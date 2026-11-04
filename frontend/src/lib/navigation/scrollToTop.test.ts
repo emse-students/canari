@@ -2,13 +2,20 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  handlePlaceClick,
+  PLACE_LINK_ATTRIBUTE,
   handlePlaceTap,
   isPlaceRetap,
   registerRetapRefresh,
   scrollPageToTop,
 } from './scrollToTop';
 import { STATUS_BAR_TAP_EVENT } from '$lib/mobile/nativeStatusBarTap';
+import { handleAppLinkClick } from '$lib/utils/openExternal';
+
+// The document's link listener navigates through the router; here only WHETHER it navigated matters.
+const navigation = vi.hoisted(() => ({ navigateInAppFromHref: vi.fn() }));
+vi.mock('$lib/utils/appLinkNavigation', () => ({
+  navigateInAppFromHref: navigation.navigateInAppFromHref,
+}));
 
 // The overlay stack is its own module with its own tests: here only its depth and its drain matter.
 const overlays = vi.hoisted(() => ({ depth: 0, drain: vi.fn() }));
@@ -169,37 +176,81 @@ describe('a re-tap of a place', () => {
   });
 });
 
-describe('a click on a place link', () => {
-  const click = (init: MouseEventInit) =>
-    new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, ...init });
+describe('a click on a place link, the way the phone delivers it', () => {
+  // The app's real listener, installed the way `hooks.client.ts` installs it (capture, on the
+  // document): it runs before anything on the anchor and stops the click, which is what made the
+  // first build's `onclick` on the anchor dead code (Mi 9T, `1.6.4-alpha.3`).
+  beforeEach(() => {
+    navigation.navigateInAppFromHref.mockReset();
+    document.addEventListener('click', handleAppLinkClick, true);
+    history.replaceState(null, '', '/posts');
+  });
+  afterEach(() => {
+    document.removeEventListener('click', handleAppLinkClick, true);
+  });
 
-  it('cancels the navigation of a plain primary re-click only', () => {
-    mountScroller(500);
-    const plain = click({});
-    handlePlaceClick(plain, '/posts', '/posts');
-    expect(plain.defaultPrevented).toBe(true);
-    const elsewhere = click({});
-    handlePlaceClick(elsewhere, '/chat', '/posts');
-    expect(elsewhere.defaultPrevented).toBe(false);
+  /** A place link as the bars render it, clicked with a real dispatched event. */
+  function clickPlaceLink(href: string, init: MouseEventInit = {}) {
+    const a = document.createElement('a');
+    a.setAttribute('href', href);
+    a.setAttribute(PLACE_LINK_ATTRIBUTE, href);
+    const icon = document.createElement('span');
+    a.appendChild(icon);
+    document.body.appendChild(a);
+    const e = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0, ...init });
+    icon.dispatchEvent(e);
+    return e;
+  }
+
+  it('a re-tap of the open place scrolls to the top and does not navigate', () => {
+    const { scrollTo } = mountScroller(1378);
+    const e = clickPlaceLink('/posts');
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
+    expect(e.defaultPrevented).toBe(true);
+    expect(navigation.navigateInAppFromHref).not.toHaveBeenCalled();
+  });
+
+  it('a tap on another place navigates and leaves the page where it is', () => {
+    const { scrollTo } = mountScroller(1378);
+    clickPlaceLink('/chat');
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(navigation.navigateInAppFromHref).toHaveBeenCalledWith('/chat');
+  });
+
+  it('a tap from deeper in the place navigates back to it', () => {
+    history.replaceState(null, '', '/posts/abc');
+    const { scrollTo } = mountScroller(1378);
+    clickPlaceLink('/posts');
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(navigation.navigateInAppFromHref).toHaveBeenCalledWith('/posts');
+  });
+
+  it('an ordinary link to the open page is not a re-tap', () => {
+    const { scrollTo } = mountScroller(1378);
+    const a = document.createElement('a');
+    a.setAttribute('href', '/posts');
+    document.body.appendChild(a);
+    a.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(navigation.navigateInAppFromHref).toHaveBeenCalledWith('/posts');
   });
 
   it.each([{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { button: 1 }])(
     'leaves a modified or middle click to the browser (%o)',
     (init) => {
       const { scrollTo } = mountScroller(500);
-      const e = click(init);
-      handlePlaceClick(e, '/posts', '/posts');
+      const e = clickPlaceLink('/posts', init);
       expect(e.defaultPrevented).toBe(false);
       expect(scrollTo).not.toHaveBeenCalled();
     }
   );
 
-  it('both web bars and the feed wire the re-tap through the shared handlers', () => {
+  it('both web bars declare their links as place links and own no click handler', () => {
     const read = (p: string) => readFileSync(p, 'utf8');
     for (const bar of ['BottomNav', 'AppSidebar']) {
-      expect(read(`src/lib/components/navigation/${bar}.svelte`)).toContain(
-        'onclick={(e) => handlePlaceClick(e, place.href, pathname)}'
-      );
+      const source = read(`src/lib/components/navigation/${bar}.svelte`);
+      expect(source).toContain(`${PLACE_LINK_ATTRIBUTE}={place.href}`);
+      expect(source).not.toContain('handlePlaceClick');
     }
     const feed = read('src/routes/posts/+page.svelte');
     expect(feed).toContain('registerRetapRefresh(refreshPosts)');
@@ -215,12 +266,29 @@ describe('the iOS status bar bridge', () => {
     expect(swift).toContain(`trigger("${STATUS_BAR_TAP_EVENT}"`);
   });
 
-  it('the catcher is a full-width strip pinned to the top, not a corner', () => {
+  it('the catcher covers the whole status bar, full width, down to the safe area', () => {
     const overlay = readFileSync(`${PLUGIN}TabBarOverlay.swift`, 'utf8');
     for (const edge of ['topAnchor', 'leadingAnchor', 'trailingAnchor']) {
       expect(overlay).toContain(`statusBarTapCatcher.${edge}.constraint(equalTo: view.${edge})`);
     }
-    expect(overlay).toContain('statusBarTapCatcher.heightAnchor.constraint(equalToConstant: 1)');
+    // A 1 pt strip was never under a tap lower in the bar (iPhone 12, `1.6.4-alpha.3`).
+    expect(overlay).toContain('equalTo: view.safeAreaLayoutGuide.topAnchor');
+    expect(overlay).not.toContain('heightAnchor.constraint(equalToConstant: 1)');
+  });
+
+  it('the catcher is visible to UIKit, takes no touch, and always has range', () => {
+    const overlay = readFileSync(`${PLUGIN}TabBarOverlay.swift`, 'utf8');
+    // The tap is a scene action, not a touch: the strip is never claimed by the overlay's hit test,
+    // since the camera, the reel viewer and the lightbox take touches under the status bar.
+    const hitTest = overlay.slice(
+      overlay.indexOf('override func hitTest'),
+      overlay.indexOf('/// CANARI PATCH: catches a tap on the iOS status bar')
+    );
+    expect(hitTest).not.toMatch(/statusBarTapCatcher|statusBarStrip|strip/);
+    expect(overlay).not.toMatch(/statusBarStrip/);
+    // `alpha` 0.01 sat on UIKit's "hidden" threshold: never a fractional alpha on the catcher.
+    expect(overlay).not.toMatch(/^\s*alpha = 0\./m);
+    expect(overlay).toContain('height: bounds.height + 2');
   });
 
   it('the catcher refuses the native scroll and the web view gives up its own', () => {
