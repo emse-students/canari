@@ -481,8 +481,9 @@ class SystemComponentsPlugin: Plugin {
         overlay.onSelect = { [weak self] id in
             self?.trigger("tabSelected", data: ["id": id])
         }
-        // CANARI PATCH: the status bar tap goes to the page, which scrolls its own box. UIKit picks
-        // ONE scroll view for that tap, so the web view's is switched off for ours to be chosen.
+        // CANARI PATCH: the status bar tap goes to the page, which scrolls its own box. The web
+        // view's scroll view has no range (the document never scrolls) and is switched off so the
+        // catcher is the one candidate UIKit can find (`StatusBarTapCatcher`).
         overlay.statusBarTapCatcher.onTap = { [weak self] in
             self?.trigger("statusBarTap", data: [:])
         }

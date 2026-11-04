@@ -18,9 +18,15 @@ final class PassthroughView: UIView {
     weak var interactiveView: UIView?
     /// The standalone account button beside the bar, if any — also interactive.
     weak var accessory: UIView?
+    /// CANARI PATCH: the status bar strip, claimed for the same reason as the bar - see
+    /// `StatusBarTapCatcher`.
+    weak var statusBarStrip: UIView?
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard let hit = super.hitTest(point, with: event) else { return nil }
+        if let strip = statusBarStrip, hit === strip {
+            return hit
+        }
         if let bar = interactiveView, !bar.isHidden, hit === bar || hit.isDescendant(of: bar) {
             return hit
         }
@@ -33,13 +39,31 @@ final class PassthroughView: UIView {
 
 /// CANARI PATCH: catches a tap on the iOS status bar and reports it instead of scrolling.
 ///
-/// UIKit sends that tap to the ONE visible scroll view with `scrollsToTop` set. The WKWebView's own
-/// scroll view is that view by default, but Canari's pages scroll in an inner `overflow-y-auto` box
-/// (the document never moves), so the gesture did nothing. This 1 pt, near-transparent scroll view
-/// (a full-width strip along the top edge, see `viewDidLoad`) becomes the only candidate (the plugin turns the web view's off), refuses the scroll
-/// (`scrollViewShouldScrollToTop` returns false) and tells the page, which runs the same
-/// scroll-to-top as a re-tap of the Feed tab. The catcher's initial 1 pt frame is replaced by the
-/// constraints.
+/// UIKit sends that tap to a visible scroll view with `scrollsToTop` set that can scroll vertically
+/// and lies under the tap. The WKWebView's own scroll view never qualifies here: Canari's pages
+/// scroll in an inner `overflow-y-auto` box, the document has no range at all (the plugin also
+/// switches its `scrollsToTop` off), so the gesture did nothing.
+///
+/// This scroll view is that candidate, and is built so UIKit cannot pass it over, whichever way it
+/// looks for "under the tap":
+/// - it COVERS the status bar - from the top edge down to the safe area's top (`viewDidLoad`) - so a
+///   tap point anywhere in the bar lies inside it. The first build was a 1 pt strip, which a tap
+///   lower in the bar never reached (iPhone 12, `1.6.4-alpha.3`: `UIStatusBarTapAction` received,
+///   the page did not move);
+/// - it is HIT-TESTABLE there (`PassthroughView.statusBarStrip`): the first build let every touch
+///   fall through to the web view, so a search that walks up from the hit view never met it. The
+///   strip is the status bar's own padding (every page pads it, `--safe-area-inset-top`), so it
+///   takes no touch a control needed;
+/// - it is VISIBLE to UIKit (`alpha` 1, a clear background, so it draws nothing): the first build's
+///   `alpha` 0.01 sat on the threshold below which UIKit treats a view as hidden, and a layer stores
+///   it as a `Float` (0.0099999998), under it - which side UIKit read is not knowable from here, so
+///   the doubt is removed rather than argued;
+/// - it always has vertical range (`layoutSubviews`): two points more content than its height,
+///   resting one point down, since a scroll view already at its top or with nothing to scroll is
+///   not a candidate.
+///
+/// It refuses the scroll (`scrollViewShouldScrollToTop` returns false) and tells the page, which runs
+/// the same scroll-to-top as a re-tap of the Feed tab.
 final class StatusBarTapCatcher: UIScrollView, UIScrollViewDelegate {
     var onTap: (() -> Void)?
 
@@ -47,20 +71,29 @@ final class StatusBarTapCatcher: UIScrollView, UIScrollViewDelegate {
         super.init(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
         delegate = self
         scrollsToTop = true
-        // Never `isHidden` nor alpha 0: UIKit skips a scroll view that is not on screen.
-        alpha = 0.01
+        backgroundColor = .clear
+        isOpaque = false
         contentInsetAdjustmentBehavior = .never
         showsVerticalScrollIndicator = false
         showsHorizontalScrollIndicator = false
-        contentSize = CGSize(width: 1, height: 4)
-        contentOffset = CGPoint(x: 0, y: 2)
         isAccessibilityElement = false
         accessibilityElementsHidden = true
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    /// Keeps the range a candidate needs at every size the constraints give it: content two points
+    /// taller than the strip, resting one point below its top. Written only when it differs, since
+    /// moving the offset lays a scroll view out again.
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let size = CGSize(width: bounds.width, height: bounds.height + 2)
+        if contentSize != size { contentSize = size }
+        if contentOffset != CGPoint(x: 0, y: 1) { contentOffset = CGPoint(x: 0, y: 1) }
+    }
+
     func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
+        NSLog("[pendi-nav][native] status bar tap caught, reported to the page")
         onTap?()
         return false
     }
@@ -134,16 +167,21 @@ final class TabBarOverlayController: UIViewController, UITabBarDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         tabBar.delegate = self
-        // A full-width 1 pt strip pinned to the top: UIKit hands the status bar tap to the scroll
-        // view under the tap point, so a corner would only answer a tap at the corner. It
-        // intercepts no touch (PassthroughView claims only the bar and the account button).
+        // The status bar's whole area, full width and down to the safe area's top, so any tap point
+        // in the bar lies inside it (see `StatusBarTapCatcher`). With no status bar (landscape
+        // iPhone) the safe area's top is 0 and the strip keeps 1 pt rather than collapsing.
         statusBarTapCatcher.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(statusBarTapCatcher)
+        (view as? PassthroughView)?.statusBarStrip = statusBarTapCatcher
+        let reachesSafeArea = statusBarTapCatcher.bottomAnchor.constraint(
+            equalTo: view.safeAreaLayoutGuide.topAnchor)
+        reachesSafeArea.priority = .defaultHigh
         NSLayoutConstraint.activate([
             statusBarTapCatcher.topAnchor.constraint(equalTo: view.topAnchor),
             statusBarTapCatcher.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             statusBarTapCatcher.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            statusBarTapCatcher.heightAnchor.constraint(equalToConstant: 1),
+            reachesSafeArea,
+            statusBarTapCatcher.heightAnchor.constraint(greaterThanOrEqualToConstant: 1),
         ])
         tabBar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(tabBar)

@@ -99,13 +99,25 @@ export function handlePlaceTap(placeHref: string, pathname: string): boolean {
 }
 
 /**
- * The click handler of a place link (`BottomNav`, `AppSidebar`): a plain primary click on the open
- * place is a re-tap and its navigation is cancelled; ctrl/meta/shift/alt or a non-primary button
- * ("open in a new tab") is left to the browser.
+ * The attribute that makes an anchor a PLACE link (`BottomNav`, `AppSidebar`): its value is the
+ * place's href. The anchor declares itself and decides nothing - a click on it is decided by the ONE
+ * owner of every in-app link click, `handleAppLinkClick` (`openExternal.ts`), a capture listener on
+ * the document that runs before any handler on the anchor and stops the event. A re-tap gate in the
+ * anchor's own `onclick` was dead code there (Mi 9T, `1.6.4-alpha.3`: three re-taps of the open Feed
+ * tab, `[appLink] In-app navigation`, no `[scrollToTop]` line, the page still at 1378 px).
  */
-export function handlePlaceClick(e: MouseEvent, placeHref: string, pathname: string): void {
-  if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
-  if (handlePlaceTap(placeHref, pathname)) e.preventDefault();
+export const PLACE_LINK_ATTRIBUTE = 'data-app-place';
+
+/**
+ * The place-link half of a link click, asked by `handleAppLinkClick` before it navigates: `true`
+ * when `anchor` is a place link whose place is the page on screen, i.e. the click was a re-tap and
+ * has been handled (the caller then cancels the navigation). Modifier keys and non-primary buttons
+ * are the caller's to filter, as for every link.
+ */
+export function handlePlaceLinkClick(anchor: Element, pathname: string): boolean {
+  const placeHref = anchor.getAttribute(PLACE_LINK_ATTRIBUTE);
+  if (!placeHref) return false;
+  return handlePlaceTap(placeHref, pathname);
 }
 
 /** True while a re-tap's refresh runs, so repeated re-taps do not start parallel ones. */
