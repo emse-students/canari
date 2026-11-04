@@ -51,7 +51,13 @@ export class Post {
   @Column('jsonb', { default: {} })
   reactions: Record<string, string>; // userId -> reactionType
 
-  @Column('jsonb', { default: [] })
+  /**
+   * `update: false`: a `save(post)` never writes it back. Every write of a comment goes through
+   * `writeComments` (`comment-write.ts`), under the post row's lock - a reaction, an edit of the post
+   * or a hide that loaded the row before a comment landed would otherwise store the stale array and
+   * lose that comment.
+   */
+  @Column({ type: 'jsonb', default: [], update: false })
   comments: any[];
 
   /**

@@ -6,6 +6,7 @@
  * set each one hands over, because the interesting failures are all partial: a post that releases
  * its own pictures but not its comments', or a comment that releases its own but not its replies'.
  */
+import { lockedCommentsManager } from './locked-comments.it-fixture';
 import { PostsService } from './posts.service';
 import { PostInteractionsService } from './post-interactions.service';
 import type { CommentIdentityService } from './comment-identity';
@@ -111,6 +112,7 @@ describe('PostInteractionsService.deleteComment', () => {
     const postRepo = {
       findOne: jest.fn(() => Promise.resolve(post)),
       save: jest.fn(() => Promise.resolve(post)),
+      manager: lockedCommentsManager(post),
     };
     const service = new PostInteractionsService(
       postRepo as unknown as Repository<Post>,

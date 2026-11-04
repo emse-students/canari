@@ -93,7 +93,12 @@ describe('PostsService post management rights', () => {
 
     const service = new PostsService(
       postRepo as unknown as Repository<Post>,
-      { del: jest.fn(), setex: jest.fn(), get: jest.fn() } as unknown as RedisService,
+      {
+        del: jest.fn(),
+        setex: jest.fn(),
+        get: jest.fn(),
+        deleteByPattern: jest.fn(() => Promise.resolve(0)),
+      } as unknown as RedisService,
       {} as FollowsService,
       associations as unknown as AssociationsService,
       { resolveMentionedUserIds: () => [] } as unknown as PostNotificationsService,

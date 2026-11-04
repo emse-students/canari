@@ -12,17 +12,25 @@
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { Logger } from '@nestjs/common';
+import { ForbiddenException, Logger } from '@nestjs/common';
 import { Client } from 'pg';
+import { of } from 'rxjs';
 import { DataSource } from 'typeorm';
 import { ContentReport } from '../moderation/entities/content-report.entity';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
+import { ModerationController } from '../moderation/moderation.controller';
+import { ModerationService } from '../moderation/moderation.service';
+import { commentRights, type CommentViewer, type StoredComment } from '../posts/comment-identity';
 import {
   BDE_MODERATED_POST_IDS_SQL,
   BDE_MODERATED_USER_IDS_SQL,
+  BDE_MODERATES_COMMENT_SQL,
   BDE_MODERATES_LIVE_SQL,
   BDE_MODERATES_REPORT_SQL,
+  MODERATION_OUT_OF_SCOPE,
+  MODERATION_RESERVED_SQL,
+  MODERATION_RESERVED_TO_PLATFORM_ADMIN,
   reportInBdeScopeSql,
 } from './bde-moderation';
 
@@ -42,6 +50,7 @@ const A = {
   // An INSTITUTION whose rule reaches bdeSe's space: no BDE governs an institution (owner,
   // 2026-11-02/03), so no BDE moderates its content - the platform admin's alone.
   instSe: '00000000-0000-4000-8000-0000000000d1', // institution, rule (NULL, saint-etienne)
+  listSe: '00000000-0000-4000-8000-0000000000e1', // a campaign LIST, rule (ICM, saint-etienne)
 } as const;
 
 const P = {
@@ -56,6 +65,7 @@ const P = {
   // there - and still bdeSe's moderators' to leave alone (owner, 2026-11-03).
   bdeSePost: '10000000-0000-4000-8000-000000000008',
   bdeGaPost: '10000000-0000-4000-8000-000000000009',
+  listSePost: '10000000-0000-4000-8000-00000000000b',
 } as const;
 
 const L = {
@@ -63,6 +73,108 @@ const L = {
   gaAssoLive: '20000000-0000-4000-8000-000000000002', // clubGa's
   cutSeLive: '20000000-0000-4000-8000-000000000003', // purged, only its cut is left
 } as const;
+
+/**
+ * THE MATRIX OF THE OWNER'S RULE OF 2026-11-03: BDE A is bdeSe (seMod), BDE B is bdeGa (gaMod). Each
+ * publisher below has a live, and a comment under a post of EACH BDE's scope (seStudent's, A's;
+ * gaStudent's, B's), so a comment proves the publisher rule where the place alone would have said yes.
+ * `forA` / `forB` are what each BDE's moderator may do to that publisher's content in its own scope.
+ */
+interface MatrixRow {
+  who: string;
+  post: string;
+  asso: string | null;
+  author: string;
+  /** The comment of this row is posted anonymously (its account hidden from readers). */
+  anonymous?: boolean;
+  forA: boolean;
+  forB: boolean;
+}
+
+const MATRIX: readonly MatrixRow[] = [
+  {
+    who: "BDE B's name",
+    post: P.bdeGaPost,
+    asso: A.bdeGa,
+    author: 'gaMod',
+    forA: false,
+    forB: true,
+  },
+  {
+    who: "an institution's name",
+    post: P.instSePost,
+    asso: A.instSe,
+    author: 'seStudent',
+    forA: false,
+    forB: false,
+  },
+  {
+    who: 'an association A governs',
+    post: P.clubSePost,
+    asso: A.clubSe,
+    author: 'seStudent',
+    forA: true,
+    forB: false,
+  },
+  {
+    who: 'an association B governs',
+    post: P.clubGaPost,
+    asso: A.clubGa,
+    author: 'gaStudent',
+    forA: false,
+    forB: true,
+  },
+  {
+    who: 'a list A governs',
+    post: P.listSePost,
+    asso: A.listSe,
+    author: 'seStudent',
+    forA: true,
+    forB: false,
+  },
+  {
+    who: "a student of A's space",
+    post: P.seStudentPost,
+    asso: null,
+    author: 'seStudent',
+    forA: true,
+    forB: false,
+  },
+  {
+    // Anonymity hides the account from readers, never from the rule: still a person's comment.
+    who: "a student of A's space, anonymously",
+    post: P.seStudentPost,
+    asso: null,
+    author: 'seStudent',
+    anonymous: true,
+    forA: true,
+    forB: false,
+  },
+];
+
+/** The live of matrix row `i`. */
+const matrixLive = (i: number) => `21000000-0000-4000-8000-00000000000${i}`;
+/** The comment of matrix row `i` under the post of BDE `bde`'s scope. */
+const matrixComment = (bde: 'se' | 'ga', i: number) => `mx-${bde}-${i}`;
+
+/**
+ * Under seStudent's post: a student's comment with an INSTITUTION's reply, and one with a club's. The
+ * reply never shields what it answers (lead, 2026-11-04): each comment is judged on itself.
+ */
+const THREAD = {
+  instReplied: 'th-inst',
+  instReply: 'th-inst-r',
+  clubReplied: 'th-club',
+  clubReply: 'th-club-r',
+} as const;
+
+const matrixComments = (bde: 'se' | 'ga') =>
+  MATRIX.map((row, i) => ({
+    id: matrixComment(bde, i),
+    userId: row.author,
+    ...(row.asso ? { associationId: row.asso } : {}),
+    ...(row.anonymous ? { anonymous: true } : {}),
+  }));
 
 maybe('BDE moderation scope against PostgreSQL', () => {
   const schema = `bdemod_it_${Math.random().toString(36).slice(2, 10)}`;
@@ -96,11 +208,14 @@ maybe('BDE moderation scope against PostgreSQL', () => {
         DEFAULT 'pending', "reviewedBy" varchar, "reviewedAt" timestamptz, "reportedUserId" varchar,
         "createdAt" timestamp NOT NULL DEFAULT now());
       CREATE TABLE live_chat_reported_lines ("reportId" uuid PRIMARY KEY, "liveId" uuid NOT NULL);
+      CREATE TABLE post_notifications (id serial PRIMARY KEY, "postId" varchar NOT NULL,
+        "commentId" varchar(255), text varchar NOT NULL);
     `);
     for (const [key, id] of Object.entries(A)) {
+      const type = key === 'instSe' ? 'institution' : key === 'listSe' ? 'list' : 'association';
       await client.query(
         `INSERT INTO associations (id, name, "isBDE", type) VALUES ($1, $2, $3, $4)`,
-        [id, key, key === 'bdeSe', key === 'instSe' ? 'institution' : 'association']
+        [id, key, key === 'bdeSe', type]
       );
     }
     await client.query(migration('071_spaces.sql'));
@@ -113,6 +228,7 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       [A.clubSe, 'ICM', 'saint-etienne'],
       [A.clubGa, null, 'gardanne'],
       [A.instSe, null, 'saint-etienne'],
+      [A.listSe, 'ICM', 'saint-etienne'],
     ];
     for (const [asso, formation, campus] of rules) {
       await client.query(
@@ -154,12 +270,39 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       [P.clubSePost, 'seStudent', A.clubSe, [{ id: 'cm-se', userId: 'gaStudent' }]],
       [P.clubGaPost, 'gaStudent', A.clubGa, []],
       [P.clubNonePost, 'seStudent', A.clubNone, []],
-      [P.seStudentPost, 'seStudent', null, []],
-      [P.gaStudentPost, 'gaStudent', null, [{ id: 'cm-ga', userId: 'seStudent' }]],
+      [
+        P.seStudentPost,
+        'seStudent',
+        null,
+        [
+          ...matrixComments('se'),
+          { id: THREAD.instReplied, userId: 'gaStudent' },
+          {
+            id: THREAD.instReply,
+            userId: 'seStudent',
+            associationId: A.instSe,
+            parentId: THREAD.instReplied,
+          },
+          { id: THREAD.clubReplied, userId: 'gaStudent' },
+          {
+            id: THREAD.clubReply,
+            userId: 'seStudent',
+            associationId: A.clubSe,
+            parentId: THREAD.clubReplied,
+          },
+        ],
+      ],
+      [
+        P.gaStudentPost,
+        'gaStudent',
+        null,
+        [{ id: 'cm-ga', userId: 'seStudent' }, ...matrixComments('ga')],
+      ],
       [P.staffPost, 'staff', null, []],
       [P.instSePost, 'seStudent', A.instSe, []],
       [P.bdeSePost, 'seMod', A.bdeSe, []],
       [P.bdeGaPost, 'gaMod', A.bdeGa, []],
+      [P.listSePost, 'seStudent', A.listSe, []],
     ];
     for (const [id, author, asso, comments] of postRows) {
       await client.query(
@@ -173,6 +316,13 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       A.clubGa,
     ]);
     await client.query(`INSERT INTO live_cuts VALUES ($1, 'seStudent', NULL)`, [L.cutSeLive]);
+    for (const [i, row] of MATRIX.entries()) {
+      await client.query(`INSERT INTO lives VALUES ($1, $2, $3)`, [
+        matrixLive(i),
+        row.author,
+        row.asso,
+      ]);
+    }
   });
 
   afterAll(async () => {
@@ -182,7 +332,9 @@ maybe('BDE moderation scope against PostgreSQL', () => {
   });
 
   it('a BDE moderates the posts of its governed spaces, association and personal alike', async () => {
-    expect(await posts('seMod')).toEqual([P.clubSePost, P.seStudentPost, P.bdeSePost].sort());
+    expect(await posts('seMod')).toEqual(
+      [P.clubSePost, P.seStudentPost, P.bdeSePost, P.listSePost].sort()
+    );
     expect(await posts('gaMod')).toEqual([P.clubGaPost, P.gaStudentPost, P.bdeGaPost].sort());
   });
 
@@ -339,5 +491,311 @@ maybe('BDE moderation scope against PostgreSQL', () => {
     } finally {
       await ds.destroy();
     }
+  });
+
+  describe("the owner's rule of 2026-11-03: no BDE moderates content in another BDE's or an institution's name", () => {
+    /** `AssociationsService` on the real SQL; `isContentModerator` (a query builder) is the door, stubbed open. */
+    const service = () =>
+      Object.assign(Object.create(AssociationsService.prototype), {
+        memberRepo: {
+          query: async (sql: string, params: unknown[]) => (await client.query(sql, params)).rows,
+        },
+        logger: new Logger('bde-moderation.it'),
+        isContentModerator: async () => true,
+      }) as AssociationsService;
+    const comment = async (moderator: string, postId: string, commentId: string) =>
+      (await client.query(BDE_MODERATES_COMMENT_SQL, [moderator, postId, commentId])).rows[0]
+        .moderates as boolean;
+    const live = async (moderator: string, id: string) =>
+      (await client.query(BDE_MODERATES_LIVE_SQL, [moderator, id])).rows[0].moderates as boolean;
+    const OFFICERS = [
+      { officer: 'seMod', bde: 'se', post: P.seStudentPost, expect: 'forA' },
+      { officer: 'gaMod', bde: 'ga', post: P.gaStudentPost, expect: 'forB' },
+    ] as const;
+
+    it.each(MATRIX.map((row, i) => [row.who, i] as const))(
+      "content in %s: a post, a live and a comment under each BDE's own scope",
+      async (_who, i) => {
+        const row = MATRIX[i];
+        for (const { officer, bde, post, expect: key } of OFFICERS) {
+          const allowed = row[key];
+          // A PERSON's comment is judged by its place alone: under a post of the officer's scope it
+          // is the officer's, whoever's student wrote it. An association's is judged by its name.
+          const commentAllowed = row.asso === null ? true : allowed;
+          // Hide, unhide, unmask, delete, read the anonymous author: `mayModeratePost`'s SQL.
+          expect({ officer, post: (await posts(officer)).includes(row.post) }).toEqual({
+            officer,
+            post: allowed,
+          });
+          // Cut a live, hide a line of its chat: `mayModerateLive`'s SQL.
+          expect({ officer, live: await live(officer, matrixLive(i)) }).toEqual({
+            officer,
+            live: allowed,
+          });
+          // Delete a comment (the route and the served bin): under a post of the officer's OWN
+          // scope, so the place alone would say yes - the publisher is what is judged.
+          expect({ officer, comment: await comment(officer, post, matrixComment(bde, i)) }).toEqual(
+            { officer, comment: commentAllowed }
+          );
+        }
+      }
+    );
+
+    it("never reaches a comment under the OTHER BDE's post, whoever publishes it", async () => {
+      for (const i of MATRIX.keys()) {
+        expect(await comment('seMod', P.gaStudentPost, matrixComment('ga', i))).toBe(false);
+        expect(await comment('gaMod', P.seStudentPost, matrixComment('se', i))).toBe(false);
+      }
+    });
+
+    it("judges a student's comment on itself: an institution's reply does not shield it (lead, 2026-11-04)", async () => {
+      expect(await comment('seMod', P.seStudentPost, THREAD.instReplied)).toBe(true);
+      // The reply itself stays the platform admin's.
+      expect(await comment('seMod', P.seStudentPost, THREAD.instReply)).toBe(false);
+      // The same thread with a reply by a club A governs is A's.
+      expect(await comment('seMod', P.seStudentPost, THREAD.clubReplied)).toBe(true);
+      expect(await comment('seMod', P.seStudentPost, THREAD.clubReply)).toBe(true);
+    });
+
+    it('serves the same bin as the route answers: `commentRights` on the real publisher set', async () => {
+      // The in-memory twin (`moderatesComment`) must agree with `BDE_MODERATES_COMMENT_SQL` on
+      // every comment of the post, or a moderator would see a bin the route refuses.
+      const svc = service();
+      const stored = (
+        await client.query(`SELECT comments FROM posts WHERE id = $1`, [P.seStudentPost])
+      ).rows[0].comments as StoredComment[];
+      for (const officer of ['seMod', 'gaMod']) {
+        const v: CommentViewer = {
+          viewerId: officer,
+          isGlobalAdmin: false,
+          isModerator: await svc.mayModeratePost(officer, P.seStudentPost),
+          managedAssociationIds: new Set(),
+          moderatedAssociationIds: await svc.moderatedAssociationIds(
+            officer,
+            stored.map((c) => c.associationId ?? '').filter(Boolean)
+          ),
+        };
+        for (const c of stored) {
+          const served = commentRights(c, v).canDelete;
+          expect({ officer, id: c.id, served }).toEqual({
+            officer,
+            id: c.id,
+            served: await comment(officer, P.seStudentPost, c.id ?? ''),
+          });
+        }
+      }
+    });
+
+    it('narrows the report queue to what the BDE may act on - an escalated item is not listed', async () => {
+      const reports: [string, string, string][] = [
+        ['31000000-0000-4000-8000-000000000001', 'post', P.instSePost],
+        ['31000000-0000-4000-8000-000000000002', 'post', P.bdeGaPost],
+        ['31000000-0000-4000-8000-000000000003', 'comment', matrixComment('se', 1)], // institution
+        ['31000000-0000-4000-8000-000000000004', 'comment', matrixComment('se', 0)], // BDE B
+        ['31000000-0000-4000-8000-000000000005', 'comment', matrixComment('se', 2)], // club A
+        ['31000000-0000-4000-8000-000000000006', 'comment', THREAD.instReplied],
+        ['31000000-0000-4000-8000-000000000007', 'live', matrixLive(1)], // institution
+        ['31000000-0000-4000-8000-000000000008', 'live', matrixLive(2)], // club A
+      ];
+      for (const [id, type, contentId] of reports) {
+        await client.query(
+          `INSERT INTO content_reports (id, "contentType", "contentId") VALUES ($1, $2, $3)`,
+          [id, type, contentId]
+        );
+      }
+      const mine = async (moderator: string) =>
+        (
+          await client.query(
+            `SELECT r.id FROM content_reports r WHERE r.id::text LIKE '31%' AND ${reportInBdeScopeSql('r', '$1')} ORDER BY r.id`,
+            [moderator]
+          )
+        ).rows.map((r) => (r.id as string).slice(-1));
+      // 6 is a student's comment under an institution's reply: the student's comment is A's.
+      expect(await mine('seMod')).toEqual(['5', '6', '8']);
+      // BDE B sees its own post's report and nothing under A's student's post.
+      expect(await mine('gaMod')).toEqual(['2']);
+      const svc = service();
+      for (const [id] of reports) {
+        // Reviewing follows the queue, and the platform admin reviews every one.
+        expect(await svc.mayModerateReport(undefined, id, { isGlobalAdmin: true })).toBe(true);
+      }
+      expect(await svc.mayModerateReport('seMod', reports[0][0])).toBe(false);
+      expect(await svc.mayModerateReport('seMod', reports[4][0])).toBe(true);
+    });
+
+    it('classifies the refusal at the throw: reserved to the platform admin, or out of scope', async () => {
+      const reserved = async (kind: string, id: string, postId: string | null = null) =>
+        (await client.query(MODERATION_RESERVED_SQL, [kind, id, postId])).rows[0]
+          .reserved as boolean;
+      expect(await reserved('post', P.instSePost)).toBe(true);
+      expect(await reserved('post', P.bdeGaPost)).toBe(true);
+      expect(await reserved('post', P.clubGaPost)).toBe(false);
+      expect(await reserved('live', matrixLive(1))).toBe(true);
+      expect(await reserved('live', matrixLive(3))).toBe(false);
+      expect(await reserved('comment', matrixComment('se', 1), P.seStudentPost)).toBe(true);
+      expect(await reserved('comment', matrixComment('se', 3), P.seStudentPost)).toBe(false);
+      expect(await reserved('comment', THREAD.instReplied)).toBe(false);
+      expect(await reserved('comment', THREAD.instReply)).toBe(true);
+      expect(await reserved('report', '31000000-0000-4000-8000-000000000001')).toBe(true);
+      expect(await reserved('post', 'not-a-uuid')).toBe(false);
+
+      const svc = service();
+      const codeOf = async (target: Parameters<AssociationsService['refuseModeration']>[1]) => {
+        const refusal = await svc.refuseModeration('seMod', target).catch((e: unknown) => e);
+        expect(refusal).toBeInstanceOf(ForbiddenException);
+        return ((refusal as ForbiddenException).getResponse() as { code: string }).code;
+      };
+      expect(await codeOf({ kind: 'post', id: P.instSePost })).toBe(
+        MODERATION_RESERVED_TO_PLATFORM_ADMIN
+      );
+      expect(await codeOf({ kind: 'post', id: P.bdeGaPost })).toBe(
+        MODERATION_RESERVED_TO_PLATFORM_ADMIN
+      );
+      expect(await codeOf({ kind: 'comment', id: THREAD.instReply, postId: P.seStudentPost })).toBe(
+        MODERATION_RESERVED_TO_PLATFORM_ADMIN
+      );
+      expect(await codeOf({ kind: 'post', id: P.clubGaPost })).toBe(MODERATION_OUT_OF_SCOPE);
+      expect(await codeOf({ kind: 'user', id: 'gaStudent' })).toBe(MODERATION_OUT_OF_SCOPE);
+    });
+
+    it('leaves the platform admin global over every row of the matrix', async () => {
+      const svc = service();
+      const admin = { isGlobalAdmin: true };
+      const allPosts = MATRIX.map((r) => r.post);
+      expect([...(await svc.moderatedPostIds('admin', allPosts, admin))].sort()).toEqual(
+        [...new Set(allPosts)].sort()
+      );
+      for (const i of MATRIX.keys()) {
+        expect(await svc.mayModerateLive('admin', matrixLive(i), admin)).toBe(true);
+        for (const { bde, post } of OFFICERS) {
+          expect(await svc.mayModerateComment('admin', post, matrixComment(bde, i), admin)).toBe(
+            true
+          );
+        }
+      }
+      const publishers: string[] = MATRIX.flatMap((r) => (r.asso ? [r.asso] : []));
+      expect([...(await svc.moderatedAssociationIds('admin', publishers, admin))].sort()).toEqual(
+        [...publishers].sort()
+      );
+      // And the served bin: an admin deletes an institution's comment.
+      const v: CommentViewer = {
+        isGlobalAdmin: true,
+        isModerator: true,
+        managedAssociationIds: new Set(),
+        moderatedAssociationIds: new Set(),
+      };
+      const institutional = { id: THREAD.instReply, userId: 'seStudent', associationId: A.instSe };
+      expect(commentRights(institutional, v).canDelete).toBe(true);
+    });
+
+    it('tombstones what a protected reply answers, takes what it moderates, at every level (lead, 2026-11-04)', async () => {
+      // The route itself (`POST /moderation/comments/:id/delete`) on the real tables: the door
+      // (`mayModerateComment`), the publisher set, the plan and the stored jsonb.
+      const post = '10000000-0000-4000-8000-00000000000c';
+      const thread: StoredComment[] = [
+        { id: 'tb-root', userId: 'gaStudent', text: 'root', media: { mediaId: 'm-root' } },
+        { id: 'tb-inst', parentId: 'tb-root', userId: 'seStudent', associationId: A.instSe },
+        { id: 'tb-bdeB', parentId: 'tb-root', userId: 'gaMod', associationId: A.bdeGa },
+        { id: 'tb-club', parentId: 'tb-root', userId: 'seStudent', associationId: A.clubSe },
+        { id: 'tb-st', parentId: 'tb-root', userId: 'seStudent', text: 'student' },
+        { id: 'tb-st-inst', parentId: 'tb-st', userId: 'seStudent', associationId: A.instSe },
+        { id: 'tb-st-anon', parentId: 'tb-st', userId: 'gaStudent', anonymous: true },
+      ];
+      await client.query(
+        `INSERT INTO posts (id, "authorId", "associationId", comments) VALUES ($1, 'seStudent', NULL, $2)`,
+        [post, JSON.stringify(thread)]
+      );
+      // The bell: one row about the club reply the delete takes, one about the root it tombstones,
+      // one about the institution's reply it keeps.
+      for (const [commentId, text] of [
+        ['tb-club', 'club words'],
+        ['tb-root', 'root words'],
+        ['tb-inst', 'inst words'],
+      ]) {
+        await client.query(
+          `INSERT INTO post_notifications ("postId", "commentId", text) VALUES ($1, $2, $3)`,
+          [post, commentId, text]
+        );
+      }
+      // The media service, as `applyMediaRetentionClass` calls it.
+      const released: string[] = [];
+      const http = {
+        post: jest.fn((_url: string, body: { mediaIds: string[] }) => {
+          released.push(...body.mediaIds);
+          return of({ data: { changed: body.mediaIds.length } });
+        }),
+      };
+      const ds = new DataSource({
+        type: 'postgres',
+        url: URL,
+        entities: [ContentReport],
+        synchronize: false,
+        extra: { options: `-c search_path=${schema},public` },
+      });
+      await ds.initialize();
+      try {
+        const route = new ModerationController(
+          new ModerationService(ds.getRepository(ContentReport), {} as never, http as never),
+          service()
+        );
+        const stored = async () =>
+          (await client.query(`SELECT comments FROM posts WHERE id = $1`, [post])).rows[0]
+            .comments as StoredComment[];
+
+        // The institution's reply is refused at the door, typed, and nothing moves.
+        const refusal = await route
+          .deleteReportedComment('tb-inst', 'seMod', undefined)
+          .catch((e: unknown) => e);
+        expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+          code: MODERATION_RESERVED_TO_PLATFORM_ADMIN,
+        });
+        expect(await stored()).toEqual(thread);
+
+        // The student's root is A's: it goes, as does every descendant A moderates; what A does not
+        // moderate (an institution's, BDE B's) stays, under tombstones of what it answered.
+        const done = await route.deleteReportedComment('tb-root', 'seMod', undefined);
+        expect([...done.removedIds].sort()).toEqual(['tb-club', 'tb-st-anon']);
+        expect([...done.tombstoneIds].sort()).toEqual(['tb-root', 'tb-st']);
+        const after = await stored();
+        expect(after.map((c) => c.id)).toEqual([
+          'tb-root',
+          'tb-inst',
+          'tb-bdeB',
+          'tb-st',
+          'tb-st-inst',
+        ]);
+        const root = after[0];
+        expect(root).toMatchObject({ id: 'tb-root', text: '', removedByModeration: true });
+        expect(root.media).toBeUndefined();
+        expect(after[3]).toMatchObject({ id: 'tb-st', text: '', removedByModeration: true });
+        // A tombstone names nobody: a block with its writer could otherwise probe who it was.
+        expect(after.filter((c) => c.removedByModeration).map((c) => c.userId)).toEqual([
+          undefined,
+          undefined,
+        ]);
+        // The media of what the moderation took are released, as on the comment's own route.
+        expect(released).toEqual(['m-root']);
+        // The bell forgets the removed reply and blanks the tombstoned root's preview.
+        const bell = (
+          await client.query(
+            `SELECT "commentId", text FROM post_notifications WHERE "postId" = $1 ORDER BY "commentId"`,
+            [post]
+          )
+        ).rows;
+        expect(bell).toEqual([
+          { commentId: 'tb-inst', text: 'inst words' },
+          { commentId: 'tb-root', text: '' },
+        ]);
+
+        // A tombstone left with no reply goes with the last thing it was kept for.
+        await route.deleteReportedComment('tb-st-inst', 'admin', 'true');
+        expect((await stored()).map((c) => c.id)).toEqual(['tb-root', 'tb-inst', 'tb-bdeB']);
+        await route.deleteReportedComment('tb-inst', 'admin', 'true');
+        await route.deleteReportedComment('tb-bdeB', 'admin', 'true');
+        expect(await stored()).toEqual([]);
+      } finally {
+        await ds.destroy();
+      }
+    });
   });
 });

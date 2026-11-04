@@ -131,19 +131,109 @@ WP-L8, by the staff cut of a live.
 
 **SCOPED SINCE 2026-11-02 (owner).** That predicate is now only the DOOR: a BDE moderator reads the
 reports, the hidden posts and the muted people of the spaces its BDE governs, and every act (hide,
-delete, pin, unmask, mute, cut, review) asks the scope of its target - a 403
+delete, unmask, mute, cut, review) asks the scope of its target - a 403
 `MODERATION_OUT_OF_SCOPE` outside it. The platform admin stays global. What "in scope" means per
 target is tabled in [profiles-and-access, D23 amended](profiles-and-access.md#d23-amended---moderate-is-scoped-and-only-the-author-edits-a-post-2026-11-02).
 
 **A post's integrity: only its author changes its text (owner, 2026-11-02).** Moderation hides,
-deletes, pins and unmasks; it never edits. Neither a BDE moderator nor the platform admin may change
+deletes and unmasks; it never edits. Neither a BDE moderator nor the platform admin may change
 another person's post (403 `POST_EDIT_PUBLISHER_ONLY`); the pencil is the served `canEdit`, apart from
 the bin (`canManage`). **A comment follows the same rule** (owner, 2026-11-02): its author alone edits
 it - a moderator or the platform admin hides or deletes it, and an edit by either is a 403
 `COMMENT_EDIT_AUTHOR_ONLY`. For a post or comment in an association's name, the author is any holder
 of `POST_AS_ASSO` in it (decided the same day). Deleting a comment is MODERATE's within its scope: a
-moderator of the post deletes any comment under it - plain, anonymous or an association's - which
-`commentRights.canDelete` serves and `POST /moderation/comments/:id/delete` enforces alike.
+moderator of the post deletes a plain or an anonymous comment under it, and an association's only
+when it moderates that association too (next paragraph) - which `commentRights.canDelete` serves and
+`POST /moderation/comments/:id/delete` enforces alike.
+
+**No BDE moderates content in an INSTITUTION's or ANOTHER BDE's name (owner, 2026-11-03).** Whatever
+the path - hide, delete, unmask, reading an association comment's writer, cutting a live, a report on
+any of them - only the platform admin acts on it; a BDE keeps moderating, in its governed spaces, what
+students and the associations and lists it governs publish. ONE predicate decides every act:
+`bdeModeratesPublisherSql` (`spaces/bde-moderation.ts`, the management predicate read for `MODERATE`,
+false for an institution and for another BDE) for whatever is in an association's name, the per-space
+standing for a person's. A post and a live were already judged by their publisher (#2953); since this
+change a **comment** is too - its post must be in scope AND its own publisher (`bdeModeratesCommentSql`;
+`moderatesComment` in `posts/comment-identity.ts` is its in-memory twin, proved to agree on real SQL).
+A comment is judged on ITSELF: its replies never shield it (decision below). **The reports queue lists
+only what the BDE may act on** - an escalated item is simply absent from it, and stays in the platform
+admin's queue (decided 2026-11-04, the simpler and reversible of the two options: no "escalated" row to
+render). A refused act is classified at the throw: 403 `MODERATION_RESERVED_TO_PLATFORM_ADMIN` when the
+target is in an institution's or a BDE's name, `MODERATION_OUT_OF_SCOPE` otherwise,
+`MODERATOR_REQUIRED` for a caller who moderates nowhere - each worded by the client through
+`describeModerationRefusal` (`frontend/src/lib/moderation/moderationRefusal.ts`), on the post card and
+in the reports queue alike (`ModerationApiError` is an `ApiRefusalError`, so `refusalCode` reads it).
+**Not moderation, and so unchanged:** pinning a post in a space (WP-PIN, a promotion - a BDE may pin
+another BDE's or an institution's post), the agenda rights over an institution's event (owner,
+2026-11-03, `holdsBdeAgendaRightOverSql`), and a mute or a broadcast withdrawal, which name a person.
+Proved in `bde-moderation.integration.spec.ts` ("the owner's rule of 2026-11-03"). **Open:** a
+student's content inside an institution's or another BDE's post or live -
+[open-questions](open-questions.md#decision-owed---who-moderates-a-students-content-inside-an-institutions-or-another-bdes-post-2026-11-04).
+
+#### Decisions taken (2026-11-04, the lead, reversible)
+
+- **A reply in a protected name does not shield what it answers.** A student's comment answered by an
+  institution's (or another BDE's) reply is the BDE's to delete, judged by its post and its own
+  publisher only. The first build refused it (the delete would have taken the reply), which made any
+  thread untouchable through a single reply in a protected name.
+- **A moderator's delete that meets a reply it does not moderate leaves a TOMBSTONE.** The delete takes
+  the comment's descendants RECURSIVELY and judges each with the same rule (`planCommentRemoval`,
+  `posts/comment-removal.ts`, used by both delete paths: `PostInteractionsService.deleteComment` and
+  `ModerationService.deleteCommentById`). A node it may remove goes; one it may not stays; a removed
+  node under which something stays is kept as a tombstone - its row kept, text, likes and media
+  blanked, `removedByModeration: true` - so the protected reply keeps its context. The marker lives in
+  the `posts.comments` jsonb, so no migration. It is served with no author and no right
+  (`canEdit`/`canDelete` false) and drawn as one line, "Commentaire retiré par la modération"
+  (`post_comment_removed_by_moderation`). A tombstone left with no reply is removed at once, on any
+  later delete that empties it, and by account erasure when it scrubs the last reply under it
+  (`scrubComments`, `internal/account-erasure.ts`).
+- **A tombstone carries NO account, and no block hides it** (second review). It stores no `userId`
+  (erasure has nothing to find in it), and both block filters exempt `removedByModeration` rows
+  (`commentShownDespiteBlocks` in `posts/comment-page.ts`, the `shown` clause of `postSelectBody`).
+  Hiding it from exactly the readers who blocked its real writer would answer "who wrote this
+  anonymous comment" - the probe the anonymous exemption already refuses - and would cut the protected
+  replies under it out of the page. A tombstone written before this rule still carries a `userId`; the
+  exemption covers it all the same.
+- **A tombstone takes no reply and no heart**: both are refused with a 409
+  `COMMENT_REMOVED_BY_MODERATION` (`refuseRemovedByModeration`), worded on the client by
+  `post_comment_removed_by_moderation_refusal`, so nothing new ever notifies the moderated writer.
+- **A tombstone is not counted.** `commentCount` (the server's SQL and the client's
+  `commentCountOf`) skips `removedByModeration` rows; a delete answers `countedOut`, the comments that
+  left the count (removed live rows plus rows turned into tombstones), and the client moves the count
+  by that.
+- **Both delete paths release the media** of every removed row and of every row turned into a
+  tombstone (`rowsReleasedBy`): the author's path through `PostMediaRetentionService.release`, the
+  moderation route through `applyMediaRetentionClass` (the same call, `ModerationService` holding its
+  own `HttpService` because `PostsModule` already imports `ModerationModule`).
+- **The bell follows the thread** (`forgetCommentNotices`, `posts/comment-write.ts`): a notification
+  whose `commentId` (migration 132) names a removed comment is deleted, one naming a tombstoned comment
+  has its preview text blanked. Best effort: a failure logs `[NOTIFY]` at ERROR and the delete stands.
+- **Every comment write holds the post row** (`writeComments`, `posts/comment-write.ts`): add, like,
+  edit, the author's delete and the moderation delete each read `posts.comments` under
+  `SELECT ... FOR UPDATE` in one transaction and write the array back in it. They were five
+  read-modify-writes of one jsonb, so a reply racing a moderation delete could resurrect the removed
+  comment or lose the reply. The entity column is `update: false`, so no other `save(post)` (a
+  reaction, an edit of the post, a hide) can write a stale copy back either. Proved on a real
+  PostgreSQL by `comment-write.integration.spec.ts` (two writers queued on one held lock, both orders).
+- **The author's own delete keeps taking the whole thread**, as before: it is not moderation, and an
+  author withdrawing a comment takes the replies under it, whoever wrote them. Whether a reply in a
+  protected name should outlive its question is
+  [owed to the owner](open-questions.md#decision-owed---may-an-authors-own-delete-take-the-replies-written-in-a-protected-name-2026-11-04).
+- **An app newer than its server** (a delete answered `{ ok: true }` alone) drops the comment and its
+  whole subtree locally, as that server did, and logs `[VERSION-SKEW]` at warn. An app older than the
+  tombstone draws one as an empty bubble -
+  [legacy-compatibility](legacy-compatibility.md#no-date-yet---a-moderation-tombstone-drawn-by-a-build-that-does-not-know-removedbymoderation-2026-11-04).
+
+**The queue's comment branch at volume (measured 2026-11-04, scratch PostgreSQL 18).** 2,000 posts,
+20,000 comments (200 threads of 50 with chained replies), 2,000 reports (1,000 on comments), one BDE
+and 60 associations. The branch is UNCORRELATED - the comment ids of the posts in scope, hashed once
+per query - so it is linear in the comments of the posts in scope and does not grow with the number
+of reports. Its publisher half was first a correlated subplan re-run per association comment:
+**2,644 ms** for the branch alone, 2,746 ms for a page of 50. Rewritten as an uncorrelated set (the
+associations the moderator moderates, hashed once): **67-76 ms** for the branch and **~280 ms** for the
+whole page (post branch 19 ms, user branch 2 ms; expanding every comment with no predicate costs
+7 ms), with the same 949 comment rows in scope. A per-report correlated EXISTS was rejected: nothing
+indexes a comment id inside the jsonb, so it would scan every post once per comment report.
 
 **A mute and a live withdrawal stay ONE platform-wide row (owner, 2026-11-02: "Laisser tel quel").**
 A measure is about a person, not about a BDE: any BDE whose spaces hold that person may lift it or

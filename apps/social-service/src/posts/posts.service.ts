@@ -1329,17 +1329,18 @@ export class PostsService {
    * for a post (see `blockedAuthorSql`).
    */
   private postSelectBody(blockedParam: number | null): string {
-    const visibleComment =
+    // A moderation tombstone is always shown (it names nobody: `commentShownDespiteBlocks`), and
+    // never COUNTED - the count says how many comments there are, and a tombstone is not one.
+    const shown =
       blockedParam === null
-        ? ''
-        : `WHERE (COALESCE(elem->>'userId', '') <> ALL($${blockedParam}::text[])
-             OR elem->>'anonymous' = 'true' OR COALESCE(elem->>'associationId', '') <> '')`;
-    const commentCount =
-      blockedParam === null
-        ? `(jsonb_array_length(COALESCE(posts.comments, '[]'::jsonb))::integer)`
-        : `(SELECT COUNT(*)::integer
+        ? 'TRUE'
+        : `(COALESCE(elem->>'userId', '') <> ALL($${blockedParam}::text[])
+             OR elem->>'anonymous' = 'true' OR COALESCE(elem->>'associationId', '') <> ''
+             OR elem->>'removedByModeration' = 'true')`;
+    const visibleComment = blockedParam === null ? '' : `WHERE ${shown}`;
+    const commentCount = `(SELECT COUNT(*)::integer
              FROM jsonb_array_elements(COALESCE(posts.comments, '[]'::jsonb)) AS elem
-             ${visibleComment})`;
+             WHERE ${shown} AND COALESCE(elem->>'removedByModeration', '') <> 'true')`;
     return `posts.id,
          posts."authorId", posts.anonymous, posts.markdown, posts."createdAt", posts."publishedAt", posts."updatedAt",
          posts.mentions, posts.links, posts."attachedFormId", posts."associationId",
@@ -2126,7 +2127,7 @@ export class PostsService {
     this.logger.debug(
       `[PERM] ${userId.slice(0, 8)} refused management of post ${post.id} (assoc=${post.associationId ?? 'none'})`
     );
-    return this.associationsService.refuseModeration(userId, `post:${post.id}`);
+    return this.associationsService.refuseModeration(userId, { kind: 'post', id: post.id });
   }
 
   /** Permanently deletes a post. See `assertMayManage` for who may. */

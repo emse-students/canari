@@ -477,7 +477,7 @@ export class PostsController {
   ): Promise<void> {
     const isGlobalAdmin = globalAdminHeader === 'true';
     if (await this.associationsService.mayModeratePost(userId, postId, { isGlobalAdmin })) return;
-    await this.associationsService.refuseModeration(userId, `post:${postId}`);
+    await this.associationsService.refuseModeration(userId, { kind: 'post', id: postId });
   }
 
   /** Hides a post from public feeds (moderation). Content moderators. */

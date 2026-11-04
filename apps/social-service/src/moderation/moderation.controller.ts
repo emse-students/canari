@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   Get,
   Headers,
+  NotFoundException,
   Param,
   Patch,
   Post,
@@ -15,6 +16,7 @@ import { ModerationService } from './moderation.service';
 import { AssociationsService } from '../associations/associations.service';
 import { CreateReportDto, MuteUserDto, ReviewReportDto } from './dto/moderation.dto';
 import { MODERATOR_REQUIRED } from '../spaces/bde-moderation';
+import { mayRemoveAsModerator, type CommentViewer } from '../posts/comment-identity';
 
 /**
  * Moderation endpoints: content reporting (all authenticated users)
@@ -52,7 +54,7 @@ export class ModerationController {
   ): Promise<void> {
     await this.assertModerator(userId, isGlobalAdmin);
     if (await this.assocService.mayModerateUser(userId, targetUserId, { isGlobalAdmin })) return;
-    await this.assocService.refuseModeration(userId, `user:${targetUserId}`);
+    await this.assocService.refuseModeration(userId, { kind: 'user', id: targetUserId });
   }
 
   // ── Public (authenticated) reports ───────────────────────────────────────
@@ -117,7 +119,7 @@ export class ModerationController {
     const isGlobalAdmin = ga === 'true';
     await this.assertModerator(userId, isGlobalAdmin);
     if (!(await this.assocService.mayModerateReport(userId, reportId, { isGlobalAdmin }))) {
-      await this.assocService.refuseModeration(userId, `report:${reportId}`);
+      await this.assocService.refuseModeration(userId, { kind: 'report', id: reportId });
     }
     return this.service.reviewReport(reportId, userId, dto.action);
   }
@@ -168,7 +170,10 @@ export class ModerationController {
     return this.service.getUserMuteStatus(userId);
   }
 
-  /** Deletes a reported comment (and replies). Requires MODERATE or global admin. */
+  /**
+   * Deletes a reported comment and the descendants this moderator may delete; a reply it may not
+   * delete stays under a tombstone. Requires MODERATE over the comment, or global admin.
+   */
   @UseGuards(NginxAuthGuard)
   @Post('comments/:commentId/delete')
   async deleteReportedComment(
@@ -178,11 +183,29 @@ export class ModerationController {
   ) {
     const isGlobalAdmin = ga === 'true';
     await this.assertModerator(userId, isGlobalAdmin);
-    // A comment is judged by the post it sits under; a missing one stays the service's 404.
+    // A comment is judged by the post it sits under AND by who publishes it (`mayModerateComment`,
+    // owner 2026-11-03) - never by its replies; a missing one stays the service's 404.
     const postId = await this.service.findPostIdForComment(commentId);
-    if (postId && !(await this.assocService.mayModeratePost(userId, postId, { isGlobalAdmin }))) {
-      await this.assocService.refuseModeration(userId, `comment:${commentId}`);
+    if (!postId) throw new NotFoundException('Comment not found');
+    if (
+      !(await this.assocService.mayModerateComment(userId, postId, commentId, { isGlobalAdmin }))
+    ) {
+      await this.assocService.refuseModeration(userId, { kind: 'comment', id: commentId, postId });
     }
-    return this.service.deleteCommentById(commentId);
+    // Each descendant the delete meets is judged by the same rule: a reply in a name this moderator
+    // does not moderate stays, under a tombstone of what it answered (lead, 2026-11-04).
+    const comments = await this.service.commentsOfPost(postId);
+    const viewer: CommentViewer = {
+      viewerId: userId,
+      isGlobalAdmin,
+      isModerator: true,
+      managedAssociationIds: new Set(),
+      moderatedAssociationIds: await this.assocService.moderatedAssociationIds(
+        userId,
+        comments.map((c) => c.associationId ?? '').filter(Boolean),
+        { isGlobalAdmin }
+      ),
+    };
+    return this.service.deleteCommentById(commentId, (c) => mayRemoveAsModerator(c, viewer));
   }
 }

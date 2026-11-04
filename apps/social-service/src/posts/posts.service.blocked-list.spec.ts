@@ -157,6 +157,10 @@ describe('PostsService hides a blocked account, and only where the author was vi
     // An anonymous or association comment is exempt, or a block would probe its writer.
     const exemptions = sql.match(/elem->>'anonymous' = 'true'/g) ?? [];
     expect(exemptions).toHaveLength(2);
+    // So is a moderation tombstone, in the window AND the count: hiding it from whoever blocked its
+    // real writer would name that writer (second review of #2999).
+    const tombstones = sql.match(/elem->>'removedByModeration' = 'true'/g) ?? [];
+    expect(tombstones).toHaveLength(2);
   });
 
   it('emits no clause at all when the viewer has blocked nobody', async () => {
@@ -167,7 +171,8 @@ describe('PostsService hides a blocked account, and only where the author was vi
 
     const sql = feedSql(calls);
     expect(sql).not.toMatch(/<> ALL/);
-    expect(sql).toMatch(/jsonb_array_length/);
+    // The count still leaves out the moderation tombstones (lead's review of #2999).
+    expect(sql).toMatch(/elem->>'removedByModeration', ''\) <> 'true'/);
   });
 
   it('filters the associations feed like the others - a member post an association carries is in it', async () => {
@@ -406,6 +411,26 @@ describe('PostsService hides a blocked account, and only where the author was vi
       };
 
       expect(shaped.comments.map((c) => c.id)).toEqual(['c1']);
+    });
+
+    it('keeps a moderation tombstone whose writer the reader blocked, and the reply it holds', async () => {
+      // A legacy tombstone still carries its writer's id; a new one carries none. Both stay.
+      const comments = [
+        { id: 't-old', userId: BLOCKED, text: '', removedByModeration: true },
+        { id: 't-new', text: '', removedByModeration: true },
+        { id: 'r', userId: 'officer', associationId: 'inst', parentId: 't-old', text: 'kept' },
+      ];
+      const findOne = jest.fn(() =>
+        Promise.resolve(entity({ authorId: 'someone-else', comments } as Partial<typeof POST>))
+      );
+      const { query } = makeQueryMock();
+      const service = makeService(query, findOne);
+
+      const shaped = (await service.getById('p1', { viewerId: 'viewer-1' })) as {
+        comments: { id: string }[];
+      };
+
+      expect(shaped.comments.map((c) => c.id)).toEqual(['t-old', 't-new', 'r']);
     });
 
     it('lets a platform admin open it anyway - the same flag that opens a hidden post', async () => {

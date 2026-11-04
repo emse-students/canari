@@ -19,6 +19,7 @@
   import { withdrawProposal } from '$lib/proposals/api';
   import { pendingRequests } from '$lib/posts/republication';
   import { deletePostAfterConfirm } from '$lib/posts/postDeletion';
+  import { describeModerationRefusal } from '$lib/moderation/moderationRefusal';
   import type { ReportReason } from '$lib/moderation/reasons';
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
   import { reportComment, reportPost } from '$lib/posts/reportComment';
@@ -420,7 +421,7 @@
       onDelete?.();
     } catch (err) {
       Log.d('handleDeletePost failed', err);
-      errorMessage = m.post_unable_to_delete_post();
+      errorMessage = describeModerationRefusal(err) ?? m.post_unable_to_delete_post();
     }
   }
 
@@ -496,7 +497,7 @@
       actionMessage = m.post_anonymous_removed();
     } catch (err) {
       Log.d('unmaskAnonymous failed', err);
-      errorMessage = m.post_unable_to_unmask();
+      errorMessage = describeModerationRefusal(err) ?? m.post_unable_to_unmask();
     }
   }
 

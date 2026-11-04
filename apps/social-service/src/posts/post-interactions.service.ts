@@ -18,7 +18,21 @@ import {
 } from './post-notifications.service';
 import { PushService } from '../push/push.service';
 import { isAnonymousPoll, recordAnonymousVote } from './anonymous-poll';
-import { CommentIdentityService, commentIdentityOf, commentRights } from './comment-identity';
+import {
+  CommentIdentityService,
+  commentIdentityOf,
+  commentRights,
+  mayRemoveAsModerator,
+  type StoredComment,
+} from './comment-identity';
+import {
+  countedOutBy,
+  idsOfRows,
+  planCommentRemoval,
+  refuseRemovedByModeration,
+  rowsReleasedBy,
+} from './comment-removal';
+import { forgetCommentNotices, writeComments } from './comment-write';
 import { COMMENT_DELETE_FORBIDDEN, COMMENT_EDIT_AUTHOR_ONLY } from '../spaces/bde-moderation';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
 import { isExpiredReel } from './reel.constants';
@@ -187,24 +201,6 @@ export class PostInteractionsService {
       }
     }
 
-    const existingComments: any[] = post.comments ?? [];
-
-    // Validate parentId references an actual comment on this post.
-    if (data.parentId) {
-      const parent = existingComments.find((c: any) => c.id === data.parentId);
-      if (!parent) throw new NotFoundException('Parent comment not found');
-
-      // Enforce max nesting depth of 3 to prevent DoS via deeply nested threads.
-      let depth = 1;
-      let current = parent;
-      while (current?.parentId) {
-        current = existingComments.find((c: any) => c.id === current.parentId);
-        depth++;
-        if (depth >= 3)
-          throw new BadRequestException('Comment nesting limit reached (max 3 levels)');
-      }
-    }
-
     const comment = {
       id: crypto.randomUUID(),
       userId: data.userId,
@@ -217,8 +213,27 @@ export class PostInteractionsService {
       createdAt: new Date().toISOString(),
       ...(data.media ? { media: data.media } : {}),
     };
-    post.comments = [...existingComments, comment];
-    await this.postRepo.save(post);
+    // The parent is read under the post's lock, with the append: a moderation delete that lands
+    // first is seen here, never overwritten by this write (`writeComments`).
+    const parent = await writeComments(this.postRepo.manager, postId, (existing) => {
+      const found = data.parentId ? existing.find((c) => c.id === data.parentId) : undefined;
+      if (data.parentId) {
+        if (!found) throw new NotFoundException('Parent comment not found');
+        refuseRemovedByModeration(found, 'reply');
+        // Enforce max nesting depth of 3 to prevent DoS via deeply nested threads.
+        let depth = 1;
+        let current: StoredComment | undefined = found;
+        while (current?.parentId) {
+          const parentId: string = current.parentId;
+          current = existing.find((c) => c.id === parentId);
+          depth++;
+          if (depth >= 3)
+            throw new BadRequestException('Comment nesting limit reached (max 3 levels)');
+        }
+      }
+      return { next: [...existing, comment], result: found };
+    });
+    post.comments = [...(post.comments ?? []), comment];
 
     // Fire-and-forget: notify the post author (also for an association post), the parent comment
     // author, and mentioned users.
@@ -286,8 +301,7 @@ export class PostInteractionsService {
         }
       }
 
-      if (data.parentId) {
-        const parent = post.comments.find((c: any) => c.id === data.parentId);
+      if (parent) {
         // A reply to an association's comment reaches everyone who speaks for it; to an anonymous
         // one, the real account behind it - the replier never learns who that is.
         let recipients: string[] = parent?.userId ? [parent.userId] : [];
@@ -384,19 +398,24 @@ export class PostInteractionsService {
     return ANONYMOUS_NOTIFICATION_ACTOR_NAME;
   }
 
-  /** Toggles a like on a comment - adds the userId if not present, removes it if already liked. */
+  /**
+   * Toggles a like on a comment - adds the userId if not present, removes it if already liked. A
+   * moderation tombstone takes none (409 `COMMENT_REMOVED_BY_MODERATION`).
+   */
   async likeComment(postId: string, commentId: string, userId: string, isGlobalAdmin = false) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
-    const comments: any[] = post.comments ?? [];
-    const comment = comments.find((c: any) => c.id === commentId);
-    if (!comment) throw new NotFoundException('Comment not found');
-    const likes: string[] = comment.likes ?? [];
-    comment.likes = likes.includes(userId)
-      ? likes.filter((id) => id !== userId)
-      : [...likes, userId];
-    post.comments = comments;
-    await this.postRepo.save(post);
+    const comment = await writeComments(this.postRepo.manager, postId, (comments) => {
+      const found = comments.find((c) => c.id === commentId);
+      if (!found) throw new NotFoundException('Comment not found');
+      refuseRemovedByModeration(found, 'like');
+      const likes = (found.likes as string[] | undefined) ?? [];
+      const liked = {
+        ...found,
+        likes: likes.includes(userId) ? likes.filter((id) => id !== userId) : [...likes, userId],
+      };
+      return { next: comments.map((c) => (c === found ? liked : c)), result: liked };
+    });
     const [served] = await this.identity.serve([comment], post, {
       viewerId: userId,
       isGlobalAdmin,
@@ -419,28 +438,27 @@ export class PostInteractionsService {
   ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
-    const comments: any[] = post.comments ?? [];
-    const comment = comments.find((c: any) => c.id === commentId);
-    if (!comment) throw new NotFoundException('Comment not found');
-    const viewer = await this.identity.viewerFor([comment], {
-      viewerId: userId,
-      isGlobalAdmin,
-      postId,
-    });
-    if (!commentRights(comment, viewer).canEdit) {
-      this.logger.warn(
-        `[PERM] comment edit refused: not its author user=${userId.slice(0, 8)} post=${postId.slice(0, 8)} moderator=${viewer.isModerator}`
-      );
-      throw new ForbiddenException({
-        code: COMMENT_EDIT_AUTHOR_ONLY,
-        message: "Only a comment's author may change its text",
+    const comment = await writeComments(this.postRepo.manager, postId, async (comments) => {
+      const found = comments.find((c) => c.id === commentId);
+      if (!found) throw new NotFoundException('Comment not found');
+      const viewer = await this.identity.viewerFor([found], {
+        viewerId: userId,
+        isGlobalAdmin,
+        postId,
       });
-    }
-    comment.text = text;
-    // Served as "(modifie)" - the client had no way to tell an edited comment from the original.
-    comment.editedAt = new Date().toISOString();
-    post.comments = comments;
-    await this.postRepo.save(post);
+      if (!commentRights(found, viewer).canEdit) {
+        this.logger.warn(
+          `[PERM] comment edit refused: not its author user=${userId.slice(0, 8)} post=${postId.slice(0, 8)} moderator=${viewer.isModerator}`
+        );
+        throw new ForbiddenException({
+          code: COMMENT_EDIT_AUTHOR_ONLY,
+          message: "Only a comment's author may change its text",
+        });
+      }
+      // Served as "(modifie)" - the client had no way to tell an edited comment from the original.
+      const edited = { ...found, text, editedAt: new Date().toISOString() };
+      return { next: comments.map((c) => (c === found ? edited : c)), result: edited };
+    });
     const [served] = await this.identity.serve([comment], post, {
       viewerId: userId,
       isGlobalAdmin,
@@ -449,37 +467,84 @@ export class PostInteractionsService {
   }
 
   /**
-   * Removes a comment and all of its replies, for whoever `commentRights` lets: the writer (any
-   * association holder for its own), a platform admin, or a moderator of this post.
+   * Removes a comment and its descendants, for whoever `commentRights` lets: the writer (any
+   * association holder for its own), a platform admin, or a moderator of this post whose publisher
+   * it moderates (owner, 2026-11-03).
+   *
+   * WHAT GOES WITH IT is `planCommentRemoval` (`comment-removal.ts`), shared with the moderation
+   * route: the writer's own delete takes every descendant, as it always took its replies; a
+   * MODERATOR's takes each descendant it may itself delete, and leaves a tombstone where a reply it
+   * may not (an institution's, another BDE's) must keep its context (lead, 2026-11-04).
+   *
+   * @returns `removedIds` (every row gone) and `tombstone` (the comment's served trace, when one was
+   *   left) - what the client needs to update its list without re-reading it.
    */
   async deleteComment(postId: string, commentId: string, userId: string, isAdmin = false) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
-    const comments: any[] = post.comments ?? [];
-    const comment = comments.find((c: any) => c.id === commentId);
-    if (!comment) throw new NotFoundException('Comment not found');
-    // The moderator half is asked of THIS post: a BDE moderates the comments of its governed spaces.
-    const viewer = await this.identity.viewerFor([comment], {
-      viewerId: userId,
-      isGlobalAdmin: isAdmin,
+    const { plan, asWriter } = await writeComments(
+      this.postRepo.manager,
       postId,
-    });
-    if (!commentRights(comment, viewer).canDelete) {
-      this.logger.warn(
-        `[PERM] comment delete refused user=${userId.slice(0, 8)} post=${postId.slice(0, 8)} moderator=${viewer.isModerator}`
-      );
-      throw new ForbiddenException({
-        code: COMMENT_DELETE_FORBIDDEN,
-        message: 'You may not delete this comment',
-      });
-    }
-    const removed = comments.filter((c: any) => c.id === commentId || c.parentId === commentId);
-    post.comments = comments.filter((c: any) => c.id !== commentId && c.parentId !== commentId);
-    await this.postRepo.save(post);
-    // The replies go with it, so their media do too - taking only the comment's own would leave
-    // every reply's photo archived for ever with nothing left on screen pointing at it.
-    await this.mediaRetention.release(commentMediaIds(removed));
-    return { ok: true };
+      async (comments) => {
+        const comment = comments.find((c) => c.id === commentId);
+        if (!comment) throw new NotFoundException('Comment not found');
+        // The moderator half is asked of THIS post, and of each publisher the delete meets - on the
+        // rows read under the lock, so a reply that landed meanwhile is judged too.
+        const viewer = await this.identity.viewerFor(comments, {
+          viewerId: userId,
+          isGlobalAdmin: isAdmin,
+          postId,
+        });
+        const rights = commentRights(comment, viewer);
+        if (!rights.canDelete) {
+          this.logger.warn(
+            `[PERM] comment delete refused user=${userId.slice(0, 8)} post=${postId.slice(0, 8)} moderator=${viewer.isModerator}`
+          );
+          // A moderator of the post refused for WHO publishes the comment: the moderation refusal, typed.
+          if (viewer.isModerator) {
+            await this.identity.refuseModeration(userId, {
+              kind: 'comment',
+              id: commentId,
+              postId,
+            });
+          }
+          throw new ForbiddenException({
+            code: COMMENT_DELETE_FORBIDDEN,
+            message: 'You may not delete this comment',
+          });
+        }
+        // The writer's delete is not moderation: it takes its whole subtree, as it always did.
+        const writer = rights.canEdit;
+        const planned = planCommentRemoval(
+          comments,
+          commentId,
+          writer ? () => true : (c) => mayRemoveAsModerator(c, viewer),
+          new Date().toISOString()
+        );
+        return { next: planned.comments, result: { plan: planned, asWriter: writer } };
+      }
+    );
+    this.logger.log(
+      `[MODERATION] comment delete post=${postId.slice(0, 8)} comment=${commentId.slice(0, 12)} writer=${asWriter} removed=${plan.removed.length} tombstoned=${plan.tombstoned.length}`
+    );
+    // What goes, its media go with it - a tombstone's too: nothing on screen points at them any more.
+    await this.mediaRetention.release(commentMediaIds(rowsReleasedBy(plan)));
+    const removedIds = idsOfRows(plan.removed);
+    await forgetCommentNotices(
+      this.postRepo.manager,
+      postId,
+      removedIds,
+      idsOfRows(plan.tombstoned.map((t) => t.after))
+    );
+    const tombstones =
+      plan.tombstoned.length === 0
+        ? []
+        : await this.identity.serve(
+            plan.tombstoned.map((t) => t.after),
+            post,
+            { viewerId: userId, isGlobalAdmin: isAdmin }
+          );
+    return { ok: true, removedIds, tombstones, countedOut: countedOutBy(plan) };
   }
 
   /**

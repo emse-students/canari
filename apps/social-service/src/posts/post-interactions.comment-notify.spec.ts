@@ -1,3 +1,4 @@
+import { lockedCommentsManager } from './locked-comments.it-fixture';
 import type { CommentIdentityService } from './comment-identity';
 import { Repository } from 'typeorm';
 import { PostInteractionsService } from './post-interactions.service';
@@ -32,7 +33,7 @@ describe('PostInteractionsService.addComment notifications', () => {
     const postRepo = {
       findOne: jest.fn(() => Promise.resolve(post)),
       save: jest.fn((p: unknown) => Promise.resolve(p)),
-      manager: { query: jest.fn(() => Promise.resolve([])) },
+      manager: lockedCommentsManager(post as { comments?: unknown[] }),
     };
     const service = new PostInteractionsService(
       postRepo as unknown as Repository<Post>,
@@ -156,6 +157,25 @@ describe('PostInteractionsService.addComment notifications', () => {
     );
     const sent = push.notifyContent.mock.calls as unknown as Array<[string]>;
     expect(sent.map(([to]) => to)).toEqual(['author']);
+  });
+
+  it('refuses a reply to, or a like of, a moderation tombstone (409), and tells nobody', async () => {
+    // S2 (second review, 2026-11-04): a reply or a like on a tombstone would be the one path
+    // left to reach the moderated writer, so neither is stored and no notice is written.
+    const tomb = { id: 't', parentId: null, text: '', likes: [], removedByModeration: true };
+    const post = { id: 'p1', authorId: 'author', associationId: null, comments: [tomb] };
+    const { service, created, push } = makeService(post);
+    await expect(
+      service.addComment('p1', { userId: 'reader', text: 'r', parentId: 't' })
+    ).rejects.toMatchObject({ status: 409, response: { code: 'COMMENT_REMOVED_BY_MODERATION' } });
+    await expect(service.likeComment('p1', 't', 'reader')).rejects.toMatchObject({
+      status: 409,
+      response: { code: 'COMMENT_REMOVED_BY_MODERATION' },
+    });
+    await flush();
+    expect(post.comments).toEqual([tomb]);
+    expect(created).toEqual([]);
+    expect(push.notifyContent).not.toHaveBeenCalled();
   });
 
   /** The review cohort (review-cohort.ts): no comment notice crosses it, in either direction. */

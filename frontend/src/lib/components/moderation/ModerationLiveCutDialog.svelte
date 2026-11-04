@@ -4,6 +4,7 @@
   import { cutLive, LiveRefusalError } from '$lib/live/api';
   import type { LiveCutResult } from '$lib/live/types';
   import { reportReasons, type ReportReason } from '$lib/moderation/reasons';
+  import { describeModerationRefusal } from '$lib/moderation/moderationRefusal';
   import { LIVE_CUT_DETAILS_MAX } from '$lib/live/constants';
   import { isTransportFailure } from '$lib/utils/transportFailure';
 
@@ -47,6 +48,9 @@
 
   /** The sentence for a refusal, decided on the typed code and kind, never on a message. */
   function errorText(e: unknown): string {
+    // A refusal of the moderator's REACH (an institution's or a BDE's live, another BDE's spaces).
+    const reach = describeModerationRefusal(e);
+    if (reach) return reach;
     if (e instanceof LiveRefusalError) {
       if (e.code === 'LIVE_CUT_FORBIDDEN') return m.moderation_live_cut_forbidden();
       if (e.kind === 'not-found') return m.moderation_live_cut_not_found();

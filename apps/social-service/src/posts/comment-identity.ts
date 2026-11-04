@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { Post } from './entities/post.entity';
+import type { ModerationTarget } from '../spaces/bde-moderation';
 
 /**
  * WHO A COMMENT SPEAKS AS, AND WHAT EACH READER MAY KNOW OF IT (2026-10-21).
@@ -39,6 +40,13 @@ export interface CommentViewer {
    * own memberships and not the admin tier: holding it is what makes them the comment's author.
    */
   managedAssociationIds: ReadonlySet<string>;
+  /**
+   * Associations whose PUBLISHED content the reader moderates as a BDE (lowercase ids,
+   * `AssociationsService.moderatedAssociationIds`): never an institution, never another BDE (owner,
+   * 2026-11-03). A comment in an association's name is that association's content, so moderating
+   * the post it sits under is not enough. Unread for a platform admin, who moderates everything.
+   */
+  moderatedAssociationIds: ReadonlySet<string>;
 }
 
 /** The facts about the post a comment sits under. */
@@ -56,11 +64,22 @@ export interface AssociationCard {
   logoUrl: string | null;
 }
 
-interface StoredComment {
+/** A comment as `posts.comments` stores it (only the fields these rules read are named). */
+export interface StoredComment {
+  id?: string;
+  /** The comment this one replies to: deleting that one takes this one with it (or tombstones it). */
+  parentId?: string | null;
   userId?: string | null;
   anonymous?: boolean;
   associationId?: string | null;
+  /** A moderation tombstone (`comment-removal.ts`): kept only so its replies keep their context. */
+  removedByModeration?: boolean;
   [key: string]: unknown;
+}
+
+/** The associations these comments speak for. */
+function associationIdsOf(comments: readonly StoredComment[]): string[] {
+  return comments.map((c) => c.associationId).filter((id): id is string => !!id);
 }
 
 /** True for a comment that is not the writer's own name on it - exempt from the block filter. */
@@ -71,28 +90,62 @@ export function isMaskedComment(c: {
   return c.anonymous === true || !!c.associationId;
 }
 
+/** The reader moderates what comment `c` is published as: a person's always, an association's per the set. */
+function moderatesPublisher(c: StoredComment, v: CommentViewer): boolean {
+  return !c.associationId || v.moderatedAssociationIds.has(c.associationId.toLowerCase());
+}
+
+/**
+ * May reader `v` moderate (delete) comment `c`? The in-memory twin of `bdeModeratesCommentSql`
+ * (`spaces/bde-moderation.ts`), on the same publisher set: a platform admin always; a BDE moderator
+ * when it moderates the post (`isModerator`) AND the comment's own publisher - never an institution's
+ * or another BDE's (owner, 2026-11-03). Judged on the comment ITSELF: its replies do not shield it
+ * (lead, 2026-11-04) - the delete tombstones it instead of taking a reply it may not
+ * (`comment-removal.ts`). A tombstone is moderated like a person's comment: it names nobody.
+ */
+export function moderatesComment(c: StoredComment, v: CommentViewer): boolean {
+  if (v.isGlobalAdmin) return true;
+  return v.isModerator && moderatesPublisher(c, v);
+}
+
+/**
+ * May reader `v`, deleting a comment AS A MODERATOR, take descendant `c` with it? What it could
+ * delete on its own (`commentRights`), or a tombstone it moderates - the rule `planCommentRemoval`
+ * applies at every level of the subtree (lead, 2026-11-04).
+ */
+export function mayRemoveAsModerator(c: StoredComment, v: CommentViewer): boolean {
+  return c.removedByModeration === true ? moderatesComment(c, v) : commentRights(c, v).canDelete;
+}
+
 /**
  * The ONE statement of who may edit and delete a comment. It serves the controls AND enforces the
- * write, so the button a reader is shown and the refusal they would get cannot disagree.
+ * write, so the button a reader is shown and the refusal they would get cannot disagree. It reads
+ * the comment and its post's standing ONLY - never its replies, which a feed window may not hold -
+ * so a single served comment (a like, an edit, an add) answers what the route will.
  */
 export function commentRights(
   c: StoredComment,
   v: CommentViewer
 ): { canEdit: boolean; canDelete: boolean } {
+  // A tombstone is the moderation's trace, not anyone's words: nobody edits it, and it leaves by
+  // itself with its last reply (`comment-removal.ts`).
+  if (c.removedByModeration === true) return { canEdit: false, canDelete: false };
   // A comment's integrity, as a post's (owner, 2026-11-02): only its author changes its text. The
   // association is the author of its comment, so its POST_AS_ASSO holders edit it.
   const author = c.associationId
     ? v.managedAssociationIds.has(c.associationId)
     : !!v.viewerId && c.userId === v.viewerId;
-  // MODERATE deletes within its scope (owner, 2026-11-02): a platform admin or a moderator of THIS
-  // post deletes any comment under it - plain, anonymous or an association's - and never rewrites
-  // one. The same answer `POST /moderation/comments/:id/delete` gives, so the bin and the route agree.
-  return { canEdit: author, canDelete: author || v.isGlobalAdmin || v.isModerator };
+  // MODERATE deletes within its scope (owner, 2026-11-02, 2026-11-03): a platform admin anything; a
+  // BDE moderator of THIS post a comment whose publisher it moderates - never an institution's or
+  // another BDE's - and never rewrites one. The same answer `POST /moderation/comments/:id/delete`
+  // gives, so the bin and the route agree.
+  return { canEdit: author, canDelete: author || moderatesComment(c, v) };
 }
 
 /** Whether this reader may see the real account behind a masked comment. */
 function seesAccount(c: StoredComment, v: CommentViewer): boolean {
-  if (v.isGlobalAdmin || v.isModerator) return true;
+  // Reading who wrote an association's comment is moderating that association's content.
+  if (v.isGlobalAdmin || (v.isModerator && moderatesPublisher(c, v))) return true;
   // The association's comment is not its writer's own, so the writer is not special there.
   return c.anonymous === true && !c.associationId && !!v.viewerId && c.userId === v.viewerId;
 }
@@ -104,6 +157,19 @@ export function serveComment<T extends StoredComment>(
   post: CommentPostFacts,
   cards: ReadonlyMap<string, AssociationCard>
 ): Record<string, unknown> {
+  if (c.removedByModeration === true) {
+    // The trace of a moderation, served to everyone alike: where it sat and when, never who wrote
+    // what was removed - the client draws "Commentaire retiré par la modération".
+    return {
+      id: c.id,
+      parentId: c.parentId ?? null,
+      createdAt: c.createdAt,
+      text: '',
+      likes: [],
+      removedByModeration: true,
+      ...commentRights(c, v),
+    };
+  }
   const out: Record<string, unknown> = { ...c, ...commentRights(c, v) };
   delete out.associationId;
   if (c.associationId) {
@@ -142,6 +208,11 @@ export class CommentIdentityService {
     @InjectRepository(Post) private readonly postRepo: Repository<Post>
   ) {}
 
+  /** The typed moderation refusal (`AssociationsService.refuseModeration`), for a comment's write path. */
+  refuseModeration(userId: string, target: ModerationTarget): Promise<never> {
+    return this.associations.refuseModeration(userId, target);
+  }
+
   /** Everyone who speaks for the association: who a reply to its comment must notify. */
   holdersOf(associationId: string): Promise<string[]> {
     return this.associations.listFlagHolders(associationId, AssociationPermissionFlag.POST_AS_ASSO);
@@ -157,7 +228,7 @@ export class CommentIdentityService {
     who: { viewerId?: string; isGlobalAdmin?: boolean; isModerator?: boolean; postId?: string }
   ): Promise<CommentViewer> {
     const isGlobalAdmin = who.isGlobalAdmin === true;
-    const assocIds = comments.map((c) => c.associationId).filter((id): id is string => !!id);
+    const assocIds = associationIdsOf(comments);
     const [isModerator, managedAssociationIds] = await Promise.all([
       // A platform admin moderates everywhere: nothing to ask of the post.
       who.isModerator !== undefined
@@ -168,7 +239,32 @@ export class CommentIdentityService {
       // No admin tier: the pencil is the author's alone (owner, 2026-11-02).
       this.associations.mayActOnAny(who.viewerId, assocIds, AssociationPermissionFlag.POST_AS_ASSO),
     ]);
-    return { viewerId: who.viewerId, isGlobalAdmin, isModerator, managedAssociationIds };
+    const moderatedAssociationIds = await this.moderatedPublishers(
+      who.viewerId,
+      isModerator && !isGlobalAdmin,
+      assocIds
+    );
+    return {
+      viewerId: who.viewerId,
+      isGlobalAdmin,
+      isModerator,
+      managedAssociationIds,
+      moderatedAssociationIds,
+    };
+  }
+
+  /**
+   * The publishers among `assocIds` a BDE moderator moderates - asked ONLY of a reader who moderates
+   * the post as a BDE and only when an association's comment is there: everyone else (an ordinary
+   * reader, the platform admin, who moderates everything) never pays the query.
+   */
+  private async moderatedPublishers(
+    viewerId: string | undefined,
+    bdeModerator: boolean,
+    assocIds: string[]
+  ): Promise<ReadonlySet<string>> {
+    if (!bdeModerator || !viewerId || assocIds.length === 0) return new Set();
+    return this.associations.moderatedAssociationIds(viewerId, assocIds);
   }
 
   private async cardsFor(comments: StoredComment[]): Promise<Map<string, AssociationCard>> {
@@ -216,20 +312,27 @@ export class CommentIdentityService {
       Array.isArray(r.comments) ? (r.comments as StoredComment[]) : []
     );
     if (all.length === 0) return;
-    // The standing is read once for the page; the moderator half is per ROW, each post's own scope.
-    const [base, cards] = await Promise.all([
+    // The standing is read once for the page; the moderator half is per ROW, each post's own scope,
+    // and the publishers it moderates are read once too - only when it moderates some row at all.
+    const [base, cards, moderatedAssociationIds] = await Promise.all([
       this.viewerFor(all, {
         viewerId: who.viewerId,
         isGlobalAdmin: who.isGlobalAdmin,
         isModerator: false,
       }),
       this.cardsFor(all),
+      this.moderatedPublishers(
+        who.viewerId,
+        who.isGlobalAdmin !== true && who.moderatedPostIds.size > 0,
+        associationIdsOf(all)
+      ),
     ]);
     for (const row of rows) {
       if (!Array.isArray(row.comments)) continue;
       const viewer: CommentViewer = {
         ...base,
         isModerator: !!row.id && who.moderatedPostIds.has(row.id),
+        moderatedAssociationIds,
       };
       row.comments = (row.comments as StoredComment[]).map((c) =>
         serveComment(c, viewer, row, cards)

@@ -440,6 +440,24 @@ this change, raised once BOTH stores serve it) is what retires the dead button; 
 it. Measure before: the `comments withheld from a grant-only reader` refusals in social-service debug
 logs count the older builds that still tap it.
 
+### No date yet - a moderation tombstone drawn by a build that does not know `removedByModeration` (2026-11-04)
+
+**Site:** the served comment rows (`tombstoneOf`, `apps/social-service/src/posts/comment-removal.ts`);
+on the client, `CommentItem.svelte` reads `removedByModeration`.
+**What an older build sees.** A moderator's delete that meets a reply in a protected name keeps the
+deleted comment as a tombstone ([moderation-and-blocking](moderation-and-blocking.md#decisions-taken-2026-11-04-the-lead-reversible)):
+no text, no author, no media. A build older than the first stable carrying it draws that row as an
+EMPTY BUBBLE with no name, with its Reply, Like and Report controls, and counts it in the thread.
+**Nothing of the removed comment reaches it**, and both writes it could try on the row are refused by
+the server (409 `COMMENT_REMOVED_BY_MODERATION`), which that build words with its generic "could not
+comment" line or a silent rollback.
+**Why it is not shimmed.** The only shim would be to drop the tombstone for old builds, which would
+cut the protected replies under it out of their context - the thing the tombstone exists for.
+**Removal condition:** none to remove. The floor (`minClientVersion` >= the first stable carrying
+this change, raised once BOTH stores serve it) retires the empty bubble; the entry goes with it.
+Measure before: the `[MODERATION] reply|like refused: comment ... is a tombstone` warns of social-service count the
+older builds still tapping a tombstone.
+
 ### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
 
 **Site:** `parseKey` and `sendRatchetDebt` in `frontend/src/lib/mls-client/sendRatchetLedger.ts`.

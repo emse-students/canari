@@ -239,7 +239,7 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
       };
       return {
         reportRepo,
-        moderation: new ModerationService(reportRepo as never, {} as never),
+        moderation: new ModerationService(reportRepo as never, {} as never, {} as never),
       };
     };
     const report = (reporterId: string, contentType: 'post' | 'comment', contentId: string) => {
