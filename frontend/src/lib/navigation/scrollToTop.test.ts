@@ -297,4 +297,14 @@ describe('the iOS status bar bridge', () => {
     const plugin = readFileSync(`${PLUGIN}SystemComponentsPlugin.swift`, 'utf8');
     expect(plugin).toContain('webView?.scrollView.scrollsToTop = false');
   });
+
+  it('the catcher says it was picked in a line a store build does not redact', () => {
+    // A Swift `NSLog` arrives as `<private>` whole: alpha.4's proof line was there and read as
+    // absent (iPhone 12, 2026-11-04). The plugin logs through one `Logger` instead.
+    for (const file of ['TabBarOverlay.swift', 'SystemComponentsPlugin.swift']) {
+      expect(readFileSync(`${PLUGIN}${file}`, 'utf8')).not.toMatch(/\bNSLog\s*\(/);
+    }
+    const overlay = readFileSync(`${PLUGIN}TabBarOverlay.swift`, 'utf8');
+    expect(overlay).toContain('PendiNav.log.notice("[pendi-nav][native] status bar tap caught');
+  });
 });

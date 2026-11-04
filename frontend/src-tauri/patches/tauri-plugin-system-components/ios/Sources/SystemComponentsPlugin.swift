@@ -12,6 +12,7 @@
 
 import Foundation
 import Tauri
+import os
 import UIKit
 import WebKit
 
@@ -85,7 +86,8 @@ struct CommandSequence {
     /// Whether `seq` is newer than every call applied so far - and if so, records it as applied.
     mutating func admits(_ seq: Int) -> Bool {
         guard seq > applied else {
-            NSLog("[pendi-nav][native] %@ seq=%ld dropped: %ld already applied", command, seq, applied)
+            PendiNav.log.notice(
+                "[pendi-nav][native] \(command, privacy: .public) seq=\(seq) dropped: \(applied) already applied")
             return false
         }
         applied = seq
@@ -223,7 +225,7 @@ class SystemComponentsPlugin: Plugin {
         let args = try invoke.parseArgs(SetTabBarInteractiveArgs.self)
         DispatchQueue.main.async { [weak self] in
             guard let self, let overlay = self.overlay else {
-                NSLog("[pendi-nav][native] setTabBarInteractive refused: tab bar is not configured")
+                PendiNav.log.notice("[pendi-nav][native] setTabBarInteractive refused: tab bar is not configured")
                 invoke.reject("tab bar is not configured")
                 return
             }
@@ -232,9 +234,8 @@ class SystemComponentsPlugin: Plugin {
                 return
             }
             overlay.view.isUserInteractionEnabled = args.interactive
-            NSLog(
-                "[pendi-nav][native] setTabBarInteractive interactive=%@",
-                args.interactive ? "yes" : "no")
+            PendiNav.log.notice(
+                "[pendi-nav][native] setTabBarInteractive interactive=\(args.interactive ? "yes" : "no", privacy: .public)")
             invoke.resolve()
         }
     }

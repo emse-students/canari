@@ -1520,6 +1520,12 @@ What must not be forgotten between the pages:
   not the text; `nativeLogContent.test.ts` fails on an interpolated content name in any Kotlin,
   Swift, Objective-C++ or Rust log call, and a harness rule matching the old line moves with it
   ([mobile](frontend/mobile.md#what-a-native-log-line-may-carry-2026-10-22)).
+- **A SWIFT `NSLog` IS `<private>` WHOLE ON A STORE BUILD, LITERAL TEXT INCLUDED - A SWIFT LINE MEANT
+  TO BE READ GOES THROUGH A `Logger`.** The status bar catcher's proof line arrived as
+  `Canari{Foundation} <private>` 2 ms after the tap it proved, and a reading concluded the catcher was
+  never picked (iPhone 12, `1.6.4-alpha.4`). The Objective-C `NSLog` lines are readable; a Swift one
+  is only an anonymous `Foundation` line. A `Logger`'s literal text is public, an interpolation is
+  marked `.public` only for ids, counts and states ([mobile](frontend/mobile.md#back-to-the-top-a-re-tap-of-the-open-tab-and-the-ios-status-bar-owner-2026-11-04)).
 - **A NATIVE VIEW OVER THE WEBVIEW CANNOT BE COVERED BY ANY WEB LAYER - EVERY SURFACE THAT COVERS THE
   SCREEN DECLARES IT.** The iOS tab bar is a `UITabBar` drawn above the WebView: no `z-index` reaches
   it, so it sat over the post composer's "Publier" and stayed tappable over every dialog (iPhone 12,

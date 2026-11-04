@@ -56,6 +56,11 @@ const TREES: { dir: string; lang: Lang; ext: string }[] = [
     lang: 'swift',
     ext: '.swift',
   },
+  {
+    dir: join(SRC_TAURI, 'patches/tauri-plugin-system-components/ios/Sources'),
+    lang: 'swift',
+    ext: '.swift',
+  },
   { dir: join(SRC_TAURI, 'src'), lang: 'rust', ext: '.rs' },
   { dir: join(FRONTEND, 'mls-core/src'), lang: 'rust', ext: '.rs' },
 ];
