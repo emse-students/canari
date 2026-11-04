@@ -18,7 +18,7 @@
 |---|---|
 | Associations (`associations`, the default) | What associations publish AND republish - a member's post an association carries is ONE card there, "Republie par X", placed at its latest republication |
 | Suivis (`followed`) | Posts from the associations and members the reader follows (never an anonymous post), and what a followed association republished, placed at that republication |
-| Mon espace (`all`, "Tout" until 1.6; the identifier is unchanged) | Every post the reader may see through their spaces, campus and formation. The row also carries an (i) button (`FeedTabsInfo`) explaining the three tabs |
+| Mon espace (`all`, "Tout" until 1.6; the identifier is unchanged) | Every post the reader may see through their spaces, campus and formation. The three tabs are explained once by the guided hint `hint-feed-tabs` (it replaced the (i) button, [guided-help](../guided-help.md)) |
 
 **A republication is an association publishing, so the feeds of what associations publish carry it
 (user, 2026-10-24).** The Associations and Suivis arms of `listPosts` read `posts."associationId"`

@@ -7,12 +7,8 @@ import {
   UserRound,
 } from '@lucide/svelte';
 import { m } from '$lib/paraglide/messages';
-import type { GuideDefinition, GuidePlacement } from '../guideTypes';
-
-/** The desktop rail is a column at the left edge: its bubble goes beside it, the bar's above it. */
-const besideTheRail = {
-  byLayout: (layout: { phone: boolean }): GuidePlacement => (layout.phone ? 'auto' : 'right'),
-};
+import type { GuideDefinition } from '../guideTypes';
+import { besideTheRail } from './placements';
 
 /**
  * THE WELCOME TOUR - the first guided visit, on the real interface (owner, 2026-11-02): the feed, the
@@ -32,6 +28,9 @@ const besideTheRail = {
 export const welcomeTour: GuideDefinition = {
   id: 'welcome-tour',
   kind: 'tour',
+  // A new account is shown this tour and NOT the news of the version it installed: meeting the
+  // tour for the first time records every declared "what's new" as seen with it.
+  supersedesNews: true,
   appliesTo: (pathname) => pathname === '/posts',
   steps: [
     {
