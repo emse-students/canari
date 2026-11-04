@@ -23,6 +23,13 @@ vi.mock('$lib/utils/appVersion', async (importOriginal) => ({
   isMobileTauriRuntime: () => runtime.mobile,
 }));
 
+/** What the arbiter told the audio session (`audioSession.ts`), in order. */
+const audible = vi.hoisted(() => ({ reports: [] as boolean[] }));
+vi.mock('$lib/utils/audioSession', () => ({
+  armAudioSession: () => {},
+  reportAudibleMedia: (playing: boolean) => audible.reports.push(playing),
+}));
+
 type Fake<T extends HTMLMediaElement> = T & { startPlaying(): void; position: number };
 const teardown: (() => void)[] = [];
 let observed: ((entries: { isIntersecting: boolean }[]) => void)[] = [];
@@ -78,6 +85,43 @@ afterEach(() => {
   runtime.mobile = false;
   Reflect.deleteProperty(document, 'visibilityState');
   Reflect.deleteProperty(window, '__canariForeground');
+});
+
+it('tells the audio session when an UNMUTED media plays, and when none does any more', () => {
+  audible.reports.length = 0;
+  const feed = video(true);
+  feed.muted = true;
+  feed.startPlaying();
+  // A muted feed video makes no sound: the session stays ambient.
+  expect(audible.reports.every((r) => r === false)).toBe(true);
+  const note = voice();
+  note.startPlaying();
+  expect(audible.reports.at(-1)).toBe(true);
+  note.pause();
+  expect(audible.reports.at(-1)).toBe(false);
+  // A muted reel the reader unmutes is an explicit request: `volumechange` reports it.
+  const reel = video();
+  reel.muted = true;
+  reel.startPlaying();
+  expect(audible.reports.at(-1)).toBe(false);
+  reel.muted = false;
+  reel.dispatchEvent(new Event('volumechange'));
+  expect(audible.reports.at(-1)).toBe(true);
+  // A volume of 0 is silence, like `muted`.
+  reel.volume = 0;
+  reel.dispatchEvent(new Event('volumechange'));
+  expect(audible.reports.at(-1)).toBe(false);
+});
+
+it('a new source on a playing element (emptied, no pause event) is reported quiet', () => {
+  audible.reports.length = 0;
+  const note = voice();
+  note.startPlaying();
+  expect(audible.reports.at(-1)).toBe(true);
+  // The load algorithm resets `paused` without a `pause` event.
+  Object.defineProperty(note, 'paused', { configurable: true, get: () => true });
+  note.dispatchEvent(new Event('emptied'));
+  expect(audible.reports.at(-1)).toBe(false);
 });
 
 it('video <-> video: starting one pauses the other, which keeps its position and ends nothing', () => {

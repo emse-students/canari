@@ -17,6 +17,7 @@
  */
 import { facingConstraint, lensIsExact, type CameraFacing } from '$lib/utils/cameraFacing';
 import { REEL_AUDIO_CONSTRAINTS, cameraVideoConstraints } from './framedCapture';
+import { captureUserMedia } from '$lib/utils/audioSession';
 import { REEL_FRAME_RATIO, containFrame } from './reelFrame';
 
 /** Why the camera could not be opened. One code per cause the screen draws differently. */
@@ -113,19 +114,23 @@ export async function openReelCamera(
       REEL_FRAME_RATIO
     );
     const wanted = cameraVideoConstraints(shown, window.devicePixelRatio || 1);
-    const stream = await devices.getUserMedia({
-      video: {
-        // EXACT on a phone and on a switch (`lensIsExact`): an IDEAL was answered with the BACK lens by
-        // WKWebView on an iPhone (alpha.4 reading, 2026-10-06). An unavailable lens is then an
-        // OverconstrainedError, classified below and logged - never a silent switch to the other one.
-        // IDEAL on a desktop's first capture: a webcam has no facing, so an exact one never opens.
-        facingMode: facingConstraint(facing, exact),
-        width: { ideal: wanted.width },
-        height: { ideal: wanted.height },
-        frameRate: { ideal: wanted.frameRate },
+    const stream = await captureUserMedia(
+      devices,
+      {
+        video: {
+          // EXACT on a phone and on a switch (`lensIsExact`): an IDEAL was answered with the BACK lens by
+          // WKWebView on an iPhone (alpha.4 reading, 2026-10-06). An unavailable lens is then an
+          // OverconstrainedError, classified below and logged - never a silent switch to the other one.
+          // IDEAL on a desktop's first capture: a webcam has no facing, so an exact one never opens.
+          facingMode: facingConstraint(facing, exact),
+          width: { ideal: wanted.width },
+          height: { ideal: wanted.height },
+          frameRate: { ideal: wanted.frameRate },
+        },
+        audio: withAudio ? REEL_AUDIO_CONSTRAINTS : false,
       },
-      audio: withAudio ? REEL_AUDIO_CONSTRAINTS : false,
-    });
+      'reel-camera'
+    );
     const video = stream.getVideoTracks()[0];
     const reported = video?.getSettings?.().facingMode;
     if (exact && reported && reported !== facing) {
@@ -182,7 +187,11 @@ export function postCameraOpener(): (
       return lens;
     }
     try {
-      const mic = await navigator.mediaDevices.getUserMedia({ audio: REEL_AUDIO_CONSTRAINTS });
+      const mic = await captureUserMedia(
+        navigator.mediaDevices,
+        { audio: REEL_AUDIO_CONSTRAINTS },
+        'post-camera'
+      );
       console.debug('[camera] post camera: microphone granted - photos and videos');
       return new MediaStream([...lens.getVideoTracks(), ...mic.getAudioTracks()]);
     } catch (err) {
