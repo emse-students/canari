@@ -9,6 +9,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { m } from '$lib/paraglide/messages';
+import { MediaDownloadError } from '$lib/utils/mediaErrors';
 
 const cache = vi.hoisted(() => ({
   retainWarmDecryptedMediaBlobUrl: vi.fn(() => null),
@@ -75,5 +76,36 @@ describe('PostMedia, gallery mode, while the file downloads', () => {
     await tick();
     flushSync();
     expect(target.querySelector('[data-video-buffering]')).toBeNull();
+  });
+
+  it('is not a live region for a page drawn ahead of the reader', () => {
+    download.mockReturnValue(new Promise(() => {}));
+    const target = mountGallery({ announceLoading: false });
+    const spinner = target.querySelector('[data-video-buffering]');
+    expect(spinner).not.toBeNull();
+    expect(spinner?.getAttribute('role')).toBeNull();
+    expect(spinner?.getAttribute('aria-label')).toBeNull();
+    expect(spinner?.getAttribute('aria-hidden')).toBe('true');
+  });
+
+  it('shows the failure and no spinner when the download is rejected', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    download.mockRejectedValue(new MediaDownloadError(500));
+    const target = mountGallery();
+    await tick();
+    await tick();
+    flushSync();
+    expect(target.querySelector('[data-video-buffering]')).toBeNull();
+    expect(target.textContent).toContain(m.post_image_load_error());
+  });
+});
+
+describe('PostMedia, standalone (cards and grids)', () => {
+  it('never renders the gallery spinner while loading', () => {
+    download.mockReturnValue(new Promise(() => {}));
+    const target = mountGallery({ galleryMode: false });
+    expect(target.querySelector('[data-video-buffering]')).toBeNull();
+    expect(target.querySelector('[data-media-loading]')).toBeNull();
   });
 });

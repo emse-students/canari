@@ -131,6 +131,11 @@
      * does what was asked. Ignored for anything that is not a generic file.
      */
     compact?: boolean;
+    /**
+     * `galleryMode` only: whether the download spinner is announced to assistive tech. False for a
+     * page drawn ahead of the reader (the reel viewer's preloading neighbour), which is not on screen.
+     */
+    announceLoading?: boolean;
   }
 
   let {
@@ -149,6 +154,7 @@
     onPlaybackBlocked,
     onFailure,
     compact = false,
+    announceLoading = true,
   }: Props = $props();
 
   // A failed download is decided: the caller stops waiting on this media.
@@ -487,7 +493,7 @@
           data-video-first-frame-poster
         />
       {/if}
-      <MediaSpinner />
+      <MediaSpinner live={announceLoading} />
     </div>
   {:else if authMissing}
     <div class="p-4 text-center text-xs text-white/60">{m.post_missing_auth_token()}</div>

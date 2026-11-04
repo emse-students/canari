@@ -667,11 +667,12 @@ piece), so a percentage would be invented; adding one means changing the media s
 reel's fetch beside the current one's was weighed and refused: (1) on one weak link the two downloads
 share the bandwidth, so the reel being watched gets roughly half of it (~110 s instead of ~55 s for
 the same file at 400 kbps) - the cost lands on the reel the reader is looking at, the gain on one they
-may never reach; (2) `ReelPreload` is ABORTED when its reel becomes current before it finished
-(a `ReelPreload` is never resumed - the player's own fetch restarts from zero), so on a link where the
-current reel takes longer than the reader's dwell, a parallel preload moves bytes that are thrown away
-at the swipe; (3) the order is a correctness fact elsewhere (`settledId`), not a tuning knob. What
-would reopen it: a resumable preload (ranged, kept across the handover) AND a measurement that the
+may never reach; (2) the swipe's handover is not a clean win either way: `ReelPreload.stop()` only aborts the
+preload's HOLD on the shared load (`mediaBlobCache.ts`); a request already on the wire is kept
+joinable, so a reel read WHOLE (this defect's path) joins the preload's bytes and loses nothing, but a
+STREAMED segmented reel opens its own fetch (`openSegmentedStream`) and the preload's partial bytes
+are dropped; (3) the order is a correctness fact elsewhere (`settledId`), not a tuning knob. What
+would reopen it: a preload whose bytes the streamed path also joins AND a measurement that the
 reader's dwell on a settled reel is shorter than the next fetch. Neither exists; nothing was measured on
 a device, this is a derivation from the link's arithmetic and the code.
 
