@@ -154,10 +154,14 @@ export interface ReadOpts {
 
 /**
  * What a caller is about to do with a post it has opened. A nominative read grant covers
- * `'READ_OR_REACT'` (read, react, comment, like a comment) and NOT `'VOTE'`: a poll vote, like a
- * republication, is never opened by a grant (user, 2026-10-07).
+ * `'READ_OR_REACT'` (read the post, react to it) and NOT `'VOTE'`: a poll vote, like a
+ * republication, is never opened by a grant (user, 2026-10-07). `'COMMENT'` (read the comments,
+ * write one, like one) counts the grant too, EXCEPT for a named reader who reaches the post only
+ * through it with their switch "voit les commentaires" off (owner, 2026-11-04,
+ * `commentsWithheldFromViewerSql`): for them the comments do not exist, a 404 like any invisible
+ * resource.
  */
-export type PostAccessIntent = 'READ_OR_REACT' | 'VOTE';
+export type PostAccessIntent = 'READ_OR_REACT' | 'COMMENT' | 'VOTE';
 
 /**
  * Association `association` is visible to user row `user`: a member (D21), or its rules reach one of
@@ -615,6 +619,40 @@ export function postVisibleToViewerSql(
   // Grants count by default (every READ path); a WRITE that a grant never opened - a vote, a
   // republication - passes `readGrants: false`, explicitly.
   return `EXISTS (SELECT 1 FROM users vis_viewer WHERE vis_viewer.id = ${viewer} AND ${postVisibleToUserSql(post, 'vis_viewer', { ...opts, readGrants: opts.readGrants ?? true })})`;
+}
+
+/**
+ * User row `user` has turned on "voit les commentaires" in the read-access grid (owner, 2026-11-04):
+ * a row of `read_grant_readers` with `sees_comments` (migration 132). No row is OFF - the owner's
+ * default for new and existing named readers alike.
+ */
+export function readerSeesGrantCommentsSql(user: string): string {
+  return `EXISTS (SELECT 1 FROM read_grant_readers sc_reader
+    WHERE sc_reader.user_id = ${user}.id AND sc_reader.sees_comments)`;
+}
+
+/**
+ * THE ONE PREDICATE OF THE 2026-11-04 AMENDMENT: post row `post` reaches the viewer whose id is the
+ * placeholder `viewer` ONLY through a nominative read grant, and that named reader's switch "voit les
+ * commentaires" is OFF. Such a reader still reads the post and reacts to it, but its COMMENTS - the
+ * students' own expression, like their personal posts, which a grant never opens - and every list of
+ * PEOPLE on it (who reacted, who voted what) are withheld: totals only.
+ *
+ * Computed as the owner stated it - visible WITH grants and NOT visible WITHOUT them - so a reader who
+ * also reaches the post natively (their own space, a membership, a republication, an accepted
+ * follow, a member repost) keeps everything. Both arms take `adminSeesAll`, as the by-id gate does:
+ * a global admin is never withheld. A reader with no grant at all answers `false` on the first
+ * conjunct, before either visibility arm is asked.
+ *
+ * Every consumer asks THIS - `commentsWithheldPostIds` (`posts/comments-withheld.ts`) for a page, the
+ * `'COMMENT'` intent of the by-id gate, the bell - so none of them can drift from the others.
+ */
+export function commentsWithheldFromViewerSql(post: string, viewer: string): string {
+  return `EXISTS (SELECT 1 FROM users cw_viewer WHERE cw_viewer.id = ${viewer}
+    AND EXISTS (SELECT 1 FROM read_grants cw_grant WHERE cw_grant.user_id = cw_viewer.id)
+    AND NOT ${readerSeesGrantCommentsSql('cw_viewer')}
+    AND ${postVisibleToUserSql(post, 'cw_viewer', { adminSeesAll: true, readGrants: true })}
+    AND NOT ${postVisibleToUserSql(post, 'cw_viewer', { adminSeesAll: true, readGrants: false })})`;
 }
 
 /**

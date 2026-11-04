@@ -1,6 +1,7 @@
 import type { EntityManager } from 'typeorm';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
 import { postVisibleToViewerSql, type PostAccessIntent } from '../spaces/reader-spaces';
+import { commentsWithheldPostIds } from './comments-withheld';
 import { isExpiredReel, type PostKind } from './reel.constants';
 
 /**
@@ -49,8 +50,11 @@ const refuse = (refusal: 'not-found' | 'hidden', why: string): PostOpenVerdict =
  * The terms, IN THIS ORDER (the order is the read's, and it matters for what a refusal reveals):
  * 1. a reel past its month is gone for everyone (`isExpiredReel`);
  * 2. the audience - `postVisibleToViewerSql`, a global admin included (opening by id is a
- *    moderation path); a read grant counts for `'READ_OR_REACT'` and never for `'VOTE'`. BEFORE the
+ *    moderation path); a read grant counts for `'READ_OR_REACT'` and `'COMMENT'`, never for `'VOTE'`. BEFORE the
  *    moderation term, whose 403 would otherwise confirm the id to someone outside the audience;
+ *    for `'COMMENT'`, also: the comments are not withheld from this reader (a named reader whose
+ *    only door is the grant, switch off - `commentsWithheldPostIds`, owner 2026-11-04), else a 404:
+ *    for that reader the comments do not exist;
  * 3. hidden by moderation, unless `allowHidden` (a platform admin doing platform work);
  * 4. scheduled later, unless the reader wrote it (or `allowHidden`): an unpublished post's existence
  *    is itself what is hidden;
@@ -68,10 +72,16 @@ export async function readPostOpenVerdict(
 ): Promise<PostOpenVerdict> {
   if (isExpiredReel(post)) return refuse('not-found', `reel expired at ${String(post.expiresAt)}`);
   const rows: { visible: boolean }[] = await manager.query(
-    `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: intent === 'READ_OR_REACT' })} AS visible FROM posts WHERE posts.id = $1`,
+    `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true, readGrants: intent !== 'VOTE' })} AS visible FROM posts WHERE posts.id = $1`,
     [post.id, opts.viewerId ?? null]
   );
   if (rows[0]?.visible !== true) return refuse('not-found', 'outside its audience');
+  if (
+    intent === 'COMMENT' &&
+    (await commentsWithheldPostIds(manager, [post.id], opts.viewerId)).has(post.id)
+  ) {
+    return refuse('not-found', 'comments withheld from a grant-only reader');
+  }
   if (post.hiddenByModeration && !opts.allowHidden) return refuse('hidden', 'hidden by moderation');
   const scheduledAt = post.scheduledAt ? new Date(post.scheduledAt) : null;
   const viewerOwnsIt = !!opts.viewerId && post.authorId === opts.viewerId;

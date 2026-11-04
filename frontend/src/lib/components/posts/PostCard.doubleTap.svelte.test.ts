@@ -228,7 +228,7 @@ it('a signed-out reader likes nothing', async () => {
 it('a like given in the reel viewer reaches the card', () => {
   const target = mountCard(row());
 
-  publishPostReactions('p1', { alice: "J'aime" });
+  publishPostReactions('p1', { reactions: { alice: "J'aime" } });
   flushSync();
 
   expect(myReaction(target)).toBe('❤️');

@@ -20,6 +20,8 @@ describe('reactionTotal', () => {
   it('counts every reaction, and none on a post without any', () => {
     expect(reactionTotal({ a: 'x', b: 'y' })).toBe(2);
     expect(reactionTotal(undefined)).toBe(0);
+    // A named reader whose comments are withheld: their own entry plus everybody else's tally.
+    expect(reactionTotal({ me: 'x' }, { x: 2, y: 1 })).toBe(4);
   });
 });
 

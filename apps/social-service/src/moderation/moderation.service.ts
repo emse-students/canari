@@ -266,7 +266,9 @@ export class ModerationService {
       this.reportRepo.manager,
       post,
       { viewerId: reporterId },
-      'READ_OR_REACT'
+      // A comment is reported by who may READ it: a named reader the comments are withheld from
+      // gets the 404 of a missing one (owner, 2026-11-04).
+      contentType === 'comment' ? 'COMMENT' : 'READ_OR_REACT'
     );
     if (verdict.refusal !== null)
       throw this.unreportable(contentType, contentId, reporterId, verdict.why);

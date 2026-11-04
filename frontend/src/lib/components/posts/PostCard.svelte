@@ -63,7 +63,7 @@
   import { Pin, CalendarCheck } from '@lucide/svelte';
   import { untrack } from 'svelte';
   import { FORM_CARD_PLACEHOLDER_MIN_HEIGHT } from '$lib/utils/mediaLayout';
-  import { REACTIONS } from '$lib/posts/reactions';
+  import { REACTIONS, reactionCountsOf } from '$lib/posts/reactions';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
@@ -224,14 +224,11 @@
   const canUnmaskAnonymous = $derived(localPost.canUnmaskAnonymous === true);
 
   let userReaction = $derived((localPost.reactions ?? {})[currentUserId] ?? null);
-  let reactions = $derived<Record<string, number>>((localPost.reactions ?? {}) as any);
-  let reactionCounts = $derived.by(() => {
-    const counts: Record<string, number> = {};
-    for (const [, reactionType] of Object.entries(reactions)) {
-      counts[reactionType] = (counts[reactionType] ?? 0) + 1;
-    }
-    return counts;
-  });
+  let reactionCounts = $derived(reactionCountsOf(localPost));
+  // The server's answer (owner, 2026-11-04): false for a named reader whose only door is a read
+  // grant with "voit les commentaires" off. No comment control is drawn then - no button, no count,
+  // no preview, no thread - and the reaction badges are a tally with no "who reacted".
+  const canSeeComments = $derived(localPost.canSeeComments !== false);
   let comments = $derived<PostComment[]>(localPost.comments ?? []);
   let topLevelComments = $derived(comments.filter((c) => !c.parentId));
 
@@ -348,8 +345,8 @@
     try {
       // Still never sent to a server certain to refuse it: when nothing is known, this asks -
       // behind a picker that has already closed and a tally that has already moved.
-      const reactions = await sendPostReaction(localPost.id, reactionType, wasReacted);
-      localPost = { ...localPost, reactions };
+      const served = await sendPostReaction(localPost.id, reactionType, wasReacted);
+      localPost = { ...localPost, ...served };
     } catch (err) {
       // NOT ALWAYS MODERATION. `assertNotMuted()` ASKS the server, so a dropped radio used to tell
       // the reader they are restricted by moderation, which is false and is about them.
@@ -391,9 +388,9 @@
    */
   const postId = $derived(localPost.id);
   $effect(() =>
-    onPostReactions(postId, (reactions) => {
+    onPostReactions(postId, (served) => {
       ledger.answered(['reactions']);
-      localPost = { ...localPost, reactions };
+      localPost = { ...localPost, ...served };
     })
   );
 
@@ -769,12 +766,15 @@
         commentCount={commentCountOf(localPost) || undefined}
         onToggleReactionPicker={() => (showReactionPicker = !showReactionPicker)}
         onReactionSelect={handleReaction}
-        onCommentClick={() => openCommentsSheet({ write: comments.length === 0 })}
+        onCommentClick={canSeeComments
+          ? () => openCommentsSheet({ write: comments.length === 0 })
+          : undefined}
       >
         {#snippet reactionSummary()}
           <ReactionsDisplay
             {reactionCounts}
             reactions={localPost.reactions ?? {}}
+            showReactors={canSeeComments}
             {userReaction}
             reactionList={REACTIONS}
             onReactionClick={handleReaction}
@@ -810,17 +810,19 @@
 
     <PostForms {formInfos} />
 
-    <div data-no-double-tap>
-      <CommentsPreview
-        {comments}
-        commentCount={commentCountOf(localPost)}
-        {currentUserId}
-        {authToken}
-        pendingCommentIds={thread.pending}
-        onLike={(id) => void thread.like(id)}
-        onOpen={openCommentsSheet}
-      />
-    </div>
+    {#if canSeeComments}
+      <div data-no-double-tap>
+        <CommentsPreview
+          {comments}
+          commentCount={commentCountOf(localPost)}
+          {currentUserId}
+          {authToken}
+          pendingCommentIds={thread.pending}
+          onLike={(id) => void thread.like(id)}
+          onOpen={openCommentsSheet}
+        />
+      </div>
+    {/if}
 
     <!-- Inline card notifications. -->
     <PostFeedback {errorMessage} {actionMessage} />
@@ -833,34 +835,36 @@
   report dialog and the draft all stay the card's - and `PostComments` is its body. Mounted only
   while open, so the box takes its draft back on every opening.
 -->
-<PostCommentsSheet open={commentsSheetOpen} onClose={() => (commentsSheetOpen = false)}>
-  <PostComments
-    {postId}
-    {comments}
-    {topLevelComments}
-    {commentText}
-    submittingComment={thread.submitting}
-    pendingCommentIds={thread.pending}
-    sendError={commentError}
-    {currentUserId}
-    {authToken}
-    {focusCommentId}
-    autofocusComposer={sheetWrite}
-    onCommentTextChange={async (text) => {
-      commentText = text;
-      commentError = '';
-    }}
-    onAddComment={handleAddComment}
-    onLikeComment={(id) => void thread.like(id)}
-    onEditComment={(id, text) => thread.edit(id, text)}
-    onDeleteComment={(id) => thread.remove(id)}
-    onReport={handleReportComment}
-    onLoadOlder={() => thread.loadMore()}
-    hasMoreComments={thread.hasMore}
-    loadingMore={thread.loadingMore}
-    totalCommentCount={commentCountOf(localPost)}
-  />
-</PostCommentsSheet>
+{#if canSeeComments}
+  <PostCommentsSheet open={commentsSheetOpen} onClose={() => (commentsSheetOpen = false)}>
+    <PostComments
+      {postId}
+      {comments}
+      {topLevelComments}
+      {commentText}
+      submittingComment={thread.submitting}
+      pendingCommentIds={thread.pending}
+      sendError={commentError}
+      {currentUserId}
+      {authToken}
+      {focusCommentId}
+      autofocusComposer={sheetWrite}
+      onCommentTextChange={async (text) => {
+        commentText = text;
+        commentError = '';
+      }}
+      onAddComment={handleAddComment}
+      onLikeComment={(id) => void thread.like(id)}
+      onEditComment={(id, text) => thread.edit(id, text)}
+      onDeleteComment={(id) => thread.remove(id)}
+      onReport={handleReportComment}
+      onLoadOlder={() => thread.loadMore()}
+      hasMoreComments={thread.hasMore}
+      loadingMore={thread.loadingMore}
+      totalCommentCount={commentCountOf(localPost)}
+    />
+  </PostCommentsSheet>
+{/if}
 
 <!--
   A comment and a post are reported through the same four reasons AND the same dialog, and until

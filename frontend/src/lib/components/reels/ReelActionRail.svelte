@@ -44,6 +44,11 @@
      * ArrowUp on the heart). The viewer applies the card's toggle: the same kind again takes it back.
      */
     onReact?: (type: string) => void;
+    /**
+     * Opens the comments. ABSENT on a post whose comments are withheld from its reader (a named
+     * reader with "voit les commentaires" off, owner 2026-11-04): no button and no count are drawn,
+     * so nothing hints at a discussion they cannot open.
+     */
     onComments?: () => void;
     onSend?: () => void;
     /**
@@ -74,7 +79,7 @@
     drawerOpen = $bindable(false),
   }: Props = $props();
 
-  const social = $derived(!!onHeart && !!onComments && !!onSend);
+  const social = $derived(!!onHeart && !!onSend);
 
   /**
    * THE REACTION DRAWER (user, 2026-10-23: a long press on the reaction opens a drawer that unfolds
@@ -250,21 +255,23 @@
       >
     </div>
 
-    <div class="flex flex-col items-center">
-      <button
-        type="button"
-        class="ui-icon-button motion-press rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-        aria-haspopup="dialog"
-        aria-label={m.reels_rail_comments({ count: commentCount })}
-        onclick={onComments}
-        data-reel-rail-comments
-      >
-        <MessageCircle size={30} strokeWidth={2} class="drop-shadow-md" aria-hidden="true" />
-      </button>
-      <span class="text-xs font-semibold drop-shadow-md" aria-hidden="true"
-        >{compactCount(commentCount, locale)}</span
-      >
-    </div>
+    {#if onComments}
+      <div class="flex flex-col items-center">
+        <button
+          type="button"
+          class="ui-icon-button motion-press rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+          aria-haspopup="dialog"
+          aria-label={m.reels_rail_comments({ count: commentCount })}
+          onclick={onComments}
+          data-reel-rail-comments
+        >
+          <MessageCircle size={30} strokeWidth={2} class="drop-shadow-md" aria-hidden="true" />
+        </button>
+        <span class="text-xs font-semibold drop-shadow-md" aria-hidden="true"
+          >{compactCount(commentCount, locale)}</span
+        >
+      </div>
+    {/if}
 
     <button
       type="button"

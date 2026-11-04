@@ -70,6 +70,8 @@ describe('ModerationService - reports', () => {
       visible?: boolean;
       blocks?: string[];
       comment?: Record<string, unknown> | null;
+      /** The comments predicate names the reporter (a named reader, switch off). */
+      withheld?: boolean;
     } = {}
   ) {
     const post =
@@ -93,6 +95,9 @@ describe('ModerationService - reports', () => {
             ? [{ ...post, comment: opts.comment ?? { id: 'c1', userId: 'real-writer' } }]
             : []
         );
+      }
+      if (sql.includes('read_grant_readers')) {
+        return Promise.resolve(post && opts.withheld ? [{ id: post.id }] : []);
       }
       if (sql.includes('FROM posts p WHERE p.id')) return Promise.resolve(post ? [post] : []);
       if (sql.includes('AS visible')) return Promise.resolve([{ visible: opts.visible ?? true }]);
@@ -162,6 +167,19 @@ describe('ModerationService - reports', () => {
         response: { code: 'CONTENT_NOT_FOUND' },
       });
       expect(reportRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('refuses 404 a comment report from a reader the comments are withheld from, not a post report', async () => {
+      // The comment's report asks the comments' gate (owner, 2026-11-04); the post's, the post's.
+      answerGate({ withheld: true });
+      await expect(report('comment', 'c1')).rejects.toMatchObject({
+        status: 404,
+        response: { code: 'CONTENT_NOT_FOUND' },
+      });
+      await report('post', POST_ID);
+      expect(reportRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ contentType: 'post', contentId: POST_ID })
+      );
     });
 
     it('files a report on an anonymous comment whose writer is blocked: the read shows it', async () => {

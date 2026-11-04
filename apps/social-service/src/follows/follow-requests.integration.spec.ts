@@ -169,6 +169,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       '072_drop_is_bde.sql',
       '073_republications.sql',
       '078_read_grants.sql',
+      '132_read_grant_readers.sql',
       '121_member_reposts.sql',
     ]) {
       await admin.query(readFileSync(join(__dirname, '..', 'migrations', name), 'utf8'));

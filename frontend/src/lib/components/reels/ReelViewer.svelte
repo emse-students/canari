@@ -55,7 +55,7 @@
     reactionRefusedLocally,
     sendPostReaction,
     toggledReactions,
-    type PostReactions,
+    type ServedReactions,
   } from '$lib/posts/postReaction';
   import { publishFailureMessage } from '$lib/posts/publishFailure';
   import { m } from '$lib/paraglide/messages';
@@ -182,8 +182,8 @@
   }
 
   /** Replaces the reactions of the loaded reel `postId`, wherever it now sits in the list. */
-  function setReactions(postId: string, reactions: PostReactions) {
-    reels = reels.map((r) => (r.id === postId ? { ...r, reactions } : r));
+  function setReactions(postId: string, served: ServedReactions) {
+    reels = reels.map((r) => (r.id === postId ? { ...r, ...served } : r));
   }
 
   /**
@@ -202,16 +202,20 @@
   function sendReaction(post: PostEntity, me: string, type: string, wasReacted: boolean) {
     const before = post.reactions ?? {};
     reactionInFlight.add(post.id);
-    setReactions(post.id, toggledReactions(before, me, type).next);
+    const tally = post.otherReactionCounts;
+    setReactions(post.id, {
+      reactions: toggledReactions(before, me, type).next,
+      otherReactionCounts: tally,
+    });
     sendPostReaction(post.id, type, wasReacted)
       .then(
-        (reactions) => {
-          setReactions(post.id, reactions);
-          publishPostReactions(post.id, reactions);
+        (served) => {
+          setReactions(post.id, served);
+          publishPostReactions(post.id, served);
         },
         (err: unknown) => {
           console.warn(`[reel-viewer] the reaction on ${post.id} was not recorded`, err);
-          setReactions(post.id, before);
+          setReactions(post.id, { reactions: before, otherReactionCounts: tally });
           showToast(publishFailureMessage(err, m.post_reaction_error()), 'error');
         }
       )

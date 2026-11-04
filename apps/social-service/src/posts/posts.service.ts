@@ -59,6 +59,7 @@ import {
 } from './republished-feed-sql';
 import { listKind, type ListPostsParams } from './list-feed';
 import {
+  commentsWithheldFromViewerSql,
   postVisibleToViewerSql,
   readInFeedAudience,
   reviewCohortAuthorFilterSql,
@@ -68,6 +69,12 @@ import { POST_EDIT_PUBLISHER_ONLY, bdeModeratesContentSql } from '../spaces/bde-
 import { sameSideOfReviewCohort } from '../review-cohort';
 import { PINNED_FOR_VIEWER_IDS_SQL, pinnedForViewerSql, type PinSpace } from './space-pins';
 import { SpacePinsService } from './space-pins.service';
+import {
+  commentsWithheldPostIds,
+  ownEntryOnly,
+  withheldReactions,
+  withholdCommentsAndPeople,
+} from './comments-withheld';
 import {
   PERSONAL_REPUBLISHING_ASSOCIATION_TYPES,
   REPUBLISHING_ASSOCIATION_TYPES,
@@ -133,6 +140,12 @@ interface PostViewerContext {
   pinnedIds: Set<string>;
   /** WP-PIN: per post, the spaces where the reader may pin it, with the pin's state there. */
   pinSpaces: Map<string, PinSpace[]>;
+  /**
+   * Ids, among the batch, of the posts whose comments and people are WITHHELD from this reader: a
+   * named reader whose only door is the read grant, switch "voit les commentaires" off (owner,
+   * 2026-11-04) - `commentsWithheldPostIds`, the one predicate. Served as `canSeeComments: false`.
+   */
+  commentsWithheldIds: Set<string>;
 }
 
 /** A request one of the reader's associations made for a personal post and that still stands (D38b). */
@@ -208,6 +221,14 @@ interface PostCapabilities {
    * (a grant opens read, react and comment, never a vote - `assertVisible` 'VOTE').
    */
   canVote: boolean;
+  /**
+   * The comments (the button, the count, the thread) and the lists of people on this post (who
+   * reacted, who voted what) are shown to this reader. False only for a named reader whose ONLY door
+   * is a read grant, switch "voit les commentaires" off (owner, 2026-11-04): their row then carries
+   * no `comments` and no `commentCount`, its reactions are their own plus `otherReactionCounts`, and
+   * its polls are tallies (`withholdCommentsAndPeople`).
+   */
+  canSeeComments: boolean;
   /** WP-F6 "Republier pour mes abonnes": the reader may repost it now (the write's own rules). */
   canRepost: boolean;
   /** WP-F6: the reader reposted it, so the card offers to take it back. */
@@ -378,6 +399,7 @@ export class PostsService {
     memberReposts: EMPTY_MEMBER_REPOST_CONTEXT,
     pinnedIds: new Set(),
     pinSpaces: new Map(),
+    commentsWithheldIds: new Set(),
   };
 
   /**
@@ -411,6 +433,9 @@ export class PostsService {
       return {
         memberReposts: await memberRepostContext(this.postRepo.manager, postIds, viewerId),
         ...(await this.pinContext(postIds, viewerId, true)),
+        // Nothing is withheld from an administrator: the predicate's `adminSeesAll` arm opens every
+        // post to them without a grant, so asking it would cost a query to learn an empty set.
+        commentsWithheldIds: new Set(),
         viewerId,
         isGlobalAdmin: true,
         moderatedIds: new Set(),
@@ -444,6 +469,14 @@ export class PostsService {
         memberRepostContext(this.postRepo.manager, postIds, viewerId),
         this.pinContext(postIds, viewerId, false),
       ]);
+    // Only a post the reader does NOT see without a grant can have its comments withheld (the
+    // predicate's own last term), so the predicate is asked of those alone: none on an ordinary
+    // reader's page, and no query for it at all.
+    const commentsWithheldIds = await commentsWithheldPostIds(
+      this.postRepo.manager,
+      postIds.filter((id) => !grantFree.grantFreeIds.has(id)),
+      viewerId
+    );
     return {
       memberReposts,
       ...pins,
@@ -454,6 +487,7 @@ export class PostsService {
       republishAsIds: memberships.all,
       grantFreeIds: grantFree.grantFreeIds,
       firstHandIds: grantFree.firstHandIds,
+      commentsWithheldIds,
       ...(await this.personalRequestContext(personalIds, viewerId, memberships.personal)),
     };
   }
@@ -702,6 +736,7 @@ export class PostsService {
       canUnrepublishAs: this.viewerMayUnrepublishAs(post, viewer),
       canVote:
         !!viewer.viewerId && (viewer.isGlobalAdmin || this.viewerSeesWithoutGrant(post, viewer)),
+      canSeeComments: !post.id || !viewer.commentsWithheldIds.has(post.id),
       canRequestRepublication: this.viewerMayRequestRepublication(post, viewer),
       republicationRequests: post.id
         ? (viewer.personalRequests.get(post.id) ?? []).filter(
@@ -811,6 +846,7 @@ export class PostsService {
     const polls = servePolls(p.polls, viewer.viewerId);
     if (!p.associationId) {
       const out: any = { ...p, ...capabilities, ...(p.polls !== undefined ? { polls } : {}) };
+      if (!capabilities.canSeeComments) withholdCommentsAndPeople(out, viewer.viewerId);
       if (this.mustHideAnonymousAuthor(p, viewer)) {
         delete out.authorId;
         delete out.authorDisplayName;
@@ -820,6 +856,7 @@ export class PostsService {
       return out;
     }
     const out: any = { ...p, ...capabilities, ...(p.polls !== undefined ? { polls } : {}) };
+    if (!capabilities.canSeeComments) withholdCommentsAndPeople(out, viewer.viewerId);
     delete out.authorId;
     delete out.authorDisplayName;
     delete out.authorFirstName;
@@ -862,6 +899,7 @@ export class PostsService {
     }
     Object.assign(raw, this.viewerCapabilities(raw, viewer));
     if (raw.polls !== undefined) raw.polls = servePolls(raw.polls, viewer.viewerId);
+    if (raw.canSeeComments === false) withholdCommentsAndPeople(raw, viewer.viewerId);
     if (!raw.associationId) {
       if (this.mustHideAnonymousAuthor(post, viewer)) {
         delete raw.authorId;
@@ -1037,7 +1075,9 @@ export class PostsService {
    *
    * THE INTENT IS EXPLICIT because a nominative read grant (WP7) opens a post to READ, REACT and
    * COMMENT only: `'READ_OR_REACT'` counts the grant, `'VOTE'` does not (a vote was never granted,
-   * user 2026-10-07: read + react/comment). A caller must say which one it is.
+   * user 2026-10-07: read + react/comment). `'COMMENT'` counts it too, but refuses a named reader
+   * whose only door is the grant with "voit les commentaires" off (owner, 2026-11-04). A caller must
+   * say which one it is.
    *
    * @param opts.allowHidden a platform admin doing platform work (as `getById`'s flag). A write
    *   route never passes it: a hidden post takes no reaction, comment or like, an admin's included.
@@ -1820,6 +1860,44 @@ export class PostsService {
   }
 
   /**
+   * THE REACTIONS A REACTION ROUTE ANSWERS WITH, as this reader may see them. The add and the removal
+   * answer with the post's reactions, and the stored map is `userId -> type`: who reacted. A reader
+   * who may open the post with its people gets it whole; a named reader from whom they are withheld
+   * (`commentsWithheldFromViewerSql`, owner 2026-11-04) gets their own entry and
+   * `otherReactionCounts`; a reader who cannot open the post at all - the removal is not gated, it
+   * adds nothing - gets their own entry only, so an id lifted from a link never lists its reactors.
+   */
+  async serveReactionsTo(
+    postId: string,
+    viewerId: string,
+    answer: { ok: boolean; reactions: Record<string, string> }
+  ): Promise<{
+    ok: boolean;
+    reactions: Record<string, string>;
+    otherReactionCounts?: Record<string, number>;
+  }> {
+    const rows: { visible: boolean; withheld: boolean }[] = await this.postRepo.manager.query(
+      `SELECT ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: true })} AS visible,
+              ${commentsWithheldFromViewerSql('posts', '$2')} AS withheld
+         FROM posts WHERE posts.id = $1`,
+      [postId, viewerId]
+    );
+    const ownOnly = ownEntryOnly(
+      viewerId,
+      answer.reactions?.[viewerId],
+      (v): v is string => typeof v === 'string'
+    );
+    if (rows[0]?.visible !== true) {
+      this.logger.debug(`[REACTION] ${postId.slice(0, 8)}: answered with the reader's own only`);
+      return { ok: answer.ok, reactions: ownOnly };
+    }
+    if (rows[0].withheld === true) {
+      return { ok: answer.ok, ...withheldReactions(answer.reactions, viewerId) };
+    }
+    return answer;
+  }
+
+  /**
    * Refuses a vote on a post its voter could not open (`assertOpenable` with the vote's audience).
    * Never `allowHidden`: a moderation-hidden post takes no votes, a platform admin's included.
    */
@@ -1893,7 +1971,8 @@ export class PostsService {
   ) {
     // `getById`'s gate, `allowHidden` included: a platform admin reads a hidden post's comments as
     // they read the post itself.
-    const { post, blockedIds } = await this.assertVisible(postId, viewerId, 'READ_OR_REACT', {
+    // `'COMMENT'`: a named reader from whom the comments are withheld gets the 404 of a missing post.
+    const { post, blockedIds } = await this.assertVisible(postId, viewerId, 'COMMENT', {
       allowHidden: opts.isGlobalAdmin === true,
     });
     const page = pageComments((post.comments ?? []) as any[], { ...opts, blockedIds });
