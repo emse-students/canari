@@ -3007,6 +3007,35 @@ redrawn); `missing=ciphertext` is the FCM budget, generic for ever; an iPhone is
 nothing redraws its banner. So the rate per platform and per cause is one `GROUP BY` over the
 chat-delivery log. The terms are the same four, from one helper (`blindBannerMissing`) on Android.
 
+**AND SINCE 2026-11-04 IT COUNTS THE BANNERS WHOSE OPEN RAN.** The report used to go out only when
+the seed was ABSENT, so every blind banner drawn with the seed in hand - a v2 refusal, a floor, an
+unreadable mirror, a row that opened with nothing to draw, an exception - reached a person's phone
+and no count (found reading a tester's `1.6.3` report of "Quelqu'un / Nouveau message dans #salon"
+across two communities). Android now reports from `postChannelNotification` itself, once per blind
+post whichever caller drew it (the first post, the redraw, the drain), through `BlindBannerReport`;
+the line gained a last term: `... held=<bool> refused=<reason|none>`. An open that ran prints
+`missing=none held=false refused=<token>`; an open that never ran prints `refused=none`, which is
+also what every older build's report prints. Both allowlists - `missing` and `refused` - are
+`libs/contracts/blind-banner-terms.json`, asserted by the controller spec, by the Rust open's source
+scan (`every_salon_open_refusal_is_in_the_blind_banner_contract`) and by `BlindBannerReportTest`. The
+iOS extension still sends `missing` alone.
+
+**A ROW THAT IS NEVER NEWS POSTS NOTHING (2026-11-04).** A withdrawn reaction and a system event
+silenced by name (`format_system_event_text`) decrypt to `ok: false` - and a salon push used to draw
+the generic "Nouveau message dans #salon" for them. `extract_full_message_info` now names them
+(`kind`: `reaction_withdrawn`, `silent_event`), `open_graine_push` answers `reaction-withdrawn` /
+`silent-event` (the contract's `silent` list), and the push posts no banner. A v1 row now tells a
+ciphertext its seed does not open (`graine-open-failed`) from a row that opened with nothing to draw
+- both read `graine-open-failed` before. The MLS path is unchanged: its `kind` is new, its token is
+still `plaintext-not-renderable`. One case stays visible: a REDRAW that finds a silent row leaves the
+generic line it would have replaced, said at INFO (`redraw=true`).
+
+**THE PHONE'S OWN LINES REACH THE EXPORTED LOG.** Every WARN and ERROR line of the push service is
+also written where the in-app log takes it - see
+[mobile](../frontend/mobile.md#the-push-services-lines-in-the-in-app-log-2026-11-04). A tester's log
+now carries `[NATIVE_PUSH] ... handleChannelMessage: seed absent -> generic banner ...` and its
+siblings, which before lived in logcat alone.
+
 **AND THE SECOND OF THOSE NAMES ITS OWN CAUSE SINCE 2026-09-24.** `no seed/ciphertext` is one `if`
 with four terms - `seedB64`, `ciphertext`, `nonce`, `messageIndex` - and the line named none of
 them, so two opposite problems printed one sentence: a seed that was never mirrored, which is a

@@ -3,6 +3,7 @@
   import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
   import { noteServerTime } from '$lib/utils/chat/serverClock';
   import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
+  import { drainNativePushLog } from '$lib/mobile/nativePushLog';
   import { resolve } from '$app/paths';
   /**
    * Always-on layout component for the MLS session lifecycle.
@@ -1956,6 +1957,8 @@
           stepDone('key-group-joins');
           // The notification extension's outcomes while away (`nseOutcomes.ts`), not awaited.
           void drainNseOutcomes(appendLog);
+          // The Android push service's warnings and errors while away (`nativePushLog.ts`).
+          void drainNativePushLog(appendLog);
           if (storage) {
             await reconcileOutboxSent(storage, {
               deviceKeyB64: globalSession.deviceKeyB64,

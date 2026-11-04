@@ -14,7 +14,9 @@ import android.graphics.Rect
 import android.net.Uri
 import android.os.PowerManager
 import android.util.Base64
-import android.util.Log
+// THE SERVICE'S `Log` ALSO FEEDS THE IN-APP LOG: every WARN and ERROR line reaches the file the page
+// takes (`NativePushLog`, 2026-11-04) - a member's exported log can say why a banner went up blind.
+import fr.emse.canari.FcmLog as Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 import androidx.core.app.RemoteInput
@@ -36,6 +38,7 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicBoolean
 import fr.emse.canari.call.RingClosed
 import fr.emse.canari.push.BackgroundWelcomeAnswer
+import fr.emse.canari.push.BlindBannerReport
 import fr.emse.canari.push.CallSoundHold
 import fr.emse.canari.push.ChannelBannerAttribution
 import fr.emse.canari.push.ChannelBannerAuthor
@@ -6005,13 +6008,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.w(TAG, "handleChannelMessage: seed absent -> generic banner, frame HELD for its key material channel=$channelId session=$sessionId index=$messageIndex")
         }
 
+        // A blind banner that reaches the shade is REPORTED by the post itself, whichever of its
+        // three callers drew it - see `postChannelNotification` and [BlindBannerReport].
         val stamp = postChannelNotification(cacheKey, data, seedHeld)
-        // COUNTED, NOT ONLY LOGGED: a blind banner that reached the shade is reported once, after
-        // it is up, so the fleet has a rate rather than a line on one phone. A held frame may still
-        // be redrawn - `held` says so, and the reader of the count subtracts nothing by guessing.
-        if (stamp != 0L && !seedHeld) {
-            reportBlindBanner(channelId, blindBannerMissing(data, seedHeld), held = openable)
-        }
         if (keyGroupAbsent) {
             // ON THE LANE, BEHIND THIS PUSH: the banner and its redraw claim below are not delayed
             // by the join's two round trips, and the join is serial with every other MLS write this
@@ -6338,6 +6337,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * @param seedHeld   whether the mirror holds this session's seed; false posts the generic body.
      * @param supersedes the instant of the line this post replaces; see `showMessageNotification`.
      * @return the instant of the line it posted, or 0 when nothing reached the shade.
+     *
+     * A BLIND BANNER THAT REACHES THE SHADE IS REPORTED HERE, ONCE PER POST, whichever caller drew
+     * it - the first post, the redraw that found the seed meanwhile, or the drain - with what the
+     * open lacked or why it refused ([BlindBannerReport]). A fallback is a signal, and one that
+     * reached a person's phone is the one the fleet must be able to count.
      */
     private fun postChannelNotification(
         cacheKey: String,
@@ -6378,6 +6382,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // Whether the open PROVED the author (`authorProven`: a v2 session's minter and signature
         // checked). A v1 row opens for whoever the push names, so its author is never named.
         var authorProven = false
+        // WHY AN OPEN THAT RAN DID NOT SHOW THE MESSAGE - the `refused=` term of the report. Null
+        // while the open never ran: `missing` says that case.
+        var refusal: String? = null
         val body: String = if (seedHeld && ciphertext != null && nonce != null && messageIndex != null) {
             try {
                 val json = JSONObject(
@@ -6401,22 +6408,35 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         // reads the file first is the one that says why it names nobody.
                         text
                     } else {
+                        // OPENED, AND NOTHING TO DRAW - which said nothing at all until 2026-11-04,
+                        // so this generic line was the one fallback no log could explain.
+                        Log.w(TAG, "handleChannelMessage: opened ok with no text type=${json.optString("type")} channel=$channelId session=$sessionId -> generic banner")
+                        refusal = BlindBannerReport.EMPTY_TEXT
                         buildChannelFallbackText(res, channelName)
                     }
                 } else {
+                    val reason = json.optString("reason").ifEmpty { BlindBannerReport.UNSTATED }
+                    // NOTHING TO ANNOUNCE IS NOT A FAILURE TO READ (a withdrawn reaction, an event
+                    // silenced by name): no banner. A redraw leaves the generic line it would have
+                    // replaced - the one case a held frame's line is not corrected, said here.
+                    if (BlindBannerReport.postsNothing(reason)) {
+                        Log.i(TAG, "handleChannelMessage: $reason - nothing to announce, no banner channel=$channelId session=$sessionId redraw=${supersedes != 0L}")
+                        return 0L
+                    }
                     // A v2 refusal ACCUSES the server or a member (channel-encryption 21.5), so it
                     // is said at ERROR; the rest are a missing or unreadable seed. The Rust line
                     // naming the check goes nowhere in a killed app, so this token is the witness.
-                    val reason = json.optString("reason")
                     if (reason in GRAINE_V2_REFUSALS) {
                         Log.e(TAG, "handleChannelMessage: REFUSED reason=$reason channel=$channelId session=$sessionId")
                     } else {
                         Log.w(TAG, "handleChannelMessage: decrypt ok=false reason=$reason channel=$channelId")
                     }
+                    refusal = reason
                     buildChannelFallbackText(res, channelName)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "handleChannelMessage: decrypt exception: ${e.message}")
+                Log.e(TAG, "handleChannelMessage: decrypt exception: ${e.javaClass.simpleName}: ${e.message}")
+                refusal = BlindBannerReport.EXCEPTION
                 buildChannelFallbackText(res, channelName)
             }
         } else {
@@ -6474,7 +6494,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val avatarBitmap = attribution.authorId?.takeIf { ChannelBannerAuthor.drawsFace(author) }?.let { fetchAvatar(it) }
         val largeIcon    = avatarBitmap ?: generateInitialsBitmap(ChannelBannerAuthor.initialsSource(author))
         Log.d(TAG, "handleChannelMessage: notification posted showsMessage=$showsMessage bodyChars=${shown.length} mentionsMe=$mentionsMe speaker=${author.javaClass.simpleName} hasAvatar=${avatarBitmap != null}")
-        return showMessageNotification(
+        val stamp = showMessageNotification(
             // ALWAYS THE GROUP SHAPE: the salon is the conversation and every line has a speaker with
             // its own key, so a notification mixing named, unnamed and blind lines keeps each line's
             // name - see `ChannelBannerAuthor.line`. The speaker is above the line, so a mention of
@@ -6493,6 +6513,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // `isGroup` alone (`groupName != senderName`) would read as a one-to-one thread.
             namesEachSender = true,
         )
+        // COUNTED, NOT ONLY LOGGED, and only once it is up: a foregrounded app or a line already
+        // read posts nothing (0) and is no fallback anybody saw.
+        if (stamp != 0L && !showsMessage) {
+            val openable = ciphertext != null && nonce != null && messageIndex != null
+            reportBlindBanner(channelId, BlindBannerReport.of(seedHeld, openable, blindBannerMissing(data, seedHeld), refusal))
+        }
+        return stamp
     }
 
     /**
@@ -6520,9 +6547,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     /**
      * Tells the server a blind salon banner went up, and why (`POST /api/mls/push/blind-banner`,
      * PushSecret - a shut app has no session). Best-effort: a failure is logged and nothing retries,
-     * because the banner is already up and the count is a rate, not a ledger.
+     * because the banner is already up and the count is a rate, not a ledger. `refused` travels only
+     * when the open ran: a server older than 2026-11-04 ignores the field.
      */
-    private fun reportBlindBanner(channelId: String, missing: List<String>, held: Boolean) {
+    private fun reportBlindBanner(channelId: String, report: BlindBannerReport.Report) {
+        val missing = report.missing
+        val held = report.held
         val ctx = MlsContextLoader.loadPushContext(this)
         val secret = retrievePushSecret(this)
         if (ctx == null || secret == null) {
@@ -6537,6 +6567,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 put("platform", "android")
                 put("missing", org.json.JSONArray(missing))
                 put("held", held)
+                report.refused?.let { put("refused", it) }
             }.toString()
             val conn = (URL("${ctx.baseUrl}/api/mls/push/blind-banner").openConnection() as HttpURLConnection).apply {
                 connectTimeout = 5_000
@@ -6548,7 +6579,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             try {
                 conn.outputStream.use { it.write(body.toByteArray()) }
-                Log.d(TAG, "reportBlindBanner: HTTP ${conn.responseCode} channel=$channelId missing=${missing.joinToString(",")} held=$held")
+                Log.d(TAG, "reportBlindBanner: HTTP ${conn.responseCode} channel=$channelId missing=${missing.joinToString(",").ifEmpty { "none" }} held=$held refused=${report.refused ?: "none"}")
             } finally {
                 conn.disconnect()
             }

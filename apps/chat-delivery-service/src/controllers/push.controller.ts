@@ -79,9 +79,36 @@ function backgroundWelcomeRefusal(
 
 /**
  * What a blind salon banner may say it lacked - the four terms of the phone's own test
- * (`postChannelNotification` on Android, `handleChannelMessage` in the iOS extension).
+ * (`postChannelNotification` on Android, `handleChannelMessage` in the iOS extension). Pinned by
+ * `libs/contracts/blind-banner-terms.json` (`missing`), which the spec asserts.
  */
-const BLIND_BANNER_TERMS = new Set(['seed', 'ciphertext', 'nonce', 'messageIndex']);
+export const BLIND_BANNER_TERMS: ReadonlySet<string> = new Set([
+  'seed',
+  'ciphertext',
+  'nonce',
+  'messageIndex',
+]);
+
+/**
+ * Why an open that DID run did not show the message - the `refused=` term (2026-11-04). The tokens
+ * `open_graine_push` answers (`background.rs`), plus the three the Android service names itself:
+ * `empty-text` (opened, nothing to draw), `exception`, and `unstated` (a refusal with no token).
+ * Pinned by `libs/contracts/blind-banner-terms.json` (`refused`), which the spec asserts.
+ */
+export const BLIND_BANNER_REFUSALS: ReadonlySet<string> = new Set([
+  'seed-not-mirrored',
+  'mirror-unreadable',
+  'below-floor',
+  'push-field-malformed',
+  'author-mismatch',
+  'signature-missing',
+  'signature-refused',
+  'graine-open-failed',
+  'plaintext-not-renderable',
+  'empty-text',
+  'exception',
+  'unstated',
+]);
 
 /**
  * Key-group requests one user may make per minute on EACH of `mls/push/key-group-base` and
@@ -212,6 +239,13 @@ export class PushController {
    *
    * PushSecret, like every route a killed app calls: there is no session to send. `missing` is an
    * ALLOWLIST - an unknown term prints as `invalid`, so a client cannot write the line it likes.
+   *
+   * `refused` (2026-11-04) is the other half: the phone HELD the seed and its open did not show the
+   * message (a v2 refusal, a floor, an unreadable mirror, a row with nothing to draw). Until then
+   * those banners were never reported at all, so the count could not see a whole class of blind
+   * banner. Same allowlist rule; absent - every build before it, and every banner whose open never
+   * ran - prints `none`. A report naming a refusal and no missing term prints `missing=none`,
+   * because nothing was missing: the open ran.
    */
   @UseGuards(ThrottlerGuard)
   @Post('mls/push/blind-banner')
@@ -225,21 +259,31 @@ export class PushController {
       platform?: unknown;
       missing?: unknown;
       held?: unknown;
+      refused?: unknown;
     }
   ): Promise<{ recorded: true }> {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
     await this.verifyPushSecretAuth(authHeader, userId, deviceId);
     const terms = Array.isArray(body.missing) ? body.missing : [];
+    const refused =
+      body.refused === undefined || body.refused === null
+        ? 'none'
+        : BLIND_BANNER_REFUSALS.has(body.refused as string)
+          ? (body.refused as string)
+          : 'invalid';
     const missing = terms.length
       ? terms
           .map((t) => (BLIND_BANNER_TERMS.has(t as string) ? (t as string) : 'invalid'))
           .join(',')
-      : 'unstated';
+      : refused === 'none'
+        ? 'unstated'
+        : 'none';
     const platform = body.platform === 'ios' ? 'ios' : 'android';
     this.logger.warn(
       `[PUSH_BLIND] user=${userId} device=${deviceId} platform=${platform} ` +
-        `channel=${sanitizeLogValue(body.channelId)} missing=${missing} held=${body.held === true}`
+        `channel=${sanitizeLogValue(body.channelId)} missing=${missing} held=${body.held === true} ` +
+        `refused=${refused}`
     );
     return { recorded: true };
   }

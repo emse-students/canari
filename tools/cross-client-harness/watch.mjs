@@ -3285,7 +3285,7 @@ export function logcatReport(lines, label = 'A1') {
     // banner is up. Only a 2xx is explained - a refused report is a blind banner the fleet never saw.
     [
       'fcm-channel-blind-reported',
-      /^reportBlindBanner: HTTP 20[01] channel=\S+ missing=\S+ held=(true|false)$/,
+      /^reportBlindBanner: HTTP 20[01] channel=\S+ missing=\S+ held=(true|false) refused=\S+$/,
     ],
     [
       'fcm-channel-redraw',

@@ -602,6 +602,24 @@ removing the read-side call fails it; a line this build stored, capped or not, n
 writer's amplification test pins at zero, and it would buy nothing: the read-side pass already
 covers every line, and it also covers whatever a FUTURE rule change finds in lines stored today.
 
+### The push service's lines in the in-app log (2026-11-04)
+
+**The log above is the WebView's console, and the Android push service is not in it.** The FCM
+service (`CanariFirebaseMessagingService`, tag `CanariFCM`) usually runs with no WebView alive and
+logs through `android.util.Log`, so every line that says why a salon banner went up blind
+("Quelqu'un" / "Nouveau message dans #salon") lived in logcat only - a tester's exported log could not
+classify their own notifications. The Android counterpart of the iOS extension's `[NSE_OUTCOME]`
+lines (`nseOutcomes.ts`):
+
+| Part | Decision |
+| --- | --- |
+| Source | The service imports `FcmLog as Log` (`NativePushLog.kt`): same signatures, and every `w`, `e` and `println` at WARN or above ALSO goes to `NativePushLog.record`. No call site was rewritten. Debug and info stay in logcat, as the in-app log keeps no debug. |
+| Line | `NativePushLogLine`: the service's own instant in the in-app log's stamp shape, `W`/`E`, the tag, the message, an exception named by its CLASS (never its message or stack), on one line. |
+| Storage | `commands/native_push_log.rs`, through JNI `nativeAppendPushLog`: `native_push_log.txt` in the app data directory, rotated to `native_push_log.1.txt` past **32 KiB** - the pair never exceeds 64 KiB. Lines are cut at 400 characters. One in-process mutex orders every append against every take (the service and the WebView share one Android process), so no line is lost between a read and a removal. |
+| Into the log | `take_native_push_log` (empty off Android) hands the lines over, oldest first, and removes them; `drainNativePushLog` (`nativePushLog.ts`) writes each as `[NATIVE_PUSH] <line>` through `appendLog`, plus one count line - at login, at every resume, and **at the top of `exportAppLog`, before `readAppLog`**, so an export carries what the service said since the last resume. That is the one hook in the export: what the file CONTAINS, never how it is shared. |
+| Privacy | Through `appendLog`, so through the console wrapper and `redactLogLine` like every other line: the lines leave the device under the in-app log's rules (8-character id prefixes, no secrets, no prose values). The service never logs message text; the file itself is app-private and plain, like logcat. |
+| Failure | A writer that cannot write says so ONCE to logcat (`NativePushLog`: `the push service's lines are NOT reaching the in-app log`), never through `FcmLog`, so it cannot recurse. A take that cannot read or remove a generation says so and leaves it for the next take. |
+
 ## The app owns which URLs its own WebView may load
 
 **A URL `http::Uri` cannot parse used to abort the whole process, and nothing on either side of the
