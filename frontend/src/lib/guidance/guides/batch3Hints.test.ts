@@ -15,7 +15,6 @@ import { isHelpId } from '../helpIds';
 import { GUIDES } from './index';
 import { associationShopHint } from './associationShopHint';
 import { associationManageHint, associationManageHubHint } from './associationManageHint';
-import { mySpaceHint } from './mySpaceHint';
 import { postAsHint } from './postAsHint';
 import { isAssociationManagementHub, isAssociationPage } from './associationRoutes';
 
@@ -64,13 +63,6 @@ const CASES: {
     elsewhere: '/associations/bde-emse',
     files: [HUB],
     anchors: ['asso.edit.members', 'asso.edit.audience'],
-  },
-  {
-    guide: mySpaceHint,
-    route: '/posts',
-    elsewhere: '/chat',
-    files: ['lib/components/posts/FeedTabRow.svelte'],
-    anchors: ['posts.tab.all'],
   },
 ];
 
@@ -162,11 +154,27 @@ describe('the association routes', () => {
 });
 
 describe('replay from Settings', () => {
-  it('"Mon espace" is replayable on the feed; the association helps, bound to one route, are not', () => {
-    expect(mySpaceHint.replay?.route).toBe('/posts');
-    expect(mySpaceHint.replay?.label().length).toBeGreaterThan(0);
+  it('the association helps, bound to one route, declare no replay', () => {
     for (const g of [associationShopHint, associationManageHint, associationManageHubHint]) {
       expect(g.replay, g.id).toBeUndefined();
     }
+  });
+});
+
+describe('the publish-as text is valid on both layouts', () => {
+  it('names the picker and says nothing about a tap, a click or a message', () => {
+    const fr = JSON.parse(src('../messages/fr.json')) as Record<string, string>;
+    const en = JSON.parse(src('../messages/en.json')) as Record<string, string>;
+    const key = 'guide_hint_post_as_body';
+    // The anchor is the phone "+" AND the desktop "Publier" button: no gesture, no noun of the button.
+    expect(fr[key]).toContain(fr.post_create_post_as_label);
+    expect(en[key]).toContain(en.post_create_post_as_label);
+    expect(fr[key]).not.toMatch(/touchez|cliquez|message|ici/i);
+    expect(en[key]).not.toMatch(/(tap|click|here)/i);
+  });
+
+  it('is a plain message, not a per-layout value', () => {
+    expect(postAsHint.steps[0].body).toBeTypeOf('function');
+    expect('byLayout' in (postAsHint.steps[0].body as object)).toBe(false);
   });
 });

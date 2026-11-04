@@ -42,7 +42,7 @@ Binding, on top of the ones above.
 | --- | --- | --- |
 | 1 | Create: post composer and event form (hint on the opening control, decision 1) | draft PR #2982 |
 | 2 | Chats and CanaReels, plus the feed tabs' explanation moved from the (i) button (decision 2), plus the "what's new" mechanism only, content with 1.6.4 (decision 3) | built, draft PR; [below](#whats-new-and-the-batch-2-hints) |
-| 3 | Associations and the campus space (shop, publish as, manage, "Mon espace"); batch 2 read PASS on both phones 2026-11-04 | built, draft PR; [below](#batch-3---associations-and-the-campus-space) |
+| 3 | Associations and the campus space (shop, publish as, manage; "Mon espace" is feed-tabs step 3); batch 2 read PASS on both phones 2026-11-04 | built, draft PR; [below](#batch-3---associations-and-the-campus-space) |
 | 4 | Booking a room | after batch 3 |
 
 ## The pieces
@@ -314,7 +314,6 @@ the right.** Two mechanisms, both reading what the interface already draws by:
 | `hint-asso-post-as` | `/posts` | `posts.compose` (the SAME opening control as `hint-create-post`: phone "+" or desktop "Publier"; never inside the modal, decision 1) | `eligible: canPostAsAssociation` (`lib/posts/postAsAccess.svelte.ts`), which asks `listPostAsAssociations()`, the list the "Publier en tant que" picker offers | "Publier au nom d'une association" - names the picker at the top of the form |
 | `hint-asso-manage` | `/associations/<slug>` | `asso.manage` (the "Gestion de l'asso" link, which OPENS the area), `asso.agenda` (Agenda hub row) | both marked only when `canManage` (the link's own condition); the agenda row also needs `canProposeEvent`, the agenda section's edit right | "Gérer l'association", "L'agenda de l'association" |
 | `hint-asso-manage-hub` | `/associations/<slug>/edit` | `asso.edit.members`, `asso.edit.audience` (hub rows) | the hub draws a row only for a reader who holds its right (`visibleEditSections`), so the audience step (platform admin or BDE super-admin) is left out for a manager without it | "Membres et droits", "Le public de l'association" |
-| `hint-my-space` | `/posts` | `posts.tab.all` (the "Mon espace" tab of `FeedTabRow`) | every account | "Mon espace" - what the tab holds; replayable from Settings |
 
 **Owner correction, 2026-11-04: one does not "join" an association.** One pays a cotisation in its
 shop; only its managers edit the member list. The first draft's `hint-asso-join` (follow, members,
@@ -324,14 +323,16 @@ dropped to keep it short and tied to the shop.
 
 Why two manager helps: the agenda is a row of the association's PUBLIC page, the members, rights and
 audience are rows of the management hub, and a hint never follows a navigation. Neither declares
-`replay` (one route per association). `hint-my-space` overlaps the third step of `hint-feed-tabs`
-(the tab's one-line explanation) - the owner listed it as its own batch item, so it is its own hint,
-met on a later visit by the one-help-per-visit cap.
+`replay` (one route per association).
+
+**"Mon espace" has no hint of its own** (lead decision, 2026-11-04, after review): the tab is already
+explained by step 3 of `hint-feed-tabs` (`posts_tabs_info_all_body`), on the same anchor, so a second
+hint would only repeat it. The owner's moment is kept, not duplicated.
 
 Pinned by `guides/batch3Hints.test.ts` (routes, layouts, anchors named in the sources, eligibility
 cases, the route patterns, replay), `guideEngine.test.ts` ("eligible": not offered, offered once the
 answer is yes, a replay held back, another help runs) and `postAsAccess.test.ts`. Owed on a phone: the
-five read on the Mi 9T and the iPhone 12 with a plain member, a non-member, a manager and an account
+four read on the Mi 9T and the iPhone 12 with a plain member, a non-member, a manager and an account
 that can post as an association.
 
 ## Back, focus, motion
