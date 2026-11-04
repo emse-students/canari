@@ -14,8 +14,6 @@ const plugin = vi.hoisted(() => ({
   configureTabBar: vi.fn(),
   onTabSelected: vi.fn(),
   getTabBarInsets: vi.fn(),
-  showTabBar: vi.fn(),
-  hideTabBar: vi.fn(),
   selectTab: vi.fn(),
   setBadge: vi.fn(),
   removeTabBar: vi.fn(),
@@ -52,6 +50,11 @@ import { modalWebLayer } from '$lib/navigation/nativeTabBarState.svelte';
 
 const mounted: (() => void)[] = [];
 const INTERACTIVE = 'plugin:system-components|set_tab_bar_interactive';
+const SHOW = 'plugin:system-components|show_tab_bar';
+const HIDE = 'plugin:system-components|hide_tab_bar';
+
+/** The `invoke` calls made for ONE patched command, as `[command, args]` pairs. */
+const callsOf = (command: string) => core.invoke.mock.calls.filter(([c]) => c === command);
 
 /** Lets the plugin's answers and the effects they trigger settle. */
 async function settle() {
@@ -72,13 +75,7 @@ beforeEach(() => {
     return { unregister: vi.fn().mockResolvedValue(undefined) };
   });
   plugin.getTabBarInsets.mockResolvedValue({ bottom: 83 });
-  for (const f of [
-    plugin.showTabBar,
-    plugin.hideTabBar,
-    plugin.selectTab,
-    plugin.setBadge,
-    plugin.removeTabBar,
-  ]) {
+  for (const f of [plugin.selectTab, plugin.setBadge, plugin.removeTabBar]) {
     f.mockResolvedValue(undefined);
   }
   nav.goto.mockReset();
@@ -209,11 +206,14 @@ describe('NativeTabBar', () => {
 
   it('hides with the layout rule, and shows again', async () => {
     const state = await mountBar({ visible: false });
-    expect(plugin.hideTabBar).toHaveBeenCalled();
+    expect(callsOf(HIDE)).toHaveLength(1);
 
     state.visible = true;
     for (let i = 0; i < 4; i++) await tick();
-    expect(plugin.showTabBar).toHaveBeenCalled();
+    expect(callsOf(SHOW)).toHaveLength(1);
+    // Both stamped from the one rising sequence Swift orders them by: the show is the newer call.
+    const seqOf = ([, args]: unknown[]) => (args as { options: { seq: number } }).options.seq;
+    expect(seqOf(callsOf(SHOW)[0])).toBeGreaterThan(seqOf(callsOf(HIDE)[0]));
   });
 
   it('draws the unread dot as an empty badge, and sends nothing that did not change', async () => {
@@ -240,38 +240,40 @@ describe('NativeTabBar', () => {
     // iPhone 12, `1.6.3-alpha.7`: a tab tapped under the tour's backdrop left the tour.
     await mountBar({ visible: true });
     // Sent once the bar is configured, whatever it was: the overlay outlives a WebView reload.
-    expect(core.invoke).toHaveBeenCalledExactlyOnceWith(INTERACTIVE, {
-      options: { interactive: true, seq: expect.any(Number) },
-    });
+    expect(callsOf(INTERACTIVE)).toEqual([
+      [INTERACTIVE, { options: { interactive: true, seq: expect.any(Number) } }],
+    ]);
 
     modalWebLayer.covering = true;
     await settle();
-    expect(core.invoke).toHaveBeenLastCalledWith(INTERACTIVE, {
-      options: { interactive: false, seq: expect.any(Number) },
-    });
+    expect(callsOf(INTERACTIVE).at(-1)).toEqual([
+      INTERACTIVE,
+      { options: { interactive: false, seq: expect.any(Number) } },
+    ]);
 
     modalWebLayer.covering = false;
     await settle();
-    expect(core.invoke).toHaveBeenLastCalledWith(INTERACTIVE, {
-      options: { interactive: true, seq: expect.any(Number) },
-    });
-    expect(core.invoke).toHaveBeenCalledTimes(3);
+    expect(callsOf(INTERACTIVE).at(-1)).toEqual([
+      INTERACTIVE,
+      { options: { interactive: true, seq: expect.any(Number) } },
+    ]);
+    expect(callsOf(INTERACTIVE)).toHaveLength(3);
     // Every call carries a rising sequence, which Swift orders the async calls by.
     const seqs = core.invoke.mock.calls.map(
       (c) => (c[1] as { options: { seq: number } }).options.seq
     );
     expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
-    expect(new Set(seqs).size).toBe(3);
+    expect(new Set(seqs).size).toBe(seqs.length);
     // Still drawn throughout: the tour's steps point at its band.
-    expect(plugin.hideTabBar).not.toHaveBeenCalled();
+    expect(callsOf(HIDE)).toHaveLength(0);
   });
 
   it('blocks a bar that comes up under a modal layer already on screen', async () => {
     modalWebLayer.covering = true;
     await mountBar({ visible: true });
-    expect(core.invoke).toHaveBeenCalledExactlyOnceWith(INTERACTIVE, {
-      options: { interactive: false, seq: expect.any(Number) },
-    });
+    expect(callsOf(INTERACTIVE)).toEqual([
+      [INTERACTIVE, { options: { interactive: false, seq: expect.any(Number) } }],
+    ]);
   });
 
   it('retries a block the plugin refused on the next change', async () => {
@@ -287,12 +289,12 @@ describe('NativeTabBar', () => {
     // the layer going away asks nothing, and the next one sends the block again.
     modalWebLayer.covering = false;
     await settle();
-    expect(core.invoke).not.toHaveBeenCalled();
+    expect(callsOf(INTERACTIVE)).toHaveLength(0);
     modalWebLayer.covering = true;
     await settle();
-    expect(core.invoke).toHaveBeenCalledExactlyOnceWith(INTERACTIVE, {
-      options: { interactive: false, seq: expect.any(Number) },
-    });
+    expect(callsOf(INTERACTIVE)).toEqual([
+      [INTERACTIVE, { options: { interactive: false, seq: expect.any(Number) } }],
+    ]);
     warn.mockRestore();
   });
 });

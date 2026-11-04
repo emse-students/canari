@@ -13,12 +13,10 @@
   import {
     configureTabBar,
     getTabBarInsets,
-    hideTabBar,
     onTabSelected,
     removeTabBar,
     selectTab,
     setBadge,
-    showTabBar,
     type TabSelectedListener,
   } from '@sosweetham/tauri-plugin-system-components-api';
   import { MOBILE_NAV_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
@@ -29,8 +27,7 @@
   import { Log } from '$lib/utils/Log';
   import { registerGuideRegion } from '$lib/guidance/guideAnchors.svelte';
   import { modalWebLayer } from '$lib/navigation/nativeTabBarState.svelte';
-  import { invoke } from '@tauri-apps/api/core';
-  import { systemComponentsCommand } from '$lib/services/systemComponentsCommands';
+  import { invokeSequenced } from '$lib/services/systemComponentsCommands';
 
   /**
    * THE BOTTOM BAR AS A NATIVE UITabBar, ON iOS ONLY - Liquid Glass on iOS 26 (user, 2026-09-29).
@@ -191,11 +188,13 @@
   }
 
   // Shown / hidden with the layout's rule, and the reserve re-read: a hidden bar covers nothing.
+  // Sequenced like the interaction switch (`invokeSequenced`): a hide quickly followed by a show
+  // (the keyboard closing as a conversation opens) may otherwise reach UIKit in the reverse order.
   $effect(() => {
     if (nativeTabBar.status !== 'native') return;
     const show = shown;
-    void (show ? showTabBar() : hideTabBar())
-      .then(() => publishInsets())
+    void invokeSequenced(show ? 'showTabBar' : 'hideTabBar')
+      .answered.then(() => publishInsets())
       .catch(logFailure(show ? 'show' : 'hide'));
   });
 
@@ -253,9 +252,10 @@
    * when configured, and its overlay OUTLIVES a WebView reload - a page reloaded under the backdrop
    * would otherwise leave a bar that takes no touch, with this side believing it never blocked it.
    * Recorded as sent only once the plugin ANSWERED, so a failed call is retried on the next change;
-   * every call carries a rising `seq`, because the command is async and two quick toggles may reach
-   * the main queue out of order - Swift drops an older one arriving last.
+   * every call carries a rising `seq` (`invokeSequenced`), because the command is async and two
+   * quick toggles may reach the main queue out of order - Swift drops an older one arriving last.
    */
+  /** The `seq` of the newest interaction call, so only ITS answer records the state as sent. */
   let interactiveSeq = 0;
   let sentInteractive: { configuration: number; interactive: boolean } | null = null;
   $effect(() => {
@@ -268,14 +268,13 @@
     ) {
       return;
     }
-    const seq = ++interactiveSeq;
     Log.d(
       'NativeTabBar',
-      `interactive=${interactive} seq=${seq} (modal web layer ${interactive ? 'gone' : 'up'})`
+      `interactive=${interactive} (modal web layer ${interactive ? 'gone' : 'up'})`
     );
-    invoke(systemComponentsCommand('setTabBarInteractive'), {
-      options: { interactive, seq },
-    }).then(
+    const { seq, answered } = invokeSequenced('setTabBarInteractive', { interactive });
+    interactiveSeq = seq;
+    answered.then(
       () => {
         if (seq === interactiveSeq) sentInteractive = { configuration, interactive };
       },
