@@ -52,9 +52,10 @@ on it. The first eleven rows were already met by `1.6.0`; the last four need `1.
 
 **NOT unblocked by `1.6.2`:** the entries whose carrying pull request first ships in `v1.6.3` (the
 institution's republication consent, #2965; WP-PIN's body-less pin, #2984; `GET spaces/audiences`, #2951;
-`kind=reel` on `feed=all`, #2990; and the creator-with-several-BDEs error, #2986), a restored message with
+`kind=reel` on `feed=all`, #2990; the creator-with-several-BDEs error, #2986), a restored message with
 no author signature (#2276, `v1.5.0`; the oldest unsigned message must also leave retention), and the
 refresh cookie on `tauri://localhost` (a desktop measurement). Entries not named here were not re-checked.
+
 ---
 
 ## What the 2026-08-17 gate actually retired, and what it did not
