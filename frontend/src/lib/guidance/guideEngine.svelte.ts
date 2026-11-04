@@ -189,7 +189,11 @@ export class GuideEngine {
     }
     if (!this.env.seenReady()) return null;
     if (this.#shownThisVisit) return null;
-    return this.guides.find((g) => !this.env.isSeen(g.id) && offered(g)) ?? null;
+    return (
+      this.guides.find(
+        (g) => !this.env.isSeen(g.id) && (!g.requires || this.env.isSeen(g.requires)) && offered(g)
+      ) ?? null
+    );
   }
 
   #start(guide: GuideDefinition, pathname: string): void {
@@ -278,7 +282,13 @@ export class GuideEngine {
     }
     Log.i('guide', `${run.guide.id} ended: ${reason} at step ${run.index + 1}/${run.steps.length}`);
     this.#run = null;
+    const first = !this.env.isSeen(run.guide.id);
     this.env.markSeen(run.guide.id);
+    if (!first) return;
+    for (const id of run.guide.supersedes ?? []) {
+      Log.i('guide', `${run.guide.id} met for the first time: ${id} recorded as seen with it`);
+      this.env.markSeen(id);
+    }
   }
 
   /**

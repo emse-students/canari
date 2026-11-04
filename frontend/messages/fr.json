@@ -3678,8 +3678,6 @@
   "posts_tab_associations": "Associations",
   "posts_tab_followed": "Suivis",
   "posts_tab_all": "Mon espace",
-  "posts_tabs_info_open": "Comprendre les onglets",
-  "posts_tabs_info_title": "Les onglets du fil",
   "posts_tabs_info_associations_title": "Associations",
   "posts_tabs_info_associations_body": "Ce que publient les associations que tu peux voir, et ce qu'elles republient.",
   "posts_tabs_info_followed_title": "Suivis",
@@ -5246,5 +5244,13 @@
   "guide_hint_create_form_questions_title": "Les questions",
   "guide_hint_create_form_questions_body": "Ajoutez vos questions une à une, avec le type de réponse voulu. Vous pouvez les rendre obligatoires.",
   "guide_hint_create_form_settings_title": "Réglages avancés",
-  "guide_hint_create_form_settings_body": "Public concerné, date d'ouverture, nombre de réponses : tout est ici, replié par défaut."
+  "guide_hint_create_form_settings_body": "Public concerné, date d'ouverture, nombre de réponses : tout est ici, replié par défaut.",
+  "guide_hint_chats_title": "Démarrer une discussion",
+  "guide_hint_chats_body": "Appuyez sur + pour écrire à une personne ou créer un groupe. Vos conversations sont dans la liste, touchez-en une pour l'ouvrir.",
+  "guide_hint_reels_title": "CanaReels",
+  "guide_hint_reels_body": "Les vidéos courtes de votre campus, en plein écran. Touchez l'icône pour les regarder, balayez pour passer à la suivante.",
+  "guide_whats_new_pins_title": "Publications épinglées",
+  "guide_whats_new_pins_body": "Les BDE peuvent désormais épingler une publication en tête de leurs espaces : elle reste en haut de Mon espace.",
+  "guide_whats_new_read_title": "Lu sur tous vos appareils",
+  "guide_whats_new_read_body": "Un message lu sur un appareil l'est aussi sur les autres, sans recharger. Vos discussions sont ici."
 }

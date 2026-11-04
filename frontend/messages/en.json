@@ -3646,8 +3646,6 @@
   "posts_tab_associations": "Clubs",
   "posts_tab_followed": "Following",
   "posts_tab_all": "My space",
-  "posts_tabs_info_open": "About the tabs",
-  "posts_tabs_info_title": "The feed tabs",
   "posts_tabs_info_associations_title": "Clubs",
   "posts_tabs_info_associations_body": "What the clubs you can see publish, and what they republish.",
   "posts_tabs_info_followed_title": "Following",
@@ -5246,5 +5244,13 @@
   "guide_hint_create_form_questions_title": "The questions",
   "guide_hint_create_form_questions_body": "Add your questions one by one, with the answer type you want. You can make them required.",
   "guide_hint_create_form_settings_title": "Advanced settings",
-  "guide_hint_create_form_settings_body": "Audience, opening date, number of answers: it is all here, folded away by default."
+  "guide_hint_create_form_settings_body": "Audience, opening date, number of answers: it is all here, folded away by default.",
+  "guide_hint_chats_title": "Start a conversation",
+  "guide_hint_chats_body": "Tap + to message someone or create a group. Your conversations are in the list: tap one to open it.",
+  "guide_hint_reels_title": "CanaReels",
+  "guide_hint_reels_body": "Short videos from your campus, full screen. Tap the icon to watch them, swipe to go to the next one.",
+  "guide_whats_new_pins_title": "Pinned posts",
+  "guide_whats_new_pins_body": "Student unions can now pin a post at the top of their spaces: it stays at the top of My space.",
+  "guide_whats_new_read_title": "Read on all your devices",
+  "guide_whats_new_read_body": "A message read on one device is read on the others too, with no reload. Your chats are here."
 }

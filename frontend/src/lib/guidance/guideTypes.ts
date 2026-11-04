@@ -77,6 +77,18 @@ export interface GuideDefinition {
   /** The routes it may START on. It runs only there; a hint whose route is left is put back. */
   readonly appliesTo: (pathname: string) => boolean;
   readonly steps: readonly GuideStep[];
+  /**
+   * Another help the account must ALREADY have seen before this one is offered. The "what's new"
+   * help uses it on the welcome tour: an account that has not met the tour is brand new (or has
+   * not been shown it yet) and gets the tour, never the news of the version it just installed.
+   */
+  readonly requires?: HelpId;
+  /**
+   * Helps recorded as seen together with this one, when this one is met for the FIRST time (a
+   * replay records nothing extra). The welcome tour supersedes the current "what's new": the tour
+   * already covers what the account has not seen, so its next visit must not open with the news.
+   */
+  readonly supersedes?: readonly HelpId[];
 }
 
 /** Why a help ended. Every one of them records it as seen, except none: an end is an end. */
