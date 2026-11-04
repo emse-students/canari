@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BaseMlsService } from '$lib/services/BaseMlsService';
 import { GroupDrainAbandonedError } from '$lib/mls-client/IMlsService';
 import type { MlsPerGroupScheduler, MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
+import { flushMacrotask } from '../../test/flush';
 
 /** @see BaseMlsService.deliveryIdentity.test.ts - same reason the cast is what instantiates the base. */
 abstract class Harness extends BaseMlsService {
@@ -174,6 +175,38 @@ describe('whenGroupDrained', () => {
     expect(info.mock.calls.flat().join(' ')).toContain(
       '1 drain waiter(s) (parked seed asks, admission observations) wait for a pull that completes'
     );
+  });
+
+  it('a pull begun on the previous link does not mark the NEW link listed (socket flap mid-pull)', async () => {
+    // Review of #3030, B2: P1 starts on link 1, link 2 opens, P1 then lists the mailbox. Frames
+    // queued while the socket was down need link 2's own pull, which waits for the socket to settle
+    // and the unresolved commits first - a long window to read "listed" in.
+    const svc = liveService();
+    let release!: () => void;
+    Object.assign(svc, {
+      delivery: {
+        ackMessages: vi.fn().mockResolvedValue(undefined),
+        pullPendingMessagesJson: vi
+          .fn()
+          .mockImplementationOnce(() => new Promise<void>((r) => (release = r)))
+          .mockResolvedValue(undefined),
+      },
+    });
+    const listed = () =>
+      (svc as unknown as { mailboxEmptiedByAPull: boolean }).mailboxEmptiedByAPull;
+
+    const p1 = inner(svc).fetchPendingMessages();
+    await flushMacrotask();
+    (svc as unknown as { noteSocketOpened(): void }).noteSocketOpened();
+    release();
+    await p1;
+    expect(listed()).toBe(false);
+    expect(svc.isGroupDrained('g-1')).toBe(false);
+
+    // The new link's own pull is the one that says it.
+    await inner(svc).fetchPendingMessages();
+    expect(listed()).toBe(true);
+    expect(svc.isGroupDrained('g-1')).toBe(true);
   });
 
   it('is rejected, typed, when the service is destroyed - no waiter outlives sign-out', async () => {

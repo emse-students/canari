@@ -35,6 +35,12 @@ export type IncomingDeliveryMeta = {
    * bounded history answer - see `historyAddressing.ts`. Absent means a group broadcast.
    */
   addressed?: boolean;
+  /**
+   * A LIVE copy that arrived before a pull had listed the whole mailbox on this link
+   * (`MlsQueuedMessage.aheadOfMailbox`): frames queued before it on the server may still be behind
+   * it in this device's queue. Read by `routeDistributionFrame`, which steps no commit for it.
+   */
+  aheadOfMailbox?: boolean;
 };
 
 /**
@@ -48,9 +54,11 @@ export function deliveryMetaOf(msg: {
   senderDeviceId?: string;
   channel?: DeliveryChannel;
   addressed?: boolean;
+  aheadOfMailbox?: boolean;
 }): IncomingDeliveryMeta | undefined {
   const meta: IncomingDeliveryMeta = {
     ...(msg.channel ? { channel: msg.channel } : {}),
+    ...(msg.aheadOfMailbox === true ? { aheadOfMailbox: true } : {}),
     ...(msg.addressed === true ? { addressed: true } : {}),
     ...(msg.queuedCreatedAt !== undefined ? { queuedCreatedAt: msg.queuedCreatedAt } : {}),
     ...(msg.queuedMessageId ? { queuedMessageId: msg.queuedMessageId } : {}),

@@ -2104,10 +2104,21 @@ export abstract class BaseMlsService implements IMlsService {
    */
   protected noteSocketOpened(): void {
     this.mailboxEmptiedByAPull = false;
+    this.linkGeneration += 1;
   }
 
-  /** Key groups with a live frame held by {@link holdLiveKeyGroupFrame} since its last pull. */
-  private readonly liveHeldKeyGroups = new Set<string>();
+  /**
+   * Which gateway link this is, bumped by {@link noteSocketOpened}. A pull captures it when it starts
+   * and may set {@link mailboxEmptiedByAPull} only if the link is still the one it started on: a
+   * pull begun on the previous link and finished after the socket flapped listed the mailbox as of
+   * THAT link, and frames queued while the socket was down are listed only by a pull of this one
+   * (review of #3030: such a pull read as "listed on this link" until the new link's own pull,
+   * which waits for the socket to settle and the unresolved commits first).
+   */
+  private linkGeneration = 0;
+
+  /** Live frames held by {@link holdLiveKeyGroupFrame} since its last pull, counted by key group. */
+  private readonly liveHeldKeyGroups = new Map<string, number>();
 
   /** The pull {@link holdLiveKeyGroupFrame} owes, until it starts. */
   private liveHoldPull: Promise<void> | null = null;
@@ -2117,17 +2128,22 @@ export abstract class BaseMlsService implements IMlsService {
    * order. ONE pull for a burst: frames held before it starts ride on it, and one held after it
    * started asks for the next, so no held frame is left without a pull that lists it. Started
    * after any pull in flight, which may have listed past this frame's row already.
+   *
+   * NOT NOTED IN `unackedFrames`, deliberately: that ledger holds a frame until an EVENT (a Welcome,
+   * a restore, a registration) discharges its reason, and nothing has to happen here but this pull,
+   * which is asked for right now. A note would only make the next unrelated discharge pull again.
    */
   private holdLiveKeyGroupFrame(groupId: string): void {
-    this.liveHeldKeyGroups.add(groupId);
+    this.liveHeldKeyGroups.set(groupId, (this.liveHeldKeyGroups.get(groupId) ?? 0) + 1);
     if (this.liveHoldPull) return;
     this.liveHoldPull = (async () => {
       await this.pendingPullInFlight?.catch(() => {});
-      const groups = [...this.liveHeldKeyGroups].map((g) => g.slice(0, 8));
+      const held = [...this.liveHeldKeyGroups].map(([g, n]) => `${g.slice(0, 8)} x${n}`);
+      const frames = [...this.liveHeldKeyGroups.values()].reduce((a, n) => a + n, 0);
       this.liveHeldKeyGroups.clear();
       this.liveHoldPull = null;
       console.log(
-        `[GRAINE] live frame(s) of key group(s) ${groups.join(', ')} ahead of the local epoch before the mailbox was listed on this link - left queued and pulled in the server's order, no commit replayed past the frames queued before them`
+        `[GRAINE] ${frames} live frame(s) on ${held.length} key group(s) [${held.join(', ')}] arrived ahead of the local epoch before the mailbox was listed on this link - left queued and pulled again in the server's order, no commit replayed past the frames queued before them`
       );
       await this.fetchPendingMessages();
     })();
@@ -2503,8 +2519,21 @@ export abstract class BaseMlsService implements IMlsService {
    */
   protected enqueueMessage(msg: MlsQueuedMessage, channel: DeliveryChannel): void {
     if (!this.admitDelivery(msg.queuedMessageId, channel)) return;
+    // AHEAD OF THE MAILBOX IS A FACT OF THE ARRIVAL, so it is stamped at the arrival. The scheduler
+    // is an arrival-order FIFO and the pull's copy of this row is dropped as a repeat above, so the
+    // rows the reconnect's pull lists AFTER this live frame - the commits and seeds the server queued
+    // BEFORE it - sit behind it here, and the pull may well have ended by the time it is handled:
+    // read then, "listed" would be true and the frame would step the log over them (review of
+    // #3030). Only a row the server can hand back is stamped: a frame with no queue id has no
+    // second copy for a hold to wait for.
+    const aheadOfMailbox =
+      channel === 'live' && !!msg.queuedMessageId && !this.mailboxListedOnThisLink();
     // Stamped HERE, after the dedup: the copy that was admitted is the one whose route is a fact.
-    this.messageScheduler.enqueue({ ...msg, channel });
+    this.messageScheduler.enqueue({
+      ...msg,
+      channel,
+      ...(aheadOfMailbox ? { aheadOfMailbox } : {}),
+    });
     if (!this.messageScheduler.draining) {
       void this.processQueue();
     }
@@ -2803,6 +2832,8 @@ export abstract class BaseMlsService implements IMlsService {
     // Cleared here rather than on failure: what the barrier may trust is a pull that finished, and
     // this one has not started. A pull that dies half-way therefore leaves it false.
     this.mailboxEmptiedByAPull = false;
+    /** The link this pull lists the mailbox for: only a pull of the CURRENT link may say it listed it. */
+    const startedOnLink = this.linkGeneration;
     // A pull is being made, so the barrier's "held for the reconnect" spell is over: the next one
     // that holds says so again.
     this.barrierPullHeldSaid = false;
@@ -2844,8 +2875,16 @@ export abstract class BaseMlsService implements IMlsService {
           },
         });
         // Every page fetched and enqueued: the server holds nothing more for this device, which is
-        // the fact the barrier is allowed to stand on.
-        this.mailboxEmptiedByAPull = true;
+        // the fact the barrier is allowed to stand on - ON THE LINK IT STARTED ON. A socket that
+        // opened meanwhile (`noteSocketOpened`) may have been preceded by frames queued while it was
+        // down, which this pull may not have listed: that link's own pull says it, not this one.
+        if (startedOnLink === this.linkGeneration) {
+          this.mailboxEmptiedByAPull = true;
+        } else {
+          console.log(
+            '[PENDING] the mailbox was listed on a link that has since been replaced - not trusted as listed on the new one; its own pull will be'
+          );
+        }
         emptied = true;
         if (fetched === 0) {
           console.log(
@@ -6659,7 +6698,7 @@ export abstract class BaseMlsService implements IMlsService {
     sender: string,
     ciphertext: Uint8Array,
     senderDeviceId?: string,
-    channel?: DeliveryChannel
+    aheadOfMailbox?: boolean
   ): Promise<boolean> {
     const scope = this.distributionScopeByGroup.get(groupId);
     if (scope === undefined) {
@@ -6692,16 +6731,18 @@ export abstract class BaseMlsService implements IMlsService {
       if (classifyIncomingDecryptError(e) !== 'epoch-gap') {
         return this.dispositionOfUnreadableFrame(groupId, e);
       }
-      // A LIVE FRAME IS NOT A PROOF THAT THE MISSING COMMITS ARE MISSING FROM THE MAILBOX. Until a
-      // pull has listed the whole mailbox on this link, the commits it is ahead of - and the seeds
-      // sealed between them - may still be on the server, queued BEFORE it. Stepping from the log
-      // to this frame's epoch jumped past them, and every one of those seeds more than
-      // `max_past_epochs` (2) behind then arrived as `past-epoch-application`, "unreadable for
-      // good" (tester export, 2026-11-04: nine on one key group in one second of a resume's bulk
-      // ingest, no join anywhere). So it is left queued, unacknowledged, and the pull that lists
-      // the mailbox in the server's order brings it back after them, as `pull`, which is never
-      // held: the step below then runs only when the commits really are not in the queue.
-      if (channel === 'live' && !this.mailboxListedOnThisLink()) {
+      // A LIVE FRAME IS NOT A PROOF THAT THE MISSING COMMITS ARE MISSING FROM THE MAILBOX. One that
+      // ARRIVED before a pull had listed the whole mailbox on this link (`aheadOfMailbox`, stamped
+      // at the arrival - read now, after the pull ended, the evidence would say "listed" while the
+      // rows it listed sit behind this frame in the queue) may be ahead of commits, and of the
+      // seeds sealed between them, that the server queued BEFORE it. Stepping from the log to this
+      // frame's epoch jumped past them, and every one of those seeds more than `max_past_epochs`
+      // (2) behind then arrived as `past-epoch-application`, "unreadable for good" (tester export,
+      // 2026-11-04: nine on one key group in one second of a resume's bulk ingest, no join
+      // anywhere). So it is left unacknowledged - `settleDelivery` forgets it - and the pull the
+      // hold asks for lists it again behind them, as `pull`, which is never stamped: the step below
+      // then runs only when the commits really are not in the queue.
+      if (aheadOfMailbox === true) {
         this.holdLiveKeyGroupFrame(groupId);
         return false;
       }

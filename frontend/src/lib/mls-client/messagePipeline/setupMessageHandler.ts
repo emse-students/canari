@@ -325,7 +325,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           senderNorm,
           content,
           deliveryMeta?.senderDeviceId,
-          deliveryMeta?.channel
+          deliveryMeta?.aheadOfMailbox === true
         );
       }
 

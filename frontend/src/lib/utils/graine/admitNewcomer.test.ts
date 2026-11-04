@@ -44,6 +44,8 @@ beforeEach(() => {
     }),
     sendWelcome: vi.fn().mockResolvedValue(undefined),
     getEpoch: vi.fn().mockReturnValue(5),
+    whenGroupDrained: vi.fn().mockResolvedValue(undefined),
+    whenDistributionEpochSettled: vi.fn().mockResolvedValue(undefined),
     persistCheckpoint: vi.fn().mockImplementation(async () => {
       persisted += 1;
     }),
@@ -241,6 +243,50 @@ describe('admitNewcomerToDistributionGroup', () => {
     expect(out).toMatchObject({ kind: 'admitted' });
     expect(mls.addMembersBulk).toHaveBeenCalledTimes(2);
     expect(mls.releaseAddLock).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-builds on the epoch the QUEUE reached when the refusal came before the mailbox was listed', async () => {
+    // Early in a resume a key group's refusal replays no log (channel-encryption 22.2): the epoch
+    // is unmoved when the refusal returns, and the drain of this link is what moves it.
+    let epoch = 5;
+    mls.getEpoch.mockImplementation(() => epoch);
+    mls.whenGroupDrained.mockImplementation(async () => {
+      epoch = 7; // the queued commits applied in order
+    });
+    mls.addMembersBulk
+      .mockRejectedValueOnce(new CommitRefusedError('epoch_mismatch', 5, 7))
+      .mockResolvedValueOnce({
+        welcome: new Uint8Array([9]),
+        ratchetTree: new Uint8Array([8]),
+        addedDeviceIds: ['phone', 'web'],
+        skipped: [],
+      });
+
+    const out = await admitNewcomerToDistributionGroup(workspaceScope('ws-1'), 'bob', log);
+
+    expect(out).toMatchObject({ kind: 'admitted' });
+    expect(mls.whenGroupDrained).toHaveBeenCalledWith('key-group');
+    expect(mls.addMembersBulk).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not wait for a drain when the refusal already moved the epoch', async () => {
+    let epoch = 5;
+    mls.getEpoch.mockImplementation(() => epoch);
+    mls.addMembersBulk
+      .mockImplementationOnce(async () => {
+        epoch = 6;
+        throw new CommitRefusedError('epoch_mismatch', 5, 6);
+      })
+      .mockResolvedValueOnce({
+        welcome: new Uint8Array([9]),
+        ratchetTree: new Uint8Array([8]),
+        addedDeviceIds: ['phone', 'web'],
+        skipped: [],
+      });
+
+    await admitNewcomerToDistributionGroup(workspaceScope('ws-1'), 'bob', log);
+
+    expect(mls.whenGroupDrained).not.toHaveBeenCalled();
   });
 
   it('gives up, loudly, on a refusal its catch-up could not move past', async () => {

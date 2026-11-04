@@ -6,7 +6,7 @@ import type { SkippedDevice } from './skippedKeyPackage';
 import type { DeviceEvent, DevicePin, KeyPackageVerdict } from './deviceTrust';
 import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
 import type { FrameDelivery } from './frameDelivery';
-import type { DeliveryChannel, IncomingDeliveryMeta } from './incomingDelivery';
+import type { IncomingDeliveryMeta } from './incomingDelivery';
 import type { MlsDecryptSession } from './mlsDecryptSession';
 import type { ServerInstant } from './serverInstant';
 import type { DistributionScope } from './distributionScope';
@@ -1406,16 +1406,16 @@ export interface IMlsService {
   ): Promise<ExternalJoinOutcome>;
   /**
    * Decrypts a frame that arrived on a key-distribution group and hands it to the Graine handler.
-   * Returns whether the frame may be acknowledged. `channel` is how it arrived: a `live` frame ahead
-   * of the group's epoch is left queued until the mailbox is listed on this link, so the commits and
-   * seeds queued before it are applied first.
+   * Returns whether the frame may be acknowledged. `aheadOfMailbox` is the arrival stamp
+   * (`IncomingDeliveryMeta.aheadOfMailbox`): such a frame, ahead of the group's epoch, steps no
+   * commit - it is left queued and pulled again behind the commits and seeds queued before it.
    */
   routeDistributionFrame(
     groupId: string,
     sender: string,
     ciphertext: Uint8Array,
     senderDeviceId?: string,
-    channel?: DeliveryChannel
+    aheadOfMailbox?: boolean
   ): Promise<boolean>;
   /** Returns the unique device ID assigned to this MLS instance. */
   getDeviceId(): string;
