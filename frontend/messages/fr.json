@@ -5312,5 +5312,14 @@
   "guide_hint_asso_hub_audience_title": "Le public de l'association",
   "guide_hint_asso_hub_audience_body": "Décidez qui voit les publications et les événements de l'association, par campus ou par formation.",
   "guide_hint_asso_shop_title": "La boutique de l'association",
-  "guide_hint_asso_shop_body": "Achetez-y ses produits et ses billets, et réglez la cotisation : c'est elle qui fait de vous un cotisant, avec les tarifs et les offres réservés aux cotisants."
+  "guide_hint_asso_shop_body": "Achetez-y ses produits et ses billets, et réglez la cotisation : c'est elle qui fait de vous un cotisant, avec les tarifs et les offres réservés aux cotisants.",
+  "guide_hint_booking_mine_title": "Vos réservations",
+  "guide_hint_booking_mine_body": "Vos prochaines réservations sont ici, la plus proche en premier. Les passées et les annulées sont repliées dessous.",
+  "guide_hint_booking_spaces_title": "Réserver un espace",
+  "guide_hint_booking_spaces_body": "Choisissez un espace pour voir sa semaine et y réserver un créneau. Un espace sur lien uniquement n'apparaît pas ici : il s'ouvre par son lien ou son QR code.",
+  "guide_hint_booking_column_title": "Une colonne par ressource",
+  "guide_hint_booking_column_body": "Cet espace a plusieurs colonnes, une par salle ou ressource. Choisissez celle que vous voulez réserver : le nombre de créneaux libres est indiqué.",
+  "guide_hint_booking_week_title": "Réserver un créneau",
+  "guide_hint_booking_week_body_phone": "Choisissez le jour, puis un créneau libre de la liste, ou « Réserver un créneau ». Une fiche vous laisse ajuster la durée et ajouter des personnes avant de confirmer.",
+  "guide_hint_booking_week_body_desktop": "Choisissez un créneau libre dans la grille, ou glissez sur plusieurs pour réserver plus longtemps. Une fiche vous laisse ajuster la durée et ajouter des personnes avant de confirmer."
 }

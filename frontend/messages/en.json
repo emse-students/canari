@@ -5312,5 +5312,14 @@
   "guide_hint_asso_hub_audience_title": "The association's audience",
   "guide_hint_asso_hub_audience_body": "Decide who sees the association's posts and events, by campus or by programme.",
   "guide_hint_asso_shop_title": "The association's shop",
-  "guide_hint_asso_shop_body": "Buy its products and tickets here, and pay the membership (cotisation): it makes you a cotisant, with the prices and offers reserved to cotisants."
+  "guide_hint_asso_shop_body": "Buy its products and tickets here, and pay the membership (cotisation): it makes you a cotisant, with the prices and offers reserved to cotisants.",
+  "guide_hint_booking_mine_title": "Your bookings",
+  "guide_hint_booking_mine_body": "Your coming bookings are here, the nearest first. Past and cancelled ones are folded away below.",
+  "guide_hint_booking_spaces_title": "Book a space",
+  "guide_hint_booking_spaces_body": "Pick a space to see its week and book a slot. A link-only space is not listed here: it opens from its link or QR code.",
+  "guide_hint_booking_column_title": "One column per resource",
+  "guide_hint_booking_column_body": "This space has several columns, one per room or resource. Pick the one you want to book: the number of free slots is shown.",
+  "guide_hint_booking_week_title": "Book a slot",
+  "guide_hint_booking_week_body_phone": "Pick the day, then a free slot in the list, or \"Book a slot\". A sheet lets you adjust the length and add people before you confirm.",
+  "guide_hint_booking_week_body_desktop": "Pick a free slot in the grid, or drag over several to book for longer. A sheet lets you adjust the length and add people before you confirm."
 }

@@ -11,7 +11,9 @@
     "hint-asso-shop",
     "hint-asso-post-as",
     "hint-asso-manage",
-    "hint-asso-manage-hub"
+    "hint-asso-manage-hub",
+    "hint-booking-spaces",
+    "hint-booking-week"
   ],
   "unknownIdCode": "HELP_ID_UNKNOWN"
 }
