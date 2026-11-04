@@ -7,8 +7,10 @@
  *   bun tools/ios-device/ios.mjs shot <file.png>        screenshot
  *   bun tools/ios-device/ios.mjs tree                   the visible accessibility tree, one line each
  *   bun tools/ios-device/ios.mjs find <text>            elements whose label/name/value contain text
- *   bun tools/ios-device/ios.mjs tap <text | x,y>       tap an element by text, or a point
- *   bun tools/ios-device/ios.mjs type <text>            type into the focused field
+ *   bun tools/ios-device/ios.mjs tap <text | x,y>       tap a Button/Link/... by text (an ambiguity is refused and
+ *                                                       listed), or a point; refused under the keyboard (IOS_TAP_KEYBOARD=1 allows)
+ *   bun tools/ios-device/ios.mjs type <text>            REPLACE the focused field's value in one call, read it back
+ *                                                       (exact, or length for a secure field), print { length, secure }
  *   bun tools/ios-device/ios.mjs swipe x1 y1 x2 y2 [s]  drag, in POINTS (see `size`)
  *   bun tools/ios-device/ios.mjs button <home|volumeUp|volumeDown>
  *   bun tools/ios-device/ios.mjs size                   window size in points
@@ -167,18 +169,145 @@ export async function tapAt(sid, x, y) {
   });
 }
 
-/** Taps the first element containing `text`, at the centre of its rectangle. */
-export async function tapText(sid, text) {
-  const hits = await find(sid, text);
+/** The element types a finger acts on. A StaticText or Other carrying the same words does not. */
+const TAPPABLE = new Set(['Button', 'Link', 'Cell', 'Switch', 'TextField', 'SecureTextField', 'SearchField', 'Tab', 'MenuItem', 'Toggle']);
+
+/**
+ * Chooses what `tap <text>` taps, or throws. PREFERS an interactive element (Button, Link, ...) over
+ * a label that merely says the same thing (the first match used to win, and it was a StaticText
+ * under the button: "Deverrouiller", "Preferences"). Among the candidates of the winning class it
+ * wants EXACTLY ONE distinct rectangle (the tree repeats a node and its text child on one rect), and
+ * REFUSES otherwise, listing them: guessing which of two buttons was meant is a tap on the wrong one.
+ * Several interactive candidates are first narrowed to those whose label equals `text` exactly.
+ */
+export function pickTapTarget(hits, text) {
   if (!hits.length) throw new Error(`nothing on screen says "${text}"`);
-  const { x, y, width, height } = hits[0].rect;
-  await tapAt(sid, Math.round(x + width / 2), Math.round(y + height / 2));
-  return hits[0];
+  const interactive = hits.filter((h) => TAPPABLE.has(h.type));
+  let pool = interactive.length ? interactive : hits;
+  if (pool.length > 1) {
+    const exact = pool.filter((h) => h.label.toLowerCase() === text.toLowerCase());
+    if (exact.length) pool = exact;
+  }
+  const distinct = new Map();
+  for (const h of pool) distinct.set(`${h.rect.x},${h.rect.y},${h.rect.width},${h.rect.height}`, h);
+  if (distinct.size > 1) {
+    const list = [...distinct.values()].map((h) => `  ${h.type} ${h.rect.x},${h.rect.y} ${h.rect.width}x${h.rect.height} "${h.label || h.text}"`);
+    throw new Error(`"${text}" is ambiguous (${distinct.size} ${interactive.length ? 'interactive' : 'non-interactive'} candidates); tap by coordinates or a longer text:\n${list.join('\n')}`);
+  }
+  return [...distinct.values()][0];
 }
 
-/** Types into the focused field, one character at a time as WDA wants it. */
-export async function type(sid, text) {
-  await wda('POST', `/session/${sid}/wda/keys`, { value: [...text] });
+/** Text inputs whose focus raises the keyboard. */
+const TEXT_INPUTS = new Set(['TextField', 'SecureTextField', 'SearchField', 'TextView']);
+
+/**
+ * Where the top of the keyboard (suggestion bar included) sits, as a fraction of the window height:
+ * 519 of 844 pt on the iPhone 12, measured 2026-11-04. It is a BOUND, not a read: the keyboard is a
+ * separate process the app-scoped accessibility tree does not contain (no `XCUIElementTypeKeyboard`
+ * node, and `/elements` finds none), so its presence is read from a text input being `isFocused`.
+ */
+export const KEYBOARD_TOP = 0.615;
+
+/** Whether a text input holds focus in the tree, which is when the keyboard is up. */
+export function keyboardUp(node) {
+  if (!node) return false;
+  if (TEXT_INPUTS.has(node.type) && node.isFocused === '1') return true;
+  return (node.children ?? []).some(keyboardUp);
+}
+
+/** Whether a tap at `y` lands in the keyboard's band, given the window height and whether it is up. */
+export function underKeyboard(up, windowHeight, y) {
+  return up && y >= windowHeight * KEYBOARD_TOP;
+}
+
+/**
+ * Refuses a tap that would land on the KEYBOARD. The accessibility tree still lists a button the
+ * keyboard covers, so a tap on it presses the KEY under that point - the measured cause of
+ * `canari-test-gamma` becoming `canari-test-gammag` and of a 24-character password showing 25 bullets
+ * (a tap on "Se connecter" at y 631 hit the `g` key). Dismiss the keyboard (the field toolbar's
+ * check mark, or the Return key via `type`) or scroll the target clear of it. `IOS_TAP_KEYBOARD=1`
+ * allows it, for the rare deliberate key tap.
+ */
+export async function guardKeyboard(sid, x, y, what) {
+  if (process.env.IOS_TAP_KEYBOARD === '1') return;
+  const up = keyboardUp(await tree(sid));
+  if (!up) return;
+  const { height } = await size(sid);
+  if (underKeyboard(up, height, y)) {
+    throw new Error(`refusing to tap ${what} at ${x},${y}: a text field has focus and the keyboard covers y >= ${Math.round(height * KEYBOARD_TOP)}; a tap would press a KEY. Dismiss the keyboard (the toolbar's check mark) or scroll the target above it first`);
+  }
+}
+
+/** Taps the one element `pickTapTarget` chooses for `text`, at the centre of its rectangle. */
+export async function tapText(sid, text) {
+  const hit = pickTapTarget(await find(sid, text), text);
+  const { x, y, width, height } = hit.rect;
+  const cx = Math.round(x + width / 2);
+  const cy = Math.round(y + height / 2);
+  await guardKeyboard(sid, cx, cy, `"${text}"`);
+  await tapAt(sid, cx, cy);
+  return hit;
+}
+
+/** The W3C element handle key, as WDA spells it in an answer. */
+const elementId = (el) => el?.ELEMENT ?? el?.['element-6066-11e4-a52e-4f735466cecf'];
+
+/**
+ * What a typed string is made of: stdin text loses ONE trailing line break (`echo`, a heredoc and a
+ * file all end in one, and typing it presses Return or lands a stray character in a secure field).
+ * Any other control character is refused, since a key event for it is not "text".
+ */
+export function typedText(raw) {
+  const text = raw.replace(/\r?\n$/, '');
+  if (/[\u0000-\u001f\u007f]/.test(text)) throw new Error('refusing to type a control character (tab, CR, ESC...)');
+  return text;
+}
+
+/**
+ * Whether what a field reports back matches what was typed. A SECURE field reports its content as
+ * bullets, so only the LENGTH can be compared (and nothing about the value may be printed).
+ * Compared in code points, since `[...s].length` is what one typed unit is.
+ */
+export function readbackMatches(text, reported, secure) {
+  const got = typeof reported === 'string' ? reported : '';
+  return secure ? [...got].length === [...text].length : got === text;
+}
+
+/**
+ * Types into the focused field IN ONE CALL, then READS IT BACK before anything submits it.
+ *
+ * It used to send `/wda/keys` with an array of single characters: one key event each, which WDA
+ * synthesises at its own typing frequency, so a dropped or repeated event changed the field with no
+ * error (`canari-test-gamma` became `...gammag`; a 24-character password put 25 bullets in, twice
+ * rejected). A trailing newline from stdin was typed too. Now: the focused element is asked for, its
+ * value is cleared, the whole string goes in as one `value` entry, and the field's reported value is
+ * compared - exactly for a plain field, by length for a secure one. A mismatch THROWS (after
+ * clearing the field), it is never retried: a retry would be a second guess at the same unknown,
+ * and a wrong password sent twice is how an account locks. Replaces, not appends.
+ * `text` is never logged or put in an error.
+ */
+export async function type(sid, raw) {
+  const text = typedText(raw);
+  if (!text) throw new Error('nothing to type (empty after dropping a trailing line break)');
+  const active = await wda('GET', `/session/${sid}/element/active`).catch((e) => {
+    if (/\(404\)/.test(e.message)) return null;
+    throw e;
+  });
+  const id = elementId(active?.value);
+  // A 404 here is "nothing holds focus" - typically the iOS password AutoFill sheet ("Preremplir le
+  // mot de passe") is over the field, which takes focus; close it with its Annuler button first.
+  if (!id) throw new Error('no focused element to type into (tap the field first; is a system sheet such as password AutoFill covering it?)');
+  const base = `/session/${sid}/element/${id}`;
+  const secure = /SecureTextField$/.test(String((await wda('GET', `${base}/attribute/type`)).value));
+  await wda('POST', `${base}/clear`, {});
+  await wda('POST', `${base}/value`, { text, value: [text] });
+  const reported = (await wda('GET', `${base}/attribute/value`)).value;
+  if (!readbackMatches(text, reported, secure)) {
+    await wda('POST', `${base}/clear`, {}).catch(() => {});
+    const n = [...(typeof reported === 'string' ? reported : '')].length;
+    throw new Error(`typed ${[...text].length} characters but the ${secure ? 'secure ' : ''}field reports ${n} characters; field cleared, nothing submitted`);
+  }
+  return { length: [...text].length, secure };
 }
 
 /** A drag from one point to another. */
@@ -312,7 +441,7 @@ async function main() {
     case 'tree':
       for (const e of flatten(await tree(sid))) {
         const r = e.rect;
-        console.log(`${e.type.replace('XCUIElementType', '')}\t${r.x},${r.y} ${r.width}x${r.height}\t${e.text}`);
+        console.log(`${e.type}\t${r.x},${r.y} ${r.width}x${r.height}\t${e.text}`);
       }
       break;
     case 'find':
@@ -320,13 +449,17 @@ async function main() {
       break;
     case 'tap': {
       const point = /^(\d+),(\d+)$/.exec(args[0] ?? '');
-      if (point) await tapAt(sid, Number(point[1]), Number(point[2]));
+      if (point) {
+        await guardKeyboard(sid, Number(point[1]), Number(point[2]), 'the point');
+        await tapAt(sid, Number(point[1]), Number(point[2]));
+      }
       else console.log(JSON.stringify(await tapText(sid, args.join(' '))));
       break;
     }
     case 'type':
       // `type -` reads the text from stdin: a password typed into a sign-in sheet never sits in argv.
-      await type(sid, args[0] === '-' && args.length === 1 ? await stdinText() : args.join(' '));
+      // Prints the LENGTH and whether the field was secure, never the text.
+      console.log(JSON.stringify(await type(sid, args[0] === '-' && args.length === 1 ? await stdinText() : args.join(' '))));
       break;
     case 'long':
       await longPressAt(sid, Number(args[0]), Number(args[1]), args[2] ? Number(args[2]) : undefined);
