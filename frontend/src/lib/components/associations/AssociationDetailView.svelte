@@ -206,16 +206,13 @@
 
   /**
    * The first-time helps' anchors on the hub rows (docs/wiki/frontend/guided-help.md, batch 3), each
-   * set only for a reader the help is FOR, from the facts this page already draws by: the members row
-   * for everyone; the shop row as "join" only for a non-member when a membership tier is offered (the
-   * card the shop opens); the agenda row only for a manager who may propose events (the agenda
-   * section's own edit right). An unset row registers nothing, so its step is left out.
+   * set only for a reader the help is FOR, from the facts this page already draws by: the shop row
+   * whenever it is drawn (the hub lists it only when the association sells something); the agenda row
+   * only for a manager who may propose events (the agenda section's own edit right). An unset row
+   * registers nothing, so its step is left out.
    */
   function hubAnchor(section: PublicSection): string | undefined {
-    if (section === 'members') return 'asso.members';
-    if (section === 'shop') {
-      return !myMembership && offeredTiers(products).length > 0 ? 'asso.join' : undefined;
-    }
+    if (section === 'shop') return 'asso.shop';
     if (section === 'calendar') return canManage && canProposeEvent ? 'asso.agenda' : undefined;
     return undefined;
   }
@@ -500,7 +497,6 @@
             {#if userId}
               <button
                 type="button"
-                use:guideAnchor={'asso.follow'}
                 onclick={() => toggleFollow()}
                 disabled={followLoading}
                 class="border-cn-border text-text-main flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition-colors hover:bg-(--cn-surface) disabled:opacity-50"

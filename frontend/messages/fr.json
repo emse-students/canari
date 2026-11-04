@@ -5266,12 +5266,6 @@
   "guide_hint_chats_body": "Le bouton + crée une nouvelle discussion, avec une personne ou un groupe ; dans les communautés, il crée un canal. Vos conversations sont dans la liste : touchez-en une pour l'ouvrir.",
   "guide_hint_reels_title": "CanaReels",
   "guide_hint_reels_body": "Les vidéos courtes de votre campus, en plein écran. Touchez l'icône pour les regarder, balayez pour passer à la suivante.",
-  "guide_hint_asso_follow_title": "Suivre l'association",
-  "guide_hint_asso_follow_body": "Suivez-la pour voir ses publications dans votre fil et recevoir ses notifications.",
-  "guide_hint_asso_members_title": "Ses membres",
-  "guide_hint_asso_members_body": "Retrouvez ici celles et ceux qui font vivre l'association.",
-  "guide_hint_asso_join_title": "Rejoindre l'association",
-  "guide_hint_asso_join_body": "Pour en devenir membre, ouvrez la boutique : la cotisation s'y choisit et s'y règle.",
   "guide_hint_post_as_title": "Publier au nom d'une association",
   "guide_hint_post_as_body": "Vous pouvez parler au nom d'une association. Touchez ici pour écrire un message : « Publier en tant que », en haut, vous laisse choisir entre vous et l'association.",
   "guide_hint_asso_manage_title": "Gérer l'association",
@@ -5283,5 +5277,7 @@
   "guide_hint_asso_hub_audience_title": "Le public de l'association",
   "guide_hint_asso_hub_audience_body": "Décidez qui voit les publications et les événements de l'association, par campus ou par formation.",
   "guide_hint_my_space_title": "Mon espace",
-  "guide_hint_my_space_body": "Ici, la vie de votre campus et de votre formation : ce que publient vos espaces, au même endroit."
+  "guide_hint_my_space_body": "Ici, la vie de votre campus et de votre formation : ce que publient vos espaces, au même endroit.",
+  "guide_hint_asso_shop_title": "La boutique de l'association",
+  "guide_hint_asso_shop_body": "Achetez-y ses produits et ses billets, et réglez la cotisation : c'est elle qui fait de vous un cotisant, avec les tarifs et les offres réservés aux cotisants."
 }

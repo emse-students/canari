@@ -5266,12 +5266,6 @@
   "guide_hint_chats_body": "The + button creates a new conversation, with a person or a group; in communities, it creates a channel. Your conversations are in the list: tap one to open it.",
   "guide_hint_reels_title": "CanaReels",
   "guide_hint_reels_body": "Short videos from your campus, full screen. Tap the icon to watch them, swipe to go to the next one.",
-  "guide_hint_asso_follow_title": "Follow the association",
-  "guide_hint_asso_follow_body": "Follow it to see its posts in your feed and get its notifications.",
-  "guide_hint_asso_members_title": "Its members",
-  "guide_hint_asso_members_body": "Find here the people who keep the association running.",
-  "guide_hint_asso_join_title": "Join the association",
-  "guide_hint_asso_join_body": "To become a member, open the shop: the membership is chosen and paid there.",
   "guide_hint_post_as_title": "Publish as an association",
   "guide_hint_post_as_body": "You can speak for an association. Tap here to write a post: \"Post as\", at the top, lets you choose between yourself and the association.",
   "guide_hint_asso_manage_title": "Manage the association",
@@ -5283,5 +5277,7 @@
   "guide_hint_asso_hub_audience_title": "The association's audience",
   "guide_hint_asso_hub_audience_body": "Decide who sees the association's posts and events, by campus or by programme.",
   "guide_hint_my_space_title": "My space",
-  "guide_hint_my_space_body": "Here, the life of your campus and your programme: what your spaces publish, in one place."
+  "guide_hint_my_space_body": "Here, the life of your campus and your programme: what your spaces publish, in one place.",
+  "guide_hint_asso_shop_title": "The association's shop",
+  "guide_hint_asso_shop_body": "Buy its products and tickets here, and pay the membership (cotisation): it makes you a cotisant, with the prices and offers reserved to cotisants."
 }

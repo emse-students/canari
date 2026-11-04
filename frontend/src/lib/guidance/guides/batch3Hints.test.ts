@@ -1,5 +1,5 @@
 /**
- * BATCH 3 - associations and the campus space: the association page hint (follow, members, join),
+ * BATCH 3 - associations and the campus space: the association shop hint,
  * the publish-as hint, the manager hints (the page, the management hub) and "Mon espace". Each on
  * its route only, every step kept on both layouts once its anchors are drawn, a step whose control
  * is not drawn for this account left out, and the anchors really named in the sources (a renamed
@@ -13,7 +13,7 @@ import { planGuide } from '../guideEngine.svelte';
 import type { GuideDefinition, GuideLayout } from '../guideTypes';
 import { isHelpId } from '../helpIds';
 import { GUIDES } from './index';
-import { associationJoinHint } from './associationJoinHint';
+import { associationShopHint } from './associationShopHint';
 import { associationManageHint, associationManageHubHint } from './associationManageHint';
 import { mySpaceHint } from './mySpaceHint';
 import { postAsHint } from './postAsHint';
@@ -38,11 +38,11 @@ const CASES: {
   anchors: string[];
 }[] = [
   {
-    guide: associationJoinHint,
+    guide: associationShopHint,
     route: '/associations/bde-emse',
     elsewhere: '/associations/bde-emse/edit',
     files: [PAGE],
-    anchors: ['asso.follow', 'asso.members', 'asso.join'],
+    anchors: ['asso.shop'],
   },
   {
     guide: postAsHint,
@@ -111,12 +111,10 @@ describe.each(CASES)('$guide.id', ({ guide, route, elsewhere, files, anchors }) 
 });
 
 describe('eligibility is the page facts the control is drawn by', () => {
-  it('a member (no join step) and a non-manager (no manager step) are shown only what applies', () => {
-    const drawn = new Set(['asso.follow', 'asso.members']);
-    const join = planGuide(associationJoinHint, PHONE, (a) => drawn.has(a));
-    expect(join.steps.map((s) => s.id)).toEqual(['follow', 'members']);
-    expect(join.skipped).toEqual([{ step: 'join', reason: 'not-rendered' }]);
-    expect(planGuide(associationManageHint, PHONE, (a) => drawn.has(a)).steps).toEqual([]);
+  it('an empty shop (no Shop row) and a non-manager are shown nothing', () => {
+    expect(planGuide(associationShopHint, PHONE, () => false).steps).toEqual([]);
+    const drawn = new Set(['asso.shop']);
+    expect(planGuide(associationManageHint, PHONE, (x) => drawn.has(x)).steps).toEqual([]);
   });
 
   it('a manager without the audience right is shown the members row only', () => {
@@ -124,9 +122,17 @@ describe('eligibility is the page facts the control is drawn by', () => {
     expect(steps.map((s) => s.id)).toEqual(['members']);
   });
 
-  it('the page marks the join row only for a non-member of an association offering a tier', () => {
-    const page = src(PAGE);
-    expect(page).toContain("!myMembership && offeredTiers(products).length > 0 ? 'asso.join'");
+  it('the page marks the Shop row, which the hub draws only when the association sells something', () => {
+    expect(src(PAGE)).toContain("if (section === 'shop') return 'asso.shop'");
+    expect(src('lib/associations/publicSections.ts')).toContain('content.productCount > 0');
+  });
+
+  it('no hint text says one joins an association (one pays a cotisation in the shop)', () => {
+    const fr = JSON.parse(src('../messages/fr.json')) as Record<string, string>;
+    const en = JSON.parse(src('../messages/en.json')) as Record<string, string>;
+    for (const [key, text] of [...Object.entries(fr), ...Object.entries(en)]) {
+      if (key.startsWith('guide_hint_asso_')) expect(text, key).not.toMatch(/rejoindre|join/i);
+    }
   });
 
   it('the agenda row is marked only for a manager who may propose events', () => {
@@ -159,7 +165,7 @@ describe('replay from Settings', () => {
   it('"Mon espace" is replayable on the feed; the association helps, bound to one route, are not', () => {
     expect(mySpaceHint.replay?.route).toBe('/posts');
     expect(mySpaceHint.replay?.label().length).toBeGreaterThan(0);
-    for (const g of [associationJoinHint, associationManageHint, associationManageHubHint]) {
+    for (const g of [associationShopHint, associationManageHint, associationManageHubHint]) {
       expect(g.replay, g.id).toBeUndefined();
     }
   });
