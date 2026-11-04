@@ -79,6 +79,15 @@ shows `verifiedAt` through `formatRelative` (`utils/time.ts`), the exact date in
 
 A setting changes how input is READ and how the screen MOVES, never what a move is.
 
+**The cell look: "flat tonal" (user's pick among four, 2026-11-04).** Flat `rounded-md` tiles, no
+border. A hidden cell is `--cn-bg` pulled 14% toward `--text-main` (22% on hover where one exists, 30%
+pressed), so one rule follows both themes; a revealed one is `--cn-surface` in light and `--cn-bg` in
+dark. Numbers are a deep shade in light and a bright one in dark (the old `-600/-700` ones were nearly
+unreadable on black), flags amber / gold, the mine `red-600`. The four candidates, light and dark, were
+compared as static mock-ups before the pick; the rejected ones (raised slate, gold-tinted, glow) are not
+kept. **NOT verified in the app:** the mock-up used the real token values, but no screenshot of the
+running modal was taken.
+
 **The lag.** `sync()` used to clone all 576 cells after every action, so Svelte re-proxied them and
 re-evaluated every button. Now the engine's board is `$state.raw` (it mutates in place, so it cannot be
 reactive anyway) and `commit()` replaces the board object for the HUD scalars. What a cell DRAWS lives in

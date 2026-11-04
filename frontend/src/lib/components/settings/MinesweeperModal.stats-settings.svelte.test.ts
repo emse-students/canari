@@ -201,7 +201,7 @@ describe('long-press delay', () => {
     }
     return [...document.querySelectorAll<HTMLButtonElement>('[data-cell]')].findIndex(
       (c) =>
-        !c.querySelector('svg') && c.textContent?.trim() === '' && c.className.includes('yellow')
+        !c.querySelector('svg') && c.textContent?.trim() === '' && c.className.includes('ms-hidden')
     );
   }
 
