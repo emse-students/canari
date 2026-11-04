@@ -26,7 +26,7 @@
  * 958 x 944 window: a `fixed inset-0` child of a wrapper inset to `top: 120` / 734 px tall measures
  * 120 / 734 with `will-change: transform` and 0 / 944 without it.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
 import SidePanel from './SidePanel.svelte';
 
@@ -36,6 +36,7 @@ const mounted: (() => void)[] = [];
 const body = createRawSnippet(() => ({ render: () => '<p>reglages</p>' }));
 
 afterEach(() => {
+  vi.unstubAllGlobals();
   while (mounted.length) mounted.pop()!();
   document.body.innerHTML = '';
 });
@@ -74,6 +75,16 @@ function scrim(): HTMLElement {
   return found as HTMLElement;
 }
 
+/** Answers every `matchMedia` as `matches`, standing in for a window below or above `xl`. */
+function stubViewport(matches: boolean): void {
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  }));
+}
+
 describe('a side panel leaves the page unless it has a row to join', () => {
   it('portals a drawer out to the body, so the window is what positions it', () => {
     const wrap = mountInPage(false);
@@ -90,6 +101,7 @@ describe('a side panel leaves the page unless it has a row to join', () => {
   });
 
   it('leaves a column where it was written, because a portalled node has no row to join', () => {
+    stubViewport(false);
     const wrap = mountInPage(true);
 
     expect(wrap.contains(panel())).toBe(true);
@@ -99,6 +111,7 @@ describe('a side panel leaves the page unless it has a row to join', () => {
   it('marks the column with the class its 1280px rule is written against', () => {
     // The two halves have to agree: `column` decides both the portal above and this class, and a
     // panel that portalled AND claimed the column would be `position: static` inside `<body>`.
+    stubViewport(false);
     mountInPage(true);
     expect(panel().classList.contains('side-panel-column')).toBe(true);
 
@@ -107,5 +120,23 @@ describe('a side panel leaves the page unless it has a row to join', () => {
 
     mountInPage(false);
     expect(panel().classList.contains('side-panel-column')).toBe(false);
+  });
+
+  it('portals even a column below xl: a drawer left in the page starts under the status bar and pads it twice', () => {
+    // Owner, 2026-11-04, iPhone: ~70 pt of blank above the header. `.app-shell` already pads the
+    // status bar, `.page-scroll-wrap` is the containing block, and the header added the inset again.
+    stubViewport(true);
+    const wrap = mountInPage(true);
+
+    expect(panel().parentElement).toBe(document.body);
+    expect(wrap.contains(panel())).toBe(false);
+    expect(scrim().parentElement).toBe(document.body);
+  });
+
+  it('keeps the column in the page at xl, where it has a row to join', () => {
+    stubViewport(false);
+    const wrap = mountInPage(true);
+
+    expect(wrap.contains(panel())).toBe(true);
   });
 });

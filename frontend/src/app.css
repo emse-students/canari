@@ -1865,7 +1865,9 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   bottom: 0;
   z-index: var(--z-side-panel);
   width: 100%;
-  max-width: 28rem;
+  /* A PHONE GETS THE WHOLE SCREEN (owner, 2026-11-04): no cap below 768px, where the drawer used to
+     stop at 28rem and leave a strip of the page beside it on a wide phone or in landscape. */
+  max-width: none;
 
   /* THE ONE HORIZONTAL INSET IN THIS PANEL, AND EVERY BODY IN IT READS IT FROM HERE.
      The header has been `px-4` in both of the panel's forms since the shell existed, and the four
@@ -2747,6 +2749,7 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
     top: calc(var(--app-content-top) + 0.75rem);
     bottom: 0.75rem;
     right: 0.75rem;
+    max-width: 28rem;
     border-radius: 0.75rem;
   }
 }

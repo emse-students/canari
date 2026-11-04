@@ -4328,6 +4328,21 @@ both halves run only on hardware.
 
 Logcat 12:16:49: a `type=channel` push at .069, a `type=channel_read` at .103 (`cancelConversationNotification` id=1035, which calls `refreshBadgeSummary`), the message banner posted at .147, then Android logged "Muting recently noisy" on the summary id 9999. The summary was rebuilt by every post and cancel with default alert behaviour, so each rebuild counted as a noisy post and tripped the platform's rate limit on the group. `refreshBadgeSummary` now sets `setOnlyAlertOnce(true)` and `GROUP_ALERT_CHILDREN`: only a child line may sound. No change to the message repost: a message already announced and cancelled by a read push is refused by the alerted ledger (`hasAlreadyAlerted`), and one not yet announced is rightly its first alert, so a second `setOnlyAlertOnce` there would only hide a real first sound.
 
+## A panel on a phone is the whole screen, and the status bar is padded ONCE (owner, 2026-11-04)
+
+Symptom (iPhone, English): the group's "Group management" panel opened with about 70 pt of blank
+above its header, below the clock. Cause: `SidePanel.svelte` left a chat panel IN the page (it had
+to be, for the `xl` column), and `.page-scroll-wrap` (`will-change: transform`) is the containing
+block of `position: fixed`, so `top: 0` meant "below the status bar" - `.app-shell` already pads
+`--safe-area-inset-top`. `.side-panel-header` then added the inset again. Two owners, one inset.
+
+Decided: below `xl` EVERY side panel is a drawer, portalled to `<body>` (`portalWhile`, driven by
+`OVERLAY_LAYOUT_QUERY`), laid out against the window, and `.side-panel-header` is the ONE owner of
+the top inset. Below 768 px the drawer has no `max-width`, so it is the whole screen; from 768 px it
+keeps its 28rem card. Only a column at `xl` stays in the page. Same shell, so it covers the group
+panel, the channel members, media and channel settings (`ConversationSidePanel`) and the community
+settings (`SidebarCommunityAdminPanel`, already portalled). Pinned by `SidePanel.portal.svelte.test.ts`.
+
 ## See also
 
 - [`frontend/architecture.md`](../architecture.md) — SvelteKit architecture, stores, routing
