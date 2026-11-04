@@ -1,7 +1,7 @@
 /**
  * THE CONVERSATION SIDE PANEL IS A BOX, NOT A WINDOW, AND ITS WIDTH RUNS THE WRONG WAY.
  *
- * `.side-panel` is `width: 100%; max-width: 28rem` below 1280px, and `.side-panel-column`
+ * `.side-panel` is `width: 100%` below 768px (the whole screen), `max-width: 28rem` from 768 to 1280px, and `.side-panel-column`
  * makes it `width: 20rem`
  * above it. So the panel is 448px at a 1000px viewport and **320px at 1400px**: the wider the
  * window, the narrower the panel. Every `sm:`/`md:` variant written inside it therefore asks the

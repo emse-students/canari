@@ -2,7 +2,8 @@
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import { X } from '@lucide/svelte';
   import { fade, fly } from 'svelte/transition';
-  import { portal } from '$lib/actions/portal';
+  import { portalWhile } from '$lib/actions/portal';
+  import { isOverlayLayout, onViewportChange, OVERLAY_LAYOUT_QUERY } from '$lib/utils/viewport';
   import { m } from '$lib/paraglide/messages';
   import type { Snippet } from 'svelte';
 
@@ -32,6 +33,15 @@
   let { open, title, onClose, column = false, actions, children }: Props = $props();
 
   /**
+   * Whether the viewport is one where a panel is a drawer (below `xl`). Followed, not read once: a
+   * rotation or a resized window across 1280px turns a column into a drawer and back.
+   */
+  let overlay = $state(isOverlayLayout());
+  $effect(() => {
+    return onViewportChange(OVERLAY_LAYOUT_QUERY, (narrow) => (overlay = narrow));
+  });
+
+  /**
    * A DRAWER HAS TO LEAVE THE PAGE; A COLUMN HAS TO STAY IN IT. Same sentence, both halves.
    *
    * `.page-scroll-wrap` carries `will-change: transform` for the swipe-between-tabs gesture, which
@@ -42,19 +52,21 @@
    * painted under both of them however high its rung is, because its rung is only compared with its
    * siblings inside that wrapper.
    *
-   * IT WAS INVISIBLE UNTIL A PANEL OPENED FROM THE SIDEBAR. The conversation panels live on a screen
-   * that hides `MobileHeader` and `BottomNav` (`isMobileConvoOpen`), so there the content area IS the
-   * viewport and the containing block coincides with it. The community settings open from the
-   * conversation LIST, where both are on screen - so their foot, which is where the leave and delete
-   * buttons now are, sat under the bottom bar. The `Modal` they replaced never had the problem
-   * because `Modal` portals.
+   * THE STATUS BAR IS THE OTHER HALF OF THE SAME FACT (owner, 2026-11-04, iPhone: ~70 pt of blank
+   * above "Group management"). The page wrapper sits inside `.app-shell`, which pads its top by
+   * `--safe-area-inset-top`, so a drawer left IN the page started BELOW the status bar and its header
+   * added the same inset again: the inset was applied twice, by the shell and by the header. A drawer
+   * is portalled whatever the host, so it is laid out against the window and the header is the ONE
+   * owner of the inset (`.side-panel-header`).
    *
-   * The column must NOT portal, and not as a concession: at `xl` it is a flex SIBLING of the chat
-   * cards, and a node moved to `<body>` has no row left to join.
+   * IT WAS INVISIBLE UNTIL A PANEL OPENED FROM THE SIDEBAR, and then until the status bar was
+   * measured: the conversation panels live on a screen that hides `MobileHeader` and `BottomNav`
+   * (`isMobileConvoOpen`), which hid the bottom half of the mismatch but never the top.
+   *
+   * Only a COLUMN that is at `xl` stays: it is a flex SIBLING of the chat cards, and a node moved to
+   * `<body>` has no row left to join. Below `xl` every panel is a drawer, so every panel leaves.
    */
-  function escapesThePage(node: HTMLElement) {
-    return column ? undefined : portal(node);
-  }
+  const escapes = $derived(!column || overlay);
 </script>
 
 <!--
@@ -107,14 +119,15 @@
     class="fixed inset-0 z-(--z-side-panel-scrim) bg-black/40 {column ? 'xl:hidden' : ''}"
     aria-label={m.chat_panel_close_label()}
     onclick={onClose}
-    use:escapesThePage
-    use:coversScreen
+    use:portalWhile={escapes}
+    use:coversScreen={escapes}
     transition:fade={{ duration: 180 }}
   ></button>
 
   <aside
     class="side-panel bg-cn-surface flex flex-col {column ? 'side-panel-column' : ''}"
-    use:escapesThePage
+    use:portalWhile={escapes}
+    use:coversScreen={escapes}
     transition:fly={{ x: 320, duration: 220 }}
   >
     <div
@@ -145,9 +158,10 @@
       stood 66px outside a panel that clips - a control nobody could see or press on a desktop.
 
       So the children write `@md:`, and `sidePanelWidth.test.ts` holds them to it. `@md` is 28rem,
-      which is exactly the drawer's `max-width`: the side-by-side forms exist in the drawer at full
-      width and nowhere narrower, and no arithmetic about padding has to be believed for that to
-      hold.
+      which is the drawer's `max-width` FROM 768px. Below 768px the drawer is the whole screen and
+      has no cap, so on a wide phone or in landscape (up to 767px) the container is wider than 28rem
+      and the `@md` side-by-side forms apply there too: intended - the room is real, and the forms
+      only ever needed 28rem of it.
 
       SAFE HERE ONLY BECAUSE EVERYTHING FULL-SCREEN INSIDE THIS PANEL IS PORTALLED. `container-type:
       inline-size` makes this div the containing block for `position: fixed` descendants; the invite
