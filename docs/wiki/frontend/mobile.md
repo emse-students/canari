@@ -1547,7 +1547,10 @@ the arguments are deserialised into the Rust `TabItem` and serialised again for 
 Rust lacks is dropped without an error. The `v0.18.32-alpha.2` build therefore drew the selected tab
 in the resting colour. `systemComponentsPatch.test.ts` now reads both halves and fails on any field
 Swift decodes that the Rust struct in front of it does not carry; on its first run it also found
-upstream's `itemPositioning`, dropped the same way (unused here, carried now). The crate is otherwise
+upstream's `itemPositioning`, dropped the same way (unused here, carried now). A later patch adds a
+command, `set_tab_bar_interactive` (2026-11-04): the bar takes no touch under the guided tour's
+backdrop ([guided-help](guided-help.md)); its JS name is pinned by `nativePluginCommands.test.ts`,
+its Swift/Rust argument pair by `systemComponentsPatch.test.ts`. The crate is otherwise
 byte-identical to 0.1.8 and carries its MIT text, which the published crate omits. A theme change
 redraws both states and reconfigures the bar. **The redraw is keyed on the two COLOURS read off the
 DOM, never on `themeStore.isDark`** (2026-10-01): the bar's `onMount` runs before the root layout's

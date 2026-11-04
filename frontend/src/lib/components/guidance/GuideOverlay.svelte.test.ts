@@ -23,6 +23,7 @@ const nav = vi.hoisted(() => ({ after: [] as NavCallback[], before: [] as NavCal
 const layout = vi.hoisted(() => ({ phone: true, swipe: true }));
 const seen = vi.hoisted(() => ({ ids: new Set<string>() }));
 const markSeen = vi.hoisted(() => vi.fn((id: string) => seen.ids.add(id)));
+const modalWebLayer = vi.hoisted(() => ({ covering: false }));
 
 vi.mock('$app/navigation', () => ({
   afterNavigate: (cb: NavCallback) => nav.after.push(cb),
@@ -40,6 +41,7 @@ vi.mock('$lib/stores/keyboardViewport.svelte', () => ({
 }));
 vi.mock('$lib/navigation/nativeTabBarState.svelte', () => ({
   nativeTabBar: { status: 'pending' },
+  modalWebLayer,
 }));
 vi.mock('$lib/utils/appVersion', () => ({ isIosTauriRuntime: () => false }));
 vi.mock('$lib/utils/Log', () => ({ Log: { d: () => {}, i: () => {} } }));
@@ -294,6 +296,20 @@ describe('the welcome tour on a phone', () => {
     expect(stepId()).toBe('feed');
     expect(counter()).toBe('2/6');
     expect(history.historyOverlayStackDepth()).toBe(1);
+  });
+
+  it('says a modal layer covers the page only while its backdrop is on screen', async () => {
+    // Read by the iOS native tab bar, drawn above the WebView, to take no touch meanwhile.
+    const { session } = await setUp();
+    expect(modalWebLayer.covering).toBe(true);
+    session.callState = 'connected';
+    flushSync();
+    expect(modalWebLayer.covering).toBe(false);
+    session.callState = 'idle';
+    flushSync();
+    expect(modalWebLayer.covering).toBe(true);
+    click('[data-guide-skip]');
+    expect(modalWebLayer.covering).toBe(false);
   });
 
   it('is suspended by a Modal that mounts over it, and comes back when it closes', async () => {
