@@ -134,7 +134,7 @@ TAG"
 OIDC="AUTHENTIK_CLIENT_ID AUTHENTIK_CLIENT_SECRET"
 
 in_list() {
-  printf '%s\n' "$2" | tr ' ' '\n' | grep -qxF "$1"
+  tr ' ' '\n' <<<"$2" | grep -xF "$1" >/dev/null
 }
 
 # ── Every production variable must be in exactly one list ────────────────────
@@ -163,7 +163,7 @@ log "classification: every production variable is accounted for"
 # `cut -d= -f2` would truncate FIREBASE_SERVICE_ACCOUNT_JSON at its first `=`. This keeps
 # everything after the FIRST separator, which is what a value is.
 value_of() {
-  sed -n "s/^$1=//p" "$SNAPSHOT" | head -1
+  sed -n "s/^$1=//p" "$SNAPSHOT" | sed -n 1p
 }
 
 # ── infrastructure/.env ──────────────────────────────────────────────────────
@@ -198,7 +198,7 @@ NEW_SECRETS=""
 HEADER
   printf '\n# ── Kept as production has them ───────────────────────────────────────────────\n'
   for name in $(printf '%s\n' "$KEEP" | tr ' ' '\n' | grep -v '^$' | sort); do
-    if printf '%s\n' "$PROD_NAMES" | grep -qxF "$name"; then
+    if grep -qxF "$name" <<<"$PROD_NAMES"; then
       printf '%s=%s\n' "$name" "$(value_of "$name")"
     fi
   done
@@ -219,7 +219,7 @@ HEADER
   # script has just written.
   for name in $(printf '%s\n' "$REGENERATE" | tr ' ' '\n' | grep -v '^$' | sort); do
     previous=""
-    [ -f "$INFRA_ENV.bak" ] && previous=$(sed -n "s/^$name=//p" "$INFRA_ENV.bak" | head -1)
+    [ -f "$INFRA_ENV.bak" ] && previous=$(sed -n "s/^$name=//p" "$INFRA_ENV.bak" | sed -n 1p)
     if [ -n "$previous" ]; then
       printf '%s=%s\n' "$name" "$previous"
       KEPT_SECRETS="$KEPT_SECRETS $name"

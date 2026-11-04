@@ -112,7 +112,7 @@ manifest_rows() {
 
 manifest_field() {
   # $1 = key, $2 = column number
-  manifest_rows | awk -F'\t' -v k="$1" -v c="$2" '$1 == k { print $c; exit }'
+  manifest_rows | awk -F'\t' -v k="$1" -v c="$2" '$1 == k && !seen { print $c; seen = 1 }'
 }
 
 # ═════════════════════════════════════════════════════════════════════════════

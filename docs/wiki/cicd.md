@@ -845,7 +845,9 @@ asserts the estate answers on the older version with no edge reload, and `deploy
 holds `ROLLING_RESOLVER_TTL_SECONDS` equal to that library's wait and to every `valid=`. It also
 fails a restore's reload once and asserts the exit trap reloads again with the file already at rest,
 skips a replica that is not running in a plain reload (and refuses it in a take-out), and checks that
-both serve workflows `exec` the deploy.
+both serve workflows `exec` the deploy. **The frozen `rolling-fixture/` libraries still carry the `printf | grep -q` defect that `pipefail-early-reader.test.mjs` forbids everywhere else, so a rollback to the releases they stand for would run it against a large `nginx -T` dump; the guard exempts them because editing them would falsify the rollback test.**
+
+**The frozen `rolling-fixture/` libraries still carry the `printf | grep -q` defect that `pipefail-early-reader.test.mjs` forbids everywhere else, so a rollback to the releases they stand for would run it against a large `nginx -T` dump; the guard exempts them because editing them would falsify the rollback test.**
 
 #### The edge is ready when it listens, not when it runs
 

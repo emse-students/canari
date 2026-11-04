@@ -276,7 +276,7 @@ jobs:
           if [ "$matches" -ne 1 ]; then
             # Cloudflare's own words, and ONLY those: the success body carries the account id and
             # the name servers, which have no business in a public repository's CI log.
-            detail="$(printf '%s' "$zones" | grep -o '"message":"[^"]*"' | head -3 | tr '\n' ' ' || true)"
+            detail="$(printf '%s' "$zones" | grep -o '"message":"[^"]*"' | sed -n 1,3p | tr '\n' ' ' || true)"
             echo "::error::expected exactly one canari-emse.fr zone readable by this token, found ${matches}. ${detail:-Refusing to guess which zone to purge.}"
             exit 1
           fi

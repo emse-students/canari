@@ -315,8 +315,8 @@ jobs:
       - name: Locate build outputs
         id: outputs
         run: |
-          AAB=$(find frontend/src-tauri/gen/android/app/build/outputs/bundle -name "*.aab" | head -1)
-          APK=$(find frontend/src-tauri/gen/android/app/build/outputs/apk/universal/release -name "*.apk" | head -1)
+          AAB=$(find frontend/src-tauri/gen/android/app/build/outputs/bundle -name "*.aab" | sed -n 1p)
+          APK=$(find frontend/src-tauri/gen/android/app/build/outputs/apk/universal/release -name "*.apk" | sed -n 1p)
           echo "aab=$AAB" >> "$GITHUB_OUTPUT"
           echo "apk=$APK" >> "$GITHUB_OUTPUT"
           echo "AAB: $AAB"

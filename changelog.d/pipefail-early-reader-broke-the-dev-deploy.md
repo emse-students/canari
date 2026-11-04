@@ -1,0 +1,3 @@
+### Fixed - the dev deploy of `v1.6.4-alpha.1` failed on a `grep -q` under pipefail
+
+`rolling.sh` matched the large `nginx -T` dump with `printf | grep -q`, which fails under `pipefail` exactly when the line is found. That pipeline, and every other one ending in `grep -q`, `head`, `sed q` or an `awk` that exits, now reads its input to the end, and `pipefail-early-reader.test.mjs` refuses a new one. The frozen `rolling-fixture/` copies of older releases' libraries still carry the defect, so a rollback to those releases would run it ([durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd), [cicd](docs/wiki/cicd.md)).

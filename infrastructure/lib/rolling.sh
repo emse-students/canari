@@ -582,8 +582,8 @@ rotation_apply() {
       cat "$(rotation_file "$proxy")" >&2 || true
       return 1
     fi
-    if printf '%s\n' "$dump" | grep -qE "^# configuration file .*/targets/$proxy\.conf:\$"; then
-      if ! printf '%s\n' "$dump" | grep -qxF "# render $ROTATION_TOKEN"; then
+    if grep -qE "^# configuration file .*/targets/$proxy\.conf:\$" <<<"$dump"; then
+      if ! grep -qxF "# render $ROTATION_TOKEN" <<<"$dump"; then
         printf '::error::%s: %s includes a targets/%s.conf that is not the one just written in %s (render %s) - its mount is not that directory; stopping the deploy\n' \
           "$proxy" "${pid:0:12}" "$proxy" "$ROTATION_DIR" "$ROTATION_TOKEN" >&2
         return 1
@@ -807,7 +807,7 @@ replace_overlap() {
 
   new=""
   for cid in $(containers_of "$service"); do
-    printf '%s\n' "$old" | grep -qx "$cid" || new="$new $cid"
+    grep -qx "$cid" <<<"$old" || new="$new $cid"
   done
   new="${new# }"
   case "$new" in

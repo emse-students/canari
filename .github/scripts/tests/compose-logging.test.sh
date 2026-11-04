@@ -55,9 +55,9 @@ for f in $FILES; do
   if [ -z "$missing" ]; then ok "$f: all $total services carry logging: *logging"; else fail "$f: no logging stanza on: $missing"; fi
 
   anchor="$(awk '/^x-logging:[[:space:]]*&logging/ { on = 1; print; next } on && /^[a-z]/ { exit } on { print }' "$path")"
-  if printf '%s\n' "$anchor" | grep -q 'driver: json-file' &&
-    printf '%s\n' "$anchor" | grep -Eq 'max-size: [0-9]+[kmg]' &&
-    printf '%s\n' "$anchor" | grep -Eq 'max-file: "?[0-9]+"?'; then
+  if grep -q 'driver: json-file' <<<"$anchor" &&
+    grep -Eq 'max-size: [0-9]+[kmg]' <<<"$anchor" &&
+    grep -Eq 'max-file: "?[0-9]+"?' <<<"$anchor"; then
     ok "$f: x-logging is json-file with max-size AND max-file"
   else
     fail "$f: x-logging anchor missing or without driver/max-size/max-file"

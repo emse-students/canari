@@ -122,7 +122,7 @@ while IFS= read -r crate; do
     report 'Vendored-fork watch is broken' "$fork_dir/Cargo.toml carries no [package] version, so there is nothing to compare upstream with."
     continue
   fi
-  pin="$(grep -E "^${crate}[[:space:]]*=[[:space:]]*\"=" "$MANIFEST" | head -1 | sed -E 's/^[^"]*"=([^"]*)".*/\1/')"
+  pin="$(grep -E "^${crate}[[:space:]]*=[[:space:]]*\"=" "$MANIFEST" | sed -n 1p | sed -E 's/^[^"]*"=([^"]*)".*/\1/')"
   if [ "$pin" != "$vendored" ]; then
     report 'Vendored fork and its pin disagree' \
       "frontend/src-tauri/Cargo.toml pins $crate to '=${pin:-<no exact pin>}' but $fork_dir is version $vendored. A patch whose version does not match the requirement is not applied, so the app builds against crates.io's copy without the CANARI PATCH hunks."

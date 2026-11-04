@@ -37,7 +37,7 @@ LOG_RETENTION_PROJECTS="canari-prod canari-dev"
 log_oldest_line_before() {
   local docker_cli="$1" id="$2" hours="$3" out rc
   # shellcheck disable=SC2086 # DOCKER_CLI may be "sudo docker"
-  out="$($docker_cli logs --timestamps --until "${hours}h" "$id" 2>&1 | head -n 1
+  out="$($docker_cli logs --timestamps --until "${hours}h" "$id" 2>&1 | head -n 1 # pipefail-early-reader: ok - a log of unbounded size; 141 is accepted below
     exit "${PIPESTATUS[0]}")"
   rc=$?
   printf '%s' "$out"

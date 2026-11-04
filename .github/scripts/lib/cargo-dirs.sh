@@ -49,7 +49,7 @@ declared_cargo_dirs() {
 links_in_graph() {
   local root="$1" queue="$2" seen="" cur manifest dep
   while [ -n "$queue" ]; do
-    cur="$(printf '%s\n' "$queue" | head -1)"
+    cur="$(printf '%s\n' "$queue" | sed -n 1p)"
     queue="$(printf '%s\n' "$queue" | tail -n +2)"
     case "$seen" in *"[$cur]"*) continue ;; esac
     seen="${seen}[$cur]"
