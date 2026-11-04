@@ -22,7 +22,7 @@
   "auth_play_store_button": "Google Play",
   "auth_maintenance_default": "Canari is under maintenance. Only administrators can sign in.",
   "auth_update_required": "Update Canari (minimum {version}) before signing in.",
-  "auth_login_start_failed": "Sign-in could not start. Try again in a moment.",
+  "auth_login_attempt_failed": "Sign-in did not go through. Try again in a moment.",
   "auth_login_fill_all": "Please fill in all fields.",
   "auth_pin_required": "Please enter your PIN.",
   "auth_pin_min_length": "The PIN must be at least 4 characters.",
@@ -3646,8 +3646,6 @@
   "posts_tab_associations": "Clubs",
   "posts_tab_followed": "Following",
   "posts_tab_all": "My space",
-  "posts_tabs_info_open": "About the tabs",
-  "posts_tabs_info_title": "The feed tabs",
   "posts_tabs_info_associations_title": "Clubs",
   "posts_tabs_info_associations_body": "What the clubs you can see publish, and what they republish.",
   "posts_tabs_info_followed_title": "Following",
@@ -5237,6 +5235,9 @@
   "guide_replay_label": "Guided tour",
   "guide_replay_desc": "See the tour of the interface again, from the feed.",
   "guide_replay_button": "Replay the tour",
+  "guide_replay_hints_label": "Replay the tips",
+  "guide_replay_hints_desc": "Play a first-use tip again, on the page it belongs to.",
+  "guide_replay_hint_tabs": "The feed tabs",
   "guide_hint_create_post_title": "Publish a post",
   "guide_hint_create_post_body": "Text, photos, a poll or a form. You can publish as yourself or as an association, and schedule it for later.",
   "guide_hint_create_event_title": "Submit an event",
@@ -5246,5 +5247,9 @@
   "guide_hint_create_form_questions_title": "The questions",
   "guide_hint_create_form_questions_body": "Add your questions one by one, with the answer type you want. You can make them required.",
   "guide_hint_create_form_settings_title": "Advanced settings",
-  "guide_hint_create_form_settings_body": "Audience, opening date, number of answers: it is all here, folded away by default."
+  "guide_hint_create_form_settings_body": "Audience, opening date, number of answers: it is all here, folded away by default.",
+  "guide_hint_chats_title": "Start a conversation",
+  "guide_hint_chats_body": "The + button creates a new conversation, with a person or a group; in communities, it creates a channel. Your conversations are in the list: tap one to open it.",
+  "guide_hint_reels_title": "CanaReels",
+  "guide_hint_reels_body": "Short videos from your campus, full screen. Tap the icon to watch them, swipe to go to the next one."
 }

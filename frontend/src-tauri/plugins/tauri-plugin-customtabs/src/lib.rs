@@ -10,8 +10,10 @@ mod mobile;
 
 mod commands;
 mod error;
+mod models;
 
 pub use error::{Error, Result};
+pub use models::{CustomTabOutcome, OpenCustomTabResponse};
 
 #[cfg(mobile)]
 use mobile::CustomTabs;

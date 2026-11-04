@@ -41,10 +41,9 @@ Binding, on top of the ones above.
 | Batch | Content | State |
 | --- | --- | --- |
 | 1 | Create: post composer and event form (hint on the opening control, decision 1) | draft PR #2982 |
-| 2 | Chats and CanaReels, plus the feed tabs' explanation moved from the (i) button (decision 2) | after batch 1 is read on both phones |
-| 3 | Associations and spaces | after batch 2 |
+| 2 | Chats and CanaReels, plus the feed tabs' explanation moved from the (i) button (decision 2), plus the "what's new" mechanism only, content with 1.6.4 (decision 3) | built, draft PR; [below](#whats-new-and-the-batch-2-hints) |
+| 3 | Associations and spaces | after batch 2 is read on both phones |
 | 4 | Booking a room | after batch 3 |
-| 5 | The "what's new" help (decision 3) | designed after batch 4 |
 
 ## The pieces
 
@@ -237,6 +236,58 @@ Pinned by `guides/createHints.test.ts` (kind, route, registered, every step kept
 left out when not drawn, and the anchors really marked in the page sources). Owed: the three read on a
 phone and a desktop with a signed-in account; the next batches (chats and CanaReels, associations and
 spaces, booking a room) follow.
+
+## What's new, and the batch 2 hints
+
+Built 2026-11-04. All `kind: 'hint'`, once per account, listed after the tour in `guides/index.ts`.
+
+| Id | Route | Anchor(s) | Steps (fr) |
+| --- | --- | --- | --- |
+| `hint-feed-tabs` | `/posts` | `posts.tab.associations`, `.followed`, `.all`: each tab of `FeedTabRow` | one step per tab, reusing the `posts_tabs_info_*` strings of the removed (i) button (rewritten in "vous", like every guide string) |
+| `hint-reels` | `/posts` | `posts.reels`: the CanaReels icon (`ReelsEntryButton`), the control that OPENS the viewer | "CanaReels" - short videos, full screen, swipe for the next |
+| `hint-chats` | `/chat` | `chat.new`: the "+" of the list header (`SidebarHeaderControls`), which opens the new-conversation modal | "Démarrer une discussion" - the + creates a discussion (a channel in communities), touch a conversation to open it; left out (not-rendered) where the list is not drawn |
+
+**The feed tabs' (i) button is gone** (`FeedTabsInfo.svelte` and its test deleted): the explanation is
+the `hint-feed-tabs` hint, and it stays reachable: **Settings > Preferences > "Revoir les aides"**
+lists every hint that declares `replay` (`{ label, route }` on its `GuideDefinition`): the post, feed
+tabs, CanaReels and chats hints. A button records the request and opens the hint's page, where it
+starts at the next quiet moment (the event and form hints are bound to a conditional or deep page and
+have no button). The welcome tour keeps its own row above.
+
+**A hint left by navigation before its LAST step is put back** (offered again on a later visit),
+not recorded: nobody read it. Finished, skipped, Esc, Back and a navigation from the last step still
+record it. A tour is unchanged.
+
+### The "what's new" mechanism (decision 3) - mechanism only, no content yet
+
+`GUIDES` carries NO what's-new in this batch: 1.6.3 is already the production stable, and the news of
+1.6.4 is written when 1.6.4's content is known (the first draft, `whats-new-1-6-3`, was removed and
+its id is not in the allowlists - it never shipped, so no row can exist).
+
+- **One declaration per version, only the latest in `GUIDES`**: `news: true` on the definition, id
+  `whats-new-<major>-<minor>-<patch>`. An account that skipped a version is shown the current news,
+  never a backlog. Shipping a version's news adds a file under `guides/`, its id to the three
+  allowlists, and drops the previous declaration from `GUIDES` (the old id stays allowlisted so the
+  rows already written stay valid). The table grows by one id per version that has news.
+- **A version that differs from the app's is a failing test**: `guideNews.test.ts` fails when a
+  declared news id does not name the base version of `frontend/package.json` (a `-alpha.N` suffix
+  stripped), and when more than one is declared.
+- **Existing account, after an update**: a `news` help is offered only to an account whose seen set
+  already has the tour (derived in `GuideEngine#pick`, no per-guide field). It starts at the first
+  quiet moment on `/posts`, once, skippable; seeing it records its id, so it never returns.
+- **New account**: has not seen the tour, so the tour runs, and `supersedesNews` on the tour records
+  EVERY declared `news` help as seen with it - derived from `GUIDES`, no literal list - only when the
+  tour is met for the first time (a replay records nothing extra). So a new account never sees the
+  news, neither on the tour's visit (the one-help-per-visit cap) nor on the next.
+- **Never on the same visit as another help**: the `#shownThisVisit` cap applies unchanged.
+- **Write it as a hint, not a tour**: nothing is put behind it. The iOS native tab bar cannot be
+  covered by any backdrop (it is drawn above the WebView); a MODAL step turns its touches off
+  (see "The iOS native tab bar takes NO TOUCH under a modal step" above), a hint leaves it tappable.
+
+Pinned by `guideNews.test.ts` (version, derivation, the engine rules over made-up ids, the put-back),
+`guideEngine.test.ts`, `guides/batch2Hints.test.ts` (routes, layouts, anchors really marked, the (i)
+button gone, replay declared). Owed on hardware: the three hints and the Settings replay read on the
+Mi 9T and the iPhone 12.
 
 ## Back, focus, motion
 
