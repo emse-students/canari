@@ -184,6 +184,44 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
         openChooser(invoke, send)
     }
 
+    @InvokeArg
+    class WriteDocumentArgs {
+        lateinit var path: String
+        lateinit var uri: String
+    }
+
+    /**
+     * Copies the staged file at `path` into the document `uri` that the save dialog's
+     * `ACTION_CREATE_DOCUMENT` just created, and answers the bytes written.
+     *
+     * THE STREAM IS THE PROVIDER'S, AND IT IS CLOSED HERE, AFTER THE COPY. The `plugin-fs` write
+     * this replaces took the descriptor out of its `ParcelFileDescriptor` (`detachFd()`), which
+     * tells the provider's close listener "closed" before the first byte: the Downloads provider
+     * recorded the size then - 0 - and kept it. Mode `w`: the document is the one the dialog has
+     * just created, empty, and `ACTION_CREATE_DOCUMENT` never hands back an existing file.
+     */
+    @Command
+    fun writeDocument(invoke: Invoke) {
+        val args = invoke.parseArgs(WriteDocumentArgs::class.java)
+        val source = File(args.path)
+        // Not the URI: it ends with the file's name.
+        Log.d(TAG, "writeDocument: ${source.length()} bytes")
+        offMainThread {
+            try {
+                val uri = Uri.parse(args.uri)
+                val resolver = activity.contentResolver
+                val out = resolver.openOutputStream(uri, "w")
+                    ?: throw IllegalStateException("the provider gave no output stream")
+                val written = out.use { stream -> source.inputStream().use { it.copyTo(stream) } }
+                Log.d(TAG, "writeDocument: $written bytes written, stream closed")
+                invoke.resolve(JSObject().put("written", written))
+            } catch (e: Exception) {
+                Log.e(TAG, "writeDocument failed", e)
+                invoke.reject("writeDocument failed: ${e.message}")
+            }
+        }
+    }
+
     /** Opens the chooser on `send`; resolved once it is shown, whatever the member then picks. */
     private fun openChooser(invoke: Invoke, send: Intent) {
         activity.runOnUiThread {

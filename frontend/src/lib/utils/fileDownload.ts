@@ -14,6 +14,10 @@
  * dialog plugin itself, so no broad filesystem grant is needed - but `fs:allow-write-file`
  * and `dialog:allow-save` must both be in `capabilities/default.json`, or this rejects on the
  * device with `fs.write_file not allowed` while building and shipping perfectly.
+ *
+ * On Android the destination is a `content://` document, and it is NOT written through
+ * `plugin-fs`: that write left the Downloads provider recording a size of 0 (see
+ * {@link isProviderDocument}). It goes through the provider's own stream instead.
  */
 
 import { isTauriRuntime } from './openExternal';
@@ -51,6 +55,49 @@ export function saveDialogFilters(fileName: string): { name: string; extensions:
   return extension ? [{ name: extension, extensions: [extension] }] : [];
 }
 
+/**
+ * Whether the save dialog's answer is a document owned by a provider (`content://`, Android's
+ * `ACTION_CREATE_DOCUMENT`) rather than a path. The URI itself carries the fact: only a provider's
+ * own stream may write it (see {@link writeIntoDocument}).
+ */
+export function isProviderDocument(target: string): boolean {
+  return target.startsWith('content://');
+}
+
+/**
+ * Writes into an Android document through the provider's own stream, opened and closed natively.
+ *
+ * WHY NOT `writeFile`: `plugin-fs` detaches the descriptor from its `ParcelFileDescriptor`, which
+ * tells the provider "closed" before a byte is written. The Downloads provider records the size
+ * then - 0 - and keeps it, so the file lists as "0 octet(s)" and an app it is shared to from there
+ * (Messenger) refuses it or reads 0 bytes, while the disk holds every byte (Mi 9T, 2026-11-04).
+ * The bytes are staged into the app cache exactly as a reel or a shared file is (Android IPC is
+ * JSON), then copied by `write_staged_document`, which removes the staged copy on every path.
+ */
+async function writeIntoDocument(bytes: Uint8Array, target: string): Promise<void> {
+  const [{ invoke }, { stageBlob }, { galleryCommand }] = await Promise.all([
+    import('@tauri-apps/api/core'),
+    import('$lib/reels/gallery'),
+    import('$lib/services/galleryCommands'),
+  ]);
+  const session = crypto.randomUUID();
+  console.debug(`[download] staging ${bytes.byteLength} bytes for a provider document, ${session}`);
+  try {
+    await stageBlob(session, new Blob([bytes as BlobPart]));
+  } catch (err) {
+    console.error('[download] staging for the provider document failed', err);
+    await invoke(galleryCommand('discardVideo'), { session }).catch((discardErr: unknown) => {
+      console.error('[download] the staged copy was not discarded', discardErr);
+    });
+    throw err;
+  }
+  const { written } = await invoke<{ written: number }>(galleryCommand('writeStagedDocument'), {
+    session,
+    uri: target,
+  });
+  console.debug(`[download] the provider's stream took ${written} bytes and closed`);
+}
+
 /** The Tauri path: pick a destination, write the bytes there. */
 async function writeThroughSaveDialog(bytes: Uint8Array, fileName: string): Promise<boolean> {
   const { save } = await import('@tauri-apps/plugin-dialog');
@@ -62,6 +109,10 @@ async function writeThroughSaveDialog(bytes: Uint8Array, fileName: string): Prom
     return false;
   }
 
+  if (isProviderDocument(target)) {
+    await writeIntoDocument(bytes, target);
+    return true;
+  }
   const { writeFile } = await import('@tauri-apps/plugin-fs');
   await writeFile(target, bytes);
   console.debug(`[download] wrote ${bytes.byteLength} bytes to ${target}`);

@@ -1,13 +1,22 @@
 // @vitest-environment happy-dom
-import { fileExtension, saveDialogFilters, saveObjectUrlAs } from './fileDownload';
+import {
+  fileExtension,
+  isProviderDocument,
+  saveDialogFilters,
+  saveObjectUrlAs,
+} from './fileDownload';
 
 const save = vi.fn();
 const writeFile = vi.fn();
+const invoke = vi.fn();
+const stageBlob = vi.fn();
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({ save: (...args: unknown[]) => save(...args) }));
 vi.mock('@tauri-apps/plugin-fs', () => ({
   writeFile: (...args: unknown[]) => writeFile(...args),
 }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
+vi.mock('$lib/reels/gallery', () => ({ stageBlob: (...args: unknown[]) => stageBlob(...args) }));
 
 type TauriWindow = Window & { __TAURI_INTERNALS__?: unknown };
 
@@ -23,6 +32,8 @@ describe('saveObjectUrlAs', () => {
   beforeEach(() => {
     save.mockReset();
     writeFile.mockReset();
+    invoke.mockReset();
+    stageBlob.mockReset();
     delete (window as TauriWindow).__TAURI_INTERNALS__;
   });
 
@@ -48,7 +59,7 @@ describe('saveObjectUrlAs', () => {
     // path is silently a no-op on Android and iOS.
     const bytes = new Uint8Array([1, 2, 3, 4]);
     pretendTauri(bytes);
-    save.mockResolvedValue('content://downloads/rapport.pdf');
+    save.mockResolvedValue('/var/mobile/Containers/Data/rapport.pdf');
 
     await expect(saveObjectUrlAs('blob:x', 'rapport.pdf')).resolves.toBe(true);
 
@@ -58,8 +69,43 @@ describe('saveObjectUrlAs', () => {
     });
     expect(writeFile).toHaveBeenCalledOnce();
     const [target, written] = writeFile.mock.calls[0];
-    expect(target).toBe('content://downloads/rapport.pdf');
+    expect(target).toBe('/var/mobile/Containers/Data/rapport.pdf');
     expect(Array.from(written as Uint8Array)).toEqual([1, 2, 3, 4]);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("writes an Android document through the provider's own stream, never plugin-fs", async () => {
+    // The reported defect: plugin-fs detaches the descriptor, the Downloads provider records a
+    // size of 0, and the file is refused when shared from there.
+    pretendTauri(new Uint8Array([1, 2, 3, 4]));
+    const uri = 'content://com.android.providers.downloads.documents/document/msf%3A121';
+    save.mockResolvedValue(uri);
+    invoke.mockResolvedValue({ written: 4 });
+
+    await expect(saveObjectUrlAs('blob:x', 'canari-log.txt')).resolves.toBe(true);
+
+    expect(writeFile).not.toHaveBeenCalled();
+    expect(stageBlob).toHaveBeenCalledOnce();
+    const [session, staged] = stageBlob.mock.calls[0] as [string, Blob];
+    expect(staged.size).toBe(4);
+    expect(invoke).toHaveBeenCalledWith('plugin:gallery|write_staged_document', { session, uri });
+  });
+
+  it('discards the staged copy and rejects when staging fails', async () => {
+    pretendTauri(new Uint8Array([1]));
+    save.mockResolvedValue('content://com.android.externalstorage.documents/document/x');
+    stageBlob.mockRejectedValue(new Error('disk full'));
+    invoke.mockResolvedValue(undefined);
+
+    await expect(saveObjectUrlAs('blob:x', 'a.txt')).rejects.toThrow('disk full');
+
+    expect(invoke).toHaveBeenCalledWith('plugin:gallery|discard_video', {
+      session: expect.any(String),
+    });
+    expect(invoke).not.toHaveBeenCalledWith(
+      'plugin:gallery|write_staged_document',
+      expect.anything()
+    );
   });
 
   it('writes nothing when the user cancels the dialog', async () => {
@@ -68,6 +114,15 @@ describe('saveObjectUrlAs', () => {
 
     await expect(saveObjectUrlAs('blob:x', 'rapport.pdf')).resolves.toBe(false);
     expect(writeFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('isProviderDocument', () => {
+  it('tells an Android document from a path', () => {
+    expect(isProviderDocument('content://com.android.providers.downloads.documents/x')).toBe(true);
+    expect(isProviderDocument('/var/mobile/Containers/Data/a.txt')).toBe(false);
+    expect(isProviderDocument('/home/a/Downloads/a.txt')).toBe(false);
+    expect(isProviderDocument('file:///tmp/a.txt')).toBe(false);
   });
 });
 
