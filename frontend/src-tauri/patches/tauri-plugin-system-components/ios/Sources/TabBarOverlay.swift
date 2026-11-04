@@ -10,6 +10,16 @@
 //
 
 import UIKit
+import os
+
+/// CANARI PATCH: the plugin's native log. A Swift `NSLog` reaches the unified log WHOLE as
+/// `<private>` on a store build - the line `1.6.4-alpha.4` added to prove a status bar tap was caught
+/// arrived as `Canari{Foundation} <private>`, 2 ms after `UIStatusBarTapAction`, and was read as
+/// absent. A `Logger`'s literal text is public; an interpolation is marked public only for ids,
+/// counts and states (`nativeLogContent.test.ts`).
+enum PendiNav {
+    static let log = Logger(subsystem: "fr.emse.canari", category: "pendi-nav")
+}
 
 /// Root view of the overlay controller: covers the whole host view so the
 /// tab bar can pin to the real screen bottom, but only claims touches that
@@ -38,10 +48,12 @@ final class PassthroughView: UIView {
 /// That it picks the one under the tap's x position is INFERRED from behaviour (iPad split views),
 /// not documented. The WKWebView's own scroll view never qualifies here: Canari's pages
 /// scroll in an inner `overflow-y-auto` box, the document has no range at all (the plugin also
-/// switches its `scrollsToTop` off), so the gesture did nothing.
+/// switches its `scrollsToTop` off). Nor does the native scroll view WebKit gives that inner box:
+/// with no catcher the scrolled feed did not move, the web view's `scrollsToTop` on or off (iPhone 12,
+/// two bench builds, 2026-11-04).
 ///
-/// This scroll view is that candidate (iPhone 12, `1.6.4-alpha.3`: `UIStatusBarTapAction` received,
-/// the page did not move with the first build), built so UIKit cannot pass it over:
+/// This scroll view is that candidate, and it is what scrolls the feed (`1.6.4-alpha.4`, measured;
+/// the first build, `alpha.3`, was passed over), built so UIKit cannot pass it over:
 /// - it is VISIBLE to UIKit (`alpha` 1, a clear background, so it draws nothing): the first build's
 ///   `alpha` 0.01 is stored by its layer as a `Float` (0.0099999998), below UIKit's 0.01 visibility
 ///   threshold - the most likely single cause;
@@ -49,7 +61,9 @@ final class PassthroughView: UIView {
 ///   (`viewDidLoad`), rather than a 1 pt strip, so however UIKit locates the tap it lies inside;
 /// - it takes NO touch: `PassthroughView` lets every touch through it. The tap needs none, and the
 ///   area under the status bar is live content (the full-bleed camera tab, the reel viewer's swipe,
-///   the media lightbox's pan and pinch, and real content just below a Dynamic Island);
+///   the media lightbox's pan and pinch, and real content just below a Dynamic Island). A touch that
+///   BEGINS in the status bar band never reaches the app at all while the bar is shown - iOS keeps
+///   it, with or without this view (measured with no catcher) - so a swipe from there does nothing;
 /// - it always has vertical range (`layoutSubviews`): two points more content than its height,
 ///   resting one point down, since a scroll view already at its top or with nothing to scroll is
 ///   not a candidate.
@@ -85,7 +99,7 @@ final class StatusBarTapCatcher: UIScrollView, UIScrollViewDelegate {
     }
 
     func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
-        NSLog("[pendi-nav][native] status bar tap caught, reported to the page")
+        PendiNav.log.notice("[pendi-nav][native] status bar tap caught, reported to the page")
         onTap?()
         return false
     }
@@ -334,10 +348,8 @@ final class TabBarOverlayController: UIViewController, UITabBarDelegate {
         if let heightC = accessoryHeight, heightC.constant != side { heightC.constant = side }
         // Keep the avatar perfectly circular as that height resolves.
         button.layer.cornerRadius = button.bounds.height / 2
-        NSLog(
-            "[pendi-nav][native] TabBarOverlay geometry barFrame=%@ barSafeBottom=%.1f avatar=%@",
-            NSCoder.string(for: tabBar.frame), tabBar.safeAreaInsets.bottom,
-            NSCoder.string(for: button.frame))
+        PendiNav.log.notice(
+            "[pendi-nav][native] TabBarOverlay geometry barFrame=\(NSCoder.string(for: self.tabBar.frame), privacy: .public) barSafeBottom=\(Double(self.tabBar.safeAreaInsets.bottom), format: .fixed(precision: 1)) avatar=\(NSCoder.string(for: button.frame), privacy: .public)")
     }
 
     /// Side of bitmap tab icons (avatars), in points.
@@ -390,9 +402,8 @@ final class TabBarOverlayController: UIViewController, UITabBarDelegate {
         let animated = !(tabBar.items?.isEmpty ?? true)
         tabBar.setItems(barItems, animated: animated)
         select(id: storedSelectedId ?? ids.first)
-        NSLog(
-            "[pendi-nav][native] TabBarOverlay apply tabs=%d classic=%@ accessory=%@",
-            ids.count, usesClassicBar ? "yes" : "no", accessoryId ?? "(none)")
+        PendiNav.log.notice(
+            "[pendi-nav][native] TabBarOverlay apply tabs=\(self.ids.count) classic=\(self.usesClassicBar ? "yes" : "no", privacy: .public) accessory=\(self.accessoryId ?? "(none)", privacy: .public)")
     }
 
     @discardableResult
