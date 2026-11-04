@@ -54,6 +54,15 @@ describe('PostHeader - the "Entre étudiants" chip', () => {
     expect(chip?.getAttribute('title')).toBe(m.post_students_only_chip_title());
   });
 
+  it('lets the republisher label wrap to its own line instead of shrinking beside the chip', () => {
+    const root = header(true);
+    const line = root.querySelector('[data-post-time-line]')!;
+    expect(line.className).toContain('flex-wrap');
+    const unit = line.querySelector('[data-post-republished-unit]')!;
+    expect(unit.className).toContain('max-w-full');
+    expect(unit.querySelector('[data-post-republished-by]')).not.toBeNull();
+  });
+
   it('is absent from an open post, and from a server older than the field', () => {
     expect(header(false).querySelector('[data-students-only-chip]')).toBeNull();
     expect(header(undefined).querySelector('[data-students-only-chip]')).toBeNull();

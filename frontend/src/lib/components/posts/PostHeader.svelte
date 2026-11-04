@@ -97,7 +97,7 @@
       />
     {/if}
     <div
-      class="text-text-muted text-2xs mt-0.5 flex min-w-0 items-center gap-1.5 font-medium opacity-80"
+      class="text-text-muted text-2xs mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 font-medium opacity-80"
       data-post-time-line
     >
       <Clock size={12} strokeWidth={2.5} class="shrink-0" />
@@ -106,9 +106,11 @@
         <StudentsOnlyChip />
       {/if}
       {#if republished}
-        <span class="shrink-0" aria-hidden="true">&middot;</span>
-        <Repeat2 size={12} strokeWidth={2.5} class="shrink-0" aria-hidden="true" />
-        <span class="truncate" data-post-republished-by><EmojiText text={republished} /></span>
+        <!-- One wrapping unit: beside the time and the "Entre etudiants" chip it was squeezed to "Republie par Cl..." on a phone, so it drops to its own line when the three do not fit. -->
+        <span class="flex max-w-full min-w-0 items-center gap-1.5" data-post-republished-unit>
+          <Repeat2 size={12} strokeWidth={2.5} class="shrink-0" aria-hidden="true" />
+          <span class="truncate" data-post-republished-by><EmojiText text={republished} /></span>
+        </span>
       {/if}
     </div>
     {#if requested.length > 0}

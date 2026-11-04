@@ -327,9 +327,7 @@ describe('at most one help per visit (2026-11-03)', () => {
   it('lets another help run after one declined as not-rendered', () => {
     const g = harness([hint('hint-create-event', 'missing'), hint('hint-create-post', 'compose')]);
     g.rendered.add('compose');
-    g.engine.consider(true, '/posts'); // the first declines: nothing drawn
-    expect(g.engine.activeId).toBeNull();
-    g.engine.consider(true, '/posts'); // the scheduler asks again
+    g.engine.consider(true, '/posts'); // the first declines: nothing drawn, the next starts in the same pass
     expect(g.engine.activeId).toBe('hint-create-post');
   });
 
@@ -389,5 +387,20 @@ describe('a help only for some accounts (`eligible`)', () => {
     g.rendered.add('compose');
     g.engine.consider(true, '/posts');
     expect(g.engine.activeId).toBe('hint-create-post');
+  });
+});
+
+describe('a help with nothing to draw does not hide the next candidate (alpha.3 reading)', () => {
+  it('an empty-shop hint is put back and the manager hint starts in the same pass', async () => {
+    const { associationShopHint } = await import('./guides/associationShopHint');
+    const { associationManageHint } = await import('./guides/associationManageHint');
+    // The reading account: a global admin on an association with an empty shop - the Gestion link
+    // and the Agenda row are drawn, the Shop row is not.
+    const h = harness([associationShopHint, associationManageHint]);
+    h.rendered.add('asso.manage');
+    h.rendered.add('asso.agenda');
+    h.engine.consider(true, '/associations/bde-emse');
+    expect(h.engine.activeId).toBe('hint-asso-manage');
+    expect(h.stepId()).toBe('manage');
   });
 });
