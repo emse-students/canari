@@ -7,7 +7,8 @@
  * TRANSITIONS as the facts arrive from the call gate, the playback arbiter and the captures, one
  * set per change and none for an equal type; every capture holds the microphone BEFORE it asks
  * (WebKit refuses an audio capture under any other override) and releases it when its audio tracks
- * stop or end; and a WKWebView without `navigator.audioSession` said once.
+ * stop or end; an iPhone without `navigator.audioSession` said once; and off iOS (a WebKitGTK window,
+ * which has `window.webkit.messageHandlers` too) nothing is set and nothing is said.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -45,14 +46,25 @@ class FakeTrack extends EventTarget {
   stop() {}
 }
 
+const IPHONE_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko)';
+const WEBKITGTK_UA =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15';
+
+function setUserAgent(ua: string) {
+  Object.defineProperty(navigator, 'userAgent', { configurable: true, get: () => ua });
+}
+
 beforeEach(() => {
   resetCallSoundGateForTest();
   resetAudioSessionForTest();
   vi.stubGlobal('MediaStreamTrack', FakeTrack);
+  setUserAgent(IPHONE_UA);
 });
 
 afterEach(() => {
   Reflect.deleteProperty(navigator, 'audioSession');
+  Reflect.deleteProperty(navigator, 'userAgent');
   Reflect.deleteProperty(window, 'webkit');
   resetAudioSessionForTest();
   resetCallSoundGateForTest();
@@ -237,11 +249,7 @@ describe('the microphone', () => {
 });
 
 describe('an engine without navigator.audioSession', () => {
-  it('in a WKWebView, says once that the switch may be ignored', () => {
-    Object.defineProperty(window, 'webkit', {
-      configurable: true,
-      value: { messageHandlers: {} },
-    });
+  it('on an iPhone, says once that the switch may be ignored', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     armAudioSession();
     reportAudibleMedia(true);
@@ -250,10 +258,39 @@ describe('an engine without navigator.audioSession', () => {
     expect(String(warn.mock.calls[0][0])).toContain('navigator.audioSession is absent');
   });
 
-  it('elsewhere, says nothing', () => {
+  it('a WebKitGTK-like window (messageHandlers present, not iOS) says nothing', () => {
+    setUserAgent(WEBKITGTK_UA);
+    Object.defineProperty(window, 'webkit', {
+      configurable: true,
+      value: { messageHandlers: {} },
+    });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     armAudioSession();
     reportAudibleMedia(true);
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('off iOS', () => {
+  it('a WebKitGTK-like window with an audio session sets nothing - no switch to obey', () => {
+    setUserAgent(WEBKITGTK_UA);
+    Object.defineProperty(window, 'webkit', {
+      configurable: true,
+      value: { messageHandlers: {} },
+    });
+    const { set } = fakeSession();
+    armAudioSession();
+    reportAudibleMedia(true);
+    holdMicrophone('voice-note')('done');
+    expect(set).toEqual([]);
+  });
+
+  it('an iPad, whose WebKit says Macintosh, is iOS by its touch points', () => {
+    setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15');
+    Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, get: () => 5 });
+    const { set } = fakeSession();
+    armAudioSession();
+    expect(set).toEqual(['ambient']);
+    Reflect.deleteProperty(navigator, 'maxTouchPoints');
   });
 });

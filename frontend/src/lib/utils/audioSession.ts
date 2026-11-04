@@ -95,24 +95,34 @@ function domAudioSession(): DomAudioSession | null {
 }
 
 /**
- * Whether the page runs in a WKWebView - the engine that has (from iOS 16.4) the Audio Session API.
- * Read from WebKit's own bridge object rather than the app's platform helpers, so this module
- * depends on no runtime detection that tests replace.
+ * Whether the page runs on iOS / iPadOS - the only system with a silent switch, so the only one
+ * where this module sets anything. Read from the user agent and the touch points (an iPad's
+ * WKWebView says "Macintosh"; a Mac reports at most one touch point - the rule `mlsPlatform.ts`
+ * follows on the web), not from the app's platform helpers, which tests replace. NOT from
+ * `window.webkit.messageHandlers`: WebKitGTK (Linux Tauri) and older macOS have it too, without
+ * the Audio Session API.
  */
-function isWkWebView(): boolean {
-  const webkit = (window as Window & { webkit?: { messageHandlers?: unknown } }).webkit;
-  return typeof webkit?.messageHandlers === 'object' && webkit.messageHandlers !== null;
+function isIosWebKit(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad|iPod/.test(ua)) return true;
+  return /Macintosh/.test(ua) && navigator.maxTouchPoints > 1;
 }
 
-/** Sets the type the facts decide, when it differs from the one applied. */
+/** Sets the type the facts decide, when it differs from the one applied - on iOS only. */
 function apply(reason: string): void {
   const next = decideAudioSessionType(facts);
   if (next === applied) return;
+  if (!isIosWebKit()) {
+    // No silent switch to obey: the engine keeps its own choice, nothing is set or said.
+    applied = next;
+    return;
+  }
   const session = domAudioSession();
   if (!session) {
-    // In a WKWebView its absence means a WebKit before iOS 16.4 (the app supports 16.0), which
-    // keeps choosing alone - the silent switch is then NOT honoured. Said once.
-    if (!absenceSaid && isWkWebView()) {
+    // On iOS its absence means a WebKit before iOS 16.4 (the app supports 16.0), which keeps
+    // choosing alone - the silent switch is then NOT honoured. Said once.
+    if (!absenceSaid) {
       absenceSaid = true;
       console.warn(
         '[AUDIO] navigator.audioSession is absent - WebKit picks the category alone and the UI tones may ignore the silent switch'

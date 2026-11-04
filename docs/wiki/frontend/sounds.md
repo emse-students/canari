@@ -190,6 +190,7 @@ before every rule above (`DOMAudioSessionEnabled`, status mature, on by default 
   deliberately** (owner's rule, 2026-11-04): CallKit's ring obeys it too, and Web Audio alone is
   what WebKit already put there. The caller's ringback plays in `calling`, when the microphone is already
   open (`setupMedia` runs before the ring), so its category is the one it always had.
+- **Only on iOS** (the user agent, or "Macintosh" with more than one touch point - an iPad): no other system has a silent switch, so elsewhere nothing is set and nothing is said. `window.webkit.messageHandlers` is NOT the test - WebKitGTK (Linux Tauri) and older macOS have it, without the API.
 - **An engine without the API** (an iPhone before 16.4) keeps WebKit's own choice; the page says so
   ONCE, `[AUDIO] navigator.audioSession is absent`, at warn. A `type` the engine refuses
   (`InvalidStateError`) is said at error level and retried on the next change.

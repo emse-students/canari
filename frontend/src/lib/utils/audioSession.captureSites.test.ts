@@ -5,7 +5,8 @@
  * `getUserMedia` (`InvalidStateError`). `captureUserMedia` holds the microphone - and so sets that
  * type - before it asks. A capture site that called `getUserMedia` with audio directly would break
  * on an iPhone as soon as the session is `ambient`, which it is from the first tone on; this scan
- * fails on it. A video-only `getUserMedia` (a call's camera) may stay direct.
+ * fails on it. A video-only `getUserMedia` (a call's camera) may stay direct. KNOWN GAP: it reads
+ * the call's text, so constraints passed as a VARIABLE (`getUserMedia(constraints)`) slip through.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
