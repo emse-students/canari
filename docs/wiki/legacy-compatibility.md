@@ -20,8 +20,38 @@ It replaces every per-entry "the user's gesture, when the time comes": a removal
 the version the floor must pass, and this rule is what moves the floor there. The raise is a production
 setting, so it is done by the owner or with the owner's go, and written into the entry it unblocks.
 
-**Production's floor is `1.5.1`** (read from `GET /api/version` on 2026-10-31). An older figure on this
-page is the floor at the date its entry names.
+**Production's floor is `1.5.3` on 2026-11-04, and the owner decided (2026-11-04) to raise it to `1.6.0` on
+both estates.** Dev reads `1.6.0` (`GET /api/version`, 2026-11-04). Production's raise is the owner's
+gesture at `/admin/platform` and is NOT yet read back: **until production reads `1.6.0`, no entry below
+counts as unblocked on it** - read the endpoint, then act. The floor rule above still
+governs the next raise (wait for BOTH stores). An older figure on this page is the floor at the date its
+entry names.
+
+### Entries `1.6.0` unblocks, once production reads it (decided 2026-11-04)
+
+"Carried by" is the first stable tag containing the pull request (`git tag --contains`). **Nothing is
+removed by this change**: removal is its own pull request, and an entry with a second half keeps waiting
+on it.
+
+| Entry | Carried by | Still owed besides the floor |
+| --- | --- | --- |
+| Send-ledger entry with no epoch | #2269, `v1.5.0` | - |
+| Member clients that still Add automatically | #2358, `v1.5.0` | - (the rule becomes true; nothing to remove) |
+| The `join-ask-1` capability gate | #2442, `v1.5.0` | - |
+| Add-lock release with no token | #2426, `v1.5.0` | - |
+| Plaintext native cache reader | #2271, `v1.5.0` | - |
+| OIDC callback with no PKCE verifier | #2317, #2326, `v1.5.0` | the `without a PKCE verifier` warning silent for a week on production, and the redirect hardening |
+| `follow-status` answers `following: true` for a pending request | #2616 (WP-F4), `v1.5.1` | - |
+| Explicit slug on association creation | #2545, `v1.5.1` | - |
+| `PUT lydia-business-key` answers `410` | #2772, `v1.5.2` | - |
+| `X-Canari-Client-Version` on `/api/lives` routes | #2812, `v1.6.0` (floor condition `1.5.4`) | - |
+| `klipy_cid` drop | `v1.2.9` | - (already met at floor `1.5.1`) |
+
+**NOT unblocked by `1.6.0`:** the entries whose carrying pull request first ships in `v1.6.3` (the
+institution's republication consent, #2965; WP-PIN's body-less pin, #2984; `GET spaces/audiences`, #2951;
+`kind=reel` on `feed=all`, #2990), the device-notice marker (needs `1.6.1`), a restored message with no
+author signature (#2276, `v1.5.0`; the oldest unsigned message must also leave retention), and the refresh
+cookie on `tauri://localhost` (a desktop measurement).
 
 ---
 
