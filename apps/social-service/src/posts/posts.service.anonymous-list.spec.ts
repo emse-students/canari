@@ -38,7 +38,6 @@ describe('PostsService feed queries mask an anonymous personal post', () => {
     polls: [],
     forms: [],
     reactions: [],
-    pinned: false,
     scheduledAt: null,
     hiddenByModeration: false,
     commentCount: 0,

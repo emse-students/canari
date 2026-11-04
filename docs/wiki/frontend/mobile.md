@@ -1668,7 +1668,8 @@ without a lag the eye sees, the picker opening, and VoiceOver reading the four n
 
 #### The DM whose chrome stands one keyboard too high (2026-10-17)
 
-**OPEN, P2, CAUSE NOT YET MEASURED.** This was found on the iPhone 12 with `v1.2.9-alpha.7`
+**MEASURED 2026-11-04, FIXED BY THE DOCUMENT-ANCHORED RECT (below); the phone reading after the fix is owed.**
+The history that follows is kept for its reasoning. This was found on the iPhone 12 with `v1.2.9-alpha.7`
 ([device-verification](../device-verification.md#the-iphone-12-readings-of-v129-alpha7-2026-10-17), 3b).
 The conversation was a DM whose last message is a tall video. The keyboard rose
 (`overlap=301 -> webview height 543`). The web composer was drawn at 487 pt, where it belongs.
@@ -1702,6 +1703,35 @@ store build's WebView cannot be inspected, so this line is the measurement. Read
 - `composerTop` 186 with both at 0 is cause 3.
 
 No fix is written until the line has named one.
+
+**The reading (iPhone 12, `1.6.4-alpha.2`, 2026-11-04, bench account, 3 rounds + 1 control).**
+- DM "Canari Test Delta" (the thread ends in a tall card): 3 of 3 rounds reproduce. Native
+  `keyboard overlap=301 -> webview height 543`; `keyboard settled: native offset=0.0 content=543.0
+  bounds=543.0`; WDA's tree reads the web "Envoyer le message" at y=487 and the native "Ajouter" ("+")
+  at y=186; the header is out of the tree.
+- Control, DM "Canari Test Alpha" (short messages): same keyboard, `offset=0 content=543 bounds=543`,
+  "+" at y=487, in place.
+- **The `page` half of the line is `<private>` on a TestFlight build**, so `scrollY`, `vvOffsetTop` and
+  `composerTop` cannot be read from the syslog. The cause is named by elimination instead.
+- **Cause 2 is refuted** (`content - bounds` = 0, offset 0). **Cause 3 is refuted**: a composer laid
+  out at 186 would be DRAWN at 186, and the web composer is drawn at 487. What is left is **cause 1**:
+  the page's rect says 186 = 487 - 301 while the screen draws 487 with the native offset at 0, so the
+  page believes its document is scrolled by 301 (the keyboard's reveal) while UIKit's offset is 0.
+  (`rect + scrollY` = 487 is the drawn place; `scrollY` itself was not read, hence "by elimination".)
+
+**The fix.** The piece's rect is anchored to the DOCUMENT, not to the layout viewport:
+`screenRect` = `getBoundingClientRect() + (scrollX, scrollY)`. The app never scrolls its document (the
+shell is `overflow-hidden` at the viewport height, so the document has no scroll range and UIKit's
+offset is 0; `CanariClampDocumentScroll` guarantees that only for an offset leaving its range). The
+rect is therefore right WHILE the offset is 0, and then what is drawn is the document position
+whatever the page believes. `rect + scroll` is invariant under that stale scroll, so no document
+scroll listener is needed; the visual viewport's `scroll` is listened to for the zoomed pan only.
+When it compensates a nonzero scroll it logs once per transition (`Log.i`, "compensating a document
+scroll: scrollX= scrollY="): the in-app reading that confirms the cause, since the native page line
+is `<private>`. Pinch-zoomed (`visualViewport.scale > 1.01`; the viewport meta
+does not forbid zoom) there is a real pan, and the visual viewport's transform
+`(rect - offset) * scale` is used instead. **Owed:** the same three rounds on the build that carries
+it (the "+" at 487 beside "Envoyer", the header in place), and a salon.
 
 **Not new in 1.2.9, by reading.** Between `v1.2.8` and `v1.2.9-alpha.7`, none of these changed:
 
@@ -4327,6 +4357,13 @@ both halves run only on hardware.
 ## The group summary never alerts (measured on a Pixel 6a, 2026-10-09)
 
 Logcat 12:16:49: a `type=channel` push at .069, a `type=channel_read` at .103 (`cancelConversationNotification` id=1035, which calls `refreshBadgeSummary`), the message banner posted at .147, then Android logged "Muting recently noisy" on the summary id 9999. The summary was rebuilt by every post and cancel with default alert behaviour, so each rebuild counted as a noisy post and tripped the platform's rate limit on the group. `refreshBadgeSummary` now sets `setOnlyAlertOnce(true)` and `GROUP_ALERT_CHILDREN`: only a child line may sound. No change to the message repost: a message already announced and cancelled by a read push is refused by the alerted ledger (`hasAlreadyAlerted`), and one not yet announced is rightly its first alert, so a second `setOnlyAlertOnce` there would only hide a real first sound.
+
+## Back to the top: a re-tap of the open tab, and the iOS status bar (owner, 2026-11-04)
+
+An iPhone user had no quick way back to the top of the feed. Two gestures, NO button (owner), ONE action (`scrollPageToTop`, `lib/navigation/scrollToTop.ts`). Section navigation is a closed chantier ([section-navigation](section-navigation.md)); this adds a gesture, not a menu.
+
+- **Re-tap of the tab the reader is on** (`handlePlaceTap` / `handlePlaceClick`; native iOS bar, `BottomNav` on web and Android, `AppSidebar` on desktop). A re-tap first closes any open history overlay and stops there (the same-URL navigation it replaces used to drain them). Otherwise the first re-tap scrolls the page to the top (smooth, instant under reduced motion); a re-tap while ALREADY at the top refreshes the feed, like Instagram, through the SAME function as pull-to-refresh (`refreshPosts`, registered by the feed with `registerRetapRefresh`), one refresh at a time, a failure warned. `scrollPageToTop` itself never refreshes. A tap from deeper in the place (`/posts/<id>`) still navigates back to it; ctrl/meta/shift/alt and non-primary clicks on the web links are left to the browser. The native bar delivers a re-tap because `UITabBarDelegate.didSelect` fires for the selected item too (owed one reading on an iPhone). Other places get the scroll where they scroll in the layout's box (communities, dashboard); the chat list scrolls in its own panel, so it is not covered, and only the feed registers a refresh.
+- **iOS status bar tap**: the app's pages scroll in ONE inner box (`.page-scroll-wrap`, `+layout.svelte`), the document never moves, and WKWebView only scrolls its own scroll view on that tap - so nothing happened. Rather than turn the document into the scroller (a redesign of the shell), the patched plugin mounts a `StatusBarTapCatcher` in the tab bar overlay - a full-width 1 pt strip along the top edge, because UIKit gives the tap to the scroll view under the tap point - and switches off the web view's `scrollsToTop`; the catcher refuses the native scroll and triggers the `statusBarTap` plugin event; the page runs `scrollPageToTop('status-bar')`. It never refreshes, and it is skipped while a history overlay is open (the page behind would move unseen). A full-screen modal that is NOT on the history overlay stack is not detected: the tap scrolls the page behind it. Compiled by `.github/workflows/ios.yml`; behaviour on a phone is owed.
 
 ## A panel on a phone is the whole screen, and the status bar is padded ONCE (owner, 2026-11-04)
 

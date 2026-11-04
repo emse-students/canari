@@ -60,15 +60,6 @@ export class Post {
   @Column({ type: 'jsonb', default: [], update: false })
   comments: any[];
 
-  /**
-   * THE RETIRED GLOBAL PIN - read by nothing. A pin is a row of `post_space_pins` per space since
-   * WP-PIN (migration 127); the column waits to be dropped (docs/wiki/legacy-compatibility.md).
-   * Still mapped, `select: false`, only so that a `TYPEORM_SYNCHRONIZE=1` stack (local, the CI boot
-   * probe) does not drop it before migration 128 has read it; no `find` selects it.
-   */
-  @Column({ type: 'boolean', default: false, select: false })
-  pinned?: boolean;
-
   /** Set to true when the post is auto-hidden after reaching the report threshold. Moderators review and restore or delete. */
   @Column({ type: 'boolean', default: false })
   hiddenByModeration: boolean;

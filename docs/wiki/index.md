@@ -27,6 +27,7 @@
 - [MLS + Graine state machine](protocols/mls-graine-state-machine.md) — **Every path, drawn from the code.** Mermaid diagrams with `file:line` on every transition, the duplicate-path table, the dead ends, and the P1/P2/P3 triage
 - [Channel encryption](protocols/channel-encryption.md) — **Graine, PHASES 1-5 ARE IN.** Why a salon is not an MLS group, the per-sender seed the server has never held, and the cut that is still owed
 - [Graine rotates on a departure (design)](protocols/graine-removal-tracker.md) — DESIGN ONLY, reviewed before code: a commit summary from `mls-core` on every platform, a per-key-group clean run, the fail-safe argument, reuse across an Add by re-distributing the same seed, `joined` keeps rotate-on-add
+- [Content-free push (design)](protocols/content-free-push.md) - DESIGN past step 1: every push type's cleartext fields measured from the code, the push envelope for salons and social pushes, Android and iOS mechanics, the honest failure contract, calls kept immediate, several accounts, rollout by `wakeVersion`, WP-W1..W7 with their gates
 - [DMs and communities, compared](protocols/dm-vs-community-encryption.md) — What MLS-carried DMs and Graine-carried communities each do well, re-measured on production 2026-10-21: group sizes, the rotation rate, the bundle, the queue, and where each can improve
 - [WebSocket binary protocol](protocols/websocket-protocol.md) — protobuf wire format, AppMessage, MlsFrame
 - [API surface](protocols/api-surface.md) — Full endpoint list across all services

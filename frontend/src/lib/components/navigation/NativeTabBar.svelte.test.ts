@@ -23,7 +23,7 @@ const plugin = vi.hoisted(() => ({
 vi.mock('@sosweetham/tauri-plugin-system-components-api', () => plugin);
 
 // The Canari-patched commands go through `invoke` by name (`systemComponentsCommands.ts`).
-const core = vi.hoisted(() => ({ invoke: vi.fn() }));
+const core = vi.hoisted(() => ({ invoke: vi.fn(), addPluginListener: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => core);
 
 const route = vi.hoisted(() => ({ page: { url: new URL('https://canari.emse.fr/posts') } }));
@@ -93,6 +93,9 @@ beforeEach(() => {
   badges.placeBadge.mockReset().mockReturnValue(0);
   nativeTabBar.status = 'pending';
   core.invoke.mockReset().mockResolvedValue(undefined);
+  core.addPluginListener
+    .mockReset()
+    .mockResolvedValue({ unregister: vi.fn().mockResolvedValue(undefined) });
   modalWebLayer.covering = false;
   window.matchMedia = ((query: string) => ({
     matches: false,
@@ -200,6 +203,52 @@ describe('NativeTabBar', () => {
     await mountBar({ visible: true });
     selectTabHandler!({ id: 'chat' });
     expect(nav.goto).toHaveBeenCalledWith('/chat');
+  });
+
+  it('a re-tap of the open place scrolls the page to the top instead of navigating', async () => {
+    const scroller = document.createElement('div');
+    scroller.className = 'page-scroll-wrap';
+    scroller.scrollTop = 700;
+    const scrollTo = vi.fn();
+    scroller.scrollTo = scrollTo as unknown as typeof scroller.scrollTo;
+    document.body.appendChild(scroller);
+    try {
+      await mountBar({ visible: true });
+      selectTabHandler!({ id: 'posts' });
+      expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
+      expect(nav.goto).not.toHaveBeenCalled();
+    } finally {
+      scroller.remove();
+    }
+  });
+
+  it('a tap from deeper in the place navigates back to it', async () => {
+    route.page.url = new URL('https://canari.emse.fr/posts/abc');
+    try {
+      await mountBar({ visible: true });
+      selectTabHandler!({ id: 'posts' });
+      expect(nav.goto).toHaveBeenCalledWith('/posts');
+    } finally {
+      route.page.url = new URL('https://canari.emse.fr/posts');
+    }
+  });
+
+  it('a status bar tap runs the same scroll-to-top', async () => {
+    const scroller = document.createElement('div');
+    scroller.className = 'page-scroll-wrap';
+    scroller.scrollTop = 300;
+    const scrollTo = vi.fn();
+    scroller.scrollTo = scrollTo as unknown as typeof scroller.scrollTo;
+    document.body.appendChild(scroller);
+    try {
+      await mountBar({ visible: true });
+      const call = core.addPluginListener.mock.calls.find(([, event]) => event === 'statusBarTap');
+      expect(call?.[0]).toBe('system-components');
+      call![2]();
+      expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
+    } finally {
+      scroller.remove();
+    }
   });
 
   it('reserves the space the plugin measures, not the web bar’s 4rem', async () => {
