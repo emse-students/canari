@@ -48,7 +48,11 @@ import {
 } from '../push/push-content';
 import { forEachBounded, PUSH_FAN_OUT_LIMIT } from '../push/fan-out';
 import { formatUserDisplayNameFromRaw } from '../utils/user-display-name';
-import { postVisibleToViewerSql, sameSideOfReviewCohortSql } from '../spaces/reader-spaces';
+import {
+  commentsWithheldFromViewerSql,
+  postVisibleToViewerSql,
+  sameSideOfReviewCohortSql,
+} from '../spaces/reader-spaces';
 import { isBlockedBetween } from '../common/user-blocks';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
 
@@ -109,9 +113,37 @@ export const POST_BOUND_NOTIFICATION_TYPES: readonly string[] = [
 ];
 
 /**
+ * The bell types whose row ALWAYS carries a comment's text. A `'mention'` may be a post's or a
+ * comment's: `commentBorneNotificationSql` tells them apart.
+ */
+export const COMMENT_BORNE_NOTIFICATION_TYPES: readonly string[] = ['comment', 'reply'];
+
+/**
+ * Bell row `n` (about post `post`) carries a COMMENT's text and writer - withheld, like the comments
+ * themselves, from a named reader whose only door to the post is a read grant with "voit les
+ * commentaires" off (owner, 2026-11-04). New rows of that kind are not written to such a reader
+ * (`mentionRecipientsOf` with `'COMMENT'`); this hides the ones written before, and any row whose
+ * reader's switch was turned off since.
+ *
+ * A `comment` or `reply` row always is. A `mention` row is when a comment wrote it: classified at
+ * the write since migration 132 (`commentId`), and for a row written before, by what the row already
+ * holds - a post's own mention (`notifyPostMentions`) names the post's author as its actor, or the
+ * anonymous actor on an anonymous post, so a mention naming ANYBODY ELSE came from a comment. Two
+ * old comment mentions look like a post's and stay shown: one written by the post's author in a
+ * comment of their own post, and an anonymous or association comment's on an anonymous post.
+ */
+export function commentBorneNotificationSql(n: string, post: string): string {
+  const types = COMMENT_BORNE_NOTIFICATION_TYPES.map((t) => `'${t}'`).join(', ');
+  return `(${n}.type IN (${types}) OR (${n}.type = 'mention' AND (${n}."commentId" IS NOT NULL
+    OR (${n}."actorId" IS DISTINCT FROM ${post}."authorId"
+      AND NOT (${n}."actorId" = '${ANONYMOUS_NOTIFICATION_ACTOR_ID}' AND ${post}.anonymous)))))`;
+}
+
+/**
  * Bell row `n` may be shown: a row of a type that names no post, or a row of a post-bound type
  * (`POST_BOUND_NOTIFICATION_TYPES`) whose post exists, is not hidden by moderation, and its
- * recipient still sees (`getNotifications` says why). The types are constants of this module.
+ * recipient still sees (`getNotifications` says why) - with its comments, for a comment-borne row
+ * (`commentBorneNotificationSql`). The types are constants of this module.
  *
  * `postId` is a `varchar` that other types fill with ids of their own, so it is cast to `uuid`
  * inside a CASE - evaluated for a post-bound row only, and only when it has a uuid's shape, so a
@@ -125,7 +157,9 @@ export function bellRowShownSql(n: string): string {
         AND ${n}."postId" ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
       THEN ${n}."postId"::uuid END)
       AND NOT notif_post."hiddenByModeration"
-      AND ${postVisibleToViewerSql('notif_post', `${n}."recipientId"`)}))`;
+      AND ${postVisibleToViewerSql('notif_post', `${n}."recipientId"`)}
+      AND NOT (${commentBorneNotificationSql(n, 'notif_post')}
+        AND ${commentsWithheldFromViewerSql('notif_post', `${n}."recipientId"`)})))`;
 }
 
 /**
@@ -312,21 +346,21 @@ export class PostNotificationsService {
    * comment's are asked when it is written, so a comment on a post not yet published (only its
    * author may write one) tells nobody, then or later: dropped, not deferred.
    * The dropped ones are counted at debug, never named: who was mentioned is the writer's text.
+   *
+   * @param intent what the text that notifies IS: `'READ_OR_REACT'` for the post's own text,
+   *   `'COMMENT'` for a comment's (a mention in it, or a reply to the recipient's comment) - which a
+   *   named reader with comments withheld (owner, 2026-11-04) must not be pushed either.
    */
   async mentionRecipientsOf(
     post: OpenablePost,
     mentionerId: string,
-    candidates: string[]
+    candidates: string[],
+    intent: 'READ_OR_REACT' | 'COMMENT'
   ): Promise<string[]> {
     const manager = this.postRepo.manager;
     const kept: string[] = [];
     for (const candidate of candidates) {
-      const verdict = await readPostOpenVerdict(
-        manager,
-        post,
-        { viewerId: candidate },
-        'READ_OR_REACT'
-      );
+      const verdict = await readPostOpenVerdict(manager, post, { viewerId: candidate }, intent);
       if (verdict.refusal === null && !(await isBlockedBetween(manager, mentionerId, candidate))) {
         kept.push(candidate);
       }
@@ -354,7 +388,12 @@ export class PostNotificationsService {
   async notifyPostMentions(post: Post): Promise<number> {
     const candidates = (post.mentions ?? []).filter((id) => id && id !== post.authorId);
     if (candidates.length === 0) return 0;
-    const recipients = await this.mentionRecipientsOf(post, post.authorId, candidates);
+    const recipients = await this.mentionRecipientsOf(
+      post,
+      post.authorId,
+      candidates,
+      'READ_OR_REACT'
+    );
     if (recipients.length === 0) return 0;
     const actorId = post.anonymous ? ANONYMOUS_NOTIFICATION_ACTOR_ID : post.authorId;
     const actorName = post.anonymous
@@ -470,6 +509,8 @@ export class PostNotificationsService {
     /** The association whose logo the bell row draws instead of the actor's face (row only, never the push). */
     associationId?: string;
     associationLogoUrl?: string | null;
+    /** The comment the row is about, for every row a comment writes (`PostNotification.commentId`). */
+    commentId?: string;
     skipPush?: boolean;
     pushData?: Record<string, string>;
   }) {

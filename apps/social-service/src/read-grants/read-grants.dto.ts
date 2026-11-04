@@ -23,3 +23,17 @@ export class SetReadGrantDto {
   @IsBoolean()
   granted!: boolean;
 }
+
+/**
+ * Sets ONE named reader's switch "voit les commentaires" (owner, 2026-11-04). A state, not a toggle,
+ * for the reason `SetReadGrantDto` gives.
+ */
+export class SetReadGrantCommentsDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(255)
+  userId!: string;
+
+  @IsBoolean()
+  seesComments!: boolean;
+}

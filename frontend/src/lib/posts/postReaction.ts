@@ -28,6 +28,17 @@ export const DOUBLE_TAP_REACTION: ReactionType = "J'aime";
 export type PostReactions = Record<string, string>;
 
 /**
+ * What the server answers to a reaction: the reactions it shows this reader, and - for a named
+ * reader the post's people are withheld from (owner, 2026-11-04) - everybody else's as a tally,
+ * `reactions` then holding their own entry alone. Taken WHOLE by every caller: a tally kept from
+ * before the answer would count a reaction twice or one already taken back.
+ */
+export interface ServedReactions {
+  reactions: PostReactions;
+  otherReactionCounts?: Record<string, number>;
+}
+
+/**
  * The reactions after `userId` toggles `type`: the same type again takes it back, any other
  * replaces theirs. Pure - the caller applies it on the tap and keeps `reactions` for a rollback.
  */
@@ -54,34 +65,34 @@ export function reactionRefusedLocally(): boolean {
 
 /**
  * Sends the reaction the caller has already drawn: removes it when `wasReacted`, adds `type`
- * otherwise. Resolves to the server's map; rejects with `MutedError` for a refusal by moderation
+ * otherwise. Resolves to what the server serves this reader ({@link ServedReactions}); rejects with `MutedError` for a refusal by moderation
  * and with whatever the transport threw otherwise (`publishFailureMessage` tells them apart).
  */
 export async function sendPostReaction(
   postId: string,
   type: string,
   wasReacted: boolean
-): Promise<PostReactions> {
+): Promise<ServedReactions> {
   await assertNotMuted();
   const result = wasReacted ? await removeReaction(postId) : await addReaction(postId, type);
-  return result.reactions;
+  return { reactions: result.reactions, otherReactionCounts: result.otherReactionCounts };
 }
 
 /** Cards listening for reactions given elsewhere, by post id. */
-const listeners = new PostListeners<[reactions: PostReactions]>('post-reaction', 'reactions');
+const listeners = new PostListeners<[served: ServedReactions]>('post-reaction', 'reactions');
 
 /**
  * Tells every card showing `postId` the reactions the server answered to a reaction given outside
  * it (the reel viewer). A listener that throws is logged and does not stop the others.
  */
-export function publishPostReactions(postId: string, reactions: PostReactions): void {
-  listeners.publish(postId, reactions);
+export function publishPostReactions(postId: string, served: ServedReactions): void {
+  listeners.publish(postId, served);
 }
 
 /** Listens for {@link publishPostReactions} on `postId`. Returns the unsubscribe. */
 export function onPostReactions(
   postId: string,
-  listener: (reactions: PostReactions) => void
+  listener: (served: ServedReactions) => void
 ): () => void {
   return listeners.on(postId, listener);
 }

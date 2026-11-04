@@ -4,7 +4,8 @@
    *
    * Every change saves at once and offers "Undo" (user, 2026-10-16). There is no undo endpoint and
    * none is needed: `PUT /read-grants` is idempotent per cell, so undoing is the inverse write, and
-   * the server journals it like any other change - the journal keeps both lines.
+   * the server journals it like any other change - the journal keeps both lines. The person's
+   * switch "voit les commentaires" (owner, 2026-11-04) is saved, undone and journalled the same way.
    */
   import { onMount } from 'svelte';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
@@ -13,10 +14,17 @@
   import {
     listReadGrants,
     setReadGrant,
+    setReadGrantComments,
     type ReadGrant,
     type ReadGrantJournalEntry,
   } from '$lib/associations/api';
-  import { cellKey, grantees, journalCountLabel, type JournalLine } from '$lib/admin/readAccess';
+  import {
+    cellKey,
+    commentsKey,
+    grantees,
+    journalCountLabel,
+    type JournalLine,
+  } from '$lib/admin/readAccess';
   import {
     campusLabel,
     formationLabel,
@@ -40,6 +48,13 @@
   const names = createNameBook();
   let grants = $state<ReadGrant[]>([]);
   let journal = $state<ReadGrantJournalEntry[]>([]);
+  /** The people whose switch "voit les commentaires" is ON, as the server last said. */
+  let commentReaders = $state<ReadonlySet<string>>(new Set());
+  /** A person's switch while its write is in flight. */
+  const optimisticComments = new SvelteMap<string, boolean>();
+  /** Whether `userId` sees the comments, the click in flight laid over the server's answer. */
+  const seesComments = (userId: string): boolean =>
+    optimisticComments.get(userId) ?? commentReaders.has(userId);
   let loading = $state(true);
   let error = $state<string | null>(null);
   /** The person whose sheet is open. */
@@ -67,14 +82,26 @@
 
   const journalLines = $derived<JournalLine[]>(
     journal.map((entry, i) => {
+      const who = { actor: names.nameOf(entry.actor), name: names.nameOf(entry.userId) };
+      const key = `${i}|${entry.at}`;
+      // A switch line names no cell.
+      if (entry.action === 'cmt_show' || entry.action === 'cmt_hide') {
+        return {
+          key,
+          at: entry.at,
+          text:
+            entry.action === 'cmt_show'
+              ? m.readaccess_journal_comments_show(who)
+              : m.readaccess_journal_comments_hide(who),
+        };
+      }
       const args = {
-        actor: names.nameOf(entry.actor),
-        name: names.nameOf(entry.userId),
+        ...who,
         campus: campusLabel(entry.campus as Campus),
         scope: scopeLabel(entry.formation),
       };
       return {
-        key: `${i}|${entry.at}`,
+        key,
         at: entry.at,
         text:
           entry.action === 'grant'
@@ -106,6 +133,9 @@
     refreshApplied = seq;
     grants = res.grants;
     journal = res.journal;
+    commentReaders = new Set(
+      (res.readers ?? []).filter((r) => r.seesComments).map((r) => r.userId)
+    );
     names.resolve([
       ...res.grants.map((g) => g.userId),
       ...res.journal.flatMap((j) => [j.userId, j.actor]),
@@ -176,6 +206,57 @@
     showUndoToast(text, change.undo);
   }
 
+  /**
+   * Writes one person's switch "voit les commentaires", as `writeCell` writes a cell: at once, the
+   * click shown while it saves, the list re-read after, and the inverse offered as an undo.
+   */
+  async function writeComments(userId: string, on: boolean, undoable: boolean) {
+    const key = commentsKey(userId);
+    if (saving.has(key)) {
+      Log.d('admin.read-access.comments refused, still saving', { userId });
+      showToast(m.readaccess_busy(), 'warning');
+      return;
+    }
+    saving.add(key);
+    optimisticComments.set(userId, on);
+    error = null;
+    Log.d('admin.read-access.comments', { userId, on, undoable });
+    try {
+      await setReadGrantComments(userId, on);
+    } catch (e) {
+      Log.d('admin.read-access.comments failed', e);
+      error = m.readaccess_save_error();
+      optimisticComments.delete(userId);
+      saving.delete(key);
+      return;
+    }
+    try {
+      await loadGrants();
+    } catch (e) {
+      Log.d('admin.read-access.refresh failed', e);
+      error = m.readaccess_refresh_error();
+    } finally {
+      optimisticComments.delete(userId);
+      saving.delete(key);
+    }
+    if (!undoable) return;
+    const name = names.nameOf(userId);
+    const text = on
+      ? m.readaccess_comments_shown_toast({ name })
+      : m.readaccess_comments_hidden_toast({ name });
+    const change: LastChange = {
+      text,
+      undo: () => {
+        Log.d('admin.read-access.comments undo', { userId, on: !on });
+        if (lastChange === change) lastChange = null;
+        void writeComments(userId, !on, false);
+      },
+    };
+    if (editing === userId) lastChange = change;
+    else Log.d('admin.read-access.change landed after its sheet closed', { userId, editing });
+    showUndoToast(text, change.undo);
+  }
+
   function openSheet(userId: string): boolean {
     Log.d('admin.read-access.openSheet', { userId });
     names.resolve([userId]);
@@ -231,6 +312,7 @@
       <ReadGrantCard
         name={names.nameOf(userId)}
         grants={grants.filter((g) => g.userId === userId)}
+        seesComments={seesComments(userId)}
         onEdit={() => openSheet(userId)}
       />
     {/each}
@@ -253,6 +335,8 @@
         !held.has(cellKey(userId, campus, formation)),
         true
       )}
+    seesComments={seesComments(userId)}
+    onToggleComments={(on) => void writeComments(userId, on, true)}
     {error}
     {lastChange}
     onClose={closeSheet}

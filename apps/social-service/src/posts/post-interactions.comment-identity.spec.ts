@@ -28,6 +28,10 @@ describe('PostInteractionsService - comment identity', () => {
       renderMentionsForPush: jest.fn((t: string) => Promise.resolve(t)),
       resolveActorName: jest.fn(() => Promise.resolve('Real Name')),
       resolveMentionedUserIds: jest.fn(() => [] as string[]),
+      // The read's gate on who a comment's text may reach, proven against PostgreSQL: open here.
+      mentionRecipientsOf: jest.fn((_p: unknown, _w: string, ids: string[]) =>
+        Promise.resolve(ids)
+      ),
     };
     const push = { notifyContent: jest.fn(() => Promise.resolve()) };
     const query = jest.fn((sql: string) =>
