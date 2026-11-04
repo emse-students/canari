@@ -68,7 +68,7 @@ maybe('the bell page against PostgreSQL (migration 126)', () => {
         type varchar NOT NULL DEFAULT 'association', archived boolean NOT NULL DEFAULT false,
         "isBDE" boolean NOT NULL DEFAULT false);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
-        "associationId" uuid, anonymous boolean NOT NULL DEFAULT false,
+        "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, anonymous boolean NOT NULL DEFAULT false,
         "hiddenByModeration" boolean NOT NULL DEFAULT false, "scheduledAt" timestamptz,
         "publishedAt" timestamptz NOT NULL DEFAULT now());
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,

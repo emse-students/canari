@@ -199,7 +199,7 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
         "logoUrl" varchar, "logoMediaId" varchar, "isBDE" boolean NOT NULL DEFAULT false,
         "createdBy" varchar(255));
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
-        "associationId" uuid, anonymous boolean NOT NULL DEFAULT false,
+        "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, anonymous boolean NOT NULL DEFAULT false,
         "hiddenByModeration" boolean NOT NULL DEFAULT false, "scheduledAt" timestamptz,
         kind varchar NOT NULL DEFAULT 'post', "expiresAt" timestamptz, markdown text,
         "feedNotifiedAt" timestamptz, "createdAt" timestamptz NOT NULL DEFAULT now(),
@@ -283,6 +283,8 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
       },
     } as unknown as PostNotificationsService;
     const redis = {
+      // The readers' generations move first (`invalidatePostListCacheFor`); the pages are the assertion.
+      incrEach: () => Promise.resolve(),
       deleteMatching: (_match: string, select: (key: string) => boolean) => {
         const doomed = [...cache].filter(select);
         for (const key of doomed) cache.delete(key);

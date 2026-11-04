@@ -3,6 +3,7 @@
   import type { PostEntity } from '$lib/posts/api';
   import PostAuthorAvatar from './PostAuthorAvatar.svelte';
   import RevealedAuthorLine from './RevealedAuthorLine.svelte';
+  import StudentsOnlyChip from './StudentsOnlyChip.svelte';
   import { Clock, Repeat2, Send } from '@lucide/svelte';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
@@ -101,6 +102,9 @@
     >
       <Clock size={12} strokeWidth={2.5} class="shrink-0" />
       <span class="shrink-0" title={exactDate(post.publishedAt)}>{timeAgo(post.publishedAt)}</span>
+      {#if post.studentsOnly}
+        <StudentsOnlyChip />
+      {/if}
       {#if republished}
         <span class="shrink-0" aria-hidden="true">&middot;</span>
         <Repeat2 size={12} strokeWidth={2.5} class="shrink-0" aria-hidden="true" />

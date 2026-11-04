@@ -54,6 +54,9 @@
   } from '$lib/posts/postIdentity';
   import Picker from '$lib/components/ui/Picker.svelte';
   import PostIdentityPicker from './PostIdentityPicker.svelte';
+  import StudentsOnlySwitch from './StudentsOnlySwitch.svelte';
+  import { studentsOnlyOffered } from '$lib/posts/studentsOnly';
+  import type { ComposerReelState } from '$lib/posts/composerReelState';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import PostComposerBar from './PostComposerBar.svelte';
   import MediaThumbRemoveButton from './MediaThumbRemoveButton.svelte';
@@ -191,6 +194,16 @@
   );
 
   /**
+   * "Entre étudiants" (owner, 2026-11-04): OFF by default, offered only while the identity chosen is
+   * an association or a list the member may post as - the same entity read as `liveAssociation`, so
+   * a restored draft naming an association no longer listed offers nothing and sends nothing.
+   */
+  let studentsOnly = $state(false);
+  const studentsOnlyAssociation = $derived(
+    liveAssociation && studentsOnlyOffered(liveAssociation.type) ? liveAssociation : null
+  );
+
+  /**
    * Hands over to the broadcaster's screen. The composer is about to unmount, and the debounced
    * auto-save below dies with it, so the draft is saved NOW (text, poll, form; the media are held
    * in memory by `holdPostComposerMedia`): the next open of the composer brings it back, and
@@ -245,6 +258,7 @@
       scheduledAt,
       selectedAssociationId,
       selectedLinkedCalendarEventId,
+      ...(studentsOnly ? { studentsOnly: true } : {}),
     };
   }
 
@@ -265,6 +279,7 @@
     scheduledAt = draft.scheduledAt;
     selectedAssociationId = draft.selectedAssociationId;
     selectedLinkedCalendarEventId = draft.selectedLinkedCalendarEventId;
+    studentsOnly = draft.studentsOnly === true;
   }
 
   function persistComposerDraft() {
@@ -327,17 +342,18 @@
    * "Garder comme post" from the reel publish step: the video comes back through `onFiles`, and
    * what the member changed in that step comes with it. The caption REPLACES this text only when
    * it differs from it (it started as this text, so an untouched caption changes nothing); the
-   * identity chosen there is the post's.
+   * identity and the "Entre étudiants" switch chosen there are the post's.
    */
-  function onReelKept(caption: string, identity: string) {
-    if (caption !== markdown) {
+  function onReelKept(kept: ComposerReelState) {
+    if (kept.caption !== markdown) {
       Log.d(
         'POST_COMPOSER',
         'kept as a post: the caption edited in the reel step replaces the text'
       );
-      markdown = caption;
+      markdown = kept.caption;
     }
-    selectedAssociationId = identity;
+    selectedAssociationId = kept.identity;
+    studentsOnly = kept.studentsOnly;
   }
 
   function onReelPublished(identity: string) {
@@ -565,6 +581,11 @@
       if (includeForm) payload.attachedFormId = selectedFormId;
 
       Object.assign(payload, postIdentityFields(selectedAssociationId));
+      // Sent only where it is offered: a switch left on before the identity changed is not a choice.
+      if (studentsOnly && studentsOnlyAssociation) payload.studentsOnly = true;
+      if (studentsOnlyAssociation) {
+        Log.d('STUDENTS_ONLY', `publishing with the switch ${payload.studentsOnly ? 'ON' : 'off'}`);
+      }
       if (selectedLinkedCalendarEventId.trim()) {
         payload.linkedCalendarEventId = selectedLinkedCalendarEventId.trim();
       }
@@ -597,6 +618,7 @@
       scheduledAt = '';
       selectedAssociationId = '';
       selectedLinkedCalendarEventId = '';
+      studentsOnly = false;
       onPostCreated(landing);
     } catch (err) {
       if (isVideoPrepareError(err) && err.fault === 'aborted') {
@@ -652,6 +674,15 @@
           label={m.post_create_link_event_label()}
           disabled={loadingLinkableEvents}
           variant="field"
+        />
+      </div>
+    {/if}
+
+    {#if studentsOnlyAssociation}
+      <div class="mt-3" transition:fade={{ duration: 200 }}>
+        <StudentsOnlySwitch
+          bind:checked={studentsOnly}
+          associationName={studentsOnlyAssociation.name}
         />
       </div>
     {/if}
@@ -832,8 +863,7 @@
         : undefined}
       reel={reelAllowed
         ? {
-            caption: markdown,
-            identity: selectedAssociationId,
+            start: { caption: markdown, identity: selectedAssociationId, studentsOnly },
             onpublished: onReelPublished,
             onkept: onReelKept,
           }

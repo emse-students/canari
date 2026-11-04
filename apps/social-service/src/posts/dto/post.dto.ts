@@ -325,6 +325,15 @@ export class CreatePostDto {
   @IsOptional()
   anonymous?: boolean;
 
+  /**
+   * "Entre étudiants" (owner, 2026-11-04): read only by students and the association's members.
+   * Absent is OFF. Refused, typed, on a post that is not an association's or a list's
+   * (`assertStudentsOnlyOffered`).
+   */
+  @IsBoolean()
+  @IsOptional()
+  studentsOnly?: boolean;
+
   @IsOptional()
   @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
   @IsUUID()
@@ -507,6 +516,14 @@ export class UpdatePostDto {
   @ValidateIf((_, v) => v != null && v !== '')
   @IsDateString()
   scheduledAt?: string | null;
+
+  /**
+   * "Entre étudiants", changed after publication, both ways (owner, 2026-11-04, decision 5). Absent
+   * leaves the stored value alone - a client older than the switch never clears it.
+   */
+  @IsBoolean()
+  @IsOptional()
+  studentsOnly?: boolean;
 }
 
 /**

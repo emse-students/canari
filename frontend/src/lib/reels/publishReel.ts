@@ -97,6 +97,8 @@ export interface PublishReelInput {
   caption: string;
   /** `''`, `ANONYMOUS_POST_IDENTITY` or an association id (`PostIdentityPicker`). */
   identity: string;
+  /** "Entre étudiants" (owner, 2026-11-04): set by the step only where it is offered. */
+  studentsOnly?: boolean;
   /** The server's cap (`GET /api/posts/reel-limits`). */
   maxDurationMs: number;
   /** Progress and cancel for the re-encode (`VideoPreparationState.optionsFor`). */
@@ -124,6 +126,8 @@ export interface PublishPhotoInput {
   clip: ReelClip;
   caption: string;
   identity: string;
+  /** "Entre étudiants", as on a reel. */
+  studentsOnly?: boolean;
   onStage?: (stage: PublishStage) => void;
 }
 
@@ -228,6 +232,7 @@ export async function publishReel(
       markdown: caption,
       media: [ref],
       ...postIdentityFields(identity),
+      ...(input.studentsOnly ? { studentsOnly: true } : {}),
     });
     console.debug(`[reel-publish] published ${post.id}`);
     return post;
@@ -264,6 +269,7 @@ export async function publishCameraPhoto(
       markdown: caption,
       media: [ref],
       ...postIdentityFields(identity),
+      ...(input.studentsOnly ? { studentsOnly: true } : {}),
     });
   } catch (err) {
     throw new ReelPublishError(stage, { cause: err });
