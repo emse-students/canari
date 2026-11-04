@@ -345,8 +345,8 @@
     try {
       // Still never sent to a server certain to refuse it: when nothing is known, this asks -
       // behind a picker that has already closed and a tally that has already moved.
-      const reactions = await sendPostReaction(localPost.id, reactionType, wasReacted);
-      localPost = { ...localPost, reactions };
+      const served = await sendPostReaction(localPost.id, reactionType, wasReacted);
+      localPost = { ...localPost, ...served };
     } catch (err) {
       // NOT ALWAYS MODERATION. `assertNotMuted()` ASKS the server, so a dropped radio used to tell
       // the reader they are restricted by moderation, which is false and is about them.
@@ -388,9 +388,9 @@
    */
   const postId = $derived(localPost.id);
   $effect(() =>
-    onPostReactions(postId, (reactions) => {
+    onPostReactions(postId, (served) => {
       ledger.answered(['reactions']);
-      localPost = { ...localPost, reactions };
+      localPost = { ...localPost, ...served };
     })
   );
 

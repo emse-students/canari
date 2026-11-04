@@ -4,13 +4,14 @@ import type { RedisService } from '../common/redis/redis.service';
 import { ReadGrantsService } from './read-grants.service';
 
 /** A transaction manager whose `query` answers by the first matching statement. */
-function setup(answers: { user?: unknown[]; write?: unknown[] }) {
+function setup(answers: { user?: unknown[]; write?: unknown[]; left?: unknown[] }) {
   const queries: { sql: string; params?: unknown[] }[] = [];
   const manager = {
     query: jest.fn(async (sql: string, params?: unknown[]) => {
       queries.push({ sql, params });
       if (sql.includes('FROM users')) return answers.user ?? [{ '?column?': 1 }];
       if (sql.startsWith('INSERT INTO read_grant_journal')) return [];
+      if (sql.startsWith('SELECT 1 FROM read_grants')) return answers.left ?? [{ '?column?': 1 }];
       return answers.write ?? [{ id: 'row' }];
     }),
   };
@@ -57,6 +58,17 @@ describe('ReadGrantsService.setCell', () => {
     expect(queries.some((q) => q.sql.includes('FROM users'))).toBe(false);
     const journal = queries.find((q) => q.sql.startsWith('INSERT INTO read_grant_journal'));
     expect(journal?.params?.[3]).toBe('revoke');
+    expect(queries.some((q) => q.sql.includes('read_grant_readers'))).toBe(false);
+  });
+
+  it("turns the reader's comment switch back OFF, journalled, when their LAST cell is revoked", async () => {
+    const { service, queries } = setup({ left: [] });
+    await service.setCell('admin-1', 'u-1', 'gardanne', null, false);
+    const lines = queries.filter((q) => q.sql.startsWith('INSERT INTO read_grant_journal'));
+    expect(lines.map((q) => q.params?.[3] ?? q.sql.match(/'(cmt_\w+)'/)?.[1])).toEqual([
+      'revoke',
+      'cmt_hide',
+    ]);
   });
 });
 
@@ -69,8 +81,8 @@ describe('ReadGrantsService.setSeesComments (owner, 2026-11-04)', () => {
     await expect(service.setSeesComments('admin-1', 'u-1', true)).resolves.toEqual({
       changed: true,
     });
-    expect(journalOf(queries)?.params).toEqual(['u-1', 'cmt_show', 'admin-1']);
-    expect(journalOf(queries)?.sql).toContain('NULL, NULL');
+    expect(journalOf(queries)?.params).toEqual(['u-1', 'admin-1']);
+    expect(journalOf(queries)?.sql).toContain("NULL, NULL, 'cmt_show'");
     expect(dropCache).toHaveBeenCalledTimes(1);
   });
 
@@ -78,7 +90,7 @@ describe('ReadGrantsService.setSeesComments (owner, 2026-11-04)', () => {
     const { service, queries } = setup({});
     await service.setSeesComments('admin-1', 'gone', false);
     expect(queries.some((q) => q.sql.includes('FROM users'))).toBe(false);
-    expect(journalOf(queries)?.params?.[1]).toBe('cmt_hide');
+    expect(journalOf(queries)?.sql).toContain("'cmt_hide'");
   });
 
   it('is idempotent: a state already held writes no journal line and keeps the cache', async () => {

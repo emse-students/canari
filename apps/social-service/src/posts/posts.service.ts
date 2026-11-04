@@ -432,13 +432,9 @@ export class PostsService {
       return {
         memberReposts: await memberRepostContext(this.postRepo.manager, postIds, viewerId),
         ...(await this.pinContext(postIds, viewerId, true)),
-        // Asked of an administrator too, never assumed: the predicate is what answers (and its
-        // `adminSeesAll` arms answer "not withheld" for one).
-        commentsWithheldIds: await commentsWithheldPostIds(
-          this.postRepo.manager,
-          postIds,
-          viewerId
-        ),
+        // Nothing is withheld from an administrator: the predicate's `adminSeesAll` arm opens every
+        // post to them without a grant, so asking it would cost a query to learn an empty set.
+        commentsWithheldIds: new Set(),
         viewerId,
         isGlobalAdmin: true,
         moderatedIds: new Set(),
@@ -459,27 +455,27 @@ export class PostsService {
       };
     }
     const associationIds = rows.map((row) => row.associationId).filter((id): id is string => !!id);
-    const [
-      managedAssociationIds,
-      moderatedIds,
-      memberships,
-      grantFree,
-      memberReposts,
-      pins,
-      commentsWithheldIds,
-    ] = await Promise.all([
-      this.associationsService.mayActOnAny(
-        viewerId,
-        associationIds,
-        AssociationPermissionFlag.POST_AS_ASSO
-      ),
-      this.associationsService.moderatedPostIds(viewerId, postIds),
-      this.republishAsOf(viewerId),
-      this.grantFreeVisibleIds(postIds, viewerId),
-      memberRepostContext(this.postRepo.manager, postIds, viewerId),
-      this.pinContext(postIds, viewerId, false),
-      commentsWithheldPostIds(this.postRepo.manager, postIds, viewerId),
-    ]);
+    const [managedAssociationIds, moderatedIds, memberships, grantFree, memberReposts, pins] =
+      await Promise.all([
+        this.associationsService.mayActOnAny(
+          viewerId,
+          associationIds,
+          AssociationPermissionFlag.POST_AS_ASSO
+        ),
+        this.associationsService.moderatedPostIds(viewerId, postIds),
+        this.republishAsOf(viewerId),
+        this.grantFreeVisibleIds(postIds, viewerId),
+        memberRepostContext(this.postRepo.manager, postIds, viewerId),
+        this.pinContext(postIds, viewerId, false),
+      ]);
+    // Only a post the reader does NOT see without a grant can have its comments withheld (the
+    // predicate's own last term), so the predicate is asked of those alone: none on an ordinary
+    // reader's page, and no query for it at all.
+    const commentsWithheldIds = await commentsWithheldPostIds(
+      this.postRepo.manager,
+      postIds.filter((id) => !grantFree.grantFreeIds.has(id)),
+      viewerId
+    );
     return {
       memberReposts,
       ...pins,

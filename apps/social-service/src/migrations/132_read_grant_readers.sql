@@ -15,10 +15,18 @@
 --    its `varchar(8)`), which name no cell: `campus` becomes NULL for them, and only for them. The
 --    journal stays append-only and records CHANGES only (the service writes no line for a state
 --    already held).
+-- 3. `post_notifications` gains `commentId`: the comment a bell row is ABOUT, set by every row a
+--    comment writes (`comment`, `reply`, and a `mention` in a comment). It is what lets the bell
+--    hide a comment's mention from a reader the comments are withheld from, where `type` alone
+--    cannot (a `mention` is also a post's). NULL on every row written before - for those the bell
+--    reads the discriminator the row already holds (`commentBorneNotificationSql`) - and on every
+--    row no comment wrote.
 --
--- ADDITIVE: a new table, a relaxed NOT NULL, a check constraint replaced by a wider one.
+-- ADDITIVE: a new table, a relaxed NOT NULL, a check constraint replaced by a wider one, a nullable
+-- column with no default (a catalogue change, no rewrite of `post_notifications`).
 -- Idempotent for CD: IF NOT EXISTS, DROP CONSTRAINT IF EXISTS before each ADD CONSTRAINT.
--- LOCKS: ACCESS EXCLUSIVE on `read_grant_journal` (a few hundred rows at most, written by a global
+-- LOCKS: ACCESS EXCLUSIVE on `post_notifications` for the catalogue change alone (no scan, no
+-- rewrite), and on `read_grant_journal` (a few hundred rows at most, written by a global
 -- admin's clicks) for the ALTERs and the validation of the two checks, released at COMMIT. A request
 -- holding it makes the migration give up after 5 s rather than queue (the re-run is safe).
 
@@ -43,5 +51,7 @@ ALTER TABLE read_grant_journal ADD CONSTRAINT read_grant_journal_action_check
 ALTER TABLE read_grant_journal DROP CONSTRAINT IF EXISTS read_grant_journal_campus_check;
 ALTER TABLE read_grant_journal ADD CONSTRAINT read_grant_journal_campus_check
   CHECK ((action IN ('grant', 'revoke')) = (campus IS NOT NULL));
+
+ALTER TABLE post_notifications ADD COLUMN IF NOT EXISTS "commentId" varchar(255) NULL;
 
 COMMIT;

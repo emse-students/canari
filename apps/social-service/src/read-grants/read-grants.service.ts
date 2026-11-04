@@ -1,5 +1,5 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, type EntityManager } from 'typeorm';
 import { RedisService } from '../common/redis/redis.service';
 import { invalidatePostListCache } from '../posts/post-list-cache';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
@@ -113,29 +113,21 @@ export class ReadGrantsService {
           throw new NotFoundException('Unknown user');
         }
       }
-      // No row is OFF, so OFF on a reader with no row inserts nothing (the SELECT's WHERE), and a
-      // state already held is left untouched by the conflict branch's WHERE: no row comes back.
+      if (!seesComments) return this.turnCommentsOff(manager, userId, actor);
+      // A state already held is left untouched by the conflict branch's WHERE: no row comes back.
       const rows = (await manager.query(
-        `INSERT INTO read_grant_readers (user_id, sees_comments, updated_by)
-           SELECT $1, $2::boolean, $3 WHERE $2::boolean
-         ON CONFLICT (user_id) DO UPDATE SET sees_comments = EXCLUDED.sees_comments,
+        `INSERT INTO read_grant_readers (user_id, sees_comments, updated_by) VALUES ($1, true, $2)
+         ON CONFLICT (user_id) DO UPDATE SET sees_comments = true,
            updated_by = EXCLUDED.updated_by, updated_at = now()
-           WHERE read_grant_readers.sees_comments IS DISTINCT FROM EXCLUDED.sees_comments
+           WHERE NOT read_grant_readers.sees_comments
          RETURNING user_id`,
-        [userId, seesComments, actor]
+        [userId, actor]
       )) as unknown[];
-      const turnedOff = seesComments
-        ? []
-        : ((await manager.query(
-            `UPDATE read_grant_readers SET sees_comments = false, updated_by = $2, updated_at = now()
-               WHERE user_id = $1 AND sees_comments RETURNING user_id`,
-            [userId, actor]
-          )) as unknown[]);
-      if (rows.length === 0 && turnedOff.length === 0) return false;
+      if (rows.length === 0) return false;
       await manager.query(
         `INSERT INTO read_grant_journal (user_id, campus, formation, action, actor)
-           VALUES ($1, NULL, NULL, $2, $3)`,
-        [userId, seesComments ? 'cmt_show' : 'cmt_hide', actor]
+           VALUES ($1, NULL, NULL, 'cmt_show', $2)`,
+        [userId, actor]
       );
       return true;
     });
@@ -145,6 +137,31 @@ export class ReadGrantsService {
       this.logger.debug(`[READ_GRANT] feed cache dropped (${dropped} keys)`);
     }
     return { changed };
+  }
+
+  /**
+   * Turns a reader's switch OFF inside `manager`'s transaction, journalled as `cmt_hide` by `actor`
+   * when it was ON; no row, or a row already OFF, writes nothing. Shared by the switch itself and by
+   * the revocation of a reader's LAST cell, so a reader granted again later starts OFF, as decided.
+   */
+  private async turnCommentsOff(
+    manager: EntityManager,
+    userId: string,
+    actor: string
+  ): Promise<boolean> {
+    const rows = (await manager.query(
+      `UPDATE read_grant_readers SET sees_comments = false, updated_by = $2, updated_at = now()
+         WHERE user_id = $1 AND sees_comments RETURNING user_id`,
+      [userId, actor]
+    )) as unknown[];
+    if (rows.length === 0) return false;
+    await manager.query(
+      `INSERT INTO read_grant_journal (user_id, campus, formation, action, actor)
+         VALUES ($1, NULL, NULL, 'cmt_hide', $2)`,
+      [userId, actor]
+    );
+    this.logger.debug(`[READ_GRANT] comments switch of ${sanitizeLog(userId)} turned off`);
+    return true;
   }
 
   /**
@@ -187,6 +204,14 @@ export class ReadGrantsService {
            VALUES ($1, $2, $3, $4, $5)`,
         [userId, campus, formation, granted ? 'grant' : 'revoke', actor]
       );
+      if (!granted) {
+        // The reader's LAST cell gone: their switch goes back OFF (journalled), so a reader granted
+        // again later starts OFF like any new one (owner, 2026-11-04).
+        const left = (await manager.query(`SELECT 1 FROM read_grants WHERE user_id = $1 LIMIT 1`, [
+          userId,
+        ])) as unknown[];
+        if (left.length === 0) await this.turnCommentsOff(manager, userId, actor);
+      }
       return true;
     });
     if (changed) {

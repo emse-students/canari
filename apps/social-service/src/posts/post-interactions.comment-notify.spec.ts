@@ -101,6 +101,16 @@ describe('PostInteractionsService.addComment notifications', () => {
     for (const [, , data] of sent) {
       expect(data).toEqual({ type: 'social', postId: 'p1', commentId });
     }
+    // And every bell ROW it writes names it too: how the bell tells a comment's mention from a
+    // post's (migration 132, `commentBorneNotificationSql`).
+    const rows = notifications.createNotification.mock.calls.map(
+      ([row]: [{ type: string; commentId?: string }]) => [row.type, row.commentId]
+    );
+    expect(rows.sort((a, b) => String(a[0]).localeCompare(String(b[0])))).toEqual([
+      ['comment', commentId],
+      ['mention', commentId],
+      ['reply', commentId],
+    ]);
   });
 
   it("asks the read's gate who of the mentioned may be told, as the writer, and tells only them", async () => {

@@ -102,6 +102,7 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
       CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255),
         "createdAt" timestamp NOT NULL DEFAULT now(), id uuid NOT NULL DEFAULT gen_random_uuid());
       CREATE TABLE user_blocks ("blockerId" varchar(255), "blockedId" varchar(255));
+      CREATE TABLE post_notifications (id serial PRIMARY KEY); -- migration 132 adds a column to it
       CREATE TABLE association_calendar_events (id uuid PRIMARY KEY, "associationId" uuid,
         "createdBy" varchar(255) NOT NULL DEFAULT 'it', "createdAt" timestamptz NOT NULL DEFAULT now());
       CREATE TABLE association_calendar_event_co_owners (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

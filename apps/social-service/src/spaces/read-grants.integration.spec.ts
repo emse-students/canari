@@ -472,14 +472,16 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
     };
 
     beforeAll(async () => {
-      await client.query(migration('132_read_grant_readers.sql'));
+      // The bell's table first: migration 132 adds its `commentId`.
       await client.query(`
         ALTER TABLE posts ADD COLUMN "hiddenByModeration" boolean NOT NULL DEFAULT false,
           ADD COLUMN "scheduledAt" timestamptz, ADD COLUMN kind varchar NOT NULL DEFAULT 'post',
           ADD COLUMN "expiresAt" timestamptz, ADD COLUMN comments jsonb NOT NULL DEFAULT '[]',
           ADD COLUMN reactions jsonb NOT NULL DEFAULT '{}', ADD COLUMN polls jsonb NOT NULL DEFAULT '[]';
-        CREATE TABLE post_notifications (type varchar, "postId" varchar, "recipientId" varchar);
+        CREATE TABLE post_notifications (type varchar, "postId" varchar, "recipientId" varchar,
+          "actorId" varchar);
       `);
+      await client.query(migration('132_read_grant_readers.sql'));
       await client.query(
         `INSERT INTO users (id, campus, cursus) VALUES ('grantOn', NULL, '[]'),
            ('grantNative', 'gardanne', '[{"formation": "ISMIN", "promo": 2023}]')`
@@ -619,20 +621,74 @@ maybe('nominative read grants against PostgreSQL (migration 078 included)', () =
       ).toEqual([...READERS]);
     });
 
+    /** Whether the bell shows a row of `type` to `recipientId`, written by `actorId` (and a comment). */
+    const shown = async (
+      type: string,
+      recipientId: string,
+      actorId = 'isminGa',
+      commentId: string | null = null
+    ) =>
+      (
+        await client.query(
+          `SELECT ${bellRowShownSql('n')} AS shown FROM (VALUES ($1::varchar, $2::varchar,
+             $3::varchar, $4::varchar, $5::varchar)) AS n(type, "postId", "recipientId", "actorId", "commentId")`,
+          [type, POST, recipientId, actorId, commentId]
+        )
+      ).rows[0].shown;
+
     it('the bell hides a comment-borne row from the OFF reader, and nothing else', async () => {
-      const shown = async (type: string, recipientId: string) =>
-        (
-          await client.query(
-            `SELECT ${bellRowShownSql('n')} AS shown FROM (VALUES ($1::varchar, $2::varchar, $3::varchar))
-               AS n(type, "postId", "recipientId")`,
-            [type, POST, recipientId]
-          )
-        ).rows[0].shown;
       expect(await shown('reply', 'grantGa')).toBe(false);
       expect(await shown('comment', 'grantGa')).toBe(false);
       expect(await shown('reaction', 'grantGa')).toBe(true);
       expect(await shown('reply', 'grantOn')).toBe(true);
       expect(await shown('reply', 'grantNative')).toBe(true);
+    });
+
+    it("the bell tells a comment's mention from the post's: by `commentId`, else by its actor", async () => {
+      // Written since migration 132: the row names its comment, whoever wrote it.
+      expect(await shown('mention', 'grantGa', 'poster', 'c1')).toBe(false);
+      expect(await shown('mention', 'grantGa', '', 'c1')).toBe(false);
+      // Written before: a mention by anybody but the post's author came from a comment...
+      expect(await shown('mention', 'grantGa', 'isminGa')).toBe(false);
+      // ...one by its author (`notifyPostMentions`) is the post's own, and keeps the post's rule.
+      expect(await shown('mention', 'grantGa', 'poster')).toBe(true);
+      // The anonymous actor on a post that is not anonymous is an anonymous or association comment.
+      expect(await shown('mention', 'grantGa', '')).toBe(false);
+      for (const id of ['grantOn', 'grantNative'] as const) {
+        expect({ id, shown: await shown('mention', id, 'isminGa', 'c1') }).toEqual({
+          id,
+          shown: true,
+        });
+      }
+    });
+
+    it("the anonymous actor on an ANONYMOUS post is the post's own mention", async () => {
+      await client.query('BEGIN');
+      try {
+        await client.query(`UPDATE posts SET anonymous = true WHERE id = $1`, [POST]);
+        expect(await shown('mention', 'grantGa', '')).toBe(true);
+        expect(await shown('mention', 'grantGa', '', 'c1')).toBe(false);
+      } finally {
+        await client.query('ROLLBACK');
+      }
+    });
+
+    it("a reader's LAST revoked cell turns their switch back OFF, journalled", async () => {
+      await client.query('BEGIN');
+      try {
+        expect(await readGrants.setCell('admin', 'grantOn', 'gardanne', null, false)).toEqual({
+          changed: true,
+        });
+        const { rows } = await client.query(
+          `SELECT r.sees_comments, (SELECT array_agg(action ORDER BY at, action) FROM read_grant_journal
+             WHERE user_id = 'grantOn') AS actions FROM read_grant_readers r WHERE r.user_id = 'grantOn'`
+        );
+        expect(rows).toEqual([
+          { sees_comments: false, actions: ['cmt_show', 'cmt_hide', 'revoke'] },
+        ]);
+      } finally {
+        await client.query('ROLLBACK');
+      }
     });
 
     it('switching OFF again withholds again, and the journal holds the changes only', async () => {

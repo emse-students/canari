@@ -420,6 +420,26 @@ affected: those carry no warning and compare nothing.
 it. Measure before: `[REPOST-P] ... accept refused: audience changed (carried none, ...)` in
 social-service logs counts the older builds that met it.
 
+### No date yet - a post whose comments are withheld, drawn by a build that does not know `canSeeComments` (2026-11-04)
+
+**Site:** the served post (`withholdCommentsAndPeople`, `apps/social-service/src/posts/comments-withheld.ts`)
+and the comment routes behind `assertVisible(.., 'COMMENT')`; on the client, `PostCard.svelte` and
+`ReelSlide.svelte` read `canSeeComments` and `otherReactionCounts`.
+**What an older build sees.** To a named reader whose only door to a post is a read grant with "voit
+les commentaires" off ([profiles-and-access](profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08)),
+the server sends no comment, no count, the reactions as the reader's own entry plus
+`otherReactionCounts`, and `canSeeComments: false`. A build older than the first stable carrying it
+ignores both fields: it still draws the comment button (with no count), and a tap opens a thread
+that the `GET .../comments` 404 leaves empty with an error line. Its reaction badges count only the
+reader's own reaction. **No comment and no reactor's name reaches it**; only the controls are dead.
+**Why it is not shimmed.** The only shim would be to send the comments, which is what was decided
+against. The affected population is the named readers alone (platform admins grant them by hand),
+not the students.
+**Removal condition:** none to remove. The floor (`minClientVersion` >= the first stable carrying
+this change, raised once BOTH stores serve it) is what retires the dead button; the entry goes with
+it. Measure before: the `comments withheld from a grant-only reader` refusals in social-service debug
+logs count the older builds that still tap it.
+
 ### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
 
 **Site:** `parseKey` and `sendRatchetDebt` in `frontend/src/lib/mls-client/sendRatchetLedger.ts`.

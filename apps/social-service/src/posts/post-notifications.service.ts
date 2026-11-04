@@ -113,19 +113,37 @@ export const POST_BOUND_NOTIFICATION_TYPES: readonly string[] = [
 ];
 
 /**
- * The bell types whose row carries a COMMENT's text: withheld, like the comments themselves, from a
- * named reader whose only door to the post is a read grant with "voit les commentaires" off (owner,
- * 2026-11-04). New ones are not written (`mentionRecipientsOf` with `'COMMENT'`); this hides the
- * ones written before. A `'mention'` row cannot say whether it came from the post or a comment, so
- * it keeps the post's own rule.
+ * The bell types whose row ALWAYS carries a comment's text. A `'mention'` may be a post's or a
+ * comment's: `commentBorneNotificationSql` tells them apart.
  */
 export const COMMENT_BORNE_NOTIFICATION_TYPES: readonly string[] = ['comment', 'reply'];
+
+/**
+ * Bell row `n` (about post `post`) carries a COMMENT's text and writer - withheld, like the comments
+ * themselves, from a named reader whose only door to the post is a read grant with "voit les
+ * commentaires" off (owner, 2026-11-04). New rows of that kind are not written to such a reader
+ * (`mentionRecipientsOf` with `'COMMENT'`); this hides the ones written before, and any row whose
+ * reader's switch was turned off since.
+ *
+ * A `comment` or `reply` row always is. A `mention` row is when a comment wrote it: classified at
+ * the write since migration 132 (`commentId`), and for a row written before, by what the row already
+ * holds - a post's own mention (`notifyPostMentions`) names the post's author as its actor, or the
+ * anonymous actor on an anonymous post, so a mention naming ANYBODY ELSE came from a comment. Two
+ * old comment mentions look like a post's and stay shown: one written by the post's author in a
+ * comment of their own post, and an anonymous or association comment's on an anonymous post.
+ */
+export function commentBorneNotificationSql(n: string, post: string): string {
+  const types = COMMENT_BORNE_NOTIFICATION_TYPES.map((t) => `'${t}'`).join(', ');
+  return `(${n}.type IN (${types}) OR (${n}.type = 'mention' AND (${n}."commentId" IS NOT NULL
+    OR (${n}."actorId" IS DISTINCT FROM ${post}."authorId"
+      AND NOT (${n}."actorId" = '${ANONYMOUS_NOTIFICATION_ACTOR_ID}' AND ${post}.anonymous)))))`;
+}
 
 /**
  * Bell row `n` may be shown: a row of a type that names no post, or a row of a post-bound type
  * (`POST_BOUND_NOTIFICATION_TYPES`) whose post exists, is not hidden by moderation, and its
  * recipient still sees (`getNotifications` says why) - with its comments, for a comment-borne row
- * (`COMMENT_BORNE_NOTIFICATION_TYPES`). The types are constants of this module.
+ * (`commentBorneNotificationSql`). The types are constants of this module.
  *
  * `postId` is a `varchar` that other types fill with ids of their own, so it is cast to `uuid`
  * inside a CASE - evaluated for a post-bound row only, and only when it has a uuid's shape, so a
@@ -134,15 +152,14 @@ export const COMMENT_BORNE_NOTIFICATION_TYPES: readonly string[] = ['comment', '
  */
 export function bellRowShownSql(n: string): string {
   const types = POST_BOUND_NOTIFICATION_TYPES.map((t) => `'${t}'`).join(', ');
-  const comments = COMMENT_BORNE_NOTIFICATION_TYPES.map((t) => `'${t}'`).join(', ');
   return `(${n}.type NOT IN (${types}) OR EXISTS (SELECT 1 FROM posts notif_post
     WHERE notif_post.id = (CASE WHEN ${n}.type IN (${types})
         AND ${n}."postId" ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
       THEN ${n}."postId"::uuid END)
       AND NOT notif_post."hiddenByModeration"
       AND ${postVisibleToViewerSql('notif_post', `${n}."recipientId"`)}
-      AND (${n}.type NOT IN (${comments})
-        OR NOT ${commentsWithheldFromViewerSql('notif_post', `${n}."recipientId"`)})))`;
+      AND NOT (${commentBorneNotificationSql(n, 'notif_post')}
+        AND ${commentsWithheldFromViewerSql('notif_post', `${n}."recipientId"`)})))`;
 }
 
 /**
@@ -492,6 +509,8 @@ export class PostNotificationsService {
     /** The association whose logo the bell row draws instead of the actor's face (row only, never the push). */
     associationId?: string;
     associationLogoUrl?: string | null;
+    /** The comment the row is about, for every row a comment writes (`PostNotification.commentId`). */
+    commentId?: string;
     skipPush?: boolean;
     pushData?: Record<string, string>;
   }) {

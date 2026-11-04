@@ -251,6 +251,7 @@ export class PostInteractionsService {
           actorId,
           actorName: masked ? actorName : undefined,
           text: preview,
+          commentId: comment.id,
           skipPush: true,
         });
       const pushContentFor = {

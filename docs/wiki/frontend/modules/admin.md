@@ -141,7 +141,8 @@ for every named reader already there too. It saves at once and offers "Annuler" 
 (`PUT /read-grants/comments`, the inverse write as undo, journalled `cmt_show`/`cmt_hide` and drawn
 in the journal in words); while it saves it is `busy` (the `Toggle`'s new prop: `aria-busy` +
 `aria-disabled`, a click does nothing - never `disabled`, for the focus-trap reason above). The card
-says the state in one muted line under the chips. What it changes for the reader, and why:
+says the state in one muted line under the chips. Unticking a reader's LAST box also turns their
+switch back OFF on the server (journalled `cmt_hide`), so a reader granted again starts OFF. What it changes for the reader, and why:
 [profiles-and-access](../../profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08).
 
 Tests: `readAccess.test.ts` (grouping, "200+", the server's page size), `ReadGrantCard.svelte.test.ts`

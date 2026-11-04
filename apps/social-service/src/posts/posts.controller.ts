@@ -398,16 +398,23 @@ export class PostsController {
     return this.interactions.likeComment(postId, commentId, xUserId, xGlobalAdmin === 'true');
   }
 
-  /** Updates the text of a comment the caller may edit (`commentRights`). */
+  /**
+   * Updates the text of a comment the caller may edit (`commentRights`). Behind the `'COMMENT'` read:
+   * the answer serves the comment (who liked it included) to a reader the comments may be withheld
+   * from - a named reader's own comment, written while their switch was on. Deleting it stays open.
+   */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId/comments/:commentId')
-  editComment(
+  async editComment(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string,
     @Param('commentId') commentId: string,
     @Body() body: EditCommentDto
   ) {
+    await this.service.assertVisible(postId, xUserId, 'COMMENT', {
+      allowHidden: xGlobalAdmin === 'true',
+    });
     return this.interactions.editComment(
       postId,
       commentId,

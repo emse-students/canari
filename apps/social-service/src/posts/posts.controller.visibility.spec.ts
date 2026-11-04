@@ -19,6 +19,7 @@ describe('PostsController - the routes ask the per-post visibility first', () =>
       addReaction: jest.fn(),
       addComment: jest.fn(),
       likeComment: jest.fn(),
+      editComment: jest.fn(),
     };
     const associations = { findCalendarEventByLinkedPost: jest.fn() };
     const controller = new PostsController(
@@ -45,6 +46,11 @@ describe('PostsController - the routes ask the per-post visibility first', () =>
       (c: PostsController) => c.addComment('reader', undefined, POST, { text: 'x' } as never),
     ],
     ['likeComment', (c: PostsController) => c.likeComment('reader', undefined, POST, 'comment')],
+    [
+      'editComment',
+      (c: PostsController) =>
+        c.editComment('reader', undefined, POST, 'comment', { text: 'x' } as never),
+    ],
   ] as const)('%s answers 404 and writes nothing', async (name, call) => {
     const { controller, assertVisible, assertMayVote, interactions } = make();
     await expect(call(controller)).rejects.toBeInstanceOf(NotFoundException);
@@ -53,8 +59,11 @@ describe('PostsController - the routes ask the per-post visibility first', () =>
         ? [assertMayVote, [POST, 'reader']]
         : name === 'addReaction'
           ? [assertVisible, [POST, 'reader', 'READ_OR_REACT']]
-          : // A comment and a comment like ask the comments' gate (owner, 2026-11-04).
-            [assertVisible, [POST, 'reader', 'COMMENT']];
+          : name === 'editComment'
+            ? // Its answer serves the comment, who liked it included (owner, 2026-11-04).
+              [assertVisible, [POST, 'reader', 'COMMENT', { allowHidden: false }]]
+            : // A comment and a comment like ask the comments' gate (owner, 2026-11-04).
+              [assertVisible, [POST, 'reader', 'COMMENT']];
     expect(gate).toHaveBeenCalledWith(...args);
     expect(interactions[name]).not.toHaveBeenCalled();
   });

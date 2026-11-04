@@ -13,7 +13,28 @@ What closes it:
   readers at all - neither the 2026-10-07 grants nor this narrowing. Whether it should is the owner's
   call; the register row C5 now says what they read
   ([register](../compliance/register-of-processing.md)).
-- **Old `mention` bell rows**: a mention row cannot tell a comment's mention from a post's, so a
-  comment mention delivered to a named reader BEFORE this change stays in their bell (new ones are no
-  longer sent). Count them once on production (`post_notifications` of type `mention` whose recipient
-  holds a `read_grants` row) - expected near zero; if not, decide whether to mark the comment ones.
+- **Old `mention` bell rows, measured once, read-only.** Since migration 132 a comment's mention
+  carries its `commentId` and the bell hides it from a withheld reader; a row written before is
+  classified by its actor (anybody but the post's author, or the anonymous actor on a post that is
+  not anonymous, is a comment). Two old comment mentions still look like a post's and stay shown:
+  the post author's own comment mention, and an anonymous or association comment's on an anonymous
+  post. The population, on production, by the lead - a SELECT and nothing else:
+
+  ```sql
+  SELECT n."commentId" IS NOT NULL AS classified_at_write,
+         n."actorId" IS NOT DISTINCT FROM p."authorId" AS actor_is_post_author,
+         n."actorId" = '' AS anonymous_actor,
+         p.anonymous AS anonymous_post,
+         count(*) AS rows
+    FROM post_notifications n
+    JOIN posts p ON p.id::text = n."postId"
+   WHERE n.type = 'mention'
+     AND EXISTS (SELECT 1 FROM read_grants g WHERE g.user_id = n."recipientId")
+   GROUP BY 1, 2, 3, 4
+   ORDER BY 1, 2, 3, 4;
+  ```
+
+  The ambiguous groups are `classified_at_write = false` with `actor_is_post_author = true`, or
+  with `anonymous_actor` and `anonymous_post` both true. Expected near zero; if not, decide whether
+  to mark them.
+- **Live chat on an association live - parked for the owner.**

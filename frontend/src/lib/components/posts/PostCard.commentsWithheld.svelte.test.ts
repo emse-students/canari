@@ -14,6 +14,7 @@ import type { PostEntity } from '$lib/posts/api';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { m } from '$lib/paraglide/messages';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
+import { publishPostReactions } from '$lib/posts/postReaction';
 
 afterAll(adoptTransitionAnimations());
 
@@ -111,4 +112,18 @@ it('keeps the comment button and the preview on any other post', () => {
   const target = mountCard(row({ comments, commentCount: 1 }));
   expect(commentButton(target)).not.toBeNull();
   expect(target.textContent).toContain('a student speaks');
+});
+
+it("adopts the tally a reaction's answer carries, never the one it started with", () => {
+  const target = mountCard(
+    row({ canSeeComments: false, reactions: {}, otherReactionCounts: { "J'aime": 2 } })
+  );
+  publishPostReactions('p1', {
+    reactions: { reader: "J'aime" },
+    otherReactionCounts: { "J'aime": 4 },
+  });
+  flushSync();
+  const counts = [...target.querySelectorAll('span.font-bold')].map((s) => s.textContent!.trim());
+  expect(counts).toContain('5');
+  expect(counts).not.toContain('3');
 });

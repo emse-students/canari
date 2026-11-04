@@ -54,6 +54,14 @@ export class PostNotification {
   @Column({ type: 'jsonb', nullable: true })
   meta: Record<string, unknown> | null;
 
+  /**
+   * The comment this row is ABOUT, set by every row a comment writes (`comment`, `reply`, and a
+   * `mention` in a comment); NULL otherwise, and on every row written before migration 132. It is
+   * how the bell tells a comment's mention from a post's (`commentBorneNotificationSql`).
+   */
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  commentId: string | null;
+
   @Column({ default: false })
   read: boolean;
 

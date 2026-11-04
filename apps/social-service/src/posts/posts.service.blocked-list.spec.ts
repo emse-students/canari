@@ -259,6 +259,71 @@ describe('PostsService hides a blocked account, and only where the author was vi
     expect(feedSql(calls)).not.toMatch(/posts\."hiddenByModeration"/);
   });
 
+  /**
+   * The feed and search hand a page through `viewerContext` and `shapeListRow` - the SHIPPED path,
+   * not the shaping helpers on a fixture: deleting the withholding call there must fail here.
+   */
+  describe('a page of posts, for a reader the comments predicate names (owner, 2026-11-04)', () => {
+    const ROW = {
+      ...POST,
+      authorId: 'someone-else',
+      commentCount: 1,
+      comments: [{ id: 'c1', userId: 'someone-else', text: 'a student speaks', likes: [] }],
+      reactions: { 'someone-else': 'like' },
+    };
+    /** `withheld`: what `commentsWithheldPostIds` answers. The page's post is never grant-free. */
+    function pageMock(withheld: string[]) {
+      return jest.fn((sql: string) => {
+        if (sql.includes(BLOCK_READ)) return Promise.resolve([]);
+        if (sql.includes('read_grant_readers'))
+          return Promise.resolve(withheld.map((id) => ({ id })));
+        if (sql.includes('AS "firstHand"')) return Promise.resolve([]);
+        if (sql.includes('FROM posts')) return Promise.resolve([{ ...ROW }]);
+        return Promise.resolve([]);
+      });
+    }
+    const pages = {
+      feed: (service: PostsService) =>
+        service.listPosts({ limit: 10, offset: 0, feed: 'all', viewerUserId: 'viewer-1' }),
+      search: (service: PostsService) =>
+        service.searchPosts('student', 20, 0, { viewerUserId: 'viewer-1' }),
+    };
+
+    it.each(Object.keys(pages) as (keyof typeof pages)[])(
+      'the %s drops the comments, their count and who reacted',
+      async (page) => {
+        const rows = (await pages[page](makeService(pageMock(['p1'])))) as Record<string, any>[];
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).not.toHaveProperty('comments');
+        expect(rows[0]).not.toHaveProperty('commentCount');
+        expect(rows[0].canSeeComments).toBe(false);
+        expect(rows[0].reactions).toEqual({});
+        expect(rows[0].otherReactionCounts).toEqual({ like: 1 });
+      }
+    );
+
+    it.each(Object.keys(pages) as (keyof typeof pages)[])(
+      'the %s serves everything to a reader it names not',
+      async (page) => {
+        const rows = (await pages[page](makeService(pageMock([])))) as Record<string, any>[];
+        expect(rows[0].commentCount).toBe(1);
+        expect(rows[0].canSeeComments).toBe(true);
+        expect(rows[0].reactions).toEqual({ 'someone-else': 'like' });
+      }
+    );
+
+    it('asks the predicate nothing for an ordinary reader, whose page is grant-free', async () => {
+      const { query, calls } = makeQueryMock([]);
+      await makeService(query).listPosts({
+        limit: 10,
+        offset: 0,
+        feed: 'all',
+        viewerUserId: 'viewer-1',
+      });
+      expect(calls.some((sql) => sql.includes('read_grant_readers'))).toBe(false);
+    });
+  });
+
   describe('a single post read by id', () => {
     const entity = (over: Partial<typeof POST> = {}) =>
       ({ ...POST, ...over, media: [], scheduledAt: null }) as unknown as Post;
