@@ -76,3 +76,49 @@ describe('comments withheld from a grant-only reader', () => {
     expect(query).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * A KEY OFF A REQUEST NEVER REACHES A PROTOTYPE (CodeQL "remote property injection", #2998): a
+ * reaction type is a string the client sent, a viewer id a header. Each map these helpers build is
+ * prototype-less and written through `Map` / `withOwnEntry`, so `__proto__` is a skipped key - the
+ * same refusal `sanitizeReactions` and `addReaction` make (`common/object-keys.ts`).
+ */
+describe('a __proto__ key in what a withheld reader is served', () => {
+  const PROTO = '__proto__';
+
+  /** Whether anything landed on the shared prototype. */
+  const polluted = () =>
+    ({} as Record<string, unknown>).polluted !== undefined || 'polluted' in Object.prototype;
+
+  it('a reaction TYPE named __proto__ is left out of the tally, and pollutes nothing', () => {
+    const reactions = JSON.parse('{"a": "__proto__", "b": "like", "c": "constructor"}');
+    const counts = otherReactionCounts(reactions, 'me');
+    expect(Object.getPrototypeOf(counts)).toBeNull();
+    expect(Object.keys(counts)).toEqual(['like']);
+    expect(counts.like).toBe(1);
+    expect(polluted()).toBe(false);
+  });
+
+  it('a viewer id named __proto__ gets no own entry, as a map with no prototype', () => {
+    const reactions = JSON.parse('{"__proto__": {"polluted": "yes"}, "b": "like"}');
+    const served = withheldReactions(reactions, PROTO);
+    expect(Object.getPrototypeOf(served.reactions)).toBeNull();
+    expect(Object.keys(served.reactions)).toEqual([]);
+    const polls = withheldPolls(
+      [{ id: 'p', options: [], votesByUser: JSON.parse('{"__proto__": ["o1"]}') }],
+      PROTO
+    ) as { votesByUser: Record<string, unknown> }[];
+    expect(Object.getPrototypeOf(polls[0].votesByUser)).toBeNull();
+    expect(Object.keys(polls[0].votesByUser)).toEqual([]);
+    expect(polluted()).toBe(false);
+  });
+
+  it("an ordinary reader's own entry is still served, as data on a prototype-less map", () => {
+    const served = withheldReactions({ me: 'like', other: 'love' }, 'me');
+    expect(Object.getPrototypeOf(served.reactions)).toBeNull();
+    expect(JSON.parse(JSON.stringify(served))).toEqual({
+      reactions: { me: 'like' },
+      otherReactionCounts: { love: 1 },
+    });
+  });
+});

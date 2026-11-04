@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
 import { commentsWithheldFromViewerSql } from '../spaces/reader-spaces';
+import { isUnsafeObjectKey, withOwnEntry } from '../common/object-keys';
 
 /**
  * A NAMED READER WHOSE ONLY DOOR TO A POST IS A READ GRANT, WITH "VOIT LES COMMENTAIRES" OFF (owner,
@@ -39,17 +40,47 @@ export async function commentsWithheldPostIds(
   return withheld;
 }
 
-/** The reaction types of everybody BUT `viewerId`, counted: the tally a withheld reader is shown. */
+/**
+ * `{ [viewerId]: value }` as a prototype-less map, or an empty one when there is no viewer, no
+ * value, or a viewer id that is no safe property name (`common/object-keys.ts`) - the one entry a
+ * withheld reader keeps of a map keyed by people. Built through `withOwnEntry`, never a computed
+ * key, so an id off a request cannot reach a prototype.
+ */
+export function ownEntryOnly<V>(
+  viewerId: string | undefined,
+  value: V | undefined,
+  isValue: (v: unknown) => v is V
+): Record<string, V> {
+  if (!viewerId || !isValue(value)) return Object.create(null) as Record<string, V>;
+  if (isUnsafeObjectKey(viewerId)) {
+    logger.warn(`[READ_GRANT] own entry not served: viewer id is no safe key`);
+    return Object.create(null) as Record<string, V>;
+  }
+  return withOwnEntry<V>(null, viewerId, value);
+}
+
+const isString = (v: unknown): v is string => typeof v === 'string';
+
+/**
+ * The reaction types of everybody BUT `viewerId`, counted: the tally a withheld reader is shown.
+ * Counted in a `Map` and served as a prototype-less object: a reaction type is a string the client
+ * sent, so a type that is no safe property name (`__proto__`, ...) is skipped and logged, as
+ * `sanitizeReactions` skips such a user id - it is no reaction the app draws.
+ */
 export function otherReactionCounts(
   reactions: Record<string, string> | null | undefined,
   viewerId: string | undefined
 ): Record<string, number> {
-  const counts: Record<string, number> = {};
+  const counts = new Map<string, number>();
   for (const [userId, type] of Object.entries(reactions ?? {})) {
     if (userId === viewerId || typeof type !== 'string') continue;
-    counts[type] = (counts[type] ?? 0) + 1;
+    if (isUnsafeObjectKey(type)) {
+      logger.warn(`[READ_GRANT] a reaction of an unsafe type left out of the tally`);
+      continue;
+    }
+    counts.set(type, (counts.get(type) ?? 0) + 1);
   }
-  return counts;
+  return Object.assign(Object.create(null) as Record<string, number>, Object.fromEntries(counts));
 }
 
 /**
@@ -62,7 +93,7 @@ export function withheldReactions(
 ): { reactions: Record<string, string>; otherReactionCounts: Record<string, number> } {
   const own = viewerId ? reactions?.[viewerId] : undefined;
   return {
-    reactions: viewerId && typeof own === 'string' ? { [viewerId]: own } : {},
+    reactions: ownEntryOnly(viewerId, own, isString),
     otherReactionCounts: otherReactionCounts(reactions, viewerId),
   };
 }
@@ -89,7 +120,7 @@ export function withheldPolls(polls: unknown, viewerId: string | undefined): unk
             ? option.votes
             : 0,
       })),
-      votesByUser: viewerId && Array.isArray(mine) ? { [viewerId]: mine } : {},
+      votesByUser: ownEntryOnly(viewerId, mine, (v): v is unknown[] => Array.isArray(v)),
     };
   });
 }

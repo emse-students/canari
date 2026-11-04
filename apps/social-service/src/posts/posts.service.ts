@@ -71,6 +71,7 @@ import { PINNED_FOR_VIEWER_IDS_SQL, pinnedForViewerSql, type PinSpace } from './
 import { SpacePinsService } from './space-pins.service';
 import {
   commentsWithheldPostIds,
+  ownEntryOnly,
   withheldReactions,
   withholdCommentsAndPeople,
 } from './comments-withheld';
@@ -1881,8 +1882,11 @@ export class PostsService {
          FROM posts WHERE posts.id = $1`,
       [postId, viewerId]
     );
-    const own = answer.reactions?.[viewerId];
-    const ownOnly = typeof own === 'string' ? { [viewerId]: own } : {};
+    const ownOnly = ownEntryOnly(
+      viewerId,
+      answer.reactions?.[viewerId],
+      (v): v is string => typeof v === 'string'
+    );
     if (rows[0]?.visible !== true) {
       this.logger.debug(`[REACTION] ${postId.slice(0, 8)}: answered with the reader's own only`);
       return { ok: answer.ok, reactions: ownOnly };
