@@ -28,6 +28,8 @@
   import { registerGuideRegion } from '$lib/guidance/guideAnchors.svelte';
   import { modalWebLayer } from '$lib/navigation/nativeTabBarState.svelte';
   import { invokeSequenced } from '$lib/services/systemComponentsCommands';
+  import { handlePlaceTap, scrollPageToTop } from '$lib/navigation/scrollToTop';
+  import { onStatusBarTap } from '$lib/mobile/nativeStatusBarTap';
 
   /**
    * THE BOTTOM BAR AS A NATIVE UITabBar, ON iOS ONLY - Liquid Glass on iOS 26 (user, 2026-09-29).
@@ -61,6 +63,7 @@
   const WIDE_QUERY = '(min-width: 48rem)';
   let wide = $state(false);
   let listener: TabSelectedListener | null = null;
+  let statusBarListener: { unregister: () => Promise<void> } | null = null;
   let destroyed = false;
   /** The last badge value sent per place, so a re-render that changes nothing sends nothing. */
   let sentBadges: Record<string, string | undefined> = {};
@@ -154,9 +157,28 @@
         listener = await onTabSelected(({ id }) => {
           const place = MOBILE_NAV_PLACES.find((p) => p.id === id);
           Log.d('NativeTabBar', `tab selected: ${id}`);
-          if (place) void goto(resolve(internalPath(place.href)));
+          // A RE-TAP of the tab the reader is on is delivered like any tap (UITabBarDelegate
+          // `didSelect` fires for the selected item too) and scrolls to the top instead.
+          if (place && !handlePlaceTap(place.href, page.url.pathname)) {
+            void goto(resolve(internalPath(place.href)));
+          }
         });
-        if (destroyed) return;
+        // Destroyed while the plugin answered: onDestroy found no listener to drop, so drop it here.
+        if (destroyed) {
+          void listener.unregister();
+          return;
+        }
+        // The status bar tap, bridged by the patched plugin: the SAME action as the re-tap. A failure
+        // here costs only that gesture, so it is logged and the bar stays native.
+        statusBarListener = await onStatusBarTap(() => scrollPageToTop('status-bar')).catch((e) => {
+          logFailure('status bar tap')(e);
+          return null;
+        });
+        if (destroyed) {
+          void statusBarListener?.unregister();
+          void listener.unregister();
+          return;
+        }
         nativeTabBar.status = 'native';
         await publishInsets();
       } catch (e) {
@@ -179,6 +201,7 @@
   onDestroy(() => {
     destroyed = true;
     void listener?.unregister();
+    void statusBarListener?.unregister();
     if (nativeTabBar.status === 'native') void removeTabBar().catch(logFailure('remove'));
     document.documentElement.style.removeProperty('--bottom-nav-reserve');
   });
