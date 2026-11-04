@@ -109,7 +109,7 @@ describe('a live key-group frame enqueued before the reconnect pull listed the m
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it('is applied BEHIND the commits and seeds queued before it, even when the pull ended first', async () => {
+  it('is applied BEHIND the commits and seeds queued before it, the pull owed behind its drain', async () => {
     const { svc, inner, opened } = harness();
     // The pipeline's own hand-off (`setupMessageHandler`), gated on its FIRST frame so the pull can
     // list the mailbox - and end - before the scheduler reaches F.
@@ -142,14 +142,16 @@ describe('a live key-group frame enqueued before the reconnect pull listed the m
       },
       'live'
     );
-    // The reconnect's pull lists C1, S5, C2 and F (dropped: its live copy is still queued) - and its
-    // listing ENDS: the mailbox reads "listed" while F, ahead of those rows, has not been handled.
-    // (Not awaited whole: the pull then waits for the queue it fed, which the gate holds.)
+    // The reconnect's pull is asked while F's drain runs. PULLS ARE SINGLE-FLIGHT BEHIND THE DRAIN
+    // (`fetchPendingMessages`, #3035): it is owed, so the mailbox cannot read "listed" while F,
+    // ahead of the rows it will list, has not been handled - the window this case was written for
+    // (the pull ending first) no longer opens, and the stamp must still hold F when it does not.
     const pulled = inner.fetchPendingMessages();
     const listed = () =>
       (svc as unknown as { mailboxEmptiedByAPull: boolean }).mailboxEmptiedByAPull;
-    for (let i = 0; i < 20 && !listed(); i++) await flushMacrotask();
-    expect(listed()).toBe(true);
+    for (let i = 0; i < 5; i++) await flushMacrotask();
+    expect(listed()).toBe(false);
+    expect(svc.isGroupDrained(GROUP)).toBe(false);
     expect(opened).toEqual([]);
 
     openGate();

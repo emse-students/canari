@@ -139,47 +139,42 @@ describe('the ack barrier in front of a pull', () => {
   });
 
   /**
-   * TWO OVERLAPPING PULLS, AND THE FIRST TO FINISH MUST NOT BLIND THE BARRIER.
+   * A SECOND PULL ASKED WHILE ONE IS FETCHING STARTS NO REQUEST: it is owed, and the barrier stands
+   * until it has run too.
    *
-   * The slot used to be overwritten by the second pull and nulled by whichever finished first, so a
-   * barrier entered after that saw no pull at all while the other was still fetching - and decrypted
-   * a frame that pull then delivered a second time.
+   * Two pulls used to run side by side, and the barrier had to be chained across both. They are
+   * single-flight now - the second ask waits for the first's fetch to end - so there is never a
+   * second request to blind the barrier, and the owed one is issued exactly once.
    */
-  it('keeps the barrier up until every overlapping pull has landed', async () => {
+  it('owes a pull asked while one is fetching, and runs it once the first has landed', async () => {
     const firstPage = deferred();
-    const secondPage = deferred();
     let pulls = 0;
     poke(svc, {
       delivery: {
         ackMessages: vi.fn().mockResolvedValue(undefined),
         pullPendingMessagesJson: vi.fn(async () => {
           const mine = ++pulls;
-          await (mine === 1 ? firstPage.promise : secondPage.promise);
+          if (mine === 1) await firstPage.promise;
           order.push(`pull-${mine}`);
         }),
       },
     });
 
     const first = inner(svc).fetchPendingMessages();
+    await vi.waitFor(() => expect(pulls).toBe(1));
+    // Two more asks while the first is fetching: neither reaches the server.
     const second = inner(svc).fetchPendingMessages();
-    // Both have reached the server before either answers.
-    await vi.waitFor(() => expect(pulls).toBe(2));
+    const third = inner(svc).fetchPendingMessages();
+    await Promise.resolve();
+    expect(pulls).toBe(1);
 
-    // The SECOND pull's answer is still out when the first one lands.
+    const barrier = svc.waitForMessageQueueIdle('test', null).then(() => order.push('barrier'));
     firstPage.settle();
-    await vi.waitFor(() => expect(order).toEqual(['pull-1']));
-    const slot = (svc as unknown as { pendingPullInFlight: unknown }).pendingPullInFlight;
-    expect(slot).not.toBeNull();
+    await Promise.all([first, second, third, barrier]);
 
-    const barrier = svc.waitForGroupQueueIdle('test', 'g-1').then(() => order.push('barrier'));
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(order).toEqual(['pull-1']);
-
-    secondPage.settle();
-    await Promise.all([first, second, barrier]);
-    expect(order).toEqual(['pull-1', 'pull-2', 'barrier']);
-    // And the slot is released once nothing is behind it, so a later barrier does not wait forever.
+    // ONE re-run for the burst, after the first landed - never two requests at once.
+    expect(order.slice(0, 2)).toEqual(['pull-1', 'pull-2']);
+    expect(pulls).toBe(2);
     expect((svc as unknown as { pendingPullInFlight: unknown }).pendingPullInFlight).toBeNull();
   });
 
@@ -278,7 +273,10 @@ describe('the ack barrier in front of a pull', () => {
 
     const svcInner = svc as unknown as {
       ackSerial: number;
-      rememberDelivery(id: string, state: 'queued' | 'done'): void;
+      rememberDelivery(
+        id: string,
+        record: { state: 'queued' | 'done'; via: 'pull' | 'live' }
+      ): void;
       admitDelivery(
         id: string | undefined,
         arrival: { channel: 'pull'; listedAfterAck: number } | { channel: 'live' }
@@ -290,7 +288,7 @@ describe('the ack barrier in front of a pull', () => {
     // A row acknowledged by an ack that could NOT be delivered: the server really does still hold
     // it, so its repeat is the consequence of the `[ACK]` failure and must not be a second finding.
     // Settled `done` first and acknowledged after, in the order the drain does both.
-    svcInner.rememberDelivery('row-1', 'done');
+    svcInner.rememberDelivery('row-1', { state: 'done', via: 'pull' });
     await inner(svc)
       .announceAck(['row-1'])
       .catch(() => {});
@@ -300,68 +298,10 @@ describe('the ack barrier in front of a pull', () => {
 
     // And one whose ack LANDED. Nothing routine explains that any more, so it accuses.
     failing = false;
-    svcInner.rememberDelivery('row-2', 'done');
+    svcInner.rememberDelivery('row-2', { state: 'done', via: 'pull' });
     await inner(svc).announceAck(['row-2']);
     expect(svcInner.admitDelivery('row-2', pulledNow())).toBe(false);
     expect(said(grumble)).toContain('nothing routine explains this');
-  });
-
-  /**
-   * TWO PULLS AT BOOT, AND THE SECOND LISTS WHAT THE FIRST'S DRAIN IS STILL APPLYING - the Mi 9T's
-   * two accused lines after each launch (`1.6.4-alpha.3`, dev, 2026-11-04), driven through the real
-   * pull and drain rather than through the seam.
-   *
-   * The reconnect's pull lists a row; while the drain applies it, the restore seeds its rows and
-   * `refetchFramesLeftBehind` starts a second pull. That pull's flush is numbered BEFORE the drain's
-   * ack, because the drain acknowledges only when it ends - so the server is right to list the row,
-   * and the drain merely finishes before the answer is read. `done` said the opposite and accused.
-   */
-  it('does not accuse a row whose ack left after the pull that lists it again', async () => {
-    const applying = deferred();
-    const secondAnswer = deferred();
-    let pulls = 0;
-    const acked: string[] = [];
-    poke(svc, {
-      messageCallback: vi.fn(async () => {
-        await applying.promise;
-        return true;
-      }),
-      delivery: {
-        ackMessages: vi.fn(async (ids: string[]) => {
-          acked.push(...ids);
-        }),
-        pullPendingMessagesJson: vi.fn(async (opts: { onPage: (rows: unknown[]) => void }) => {
-          const mine = ++pulls;
-          if (mine === 2) await secondAnswer.promise;
-          opts.onPage([{ id: 'row-boot', senderId: 'alice', groupId: 'g-1', proto: 'AQ==' }]);
-        }),
-      },
-    });
-    const grumble = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const note = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const lines = (spy: ReturnType<typeof vi.spyOn>) =>
-      (spy.mock.calls as unknown[][]).map((c) => String(c[0])).filter((l) => l.includes('row-boo'));
-
-    // The reconnect's pull: its row is handed in and the drain is now applying it.
-    const first = inner(svc).fetchPendingMessages();
-    await vi.waitFor(() => expect(pulls).toBe(1));
-    // The re-fetch for the seeded rows, issued while that drain has not ended - so before its ack.
-    const second = inner(svc).fetchPendingMessages();
-    await vi.waitFor(() => expect(pulls).toBe(2));
-
-    // The drain ends and acknowledges; only then is the second pull's answer read.
-    applying.settle();
-    await vi.waitFor(() => expect(acked).toContain('row-boot'));
-    secondAnswer.settle();
-    await Promise.all([first, second]);
-
-    expect(lines(grumble)).toEqual([]);
-    expect(lines(note).join(' | ')).toContain(
-      'the pull was issued before this device acknowledged'
-    );
-    expect(svc.deliveryRepeatStats()['pull:done']).toBe(1);
-    // Not decrypted twice, and acknowledged once more so the row cannot be left pending.
-    expect(acked.filter((id) => id === 'row-boot')).toHaveLength(2);
   });
 
   it('does not make a later pull wait on an ack that has already landed', async () => {

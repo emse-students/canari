@@ -729,29 +729,26 @@ export abstract class BaseMlsService implements IMlsService {
    * frame for an unknown group is processed, not acked, and re-fetched when its Welcome lands - so
    * remembering it would make that re-fetch a no-op. The entry is dropped exactly where the ack
    * decision says no.
-   */
-  private readonly deliveries = new Map<string, 'queued' | 'done'>();
-
-  /**
-   * WHICH ACKNOWLEDGEMENT CARRIED EACH `done` ROW, as the {@link ackSerial} of the request that sent
-   * it - the fact that separates a pull that overtook a landed ack from one that was simply issued
-   * first.
    *
-   * `done` SAYS THIS DEVICE DECIDED TO ACKNOWLEDGE A ROW, NOT THAT THE SERVER WAS ASKED TO FORGET IT.
-   * The drain settles a row `done` the moment its handler returns, and the ack that names it leaves
-   * only when the WHOLE drain ends (`onDrainEnd`). A pull issued anywhere in between - the boot's
-   * re-fetch for the conversations the restore has just seeded, started while the first pull's drain
-   * is still applying its rows, or a pull already out when a live copy drains - is answered
-   * from a queue that really does still hold the row, and listing it is the server being right. An
-   * id is absent here until its ack is issued; bounded with {@link deliveries}, whose eviction and
-   * forgetting remove it too.
+   * THE ROUTE OF THE ADMITTED COPY IS KEPT WITH IT (`via`), because a repeat means something
+   * different depending on which channel took the row in first - see {@link PULL_CROSSED_A_LIVE_ACK}.
    */
-  private readonly ackSerialOf = new Map<string, number>();
+  private readonly deliveries = new Map<
+    string,
+    {
+      state: 'queued' | 'done';
+      /** The channel whose copy was admitted. */
+      via: DeliveryChannel;
+      /** The {@link ackSerial} of the request that acknowledged it; absent until one is issued. */
+      ackSerial?: number;
+    }
+  >();
 
   /**
    * How many acknowledgement requests {@link announceAck} has issued. A pull records the serial of
    * its own flush ({@link fetchPendingMessages}): every ack up to that one has settled before the
-   * pull's request leaves, and no later one has.
+   * pull's request leaves, and none issued later has. Read only for a row the SOCKET took in -
+   * the one crossing a pull cannot be ordered against ({@link PULL_CROSSED_A_LIVE_ACK}).
    */
   private ackSerial = 0;
 
@@ -1670,7 +1667,8 @@ export abstract class BaseMlsService implements IMlsService {
     // of a drain ack are ordered exactly as their requests will be.
     const serial = ++this.ackSerial;
     for (const id of messageIds) {
-      if (this.deliveries.has(id)) this.ackSerialOf.set(id, serial);
+      const known = this.deliveries.get(id);
+      if (known) known.ackSerial = serial;
     }
     // WHOSE IDS THESE ARE, CAPTURED WHEN THEY ARE HANDED OVER RATHER THAN WHEN THEY ARE SENT.
     // `MlsDeliveryApi.ackMessages` reads `userId`/`deviceId` and mints its auth header at CALL time,
@@ -2092,6 +2090,11 @@ export abstract class BaseMlsService implements IMlsService {
     // THE PULL FIRST, exactly as the whole-mailbox barrier does it: a bucket that is empty because
     // nothing has been FETCHED yet is not a bucket that has nothing left. What this skips is the
     // other twenty-eight conversations' frames, not the round trip that lists our own.
+    // AN OWED PULL ONLY FOR THE GROUPS IT WAS ASKED FOR. It starts when the current drain ends, so
+    // waiting on it for every group would hold each history answer behind the whole drain; a group
+    // it was asked for waits for its listing, because the frames it is for are not queued yet.
+    const owed = this.owedPull;
+    if (owed?.groups.has(groupId)) await owed.fetched.promise;
     await this.pendingPullInFlight?.catch(() => {});
     // SILENT. A leg waiting for its own group's frames is the routine path and finishes in
     // milliseconds; a line announcing the wait, with nothing announcing its end, is half a story
@@ -2105,7 +2108,7 @@ export abstract class BaseMlsService implements IMlsService {
     const drained = this.groupDrainedNow(groupId);
     if (!drained) {
       console.debug(
-        `[QUEUE] group ${groupId.slice(0, 8)} not known drained: pulled=${this.mailboxEmptiedByAPull} pulling=${Boolean(this.pendingPullInFlight)} socket=${this.isWsOpen()} idle=${this.messageScheduler.isGroupIdle(groupId)}`
+        `[QUEUE] group ${groupId.slice(0, 8)} not known drained: pulled=${this.mailboxEmptiedByAPull} pulling=${Boolean(this.pendingPullInFlight)} owed=${Boolean(this.owedPull)} socket=${this.isWsOpen()} idle=${this.messageScheduler.isGroupIdle(groupId)}`
       );
     }
     return drained;
@@ -2120,10 +2123,14 @@ export abstract class BaseMlsService implements IMlsService {
    * Whether a pull has listed the WHOLE mailbox since the socket last opened, and none is running:
    * everything the server queued for this device before now is in the scheduler already, ahead of
    * whatever arrives next. Cleared when a socket opens ({@link noteSocketOpened}), because frames
-   * queued while the link was down are listed only by the pull that follows the reconnect.
+   * queued while the link was down are listed only by the pull that follows the reconnect. An OWED
+   * pull counts as running: between the ask and its start, something asked for a listing that has
+   * not happened (a held live key-group frame, a re-fetch).
    */
   private mailboxListedOnThisLink(): boolean {
-    return this.mailboxEmptiedByAPull && !this.pendingPullInFlight && this.isWsOpen();
+    return (
+      this.mailboxEmptiedByAPull && !this.pendingPullInFlight && !this.owedPull && this.isWsOpen()
+    );
   }
 
   /**
@@ -2150,14 +2157,12 @@ export abstract class BaseMlsService implements IMlsService {
   /** Live frames held by {@link holdLiveKeyGroupFrame} since its last pull, counted by key group. */
   private readonly liveHeldKeyGroups = new Map<string, number>();
 
-  /** The pull {@link holdLiveKeyGroupFrame} owes, until it starts. */
-  private liveHoldPull: Promise<void> | null = null;
-
   /**
    * Leaves a live key-group frame queued on the server and asks for the pull that lists it in
-   * order. ONE pull for a burst: frames held before it starts ride on it, and one held after it
-   * started asks for the next, so no held frame is left without a pull that lists it. Started
-   * after any pull in flight, which may have listed past this frame's row already.
+   * order. ONE pull for a burst, by the single-flight rule of {@link fetchPendingMessages}: asked
+   * from inside the drain, it is owed and issued behind that drain's ack, after any pull fetching -
+   * which may have listed past this frame's row already. The pull that lists them says how many
+   * frames it carries ({@link runPull}).
    *
    * NOT NOTED IN `unackedFrames`, deliberately: that ledger holds a frame until an EVENT (a Welcome,
    * a restore, a registration) discharges its reason, and nothing has to happen here but this pull,
@@ -2165,18 +2170,7 @@ export abstract class BaseMlsService implements IMlsService {
    */
   private holdLiveKeyGroupFrame(groupId: string): void {
     this.liveHeldKeyGroups.set(groupId, (this.liveHeldKeyGroups.get(groupId) ?? 0) + 1);
-    if (this.liveHoldPull) return;
-    this.liveHoldPull = (async () => {
-      await this.pendingPullInFlight?.catch(() => {});
-      const held = [...this.liveHeldKeyGroups].map(([g, n]) => `${g.slice(0, 8)} x${n}`);
-      const frames = [...this.liveHeldKeyGroups.values()].reduce((a, n) => a + n, 0);
-      this.liveHeldKeyGroups.clear();
-      this.liveHoldPull = null;
-      console.log(
-        `[GRAINE] ${frames} live frame(s) on ${held.length} key group(s) [${held.join(', ')}] arrived ahead of the local epoch before the mailbox was listed on this link - left queued and pulled again in the server's order, no commit replayed past the frames queued before them`
-      );
-      await this.fetchPendingMessages();
-    })();
+    void this.fetchPendingMessages([groupId]);
   }
 
   /** Waiters of {@link whenGroupDrained}, by group. */
@@ -2257,6 +2251,9 @@ export abstract class BaseMlsService implements IMlsService {
 
   private async settleMailbox(): Promise<void> {
     await this.pendingPullInFlight?.catch(() => {});
+    // AN OWED PULL IS PART OF THE MAILBOX this barrier speaks for: something asked for a listing
+    // that has not run yet. Never a cycle - it is issued by a fetch or a drain ending, not by this.
+    await this.owedPull?.done.promise;
     return this.messageScheduler.waitUntilIdle();
   }
 
@@ -2351,15 +2348,14 @@ export abstract class BaseMlsService implements IMlsService {
     pull: {
       queued: {
         say:
-          'the pull listed a row the socket or an earlier pull had already handed in and this device' +
-          ' has not drained yet - the ordinary crossing, and nothing is wrong',
+          'the pull listed a row the socket had already handed in and this device has not drained' +
+          ' yet - the ordinary crossing, and nothing is wrong',
         accuse: false,
       },
       done: {
         say:
           'the pull listed a row this device had already acknowledged, AND that acknowledgement had' +
-          ' settled before the pull was issued (its serial is at most the pull flush serial;' +
-          ' `fetchPendingMessages` awaits `ackInFlight`), so' +
+          ' landed before the pull was issued - `fetchPendingMessages` awaits `ackInFlight`, so' +
           ' nothing routine explains this: either a pull was started outside that barrier, or the' +
           ' server answered without recording an ack it had accepted',
         accuse: true,
@@ -2402,23 +2398,22 @@ export abstract class BaseMlsService implements IMlsService {
   };
 
   /**
-   * WHAT `pull:done` MEANS WHEN THE PULL WAS ISSUED BEFORE THE ROW'S ACK - the ordinary crossing,
-   * seen once the drain has overtaken the pull's answer.
+   * A PULL THAT LISTS A ROW THE SOCKET TOOK IN, BEFORE THAT ROW'S ACK WAS SENT - the one crossing a
+   * pull cannot be ordered against, so it has its own shape (`pull:crossed-live-ack`) and is never
+   * counted as `pull:done`.
    *
-   * The `ackInFlight` barrier orders a pull after every ack ANNOUNCED before it, and only those. A
-   * row this device settled `done` after the pull left - its ack not yet sent, or sent after the
-   * pull's own flush - is still in the server's queue when the pull is answered, so the listing is
-   * correct, and it differs from `pull:queued` only in whether the drain or the answer came first.
-   * Reported on the Mi 9T (`1.6.4-alpha.3`, dev, 2026-11-04) as two accused lines after each launch:
-   * a boot pulls twice - the reconnect's pull, then the re-fetch for the conversations the restore
-   * seeded (`refetchFramesLeftBehind`), which nothing holds behind the first pull's drain - and the
-   * rows of the drain still running are exactly the rows the second pull lists. Carried from
-   * {@link ackSerialOf} and the pull's own flush serial, never inferred from the repeat.
+   * A live frame is drained the moment it arrives, and its ack leaves only when that drain ends. A
+   * pull already out, or one whose flush was numbered before that ack, is answered from a queue
+   * that still holds the row: the listing is correct, and the ack already issued or about to be
+   * covers it, so it is NOT acknowledged a second time. A row first taken in by a PULL has no such
+   * reading: pulls are single-flight and the owed one starts only behind the drain's ack
+   * ({@link issueOwedPull}), so its repeat keeps accusing. Carried from the row's
+   * {@link deliveries} record and the pull's flush serial, never inferred from the repeat.
    */
-  private static readonly PULL_DONE_LISTED_BEFORE_ITS_ACK = {
+  private static readonly PULL_CROSSED_A_LIVE_ACK = {
     say:
-      'the pull was issued before this device acknowledged the row (its ack left after the pull' +
-      ' did), so the server was right to list it - the ordinary crossing, the drain simply won',
+      'the pull listed a row the socket had already handed in, before this device had sent its' +
+      ' acknowledgement - the ordinary crossing, and that acknowledgement covers it',
     accuse: false,
   };
 
@@ -2442,14 +2437,15 @@ export abstract class BaseMlsService implements IMlsService {
    * measured 23/25 by FWD-2 on 2026-09-05. That measurement described a race that no longer exists
    * - the ack and the pull it was crossing are now ordered - so the shape has been re-read against
    * the population it will actually run on rather than kept on the reading that named the last
-   * incident. What is left of it accuses, unless the ack is known to have failed or to have left
-   * after the pull did.
+   * incident. What is left of it accuses, unless the ack is known to have failed; a pull crossing
+   * the ack of a row the SOCKET took in is a shape of its own (`pull:crossed-live-ack`).
    *
    * In the instance and not the module because two services can exist at once in a test.
    */
   private readonly repeats: Record<DeliveryRepeatShape, number> = {
     'pull:queued': 0,
     'pull:done': 0,
+    'pull:crossed-live-ack': 0,
     'live:queued': 0,
     'live:done': 0,
   };
@@ -2481,14 +2477,14 @@ export abstract class BaseMlsService implements IMlsService {
    *
    * @param arrival which side offered this copy - see {@link REPEAT_MEANS} for what each of the
    *   four combinations of channel and prior state actually says - and, for a pull, the serial of
-   *   the pull's own ack flush: what separates an ack that preceded it from one that did not.
+   *   the pull's own ack flush, which {@link PULL_CROSSED_A_LIVE_ACK} reads.
    */
   private admitDelivery(queuedMessageId: string | undefined, arrival: DeliveryArrival): boolean {
     if (!queuedMessageId) return true;
     const { channel } = arrival;
     const known = this.deliveries.get(queuedMessageId);
     if (!known) {
-      this.rememberDelivery(queuedMessageId, 'queued');
+      this.rememberDelivery(queuedMessageId, { state: 'queued', via: channel });
       return true;
     }
     // NOT A FALLBACK AND NOT SILENT, and no longer a guess: this used to report "the live frame and
@@ -2498,18 +2494,29 @@ export abstract class BaseMlsService implements IMlsService {
     // it would be, and the shape is now named.
     // THE DISCRIMINATOR IS CARRIED, NOT GUESSED. Only this instance knows whether the ack for this
     // row got through, and that is exactly what separates a defect from a consequence.
-    const meaning =
-      arrival.channel === 'pull' && known === 'done'
-        ? this.meaningOfPullDone(queuedMessageId, arrival.listedAfterAck)
-        : BaseMlsService.REPEAT_MEANS[channel][known];
-    const shape = `${channel}:${known}` as DeliveryRepeatShape;
+    const crossed =
+      arrival.channel === 'pull' &&
+      known.state === 'done' &&
+      known.via === 'live' &&
+      (known.ackSerial === undefined || known.ackSerial > arrival.listedAfterAck);
+    const meaning = crossed
+      ? BaseMlsService.PULL_CROSSED_A_LIVE_ACK
+      : channel === 'pull' && known.state === 'done' && this.unacknowledged.has(queuedMessageId)
+        ? BaseMlsService.PULL_DONE_AFTER_A_FAILED_ACK
+        : BaseMlsService.REPEAT_MEANS[channel][known.state];
+    const shape: DeliveryRepeatShape = crossed
+      ? 'pull:crossed-live-ack'
+      : `${channel}:${known.state}`;
+    // ACKNOWLEDGED AGAIN ONLY WHEN NO ACK OF THIS DEVICE IS STILL TO COME: a crossing's own ack is
+    // in flight or about to leave, and a second one would be a request that says nothing new.
+    const reAck = known.state === 'done' && !crossed;
     this.repeats[shape] += 1;
     // `queuedMessageId` is the SERVER's, and a truncation is not a sanitiser - eight
     // characters are enough to hold a newline and start a line of the sender's choosing.
     const line =
       `[QUEUE] delivery ${sanitizeForLog(queuedMessageId).slice(0, 8)}... arrived twice - ${meaning.say};` +
       ` not decrypting it again` +
-      (known === 'done' ? ', acknowledging it once more' : '');
+      (reAck ? ', acknowledging it once more' : '');
     // A RATE IS NOT READ ONE LINE AT A TIME, and this comment used to say so while the code printed
     // one line at a time anyway. FWD-2 measured it on 2026-09-05: twenty-five forwards back to back,
     // and `pull:done` - the ack still in flight when the pull was answered - fired in TWENTY-THREE
@@ -2527,7 +2534,7 @@ export abstract class BaseMlsService implements IMlsService {
     } else if (this.repeats[shape] === 1) {
       console.log(`${line}. Further ones of this shape are counted, not printed`);
     }
-    if (known === 'done') {
+    if (reAck) {
       void this.announceAck([queuedMessageId]).catch((e) =>
         console.warn('[ACK] re-ack of a repeated delivery failed:', e)
       );
@@ -2536,39 +2543,30 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
-   * What a pull listing a row this device already settled `done` says, from the facts this instance
-   * holds: whether the row's ack was issued before the pull's own flush, and whether it got through.
-   *
-   * @param listedAfterAck the serial of the pull's flush - every ack up to it settled before the
-   *   pull's request left.
-   */
-  private meaningOfPullDone(
-    queuedMessageId: string,
-    listedAfterAck: number
-  ): { say: string; accuse: boolean } {
-    const ackedBy = this.ackSerialOf.get(queuedMessageId);
-    if (ackedBy === undefined || ackedBy > listedAfterAck) {
-      return BaseMlsService.PULL_DONE_LISTED_BEFORE_ITS_ACK;
-    }
-    if (this.unacknowledged.has(queuedMessageId))
-      return BaseMlsService.PULL_DONE_AFTER_A_FAILED_ACK;
-    return BaseMlsService.REPEAT_MEANS.pull.done;
-  }
-
-  /**
    * Records what the drain decided about a delivery: acknowledged, or owed a re-delivery.
    *
    * @param acked whether this drain acknowledged the row. False FORGETS it, because an unacked row
    *   is one the server must be able to hand back - see {@link deliveries}.
    */
-  private settleDelivery(queuedMessageId: string | undefined, acked: boolean): void {
+  private settleDelivery(
+    queuedMessageId: string | undefined,
+    acked: boolean,
+    via: DeliveryChannel | undefined
+  ): void {
     if (!queuedMessageId) return;
-    if (acked) {
-      this.rememberDelivery(queuedMessageId, 'done');
-    } else {
+    if (!acked) {
       this.deliveries.delete(queuedMessageId);
-      this.ackSerialOf.delete(queuedMessageId);
+      return;
     }
+    const known = this.deliveries.get(queuedMessageId);
+    if (known) {
+      known.state = 'done';
+      return;
+    }
+    // EVICTED WHILE IT WAS QUEUED (more than DELIVERY_MEMORY admissions in between): remembered
+    // again with the route its message carries, and as a PULL when it carries none - the side
+    // whose repeat is never excused.
+    this.rememberDelivery(queuedMessageId, { state: 'done', via: via ?? 'pull' });
   }
 
   /**
@@ -2581,13 +2579,15 @@ export abstract class BaseMlsService implements IMlsService {
    * a `Map`'s first key is its oldest, and a re-`set` of a known id is a state change, not a
    * refresh, so nothing here can keep an entry alive by touching it.
    */
-  private rememberDelivery(queuedMessageId: string, state: 'queued' | 'done'): void {
-    this.deliveries.set(queuedMessageId, state);
+  private rememberDelivery(
+    queuedMessageId: string,
+    record: { state: 'queued' | 'done'; via: DeliveryChannel }
+  ): void {
+    this.deliveries.set(queuedMessageId, { ...record });
     while (this.deliveries.size > BaseMlsService.DELIVERY_MEMORY) {
       const oldest = this.deliveries.keys().next().value;
       if (oldest === undefined) break;
       this.deliveries.delete(oldest);
-      this.ackSerialOf.delete(oldest);
     }
   }
 
@@ -2649,8 +2649,9 @@ export abstract class BaseMlsService implements IMlsService {
   protected refetchFramesLeftBehind(
     /**
      * The reason(s) the event discharges. SEVERAL IN ONE CALL, NOT ONE CALL EACH: every call that
-     * takes something starts a pull, and nothing coalesces two pulls - so an event discharging two
-     * reasons for one group would pay for the same mailbox twice.
+     * takes something asks for a pull, and two asks are folded into one only while a pull is owed
+     * - so an event discharging two reasons for one group in two calls could pay for the same
+     * mailbox twice.
      */
     reasons: UnackedReason | readonly UnackedReason[],
     trigger: string,
@@ -2687,7 +2688,7 @@ export abstract class BaseMlsService implements IMlsService {
         ' + '
       )} [${[...taken].map((g) => g.slice(0, 8)).join(', ')}]`
     );
-    void this.fetchPendingMessages();
+    void this.fetchPendingMessages([...taken]);
     return true;
   }
 
@@ -2726,7 +2727,7 @@ export abstract class BaseMlsService implements IMlsService {
             hasQueuedId: Boolean(msg.queuedMessageId),
           });
           if (ackedReset) ackIds.push(msg.queuedMessageId!);
-          this.settleDelivery(msg.queuedMessageId, ackedReset);
+          this.settleDelivery(msg.queuedMessageId, ackedReset, msg.channel);
           return;
         }
 
@@ -2762,7 +2763,7 @@ export abstract class BaseMlsService implements IMlsService {
             hasQueuedId: Boolean(msg.queuedMessageId),
           };
           const acked = shouldAckAfterSuccess(cbResult, flags) && !!msg.queuedMessageId;
-          this.settleDelivery(msg.queuedMessageId, acked);
+          this.settleDelivery(msg.queuedMessageId, acked, msg.channel);
           if (acked) {
             ackIds.push(msg.queuedMessageId!);
           } else if (flags.hasQueuedId && cbResult === false) {
@@ -2818,7 +2819,7 @@ export abstract class BaseMlsService implements IMlsService {
             // FORGOTTEN, so "retry on reconnect" stays true. The row was not acknowledged, so the
             // server will offer it again, and an id still remembered here would make the pull that
             // re-offers it drop the frame instead of retrying it.
-            this.settleDelivery(msg.queuedMessageId, false);
+            this.settleDelivery(msg.queuedMessageId, false, msg.channel);
             // The window closes either way, and what it held is RE-QUEUED rather than dropped.
             // Dropping assumed the server would re-deliver, which is true only of a frame carrying
             // a `queuedMessageId`; a live WebSocket frame need not carry one. Re-queued, the group
@@ -2832,7 +2833,7 @@ export abstract class BaseMlsService implements IMlsService {
               hasQueuedId: Boolean(msg.queuedMessageId),
             };
             const ackedAfterThrow = shouldAckAfterException(exFlags) && !!msg.queuedMessageId;
-            this.settleDelivery(msg.queuedMessageId, ackedAfterThrow);
+            this.settleDelivery(msg.queuedMessageId, ackedAfterThrow, msg.channel);
             if (ackedAfterThrow) {
               ackIds.push(msg.queuedMessageId!);
             } else if (exFlags.hasQueuedId) {
@@ -2874,6 +2875,11 @@ export abstract class BaseMlsService implements IMlsService {
           if (welcomedGroups.length > 0) {
             this.refetchFramesLeftBehind('unknown-group', 'welcome processed');
           }
+          // THE OWED PULL, IN THE TICK THE DRAIN'S ACK WAS ANNOUNCED: its flush chains behind that
+          // ack, so the server cannot list again a row this drain applied. Not while a pull is still
+          // fetching (its end issues it), nor while frames are still runnable - the drain they
+          // restart issues it behind THEIR ack.
+          if (!this.messageScheduler.hasRunnableWork()) this.issueOwedPull('drain end');
 
           finishQueueDrainBench(ackIds.length);
           if (drainIngest === null) {
@@ -2899,6 +2905,9 @@ export abstract class BaseMlsService implements IMlsService {
     if (this.messageScheduler.hasRunnableWork() && !this.messageScheduler.draining) {
       void this.processQueue();
     }
+    // No drain runs and none was restarted: a pull owed since `onDrainEnd` declined it (a fetch was
+    // still out, or frames were still runnable) has nothing left to wait behind.
+    if (!this.messageScheduler.draining) this.issueOwedPull('queue idle');
   }
 
   /**
@@ -2907,8 +2916,21 @@ export abstract class BaseMlsService implements IMlsService {
    * pull that dies half-way still shrinks the backlog. Draining the whole queue behind a single
    * deadline was WP-PENDING-1 - a device far enough behind aborted on every reconnect, ACKed
    * nothing, and its backlog grew forever.
+   *
+   * SINGLE-FLIGHT, WITH ONE OWED RE-RUN. A pull asked for while another is fetching, or while the
+   * queue is draining, starts no request: it is OWED ({@link owePull}) and issued once both have
+   * ended ({@link issueOwedPull}) - its ack flush then chains behind the drain's ack, so the server
+   * cannot list again the rows this device has just applied. Two pulls used to run side by side
+   * (the reconnect's and the re-fetch for the conversations the restore seeded), and the second
+   * listed rows the first's drain had settled but not yet acknowledged: `[QUEUE] delivery ...
+   * arrived twice`, accused, twice after each launch on the Mi 9T (`1.6.4-alpha.3`, 2026-11-04). The
+   * overlap is deleted, not reconciled. A burst of asks collapses into that one re-run - the flag is
+   * consumed when the pull is issued - so termination is a proof, not a timer.
+   *
+   * @param forGroups the groups this ask is for, if it is for some: a {@link waitForGroupQueueIdle}
+   *   on one of them waits for the owed pull's listing; a barrier on any other group does not.
    */
-  async fetchPendingMessages(): Promise<void> {
+  async fetchPendingMessages(forGroups: readonly string[] = []): Promise<void> {
     if (this.userId === UNRESOLVED_USER_ID) return;
     if (getTabLeadership() === 'follower') {
       // AT A LEVEL THAT ACCUSES: every path that pulls is gated on leadership, so reaching this is a
@@ -2917,6 +2939,70 @@ export abstract class BaseMlsService implements IMlsService {
         '[PENDING] pull refused on a follower tab - only the leader drains the queue (a caller is not gated on leadership)'
       );
       return;
+    }
+    if (this.pendingPullInFlight || this.messageScheduler.draining) return this.owePull(forGroups);
+    return this.runPull();
+  }
+
+  /**
+   * The pull asked for while another pull or a drain was running, until it is issued: the groups it
+   * was asked for, and two promises - `fetched` when its listing has landed (what a group barrier
+   * waits for), `done` when it has ended whole (what the asker's `fetchPendingMessages` resolves on).
+   */
+  private owedPull: {
+    groups: Set<string>;
+    fetched: { promise: Promise<void>; resolve: () => void };
+    done: { promise: Promise<void>; resolve: () => void };
+  } | null = null;
+
+  /** Records an ask that cannot run now. See {@link fetchPendingMessages}. */
+  private owePull(forGroups: readonly string[]): Promise<void> {
+    if (!this.owedPull) {
+      const settle = () => {
+        let resolve!: () => void;
+        const promise = new Promise<void>((r) => (resolve = r));
+        return { promise, resolve };
+      };
+      this.owedPull = { groups: new Set(), fetched: settle(), done: settle() };
+      console.debug(
+        `[PENDING] pull asked while ${this.pendingPullInFlight ? 'a pull is fetching' : 'the queue is draining'} - owed, issued once it ends behind this drain's ack`
+      );
+    }
+    for (const g of forGroups) this.owedPull.groups.add(g);
+    return this.owedPull.done.promise;
+  }
+
+  /**
+   * Issues the owed pull, if one is owed and no pull is fetching. The CALLER vouches for the drain:
+   * `onDrainEnd` right after announcing the drain's ack (the flush chains behind it), or a point
+   * where no drain runs - the end of a fetch, the end of `processQueue`.
+   */
+  private issueOwedPull(trigger: string): void {
+    const owed = this.owedPull;
+    if (!owed || this.pendingPullInFlight) return;
+    this.owedPull = null;
+    console.debug(`[PENDING] owed pull issued (${trigger})`);
+    void this.runPull(() => owed.fetched.resolve()).finally(() => {
+      owed.fetched.resolve();
+      owed.done.resolve();
+    });
+  }
+
+  /**
+   * One pull, start to end - only ever started by {@link fetchPendingMessages} or
+   * {@link issueOwedPull}, which keep it single-flight.
+   *
+   * @param onFetched called once the listing has landed (or failed), before the mailbox is settled.
+   */
+  private async runPull(onFetched?: () => void): Promise<void> {
+    // THE HELD LIVE KEY-GROUP FRAMES THIS PULL LISTS (`holdLiveKeyGroupFrame`), said once per pull.
+    if (this.liveHeldKeyGroups.size > 0) {
+      const held = [...this.liveHeldKeyGroups].map(([g, n]) => `${g.slice(0, 8)} x${n}`);
+      const frames = [...this.liveHeldKeyGroups.values()].reduce((a, n) => a + n, 0);
+      this.liveHeldKeyGroups.clear();
+      console.log(
+        `[GRAINE] ${frames} live frame(s) on ${held.length} key group(s) [${held.join(', ')}] arrived ahead of the local epoch before the mailbox was listed on this link - left queued and pulled again in the server's order, no commit replayed past the frames queued before them`
+      );
     }
 
     // Cleared here rather than on failure: what the barrier may trust is a pull that finished, and
@@ -2954,9 +3040,9 @@ export abstract class BaseMlsService implements IMlsService {
       // their retries are exhausted, and in that second case the rows really are still owed.
       const flush = this.announceAck([]);
       // WHAT THIS PULL IS ORDERED AFTER, read in the tick the flush was numbered: every ack up to
-      // this serial settles before the request leaves, and none issued later is waited for. A repeat
-      // of a row acknowledged by a later ack is a crossing, not an overtaken ack (`admitDelivery`).
-      // A lower bound for a later page, which may leave after more acks - never claimed as more.
+      // this serial settles before the request leaves, and none issued later is waited for. Read
+      // only for a row the SOCKET took in (`PULL_CROSSED_A_LIVE_ACK`); a lower bound for a later
+      // page, which may leave after more acks - never claimed as more.
       const listedAfterAck = this.ackSerial;
       await flush.catch(() => {});
       try {
@@ -3039,23 +3125,28 @@ export abstract class BaseMlsService implements IMlsService {
         }
       }
     })();
-    // CHAINED, NEVER OVERWRITTEN. Two pulls can overlap (a reconnect and the restore's seeded-rows
-    // pull), and the barrier must stand until EVERY one of them has landed. Assigning `pull` alone let
-    // the first to finish null the slot while the other was still fetching, so a
-    // `waitForGroupQueueIdle` passed and decrypted a frame that pull then delivered a second time.
+    // SINGLE-FLIGHT BY CONSTRUCTION: both starters refuse while a pull is fetching. A slot already
+    // taken here is a starter that broke that, so it ACCUSES - and is still chained, so the barrier
+    // stands until both have landed rather than being blinded by whichever ends first.
     const previous = this.pendingPullInFlight;
     const announced = previous ? Promise.all([previous, pull]).then(() => {}) : pull;
     if (previous) {
-      console.log('[PENDING] A pull is already in flight - the barrier now waits for both');
+      console.error(
+        '[PENDING] a pull started while another was fetching - a starter bypassed the single-flight gate (fetchPendingMessages / issueOwedPull)'
+      );
     }
     this.pendingPullInFlight = announced;
     try {
       await pull;
     } finally {
       // CLEARED BEFORE THE BARRIER, deliberately: the line below is that barrier, and a pull still
-      // announcing itself here would be waiting on its own completion. ONLY WHEN IT IS STILL OURS: a
-      // later pull chained onto it, and clearing would blind the barrier to that one.
+      // announcing itself here would be waiting on its own completion.
       if (this.pendingPullInFlight === announced) this.pendingPullInFlight = null;
+      onFetched?.();
+      // THE FETCH IS OVER: an owed pull may start now unless a drain is running, whose end issues
+      // it behind its own ack instead (`onDrainEnd`). The rows this pull just enqueued started that
+      // drain synchronously, so they are never listed again before they are acknowledged.
+      if (!this.messageScheduler.draining) this.issueOwedPull('pull ended');
     }
     await this.settleMailbox();
     // THE PULL'S END IS AN EVENT FOR `whenGroupDrained`: a group that went idle before the mailbox

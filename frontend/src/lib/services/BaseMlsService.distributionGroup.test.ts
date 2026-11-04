@@ -1230,7 +1230,6 @@ describe('a frame from an epoch this device has not reached', () => {
         mailboxEmptiedByAPull: true,
         pendingPullInFlight: link.pulling ?? null,
         liveHeldKeyGroups: new Map<string, number>(),
-        liveHoldPull: null,
         holdLiveKeyGroupFrame: (
           BaseMlsService.prototype as unknown as { holdLiveKeyGroupFrame(g: string): void }
         ).holdLiveKeyGroupFrame,
@@ -1254,25 +1253,21 @@ describe('a frame from an epoch this device has not reached', () => {
       log.mockRestore();
     });
 
-    it('asks ONE pull for a burst, started after the pull already running', async () => {
-      let endRunning!: () => void;
-      const running = new Promise<void>((resolve) => (endRunning = resolve));
-      const { ctx } = liveGapped({ pulling: running });
+    it('asks the pull for its key group on every frame, and counts the burst for the line it prints', async () => {
+      // ONE pull for the burst is the single-flight rule of `fetchPendingMessages` itself (asked
+      // while a pull fetches, it is owed and issued once) - `BaseMlsService.singleFlightPull.test.ts`.
+      const { ctx } = liveGapped({ pulling: new Promise<void>(() => undefined) });
       const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
       await routeAhead(ctx, new Uint8Array([1]));
       await routeAhead(ctx, new Uint8Array([1]));
       await flushMacrotask();
-      // The running pull may have listed past these rows already: the one owed starts after it.
-      expect(ctx.fetchPendingMessages).not.toHaveBeenCalled();
 
-      endRunning();
-      await flushMacrotask();
-      expect(ctx.fetchPendingMessages).toHaveBeenCalledTimes(1);
-      // Counted, per key group, in the one line the burst prints.
-      expect(log.mock.calls.flat().join('\n')).toContain(
-        '2 live frame(s) on 1 key group(s) [g-1 x2]'
-      );
+      expect(ctx.fetchPendingMessages).toHaveBeenCalledTimes(2);
+      expect(ctx.fetchPendingMessages).toHaveBeenCalledWith(['g-1']);
+      expect(
+        (ctx as unknown as { liveHeldKeyGroups: Map<string, number> }).liveHeldKeyGroups
+      ).toEqual(new Map([['g-1', 2]]));
       log.mockRestore();
     });
 

@@ -1,6 +1,6 @@
-### Fixed - a row listed again by a pull issued before its ack is no longer accused at launch
+### Fixed - a second pull at launch no longer lists rows the first pull's drain had not acknowledged
 
-The boot's second pull listed rows the first pull's drain had not acknowledged yet, and the repeat
-was accused as an ack the server forgot (`[QUEUE] delivery ... arrived twice`, twice per launch on the
-Mi 9T); the line now carries which came first, and still accuses an ack that landed before the pull
-([chat](docs/wiki/frontend/modules/chat.md#a-done-row-listed-again-whose-ack-came-first-2026-11-04)).
+Two pulls ran side by side at boot, and the second listed rows the first's drain had applied but not
+yet acknowledged, accused as an ack the server forgot (`[QUEUE] delivery ... arrived twice`, twice per
+launch on the Mi 9T); a pull asked meanwhile is now owed and runs once, behind the drain's ack
+([chat](docs/wiki/frontend/modules/chat.md#one-pull-at-a-time-and-the-one-asked-meanwhile-is-owed-2026-11-04)).

@@ -1426,8 +1426,12 @@ export interface IMlsService {
    */
   resolveDeviceId(userId: string): Promise<string>;
   /** Fetches messages queued on the delivery service that were not yet delivered
-   * (e.g. during a disconnect). Should be called after every connect/reconnect. */
-  fetchPendingMessages(): Promise<void>;
+   * (e.g. during a disconnect). Should be called after every connect/reconnect. Single-flight: an
+   * ask made while a pull is fetching or the queue is draining is owed and run once both have
+   * ended, and resolves then.
+   * @param forGroups the groups the ask is for, if any - a group barrier on one of them waits for
+   *   the owed pull's listing. */
+  fetchPendingMessages(forGroups?: readonly string[]): Promise<void>;
   /**
    * Resolves when this device's mailbox is empty - nothing left to fetch, nothing left to apply.
    *

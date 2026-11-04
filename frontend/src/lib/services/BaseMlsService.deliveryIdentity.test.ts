@@ -193,6 +193,7 @@ describe('a delivery that arrives twice', () => {
     expect(svc.deliveryRepeatStats()).toEqual({
       'pull:queued': 0,
       'pull:done': 1,
+      'pull:crossed-live-ack': 0,
       'live:queued': 0,
       'live:done': 1,
     });

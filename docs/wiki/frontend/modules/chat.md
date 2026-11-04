@@ -1129,30 +1129,41 @@ Four properties, each of which would be a defect if dropped:
 `BaseMlsService.deliveryIdentity.test.ts` pins all four plus the base case, driving the real drain
 through `enqueueMessage` rather than asserting on the Map.
 
-### A `done` row listed again: whose ack came first (2026-11-04)
+### One pull at a time, and the one asked meanwhile is owed (2026-11-04)
 
 `done` records that this device DECIDED to acknowledge a row; the ack naming it leaves only when the
-whole drain ends (`onDrainEnd`). `fetchPendingMessages` awaits every ack announced before it
-(`ackInFlight`), and only those. So a pull issued while a drain is still applying - at boot, the
-reconnect's pull and then `refetchFramesLeftBehind`'s re-fetch for the conversations the restore just
-seeded, which nothing holds behind the first drain - lists rows the server rightly still holds, and
-when the drain finishes before the answer is read they meet `done`. The old cell accused that as "an
-ack that had landed before the pull" - two such lines after each launch on the Mi 9T
-(`1.6.4-alpha.3`, dev).
+whole drain ends (`onDrainEnd`). Two pulls used to run side by side at boot - the reconnect's, then
+`refetchFramesLeftBehind`'s re-fetch for the conversations the restore had just seeded - and the
+second listed rows the first one's drain had settled but not yet acknowledged. The repeat met `done`
+and was accused as an ack the server forgot: two `[QUEUE] delivery ... arrived twice` lines after each
+launch on the Mi 9T (`1.6.4-alpha.3`, dev).
 
-The discriminator is now carried, never inferred: every ack request gets a serial (`announceAck`),
-each `done` row remembers the serial of the ack that named it (`ackSerialOf`), and a pull records the
-serial of its own flush (`listedAfterAck`, typed on `DeliveryArrival`). A `pull:done` repeat is
+The overlap is deleted, not classified. `fetchPendingMessages` is SINGLE-FLIGHT WITH ONE OWED RE-RUN:
 
-| The row's ack | Line |
-| --- | --- |
-| not issued yet, or issued after the pull's flush | `log`, once per shape: the ordinary crossing |
-| issued before, and it failed | `log`: the `[ACK]` failure above, showing its consequence |
-| issued before, and it landed | `warn`: nothing routine explains it (a pull outside the barrier, or a server that forgot an ack) |
+- asked while a pull is fetching or the queue is draining, it starts no request - the pull is OWED
+  (`owePull`), the caller's groups are added to it, and the caller's promise settles when it has run;
+- the owed pull is issued (`issueOwedPull`) in the tick `onDrainEnd` announces the drain's ack (its
+  flush chains behind that ack), or at the end of a fetch or of `processQueue` when no drain runs;
+- the owed record is consumed when it is issued, so a burst of asks is one pull and nothing is timed.
 
-The flush serial is a lower bound for a later page of the same pull, which may leave after more acks;
-it is never claimed as more. `BaseMlsService.ackBarrier.test.ts` drives the two-pulls-at-boot case
-through the real pull and drain and fails on the old predicate.
+It is NOT chained into `pendingPullInFlight` (that held every barrier behind the whole drain).
+`waitForGroupQueueIdle` waits on the owed pull's listing only for a group it was asked for;
+`mailboxListedOnThisLink` - and so `isGroupDrained` - reads false while a pull is owed. A held live
+key-group frame (`holdLiveKeyGroupFrame`) just asks for its group's pull.
+
+One crossing no pull can be ordered against is left, and it has its own shape: a row the SOCKET handed
+in, listed by a pull whose flush left before that row's ack. Every ack request carries a serial
+(`announceAck`), each delivery remembers the channel that admitted it and the serial of the ack naming
+it, and a pull records the serial of its flush (`listedAfterAck` on `DeliveryArrival`):
+
+| The repeat | Shape | Line |
+| --- | --- | --- |
+| pull lists a row the socket took in, ack not sent before the pull's flush | `pull:crossed-live-ack` | `log`, once; not acknowledged again - that ack covers it |
+| pull lists a `done` row whose ack failed | `pull:done` | `log`: the `[ACK]` failure above |
+| pull lists a `done` row a PULL took in, ack landed before | `pull:done` | `warn`: nothing routine explains it |
+
+`BaseMlsService.singleFlightPull.test.ts` drives both through the real pull, scheduler and drain:
+two asks during a drain give exactly one second pull, after the drain's ack, and no repeat.
 
 ## Outbox (outbound delivery)
 
