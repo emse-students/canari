@@ -52,6 +52,7 @@ import {
   commentsWithheldFromViewerSql,
   postVisibleToViewerSql,
   sameSideOfReviewCohortSql,
+  studentsOnlyAdmitsViewerSql,
 } from '../spaces/reader-spaces';
 import { isBlockedBetween } from '../common/user-blocks';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
@@ -160,6 +161,30 @@ export function bellRowShownSql(n: string): string {
       AND ${postVisibleToViewerSql('notif_post', `${n}."recipientId"`)}
       AND NOT (${commentBorneNotificationSql(n, 'notif_post')}
         AND ${commentsWithheldFromViewerSql('notif_post', `${n}."recipientId"`)})))`;
+}
+
+/**
+ * A `repost_proposed` bell row whose TEXT its recipient may no longer read: the proposal's post is
+ * "Entre étudiants" and the gate refuses the recipient (`studentsOnlyAdmitsViewerSql`). Such a row
+ * is not post-bound - its `postId` names the receiving association's queue - so
+ * {@link bellRowShownSql} never re-asks the predicate, and a row written while the switch was OFF
+ * would keep its preview once it is turned on. The row stays (the proposal is still theirs to
+ * decide); only its text is withheld at the read, as the queue's `describe` withholds it.
+ *
+ * The row does not name its post, so the post is found through the proposal the row announced:
+ * a `repost` proposal from the row's association (`associationId`) to its queue (`postId`), by its
+ * actor. ANY such proposal whose post the gate refuses withholds the text - restrictive where one
+ * proposer sent the same association several posts, never permissive. The proposal's status does
+ * not matter: a decided proposal's row is still in the bell.
+ */
+export function repostProposalTextWithheldSql(n: string): string {
+  return `(${n}.type = 'repost_proposed' AND EXISTS (SELECT 1 FROM proposals rpw_prop
+    JOIN posts rpw_post ON rpw_post.id = rpw_prop."subjectId"
+    WHERE rpw_prop.kind = 'repost'
+      AND rpw_prop."toAssociationId"::text = ${n}."postId"
+      AND rpw_prop."fromAssociationId"::text = ${n}."associationId"
+      AND rpw_prop."proposedBy" = ${n}."actorId"
+      AND NOT ${studentsOnlyAdmitsViewerSql('rpw_post', `${n}."recipientId"`)}))`;
 }
 
 /**
@@ -740,7 +765,22 @@ export class PostNotificationsService {
    * itself is left to the 90-day sweep. A PUSH already delivered to a device cannot be recalled.
    */
   async getNotifications(userId: string, limit = 30) {
-    return this.bellPageQuery(userId, limit).getMany();
+    const rows = await this.bellPageQuery(userId, limit).getMany();
+    const proposed = rows.filter((r) => r.type === 'repost_proposed' && r.text);
+    if (proposed.length === 0) return rows;
+    // A repost proposal's preview is re-asked here, at the read (`repostProposalTextWithheldSql`).
+    const withheld: { id: string }[] = await this.notifRepo.manager.query(
+      `SELECT n.id FROM post_notifications n
+        WHERE n.id = ANY($1::uuid[]) AND ${repostProposalTextWithheldSql('n')}`,
+      [proposed.map((r) => r.id)]
+    );
+    if (withheld.length === 0) return rows;
+    const ids = new Set(withheld.map((r) => r.id));
+    this.logger.debug(
+      `[STUDENTS_ONLY] bell of ${userId.slice(0, 8)}: ${ids.size} repost proposal text(s) withheld`
+    );
+    for (const row of rows) if (ids.has(row.id)) row.text = '';
+    return rows;
   }
 
   /**

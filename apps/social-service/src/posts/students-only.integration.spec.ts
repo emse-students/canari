@@ -50,6 +50,7 @@ import type { RedisService } from '../common/redis/redis.service';
 import type { FollowsService } from '../follows/follows.service';
 import type { AssociationsService } from '../associations/associations.service';
 import { bellRowShownSql, PostNotificationsService } from './post-notifications.service';
+import { PostNotification } from './entities/post-notification.entity';
 import type { PostMediaRetentionService } from './post-media-retention.service';
 import type { ListPostsFeed, ListPostsParams } from './list-feed';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
@@ -194,7 +195,8 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [],
+      // The bell is read through its entity (`getNotifications`), so that one is mapped.
+      entities: [PostNotification],
       synchronize: false,
       extra: { options: `-c search_path=${schema},public` },
     });
@@ -226,8 +228,11 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
       CREATE TABLE user_blocks ("blockerId" varchar(255) NOT NULL, "blockedId" varchar(255) NOT NULL);
       CREATE TABLE user_follows ("followerUserId" varchar(255) NOT NULL,
         "followedUserId" varchar(255) NOT NULL, status varchar(16) NOT NULL);
-      CREATE TABLE post_notifications (id serial PRIMARY KEY, "recipientId" varchar(255) NOT NULL,
-        type varchar NOT NULL, "postId" varchar, "actorId" varchar(255));
+      CREATE TABLE post_notifications (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        "recipientId" varchar NOT NULL, type varchar NOT NULL, "postId" varchar NOT NULL,
+        "actorId" varchar NOT NULL, "actorName" varchar, "associationId" varchar,
+        "associationLogoUrl" varchar, text varchar NOT NULL, meta jsonb, "commentId" varchar,
+        read boolean NOT NULL DEFAULT false, "createdAt" timestamp NOT NULL DEFAULT now());
       CREATE TABLE user_moderation ("userId" varchar(255) PRIMARY KEY,
         "isMuted" boolean NOT NULL DEFAULT false);
     `);
@@ -571,5 +576,36 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
     expect(await feedHas('associations', 'nr', P)).toBe(false);
     await setSwitch(false);
     expect(await feedHas('associations', 'nr', P)).toBe(true);
+  });
+
+  it("a repost proposal's bell row written while the switch was OFF loses its text at the read once it is ON", async () => {
+    // The proposal, and its bell rows as `announce` wrote them with the switch OFF: text for both.
+    await q(
+      `INSERT INTO proposals (kind, "subjectId", "fromAssociationId", "toAssociationId", "proposedBy")
+         VALUES ('repost', $1, $2, $3, 'off')`,
+      [P, A1, C2]
+    );
+    for (const recipient of ['s2', 'sg']) {
+      await q(
+        `INSERT INTO post_notifications ("recipientId", type, "postId", "actorId", "actorName",
+           "associationId", text) VALUES ($1, 'repost_proposed', $2, 'off', 'A1', $3, 'la soirée des promos')`,
+        [recipient, C2, A1]
+      );
+    }
+    const bell = new PostNotificationsService(
+      ds.getRepository(PostNotification),
+      { manager } as never,
+      {} as never,
+      {} as never
+    );
+    const textOf = async (reader: string) =>
+      (await bell.getNotifications(reader)).find((n) => n.type === 'repost_proposed')?.text;
+    const { off, on } = await bothWays(async () => ({
+      staff: await textOf('s2'),
+      student: await textOf('sg'),
+    }));
+    expect(off).toEqual({ staff: 'la soirée des promos', student: 'la soirée des promos' });
+    // The row stays in the staff officer's bell - the proposal is still theirs to decide - textless.
+    expect(on).toEqual({ staff: '', student: 'la soirée des promos' });
   });
 });

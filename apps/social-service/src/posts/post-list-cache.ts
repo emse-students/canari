@@ -31,6 +31,13 @@ export const POST_LIST_CACHE_PREFIX = 'posts:list:v3:';
  * with the generation it was computed under, and a page whose generation is not the current one is
  * never served: deterministic, whatever the interleaving, with the sweep left to reclaim memory.
  * Outside the prefix, so no sweep ever deletes it.
+ *
+ * NO TTL, ON THIS KEY OR ON A READER'S, DELIBERATELY. A counter that went back to 0 could match a
+ * page still alive under the value it had before, so it must never vanish. Redis runs
+ * `volatile-lru` on both estates, which evicts ONLY keys carrying a TTL: without one these are
+ * never evicted, and AOF keeps them across a restart. A TTL would make them evictable, which is
+ * the one way to reset them - `post-list-cache.spec.ts` asserts the policy in both compose files.
+ * The cost is one small integer per reader a member repost ever reached, bounded by the users.
  */
 export const POST_LIST_GENERATION_KEY = 'posts:list:generation';
 
