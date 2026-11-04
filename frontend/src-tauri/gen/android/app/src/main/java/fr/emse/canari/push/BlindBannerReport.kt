@@ -49,7 +49,13 @@ object BlindBannerReport {
     /**
      * The report for a blind banner that reached the shade.
      *
-     * @param seedHeld whether the open ran (the mirror held this session's seed)
+     * THE OPEN RAN ONLY WHEN BOTH HELD: the seed AND the inlined ciphertext, nonce and index
+     * (`postChannelNotification`'s guard). A mirrored seed with a ciphertext the server did not
+     * inline (the 4 KB FCM budget) never opened, so it reports `missing=ciphertext` - reading
+     * [seedHeld] alone as "it ran" turned that into `refused=unstated` and erased the term the
+     * `[PUSH_BLIND]` GROUP BY separates the two causes with (review of #3027).
+     *
+     * @param seedHeld whether the mirror held this session's seed
      * @param openable whether the push carried ciphertext, nonce and index - a frame that is
      *   held for its seed and may be redrawn
      * @param missing  the terms the open lacked (`blindBannerMissing`), read only when it never ran
@@ -57,7 +63,7 @@ object BlindBannerReport {
      *   nobody said why
      */
     fun of(seedHeld: Boolean, openable: Boolean, missing: List<String>, refused: String?): Report =
-        if (seedHeld) {
+        if (seedHeld && openable) {
             Report(missing = emptyList(), held = false, refused = refused?.takeIf { it.isNotEmpty() } ?: UNSTATED)
         } else {
             Report(missing = missing, held = openable, refused = null)

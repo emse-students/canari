@@ -112,6 +112,11 @@ pub fn decode_commits_b64_json(json: &str) -> Vec<Vec<u8>> {
 /// ciphertext (`ciphertext||tag`) and 12-byte nonce; the raw 32-byte epoch key is looked up natively
 /// so the plaintext never transits Google/FCM. The decrypted bytes are the same encoded AppMessage
 /// proto as MLS, so `extract_full_message_info` parses them identically.
+///
+/// TEST-ONLY since 2026-11-04: the production path is [`open_graine_push`], which opens with
+/// [`open_channel_ciphertext`] and names WHICH step failed; this keeps the plain "opened and
+/// renderable, or nothing" shape the cross-version push tests pin the cipher and the proto with.
+#[cfg(test)]
 pub fn decrypt_channel_message(
     raw_key: &[u8],
     nonce: &[u8],
@@ -127,9 +132,9 @@ pub fn decrypt_channel_message(
     }
 }
 
-/// AES-256-GCM-opens a salon ciphertext (`ciphertext||tag`) - the one cipher step of
-/// [`decrypt_channel_message`] and the v1 half of [`open_graine_push`], which tells the caller WHICH
-/// step failed. None, said at error, when the key or nonce is malformed or the tag does not verify.
+/// AES-256-GCM-opens a salon ciphertext (`ciphertext||tag`) - the one cipher step of the v1 half of
+/// [`open_graine_push`] (and of the test-only `decrypt_channel_message`), which tells the caller
+/// WHICH step failed. None, said at error, when the key or nonce is malformed or the tag does not verify.
 fn open_channel_ciphertext(raw_key: &[u8], nonce: &[u8], ciphertext: &[u8]) -> Option<Vec<u8>> {
     use aes_gcm::aead::{Aead, KeyInit};
     use aes_gcm::{Aes256Gcm, Key, Nonce};
@@ -174,8 +179,8 @@ pub struct GrainePush<'a> {
     pub signature_b64: &'a str,
 }
 
-/// Opens a salon push against the seed mirror, and returns the metadata JSON of
-/// [`decrypt_channel_message`] or a `refused` with its reason. An opened answer carries
+/// Opens a salon push against the seed mirror, and returns the message metadata JSON of
+/// `extract_full_message_info` or a `refused` with its reason. An opened answer carries
 /// `authorProven`: `true` under a v2 session (minter and signature checked), `false` under v1, whose
 /// rows carry no author proof - the one fact a banner needs before it names the push's `senderId`.
 ///

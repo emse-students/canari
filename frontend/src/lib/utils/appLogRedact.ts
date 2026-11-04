@@ -43,8 +43,12 @@ export const MAX_INPUT_CHARS = 1000;
 /** A JSON Web Token: three base64url segments, the first one a JSON header (`eyJ`). */
 const JWT_RE = /\beyJ[\w-]{4,}\.[\w-]{4,}\.[\w-]*/g;
 
-/** `Bearer xxx` / `Basic xxx` as they appear in a dumped header. */
-const AUTH_SCHEME_RE = /\b(Bearer|Basic)\s+[\w\-.~+/=]+/gi;
+/**
+ * `Bearer xxx` / `Basic xxx` / `PushSecret xxx` as they appear in a dumped header. `PushSecret` is
+ * the native push service's own scheme (a shut app has no session), whose lines reach this log
+ * since 2026-11-04 (`nativePushLog.ts`).
+ */
+const AUTH_SCHEME_RE = /\b(Bearer|Basic|PushSecret)\s+[\w\-.~+/=]+/gi;
 
 /** A query string or a fragment after a URL or an absolute path. Its keys and values both go. */
 const QUERY_RE = /((?:[a-z][a-z0-9+.-]*:\/\/[^\s?#"'<>]*)|(?:\/[\w\-./%…]*))\?[^\s"'<>]*/gi;

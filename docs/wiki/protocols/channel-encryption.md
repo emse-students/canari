@@ -3018,7 +3018,15 @@ the line gained a last term: `... held=<bool> refused=<reason|none>`. An open th
 also what every older build's report prints. Both allowlists - `missing` and `refused` - are
 `libs/contracts/blind-banner-terms.json`, asserted by the controller spec, by the Rust open's source
 scan (`every_salon_open_refusal_is_in_the_blind_banner_contract`) and by `BlindBannerReportTest`. The
-iOS extension still sends `missing` alone.
+iOS extension still sends `missing` alone. "The open ran" means the seed AND the inlined ciphertext,
+nonce and index were all there: a mirrored seed with a ciphertext the server did not inline still
+prints `missing=ciphertext refused=none`, never `refused=unstated` (review of #3027).
+
+**IT COUNTS BANNERS, NOT MESSAGES.** Reporting from `postChannelNotification` means one message can
+be counted twice on Android: a blind first post and a redraw or drain that finds it still blind each
+post a banner, and each reports. A rate read off `[PUSH_BLIND]` is blind banners per platform and
+cause; a per-message rate needs the lines de-duplicated on channel and time, or read as an upper
+bound.
 
 **A ROW THAT IS NEVER NEWS POSTS NOTHING (2026-11-04).** A withdrawn reaction and a system event
 silenced by name (`format_system_event_text`) decrypt to `ok: false` - and a salon push used to draw

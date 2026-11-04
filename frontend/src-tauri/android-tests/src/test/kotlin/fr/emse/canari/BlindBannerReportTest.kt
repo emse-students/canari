@@ -37,6 +37,14 @@ class BlindBannerReportTest {
     }
 
     @Test
+    fun `a held seed with a ciphertext the server did not inline never opened - it says what it lacked`() {
+        val report = BlindBannerReport.of(seedHeld = true, openable = false, missing = listOf("ciphertext"), refused = null)
+        assertEquals(listOf("ciphertext"), report.missing)
+        assertFalse(report.held)
+        assertNull(report.refused)
+    }
+
+    @Test
     fun `an open that ran reports its refusal and nothing missing`() {
         val report = BlindBannerReport.of(seedHeld = true, openable = true, missing = listOf("seed"), refused = "below-floor")
         assertEquals(emptyList<String>(), report.missing)

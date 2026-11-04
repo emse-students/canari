@@ -5625,7 +5625,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             is PostReactionGroup.Shape.Many ->
                 res.getString(R.string.notif_social_reaction_body_many, shape.a.name, shape.b.name, shape.others)
             null -> {
-                Log.e(TAG, "post reaction: empty ledger after adding ${newcomer.name} - nothing to say")
+                Log.e(TAG, "post reaction: empty ledger after adding actor=${newcomer.id.take(8)} - nothing to say")
                 return
             }
         }
