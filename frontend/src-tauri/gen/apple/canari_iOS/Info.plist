@@ -15,9 +15,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.6.3</string>
+	<string>1.6.4</string>
 	<key>CFBundleVersion</key>
-	<string>100600310</string>
+	<string>100600401</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIBackgroundModes</key>
