@@ -13,6 +13,7 @@ export const createPostHint: GuideDefinition = {
   id: 'hint-create-post',
   kind: 'hint',
   appliesTo: (pathname) => pathname === '/posts',
+  replay: { label: m.guide_hint_create_post_title, route: '/posts' },
   steps: [
     {
       id: 'compose',

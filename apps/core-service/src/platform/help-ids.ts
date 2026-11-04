@@ -11,6 +11,9 @@ export const HELP_IDS = [
   'hint-create-post',
   'hint-create-event',
   'hint-create-form',
+  'hint-feed-tabs',
+  'hint-reels',
+  'hint-chats',
 ] as const;
 
 /**
