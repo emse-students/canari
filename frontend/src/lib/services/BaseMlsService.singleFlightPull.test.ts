@@ -16,7 +16,9 @@ import { BaseMlsService } from '$lib/services/BaseMlsService';
 import type { MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 
 /** @see BaseMlsService.deliveryIdentity.test.ts - same reason the cast is what instantiates the base. */
-abstract class Harness extends BaseMlsService {}
+abstract class Harness extends BaseMlsService {
+  protected override pausePlatformSocket(): void {}
+}
 
 const makeService = (): BaseMlsService =>
   new (Harness as unknown as new (platform: 'web' | 'tauri') => BaseMlsService)('web');
@@ -164,6 +166,68 @@ describe('a pull asked while another pull or a drain is running', () => {
     await Promise.all([first, owedFor]);
     expect(owedSettled).toBe(true);
     expect(pulls).toBe(2);
+  });
+
+  it('holds EVERY group barrier on an owed pull that named no group - it is for the whole mailbox', async () => {
+    queue = [row('row-1', 'g-1')];
+    const first = inner(svc).fetchPendingMessages();
+    await vi.waitFor(() => expect(order).toContain('apply:row-1'));
+    // A reconnect, a barrier or a re-enrolment asks for the whole mailbox, after a group ask.
+    void inner(svc).fetchPendingMessages(['g-2']);
+    void inner(svc).fetchPendingMessages();
+
+    let settled = false;
+    const anyGroup = svc.waitForGroupQueueIdle('test', 'g-3').then(() => (settled = true));
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(settled).toBe(false);
+
+    applying.settle();
+    await Promise.all([first, anyGroup]);
+    expect(pulls).toBe(2);
+  });
+
+  it('does not issue the owed pull while a row a pull listed is held by a commit', async () => {
+    // The fetch ends with its row queued but NOT runnable - a commit of its group holds the MLS
+    // lock - so no drain runs. Issued then, the owed pull would list that unacknowledged row again.
+    queue = [row('row-held', 'g-c')];
+    applying.settle();
+    const commitEnds = deferred();
+    const committing = (
+      svc as unknown as {
+        runCommitUnderMlsLock(g: string, fn: () => Promise<void>): Promise<void>;
+      }
+    ).runCommitUnderMlsLock('g-c', () => commitEnds.promise);
+
+    const first = inner(svc).fetchPendingMessages();
+    const second = inner(svc).fetchPendingMessages(['g-x']);
+    await vi.waitFor(() => expect(order).toEqual(['pull-1']));
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+    // Fetched, the row still held: nothing else may be listed yet.
+    expect(pulls).toBe(1);
+    expect(inner(svc).owedPull).not.toBeNull();
+
+    // The commit's end resumes the row; the drain that applies it issues the owed pull behind its ack.
+    commitEnds.settle();
+    await committing;
+    await Promise.all([first, second]);
+    expect(order).toEqual(['pull-1', 'apply:row-held', 'ack:row-held', 'pull-2']);
+    expect(repeats()).toEqual([]);
+  });
+
+  it('drops an owed pull when its client is destroyed: its askers are released, nothing is pulled', async () => {
+    queue = [row('row-1', 'g-1')];
+    const first = inner(svc).fetchPendingMessages();
+    await vi.waitFor(() => expect(order).toContain('apply:row-1'));
+    const owed = inner(svc).fetchPendingMessages(['g-2']);
+    const barrier = svc.waitForGroupQueueIdle('test', 'g-2');
+
+    svc.destroy();
+    await owed;
+    expect(inner(svc).owedPull).toBeNull();
+
+    applying.settle();
+    await Promise.all([first, barrier]);
+    expect(pulls).toBe(1);
   });
 
   it('names a pull crossing the ack of a row the SOCKET took in apart, and acks it once', async () => {

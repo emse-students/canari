@@ -259,6 +259,18 @@ import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 const EXTERNAL_JOIN_MAX_ATTEMPTS = 3;
 
 /**
+ * Releases everyone waiting on an owed pull - its group barriers and its askers - once it has run,
+ * or once it never will (refused at issue, or its client destroyed).
+ */
+function settleOwedPull(owed: {
+  fetched: { resolve: () => void };
+  done: { resolve: () => void };
+}): void {
+  owed.fetched.resolve();
+  owed.done.resolve();
+}
+
+/**
  * Whether a failed commit submission is the server's 409 `SEAT_CLAIM_OVERTAKEN`: a whole-commit
  * refusal that advanced nothing, read off the typed status and code, never off the message.
  */
@@ -1055,6 +1067,12 @@ export abstract class BaseMlsService implements IMlsService {
     externalJoinFlights.get(this)?.clear();
     // Nor a wait for a drain this client will never see (the admission gate's parked asks).
     this.abandonGroupDrainedWaiters();
+    // Nor a pull owed for later: issued after this, it would decrypt and acknowledge for nobody.
+    // Its askers are released with nothing listed.
+    if (this.owedPull) {
+      settleOwedPull(this.owedPull);
+      this.owedPull = null;
+    }
     // Nor a wake at the end of a lock the server refused: it would re-plan through a dead client.
     this.cancelAddLockExpiryWakes();
     if (this.heartbeatTimer !== null) {
@@ -2092,9 +2110,11 @@ export abstract class BaseMlsService implements IMlsService {
     // other twenty-eight conversations' frames, not the round trip that lists our own.
     // AN OWED PULL ONLY FOR THE GROUPS IT WAS ASKED FOR. It starts when the current drain ends, so
     // waiting on it for every group would hold each history answer behind the whole drain; a group
-    // it was asked for waits for its listing, because the frames it is for are not queued yet.
+    // it was asked for waits for its listing, because the frames it is for are not queued yet. An
+    // ask that named no group (a reconnect, a barrier, a re-enrolment) was for the WHOLE mailbox, so
+    // every group waits for it: answering from a store this link never listed is the hole it fills.
     const owed = this.owedPull;
-    if (owed?.groups.has(groupId)) await owed.fetched.promise;
+    if (owed && (owed.groups === 'all' || owed.groups.has(groupId))) await owed.fetched.promise;
     await this.pendingPullInFlight?.catch(() => {});
     // SILENT. A leg waiting for its own group's frames is the routine path and finishes in
     // milliseconds; a line announcing the wait, with nothing announcing its end, is half a story
@@ -2877,9 +2897,10 @@ export abstract class BaseMlsService implements IMlsService {
           }
           // THE OWED PULL, IN THE TICK THE DRAIN'S ACK WAS ANNOUNCED: its flush chains behind that
           // ack, so the server cannot list again a row this drain applied. Not while a pull is still
-          // fetching (its end issues it), nor while frames are still runnable - the drain they
-          // restart issues it behind THEIR ack.
-          if (!this.messageScheduler.hasRunnableWork()) this.issueOwedPull('drain end');
+          // fetching (its end issues it), nor while a row a pull listed is still queued here - a
+          // commit holding it, or a Welcome it is parked behind: unacknowledged, it would be listed
+          // again. The drain that applies it ends here once more, and issues it then.
+          this.issueOwedPull('drain end');
 
           finishQueueDrainBench(ackIds.length);
           if (drainIngest === null) {
@@ -2906,7 +2927,9 @@ export abstract class BaseMlsService implements IMlsService {
       void this.processQueue();
     }
     // No drain runs and none was restarted: a pull owed since `onDrainEnd` declined it (a fetch was
-    // still out, or frames were still runnable) has nothing left to wait behind.
+    // still out) has nothing left to wait behind - unless a row a pull listed is still queued, which
+    // a commit holds; that commit's end restarts the drain (`resumeFramesHeldByCommit`), whose end
+    // issues it.
     if (!this.messageScheduler.draining) this.issueOwedPull('queue idle');
   }
 
@@ -2917,8 +2940,9 @@ export abstract class BaseMlsService implements IMlsService {
    * deadline was WP-PENDING-1 - a device far enough behind aborted on every reconnect, ACKed
    * nothing, and its backlog grew forever.
    *
-   * SINGLE-FLIGHT, WITH ONE OWED RE-RUN. A pull asked for while another is fetching, or while the
-   * queue is draining, starts no request: it is OWED ({@link owePull}) and issued once both have
+   * SINGLE-FLIGHT, WITH ONE OWED RE-RUN. A pull asked for while another is fetching, while the
+   * queue is draining, or while a row a pull listed is still queued (held by a commit), starts no
+   * request: it is OWED ({@link owePull}) and issued once both have
    * ended ({@link issueOwedPull}) - its ack flush then chains behind the drain's ack, so the server
    * cannot list again the rows this device has just applied. Two pulls used to run side by side
    * (the reconnect's and the re-fetch for the conversations the restore seeded), and the second
@@ -2928,20 +2952,50 @@ export abstract class BaseMlsService implements IMlsService {
    * consumed when the pull is issued - so termination is a proof, not a timer.
    *
    * @param forGroups the groups this ask is for, if it is for some: a {@link waitForGroupQueueIdle}
-   *   on one of them waits for the owed pull's listing; a barrier on any other group does not.
+   *   on one of them waits for the owed pull's listing; a barrier on any other group does not. None
+   *   means the whole mailbox, and then every group's barrier waits.
    */
   async fetchPendingMessages(forGroups: readonly string[] = []): Promise<void> {
-    if (this.userId === UNRESOLVED_USER_ID) return;
+    if (!this.mayPull('asked')) return;
+    if (this.pendingPullInFlight || this.messageScheduler.draining || this.pullRowsStillQueued()) {
+      return this.owePull(forGroups);
+    }
+    return this.runPull();
+  }
+
+  /**
+   * Whether this client may pull at all, checked when a pull is ASKED and again when an owed one is
+   * ISSUED - the ask may have been made by a client that has since lost the tab's leadership. A
+   * destroyed client never reaches here through the owed path ({@link destroy} drops the record).
+   */
+  private mayPull(when: 'asked' | 'issued'): boolean {
+    if (this.userId === UNRESOLVED_USER_ID) return false;
+    if (this.socketRetired) {
+      // AT A LEVEL THAT ACCUSES: the caller holds a client that was let go of, exactly as `connect`
+      // says of a destroyed client - a pull from it would decrypt and ack for nobody.
+      console.error(
+        `[PENDING] pull ${when} on a DESTROYED MLS client - its caller holds a client that was let go of; nothing pulled`
+      );
+      return false;
+    }
     if (getTabLeadership() === 'follower') {
       // AT A LEVEL THAT ACCUSES: every path that pulls is gated on leadership, so reaching this is a
       // caller that forgot - and letting it through decrypts in a tab that does not own the ratchet.
       console.error(
-        '[PENDING] pull refused on a follower tab - only the leader drains the queue (a caller is not gated on leadership)'
+        `[PENDING] pull ${when} on a follower tab, refused - only the leader drains the queue (a caller is not gated on leadership)`
       );
-      return;
+      return false;
     }
-    if (this.pendingPullInFlight || this.messageScheduler.draining) return this.owePull(forGroups);
-    return this.runPull();
+    return true;
+  }
+
+  /**
+   * Whether a row a PULL listed is still queued here, unacknowledged - in a group's queue, held by a
+   * commit, or parked behind a Welcome. A pull issued now would list it again: the overlap this
+   * single-flight exists to delete. Not "runnable work", which a commit-held row is not.
+   */
+  private pullRowsStillQueued(): boolean {
+    return this.messageScheduler.hasQueuedFrom('pull');
   }
 
   /**
@@ -2950,7 +3004,8 @@ export abstract class BaseMlsService implements IMlsService {
    * waits for), `done` when it has ended whole (what the asker's `fetchPendingMessages` resolves on).
    */
   private owedPull: {
-    groups: Set<string>;
+    /** `'all'` once any ask named no group: that ask was for the whole mailbox. */
+    groups: Set<string> | 'all';
     fetched: { promise: Promise<void>; resolve: () => void };
     done: { promise: Promise<void>; resolve: () => void };
   } | null = null;
@@ -2964,28 +3019,44 @@ export abstract class BaseMlsService implements IMlsService {
         return { promise, resolve };
       };
       this.owedPull = { groups: new Set(), fetched: settle(), done: settle() };
+      const behind = this.pendingPullInFlight
+        ? 'a pull is fetching'
+        : this.messageScheduler.draining
+          ? 'the queue is draining'
+          : 'a row a pull listed is still queued behind a commit';
       console.debug(
-        `[PENDING] pull asked while ${this.pendingPullInFlight ? 'a pull is fetching' : 'the queue is draining'} - owed, issued once it ends behind this drain's ack`
+        `[PENDING] pull asked while ${behind} - owed, issued once it ends behind this drain's ack`
       );
     }
-    for (const g of forGroups) this.owedPull.groups.add(g);
-    return this.owedPull.done.promise;
+    const owed = this.owedPull;
+    if (forGroups.length === 0) owed.groups = 'all';
+    else if (owed.groups !== 'all') for (const g of forGroups) owed.groups.add(g);
+    return owed.done.promise;
   }
 
   /**
-   * Issues the owed pull, if one is owed and no pull is fetching. The CALLER vouches for the drain:
-   * `onDrainEnd` right after announcing the drain's ack (the flush chains behind it), or a point
-   * where no drain runs - the end of a fetch, the end of `processQueue`.
+   * Issues the owed pull, if one is owed, no pull is fetching, and no row a pull listed is still
+   * queued here. The CALLER vouches for the drain: `onDrainEnd` right after announcing the drain's
+   * ack (the flush chains behind it), or a point where no drain runs - the end of a fetch, the end
+   * of `processQueue`.
    */
   private issueOwedPull(trigger: string): void {
     const owed = this.owedPull;
-    if (!owed || this.pendingPullInFlight) return;
+    if (!owed || this.pendingPullInFlight || this.pullRowsStillQueued()) return;
     this.owedPull = null;
+    if (!this.mayPull('issued')) {
+      // Nobody may pull here any more: the askers are released, with nothing listed.
+      settleOwedPull(owed);
+      return;
+    }
     console.debug(`[PENDING] owed pull issued (${trigger})`);
-    void this.runPull(() => owed.fetched.resolve()).finally(() => {
-      owed.fetched.resolve();
-      owed.done.resolve();
-    });
+    void this.runPull(() => owed.fetched.resolve())
+      .catch((e: unknown) => {
+        // AT A LEVEL THAT ACCUSES: `runPull` reports its own failures and settles; reaching this is
+        // a throw it did not expect - and nobody else awaits this promise to see it.
+        console.error(`[PENDING] owed pull (${trigger}) threw: ${sanitizeForLog(String(e))}`);
+      })
+      .finally(() => settleOwedPull(owed));
   }
 
   /**
@@ -3144,8 +3215,9 @@ export abstract class BaseMlsService implements IMlsService {
       if (this.pendingPullInFlight === announced) this.pendingPullInFlight = null;
       onFetched?.();
       // THE FETCH IS OVER: an owed pull may start now unless a drain is running, whose end issues
-      // it behind its own ack instead (`onDrainEnd`). The rows this pull just enqueued started that
-      // drain synchronously, so they are never listed again before they are acknowledged.
+      // it behind its own ack instead (`onDrainEnd`), or a row a pull listed is still queued - a
+      // commit holding it keeps the drain from starting, and `issueOwedPull` refuses while it is
+      // there, so that row is never listed again before it is acknowledged.
       if (!this.messageScheduler.draining) this.issueOwedPull('pull ended');
     }
     await this.settleMailbox();

@@ -274,6 +274,24 @@ export class MlsPerGroupScheduler {
     return n;
   }
 
+  /**
+   * Whether a frame admitted by `channel` is still waiting here - in a group's queue, runnable or
+   * held back by a commit, or parked behind a Welcome. Not "runnable work": a frame a commit holds
+   * is not runnable and is still unacknowledged, and a pull issued past it would list it again.
+   * Read from the queues themselves, so no count can drift from them.
+   */
+  hasQueuedFrom(channel: DeliveryChannel): boolean {
+    for (const b of this.buckets.values()) {
+      for (const tier of [b.control, b.welcome, b.messages]) {
+        if (tier.some((m) => m.channel === channel)) return true;
+      }
+    }
+    for (const buffered of this.pendingWelcomeGroups.values()) {
+      if (buffered.some((m) => m.channel === channel)) return true;
+    }
+    return false;
+  }
+
   /** Queue stats for logging. */
   getStats(): { groups: number; control: number; welcome: number; messages: number } {
     let control = 0;

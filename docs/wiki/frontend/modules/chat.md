@@ -1140,14 +1140,21 @@ launch on the Mi 9T (`1.6.4-alpha.3`, dev).
 
 The overlap is deleted, not classified. `fetchPendingMessages` is SINGLE-FLIGHT WITH ONE OWED RE-RUN:
 
-- asked while a pull is fetching or the queue is draining, it starts no request - the pull is OWED
-  (`owePull`), the caller's groups are added to it, and the caller's promise settles when it has run;
+- asked while a pull is fetching, the queue is draining, or a row a PULL listed is still queued
+  (`hasQueuedFrom('pull')`: held by a commit, or parked behind a Welcome - PENDING, not merely
+  runnable), it starts no request - the pull is OWED (`owePull`), the caller's groups are added to it
+  (an ask naming none makes it `'all'`), and the caller's promise settles when it has run;
 - the owed pull is issued (`issueOwedPull`) in the tick `onDrainEnd` announces the drain's ack (its
-  flush chains behind that ack), or at the end of a fetch or of `processQueue` when no drain runs;
-- the owed record is consumed when it is issued, so a burst of asks is one pull and nothing is timed.
+  flush chains behind that ack), or at the end of a fetch or of `processQueue` when no drain runs -
+  never while a pull's row is still queued: a commit-held row's drain starts at the commit's end
+  (`resumeFramesHeldByCommit`), and its `onDrainEnd` issues it;
+- the owed record is consumed when it is issued, so a burst of asks is one pull and nothing is timed;
+  the issue re-checks the gates of an ask (resolved user, leader tab, client not destroyed), and
+  `destroy()` drops the record, releasing its askers with nothing pulled.
 
 It is NOT chained into `pendingPullInFlight` (that held every barrier behind the whole drain).
-`waitForGroupQueueIdle` waits on the owed pull's listing only for a group it was asked for;
+`waitForGroupQueueIdle` waits on the owed pull's listing only for a group it was asked for, or for
+every group when an ask named none (a reconnect, a barrier, a re-enrolment: the whole mailbox);
 `mailboxListedOnThisLink` - and so `isGroupDrained` - reads false while a pull is owed. A held live
 key-group frame (`holdLiveKeyGroupFrame`) just asks for its group's pull.
 
