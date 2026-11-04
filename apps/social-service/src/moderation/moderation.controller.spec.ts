@@ -81,6 +81,7 @@ describe('ModerationController - the BDE scope', () => {
       listMutedUsers: jest.fn().mockResolvedValue([]),
       findPostIdForComment: jest.fn().mockResolvedValue('p-out'),
       deleteCommentById: jest.fn().mockResolvedValue({ postId: 'p-out' }),
+      commentsOfPost: jest.fn().mockResolvedValue([{ id: 'c1', userId: 'w' }]),
     };
     const assoc = {
       isContentModerator: jest.fn().mockResolvedValue(true),
@@ -99,6 +100,9 @@ describe('ModerationController - the BDE scope', () => {
       ),
       refuseModeration: jest.fn(() =>
         Promise.reject(new ForbiddenException({ code: 'MODERATION_OUT_OF_SCOPE' }))
+      ),
+      moderatedAssociationIds: jest.fn((_u: string, ids: string[]) =>
+        Promise.resolve(new Set(ids))
       ),
     };
     return {
@@ -158,10 +162,15 @@ describe('ModerationController - the BDE scope', () => {
     });
   });
 
-  it('lets the platform admin delete any comment', async () => {
+  it('lets the platform admin delete any comment, taking every descendant (it moderates them all)', async () => {
     const { controller, service } = make();
     await controller.deleteReportedComment('c1', 'admin', 'true');
-    expect(service.deleteCommentById).toHaveBeenCalledWith('c1');
+    const [id, mayRemove] = service.deleteCommentById.mock.calls[0] as [
+      string,
+      (c: Record<string, unknown>) => boolean,
+    ];
+    expect(id).toBe('c1');
+    expect(mayRemove({ id: 'r', userId: 'x', associationId: 'an-institution' })).toBe(true);
   });
 
   it('reads the queue in its scope and says which person on each row it may mute', async () => {

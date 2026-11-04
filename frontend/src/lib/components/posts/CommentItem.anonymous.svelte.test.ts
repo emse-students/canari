@@ -98,4 +98,14 @@ describe('CommentItem author', () => {
     expect(nameLine(t).textContent!.trim()).toBe('BDE');
     expect(t.querySelector('[data-revealed-author]')).toBeNull();
   });
+
+  it('a moderation tombstone draws one line: no author, no text, no action (lead, 2026-11-04)', async () => {
+    const t = await render(
+      comment({ text: '', removedByModeration: true, canEdit: false, canDelete: false })
+    );
+    const line = t.querySelector('[data-testid="comment-removed-by-moderation"]')!;
+    expect(line.textContent!.trim()).toBe(m.post_comment_removed_by_moderation());
+    expect(t.querySelector('.text-xs.font-bold')).toBeNull();
+    expect(t.querySelectorAll('button')).toHaveLength(0);
+  });
 });

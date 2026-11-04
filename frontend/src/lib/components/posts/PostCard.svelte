@@ -500,7 +500,7 @@
       actionMessage = m.post_anonymous_removed();
     } catch (err) {
       Log.d('unmaskAnonymous failed', err);
-      errorMessage = m.post_unable_to_unmask();
+      errorMessage = describeModerationRefusal(err) ?? m.post_unable_to_unmask();
     }
   }
 

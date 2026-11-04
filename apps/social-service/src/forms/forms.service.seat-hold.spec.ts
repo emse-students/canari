@@ -145,6 +145,8 @@ describe('FormsService - the seat a pending payment holds', () => {
       listCotisationTiers: jest.fn(() => Promise.resolve([])),
       cotisationModeOf: jest.fn(() => Promise.resolve('dated')),
       rankCotisationTier: jest.fn(() => Promise.resolve('none')),
+      // Asked after a grant that failed: the tier is not held as this answer's delivery.
+      holdsTierDeliveredBy: jest.fn(() => Promise.resolve(false)),
     };
 
     /** The two UPDATE shapes the service builds: the expiry job and a fulfilment claim. */

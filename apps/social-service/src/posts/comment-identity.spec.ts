@@ -1,6 +1,8 @@
 import {
   commentIdentityOf,
   commentRights,
+  mayRemoveAsModerator,
+  moderatesComment,
   serveComment,
   type AssociationCard,
   type CommentViewer,
@@ -119,14 +121,40 @@ describe('commentRights', () => {
     expect(commentRights(upper, governingModerator()).canDelete).toBe(true);
   });
 
-  it('refuses a moderator a comment whose thread holds a reply it does not moderate', () => {
-    // Deleting a comment takes its replies: an institution's reply is never deleted through its parent.
-    const reply = { id: 'r1', parentId: PLAIN.id, userId: 'w2', associationId: 'asso-1' };
-    expect(commentRights(PLAIN, viewer({ isModerator: true }), [reply]).canDelete).toBe(false);
-    expect(commentRights(PLAIN, governingModerator(), [reply]).canDelete).toBe(true);
-    expect(commentRights(PLAIN, viewer({ isGlobalAdmin: true }), [reply]).canDelete).toBe(true);
-    // The author deletes their own comment whatever replies it holds - that is not moderation.
-    expect(commentRights(PLAIN, viewer({ viewerId: 'writer' }), [reply]).canDelete).toBe(true);
+  it('judges the comment ITSELF: a protected reply does not shield it (lead, 2026-11-04)', () => {
+    // The rights read the comment and the post's standing only - no reply list is even taken - so a
+    // single served comment (a like, an edit, an add) carries the bin the route will honour.
+    expect(commentRights(PLAIN, viewer({ isModerator: true })).canDelete).toBe(true);
+    expect(moderatesComment(PLAIN, viewer({ isModerator: true }))).toBe(true);
+    expect(moderatesComment(ASSO, viewer({ isModerator: true }))).toBe(false);
+    expect(moderatesComment(ASSO, viewer({ isGlobalAdmin: true }))).toBe(true);
+  });
+
+  it('serves a tombstone to everyone alike: no author, no text, no control', () => {
+    const tomb = {
+      id: 't1',
+      parentId: null,
+      userId: 'writer',
+      createdAt: '2026-11-04T00:00:00.000Z',
+      text: '',
+      removedByModeration: true,
+    };
+    for (const v of [viewer(), viewer({ viewerId: 'writer' }), viewer({ isGlobalAdmin: true })]) {
+      const out = serveComment(tomb, v, POST, CARDS);
+      expect(out).toEqual({
+        id: 't1',
+        parentId: null,
+        createdAt: tomb.createdAt,
+        text: '',
+        likes: [],
+        removedByModeration: true,
+        canEdit: false,
+        canDelete: false,
+      });
+    }
+    // A moderator removing a subtree may take a tombstone it moderates; nobody else.
+    expect(mayRemoveAsModerator(tomb, viewer({ isModerator: true }))).toBe(true);
+    expect(mayRemoveAsModerator(tomb, viewer())).toBe(false);
   });
 
   it('lets a moderator delete an anonymous comment but never edit it', () => {

@@ -1665,12 +1665,12 @@ standing every BDE power reads (`bdeStandingInSpaceSql`, `spaces/bde.ts`):
 | an association's post or live | the association is reached by a space the BDE governs (`holdsBdeFlagOverSql`) - never an institution's |
 | a post or live in ANOTHER BDE's name | never, even when it is seen in the BDE's own spaces: only the platform admin, as for an institution (owner, 2026-11-03); a BDE's own content is its own members' |
 | a personal post or live | its author belongs to one of the spaces the BDE governs (`isReaderSpaceSql`) |
-| a comment | the post it sits under is in scope AND, for a comment in an association's name, so is that association's content - never an institution's or another BDE's (owner, 2026-11-03) - AND so is every reply its delete would take (`bdeModeratesCommentSql`) |
+| a comment | the post it sits under is in scope AND, for a comment in an association's name, so is that association's content - never an institution's or another BDE's (owner, 2026-11-03) (`bdeModeratesCommentSql`). Judged on itself: a reply the moderator does not moderate stays, under a moderation tombstone of what it answered (lead, 2026-11-04, [moderation-and-blocking](moderation-and-blocking.md#decisions-taken-2026-11-04-the-lead-reversible)) |
 | a live chat line | its live is in scope (read from the live, or from its cut once purged) |
 | a person (mute, unmute, broadcast withdrawal) | they belong to one of the BDE's spaces |
 | a report | what it is about is in scope; once its content is gone, the platform admin's |
 
-Kept within the scope: hide, unhide, delete, pin, unmask, reading an anonymous author, deleting a
+Kept within the scope: hide, unhide, delete, unmask, reading an anonymous author, deleting a
 comment, cutting a live and hiding its chat lines, muting, reviewing a report. An association with no
 audience rule, a person with no space (staff) and **an institution** are governed by no BDE: their
 content is the platform admin's to moderate. The institution follows from the owner's rule that no BDE

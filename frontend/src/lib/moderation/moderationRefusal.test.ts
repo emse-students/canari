@@ -3,8 +3,13 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { m } from '$lib/paraglide/messages';
+import { refusalCode } from '$lib/utils/apiRefusal';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { MODERATION_REFUSAL_CODES, describeModerationRefusal } from './moderationRefusal';
+
+const apiFetchMock = vi.hoisted(() => vi.fn());
+vi.mock('$lib/utils/apiFetch', () => ({ apiFetch: apiFetchMock }));
+vi.mock('$lib/utils/apiUrl', () => ({ socialUrl: () => '' }));
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BDE_MODERATION = resolve(
@@ -38,6 +43,35 @@ describe('moderation refusal codes', () => {
     expect(describeModerationRefusal(new ApiRefusalError(403, 'MODERATOR_REQUIRED', 'x'))).toBe(
       m.moderation_refusal_moderator_required()
     );
+  });
+
+  it('reads the reports queue refusals too: `moderation/api` throws a refusal `refusalCode` reads', async () => {
+    // The queue's acts (delete a reported comment, review, mute) go through `moderation/api`, whose
+    // `ModerationApiError` stood apart from `ApiRefusalError` and was worded as a bare failure.
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    // A new response per call: a body is read once.
+    apiFetchMock.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({ code: MODERATION_REFUSAL_CODES.MODERATION_RESERVED_TO_PLATFORM_ADMIN }),
+          { status: 403, headers: { 'content-type': 'application/json' } }
+        )
+    );
+    const { deleteReportedComment, reviewReport, muteUser } = await import('./api');
+    for (const act of [
+      () => deleteReportedComment('c1'),
+      () => reviewReport('r1', 'reviewed'),
+      () => muteUser('u1'),
+    ]) {
+      const refusal = await act().catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(ApiRefusalError);
+      expect(refusalCode(refusal)).toBe(
+        MODERATION_REFUSAL_CODES.MODERATION_RESERVED_TO_PLATFORM_ADMIN
+      );
+      expect(describeModerationRefusal(refusal)).toBe(
+        m.moderation_refusal_reserved_to_platform_admin()
+      );
+    }
   });
 
   it('CONTROL: an untyped refusal, another code or a transport failure has no sentence', () => {

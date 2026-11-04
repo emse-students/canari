@@ -846,6 +846,7 @@
   "post_comment_gif_too_large": "Ce GIF est trop lourd pour être joint.",
   "post_comment_anonymous_author_label": "Anonyme - auteur du post",
   "post_comment_edited_label": "modifié",
+  "post_comment_removed_by_moderation": "Commentaire retiré par la modération",
   "post_comment_identity_label": "Commenter en tant que",
   "post_comment_anonymous_hint": "Votre nom n'apparaîtra pas sur ce commentaire. Un modérateur peut toujours voir qui l'a écrit.",
   "post_comment_identity_unavailable": "Impossible de commenter sous cette identité. Choisissez-en une autre.",

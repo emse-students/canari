@@ -22,8 +22,10 @@ import {
   CommentIdentityService,
   commentIdentityOf,
   commentRights,
-  repliesByParent,
+  mayRemoveAsModerator,
+  type StoredComment,
 } from './comment-identity';
+import { planCommentRemoval } from './comment-removal';
 import { COMMENT_DELETE_FORBIDDEN, COMMENT_EDIT_AUTHOR_ONLY } from '../spaces/bde-moderation';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
 import { isExpiredReel } from './reel.constants';
@@ -437,29 +439,36 @@ export class PostInteractionsService {
   }
 
   /**
-   * Removes a comment and all of its replies, for whoever `commentRights` lets: the writer (any
-   * association holder for its own), a platform admin, or a moderator of this post.
+   * Removes a comment and its descendants, for whoever `commentRights` lets: the writer (any
+   * association holder for its own), a platform admin, or a moderator of this post whose publisher
+   * it moderates (owner, 2026-11-03).
+   *
+   * WHAT GOES WITH IT is `planCommentRemoval` (`comment-removal.ts`), shared with the moderation
+   * route: the writer's own delete takes every descendant, as it always took its replies; a
+   * MODERATOR's takes each descendant it may itself delete, and leaves a tombstone where a reply it
+   * may not (an institution's, another BDE's) must keep its context (lead, 2026-11-04).
+   *
+   * @returns `removedIds` (every row gone) and `tombstone` (the comment's served trace, when one was
+   *   left) - what the client needs to update its list without re-reading it.
    */
   async deleteComment(postId: string, commentId: string, userId: string, isAdmin = false) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
-    const comments: any[] = post.comments ?? [];
-    const comment = comments.find((c: any) => c.id === commentId);
+    const comments: StoredComment[] = (post.comments as StoredComment[] | null) ?? [];
+    const comment = comments.find((c) => c.id === commentId);
     if (!comment) throw new NotFoundException('Comment not found');
-    // The moderator half is asked of THIS post: a BDE moderates the comments of its governed spaces -
-    // and of THIS thread: the comment and the replies the delete takes must each be published by
-    // someone it moderates, never an institution or another BDE (owner, 2026-11-03).
-    const replies = repliesByParent(comments).get(commentId) ?? [];
-    const viewer = await this.identity.viewerFor([comment, ...replies], {
+    // The moderator half is asked of THIS post, and of each publisher the delete meets.
+    const viewer = await this.identity.viewerFor(comments, {
       viewerId: userId,
       isGlobalAdmin: isAdmin,
       postId,
     });
-    if (!commentRights(comment, viewer, replies).canDelete) {
+    const rights = commentRights(comment, viewer);
+    if (!rights.canDelete) {
       this.logger.warn(
         `[PERM] comment delete refused user=${userId.slice(0, 8)} post=${postId.slice(0, 8)} moderator=${viewer.isModerator}`
       );
-      // A moderator of the post refused for WHO publishes the thread: the moderation refusal, typed.
+      // A moderator of the post refused for WHO publishes the comment: the moderation refusal, typed.
       if (viewer.isModerator) {
         await this.identity.refuseModeration(userId, { kind: 'comment', id: commentId, postId });
       }
@@ -468,13 +477,36 @@ export class PostInteractionsService {
         message: 'You may not delete this comment',
       });
     }
-    const removed = comments.filter((c: any) => c.id === commentId || c.parentId === commentId);
-    post.comments = comments.filter((c: any) => c.id !== commentId && c.parentId !== commentId);
+    // The writer's delete is not moderation: it takes its whole subtree, as it always did.
+    const asWriter = rights.canEdit;
+    const plan = planCommentRemoval(
+      comments,
+      commentId,
+      asWriter ? () => true : (c) => mayRemoveAsModerator(c, viewer),
+      new Date().toISOString()
+    );
+    post.comments = plan.comments;
     await this.postRepo.save(post);
-    // The replies go with it, so their media do too - taking only the comment's own would leave
-    // every reply's photo archived for ever with nothing left on screen pointing at it.
-    await this.mediaRetention.release(commentMediaIds(removed));
-    return { ok: true };
+    this.logger.log(
+      `[MODERATION] comment delete post=${postId.slice(0, 8)} comment=${commentId.slice(0, 12)} writer=${asWriter} removed=${plan.removed.length} tombstoned=${plan.tombstoned.length}`
+    );
+    // What goes, its media go with it - a tombstone's too: nothing on screen points at them any more.
+    await this.mediaRetention.release(
+      commentMediaIds([...plan.removed, ...plan.tombstoned.map((t) => t.before)])
+    );
+    const tombstones =
+      plan.tombstoned.length === 0
+        ? []
+        : await this.identity.serve(
+            plan.tombstoned.map((t) => t.after),
+            post,
+            { viewerId: userId, isGlobalAdmin: isAdmin }
+          );
+    return {
+      ok: true,
+      removedIds: plan.removed.map((c) => c.id).filter((id): id is string => !!id),
+      tombstones,
+    };
   }
 
   /**

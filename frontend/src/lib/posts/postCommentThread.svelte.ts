@@ -254,21 +254,31 @@ export class PostCommentThread {
     }
   }
 
-  /** Deletes a comment and its replies. */
+  /**
+   * Deletes a comment and what the server took with it. The server decides, level by level, what
+   * goes (`removedIds`) and what stays as a moderation tombstone (`tombstones`: a moderator's delete
+   * that met a reply it does not moderate, lead 2026-11-04) - so this copy applies its answer and
+   * never guesses the thread from the rows it happens to hold.
+   */
   async remove(commentId: string): Promise<void> {
     try {
-      await deleteCommentApi(this.host.read().id, commentId);
+      const answer = await deleteCommentApi(this.host.read().id, commentId);
       this.host.answered();
-      const post = this.host.read();
-      const held = post.comments ?? [];
-      const kept = held.filter((c) => c.id !== commentId && c.parentId !== commentId);
-      // The server deletes the comment and its replies; the count goes down by the rows held, and
-      // by one at least - the comment itself, even when this copy no longer held it.
-      const count = Math.max(1, held.length - kept.length);
-      const ids = held.filter((c) => !kept.includes(c)).map((c) => c.id);
-      this.noteRemoved(ids.length > 0 ? ids : [commentId]);
-      this.host.write(withCommentCountDelta({ ...post, comments: kept }, -count));
-      this.announce({ kind: 'remove', ids: ids.length > 0 ? ids : [commentId], count });
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a lookup local to this call, never observed
+      const gone = new Set(answer.removedIds);
+      const tombstones = answer.tombstones ?? [];
+      Log.d(
+        'PostCommentThread.remove',
+        `removed=${gone.size} tombstoned=${tombstones.length} comment=${commentId.slice(0, 8)}`
+      );
+      let post = this.host.read();
+      post = { ...post, comments: (post.comments ?? []).filter((c) => !gone.has(c.id)) };
+      for (const tombstone of tombstones) post = withComment(post, tombstone.id, tombstone);
+      this.noteRemoved([...gone]);
+      // A tombstone is still a row of the thread: the count goes down by the rows the server dropped.
+      this.host.write(withCommentCountDelta(post, -gone.size));
+      if (gone.size > 0) this.announce({ kind: 'remove', ids: [...gone], count: gone.size });
+      for (const tombstone of tombstones) this.announce({ kind: 'upsert', comment: tombstone });
     } catch (err) {
       Log.d('PostCommentThread.remove failed', err);
       this.host.fail(describeModerationRefusal(err) ?? m.post_unable_to_delete_comment());

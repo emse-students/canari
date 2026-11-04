@@ -397,7 +397,7 @@ it('a deleted comment is not brought back by a row read before the delete answer
   const mine = comment(1, { userId: 'alice', text: 'gone words', canEdit: true, canDelete: true });
   const { props } = mountCard(row({ comments: [mine] }), true);
   const getIssuedAt = nextPostSequence();
-  vi.mocked(deleteComment).mockResolvedValue({ ok: true } as never);
+  vi.mocked(deleteComment).mockResolvedValue({ ok: true, removedIds: [mine.id] });
 
   (
     sheet().querySelector(`button[aria-label="${m.common_delete_button()}"]`) as HTMLButtonElement

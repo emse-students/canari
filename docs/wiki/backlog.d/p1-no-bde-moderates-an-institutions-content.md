@@ -14,11 +14,16 @@ student's post was deletable (and its writer readable) by that post's BDE, direc
 reports queue, or through the delete of a parent comment taking its replies.
 
 **What closed it.** ONE predicate, `bdeModeratesPublisherSql` (`apps/social-service/src/spaces/bde-moderation.ts`),
-composed by every target kind; a comment is now judged by its post, its own publisher and its replies'
-publishers (`bdeModeratesCommentSql`, `mayModerateComment`, and `moderatesCommentThread` for the served
-bin). A refusal is typed `MODERATION_RESERVED_TO_PLATFORM_ADMIN` and worded by the client. Proof:
+composed by every target kind; a comment is now judged by its post and its own publisher
+(`bdeModeratesCommentSql`, `mayModerateComment`, and `moderatesComment` for the served bin). A
+moderator's delete takes the descendants it moderates and leaves a moderation tombstone where a reply
+it does not moderate must keep its context (lead, 2026-11-04). A refusal is typed
+`MODERATION_RESERVED_TO_PLATFORM_ADMIN` and worded by the client, the reports queue included. Proof:
 `bde-moderation.integration.spec.ts` (real PostgreSQL, the matrix BDE A / BDE B / an institution / a
-club of each / a student, and the platform admin). The mechanism and the decisions taken are in
-[moderation-and-blocking](../moderation-and-blocking.md#who-may-read-the-queue).
+club of each / a list / a student, named and anonymous, and the platform admin; the tombstone through
+the route). The mechanism, the decisions taken and the queue's measured cost are in
+[moderation-and-blocking](../moderation-and-blocking.md#decisions-taken-2026-11-04-the-lead-reversible).
 
-**Owed:** the release, then this file and its queue line are deleted.
+**Owed:** the release, then this file and its queue line are deleted. **Parked for the owner:** a
+student's content inside an institution's or another BDE's post
+([open-questions](../open-questions.md#decision-owed---who-moderates-a-students-content-inside-an-institutions-or-another-bdes-post-2026-11-04)).

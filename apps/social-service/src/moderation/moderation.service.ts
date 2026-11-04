@@ -10,6 +10,8 @@ import { createHash } from 'crypto';
 import { isBlockedBetween } from '../common/user-blocks';
 import { liveVisibleToViewerSql } from '../spaces/reader-spaces';
 import { bdeModeratesUserSql, reportInBdeScopeSql } from '../spaces/bde-moderation';
+import type { StoredComment as RemovableComment } from '../posts/comment-identity';
+import { planCommentRemoval } from '../posts/comment-removal';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, QueryFailedError, Repository } from 'typeorm';
 import { DELETED_ACCOUNT } from '../internal/account-erasure';
@@ -911,27 +913,52 @@ export class ModerationService {
     return rows[0]?.id ?? null;
   }
 
+  /** The stored comments of post `postId` (empty when it has none, or is gone). */
+  async commentsOfPost(postId: string): Promise<RemovableComment[]> {
+    const rows: { comments: RemovableComment[] | null }[] = await this.reportRepo.manager.query(
+      `SELECT comments FROM posts WHERE id = $1`,
+      [postId]
+    );
+    return rows[0]?.comments ?? [];
+  }
+
   /**
-   * Removes a comment (and its replies) from any post that contains it.
-   * Used by moderators when acting on comment reports.
+   * Removes a comment and its descendants from the post that holds it - the moderators' act on a
+   * comment report. What goes is `planCommentRemoval` (`posts/comment-removal.ts`), the same plan the
+   * comment's own delete route applies: each descendant `mayRemove` admits goes, one it does not stays
+   * under a moderation tombstone (lead, 2026-11-04). The row is read and written under a row lock, so
+   * a comment added meanwhile is not overwritten by this plan.
    */
-  async deleteCommentById(commentId: string): Promise<{ postId: string }> {
+  async deleteCommentById(
+    commentId: string,
+    mayRemove: (c: RemovableComment) => boolean
+  ): Promise<{ postId: string; removedIds: string[]; tombstoneIds: string[] }> {
     const postId = await this.findPostIdForComment(commentId);
     if (!postId) throw new NotFoundException('Comment not found');
-
-    await this.reportRepo.manager.query(
-      `UPDATE posts SET comments = COALESCE(
-         (
-           SELECT jsonb_agg(elem)
-           FROM jsonb_array_elements(COALESCE(comments, '[]'::jsonb)) elem
-           WHERE elem->>'id' != $2 AND COALESCE(elem->>'parentId', '') != $2
-         ),
-         '[]'::jsonb
-       )
-       WHERE id = $1`,
-      [postId, commentId]
-    );
-    return { postId };
+    return this.reportRepo.manager.transaction(async (m) => {
+      const rows: { comments: RemovableComment[] | null }[] = await m.query(
+        `SELECT comments FROM posts WHERE id = $1 FOR UPDATE`,
+        [postId]
+      );
+      const plan = planCommentRemoval(
+        rows[0]?.comments ?? [],
+        commentId,
+        mayRemove,
+        new Date().toISOString()
+      );
+      await m.query(`UPDATE posts SET comments = $2::jsonb WHERE id = $1`, [
+        postId,
+        JSON.stringify(plan.comments),
+      ]);
+      this.logger.log(
+        `[MODERATION] reported comment delete post=${postId.slice(0, 8)} comment=${commentId.slice(0, 12)} removed=${plan.removed.length} tombstoned=${plan.tombstoned.length}`
+      );
+      return {
+        postId,
+        removedIds: plan.removed.map((c) => c.id).filter((id): id is string => !!id),
+        tombstoneIds: plan.tombstoned.map((t) => t.after.id).filter((id): id is string => !!id),
+      };
+    });
   }
 
   /**

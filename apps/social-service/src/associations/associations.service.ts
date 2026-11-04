@@ -3069,6 +3069,9 @@ export class AssociationsService {
       userId,
       unique,
     ]);
+    this.logger.debug(
+      `[MODERATION] publishers user=${sanitizeLog(userId.slice(0, 8))} asked=${unique.length} moderated=${rows.length}`
+    );
     return new Set(rows.map((r) => r.id));
   }
 

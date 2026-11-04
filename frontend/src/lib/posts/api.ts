@@ -109,6 +109,11 @@ export interface PostComment {
   canDelete?: boolean;
   /** Encrypted media attached to this comment (GIF, screenshot, etc.). */
   media?: PostMediaRef;
+  /**
+   * A moderation TOMBSTONE (lead, 2026-11-04): the comment was removed by a moderator but replies it
+   * may not remove still answer it, so its row stays with no text, author or media.
+   */
+  removedByModeration?: boolean;
 }
 
 /** The longest comment, in characters. The server copy is `COMMENT_MAX_LENGTH` in `apps/social-service/src/posts/comment-page.ts`. */
@@ -581,7 +586,22 @@ export async function editComment(
   });
 }
 
-export async function deleteComment(postId: string, commentId: string): Promise<{ ok: boolean }> {
+/** The server's answer to a comment's delete: what it dropped, and what it kept as a tombstone. */
+export interface CommentDeleteAnswer {
+  ok: boolean;
+  /** Every row the delete took: the comment and its descendants the deleter may remove. */
+  removedIds: string[];
+  /**
+   * The rows kept as moderation tombstones (`removedByModeration`), served as this reader sees them:
+   * a moderator's delete met a reply it does not moderate, which stays in its context. Absent when none.
+   */
+  tombstones?: PostComment[];
+}
+
+export async function deleteComment(
+  postId: string,
+  commentId: string
+): Promise<CommentDeleteAnswer> {
   return request(`/api/posts/${postId}/comments/${commentId}`, { method: 'DELETE' });
 }
 

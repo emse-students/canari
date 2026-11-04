@@ -64,31 +64,22 @@ export interface AssociationCard {
   logoUrl: string | null;
 }
 
-interface StoredComment {
+/** A comment as `posts.comments` stores it (only the fields these rules read are named). */
+export interface StoredComment {
   id?: string;
-  /** The comment this one replies to: deleting that one takes this one with it. */
+  /** The comment this one replies to: deleting that one takes this one with it (or tombstones it). */
   parentId?: string | null;
   userId?: string | null;
   anonymous?: boolean;
   associationId?: string | null;
+  /** A moderation tombstone (`comment-removal.ts`): kept only so its replies keep their context. */
+  removedByModeration?: boolean;
   [key: string]: unknown;
 }
 
 /** The associations these comments speak for. */
 function associationIdsOf(comments: readonly StoredComment[]): string[] {
   return comments.map((c) => c.associationId).filter((id): id is string => !!id);
-}
-
-/** The direct replies of each comment of `list`, by the id of the comment they reply to. */
-export function repliesByParent(list: readonly StoredComment[]): Map<string, StoredComment[]> {
-  const out = new Map<string, StoredComment[]>();
-  for (const c of list) {
-    if (!c.parentId) continue;
-    const held = out.get(c.parentId);
-    if (held) held.push(c);
-    else out.set(c.parentId, [c]);
-  }
-  return out;
 }
 
 /** True for a comment that is not the writer's own name on it - exempt from the block filter. */
@@ -105,44 +96,50 @@ function moderatesPublisher(c: StoredComment, v: CommentViewer): boolean {
 }
 
 /**
- * May reader `v` moderate (delete) comment `c`, whose direct replies are `replies`? The in-memory
- * twin of `bdeModeratesCommentSql` (`spaces/bde-moderation.ts`), on the same publisher set: a
- * platform admin always; a BDE moderator when it moderates the post (`isModerator`), the comment's
- * publisher AND every reply's - a delete takes the replies, so an institution's or another BDE's
- * reply is never deleted through its parent (owner, 2026-11-03).
+ * May reader `v` moderate (delete) comment `c`? The in-memory twin of `bdeModeratesCommentSql`
+ * (`spaces/bde-moderation.ts`), on the same publisher set: a platform admin always; a BDE moderator
+ * when it moderates the post (`isModerator`) AND the comment's own publisher - never an institution's
+ * or another BDE's (owner, 2026-11-03). Judged on the comment ITSELF: its replies do not shield it
+ * (lead, 2026-11-04) - the delete tombstones it instead of taking a reply it may not
+ * (`comment-removal.ts`). A tombstone is moderated like a person's comment: it names nobody.
  */
-export function moderatesCommentThread(
-  c: StoredComment,
-  replies: readonly StoredComment[],
-  v: CommentViewer
-): boolean {
+export function moderatesComment(c: StoredComment, v: CommentViewer): boolean {
   if (v.isGlobalAdmin) return true;
-  return (
-    v.isModerator && moderatesPublisher(c, v) && replies.every((r) => moderatesPublisher(r, v))
-  );
+  return v.isModerator && moderatesPublisher(c, v);
+}
+
+/**
+ * May reader `v`, deleting a comment AS A MODERATOR, take descendant `c` with it? What it could
+ * delete on its own (`commentRights`), or a tombstone it moderates - the rule `planCommentRemoval`
+ * applies at every level of the subtree (lead, 2026-11-04).
+ */
+export function mayRemoveAsModerator(c: StoredComment, v: CommentViewer): boolean {
+  return c.removedByModeration === true ? moderatesComment(c, v) : commentRights(c, v).canDelete;
 }
 
 /**
  * The ONE statement of who may edit and delete a comment. It serves the controls AND enforces the
- * write, so the button a reader is shown and the refusal they would get cannot disagree. `replies`
- * are the comment's direct replies the caller holds - the WHOLE thread on a write, which reads the
- * stored post; a feed window may hold fewer, and the write then decides on the stored thread.
+ * write, so the button a reader is shown and the refusal they would get cannot disagree. It reads
+ * the comment and its post's standing ONLY - never its replies, which a feed window may not hold -
+ * so a single served comment (a like, an edit, an add) answers what the route will.
  */
 export function commentRights(
   c: StoredComment,
-  v: CommentViewer,
-  replies: readonly StoredComment[] = []
+  v: CommentViewer
 ): { canEdit: boolean; canDelete: boolean } {
+  // A tombstone is the moderation's trace, not anyone's words: nobody edits it, and it leaves by
+  // itself with its last reply (`comment-removal.ts`).
+  if (c.removedByModeration === true) return { canEdit: false, canDelete: false };
   // A comment's integrity, as a post's (owner, 2026-11-02): only its author changes its text. The
   // association is the author of its comment, so its POST_AS_ASSO holders edit it.
   const author = c.associationId
     ? v.managedAssociationIds.has(c.associationId)
     : !!v.viewerId && c.userId === v.viewerId;
   // MODERATE deletes within its scope (owner, 2026-11-02, 2026-11-03): a platform admin anything; a
-  // BDE moderator of THIS post a comment whose publisher (and replies' publishers) it moderates -
-  // never an institution's or another BDE's - and never rewrites one. The same answer
-  // `POST /moderation/comments/:id/delete` gives, so the bin and the route agree.
-  return { canEdit: author, canDelete: author || moderatesCommentThread(c, replies, v) };
+  // BDE moderator of THIS post a comment whose publisher it moderates - never an institution's or
+  // another BDE's - and never rewrites one. The same answer `POST /moderation/comments/:id/delete`
+  // gives, so the bin and the route agree.
+  return { canEdit: author, canDelete: author || moderatesComment(c, v) };
 }
 
 /** Whether this reader may see the real account behind a masked comment. */
@@ -158,10 +155,22 @@ export function serveComment<T extends StoredComment>(
   c: T,
   v: CommentViewer,
   post: CommentPostFacts,
-  cards: ReadonlyMap<string, AssociationCard>,
-  replies: readonly StoredComment[] = []
+  cards: ReadonlyMap<string, AssociationCard>
 ): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...c, ...commentRights(c, v, replies) };
+  if (c.removedByModeration === true) {
+    // The trace of a moderation, served to everyone alike: where it sat and when, never who wrote
+    // what was removed - the client draws "Commentaire retiré par la modération".
+    return {
+      id: c.id,
+      parentId: c.parentId ?? null,
+      createdAt: c.createdAt,
+      text: '',
+      likes: [],
+      removedByModeration: true,
+      ...commentRights(c, v),
+    };
+  }
+  const out: Record<string, unknown> = { ...c, ...commentRights(c, v) };
   delete out.associationId;
   if (c.associationId) {
     out.association = cards.get(c.associationId) ?? null;
@@ -282,8 +291,7 @@ export class CommentIdentityService {
       this.viewerFor(list, { ...who, postId: post.id }),
       this.cardsFor(list),
     ]);
-    const replies = repliesByParent(list);
-    return list.map((c) => serveComment(c, viewer, post, cards, replies.get(c.id ?? '')));
+    return list.map((c) => serveComment(c, viewer, post, cards));
   }
 
   /**
@@ -326,9 +334,9 @@ export class CommentIdentityService {
         isModerator: !!row.id && who.moderatedPostIds.has(row.id),
         moderatedAssociationIds,
       };
-      const list = row.comments as StoredComment[];
-      const replies = repliesByParent(list);
-      row.comments = list.map((c) => serveComment(c, viewer, row, cards, replies.get(c.id ?? '')));
+      row.comments = (row.comments as StoredComment[]).map((c) =>
+        serveComment(c, viewer, row, cards)
+      );
     }
     this.logger.debug(`serveRows: ${all.length} comments over ${rows.length} rows`);
   }

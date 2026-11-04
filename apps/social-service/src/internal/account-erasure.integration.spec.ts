@@ -105,7 +105,10 @@ maybe('account erasure against PostgreSQL', () => {
             url: URL,
             entities: getMetadataArgsStorage().tables.map((t) => t.target as Function),
             synchronize: false,
-            extra: { options: `-c search_path=${buildSchema}` },
+            // `public` stays on the path: an earlier spec of the same run may have installed
+            // `uuid-ossp` there, and TypeORM's `CREATE EXTENSION IF NOT EXISTS` then installs
+            // nothing - so `uuid_generate_v4()` resolves only through `public`.
+            extra: { options: `-c search_path=${buildSchema},public` },
           });
           await client.query(`CREATE SCHEMA IF NOT EXISTS ${buildSchema}`);
           await ds.initialize();

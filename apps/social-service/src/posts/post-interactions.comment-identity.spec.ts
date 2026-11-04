@@ -28,6 +28,10 @@ describe('PostInteractionsService - comment identity', () => {
       renderMentionsForPush: jest.fn((t: string) => Promise.resolve(t)),
       resolveActorName: jest.fn(() => Promise.resolve('Real Name')),
       resolveMentionedUserIds: jest.fn(() => [] as string[]),
+      // The read's gate for a mention: everyone named may read here.
+      mentionRecipientsOf: jest.fn((_post: unknown, _writer: string, ids: string[]) =>
+        Promise.resolve(ids)
+      ),
     };
     const push = { notifyContent: jest.fn(() => Promise.resolve()) };
     const query = jest.fn((sql: string) =>
@@ -59,6 +63,7 @@ describe('PostInteractionsService - comment identity', () => {
     return { service, post, created, push, associations };
   }
   const flush = () => new Promise((resolve) => setImmediate(resolve));
+  const base = () => ({ id: 'p1', authorId: 'author', associationId: null, comments: [] as any[] });
 
   describe("a BDE moderator of the post, on content in an institution's or another BDE's name (owner, 2026-11-03)", () => {
     const INST = 'inst-1';
@@ -108,18 +113,45 @@ describe('PostInteractionsService - comment identity', () => {
       expect(post.comments).toHaveLength(1);
     });
 
-    it("refuses a student's comment whose reply is the institution's: the delete would take it", async () => {
+    it("deletes a student's comment whose reply is the institution's, leaving a tombstone (lead, 2026-11-04)", async () => {
+      // The protected reply does not shield its parent: the parent becomes the moderation's trace,
+      // the institution's reply stays in its context, the club's reply goes with the delete.
       const { service, post } = moderating([
-        { id: 'c1', userId: 'student' },
+        { id: 'c1', userId: 'student', text: 'abuse', createdAt: 't0' },
+        { id: 'r1', userId: 'w', associationId: INST, parentId: 'c1' },
+        { id: 'r2', userId: 'w', associationId: CLUB, parentId: 'c1' },
+      ]);
+      const out = await service.deleteComment('p1', 'c1', 'bde');
+      const stored = post.comments as any[];
+      expect(stored.map((c) => c.id)).toEqual(['c1', 'r1']);
+      expect(stored[0]).toMatchObject({ text: '', removedByModeration: true });
+      expect(out.removedIds).toEqual(['r2']);
+      expect(out.tombstones).toEqual([
+        expect.objectContaining({ id: 'c1', removedByModeration: true, canDelete: false }),
+      ]);
+    });
+
+    it("the writer's own delete is not moderation: it takes the whole subtree", async () => {
+      const { service, post } = moderating([
+        { id: 'c1', userId: 'bde', text: 'mine' },
         { id: 'r1', userId: 'w', associationId: INST, parentId: 'c1' },
       ]);
-      await expect(service.deleteComment('p1', 'c1', 'bde')).rejects.toBeInstanceOf(
-        ForbiddenException
-      );
-      expect(post.comments).toHaveLength(2);
+      await service.deleteComment('p1', 'c1', 'bde');
+      expect(post.comments).toEqual([]);
+    });
+
+    it('serves a liked or edited comment the same bin the route honours, replies or not (S2)', async () => {
+      // `likeComment` serves ONE comment: its bin must not depend on replies the response omits.
+      const { service } = moderating([
+        { id: 'c1', userId: 'student', likes: [] },
+        { id: 'r1', userId: 'w', associationId: INST, parentId: 'c1' },
+      ]);
+      const liked = (await service.likeComment('p1', 'c1', 'bde')) as any;
+      expect(liked.comment).toMatchObject({ id: 'c1', canDelete: true });
+      const reply = (await service.likeComment('p1', 'r1', 'bde')) as any;
+      expect(reply.comment).toMatchObject({ id: 'r1', canDelete: false });
     });
   });
-  const base = () => ({ id: 'p1', authorId: 'author', associationId: null, comments: [] as any[] });
 
   it('stores an anonymous comment with the real account and no name', async () => {
     const { service, post } = make(base());

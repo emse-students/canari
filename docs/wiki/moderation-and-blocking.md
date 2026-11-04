@@ -131,12 +131,12 @@ WP-L8, by the staff cut of a live.
 
 **SCOPED SINCE 2026-11-02 (owner).** That predicate is now only the DOOR: a BDE moderator reads the
 reports, the hidden posts and the muted people of the spaces its BDE governs, and every act (hide,
-delete, pin, unmask, mute, cut, review) asks the scope of its target - a 403
+delete, unmask, mute, cut, review) asks the scope of its target - a 403
 `MODERATION_OUT_OF_SCOPE` outside it. The platform admin stays global. What "in scope" means per
 target is tabled in [profiles-and-access, D23 amended](profiles-and-access.md#d23-amended---moderate-is-scoped-and-only-the-author-edits-a-post-2026-11-02).
 
 **A post's integrity: only its author changes its text (owner, 2026-11-02).** Moderation hides,
-deletes, pins and unmasks; it never edits. Neither a BDE moderator nor the platform admin may change
+deletes and unmasks; it never edits. Neither a BDE moderator nor the platform admin may change
 another person's post (403 `POST_EDIT_PUBLISHER_ONLY`); the pencil is the served `canEdit`, apart from
 the bin (`canManage`). **A comment follows the same rule** (owner, 2026-11-02): its author alone edits
 it - a moderator or the platform admin hides or deletes it, and an edit by either is a 403
@@ -153,18 +153,54 @@ students and the associations and lists it governs publish. ONE predicate decide
 `bdeModeratesPublisherSql` (`spaces/bde-moderation.ts`, the management predicate read for `MODERATE`,
 false for an institution and for another BDE) for whatever is in an association's name, the per-space
 standing for a person's. A post and a live were already judged by their publisher (#2953); since this
-change a **comment** is too - its post must be in scope AND its own publisher, AND every reply its
-delete would take (`bdeModeratesCommentSql`; `moderatesCommentThread` is its in-memory twin, proved to
-agree on real SQL). **The reports queue lists only what the BDE may act on** - an escalated item is
-simply absent from it, and stays in the platform admin's queue (decided 2026-11-04, the simpler and
-reversible of the two options: no "escalated" row to render). A refused act is classified at the
-throw: 403 `MODERATION_RESERVED_TO_PLATFORM_ADMIN` when the target is in an institution's or a BDE's
-name, `MODERATION_OUT_OF_SCOPE` otherwise, `MODERATOR_REQUIRED` for a caller who moderates nowhere -
-each worded by the client through `describeModerationRefusal` (`frontend/src/lib/moderation/moderationRefusal.ts`).
+change a **comment** is too - its post must be in scope AND its own publisher (`bdeModeratesCommentSql`;
+`moderatesComment` in `posts/comment-identity.ts` is its in-memory twin, proved to agree on real SQL).
+A comment is judged on ITSELF: its replies never shield it (decision below). **The reports queue lists
+only what the BDE may act on** - an escalated item is simply absent from it, and stays in the platform
+admin's queue (decided 2026-11-04, the simpler and reversible of the two options: no "escalated" row to
+render). A refused act is classified at the throw: 403 `MODERATION_RESERVED_TO_PLATFORM_ADMIN` when the
+target is in an institution's or a BDE's name, `MODERATION_OUT_OF_SCOPE` otherwise,
+`MODERATOR_REQUIRED` for a caller who moderates nowhere - each worded by the client through
+`describeModerationRefusal` (`frontend/src/lib/moderation/moderationRefusal.ts`), on the post card and
+in the reports queue alike (`ModerationApiError` is an `ApiRefusalError`, so `refusalCode` reads it).
 **Not moderation, and so unchanged:** pinning a post in a space (WP-PIN, a promotion - a BDE may pin
 another BDE's or an institution's post), the agenda rights over an institution's event (owner,
 2026-11-03, `holdsBdeAgendaRightOverSql`), and a mute or a broadcast withdrawal, which name a person.
-Proved in `bde-moderation.integration.spec.ts` ("the owner's rule of 2026-11-03").
+Proved in `bde-moderation.integration.spec.ts` ("the owner's rule of 2026-11-03"). **Open:** a
+student's content inside an institution's or another BDE's post or live -
+[open-questions](open-questions.md#decision-owed---who-moderates-a-students-content-inside-an-institutions-or-another-bdes-post-2026-11-04).
+
+#### Decisions taken (2026-11-04, the lead, reversible)
+
+- **A reply in a protected name does not shield what it answers.** A student's comment answered by an
+  institution's (or another BDE's) reply is the BDE's to delete, judged by its post and its own
+  publisher only. The first build refused it (the delete would have taken the reply), which made any
+  thread untouchable through a single reply in a protected name.
+- **A moderator's delete that meets a reply it does not moderate leaves a TOMBSTONE.** The delete takes
+  the comment's descendants RECURSIVELY and judges each with the same rule (`planCommentRemoval`,
+  `posts/comment-removal.ts`, used by both delete paths: `PostInteractionsService.deleteComment` and
+  `ModerationService.deleteCommentById`). A node it may remove goes; one it may not stays; a removed
+  node under which something stays is kept as a tombstone - its row kept, text, likes and media
+  blanked, `removedByModeration: true` - so the protected reply keeps its context. The marker lives in
+  the `posts.comments` jsonb, so no migration. It is served with no author and no right
+  (`canEdit`/`canDelete` false) and drawn as one line, "Commentaire retiré par la modération"
+  (`post_comment_removed_by_moderation`). A tombstone left with no reply is removed at once, and on
+  any later delete that empties it.
+- **The author's own delete keeps taking the whole thread**, as before: it is not moderation, and an
+  author withdrawing a comment takes the replies under it, whoever wrote them.
+- **The moderation route still releases no media** of what it removes - a gap older than this change
+  (the author's path releases them), recorded so it is not mistaken for part of it.
+
+**The queue's comment branch at volume (measured 2026-11-04, scratch PostgreSQL 18).** 2,000 posts,
+20,000 comments (200 threads of 50 with chained replies), 2,000 reports (1,000 on comments), one BDE
+and 60 associations. The branch is UNCORRELATED - the comment ids of the posts in scope, hashed once
+per query - so it is linear in the comments of the posts in scope and does not grow with the number
+of reports. Its publisher half was first a correlated subplan re-run per association comment:
+**2,644 ms** for the branch alone, 2,746 ms for a page of 50. Rewritten as an uncorrelated set (the
+associations the moderator moderates, hashed once): **67-76 ms** for the branch and **~280 ms** for the
+whole page (post branch 19 ms, user branch 2 ms; expanding every comment with no predicate costs
+7 ms), with the same 949 comment rows in scope. A per-report correlated EXISTS was rejected: nothing
+indexes a comment id inside the jsonb, so it would scan every post once per comment report.
 
 **A mute and a live withdrawal stay ONE platform-wide row (owner, 2026-11-02: "Laisser tel quel").**
 A measure is about a person, not about a BDE: any BDE whose spaces hold that person may lift it or

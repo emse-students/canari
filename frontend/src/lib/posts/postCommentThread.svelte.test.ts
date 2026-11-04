@@ -5,7 +5,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { PostComment, PostEntity } from '$lib/posts/api';
-import { addComment, fetchComments } from '$lib/posts/api';
+import { addComment, deleteComment, fetchComments } from '$lib/posts/api';
 import { PostCommentThread } from './postCommentThread.svelte';
 
 vi.mock('$lib/moderation/muteCheck', () => ({
@@ -17,6 +17,7 @@ vi.mock('$lib/posts/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/posts/api')>()),
   fetchComments: vi.fn(),
   addComment: vi.fn(),
+  deleteComment: vi.fn(),
 }));
 
 const c = (n: number): PostComment => ({
@@ -107,6 +108,44 @@ it('a personal comment (the default) is drawn under the reader and sends no iden
     parentId: undefined,
     media: undefined,
   });
+});
+
+it("a delete applies the server's answer: the rows it took go, a tombstone replaces its row", async () => {
+  // c1 answered by c2 (an institution's, kept) and c3 (taken), c3 answered by c4 (taken too): the
+  // server decided it level by level; the thread does not guess from the rows it holds.
+  const tombstone: PostComment = {
+    id: 'c1',
+    parentId: null,
+    text: '',
+    likes: [],
+    createdAt: '2026-10-19T00:00:00Z',
+    removedByModeration: true,
+    canEdit: false,
+    canDelete: false,
+  };
+  vi.mocked(deleteComment).mockResolvedValue({
+    ok: true,
+    removedIds: ['c3', 'c4'],
+    tombstones: [tombstone],
+  });
+  const rows = [
+    c(1),
+    { ...c(2), parentId: 'c1' },
+    { ...c(3), parentId: 'c1' },
+    { ...c(4), parentId: 'c3' },
+  ];
+  const { thread, state } = threadOn({
+    id: 'p',
+    comments: rows,
+    commentCount: 4,
+  } as unknown as PostEntity);
+
+  await thread.remove('c1');
+
+  expect(state.held.comments?.map((x) => x.id)).toEqual(['c1', 'c2']);
+  expect(state.held.comments?.[0]).toEqual(tombstone);
+  expect(state.held.commentCount).toBe(2);
+  expect(state.failures).toEqual([]);
 });
 
 describe('paging', () => {

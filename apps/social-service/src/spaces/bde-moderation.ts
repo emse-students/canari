@@ -43,8 +43,8 @@ const MODERATE = String(AssociationPermissionFlag.MODERATE);
 /** 403 `code`: the caller moderates somewhere, but not where this target lives. */
 export const MODERATION_OUT_OF_SCOPE = 'MODERATION_OUT_OF_SCOPE';
 /**
- * 403 `code`: the target is published in an INSTITUTION's or a BDE's name (or is a comment thread in
- * which something is), which no other BDE moderates - the platform admin's (owner, 2026-11-03).
+ * 403 `code`: the target is published in an INSTITUTION's or a BDE's name (or is a comment under
+ * a post in such a name), which no other BDE moderates - the platform admin's (owner, 2026-11-03).
  * Classified at the throw (`AssociationsService.refuseModeration`, `MODERATION_RESERVED_SQL`), so the
  * client words "only the platform administration moderates this" rather than "outside your spaces".
  */
@@ -114,21 +114,24 @@ function commentPublisherSql(comment: string): string {
 
 /**
  * User `moderator` moderates, as a BDE, the comment `comment` (a `jsonb` element) of post row `post`
- * (an alias): the post is in scope (the place), the comment's own publisher is (an association's
- * comment is that association's content), and so is every reply that would go with it - deleting a
- * comment takes its replies, so an institution's reply under a student's comment is not deleted by a
- * BDE through its parent (owner, 2026-11-03: "whatever the path").
+ * (an alias): the post is in scope (the place) AND the comment's own publisher is (an association's
+ * comment is that association's content) - judged on the comment ITSELF, as a post is. Its replies do
+ * not shield it (lead's decision, 2026-11-04): a delete that meets a reply the moderator does not
+ * moderate leaves a moderation TOMBSTONE instead of taking that reply (`posts/comment-removal.ts`).
  *
- * `commentRights` (`posts/comment-identity.ts`) applies the same rule in memory to the comments it
- * holds (`moderatesCommentThread`), on the publisher set `BDE_MODERATED_ASSOCIATION_IDS_SQL` answers.
+ * `commentRights` (`posts/comment-identity.ts`) applies the same rule in memory (`moderatesComment`),
+ * on the publisher set `BDE_MODERATED_ASSOCIATION_IDS_SQL` answers.
+ *
+ * The publisher half is an UNCORRELATED set - the associations the moderator moderates, hashed once
+ * per query - and never the predicate re-run per comment: the report queue meets every comment of
+ * every post in scope, and the per-row form cost 2.6 s on 20,000 comments where the set costs a hash
+ * probe each (measured 2026-11-04, [moderation-and-blocking](docs/wiki/moderation-and-blocking.md)).
  */
 export function bdeModeratesCommentSql(moderator: string, post: string, comment: string): string {
-  const publisherOk = (c: string) =>
-    `(${commentPublisherSql(c)} IS NULL OR ${bdeModeratesPublisherSql(moderator, commentPublisherSql(c))})`;
   return `(${bdeModeratesContentSql(moderator, `${post}."associationId"`, `${post}."authorId"`)}
-    AND ${publisherOk(comment)}
-    AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(${post}.comments, '[]'::jsonb)) mod_reply
-      WHERE mod_reply->>'parentId' = ${comment}->>'id' AND NOT ${publisherOk('mod_reply')}))`;
+    AND (${commentPublisherSql(comment)} IS NULL
+      OR ${commentPublisherSql(comment)} IN (SELECT mcp.id FROM associations mcp
+        WHERE ${bdeModeratesPublisherSql(moderator, 'mcp.id')})))`;
 }
 
 /**
@@ -173,15 +176,15 @@ function liveReservedSql(liveId: string): string {
 }
 
 /**
- * Comment `commentId` (a text SQL expression) sits under a post published in a reserved name, or it
- * or one of its replies is in such a name. `postId` (a uuid SQL expression, or NULL) narrows the scan
- * to one post when the caller knows it.
+ * Comment `commentId` (a text SQL expression) sits under a post published in a reserved name, or is
+ * itself in such a name. `postId` (a uuid SQL expression, or NULL) narrows the scan to one post when
+ * the caller knows it.
  */
 function commentReservedSql(commentId: string, postId: string): string {
   return `EXISTS (SELECT 1 FROM posts rsv_cpost
     CROSS JOIN LATERAL jsonb_array_elements(COALESCE(rsv_cpost.comments, '[]'::jsonb)) rsv_c
     WHERE (${postId} IS NULL OR rsv_cpost.id = ${postId})
-      AND (rsv_c->>'id' = ${commentId} OR rsv_c->>'parentId' = ${commentId})
+      AND rsv_c->>'id' = ${commentId}
       AND (${reservedPublisherSql('rsv_cpost."associationId"')}
         OR ${reservedPublisherSql(commentPublisherSql('rsv_c'))}))`;
 }
@@ -237,7 +240,7 @@ export const BDE_MODERATES_LIVE_SQL = `SELECT ${bdeModeratesLiveSql('$1', asUuid
  * Report row `report` (a `content_reports` row) is about something user `moderator` moderates as a
  * BDE - what narrows the queue and every act on a report (owner, 2026-11-02):
  * - `post`: the post is in scope; `comment`: the comment is (`bdeModeratesCommentSql`: the post it sits
- *   under, its own publisher and its replies' publishers);
+ *   under, and its own publisher);
  * - `user`: the reported person belongs to one of the BDE's spaces;
  * - `live`: the live is in scope; `live_chat`: the live of the kept line is (once the line is erased,
  *   nothing names its live and the report is the platform admin's).
