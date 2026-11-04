@@ -84,6 +84,7 @@ jobs:
       run-harness: ${{ steps.matrix.outputs.harness }}
       run-android: ${{ steps.matrix.outputs.android }}
       run-android-app: ${{ steps.matrix.outputs.android_app }}
+      run-ios-app: ${{ steps.matrix.outputs.ios_app }}
       run-mls-compat: ${{ steps.matrix.outputs.mls_compat }}
       run-miconnect: ${{ steps.matrix.outputs.miconnect }}
       run-call-e2e: ${{ steps.matrix.outputs.call_e2e }}
@@ -118,6 +119,7 @@ jobs:
             echo "harness=true"      >> "$GITHUB_OUTPUT"
             echo "android=true"      >> "$GITHUB_OUTPUT"
             echo "android_app=true"  >> "$GITHUB_OUTPUT"
+            echo "ios_app=true"      >> "$GITHUB_OUTPUT"
             echo "mls_compat=true"   >> "$GITHUB_OUTPUT"
             echo "miconnect=true"    >> "$GITHUB_OUTPUT"
             echo "call_e2e=true"     >> "$GITHUB_OUTPUT"
@@ -346,6 +348,26 @@ jobs:
             echo "android_app=true" >> "$GITHUB_OUTPUT"
           else
             echo "android_app=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # -- iOS app compile --
+          # What `compile-ios-app` reads: the NATIVE APPLE CODE and what builds it. It runs on a
+          # macOS runner, the scarcest minutes in this file, so the trigger is the Apple tree and
+          # not (like `android_app`) the Rust crate: `gen/apple` (the app, the notification and share
+          # extensions, the pbxproj), a Swift package under `plugins/*/ios` or `patches/*/ios`, any
+          # Swift / Objective-C source or header under `src-tauri` (a bridge may live beside the
+          # Rust), the scripts it runs, `ios.yml` (the release build it mirrors) and the toolchain
+          # pin. A Rust-only change is compiled for the host by `test-rust` and for iOS by the
+          # release.
+          if has '^frontend/src-tauri/gen/apple/' || \
+             has '^frontend/src-tauri/(plugins|patches)/[^/]+/ios/' || \
+             has '^frontend/src-tauri/.*\.(swift|m|mm|h)$' || \
+             has '^rust-toolchain\.toml$' || \
+             has '^\.github/workflows/ios\.yml$' || \
+             has '^\.github/scripts/ios-(app-compile|libapp|extensions)\.sh$'; then
+            echo "ios_app=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ios_app=false" >> "$GITHUB_OUTPUT"
           fi
 
           # -- MLS cross-version compatibility --
@@ -1341,6 +1363,74 @@ jobs:
         run: bash .github/scripts/android-app-compile.sh
 
   # =================================================================================================
+  # THE iOS APP COMPILES (2026-11-04). Nothing on the Windows workstation compiles Swift or
+  # Objective-C and no pull-request job did, so a Swift error first failed on the pre-release, after
+  # the merge, where it blocks every change behind it. This builds the app, both extensions and the
+  # Swift plugins UNSIGNED (no secret, so it runs on a Dependabot pull request) with
+  # `xcodebuild build`, and `ios-extensions.sh` asserts both extensions came out.
+  #
+  # A JOB OF THIS FILE, NOT A SECOND CALL OF `ios.yml`: that workflow's job needs signing secrets and
+  # write permission, and both are things a pull request must not have. What the two share is the
+  # script that stages the Rust static library (`ios-libapp.sh`) and the extension assertion; the
+  # runner, the Xcode pin and the dependency steps are the same lines. Behind `run-ios-app` so a
+  # pull request touching no Apple code pays no macOS minute, and `skipped` passes the aggregate.
+  # =================================================================================================
+  compile-ios-app:
+    name: Compile iOS app
+    needs: [changes]
+    if: ${{ needs.changes.outputs.run-ios-app == 'true' }}
+    runs-on: macos-15 # carries Xcode 26.x, which `ios.yml` REQUIRES for the same reason
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Select Xcode 26
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '^26.0'
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: ".bun-version"
+
+      - name: Cache Bun dependencies
+        uses: actions/cache@v6
+        with:
+          path: |
+            frontend/node_modules
+            ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('frontend/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install Rust Stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: |
+          bun install --frozen-lockfile
+          bunx svelte-kit sync
+
+      - name: Build MLS WASM
+        uses: ./.github/actions/build-mls-wasm
+
+      - name: Generate protobuf bindings
+        working-directory: frontend
+        run: bun run proto:gen
+
+      - name: Compile the iOS app
+        run: bash .github/scripts/ios-app-compile.sh
+
+  # =================================================================================================
   # THE SFU'S END-TO-END CALL - REAL BROWSERS, REAL TURN, ENCRYPTED AUDIO (owner decision D3, 2026-11-01)
   #
   # `call-service` is kept working for the day the School opens UDP to it (D2), and a green
@@ -1779,7 +1869,7 @@ jobs:
     name: CI passed
     if: always()
     needs:
-      [changes, test-rust, boot-nest-apps, test-social-integration, test-chat-delivery-integration, test-typescript-backend, test-frontend, test-frontend-shards, test-android, compile-android-app, test-harness,
+      [changes, test-rust, boot-nest-apps, test-social-integration, test-chat-delivery-integration, test-typescript-backend, test-frontend, test-frontend-shards, test-android, compile-android-app, compile-ios-app, test-harness,
       test-ci-scripts, dependency-ceiling, mls-forward-compat, test-miconnect-blueprints, test-call-service-e2e, security, dependency-audit]
     runs-on: ubuntu-24.04
     steps:

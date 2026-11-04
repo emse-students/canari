@@ -1753,6 +1753,29 @@ a companion object, a plugin command missing from its ACL: none of these are vis
 build (`:app:compileUniversalReleaseKotlin`) is the first real Kotlin compile — a debug build does
 not exercise it.
 
+### A pull request compiles the iOS app, unsigned (`compile-ios-app`, 2026-11-04)
+
+Dispatching `ios.yml` by hand per branch was a human queue, and a Swift error in `gen/apple` or a
+Swift plugin therefore first failed on the pre-release, after the merge. `ci.yml` now carries
+`compile-ios-app`: a macOS job that builds the app, both extensions and the Swift packages with
+`xcodebuild build` and `CODE_SIGNING_ALLOWED=NO`, then runs `ios-extensions.sh` on the built `.app`.
+It is a **need of `CI passed`**, so a Swift error fails the merge gate.
+
+- **No fifth workflow, and not a second call of `ios.yml`.** That job needs signing secrets and
+  `contents: write`, which a pull request (Dependabot's above all) must not have. The two share
+  `.github/scripts/ios-libapp.sh` (the Rust static library staging, extracted from `ios.yml`) and
+  `ios-extensions.sh`; the whole pull-request account is `.github/scripts/ios-app-compile.sh`.
+- **No secret.** A stub `GoogleService-Info.plist` (marker-checked, a real one is never
+  overwritten) and placeholder `VITE_*` origins stand in; no archive, no export, no upload.
+- **Path filter, so macOS minutes are paid only for Apple code.** `changes` emits `ios_app` when a
+  changed file is under `gen/apple/`, under `plugins|patches/<name>/ios/`, any `.swift .m .mm .h`
+  under `frontend/src-tauri`, `ios.yml`, the three iOS scripts or `rust-toolchain.toml` - or when
+  `ci.yml` itself changed (`run_all`). Otherwise the job is `skipped`, which `CI passed` accepts.
+  A Rust-only change does not trigger it (`test-rust` covers the host, the release the iOS target).
+- **What it does not replace:** signing, the icon tint, the archive-only assertions and TestFlight
+  stay in `ios.yml`. `swift-syntax.sh` (parse only) still runs in `test-ci-scripts`.
+- Shape pinned by `.github/scripts/tests/ios-compile-job.test.mjs`.
+
 ### A green run is not proof that *your* file compiled
 
 The iOS `project.pbxproj` is hand-maintained (there is no xcodegen here), so a source file that is
