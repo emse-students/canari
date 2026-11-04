@@ -22,6 +22,35 @@ here and nothing else.**
 
 ## Where the pass stands
 
+**2026-11-04, the bench readings of `v1.6.4-alpha.2` (dev answering `1.6.4-alpha.2`): Mi 9T `canari-test-alpha` (the release APK sideloaded, versionCode `100600402`), iPhone 12 `canari-test-gamma`, the harness Chrome as gamma and delta.** TestFlight offered only `1.6.4 (100600401)` (`alpha.1`) on the iPhone; `alpha.2` changed only the deploy scripts (#3003), so the iPhone read the same client code.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| SC. Cancelling the iOS sign-in sheet (#2995) | **PASS** | The system sheet cancelled three times in a row: each time the button read "Se connecter" again at once and the next tap reopened the sheet; never the stuck "Redirection..." |
+| T. The native tab bar under the tour (#2997) | **PASS** | Tour replayed from Settings: taps on the four tab icons and the bar's band at steps 1, 3 and the last left the tour on its step and the route on the feed; after "Terminer" the chat tab worked; after a terminate and relaunch mid-tour the bar worked at once |
+| Guided help, batch 2 (#2996) | **PASS** | Both phones: the feed-tabs hint (1/3 to 3/3), then CanaReels alone at the next visit, then the chats hint; one help per visit. Mi 9T: "Revoir les aides" lists the four hints and replays one; a hint left at 2/3 by navigating away came back at 1/3 |
+| Named readers' comment switch (#2998), the procedure of [its backlog entry](backlog.d/named-readers-comments-switch-readings-owed.md) | **PASS** | Through the app's routes on dev, a throwaway association, post, comment, reaction and named poll: switch OFF - post 200 with `canSeeComments:false` and no comments, reactions as delta's own plus `otherReactionCounts`, the poll as tallies, `GET`/`POST /comments` 404, `POST /reactions` 201; switch ON - the comment and the names back, `GET /comments` 200, `POST` 201; the journal shows the grant and the switch. Every fixture removed |
+| The moderation tombstone (#2999) | **PASS** | delta (a non-admin BDE moderator) deleted a student's comment under the BDE's post that carried an institution's reply: 200 with one tombstone; the list shows "Commentaire retiré par la modération" with the institution's reply kept under it and the badge counting 1; a reply and a heart to the tombstone answer 409 `COMMENT_REMOVED_BY_MODERATION`; delta's delete of the institution's reply answers 403 `MODERATION_RESERVED_TO_PLATFORM_ADMIN` on both delete routes. Every fixture removed |
+
+**The dev bench accounts (owner, 2026-11-04).** Their rights live in DEV's own database, never in the
+identity provider, which production shares and which is not touched:
+
+- **`canari-test-gamma` is the bench's dev global admin** (`users.admin`); after a dev reset it is
+  restored by the one statement of [dev-environment](infrastructure/dev-environment.md#how-a-tester-gets-in).
+- **`canari-test-delta` is the bench's non-admin BDE moderator on dev**: a permanent membership of
+  the fixture "BDE Fictif" with the `MODERATE` permission, added through
+  `POST /api/associations/:id/members` as gamma. It must NOT become an admin: a platform admin
+  moderates everything, so only a non-admin moderator shows a tombstone. A dev reset removes it; it is
+  re-added the same way, and that call is the owner's to approve (an agent's permission layer refuses
+  a permission grant).
+- `canari-test-alpha` and `-beta` are ordinary accounts.
+- **Driving dev without typing a password:** from a signed-in dev page, `POST /api/auth/refresh`
+  (cookie) returns an access token for `fetch` with `Authorization: Bearer`. Fixtures are created
+  through the app's routes (`POST /api/associations/admin`, `POST /api/posts` with `associationId`,
+  `.../comments` with `parentId` and `associationId` for a reply in an entity's name) and removed with
+  `DELETE /api/posts/:id` and `DELETE /api/associations/:id`. A comment's id is NOT in its create
+  answer: read it from `GET /api/posts/:id/comments` before replying with `parentId`.
+
 **2026-11-04, the bench readings of `v1.6.3-alpha.10` (dev answering `1.6.3-alpha.10`, server fixes #2992 and #2990): Mi 9T `canari-test-alpha`, iPhone 12 `canari-test-gamma`, gamma also on the harness Chrome (W2 slot, port 9223).** Mi 9T: the release `app-universal-release.apk` sideloaded with `adb install -r` (versionCode `100600310`), Settings > A propos reads `1.6.3-alpha.10`. **iPhone: TestFlight still offered only `1.6.3 (100600309)` (`alpha.9`) about 40 min after the release run went green, so the iPhone ran the `alpha.9` client, not `alpha.10`.** Both fixes are server-side, so readings 1-3 hold for an `alpha.9` client on the iPhone (the web tab was reloaded and runs the `alpha.10` bundle); the iPhone was not re-read on `alpha.10`. After the update the iPhone asked for the PIN again; the typed text did not reach the web field (`ios.mjs type`), the numeric keypad did.
 
 | Reading | Verdict | What was seen |

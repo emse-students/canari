@@ -3,7 +3,7 @@
 Built and proven against PostgreSQL ([profiles-and-access](../profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08)).
 What closes it:
 
-- **One dev reading after a pre-release**, with a throwaway grantee (no space) granted a campus
+- **One dev reading after a pre-release - READ, PASS, `1.6.4-alpha.2`, 2026-11-04 ([device-verification](../device-verification.md#where-the-pass-stands)).** With a throwaway grantee (no space) granted a campus
   whose association post carries a comment, a reaction and a named poll vote: switch OFF - the card
   shows no comment button or count, the reaction badge shows the total and opens no list,
   `GET /api/posts/:id/comments` and `POST /comments` answer 404, `POST /reactions` 201 with
