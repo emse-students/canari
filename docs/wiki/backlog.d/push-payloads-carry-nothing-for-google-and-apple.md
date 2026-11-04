@@ -15,6 +15,21 @@ Owner, 2026-11-02: build it, behind a SERVER-SIDE switch that is OFF by default,
   (UnifiedPush with a self-hosted distributor, or a persistent connection) is a separate question:
   ntfy would be an install on the DSI host, so their written agreement first; not part of this.
 
+### The whole design (2026-11-04) - what step 1 leaves, on its own page
+
+Owner, 2026-11-04: design the rest first. **[content-free-push](../protocols/content-free-push.md)**
+measures every push type from the code (step 1 covers the MLS frames only: salons, social and bell
+pushes - which carry the plaintext opening of comments and posts - reactions, join asks, the
+welcome-request-pending wake and call rings still leave in full) and designs step 2 (a push envelope
+in chat-delivery, re-served to its device until the app opens, the token goes or a cap evicts it, with
+the iOS thread and sound carried in the answer), the platform mechanics, the failure contract, calls, several accounts on one device,
+rollout by a `wakeVersion`, the server cost to measure, and WP-W1..W7 with their gates. **The owner
+decided its three non-reversible questions on 2026-11-04**
+([section 11](../protocols/content-free-push.md#not-reversible---decided-by-the-owner-2026-11-04)):
+no filtering-entitlement request to Apple; the call ring stays as it is and only `call_ring_end`
+drops `groupId`; the full-payload path is retired by raising `minClientVersion` once the devices still
+on it are few ([the measure](../protocols/content-free-push.md#81-when-few-is-reached---the-measure-that-retires-the-full-path)).
+
 ### The design (2026-11-02)
 
 **Scope of step 1: the MLS frames** - every push `sendFcmForQueued` sends (messages, Welcomes,
