@@ -16,30 +16,6 @@ measurement or a device nobody here has. None of them is waiting on an implement
 
 ---
 
-### DECISION OWED - may an author's own delete take the replies written in a protected name? (2026-11-04)
-
-**Owed to the owner; parked by the lead's second review of #2999, nothing changed.** A student who
-deletes their own comment takes every reply under it, whoever wrote them - an institution's or a BDE's
-reply included (`PostInteractionsService.deleteComment`: an author's delete plans with "may remove
-everything", so it leaves no tombstone). A moderator's delete of the same comment would keep that
-reply under a tombstone ([moderation-and-blocking](moderation-and-blocking.md#decisions-taken-2026-11-04-the-lead-reversible)).
-Two readings:
-
-- **The author withdraws the whole exchange (what ships).** A comment and the answers to it are one
-  conversation, and the author is not moderating anyone: they take back what they started, as they
-  always could. An institution's answer to a withdrawn question has no context left. The cost: a
-  student can erase an institution's (or a BDE's) public answer - a correction, a statement - by
-  deleting the question it answered.
-- **A reply in a protected name outlives its question.** The author's delete runs the same plan as a
-  moderator's, with "may remove" = "is not in an institution's or a BDE's name": the question becomes a
-  tombstone and the answer stays. The cost: an author can no longer make their thread disappear, and a
-  tombstone ("retiré par la modération") would wrongly name moderation - it would need its own marker
-  and line ("retiré par son auteur").
-
-Either is a change to ONE argument (the `mayRemove` predicate `deleteComment` hands to
-`planCommentRemoval`, `apps/social-service/src/posts/comment-removal.ts`) plus, for the second, a
-tombstone kind; its rows go in `comment-removal.spec.ts`.
-
 ### DECISION OWED - may a drain that only RECEIVED application frames skip its full checkpoint? (2026-10-13)
 
 **ANSWERED 2026-10-18 (user): yes, but ONLY after the Mi 9T crash measurement below.** The work package is [WP-CHECKPOINT-SKIP](backlog.md#decided-by-the-user-on-2026-10-18---every-design-question-answered); this section stays as the measured reasoning and the protocol, and is deleted when the measurement is read and the build ships.
