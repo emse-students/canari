@@ -18,16 +18,23 @@ import WebKit
 /// `UIApplication.open(_:)` - since fr.emse.canari:// is this app's own registered scheme, that
 /// routes straight back into the same app-delegate path the Android deep link already uses.
 ///
+/// THE INVOKE SETTLES WHEN THE SHEET GOES AWAY, NOT WHEN IT APPEARS (2026-11-04). It used to
+/// resolve on presentation and drop a cancellation silently; the sheet is in-app, so closing it
+/// raises no visibility, focus or foreground edge, and the login page held its button on
+/// "Redirection..." until the app was killed. The answer is now the session's END, typed:
+/// `completed` (the callback was re-dispatched), `cancelled` (the user closed it), or a rejection
+/// (it failed, or would not start). `CustomTabOutcome` in `src/models.rs` is the other half.
+///
 /// VERIFIED ON HARDWARE 2026-08-27 (iPhone, iOS 18.7, against production): the session presented,
 /// the redirect was intercepted, the self-reinvocation routed back into the app and /auth/callback
-/// ran. Nothing in this file needed changing then, and nothing needed changing for the iPad defect
-/// of 2026-08-30 either - what was broken there was the CALLER, which decided from the user agent
-/// whether it was on mobile at all and so never reached this plugin on an iPad. `presentationAnchor`
-/// is device-agnostic by construction, so an iPhone run stands for both.
+/// ran. `presentationAnchor` is device-agnostic by construction, so an iPhone run stands for an
+/// iPad too.
 class CustomTabsPlugin: Plugin, ASWebAuthenticationPresentationContextProviding {
-  /// Keeps the session alive for the duration of the flow - ASWebAuthenticationSession is
-  /// deallocated (and its sheet dismissed) the instant nothing retains it.
-  private var session: ASWebAuthenticationSession?
+  /// The session on screen and the invoke waiting for its end. The session is kept alive here -
+  /// ASWebAuthenticationSession is deallocated (and its sheet dismissed) the instant nothing
+  /// retains it - and the pair is what makes each invoke settle EXACTLY ONCE: only the completion
+  /// of the session still pending may settle it. Touched on the main queue only.
+  private var pending: (session: ASWebAuthenticationSession, invoke: Invoke)?
 
   class OpenCustomTabArgs: Decodable {
     let url: String
@@ -37,41 +44,91 @@ class CustomTabsPlugin: Plugin, ASWebAuthenticationPresentationContextProviding 
   /// registered scheme (fr.emse.canari) - the session watches for a redirect to it and treats
   /// that as completion.
   ///
-  /// Resolves as soon as the session is presented, not when the flow finishes - matching the
-  /// fire-and-forget contract of Android's openCustomTab and of the openUrl call this replaces
-  /// on iOS. The actual OIDC result continues to flow entirely through the shared deep-link
-  /// pipeline (hooks.client.ts), unchanged.
+  /// Resolves `{ outcome: "completed" }` once the callback has been handed to the shared deep-link
+  /// pipeline (hooks.client.ts), `{ outcome: "cancelled" }` when the user closed the sheet, and
+  /// rejects when the session failed or could not start.
   @objc public func openCustomTab(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(OpenCustomTabArgs.self)
 
+    // The URL is never logged: it carries the OIDC state and the PKCE challenge.
     guard let url = URL(string: args.url) else {
-      invoke.reject("Invalid URL: \(args.url)")
+      NSLog("[CustomTabsPlugin] openCustomTab: the URL does not parse - refused")
+      invoke.reject("Invalid URL")
       return
     }
 
     DispatchQueue.main.async {
+      NSLog("[CustomTabsPlugin] openCustomTab: presenting a session")
+      // A sheet already up belongs to an earlier invoke (a sign-out's end-session the user never
+      // closed, then a sign-in). Its invoke is answered `cancelled` NOW and its session cancelled,
+      // so no caller is left waiting on a sheet that is gone; its own completion, if UIKit still
+      // runs it, finds it is no longer pending and settles nothing.
+      if let earlier = self.pending {
+        NSLog("[CustomTabsPlugin] openCustomTab: an earlier session is superseded")
+        self.pending = nil
+        earlier.invoke.resolve(["outcome": "cancelled"])
+        earlier.session.cancel()
+      }
+
+      // Weak: the session owns this handler, so a strong reference back would keep it alive for ever.
+      weak var created: ASWebAuthenticationSession?
       let session = ASWebAuthenticationSession(
         url: url,
         callbackURLScheme: "fr.emse.canari"
       ) { [weak self] callbackURL, error in
-        self?.session = nil
-        guard let callbackURL = callbackURL, error == nil else {
-          // Cancelled by the user, or failed - nothing to forward. Neither Android's
-          // openCustomTab nor the previous iOS openUrl reports a failure past this point
-          // either; the login page itself is the only thing that communicates that today.
-          return
+        // The completion handler's queue is not documented; the pending pair is main-queue state.
+        DispatchQueue.main.async {
+          guard let self, let created, let current = self.pending, current.session === created
+          else {
+            NSLog("[CustomTabsPlugin] session ended after it was superseded - nothing to settle")
+            return
+          }
+          self.pending = nil
+          self.settle(current.invoke, callbackURL: callbackURL, error: error)
         }
-        UIApplication.shared.open(callbackURL, options: [:], completionHandler: nil)
       }
+      created = session
 
       session.presentationContextProvider = self
       // Share Safari's cookie jar (Authentik session, "remember me") rather than forcing a
       // fresh login every time - matches what a normal browser tab would do.
       session.prefersEphemeralWebBrowserSession = false
-      self.session = session
-      session.start()
-      invoke.resolve()
+      self.pending = (session, invoke)
+      guard session.start() else {
+        // `start()` refuses when there is no window to present from or a session is already
+        // presented: no sheet ever appeared, so the caller must hear it at once.
+        NSLog("[CustomTabsPlugin] openCustomTab: the session refused to start")
+        self.pending = nil
+        invoke.reject("ASWebAuthenticationSession refused to start")
+        return
+      }
     }
+  }
+
+  /// Answers the invoke for a session that ended: the outcome the page decides its button from.
+  private func settle(_ invoke: Invoke, callbackURL: URL?, error: Error?) {
+    if let callbackURL, error == nil {
+      NSLog("[CustomTabsPlugin] session completed - re-dispatching the callback to the app scheme")
+      UIApplication.shared.open(callbackURL, options: [:], completionHandler: nil)
+      invoke.resolve(["outcome": "completed"])
+      return
+    }
+    if let authError = error as? ASWebAuthenticationSessionError,
+      authError.code == .canceledLogin
+    {
+      NSLog("[CustomTabsPlugin] session cancelled by the user")
+      invoke.resolve(["outcome": "cancelled"])
+      return
+    }
+    // Neither a callback nor the user's cancellation: a failure, said as one (the error's domain
+    // and code only - its description may quote the URL).
+    let nsError = error.map { $0 as NSError }
+    NSLog(
+      "[CustomTabsPlugin] session FAILED: domain=%@ code=%ld",
+      nsError?.domain ?? "none (no callback and no error)", nsError?.code ?? 0)
+    invoke.reject(
+      "ASWebAuthenticationSession failed: \(nsError?.domain ?? "no callback") \(nsError?.code ?? 0)"
+    )
   }
 
   func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {

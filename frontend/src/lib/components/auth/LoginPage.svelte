@@ -7,6 +7,7 @@
     hasStoredSession,
     getToken,
     PASSWORD_LOGIN_FLOW_SLUG,
+    type OidcLoginStart,
   } from '$lib/stores/auth';
   import { BiometricService } from '$lib/services/biometric';
   import LoginForm from './LoginForm.svelte';
@@ -234,13 +235,27 @@
     isLoggingIn = false;
   }
 
+  /**
+   * Acts on how the sign-in left the page. A sheet the USER CLOSED (iOS) hands the form back at
+   * once: it raises no visibility, focus or foreground edge, so `onVisible` never would - the button
+   * stayed on "Redirection..." until the app was killed (iPhone 12, 2026-11-03). Every other outcome
+   * is followed by a navigation, the callback's deep link or the foreground edge, and stays busy.
+   */
+  function settleLoginStart(start: OidcLoginStart) {
+    if (start !== 'cancelled') {
+      console.debug(`[LOGIN] sign-in under way (${start}), the form stays busy.`);
+      return;
+    }
+    console.debug('[LOGIN] sign-in sheet closed by the user, the form is handed back.');
+    isLoggingIn = false;
+  }
+
   async function handleLogin() {
     if (!(await beginLoginAttempt())) return;
     try {
       // Awaited: `startOidcLogin` is async, and an unawaited rejection would escape this `catch`
       // and leave the form busy for ever.
-      await startOidcLogin(getSafeReturnTarget());
-      // The browser navigates to Authentik - no need to reset isLoggingIn.
+      settleLoginStart(await startOidcLogin(getSafeReturnTarget()));
     } catch (e: unknown) {
       failLoginAttempt(e);
     }
@@ -249,7 +264,9 @@
   async function handlePasswordLogin() {
     if (!(await beginLoginAttempt())) return;
     try {
-      await startOidcLogin(getSafeReturnTarget(), { flowSlug: PASSWORD_LOGIN_FLOW_SLUG });
+      settleLoginStart(
+        await startOidcLogin(getSafeReturnTarget(), { flowSlug: PASSWORD_LOGIN_FLOW_SLUG })
+      );
     } catch (e: unknown) {
       failLoginAttempt(e);
     }

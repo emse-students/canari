@@ -99,7 +99,7 @@ describe('the end-session request a sign-out makes', () => {
 describe('from sign-in to sign-out', () => {
   beforeEach(() => {
     mobile.value = true;
-    invokeMock.mockReset().mockResolvedValue(undefined);
+    invokeMock.mockReset().mockResolvedValue({ outcome: 'completed' });
     gotoMock.mockReset().mockResolvedValue(undefined);
     connectivity.reset();
     localStorage.clear();

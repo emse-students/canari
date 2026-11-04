@@ -75,7 +75,7 @@ async function callbackBody(state: string): Promise<Record<string, unknown>> {
 
 describe('PKCE on the MiConnect sign-in', () => {
   beforeEach(() => {
-    invokeMock.mockReset().mockResolvedValue(undefined);
+    invokeMock.mockReset().mockResolvedValue({ outcome: 'completed' });
     localStorage.clear();
     sessionStorage.clear();
     nativeStore.clear();
@@ -204,5 +204,32 @@ describe('PKCE on the MiConnect sign-in', () => {
     localStorage.setItem('canari_oidc_state', state);
     const second = await callbackBody(state);
     expect(second).not.toHaveProperty('code_verifier');
+  });
+});
+
+/**
+ * ON A PHONE THE SIGN-IN ANSWERS HOW ITS BROWSER ENDED (2026-11-04): an iOS sheet the user closed
+ * raises no page event, so `startOidcLogin` is the only way the login page learns of it.
+ */
+describe('startOidcLogin on a phone answers the in-app browser outcome', () => {
+  beforeEach(() => {
+    env.oidcPkce = true;
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  it.each(['completed', 'cancelled', 'handedOff'] as const)('returns %s as answered', async (o) => {
+    invokeMock.mockReset().mockResolvedValue({ outcome: o });
+    await expect(startOidcLogin('/chat')).resolves.toBe(o);
+  });
+
+  it('refuses an answer that names no known outcome', async () => {
+    invokeMock.mockReset().mockResolvedValue(undefined);
+    await expect(startOidcLogin('/chat')).rejects.toThrow(/no known outcome/);
+  });
+
+  it('passes the plugin refusal through', async () => {
+    invokeMock.mockReset().mockRejectedValue(new Error('ASWebAuthenticationSession failed'));
+    await expect(startOidcLogin('/chat')).rejects.toThrow(/failed/);
   });
 });
