@@ -15,6 +15,17 @@ Owner, 2026-11-02: build it, behind a SERVER-SIDE switch that is OFF by default,
   (UnifiedPush with a self-hosted distributor, or a persistent connection) is a separate question:
   ntfy would be an install on the DSI host, so their written agreement first; not part of this.
 
+### The whole design (2026-11-04) - what step 1 leaves, on its own page
+
+Owner, 2026-11-04: design the rest first. **[content-free-push](../protocols/content-free-push.md)**
+measures every push type from the code (step 1 covers the MLS frames only: salons, social and bell
+pushes - which carry the plaintext opening of comments and posts - reactions, join asks and call
+rings still leave in full) and designs step 2 (a push envelope in chat-delivery, deleted by the fetch
+that serves it), the platform mechanics, the failure contract, calls (immediate, and last), several
+accounts on one device, rollout by a `wakeVersion`, the server cost to measure, and WP-W1..W7 with
+their gates. Its non-reversible questions are parked in
+[open-questions](../open-questions.md#content-free-push---the-three-decisions-that-are-not-reversible-2026-11-04).
+
 ### The design (2026-11-02)
 
 **Scope of step 1: the MLS frames** - every push `sendFcmForQueued` sends (messages, Welcomes,
