@@ -36,7 +36,7 @@ here and nothing else.**
 identity provider, which production shares and which is not touched:
 
 - **`canari-test-gamma` is the bench's dev global admin** (`users.admin`); after a dev reset it is
-  restored by the one statement of [dev-environment](infrastructure/dev-environment.md#how-a-tester-gets-in).
+  restored by the one statement of [dev-environment](infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16).
 - **`canari-test-delta` is the bench's non-admin BDE moderator on dev**: a permanent membership of
   the fixture "BDE Fictif" with the `MODERATE` permission, added through
   `POST /api/associations/:id/members` as gamma. It must NOT become an admin: a platform admin
