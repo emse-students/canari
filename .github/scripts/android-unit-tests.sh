@@ -61,7 +61,7 @@ fi
 
 total=0
 for report in "${reports[@]}"; do
-  n="$(sed -n 's/.*<testsuite[^>]* tests="\([0-9]*\)".*/\1/p' "$report" | head -1)"
+  n="$(sed -n 's/.*<testsuite[^>]* tests="\([0-9]*\)".*/\1/p' "$report" | sed -n 1p)"
   total=$((total + ${n:-0}))
   printf '  %-64s %s test(s)\n' "$(basename "$report")" "${n:-0}"
 done

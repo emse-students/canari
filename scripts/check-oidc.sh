@@ -101,8 +101,8 @@ else
 fi
 
 if [[ -n "$FE_ENV" ]]; then
-  VITE_AUTHENTIK_URL=$(grep -E '^VITE_AUTHENTIK_URL=' "$FE_ENV" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "'\"" || true)
-  VITE_AUTHENTIK_CLIENT_ID=$(grep -E '^VITE_AUTHENTIK_CLIENT_ID=' "$FE_ENV" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "'\"" || true)
+  VITE_AUTHENTIK_URL=$(grep -E '^VITE_AUTHENTIK_URL=' "$FE_ENV" 2>/dev/null | sed -n 1p | cut -d= -f2- | tr -d "'\"" || true)
+  VITE_AUTHENTIK_CLIENT_ID=$(grep -E '^VITE_AUTHENTIK_CLIENT_ID=' "$FE_ENV" 2>/dev/null | sed -n 1p | cut -d= -f2- | tr -d "'\"" || true)
 
   if [[ -n "$VITE_AUTHENTIK_URL" ]]; then
     pass "VITE_AUTHENTIK_URL = $VITE_AUTHENTIK_URL"

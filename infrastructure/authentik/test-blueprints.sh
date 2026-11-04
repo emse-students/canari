@@ -37,7 +37,7 @@ MICONNECT_EDITOR_TOKEN=blueprint-test-editor-token-0123456789abcdef
 AUTHENTIK_PUBLISH=127.0.0.1:0
 EOF
 
-echo "starting a fresh MiConnect ($(grep -o 'AUTHENTIK_TAG:-[^}]*' "$work/compose.yml" | head -1))"
+echo "starting a fresh MiConnect ($(grep -o 'AUTHENTIK_TAG:-[^}]*' "$work/compose.yml" | sed -n 1p))"
 docker compose -p "$project" --project-directory "$work" -f "$work/compose.yml" up -d --quiet-pull
 
 worker="${project}-worker-1"

@@ -163,7 +163,7 @@ log "classification: every production variable is accounted for"
 # `cut -d= -f2` would truncate FIREBASE_SERVICE_ACCOUNT_JSON at its first `=`. This keeps
 # everything after the FIRST separator, which is what a value is.
 value_of() {
-  sed -n "s/^$1=//p" "$SNAPSHOT" | head -1
+  sed -n "s/^$1=//p" "$SNAPSHOT" | sed -n 1p
 }
 
 # ── infrastructure/.env ──────────────────────────────────────────────────────
@@ -219,7 +219,7 @@ HEADER
   # script has just written.
   for name in $(printf '%s\n' "$REGENERATE" | tr ' ' '\n' | grep -v '^$' | sort); do
     previous=""
-    [ -f "$INFRA_ENV.bak" ] && previous=$(sed -n "s/^$name=//p" "$INFRA_ENV.bak" | head -1)
+    [ -f "$INFRA_ENV.bak" ] && previous=$(sed -n "s/^$name=//p" "$INFRA_ENV.bak" | sed -n 1p)
     if [ -n "$previous" ]; then
       printf '%s=%s\n' "$name" "$previous"
       KEPT_SECRETS="$KEPT_SECRETS $name"

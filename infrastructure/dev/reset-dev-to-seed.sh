@@ -90,7 +90,7 @@ require_dev "$DEV_REDIS"
 
 # ── The seed, and the three facts its header states ──────────────────────────
 [ -f "$SEED_SQL" ] || fail "$SEED_SQL is missing - regenerate it with 'bun tools/dev-seed/seed.ts --write'"
-seed_header() { sed -n "s/^-- seed-$1: //p" "$SEED_SQL" | head -1; }
+seed_header() { sed -n "s/^-- seed-$1: //p" "$SEED_SQL" | sed -n 1p; }
 SEED_USERS=$(seed_header users)
 SEED_MARKER=$(seed_header marker)
 SEED_TABLES=$(seed_header tables)

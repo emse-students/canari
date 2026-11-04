@@ -646,7 +646,9 @@ dump_with() { # <ok|fail|truncated> <out>
     rc=$?
     # A truncated stream: a gzip whose tail is gone, as a killed pipe leaves it.
     if [ "$MODE" = truncated ]; then
-      printf 'CREATE TABLE t (a int);\n%.0s' {1..200} | gzip | head -c 40 >"$2"
+      printf 'CREATE TABLE t (a int);\n%.0s' {1..200} | gzip >"$2.full"
+      head -c 40 "$2.full" >"$2"
+      rm -f "$2.full"
       gzip -t "$2" 2>/dev/null
       return $?
     fi

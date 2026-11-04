@@ -344,8 +344,8 @@ fi
 # The lists exist before anything that includes them starts: a fresh host, or a lost directory, would
 # otherwise leave the frontend and the edge unable to start (2026-11-01 review).
 # shellcheck disable=SC2016 # the literal line of deploy-environment.sh, unexpanded on purpose
-seed_line="$(grep -n '^rotation_seed <<<"\$REPLACE_PLAN"' "$DEPLOY" | head -1 | cut -d: -f1)"
-first_up="$(grep -n '^dc up ' "$DEPLOY" | head -1 | cut -d: -f1)"
+seed_line="$(grep -n '^rotation_seed <<<"\$REPLACE_PLAN"' "$DEPLOY" | sed -n 1p | cut -d: -f1)"
+first_up="$(grep -n '^dc up ' "$DEPLOY" | sed -n 1p | cut -d: -f1)"
 if [ -n "$seed_line" ] && [ -n "$first_up" ] && [ "$seed_line" -lt "$first_up" ]; then
   ok "deploy-environment.sh seeds the replica lists (line $seed_line) before its first 'dc up' (line $first_up)"
 else
@@ -353,7 +353,7 @@ else
 fi
 # Whatever ends the deploy puts a list taken out back at rest: an EXIT trap, and every signal a
 # cancelled job or a dropped session sends turned into an exit, so that trap runs for it too.
-trap_line="$(grep -n "^trap 'rotation_restore_in_flight .*' EXIT\$" "$DEPLOY" | head -1 | cut -d: -f1)"
+trap_line="$(grep -n "^trap 'rotation_restore_in_flight .*' EXIT\$" "$DEPLOY" | sed -n 1p | cut -d: -f1)"
 signals=""
 for sig in HUP INT TERM; do grep -qE "^trap 'exit [0-9]+' $sig\$" "$DEPLOY" || signals="$signals $sig"; done
 if [ -n "$trap_line" ] && [ -n "$seed_line" ] && [ "$trap_line" -lt "$seed_line" ] && [ -z "$signals" ]; then

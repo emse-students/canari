@@ -57,7 +57,7 @@ failed=""
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   if ! out="$(cd "$REPO_ROOT" && "$SWIFTC" -parse "$f" 2>&1)"; then
-    printf '%s\n' "$out" | head -20
+    printf '%s\n' "$out" | sed -n 1,20p
     echo "::error file=$f::Swift does not parse"
     failed="$failed $f"
   fi

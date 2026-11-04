@@ -112,7 +112,7 @@ cd "$DEPLOY_PATH" || {
 # The estate is identified by the compose file's own `name:`, not by the directory or by a `-p` this
 # script passes. Read it back and SAY it: the two deployed files sit in one directory, and a missing
 # `name:` used to mean dev silently joined production's project and its volumes.
-PROJECT="$(grep -E '^name:[[:space:]]*' "$COMPOSE_FILE" | head -1 |
+PROJECT="$(grep -E '^name:[[:space:]]*' "$COMPOSE_FILE" | sed -n 1p |
   sed 's/^name:[[:space:]]*//; s/[[:space:]]*$//' || true)"
 [ -n "$PROJECT" ] || {
   printf 'deploy-environment: %s declares no top-level "name:" - refusing, because its project would then be named after its directory, which is shared with the other deployed estate\n' \

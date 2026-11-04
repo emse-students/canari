@@ -41,7 +41,7 @@ MAX_SAMPLES=43200
 # Docker resolver and the bridge to the path.
 # Resolved by its compose service label, never by name: a rolling release names each replica
 # `-1`, `-2`, `-3`... and a hardcoded suffix drifts with every deploy.
-CONTAINER=$(docker ps --filter 'label=com.docker.compose.service=chat-delivery-service' --format '{{.Names}}' | head -n 1)
+CONTAINER=$(docker ps --filter 'label=com.docker.compose.service=chat-delivery-service' --format '{{.Names}}' | sed -n 1p)
 if [ -z "${CONTAINER}" ]; then
 	echo "probe: no running chat-delivery-service container" >&2
 	exit 1

@@ -549,7 +549,7 @@ jobs:
           echo "cargo features: $FEATURES"
           rustup target add aarch64-apple-ios
           cargo build --lib --release --target aarch64-apple-ios --features "$FEATURES"
-          LIB=$(find target/aarch64-apple-ios/release -maxdepth 1 -name 'libmines_app_lib.a' | head -1)
+          LIB=$(find target/aarch64-apple-ios/release -maxdepth 1 -name 'libmines_app_lib.a' | sed -n 1p)
           if [ -z "$LIB" ]; then
             echo "::error::libmines_app_lib.a not produced by cargo"
             exit 1
@@ -590,7 +590,7 @@ jobs:
             'GCC_PREPROCESSOR_DEFINITIONS=$(inherited) CANARI_BENCH=1' \
             'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) CANARI_BENCH'
 
-          APP="$(find "$ARCHIVE/Products/Applications" -maxdepth 1 -name '*.app' | head -1)"
+          APP="$(find "$ARCHIVE/Products/Applications" -maxdepth 1 -name '*.app' | sed -n 1p)"
           if [ -z "$APP" ]; then
             echo "::error::the archive holds no .app"
             exit 1
@@ -675,14 +675,14 @@ jobs:
 
           # THE STORE APP EMBEDS EXACTLY ITS TWO EXTENSIONS - one missing still archives, uploads and
           # launches; only a phone would show the share sheet without Canari (ios-extensions.sh).
-          STORE_APP="$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 1 -name '*.app' | head -1)"
+          STORE_APP="$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 1 -name '*.app' | sed -n 1p)"
           bash ../.github/scripts/ios-extensions.sh "$STORE_APP"
 
           # THE ICON IS AN ICON COMPOSER DOCUMENT (gen/apple/AppIcon.icon), written without the Mac app
           # that normally authors it, and nothing but Xcode 26 can say whether it means what it was
           # meant to. `actool` compiles it into Assets.car: list what came out, and FAIL if the icon
           # is not there at all - a build that ships the default blank icon is green otherwise.
-          CAR="$(find "$ARCHIVE_PATH/Products/Applications" -name Assets.car | head -1)"
+          CAR="$(find "$ARCHIVE_PATH/Products/Applications" -name Assets.car | sed -n 1p)"
           if [ -z "$CAR" ]; then
             echo "::error::the archive holds no Assets.car"
             exit 1
@@ -698,7 +698,7 @@ jobs:
           # WHAT THE STORE BINARY DECLARES, PRINTED AND NEVER WRITTEN: the background modes and the
           # microphone purpose string of the BUILT app, the iOS twin of the Android built-manifest step.
           # `callsCompiled.test.ts` asserts the SOURCE plist; this is what App Review will read.
-          BUILT_PLIST="$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 2 -name Info.plist -path '*.app/Info.plist' | head -1)"
+          BUILT_PLIST="$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 2 -name Info.plist -path '*.app/Info.plist' | sed -n 1p)"
           if [ -z "$BUILT_PLIST" ]; then
             echo "::error::the archive's app carries no Info.plist"
             exit 1
@@ -762,7 +762,7 @@ jobs:
             -exportOptionsPlist ExportOptions.plist \
             -exportPath build/ipa
 
-          IPA=$(find build/ipa -name '*.ipa' | head -1)
+          IPA=$(find build/ipa -name '*.ipa' | sed -n 1p)
           if [ -z "$IPA" ]; then
             echo "::error::exportArchive produced no .ipa"
             exit 1
