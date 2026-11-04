@@ -30,6 +30,8 @@ const MAX_NETWORK_CREDIT_MS = 4_000;
 /** Extra slack beyond measured challenge RTT for submit hop + generation. */
 const NETWORK_CREDIT_SLACK_MS = 1_000;
 const LEADERBOARD_LIMIT = 25;
+/** How many of a player's latest wins `stats` returns. */
+const RECENT_WINS_LIMIT = 10;
 
 /**
  * Picks the scored duration: prefer the client timer when it sits in
@@ -242,9 +244,14 @@ export class MinesweeperService {
     };
   }
 
-  /** Top verified clears (best time per user). Display names from shared `users` table. */
-  async leaderboard(limit = LEADERBOARD_LIMIT, viewerId?: string) {
+  /**
+   * One page of verified clears (best time per user), `offset` places down, plus the `total` number
+   * of ranked players so a client knows when the last page is reached. Display names from the
+   * shared `users` table.
+   */
+  async leaderboard(limit = LEADERBOARD_LIMIT, viewerId?: string, offset = 0) {
     const capped = Math.min(Math.max(limit, 1), 50);
+    const start = Math.max(Math.trunc(offset) || 0, 0);
     const rows: Array<{
       scoreId: string;
       userId: string;
@@ -269,7 +276,7 @@ export class MinesweeperService {
     rows.sort(
       (a, b) => a.durationMs - b.durationMs || a.verifiedAt.getTime() - b.verifiedAt.getTime()
     );
-    const top = rows.slice(0, capped);
+    const top = rows.slice(start, start + capped);
     const userIds = top.map((r) => r.userId);
     const nameById = new Map<string, string>();
     if (userIds.length > 0) {
@@ -283,8 +290,9 @@ export class MinesweeperService {
     }
 
     return {
+      total: rows.length,
       entries: top.map((r, i) => ({
-        rank: i + 1,
+        rank: start + i + 1,
         // The row to remove: a global admin's "remove this score" names it (`removeScore`).
         scoreId: r.scoreId,
         userId: r.userId,
@@ -341,6 +349,72 @@ export class MinesweeperService {
       moveCount: best.moveCount,
       verifiedAt: best.verifiedAt.toISOString(),
       rank,
+    };
+  }
+
+  /**
+   * The caller's own ranked record. Only RANKED games are known to the server: a casual game never
+   * opens a challenge, so "played" is the player's challenges and "won" their stored scores; the
+   * difference is every ranked game that was lost, abandoned, rejected or left to expire.
+   */
+  async stats(userId: string) {
+    const [challengeRows, aggregateRows, recent, standing] = await Promise.all([
+      this.challenges.query(
+        `SELECT COUNT(*)::int AS played FROM minesweeper_challenges WHERE "userId" = $1`,
+        [userId]
+      ) as Promise<Array<{ played: number | string }>>,
+      this.scores.query(
+        `
+        SELECT COUNT(*)::int AS won,
+               MIN("durationMs")::int AS best,
+               ROUND(AVG("durationMs"))::int AS average,
+               ROUND(percentile_cont(0.5) WITHIN GROUP (ORDER BY "durationMs"))::int AS median
+        FROM minesweeper_scores
+        WHERE "userId" = $1
+        `,
+        [userId]
+      ) as Promise<
+        Array<{
+          won: number | string;
+          best: number | null;
+          average: number | null;
+          median: number | null;
+        }>
+      >,
+      this.scores.query(
+        `
+        SELECT id AS "scoreId", "durationMs", "moveCount", "verifiedAt"
+        FROM minesweeper_scores
+        WHERE "userId" = $1
+        ORDER BY "verifiedAt" DESC
+        LIMIT ${RECENT_WINS_LIMIT}
+        `,
+        [userId]
+      ) as Promise<
+        Array<{ scoreId: string; durationMs: number; moveCount: number; verifiedAt: Date }>
+      >,
+      this.me(userId),
+    ]);
+
+    const won = Number(aggregateRows[0]?.won ?? 0);
+    // A score always has its challenge, but never trust that for a ratio: won cannot exceed played.
+    const played = Math.max(Number(challengeRows[0]?.played ?? 0), won);
+    const aggregate = aggregateRows[0];
+    return {
+      played,
+      won,
+      lost: played - won,
+      winRate: played > 0 ? won / played : null,
+      bestMs: won > 0 ? (aggregate?.best ?? null) : null,
+      averageMs: won > 0 ? (aggregate?.average ?? null) : null,
+      medianMs: won > 0 ? (aggregate?.median ?? null) : null,
+      rank: standing.rank,
+      recent: recent.map((r) => ({
+        scoreId: r.scoreId,
+        durationMs: r.durationMs,
+        moveCount: r.moveCount,
+        verifiedAt: new Date(r.verifiedAt).toISOString(),
+      })),
     };
   }
 

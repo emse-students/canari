@@ -12,7 +12,8 @@ import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimatio
 const startChallenge = vi.hoisted(() => vi.fn());
 
 vi.mock('$lib/minesweeper/api', () => ({
-  fetchMinesweeperLeaderboard: vi.fn().mockResolvedValue([]),
+  fetchMinesweeperLeaderboard: vi.fn().mockResolvedValue({ entries: [], total: 0 }),
+  fetchMinesweeperStats: vi.fn(),
   fetchMinesweeperBans: vi.fn().mockResolvedValue([]),
   removeMinesweeperScore: vi.fn(),
   banMinesweeperUser: vi.fn(),
