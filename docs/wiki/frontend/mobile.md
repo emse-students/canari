@@ -1668,7 +1668,8 @@ without a lag the eye sees, the picker opening, and VoiceOver reading the four n
 
 #### The DM whose chrome stands one keyboard too high (2026-10-17)
 
-**OPEN, P2, CAUSE NOT YET MEASURED.** This was found on the iPhone 12 with `v1.2.9-alpha.7`
+**MEASURED 2026-11-04, FIXED BY THE DOCUMENT-ANCHORED RECT (below); the phone reading after the fix is owed.**
+The history that follows is kept for its reasoning. This was found on the iPhone 12 with `v1.2.9-alpha.7`
 ([device-verification](../device-verification.md#the-iphone-12-readings-of-v129-alpha7-2026-10-17), 3b).
 The conversation was a DM whose last message is a tall video. The keyboard rose
 (`overlap=301 -> webview height 543`). The web composer was drawn at 487 pt, where it belongs.
@@ -1702,6 +1703,30 @@ store build's WebView cannot be inspected, so this line is the measurement. Read
 - `composerTop` 186 with both at 0 is cause 3.
 
 No fix is written until the line has named one.
+
+**The reading (iPhone 12, `1.6.4-alpha.2`, 2026-11-04, bench account, 3 rounds + 1 control).**
+- DM "Canari Test Delta" (the thread ends in a tall card): 3 of 3 rounds reproduce. Native
+  `keyboard overlap=301 -> webview height 543`; `keyboard settled: native offset=0.0 content=543.0
+  bounds=543.0`; WDA's tree reads the web "Envoyer le message" at y=487 and the native "Ajouter" ("+")
+  at y=186; the header is out of the tree.
+- Control, DM "Canari Test Alpha" (short messages): same keyboard, `offset=0 content=543 bounds=543`,
+  "+" at y=487, in place.
+- **The `page` half of the line is `<private>` on a TestFlight build**, so `scrollY`, `vvOffsetTop` and
+  `composerTop` cannot be read from the syslog. The cause is named by elimination instead.
+- **Cause 2 is refuted** (`content - bounds` = 0, offset 0). **Cause 3 is refuted**: a composer laid
+  out at 186 would be DRAWN at 186, and the web composer is drawn at 487. What is left is **cause 1**:
+  the page's rect says 186 = 487 - 301 while the screen draws 487 with the native offset at 0, so the
+  page believes its document is scrolled by 301 (the keyboard's reveal) while UIKit's offset is 0.
+  (`rect + scrollY` = 487 is the drawn place; `scrollY` itself was not read, hence "by elimination".)
+
+**The fix.** The piece's rect is anchored to the DOCUMENT, not to the layout viewport:
+`screenRect` = `getBoundingClientRect() + (scrollX, scrollY)`. The app never scrolls its document (the
+shell is pinned, native clamps the offset to 0), so what is drawn is always the document position
+whatever the page believes. `rect + scroll` is invariant under that stale scroll, so no scroll
+listener is needed and none was added. Pinch-zoomed (`visualViewport.scale > 1.01`; the viewport meta
+does not forbid zoom) there is a real pan, and the visual viewport's transform
+`(rect - offset) * scale` is used instead. **Owed:** the same three rounds on the build that carries
+it (the "+" at 487 beside "Envoyer", the header in place), and a salon.
 
 **Not new in 1.2.9, by reading.** Between `v1.2.8` and `v1.2.9-alpha.7`, none of these changed:
 

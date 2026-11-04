@@ -41,19 +41,44 @@ export function usesNativeGlassChrome(): boolean {
   return isIosTauriRuntime();
 }
 
+/** What `screenRect` reads off the window besides the box. */
+export interface ScreenFrame {
+  /** `window.scrollX` / `window.scrollY`: where the PAGE believes the document is scrolled. */
+  scrollX: number;
+  scrollY: number;
+  /** The visual viewport, or null where there is none. */
+  vv: Pick<VisualViewport, 'offsetLeft' | 'offsetTop' | 'scale'> | null;
+}
+
 /**
- * A box's place ON THE SCREEN, which is what the native layer is given: `getBoundingClientRect()` is
- * relative to the LAYOUT viewport, and the native overlay is laid over the visible screen, so the
- * visual viewport's offset (a pan, the keyboard's reveal scroll) is subtracted. With the viewports
- * aligned the offset is 0 and this is the rect itself.
+ * A box's place ON THE SCREEN, which is what the native layer is given (the overlay is edge to edge
+ * over the window, and native takes the frame as it is).
+ *
+ * THE DOCUMENT IS ANCHORED, NOT THE VIEWPORT. `getBoundingClientRect()` is the document position
+ * MINUS the page's own idea of its scroll, and the page's idea can disagree with what is drawn: the
+ * iPhone 12 reading of 2026-11-04 (`v1.6.4-alpha.2`) had the web composer drawn at 487 pt, the native
+ * scroll view at offset 0 (content = bounds = 543, so no range), and the "+" - placed at the rect -
+ * at 186 = 487 - 301. The app never scrolls its document (the shell is pinned and every list scrolls
+ * in its own element; native clamps the offset to 0), so what is drawn is always the document
+ * position, `rect + scroll`, whatever the page believes. Pinch-zoomed there is a real pan, so the
+ * visual viewport's transform is applied instead.
  */
 export function screenRect(
   box: Pick<DOMRect, 'left' | 'top' | 'width' | 'height'>,
-  vv: Pick<VisualViewport, 'offsetLeft' | 'offsetTop'> | null | undefined
+  frame: ScreenFrame
 ) {
+  const scale = frame.vv?.scale ?? 1;
+  if (frame.vv && scale > 1.01) {
+    return {
+      x: (box.left - frame.vv.offsetLeft) * scale,
+      y: (box.top - frame.vv.offsetTop) * scale,
+      width: box.width * scale,
+      height: box.height * scale,
+    };
+  }
   return {
-    x: box.left - (vv?.offsetLeft ?? 0),
-    y: box.top - (vv?.offsetTop ?? 0),
+    x: box.left + frame.scrollX,
+    y: box.top + frame.scrollY,
     width: box.width,
     height: box.height,
   };
@@ -149,7 +174,11 @@ export function nativeGlassPiece(node: HTMLElement, initial: NativeGlassPiecePar
   let queue: Promise<unknown> = Promise.resolve();
 
   function measure() {
-    return screenRect(node.getBoundingClientRect(), window.visualViewport);
+    return screenRect(node.getBoundingClientRect(), {
+      scrollX: window.scrollX,
+      scrollY: window.scrollY,
+      vv: window.visualViewport,
+    });
   }
 
   function enqueue(what: string, call: () => Promise<unknown>) {
@@ -277,13 +306,6 @@ export function nativeGlassPiece(node: HTMLElement, initial: NativeGlassPiecePar
   resizes.observe(node);
   window.addEventListener('resize', remeasure);
   window.visualViewport?.addEventListener('resize', remeasure);
-  // THE DOCUMENT'S SCROLL AND THE VISUAL VIEWPORT'S PAN MOVE A PIECE WITHOUT RESIZING ANYTHING. The
-  // keyboard's rise reveals the focused field by scrolling the document; when that offset is put
-  // back (native `CanariClampDocumentScroll`) nothing resized, so the native "+" stayed where the
-  // transient scroll had put it - one keyboard overlap above its twin (iPhone 12, 2026-10-17 and
-  // 2026-11-04). Element scrolls do not bubble here, so the thread's own scrolling costs nothing.
-  window.addEventListener('scroll', remeasure);
-  window.visualViewport?.addEventListener('scroll', remeasure);
   // THE ROOT'S STYLE AND CLASS MOVE A PIECE WITHOUT RESIZING IT OR THE WINDOW. Native writes
   // `--safe-area-inset-bottom` on `<html>` when the keyboard's animation ENDS (canari_ios.mm), after
   // the window's `resize` was already read, and the composer's floor is
@@ -321,9 +343,7 @@ export function nativeGlassPiece(node: HTMLElement, initial: NativeGlassPiecePar
       avatarChanges.disconnect();
       node.removeEventListener('load', onAvatarLoad, true);
       window.removeEventListener('resize', remeasure);
-      window.removeEventListener('scroll', remeasure);
       window.visualViewport?.removeEventListener('resize', remeasure);
-      window.visualViewport?.removeEventListener('scroll', remeasure);
       handlers.delete(nativeId);
       node.style.visibility = '';
       // Queued behind a creation still in flight, so a piece created after its unmount is removed.

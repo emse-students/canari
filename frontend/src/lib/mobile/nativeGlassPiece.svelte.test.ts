@@ -206,6 +206,25 @@ describe('nativeGlassPiece', () => {
     action.destroy?.();
   });
 
+  it('keeps the screen place when the page scrolls under a fixed drawing (rect and scrollY move together)', async () => {
+    const rect = { left: 12, top: 487, width: 44, height: 44 };
+    const node = piece(rect);
+    const action = nativeGlassPiece(node, { id: 'chat-add', label: 'Add', icon: Images });
+    await settle();
+    plugin.updateComponent.mockClear();
+
+    rect.top = 186;
+    Object.defineProperty(window, 'scrollY', { value: 301, configurable: true });
+    window.dispatchEvent(new Event('resize'));
+    await settle();
+    expect(plugin.updateComponent).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ y: 186 })
+    );
+    Object.defineProperty(window, 'scrollY', { value: 0, configurable: true });
+    action.destroy?.();
+  });
+
   it('is hidden while its web twin has no box (the phone header at md width)', async () => {
     const node = piece({ left: 0, top: 0, width: 0, height: 0 });
     const action = nativeGlassPiece(node, { id: 'chat-back', label: 'Back', icon: ChevronLeft });
@@ -246,22 +265,28 @@ describe('nativeGlassPiece', () => {
 describe('screenRect', () => {
   const box = { left: 12, top: 487, width: 44, height: 44 };
 
-  it('is the rect itself while the viewports are aligned', () => {
-    expect(screenRect(box, { offsetLeft: 0, offsetTop: 0 })).toEqual({
+  it('is the rect itself while the page is not scrolled', () => {
+    expect(screenRect(box, { scrollX: 0, scrollY: 0, vv: null })).toEqual({
       x: 12,
       y: 487,
       width: 44,
       height: 44,
     });
-    expect(screenRect(box, null).y).toBe(487);
   });
 
-  it('subtracts the visual viewport pan, so a panned page still hands native the screen place', () => {
-    expect(screenRect(box, { offsetLeft: 4, offsetTop: 301 })).toEqual({
-      x: 8,
-      y: 186,
-      width: 44,
-      height: 44,
+  it('anchors to the document: the page believing scrollY=301 does not move the piece (iPhone 12, 2026-11-04)', () => {
+    // The page read rect.top 186 = 487 - 301 while the composer was DRAWN at 487 (native offset 0).
+    const stale = { left: 12, top: 186, width: 44, height: 44 };
+    expect(screenRect(stale, { scrollX: 0, scrollY: 301, vv: null }).y).toBe(487);
+  });
+
+  it('applies the visual viewport transform when pinch-zoomed, where the pan is real', () => {
+    const vv = { offsetLeft: 4, offsetTop: 100, scale: 2 };
+    expect(screenRect(box, { scrollX: 0, scrollY: 50, vv })).toEqual({
+      x: 16,
+      y: 774,
+      width: 88,
+      height: 88,
     });
   });
 });
