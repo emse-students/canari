@@ -40,7 +40,6 @@ describe('PostsService hides a blocked account, and only where the author was vi
     polls: [],
     forms: [],
     reactions: [],
-    pinned: false,
     scheduledAt: null,
     hiddenByModeration: false,
     commentCount: 0,

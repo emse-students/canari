@@ -35,7 +35,6 @@ describe("PostsService feed queries carry a post's linked calendar event", () =>
     polls: [],
     forms: [],
     reactions: [],
-    pinned: false,
     scheduledAt: null,
     hiddenByModeration: false,
     commentCount: 0,
