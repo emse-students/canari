@@ -86,8 +86,11 @@ struct CommandSequence {
     /// Whether `seq` is newer than every call applied so far - and if so, records it as applied.
     mutating func admits(_ seq: Int) -> Bool {
         guard seq > applied else {
+            // Copied out first: a `Logger` interpolation is an escaping autoclosure, which may not
+            // capture the `self` of a mutating method.
+            let (name, last) = (command, applied)
             PendiNav.log.notice(
-                "[pendi-nav][native] \(command, privacy: .public) seq=\(seq) dropped: \(applied) already applied")
+                "[pendi-nav][native] \(name, privacy: .public) seq=\(seq) dropped: \(last) already applied")
             return false
         }
         applied = seq
