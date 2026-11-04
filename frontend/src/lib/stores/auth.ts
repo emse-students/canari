@@ -24,7 +24,7 @@ import {
 import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { createPkcePair } from '$lib/utils/pkce';
 import { getAppVersionCheck } from '$lib/stores/appVersionCheck.svelte';
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { isTauri } from '@tauri-apps/api/core';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
@@ -38,7 +38,7 @@ import { eraseAccountShortcuts } from '$lib/sharing/shareTargetsNative';
 import { eraseIncomingShare } from '$lib/mobile/incomingShareSignOut';
 import { endPushRegistration } from '$lib/services/PushNotificationService';
 import { getClientAppVersion, isMobileTauriRuntime } from '$lib/utils/appVersion';
-import { customTabsCommand } from '$lib/services/customTabsCommands';
+import { openCustomTab, type CustomTabOutcome } from '$lib/services/customTabsCommands';
 import {
   clearRestoreKey,
   forgetRestoreKeyRegistrations,
@@ -509,14 +509,25 @@ export type OidcLoginOptions = {
 };
 
 /**
+ * How a started sign-in left the page: `navigating` (web and desktop - the document is on its way
+ * to MiConnect), or the in-app browser's own outcome on a phone ({@link CustomTabOutcome}). Only
+ * `cancelled` hands the form back: every other value is followed by a navigation, a deep link or
+ * the app's foreground edge.
+ */
+export type OidcLoginStart = 'navigating' | CustomTabOutcome;
+
+/**
  * Redirect the user to Authentik's authorize endpoint.
  * After login, Authentik will redirect back to `/auth/callback`.
  * When `flowSlug` is set, the user is sent through `/if/flow/{slug}/` first.
+ *
+ * On a phone it resolves when the in-app browser ENDS (iOS: when its sheet goes away), so the
+ * caller learns of a sheet the user closed - see {@link OidcLoginStart}.
  */
 export async function startOidcLogin(
   returnTo = '/chat',
   options?: OidcLoginOptions
-): Promise<void> {
+): Promise<OidcLoginStart> {
   const baseUrl = authentikUrl();
   const clientId = authentikClientId();
   if (!baseUrl || !clientId) {
@@ -581,11 +592,16 @@ export async function startOidcLogin(
   // through the same deep link. A plain system-browser launch (openUrl), used before this
   // plugin existed, left the tab/window open afterward with nothing able to dismiss it from
   // either side, which read as "the login failed".
+  //
+  // THE ANSWER IS THE BROWSER'S END, NOT ITS OPENING (2026-11-04): on iOS a sheet the user closed
+  // raises no visibility, focus or foreground edge, so the page can only learn it from here.
   if (isMobileTauriRuntime()) {
-    await invoke(customTabsCommand('openCustomTab'), { url: authUrl });
-  } else {
-    window.location.href = authUrl;
+    const outcome = await openCustomTab(authUrl);
+    alog(`login: in-app browser ended (${outcome})`);
+    return outcome;
   }
+  window.location.href = authUrl;
+  return 'navigating';
 }
 
 /**
@@ -975,14 +991,16 @@ export async function leaveSignedOut(): Promise<void> {
     window.location.href = plan.url;
     return;
   } else {
-    try {
-      await invoke(customTabsCommand('openCustomTab'), { url: plan.url });
-      alog('signout→MiConnect end-session (in-app browser)');
-    } catch (e) {
-      awarn(
-        `signout: MiConnect end-session could not open (${String(e)}) - its session is NOT ended`
-      );
-    }
+    // NOT awaited: the plugin answers when the sheet goes away (iOS), and the app goes to /login
+    // behind it at once, as it always did - the outcome is only logged.
+    alog('signout→MiConnect end-session (in-app browser)');
+    void openCustomTab(plan.url).then(
+      (outcome) => alog(`signout: MiConnect end-session browser ended (${outcome})`),
+      (e: unknown) =>
+        awarn(
+          `signout: MiConnect end-session could not open (${String(e)}) - its session is NOT ended`
+        )
+    );
   }
   await goto(loginPath, { replace: true });
 }
