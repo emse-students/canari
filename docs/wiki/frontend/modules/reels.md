@@ -606,12 +606,38 @@ decoded is now a picture of that frame**, in this order (`ReelSlide`'s `posterUr
 3. **Nothing - the frame's black**, for a reel published before 2026-10-31 that this device has not
    decoded yet. It gets its sharp frame the first time it is preloaded or watched.
 
-**The play button answers a REFUSAL, never a load.** The minimal reel player asks `play()` itself at
-`canplay` (the `autoplay` attribute fails silently) and draws its amber button only on a
-`NotAllowedError` (iOS with sound on, a browser policy) or any other failure, with a warning. An
-`AbortError` is an interruption by a new load: it is asked ONCE more at that load's next
-`loadeddata` / `canplay`, and a second one draws the button. Pinned by `VideoPlayer.svelte.test.ts`, `ReelSlide.svelte.test.ts`,
-`ReelViewer.svelte.test.ts`, `reelPosters.test.ts`, `publishReel.test.ts`.
+**The play button answers a DECIDED OUTCOME, never a load.** The minimal reel player asks `play()`
+itself (the `autoplay` attribute fails silently) and draws its amber button only when the reader
+must act. The states, after the iPhone report of 2026-11-04 (*"some CanaReels do not autoplay, I
+have to tap play"*):
+
+| What the element says | What the player does | Log |
+| --- | --- | --- |
+| `loadstart` | a new LOAD: its autoplay will be asked afresh, earlier answers void | `Log.d` `load N started` |
+| `loadedmetadata` (else `loadeddata` / `canplay`) | asks `play()` ONCE for this load | `Log.d` `autoplay asked` |
+| `play()` resolves | playing - nothing more is asked in this load | - |
+| `NotAllowedError`, sound ON | mutes the element AND the app's one answer (`videoSound`), asks again at once | `warn` `autoplay with sound refused - muted and asked again` |
+| `NotAllowedError`, muted | the button (`refused`) | `warn` |
+| `AbortError` after a new `loadstart` | that load's first event asks again | `debug` |
+| `AbortError`, no new load | a PAUSE interrupted it (the reader, or the arbiter: screen left, a call): the button (`interrupted`) | `info` |
+| anything else | the button (`errored`) | `warn` |
+| `waiting` while not paused | a SPINNER (`data-video-buffering`), a slow network - never the button; cleared by `playing`, a pause, a new load | `Log.d` with `readyState` / `networkState` |
+| `stalled` | nothing drawn | `Log.d` |
+
+The rule is `utils/videoAutoplay.ts` (`decideAutoplayRejection`), classified by the exception's NAME
+at the throw, never by its message. Two holes closed: (1) the ask used to wait for
+`loadeddata` / `canplay`, which an iPhone with `preload="metadata"` never reaches when WebKit
+declines the `autoplay` attribute (its `InvisibleAutoplayNotPermitted` rule, read in
+`MediaElementSession::autoplayPermitted`: a reel not yet in the viewport) - an explicit `play()` is
+not subject to that rule and makes the engine fetch the data; (2) an `AbortError` with no new load
+waited for a load event that never came - a frozen reel, no button, only a debug line. Every branch
+terminates by a proof, not a count: the muted retry is muted, so its refusal is final; a re-ask
+needs a new load. **The owner's rule (2026-11-04): a reel STARTS MUTED** (`videoSound`, muted at
+every launch); the reader's sound button is the explicit request, and only then does the reel's
+sound play with the iPhone's silent switch on. Pinned by
+`videoAutoplay.test.ts`, `VideoPlayer.svelte.test.ts`, `ReelSlide.svelte.test.ts`,
+`ReelViewer.svelte.test.ts`, `reelPosters.test.ts`, `publishReel.test.ts`. **Owed on the iPhone 12** (none
+of it read on a device): ten reels swiped on a throttled link - each starts without a tap, a stall shows the spinner, and the in-app log carries no `[VideoPlayer] autoplay` warning or `interrupted by a pause` line the reader did not cause (the device console, Safari Web Inspector, shows the `Log.d` lines: one `autoplay asked` per load).
 
 **Owed on the bench phones** (none of this was read on a device): see
 [device-verification](../../device-verification.md) and the PR's reading list - per phone, the

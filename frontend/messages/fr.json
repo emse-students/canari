@@ -883,6 +883,7 @@
   "video_sound_label": "Son des vidéos",
   "video_player_label": "Lecteur vidéo",
   "video_play_label": "Lire",
+  "video_loading_label": "Chargement de la vidéo",
   "video_pause_label": "Pause",
   "video_seek_label": "Position dans la vidéo",
   "video_time_value": "{elapsed} sur {duration}",
