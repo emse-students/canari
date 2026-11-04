@@ -29,6 +29,14 @@ export interface MlsQueuedMessage {
    * because the same row can be offered by both routes and only the dedup decides which one counts.
    */
   channel?: DeliveryChannel;
+  /**
+   * A LIVE copy that arrived before a pull had listed the whole mailbox on this link - stamped by
+   * `enqueueMessage` at ARRIVAL, the one moment that says it. The scheduler is an arrival-order
+   * FIFO, so such a frame sits AHEAD of every row the reconnect's pull lists after it, and the
+   * pull's own copy of it is dropped as a repeat: by the time the frame is handled the mailbox may
+   * read as listed while the frames queued before it on the server are still behind it here.
+   */
+  aheadOfMailbox?: boolean;
 }
 
 /** `web`: Welcome at front of each group's message list. `tauri`: separate control/welcome tiers. */

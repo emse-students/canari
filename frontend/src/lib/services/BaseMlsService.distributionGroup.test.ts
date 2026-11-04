@@ -76,7 +76,8 @@ const proto = BaseMlsService.prototype as unknown as {
     groupId: string,
     sender: string,
     ciphertext: Uint8Array,
-    senderDeviceId?: string
+    senderDeviceId?: string,
+    aheadOfMailbox?: boolean
   ): Promise<boolean>;
   noteDistributionGroup(groupId: string): void;
   forgetDistributionGroupById(groupId: string): Promise<boolean>;
@@ -1047,6 +1048,9 @@ describe('a held key group behind its server', () => {
   function behind(epoch: number, log: { baseEpoch: number }[], serverEpoch: number) {
     const tree = { epoch };
     let settle!: () => void;
+    const drained = new Promise<void>((r) => {
+      settle = r;
+    });
     const listener = vi.fn();
     const ctx = makeCtx({
       getLocalGroups: vi.fn().mockReturnValue(['g-1']),
@@ -1061,10 +1065,9 @@ describe('a held key group behind its server', () => {
         activeEpoch: serverEpoch,
         belowFloor: false,
       })),
-      initialDrain: new Promise<void>((r) => {
-        settle = r;
-      }),
-      waitForGroupQueueIdle: vi.fn().mockResolvedValue(undefined),
+      // The drain of THIS link (a pull listed the whole mailbox since the socket opened, and the
+      // group's share of it applied) - never the boot's, which a resume leaves hours old.
+      whenGroupDrained: vi.fn(() => drained),
       distributionEpochChecks: new Map(),
       distributionGapListener: listener,
       catchUpDistributionGroup: (proto2 as { catchUpDistributionGroup: unknown })
@@ -1082,6 +1085,10 @@ describe('a held key group behind its server', () => {
 
     expect(ctx.fetchCommitsSince).not.toHaveBeenCalled();
     expect(isInEpochGap('g-1')).toBe(false);
+    // The drain of THIS group on THIS link, not the boot's (2026-11-04: a resume left it hours old).
+    expect((ctx as unknown as { whenGroupDrained: unknown }).whenGroupDrained).toHaveBeenCalledWith(
+      'g-1'
+    );
     void verdict;
   });
 
@@ -1204,6 +1211,81 @@ describe('a frame from an epoch this device has not reached', () => {
     // Still behind the server: nothing may be sealed yet.
     expect(isInEpochGap('g-1')).toBe(true);
     log.mockRestore();
+  });
+
+  /**
+   * THE LIVE FRAME THAT OVERTAKES ITS OWN MAILBOX (tester export, 2026-11-04: nine seeds of one key
+   * group lost as `past-epoch-application` during a resume's bulk ingest, no join anywhere). After a
+   * reconnect, a seed pushed live at the server's epoch reaches the scheduler before the pull has
+   * listed the commits and seeds queued ahead of it. Stepping the log to its epoch put every one of
+   * those seeds more than `max_past_epochs` (2) behind, for good.
+   */
+  describe('stamped as having arrived ahead of the mailbox on this link', () => {
+    /** `gapped()` plus the real hold. The STAMP is what decides, never the link read now. */
+    function liveGapped(link: { pulling?: Promise<void> | null } = {}) {
+      const g = gapped();
+      Object.assign(g.ctx, {
+        // Listed by now - which is exactly the moment the stamp exists for: the pull that listed
+        // the mailbox may have ended before this frame, ahead of its rows, is handled.
+        mailboxEmptiedByAPull: true,
+        pendingPullInFlight: link.pulling ?? null,
+        liveHeldKeyGroups: new Map<string, number>(),
+        liveHoldPull: null,
+        holdLiveKeyGroupFrame: (
+          BaseMlsService.prototype as unknown as { holdLiveKeyGroupFrame(g: string): void }
+        ).holdLiveKeyGroupFrame,
+      });
+      return g;
+    }
+    const routeAhead = (ctx: Ctx, bytes: Uint8Array, ahead = true) =>
+      proto.routeDistributionFrame.call(ctx, 'g-1', 'peer', bytes, 'peer-phone', ahead);
+
+    it('steps NO commit, leaves the frame unacknowledged, and pulls the mailbox in order', async () => {
+      const { ctx, tree } = liveGapped();
+      const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+      expect(await routeAhead(ctx, new Uint8Array([1]))).toBe(false);
+      await flushMacrotask();
+
+      expect(tree.epoch).toBe(4);
+      expect(ctx.fetchCommitsSince).not.toHaveBeenCalled();
+      expect(ctx.distributionFrameHandler).not.toHaveBeenCalled();
+      expect(ctx.fetchPendingMessages).toHaveBeenCalledTimes(1);
+      log.mockRestore();
+    });
+
+    it('asks ONE pull for a burst, started after the pull already running', async () => {
+      let endRunning!: () => void;
+      const running = new Promise<void>((resolve) => (endRunning = resolve));
+      const { ctx } = liveGapped({ pulling: running });
+      const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+      await routeAhead(ctx, new Uint8Array([1]));
+      await routeAhead(ctx, new Uint8Array([1]));
+      await flushMacrotask();
+      // The running pull may have listed past these rows already: the one owed starts after it.
+      expect(ctx.fetchPendingMessages).not.toHaveBeenCalled();
+
+      endRunning();
+      await flushMacrotask();
+      expect(ctx.fetchPendingMessages).toHaveBeenCalledTimes(1);
+      // Counted, per key group, in the one line the burst prints.
+      expect(log.mock.calls.flat().join('\n')).toContain(
+        '2 live frame(s) on 1 key group(s) [g-1 x2]'
+      );
+      log.mockRestore();
+    });
+
+    it('steps as before a frame NOT stamped - pulled, or live after the listing: the commits really are missing', async () => {
+      const { ctx, tree } = liveGapped();
+      const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+      expect(await routeAhead(ctx, new Uint8Array([1]), false)).toBe(true);
+
+      expect(tree.epoch).toBe(5);
+      expect(ctx.fetchPendingMessages).not.toHaveBeenCalled();
+      log.mockRestore();
+    });
   });
 
   it('hands the envelope device to the RETRY as well, so a step cannot drop the check', async () => {

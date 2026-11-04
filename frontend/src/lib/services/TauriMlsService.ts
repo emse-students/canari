@@ -432,6 +432,7 @@ export class TauriMlsService extends BaseMlsService {
       throw new GatewayOpenAbandonedError('paused during the native connect');
     }
     this.ws = socket;
+    this.noteSocketOpened();
     console.log(`[WS] Connected to Chat Gateway - device=${sanitizeForLog(deviceId)}`);
 
     this.wsUnlisten = this.ws.addListener((msg: WsMessage) => {

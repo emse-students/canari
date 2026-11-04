@@ -324,7 +324,8 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           groupId,
           senderNorm,
           content,
-          deliveryMeta?.senderDeviceId
+          deliveryMeta?.senderDeviceId,
+          deliveryMeta?.aheadOfMailbox === true
         );
       }
 
