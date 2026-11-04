@@ -72,6 +72,8 @@ describe('PostsService hides a blocked account, and only where the author was vi
       }
       // The one-row visibility read (WP6b): every reader here is inside the post's audience.
       if (sql.includes('AS visible')) return Promise.resolve([{ visible: true }]);
+      // No reader here is a named reader: nothing is withheld (`commentsWithheldPostIds`).
+      if (sql.includes('read_grant_readers')) return Promise.resolve([]);
       if (sql.includes('FROM posts')) return Promise.resolve([{ ...POST }]);
       if (sql.includes('FROM users WHERE id = ANY')) return Promise.resolve([]);
       return Promise.resolve([]);
@@ -291,6 +293,36 @@ describe('PostsService hides a blocked account, and only where the author was vi
 
       expect(shaped.id).toBe('p1');
       expect(shaped.authorId).toBeUndefined();
+    });
+
+    it('withholds the comments and the people from a reader the comments predicate names', async () => {
+      // `commentsWithheldPostIds` answers p1 (owner, 2026-11-04): the served post carries no
+      // comment, no count, and the reactions as the reader's own plus a tally.
+      const comments = [{ id: 'c1', userId: 'someone-else', text: 'a student speaks' }];
+      const findOne = jest.fn(() =>
+        Promise.resolve(
+          entity({
+            authorId: 'someone-else',
+            comments,
+            reactions: { 'someone-else': 'like' },
+          } as unknown as Partial<typeof POST>)
+        )
+      );
+      const { query } = makeQueryMock([]);
+      query.mockImplementation((sql: string) => {
+        if (sql.includes('read_grant_readers')) return Promise.resolve([{ id: 'p1' }]);
+        if (sql.includes('AS visible')) return Promise.resolve([{ visible: true }]);
+        return Promise.resolve([]);
+      });
+      const service = makeService(query, findOne);
+
+      const shaped = (await service.getById('p1', { viewerId: 'viewer-1' })) as Record<string, any>;
+
+      expect(shaped).not.toHaveProperty('comments');
+      expect(shaped).not.toHaveProperty('commentCount');
+      expect(shaped.canSeeComments).toBe(false);
+      expect(shaped.reactions).toEqual({});
+      expect(shaped.otherReactionCounts).toEqual({ like: 1 });
     });
 
     it('drops a blocked account comments from a post written by somebody else', async () => {

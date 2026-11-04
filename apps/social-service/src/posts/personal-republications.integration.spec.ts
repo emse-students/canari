@@ -314,6 +314,8 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
     await q(migration('072_drop_is_bde.sql'));
     await q(migration('073_republications.sql'));
     await q(migration('078_read_grants.sql'));
+    // The bell's comment-borne rows read the named reader's switch (owner, 2026-11-04).
+    await q(migration('132_read_grant_readers.sql'));
     await q(migration('096_personal_republication_requests.sql'));
     await q(migration('121_member_reposts.sql'));
     // AG and AG2 reach the whole Gardanne campus, and nothing else.

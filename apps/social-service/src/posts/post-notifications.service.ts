@@ -48,7 +48,11 @@ import {
 } from '../push/push-content';
 import { forEachBounded, PUSH_FAN_OUT_LIMIT } from '../push/fan-out';
 import { formatUserDisplayNameFromRaw } from '../utils/user-display-name';
-import { postVisibleToViewerSql, sameSideOfReviewCohortSql } from '../spaces/reader-spaces';
+import {
+  commentsWithheldFromViewerSql,
+  postVisibleToViewerSql,
+  sameSideOfReviewCohortSql,
+} from '../spaces/reader-spaces';
 import { isBlockedBetween } from '../common/user-blocks';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
 
@@ -109,9 +113,19 @@ export const POST_BOUND_NOTIFICATION_TYPES: readonly string[] = [
 ];
 
 /**
+ * The bell types whose row carries a COMMENT's text: withheld, like the comments themselves, from a
+ * named reader whose only door to the post is a read grant with "voit les commentaires" off (owner,
+ * 2026-11-04). New ones are not written (`mentionRecipientsOf` with `'COMMENT'`); this hides the
+ * ones written before. A `'mention'` row cannot say whether it came from the post or a comment, so
+ * it keeps the post's own rule.
+ */
+export const COMMENT_BORNE_NOTIFICATION_TYPES: readonly string[] = ['comment', 'reply'];
+
+/**
  * Bell row `n` may be shown: a row of a type that names no post, or a row of a post-bound type
  * (`POST_BOUND_NOTIFICATION_TYPES`) whose post exists, is not hidden by moderation, and its
- * recipient still sees (`getNotifications` says why). The types are constants of this module.
+ * recipient still sees (`getNotifications` says why) - with its comments, for a comment-borne row
+ * (`COMMENT_BORNE_NOTIFICATION_TYPES`). The types are constants of this module.
  *
  * `postId` is a `varchar` that other types fill with ids of their own, so it is cast to `uuid`
  * inside a CASE - evaluated for a post-bound row only, and only when it has a uuid's shape, so a
@@ -120,12 +134,15 @@ export const POST_BOUND_NOTIFICATION_TYPES: readonly string[] = [
  */
 export function bellRowShownSql(n: string): string {
   const types = POST_BOUND_NOTIFICATION_TYPES.map((t) => `'${t}'`).join(', ');
+  const comments = COMMENT_BORNE_NOTIFICATION_TYPES.map((t) => `'${t}'`).join(', ');
   return `(${n}.type NOT IN (${types}) OR EXISTS (SELECT 1 FROM posts notif_post
     WHERE notif_post.id = (CASE WHEN ${n}.type IN (${types})
         AND ${n}."postId" ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
       THEN ${n}."postId"::uuid END)
       AND NOT notif_post."hiddenByModeration"
-      AND ${postVisibleToViewerSql('notif_post', `${n}."recipientId"`)}))`;
+      AND ${postVisibleToViewerSql('notif_post', `${n}."recipientId"`)}
+      AND (${n}.type NOT IN (${comments})
+        OR NOT ${commentsWithheldFromViewerSql('notif_post', `${n}."recipientId"`)})))`;
 }
 
 /**
@@ -312,21 +329,21 @@ export class PostNotificationsService {
    * comment's are asked when it is written, so a comment on a post not yet published (only its
    * author may write one) tells nobody, then or later: dropped, not deferred.
    * The dropped ones are counted at debug, never named: who was mentioned is the writer's text.
+   *
+   * @param intent what the text that notifies IS: `'READ_OR_REACT'` for the post's own text,
+   *   `'COMMENT'` for a comment's (a mention in it, or a reply to the recipient's comment) - which a
+   *   named reader with comments withheld (owner, 2026-11-04) must not be pushed either.
    */
   async mentionRecipientsOf(
     post: OpenablePost,
     mentionerId: string,
-    candidates: string[]
+    candidates: string[],
+    intent: 'READ_OR_REACT' | 'COMMENT'
   ): Promise<string[]> {
     const manager = this.postRepo.manager;
     const kept: string[] = [];
     for (const candidate of candidates) {
-      const verdict = await readPostOpenVerdict(
-        manager,
-        post,
-        { viewerId: candidate },
-        'READ_OR_REACT'
-      );
+      const verdict = await readPostOpenVerdict(manager, post, { viewerId: candidate }, intent);
       if (verdict.refusal === null && !(await isBlockedBetween(manager, mentionerId, candidate))) {
         kept.push(candidate);
       }
@@ -354,7 +371,12 @@ export class PostNotificationsService {
   async notifyPostMentions(post: Post): Promise<number> {
     const candidates = (post.mentions ?? []).filter((id) => id && id !== post.authorId);
     if (candidates.length === 0) return 0;
-    const recipients = await this.mentionRecipientsOf(post, post.authorId, candidates);
+    const recipients = await this.mentionRecipientsOf(
+      post,
+      post.authorId,
+      candidates,
+      'READ_OR_REACT'
+    );
     if (recipients.length === 0) return 0;
     const actorId = post.anonymous ? ANONYMOUS_NOTIFICATION_ACTOR_ID : post.authorId;
     const actorName = post.anonymous

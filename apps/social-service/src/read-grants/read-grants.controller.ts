@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Headers, HttpCode, Put, UseGuards } from '@nestjs/common';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
-import { SetReadGrantDto } from './read-grants.dto';
+import { SetReadGrantCommentsDto, SetReadGrantDto } from './read-grants.dto';
 import { ReadGrantsService } from './read-grants.service';
 
 /**
@@ -15,7 +15,7 @@ import { ReadGrantsService } from './read-grants.service';
 export class ReadGrantsController {
   constructor(private readonly service: ReadGrantsService) {}
 
-  /** Current grants and the journal of grants and revocations. */
+  /** Current grants, the readers' comment switches, and the journal of every change. */
   @Get()
   list() {
     return this.service.list();
@@ -34,6 +34,18 @@ export class ReadGrantsController {
       dto.campus,
       dto.formation ?? null,
       dto.granted
+    );
+  }
+
+  /** Turns one named reader's switch "voit les commentaires" on or off. Idempotent. */
+  @Put('comments')
+  @HttpCode(204)
+  async setComments(@Headers('x-user-id') actor: string, @Body() dto: SetReadGrantCommentsDto) {
+    // Both ids lowercased, for the reason `set` gives.
+    await this.service.setSeesComments(
+      actor.trim().toLowerCase(),
+      dto.userId.trim().toLowerCase(),
+      dto.seesComments
     );
   }
 }

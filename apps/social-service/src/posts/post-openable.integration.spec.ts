@@ -115,6 +115,7 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
       '078_read_grants.sql',
       '114_user_follow_status.sql',
       '121_member_reposts.sql',
+      '132_read_grant_readers.sql',
     ]) {
       await client.query(migration(name));
     }
@@ -195,7 +196,8 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
         await notifications().mentionRecipientsOf(
           await row(P_PERSONAL),
           'author',
-          everyoneButTheAuthor
+          everyoneButTheAuthor,
+          'READ_OR_REACT'
         )
       ).toEqual(['reader', 'commenter', 'blockedTheCommenter']);
     });
@@ -203,17 +205,24 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
     it('reaches nobody on a hidden post, nor on one scheduled later', async () => {
       for (const postId of [P_HIDDEN, P_SCHEDULED]) {
         expect(
-          await notifications().mentionRecipientsOf(await row(postId), 'author', ['reader'])
+          await notifications().mentionRecipientsOf(
+            await row(postId),
+            'author',
+            ['reader'],
+            'READ_OR_REACT'
+          )
         ).toEqual([]);
       }
     });
 
     it("drops a block with the WRITER of a comment's mention, whoever wrote the post", async () => {
       expect(
-        await notifications().mentionRecipientsOf(await row(P_PERSONAL), 'commenter', [
-          'reader',
-          'blockedTheCommenter',
-        ])
+        await notifications().mentionRecipientsOf(
+          await row(P_PERSONAL),
+          'commenter',
+          ['reader', 'blockedTheCommenter'],
+          'COMMENT'
+        )
       ).toEqual(['reader']);
     });
   });

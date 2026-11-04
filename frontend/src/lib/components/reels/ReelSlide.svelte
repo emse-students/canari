@@ -440,11 +440,11 @@
       <div class="pointer-events-none absolute right-1 bottom-0 z-30 {bottomPad}">
         <ReelActionRail
           {readerReaction}
-          reactionCount={reactionTotal(post.reactions)}
+          reactionCount={reactionTotal(post.reactions, post.otherReactionCounts)}
           commentCount={commentCountOf(post)}
           onHeart={rail?.onHeart}
           onReact={rail?.onReact}
-          onComments={rail?.onComments}
+          onComments={post.canSeeComments === false ? undefined : rail?.onComments}
           onSend={rail?.onSend}
           tools={page === 'reel' ? railTools : undefined}
           sound={page === 'reel'}

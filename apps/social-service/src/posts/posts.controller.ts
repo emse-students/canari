@@ -326,17 +326,22 @@ export class PostsController {
   ) {
     await this.assertNotMuted(xUserId);
     const { post } = await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
-    return this.interactions.addReaction(postId, xUserId, body.reactionType, post);
+    const answer = await this.interactions.addReaction(postId, xUserId, body.reactionType, post);
+    // The stored map names who reacted: served per reader, like every other read of it.
+    return this.service.serveReactionsTo(postId, xUserId, answer);
   }
 
   /** Removes the calling user's reaction from a post. */
   @UseGuards(NginxAuthGuard)
   @Delete(':postId/reactions')
-  removeReaction(
+  async removeReaction(
     @Headers('x-user-id') xUserId: string,
     @Param('postId', ParseUUIDPipe) postId: string
   ) {
-    return this.interactions.removeReaction(postId, xUserId);
+    const answer = await this.interactions.removeReaction(postId, xUserId);
+    // Not gated (it adds nothing), so its answer is what must not list the reactors to whoever
+    // holds an id: `serveReactionsTo` hands an outsider their own entry only.
+    return this.service.serveReactionsTo(postId, xUserId, answer);
   }
 
   /** One page of comments as whole threads: `?cursor=<position>&limit=20&order=recent|oldest`. */
@@ -365,7 +370,7 @@ export class PostsController {
   ) {
     // The mute is the real account's, whatever the comment will say it is.
     await this.assertNotMuted(xUserId);
-    await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
+    await this.service.assertVisible(postId, xUserId, 'COMMENT');
     const isGlobalAdmin = xGlobalAdmin === 'true';
     // Speaking for an association is the right posts need, asked BEFORE anything is written: an
     // older server would have ignored the field and published under the person's own name.
@@ -389,7 +394,7 @@ export class PostsController {
     @Param('postId', ParseUUIDPipe) postId: string,
     @Param('commentId') commentId: string
   ) {
-    await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
+    await this.service.assertVisible(postId, xUserId, 'COMMENT');
     return this.interactions.likeComment(postId, commentId, xUserId, xGlobalAdmin === 'true');
   }
 

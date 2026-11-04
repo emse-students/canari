@@ -132,6 +132,18 @@ The decisions, taken by the user on 2026-10-16:
   reviewers' writes are tracked per person, so an undo for one never waits on an add for another.
 - **A failed add keeps the person in the search field** (`onAdd` answers whether it succeeded).
 
+**"Voit les commentaires", one switch per person (owner, 2026-11-04: "un truc clair et propre, le
+plus user-friendly possible").** At the foot of the same sheet, under the campuses: the shared
+`Toggle`, labelled "Voit les commentaires", with ONE line under it saying what the reader will and
+will not see in its current state (OFF: reads the posts and reacts, without the comments or who
+reacted or voted; ON: reads and writes the comments, sees who reacted or voted). OFF is the default,
+for every named reader already there too. It saves at once and offers "Annuler" like a box
+(`PUT /read-grants/comments`, the inverse write as undo, journalled `cmt_show`/`cmt_hide` and drawn
+in the journal in words); while it saves it is `busy` (the `Toggle`'s new prop: `aria-busy` +
+`aria-disabled`, a click does nothing - never `disabled`, for the focus-trap reason above). The card
+says the state in one muted line under the chips. What it changes for the reader, and why:
+[profiles-and-access](../../profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08).
+
 Tests: `readAccess.test.ts` (grouping, "200+", the server's page size), `ReadGrantCard.svelte.test.ts`
 (chips), `ReadAccessPanel.svelte.test.ts` (save at once, undo = inverse write, the re-read race -
 checked to FAIL with the sequence guard removed - busy box, undo in the sheet, failed save inside
@@ -140,7 +152,9 @@ undo re-grants, the in-force label, a failed add keeps the person picked and the
 on success - checked to FAIL when the field clears unconditionally; the readers' "Ajouter" opens
 the sheet, then clears; `src/test/pickUser.ts` picks through the real search), `routes/admin/read-access/page.tabs.svelte.test.ts` (two tabs
 for a global admin, the reviewers alone and no read-grants request for a BDE super-admin, the hub
-for anyone else).
+for anyone else). The comments switch: `ReadGrantCard.svelte.test.ts` (the state line),
+`ReadAccessPanel.svelte.test.ts` (OFF by default with its line, saves at once, undo = inverse
+write, a click while busy is put back and sends nothing, a switch line of the journal in words).
 
 ## The catalogue and the create form (`/admin/spaces`, owner 2026-11-02)
 

@@ -45,6 +45,8 @@ const CONTAINER_TYPES = new Set(['jsonb', 'json', 'simple-array', 'simple-json']
 const RAW_TABLES = [
   'read_grants',
   'read_grant_journal',
+  // Migration 132's per-reader switch "voit les commentaires": the reader, who set it.
+  'read_grant_readers',
   'post_audiences',
   'channel_message_client_tombstones',
   // Migration 106's audit copy of the logo URLs it rewrote: association ids and URLs, no account.

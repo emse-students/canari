@@ -88,6 +88,8 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'minesweeper_bans.userId': { action: 'delete' },
   'document_reviewer_grants.userId': { action: 'delete' },
   'read_grants.user_id': { action: 'delete' },
+  // The named reader's switch "voit les commentaires" (migration 132): theirs, gone with them.
+  'read_grant_readers.user_id': { action: 'delete' },
   // The claim already turned the legacy row into a `user_tags` row (deleted above); what is left is
   // the name it was matched on, which is the last nominative trace.
   'legacy_cotisations.claimedByUserId': { action: 'delete' },
@@ -133,6 +135,7 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'content_reports.reviewedBy': { action: 'anonymise' },
   'content_reports.reportedUserId': { action: 'anonymise' },
   'read_grants.granted_by': { action: 'anonymise' },
+  'read_grant_readers.updated_by': { action: 'anonymise' },
   // WP-PIN (migration 127): a pin is the space's promotion, not the pinner's - it stays, unsigned.
   'post_space_pins.pinned_by': { action: 'anonymise' },
   'read_grant_journal.user_id': { action: 'anonymise' },
@@ -536,6 +539,7 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   },
   { label: 'reviewer_grants', sql: `DELETE FROM document_reviewer_grants WHERE "userId" = $1` },
   { label: 'read_grants', sql: `DELETE FROM read_grants WHERE user_id = $1` },
+  { label: 'read_grant_readers', sql: `DELETE FROM read_grant_readers WHERE user_id = $1` },
   {
     label: 'legacy_cotisations',
     sql: `DELETE FROM legacy_cotisations WHERE "claimedByUserId" = $1`,
@@ -601,6 +605,10 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     sql: `UPDATE content_reports SET "reportedUserId" = $2 WHERE "reportedUserId" = $1`,
   },
   { label: 'read_grants_by', sql: `UPDATE read_grants SET granted_by = $2 WHERE granted_by = $1` },
+  {
+    label: 'read_grant_readers_by',
+    sql: `UPDATE read_grant_readers SET updated_by = $2 WHERE updated_by = $1`,
+  },
   {
     label: 'space_pins_by',
     sql: `UPDATE post_space_pins SET pinned_by = $2 WHERE pinned_by = $1`,
