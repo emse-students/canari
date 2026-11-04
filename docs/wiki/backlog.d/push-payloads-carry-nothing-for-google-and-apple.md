@@ -21,10 +21,13 @@ Owner, 2026-11-04: design the rest first. **[content-free-push](../protocols/con
 measures every push type from the code (step 1 covers the MLS frames only: salons, social and bell
 pushes - which carry the plaintext opening of comments and posts - reactions, join asks and call
 rings still leave in full) and designs step 2 (a push envelope in chat-delivery, deleted by the fetch
-that serves it), the platform mechanics, the failure contract, calls (immediate, and last), several
-accounts on one device, rollout by a `wakeVersion`, the server cost to measure, and WP-W1..W7 with
-their gates. Its non-reversible questions are parked in
-[open-questions](../open-questions.md#content-free-push---the-three-decisions-that-are-not-reversible-2026-11-04).
+that serves it), the platform mechanics, the failure contract, calls, several accounts on one device,
+rollout by a `wakeVersion`, the server cost to measure, and WP-W1..W7 with their gates. **The owner
+decided its three non-reversible questions on 2026-11-04**
+([section 11](../protocols/content-free-push.md#not-reversible---decided-by-the-owner-2026-11-04)):
+no filtering-entitlement request to Apple; the call ring stays as it is and only `call_ring_end`
+drops `groupId`; the full-payload path is retired by raising `minClientVersion` once the devices still
+on it are few ([the measure](../protocols/content-free-push.md#81-when-few-is-reached---the-measure-that-retires-the-full-path)).
 
 ### The design (2026-11-02)
 

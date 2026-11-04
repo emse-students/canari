@@ -171,7 +171,8 @@ most until the device next opens the app or signs out".
 - **iOS cannot withhold an alert.** Without the `com.apple.developer.usernotifications.filtering`
   entitlement (granted by Apple on request) the extension must deliver SOMETHING for every alert push.
   So a `gone` answer is drawn passive ("already received"), and a failure is drawn as the honest
-  sentence. With the entitlement, `gone` could draw nothing at all - a question below.
+  sentence. **Owner, 2026-11-04 (N1): no request to Apple for that entitlement** - iOS keeps drawing an
+  honest alert for every wake (section 11).
 - **Silent wakes are best effort**, as silent frames already are: `content-available` pushes are
   throttled by the system and not delivered to an app the user force-quit. Read receipts and
   own-device dismissals lose nothing new: the next activation clears every conversation's
@@ -232,17 +233,15 @@ A ring cannot wait for a round trip:
   first is up to 20 s of silence on a call that rings 60 s.
 
 **What a ring tells Google and Apple today** is already names-free (decision 6): `callerId`,
-`groupId`, `callId`, `hasVideo`, `ringUntil` - pseudonymous ids, but a call graph. **The target, a
-later and separate step (WP-W6)**: ring with an opaque `ringId` and `ringUntil` only, report / post at
-once with the neutral "Canari call", then fetch the ring (`GET .../ring?ringId=`) and UPDATE the call
-(`CXProvider.reportCall(with:updated:)`; re-post the same Android notification id) with the caller's
-name from the phone's own `display_names.json`. **If that fetch fails, the call cannot be answered**
-(no `groupId` to join), so the ring is ended at once with an honest "could not be loaded" missed-call
-line, logged at ERROR - never left ringing unanswerable. `call_ring_end` needs `callId` only (the
-`groupId` it carries is not needed to end a ring by id) and can lose `groupId` first, cheaply.
+`groupId`, `callId`, `hasVideo`, `ringUntil` - pseudonymous ids, but a call graph.
 
-Recommended order: calls go LAST, after the step-1 and envelope readings, because a CallKit regression
-costs VoIP delivery for the whole app on a store build.
+**Owner, 2026-11-04 (N2): the ring stays as it is - immediate, ids only, no fetch-based ring.** The
+alternative that was weighed (an opaque `ringId`, the call reported at once as a neutral "Canari call"
+and updated after a fetch) is NOT built: a CallKit regression on a store build costs VoIP delivery for
+the whole app, and a failed fetch would leave a ring that cannot be answered. **Only the cheap half
+ships (WP-W6): `call_ring_end` drops `groupId`** and carries `type`, `callId`, `reason` - a ring is
+ended by its `callId`, which is all both platforms need to find it. So what Google and Apple keep
+learning about calls is the `call_ring` row of section 1, and the register says so.
 
 ## 7. Several accounts on one device
 
@@ -281,10 +280,27 @@ costs VoIP delivery for the whole app on a store build.
 - **Legacy rows** ([legacy-compatibility](../legacy-compatibility.md)): the `legacyTitle` /
   `legacyBody` shim and the reaction's `social` wire type stay for every full-mode device; a wake
   device never receives them. **The `full` path itself becomes a legacy row** the day both platforms
-  declare version 2: its removal condition is `minClientVersion` on an estate at or above the first
-  build declaring it on both platforms, and `push_mode = wake` on that estate - then the full builders,
-  the switch and the shim rows go in one pull request.
+  declare version 2, and **the owner decided on 2026-11-04 (N3) to retire it** - raising
+  `minClientVersion` - once the devices still on it are few, by the measure in section 8.1.
 - **Web push**: none exists (the web client is notified over its WebSocket only); nothing to migrate.
+
+### 8.1 When "few" is reached - the measure that retires the full path
+
+Two readings, both on production, both per platform, and BOTH must hold:
+
+1. **The tokens.** One `GROUP BY` on chat-delivery's `push_token`: `platform`, `wakeVersion < 2` vs
+   `>= 2`, over the rows whose `updatedAt` falls in the last 30 days (every app start re-registers and
+   rewrites the row, so that is the set of installs alive this month; an older row is an install nobody
+   opens, which a floor raise costs nothing). **Few = under 2 % of those rows, or under 10 rows,
+   whichever is larger, on each platform.**
+2. **The sends.** The share of sends that still left in full: `[PUSH_SEND] ... mode=full`, plus the
+   `[SOCIAL_PUSH] ... sent` lines to a `wakeVersion < 2` token (WP-W3 adds `mode=` to that line), over
+   all sends - **under 2 % on each of 7 consecutive days**. The token count says who is left; the send
+   count says whether those are the devices still receiving notifications.
+
+Both readings are written, dated, into the [legacy-compatibility](../legacy-compatibility.md) row.
+Then the pull request of WP-W7 raises `minClientVersion` to the first stable declaring version 2 on
+both platforms and deletes the full builders, `push_mode` and the legacy-sentence shim.
 
 ## 9. Server cost
 
@@ -312,8 +328,8 @@ costs VoIP delivery for the whole app on a store build.
 | WP-W3 | Server: `push_body` + `push_envelope`, `wakeVersion`, `sendPushToUser` stores and wakes when `push_mode = wake` and `wakeVersion >= 2`, the fetch answers `{status: 'push'}` | jest: the fetched map is byte-identical to the map the full push would have sent for the same input (salon, social, reaction, read, join ask); a second fetch of one envelope is `gone`; the four retention deaths each delete exactly their rows (cascade, register, cap, serve); `foreign` logged and answered `gone`; the production volume counts of section 9 read and written here |
 | WP-W4 | Android: envelope wakes (`envelopeId` -> fetch -> `dispatchPush`), the account bound at arrival and checked at dispatch, `PUSH_WAKE_DECLARED.android = 2` | `:app:compileArmDebugKotlin`; JVM tests (`WakeAnswerTest` for `push`, `WakeOrderTest` for an envelope ticket between a Welcome and its salon, a switch between arrival and dispatch); vitest `pushWakeCompiled.test.ts` extended; then on the Mi 9T: a salon text, a comment, a chat reaction, each with content; the blind-banner `not-inlined` reason reads zero on wake |
 | WP-W5 | iOS: envelope wakes in the extension and in `canari_push.mm`, the account check, `PUSH_WAKE_DECLARED.ios = 2` | the compile-only iOS job ([p2](../backlog.d/p2-pull-request-ci-never-compiles-ios-swift.md)) green; iPhone 12: reading 2 of the backlog entry for DMs, then salons and social, `[NSE_OUTCOME] kind=wake outcome=decrypted`, `peakMB` read for the largest salon |
-| WP-W6 | Calls: `call_ring_end` loses `groupId`; then the opaque `ringId` ring with the update after report | the first half: specs + one ring end read on both phones; the second half: a decision (question N2 below) and a ring read on both phones, locked and killed, including a failed fetch |
-| WP-W7 | Retire the `full` path once both platforms declare 2 and `minClientVersion` passes them; the register and the privacy policy say "a wake-up and an opaque id" for every push but a ring | `legacy-compatibility.md` row met on the estate (`GET /api/version`); the full builders, `push_mode` and the legacy-sentence shim deleted in one pull request |
+| WP-W6 | Calls: `call_ring_end` drops `groupId` (N2: the ring itself is unchanged) | jest: the ring-end payload's keys are exactly `type`, `callId`, `reason`; the Android and iOS ring-end handlers find the ring by `callId` alone (a test that would fail if either still read `groupId`); one ring hung up by the caller, read on both phones locked |
+| WP-W7 | Retire the `full` path (N3): raise `minClientVersion` to the first stable declaring version 2 on both platforms; the register and the privacy policy say "a wake-up and an opaque id" for every push but a ring | the two readings of section 8.1 under their thresholds, written into the `legacy-compatibility.md` row; then the full builders, `push_mode` and the legacy-sentence shim deleted in one pull request |
 
 ## 11. Open questions
 
@@ -329,13 +345,13 @@ costs VoIP delivery for the whole app on a store build.
 | Q6 | Silent wakes at FCM `normal` priority instead of `high` (deprioritisation of high-priority pushes that draw nothing) | keep `high` and measure: `gone` and silent wake counts per day in reading 4; change only on a measured deprioritisation |
 | Q7 | What the production flip of WP-W2 waits for | every unfetched wake explained by a typed stage for a week, and the "could not be loaded" notification on under 1 % of visible wakes |
 
-### Not reversible, or not ours - parked in [open-questions](../open-questions.md#content-free-push---the-three-decisions-that-are-not-reversible-2026-11-04)
+### Not reversible - decided by the owner, 2026-11-04
 
-| # | Question | Why it is not a reversible default |
+| # | Question | Owner's decision |
 | --- | --- | --- |
-| N1 | Ask Apple for the notification-filtering entitlement, so a `gone` wake draws nothing on iOS | a request to Apple tied to the App ID, answered by Apple; a one-off for the owner |
-| N2 | Calls through a fetch (the opaque `ringId` ring) | a CallKit regression on a store build costs VoIP delivery for the whole app, and old builds ring with ids for as long as they live |
-| N3 | Retiring the full path (WP-W7) | raising `minClientVersion` forces every older install to update before it gets any notification |
+| N1 | Ask Apple for the notification-filtering entitlement, so a `gone` wake draws nothing on iOS? | **No.** iOS keeps drawing an honest alert for every wake: the "could not be loaded" sentence for a failed fetch, the passive "already received" line for a `gone` answer (section 4.2) |
+| N2 | Calls through a fetch (an opaque `ringId` ring)? | **No.** Only the cheap half: `call_ring_end` drops `groupId` (WP-W6); the ring stays immediate, ids only (section 6) |
+| N3 | Retire the full path (WP-W7, raise `minClientVersion`)? | **Yes**, once the devices still on it are few - the measure and its thresholds are in section 8.1 |
 
 Android beyond FCM (UnifiedPush with a self-hosted distributor) stays out of this design: it is an
 install on the shared host, so the host owner's written agreement comes first (backlog entry).

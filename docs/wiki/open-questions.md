@@ -547,21 +547,3 @@ acted on (the hourly commit-log hole report on the server, the shortfall report 
 client). The question is whether the USER should ever see that a frame was dropped on their device: the
 "SECURISE & SYNC" shield that did so lied, and was removed by the user's choice to stop exposing the
 machinery. **Nothing is blocked on it**, and it is a product decision, not a measurement.
-
-## Content-free push - the three decisions that are not reversible (2026-11-04)
-
-Parked from [content-free-push](protocols/content-free-push.md#11-open-questions), where the reversible
-ones were taken with their recommended option. **Nothing before WP-W5 waits on these.**
-
-- **N1 - ask Apple for the notification-filtering entitlement?** Without it the iOS extension must
-  deliver something for every alert push, so a wake answered `gone` is drawn as a passive "already
-  received" line; with it, nothing is drawn. A request tied to the App ID and answered by Apple - a
-  one-off for the owner. Recommended: ask, once WP-W5 has its iPhone reading.
-- **N2 - calls through a fetch (an opaque `ringId` ring, updated after the CallKit report)?** It removes
-  the call graph (`callerId`, `groupId`) from what Google and Apple see; a CallKit regression on a store
-  build costs VoIP delivery for the whole app, and older builds keep ringing with ids for as long as
-  they are installed. Recommended: only after WP-W1..W5 are read, and only the `call_ring_end` half
-  (drop `groupId`) before that.
-- **N3 - retire the full payload path (WP-W7)?** It needs `minClientVersion` raised past the first build
-  declaring envelopes on both platforms, which forces every older install to update before it receives
-  any notification. Recommended: decide when both platforms have declared for one stable cycle.
