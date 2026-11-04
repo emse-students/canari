@@ -987,9 +987,10 @@ F4, question 3 is F5, question 4 is F6 (section 0).
   `space_pin_limit` refusal reads `post_pin_limit_reached`. The governor's list endpoint has no
   screen of its own yet: the pending state reaches the governor on the post's own menu.
 - **Migrations**: 127 (`post_space_pins`, additive) and 128 (the move of the global pin, HELD for
-  the owner's hand-merge). `posts.pinned` is read by nothing (`select: false` on the entity, kept
-  mapped so a synchronize stack does not drop it before 128 reads it); its drop is recorded in
-  [legacy-compatibility](legacy-compatibility.md). 128 NOTICEs every pin it does not carry: each
+  the owner's hand-merge; run on both estates by `v1.6.3`, its one flagged post carried).
+  `posts.pinned` is read by nothing and, since 2026-11-04, unmapped from the entity; its drop waits
+  for production to serve that unmapping, since an older image still names it in every INSERT
+  ([legacy-compatibility](legacy-compatibility.md#removable-at-floor-127)). 128 NOTICEs every pin it does not carry: each
   governed space where the post is visible but that had no room, and each flagged post pinned
   nowhere (visible in no governed space, or not live at run time - hidden, scheduled, an expired
   reel); nothing re-runs it, so the run's log is the re-pin-by-hand list.
@@ -1086,8 +1087,8 @@ n'importe quel post sur l'espace dont il est responsable"*:
   right held). `pinned` in the response means pinned in one of the viewer's spaces.
 - **Old clients.** They read `pinned` and send a body-less `pin`. `pinned` keeps the meaning above; a
   body-less pin is accepted when exactly one governed space fits and is otherwise refused with a
-  typed `space_required` 409. `posts.pinned` stops being read at once; the column is dropped in a
-  later migration after the window recorded in [legacy-compatibility](legacy-compatibility.md).
+  typed `space_required` 409. `posts.pinned` stops being read at once; the column is unmapped, then
+  dropped in a later release ([legacy-compatibility](legacy-compatibility.md#removable-at-floor-127)).
 - Tests: unit; integration with two BDEs on one campus (an ISMIN pin is not on top for ICM readers);
   the 4th pin refused; two concurrent pins at 2 of 3 leave exactly 3; an institution post pinnable
   (G9 intact); unpin; a no-space account with a campus-wide read grant sees an ISMIN-space pin first,
