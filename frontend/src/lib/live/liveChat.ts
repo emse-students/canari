@@ -22,6 +22,13 @@
  *   at once, and the server leaves them out of the sums it serves back (C10).
  *
  * Plain text only (C15): a message is drawn as text, never as markup or a link.
+ *
+ * WITHHELD (owner, 2026-11-04): the server withholds the chat from a named reader who watches an
+ * association's live only through a read grant with "voit les commentaires" off. The open says so
+ * (`LiveView.chatWithheld`, through {@link LiveChatSession.onKey}) and EVERY poll says it again
+ * (`LiveChatBlock.withheld`), so the session follows the switch from the next poll on, both ways: no
+ * line kept and none written while withheld, and on the way back the message cursor starts over, so
+ * the reader is served the chat as a joiner is. The reactions float either way.
  */
 import { m } from '$lib/paraglide/messages';
 import { Log } from '$lib/utils/Log';
@@ -94,7 +101,8 @@ export function liveReactionLabel(kind: LiveReactionKind): string {
 /**
  * Why a send did not land - decided at the throw, so the panel switches on it:
  * `empty` / `too-long` (refused before sealing), `too-fast` (429), `network` (no answer - retry
- * re-sends the same bytes), `muted`, `removed`, `ended`, `refused` (any other verdict), and
+ * re-sends the same bytes), `muted`, `removed`, `ended`, `withheld` (403 `LIVE_CHAT_WITHHELD`: the
+ * chat is withheld from this named reader), `refused` (any other verdict), and
  * `unreadable`: the server stored it, but under an author other than the one it was sealed for, or
  * its echo did not open - so every OTHER viewer drops it, and saying "sent" would be a lie.
  */
@@ -107,6 +115,7 @@ export type LiveChatSendFailure =
   | 'muted'
   | 'removed'
   | 'ended'
+  | 'withheld'
   | 'refused';
 
 /** One line of the chat as the panel draws it. */
@@ -144,6 +153,11 @@ export interface LiveChatSessionOptions {
   me(): string | null;
   /** Told the whole list after every change. */
   onChange(lines: readonly LiveChatLine[]): void;
+  /**
+   * Told when the chat becomes withheld from me or served to me again (see the module comment) -
+   * the panel draws its one-line explanation in place of the chat while it is `true`.
+   */
+  onWithheld?(withheld: boolean): void;
   /** Told reactions to float: mine at the tap, everyone else's as each poll brings them. */
   onFloat?(kind: LiveReactionKind, count: number): void;
   /**
@@ -168,6 +182,7 @@ const defaultDeps: LiveChatDeps = {
 /** The failure a refused or unanswered send means - the ONE classification. */
 export function liveChatSendFailure(error: unknown): LiveChatSendFailure {
   if (error instanceof LiveRefusalError) {
+    if (error.code === 'LIVE_CHAT_WITHHELD') return 'withheld';
     if (error.kind === 'rate-limited') return 'too-fast';
     if (error.kind === 'removed') return 'removed';
     if (error.kind === 'ended' || error.kind === 'not-found') return 'ended';
@@ -217,6 +232,8 @@ export class LiveChatSession {
   /** Blocks are applied one after another, in arrival order. */
   private chain: Promise<void> = Promise.resolve();
   private stopped = false;
+  /** The server withholds the chat from me (a named reader, owner 2026-11-04). */
+  private chatWithheld = false;
 
   constructor(opts: LiveChatSessionOptions) {
     this.opts = opts;
@@ -239,9 +256,14 @@ export class LiveChatSession {
     return this.keyHex !== null;
   }
 
-  /** Whether a message can be written: the key is held and I am known. */
+  /** Whether a message can be written: the key is held, I am known and the chat is mine to read. */
   get canWrite(): boolean {
-    return this.keyHex !== null && this.me !== null && !this.stopped;
+    return this.keyHex !== null && this.me !== null && !this.stopped && !this.chatWithheld;
+  }
+
+  /** Whether the server withholds the chat from me now - the open's answer, then each poll's. */
+  get withheld(): boolean {
+    return this.chatWithheld;
   }
 
   /** The live's key, from `GET /api/lives/:id` (the player's open) - never logged. */
@@ -250,9 +272,13 @@ export class LiveChatSession {
     this.keyHex = keyHex;
   }
 
-  /** The player's hook (`LivePlayerChatHook.onKey`): the key its open fetched. */
-  onKey(keyHex: string): void {
+  /**
+   * The player's hook (`LivePlayerChatHook.onKey`): the key its open fetched, and whether that open
+   * said the chat is withheld from me - so the explanation is drawn before the first poll answers.
+   */
+  onKey(keyHex: string, opened: { chatWithheld?: boolean } = {}): void {
     this.setKey(keyHex);
+    this.setWithheld(opened.chatWithheld === true);
   }
 
   /** The server's numbers (`GET /api/lives/limits`): the longest message and a burst's taps. */
@@ -290,7 +316,11 @@ export class LiveChatSession {
     // `query()` may run before this block is drawn, and asking from the old cursors would bring the
     // same rows - the same reactions floating twice. The rows themselves are drawn in order by the
     // chain below, each in its own try, so moving past them loses none.
-    if (Number.isSafeInteger(block.messagesCursor)) this.messagesAfter = block.messagesCursor;
+    // A WITHHELD block holds no message cursor for me: the next poll that serves the chat again is a
+    // joiner's (no cursor), so the reader gets the backlog as anyone opening the live would.
+    this.setWithheld(block.withheld === true);
+    if (this.chatWithheld) this.messagesAfter = undefined;
+    else if (Number.isSafeInteger(block.messagesCursor)) this.messagesAfter = block.messagesCursor;
     else console.error(`[LIVE_CHAT] ${this.liveId}: a chat block without a message cursor`);
     if (Number.isSafeInteger(block.reactionsCursor)) this.reactionsAfter = block.reactionsCursor;
     else console.error(`[LIVE_CHAT] ${this.liveId}: a chat block without a reaction cursor`);
@@ -448,11 +478,39 @@ export class LiveChatSession {
       return null;
     } catch (e) {
       const failure = liveChatSendFailure(e);
+      if (failure === 'withheld') {
+        // The switch went off before a poll could say so: the server's answer is the same verdict
+        // as a withheld block, applied now - the line goes with the rest of the chat.
+        console.info(
+          `[LIVE_CHAT] ${this.liveId}: message ${clientId} refused, the chat is withheld`
+        );
+        this.sealedByClientId.delete(clientId);
+        this.setWithheld(true);
+        return failure;
+      }
       console.warn(`[LIVE_CHAT] ${this.liveId}: message ${clientId} not sent (${failure})`);
       this.markFailed(clientId, failure);
       this.reportLiveOver(e);
       return failure;
     }
+  }
+
+  /**
+   * Follows the server's word on whether the chat is withheld from me. Entering it drops every line
+   * (none may stay on screen) and the unsent ones; either change is told once to the screen.
+   */
+  private setWithheld(withheld: boolean): void {
+    if (withheld === this.chatWithheld) return;
+    this.chatWithheld = withheld;
+    console.info(`[LIVE_CHAT] ${this.liveId}: chat ${withheld ? 'withheld from' : 'served to'} me`);
+    if (withheld) {
+      this.lines = [];
+      this.sealedByClientId.clear();
+      this.verifiedEchoes.clear();
+      this.messagesAfter = undefined;
+      this.changed();
+    }
+    this.opts.onWithheld?.(withheld);
   }
 
   /** My pending line becomes the server's, wherever the answer or a poll brought it first. */
@@ -493,7 +551,8 @@ export class LiveChatSession {
   private async apply(block: LiveChatBlock): Promise<void> {
     const key = this.keyHex;
     if (this.stopped || key === null) return;
-    const messages = Array.isArray(block.messages) ? block.messages : [];
+    // A withheld block carries no line; one that was in flight when the switch went off is not drawn.
+    const messages = this.chatWithheld || !Array.isArray(block.messages) ? [] : block.messages;
     let dropped = 0;
     for (const m of messages) {
       // EVERY row is handled inside its own try: one malformed row is dropped and said, never a

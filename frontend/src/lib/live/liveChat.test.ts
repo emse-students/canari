@@ -268,6 +268,7 @@ describe('writing', () => {
     [refusal('ended', 410, 'LIVE_ENDED'), 'ended'],
     [refusal('not-found', 404, 'LIVE_NOT_FOUND'), 'ended'],
     [refusal('refused', 403, 'LIVE_MUTED'), 'muted'],
+    [refusal('refused', 403, 'LIVE_CHAT_WITHHELD'), 'withheld'],
     [refusal('refused', 409, 'LIVE_MESSAGE_CONFLICT'), 'refused'],
     [refusal('unavailable', 502), 'network'],
     [new TransportFailureError('offline'), 'network'],
@@ -589,5 +590,82 @@ describe('a write answered "the live is over" (WP-L6)', () => {
     expect(await hiding).toBe(false);
     expect(over).not.toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe('the chat withheld from a named reader (owner, 2026-11-04)', () => {
+  function watched() {
+    const told: boolean[] = [];
+    const s = new LiveChatSession({
+      liveId: LIVE,
+      me: () => ME,
+      onChange: (l) => {
+        lines = l;
+      },
+      onFloat: (kind, n) => floats.push([kind, n]),
+      onWithheld: (w) => told.push(w),
+      deps,
+    });
+    return { s, told };
+  }
+
+  it('the open says it: no composer from the first frame, told once', () => {
+    const { s, told } = watched();
+    s.onKey(KEY, { chatWithheld: true });
+    expect(s.withheld).toBe(true);
+    expect(s.canWrite).toBe(false);
+    expect(told).toEqual([true]);
+    // An open that says nothing (an older server) is not withheld.
+    const other = watched();
+    other.s.onKey(KEY);
+    expect(other.s.withheld).toBe(false);
+    expect(other.s.canWrite).toBe(true);
+    expect(other.told).toEqual([]);
+  });
+
+  it('a withheld block draws no line, keeps no message cursor, and still floats the reactions', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { s, told } = watched();
+    s.onKey(KEY);
+    await s.receive(block([wire(1, 'avant')], 1));
+    expect(texts()).toEqual(['avant']);
+    await s.receive(
+      block([wire(2, 'never drawn')], 9, {
+        withheld: true,
+        reactions: [{ window: 0, counts: { fire: 2 } }],
+        reactionsCursor: 4,
+      })
+    );
+    expect(lines).toEqual([]);
+    expect(floats).toEqual([['fire', 2]]);
+    expect(s.query()).toEqual({ messagesAfter: undefined, reactionsAfter: 4 });
+    expect(told).toEqual([true]);
+    info.mockRestore();
+  });
+
+  it('switched back ON, the next poll is a joiner: the backlog is drawn and writing comes back', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { s, told } = watched();
+    s.onKey(KEY, { chatWithheld: true });
+    await s.receive(block([], 5, { withheld: true }));
+    expect(s.query().messagesAfter).toBeUndefined();
+    await s.receive(block([wire(4, 'backlog'), wire(5, 'newest')], 5));
+    expect(texts()).toEqual(['backlog', 'newest']);
+    expect(s.query().messagesAfter).toBe(5);
+    expect(s.canWrite).toBe(true);
+    expect(told).toEqual([true, false]);
+    info.mockRestore();
+  });
+
+  it('a send refused LIVE_CHAT_WITHHELD (the switch went off between two polls) withholds at once, with no failed line', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    deps.postMessage.mockRejectedValueOnce(refusal('refused', 403, 'LIVE_CHAT_WITHHELD'));
+    const { s, told } = watched();
+    s.onKey(KEY);
+    expect(await s.send('bonjour')).toBe('withheld');
+    expect(lines).toEqual([]);
+    expect(s.withheld).toBe(true);
+    expect(told).toEqual([true]);
+    info.mockRestore();
   });
 });

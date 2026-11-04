@@ -440,6 +440,26 @@ this change, raised once BOTH stores serve it) is what retires the dead button; 
 it. Measure before: the `comments withheld from a grant-only reader` refusals in social-service debug
 logs count the older builds that still tap it.
 
+### No date yet - a live chat withheld, drawn by a build that does not know `withheld` (2026-11-04)
+
+**Site:** the manifest poll's chat block (`LiveChatService.read` with `withheld`,
+`apps/social-service/src/lives/live-chat.service.ts`) and `POST /api/lives/:id/messages`
+(`LivesService.mayChat`); on the client, `LiveChatSession` reads `LiveChatBlock.withheld` and
+`LiveView.chatWithheld`.
+**What an older build sees.** To a named reader the chat of an association's live is withheld from
+([profiles-and-access](profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08)), the
+server sends `messages: []` with the live's newest seq as `messagesCursor` - a block an older build
+applies as an empty one, its cursor advancing quietly, with no error line. It still draws the composer,
+and a send is answered `403 LIVE_CHAT_WITHHELD`, which it classifies `refused` ("Non envoye.") on
+that line. **No chat line reaches it**; only the composer is dead.
+**Why it is not shimmed.** The only shim would be to serve the lines, which is what was decided
+against; the cursor is already the one an older build reads quietly. The population is the named
+readers alone.
+**Removal condition:** none to remove; the floor (`minClientVersion` >= the first stable carrying
+it, raised once BOTH stores serve it) retires the dead composer, and the entry goes with it. Measure
+before: the `refused to <id>: chat withheld` debug lines of `LivesService` count the older builds
+that still send.
+
 ### No date yet - a moderation tombstone drawn by a build that does not know `removedByModeration` (2026-11-04)
 
 **Site:** the served comment rows (`tombstoneOf`, `apps/social-service/src/posts/comment-removal.ts`);

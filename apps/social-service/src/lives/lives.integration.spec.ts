@@ -30,6 +30,8 @@ import { HttpStatus, Logger, ServiceUnavailableException } from '@nestjs/common'
 import { LIVE_ENTITIES } from './lives.module';
 import { LivesService } from './lives.service';
 import { LiveChatService } from './live-chat.service';
+import { LiveChatController } from './live-chat.controller';
+import { LivesController } from './lives.controller';
 import { liveChatAad } from './live-chat-seal';
 import { LIVE_KEY_ENCRYPTION_SECRET_ENV } from './live-key-at-rest';
 import { LiveRetentionScheduler } from './live-retention.scheduler';
@@ -319,6 +321,12 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       `CREATE TABLE association_audiences ("associationId" uuid, formation varchar, campus varchar)`
     );
     await q(`CREATE TABLE read_grants (user_id varchar(255), campus varchar, formation varchar)`);
+    // A named reader's switch "voit les commentaires" (migration 132), in the columns the predicate
+    // reads: the watch rule asks whether the chat is withheld (owner, 2026-11-04).
+    await q(
+      `CREATE TABLE read_grant_readers (user_id varchar(255) PRIMARY KEY,
+         sees_comments boolean NOT NULL DEFAULT false)`
+    );
     for (const id of [ALICE, BOB, CAROL, DAVE, EVE]) {
       await q(
         `INSERT INTO users (id, campus, cursus) VALUES ($1, ${SE}, '[{"formation":"ICM"}]')`,
@@ -357,6 +365,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
     await q(`DELETE FROM association_members`);
     await q(`DELETE FROM association_audiences`);
     await q(`DELETE FROM read_grants`);
+    await q(`DELETE FROM read_grant_readers`);
     await q(`DELETE FROM live_cuts`);
     await q(`DELETE FROM live_broadcast_withdrawals`);
     await q(`DELETE FROM live_chat_reported_lines`);
@@ -3208,6 +3217,165 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
         content: 'verified',
         author: 'erased',
         reporter: 'verified',
+      });
+    });
+
+    /**
+     * THE LIVE CHAT OF A NAMED READER (owner, 2026-11-04): a reader who watches an association's live
+     * ONLY through a read grant, with "voit les commentaires" off, sees the video and not its chat.
+     * Every consumer, through the shipped code: the open, the poll (`LivesController.manifest`), a
+     * message (`LiveChatController.post`), a burst, a line's report, and what a line notifies.
+     *
+     * The cast, on BDE Gardanne's live (audience ISMIN x Gardanne), broadcast by ALICE:
+     * BOB - a grant on Gardanne, switch never set (OFF): withheld;
+     * CAROL - the same grant, switch ON;
+     * EVE - the same grant, and a platform admin: never withheld;
+     * FRANK - an ISMIN student of Gardanne: reaches it natively, never withheld.
+     */
+    describe('a named reader and the chat of an association live (owner, 2026-11-04)', () => {
+      const switchOn = (who: string, on: boolean) =>
+        q(
+          `INSERT INTO read_grant_readers (user_id, sees_comments) VALUES ($1, $2)
+           ON CONFLICT (user_id) DO UPDATE SET sees_comments = EXCLUDED.sees_comments`,
+          [who, on]
+        );
+      const polls = () => new LivesController(lives, {} as AssociationsService, chat);
+      const writes = () => new LiveChatController(lives, chat, {} as AssociationsService);
+      const poll = (who: string, messagesAfter?: string) =>
+        polls().manifest(LIVE_ID(), who, undefined, '1', messagesAfter, messagesAfter);
+      let liveId = '';
+      const LIVE_ID = () => liveId;
+      /** A message body as the client sends it, sealed for its author. */
+      const body = (who: string, text = 'bonjour') => {
+        const clientId = uuid();
+        return { clientId, sealed: seal(liveId, clientId, who, text) };
+      };
+      const react = (who: string, counts: Record<string, number>) =>
+        writes().react(liveId, who, { burstId: uuid(), counts });
+
+      beforeEach(async () => {
+        await q(`INSERT INTO associations (id, name) VALUES ($1, 'BDE Gardanne')`, [ASSO]);
+        await q(
+          `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ISMIN', ${GA})`,
+          [ASSO]
+        );
+        for (const who of [BOB, CAROL, EVE]) {
+          await q(`INSERT INTO read_grants (user_id, campus, formation) VALUES ($1, ${GA}, NULL)`, [
+            who,
+          ]);
+        }
+        await switchOn(CAROL, true);
+        await q(`UPDATE users SET admin = true WHERE id = $1`, [EVE]);
+        mayActAs.add(`${ALICE}:${ASSO}`);
+        liveId = (await lives.start(ALICE, { key: KEY, associationId: ASSO })).id;
+        await lives.ingest(ALICE, liveId, 0, segment(0));
+      });
+      afterEach(() => q(`UPDATE users SET admin = false WHERE id = $1`, [EVE]));
+
+      it('every one of them watches; the open says the chat is withheld from BOB alone', async () => {
+        for (const [who, withheld] of [
+          [BOB, true],
+          [CAROL, false],
+          [EVE, false],
+          [FRANK, false],
+          [ALICE, false],
+        ] as const) {
+          await expect(lives.get(who, liveId)).resolves.toMatchObject({
+            key: KEY,
+            chatWithheld: withheld,
+          });
+        }
+      });
+
+      it('the poll serves BOB no line, ever - only the reactions - and the others every line', async () => {
+        const line = await say(FRANK, liveId, 'salut');
+        await react(FRANK, { fire: 2 });
+        const first = (await poll(BOB)).chat;
+        expect(first).toEqual({
+          messages: [],
+          messagesCursor: line.seq,
+          reactions: [],
+          reactionsCursor: expect.any(Number),
+          withheld: true,
+        });
+        // With a cursor (an older client passing one back): still no line, and the reactions flow.
+        await react(FRANK, { clap: 1 });
+        const next = (await poll(BOB, '0')).chat;
+        expect(next?.messages).toEqual([]);
+        expect(next?.withheld).toBe(true);
+        expect(next?.reactions.flatMap((w) => Object.keys(w.counts)).sort()).toEqual([
+          'clap',
+          'fire',
+        ]);
+        for (const who of [CAROL, EVE, FRANK, ALICE]) {
+          const block = (await poll(who)).chat;
+          expect({ who, ids: block?.messages.map((m) => m.id), withheld: block?.withheld }).toEqual(
+            { who, ids: [line.id], withheld: undefined }
+          );
+        }
+        // The flag rides the chat block only: the manifest itself carries no `chatWithheld`.
+        expect(await poll(BOB)).not.toHaveProperty('chatWithheld');
+      });
+
+      it('BOB may not send (403 LIVE_CHAT_WITHHELD, nothing written) but may react; the others send', async () => {
+        expect(await refusal(writes().post(liveId, BOB, body(BOB)))).toEqual({
+          status: HttpStatus.FORBIDDEN,
+          code: 'LIVE_CHAT_WITHHELD',
+        });
+        expect(await q(`SELECT 1 FROM live_chat_messages WHERE "authorId" = $1`, [BOB])).toEqual(
+          []
+        );
+        await expect(react(BOB, { like: 1 })).resolves.toMatchObject({ seq: expect.any(Number) });
+        for (const who of [CAROL, EVE, FRANK]) {
+          await expect(writes().post(liveId, who, body(who))).resolves.toMatchObject({
+            authorId: who,
+          });
+        }
+        // A chat line notifies nobody - no bell row and no push, to a named reader or anyone.
+        expect(bell).toEqual([]);
+        expect((await pushed()).filter((n) => n.recipientIds.includes(BOB))).toEqual([]);
+      });
+
+      it('BOB cannot report a line (404, as a hidden one); CAROL can', async () => {
+        const line = await say(FRANK, liveId, 'une ligne');
+        expect(await refusal(reportLine(BOB, line.id, 'une ligne', liveId))).toEqual({
+          status: HttpStatus.NOT_FOUND,
+          code: 'LIVE_NOT_FOUND',
+        });
+        await expect(reportLine(CAROL, line.id, 'une ligne', liveId)).resolves.toMatchObject({
+          contentType: 'live_chat',
+          reporterId: CAROL,
+        });
+        expect((await kept()).map((k) => k.text)).toEqual(['une ligne']);
+      });
+
+      it('a switch flipped MID-LIVE holds from the next poll on, with no reopen', async () => {
+        const before = await say(FRANK, liveId, 'avant');
+        const withheld = (await poll(BOB)).chat;
+        expect(withheld?.withheld).toBe(true);
+
+        // ON: the client, having held no cursor while withheld, polls as a joiner and gets the
+        // backlog - the line written while BOB was withheld included, as a comment switched on shows
+        // the comments already there.
+        await switchOn(BOB, true);
+        const opened = (await poll(BOB)).chat;
+        expect(opened?.withheld).toBeUndefined();
+        expect(opened?.messages.map((m) => m.id)).toEqual([before.id]);
+        await expect(writes().post(liveId, BOB, body(BOB))).resolves.toMatchObject({
+          authorId: BOB,
+        });
+
+        // OFF again: the very next poll serves no line, even from the cursor BOB holds, and a send
+        // is refused again.
+        await switchOn(BOB, false);
+        const after = await say(FRANK, liveId, 'apres');
+        const closed = (await poll(BOB, String(opened?.messagesCursor ?? 0))).chat;
+        expect(closed).toMatchObject({ messages: [], withheld: true });
+        expect(closed?.messagesCursor).toBeGreaterThanOrEqual(after.seq);
+        expect(await refusal(writes().post(liveId, BOB, body(BOB)))).toEqual({
+          status: HttpStatus.FORBIDDEN,
+          code: 'LIVE_CHAT_WITHHELD',
+        });
       });
     });
   });

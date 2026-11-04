@@ -163,6 +163,21 @@ member's live** (a segment, the end, a removal) **is `404 LIVE_NOT_FOUND`**, the
 does not exist - a `403` there would tell any signed-in account which live ids are real (review,
 2026-10-19).
 
+**A named reader watches; the chat is the switch's (owner, 2026-11-04).** A reader who sees an
+association's live ONLY through a read grant, with "voit les commentaires" off, watches it - the
+video, the viewer count, the floating reactions - but its chat is WITHHELD:
+`liveChatWithheldFromViewerSql`, the lives' half of the ONE definition of "withheld" the comments
+also use (`withheldFromGrantOnlyReaderSql`, [profiles-and-access](../profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08)).
+`assertMayWatch` asks it IN ITS OWN STATEMENT, beside the visibility, so the open (`chatWithheld` on
+`GET /api/lives/:id`) and every manifest poll answer it on one snapshot: the poll's chat block is then
+`{ messages: [], messagesCursor: <newest seq>, reactions, reactionsCursor, withheld: true }` and no
+message row is read; `POST .../messages` is `403 LIVE_CHAT_WITHHELD` (`LivesService.mayChat`; a
+403 and not a 404, because the live is visible to them and a 404 tells the client it is gone); a
+line's report is the `404 LIVE_NOT_FOUND` of a hidden line. A switch flipped in the read-access grid
+holds from the NEXT poll on, both ways, with no reopen: the poll is the stream, and every poll asks
+the predicate again - no cache, no timer. A chat line notifies nobody, so there is no notification to
+withhold. Proof: `lives.integration.spec.ts`, "a named reader and the chat of an association live".
+
 **A segment is read WITHOUT A TOKEN**, `GET /api/media/public/live/<liveId>/<name>`, by the `name`
 the manifest gives, and it is answered by Canari's own nginx from the second viewer on (below).
 
@@ -1119,8 +1134,8 @@ social-service.
 
 | Route | Who | Answers |
 | --- | --- | --- |
-| `GET /api/lives/:id/manifest?chat=1[&messagesAfter=<seq>][&reactionsAfter=<seq>]` | who may watch | the manifest plus `chat: { messages, messagesCursor, reactions, reactionsCursor }`. `messages`: ascending `seq`, at most 100 after the cursor (or the newest 50 without one), each `{ id, seq, authorId, clientId, sealed (base64), createdAt }` or a tombstone `{ id, seq, hidden: true }`. `reactions`: `[{ window, counts: { like?, laugh?, clap?, fire?, canari? } }]`. Pass each cursor back as is. Without `chat=1`, the manifest is unchanged |
-| `POST /api/lives/:id/messages` `{ clientId, sealed }` | who may watch, not muted | `201` the message. `400 LIVE_MESSAGE_INVALID` (not a uuid / not base64 / out of 29..928 bytes), `403 LIVE_MUTED`, `409 LIVE_MESSAGE_CONFLICT`, `429 LIVE_MESSAGE_TOO_FAST` (with `retryAfterMs`), and the watch refusals (`404`, `403 LIVE_VIEWER_REMOVED`, `410`) |
+| `GET /api/lives/:id/manifest?chat=1[&messagesAfter=<seq>][&reactionsAfter=<seq>]` | who may watch | the manifest plus `chat: { messages, messagesCursor, reactions, reactionsCursor }`. `messages`: ascending `seq`, at most 100 after the cursor (or the newest 50 without one), each `{ id, seq, authorId, clientId, sealed (base64), createdAt }` or a tombstone `{ id, seq, hidden: true }`. `reactions`: `[{ window, counts: { like?, laugh?, clap?, fire?, canari? } }]`. Pass each cursor back as is. Without `chat=1`, the manifest is unchanged. To a named reader the chat is withheld from, `messages` is always empty, `messagesCursor` the newest seq, and `withheld: true` ([who may watch](#who-may-watch-the-rule-of-a-post)) |
+| `POST /api/lives/:id/messages` `{ clientId, sealed }` | who may watch, not muted, the chat not withheld | `201` the message. `400 LIVE_MESSAGE_INVALID` (not a uuid / not base64 / out of 29..928 bytes), `403 LIVE_MUTED`, `403 LIVE_CHAT_WITHHELD`, `409 LIVE_MESSAGE_CONFLICT`, `429 LIVE_MESSAGE_TOO_FAST` (with `retryAfterMs`), and the watch refusals (`404`, `403 LIVE_VIEWER_REMOVED`, `410`) |
 | `POST /api/lives/:id/reactions` `{ burstId, counts }` | who may watch, not muted | `201 { burstId, seq }`. `400 LIVE_REACTION_INVALID` (an unknown kind, a count not 1..10, an empty burst), `403 LIVE_MUTED`, `409 LIVE_REACTION_CONFLICT`, `429 LIVE_REACTION_TOO_FAST` (with `retryAfterMs`), the watch refusals |
 | `POST /api/lives/:id/messages/:messageId/hide` | the broadcaster, or staff (`isContentModerator`) | `200 { liveId, messageId, hidden: true }`, idempotent; `404 LIVE_MESSAGE_NOT_FOUND`, `404 LIVE_NOT_FOUND`, `410 LIVE_ENDED` |
 

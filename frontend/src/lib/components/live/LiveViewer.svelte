@@ -88,7 +88,9 @@
   // The key from the player, and the account READ REACTIVELY: an account that loads after the viewer
   // opened enables the composer then, not never.
   let chatKeyed = $state(false);
-  const chatCanWrite = $derived(chatKeyed && currentUserId() !== null);
+  /** The server withholds the chat from this named reader (owner, 2026-11-04): the session says. */
+  let chatWithheld = $state(false);
+  const chatCanWrite = $derived(chatKeyed && !chatWithheld && currentUserId() !== null);
   let chatOpen = $state(true);
   // STAFF HIDE (C14): the server opens the hide route to the broadcaster and to the moderators of
   // THIS live - a platform admin, read reactively, or a BDE whose spaces hold it.
@@ -173,6 +175,9 @@
         chatLines = lines;
       },
       onFloat: (kind, count) => reactions?.add(kind, count),
+      onWithheld: (withheld) => {
+        chatWithheld = withheld;
+      },
       // A write answered "the live is over" shows the screen the player's own poll would have shown.
       onLiveOver: (verdict) => player?.refusedElsewhere(verdict),
       deps: chatDeps,
@@ -201,8 +206,8 @@
         viewers = count;
       },
       chat: {
-        onKey: (key) => {
-          session.onKey(key);
+        onKey: (key, opened) => {
+          session.onKey(key, opened);
           chatKeyed = session.keyed;
         },
         query: () => session.query(),
@@ -395,6 +400,7 @@
               discard={(id) => chat?.discard(id)}
               hide={(id) => void chat?.hide(id)}
               report={(line) => (reportedLine = line)}
+              withheld={chatWithheld}
             />
           {/if}
         </div>

@@ -60,6 +60,16 @@ afterEach(() => {
 });
 
 describe('LiveChatPanel', () => {
+  it('withheld from a named reader (owner, 2026-11-04): one plain line, no list and no composer', () => {
+    const { target } = render({ withheld: true, lines: [line({})] });
+    expect(target.querySelector('[data-live-chat-withheld]')?.textContent?.trim()).toBe(
+      m.live_chat_withheld()
+    );
+    expect(target.querySelector('[data-live-chat-line]')).toBeNull();
+    expect(target.querySelector('[data-live-chat-composer]')).toBeNull();
+    expect(target.querySelector('[role="alert"]')).toBeNull();
+  });
+
   it('draws a message as plain text: markup and links stay text', () => {
     const { target } = render({
       lines: [line({ text: '<b>bold</b> https://example.org' })],
