@@ -306,6 +306,7 @@
             {media}
             {authToken}
             galleryMode
+            announceLoading={active}
             onLoaded={active ? onMediaLoaded : undefined}
             onPlaybackBlocked={active ? onPlaybackBlocked : undefined}
           />

@@ -653,6 +653,29 @@ Pinned by
 `ReelViewer.svelte.test.ts`, `reelPosters.test.ts`, `publishReel.test.ts`. **Owed on the iPhone 12** (none
 of it read on a device): ten reels swiped on a throttled link - each starts without a tap, a stall shows the spinner, and the in-app log carries no `[VideoPlayer] autoplay` warning or `interrupted by a pause` line the reader did not cause (the device console, Safari Web Inspector, shows the `Log.d` lines: one `autoplay asked` per load).
 
+**The download is said, from the first byte (Mi 9T, v1.6.4-alpha.4, 400 kbps / 400 ms, 2026-11-04).**
+A reel whose segmented read falls back to the whole blob (`segmented, read whole (no-codecs)`) holds
+`PostMedia`'s `loading` for the entire ~55 s download, and the gallery branch drew a static image
+icon (no poster) or the bare poster: #3015's spinner lives in `VideoPlayer`, which mounts only after
+that wait. Now `PostMedia` (gallery mode) draws `shared/MediaSpinner.svelte` over the poster for as
+long as `loading` holds, and `VideoPlayer` draws the same component while it buffers - one visual
+language, one label (`video_loading_label`). Pinned by `PostMedia.loading.svelte.test.ts`. **No
+progress figure**: `MediaService.downloadAndDecrypt` reports none (the bytes land decrypted in one
+piece), so a percentage would be invented; adding one means changing the media service, not the page.
+
+**The preload stays behind the settled reel - decided, not changed (2026-11-04).** Starting the next
+reel's fetch beside the current one's was weighed and refused: (1) on one weak link the two downloads
+share the bandwidth, so the reel being watched gets roughly half of it (~110 s instead of ~55 s for
+the same file at 400 kbps) - the cost lands on the reel the reader is looking at, the gain on one they
+may never reach; (2) the swipe's handover is not a clean win either way: `ReelPreload.stop()` only aborts the
+preload's HOLD on the shared load (`mediaBlobCache.ts`); a request already on the wire is kept
+joinable, so a reel read WHOLE (this defect's path) joins the preload's bytes and loses nothing, but a
+STREAMED segmented reel opens its own fetch (`openSegmentedStream`) and the preload's partial bytes
+are dropped; (3) the order is a correctness fact elsewhere (`settledId`), not a tuning knob. What
+would reopen it: a preload whose bytes the streamed path also joins AND a measurement that the
+reader's dwell on a settled reel is shorter than the next fetch. Neither exists; nothing was measured on
+a device, this is a derivation from the link's arithmetic and the code.
+
 **Owed on the bench phones** (none of this was read on a device): see
 [device-verification](../../device-verification.md) and the PR's reading list - per phone, the
 `[reel-frame]` / `[reel-poster]` lines (a frame decoded, its bytes and milliseconds), a swipe forward
