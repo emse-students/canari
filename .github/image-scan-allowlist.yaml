@@ -189,6 +189,17 @@ vulnerabilities:
       - "pkg:deb/debian/libbrotli1@1.1.0-2+b7"
     statement: "Debian libbrotli1 1.1.0-2+b7 in authentik 2026.8.5, the newest authentik release, an upstream image this repository does not build, so the fix is not ours to ship; which processes load it was not verified. Remove when an authentik release ships 1.1.0-2+deb13u1."
 
+  # Debian's apt 3.0.3 (and its library libapt-pkg7.0) in the same authentik image, reported
+  # 2026-11-05: an on-path attacker against apt's own package downloads, fixed in 3.0.4.
+  # 2026.8.5 is still the newest authentik release. Upstream's Dockerfile runs apt-get only in its
+  # build stages; the server and worker never invoke apt at runtime, and this deployment never runs
+  # apt inside the container. Scoped by purl to that one build.
+  - id: CVE-2026-109518
+    purls:
+      - "pkg:deb/debian/apt@3.0.3"
+      - "pkg:deb/debian/libapt-pkg7.0@3.0.3"
+    statement: "apt 3.0.3 and libapt-pkg7.0 in authentik 2026.8.5 (on-path attacker against apt's package downloads): upstream runs apt-get only while building the image, nothing in the server or worker invokes apt, and this deployment never runs it in the container. Upstream image, not rebuildable here; remove when an authentik release ships apt 3.0.4."
+
   # Three Python libraries in the same authentik image (2026-10-27), each HIGH with a published fix
   # and none in a release: 2026.8.5 (2026-10-21) is the newest. Read from authentik's own lockfile
   # at that tag (not from running the image): dnspython arrives only through `email-validator`;
