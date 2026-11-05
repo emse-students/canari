@@ -377,6 +377,32 @@ the two read on the Mi 9T and the iPhone 12, with a one-column and a several-col
   `data-tracking`, which turns their transition off - they follow the target instead of lagging it.
   `scrollend` and the next step clear it; where `scrollend` does not fire, the cost is only that the
   glide waits for the next step.
+- **The spotlight follows its target WHATEVER moves it (2026-11-05).** A `ResizeObserver` sees a
+  change of SIZE only, and `scroll`/`resize` listeners see neither a banner leaving, a skeleton
+  replaced by a shorter block, a scrollbar appearing nor a sidebar widening: the target MOVED with
+  its size untouched and the ring kept a stale box (measured in Chromium: a 120x40 button moved from
+  y=50 to y=10, the ring stayed at 44 instead of 4). `guideAnchorFollow.ts` closes it with an
+  `IntersectionObserver` whose `rootMargin` shrinks the viewport to exactly the target's box: any
+  shift or resize drops the intersection ratio below 1, the callback fires, and the observer is
+  re-armed around the new box. It is an event, not a poll and not a per-frame read; it catches moves
+  by any cause (an offset ancestor, a font, an image, a grid render) without enumerating ancestors,
+  which a `ResizeObserver` on ancestors plus a `MutationObserver` could not promise. Its report joins
+  the same one-measure-per-frame schedule. The frame is made of the viewport size and the target's box, so a
+  `ResizeObserver` on `documentElement` and on the target re-frames when the window grows (slack the
+  intersection cannot see) and when a target that had no box gains one (it had no observer at all).
+  A target partly off screen IS framed (a negative inset becomes a positive `rootMargin`). The real
+  limit is a target clipped by an ancestor scroller: its ratio is below 1 from the start, the first
+  callback re-arms on that ratio, and moves are then seen against it.
+  Measured in Chromium (review of #3050): 1px moves fire in each of the four directions, on
+  fractional coordinates; 0.5px moves do NOT fire; a box at top -10px reports ratio 1 and a move to
+  -5px reports 0.875, which fires; a clipped target settles after 2 arms. WebKit is untested - a
+  re-arm that lingers there is the residual risk, and the bench reading on the iPhone checks it.
+- **The ring hugs the control**: its padding is symmetric (0.375rem on all sides, then the 2px ring),
+  and its corner radius is the control's own computed radius plus that padding (concentric), capped at
+  half the short side - a pill target gets a pill ring, not the fixed `--radius-lg` corner.
+- Pinned by `guideAnchorFollow.test.ts` (move reported, observer re-armed), the overlay test (a shift
+  with no size change moves the spotlight) and `guideAnchorSources.test.ts` (every anchor a guide
+  names is marked by a control on every layout).
 - The layer is its own rung, `--z-guide` (one over `--z-modal`): a help never runs over a modal or
   a sheet (it would not be quiet - it is suspended), and the call and a confirmation keep their rungs
   above it. The accent ink is the `guide-ink` token (brand dark in light, yellow in dark).
