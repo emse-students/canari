@@ -209,6 +209,7 @@ drift, and the erasure race is exactly the part that must not.
 | 503 `RESTORE_UNAVAILABLE` | this estate has no signing fingerprint configured | logs, shows the ordinary sign-in, keeps the key |
 | 429, 408 | throttled, or too slow to answer | as `RESTORE_UNAVAILABLE`: the attempt stays un-recorded and the next start asks again |
 | 409 `RESTORE_REGISTRATION_CONFLICT` (registration) | another registration for this session committed first | the start's registration fails, logged; the next start re-checks |
+| 403 `RESTORE_ORIGIN_NOT_ALLOWED` (registration) | the key was made by a build whose signing certificate `ANDROID_APP_LINK_SHA256` does not name (a sideloaded APK signed by the upload key) - read from the response's `clientDataJSON` before the verifier, so it is never a `RESTORE_REGISTRATION_INVALID` | records the version (`canari_restore_origin_refused`) and mints no key again until the version changes; the session's own check still runs at every start |
 | 403 `ACCOUNT_ERASURE_*`, 503 `MAINTENANCE` | as for a MiConnect sign-in | the same sentences as a MiConnect sign-in |
 
 Every refusal is logged server-side at `warn` with the code and the first 8 characters of the
@@ -231,7 +232,13 @@ work the secret reached only the frontend BUILD (`build.yml`); it now has a row 
 `infrastructure/deploy/env-manifest.tsv` (`warn` on both estates: absent, restore is unavailable),
 is passed by `serve-prod.yml` / `serve-dev.yml`, and is wired into `core-service` in both compose
 files. Dev reads `DEV_ANDROID_APP_LINK_SHA256`, which does not exist yet - **a one-off for the user**
-(the same value as production's: one Play signing key signs both tracks). The conversion is
+(the same value as production's: one Play signing key signs both tracks). **A bench APK is NOT signed by that key** (2026-11-05): the
+sideloaded `1.6.5-alpha.1` on the bench Mi 9T is signed by the upload or sideload key, so dev
+refused its key at every start - 59 `400 RESTORE_REGISTRATION_INVALID` from 11-01 to 11-05, server
+side `Unexpected registration response origin "android:apk-key-hash:..."`. Since the refusal has its
+own code the client stops after one per version; whether dev should ALSO accept the upload key
+(adding its SHA-256 to `DEV_ANDROID_APP_LINK_SHA256`, which also puts it in dev's
+`assetlinks.json`) is the owner's variable to change. The conversion is
 `base64url` WITHOUT padding of the 32 bytes the colon-hex names, accepted in exactly the forms
 `parseAndroidSha256Fingerprints` accepts.
 

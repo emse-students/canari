@@ -3,7 +3,7 @@
 import { Logger } from '@nestjs/common';
 import { createHash, generateKeyPairSync, randomBytes, sign, type KeyObject } from 'node:crypto';
 import { isoCBOR } from '@simplewebauthn/server/helpers';
-import { RestoreCredentialsService } from './restore-credentials.service';
+import { registrationOrigin, RestoreCredentialsService } from './restore-credentials.service';
 import { RESTORE_CHALLENGE_TTL_MS } from './restore-challenge';
 import { RestoreCredential } from './restore-credential.entity';
 import { QueryFailedError } from 'typeorm';
@@ -455,6 +455,36 @@ describe('RestoreCredentialsService', () => {
       T0
     );
     expect(result.status).toBe('invalid');
+  });
+
+  it('refuses a key made by a build this estate does not vouch for with its own status', async () => {
+    const { service, sessions, credentials } = makeStore();
+    sessions.set(SID, { id: SID, userId: USER, expiresAt: LATER, tokenId: JTI });
+    const phone = new SoftAuthenticator();
+    const options = await service.registrationOptions(SID, T0);
+    // A sideloaded APK signed by another certificate than the one ANDROID_APP_LINK_SHA256 names.
+    const sideloaded = `android:apk-key-hash:${Buffer.alloc(32, 0xcd).toString('base64url')}`;
+    expect(
+      await service.register(
+        USER,
+        SID,
+        JTI,
+        phone.register(options.challenge, { origin: sideloaded }) as never,
+        true,
+        T0
+      )
+    ).toEqual({ status: 'origin-refused', origin: sideloaded });
+    expect(credentials.size).toBe(0);
+  });
+
+  it('reads the origin a registration names, and nothing from a response that names none', () => {
+    const encode = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    expect(
+      registrationOrigin({ response: { clientDataJSON: encode({ origin: ORIGIN }) } } as never)
+    ).toBe(ORIGIN);
+    expect(registrationOrigin({ response: { clientDataJSON: encode({}) } } as never)).toBeNull();
+    expect(registrationOrigin({ response: { clientDataJSON: '%%' } } as never)).toBeNull();
+    expect(registrationOrigin(undefined)).toBeNull();
   });
 
   it('never re-binds a key id already held by another session', async () => {

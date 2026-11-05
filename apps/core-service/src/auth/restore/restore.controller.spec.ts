@@ -259,6 +259,19 @@ describe('AuthController restore routes', () => {
         controller.restoreRegistration(fromApp(), { response: {}, cloudBackup: true })
       ).rejects.toMatchObject({ response: { code: 'RESTORE_KEY_TAKEN' } });
     });
+
+    it('answers a key from a build this estate does not vouch for with its own typed 403', async () => {
+      restore.register.mockResolvedValue({
+        status: 'origin-refused',
+        origin: 'android:apk-key-hash:x',
+      });
+      await expect(
+        controller.restoreRegistration(fromApp(), { response: {}, cloudBackup: true })
+      ).rejects.toMatchObject({
+        status: 403,
+        response: { code: 'RESTORE_ORIGIN_NOT_ALLOWED' },
+      });
+    });
   });
 
   describe('assertion', () => {

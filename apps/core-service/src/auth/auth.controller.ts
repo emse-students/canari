@@ -1058,6 +1058,15 @@ export class AuthController {
             'Another registration for this session committed first'
           )
         );
+      case 'origin-refused':
+        // A verdict on the BUILD, not on this request: the client records it and stops asking until
+        // it runs another version (restoreCredential.ts, `ensureRestoreKey`).
+        throw new ForbiddenException(
+          restoreRefusal(
+            'RESTORE_ORIGIN_NOT_ALLOWED',
+            'This build of the app is not one this estate vouches for'
+          )
+        );
       case 'invalid':
         throw new BadRequestException(
           restoreRefusal('RESTORE_REGISTRATION_INVALID', 'The restore key did not verify')

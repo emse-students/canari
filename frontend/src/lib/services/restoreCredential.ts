@@ -17,6 +17,7 @@ import { m } from '$lib/paraglide/messages';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { isTransportFailure } from '$lib/utils/transportFailure';
+import { getClientAppVersion } from '$lib/utils/appVersion';
 import { adoptRestoredSession, type SignedInSession } from '$lib/stores/auth';
 import { sessionScopedHeaders } from '$lib/services/authSessions';
 import {
@@ -25,7 +26,9 @@ import {
   getRestoreKey,
   hasAttemptedRestore,
   markRestoreAttempted,
+  recordRestoreOriginRefused,
   restoreKeyRecord,
+  restoreOriginRefusedAt,
   restoreKeySupported,
   writeRestoreKeyRecord,
 } from '$lib/services/restoreKey';
@@ -95,7 +98,10 @@ let ensureInFlight: Promise<void> | null = null;
  * (the server holds the platform's key) and never accused. The ordinary start costs one request and
  * no platform call.
  *
- * Throws on any failure (the caller logs it); the next start tries again.
+ * Throws on any failure (the caller logs it); the next start tries again - EXCEPT after the estate
+ * refused this BUILD (`RESTORE_ORIGIN_NOT_ALLOWED`), a verdict no start of the same version can
+ * change: recorded ({@link recordRestoreOriginRefused}), and no key is minted again until the
+ * version changes.
  */
 export function ensureRestoreKey(userId: string): Promise<void> {
   if (ensureInFlight) {
@@ -150,6 +156,18 @@ async function ensureRestoreKeyOnce(userId: string): Promise<void> {
     // was then refused): the two diverged, and this start brings them back together.
     rwarn('the session holds a key this phone no longer holds - replacing it');
   }
+  // A VERDICT ON THIS BUILD IS NOT ASKED AGAIN BY IT. The estate refused this install's signing
+  // certificate at this version (`RESTORE_ORIGIN_NOT_ALLOWED`); the certificate cannot change
+  // without an uninstall, so minting a key at every start only to have it refused again was a
+  // refusal per start that changed nothing (59 on a bench Mi 9T from 2026-11-01 to 11-05). The
+  // checks above still run: they are this session's, not this build's.
+  const version = getClientAppVersion();
+  if (restoreOriginRefusedAt() === version) {
+    console.debug(
+      `[RESTORE] register skipped: this estate refused this build's signature at ${version}`
+    );
+    return;
+  }
   rlog("register: creating this install's key");
 
   const created = await createRestoreKey(options);
@@ -172,7 +190,14 @@ async function ensureRestoreKeyOnce(userId: string): Promise<void> {
       previousCredentialId: record.registered,
     }),
   });
-  if (!res.ok) throw new RestoreRegistrationRefusedError(await readRestoreRefusal(res));
+  if (!res.ok) {
+    const refusal = await readRestoreRefusal(res);
+    if (refusal.code === 'RESTORE_ORIGIN_NOT_ALLOWED') {
+      // Said once per version, by the caller's line: recorded, so the next start does not ask.
+      recordRestoreOriginRefused(version);
+    }
+    throw new RestoreRegistrationRefusedError(refusal);
+  }
   const { credentialId } = (await res.json()) as { credentialId: string };
   writeRestoreKeyRecord(userId, { held: credentialId, registered: credentialId });
   rlog(`register✓ (cloudBackup=${created.cloudBackup})`);

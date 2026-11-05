@@ -47,8 +47,34 @@ export type RegisterResult =
    * starts racing): the unique session constraint refused the second. Nothing was changed by it.
    */
   | { status: 'conflict' }
-  /** The response did not verify (challenge, origin, RP id, signature, format). */
+  /**
+   * The key was created by a BUILD this estate does not vouch for: its signing certificate is not
+   * one `ANDROID_APP_LINK_SHA256` names (a sideloaded APK signed by the upload key on an estate that
+   * names only the Play app-signing key). A verdict on the build, not on this request - the same
+   * install is refused identically at every start - so it has its own status, told apart at the
+   * throw rather than read back out of the verifier's message.
+   */
+  | { status: 'origin-refused'; origin: string }
+  /** The response did not verify (challenge, RP id, signature, format). */
   | { status: 'invalid'; reason: string };
+
+/**
+ * The origin a registration response's `clientDataJSON` names, or null when it names none readably -
+ * which leaves the verdict to the verifier. Read here because the one refusal that is a verdict on
+ * the BUILD (not the request) must be told apart where it is known.
+ */
+export function registrationOrigin(response: RegistrationResponseJSON | undefined): string | null {
+  const encoded = response?.response?.clientDataJSON;
+  if (typeof encoded !== 'string') return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as {
+      origin?: unknown;
+    };
+    return typeof parsed.origin === 'string' ? parsed.origin : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Outcome of {@link RestoreCredentialsService.verifyAssertion}: a verdict, and NOTHING written. */
 export type VerifyAssertionResult =
@@ -241,6 +267,13 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
     if (!(await this.isLiveSessionOf(userId, sessionId, now, tokenId))) {
       this.logger.warn(`[RESTORE] registration refused: no live session sid=${sessionId}`);
       return { status: 'no-session' };
+    }
+    const origin = registrationOrigin(response);
+    if (origin !== null && !origins.includes(origin)) {
+      this.logger.warn(
+        `[RESTORE] registration refused sid=${sessionId}: origin ${origin} is not a build this estate vouches for (ANDROID_APP_LINK_SHA256)`
+      );
+      return { status: 'origin-refused', origin };
     }
     let verification: Awaited<ReturnType<typeof verifyRegistrationResponse>>;
     try {

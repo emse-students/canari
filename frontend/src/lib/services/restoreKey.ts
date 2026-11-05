@@ -130,6 +130,25 @@ export function markRestoreAttempted(): void {
   writeStorage(RESTORE_ATTEMPTED_KEY, '1');
 }
 
+/**
+ * Per install: the app VERSION whose restore keys the estate refused as coming from a build it
+ * does not vouch for (`RESTORE_ORIGIN_NOT_ALLOWED`: the APK's signing certificate is not one the
+ * server's `ANDROID_APP_LINK_SHA256` names). The certificate is fixed for the life of an install -
+ * another signer is an uninstall, which clears this - so the verdict holds until the version
+ * changes, and a start of the same version does not mint a key only to have it refused again.
+ */
+export const RESTORE_ORIGIN_REFUSED_KEY = 'canari_restore_origin_refused';
+
+/** The version the estate refused this install's build at, or null when it never did. */
+export function restoreOriginRefusedAt(): string | null {
+  return readStorage(RESTORE_ORIGIN_REFUSED_KEY);
+}
+
+/** Records that the estate refused this install's build at `version` (see the key above). */
+export function recordRestoreOriginRefused(version: string): void {
+  writeStorage(RESTORE_ORIGIN_REFUSED_KEY, version);
+}
+
 /** Creates (or replaces) this install's key from the server's registration options. */
 export async function createRestoreKey(options: unknown): Promise<CreatedRestoreKey> {
   return invoke<CreatedRestoreKey>(restoreCommand('create'), {

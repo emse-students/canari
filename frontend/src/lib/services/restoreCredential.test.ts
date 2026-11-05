@@ -2,7 +2,11 @@
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 let android = true;
-vi.mock('$lib/utils/appVersion', () => ({ isAndroidTauriRuntime: () => android }));
+let appVersion = '1.6.5-alpha.1';
+vi.mock('$lib/utils/appVersion', () => ({
+  isAndroidTauriRuntime: () => android,
+  getClientAppVersion: () => appVersion,
+}));
 const adoptRestoredSession = vi.fn();
 vi.mock('$lib/stores/auth', () => ({
   adoptRestoredSession: (...args: unknown[]) => adoptRestoredSession(...args),
@@ -17,6 +21,7 @@ vi.mock('$lib/services/authSessions', () => ({
 import { attemptRestore, ensureRestoreKey } from './restoreCredential';
 import {
   RESTORE_ATTEMPTED_KEY,
+  RESTORE_ORIGIN_REFUSED_KEY,
   RESTORE_REGISTERED_PREFIX,
   forgetRestoreKeyRegistrations,
   restoreKeyRecord,
@@ -48,6 +53,7 @@ let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   localStorage.clear();
   android = true;
+  appVersion = '1.6.5-alpha.1';
   invoke.mockReset();
   adoptRestoredSession.mockReset().mockResolvedValue(undefined);
   apiFetch.mockReset();
@@ -197,6 +203,43 @@ describe('ensureRestoreKey', () => {
       refusal: { status: 403, code: 'RESTORE_KEY_TAKEN' },
     });
     expect(restoreKeyRecord('user-1').registered).toBeNull();
+  });
+
+  it('a build the estate refuses is not asked again at the same version, and is at the next', async () => {
+    platform({ create: { responseJson: '{"id":"k"}', cloudBackup: true } });
+    apiFetch
+      .mockResolvedValueOnce(options(null))
+      .mockResolvedValueOnce(json({ code: 'RESTORE_ORIGIN_NOT_ALLOWED', message: 'x' }, 403));
+    await expect(ensureRestoreKey('user-1')).rejects.toMatchObject({
+      refusal: { status: 403, code: 'RESTORE_ORIGIN_NOT_ALLOWED' },
+    });
+    expect(localStorage.getItem(RESTORE_ORIGIN_REFUSED_KEY)).toBe('1.6.5-alpha.1');
+
+    // The next start of the same version: the session's own check still runs, no key is minted.
+    invoke.mockClear();
+    apiFetch.mockReset().mockResolvedValueOnce(options(null));
+    await ensureRestoreKey('user-1');
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    expect(invoke).not.toHaveBeenCalled();
+
+    // Another version may be signed by a key the estate names: it asks again.
+    appVersion = '1.6.5-alpha.2';
+    apiFetch
+      .mockReset()
+      .mockResolvedValueOnce(options(null))
+      .mockResolvedValueOnce(json({ registered: true, credentialId: 'k' }));
+    await ensureRestoreKey('user-1');
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(restoreKeyRecord('user-1')).toEqual({ held: 'k', registered: 'k' });
+  });
+
+  it('records nothing for a refusal that is not a verdict on the build', async () => {
+    platform({ create: { responseJson: '{"id":"k"}', cloudBackup: true } });
+    apiFetch
+      .mockResolvedValueOnce(options(null))
+      .mockResolvedValueOnce(json({ code: 'RESTORE_REGISTRATION_INVALID', message: 'x' }, 400));
+    await expect(ensureRestoreKey('user-1')).rejects.toBeDefined();
+    expect(localStorage.getItem(RESTORE_ORIGIN_REFUSED_KEY)).toBeNull();
   });
 
   it('does nothing off Android', async () => {
