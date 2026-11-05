@@ -44,6 +44,8 @@
     getAppVersionCheck,
     isBelowMinClientVersion,
   } from '$lib/stores/appVersionCheck.svelte';
+  import BootGate from '$lib/components/layout/BootGate.svelte';
+  import { bootSessionBlocks } from '$lib/stores/bootSession.svelte';
   import PlatformGateOverlay from '$lib/components/shared/PlatformGateOverlay.svelte';
   import IdentitySplitOverlay from '$lib/components/shared/IdentitySplitOverlay.svelte';
   import EnvironmentBanner from '$lib/components/shared/EnvironmentBanner.svelte';
@@ -99,6 +101,9 @@
   const isLoginPage = $derived(
     pathname === '/login' || pathname.startsWith('/legal') || pathname.startsWith('/f/')
   );
+
+  /** The session question is open: no page is mounted (it would fetch with no token), `BootGate` speaks. */
+  const bootBlocked = $derived(bootSessionBlocks(pathname));
 
   const showMaintenanceAdminBanner = $derived.by(() => {
     const info = getAppVersionCheck();
@@ -776,7 +781,9 @@
           <!-- NO BOUNDARY HERE: SvelteKit 3 wraps every route node in its own, closer to the page,
                armed with `+error.svelte` and reported through `handleClientError` - one held here
                could never catch anything (docs/wiki/frontend/architecture.md#a-page-that-crashes). -->
-          {@render children?.()}
+          {#if !bootBlocked}
+            {@render children?.()}
+          {/if}
         </div>
       </main>
 
@@ -800,6 +807,7 @@
     </div>
   </div>
 
+  <BootGate />
   <ToastContainer />
   <ConfirmDialog />
   <AnnouncementModal />

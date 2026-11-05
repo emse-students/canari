@@ -1053,3 +1053,48 @@ without moving reachability; the API's JSON `200`, `403` and `502` do clear it),
 (stall, unproven, stall stays reachable; an unproven answer keeps the in-flight hint quiet), `reachabilityProbe.test.ts` (the same three pages return `false`), `preferencesApi.test.ts` and
 `mlsDeliveryApi.notFromApi.test.ts` (a portal `200` on each write is `NotFromApiError`, the service's
 JSON is done).
+
+## First paint never waits on the network: the boot session question (2026-11-05)
+
+**What the owner saw.** Two users abroad (Australia, India) opened the Android app and got a screen with
+no button at all, from launch; it worked for one of them on mobile data and not on the home box. The
+site answers from far away, only slowly (`GET /api/version` about 3.1 s from an Indian datacenter,
+0.16 s from France), and `canari.emse.fr` has no CDN in front of it.
+
+**Why it was stuck, from the code.** The UI is embedded in the app (`frontendDist`), so the first paint
+needs no network - but `routes/+layout.ts` runs with `ssr = false` and its `load` did
+`await refresh(event.fetch)` whenever no user id was stored (every first launch, every never-signed-in
+install). An SPA draws nothing until the root `load` resolves, and the layout's `onMount` - which is
+what removes the inline splash of `app.html` (a bird on `#000000`) - cannot run before that. The refresh
+runs under `REFRESH_DEADLINE_MS` (20 s) and is re-sent once (`REFRESH_DEADLINE_RESENDS`), so a path that
+hangs held the splash for up to about 40 s, and then sent the user to login on a failure that was a
+transport failure, not an answer. Every other call between launch and paint is already off the critical
+path: the layout's `onMount` calls (`refreshAppVersionCheck`, avatar purge, outbox drain, deleted-account
+guards) are `void`, `hooks.client.ts` does no I/O in `init`, the WASM prefetch is a fire-and-forget on
+the web and absent on Tauri, and no store awaits at import time. The root `load` was the only awaited
+network call.
+
+**The fix.** `+layout.ts` no longer awaits anything. With no stored user it calls `startBootSession`
+(`lib/stores/bootSession.svelte.ts`) and returns; the layout mounts at once, does not mount the page
+underneath (it would fetch with no token) and `components/layout/BootGate.svelte` draws the boot state
+("Connexion a Canari..."). The refresh's own outcome ends it:
+
+| outcome of the refresh | phase | screen |
+| --- | --- | --- |
+| a token, or a sign-in completed meanwhile | `settled` | the page asked for; the background profile check runs as before |
+| an ANSWER that is not a token (401/403, identity split, sign-out) | `settled` | login, carrying the page asked for |
+| a TRANSPORT failure (`isTransportFailure`: deadline or no answer) | `unreachable` | "Impossible de joindre Canari depuis ce reseau", a retry button and a hint |
+
+`unreachable` is derived from the failure event, never from a second timer, and never logs anyone out
+(a status code is an answer, a transport failure is not). It ends on the retry button or on the
+browser's `online` event. The `/f/` and `isSignedOutPath` routes, the `globalSession` short-circuits, the
+PIN/biometric flow (`isLoginInProgress`), `checkSessionUserInBackground` and the OIDC return are
+unchanged: a known user id, or `globalSession.isLoggedIn`, settles the phase without asking. The web
+build and iOS share the same `+layout.ts`, so both get the same behaviour.
+
+**The deadlines are NOT changed.** A shorter first deadline or a parallel send was considered and
+rejected: the re-send exists so a rotation the server made is answered from its 60 s grace (see
+`REFRESH_DEADLINE_MS`), and a slow-but-alive path (3 s) is nowhere near 20 s. What was wrong was not the
+number but that the wait stood in front of the paint; now it stands behind it, and the screen says what
+it is waiting for. Pinned by `routes/firstPaintNeverWaits.test.ts`. No before/after time-to-paint
+reading from a blackholed link was taken.
