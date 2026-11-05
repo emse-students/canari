@@ -47,6 +47,7 @@ use openmls_traits::types::HashType;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 
+use crate::admission::AdmissionPolicy;
 use crate::members::credential_identity;
 
 /// The most device events kept while nobody takes them. An event is a few hundred bytes of
@@ -928,7 +929,12 @@ impl DeviceTrust {
     /// over PAIRS, not indexes, and a pinned pair is not news: a leaf that moved index, or a device
     /// removed and re-added under its pinned key (a heal), is the same device and says nothing.
     ///
+    /// `door` is the group's admission policy ([`crate::admission`]). It decides nothing here - the
+    /// event is recorded whatever it says - and only names what a device's entry by its own commit
+    /// IS ([`unvouched_entry_level`]).
+    ///
     /// @returns whether anything was written.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn observe_merged_commit(
         &mut self,
         group_id: &str,
@@ -937,6 +943,7 @@ impl DeviceTrust {
         after: &[LeafKey],
         added_by: Option<&str>,
         own: (&str, &[u8]),
+        door: Option<AdmissionPolicy>,
     ) -> bool {
         // A GROUP THE LOAD LEFT UNSEEDED is seeded from the tree this commit was built on: a commit
         // merged on it - ours accepted by the server, or a member's - makes it a tree this device
@@ -996,10 +1003,17 @@ impl DeviceTrust {
                     );
                     continue;
                 }
-                LeafTrust::Pinned => log::error!(
-                    "[TRUST] {group_id} epoch {epoch}: {identity} entered by its OWN commit under a key \
-                     pinned elsewhere, never in this group - the pin vouches for nothing here, recorded"
-                ),
+                LeafTrust::Pinned => match unvouched_entry_level(door) {
+                    log::Level::Error => log::error!(
+                        "[TRUST] {group_id} epoch {epoch}: {identity} entered by its OWN commit under a key \
+                         pinned elsewhere, never in this group - the pin vouches for nothing here, recorded"
+                    ),
+                    _ => log::info!(
+                        "[TRUST] {group_id} epoch {epoch}: {identity} entered this key group by its own \
+                         external commit - the key group's door (admission open); its pin from another \
+                         group vouches for nothing here, recorded"
+                    ),
+                },
                 LeafTrust::FirstSight => log::info!(
                     "[TRUST] {group_id} epoch {epoch}: {identity} added by {} (key {fingerprint}, first sight)",
                     added_by.unwrap_or("an unreadable sender"),
@@ -1030,12 +1044,67 @@ impl DeviceTrust {
     }
 }
 
+/// The level a member's device ENTERING BY ITS OWN COMMIT, never in this group, is said at - the
+/// fact [`DeviceEvent::enters_as_unvouched_device`] reads - named by the group's admission policy.
+///
+/// A community's key group is entered by external commit BY DESIGN (`crate::admission`: the app
+/// classifies every key group it registers `open`), and its door is the server's join gate, never a
+/// member's Add. So a further device of a member entering one is the ordinary path - a user's new
+/// browser enters every key group of every community that way - and an ERROR there accused it once
+/// per key group per device (70 lines on a Mi 9T for 7 web sign-ins, 2026-11-05). In a
+/// conversation (`closed`) or a group nobody classified, the same entry is what a further device
+/// no longer does since 2026-10-31 (it asks a member's device to add it): an older client or an
+/// entry nobody made, and it stays an ERROR. The event is recorded either way.
+pub(crate) fn unvouched_entry_level(door: Option<AdmissionPolicy>) -> log::Level {
+    match door {
+        Some(AdmissionPolicy::Open) => log::Level::Info,
+        Some(AdmissionPolicy::Closed) | None => log::Level::Error,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn lk(index: u32, identity: &str, key: u8) -> LeafKey {
         (index, identity.to_string(), vec![key; 32])
+    }
+
+    #[test]
+    fn an_own_entry_into_a_key_group_is_its_door_and_into_anything_else_an_accusation() {
+        // A key group is classified `open` by the app, and external commit is its door: a member's
+        // new browser entering it is the ordinary path, said at info (Mi 9T, 2026-11-05: 70 ERROR
+        // lines for 7 web sign-ins). A conversation, or a group nobody classified, keeps the ERROR.
+        assert_eq!(
+            unvouched_entry_level(Some(AdmissionPolicy::Open)),
+            log::Level::Info
+        );
+        assert_eq!(
+            unvouched_entry_level(Some(AdmissionPolicy::Closed)),
+            log::Level::Error
+        );
+        assert_eq!(unvouched_entry_level(None), log::Level::Error);
+    }
+
+    #[test]
+    fn an_own_entry_into_a_key_group_is_recorded_as_in_any_other_group() {
+        // The policy names the line, never the event: what the app announces and withholds is
+        // decided on the event, exactly as before.
+        let mut t = DeviceTrust::default();
+        let own = ("alice:phone-a", &[1u8; 32][..]);
+        let a_before = vec![lk(0, "alice:phone-a", 1), lk(1, "bob:phone-1", 2)];
+        let mut a_after = a_before.clone();
+        a_after.push(lk(2, "bob:web-2", 3));
+        t.observe_merged_commit("gA", 4, &a_before, &a_after, Some("bob:phone-1"), own, None);
+        t.take_events();
+        let b_before = vec![lk(0, "alice:phone-a", 1), lk(1, "bob:phone-1", 2)];
+        let mut b_after = b_before.clone();
+        b_after.push(lk(2, "bob:web-2", 3));
+        let open = Some(AdmissionPolicy::Open);
+        t.observe_merged_commit("gB", 9, &b_before, &b_after, Some("bob:web-2"), own, open);
+        let events = t.take_events();
+        assert_eq!(events.len(), 1);
+        assert!(events[0].enters_as_unvouched_device());
     }
 
     #[test]
@@ -1048,13 +1117,13 @@ mod tests {
         let a_before = vec![lk(0, "alice:phone-a", 1), lk(1, "bob:phone-1", 2)];
         let mut a_after = a_before.clone();
         a_after.push(lk(2, "bob:web-2", 3));
-        t.observe_merged_commit("gA", 4, &a_before, &a_after, Some("bob:phone-1"), own);
+        t.observe_merged_commit("gA", 4, &a_before, &a_after, Some("bob:phone-1"), own, None);
         t.take_events();
         // Group B: the same device, same key, brings ITSELF in.
         let b_before = vec![lk(0, "alice:phone-a", 1), lk(1, "bob:phone-1", 2)];
         let mut b_after = b_before.clone();
         b_after.push(lk(2, "bob:web-2", 3));
-        t.observe_merged_commit("gB", 9, &b_before, &b_after, Some("bob:web-2"), own);
+        t.observe_merged_commit("gB", 9, &b_before, &b_after, Some("bob:web-2"), own, None);
         let events = t.take_events();
         assert_eq!(
             events.len(),
@@ -1080,7 +1149,7 @@ mod tests {
         let without = vec![lk(0, "alice:phone-a", 1), lk(1, "bob:phone-1", 2)];
         t.seed_from_tree(&full);
         // A member's commit removes bob's web device; bob stays.
-        t.observe_merged_commit("g", 5, &full, &without, Some("alice:phone-a"), own);
+        t.observe_merged_commit("g", 5, &full, &without, Some("alice:phone-a"), own, None);
         assert!(t.device_left_group("g", "BOB:web-2"));
         assert!(!t.device_left_group("g", "bob:phone-1"));
         assert!(
@@ -1089,7 +1158,7 @@ mod tests {
         );
         t.take_events();
         // It comes back by its own commit, under its pinned key: the same device, nothing to say.
-        t.observe_merged_commit("g", 6, &without, &full, Some("bob:web-2"), own);
+        t.observe_merged_commit("g", 6, &without, &full, Some("bob:web-2"), own, None);
         assert!(t.take_events().is_empty());
     }
 
@@ -1100,7 +1169,7 @@ mod tests {
         let before = vec![lk(0, "alice:phone-a", 1), lk(1, "bob:phone-1", 2)];
         let mut after = before.clone();
         after.push(lk(2, "bob:web-2", 3));
-        t.observe_merged_commit("g", 3, &before, &after, Some("alice:phone-a"), own);
+        t.observe_merged_commit("g", 3, &before, &after, Some("alice:phone-a"), own, None);
         let events = t.take_events();
         assert_eq!(events.len(), 1);
         assert!(events[0].first_in_group);
