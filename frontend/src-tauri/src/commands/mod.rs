@@ -15,6 +15,8 @@ pub mod handoff;
 pub mod mls;
 // One MLS state per account on a shared install: the slot, the parked states, the switch.
 pub mod mls_account_state;
+// The Android push service's warnings and errors, carried into the app log (2026-11-04).
+pub mod native_push_log;
 pub mod notifications;
 // The iOS notification extension's outcome log, carried into the app log (2026-11-01).
 pub mod nse_outcomes;

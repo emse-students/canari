@@ -7,7 +7,9 @@ import { ThrottlerGuard } from '@nestjs/throttler';
 import { PushSecretGuard } from '../guards/push-secret.guard';
 import { PushSecretThrottlerGuard } from '../guards/push-secret-throttler.guard';
 import * as crypto from 'crypto';
-import { PushController } from './push.controller';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+import { BLIND_BANNER_REFUSALS, BLIND_BANNER_TERMS, PushController } from './push.controller';
 import { PushToken } from '../entities/push-token.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { KeyPackage } from '../entities/key-package.entity';
@@ -78,7 +80,7 @@ describe('PushController - POST mls/push/blind-banner', () => {
     });
     expect(res).toEqual({ recorded: true });
     expect(blindLines()).toEqual([
-      '[PUSH_BLIND] user=user-1 device=dev-1 platform=android channel=chan-1 missing=seed held=true',
+      '[PUSH_BLIND] user=user-1 device=dev-1 platform=android channel=chan-1 missing=seed held=true refused=none',
     ]);
   });
 
@@ -89,7 +91,52 @@ describe('PushController - POST mls/push/blind-banner', () => {
       channelId: 'chan-1',
       missing: ['ciphertext', 'x\nforged'],
     });
-    expect(blindLines()[0]).toContain('missing=ciphertext,invalid held=false');
+    expect(blindLines()[0]).toContain('missing=ciphertext,invalid held=false refused=none');
+  });
+
+  it('names the refusal of an open that ran, with nothing missing', async () => {
+    await controller.reportBlindBanner(`PushSecret ${SECRET}`, {
+      userId: 'user-1',
+      deviceId: 'dev-1',
+      channelId: 'chan-1',
+      platform: 'android',
+      missing: [],
+      held: false,
+      refused: 'signature-refused',
+    });
+    expect(blindLines()).toEqual([
+      '[PUSH_BLIND] user=user-1 device=dev-1 platform=android channel=chan-1 missing=none held=false refused=signature-refused',
+    ]);
+  });
+
+  it('prints a refusal outside the allowlist as invalid, never as sent', async () => {
+    await controller.reportBlindBanner(`PushSecret ${SECRET}`, {
+      userId: 'user-1',
+      deviceId: 'dev-1',
+      channelId: 'chan-1',
+      refused: 'x\nforged',
+    });
+    expect(blindLines()[0]).toContain('missing=none held=false refused=invalid');
+  });
+
+  it('keeps the shape an older build sends: no refused field prints refused=none', async () => {
+    await controller.reportBlindBanner(`PushSecret ${SECRET}`, {
+      userId: 'user-1',
+      deviceId: 'dev-1',
+      channelId: 'chan-1',
+    });
+    expect(blindLines()[0]).toContain('missing=unstated held=false refused=none');
+  });
+
+  it('allows exactly the terms of the shared contract', () => {
+    const root = resolve(__dirname, '../../../..');
+    const contract = JSON.parse(
+      readFileSync(resolve(root, 'libs/contracts/blind-banner-terms.json'), 'utf8')
+    ) as { missing: string[]; refused: string[]; silent: string[] };
+    expect([...BLIND_BANNER_TERMS].sort()).toEqual([...contract.missing].sort());
+    expect([...BLIND_BANNER_REFUSALS].sort()).toEqual([...contract.refused].sort());
+    // A silent answer is never a banner, so it is never a term a report may carry.
+    for (const silent of contract.silent) expect(BLIND_BANNER_REFUSALS.has(silent)).toBe(false);
   });
 
   it('refuses a caller without the device push secret, and prints no count', async () => {

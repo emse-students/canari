@@ -351,6 +351,13 @@ fn graine_seeds(bytes: &[u8]) -> Option<Vec<serde_json::Value>> {
     Some(out)
 }
 
+/// The `kind` of a decrypted frame that takes a reaction back: nothing to announce, ever.
+pub const KIND_REACTION_WITHDRAWN: &str = "reaction_withdrawn";
+
+/// The `kind` of a system event [`format_system_event_text`] silences by name (an edit, a pin, a
+/// receipt...): nothing to announce, ever.
+pub const KIND_SILENT_EVENT: &str = "silent_event";
+
 /// Extracts the full metadata of a decrypted `AppMessage` protobuf for push display.
 ///
 /// `language` words every sentence this function composes itself (a system event, a reaction, a
@@ -412,7 +419,9 @@ pub fn extract_full_message_info(bytes: &[u8], language: PushLanguage) -> serde_
             );
         }
         if removed {
-            return serde_json::json!({ "ok": false });
+            // NAMED, so a salon push can tell "nothing to announce" from "could not read it": a bare
+            // `ok: false` drew the generic "new message" banner for a withdrawn reaction.
+            return serde_json::json!({ "ok": false, "kind": KIND_REACTION_WITHDRAWN });
         }
     }
 
@@ -506,7 +515,9 @@ pub fn extract_full_message_info(bytes: &[u8], language: PushLanguage) -> serde_
             if let Some(text) = format_system_event_text(&event, &data, language) {
                 return ok_message_json(text, message_id, sent_at, "system");
             }
-            return serde_json::json!({ "ok": false });
+            // Silenced BY NAME (`format_system_event_text`): an event that is never news, named so
+            // a salon push posts nothing rather than the generic line.
+            return serde_json::json!({ "ok": false, "kind": KIND_SILENT_EVENT });
         }
     }
 
@@ -1187,10 +1198,24 @@ mod tests {
         let mut msg = Vec::new();
         write_bytes_field(&mut msg, 3, &reaction);
 
-        assert_eq!(
-            extract_full_message_info(&msg, PushLanguage::French)["ok"],
-            false
-        );
+        let info = extract_full_message_info(&msg, PushLanguage::French);
+        assert_eq!(info["ok"], false);
+        // Named, so a salon push posts nothing instead of the generic line (2026-11-04).
+        assert_eq!(info["kind"], KIND_REACTION_WITHDRAWN);
+    }
+
+    #[test]
+    fn a_silenced_system_event_says_so() {
+        // SystemMsg { event=1, data=2 } as AppMessage field 5.
+        let mut system = Vec::new();
+        write_string_field(&mut system, 1, "edit_message");
+        write_string_field(&mut system, 2, "{}");
+        let mut msg = Vec::new();
+        write_bytes_field(&mut msg, 5, &system);
+
+        let info = extract_full_message_info(&msg, PushLanguage::French);
+        assert_eq!(info["ok"], false);
+        assert_eq!(info["kind"], KIND_SILENT_EVENT);
     }
 
     #[test]

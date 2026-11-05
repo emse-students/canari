@@ -262,6 +262,7 @@ import {
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
 import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
 import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
+import { drainNativePushLog } from '$lib/mobile/nativePushLog';
 import { uploadClassFor } from '$lib/reels/chatReelWriter';
 import { ACCOUNT_KEY, SESSION_META_STORE } from '$lib/utils/accountLocalKeys';
 import { isDeletedAccountHere, wipeReasonOf } from '$lib/utils/deletedAccountMarker';
@@ -1907,6 +1908,8 @@ export async function loginImpl(
     // out or killed - one `[NSE_OUTCOME]` line each (`nseOutcomes.ts`). Not awaited: nothing below
     // depends on it, and a log line must never hold a login.
     void drainNseOutcomes(appendLog);
+    // And the Android push service's warnings and errors while away (`nativePushLog.ts`).
+    void drainNativePushLog(appendLog);
 
     // Notify only on genuine private browsing (blocked / ephemeral storage).
     void isLikelyPrivateBrowsing()

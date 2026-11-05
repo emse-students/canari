@@ -112,12 +112,30 @@ pub fn decode_commits_b64_json(json: &str) -> Vec<Vec<u8>> {
 /// ciphertext (`ciphertext||tag`) and 12-byte nonce; the raw 32-byte epoch key is looked up natively
 /// so the plaintext never transits Google/FCM. The decrypted bytes are the same encoded AppMessage
 /// proto as MLS, so `extract_full_message_info` parses them identically.
+///
+/// TEST-ONLY since 2026-11-04: the production path is [`open_graine_push`], which opens with
+/// [`open_channel_ciphertext`] and names WHICH step failed; this keeps the plain "opened and
+/// renderable, or nothing" shape the cross-version push tests pin the cipher and the proto with.
+#[cfg(test)]
 pub fn decrypt_channel_message(
     raw_key: &[u8],
     nonce: &[u8],
     ciphertext: &[u8],
     language: PushLanguage,
 ) -> Option<serde_json::Value> {
+    let plaintext = open_channel_ciphertext(raw_key, nonce, ciphertext)?;
+    let info = extract_full_message_info(&plaintext, language);
+    if info["ok"].as_bool().unwrap_or(false) {
+        Some(info)
+    } else {
+        None
+    }
+}
+
+/// AES-256-GCM-opens a salon ciphertext (`ciphertext||tag`) - the one cipher step of the v1 half of
+/// [`open_graine_push`] (and of the test-only `decrypt_channel_message`), which tells the caller
+/// WHICH step failed. None, said at error, when the key or nonce is malformed or the tag does not verify.
+fn open_channel_ciphertext(raw_key: &[u8], nonce: &[u8], ciphertext: &[u8]) -> Option<Vec<u8>> {
     use aes_gcm::aead::{Aead, KeyInit};
     use aes_gcm::{Aes256Gcm, Key, Nonce};
 
@@ -135,21 +153,13 @@ pub fn decrypt_channel_message(
         );
         return None;
     }
-
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(raw_key));
-    let plaintext = match cipher.decrypt(Nonce::from_slice(nonce), ciphertext) {
-        Ok(p) => p,
+    match cipher.decrypt(Nonce::from_slice(nonce), ciphertext) {
+        Ok(p) => Some(p),
         Err(e) => {
             log::error!("[ChannelBG] AES-GCM decrypt failed: {e}");
-            return None;
+            None
         }
-    };
-
-    let info = extract_full_message_info(&plaintext, language);
-    if info["ok"].as_bool().unwrap_or(false) {
-        Some(info)
-    } else {
-        None
     }
 }
 
@@ -169,8 +179,8 @@ pub struct GrainePush<'a> {
     pub signature_b64: &'a str,
 }
 
-/// Opens a salon push against the seed mirror, and returns the metadata JSON of
-/// [`decrypt_channel_message`] or a `refused` with its reason. An opened answer carries
+/// Opens a salon push against the seed mirror, and returns the message metadata JSON of
+/// `extract_full_message_info` or a `refused` with its reason. An opened answer carries
 /// `authorProven`: `true` under a v2 session (minter and signature checked), `false` under v1, whose
 /// rows carry no author proof - the one fact a banner needs before it names the push's `senderId`.
 ///
@@ -298,7 +308,20 @@ pub fn open_graine_push(
             "[GraineBG] v2 row of session {} opened and is not renderable",
             push.session_id
         );
-        refused("plaintext-not-renderable")
+        unrenderable_salon_row(&info)
+    }
+}
+
+/// The refusal an OPENED salon row with nothing to draw becomes - a silent token when the row is
+/// deliberately never news (a withdrawn reaction, an event silenced by name), so the push posts
+/// nothing; `plaintext-not-renderable` otherwise, which the push draws as the generic line and
+/// reports (`libs/contracts/blind-banner-terms.json`, `silent` and `refused`).
+fn unrenderable_salon_row(info: &serde_json::Value) -> serde_json::Value {
+    use super::proto_fields::{KIND_REACTION_WITHDRAWN, KIND_SILENT_EVENT};
+    match info["kind"].as_str() {
+        Some(KIND_REACTION_WITHDRAWN) => refused("reaction-withdrawn"),
+        Some(KIND_SILENT_EVENT) => refused("silent-event"),
+        _ => refused("plaintext-not-renderable"),
     }
 }
 
@@ -321,16 +344,24 @@ fn open_graine_push_v1(
             return refused("graine-open-failed");
         }
     };
+    // TWO DIFFERENT FAILURES, NAMED APART (2026-11-04): a ciphertext the key does not open is
+    // `graine-open-failed`; a row that opened and has nothing to draw is the v2 half's token. Both
+    // used to read `graine-open-failed`, so a withdrawn reaction looked like a broken seed.
+    let Some(plaintext) = open_channel_ciphertext(&key, nonce, ciphertext) else {
+        return refused("graine-open-failed");
+    };
+    let mut info = extract_full_message_info(&plaintext, language);
+    if !info["ok"].as_bool().unwrap_or(false) {
+        log::debug!(
+            "[GraineBG] v1 row of session {} opened and is not renderable",
+            push.session_id
+        );
+        return unrenderable_salon_row(&info);
+    }
     // A v1 row opens WHOEVER the push names, so the answer says the author is NOT proven: a banner
     // shows the text and names nobody (`ChannelBannerAuthor`) - the server's `senderId` is a claim.
-    decrypt_channel_message(&key, nonce, ciphertext, language)
-        .map(|mut info| {
-            if info["ok"].as_bool().unwrap_or(false) {
-                info["authorProven"] = serde_json::Value::Bool(false);
-            }
-            info
-        })
-        .unwrap_or_else(|| refused("graine-open-failed"))
+    info["authorProven"] = serde_json::Value::Bool(false);
+    info
 }
 
 /// Decrypts an end-to-end-encrypted media blob (AES-256-GCM) for a notification thumbnail (WP-XP-3).
