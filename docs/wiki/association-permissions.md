@@ -404,8 +404,8 @@ transfer or bulk-import path (the unused `AddMembersBatchDto` was deleted).
     any other, judged by neither the institution rule nor the ceiling; only the last holder of
     `MANAGE_MEMBERS` is refused (see the bullet on the button above).
   - **no BDE moderates an institution's content; only the platform admin does** (owner,
-    2026-11-03). Recorded, not yet enforced: `isContentModerator` is platform-wide and takes no
-    post ([backlog](backlog.d/p1-no-bde-moderates-an-institutions-content.md)).
+    2026-11-03). Enforced since `v1.6.5` by `bdeModeratesPublisherSql` and its comment twin
+    ([moderation-and-blocking](moderation-and-blocking.md#who-may-read-the-queue)).
   Proven against real SQL in `bde.integration.spec.ts` (the agenda matrix with two institutions)
   and through the real route guard in `audience-takeover.integration.spec.ts` (a BDE validates an
   institution's event targeting its space, not one targeting only another BDE's, and still cannot
