@@ -43,7 +43,7 @@ Binding, on top of the ones above.
 | 1 | Create: post composer and event form (hint on the opening control, decision 1) | draft PR #2982 |
 | 2 | Chats and CanaReels, plus the feed tabs' explanation moved from the (i) button (decision 2), plus the "what's new" mechanism only, content with 1.6.4 (decision 3) | built, draft PR; [below](#whats-new-and-the-batch-2-hints) |
 | 3 | Associations and the campus space (shop, publish as, manage; "Mon espace" is feed-tabs step 3); batch 2 read PASS on both phones 2026-11-04 | built, draft PR; [below](#batch-3---associations-and-the-campus-space) |
-| 4 | Booking a room: the Reservations page and a space's week | built, draft PR, merges only after batch 3 is read on a phone; [below](#batch-4---booking-a-room) |
+| 4 | Booking a room: the Reservations page and a space's week | built, in 1.6.5 (owner, 2026-11-05); [below](#batch-4---booking-a-room) |
 
 ## The pieces
 
@@ -339,7 +339,7 @@ that can post as an association.
 ## Batch 4 - booking a room
 
 Built 2026-11-04, `kind: 'hint'` each, once per account, listed after batch 3 in `guides/index.ts`.
-**Merges only after batch 3 is read on a phone** (owner). Both pages load after the route settles, so
+Ships in 1.6.5 (owner, 2026-11-05), ahead of the batch 3 phone reading. Both pages load after the route settles, so
 a help starts when its anchors mount; every anchor is marked by the element's own render condition.
 
 | Id | Route | Anchor(s) | Steps (fr) |
