@@ -409,7 +409,7 @@ pub async fn get_admin_presence(
             return unavailable("Presence store unavailable");
         }
     };
-    match crate::census::read_census(&mut con, 1).await {
+    match crate::census::read_census(&mut con).await {
         Ok(census) => (StatusCode::OK, Json(census)).into_response(),
         Err(e) => {
             tracing::warn!(
@@ -421,17 +421,42 @@ pub async fn get_admin_presence(
     }
 }
 
-/// `GET /api/admin/presence/history`: the last 24 hours of the census, one sample per minute, oldest
-/// first, and the two numbers the chart needs to draw a minute nobody sampled as a gap
-/// (`intervalSecs`, `windowSecs`). Requires `X-Global-Admin: true`; 503 when the series cannot be
-/// read.
+/// Query of `GET /api/admin/presence/history`.
+#[derive(serde::Deserialize)]
+pub struct HistoryQuery {
+    /// `24h` (the default), `7d` or `30d`; anything else is a 400 ([`crate::census::Window`]).
+    window: Option<String>,
+}
+
+/// `GET /api/admin/presence/history?window=24h|7d|30d`: the census over the window, oldest first,
+/// and the two numbers the chart needs to draw a period nobody sampled as a gap (`intervalSecs`, the
+/// spacing of the points the window is served at, and `windowSecs`). 24 h is one sample per minute;
+/// 7 d is the 5-minute series (the peak of each 5 minutes); 30 d is that series rolled up to 30
+/// minutes (the peak of each half hour). The window is a CLOSED set: an unknown value is a 400, so a
+/// request cannot ask for an unbounded read. Requires `X-Global-Admin: true`; 503 when the series
+/// cannot be read.
 pub async fn get_admin_presence_history(
     headers: HeaderMap,
+    Query(query): Query<HistoryQuery>,
     State(state): State<Arc<AppState>>,
 ) -> axum::response::Response {
     if !is_global_admin(&headers) {
         return forbidden();
     }
+    let window = match query.window.as_deref() {
+        None => crate::census::Window::Day,
+        Some(raw) => match crate::census::Window::parse(raw) {
+            Some(window) => window,
+            None => {
+                tracing::debug!("[admin/presence/history] refused window {:?} - 400", raw);
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": "window must be 24h, 7d or 30d"})),
+                )
+                    .into_response();
+            }
+        },
+    };
     let mut con = match state.redis_client.get_multiplexed_async_connection().await {
         Ok(con) => con,
         Err(e) => {
@@ -444,9 +469,15 @@ pub async fn get_admin_presence_history(
     };
     // REDIS's clock, the one the series is written against: nothing scored in the future is served.
     let result = match crate::census::redis_now(&mut con).await {
-        Ok(now) => crate::census::read_series(&mut con, &state.census_key, now)
-            .await
-            .map(|samples| (now, samples)),
+        Ok(now) => crate::census::read_window(
+            &mut con,
+            &state.census_key,
+            &state.census_coarse_key,
+            now,
+            window,
+        )
+        .await
+        .map(|samples| (now, samples)),
         Err(e) => Err(e),
     };
     match result {
@@ -454,8 +485,8 @@ pub async fn get_admin_presence_history(
             StatusCode::OK,
             Json(serde_json::json!({
                 "now": now,
-                "intervalSecs": crate::census::SAMPLE_INTERVAL_SECS,
-                "windowSecs": crate::census::RETENTION_SECS,
+                "intervalSecs": window.interval_secs(),
+                "windowSecs": window.secs(),
                 "samples": samples,
             })),
         )
@@ -890,6 +921,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_unknown_history_window_is_a_400() {
+        let client = redis::Client::open("redis://127.0.0.1:1/").expect("client construction");
+        let audience = PresenceAudience::new(String::new(), String::new(), String::new());
+        let state = Arc::new(AppState::new(client, "test-secret".to_string(), audience));
+        let app = Router::new()
+            .route(
+                "/api/admin/presence/history",
+                get(get_admin_presence_history),
+            )
+            .with_state(state);
+        for window in ["1y", "", "9999d", "24h%20"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/api/admin/presence/history?window={window}"))
+                        .header("x-global-admin", "true")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{window:?}");
+        }
+    }
+
+    #[tokio::test]
     async fn an_unreadable_store_is_a_503_never_an_empty_census() {
         let client = redis::Client::open("redis://127.0.0.1:1/").expect("client construction");
         let audience = PresenceAudience::new(String::new(), String::new(), String::new());
@@ -940,18 +998,23 @@ mod tests {
             .await
             .unwrap();
         // The history route reads the state's series key, a key of THIS test's own - never the one
-        // production reads. The sample is cut at 1 (not the series' minimum of 3) so the seeded
-        // device's version is on the wire to be looked for.
-        let census = crate::census::read_census(&mut con, 1).await.unwrap();
+        // production reads. A device of one person is on the wire, so its version can be looked for.
+        let census = crate::census::read_census(&mut con).await.unwrap();
         let now = crate::census::redis_now(&mut con).await.unwrap();
         let census_key = format!("it:monitor:{}", uuid::Uuid::new_v4());
         crate::census::record_sample(&mut con, &census_key, now - now % 60, &census)
             .await
             .unwrap();
 
+        let coarse_key = format!("it:monitor:coarse:{}", uuid::Uuid::new_v4());
+        crate::census::record_coarse(&mut con, &coarse_key, now, &census)
+            .await
+            .unwrap();
+
         let audience = PresenceAudience::new(String::new(), String::new(), String::new());
         let mut state = AppState::new(client, "test-secret".to_string(), audience);
         state.census_key = census_key;
+        state.census_coarse_key = coarse_key;
         let state = Arc::new(state);
         let app = Router::new()
             .route("/api/admin/presence", get(get_admin_presence))
@@ -960,7 +1023,12 @@ mod tests {
                 get(get_admin_presence_history),
             )
             .with_state(state);
-        for path in ["/api/admin/presence", "/api/admin/presence/history"] {
+        for path in [
+            "/api/admin/presence",
+            "/api/admin/presence/history",
+            "/api/admin/presence/history?window=7d",
+            "/api/admin/presence/history?window=30d",
+        ] {
             let response = app
                 .clone()
                 .oneshot(

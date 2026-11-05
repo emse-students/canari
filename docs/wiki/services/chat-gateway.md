@@ -458,29 +458,36 @@ says so ([backlog](../backlog.md#p3---the-phone-polls-presence-every-ten-seconds
 **The owner's request (2026-11-02):** `/admin/status` listed every connected person and device; it
 now counts them - *"un outil de monitoring, avec une courbe des dernieres 24h (anonyme), avec la
 plateforme, la version"*. The page is `frontend/src/routes/admin/status/+page.svelte`
-(totals, a chart, the versions live now); the server side is `census.rs` and the two admin routes in
+(totals, two line charts, the versions live now); the server side is `census.rs` and the two admin routes in
 `presence.rs`.
 
-**Aggregate, with the small cells merged.** `GET /api/admin/presence` answers `{ devices, users, groups: [{ platform,
-version, devices, users }] }`; `GET /api/admin/presence/history` answers `{ now, intervalSecs,
-windowSecs, samples: [{ t, devices, users, groups }] }`. No user id, device id, address or per-person
+**Aggregate, every cell kept.** `GET /api/admin/presence` answers `{ devices, users, groups: [{ platform,
+version, devices, users }] }`; `GET /api/admin/presence/history?window=24h|7d|30d` answers `{ now,
+intervalSecs, windowSecs, samples: [{ t, devices, users, groups }] }`. No user id, device id, address or per-person
 field exists on either wire - `the_admin_routes_return_counts_and_never_an_id` seeds a device with
-known ids against a real Redis and fails if either body contains one, and the page's test fails if a
+known ids against a real Redis and fails if any body (all three windows) contains one, and the page's test fails if a
 stray `userId` in a response reaches the DOM. `users` is DISTINCT over the whole population (one
 person on a phone and a laptop is one user, two devices), so it is not the sum of the groups.
 
-**Small cells are merged in the HISTORY, never in the live counts (review of #2956).** A
-(platform, version) cell holding ONE person identifies them - and three devices of one user are one
-person, so the rule counts PEOPLE as well as devices: an admin could read that
-person's connections to the minute for 24 hours. So before a sample is kept, `aggregate(.., 3)`
-merges every cell of fewer than `HISTORY_MIN_CELL` (3) devices OR distinct people into `other`, BY PLATFORM FIRST (the
-version is dissolved: `(ios, 1.5.4)` of 1 device joins `(ios, other)`), then BY VERSION (a platform
-whose merged cell is still under 3 is dissolved too and joins `(other, other)`). The totals never
-move, only how finely they are split; the page says so under the chart. The live counts keep every
-cell: they are a single instant, with no history to follow a person through. **What is NOT
-suppressed, stated exactly:** cells below 3 people are merged; the `(other, other)` remainder and each
-sample's totals (`devices`, `users`) are kept as they are and may be 1 or 2 - a total of 1 shows
-that one person was connected, and nothing more, since it carries no platform and no version.
+**Small cells are NOT merged any more (owner's decision, 2026-11-05).** Until then (review of #2956) a
+(platform, version) cell of fewer than 3 devices or people was merged into `other` before a sample was
+kept, because a cell holding ONE person lets an admin read that person's connections to the minute. The
+owner reversed it: *"Je veux chaque version, chaque plateforme, avec de jolies courbes."* Every
+(platform, version) cell now has its own line, even for one person, and `HISTORY_MIN_CELL` and the
+two-pass merge in `aggregate` are gone. **Why that was his to decide, and why it is reversible:** the
+rule was a privacy-by-design choice made by us for a tool only global admins can open, not a legal or
+security requirement; and it can come back without losing anything, because the merge happened at
+WRITE time and a restored rule can simply apply to what is written from then on (samples already written
+stay as they were - there is no retroactive un-merging, and none of the 24 h series written
+before 2026-11-05 has a split cell). **What an admin can now read, stated exactly:** for each of the 24 h /
+7 d / 30 d windows, how many devices ran each (platform, version) at each point, down to a cell of 1, so
+a version or platform with a single device draws a line that rises and falls with that one device's
+connections (to the minute over 24 h, to 5 or 30 minutes beyond). Still no identifier of any kind on the
+wire; a cell does not say WHO, only that the cell was non-empty - but in a small association an admin who
+knows who runs a given pre-release can infer it. That inference is accepted with the decision.
+**What still bounds the series** (abuse, never privacy): the platform allowlist (six names, else
+`other`), the version grammar and length, at most 32 versions per sample (the rarest merging into
+`other`), and a cap of 64 cells on every stored point (a minute or a coarse bucket; the smallest beyond it are summed into `(other, other)`).
 
 **What a socket declares.** The client adds `platform=` (`web`, or the native shell's own name:
 `android`, `ios`, `macos`, `windows`, `linux`) and `app_version=` (`VITE_APP_VERSION`, the very
@@ -528,18 +535,50 @@ an unreadable or skewed minute is a gap, never a wrong count.
 **Retention and gaps.** The same script trims `-inf .. now - 86400` (Redis's now) after every write, and gives the
 key an expiry of 25 h as a backstop - 1440 members at steady state, deleted by the write that makes
 them old, not by a timer. A minute nobody sampled (every gateway restarting, Redis unreachable) has
-NO member; the history answers only what exists, `buildBuckets` lays the window out minute by minute
-and leaves the missing ones `null`, and the chart breaks its areas there and says what a blank
-stretch means. **Nothing is interpolated.** A Redis that cannot be read answers 503, never an empty
+NO member; the history answers only what exists, `buildBuckets` lays the window out point by point
+and leaves the missing ones `null`, and every line breaks there. **Nothing is interpolated.** A Redis that cannot be read answers 503, never an empty
 census: zero would be a claim.
+
+**The 7-day and 30-day windows (2026-11-05): a second series, `monitor:presence:samples:5m`.** One
+member per 5 minutes (scored by the bucket's start), kept 30 days, in the same Redis. Written by the
+replica that WROTE the minute in the fine series (`record_coarse`, right after `record_sample`
+answers `Wrote`): it reads the bucket, folds the minute in with `merge_max`, and writes it back through
+a compare-and-swap script (`RECORD_COARSE`, up to 5 attempts; a lost race is logged at warn and costs
+that bucket one minute, never a wrong count). **The aggregate is the MAX per bucket, not the mean**,
+because (1) a max is idempotent and order-free - applying a minute twice, or two minutes in any
+order, lands on the same bucket, which a mean cannot do without also storing a count and a sum; (2) it
+answers the capacity question the page serves ("how many were connected AT MOST?"), where a mean
+smooths away exactly the peaks that decide a minimum-version cutoff; (3) a one-minute connection of a
+lone device still shows on the 7 d / 30 d curve instead of being diluted to a fifth. The price: every cell's
+maximum is taken independently, so the cells of a bucket need not add up to the bucket's total maximum
+(they peak at different minutes), and the curves overstate steady load slightly. The 30-day window is
+served from the same series rolled up to 30 minutes (`rollup_max`, the same max), so no window answers
+more than 2016 points: 24 h = 1440 (60 s), 7 d = 2016 (300 s), 30 d = 1440 (1800 s); `intervalSecs` and
+`windowSecs` in the answer say which. A period with no bucket is a gap, exactly as in the fine series.
+The route takes `window` from a closed set (`24h`, `7d`, `30d`; absent = `24h`); any other value is a 400, so no request
+can ask for an unbounded read. The coarse series does not backfill: it starts at the first deploy that
+carries it, and the 7 d / 30 d charts are blank (a gap) before that.
+
+**The size of the coarse series, in numbers.** 30 d x 288 buckets/day = **8,640 members**. A member is
+`{"t":..,"devices":..,"users":..,"groups":[{"platform":"android","version":"1.6.5-alpha.2","devices":3,"users":3}, ...]}`:
+about 75 bytes per group plus ~50 of envelope. **Typical** (about 15 cells: 6 platforms x a few live
+versions): 15 x 75 + 50 = ~1.2 KB, so 8,640 x 1.2 KB = **~10 MB**. **Hard ceiling:** a stored point keeps at most
+64 cells (`MAX_GROUPS_PER_POINT`; the smallest beyond it are summed into `(other, other)`), so 64 x 75 + 50 = ~4.9 KB and
+8,640 x 4.9 KB = **~42 MB**, whatever clients declare (without the cap, 33 versions x 8 platforms = 264 cells
+could reach ~170 MB). The fine series obeys the same cap: 1,440 x 1.2 KB = ~1.7 MB typical, 1,440 x 4.9 KB = ~7 MB at the ceiling. The whole census is
+**~12 MB typical, ~49 MB at the ceiling**. The key expires 30 d + 1 h after its last write and the same
+script trims everything older than 30 d, so it never grows past that. Reading a window costs one
+`ZRANGEBYSCORE` of at most 8,640 members (7 d: 2,016; 30 d: 8,640 then rolled up in memory) and happens
+only for an admin looking at the page.
 
 **The page polls only while it is looked at.** The 10 s (live) and 60 s (history) polls stop when
 the tab is hidden and one read happens the moment it is shown again; each request scans the presence
 keys, so a forgotten tab must not keep asking. The page keeps one failure flag per source, so a live
 read that succeeds never clears a history read that failed.
 
-**Register.** The series is counts by platform and version, with cells under 3 devices or people
-merged (above); the remainder and the totals are not suppressed, and row C18 says exactly that. The only thing tied to an account is the
+**Register.** The series is counts by platform and version, every cell kept (owner's decision of
+2026-11-05, above) over 24 h at one sample a minute, and 30 days at one bucket per 5 minutes; row C18
+says exactly that. The only thing tied to an account is the
 declaration key, for at most 90 s after the device's last pong and gone with the presence key on a
 clean end - the lifetime and purpose of the presence key it sits beside. The ADMIN's view shrank: it
 no longer shows a list of connected people. The privacy policy needs no change.

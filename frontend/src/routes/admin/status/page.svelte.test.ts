@@ -22,7 +22,7 @@ vi.mock('$lib/utils/apiUrl', () => ({ gatewayUrl: () => 'https://gw.test' }));
 vi.mock('$lib/utils/apiFetch', () => ({
   apiFetch: vi.fn((url: string) =>
     Promise.resolve(
-      new Response(JSON.stringify(url.endsWith('/history') ? responses.history : responses.now), {
+      new Response(JSON.stringify(url.includes('/history') ? responses.history : responses.now), {
         status: 200,
       })
     )
@@ -83,7 +83,7 @@ function seed() {
   };
 }
 
-it('shows the totals, the versions with their share, and the 24-hour chart', async () => {
+it('shows the totals, the versions with their share, and the two history charts', async () => {
   seed();
   const page = await render();
   await vi.waitFor(() => expect(page.querySelector('[role="slider"]')).not.toBeNull());
@@ -95,7 +95,9 @@ it('shows the totals, the versions with their share, and the 24-hour chart', asy
   expect(versions).toHaveLength(2);
   expect(versions[0].textContent).toContain('1.5.4');
   expect(versions[0].textContent).toContain('75');
-  expect(page.querySelectorAll('svg polygon').length).toBeGreaterThan(0);
+  expect(page.querySelectorAll('svg path[data-series]').length).toBeGreaterThan(0);
+  // Two charts: one line per platform, one per version.
+  expect(page.querySelectorAll('[role="slider"]')).toHaveLength(2);
 });
 
 it('draws no list of people or devices, and no identifier', async () => {
@@ -128,7 +130,7 @@ it('keeps a history failure on screen when the live counts then succeed', async 
   const fetch = await mockedFetch();
   fetch.mockImplementation((url: string | URL | Request) =>
     Promise.resolve(
-      String(url).endsWith('/history')
+      String(url).includes('/history')
         ? new Response('{}', { status: 500 })
         : new Response(JSON.stringify(responses.now), { status: 200 })
     )
@@ -190,4 +192,37 @@ it('gives the chart readout to the keyboard', async () => {
 
   chart.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await vi.waitFor(() => expect(readout()).toBe(''));
+});
+
+it('breaks each live version down by platform, and says what Unknown means', async () => {
+  seed();
+  (responses.now as { groups: unknown[] }).groups.push({
+    platform: 'unknown',
+    version: 'unknown',
+    devices: 1,
+    users: 1,
+  });
+  const page = await render();
+  const first = page.querySelectorAll('[data-testid="status-version"]')[0];
+  expect(first.querySelectorAll('[data-testid="status-version-platform"]').length).toBeGreaterThan(
+    0
+  );
+  expect(first.textContent).toContain('Android');
+  expect(page.querySelector('[data-testid="status-unknown-explainer"]')).not.toBeNull();
+});
+
+it('asks the gateway for the period the reader picks, and drops the old curves meanwhile', async () => {
+  seed();
+  const fetch = await mockedFetch();
+  const page = await render();
+  const asked = () => fetch.mock.calls.map((c) => String(c[0]));
+  expect(asked().some((u) => u.endsWith('/history?window=24h'))).toBe(true);
+
+  page.querySelector<HTMLButtonElement>('[data-testid="period-30d"]')!.click();
+  await vi.waitFor(() => expect(asked().some((u) => u.endsWith('/history?window=30d'))).toBe(true));
+  await vi.waitFor(() =>
+    expect(page.querySelector('[data-testid="period-30d"]')?.getAttribute('aria-pressed')).toBe(
+      'true'
+    )
+  );
 });

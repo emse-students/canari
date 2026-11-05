@@ -358,6 +358,18 @@
   --avatar-hue-6-to: #b91c1c;
   --avatar-hue-7-from: #d08200;
   --avatar-hue-7-to: #b45309;
+
+  /* CATEGORICAL CHART SERIES (admin status curves): the eight validated slots of the dataviz
+     default palette, in fixed order, never cycled. Dark has its own steps (re-validated against the
+     dark surface), not a flipped copy. */
+  --chart-series-1: #2a78d6;
+  --chart-series-2: #eb6834;
+  --chart-series-3: #1baf7a;
+  --chart-series-4: #eda100;
+  --chart-series-5: #e87ba4;
+  --chart-series-6: #008300;
+  --chart-series-7: #6250d6;
+  --chart-series-8: #e34948;
   --cn-bg: #f0f2f5;
   --cn-surface: #ffffff; /* measured, 68% of the handset thread in light mode */
   /* A HAIRLINE, NOT A LINE. The reference draws six visible borders on an entire page, all
@@ -469,6 +481,14 @@
 }
 
 :root[data-theme='dark'] {
+  --chart-series-1: #3987e5;
+  --chart-series-2: #d95926;
+  --chart-series-3: #199e70;
+  --chart-series-4: #c98500;
+  --chart-series-5: #d55181;
+  --chart-series-6: #008300;
+  --chart-series-7: #9085e9;
+  --chart-series-8: #e66767;
   /* THE MEASURED THEME. Every value marked "measured" was read off a live Messenger thread with
      `getComputedStyle`; the Facebook group page independently uses the same ramp one step lighter
      (#242526 / #252728 / #3b3c3e), which is what makes it a system rather than one page's choice.

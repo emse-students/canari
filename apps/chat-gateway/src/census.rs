@@ -23,10 +23,12 @@
 //!   replica whose clock is wrong can neither wipe real history nor plant future samples nor take a
 //!   minute's slot from a correct one. Its own clock only decides WHEN it tries; a skewed replica
 //!   leaves its minutes to the others.
-//! - **a cell of fewer than [`HISTORY_MIN_CELL`] devices OR people is merged before the series keeps
-//!   it**: it would identify the person behind it, whose connections an admin could then read to the
-//!   minute. The `(other, other)` remainder and each sample's totals are NOT suppressed and may be 1
-//!   or 2. See [`aggregate`].
+//! - **every (platform, version) cell is kept, even a cell of one device** (owner, 2026-11-05: *"je
+//!   veux chaque version, chaque plateforme"*). What bounds the series is the platform allowlist, the
+//!   version grammar and [`MAX_VERSIONS_PER_SAMPLE`], never a minimum cell size. No id ever reaches a
+//!   sample (`a_census_names_nobody`).
+//! - a SECOND, coarser series (`monitor:presence:samples:5m`, one MAX per five minutes, 30 days)
+//!   serves the 7-day and 30-day windows. See [`record_coarse`] and [`Window`].
 //!
 //! A minute nobody sampled (every gateway restarting, Redis down) has NO member: the admin page draws
 //! it as a gap, and nothing here interpolates one.
@@ -51,17 +53,25 @@ const MAX_VERSION_LEN: usize = 32;
 /// sample's size whatever a client declares.
 pub const MAX_VERSIONS_PER_SAMPLE: usize = 32;
 
-/// The fewest devices AND people a (platform, version) cell may hold in the 24-hour series. A cell of
-/// one person names them in effect (their connections readable to the minute), so smaller cells are
-/// merged by [`aggregate`] before a sample is written. The LIVE census keeps every cell (minimum 1).
-pub const HISTORY_MIN_CELL: u64 = 3;
-
 /// One sample per this many seconds.
 pub const SAMPLE_INTERVAL_SECS: i64 = 60;
 /// How much history is kept, in seconds: 24 hours.
 pub const RETENTION_SECS: i64 = 24 * 60 * 60;
 /// The sorted set holding the series.
 pub const SAMPLES_KEY: &str = "monitor:presence:samples";
+/// The sorted set holding the coarse series (one member per [`COARSE_INTERVAL_SECS`], the MAX of
+/// the minutes inside it).
+pub const COARSE_KEY: &str = "monitor:presence:samples:5m";
+/// One coarse bucket spans this many seconds: 5 minutes.
+pub const COARSE_INTERVAL_SECS: i64 = 300;
+/// How long the coarse series is kept: 30 days.
+pub const COARSE_RETENTION_SECS: i64 = 30 * 24 * 60 * 60;
+/// Most (platform, version) cells a stored point (a minute or a coarse bucket) keeps; the smallest beyond it fold into
+/// `(other, other)`. Bounds a bucket's size (and so Redis's) whatever clients declare.
+pub const MAX_GROUPS_PER_POINT: usize = 64;
+/// The 30-day window is served rolled up to this many seconds (30 minutes), so no window ever
+/// answers more than 2016 points.
+pub const MONTH_INTERVAL_SECS: i64 = 1800;
 /// Prefix of the shared keys holding what a device declared.
 const CLIENT_KEY_PREFIX: &str = "monitor:client:";
 
@@ -154,15 +164,11 @@ pub struct Sample {
 /// which is what the shared presence keys give and a per-process map does not. The ids are used to
 /// count distinct users and are not kept.
 ///
-/// `min_cell` is the fewest devices AND the fewest distinct people a (platform, version) cell may
-/// hold (three devices of one user are one person): a smaller one is merged
-/// into `other`, BY PLATFORM FIRST (the version is dissolved: `(ios, 1.5.4)` of 1 device joins
-/// `(ios, other)`), then BY VERSION (a platform's remaining cell still under the minimum joins
-/// `(other, other)`, the platform dissolved too). Totals never change - only how finely they are
-/// split - and neither the `(other, other)` remainder nor the totals are suppressed. The live census passes 1 (no merge); the series passes [`HISTORY_MIN_CELL`].
+/// EVERY (platform, version) cell is kept, down to a cell of one device (owner, 2026-11-05): the
+/// only bound is [`MAX_VERSIONS_PER_SAMPLE`], the rarest versions beyond it merging into `other`.
 ///
 /// The output is deterministic: groups sorted by platform, then devices descending, then version.
-pub fn aggregate(devices: &[(String, ClientKind)], min_cell: u64) -> Census {
+pub fn aggregate(devices: &[(String, ClientKind)]) -> Census {
     let mut per_version: HashMap<&str, u64> = HashMap::new();
     for (_, kind) in devices {
         *per_version.entry(kind.version.as_str()).or_default() += 1;
@@ -192,42 +198,6 @@ pub fn aggregate(devices: &[(String, ClientKind)], min_cell: u64) -> Census {
         everyone.insert(user.as_str());
     }
 
-    // Merge the small cells: by platform first (dissolve the version), then by version (dissolve the
-    // platform). Each pass reads the result of the one before it.
-    let fold = |cells: &mut BTreeMap<(String, String), Cell>, dissolve_platform: bool| {
-        let small: Vec<(String, String)> = cells
-            .iter()
-            .filter(|((platform, version), (n, users))| {
-                // A cell is small when it holds few DEVICES or few PEOPLE: three devices of one
-                // user are one person's connections, readable to the minute.
-                (*n < min_cell || (users.len() as u64) < min_cell)
-                    && if dissolve_platform {
-                        platform != OTHER
-                    } else {
-                        version != OTHER
-                    }
-            })
-            .map(|(k, _)| k.clone())
-            .collect();
-        for key in small {
-            let Some((n, users)) = cells.remove(&key) else {
-                continue;
-            };
-            let target = if dissolve_platform {
-                (OTHER.to_string(), OTHER.to_string())
-            } else {
-                (key.0.clone(), OTHER.to_string())
-            };
-            let into = cells.entry(target).or_insert_with(|| (0, HashSet::new()));
-            into.0 += n;
-            into.1.extend(users);
-        }
-    };
-    if min_cell > 1 {
-        fold(&mut cells, false);
-        fold(&mut cells, true);
-    }
-
     let mut groups: Vec<Group> = cells
         .into_iter()
         .map(|((platform, version), (devices, users))| Group {
@@ -237,17 +207,82 @@ pub fn aggregate(devices: &[(String, ClientKind)], min_cell: u64) -> Census {
             users: users.len() as u64,
         })
         .collect();
+    sort_groups(&mut groups);
+    Census {
+        devices: devices.len() as u64,
+        users: everyone.len() as u64,
+        groups,
+    }
+}
+
+/// The canonical order of a census's groups: platform, then devices descending, then version.
+fn sort_groups(groups: &mut [Group]) {
     groups.sort_by(|a, b| {
         a.platform
             .cmp(&b.platform)
             .then_with(|| b.devices.cmp(&a.devices))
             .then_with(|| a.version.cmp(&b.version))
     });
-    Census {
-        devices: devices.len() as u64,
-        users: everyone.len() as u64,
-        groups,
+}
+
+/// Folds `other` into `into` by taking the MAXIMUM of every count, cell by cell (totals included),
+/// then bounds the groups to `max_groups`. A max is idempotent and order-free, so a replica that
+/// applies the same minute twice, or two minutes in any order, lands on the same bucket - and it
+/// answers the question a capacity reader asks: how many were connected AT MOST in this period.
+/// Cells peak at different minutes, so the cells' maxima need not add up to the total's maximum.
+pub fn merge_max(into: &mut Census, other: &Census, max_groups: usize) {
+    into.devices = into.devices.max(other.devices);
+    into.users = into.users.max(other.users);
+    let mut cells: BTreeMap<(String, String), (u64, u64)> = BTreeMap::new();
+    for g in into.groups.iter().chain(other.groups.iter()) {
+        let cell = cells
+            .entry((g.platform.clone(), g.version.clone()))
+            .or_insert((0, 0));
+        cell.0 = cell.0.max(g.devices);
+        cell.1 = cell.1.max(g.users);
     }
+    let groups = cells
+        .into_iter()
+        .map(|((platform, version), (devices, users))| Group {
+            platform,
+            version,
+            devices,
+            users,
+        })
+        .collect();
+    into.groups = bound_groups(groups, max_groups);
+}
+
+/// Keeps at most `max` cells: the largest ones stay, the rest (and any existing `(other, other)`)
+/// are summed into one `(other, other)` cell - an upper bound, which is the safe side of a cap.
+fn bound_groups(mut groups: Vec<Group>, max: usize) -> Vec<Group> {
+    if groups.len() <= max {
+        sort_groups(&mut groups);
+        return groups;
+    }
+    let (mut residue, mut rest): (Vec<Group>, Vec<Group>) = groups
+        .drain(..)
+        .partition(|g| g.platform == OTHER && g.version == OTHER);
+    rest.sort_by(|a, b| {
+        b.devices
+            .cmp(&a.devices)
+            .then_with(|| a.platform.cmp(&b.platform))
+            .then_with(|| a.version.cmp(&b.version))
+    });
+    let overflow = rest.split_off(max.saturating_sub(1).min(rest.len()));
+    let mut folded = residue.pop().unwrap_or(Group {
+        platform: OTHER.to_string(),
+        version: OTHER.to_string(),
+        devices: 0,
+        users: 0,
+    });
+    for g in overflow {
+        folded.devices += g.devices;
+        folded.users += g.users;
+    }
+    rest.push(folded);
+    sort_groups(&mut rest);
+    rest
 }
 
 /// The shared key a device's declaration lives under, for `conn_key` = `"{userId}:{deviceId}"`.
@@ -321,13 +356,9 @@ pub async fn declared_kinds(
     Ok(kinds)
 }
 
-/// The census of everybody connected right now, on every gateway process, with cells of fewer than
-/// `min_cell` devices merged (see [`aggregate`]): 1 for the live view, [`HISTORY_MIN_CELL`] for a
-/// sample that will be kept.
-pub async fn read_census(
-    con: &mut MultiplexedConnection,
-    min_cell: u64,
-) -> redis::RedisResult<Census> {
+/// The census of everybody connected right now, on every gateway process (see [`aggregate`]): the
+/// live view and the sample that will be kept are the same census.
+pub async fn read_census(con: &mut MultiplexedConnection) -> redis::RedisResult<Census> {
     let online = list_online(con).await?;
     let kinds = declared_kinds(con, &online).await?;
     let population: Vec<(String, ClientKind)> = online
@@ -335,7 +366,7 @@ pub async fn read_census(
         .zip(kinds)
         .map(|((user, _device), kind)| (user, kind))
         .collect();
-    Ok(aggregate(&population, min_cell))
+    Ok(aggregate(&population))
 }
 
 /// Redis's own clock, in Unix seconds: the ONE clock the series is written and read against.
@@ -435,7 +466,7 @@ pub async fn record_sample(
     })
 }
 
-/// Every sample of the series `key` in the window `(now - RETENTION_SECS, now]`, oldest first, where
+/// Every sample of the series `key` in the window `(now - window_secs, now]`, oldest first, where
 /// `now` is REDIS's clock ([`redis_now`]): nothing scored in the future is ever served. A member that
 /// does not parse is skipped and logged: it can only be a foreign write, and a gap is the honest
 /// rendering of a minute nobody can read.
@@ -443,10 +474,11 @@ pub async fn read_series(
     con: &mut MultiplexedConnection,
     key: &str,
     now: i64,
+    window_secs: i64,
 ) -> redis::RedisResult<Vec<Sample>> {
     let members: Vec<String> = redis::cmd("ZRANGEBYSCORE")
         .arg(key)
-        .arg(format!("({}", now - RETENTION_SECS))
+        .arg(format!("({}", now - window_secs))
         .arg(now)
         .query_async(con)
         .await?;
@@ -464,6 +496,177 @@ pub async fn read_series(
             }
         })
         .collect())
+}
+
+/// A history window an admin may ask for. A CLOSED set, parsed from the query: anything else is
+/// refused by the route, so a request can never ask for an unbounded read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Window {
+    /// 24 hours at one sample per minute (the fine series).
+    Day,
+    /// 7 days at one point per 5 minutes (the coarse series as stored).
+    Week,
+    /// 30 days at one point per 30 minutes (the coarse series, rolled up by max).
+    Month,
+}
+
+impl Window {
+    /// Parses the `window` query value: `24h`, `7d` or `30d`; `None` for anything else.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "24h" => Some(Window::Day),
+            "7d" => Some(Window::Week),
+            "30d" => Some(Window::Month),
+            _ => None,
+        }
+    }
+
+    /// How far back the window reaches, in seconds.
+    pub fn secs(self) -> i64 {
+        match self {
+            Window::Day => RETENTION_SECS,
+            Window::Week => 7 * 24 * 60 * 60,
+            Window::Month => COARSE_RETENTION_SECS,
+        }
+    }
+
+    /// The spacing of the points the route answers, in seconds.
+    pub fn interval_secs(self) -> i64 {
+        match self {
+            Window::Day => SAMPLE_INTERVAL_SECS,
+            Window::Week => COARSE_INTERVAL_SECS,
+            Window::Month => MONTH_INTERVAL_SECS,
+        }
+    }
+}
+
+/// Rolls `samples` (oldest first) up to buckets of `step` seconds, each the MAX of the samples
+/// inside it ([`merge_max`]). A bucket nobody sampled has no entry: a gap stays a gap.
+pub fn rollup_max(samples: Vec<Sample>, step: i64) -> Vec<Sample> {
+    let mut out: BTreeMap<i64, Census> = BTreeMap::new();
+    for sample in samples {
+        let bucket = sample.t - sample.t.rem_euclid(step);
+        match out.get_mut(&bucket) {
+            Some(into) => merge_max(into, &sample.census, MAX_GROUPS_PER_POINT),
+            None => {
+                out.insert(bucket, sample.census);
+            }
+        }
+    }
+    out.into_iter()
+        .map(|(t, census)| Sample { t, census })
+        .collect()
+}
+
+/// Reads the samples of `window` as the route answers them: the fine series for a day, the coarse one
+/// for a week, the coarse one rolled up for a month. `now` is Redis's clock.
+pub async fn read_window(
+    con: &mut MultiplexedConnection,
+    fine_key: &str,
+    coarse_key: &str,
+    now: i64,
+    window: Window,
+) -> redis::RedisResult<Vec<Sample>> {
+    match window {
+        Window::Day => read_series(con, fine_key, now, window.secs()).await,
+        Window::Week => read_series(con, coarse_key, now, window.secs()).await,
+        Window::Month => {
+            let coarse = read_series(con, coarse_key, now, window.secs()).await?;
+            Ok(rollup_max(coarse, MONTH_INTERVAL_SECS))
+        }
+    }
+}
+
+/// Compare-and-swap of one coarse bucket, and the trim of the coarse series against REDIS's clock.
+/// KEYS: the coarse series. ARGV: bucket score, the member this caller read ('' if none), the member
+/// to write, retention. Returns 1 when written, 0 when another replica changed the bucket first (the
+/// caller re-reads and merges again).
+const RECORD_COARSE: &str = r"
+local score = tonumber(ARGV[1])
+local keep = tonumber(ARGV[4])
+if not score or not keep or keep < 1 then
+  return redis.error_reply('ERR census: a coarse bucket needs a score and a positive retention')
+end
+local current = redis.call('ZRANGEBYSCORE', KEYS[1], score, score)
+local seen = ARGV[2]
+if (seen == '' and #current > 0) or (seen ~= '' and current[1] ~= seen) then
+  return 0
+end
+redis.call('ZREMRANGEBYSCORE', KEYS[1], score, score)
+redis.call('ZADD', KEYS[1], score, ARGV[3])
+local now = tonumber(redis.call('TIME')[1])
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now - keep)
+redis.call('EXPIRE', KEYS[1], keep + 3600)
+return 1
+";
+
+/// How many times [`record_coarse`] re-reads a bucket another replica changed under it.
+const COARSE_CAS_ATTEMPTS: usize = 5;
+
+/// Folds the census of minute `t` into its 5-minute bucket of the coarse series `key` (the MAX of
+/// every count, see [`merge_max`]). Idempotent - applying a minute twice changes nothing - and safe
+/// across replicas through a compare-and-swap, so no lock or leader exists. Returns whether the
+/// bucket was written; `false` after [`COARSE_CAS_ATTEMPTS`] lost races (logged by the caller as a
+/// bucket that missed one minute, never a wrong count: a max only ever under-reads by a minute).
+pub async fn record_coarse(
+    con: &mut MultiplexedConnection,
+    key: &str,
+    t: i64,
+    census: &Census,
+) -> redis::RedisResult<bool> {
+    let bucket = t - t.rem_euclid(COARSE_INTERVAL_SECS);
+    for attempt in 1..=COARSE_CAS_ATTEMPTS {
+        let current: Vec<String> = redis::cmd("ZRANGEBYSCORE")
+            .arg(key)
+            .arg(bucket)
+            .arg(bucket)
+            .query_async(con)
+            .await?;
+        let seen = current.first().cloned().unwrap_or_default();
+        let mut merged = Sample {
+            t: bucket,
+            census: census.clone(),
+        };
+        merged.census.groups = bound_groups(merged.census.groups, MAX_GROUPS_PER_POINT);
+        if !seen.is_empty() {
+            match serde_json::from_str::<Sample>(&seen) {
+                Ok(existing) => {
+                    let mut base = existing.census;
+                    merge_max(&mut base, census, MAX_GROUPS_PER_POINT);
+                    merged.census = base;
+                }
+                Err(e) => tracing::warn!(
+                    "[census] an unreadable coarse member of {} is replaced by this minute: {}",
+                    key,
+                    e
+                ),
+            }
+        }
+        let payload = serde_json::to_string(&merged).map_err(|e| {
+            redis::RedisError::from((
+                redis::ErrorKind::Client,
+                "coarse sample is not serialisable",
+                e.to_string(),
+            ))
+        })?;
+        let written: i64 = redis::Script::new(RECORD_COARSE)
+            .key(key)
+            .arg(bucket)
+            .arg(seen)
+            .arg(payload)
+            .arg(COARSE_RETENTION_SECS)
+            .invoke_async(con)
+            .await?;
+        if written == 1 {
+            return Ok(true);
+        }
+        tracing::debug!(
+            "[census] coarse bucket {} changed under attempt {} - merging again",
+            bucket,
+            attempt
+        );
+    }
+    Ok(false)
 }
 
 /// Take and record the sample of the minute containing `now` (this replica's clock - which only
@@ -520,8 +723,12 @@ async fn sample_once(state: &AppState, now: i64) {
             return;
         }
     }
-    let census = match read_census(&mut con, HISTORY_MIN_CELL).await {
-        Ok(census) => census,
+    let census = match read_census(&mut con).await {
+        Ok(mut census) => {
+            // The stored point is bounded; the live view (a single instant) is not.
+            census.groups = bound_groups(census.groups, MAX_GROUPS_PER_POINT);
+            census
+        }
         Err(e) => {
             tracing::warn!(
                 "[census] the census read failed - minute {} left as a gap: {}",
@@ -538,13 +745,32 @@ async fn sample_once(state: &AppState, now: i64) {
             if skew > 0 { "ahead of" } else { "behind" },
             bucket
         ),
-        Ok(outcome) => tracing::debug!(
-            "[census] minute {}: {} devices, {} users ({:?})",
-            bucket,
-            census.devices,
-            census.users,
-            outcome
-        ),
+        Ok(outcome) => {
+            tracing::debug!(
+                "[census] minute {}: {} devices, {} users ({:?})",
+                bucket,
+                census.devices,
+                census.users,
+                outcome
+            );
+            // Only the replica that WROTE the minute folds it into the coarse series: the others
+            // found it taken and have nothing new to add.
+            if outcome == SampleOutcome::Wrote {
+                match record_coarse(&mut con, &state.census_coarse_key, bucket, &census).await {
+                    Ok(true) => {}
+                    Ok(false) => tracing::warn!(
+                        "[census] coarse bucket of minute {} lost {} races - this minute is missing from the 7/30-day series",
+                        bucket,
+                        COARSE_CAS_ATTEMPTS
+                    ),
+                    Err(e) => tracing::warn!(
+                        "[census] the coarse write failed - minute {} is missing from the 7/30-day series: {}",
+                        bucket,
+                        e
+                    ),
+                }
+            }
+        }
         Err(e) => tracing::warn!(
             "[census] the sample write failed - minute {} left as a gap: {}",
             bucket,
@@ -605,16 +831,13 @@ mod tests {
 
     #[test]
     fn devices_and_distinct_users_are_counted_by_platform_and_version() {
-        let census = aggregate(
-            &[
-                device("alice", "android", "1.5.4"),
-                device("alice", "web", "1.5.4"),
-                device("bob", "android", "1.5.4"),
-                device("bob", "android", "1.5.3"),
-                device("carol", "ios", "1.5.4"),
-            ],
-            1,
-        );
+        let census = aggregate(&[
+            device("alice", "android", "1.5.4"),
+            device("alice", "web", "1.5.4"),
+            device("bob", "android", "1.5.4"),
+            device("bob", "android", "1.5.3"),
+            device("carol", "ios", "1.5.4"),
+        ]);
         assert_eq!(census.devices, 5);
         // alice owns two devices and bob two: three people, not five.
         assert_eq!(census.users, 3);
@@ -635,7 +858,7 @@ mod tests {
     #[test]
     fn an_empty_population_is_an_empty_census() {
         assert_eq!(
-            aggregate(&[], 1),
+            aggregate(&[]),
             Census {
                 devices: 0,
                 users: 0,
@@ -650,7 +873,7 @@ mod tests {
         for i in 0..(MAX_VERSIONS_PER_SAMPLE + 5) {
             devices.push(device(&format!("u{i}"), "web", &format!("1.0.{i}")));
         }
-        let census = aggregate(&devices, 1);
+        let census = aggregate(&devices);
         let versions: HashSet<&str> = census.groups.iter().map(|g| g.version.as_str()).collect();
         assert_eq!(versions.len(), MAX_VERSIONS_PER_SAMPLE + 1);
         assert!(versions.contains(OTHER));
@@ -660,13 +883,10 @@ mod tests {
     #[test]
     fn a_census_names_nobody() {
         // THE PRIVACY PIN: whatever the population's ids are, no serialised sample contains one.
-        let census = aggregate(
-            &[
-                device("user-id-aaaa", "web", "1.5.4"),
-                device("user-id-bbbb", "android", "1.5.4"),
-            ],
-            HISTORY_MIN_CELL,
-        );
+        let census = aggregate(&[
+            device("user-id-aaaa", "web", "1.5.4"),
+            device("user-id-bbbb", "android", "1.5.4"),
+        ]);
         let json = serde_json::to_string(&Sample { t: 60, census }).unwrap();
         assert!(!json.contains("user-id"));
         assert!(!json.contains("userId") && !json.contains("deviceId"));
@@ -676,7 +896,7 @@ mod tests {
     fn a_sample_round_trips_through_json() {
         let sample = Sample {
             t: 120,
-            census: aggregate(&[device("a", "web", "1.5.4")], 1),
+            census: aggregate(&[device("a", "web", "1.5.4")]),
         };
         let back: Sample = serde_json::from_str(&serde_json::to_string(&sample).unwrap()).unwrap();
         assert_eq!(back, sample);
@@ -691,104 +911,116 @@ mod tests {
     }
 
     #[test]
-    fn a_small_cell_is_merged_by_platform_first_then_by_version() {
-        let mut devices = Vec::new();
-        // android 1.5.4: 3 devices (kept). android 1.5.3: 1 and android 1.5.2: 1 - together 2, still
-        // under 3. ios 1.5.4: 1. web 1.5.4: 3 (kept), web 1.5.3: 2 -> (web, other) = 2, under 3.
-        for i in 0..3 {
-            devices.push(device(&format!("a{i}"), "android", "1.5.4"));
-            devices.push(device(&format!("w{i}"), "web", "1.5.4"));
-        }
-        devices.push(device("s1", "android", "1.5.3"));
-        devices.push(device("s2", "android", "1.5.2"));
-        devices.push(device("s3", "ios", "1.5.4"));
-        devices.push(device("s4", "web", "1.5.3"));
-        devices.push(device("s5", "web", "1.5.3"));
-
-        let census = aggregate(&devices, HISTORY_MIN_CELL);
-
-        // The totals never move.
-        assert_eq!(census.devices, 11);
-        assert_eq!(census.users, 11);
-        assert_eq!(cell_of(&census, "android", "1.5.4"), Some((3, 3)));
-        assert_eq!(cell_of(&census, "web", "1.5.4"), Some((3, 3)));
-        // Pass 1 folded the versions of each small cell into (platform, other); pass 2 found
-        // android-other (2), web-other (2) and ios-other (1) still under the minimum and dissolved
-        // the platforms too.
-        assert_eq!(cell_of(&census, "other", "other"), Some((5, 5)));
-        assert_eq!(census.groups.len(), 3);
-        // No remaining cell is under the minimum, except the last residue, which names no platform
-        // and no version.
-        assert!(
-            census
-                .groups
-                .iter()
-                .all(|g| g.devices >= HISTORY_MIN_CELL
-                    || (g.platform == OTHER && g.version == OTHER))
-        );
-    }
-
-    #[test]
-    fn a_platform_cell_that_reaches_the_minimum_after_the_first_pass_keeps_its_platform() {
-        let census = aggregate(
-            &[
-                device("a", "ios", "1.0.0"),
-                device("b", "ios", "1.0.1"),
-                device("c", "ios", "1.0.2"),
-            ],
-            HISTORY_MIN_CELL,
-        );
-        // Three single-device cells fold into (ios, other) = 3: the platform survives.
-        assert_eq!(census.groups.len(), 1);
-        assert_eq!(cell_of(&census, "ios", "other"), Some((3, 3)));
-    }
-
-    #[test]
-    fn merged_cells_count_their_distinct_users_once() {
-        let census = aggregate(
-            &[
-                device("same", "ios", "1.0.0"),
-                device("same", "android", "1.0.0"),
-                device("other-person", "linux", "1.0.0"),
-            ],
-            HISTORY_MIN_CELL,
-        );
-        assert_eq!(cell_of(&census, "other", "other"), Some((3, 2)));
-        assert_eq!(census.users, 2);
-    }
-
-    #[test]
-    fn three_devices_of_one_person_are_not_a_cell() {
-        let census = aggregate(
-            &[
-                device("solo", "ios", "1.0.0"),
-                device("solo", "ios", "1.0.0"),
-                device("solo", "ios", "1.0.0"),
-            ],
-            HISTORY_MIN_CELL,
-        );
-        // Three devices pass a device threshold, one person does not: nothing names the platform.
-        assert_eq!(cell_of(&census, "ios", "1.0.0"), None);
-        assert_eq!(cell_of(&census, "other", "other"), Some((3, 1)));
-    }
-
-    #[test]
-    fn three_people_make_a_cell() {
-        let census = aggregate(
-            &[
-                device("a", "ios", "1.0.0"),
-                device("b", "ios", "1.0.0"),
-                device("c", "ios", "1.0.0"),
-            ],
-            HISTORY_MIN_CELL,
-        );
-        assert_eq!(cell_of(&census, "ios", "1.0.0"), Some((3, 3)));
-    }
-
-    #[test]
-    fn the_live_census_keeps_every_cell() {
-        let census = aggregate(&[device("a", "ios", "1.0.0")], 1);
+    fn a_cell_of_one_person_is_kept_whole() {
+        // Owner, 2026-11-05: every (platform, version) gets its own series, even for one person.
+        let census = aggregate(&[
+            device("solo", "ios", "1.0.0"),
+            device("a", "android", "1.0.0"),
+            device("b", "android", "1.0.1"),
+        ]);
         assert_eq!(cell_of(&census, "ios", "1.0.0"), Some((1, 1)));
+        assert_eq!(cell_of(&census, "android", "1.0.0"), Some((1, 1)));
+        assert_eq!(cell_of(&census, "android", "1.0.1"), Some((1, 1)));
+        assert_eq!(cell_of(&census, OTHER, OTHER), None);
+        assert_eq!(census.groups.len(), 3);
+    }
+
+    fn census_of(devices: u64, users: u64, cells: &[(&str, &str, u64)]) -> Census {
+        Census {
+            devices,
+            users,
+            groups: cells
+                .iter()
+                .map(|(p, v, n)| Group {
+                    platform: p.to_string(),
+                    version: v.to_string(),
+                    devices: *n,
+                    users: *n,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn merge_max_takes_the_peak_of_every_cell_and_is_idempotent() {
+        let mut bucket = census_of(3, 3, &[("web", "1.0.0", 2), ("ios", "1.0.0", 1)]);
+        let later = census_of(2, 2, &[("web", "1.0.0", 1), ("android", "1.0.0", 1)]);
+        merge_max(&mut bucket, &later, 64);
+        assert_eq!(bucket.devices, 3);
+        assert_eq!(cell_of(&bucket, "web", "1.0.0"), Some((2, 2)));
+        assert_eq!(cell_of(&bucket, "ios", "1.0.0"), Some((1, 1)));
+        assert_eq!(cell_of(&bucket, "android", "1.0.0"), Some((1, 1)));
+        let once = bucket.clone();
+        merge_max(&mut bucket, &later, 64);
+        assert_eq!(bucket, once, "applying a minute twice changes nothing");
+    }
+
+    #[test]
+    fn a_bucket_beyond_the_group_cap_folds_its_smallest_cells_into_other() {
+        let cells: Vec<(String, u64)> = (0..10).map(|i| (format!("1.0.{i}"), 10 - i)).collect();
+        let census = census_of(
+            55,
+            55,
+            &cells
+                .iter()
+                .map(|(v, n)| ("web", v.as_str(), *n))
+                .collect::<Vec<_>>(),
+        );
+        let bounded = bound_groups(census.groups, 4);
+        assert_eq!(bounded.len(), 4);
+        // The three biggest stay; the seven others (7+6+..+1 = 28) are summed.
+        assert_eq!(
+            cell_of(
+                &Census {
+                    devices: 0,
+                    users: 0,
+                    groups: bounded.clone()
+                },
+                OTHER,
+                OTHER
+            ),
+            Some((28, 28))
+        );
+        assert!(bounded.iter().any(|g| g.version == "1.0.0"));
+    }
+
+    #[test]
+    fn a_window_is_a_closed_set() {
+        assert_eq!(Window::parse("24h"), Some(Window::Day));
+        assert_eq!(Window::parse("7d"), Some(Window::Week));
+        assert_eq!(Window::parse("30d"), Some(Window::Month));
+        for bad in ["", "1y", "9999d", "-1", "24H", "30d "] {
+            assert_eq!(Window::parse(bad), None, "{bad:?}");
+        }
+        // No window ever answers more than 2016 points.
+        for w in [Window::Day, Window::Week, Window::Month] {
+            assert!(w.secs() / w.interval_secs() <= 2016);
+        }
+    }
+
+    #[test]
+    fn a_rollup_takes_the_max_and_leaves_a_gap_empty() {
+        let sample = |t: i64, n: u64| Sample {
+            t,
+            census: census_of(n, n, &[("web", "1.0.0", n)]),
+        };
+        let rolled = rollup_max(
+            vec![
+                sample(0, 1),
+                sample(300, 4),
+                sample(600, 2),
+                // 3600 is a different half hour: the half hours between hold nothing.
+                sample(3600, 7),
+            ],
+            1800,
+        );
+        assert_eq!(
+            rolled
+                .iter()
+                .map(|s| (s.t, s.census.devices))
+                .collect::<Vec<_>>(),
+            vec![(0, 4), (3600, 7)]
+        );
     }
 }
 
@@ -866,7 +1098,9 @@ mod redis_it {
         );
         assert!(minute_taken(&mut con, &key, t).await.unwrap());
         let now = redis_now(&mut con).await.unwrap();
-        let got = read_series(&mut con, &key, now).await.unwrap();
+        let got = read_series(&mut con, &key, now, RETENTION_SECS)
+            .await
+            .unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].census.devices, 3);
     }
@@ -880,7 +1114,9 @@ mod redis_it {
         plant(&mut con, &key, t - 540, 1).await;
         record_sample(&mut con, &key, t, &census(1)).await.unwrap();
         let now = redis_now(&mut con).await.unwrap();
-        let got = read_series(&mut con, &key, now).await.unwrap();
+        let got = read_series(&mut con, &key, now, RETENTION_SECS)
+            .await
+            .unwrap();
         assert_eq!(
             got.iter().map(|s| s.t).collect::<Vec<_>>(),
             vec![t - 600, t - 540, t]
@@ -897,7 +1133,9 @@ mod redis_it {
         plant(&mut con, &key, t - RETENTION_SECS + 600, 2).await;
         record_sample(&mut con, &key, t, &census(3)).await.unwrap();
         let now = redis_now(&mut con).await.unwrap();
-        let got = read_series(&mut con, &key, now).await.unwrap();
+        let got = read_series(&mut con, &key, now, RETENTION_SECS)
+            .await
+            .unwrap();
         // The sample inside the window is kept; the one older than 24 h was trimmed by the write.
         assert_eq!(
             got.iter().map(|s| s.census.devices).collect::<Vec<_>>(),
@@ -939,7 +1177,9 @@ mod redis_it {
 
         assert!(!minute_taken(&mut con, &key, ahead).await.unwrap());
         let now = redis_now(&mut con).await.unwrap();
-        let got = read_series(&mut con, &key, now).await.unwrap();
+        let got = read_series(&mut con, &key, now, RETENTION_SECS)
+            .await
+            .unwrap();
         assert_eq!(
             got.iter().map(|s| s.census.devices).collect::<Vec<_>>(),
             vec![5, 6],
@@ -954,8 +1194,85 @@ mod redis_it {
         // Even a future sample that DID get in (a foreign write) is never served: the read is
         // bounded to Redis's now.
         plant(&mut con, &key, now + 3600, 99).await;
-        let got = read_series(&mut con, &key, now).await.unwrap();
+        let got = read_series(&mut con, &key, now, RETENTION_SECS)
+            .await
+            .unwrap();
         assert!(got.iter().all(|s| s.census.devices != 99));
+    }
+
+    fn with_cells(devices: u64, cells: &[(&str, &str, u64)]) -> Census {
+        Census {
+            devices,
+            users: devices,
+            groups: cells
+                .iter()
+                .map(|(p, v, n)| Group {
+                    platform: p.to_string(),
+                    version: v.to_string(),
+                    devices: *n,
+                    users: *n,
+                })
+                .collect(),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_coarse_bucket_keeps_the_peak_of_its_minutes_and_replays_are_harmless() {
+        let Some(mut con) = redis().await else { return };
+        let key = series();
+        let t = this_minute(&mut con).await;
+        let bucket = t - t.rem_euclid(COARSE_INTERVAL_SECS);
+        let low = with_cells(2, &[("web", "1.0.0", 2)]);
+        let high = with_cells(5, &[("web", "1.0.0", 3), ("ios", "1.0.0", 2)]);
+        assert!(record_coarse(&mut con, &key, bucket, &high).await.unwrap());
+        // A later, quieter minute of the same bucket, applied twice (two replicas, a replay).
+        for _ in 0..2 {
+            assert!(
+                record_coarse(&mut con, &key, bucket + 60, &low)
+                    .await
+                    .unwrap()
+            );
+        }
+        let now = redis_now(&mut con).await.unwrap();
+        let got = read_series(&mut con, &key, now + 1, COARSE_RETENTION_SECS)
+            .await
+            .unwrap();
+        assert_eq!(got.len(), 1, "one member per 5 minutes");
+        assert_eq!(got[0].t, bucket);
+        assert_eq!(got[0].census.devices, 5);
+        assert_eq!(cell_of_census(&got[0].census, "web", "1.0.0"), Some(3));
+        assert_eq!(cell_of_census(&got[0].census, "ios", "1.0.0"), Some(2));
+        let ttl: i64 = redis::cmd("TTL")
+            .arg(&key)
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        assert!(ttl > 0 && ttl <= COARSE_RETENTION_SECS + 3600);
+    }
+
+    fn cell_of_census(census: &Census, p: &str, v: &str) -> Option<u64> {
+        census
+            .groups
+            .iter()
+            .find(|g| g.platform == p && g.version == v)
+            .map(|g| g.devices)
+    }
+
+    #[tokio::test]
+    async fn the_coarse_series_trims_what_is_older_than_30_days() {
+        let Some(mut con) = redis().await else { return };
+        let key = series();
+        let t = this_minute(&mut con).await;
+        let old = t - COARSE_RETENTION_SECS - 3600;
+        let old = old - old.rem_euclid(COARSE_INTERVAL_SECS);
+        plant(&mut con, &key, old, 9).await;
+        assert!(record_coarse(&mut con, &key, t, &census(1)).await.unwrap());
+        let members: i64 = redis::cmd("ZCARD")
+            .arg(&key)
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        assert_eq!(members, 1, "the 30-day-old bucket was trimmed by the write");
     }
 
     #[tokio::test]

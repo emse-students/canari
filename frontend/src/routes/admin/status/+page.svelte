@@ -2,7 +2,7 @@
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
-  import PresenceChart from '$lib/components/admin/PresenceChart.svelte';
+  import PresenceLineChart from '$lib/components/admin/PresenceLineChart.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { isGlobalAdmin } from '$lib/stores/user';
@@ -15,14 +15,17 @@
     devicesByPlatform,
     layersOf,
     versionShares,
+    HISTORY_WINDOWS,
     type Census,
     type CensusHistory,
+    type HistoryWindow,
   } from '$lib/admin/presenceMonitor';
   import { platformColor, platformLabel, versionLabel } from '$lib/admin/presencePlatforms';
 
   /**
    * THE PAGE IS COUNTS ONLY (owner, 2026-11-02): how many people and devices are connected, by
-   * platform and app version, and the last 24 hours of it. It once listed every connected user and
+   * platform and app version, and 24 hours, 7 days or 30 days of it, one line per platform and one
+   * per version. It once listed every connected user and
    * device; neither id is on the wire any more, so this page cannot show one.
    */
   let census = $state<Census | null>(null);
@@ -37,7 +40,10 @@
   let historyTimer: ReturnType<typeof setInterval>;
 
   const NOW_REFRESH_MS = 10_000;
-  const HISTORY_REFRESH_MS = 60_000;
+  /** The 24 h series gains a point a minute; the 5-minute and 30-minute series gain one far less often. */
+  const historyRefreshMs = (w: HistoryWindow) => (w === '24h' ? 60_000 : 300_000);
+
+  let period = $state<HistoryWindow>('24h');
 
   async function getJson<T>(path: string): Promise<T> {
     const res = await apiFetch(`${gatewayUrl()}${path}`);
@@ -59,13 +65,27 @@
   }
 
   async function fetchHistory() {
+    const asked = period;
     try {
-      history = await getJson<CensusHistory>('/api/admin/presence/history');
+      const answer = await getJson<CensusHistory>(`/api/admin/presence/history?window=${asked}`);
+      // A slower answer for a period the reader has since left must not replace the one on screen.
+      if (asked !== period) return;
+      history = answer;
       historyFailed = false;
     } catch (e) {
-      Log.d('admin.status.fetchHistory failed', e);
-      historyFailed = true;
+      Log.d(`admin.status.fetchHistory failed (${asked})`, e);
+      if (asked === period) historyFailed = true;
     }
+  }
+
+  /** Switches the period: the old window's curves are dropped (not shown under a new label) and the new one is read at once. */
+  function choosePeriod(next: HistoryWindow) {
+    if (next === period) return;
+    Log.d(`admin.status.period ${period} -> ${next}`);
+    period = next;
+    history = null;
+    void fetchHistory();
+    if (!document.hidden) startPolling();
   }
 
   function refreshAll() {
@@ -94,7 +114,7 @@
   function startPolling() {
     stopPolling();
     nowTimer = setInterval(() => void fetchNow(), NOW_REFRESH_MS);
-    historyTimer = setInterval(() => void fetchHistory(), HISTORY_REFRESH_MS);
+    historyTimer = setInterval(() => void fetchHistory(), historyRefreshMs(period));
   }
 
   function stopPolling() {
@@ -203,16 +223,50 @@
     {/if}
   </section>
 
-  <!-- Last 24 hours -->
-  <section class="mb-8" aria-labelledby="status-24h">
-    <h2
-      id="status-24h"
-      class="text-text-muted mb-3 text-xs font-semibold tracking-widest uppercase"
-    >
-      {m.admin_status_chart_heading()}
-    </h2>
+  <!-- History: one line per platform, one per version -->
+  <section class="mb-8" aria-labelledby="status-history">
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <h2
+        id="status-history"
+        class="text-text-muted text-xs font-semibold tracking-widest uppercase"
+      >
+        {m.admin_status_history_heading()}
+      </h2>
+      <div
+        role="group"
+        aria-label={m.admin_status_period_label()}
+        class="border-cn-border flex overflow-hidden rounded-lg border bg-(--cn-surface) text-sm"
+      >
+        {#each HISTORY_WINDOWS as w (w)}
+          <button
+            type="button"
+            aria-pressed={period === w}
+            data-testid="period-{w}"
+            onclick={() => choosePeriod(w)}
+            class="px-3 py-1.5 transition-colors {period === w
+              ? 'bg-cn-yellow text-black'
+              : 'text-text-muted hover:text-text-main'}"
+          >
+            {w === '24h'
+              ? m.admin_status_period_24h()
+              : w === '7d'
+                ? m.admin_status_period_7d()
+                : m.admin_status_period_30d()}
+          </button>
+        {/each}
+      </div>
+    </div>
+    <p class="text-text-muted mb-3 text-sm">{m.admin_status_history_hint()}</p>
     {#if history}
-      <PresenceChart {history} />
+      <h3 class="text-text-main mb-1 text-sm font-medium">
+        {m.admin_status_chart_platforms_heading()}
+      </h3>
+      <PresenceLineChart {history} axis="platform" />
+      <h3 class="text-text-main mt-6 mb-1 text-sm font-medium">
+        {m.admin_status_chart_versions_heading()}
+      </h3>
+      <PresenceLineChart {history} axis="version" />
+      <p class="text-text-muted mt-3 text-xs">{m.admin_status_chart_gap_hint()}</p>
     {:else}
       <div class="text-text-muted text-sm">{m.common_loading_label()}</div>
     {/if}
@@ -227,6 +281,11 @@
       {m.admin_status_versions_heading()}
     </h2>
     <p class="text-text-muted mb-3 text-sm">{m.admin_status_versions_hint()}</p>
+    {#if versions.some((v) => v.version === 'unknown')}
+      <p class="text-text-muted mb-3 text-sm" data-testid="status-unknown-explainer">
+        {m.admin_status_versions_unknown_explainer()}
+      </p>
+    {/if}
     {#if versions.length === 0}
       <p class="text-text-muted text-sm">{m.admin_status_versions_empty()}</p>
     {:else}
@@ -242,14 +301,29 @@
               </span>
             </div>
             <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-(--surface-elevated)">
-              <div
-                class="bg-cn-yellow h-full rounded-full"
-                style:width="{Math.max(v.share * 100, 1)}%"
-              ></div>
+              <div class="flex h-full gap-0.5" style:width="{Math.max(v.share * 100, 1)}%">
+                {#each v.platforms as p (p.platform)}
+                  <div
+                    class="h-full"
+                    style:flex-grow={p.devices}
+                    style:background-color={platformColor(p.platform)}
+                  ></div>
+                {/each}
+              </div>
             </div>
-            <p class="text-text-muted mt-1.5 text-xs">
-              {v.platforms.map((p) => `${platformLabel(p.platform)} ${p.devices}`).join(' · ')}
-            </p>
+            <ul class="text-text-muted mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
+              {#each v.platforms as p (p.platform)}
+                <li class="flex items-center gap-1.5" data-testid="status-version-platform">
+                  <span
+                    class="inline-block size-2 rounded-full"
+                    style:background-color={platformColor(p.platform)}
+                    aria-hidden="true"
+                  ></span>
+                  {platformLabel(p.platform)}
+                  {p.devices}
+                </li>
+              {/each}
+            </ul>
           </li>
         {/each}
       </ul>
