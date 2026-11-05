@@ -989,6 +989,59 @@ describe('MessagingService - visibility vs durability', () => {
 
         expect(redis.sadd).toHaveBeenCalledWith('group:members:g1', 'u1:d1', 'u2:dA');
       });
+
+      describe('an ACTIVE device admitted after the frame was sealed (2026-11-04)', () => {
+        /**
+         * The sender, a member admitted long ago, a device whose external join was built on epoch 5
+         * (it holds 6 onwards), one whose admission is only INFERRED at 5, and one with none.
+         */
+        const withJoiner = () => {
+          const active = [
+            { userId: 'u1', deviceId: 'd1', admittedByBaseEpoch: 0, admissionInferred: false },
+            { userId: 'u2', deviceId: 'dA', admittedByBaseEpoch: 2, admissionInferred: false },
+            { userId: 'u3', deviceId: 'dJoin', admittedByBaseEpoch: 5, admissionInferred: false },
+            { userId: 'u4', deviceId: 'dGuess', admittedByBaseEpoch: 5, admissionInferred: true },
+            {
+              userId: 'u5',
+              deviceId: 'dNone',
+              admittedByBaseEpoch: null,
+              admissionInferred: false,
+            },
+          ];
+          deviceGroupRepo.find.mockImplementation(
+            async ({ where }: { where: { status?: string } }) =>
+              where.status === 'pending' ? [] : active
+          );
+          keyPackageRepo.find.mockResolvedValue(active);
+        };
+
+        it('withholds a frame sealed at or before the base of its admission, which it can never open', async () => {
+          withJoiner();
+          silencePush();
+
+          await service.sendMessage(send({ proto: sealedAt(5), durable: true }));
+
+          expect(queuedDevices()).toEqual(['dA', 'dGuess', 'dNone']);
+        });
+
+        it('queues it every frame sealed at the epoch its admission created, and after', async () => {
+          withJoiner();
+          silencePush();
+
+          await service.sendMessage(send({ proto: sealedAt(6), durable: true }));
+
+          expect(queuedDevices()).toEqual(['dA', 'dJoin', 'dGuess', 'dNone']);
+        });
+
+        it('never withholds a commit: the rule is about application frames', async () => {
+          withJoiner();
+          silencePush();
+
+          await service.sendMessage(send({ proto: sealedAt(5), durable: true, isCommit: true }));
+
+          expect(queuedDevices()).toContain('dJoin');
+        });
+      });
     });
 
     it('reconciles the gateway routing set with every live member, the sender included', async () => {

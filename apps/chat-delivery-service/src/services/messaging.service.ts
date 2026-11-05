@@ -51,6 +51,7 @@ import {
   mlsFrameEpoch,
   isPublicMlsFrame,
   readCommitFrame,
+  sealedBeforeAdmission,
 } from '../utils/mls-frame-epoch';
 import { groupInfoLeafIdentity } from '../utils/mls-group-info';
 import {
@@ -1885,12 +1886,37 @@ export class MessagingService {
             appVersion: senderVersion ?? 'unknown',
           };
         }
-        const members = recipients.filter(
+        const reachable = recipients.filter(
           (m) =>
             !isSender(m) &&
             !excludeSet.has(`${m.userId}:${m.deviceId}`) &&
             liveDeviceIds.has(`${m.userId}:${m.deviceId}`)
         );
+        // AN APPLICATION FRAME SEALED BEFORE A SEAT'S ADMISSION IS NOT ITS TO RECEIVE: its device
+        // joined at a later epoch and holds no secret of this one, so a row would be acknowledged as
+        // a loss on arrival and drive a seed request it was never owed (`sealedBeforeAdmission`).
+        // The same rule `admittedAtEpoch` applies to a pending seat above, applied to the seat's
+        // recorded admission so it holds for an active one too. Said in one line, as a count: it is
+        // the ordinary race of a send crossing a join, not a fault.
+        const beforeAdmission =
+          !isHandshake && frameEpoch !== null
+            ? reachable.filter((m) => sealedBeforeAdmission(frameEpoch, m))
+            : [];
+        if (beforeAdmission.length > 0) {
+          this.logger.log(
+            `[SEND][${traceId}] SEALED_BEFORE_ADMISSION group=${groupId} frameEpoch=${frameEpoch} ` +
+              `withheld=${beforeAdmission.length} devices=${beforeAdmission
+                .map(
+                  (m) =>
+                    `${cutUserId(m.userId)}:${cutDeviceId(m.deviceId)}@${m.admittedByBaseEpoch}`
+                )
+                .join(',')}`
+          );
+        }
+        const members =
+          beforeAdmission.length > 0
+            ? reachable.filter((m) => !beforeAdmission.includes(m))
+            : reachable;
         // AN ADDRESSED FRAME NARROWS THE SET RESOLVED ABOVE AND NEVER ADDS TO IT: a key that names no
         // live member of this group addresses nobody, so a client cannot use it to reach a device
         // outside the group. Measured on production 2026-10-12, an answer to one seed request was
@@ -5502,15 +5528,24 @@ export class MessagingService {
       authority,
       claim,
       admittedByBaseEpoch,
+      admissionInferred = false,
     }: {
       tag?: string;
       authority: ActivationAuthority;
       /**
        * The admission this seat holds when no commit recorded one - the group's creation (`0`) or
-       * the epoch a key group's publisher holds the group at - written only on a seat that has none
-       * ({@link recordAdmission}, `keepRecorded`), so it never lowers the floor an accepted commit set.
+       * the base leading to the epoch a key group's publisher holds - written only on a seat that has
+       * none ({@link recordAdmission}, `keepRecorded`), so it never lowers the floor an accepted
+       * commit set.
        */
       admittedByBaseEpoch?: number;
+      /**
+       * Write {@link admittedByBaseEpoch} as a floor INFERRED rather than an admission: a key group's
+       * publisher past the creation may have been in the tree long before this publish, so the
+       * value is not when it arrived - it floors the commit times it is answered, and never
+       * withholds a frame from it (`sealedBeforeAdmission`).
+       */
+      admissionInferred?: boolean;
       /**
        * The claim this seat is written against ({@link claimSeat}), taken by the caller BEFORE the
        * check that decided the activation. REQUIRED of the two authorities whose check is made
@@ -5559,7 +5594,15 @@ export class MessagingService {
     // package ({@link writeClaimedSeat}): created while its account is erased, it gets no seat.
     if (authority === 'group_creator') {
       const refused = await withSeatLock(this.groupRepo.manager, groupId, (m) =>
-        this.writeClaimedSeat(m, userId, deviceId, groupId, tag, admittedByBaseEpoch)
+        this.writeClaimedSeat(
+          m,
+          userId,
+          deviceId,
+          groupId,
+          tag,
+          admittedByBaseEpoch,
+          admissionInferred
+        )
       );
       if (refused !== null) return { ok: false, reason: refused };
       await this.routeActiveSeat(userId, deviceId, groupId, tag);
@@ -5589,7 +5632,8 @@ export class MessagingService {
         deviceId,
         groupId,
         tag,
-        admittedByBaseEpoch
+        admittedByBaseEpoch,
+        admissionInferred
       );
       return refused === null ? ({ ok: true } as const) : ({ ok: false, reason: refused } as const);
     });
@@ -5618,7 +5662,8 @@ export class MessagingService {
     deviceId: string,
     groupId: string,
     tag: string,
-    admittedByBaseEpoch?: number
+    admittedByBaseEpoch?: number,
+    admissionInferred = false
   ): Promise<null | 'revoked' | 'no_key_package'> {
     const revoked = await m.getRepository(RevokedDevice).findOne({
       where: activeRevocationWhere({ userId, deviceId }),
@@ -5646,6 +5691,7 @@ export class MessagingService {
     if (admittedByBaseEpoch !== undefined) {
       await this.recordAdmission(m, userId, deviceId, groupId, admittedByBaseEpoch, tag, {
         keepRecorded: true,
+        inferred: admissionInferred,
       });
     }
     return null;
@@ -5667,6 +5713,8 @@ export class MessagingService {
    * so its re-add is written. An external join proves its leaf by its own frame, so it is not
    * guarded. `keepRecorded` writes only a seat that has none: the creation and a key group's
    * publisher, which no commit admitted, must never lower a floor an accepted commit set.
+   * `inferred` writes the value as a floor INFERRED, not an admission - a key group's publisher past
+   * the creation, which may have been in the tree long before ({@link activateDeviceMembership}).
    */
   private async recordAdmission(
     m: EntityManager,
@@ -5678,7 +5726,8 @@ export class MessagingService {
     {
       keepRecorded = false,
       pendingOnly = false,
-    }: { keepRecorded?: boolean; pendingOnly?: boolean } = {}
+      inferred = false,
+    }: { keepRecorded?: boolean; pendingOnly?: boolean; inferred?: boolean } = {}
   ): Promise<void> {
     const result = await m.getRepository(DeviceGroupMembership).update(
       {
@@ -5688,11 +5737,11 @@ export class MessagingService {
         ...(keepRecorded ? { admittedByBaseEpoch: IsNull() } : {}),
         ...(pendingOnly ? { status: 'pending' as const } : {}),
       },
-      { admittedByBaseEpoch: baseEpoch, admissionInferred: false }
+      { admittedByBaseEpoch: baseEpoch, admissionInferred: inferred }
     );
     this.logger.debug(
       `[${tag}] admission group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)} ` +
-        `baseEpoch=${baseEpoch} keepRecorded=${keepRecorded} pendingOnly=${pendingOnly} written=${result.affected ?? '?'}`
+        `baseEpoch=${baseEpoch} inferred=${inferred} keepRecorded=${keepRecorded} pendingOnly=${pendingOnly} written=${result.affected ?? '?'}`
     );
   }
 

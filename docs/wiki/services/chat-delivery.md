@@ -434,6 +434,40 @@ never appended to the history stream**: that stream is replayed to every member,
 belongs to one device's queue only. Why and what it costs:
 [channel-encryption §23](../protocols/channel-encryption.md#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12).
 
+**An application frame sealed before a seat's admission is withheld from that seat (2026-11-04).**
+A device admitted by a commit built on base epoch B (an Add, or its own external join) holds the
+group from B + 1, and neither a Welcome nor an external join carries the secrets of an earlier
+epoch. A member that has not applied the join yet still seals at B after the join is accepted -
+a send crossing a join - and that frame was queued and pushed to the newcomer, which acknowledged
+it as `past-epoch-application`, counted it as a lost key-group frame and asked its peers for a seed
+it was never owed (rig log, 2026-10-25: `msg_epoch=5 group_epoch=6` in the same second as
+`externalJoin ... base epoch 5`, two per community joined, each followed by three seed requests).
+`sendMessage` now drops, for an application frame, every seat for which `sealedBeforeAdmission`
+(`utils/mls-frame-epoch.ts`) holds - `frameEpoch <= admittedByBaseEpoch` - and logs one line,
+`[SEND][trace] SEALED_BEFORE_ADMISSION group= frameEpoch= withheld=N devices=`. It is the rule a
+pending seat already had (`admittedAtEpoch`), read from the admission every seat records. Commits
+are never withheld. An inferred floor (`admissionInferred`) or a seat with no recorded admission is
+never withheld from, because only a recorded admission proves the device cannot hold the epoch. A
+key group's PUBLISHER is recorded at the base leading to the epoch E it publishes, `E - 1`
+(`publisherAdmissionBase`): the publish writes an admission on ANY active seat that has none - a
+member whose seat carries no admission, not only the creator - and recording E itself would
+withhold the frames peers seal at E, which that device reads. Past the creation's publish (E = 0,
+recorded as an admission) the value is written as an INFERRED floor (`admissionInferred`): such a
+member may have been in the tree long before it published, so the floor dates the commit times it
+is answered and never withholds a frame from it. A conversation's creator is recorded
+at 0, the epoch it holds: one epoch too strict, which withholds nothing, because no other device can
+seal at the epoch a group was created at. The history stream (`GET mls/history/:groupId`, the batch)
+is not a second road to the key-group loss: the client replays it only for conversations
+(`utils/chat/conversations.ts`, the conversation metas minus salons), never a key group, and a key
+group's peer reconcile is closed (`historyReconcile.ts`, `isDistributionGroup`), so no seed request
+comes from it. A CONVERSATION joiner can still be handed the crossing frame by its stream (rows are
+filtered by arrival time, not epoch): the replay marks the row seen (`utils/chat/history.ts`, no
+queue ack) and escalates a peer reconcile, whose answer is sealed at the current epoch - the one
+road by which a message sent after the arrival still reaches the newcomer, so the stream is
+deliberately NOT filtered by this rule. Asserted in
+`messaging.durability.spec.ts` (an active device admitted after the frame),
+`mls-frame-epoch.spec.ts` and `internal.distribution-group.spec.ts` (the publisher's record).
+
 ### The queue is bounded on ONE axis, and observed on the other
 
 `cleanupExpiredQueuedMessages` bounds the queue by AGE, and that is the only axis on which
