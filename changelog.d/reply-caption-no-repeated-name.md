@@ -1,0 +1,1 @@
+A reply in a group no longer prints the sender's name twice in a row: when the name is already above the bubble, the caption reads "A répondu à <quoted author>" (or "A répondu à son message"). Own messages and 1:1 keep the full, self-contained form.

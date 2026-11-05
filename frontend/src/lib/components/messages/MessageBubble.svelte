@@ -115,6 +115,8 @@
     restoredUnverified?: boolean;
     /** When true, renders the content as struck-through italic and hides action buttons. */
     isDeleted?: boolean;
+    /** True when the sender's name is drawn right above this bubble, so the reply caption omits it. */
+    senderHeaderShown?: boolean;
     /** Controls which corners of the bubble are rounded based on adjacent messages. */
     groupPosition?: 'single' | 'start' | 'middle' | 'end';
     /** Called when the user clicks the "Rejoindre la communauté" button on a channel invitation card. */
@@ -192,6 +194,7 @@
     restoredUnverified = false,
     isDeleted = false,
     groupPosition = 'single',
+    senderHeaderShown = false,
     onJoinChannel,
     onReply,
     onForward,
@@ -390,9 +393,25 @@
       if (resolved && senderId === sid) senderDisplayName = resolved;
     });
   });
+  /** The quoted author, resolved the same way: the caption names them ("A répondu à ..."). */
+  let quotedDisplayName = $state('');
+  $effect(() => {
+    const qid = effectiveReplyTo?.senderId;
+    if (!qid) {
+      quotedDisplayName = '';
+      return;
+    }
+    quotedDisplayName = getUserDisplayNameSync(qid, qid);
+    resolveUserDisplayName(qid).then((resolved) => {
+      if (resolved && effectiveReplyTo?.senderId === qid) quotedDisplayName = resolved;
+    });
+  });
 
   /** The caption names people already on the page, so it carries given names (the profile's `firstName`), not "Nils FERAL". */
   const senderFirstName = $derived(getUserFirstNameSync(senderId, senderDisplayName));
+  const quotedFirstName = $derived(
+    getUserFirstNameSync(effectiveReplyTo?.senderId ?? '', quotedDisplayName)
+  );
 
   // A reaction the user took back is KEPT in the list, carrying the time it was taken back, so the
   // removal can reach devices that still hold the placement. Only what still stands is rendered.
@@ -948,6 +967,11 @@
             content={effectiveReplyTo.content}
             {isOwn}
             replierDisplayName={senderFirstName}
+            replierId={senderId}
+            quotedId={effectiveReplyTo.senderId}
+            quotedDisplayName={quotedFirstName}
+            {currentUserId}
+            headerShown={senderHeaderShown}
             {onNavigateToMessage}
           />
         {/if}

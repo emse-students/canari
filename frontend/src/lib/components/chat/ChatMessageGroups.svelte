@@ -350,6 +350,7 @@
               isDeleted={msg.isDeleted}
               status={msg.status}
               {groupPosition}
+              senderHeaderShown={showSender}
               {onJoinChannel}
               onReply={onReply && !msg.awaitingServerId ? () => onReply?.(msg) : undefined}
               onForward={onForward && !msg.awaitingServerId ? () => onForward?.(msg) : undefined}
