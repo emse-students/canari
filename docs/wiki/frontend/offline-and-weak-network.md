@@ -1053,3 +1053,84 @@ without moving reachability; the API's JSON `200`, `403` and `502` do clear it),
 (stall, unproven, stall stays reachable; an unproven answer keeps the in-flight hint quiet), `reachabilityProbe.test.ts` (the same three pages return `false`), `preferencesApi.test.ts` and
 `mlsDeliveryApi.notFromApi.test.ts` (a portal `200` on each write is `NotFromApiError`, the service's
 JSON is done).
+
+## First paint never waits on the network: the boot session question (2026-11-05)
+
+**What the owner saw.** Two users abroad (Australia, India) opened the Android app and got a screen with
+no button at all, from launch; it worked for one of them on mobile data and not on the home box. The
+site answers from far away, only slowly (`GET /api/version` about 3.1 s from an Indian datacenter,
+0.16 s from France), and `canari.emse.fr` has no CDN in front of it.
+
+**Why it was stuck, from the code.** The UI is embedded in the app (`frontendDist`), so the first paint
+needs no network - but `routes/+layout.ts` runs with `ssr = false` and its `load` did
+`await refresh(event.fetch)` whenever no user id was stored (every first launch, every never-signed-in
+install). An SPA draws nothing until the root `load` resolves, and the layout's `onMount` - which is
+what removes the inline splash of `app.html` (a bird on `#000000`) - cannot run before that. The refresh
+runs under `REFRESH_DEADLINE_MS` (20 s) and is re-sent once (`REFRESH_DEADLINE_RESENDS`), so a path that
+hangs held the splash for up to about 40 s, and then sent the user to login on a failure that was a
+transport failure, not an answer. Every other call between launch and paint is already off the critical
+path: the layout's `onMount` calls (`refreshAppVersionCheck`, avatar purge, outbox drain, deleted-account
+guards) are `void`, `hooks.client.ts` does no I/O in `init`, the WASM prefetch is a fire-and-forget on
+the web and absent on Tauri, and no store awaits at import time. **The root `load` was NOT the only
+awaited network call** - SvelteKit renders nothing until EVERY load of a navigation resolves, page
+loads included. Every `+page.ts` and `+layout.ts` under `src/routes` was enumerated (14 files):
+`posts/+page.ts` and `posts/[postId]/+page.ts` awaited `redirectIfNotFeedAudience()`, which on a first
+visit (no remembered verdict) awaited `GET /api/posts/audience`, a token-bound call that joins the same
+hanging refresh - and `/` redirects to `/posts`, so the default route still sat on the splash for about
+45 s with only the root load fixed (measured in Chromium against an API that never answers). The other
+twelve are synchronous (`redirect`, SEO objects, param parsing). The gate now never awaits an unknown
+verdict: the page opens and the redirect to `/chat` is made behind it from the answer
+(`lib/posts/feedAudience.ts`), pinned with the root load and both post loads together under a refresh
+that never resolves.
+
+**The fix.** `+layout.ts` no longer awaits anything. With no stored user it calls `startBootSession`
+(`lib/stores/bootSession.svelte.ts`) and returns; the layout mounts at once, does not mount the page
+underneath (it would fetch with no token) and `components/layout/BootGate.svelte` draws the boot state
+("Connexion a Canari..."). The refresh's own outcome ends it:
+
+| outcome of the refresh | phase | screen |
+| --- | --- | --- |
+| a token, or a sign-in completed meanwhile | `settled` | the page asked for; the background profile check runs as before |
+| an ANSWER that is not a token (401/403, identity split, sign-out) | `settled` | login, carrying the page asked for |
+| a TRANSPORT failure (`isTransportFailure`: deadline or no answer) | `unreachable` | "Impossible de joindre Canari depuis ce reseau", a retry button and a hint |
+
+`unreachable` is derived from the failure event, never from a second timer, and never logs anyone out
+(a status code is an answer, a transport failure is not). It ends on the retry button or on the
+browser's `online` event. The `/f/` and `isSignedOutPath` routes, the `globalSession` short-circuits, the
+PIN/biometric flow (`isLoginInProgress`), `checkSessionUserInBackground` and the OIDC return are
+unchanged: a known user id, or `globalSession.isLoggedIn`, settles the phase without asking. The web
+build and iOS share the same `+layout.ts`, so both get the same behaviour.
+
+**The deadlines are NOT changed.** A shorter first deadline or a parallel send was considered and
+rejected: the re-send exists so a rotation the server made is answered from its 60 s grace (see
+`REFRESH_DEADLINE_MS`), and a slow-but-alive path (3 s) is nowhere near 20 s. What was wrong was not the
+number but that the wait stood in front of the paint; now it stands behind it, and the screen says what
+it is waiting for. Pinned by `routes/firstPaintNeverWaits.test.ts`.
+
+**Review follow-ups (same day).**
+- A link opened while the question is open (a Tauri deep link on a cold start) re-runs the root load; the
+  boot reads the LATEST caller's deps, so login returns to that page, not to `/`.
+- The question can never leave `resolving` behind (a `finally` settles it), and `unreachable` ends when a
+  session is known by another road (another caller's refresh answered, the unlock completed), on the
+  `online` event, on the retry button or on a navigation.
+- The shell is `inert` and the iOS native tab bar hidden while the screen is up; only the one-line state
+  is a live region and focus moves to Retry.
+- `readNativeRefreshToken` (a local plugin-store read before the request, outside the deadline) is NOT
+  bounded: it is not a network call, a bound would be a bare timer with no event behind it, and a hang
+  there is already visible (the boot screen keeps saying it is connecting). If it is ever seen to
+  hang, the fix is in the store call, not a timeout around it.
+- An edge 5xx or an HTML 403 on the refresh still goes to login (`auth.ts` calls it transient): parked in
+  `docs/wiki/backlog.d/p3-an-edge-refusal-of-the-boot-refresh-reads-as-signed-out.md`.
+
+**The reading (2026-11-05, Chromium, production web build, every `/api` request hangs forever, fresh isolated
+context, no stored user, first load for `/`, chunks cached for the others).** Time of the first boot screen,
+what the screen said at 5 s, 25 s and 45 s, and when the unreachable screen replaced it:
+
+| route | boot screen from | 5 s | 25 s | 45 s | unreachable from |
+| --- | ---: | --- | --- | --- | --- |
+| `/` (-> `/posts`) | 3.8 s (cold module load, 0.5 s warm) | connecting | connecting | unreachable | 42.5 s |
+| `/chat` | 0.5 s | connecting | connecting | unreachable | 40.3 s |
+| `/posts/<id>` | 0.5 s | connecting | connecting | unreachable | 40.5 s |
+
+Before the change, `/` showed the splash until about 43 s and then login; with only the root load fixed it
+showed the splash until about 47 s. The unreachable screen arrives at the refresh's own two 20 s deadlines.

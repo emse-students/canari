@@ -5339,5 +5339,9 @@
   "guide_hint_booking_column_body": "This space has several columns, one per room or resource. Pick the one you want to book: the number of free slots is shown.",
   "guide_hint_booking_week_title": "Book a slot",
   "guide_hint_booking_week_body_phone": "Pick the day, then a free slot in the list, or use the + button. A sheet lets you adjust the length and add people before you confirm.",
-  "guide_hint_booking_week_body_desktop": "Pick a free slot in the grid, or drag over several to book for longer. A sheet lets you adjust the length and add people before you confirm."
+  "guide_hint_booking_week_body_desktop": "Pick a free slot in the grid, or drag over several to book for longer. A sheet lets you adjust the length and add people before you confirm.",
+  "boot_connecting": "Connecting to Canari...",
+  "boot_unreachable_title": "Cannot reach Canari from this network",
+  "boot_unreachable_hint": "Your connection may be down or very slow. Check it, try Wi-Fi or mobile data, then retry. Canari resumes by itself when the network returns.",
+  "boot_unreachable_retry": "Retry"
 }

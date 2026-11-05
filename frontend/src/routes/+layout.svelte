@@ -44,6 +44,8 @@
     getAppVersionCheck,
     isBelowMinClientVersion,
   } from '$lib/stores/appVersionCheck.svelte';
+  import BootGate from '$lib/components/layout/BootGate.svelte';
+  import { bootSessionBlocks } from '$lib/stores/bootSession.svelte';
   import PlatformGateOverlay from '$lib/components/shared/PlatformGateOverlay.svelte';
   import IdentitySplitOverlay from '$lib/components/shared/IdentitySplitOverlay.svelte';
   import EnvironmentBanner from '$lib/components/shared/EnvironmentBanner.svelte';
@@ -99,6 +101,9 @@
   const isLoginPage = $derived(
     pathname === '/login' || pathname.startsWith('/legal') || pathname.startsWith('/f/')
   );
+
+  /** The session question is open: no page is mounted (it would fetch with no token), `BootGate` speaks. */
+  const bootBlocked = $derived(bootSessionBlocks(pathname));
 
   const showMaintenanceAdminBanner = $derived.by(() => {
     const info = getAppVersionCheck();
@@ -709,7 +714,11 @@
        included; at 390px it was 84px tall and hid the whole 56px mobile header, so the phone showed
        no top bar at all. A row in the shell's own column cannot overlap it, at any width and for any
        number of banners, with nothing measured and no variable to keep in step. -->
-  <div bind:this={bannerColumn} class="app-banner-column z-(--z-banner) flex shrink-0 flex-col">
+  <div
+    bind:this={bannerColumn}
+    class="app-banner-column z-(--z-banner) flex shrink-0 flex-col"
+    inert={bootBlocked}
+  >
     <!-- FIRST, and it decides for itself whether to render. The others come and go; this one is a
          property of the whole deployment, so a transient notice must not push it off screen. -->
     <EnvironmentBanner />
@@ -742,7 +751,7 @@
        the wrapper above owns `h-(--app-viewport-height,100dvh)` and its padding, and this only ever
        divides what is left. `min-h-0` because a flex child's default `min-height:auto` refuses to
        shrink below its content, which is what turns an overflowing chat list into a page scroll. -->
-  <div class="flex min-h-0 w-full flex-1">
+  <div class="flex min-h-0 w-full flex-1" inert={bootBlocked}>
     <svelte:boundary onerror={(e) => console.error('[ChatBackgroundService] crash recovered:', e)}>
       <ChatBackgroundService />
     </svelte:boundary>
@@ -776,7 +785,9 @@
           <!-- NO BOUNDARY HERE: SvelteKit 3 wraps every route node in its own, closer to the page,
                armed with `+error.svelte` and reported through `handleClientError` - one held here
                could never catch anything (docs/wiki/frontend/architecture.md#a-page-that-crashes). -->
-          {@render children?.()}
+          {#if !bootBlocked}
+            {@render children?.()}
+          {/if}
         </div>
       </main>
 
@@ -791,7 +802,11 @@
              the WebView, so no modal can paint over it the way it paints over the web bar. -->
         {#if !isLoginPage}
           <NativeTabBar
-            visible={!isKeyboardOpen && !isMobileConvoOpen && !isFullScreen && !screenCover.covered}
+            visible={!isKeyboardOpen &&
+              !isMobileConvoOpen &&
+              !isFullScreen &&
+              !screenCover.covered &&
+              !bootBlocked}
           />
         {/if}
       {:else if !isKeyboardOpen && !isLoginPage && !isMobileConvoOpen && !isFullScreen}
@@ -800,6 +815,7 @@
     </div>
   </div>
 
+  <BootGate />
   <ToastContainer />
   <ConfirmDialog />
   <AnnouncementModal />
