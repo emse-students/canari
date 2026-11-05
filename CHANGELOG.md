@@ -14,6 +14,198 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.6.5] - 2026-11-05
+
+### Fixed - the manager hint was never offered after an empty-shop hint, and a republisher's name was cut to "R..." beside the students-only chip
+
+A help put back for having nothing to draw ended the scheduler's pass, so the next help on the route was never considered; it now tries the next candidate at once. The republisher label wraps to its own line instead of shrinking ([guided-help](docs/wiki/frontend/guided-help.md)).
+
+### Fixed - a file saved on Android into "Downloads" was listed as 0 bytes, and refused when shared from there
+
+The save dialog's document is now written through the provider's own stream, closed after the copy, instead of a detached descriptor the provider saw closed before the first byte; the in-app log export was the reported case ([mobile](docs/wiki/frontend/mobile.md)).
+
+### Fixed - re-tapping the open tab on Android and the web, and the iOS status bar tap, now scroll to the top
+
+Both did nothing on `1.6.4-alpha.3`: the document's link listener navigated before the tab's own handler ran, and the iOS catcher was a 1 pt, nearly transparent strip no status bar tap reached ([mobile](docs/wiki/frontend/mobile.md#back-to-the-top-a-re-tap-of-the-open-tab-and-the-ios-status-bar-owner-2026-11-04)).
+
+### Added - re-tapping the open Feed tab scrolls to the top (and refreshes when already there), and on iOS a tap on the status bar scrolls to the top too
+
+One action behind both gestures ([mobile](docs/wiki/frontend/mobile.md#back-to-the-top-a-re-tap-of-the-open-tab-and-the-ios-status-bar-owner-2026-11-04)).
+
+### Fixed - the bell answered 500 to any reader holding a repost-proposal row (dev only, `1.6.4-alpha.3`)
+
+#3019 compared `post_notifications."associationId"`, a `uuid` column, through a varchar regex cast; it is now compared as it is. The bell's integration specs build that table from its migrations instead of a hand-written one that called the column a varchar ([post-notifications.it-schema.ts](apps/social-service/src/posts/post-notifications.it-schema.ts)).
+
+### Changed - the minimum client version is 1.6.2 on both estates
+
+The owner raised production, then dev, to `1.6.2` on 2026-11-04. The entries it unblocks are listed, none removed ([legacy-compatibility](docs/wiki/legacy-compatibility.md#entries-162-unblocks-both-estates-read-it-2026-11-04)).
+
+### Changed - the English app says "association", never "club"
+
+"Club" named both communities and associations in English; the association strings now say "association", and the communities entry no longer describes a community as an association space ([glossary](docs/wiki/glossary.md)).
+
+### Fixed - a device that just joined a group no longer receives the frames sealed before its join
+
+A frame sealed at an epoch before a device's admission could never be opened by it, and was
+acknowledged as a lost key-group frame followed by needless seed requests. chat-delivery now
+withholds it from that device ([chat-delivery](docs/wiki/services/chat-delivery.md#who-a-frame-is-queued-for-and-who-owns-the-gateways-routing-set)).
+
+### Changed - a group conversation and a community no longer share words
+
+"New group" creates a group conversation ("Create group conversation"), the rail's "+" opens "New community"; English no longer calls a community a "club" ([chat](docs/wiki/frontend/modules/chat.md#a-group-conversation-and-a-community-are-two-entry-points-with-two-names-owner-2026-11-04)).
+
+### Added - guided help, batch 2: chats, CanaReels and the feed tabs
+
+First-use hints for starting a conversation and for the CanaReels icon; the feed tabs' (i) button is gone and its explanation is now a hint on the tabs; "Revoir les aides" in Settings replays the hints; the "what's new" mechanism is in, with no content yet ([guided-help](docs/wiki/frontend/guided-help.md#whats-new-and-the-batch-2-hints)).
+
+### Added - guided help, batch 3: associations
+
+First-use hints on an association's page (its shop and the cotisation), for publishing in an association's name, for whoever manages an association (its page, its management area); each is offered only to accounts it applies to ([guided-help](docs/wiki/frontend/guided-help.md#batch-3---associations-and-the-campus-space)).
+
+### Added - guided help, batch 4: booking a room
+
+First-use hints on the Reservations page (your bookings, the spaces) and on a space's page (the columns, booking a slot) ([guided-help](docs/wiki/frontend/guided-help.md#batch-4---booking-a-room)).
+
+### Process - `main`, the release branches and the tags were force-pushed on 2026-11-04 (admin bypass)
+
+**ADMIN BYPASS TAKEN, on the owner's written authorization, and this is the record the rule asks for.** A misconfigured local git identity had stamped a placeholder author and a `Co-authored-by` trailer on 517 commits since 2026-10-24, which GitHub listed as a contributor. The history was rewritten from that point (trailer dropped, author restored, every commit re-signed), with identical trees and commit counts verified before the push, and pushed with a lease on every old tip; no gate of `release-preflight.sh` was involved and no code changed. Every commit and tag SHA from that date onward is new: a local clone or branch from before must be re-fetched and rebased, never pushed as is.
+
+### Changed - the image scan allowlists apt's advisory in the authentik image (owner, 2026-11-05)
+
+`CVE-2026-109518` (apt 3.0.3) failed every scan from 2026-11-05. apt runs only while upstream builds the image, never at runtime, and no authentik release ships the fix yet ([cicd](docs/wiki/cicd.md)).
+
+### Fixed - the iPhone bench tool no longer presses a keyboard key when asked to tap a button the keyboard covers
+
+`ios.mjs tap` refuses a target under the keyboard and an ambiguous text, prefers buttons over labels, and `type` sets the field in one call and reads it back ([cross-client-ios](docs/wiki/cross-client-ios.md)).
+
+### Fixed - a closed iOS sign-in sheet no longer leaves the login button busy until the app is killed
+
+The in-app browser plugin now answers how its sheet ended (`completed`, `cancelled`, `handedOff`), and the login page hands the button back on `cancelled` ([mobile](docs/wiki/frontend/mobile.md#oidc-login-opens-a-dedicated-in-app-browser-session-wp-oidc-tab-1-android-shipped-and-verified-2026-08-08-ios-verified-on-hardware-2026-08-27)).
+
+### Fixed - on iOS the native "+" and header pieces are placed at the document position, so a keyboard rise no longer strands them one keyboard height above the composer
+
+The page believed its document scrolled by the keyboard overlap while the screen drew it at offset 0 (measured on the iPhone 12, 2026-11-04) ([mobile](docs/wiki/frontend/mobile.md#the-dm-whose-chrome-stands-one-keyboard-too-high-2026-10-17)).
+
+### Fixed - the iOS tab bar plugin's native log lines are readable on a store build
+
+Its Swift `NSLog` lines reached the device log as `<private>`, which made the `1.6.4-alpha.4` status bar tap look as if the catcher was never chosen. Measured on the iPhone 12, the catcher is what scrolls the feed to the top, and the dead band under the status bar comes from iOS, not from the app ([mobile](docs/wiki/frontend/mobile.md#back-to-the-top-a-re-tap-of-the-open-tab-and-the-ios-status-bar-owner-2026-11-04)).
+
+### Fixed - on iOS the native tab bar no longer takes a tap under the welcome tour's backdrop
+
+While a tour step is on screen the bar stays drawn but passes every touch to the page, so a tab tap no longer leaves the tour ([guided-help](docs/wiki/frontend/guided-help.md)).
+
+### Fixed - after a resume, no key-group commit jumps the seeds still queued before it
+
+A live seed, a community's epoch check and a refused key-group commit each stepped the commit log
+while the reconnect's pull had not yet listed the mailbox, so queued seeds more than two epochs behind
+were lost for good. They now wait for this link's drain, and the window stays 2
+([channel-encryption 22.2](docs/wiki/protocols/channel-encryption.md#222-after-a-resume-no-key-group-commit-is-applied-ahead-of-the-frames-queued-before-it-2026-11-04)).
+
+### Added - minesweeper: a stats tab, a paged ranking with relative dates, settings, and a lighter board
+
+The leaderboard sheet gains a Stats tab (ranked games, wins, win rate, best / average / median, latest wins) and pages the ranking ten at a time with "time ago" per row; a gear opens settings (double-tap zoom, long-press delay, vibration, animation speed). A move no longer re-renders all 576 cells, only those it changed. The engine and its server twin are untouched ([minesweeper](docs/wiki/frontend/modules/minesweeper.md#stats-paging-settings-and-the-cell-diff-2026-11-04)).
+
+### Changed - a named reader no longer sees students' comments on a post only their grant opens
+
+Owner's decision of 2026-11-04: comments, and who reacted or voted, are withheld from a named reader
+whose only door to a post is a read grant, unless a platform admin turns on their new switch
+"voit les commentaires" (off by default); reactions stay open. A reaction's answer no longer lists a
+post's reactors to someone who cannot open it, and a reply is pushed only to who may read the
+comments ([profiles-and-access](docs/wiki/profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08)).
+
+### Changed - a named reader watching an association's live through their grant alone does not see its chat
+
+Owner's decision of 2026-11-04: such a reader sees the video and the floating reactions, but is served
+no chat line and may send or report none, unless the same "voit les commentaires" switch is on; a
+flip takes effect at the next poll, without reopening the live
+([profiles-and-access](docs/wiki/profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08)).
+
+### Fixed - the iOS tab bar's show and hide can no longer apply out of order
+
+Both async commands now carry the same rising `seq` as the interaction switch, and the plugin drops a call older than the last one it applied ([mobile](docs/wiki/frontend/mobile.md#the-native-ios-tab-bar)).
+
+### Changed - a third libexpat advisory in the nginx images, allowlisted until they are rebuilt
+
+`CVE-2026-113351` (libexpat 2.9.0-r0, fixed in Alpine's 2.10.0-r0) turned `main`'s container scan red in `nginx:1.31.8-alpine` and `nginx:stable-alpine`; no nginx build carries the fix yet, so it is allowlisted by purl beside the two libexpat entries of 2026-11-03 and retires with the pins ([cicd](docs/wiki/cicd.md#container-images-are-scanned-2026-10-23)).
+
+### Fixed - no BDE moderates a comment in an institution's or another BDE's name
+
+A comment published as an institution or another BDE could still be deleted, or its writer read, by
+the BDE moderating the post it sat under; only the platform admin may now, as for posts and lives. A
+moderator's delete that meets such a reply leaves a "removed by moderation" line in place of what it
+answered; concurrent comment writes on one post no longer lose each other's changes, and every
+refusal is worded by its code ([moderation-and-blocking](docs/wiki/moderation-and-blocking.md#decisions-taken-2026-11-04-the-lead-reversible)).
+
+### Fixed - a DM created in the foreground showed the generic iPhone banner once the app was killed
+
+The notification extension's copy of the MLS state now follows every write of that state instead of
+the next activation or resignation, which a process killed in the foreground never reaches; the
+extension's log lines are readable on a store build ([mobile](docs/wiki/frontend/mobile.md#the-extensions-copy-of-the-state-follows-every-write-2026-11-05)).
+
+### Fixed - the dev deploy of `v1.6.4-alpha.1` failed on a `grep -q` under pipefail
+
+`rolling.sh` matched the large `nginx -T` dump with `printf | grep -q`, which fails under `pipefail` exactly when the line is found. That pipeline, and every other one ending in `grep -q`, `head`, `sed q` or an `awk` that exits, now reads its input to the end, and `pipefail-early-reader.test.mjs` refuses a new one. The frozen `rolling-fixture/` copies of older releases' libraries still carry the defect, so a rollback to those releases would run it ([durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd), [cicd](docs/wiki/cicd.md)).
+
+### Changed - `posts.pinned`, the retired global pin, is no longer mapped by the post entity
+
+No INSERT names the column any more, so a later release can drop it without failing the posts an
+older container creates during the deploy ([legacy-compatibility](docs/wiki/legacy-compatibility.md#removable-at-floor-127)).
+
+### Added - a pull request touching native Apple code now compiles the iOS app
+
+A compile-only, unsigned iOS job (`compile-ios-app`) in `ci.yml` feeds `CI passed`, so a Swift error fails before the merge instead of at the release cut; it skips cleanly when no Apple file changed ([cicd](docs/wiki/cicd.md#a-pull-request-compiles-the-ios-app-unsigned-compile-ios-app-2026-11-04)).
+
+### Fixed - a push ahead of the stored MLS state is no longer logged as a decrypt failure
+
+The background push path reads the frame's epoch before decrypting and answers the commit catch-up it owes at info, instead of an MLS ERROR and a false "resync" WARN per push after any commit; the one shared check also stops the foreground queueing an evicted group's frames as a gap ([mobile](docs/wiki/frontend/mobile.md#background-mls-decrypt-ladder)).
+
+### Fixed - a blind salon notification is always counted, and the push service's warnings reach the exported log
+
+Every blind salon banner ("Quelqu'un" / "Nouveau message dans #salon") is now reported with why the open did not show the message, a withdrawn reaction posts no banner, and the Android push service's warnings and errors are carried into the in-app log ([channel-encryption](docs/wiki/protocols/channel-encryption.md), [mobile](docs/wiki/frontend/mobile.md#the-push-services-lines-in-the-in-app-log-2026-11-04)).
+
+### Fixed - a second pull at launch no longer lists rows the first pull's drain had not acknowledged
+
+Two pulls ran side by side at boot, and the second listed rows the first's drain had applied but not
+yet acknowledged, accused as an ack the server forgot (`[QUEUE] delivery ... arrived twice`, twice per
+launch on the Mi 9T); a pull asked meanwhile is now owed and runs once, behind the drain's ack
+([chat](docs/wiki/frontend/modules/chat.md#one-pull-at-a-time-and-the-one-asked-meanwhile-is-owed-2026-11-04)).
+
+### Fixed - a CanaReel that did not start by itself until it was tapped
+
+The reel player asks to play from `loadedmetadata` on, once per load; a refused autoplay shows the play button even before the first frame, and never mutes the sound the reader chose; an autoplay interrupted by a pause shows the play button instead of a frozen reel; a slow network shows a spinner, never the play button ([reels](docs/wiki/frontend/modules/reels.md#a-loading-reel-shows-its-first-frame-never-a-play-glyph-owner-2026-10-31)).
+
+### Fixed - a CanaReel downloading on a slow link shows a spinner from the first byte
+
+The viewer drew a static image icon for the whole download and the spinner only once the player mounted; it now draws the player's own spinner over the first-frame poster while the file arrives. The preload of the next reel keeps waiting behind the settled one, the reasons written down ([reels](docs/wiki/frontend/modules/reels.md)).
+
+### Fixed - a restore key from a build the estate does not vouch for is refused once, not at every start
+
+The server names that refusal `RESTORE_ORIGIN_NOT_ALLOWED`, and the client records it against its version and the estate's accepted origins: it mints no key while both hold, says so at `warn` each start, and heals at the next start once either changes ([account-restore](docs/wiki/account-restore.md#the-server---core-service-apiauthrestore)).
+
+### Fixed - a panel on a phone is the whole screen, with no blank band under the status bar
+
+The group management panel (and members, media, channel settings) left about 70 pt of blank above its header on iPhone: the status bar was padded by the app shell and again by the header. Below `xl` every side panel is now a drawer on the window, full screen on a phone ([mobile](docs/wiki/frontend/mobile.md#a-panel-on-a-phone-is-the-whole-screen-and-the-status-bar-is-padded-once-owner-2026-11-04)).
+
+### Changed - there is no `1.6.4` stable, and production goes from `1.6.3` to `1.6.5`
+
+`1.6.4-alpha.4` passed every reading, but its tree still carried the `1.6.3` store notes, and the `1.6.5` work had already merged. The store notes now name `1.6.5` ([durable-rules](docs/wiki/durable-rules.md#release-and-ci---cicd)).
+
+### Fixed - a repost proposal's bell row no longer shows the text of a post later made "Entre étudiants"
+
+The bell blanks it at the read for a recipient the switch refuses, and the feed cache's counters are documented and tested as unevictable ([profiles-and-access](docs/wiki/profiles-and-access.md#the-students-only-switch-as-built-owner-2026-11-04)).
+
+### Added - an "Entre étudiants" switch on association and list posts
+
+An association or a list may publish a post that only students and its own members read, on every path, with a chip on the card; one predicate carries it, migration 133 adds the column ([profiles-and-access](docs/wiki/profiles-and-access.md#the-students-only-switch-as-built-owner-2026-11-04)).
+
+### Fixed - a member's new device entering a community's key group by itself is no longer logged as an error
+
+External commit is a key group's door, so the device observer says that entry at info and keeps the ERROR for conversations and unclassified groups; the event is recorded as before ([mls-protocol](docs/wiki/protocols/mls-protocol.md#a-device-of-a-member-is-added-never-asked-about-2026-10-31)).
+
+### Fixed - the app's sounds ignored the iPhone's silent switch and the Android ringer
+
+The page now owns its audio session category: `ambient` for the app's tones, `playback` only while a media the reader unmuted plays, `play-and-record` during a call or any microphone capture; on Android an app tone plays only at the normal ringer mode ([sounds](docs/wiki/frontend/sounds.md#the-silent-switch-and-the-ringer-who-owns-the-category-owner-2026-11-04)).
+
 ## [1.6.3] - 2026-11-03
 
 ### Fixed - accepting a co-organisation on a validated event sends it back to validation
