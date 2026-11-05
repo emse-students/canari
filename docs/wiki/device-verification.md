@@ -68,6 +68,8 @@ recreate it with the recipes below, in this order.
 | **(d1) a non-student recipient of a repost proposal** (bell row, #3019) | `canari-test-delta` AND `canari-test-beta`, both with an EMPTY cursus (campus Saint-Etienne, no space), each a member with `POST_AS_ASSO` of a receiving association (delta: "Club Robotique Fictif", beta: "Fanfare Fictive") that holds a PENDING repost proposal from "Club Photo Fictif", one proposal per Photo post above (switch OFF at proposal time; turn it ON as alpha to read the blanked text). **BLOCKED by a defect: their bell answers 500 until the fix of #3019 (its own pull request) is deployed** | delta on the harness Chrome slot W5, beta on W4 (both signed in) |
 | **(d2) a named reader with a grant-only door** (live chat, #3014) | `canari-test-beta`: a read grant on "saint-etienne, whole campus", "voit les commentaires" OFF (the default), NO membership of the association watched, no cursus. Read through the API on an Echecs post: 200, `canSeeComments: false`; a "students only" post 404 | beta (W4) |
 
+**Added 2026-11-05 (booking hints, batch 4):** the booking space "Banc 165 (2 colonnes)", owned by "BDE Fictif", with 2 resources, created through the app's routes as gamma.
+
 **Why beta, not delta, is the named reader.** delta is also the BDE moderator: a `MODERATE` holder
 opens an Echecs post by id (200, comments visible, even a "students only" one), so a live read
 through delta would be a moderation read, not a grant-only one (the unasserted case of
@@ -263,6 +265,53 @@ only thing that reaches a phone.
 naming the test device's UDID. It also buys `get-task-allow`, which is what makes the WKWebView
 inspectable - so the one change that makes an artifact installable is the same change that makes the
 webview readable. Owed, not done.
+
+## Readings of v1.6.5-alpha.1 (2026-11-05)
+
+Dev answering `1.6.5-alpha.1`. Web on the harness Chrome (gamma, delta, beta), Android on the Mi 9T
+`canari-test-alpha`, iOS on the iPhone 12 `canari-test-gamma`.
+
+**Web: PASS on every row.** Guided help batch 3; batch 4 on `/bookings`, including the multi-column
+week hint (desktop and 375 px); the "Entre étudiants" form, the non-student 404 and the empty bell
+text; the republisher label wrapping at 375 px; grant-only live chat withheld then unwithheld (read
+through the API); a tab re-tap going back to the top.
+
+**Web console, two kinds of lines, judged by the owner as NOT blocking.**
+
+- Cloudflare JS detections (14 per session): injected on the dev zone only and blocked by the CSP.
+  The owner is to switch JS detections off in the Cloudflare dashboard, because the API token lacks
+  the permission. Production is not behind Cloudflare.
+- The old documented `[MLS] key package worker state DISCARDED` guard
+  ([key-package-pool](protocols/key-package-pool.md)).
+
+**Mi 9T: PASS on every row.**
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| M1. The resume fix (#3030) | **PASS** | 3 runs, every message readable, no "Quelqu'un" |
+| M2. No false "arrived twice" at launch | **PASS** | One `pull:queued` crossing line seen; it is benign |
+| M3. Salon banners and push-blind counters | **PASS** | 16 salon banners, all showing text; 0 `[PUSH_BLIND]` and 0 `SEALED_BEFORE_ADMISSION` on dev since the deploy |
+| M4. The reel spinner on a slow link | **PASS** | The spinner shows, and the sound stays uncut |
+| M5. The 1.6.4 rows | **PASS** | All read |
+
+Noise lines N1-N4 were fixed or filed: #3042, #3041, #3043, #3044.
+
+**iPhone 12.**
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| The update | **PASS** | |
+| The status-bar tap | **PASS** | Its log line is now readable, so #3037 is proven |
+| Guided help, batch 4 | **PASS** | |
+| A 1:1 push after a foreground kill | **FAIL** | The banner showed the generic "Nouveau message de ...". The cause was found and fixed in #3040; it is owed its reading on `alpha.2` |
+
+Also measured: the extension's Swift `NSLog` lines are `<private>` on TestFlight.
+
+**The owner's two gestures** (the silent switch, the pinch zoom) were read on `1.6.4-alpha.4`. They
+carry over because #3018's and #3008's files are unchanged (owner, 2026-11-05).
+
+**Sideloaded bench APK.** It is signed by the upload key, so dev refuses its restore key (see
+[account-restore](account-restore.md)).
 
 ## The layout pass of 2026-09-09, and the sixth check that ran later the same day
 
