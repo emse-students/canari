@@ -1315,13 +1315,48 @@ The NSE shares data with the main app via App Group `group.fr.emse.canari`:
 - `push_context.json` — device ID, user ID, backend base URL, push token. No key material: the
   device key comes from the shared keychain item `mls_bg_key_<alias>` (see
   [auth](modules/auth.md) "Where the key lives")
-- `mls.bin` — read-only mirror of the persisted MLS state; the NSE never writes it
+- `mls.bin` — read-only copy of the persisted MLS state, rewritten at EVERY write of the state (below); the NSE never writes it
 - `graine_seeds.json` — the salon seed mirror, SEALED at rest; only Rust opens it (see "The native caches are sealed at rest")
 - `push_secret.txt` — read-only mirror of the PushSecret for backend fetch paths
 
 (`channel_keys.json`, the epoch-key mirror Graine replaced, had no reader left; the first run of a 2026-10-22 build deletes it.)
 
 The NSE does **not** write `mls.bin`, process Welcome pushes, or drain the outbox. Those remain app-process responsibilities.
+
+### The extension's copy of the state follows every write (2026-11-05)
+
+**The defect** (owner: blocks `1.6.5`). On the iPhone 12, `1.6.5-alpha.1`: a DM created from the
+foreground, the app killed with `ios.mjs terminate` (an OS death, not a user swipe), then two
+messages pushed in that DM - both banners read `Nouveau message de <sender>`; a salon push in
+between read its text. The syslog of that run (Objective-C lines are readable on a store build) gives
+the mechanism: process `31805` mirrored to the App Group at `didBecomeActive` (12:03:52) and never
+again - no `willResignActive` before `Target app was terminated` (12:11:42); the extension ran at
+12:11:50; the next process, launched in the background at 12:12:26, mirrors only at its
+`didBecomeActive` (12:15:11), so the second DM push (12:14:52) met the same copy. The copy predated
+the DM, so the ladder can only have found no such group (`group-absent`, the generic line) - READ
+FROM THE CODE, since every Swift `NSLog` of the extension arrived `<private>` and its `cause` could
+not be read. The salon was untouched because its key group was older than the activation.
+
+**The fix.** The copy was made at `didBecomeActive` and `willResignActive` only (`canari_ios.mm`,
+`CanariMirrorPushStateToAppGroup`), because "there is no Rust write hook to mirror on". There is
+one now: every write of the slot goes through `write_slot_mls_bin` (`concurrency.rs`) - the
+foreground checkpoint, `save_mls_state`, the re-sealed legacy snapshot and the background engines'
+compare-and-swap - which, under the same hold of `mls_bin_write_lock`, makes the App Group copy the
+slot's (`refresh_extension_copy` -> `sync_extension_copy`, the same code an account switch uses). A
+test (`only_the_slot_writer_writes_mls_bin`) refuses any other caller of `write_mls_bin_atomically`
+in non-test code. The copy is an APFS clone where the volume allows it (`std::fs::copy`), and its
+time is in the `[MLS_ACCOUNT]` debug line. The activation mirror stays for the push context, the
+seeds and the secret; its `mls.bin` half re-copies a slot that is already followed. The bench
+commands' deliberate damage (`commands/bench.rs`) is not followed: a CORRUPT row measures the app.
+
+**Owed:** the same reading on a build carrying this (`ios.mjs terminate` after a foreground DM), and
+the extension's `outcome=` line, now readable, saying `decrypted`.
+
+**The extension's lines are readable.** `NotificationService.swift` logs through
+`NseLog.log` (`Logger`, subsystem `fr.emse.canari`, category `nse`); every interpolation names its
+privacy, `.public` for ids and id prefixes, counts, states, outcome reasons and error domains and
+codes. `nativeLogContent.test.ts` refuses a Swift `NSLog` in the extension and an interpolation with
+no privacy argument, on top of its content scan.
 
 **A salon banner names its speaker (2026-11-01), the iOS half of Android's `ChannelBannerAuthor`.**
 Both Apple composers (the NSE's `handleChannelMessage`, `canari_push.mm`'s `CanariHandleChannelMessage`)

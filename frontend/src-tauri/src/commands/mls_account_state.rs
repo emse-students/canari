@@ -916,12 +916,14 @@ fn select_held(data_dir: &Path, user_id: &str) -> Result<Selection, SelectionRef
     })
 }
 
-/// Makes the iOS notification extension's copy of `mls.bin` in the App Group the slot's again after
-/// a switch - written when the slot holds a state, DELETED when it holds none - so the extension
-/// never decrypts the new account's pushes with the previous account's state until the next
-/// activation's mirror. A failure is accused and the switch stands: the copy is a cache, and the
-/// mirror at the next activation rewrites it. A no-op off iOS.
-fn refresh_extension_copy(data_dir: &Path) {
+/// Makes the iOS notification extension's copy of `mls.bin` in the App Group the slot's again -
+/// written when the slot holds a state, DELETED when it holds none. Called after a switch, so the
+/// extension never decrypts the new account's pushes with the previous account's state, and after
+/// EVERY write of the slot ([`crate::concurrency::write_slot_mls_bin`]), so a state the app wrote is
+/// the extension's state from that moment, not from the next lifecycle event. The caller holds
+/// [`mls_bin_write_lock`]. A failure is accused and the write stands: the copy is a cache, and the
+/// next write or activation rewrites it. A no-op off iOS.
+pub(crate) fn refresh_extension_copy(data_dir: &Path) {
     #[cfg(target_os = "ios")]
     {
         match crate::app_group::app_group_dir() {
@@ -943,14 +945,22 @@ fn refresh_extension_copy(data_dir: &Path) {
 
 /// [`refresh_extension_copy`] on two real directories: the slot's `mls.bin` copied into `group`
 /// atomically (tmp + rename), or `group`'s copy removed when the slot holds no state.
+///
+/// Run after every slot write, so its cost is measured: on APFS `std::fs::copy` tries a clone first
+/// (`fclonefileat`, copy-on-write, the data container and the App Group sharing one volume), and
+/// the elapsed time is in the line.
 #[cfg(any(target_os = "ios", test))]
 pub(crate) fn sync_extension_copy(data_dir: &Path, group: &Path) -> Result<(), String> {
     let copy = group.join("mls.bin");
     if slot_holds_state(data_dir)? {
+        let started = std::time::Instant::now();
         let tmp = group.join("mls.bin.tmp");
         std::fs::copy(data_dir.join("mls.bin"), &tmp).map_err(|e| format!("copy mls.bin: {e}"))?;
         std::fs::rename(&tmp, &copy).map_err(|e| format!("rename mls.bin copy: {e}"))?;
-        log::info!("[MLS_ACCOUNT] the extension's copy of the state now follows the slot");
+        log::debug!(
+            "[MLS_ACCOUNT] the extension's copy of the state now follows the slot ({} ms)",
+            started.elapsed().as_millis()
+        );
     } else {
         match std::fs::remove_file(&copy) {
             Ok(()) => log::info!(

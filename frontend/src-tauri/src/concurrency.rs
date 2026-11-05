@@ -705,7 +705,7 @@ fn background_write_mls_bin_compare_and_swap<R>(
                 .to_string(),
         ));
     }
-    write_mls_bin_atomically(path, data).map_err(Other)?;
+    write_slot_mls_bin(path, data).map_err(Other)?;
     Ok(then())
 }
 
@@ -716,6 +716,44 @@ pub(crate) fn write_mls_bin_atomically(path: &std::path::Path, data: &[u8]) -> R
     let tmp = path.with_extension("bin.tmp");
     std::fs::write(&tmp, data).map_err(|e| format!("write mls.bin.tmp: {e}"))?;
     std::fs::rename(&tmp, path).map_err(|e| format!("rename mls.bin.tmp -> mls.bin: {e}"))
+}
+
+/// Writes the SLOT - `<data_dir>/mls.bin`, the state the app runs on - and makes the iOS
+/// notification extension's copy in the App Group follow it, in the caller's hold of
+/// [`mls_bin_write_lock`]. EVERY write of the slot goes through here: the test
+/// `only_the_slot_writer_writes_mls_bin` refuses a [`write_mls_bin_atomically`] call anywhere else
+/// in the crate's non-test code.
+///
+/// **WHY AT THE WRITE, NOT AT A LIFECYCLE EVENT** (`1.6.5-alpha.1`, iPhone 12): the copy was made
+/// only at `didBecomeActive` and `willResignActive` (`canari_ios.mm`). A DM created while the app
+/// was open lives in the slot from its checkpoint on, but a process killed in the foreground never
+/// resigns, so the extension kept the copy of the last activation - no such group - and every
+/// message of that DM read `Nouveau message de <sender>` until the app was opened and left again.
+/// A salon was not touched: its key group is older than the activation. Whatever ends the process,
+/// the copy is now as new as the slot from the moment the write returns.
+pub(crate) fn write_slot_mls_bin(slot: &std::path::Path, data: &[u8]) -> Result<(), String> {
+    write_slot_mls_bin_then(
+        slot,
+        data,
+        crate::commands::mls_account_state::refresh_extension_copy,
+    )
+}
+
+/// [`write_slot_mls_bin`] with the follower handed in - the App Group exists only on a device, so a
+/// test hands a directory of its own. The follower runs only once the slot is written.
+fn write_slot_mls_bin_then(
+    slot: &std::path::Path,
+    data: &[u8],
+    follow: impl FnOnce(&std::path::Path),
+) -> Result<(), String> {
+    write_mls_bin_atomically(slot, data)?;
+    match slot.parent() {
+        Some(data_dir) => follow(data_dir),
+        None => log::error!(
+            "[MLS] the slot written has no directory - the extension's copy does not follow it"
+        ),
+    }
+    Ok(())
 }
 
 /// Writes the MLS state to `{app_data_dir}/mls.bin` under the global lock, refreshing the
@@ -729,7 +767,7 @@ pub(crate) fn write_mls_state_blob(app: &tauri::AppHandle, data: &[u8]) -> Resul
     let _guard = mls_bin_write_lock()
         .lock()
         .map_err(|_| "mls_bin write lock poisoned".to_string())?;
-    write_mls_bin_atomically(&data_dir.join("mls.bin"), data)
+    write_slot_mls_bin(&data_dir.join("mls.bin"), data)
 }
 
 /// Fixtures shared by every test module that exercises the process-global locks above.
@@ -1238,6 +1276,97 @@ mod tests {
 
         assert!(manager.lock().unwrap_or_else(|e| e.into_inner()).is_none());
         assert!(key.lock().unwrap_or_else(|e| e.into_inner()).is_none());
+    }
+
+    /// A fresh directory under the system temp dir, unique to `tag` and this process.
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("canari-slot-{tag}-{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// `1.6.5-alpha.1`, iPhone 12: a DM created in the foreground and the app killed there - the
+    /// extension's copy was the last activation's and the DM's pushes read the generic line. A slot
+    /// write is now followed at once: the copy holds exactly what the slot holds when the write
+    /// returns, with no lifecycle event in between.
+    #[test]
+    fn a_slot_write_is_the_extensions_copy_when_it_returns() {
+        let dir = scratch("follow-data");
+        let group = scratch("follow-group");
+        std::fs::write(group.join("mls.bin"), b"state of the last activation").unwrap();
+        let follow = |data_dir: &std::path::Path| {
+            crate::commands::mls_account_state::sync_extension_copy(data_dir, &group).unwrap()
+        };
+
+        write_slot_mls_bin_then(&dir.join("mls.bin"), b"state holding the new DM", follow).unwrap();
+        assert_eq!(
+            std::fs::read(group.join("mls.bin")).unwrap(),
+            b"state holding the new DM"
+        );
+
+        write_slot_mls_bin_then(&dir.join("mls.bin"), b"the next checkpoint", follow).unwrap();
+        assert_eq!(
+            std::fs::read(group.join("mls.bin")).unwrap(),
+            b"the next checkpoint"
+        );
+        assert!(!group.join("mls.bin.tmp").exists(), "no temporary left");
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&group).ok();
+    }
+
+    /// A write that failed leaves the copy alone: the follower runs only once the slot is written.
+    #[test]
+    fn a_failed_slot_write_is_not_followed() {
+        let dir = scratch("follow-fail").join("missing-directory");
+        let mut followed = false;
+        let refused =
+            write_slot_mls_bin_then(&dir.join("mls.bin"), b"never written", |_| followed = true);
+        assert!(refused.is_err());
+        assert!(!followed);
+    }
+
+    /// The source half of the guarantee: a slot written by anything but [`write_slot_mls_bin`] is a
+    /// state the extension would not see until the next activation. Every call of
+    /// [`write_mls_bin_atomically`] in non-test code is the slot writer's own.
+    #[test]
+    fn only_the_slot_writer_writes_mls_bin() {
+        fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    rust_files(&path, out);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    out.push(path);
+                }
+            }
+        }
+        let mut files = Vec::new();
+        rust_files(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut files,
+        );
+        assert!(files.len() > 10, "the crate's sources were not found");
+        let mut callers = Vec::new();
+        for file in files {
+            let src = std::fs::read_to_string(&file).unwrap();
+            // The non-test part: everything before the file's test module.
+            let shipped = src.split("#[cfg(test)]\nmod ").next().unwrap();
+            for (n, line) in shipped.lines().enumerate() {
+                let code = line.split("//").next().unwrap();
+                if code.contains("write_mls_bin_atomically(")
+                    && !code.contains("fn write_mls_bin_atomically(")
+                {
+                    callers.push(format!("{}:{}", file.display(), n + 1));
+                }
+            }
+        }
+        assert_eq!(
+            callers.len(),
+            1,
+            "the slot writer must be the only caller: {callers:?}"
+        );
+        assert!(callers[0].contains("concurrency.rs"), "{callers:?}");
     }
 
     /// A checkpoint asked of an empty slot is refused with the typed code, never a silent success.

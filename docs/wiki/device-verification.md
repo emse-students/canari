@@ -594,7 +594,11 @@ DM killed afterwards read `🎬 CanaReel`. The group, older, read its content th
 the state the extension decrypts with did not yet hold the new DM when the process was killed. The
 syslog shows the extension ran and delivered mutated content (`Service extension delivered mutated
 content`, `Delivered user visible push notification`); its `[NSE_OUTCOME]` line is not readable on a
-TestFlight build (its backlog entry was withdrawn by the owner on 2026-11-03).
+TestFlight build (its backlog entry was withdrawn by the owner on 2026-11-03). **Read again on
+`1.6.5-alpha.1` (2026-11-05) and explained:** the App Group copy of the state was made only at an
+activation or a resignation, and a process killed in the foreground never resigns; the copy now
+follows every write of the state ([mobile](frontend/mobile.md#the-extensions-copy-of-the-state-follows-every-write-2026-11-05)).
+Owed: this row again on a build carrying it.
 
 ## C. The row a push creates carries the GROUP's name - owed on BOTH platforms
 
