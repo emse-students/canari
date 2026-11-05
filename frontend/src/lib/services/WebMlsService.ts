@@ -517,6 +517,7 @@ export class WebMlsService extends BaseMlsService {
       socket.onopen = () => {
         clearTimeout(timeout);
         resolved = true;
+        this.noteSocketOpened();
         this.startHeartbeat();
         console.log(`[WS] Connected to Chat Gateway - device=${sanitizeForLog(deviceId)}`);
         resolve();

@@ -3995,6 +3995,81 @@ What the verdicts are and who acts on them: `DistributionGapVerdict` (`IMlsServi
 `distributionGapListener` (`utils/graine/distributionGroup.ts`), wired in `sessionAuth` with the frame
 handler, before any drain.
 
+### 22.2 After a resume, no key-group commit is applied ahead of the frames queued before it (2026-11-04)
+
+**The report.** A tester's export: nine `past-epoch-application` losses ("unreadable for good"), all
+on ONE key group, in one second of a resume's bulk ingest, with no external join anywhere before them
+- so the server-side rule of `chat-delivery.md` (a frame sealed before a seat's admission) is not this.
+
+**What was ruled out.** The native push path (Android `CanariFCM`, the iOS extension) applies key-group
+commits IN MEMORY only, to open the one frame it was handed, and never persists the advanced state:
+the app's epoch cannot be moved by a background catch-up. The server's pull is ordered
+(`createdAt ASC, id ASC`) and the scheduler is a per-group FIFO, so the mailbox alone applies a key
+group's commits and seeds in the order they were queued.
+
+**What could still advance the epoch out of order - three roads, one shared defect.** Each trusted
+"the mailbox has been drained" from evidence that a resume leaves stale:
+
+- **The drain fact outlived the link.** `mailboxEmptiedByAPull` was cleared only at the start of a
+  pull, never when a socket opened, so between a reconnect and its pull the PREVIOUS link's pull -
+  minutes or hours old - still read as "listed". Each platform now calls `noteSocketOpened()` when its
+  gateway socket opens, and `mailboxListedOnThisLink()` (a pull emptied the mailbox since then, none
+  is running, the socket is open) is the one predicate the roads below and `isGroupDrained` read.
+  `noteSocketOpened()` also bumps a LINK GENERATION, which a pull captures when it starts: only a pull
+  started on the current link may set the flag, so a pull begun before a socket flap and finished
+  after it does not mark the new link listed - that link's own pull waits for the socket to settle
+  and the unresolved commits first, a long window to read "listed" in.
+- **A live frame stepped the log over its own mailbox.** After a reconnect, a seed pushed live at the
+  server's epoch reaches the scheduler before the pull has listed the commits and seeds queued ahead of
+  it. Section 22.1's step (one commit at a time from the log, until the frame opens) then moved the
+  group to the frame's epoch, and every queued seed more than two epochs behind it was lost when the
+  pull delivered it. **The fact is stamped at the ARRIVAL, never read when the frame is handled**:
+  the scheduler is an arrival-order FIFO, so the rows the reconnect's pull lists sit BEHIND the live
+  frame, and the pull's own copy of it is dropped as a repeat (`admitDelivery`). The pull may well
+  have ended - the mailbox reading "listed" - before the scheduler reaches the frame. So
+  `enqueueMessage` stamps a live copy with a queue id `aheadOfMailbox` when the mailbox was not yet
+  listed on this link, the stamp rides `IncomingDeliveryMeta` to `routeDistributionFrame`, and such a
+  frame with an epoch gap is left unacknowledged and steps nothing (`holdLiveKeyGroupFrame`).
+  `settleDelivery` forgets it, and the one pull asked for the burst - started after any pull in
+  flight - lists it again as `pull`, never stamped, behind the frames queued before it. A frame with
+  no stamp (pulled, or live after the listing) with a gap means the commits really are not queued,
+  and the step runs as before. A held frame is NOT noted in `unackedFrames`: that ledger waits for an
+  event to discharge a reason, and here the pull is asked for at once.
+- **The epoch check waited for the BOOT's drain.** `verifyDistributionEpoch` (the loader's held
+  branch, on every community open) waited for `initialDrain` - resolved once per session - and for
+  whatever pull happened to be in flight. After a resume it read "idle" over a mailbox nobody had
+  listed and replayed the log to the server's epoch. It now waits for `whenGroupDrained(groupId)`:
+  this link's full pull, and the group's share of it applied.
+- **A refused key-group commit replayed the log at once.** A commit this device makes on a key group
+  early in a resume (a roster pass, a departure) is refused at a base the queue is about to move;
+  `catchUpOnRefusedCommit` replayed the log to the server's epoch over the queued seeds. For a key
+  group, before the mailbox was listed on this link, it now replays nothing and hands the epoch to
+  `verifyDistributionEpoch` (never awaited - the caller holds the MLS lock and the drain needs it); the
+  refusal is still reported, and the next attempt is built on the epoch the queue reaches. The callers
+  that REBUILD on a moved epoch read it after that drain: an admission (`admitNewcomer.ts`) whose
+  refusal left the epoch unmoved awaits `whenGroupDrained` and `whenDistributionEpochSettled` -
+  outside the MLS lock, from an admin's gesture - before `rebuildableRefusal` decides, so NOTIF-21's
+  rebuild still runs during a resume. A leaf refresh needs nothing: a refused one is asked again at
+  the next send after the epoch moves, which the queue does. A key-group Remove that is refused is
+  released to the scope's election (`commitRemoval.ts`), unchanged.
+
+**Not a bigger window.** `max_past_epochs` stays 2: the fix is the order, so a frame is never more
+than the ratchet's own reordering behind when it is opened.
+
+**Which road the tester's nine took is not proven from the export** - the three share the stale
+fact, and the export does not carry the lines that would separate them. Two lines now name them when
+they fire: `[GRAINE] N live frame(s) on K key group(s) [... xN] arrived ahead of the local epoch ... left queued and pulled again in the server's order`
+and `[COMMIT] ... refused on key group ... before the mailbox was listed on this link`.
+
+Asserted in `BaseMlsService.liveAheadOfMailbox.test.ts` (through the REAL scheduler and dedupe: a
+live frame enqueued first, a pull listing `[C1, S, C2, F]` that ends before F is handled - its
+control, deciding at handling time, replays the log over the queued commits),
+`BaseMlsService.distributionGroup.test.ts` (the stamped route; the epoch check waits for
+`whenGroupDrained`), `BaseMlsService.refusedCommit.test.ts` (the key-group refusal),
+`BaseMlsService.groupDrained.test.ts` (a new link is not drained; a pull begun before a socket flap
+does not list the new link), `admitNewcomer.test.ts` (the rebuild after the drain) and
+`setupMessageHandler.test.ts` (the stamp is handed to the route).
+
 **Also measured that day, and not a defect of this device**: Rootz 2026-2027 -> `#general`, the
 rows of 2026-09-02 (two sessions, one the user's own) are unreadable on EVERY current device - all
 joined the key group 2026-09-12..28, the phone included. The repair walk behaved: own devices

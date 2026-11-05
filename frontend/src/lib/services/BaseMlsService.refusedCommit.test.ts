@@ -99,6 +99,11 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
         (BaseMlsService.prototype as unknown as Record<string, unknown>)[name],
       ])
     ),
+    // A conversation, unless a case says otherwise: a key group's refusal waits for this link's
+    // drain instead (the last describe below).
+    isDistributionGroup: vi.fn(() => false),
+    mailboxListedOnThisLink: vi.fn(() => true),
+    verifyDistributionEpoch: vi.fn().mockResolvedValue('current'),
     // The REAL method, not a stand-in: it IS the entrance under test.
     catchUpOnRefusedCommit: (
       BaseMlsService.prototype as unknown as {
@@ -597,5 +602,59 @@ describe('BaseMlsService - a commit ACCEPTED and then not merged here', () => {
     expect(thrown).not.toBeInstanceOf(CommitRefusedError);
     expect(String(thrown)).toContain('wasm merge');
     expect((thrown as AcceptedCommitNotMergedError).baseEpoch).toBe(195);
+  });
+});
+
+/**
+ * A KEY GROUP'S COMMIT REFUSED EARLY IN A RESUME (2026-11-04). The roster pass or a departure commits
+ * on a key group before the reconnect's pull has listed the mailbox; the refusal names a server epoch
+ * the queue is about to reach, with the seeds sealed between those commits still in it. Replaying the
+ * log here jumped them, and `max_past_epochs` is 2.
+ */
+describe('BaseMlsService - a key group commit refused before the mailbox was listed on this link', () => {
+  beforeEach(() => resetEpochGapRegistry());
+
+  function keyGroupCtx(listed: boolean) {
+    const ctx = makeCtx({
+      isDistributionGroup: vi.fn(() => true),
+      mailboxListedOnThisLink: vi.fn(() => listed),
+    });
+    ctx.delivery.submitCommit.mockResolvedValue({
+      accepted: false,
+      reason: 'epoch_mismatch',
+      currentEpoch: 198,
+    });
+    ctx.fetchCommitsSince.mockResolvedValue({
+      commits: [195, 196, 197].map((baseEpoch) => ({ baseEpoch, proto: 'AQID' })),
+      activeEpoch: 198,
+      belowFloor: false,
+    });
+    return ctx;
+  }
+
+  it('replays nothing, and leaves the epoch to the check that waits for this link to drain', async () => {
+    const ctx = keyGroupCtx(false);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    // Still reported: the caller's next attempt is built on the epoch the queue reaches.
+    await expect(runCommit(ctx, 'g')).rejects.toThrow('Staged commit rejected: epoch_mismatch');
+
+    expect(ctx.fetchCommitsSince).not.toHaveBeenCalled();
+    expect(ctx.processIncomingMessage).not.toHaveBeenCalled();
+    expect(ctx.state.epoch).toBe(195);
+    expect(ctx.verifyDistributionEpoch).toHaveBeenCalledWith('g', 198);
+    log.mockRestore();
+  });
+
+  it('replays as before once the mailbox was listed: the queue holds nothing ahead of the log', async () => {
+    const ctx = keyGroupCtx(true);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    await expect(runCommit(ctx, 'g')).rejects.toThrow('Staged commit rejected: epoch_mismatch');
+
+    expect(ctx.fetchCommitsSince).toHaveBeenCalledWith('g', 195);
+    expect(ctx.state.epoch).toBe(198);
+    expect(ctx.verifyDistributionEpoch).not.toHaveBeenCalled();
+    log.mockRestore();
   });
 });
