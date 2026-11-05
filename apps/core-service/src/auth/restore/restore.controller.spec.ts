@@ -54,6 +54,7 @@ describe('AuthController restore routes', () => {
     isLiveSessionOf: jest.Mock;
     registrationOptions: jest.Mock;
     registeredKeyOf: jest.Mock;
+    allowedOriginsDigest: jest.Mock;
     register: jest.Mock;
     assertionOptions: jest.Mock;
     verifyAssertion: jest.Mock;
@@ -86,6 +87,7 @@ describe('AuthController restore routes', () => {
       isLiveSessionOf: jest.fn().mockResolvedValue(true),
       registrationOptions: jest.fn().mockResolvedValue({ challenge: 'c' }),
       registeredKeyOf: jest.fn().mockResolvedValue(null),
+      allowedOriginsDigest: jest.fn().mockReturnValue('0123456789abcdef'),
       register: jest
         .fn()
         .mockResolvedValue({ status: 'registered', credentialId: 'cred', replaced: null }),
@@ -147,6 +149,8 @@ describe('AuthController restore routes', () => {
       await expect(controller.restoreRegistrationOptions(fromApp())).resolves.toEqual({
         options: { challenge: 'c' },
         registeredCredentialId: 'held',
+        // The other half of an origin refusal's verdict: a changed set lifts it on the client.
+        originsDigest: '0123456789abcdef',
       });
       // The refresh id is passed down: only the session's CURRENT credential may register a key.
       expect(restore.isLiveSessionOf).toHaveBeenCalledWith(

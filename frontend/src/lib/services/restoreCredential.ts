@@ -28,7 +28,7 @@ import {
   markRestoreAttempted,
   recordRestoreOriginRefused,
   restoreKeyRecord,
-  restoreOriginRefusedAt,
+  restoreOriginRefusal,
   restoreKeySupported,
   writeRestoreKeyRecord,
 } from '$lib/services/restoreKey';
@@ -99,9 +99,9 @@ let ensureInFlight: Promise<void> | null = null;
  * no platform call.
  *
  * Throws on any failure (the caller logs it); the next start tries again - EXCEPT after the estate
- * refused this BUILD (`RESTORE_ORIGIN_NOT_ALLOWED`), a verdict no start of the same version can
- * change: recorded ({@link recordRestoreOriginRefused}), and no key is minted again until the
- * version changes.
+ * refused this BUILD (`RESTORE_ORIGIN_NOT_ALLOWED`), a verdict on the pair (this version, the
+ * estate's accepted origins): recorded ({@link recordRestoreOriginRefused}), and no key is minted
+ * while both still match - a new version or a changed configuration lifts it at the next start.
  */
 export function ensureRestoreKey(userId: string): Promise<void> {
   if (ensureInFlight) {
@@ -129,9 +129,15 @@ async function ensureRestoreKeyOnce(userId: string): Promise<void> {
   });
   if (!optionsRes.ok)
     throw new RestoreRegistrationRefusedError(await readRestoreRefusal(optionsRes));
-  const { options, registeredCredentialId: onServer } = (await optionsRes.json()) as {
+  const {
+    options,
+    registeredCredentialId: onServer,
+    originsDigest,
+  } = (await optionsRes.json()) as {
     options: unknown;
     registeredCredentialId: string | null;
+    /** Absent from a server older than the origin refusal: nothing is then recorded against it. */
+    originsDigest?: string;
   };
   const record = restoreKeyRecord(userId);
   if (onServer !== null && onServer === record.held) {
@@ -156,15 +162,22 @@ async function ensureRestoreKeyOnce(userId: string): Promise<void> {
     // was then refused): the two diverged, and this start brings them back together.
     rwarn('the session holds a key this phone no longer holds - replacing it');
   }
-  // A VERDICT ON THIS BUILD IS NOT ASKED AGAIN BY IT. The estate refused this install's signing
-  // certificate at this version (`RESTORE_ORIGIN_NOT_ALLOWED`); the certificate cannot change
-  // without an uninstall, so minting a key at every start only to have it refused again was a
-  // refusal per start that changed nothing (59 on a bench Mi 9T from 2026-11-01 to 11-05). The
-  // checks above still run: they are this session's, not this build's.
+  // A VERDICT ON THIS BUILD, UNDER THIS CONFIGURATION, IS NOT ASKED AGAIN. The estate refused this
+  // install's signing certificate (`RESTORE_ORIGIN_NOT_ALLOWED`); minting a key at every start only
+  // to have it refused again was a refusal per start that changed nothing (59 on a bench Mi 9T from
+  // 2026-11-01 to 11-05). Skipped only while BOTH halves of that verdict still hold - this version
+  // and the estate's accepted origins - so a fixed configuration heals at the next start. The
+  // checks above still run: they are this session's, not this build's. The skip is a WARN, once
+  // per start: this install has NO restore key, and that must stay countable.
   const version = getClientAppVersion();
-  if (restoreOriginRefusedAt() === version) {
-    console.debug(
-      `[RESTORE] register skipped: this estate refused this build's signature at ${version}`
+  const refusedAt = restoreOriginRefusal();
+  if (
+    refusedAt !== null &&
+    refusedAt.version === version &&
+    refusedAt.originsDigest === originsDigest
+  ) {
+    rwarn(
+      `register skipped: this estate refused this build (${version}) under origins ${refusedAt.originsDigest} - this install holds no restore key until the version or the estate's origins change`
     );
     return;
   }
@@ -192,9 +205,14 @@ async function ensureRestoreKeyOnce(userId: string): Promise<void> {
   });
   if (!res.ok) {
     const refusal = await readRestoreRefusal(res);
-    if (refusal.code === 'RESTORE_ORIGIN_NOT_ALLOWED') {
-      // Said once per version, by the caller's line: recorded, so the next start does not ask.
-      recordRestoreOriginRefused(version);
+    // Recorded only when both halves of the verdict are KNOWN: a build with no version constant
+    // (`0.0.0`) or a server that sends no digest would make a record nothing could ever lift.
+    if (
+      refusal.code === 'RESTORE_ORIGIN_NOT_ALLOWED' &&
+      version !== '0.0.0' &&
+      typeof originsDigest === 'string'
+    ) {
+      recordRestoreOriginRefused({ version, originsDigest });
     }
     throw new RestoreRegistrationRefusedError(refusal);
   }

@@ -3,7 +3,12 @@
 import { Logger } from '@nestjs/common';
 import { createHash, generateKeyPairSync, randomBytes, sign, type KeyObject } from 'node:crypto';
 import { isoCBOR } from '@simplewebauthn/server/helpers';
-import { registrationOrigin, RestoreCredentialsService } from './restore-credentials.service';
+import {
+  loggableOrigin,
+  originsDigest,
+  registrationOrigin,
+  RestoreCredentialsService,
+} from './restore-credentials.service';
 import { RESTORE_CHALLENGE_TTL_MS } from './restore-challenge';
 import { RestoreCredential } from './restore-credential.entity';
 import { QueryFailedError } from 'typeorm';
@@ -475,6 +480,77 @@ describe('RestoreCredentialsService', () => {
       )
     ).toEqual({ status: 'origin-refused', origin: sideloaded });
     expect(credentials.size).toBe(0);
+  });
+
+  it('answers a dead session before it judges the origin', async () => {
+    const { service, credentials } = makeStore();
+    const phone = new SoftAuthenticator();
+    const options = await service.registrationOptions(SID, T0);
+    const sideloaded = `android:apk-key-hash:${Buffer.alloc(32, 0xcd).toString('base64url')}`;
+    expect(
+      await service.register(
+        USER,
+        SID,
+        JTI,
+        phone.register(options.challenge, { origin: sideloaded }) as never,
+        true,
+        T0
+      )
+    ).toEqual({ status: 'no-session' });
+    expect(credentials.size).toBe(0);
+  });
+
+  it('keeps every other failure of an ALLOWED origin `invalid`: a stale challenge, another RP id', async () => {
+    const { service, sessions, credentials } = makeStore();
+    sessions.set(SID, {
+      id: SID,
+      userId: USER,
+      expiresAt: new Date(T0.getTime() + 86_400_000),
+      tokenId: JTI,
+    });
+    const phone = new SoftAuthenticator();
+    const stale = await service.registrationOptions(SID, T0);
+    const after = new Date(T0.getTime() + RESTORE_CHALLENGE_TTL_MS);
+    expect(
+      (
+        await service.register(
+          USER,
+          SID,
+          JTI,
+          phone.register(stale.challenge) as never,
+          true,
+          after
+        )
+      ).status
+    ).toBe('invalid');
+    const fresh = await service.registrationOptions(SID, T0);
+    expect(
+      (
+        await service.register(
+          USER,
+          SID,
+          JTI,
+          phone.register(fresh.challenge, { rpId: 'dev.canari-emse.fr' }) as never,
+          true,
+          T0
+        )
+      ).status
+    ).toBe('invalid');
+    expect(credentials.size).toBe(0);
+  });
+
+  it('digests the accepted origins order-free, and a changed set reads differently', () => {
+    const other = `android:apk-key-hash:${Buffer.alloc(32, 0xcd).toString('base64url')}`;
+    expect(originsDigest([ORIGIN, other])).toBe(originsDigest([other, ORIGIN, other]));
+    expect(originsDigest([ORIGIN])).not.toBe(originsDigest([ORIGIN, other]));
+    expect(originsDigest([ORIGIN])).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it('logs a client-supplied origin quoted, escaped and bounded', () => {
+    expect(loggableOrigin('a\nforged [RESTORE] line')).toBe('"a\\nforged [RESTORE] line"');
+    const long = loggableOrigin('x'.repeat(5000));
+    expect(long.length).toBeLessThanOrEqual(103);
+    expect(long.endsWith('...')).toBe(true);
   });
 
   it('reads the origin a registration names, and nothing from a response that names none', () => {

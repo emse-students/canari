@@ -87,8 +87,8 @@ const cleared = () =>
 
 describe('ensureRestoreKey', () => {
   /** The options answer: the WebAuthn options and the key the session holds now. */
-  const options = (registeredCredentialId: string | null) =>
-    json({ options: { challenge: 'c' }, registeredCredentialId });
+  const options = (registeredCredentialId: string | null, originsDigest = 'origins-a') =>
+    json({ options: { challenge: 'c' }, registeredCredentialId, originsDigest });
   const record = (held: string | null, registered: string | null) =>
     writeRestoreKeyRecord('user-1', { held, registered });
 
@@ -205,7 +205,7 @@ describe('ensureRestoreKey', () => {
     expect(restoreKeyRecord('user-1').registered).toBeNull();
   });
 
-  it('a build the estate refuses is not asked again at the same version, and is at the next', async () => {
+  const refusedOnce = async () => {
     platform({ create: { responseJson: '{"id":"k"}', cloudBackup: true } });
     apiFetch
       .mockResolvedValueOnce(options(null))
@@ -213,14 +213,24 @@ describe('ensureRestoreKey', () => {
     await expect(ensureRestoreKey('user-1')).rejects.toMatchObject({
       refusal: { status: 403, code: 'RESTORE_ORIGIN_NOT_ALLOWED' },
     });
-    expect(localStorage.getItem(RESTORE_ORIGIN_REFUSED_KEY)).toBe('1.6.5-alpha.1');
+  };
 
-    // The next start of the same version: the session's own check still runs, no key is minted.
+  it('a build the estate refuses is not asked again at the same version, and is at the next', async () => {
+    await refusedOnce();
+    expect(JSON.parse(localStorage.getItem(RESTORE_ORIGIN_REFUSED_KEY) ?? 'null')).toEqual({
+      version: '1.6.5-alpha.1',
+      originsDigest: 'origins-a',
+    });
+
+    // The next start of the same version, same origins: the session's own check still runs, no
+    // key is minted, and the skip is a countable WARN - this install holds no restore key.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     invoke.mockClear();
     apiFetch.mockReset().mockResolvedValueOnce(options(null));
     await ensureRestoreKey('user-1');
     expect(apiFetch).toHaveBeenCalledTimes(1);
     expect(invoke).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('[RESTORE] register skipped'));
 
     // Another version may be signed by a key the estate names: it asks again.
     appVersion = '1.6.5-alpha.2';
@@ -231,6 +241,34 @@ describe('ensureRestoreKey', () => {
     await ensureRestoreKey('user-1');
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(restoreKeyRecord('user-1')).toEqual({ held: 'k', registered: 'k' });
+  });
+
+  it('a changed estate configuration heals the refusal at the next start, same version', async () => {
+    await refusedOnce();
+    invoke.mockClear();
+    // The variable was fixed on the server: the digest the options carry is a new one.
+    apiFetch
+      .mockReset()
+      .mockResolvedValueOnce(options(null, 'origins-b'))
+      .mockResolvedValueOnce(json({ registered: true, credentialId: 'k' }));
+    await ensureRestoreKey('user-1');
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(restoreKeyRecord('user-1')).toEqual({ held: 'k', registered: 'k' });
+  });
+
+  it('records nothing it could never lift: a build with no version, a server with no digest', async () => {
+    appVersion = '0.0.0';
+    await refusedOnce();
+    expect(localStorage.getItem(RESTORE_ORIGIN_REFUSED_KEY)).toBeNull();
+
+    appVersion = '1.6.5-alpha.1';
+    platform({ create: { responseJson: '{"id":"k"}', cloudBackup: true } });
+    apiFetch
+      .mockReset()
+      .mockResolvedValueOnce(json({ options: { challenge: 'c' }, registeredCredentialId: null }))
+      .mockResolvedValueOnce(json({ code: 'RESTORE_ORIGIN_NOT_ALLOWED', message: 'x' }, 403));
+    await expect(ensureRestoreKey('user-1')).rejects.toBeDefined();
+    expect(localStorage.getItem(RESTORE_ORIGIN_REFUSED_KEY)).toBeNull();
   });
 
   it('records nothing for a refusal that is not a verdict on the build', async () => {
