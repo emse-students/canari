@@ -166,7 +166,11 @@ export function bellRowShownSql(n: string): string {
 /** The shape of a uuid, which a varchar column must have before it is cast to one. */
 const UUID_SHAPE = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
 
-/** `column` (a varchar) as a uuid, or NULL when it does not have the shape of one. */
+/**
+ * `column` (a VARCHAR) as a uuid, or NULL when it does not have the shape of one. Never for a column
+ * that already is a `uuid` (`associationId` is, since migration 061): `uuid ~* text` has no operator
+ * and fails the whole bell with a 500 (#3019 on dev).
+ */
 function asUuidSql(column: string): string {
   return `(CASE WHEN ${column} ~* '${UUID_SHAPE}' THEN ${column}::uuid END)`;
 }
@@ -179,7 +183,8 @@ function asUuidSql(column: string): string {
  * only its text is withheld at the read, as the queue's `describe` withholds it.
  *
  * The row does not name its post, so the post is found through the proposal the row announced: a
- * `repost` proposal from the row's association (`associationId`) to its queue (`postId`), by its
+ * `repost` proposal from the row's association (`associationId`, a `uuid` column compared as it
+ * is) to its queue (`postId`, a varchar cast through {@link asUuidSql}), by its
  * actor, whatever its status (a decided proposal's row is still in the bell). FAIL CLOSED (review
  * of #3019): the text is shown only while such a proposal still leads to a post that exists, is not
  * hidden by moderation, and admits the recipient (`studentsOnlyAdmitsViewerSql`), and NO such
@@ -190,7 +195,7 @@ function asUuidSql(column: string): string {
 export function repostProposalTextWithheldSql(n: string): string {
   const matches = (prop: string) => `${prop}.kind = 'repost'
       AND ${prop}."toAssociationId" = ${asUuidSql(`${n}."postId"`)}
-      AND ${prop}."fromAssociationId" = ${asUuidSql(`${n}."associationId"`)}
+      AND ${prop}."fromAssociationId" = ${n}."associationId"
       AND ${prop}."proposedBy" = ${n}."actorId"`;
   const admitted = (post: string) => studentsOnlyAdmitsViewerSql(post, `${n}."recipientId"`);
   return `(${n}.type = 'repost_proposed' AND (

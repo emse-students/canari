@@ -437,6 +437,27 @@ matches it - without one, a second save became `X.mp3 (1)` and lost its type. Tw
   (user, 2026-09-29, on the agenda sheet). `exportSearchablePdf` now hands its `pdf.output('blob')`
   to `downloadDecryptedFile`; its test's fake jsPDF throws from `save()` so the regression cannot
   return quietly. When a dependency offers to write a file, look for what it does under the name.
+- **On Android, a saved document is written through ITS PROVIDER'S stream, never `plugin-fs`**
+  (owner report 2026-11-04: an exported log "badly formed", Messenger refusing it or seeing 0
+  bytes). `writeFile` on a `content://` URI asks the Kotlin side for a descriptor, and
+  `tauri-plugin-fs` (2.7.1) answers `openAssetFileDescriptor(...).parcelFileDescriptor.detachFd()`;
+  Rust writes the raw fd and closes it. A `detachFd()` tells the provider's close listener "closed"
+  AT ONCE, before the first byte, so a provider that records the size on close records 0 and keeps
+  it. **Measured on the Mi 9T (Android 16), `1.6.4-alpha.2`:** the log saved into the
+  "Telechargements" root is 2 138 451 bytes on disk and in MediaStore (`_size`), and the Downloads
+  root lists it as **"0 octet(s)"** - as it still lists three logs saved there on 15, 16 and 19
+  October; the same log saved into the "Mi 9T > Download" root (external storage provider, which
+  learns the size from the file system) lists 2,15 Mo. A file shared from the Downloads view
+  carries that provider's size to the receiver. `isProviderDocument(target)` now sends a
+  `content://` destination to `write_staged_document` (gallery plugin): the bytes are staged in the
+  app cache like a shared file, and Kotlin copies them through `contentResolver.openOutputStream`,
+  closed AFTER the copy, so the listener fires once the bytes are in. iOS and desktop return a path
+  and keep `writeFile`: the iPhone 12 save into "Sur mon iPhone" read 1,6 Mo in Files (2026-11-04).
+  **Owed:** after a pre-release, a log saved into "Telechargements" on the Mi 9T lists its real size
+  there, and shared from that view to Gmail and Messenger the receiver shows the size and opens it.
+  Not read: an iOS save into iCloud Drive or a third-party provider, where the dialog plugin exports
+  an EMPTY placeholder (`UIDocumentPickerViewController(url:in: .exportToService)`) before the
+  write.
 - **Never ask for a directory.** Android's storage access framework offers a *document* picker;
   `dialog.open({ directory: true })` has no equivalent there. `save()` is the portable shape.
 - **`fs:default` is READ-ONLY.** It grants reading the app-specific directories and creating them,
@@ -477,7 +498,7 @@ every plugin with a JS command surface, and an exemption there is how that test 
 | Failure | No IndexedDB, or a failed write ON screen: persistence stops for the process, said ONCE at `error` (`[APPLOG] the in-app log is no longer written to disk`), lines stay in a 256 KiB memory tail (oldest dropped and counted), and the export header names the state. **The export still reads the ring already on disk** - it read the memory tail alone, 19 KB against 191 KB stored (iPhone 12, 1.2.9-alpha.3). Not a second storage path. |
 | Write cut short off screen | WebKit aborts the IndexedDB transaction in flight when it suspends a backgrounded WebView, so on iOS the leave-screen flush lost that race (`log write failed` 69 ms after `[LIFECYCLE] App in background`, alpha.2 and alpha.3). A write that fails while the app is OFF screen (known from the same `onAppScreenChange` that asked for it) is not a storage failure: its lines go back in front, the connection is dropped, the batch thresholds stop asking until the app is back, and the return writes them. WebKit delivers that abort on RESUME, so the app may already be on screen when it arrives: the hold then applies only while the app is still off screen, and otherwise the lines are written again at once. One `info` line says so. `appLog.test.ts` pins it. |
 | Wipe | `wipeDeviceToFactory` calls `discardAppLog()` (empties, closes, stops writing for the process) before the `CanariDB*` prefix delete removes the database; `onversionchange` closes the connection too, so the delete cannot block. A sign-out does NOT clear it: "I was logged out" is exactly the report it must survive. The cost, accepted rather than missed: the next account to sign in on that device can export the previous one's REDACTED lines (8-character id prefixes, times, error kinds). |
-| Export | Settings > About > **Save the log**: user-initiated only, through `downloadDecryptedFile` - the browser download on the web, the native save dialog in the app (Android's document picker, iOS's Files picker, the desktop save panel). A header gives version, platform class (`android-app`, never the model), export time and UTC offset, line / redacted / dropped counts and the storage state. |
+| Export | Settings > About > **Save the log**: user-initiated only, through `downloadDecryptedFile` - the browser download on the web, the native save dialog in the app (Android's document picker, written through the provider's own stream, for the reason given in the download rules above - iOS's Files picker, the desktop save panel). The file is `canari-log-<version>-<date>-<time>.txt`, `text/plain;charset=utf-8`. A header gives version, platform class (`android-app`, never the model), export time and UTC offset, line / redacted / dropped counts and the storage state. |
 
 **Why IndexedDB and not a file through the log or fs plugin.** A plugin-log `Webview`/`LogDir`
 forward would cost an IPC crossing per line - on Android a JSON `postMessage` - on the hot path,
@@ -1550,7 +1571,20 @@ Swift decodes that the Rust struct in front of it does not carry; on its first r
 upstream's `itemPositioning`, dropped the same way (unused here, carried now). A later patch adds a
 command, `set_tab_bar_interactive` (2026-11-04): the bar takes no touch under the guided tour's
 backdrop ([guided-help](guided-help.md)); its JS name is pinned by `nativePluginCommands.test.ts`,
-its Swift/Rust argument pair by `systemComponentsPatch.test.ts`. The crate is otherwise
+its Swift/Rust argument pair by `systemComponentsPatch.test.ts`. **Show and hide are ordered the
+same way** (2026-11-04): upstream's `show_tab_bar` / `hide_tab_bar` are ASYNC Rust commands, each on
+its own runtime worker before the hop to the main queue, so a hide quickly followed by a show (the
+keyboard closing as a conversation opens) could reach UIKit reversed and leave the bar in the state
+the layout had left. Both now take `TabBarVisibilityOptions { seq }`, invoked by name through
+`invokeSequenced` (`systemComponentsCommands.ts`) instead of the published JS API, which sends no
+argument. ONE mechanism serves the three commands: the page stamps every call from one rising
+counter, and Swift's `CommandSequence` - one instance per state (`interactiveOrder`,
+`visibilityOrder`), both reset by a configuration - drops a call older than the last one it applied.
+A sync Rust command is NOT the alternative: it runs on the main thread and would block it waiting
+for Swift, which answers from `DispatchQueue.main.async` - a deadlock. The race was read off the
+shape, never seen; owed on the iPhone is only that the bar still shows and hides with the layout (a
+conversation opened and left with the keyboard up, the bar back on the list) - a dropped call logs
+`[pendi-nav][native] showTabBar/hideTabBar seq=N dropped`. The crate is otherwise
 byte-identical to 0.1.8 and carries its MIT text, which the published crate omits. A theme change
 redraws both states and reconfigures the bar. **The redraw is keyed on the two COLOURS read off the
 DOM, never on `themeStore.isDark`** (2026-10-01): the bar's `onMount` runs before the root layout's
@@ -1668,7 +1702,8 @@ without a lag the eye sees, the picker opening, and VoiceOver reading the four n
 
 #### The DM whose chrome stands one keyboard too high (2026-10-17)
 
-**OPEN, P2, CAUSE NOT YET MEASURED.** This was found on the iPhone 12 with `v1.2.9-alpha.7`
+**MEASURED 2026-11-04, FIXED BY THE DOCUMENT-ANCHORED RECT (below); the phone reading after the fix is owed.**
+The history that follows is kept for its reasoning. This was found on the iPhone 12 with `v1.2.9-alpha.7`
 ([device-verification](../device-verification.md#the-iphone-12-readings-of-v129-alpha7-2026-10-17), 3b).
 The conversation was a DM whose last message is a tall video. The keyboard rose
 (`overlap=301 -> webview height 543`). The web composer was drawn at 487 pt, where it belongs.
@@ -1702,6 +1737,35 @@ store build's WebView cannot be inspected, so this line is the measurement. Read
 - `composerTop` 186 with both at 0 is cause 3.
 
 No fix is written until the line has named one.
+
+**The reading (iPhone 12, `1.6.4-alpha.2`, 2026-11-04, bench account, 3 rounds + 1 control).**
+- DM "Canari Test Delta" (the thread ends in a tall card): 3 of 3 rounds reproduce. Native
+  `keyboard overlap=301 -> webview height 543`; `keyboard settled: native offset=0.0 content=543.0
+  bounds=543.0`; WDA's tree reads the web "Envoyer le message" at y=487 and the native "Ajouter" ("+")
+  at y=186; the header is out of the tree.
+- Control, DM "Canari Test Alpha" (short messages): same keyboard, `offset=0 content=543 bounds=543`,
+  "+" at y=487, in place.
+- **The `page` half of the line is `<private>` on a TestFlight build**, so `scrollY`, `vvOffsetTop` and
+  `composerTop` cannot be read from the syslog. The cause is named by elimination instead.
+- **Cause 2 is refuted** (`content - bounds` = 0, offset 0). **Cause 3 is refuted**: a composer laid
+  out at 186 would be DRAWN at 186, and the web composer is drawn at 487. What is left is **cause 1**:
+  the page's rect says 186 = 487 - 301 while the screen draws 487 with the native offset at 0, so the
+  page believes its document is scrolled by 301 (the keyboard's reveal) while UIKit's offset is 0.
+  (`rect + scrollY` = 487 is the drawn place; `scrollY` itself was not read, hence "by elimination".)
+
+**The fix.** The piece's rect is anchored to the DOCUMENT, not to the layout viewport:
+`screenRect` = `getBoundingClientRect() + (scrollX, scrollY)`. The app never scrolls its document (the
+shell is `overflow-hidden` at the viewport height, so the document has no scroll range and UIKit's
+offset is 0; `CanariClampDocumentScroll` guarantees that only for an offset leaving its range). The
+rect is therefore right WHILE the offset is 0, and then what is drawn is the document position
+whatever the page believes. `rect + scroll` is invariant under that stale scroll, so no document
+scroll listener is needed; the visual viewport's `scroll` is listened to for the zoomed pan only.
+When it compensates a nonzero scroll it logs once per transition (`Log.i`, "compensating a document
+scroll: scrollX= scrollY="): the in-app reading that confirms the cause, since the native page line
+is `<private>`. Pinch-zoomed (`visualViewport.scale > 1.01`; the viewport meta
+does not forbid zoom) there is a real pan, and the visual viewport's transform
+`(rect - offset) * scale` is used instead. **Owed:** the same three rounds on the build that carries
+it (the "+" at 487 beside "Envoyer", the header in place), and a salon.
 
 **Not new in 1.2.9, by reading.** Between `v1.2.8` and `v1.2.9-alpha.7`, none of these changed:
 
@@ -4327,6 +4391,15 @@ both halves run only on hardware.
 ## The group summary never alerts (measured on a Pixel 6a, 2026-10-09)
 
 Logcat 12:16:49: a `type=channel` push at .069, a `type=channel_read` at .103 (`cancelConversationNotification` id=1035, which calls `refreshBadgeSummary`), the message banner posted at .147, then Android logged "Muting recently noisy" on the summary id 9999. The summary was rebuilt by every post and cancel with default alert behaviour, so each rebuild counted as a noisy post and tripped the platform's rate limit on the group. `refreshBadgeSummary` now sets `setOnlyAlertOnce(true)` and `GROUP_ALERT_CHILDREN`: only a child line may sound. No change to the message repost: a message already announced and cancelled by a read push is refused by the alerted ledger (`hasAlreadyAlerted`), and one not yet announced is rightly its first alert, so a second `setOnlyAlertOnce` there would only hide a real first sound.
+
+## Back to the top: a re-tap of the open tab, and the iOS status bar (owner, 2026-11-04)
+
+An iPhone user had no quick way back to the top of the feed. Two gestures, NO button (owner), ONE action (`scrollPageToTop`, `lib/navigation/scrollToTop.ts`). Section navigation is a closed chantier ([section-navigation](section-navigation.md)); this adds a gesture, not a menu.
+
+- **Re-tap of the tab the reader is on** (`handlePlaceTap`; native iOS bar, `BottomNav` on web and Android, `AppSidebar` on desktop). The web bars' links only DECLARE themselves place links (`data-app-place`, `PLACE_LINK_ATTRIBUTE`); the decision is made by `handleAppLinkClick` (`openExternal.ts`), the document's capture listener that owns every in-app link click and stops it. The first build put the gate in each anchor's `onclick`, which that listener never let run: on the Mi 9T (`1.6.4-alpha.3`) three re-taps of the open Feed tab logged `[appLink] In-app navigation`, no `[scrollToTop]` line, and the page stayed at 1378 px. The test dispatches a real click on a place link with that listener installed. A re-tap first closes any open history overlay and stops there (the same-URL navigation it replaces used to drain them). Otherwise the first re-tap scrolls the page to the top (smooth, instant under reduced motion); a re-tap while ALREADY at the top refreshes the feed, like Instagram, through the SAME function as pull-to-refresh (`refreshPosts`, registered by the feed with `registerRetapRefresh`), one refresh at a time, a failure warned. `scrollPageToTop` itself never refreshes. A tap from deeper in the place (`/posts/<id>`) still navigates back to it; ctrl/meta/shift/alt and non-primary clicks on the web links are left to the browser. The native bar delivers a re-tap because `UITabBarDelegate.didSelect` fires for the selected item too (owed one reading on an iPhone). Other places get the scroll where they scroll in the layout's box (communities, dashboard); the chat list scrolls in its own panel, so it is not covered, and only the feed registers a refresh.
+- **iOS status bar tap**: the app's pages scroll in ONE inner box (`.page-scroll-wrap`, `+layout.svelte`) and the document never moves. **WebKit does not answer the tap for that box (measured)**: on two throwaway bench builds of the iPhone 12 (2026-11-04, dev), with no catcher, the scrolled feed did not move on a tap at (200,20) - neither with the web view's own `scrollsToTop` left at its default (the state before #3013) nor with it switched off, although WebKit gives the box a native scroll view of its own. So the patched plugin mounts a `StatusBarTapCatcher` in the tab bar overlay and switches the web view's `scrollsToTop` off. Since iOS 13 the tap is a scene action (`UIStatusBarTapAction`), not a touch: no hit test runs. The first build's catcher (`1.6.4-alpha.3`) was a 1 pt strip at `alpha` 0.01 and the page did not move; `alpha` 0.01 is stored as a `Float` below UIKit's 0.01 visibility threshold, the most likely single cause. Since `1.6.4-alpha.4` the catcher has `alpha` 1 on a clear background, covers the whole status bar (top edge to the safe area's top, full width, at least 1 pt) and always keeps vertical range, and **the tap scrolls the feed to the top (measured on alpha.4)**. That UIKit picks the scroll view under the tap's x position is inferred from behaviour, not documented. The catcher refuses the native scroll and triggers the `statusBarTap` plugin event; the page runs `scrollPageToTop('status-bar')`, which never refreshes and is skipped while a history overlay is open (the page behind would move unseen). A full-screen modal that is NOT on the history overlay stack is not detected: the tap scrolls the page behind it.
+  - **The catcher's log line was there and read as absent.** alpha.4's `NSLog("[pendi-nav][native] status bar tap caught ...")` arrived as `Canari{Foundation} <private>`, 1.8 ms after `Received action(s): UIStatusBarTapAction`, the only such line of that process in the capture: **a Swift `NSLog` is redacted WHOLE on a store build**, literal text included (the Objective-C `[CanariIOS]` lines are not). The plugin's lines now go through one `Logger` (`PendiNav.log`, category `pendi-nav`), whose literal text is public, and `nativeLogContent.test.ts` scans the plugin. Read on a bench build of that change (iPhone 12, dev, 2026-11-04): three taps on a scrolled feed, three `Received action(s): UIStatusBarTapAction` each followed within 2 ms by `Canari{Canari} [pendi-nav][native] status bar tap caught, reported to the page`, and the feed back at its top.
+  - **It takes NO touch, and the dead band under the status bar is iOS's, not ours (measured).** `PassthroughView.hitTest` returns nil for everything but the bar and the account button, so the catcher never enters a hit test. On alpha.4 a horizontal swipe STARTING at y 30 did nothing on the feed as on the camera tab, while the same swipe at y 400 changed tab. On the throwaway build with NO catcher (the pre-#3013 native state) a debug probe logging every overlay hit test with y < 100 logged nothing for a swipe at y 30 and did for one at y 90, and the swipe at y 30 changed nothing: **iOS does not deliver to the app a touch that begins in the status bar band (0-47 pt on the iPhone 12) while the status bar is shown**. It is not a `1.6.4` regression and no overlay change can fix it; only hiding the status bar on a screen would give that band back (not decided). Driven over WDA, whose touches are synthesised through the system like a finger's.
 
 ## A panel on a phone is the whole screen, and the status bar is padded ONCE (owner, 2026-11-04)
 

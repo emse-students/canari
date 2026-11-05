@@ -20,8 +20,40 @@ It replaces every per-entry "the user's gesture, when the time comes": a removal
 the version the floor must pass, and this rule is what moves the floor there. The raise is a production
 setting, so it is done by the owner or with the owner's go, and written into the entry it unblocks.
 
-**Production's floor is `1.5.1`** (read from `GET /api/version` on 2026-10-31). An older figure on this
-page is the floor at the date its entry names.
+**Production's floor is `1.6.2`** (read back from `GET /api/version` on 2026-11-04, after the owner's raise;
+the owner decided to KEEP `1.6.2`, not lower it to `1.6.0`). **Dev reads `1.6.2` too** (raised on the
+owner's instruction and read back from its `GET /api/version`, 2026-11-04). An older figure on this page
+is the floor at the date its entry names.
+
+### Entries `1.6.2` unblocks (both estates read it, 2026-11-04)
+
+"Carried by" is the first stable tag containing the pull request (`git tag --contains`). **Nothing is
+removed by this change**: removal is its own pull request, and an entry with a second half keeps waiting
+on it. The first eleven rows were already met by `1.6.0`; the last four need `1.6.1` or `1.6.2`.
+
+| Entry | Carried by | Still owed besides the floor |
+| --- | --- | --- |
+| Send-ledger entry with no epoch | #2269, `v1.5.0` | - |
+| Member clients that still Add automatically | #2358, `v1.5.0` | - (the rule becomes true; nothing to remove) |
+| The `join-ask-1` capability gate | #2442, `v1.5.0` | - |
+| Add-lock release with no token | #2426, `v1.5.0` | - |
+| Plaintext native cache reader | #2271, `v1.5.0` | - |
+| OIDC callback with no PKCE verifier | #2317, #2326, `v1.5.0` | the `without a PKCE verifier` warning silent for a week on production, and the redirect hardening |
+| `follow-status` answers `following: true` for a pending request | #2616 (WP-F4), `v1.5.1` | - |
+| Explicit slug on association creation | #2545, `v1.5.1` | - |
+| `PUT lydia-business-key` answers `410` | #2772, `v1.5.2` | - |
+| `X-Canari-Client-Version` on `/api/lives` routes | #2812, `v1.6.0` (floor condition `1.5.4`) | - |
+| `klipy_cid` drop | `v1.2.9` | - (already met at floor `1.5.1`) |
+| Presence GET (server half) | #2661, `v1.5.1` | the `legacy GET /api/presence served` line absent from production for a week |
+| Paid-form tier codes of #2667 (wording only) | #2667, `v1.5.1` | - |
+| Device-notice marker named by the key in hex | #2871, `v1.6.1` | every build has run since and migrated its markers (data at rest: the floor alone does not retire it) |
+| Call record with no start clocks | #2890, `v1.6.2` | - |
+
+**NOT unblocked by `1.6.2`:** the entries whose carrying pull request first ships in `v1.6.3` (the
+institution's republication consent, #2965; WP-PIN's body-less pin, #2984; `GET spaces/audiences`, #2951;
+`kind=reel` on `feed=all`, #2990; the creator-with-several-BDEs error, #2986), a restored message with
+no author signature (#2276, `v1.5.0`; the oldest unsigned message must also leave retention), and the
+refresh cookie on `tauri://localhost` (a desktop measurement). Entries not named here were not re-checked.
 
 ---
 
@@ -117,7 +149,7 @@ REST: those rows need a count, then a migration.
 | A `closed` admission classification dropped at load (`drop_closed_admission_policies`, `mls-core` `state.rs`; review of #2817) | every device that ran a dev build of #2815 has loaded its state once on a later build - dev and alpha builds only, nothing shipped `closed` to a store | not a version question (dev/alphas) | `PersistedState.admission` in `mls.bin` | 1 function + 1 call + 1 test | remove 2027-02-01, or when the fix-forward re-arms the rule - whichever is first, since a re-armed rule writes `closed` again and must not have it dropped ([mls-protocol](protocols/mls-protocol.md)) |
 | `canari_admission_frozen` removed at session setup (`forgetLegacyAdmissionFreeze`, `setupMessageHandler.ts`; review of #2817) | every device that ran a dev build of #2815 has opened a session on a later build | not a version question (dev/alphas) | one device-global `localStorage` key, read by nothing | 1 function + 1 call + 1 test | remove 2027-02-01 ([mls-protocol](protocols/mls-protocol.md)) |
 | A body-less `PATCH /api/posts/:postId/pin|unpin` (an older client sends no `spaceId`): pinned in, or unpinned from, the ONE space that fits, else a typed `409 space_required` (`SpacePinsService.onlySpace`, WP-PIN) | `minClientVersion` past the first stable whose post menu sends `{ spaceId }`, on BOTH stores | NO (unreleased) | none | 1 private method + the optional `spaceId` of `PinPostDto` | waits for the floor; then the `spaceId` becomes required (a 400 instead of a guess) ([spaces-and-audiences-reform](spaces-and-audiences-reform.md#11-wp-pin---a-pin-is-a-promotion-per-space-not-a-global-flag-decided-2026-11-03)) |
-| `posts.pinned`, the retired global pin: read by nothing since WP-PIN, mapped `select: false` only so a `TYPEORM_SYNCHRONIZE=1` stack does not drop it before migration 128 reads it | migration 128 (held for the owner) applied on BOTH estates | NO (128 is held) | the column; one `true` row on production (2026-11-03) | 1 entity property + a migration `ALTER TABLE posts DROP COLUMN pinned` (held: a DROP) | owed after 128 has run on both estates. A flagged post 128 could not carry (not live at run time - hidden, scheduled, an expired reel - or no governed space with room) is named by a NOTICE in that run's log and is NOT re-examined: nothing re-runs 128, so it is re-pinned by hand before the drop if still wanted ([spaces-and-audiences-reform](spaces-and-audiences-reform.md#11-wp-pin---a-pin-is-a-promotion-per-space-not-a-global-flag-decided-2026-11-03)) |
+| `posts.pinned`, the retired global pin: read by nothing since WP-PIN, and UNMAPPED from the entity since 2026-11-04, so no INSERT names it any more | 128 applied on BOTH estates (MET: dev through `v1.6.3-alpha.6`, production through `v1.6.3`, 2026-11-03 - its one flagged post carried, `INSERT 0 1`); AND production serving a build without the mapping (`git merge-base --is-ancestor <unmapping commit> prod-released`) | NO (the unmapping is not in production yet) | the column; one `true` row on production, already carried into a space pin | a migration `ALTER TABLE posts DROP COLUMN IF EXISTS pinned` (held: a DROP) | **not in the release that unmaps it**: migrations apply BEFORE the rolling replacement, and every image up to `v1.6.4-alpha.2` names `"pinned"` in the column list of each `INSERT INTO posts` (TypeORM lists every mapped column, `DEFAULT` for an unset one), so a drop in the same deploy fails every post created by an old container until the rollover ([durable-rules](durable-rules.md#release-and-ci---cicd)) |
 | `internal/reel-purge` with NO `reason` read as the pre-RC-14 delete (`purgeReels`, `media.service.ts`; review of #2898) | BOTH estates run the social-service carrying RC-14, which always names one | not a client version question: a deploy-order WINDOW (media-service may be replaced before social-service, or rolled back past it) | none | the `undefined` arm, its warn and the controller's absent-reason branch | remove once both estates deploy RC-14: then a missing reason is a `400`. Until then the old caller gets the old delete for a file no LIVE chat hold keeps; for a file a live chat hold keeps, the post hold is RELEASED and the answer is `refused` (the old caller drops its post row on any answer, and an older reel worker counts outcomes by name, so `released` would read as NaN), since that caller cannot say moderator from post end and the release is the safe reading - each call logs `Reel purge ... with NO reason - an older social-service` ([media-service](services/media-service.md#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01)) |
 | `X-Canari-Client-Version` floor on every `/api/lives` route (`live-client-version.ts`, `LiveEnabledGuard`; new 2026-10-31, shipped with `1.5.4`) | the global `minClientVersion` floor >= `1.5.4` AND production serves `1.5.4` on both stores - then every client that can reach a lives route sends the header | NO (lives are off in production until `1.5.4`) | none | the header constant, `liveClientVersionAllowed` and one guard branch (~40 lines), the web client's `withClientVersion` | owed at the floor: a request with NO header is REFUSED (that is what a `1.5.1`-`1.5.3` build sends, the only evidence the server has), so the rig and `tools/live-bench` send `1.5.4`; once the floor covers them the branch is dead and goes ([lives](services/lives.md)) |
 | An institution's republication request accepted with NO `audienceFingerprint` is REFUSED, 409 `REPOST_PERSONAL_AUDIENCE_CHANGED` (`assertConsentCurrent`, `personal-republications.service.ts`; review of #2965) | `minClientVersion` >= the first stable carrying the consent screen's warning and fingerprint (#2965), raised once BOTH stores serve it | NO (unreleased) | none | nothing to remove - the refusal IS the rule, not a shim | waits for the floor. Deliberate: the warning is the consent, and an older build never drew it. Until the floor, an older build lists the institution's request, and its Accept is refused and read as "Cette proposition n'est plus en attente" while the list re-reads with the request STILL there - stuck on that device until the app updates; Refuse works ([diary](#no-date-yet---an-institutions-republication-request-accepted-by-a-build-that-never-showed-its-audience)) |

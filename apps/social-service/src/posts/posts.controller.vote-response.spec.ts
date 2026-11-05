@@ -56,7 +56,6 @@ describe('PostsController.votePoll', () => {
         { id: 'c4', userId: 'friend-1', text: 'plain' },
       ],
       hiddenByModeration: false,
-      pinned: false,
       scheduledAt: null,
       kind: 'post',
       expiresAt: null,

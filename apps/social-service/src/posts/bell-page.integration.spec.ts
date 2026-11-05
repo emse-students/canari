@@ -17,6 +17,7 @@ import { join } from 'path';
 import { DataSource } from 'typeorm';
 import { PostNotification } from './entities/post-notification.entity';
 import { PostNotificationsService } from './post-notifications.service';
+import { createPostNotificationsTable } from './post-notifications.it-schema';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -78,13 +79,12 @@ maybe('the bell page against PostgreSQL (migration 126)', () => {
         "followedUserId" varchar(255) NOT NULL, status varchar(16) NOT NULL);
       CREATE TABLE user_moderation ("userId" varchar(255) PRIMARY KEY,
         "isMuted" boolean NOT NULL DEFAULT false);
-      CREATE TABLE post_notifications (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        "recipientId" varchar NOT NULL, type varchar NOT NULL, "postId" varchar NOT NULL,
-        "actorId" varchar NOT NULL, "actorName" varchar, "associationId" varchar,
-        "associationLogoUrl" varchar, text varchar NOT NULL, meta jsonb,
-        read boolean NOT NULL DEFAULT false, "createdAt" timestamp NOT NULL DEFAULT now());
-      CREATE INDEX "IDX_post_notifications_recipient" ON post_notifications ("recipientId");
     `);
+    // The bell's table as the estates hold it - its columns' types from the migrations (#3019's 500).
+    await createPostNotificationsTable(q);
+    await q(
+      `CREATE INDEX "IDX_post_notifications_recipient" ON post_notifications ("recipientId")`
+    );
     await q(`INSERT INTO associations (id, name, slug) VALUES ($1, 'ASSO', 'asso')`, [ASSO]);
     for (const file of [
       '071_spaces.sql',

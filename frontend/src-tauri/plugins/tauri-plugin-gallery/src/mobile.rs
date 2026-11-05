@@ -1,6 +1,6 @@
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::commands::{PublishAnswer, ShareTarget};
+use crate::commands::{DocumentWritten, PublishAnswer, ShareTarget};
 use tauri::{
     plugin::{PluginApi, PluginHandle},
     AppHandle, Runtime,
@@ -46,6 +46,13 @@ struct ShareFilePayload {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct WriteDocumentPayload {
+    path: String,
+    uri: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct PublishShareTargetsPayload {
     targets: Vec<ShareTarget>,
 }
@@ -80,6 +87,14 @@ impl<R: Runtime> Gallery<R> {
     pub fn share_file(&self, path: String, mime: String) -> crate::Result<()> {
         self.0
             .run_mobile_plugin("shareFile", ShareFilePayload { path, mime })
+            .map_err(Into::into)
+    }
+
+    /// Android only: copies the file at `path` into the document `uri` through the provider's own
+    /// stream (`write_staged_document`).
+    pub fn write_document(&self, path: String, uri: String) -> crate::Result<DocumentWritten> {
+        self.0
+            .run_mobile_plugin("writeDocument", WriteDocumentPayload { path, uri })
             .map_err(Into::into)
     }
 

@@ -29,8 +29,9 @@ fn valid_session(session: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
-/// The file a session stages into. `.mp4`, because iOS Photos reads the container off the
-/// extension of the URL it is given.
+/// The file a session stages into: a reel saved to the gallery, a file shared out, or a document
+/// written through its provider. `.mp4` whatever the content, because iOS Photos reads the container
+/// off the extension of the URL it is given; the other two never read the staged file's name.
 fn staged_path<R: Runtime>(app: &AppHandle<R>, session: &str) -> crate::Result<PathBuf> {
     if !valid_session(session) {
         return Err(crate::Error::BadSession);
@@ -259,6 +260,69 @@ pub(crate) async fn share_staged<R: Runtime>(
     }
 }
 
+/// What `write_staged_document` answers: the bytes written into the document, its stream closed.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct DocumentWritten {
+    pub written: u64,
+}
+
+/// A destination the Android save dialog handed back: a `content://` document URI, nothing else.
+/// A plain path would bypass the document's provider exactly as the write this command replaces did.
+fn valid_document_uri(uri: &str) -> bool {
+    uri.len() <= 2048
+        && uri
+            .strip_prefix("content://")
+            .is_some_and(|rest| !rest.is_empty())
+        && !uri.chars().any(char::is_control)
+}
+
+/// Writes the session's staged file into the document the Android save dialog created, then
+/// removes the staged copy.
+///
+/// WHY NOT `plugin-fs`'s `writeFile`: on Android it opens the document, DETACHES the descriptor
+/// from its `ParcelFileDescriptor` (`detachFd()`) and lets Rust write and close the raw fd. A
+/// detach tells the provider's close listener "closed" at once, BEFORE a single byte is written,
+/// so a provider that records the size on close records 0 and keeps it: the Downloads provider
+/// then lists the file as "0 octet(s)" while the disk holds every byte, and an app the file is
+/// shared to from there reads that size and refuses the file or sees 0 bytes. Here the stream is
+/// the provider's own, opened and CLOSED through the content resolver after the copy, so its
+/// listener fires once the bytes are in. Measured on the Mi 9T, 2026-11-04
+/// (`docs/wiki/frontend/mobile.md`).
+#[command]
+pub(crate) async fn write_staged_document<R: Runtime>(
+    app: AppHandle<R>,
+    session: String,
+    uri: String,
+) -> crate::Result<DocumentWritten> {
+    let staged = staged_path(&app, &session)?;
+    if !valid_document_uri(&uri) {
+        log::error!("[gallery] write_staged_document {session}: not a content:// document");
+        remove_staged(&staged);
+        return Err(crate::Error::BadUri);
+    }
+    let size = std::fs::metadata(&staged).map(|m| m.len()).unwrap_or(0);
+    // Not the URI: it ends with the file's name.
+    log::debug!("[gallery] write_staged_document {session}: {size} bytes staged");
+    #[cfg(target_os = "android")]
+    let outcome = app
+        .gallery()
+        .write_document(staged.to_string_lossy().into_owned(), uri);
+    #[cfg(not(target_os = "android"))]
+    let outcome: crate::Result<DocumentWritten> = {
+        let _ = uri;
+        Err(crate::Error::AndroidOnly)
+    };
+    match &outcome {
+        Ok(w) => log::debug!(
+            "[gallery] write_staged_document {session}: {} bytes written",
+            w.written
+        ),
+        Err(e) => log::error!("[gallery] write_staged_document {session} failed: {e}"),
+    }
+    remove_staged(&staged);
+    outcome
+}
+
 fn remove_staged(path: &std::path::Path) {
     match std::fs::remove_file(path) {
         Ok(()) => {}
@@ -370,7 +434,7 @@ pub(crate) async fn open_app_settings<R: Runtime>(app: AppHandle<R>) -> crate::R
 
 #[cfg(test)]
 mod tests {
-    use super::{valid_mime, valid_name, valid_session};
+    use super::{valid_document_uri, valid_mime, valid_name, valid_session};
 
     #[test]
     fn a_session_is_a_token_never_a_path() {
@@ -403,5 +467,22 @@ mod tests {
         assert!(!valid_mime("text/plain; charset=utf-8"));
         assert!(!valid_mime("/png"));
         assert!(!valid_mime("image/"));
+    }
+
+    #[test]
+    fn a_document_is_a_content_uri_never_a_path() {
+        assert!(valid_document_uri(
+            "content://com.android.providers.downloads.documents/document/msf%3A121"
+        ));
+        assert!(!valid_document_uri("content://"));
+        assert!(!valid_document_uri("/sdcard/Download/canari-log.txt"));
+        assert!(!valid_document_uri(
+            "file:///sdcard/Download/canari-log.txt"
+        ));
+        assert!(!valid_document_uri("content://a/b\ninjected"));
+        assert!(!valid_document_uri(&format!(
+            "content://{}",
+            "a".repeat(2048)
+        )));
     }
 }

@@ -72,14 +72,15 @@ impl<R: Runtime> SystemComponents<R> {
         )
     }
 
-    pub fn show_tab_bar(&self) -> crate::Result<()> {
+    /// CANARI PATCH: the `seq` orders the async calls on iOS; this side ignores it.
+    pub fn show_tab_bar(&self, _options: TabBarVisibilityOptions) -> crate::Result<()> {
         macos_only!(
             macos::tab_bar::set_hidden(self.window()?, false),
             "the native tab bar is iOS/macOS-only"
         )
     }
 
-    pub fn hide_tab_bar(&self) -> crate::Result<()> {
+    pub fn hide_tab_bar(&self, _options: TabBarVisibilityOptions) -> crate::Result<()> {
         macos_only!(
             macos::tab_bar::set_hidden(self.window()?, true),
             "the native tab bar is iOS/macOS-only"
