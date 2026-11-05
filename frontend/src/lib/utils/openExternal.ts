@@ -3,6 +3,7 @@ import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
 import { confirmUnsafeLinkIfNeeded } from '$lib/utils/checkLinkSafety';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
+import { handlePlaceLinkClick } from '$lib/navigation/scrollToTop';
 
 export { isTauriRuntime };
 
@@ -31,7 +32,9 @@ export function shouldOpenExternalHref(
 
 /**
  * Intercept link clicks: Canari app URLs navigate in-app (web + Tauri); other http(s) links
- * open in the system browser on Tauri only.
+ * open in the system browser on Tauri only. A re-tap of the open place's link (a link carrying
+ * `PLACE_LINK_ATTRIBUTE`) scrolls that page to its top instead of navigating: this listener runs
+ * first and stops the click, so it is the ONE place that decision can be made.
  * Returns true when default navigation was cancelled.
  */
 export function handleAppLinkClick(event: MouseEvent): boolean {
@@ -48,6 +51,12 @@ export function handleAppLinkClick(event: MouseEvent): boolean {
   const rawHref = anchor.getAttribute('href') ?? '';
   const href =
     rawHref.startsWith('/') && !rawHref.startsWith('//') ? rawHref : anchor.href || rawHref;
+
+  if (handlePlaceLinkClick(anchor, window.location.pathname)) {
+    event.preventDefault();
+    event.stopPropagation();
+    return true;
+  }
 
   const inAppPath = inAppPathFromHref(href);
   if (inAppPath) {

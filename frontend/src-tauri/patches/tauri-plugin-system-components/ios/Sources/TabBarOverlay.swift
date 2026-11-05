@@ -10,6 +10,16 @@
 //
 
 import UIKit
+import os
+
+/// CANARI PATCH: the plugin's native log. A Swift `NSLog` reaches the unified log WHOLE as
+/// `<private>` on a store build - the line `1.6.4-alpha.4` added to prove a status bar tap was caught
+/// arrived as `Canari{Foundation} <private>`, 2 ms after `UIStatusBarTapAction`, and was read as
+/// absent. A `Logger`'s literal text is public; an interpolation is marked public only for ids,
+/// counts and states (`nativeLogContent.test.ts`).
+enum PendiNav {
+    static let log = Logger(subsystem: "fr.emse.canari", category: "pendi-nav")
+}
 
 /// Root view of the overlay controller: covers the whole host view so the
 /// tab bar can pin to the real screen bottom, but only claims touches that
@@ -33,13 +43,33 @@ final class PassthroughView: UIView {
 
 /// CANARI PATCH: catches a tap on the iOS status bar and reports it instead of scrolling.
 ///
-/// UIKit sends that tap to the ONE visible scroll view with `scrollsToTop` set. The WKWebView's own
-/// scroll view is that view by default, but Canari's pages scroll in an inner `overflow-y-auto` box
-/// (the document never moves), so the gesture did nothing. This 1 pt, near-transparent scroll view
-/// (a full-width strip along the top edge, see `viewDidLoad`) becomes the only candidate (the plugin turns the web view's off), refuses the scroll
-/// (`scrollViewShouldScrollToTop` returns false) and tells the page, which runs the same
-/// scroll-to-top as a re-tap of the Feed tab. The catcher's initial 1 pt frame is replaced by the
-/// constraints.
+/// Since iOS 13 that tap is a SCENE action (`UIStatusBarTapAction`), not a touch: no hit test runs,
+/// and UIKit hands it to a visible scroll view with `scrollsToTop` set that can scroll vertically.
+/// That it picks the one under the tap's x position is INFERRED from behaviour (iPad split views),
+/// not documented. The WKWebView's own scroll view never qualifies here: Canari's pages
+/// scroll in an inner `overflow-y-auto` box, the document has no range at all (the plugin also
+/// switches its `scrollsToTop` off). Nor does the native scroll view WebKit gives that inner box:
+/// with no catcher the scrolled feed did not move, the web view's `scrollsToTop` on or off (iPhone 12,
+/// two bench builds, 2026-11-04).
+///
+/// This scroll view is that candidate, and it is what scrolls the feed (`1.6.4-alpha.4`, measured;
+/// the first build, `alpha.3`, was passed over), built so UIKit cannot pass it over:
+/// - it is VISIBLE to UIKit (`alpha` 1, a clear background, so it draws nothing): the first build's
+///   `alpha` 0.01 is stored by its layer as a `Float` (0.0099999998), below UIKit's 0.01 visibility
+///   threshold - the most likely single cause;
+/// - it COVERS the status bar, full width, from the top edge down to the safe area's top
+///   (`viewDidLoad`), rather than a 1 pt strip, so however UIKit locates the tap it lies inside;
+/// - it takes NO touch: `PassthroughView` lets every touch through it. The tap needs none, and the
+///   area under the status bar is live content (the full-bleed camera tab, the reel viewer's swipe,
+///   the media lightbox's pan and pinch, and real content just below a Dynamic Island). A touch that
+///   BEGINS in the status bar band never reaches the app at all while the bar is shown - iOS keeps
+///   it, with or without this view (measured with no catcher) - so a swipe from there does nothing;
+/// - it always has vertical range (`layoutSubviews`): two points more content than its height,
+///   resting one point down, since a scroll view already at its top or with nothing to scroll is
+///   not a candidate.
+///
+/// It refuses the scroll (`scrollViewShouldScrollToTop` returns false) and tells the page, which runs
+/// the same scroll-to-top as a re-tap of the Feed tab.
 final class StatusBarTapCatcher: UIScrollView, UIScrollViewDelegate {
     var onTap: (() -> Void)?
 
@@ -47,20 +77,29 @@ final class StatusBarTapCatcher: UIScrollView, UIScrollViewDelegate {
         super.init(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
         delegate = self
         scrollsToTop = true
-        // Never `isHidden` nor alpha 0: UIKit skips a scroll view that is not on screen.
-        alpha = 0.01
+        backgroundColor = .clear
+        isOpaque = false
         contentInsetAdjustmentBehavior = .never
         showsVerticalScrollIndicator = false
         showsHorizontalScrollIndicator = false
-        contentSize = CGSize(width: 1, height: 4)
-        contentOffset = CGPoint(x: 0, y: 2)
         isAccessibilityElement = false
         accessibilityElementsHidden = true
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    /// Keeps the range a candidate needs at every size the constraints give it: content two points
+    /// taller than the strip, resting one point below its top. Written only when it differs, since
+    /// moving the offset lays a scroll view out again.
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let size = CGSize(width: bounds.width, height: bounds.height + 2)
+        if contentSize != size { contentSize = size }
+        if contentOffset != CGPoint(x: 0, y: 1) { contentOffset = CGPoint(x: 0, y: 1) }
+    }
+
     func scrollViewShouldScrollToTop(_ scrollView: UIScrollView) -> Bool {
+        PendiNav.log.notice("[pendi-nav][native] status bar tap caught, reported to the page")
         onTap?()
         return false
     }
@@ -134,16 +173,20 @@ final class TabBarOverlayController: UIViewController, UITabBarDelegate {
     override func viewDidLoad() {
         super.viewDidLoad()
         tabBar.delegate = self
-        // A full-width 1 pt strip pinned to the top: UIKit hands the status bar tap to the scroll
-        // view under the tap point, so a corner would only answer a tap at the corner. It
-        // intercepts no touch (PassthroughView claims only the bar and the account button).
+        // The status bar's whole area, full width and down to the safe area's top, so any tap point
+        // in the bar lies inside it (see `StatusBarTapCatcher`). With no status bar (landscape
+        // iPhone) the safe area's top is 0 and the strip keeps 1 pt rather than collapsing.
         statusBarTapCatcher.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(statusBarTapCatcher)
+        let reachesSafeArea = statusBarTapCatcher.bottomAnchor.constraint(
+            equalTo: view.safeAreaLayoutGuide.topAnchor)
+        reachesSafeArea.priority = .defaultHigh
         NSLayoutConstraint.activate([
             statusBarTapCatcher.topAnchor.constraint(equalTo: view.topAnchor),
             statusBarTapCatcher.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             statusBarTapCatcher.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            statusBarTapCatcher.heightAnchor.constraint(equalToConstant: 1),
+            reachesSafeArea,
+            statusBarTapCatcher.heightAnchor.constraint(greaterThanOrEqualToConstant: 1),
         ])
         tabBar.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(tabBar)
@@ -305,10 +348,8 @@ final class TabBarOverlayController: UIViewController, UITabBarDelegate {
         if let heightC = accessoryHeight, heightC.constant != side { heightC.constant = side }
         // Keep the avatar perfectly circular as that height resolves.
         button.layer.cornerRadius = button.bounds.height / 2
-        NSLog(
-            "[pendi-nav][native] TabBarOverlay geometry barFrame=%@ barSafeBottom=%.1f avatar=%@",
-            NSCoder.string(for: tabBar.frame), tabBar.safeAreaInsets.bottom,
-            NSCoder.string(for: button.frame))
+        PendiNav.log.notice(
+            "[pendi-nav][native] TabBarOverlay geometry barFrame=\(NSCoder.string(for: self.tabBar.frame), privacy: .public) barSafeBottom=\(Double(self.tabBar.safeAreaInsets.bottom), format: .fixed(precision: 1)) avatar=\(NSCoder.string(for: button.frame), privacy: .public)")
     }
 
     /// Side of bitmap tab icons (avatars), in points.
@@ -361,9 +402,8 @@ final class TabBarOverlayController: UIViewController, UITabBarDelegate {
         let animated = !(tabBar.items?.isEmpty ?? true)
         tabBar.setItems(barItems, animated: animated)
         select(id: storedSelectedId ?? ids.first)
-        NSLog(
-            "[pendi-nav][native] TabBarOverlay apply tabs=%d classic=%@ accessory=%@",
-            ids.count, usesClassicBar ? "yes" : "no", accessoryId ?? "(none)")
+        PendiNav.log.notice(
+            "[pendi-nav][native] TabBarOverlay apply tabs=\(self.ids.count) classic=\(self.usesClassicBar ? "yes" : "no", privacy: .public) accessory=\(self.accessoryId ?? "(none)", privacy: .public)")
     }
 
     @discardableResult
