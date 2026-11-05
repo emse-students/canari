@@ -131,7 +131,7 @@ describe('the extension and the reader agree on the file contract', () => {
     expect(append).not.toMatch(/return (true|false)\b/);
     const end = block.match(/func end\([\s\S]*?\n {6}\}\n/)?.[0] ?? '';
     expect(end).toContain('if case .appended = appended { return }');
-    expect(end).toContain('not appended (\\(appended.reason))');
+    expect(end).toContain('not appended (\\(appended.reason, privacy: .public))');
     expect(end).not.toContain('log busy');
   });
 

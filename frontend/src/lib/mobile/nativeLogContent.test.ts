@@ -517,3 +517,33 @@ describe('native log lines in every build', () => {
     expect(findings.map((f) => `${f.file}:${f.line} interpolates \`${f.expr}\``)).toEqual([]);
   });
 });
+
+describe('the notification extension on a store build', () => {
+  const NSE = join(SRC_TAURI, 'gen/apple/canari_NSE/NotificationService.swift');
+
+  it('logs through its Logger, never a Swift NSLog, which arrives as <private> whole', () => {
+    // `1.6.5-alpha.1` on the iPhone 12: the generic banner of a killed-app DM came with every
+    // extension line `<private>`, so its reason could not be read. The scan above still holds every
+    // interpolation of the Logger calls to ids, counts, states and reasons.
+    const src = readFileSync(NSE, 'utf8');
+    expect(src).not.toMatch(/\bNSLog\s*\(/);
+    expect(src).toContain('Logger(subsystem: "fr.emse.canari", category: "nse")');
+    expect(src).toMatch(/NseLog\.log\.notice\(\s*"\[CanariNSE\] outcome=/);
+  });
+
+  it('names the privacy of every value it interpolates', () => {
+    // A string interpolated with no privacy argument is redacted on a store build, silently: the
+    // choice is written value by value, `.public` for an id, a count, a state or a reason (the scan
+    // above refuses one that is content), `.private` for anything else.
+    const src = readFileSync(NSE, 'utf8');
+    const unmarked: string[] = [];
+    for (const m of src.matchAll(/NseLog\.log\.\w+\(/g)) {
+      for (const expr of callExpressions(src, m.index! + m[0].length, 'swift')) {
+        if (!/privacy:\s*\.(public|private)\s*$/.test(expr)) {
+          unmarked.push(`${lineOf(src, m.index!)}: ${expr}`);
+        }
+      }
+    }
+    expect(unmarked).toEqual([]);
+  });
+});

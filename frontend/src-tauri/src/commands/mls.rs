@@ -635,7 +635,7 @@ fn load_resealed_legacy_state(
     })?;
     let path = data_dir.join("mls.bin");
     match crate::concurrency::while_claim_current(claim, || {
-        crate::concurrency::write_mls_bin_atomically(&path, resealed)
+        crate::concurrency::write_slot_mls_bin(&path, resealed)
     }) {
         Ok(Ok(())) => Ok(Some(manager)),
         Ok(Err(e)) => {

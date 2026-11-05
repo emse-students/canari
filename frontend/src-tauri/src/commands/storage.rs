@@ -1,8 +1,7 @@
 //! Storage Tauri commands: persistence, reload, heartbeat, flags.
 
 use crate::concurrency::{
-    foreground_checkpoint_lock, mark_foreground_active, mls_bin_write_lock,
-    write_mls_bin_atomically,
+    foreground_checkpoint_lock, mark_foreground_active, mls_bin_write_lock, write_slot_mls_bin,
 };
 use crate::state::AppState;
 use mls_core::MlsManager;
@@ -120,7 +119,7 @@ fn account_state_write_held(
     if owner.as_deref() != Some(user_id) {
         record_mls_state_owner(data_dir, user_id).map_err(AccountStateWriteRefused::Io)?;
     }
-    write_mls_bin_atomically(&data_dir.join("mls.bin"), data).map_err(AccountStateWriteRefused::Io)
+    write_slot_mls_bin(&data_dir.join("mls.bin"), data).map_err(AccountStateWriteRefused::Io)
 }
 
 /// What a resume reload did, and WHY when it did nothing - a TYPE, because the caller must act
