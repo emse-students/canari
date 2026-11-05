@@ -108,7 +108,7 @@ PRE-RELEASE `vX.Y.Z-alpha.N` deploys `dev.canari-emse.fr` and the store TESTER p
 hyphen IS the definition**, read by `release_kind()` in `.github/scripts/lib/release-preconditions.sh`
 (the ONE implementation) and by `scripts/bump-app-version.sh`'s store band. **A stable owes exactly
 one thing written by a human**: `store/whats-new.txt`, first line `version: X.Y.Z` - one text reaching
-the App Store, Play and the GitHub release body through ONE implementation. Check it before tagging:
+the App Store, Play and the GitHub release body through ONE implementation, read from the PRE-RELEASE's tree - so check it before cutting the last alpha:
 
 ```sh
 MARKETING_VERSION=0.16.2 bun tools/app-store/submit.mjs --check-notes
