@@ -3852,6 +3852,26 @@ sidebar order kept when they answer in reverse, and no retry while a sibling is 
   row is dated by its server `createdAt` on every path, or the heads under the last message flicker
   with each history load (2026-10-12,
   [social-service](../../services/social-service.md#read-receipts-in-a-salon)).
+  **How a DM or group receipt is computed, end to end.** The reader's receipt effect
+  (`MainChatPage`) takes `readMarkTarget`: the newest `messageTime` among the FOREIGN rows held,
+  bounded by `serverMarkCeiling` (the newest `serverTimestamp` held, and what the server said to this
+  account, `serverClock.ts`); it leaves as `read_watermark {serverAt}`; the author's device merges it
+  into `serverReadWatermarks` and draws the head on its last own row with `serverTimestamp <= mark`
+  (`readersOf`). So the reader's rows and the author's rows must carry the SAME key, the server's
+  acceptance: `queuedCreatedAt` on a received row, the `receivedAt` the send answered on the author's.
+  **The receipt one or two messages late (owner, 2026-11-05, 1.6.5).** `batchAddMessages` - the drain
+  every live arrival goes through - gave the server time to the STORED row only and built the SHOWN
+  row without it, so until a reload every received row was keyed by its author's `sentAt`. Measured on
+  dev with a logpoint on `readMarkTarget` in two bench browsers: the reader's rows held
+  `serverTimestamp: undefined`, its mark was the author's `sentAt` of the last message (author clock,
+  ~0.7 s behind the server, plus the network), and the author compared it with the later server time
+  of its own rows - the head stayed on the message before a quick pair, both of the pair single-checked.
+  The ceiling, with no dated foreign row, held the mark at the reader's own last send, which is why it
+  moved only when the reader acted. A reaction played no part (the same run without one gives the same
+  head); nor did #2937 or #2939: the row never carried the field, and #2824 (`1.6.0`, marks on the server
+  clock) made it load-bearing. Fixed at the row: the shown row carries `serverTimestamp`.
+  `readReceipt.oneLate.svelte.test.ts` (the owner's sequence, reactions both ways, arrivals while open,
+  a second device on each side; all four fail without the fix).
 - **GIFs**: an in-app picker (KLIPY) sends a GIF by URL; on Android the soft keyboard's own
   GIF/sticker button also works via `commitContent` (see below). GIFs skip canvas compression in
   `useMessaging.handleFilesSelected` so their animation is preserved.
