@@ -338,7 +338,7 @@ describe('channel push payload contract (social-service writer vs the three nati
       'showsMessage: body != nil, senderId: senderId, serverSaysMentioned: serverSaysMentioned)',
       'if serverSaysMentioned, !mentionsMe {',
       'if body == nil, !senderId.isEmpty || serverSaysMentioned {',
-      'mentioned=\\(serverSaysMentioned)',
+      'mentioned=\\(serverSaysMentioned, privacy: .public)',
     ]);
     onlyThrough(swiftChannelOnly, /\blet mentionsMe\b|\bfetchAvatar\(|\bmentionAuthorLine\(/g, [
       'let mentionsMe = attribution.mentionsMe',
