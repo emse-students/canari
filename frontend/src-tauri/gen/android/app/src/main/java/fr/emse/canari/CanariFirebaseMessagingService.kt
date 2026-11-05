@@ -5041,6 +5041,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     Log.w(TAG, "$where: MLS refused it at an epoch this device holds kind=${json.optString("kind")} - no catch-up or retry can read it")
                     PushDecrypt.RefusedForGood
                 }
+                "mls-refused" -> {
+                    // `kind: EpochAhead` is READ FROM THE FRAME'S HEADER by Rust, never learnt from
+                    // a refusal: this path never writes mls.bin, so after any commit every push of
+                    // the group is ahead of it until the app drains, and the catch-up below is the
+                    // designed answer - not a failure (`epoch_ahead_of_held_state`, 2026-11-05).
+                    if (json.optString("kind") == "EpochAhead") {
+                        Log.d(TAG, "$where: frame ahead of the stored state - the commit catch-up reads it")
+                    } else {
+                        Log.w(TAG, "$where: no message to show, reason=$reason kind=${json.optString("kind")}")
+                    }
+                    PushDecrypt.Refused
+                }
                 else -> {
                     Log.w(TAG, "$where: no message to show, reason=$reason")
                     PushDecrypt.Refused
