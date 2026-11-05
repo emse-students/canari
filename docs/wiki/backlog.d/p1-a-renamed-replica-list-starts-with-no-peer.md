@@ -10,6 +10,6 @@ take-out, each resolved for the request (`resolver_timeout 2s`, its failures cou
 closing test (`deploy-rolling.test.sh` case 2b, hundreds of reloads under load) are in
 [cicd](../cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to).
 
-**Owed:** one reading on a production deploy carrying it (the `v1.6.5` deploy of 2026-11-05 qualifies) - then
-delete this file and its `CLAUDE.md` queue line: no `no live upstreams` in the edge's or the
-frontend's log across that deploy (`docker logs --since <deploy start>`).
+**Owed:** one reading on a production deploy carrying it (the `v1.6.5` deploy of 2026-11-05
+qualifies): no `no live upstreams` in the edge's or the frontend's log across that deploy
+(`docker logs --since <deploy start>`). Then delete this file and its `CLAUDE.md` queue line.
