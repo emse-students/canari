@@ -19,6 +19,8 @@ export const HELP_IDS = [
   'hint-asso-post-as',
   'hint-asso-manage',
   'hint-asso-manage-hub',
+  'hint-booking-spaces',
+  'hint-booking-week',
 ] as const;
 
 /**

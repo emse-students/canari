@@ -43,7 +43,7 @@ Binding, on top of the ones above.
 | 1 | Create: post composer and event form (hint on the opening control, decision 1) | draft PR #2982 |
 | 2 | Chats and CanaReels, plus the feed tabs' explanation moved from the (i) button (decision 2), plus the "what's new" mechanism only, content with 1.6.4 (decision 3) | built, draft PR; [below](#whats-new-and-the-batch-2-hints) |
 | 3 | Associations and the campus space (shop, publish as, manage; "Mon espace" is feed-tabs step 3); batch 2 read PASS on both phones 2026-11-04 | built, draft PR; [below](#batch-3---associations-and-the-campus-space) |
-| 4 | Booking a room | after batch 3 |
+| 4 | Booking a room: the Reservations page and a space's week | built, in 1.6.5 (owner, 2026-11-05); [below](#batch-4---booking-a-room) |
 
 ## The pieces
 
@@ -335,6 +335,23 @@ cases, the route patterns, replay), `guideEngine.test.ts` ("eligible": not offer
 answer is yes, a replay held back, another help runs) and `postAsAccess.test.ts`. Owed on a phone: the
 four read on the Mi 9T and the iPhone 12 with a plain member, a non-member, a manager and an account
 that can post as an association.
+
+## Batch 4 - booking a room
+
+Built 2026-11-04, `kind: 'hint'` each, once per account, listed after batch 3 in `guides/index.ts`.
+Ships in 1.6.5 (owner, 2026-11-05), ahead of the batch 3 phone reading. Both pages load after the route settles, so
+a help starts when its anchors mount; every anchor is marked by the element's own render condition.
+
+| Id | Route | Anchor(s) | Steps (fr) |
+| --- | --- | --- | --- |
+| `hint-booking-spaces` | `/bookings` | `bookings.mine` (the "Vos prochaines réservations" section, drawn once loaded), `bookings.spaces` (a wrapper of `SpaceList`, drawn only when the read succeeded and the list is not empty) | "Vos réservations" - coming ones first, past and cancelled folded below; "Réserver un espace" - pick a space for its week; a link-only space is opened by its link or QR code |
+| `hint-booking-week` | `/bookings/spaces/<id>` (not `manage`, not `edit`) | `bookings.column` (a wrapper of `ColumnSelect`, drawn only for a space with several columns), `bookings.week` (`data-week-grid`: the planning list on a phone, the grid wide); both marked by `SpaceWeek` in `book` mode once the first read of the week landed | "Une colonne par ressource"; "Réserver un créneau" - body by layout (list and the icon-only + button on a phone, grid and drag on a wide screen), then the sheet adjusts the length and adds people |
+
+`hint-booking-spaces` declares `replay` (`/bookings`, label "Réservations"); the space hint has none (one
+route per space). The week anchors wait for `loaded` so a help never starts on the dimmed empty grid
+and a failed read (the error line) leaves both steps out; the grid keeps its anchor while a week is
+loaded, so moving week does not drop a step. Pinned by `guides/batch4Hints.test.ts`. Owed on a phone:
+the two read on the Mi 9T and the iPhone 12, with a one-column and a several-column space.
 
 ## Back, focus, motion
 

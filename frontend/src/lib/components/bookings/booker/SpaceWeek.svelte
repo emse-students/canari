@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, untrack, type Snippet } from 'svelte';
+  import { guideAnchorWhen } from '$lib/guidance/guideAnchors.svelte';
   import MineHereCard from '$lib/components/bookings/booker/MineHereCard.svelte';
   import { mineHere } from '$lib/bookings/mineHere';
   import SpaceGrid from '$lib/components/bookings/booker/SpaceGrid.svelte';
@@ -363,12 +364,14 @@
 <div class={mode === 'book' ? 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start' : ''}>
   <div class="min-w-0 space-y-4">
     {#if space.resources.length > 1 && resource}
-      <ColumnSelect
-        resources={space.resources}
-        value={resource.id}
-        counts={freeCounts}
-        onSelect={(id) => (resourceId = id)}
-      />
+      <div use:guideAnchorWhen={mode === 'book' && loaded ? 'bookings.column' : undefined}>
+        <ColumnSelect
+          resources={space.resources}
+          value={resource.id}
+          counts={freeCounts}
+          onSelect={(id) => (resourceId = id)}
+        />
+      </div>
     {/if}
 
     {#if slotsError}
@@ -404,6 +407,7 @@
         class="transition-opacity {weekHeld ? '' : 'opacity-50'}"
         inert={!weekHeld}
         data-week-grid
+        use:guideAnchorWhen={mode === 'book' && loaded ? 'bookings.week' : undefined}
       >
         {#if drawn.endMin === drawn.startMin}
           <p class="text-text-muted py-8 text-center text-sm">
