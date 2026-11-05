@@ -2054,7 +2054,7 @@ nothing can - the reference is not in any copy this device holds.
 The quote itself also had a left padding and no right one, so its text ran into the bubble's edge;
 `MessageReplyQuote` was padded on both sides. **That component is no longer a strip inside the
 bubble at all since 2026-09-22** - it is a second, receded bubble stacked flush above the reply,
-under a caption row naming who answered whom, measured off the reference in both themes:
+under a caption row naming who answered whom (worded by `utils/chat/replyCaption.ts`: when the sender header is already drawn above, the caption drops the replier and reads "A répondu à <quoted author>" / "A répondu à son message"; without a header it names both; an unknown quoted author gives the name-less form), measured off the reference in both themes:
 [design-reference section 37](../design-reference.md). Nothing above changes: an edit still has to
 preserve the envelope's `replyTo`, and the quote is still drawn from it.
 

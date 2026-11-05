@@ -393,6 +393,9 @@
       if (resolved && senderId === sid) senderDisplayName = resolved;
     });
   });
+  /** A directory answer worth printing: not empty, not the id itself, not the "unknown user" label. */
+  const knownName = (name: string | null | undefined, id: string): string =>
+    name && name !== id && name !== m.user_unknown_label() ? name : '';
   /** The quoted author, resolved the same way: the caption names them ("A répondu à ..."). */
   let quotedDisplayName = $state('');
   $effect(() => {
@@ -401,16 +404,17 @@
       quotedDisplayName = '';
       return;
     }
-    quotedDisplayName = getUserDisplayNameSync(qid, qid);
+    // NEVER A RAW ID: an unknown author stays '' and the caption takes its name-less form.
+    quotedDisplayName = knownName(getUserDisplayNameSync(qid, ''), qid);
     resolveUserDisplayName(qid).then((resolved) => {
-      if (resolved && effectiveReplyTo?.senderId === qid) quotedDisplayName = resolved;
+      if (effectiveReplyTo?.senderId === qid) quotedDisplayName = knownName(resolved, qid);
     });
   });
 
   /** The caption names people already on the page, so it carries given names (the profile's `firstName`), not "Nils FERAL". */
   const senderFirstName = $derived(getUserFirstNameSync(senderId, senderDisplayName));
   const quotedFirstName = $derived(
-    getUserFirstNameSync(effectiveReplyTo?.senderId ?? '', quotedDisplayName)
+    getUserFirstNameSync(effectiveReplyTo?.senderId ?? '', quotedDisplayName) || ''
   );
 
   // A reaction the user took back is KEPT in the list, carrying the time it was taken back, so the

@@ -15,7 +15,7 @@ export interface ReplyCaptionInput {
   currentUserId: string;
   /** Given name of the replier (read only when not own). */
   replierName: string;
-  /** Given name of the quoted author. */
+  /** Given name of the quoted author; '' when unknown (the caption then names nobody). */
   quotedName: string;
 }
 
@@ -31,6 +31,7 @@ const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
  * self-contained and names both.
  */
 export function replyCaption(i: ReplyCaptionInput): string {
+  const quotedKnown = i.quotedName.trim() !== '';
   const quotedIsReplier = same(i.quotedId, i.replierId);
   const quotedIsReader = !!i.currentUserId && same(i.quotedId, i.currentUserId);
   let key: string;
@@ -42,6 +43,9 @@ export function replyCaption(i: ReplyCaptionInput): string {
     } else if (quotedIsReader) {
       key = 'shown_you';
       text = m.msg_reply_caption_shown_you();
+    } else if (!quotedKnown) {
+      key = 'shown_nameless';
+      text = m.msg_reply_caption_shown_nameless();
     } else {
       key = 'shown_other';
       text = m.msg_reply_caption_shown_other({ quoted: i.quotedName });
@@ -50,6 +54,9 @@ export function replyCaption(i: ReplyCaptionInput): string {
     if (quotedIsReplier || quotedIsReader) {
       key = 'you_to_self';
       text = m.msg_reply_caption_you_to_self();
+    } else if (!quotedKnown) {
+      key = 'you_nameless';
+      text = m.msg_reply_caption_you_nameless();
     } else {
       key = 'you_to_other';
       text = m.msg_reply_caption_you_to_other({ quoted: i.quotedName });
@@ -60,10 +67,14 @@ export function replyCaption(i: ReplyCaptionInput): string {
   } else if (quotedIsReader) {
     key = 'other_to_you';
     text = m.msg_reply_caption_other_to_you({ name: i.replierName });
+  } else if (!quotedKnown) {
+    key = 'other_nameless';
+    text = m.msg_reply_caption_other_nameless({ name: i.replierName });
   } else {
     key = 'other_to_other';
     text = m.msg_reply_caption_other_to_other({ name: i.replierName, quoted: i.quotedName });
   }
-  Log.d('[replyCaption] form', key);
+  // Only the name-less fallback is a decision worth a line: the quoted author could not be named.
+  if (key.endsWith('nameless')) Log.d('[replyCaption] quoted author unknown, name-less form', key);
   return text;
 }

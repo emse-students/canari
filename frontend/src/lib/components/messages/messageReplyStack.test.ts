@@ -106,3 +106,14 @@ describe('stackedQuotePosition puts the tail on the corner the quote faces', () 
     );
   });
 });
+
+describe('the sender header and the reply caption never both name the replier', () => {
+  const GROUPS = 'src/lib/components/chat/ChatMessageGroups.svelte';
+
+  it('hands the bubble the same flag that draws the header (group yes, DM no)', () => {
+    const src = flat(GROUPS);
+    expect(src).toContain('senderHeaderShown={showSender}');
+    // The flag is false in a direct conversation, so a 1:1 caption stays self-contained.
+    expect(src).toMatch(/showSender = !msg\.isOwn && !isDirect/);
+  });
+});

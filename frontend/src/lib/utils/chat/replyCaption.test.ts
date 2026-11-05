@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { setLocale } from '$lib/paraglide/runtime';
 import { replyCaption, type ReplyCaptionInput } from './replyCaption';
 
 const base: ReplyCaptionInput = {
@@ -38,5 +39,23 @@ describe('replyCaption', () => {
     expect(cap({ isOwn: true, replierId: 'me', quotedId: 'me' })).toBe(
       'Vous avez répondu à votre message'
     );
+  });
+
+  it('an unknown quoted author gets a name-less form, never a dangling "à"', () => {
+    expect(cap({ headerShown: true, quotedName: '' })).toBe('A répondu');
+    expect(cap({ quotedName: '' })).toBe('Alice a répondu');
+    expect(cap({ isOwn: true, replierId: 'me', quotedName: '  ' })).toBe('Vous avez répondu');
+  });
+
+  it('reads in English when the locale is en', () => {
+    setLocale('en');
+    try {
+      expect(cap({ headerShown: true })).toBe('Replied to Bob');
+      expect(cap({ headerShown: true, quotedId: 'alice' })).toBe('Replied to their own message');
+      expect(cap({ headerShown: true, quotedName: '' })).toBe('Replied');
+      expect(cap({ isOwn: true, replierId: 'me' })).toBe('You replied to Bob');
+    } finally {
+      setLocale('fr');
+    }
   });
 });
