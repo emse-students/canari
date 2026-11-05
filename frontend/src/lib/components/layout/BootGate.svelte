@@ -9,6 +9,7 @@
   } from '$lib/stores/bootSession.svelte';
   import { sessionAnsweredFor } from '$lib/stores/sessionAnswer.svelte';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
+  import ModalOverlay from '$lib/components/shared/ModalOverlay.svelte';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -37,11 +38,23 @@
   });
 </script>
 
-{#if blocked}
-  <div
-    class="bg-cn-bg text-text-main fixed inset-0 z-(--z-banner) flex flex-col items-center justify-center gap-4 p-6 text-center"
-    data-testid="boot-gate"
-  >
+<!--
+  THE ONE OVERLAY EVERY MODAL USES (`ModalOverlay`): portalled to the body, so it sits OUTSIDE the
+  `inert` shell, on the `critical` rung, with the safe area, and registered with `coversScreen` (the
+  iOS native tab bar hides under it). It cannot be dismissed: Escape and the system Back are no-ops
+  (`dismissible={false}`, `onClose` does nothing), because nothing sits behind it to go back to. The
+  panel is made opaque and full-screen so the shell never reads through it.
+-->
+<ModalOverlay
+  open={blocked}
+  onClose={() => {}}
+  dismissible={false}
+  layer="critical"
+  scrim={false}
+  label={unreachable ? m.boot_unreachable_title() : m.boot_connecting()}
+  panelClass="bg-cn-bg text-text-main fixed inset-0 flex flex-col items-center justify-center gap-4 p-6 text-center"
+>
+  <div class="contents" data-testid="boot-gate">
     {#if unreachable}
       <CloudOff size={40} class="text-text-muted" aria-hidden="true" />
       <p class="text-lg font-bold" role="status" aria-live="polite">
@@ -63,4 +76,4 @@
       </p>
     {/if}
   </div>
-{/if}
+</ModalOverlay>

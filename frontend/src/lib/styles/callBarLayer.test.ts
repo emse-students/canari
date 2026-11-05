@@ -68,7 +68,7 @@ describe('the call bar and the layers that cover the screen', () => {
       /:root\[data-call-bar\] \.app-banner-column \{\s*z-index: var\(--z-call\);\s*\}/
     );
     const layout = readFileSync(join(src, 'routes', '+layout.svelte'), 'utf8');
-    expect(layout).toMatch(/bind:this=\{bannerColumn\} class="app-banner-column /);
+    expect(layout).toMatch(/bind:this=\{bannerColumn\}\s+class="app-banner-column /);
   });
 
   it('pushes every covering surface top inset below the column, resolved on the root', () => {
