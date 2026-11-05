@@ -53,7 +53,8 @@ fn refused(reason: &str) -> serde_json::Value {
 /// it: can a LATER state of this group read the same bytes?
 ///
 /// `mls-refused` - perhaps: the frame names an epoch ahead of ours (`SenderRatchetGap` carries the
-/// gap fast-fail), or nothing classified it. The commit catch-up and the worker are answers to that.
+/// gap fast-fail - on the direct path that case is read from the header first and answered
+/// `kind: EpochAhead` without asking MLS, see `epoch_ahead_of_held_state`), or nothing classified it. The commit catch-up and the worker are answers to that.
 ///
 /// `mls-refused-for-good` - no: the frame was refused at an epoch this device already holds, so
 /// applying commits builds the NEXT epoch and leaves this one's secrets exactly as they were. It
@@ -1377,12 +1378,48 @@ fn with_owner_alerts(
     answer
 }
 
+/// The `kind` a refusal carries when the frame names an epoch AHEAD of the stored state - not a
+/// `DecryptErrorKind`, because MLS is never asked: see [`epoch_ahead_of_held_state`].
+const EPOCH_AHEAD_KIND: &str = "EpochAhead";
+
+/// The frame's epoch and the stored one, when the frame is AHEAD of a group this state holds and is
+/// still a member of - read from the frame's cleartext header, before any decrypt.
+///
+/// NOT A FAILURE, AND IT USED TO BE SAID AS ONE. This path never writes `mls.bin` (the foreground is
+/// its single writer), so after ANY commit - a member's new browser joining a key group is one -
+/// every push of that group until the app next drains is ahead of the stored state, and the native
+/// caller's commit catch-up is the designed answer (`PushRecoveryLadder`). It used to learn that by
+/// handing the frame to MLS, which refused it with the gap fast-fail: an ERROR here and a WARN
+/// claiming a "resync" this path never runs, 13 times on a Mi 9T reading of 2026-11-05 while every
+/// banner still drew its text. The foreground's `recevoir_message_bytes` reads the same header for
+/// the same reason. A frame of a group this device was REMOVED from stays with MLS, which names it
+/// `Evicted` (refused for good) - no catch-up can read that one.
+fn epoch_ahead_of_held_state(manager: &MlsManager, frame: &PushFrame<'_>) -> Option<(u64, u64)> {
+    let held = manager.get_epoch(frame.group_id).ok()?;
+    if !manager.is_group_active(frame.group_id).unwrap_or(false) {
+        return None;
+    }
+    let msg = MlsManager::parse_message_epoch(frame.ciphertext)?;
+    (msg > held).then_some((msg, held))
+}
+
 /// The body of [`decrypt_push_message_with_key`] once the state is loaded.
 fn decrypt_loaded(
     manager: &mut MlsManager,
     frame: &PushFrame<'_>,
     language: PushLanguage,
 ) -> serde_json::Value {
+    if let Some((msg_epoch, held_epoch)) = epoch_ahead_of_held_state(manager, frame) {
+        log::info!(
+            "[PushBG] key-based: frame of {} at epoch {msg_epoch} is ahead of the stored state \
+             (epoch {held_epoch}) - a commit the foreground has not merged yet; the commit catch-up \
+             reads it",
+            frame.group_id.get(..8).unwrap_or(frame.group_id)
+        );
+        let mut out = refused("mls-refused");
+        out["kind"] = serde_json::Value::String(EPOCH_AHEAD_KIND.to_string());
+        return out;
+    }
     let app = match manager.process_incoming_message_with_sender(frame.group_id, frame.ciphertext) {
         Ok(Some(app)) => app,
         Ok(None) => {
@@ -2060,6 +2097,8 @@ mod tests {
             PushLanguage::French,
         );
         assert_eq!(direct["reason"], "mls-refused");
+        // Read from the header, never learnt from an MLS refusal: the catch-up is owed, nothing failed.
+        assert_eq!(direct["kind"], EPOCH_AHEAD_KIND);
 
         let info = decrypt_push_message_with_commits_with_key(
             &bob_behind,
