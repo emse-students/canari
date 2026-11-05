@@ -31,7 +31,7 @@
   import { observeElementMoves } from '$lib/guidance/guideAnchorFollow';
   import { seenHelps } from '$lib/guidance/seenHelps.svelte';
   import { quietBlocker } from '$lib/guidance/guideQuiet';
-  import { placeBubble, type BubblePosition } from '$lib/guidance/guidePlacement';
+  import { placeBubble, ringRadius, type BubblePosition } from '$lib/guidance/guidePlacement';
   import type { GuideRect } from '$lib/guidance/guideAnchors.svelte';
 
   /**
@@ -207,9 +207,17 @@
    * of gap at one and bites into the other. Capped at half the short side.
    */
   function hugRadius(element: HTMLElement, rect: GuideRect, pad: number): number | null {
-    const own = parseFloat(getComputedStyle(element).borderTopLeftRadius);
-    if (!Number.isFinite(own)) return null;
-    return Math.min(own + pad, (Math.min(rect.width, rect.height) + 2 * pad) / 2);
+    const style = getComputedStyle(element);
+    return ringRadius(
+      [
+        style.borderTopLeftRadius,
+        style.borderTopRightRadius,
+        style.borderBottomRightRadius,
+        style.borderBottomLeftRadius,
+      ],
+      rect,
+      pad
+    );
   }
 
   /** Re-reads the target's box and places the bubble. Called on every event that can move either. */
@@ -269,7 +277,8 @@
   });
 
   // Anything that can move the target or the bubble re-measures - events, never a poll (the target's
-  // own moves come from an IntersectionObserver framing its box) - and at most ONCE PER FRAME: a scroll fires many events a frame, and each measure forces a layout.
+  // own moves come from an IntersectionObserver framing its box) - and at most
+  // ONCE PER FRAME: a scroll fires many events a frame, and each measure forces a layout.
   $effect(() => {
     if (!visible || !bubbleEl) return;
     const current = view;

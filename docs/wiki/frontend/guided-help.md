@@ -387,8 +387,16 @@ the two read on the Mi 9T and the iPhone 12, with a one-column and a several-col
   re-armed around the new box. It is an event, not a poll and not a per-frame read; it catches moves
   by any cause (an offset ancestor, a font, an image, a grid render) without enumerating ancestors,
   which a `ResizeObserver` on ancestors plus a `MutationObserver` could not promise. Its report joins
-  the same one-measure-per-frame schedule. Limit: a target partly off screen cannot be framed, so the
-  hidden part's moves are not seen - scroll events cover that case.
+  the same one-measure-per-frame schedule. The frame is made of the viewport size and the target's box, so a
+  `ResizeObserver` on `documentElement` and on the target re-frames when the window grows (slack the
+  intersection cannot see) and when a target that had no box gains one (it had no observer at all).
+  A target partly off screen IS framed (a negative inset becomes a positive `rootMargin`). The real
+  limit is a target clipped by an ancestor scroller: its ratio is below 1 from the start, the first
+  callback re-arms on that ratio, and moves are then seen against it.
+  Measured in Chromium (review of #3050): 1px moves fire in each of the four directions, on
+  fractional coordinates; 0.5px moves do NOT fire; a box at top -10px reports ratio 1 and a move to
+  -5px reports 0.875, which fires; a clipped target settles after 2 arms. WebKit is untested - a
+  re-arm that lingers there is the residual risk, and the bench reading on the iPhone checks it.
 - **The ring hugs the control**: its padding is symmetric (0.375rem on all sides, then the 2px ring),
   and its corner radius is the control's own computed radius plus that padding (concentric), capped at
   half the short side - a pill target gets a pill ring, not the fixed `--radius-lg` corner.

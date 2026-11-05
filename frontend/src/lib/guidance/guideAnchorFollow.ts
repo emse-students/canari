@@ -26,6 +26,9 @@ export function observeElementMoves(element: Element, onMove: () => void): () =>
   const root = element.ownerDocument.documentElement;
   let io: IntersectionObserver | null = null;
   let stopped = false;
+  /** The viewport size the current frame was computed for: a different one makes the frame stale. */
+  let framedWidth = 0;
+  let framedHeight = 0;
 
   function disconnect(): void {
     io?.disconnect();
@@ -37,17 +40,20 @@ export function observeElementMoves(element: Element, onMove: () => void): () =>
     if (stopped) return;
     const { left, top, width, height } = element.getBoundingClientRect();
     if (report) onMove();
-    // No box (hidden, detached): nothing to hug; the registry decides what that means.
+    // No box (hidden, detached): nothing to frame. The resize observer below re-arms when it gains one.
     if (!width || !height) return;
+    framedWidth = root.clientWidth;
+    framedHeight = root.clientHeight;
     const insets = [
       Math.floor(top),
-      Math.floor(root.clientWidth - (left + width)),
-      Math.floor(root.clientHeight - (top + height)),
+      Math.floor(framedWidth - (left + width)),
+      Math.floor(framedHeight - (top + height)),
       Math.floor(left),
     ];
-    // An element partly off screen cannot be framed by a root margin: a negative inset on a side
-    // that is already outside the viewport is clamped to nothing, so the frame is the visible part
-    // and a move of the hidden part is not seen. Scroll events cover that case.
+    // A box partly off screen is framed too: its negative inset becomes a positive margin that
+    // grows the root, so the ratio is 1 there as well (measured in Chromium). The real limit is a
+    // box clipped by an ancestor scroller: its ratio is below 1 from the start, handled by the
+    // first-callback branch below, and moves are still seen against that ratio.
     const rootMargin = insets.map((inset) => `${-inset}px`).join(' ');
     let first = true;
     io = new IntersectionObserver(
@@ -55,8 +61,8 @@ export function observeElementMoves(element: Element, onMove: () => void): () =>
         const ratio = entries[entries.length - 1].intersectionRatio;
         if (first) {
           first = false;
-          // Rounding or clipping can leave the box a hair short of the frame: the threshold that
-          // must be crossed is then the ratio actually seen, so re-arm on it. Not a move.
+          // Clipping or rounding can leave the box short of the frame: the threshold that must be
+          // crossed is then the ratio actually seen, so re-arm on it. Not a move.
           if (ratio > 0 && ratio !== threshold) arm(false, ratio);
           return;
         }
@@ -67,9 +73,36 @@ export function observeElementMoves(element: Element, onMove: () => void): () =>
     io.observe(element);
   }
 
+  // The frame is made of the viewport's size and the element's box, so a change of either must
+  // re-frame: a window that GROWS leaves slack the observer cannot see, and an element that had no
+  // box (hidden by a breakpoint, not yet laid out) has no observer at all until it gains one.
+  const resizes =
+    typeof ResizeObserver === 'function'
+      ? new ResizeObserver((entries) => {
+          if (stopped) return;
+          for (const entry of entries) {
+            if (entry.target === root) {
+              if (io && (root.clientWidth !== framedWidth || root.clientHeight !== framedHeight)) {
+                arm(true);
+                return;
+              }
+            } else if (!io) {
+              const box = element.getBoundingClientRect();
+              if (box.width && box.height) {
+                arm(true);
+                return;
+              }
+            }
+          }
+        })
+      : null;
+  resizes?.observe(root);
+  resizes?.observe(element);
+
   arm(false);
   return () => {
     stopped = true;
+    resizes?.disconnect();
     disconnect();
   };
 }
