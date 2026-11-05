@@ -2,11 +2,10 @@
  * The admin status page's monitoring data: the gateway's anonymous census, shaped for drawing.
  *
  * THE WIRE IS COUNTS ONLY (`GET /api/admin/presence` and `/history`, chat-gateway `census.rs`): a
- * connected-device and connected-user count per (platform, app version), now and once a minute for
- * the last 24 hours. Nothing here names a person or a device, and nothing here may ever need to.
+ * connected-device and connected-user count per (platform, app version), now and, over 24 hours, 7 days or 30 days, a series of peaks. Nothing here names a person or a device, and nothing here may ever need to.
  *
- * A MINUTE NOBODY SAMPLED IS A GAP, NEVER AN INTERPOLATION: {@link buildBuckets} lays the whole
- * window out minute by minute and leaves the missing ones `null`, and {@link runsOf} is what splits
+ * A PERIOD NOBODY SAMPLED IS A GAP, NEVER AN INTERPOLATION: {@link buildBuckets} lays the whole
+ * window out point by point and leaves the missing ones `null`, and {@link runsOf} is what splits
  * a drawn line at them.
  */
 
@@ -30,7 +29,16 @@ export interface CensusSample extends Census {
   t: number;
 }
 
-/** What `/api/admin/presence/history` answers. */
+/** The periods the history can be asked for; the gateway refuses any other value. */
+export const HISTORY_WINDOWS = ['24h', '7d', '30d'] as const;
+
+/** One of {@link HISTORY_WINDOWS}. */
+export type HistoryWindow = (typeof HISTORY_WINDOWS)[number];
+
+/**
+ * What `/api/admin/presence/history?window=` answers. `intervalSecs` is the spacing of the points
+ * of THIS window (60 s for 24 h, 300 s for 7 d, 1800 s for 30 d), each the peak of its period.
+ */
 export interface CensusHistory {
   now: number;
   intervalSecs: number;
@@ -105,7 +113,7 @@ export interface Bucket {
 }
 
 /**
- * The window laid out minute by minute, ending at the minute containing `history.now`. A minute with
+ * The window laid out point by point, ending at the point containing `history.now`. A point with
  * no sample is `null` - the gap the chart draws - and no value is invented for it.
  */
 export function buildBuckets(history: CensusHistory): Bucket[] {
@@ -124,10 +132,15 @@ export function buildBuckets(history: CensusHistory): Bucket[] {
 
 /** The `[from, to]` index ranges (inclusive) of consecutive buckets that have a sample. */
 export function runsOf(buckets: readonly Bucket[]): [number, number][] {
+  return runsOfPresent(buckets.map((b) => b.sample !== null));
+}
+
+/** The `[from, to]` index ranges (inclusive) of consecutive `true` entries: the runs between gaps. */
+export function runsOfPresent(present: readonly boolean[]): [number, number][] {
   const runs: [number, number][] = [];
   let start = -1;
-  for (let i = 0; i <= buckets.length; i++) {
-    const has = i < buckets.length && buckets[i].sample !== null;
+  for (let i = 0; i <= present.length; i++) {
+    const has = i < present.length && present[i];
     if (has && start < 0) start = i;
     if (!has && start >= 0) {
       runs.push([start, i - 1]);
@@ -135,68 +148,4 @@ export function runsOf(buckets: readonly Bucket[]): [number, number][] {
     }
   }
   return runs;
-}
-
-/** The tallest stack in the window, never below 1 so an empty window still has a scale. */
-export function peakDevices(buckets: readonly Bucket[]): number {
-  let peak = 1;
-  for (const b of buckets) if (b.sample && b.sample.devices > peak) peak = b.sample.devices;
-  return peak;
-}
-
-/** Geometry of the chart's drawing area, in SVG user units. */
-export interface ChartBox {
-  width: number;
-  height: number;
-}
-
-/**
- * One filled polygon per (run, layer): the band of `layer` between the layers below it and itself,
- * across the consecutive minutes of `run`. A run of a single minute is widened to one minute's
- * width so a lone sample is visible rather than a zero-width sliver.
- *
- * Returns SVG `points` strings, keyed by layer, one entry per run (empty bands omitted).
- */
-export function stackedBands(
-  buckets: readonly Bucket[],
-  layers: readonly string[],
-  box: ChartBox,
-  peak: number
-): { layer: string; points: string }[] {
-  const n = buckets.length;
-  if (n === 0) return [];
-  const colWidth = box.width / n;
-  const x = (i: number) => (i + 0.5) * colWidth;
-  const y = (devices: number) => box.height - (devices / peak) * box.height;
-  const bands: { layer: string; points: string }[] = [];
-  for (const [from, to] of runsOf(buckets)) {
-    const columns =
-      from === to
-        ? [
-            { x: x(from) - colWidth / 2, idx: from },
-            { x: x(from) + colWidth / 2, idx: from },
-          ]
-        : range(from, to).map((idx) => ({ x: x(idx), idx }));
-    const cumulative = columns.map(() => 0);
-    for (const layer of layers) {
-      const lower = [...cumulative];
-      const upper = columns.map(({ idx }, k) => {
-        const cell = buckets[idx].sample?.groups.filter((g) => g.platform === layer) ?? [];
-        return cumulative[k] + cell.reduce((sum, g) => sum + g.devices, 0);
-      });
-      if (upper.every((value, k) => value === lower[k])) continue;
-      const top = columns.map((c, k) => `${c.x.toFixed(2)},${y(upper[k]).toFixed(2)}`);
-      const bottom = columns.map((c, k) => `${c.x.toFixed(2)},${y(lower[k]).toFixed(2)}`).reverse();
-      bands.push({ layer, points: [...top, ...bottom].join(' ') });
-      upper.forEach((value, k) => (cumulative[k] = value));
-    }
-  }
-  return bands;
-}
-
-/** `from..to` inclusive. */
-function range(from: number, to: number): number[] {
-  const out: number[] = [];
-  for (let i = from; i <= to; i++) out.push(i);
-  return out;
 }

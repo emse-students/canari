@@ -23,7 +23,7 @@ Most `/api` locations carry `auth_request /internal/auth/verify`, which calls `c
 |---|---|---|---|
 | `/api/ws` | `chat-gateway:3000` | yes | WebSocket upgrade, token from `canari_ws_token` cookie |
 | `/api/presence` | `chat-gateway:3000` | yes | Online presence (Redis): `POST` with the ids in the body, `client_max_body_size 128k`; the legacy `GET ?users=` for installed clients ([chat-gateway](../services/chat-gateway.md#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)) |
-| `/api/admin/presence` (and `/history`) | `chat-gateway:3000` | yes | Admin monitoring: connected people and devices counted by platform and app version, now and over 24 h - counts only ([census](../services/chat-gateway.md#the-anonymous-census-and-its-24-hour-series-2026-11-02)) |
+| `/api/admin/presence` (and `/history`) | `chat-gateway:3000` | yes | Admin monitoring: connected people and devices counted by platform and app version, now and over 24 h / 7 d / 30 d (`?window=`) - counts only ([census](../services/chat-gateway.md#the-anonymous-census-and-its-24-hour-series-2026-11-02)) |
 | `/api/mls/*` | `chat-delivery-service:3010` | yes | MLS API; Redis history at `/api/mls/history/*` |
 | `/api/chat-delivery-health` | `chat-delivery-service:3010` | no | Liveness probe -> `GET /api/health` |
 | `/api/media/*` | `media-service:3011` | yes | Encrypted blob storage (Garage) |
