@@ -49,7 +49,11 @@ import { load } from './+layout';
 import { load as loadPosts } from './posts/+page';
 import { load as loadPost } from './posts/[postId]/+page';
 import BootGate from '$lib/components/layout/BootGate.svelte';
-import { bootSessionPhase, resetBootSessionForTest } from '$lib/stores/bootSession.svelte';
+import {
+  bootSessionPhase,
+  resetBootSessionForTest,
+  startBootSession,
+} from '$lib/stores/bootSession.svelte';
 import { noteSessionAnswered } from '$lib/stores/sessionAnswer.svelte';
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 import { m } from '$lib/paraglide/messages';
@@ -199,21 +203,19 @@ describe('first paint never waits on the network', () => {
   });
 
   it('an exception in the question never leaves the phase resolving', async () => {
-    hoisted.refresh = () => new Promise<never>(() => {});
-    const original = hoisted.userId;
-    Object.defineProperty(hoisted, 'userId', {
-      configurable: true,
-      get() {
-        throw new Error('store unreadable');
+    // Called directly: the throw must happen INSIDE the question, after `startBootSession`.
+    let reads = 0;
+    startBootSession({
+      refresh: () => Promise.reject(new Error('refused')),
+      currentUserId: () => {
+        if (++reads > 1) throw new Error('store unreadable');
+        return null;
       },
+      goToLogin: () => {},
+      onSessionKnown: () => {},
     });
-    await load(event()).catch(() => {});
+    expect(bootSessionPhase()).toBe('resolving');
     await settle();
-    Object.defineProperty(hoisted, 'userId', {
-      configurable: true,
-      writable: true,
-      value: original,
-    });
     expect(bootSessionPhase()).toBe('settled');
   });
 });

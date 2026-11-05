@@ -87,7 +87,16 @@ export async function redirectIfNotFeedAudience(): Promise<boolean> {
   const verdict = feedAudienceState();
   if (verdict === null) {
     Log.d('FeedAudience', 'no remembered verdict - the page opens, the answer redirects behind it');
-    void revalidateFeedAudience().then((answer) => (answer === false ? sendToChat() : undefined));
+    void revalidateFeedAudience().then((answer) => {
+      if (answer !== false) return;
+      // THE PAGE THE ANSWER IS ABOUT, NOT WHICHEVER IS CURRENT: a reader who left the feed before the
+      // answer came is not pulled away from the page they went to.
+      if (!isFeedPath(currentPath())) {
+        Log.d('FeedAudience', 'outside the audience, but the reader left the feed - no redirect');
+        return;
+      }
+      return sendToChat();
+    });
     return false;
   }
   void revalidateFeedAudience();
@@ -95,6 +104,16 @@ export async function redirectIfNotFeedAudience(): Promise<boolean> {
   if (verdict !== false) return false;
   await sendToChat();
   return true;
+}
+
+/** The path the browser is on now (the SPA's own location, read when the answer lands). */
+function currentPath(): string {
+  return typeof window === 'undefined' ? '/posts' : window.location.pathname;
+}
+
+/** Whether `path` is the feed or a post of it - the pages the audience gate guards. */
+function isFeedPath(path: string): boolean {
+  return path === '/posts' || path.startsWith('/posts/');
 }
 
 /** Sends the reader to `/chat`; a refused navigation is not an error worth surfacing. */

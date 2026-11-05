@@ -1105,8 +1105,7 @@ build and iOS share the same `+layout.ts`, so both get the same behaviour.
 rejected: the re-send exists so a rotation the server made is answered from its 60 s grace (see
 `REFRESH_DEADLINE_MS`), and a slow-but-alive path (3 s) is nowhere near 20 s. What was wrong was not the
 number but that the wait stood in front of the paint; now it stands behind it, and the screen says what
-it is waiting for. Pinned by `routes/firstPaintNeverWaits.test.ts`. No before/after time-to-paint
-reading from a blackholed link was taken.
+it is waiting for. Pinned by `routes/firstPaintNeverWaits.test.ts`.
 
 **Review follow-ups (same day).**
 - A link opened while the question is open (a Tauri deep link on a cold start) re-runs the root load; the
