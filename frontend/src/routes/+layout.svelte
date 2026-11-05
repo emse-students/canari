@@ -714,7 +714,11 @@
        included; at 390px it was 84px tall and hid the whole 56px mobile header, so the phone showed
        no top bar at all. A row in the shell's own column cannot overlap it, at any width and for any
        number of banners, with nothing measured and no variable to keep in step. -->
-  <div bind:this={bannerColumn} class="app-banner-column z-(--z-banner) flex shrink-0 flex-col">
+  <div
+    bind:this={bannerColumn}
+    class="app-banner-column z-(--z-banner) flex shrink-0 flex-col"
+    inert={bootBlocked}
+  >
     <!-- FIRST, and it decides for itself whether to render. The others come and go; this one is a
          property of the whole deployment, so a transient notice must not push it off screen. -->
     <EnvironmentBanner />
@@ -747,7 +751,7 @@
        the wrapper above owns `h-(--app-viewport-height,100dvh)` and its padding, and this only ever
        divides what is left. `min-h-0` because a flex child's default `min-height:auto` refuses to
        shrink below its content, which is what turns an overflowing chat list into a page scroll. -->
-  <div class="flex min-h-0 w-full flex-1">
+  <div class="flex min-h-0 w-full flex-1" inert={bootBlocked}>
     <svelte:boundary onerror={(e) => console.error('[ChatBackgroundService] crash recovered:', e)}>
       <ChatBackgroundService />
     </svelte:boundary>
@@ -798,7 +802,11 @@
              the WebView, so no modal can paint over it the way it paints over the web bar. -->
         {#if !isLoginPage}
           <NativeTabBar
-            visible={!isKeyboardOpen && !isMobileConvoOpen && !isFullScreen && !screenCover.covered}
+            visible={!isKeyboardOpen &&
+              !isMobileConvoOpen &&
+              !isFullScreen &&
+              !screenCover.covered &&
+              !bootBlocked}
           />
         {/if}
       {:else if !isKeyboardOpen && !isLoginPage && !isMobileConvoOpen && !isFullScreen}

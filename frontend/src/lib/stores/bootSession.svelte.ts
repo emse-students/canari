@@ -70,41 +70,64 @@ export function settleBootSession(): void {
   phase = 'settled';
 }
 
-async function run(deps: BootSessionDeps): Promise<void> {
-  let userId = deps.currentUserId();
-  if (!userId) {
-    blog(
-      'no stored user - asking the server for the session; the screen shows the boot state meanwhile'
-    );
-    try {
-      await deps.refresh();
-    } catch (e) {
-      // A sign-in may have completed while the request was in flight: it answers the question.
-      if (!deps.currentUserId() && isTransportFailure(e)) {
-        bwarn(`session question unanswered, nothing reached the server: ${String(e)}`);
-        phase = 'unreachable';
-        if (typeof window !== 'undefined') {
-          const onOnline = () => retryBootSession();
-          window.addEventListener('online', onOnline, { once: true });
-          removeOnline = () => window.removeEventListener('online', onOnline);
+/**
+ * The question itself. It reads {@link lastDeps} at every step, never the deps it was started with:
+ * a link opened during the boot (a Tauri deep link) navigates, the root load re-runs and hands over
+ * fresh deps, and the login redirect must carry THAT page, not the first one.
+ */
+async function run(): Promise<void> {
+  const deps = (): BootSessionDeps => lastDeps!;
+  try {
+    let userId = deps().currentUserId();
+    if (!userId) {
+      blog(
+        'no stored user - asking the server for the session; the screen shows the boot state meanwhile'
+      );
+      try {
+        await deps().refresh();
+      } catch (e) {
+        // A sign-in may have completed while the request was in flight: it answers the question.
+        if (!deps().currentUserId() && isTransportFailure(e)) {
+          bwarn(`session question unanswered, nothing reached the server: ${String(e)}`);
+          phase = 'unreachable';
+          if (typeof window !== 'undefined') {
+            const onOnline = () => retryBootSession();
+            window.addEventListener('online', onOnline, { once: true });
+            removeOnline = () => window.removeEventListener('online', onOnline);
+          }
+          return;
         }
-        return;
+        blog(`refresh refused (${e instanceof Error ? e.name : typeof e}) - no session`);
       }
-      blog(`refresh refused (${e instanceof Error ? e.name : typeof e}) - no session`);
+      userId = deps().currentUserId();
     }
-    userId = deps.currentUserId();
-  }
-  if (!userId) {
-    try {
-      await deps.goToLogin();
-    } catch (e) {
-      bwarn(`redirect to login failed: ${String(e)}`);
+    if (!userId) {
+      try {
+        await deps().goToLogin();
+      } catch (e) {
+        bwarn(`redirect to login failed: ${String(e)}`);
+      }
+      settleBootSession();
+      return;
     }
     settleBootSession();
-    return;
+    deps().onSessionKnown(userId);
+  } catch (e) {
+    bwarn(`the session question failed unexpectedly: ${String(e)}`);
+  } finally {
+    // NEVER LEAVE `resolving` BEHIND: only an explicit `unreachable` outlives the run.
+    if (phase === 'resolving') settleBootSession();
   }
+}
+
+/**
+ * Ends the question because a session is known by another road (another caller's refresh succeeded,
+ * the unlock completed): nothing is left to ask, and `unreachable` would be stale.
+ */
+export function noteSessionKnownElsewhere(): void {
+  if (phase === 'settled') return;
+  blog('a session is known by another road - the boot question is over');
   settleBootSession();
-  deps.onSessionKnown(userId);
 }
 
 /**
@@ -116,7 +139,7 @@ export function startBootSession(deps: BootSessionDeps): void {
   if (inFlight) return;
   dropOnlineListener();
   phase = 'resolving';
-  inFlight = run(deps).finally(() => {
+  inFlight = run().finally(() => {
     inFlight = null;
   });
 }

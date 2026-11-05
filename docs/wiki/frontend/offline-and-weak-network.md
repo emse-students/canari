@@ -1071,8 +1071,17 @@ hangs held the splash for up to about 40 s, and then sent the user to login on a
 transport failure, not an answer. Every other call between launch and paint is already off the critical
 path: the layout's `onMount` calls (`refreshAppVersionCheck`, avatar purge, outbox drain, deleted-account
 guards) are `void`, `hooks.client.ts` does no I/O in `init`, the WASM prefetch is a fire-and-forget on
-the web and absent on Tauri, and no store awaits at import time. The root `load` was the only awaited
-network call.
+the web and absent on Tauri, and no store awaits at import time. **The root `load` was NOT the only
+awaited network call** - SvelteKit renders nothing until EVERY load of a navigation resolves, page
+loads included. Every `+page.ts` and `+layout.ts` under `src/routes` was enumerated (14 files):
+`posts/+page.ts` and `posts/[postId]/+page.ts` awaited `redirectIfNotFeedAudience()`, which on a first
+visit (no remembered verdict) awaited `GET /api/posts/audience`, a token-bound call that joins the same
+hanging refresh - and `/` redirects to `/posts`, so the default route still sat on the splash for about
+45 s with only the root load fixed (measured in Chromium against an API that never answers). The other
+twelve are synchronous (`redirect`, SEO objects, param parsing). The gate now never awaits an unknown
+verdict: the page opens and the redirect to `/chat` is made behind it from the answer
+(`lib/posts/feedAudience.ts`), pinned with the root load and both post loads together under a refresh
+that never resolves.
 
 **The fix.** `+layout.ts` no longer awaits anything. With no stored user it calls `startBootSession`
 (`lib/stores/bootSession.svelte.ts`) and returns; the layout mounts at once, does not mount the page
@@ -1098,3 +1107,31 @@ rejected: the re-send exists so a rotation the server made is answered from its 
 number but that the wait stood in front of the paint; now it stands behind it, and the screen says what
 it is waiting for. Pinned by `routes/firstPaintNeverWaits.test.ts`. No before/after time-to-paint
 reading from a blackholed link was taken.
+
+**Review follow-ups (same day).**
+- A link opened while the question is open (a Tauri deep link on a cold start) re-runs the root load; the
+  boot reads the LATEST caller's deps, so login returns to that page, not to `/`.
+- The question can never leave `resolving` behind (a `finally` settles it), and `unreachable` ends when a
+  session is known by another road (another caller's refresh answered, the unlock completed), on the
+  `online` event, on the retry button or on a navigation.
+- The shell is `inert` and the iOS native tab bar hidden while the screen is up; only the one-line state
+  is a live region and focus moves to Retry.
+- `readNativeRefreshToken` (a local plugin-store read before the request, outside the deadline) is NOT
+  bounded: it is not a network call, a bound would be a bare timer with no event behind it, and a hang
+  there is already visible (the boot screen keeps saying it is connecting). If it is ever seen to
+  hang, the fix is in the store call, not a timeout around it.
+- An edge 5xx or an HTML 403 on the refresh still goes to login (`auth.ts` calls it transient): parked in
+  `docs/wiki/backlog.d/p3-an-edge-refusal-of-the-boot-refresh-reads-as-signed-out.md`.
+
+**The reading (2026-11-05, Chromium, production web build, every `/api` request hangs forever, fresh isolated
+context, no stored user, first load for `/`, chunks cached for the others).** Time of the first boot screen,
+what the screen said at 5 s, 25 s and 45 s, and when the unreachable screen replaced it:
+
+| route | boot screen from | 5 s | 25 s | 45 s | unreachable from |
+| --- | ---: | --- | --- | --- | --- |
+| `/` (-> `/posts`) | 3.8 s (cold module load, 0.5 s warm) | connecting | connecting | unreachable | 42.5 s |
+| `/chat` | 0.5 s | connecting | connecting | unreachable | 40.3 s |
+| `/posts/<id>` | 0.5 s | connecting | connecting | unreachable | 40.5 s |
+
+Before the change, `/` showed the splash until about 43 s and then login; with only the root load fixed it
+showed the splash until about 47 s. The unreachable screen arrives at the refresh's own two 20 s deadlines.

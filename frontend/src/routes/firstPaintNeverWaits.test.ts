@@ -19,7 +19,17 @@ const hoisted = vi.hoisted(() => ({
   pathname: '/posts',
 }));
 
-vi.mock('$lib/stores/user', () => ({ currentUserId: () => hoisted.userId }));
+vi.mock('$lib/stores/user', () => ({
+  currentUserId: () => hoisted.userId,
+  isGlobalAdmin: () => false,
+}));
+// The token-bound calls of the page loads: each stands for a request that joins the hanging refresh.
+vi.mock('$lib/posts/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/posts/api')>()),
+  listPosts: () => new Promise<never>(() => {}),
+  getPost: () => new Promise<never>(() => {}),
+  fetchFeedAudience: () => new Promise<never>(() => {}),
+}));
 vi.mock('$lib/stores/auth', () => ({ refresh: () => hoisted.refresh!() }));
 vi.mock('$lib/utils/sessionProfileCheck', () => ({ checkSessionUserInBackground: vi.fn() }));
 vi.mock('$app/navigation', () => ({ goto: (...a: unknown[]) => hoisted.goto(...a) }));
@@ -36,12 +46,15 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 }));
 
 import { load } from './+layout';
+import { load as loadPosts } from './posts/+page';
+import { load as loadPost } from './posts/[postId]/+page';
 import BootGate from '$lib/components/layout/BootGate.svelte';
 import { bootSessionPhase, resetBootSessionForTest } from '$lib/stores/bootSession.svelte';
+import { noteSessionAnswered } from '$lib/stores/sessionAnswer.svelte';
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 import { m } from '$lib/paraglide/messages';
 
-const event = () => ({ url: new URL('http://x.test/posts'), fetch }) as never;
+const event = (path = '/posts') => ({ url: new URL(`http://x.test${path}`), fetch }) as never;
 const mounted: (() => void)[] = [];
 
 function mountGate(): HTMLElement {
@@ -143,5 +156,64 @@ describe('first paint never waits on the network', () => {
     await load(event());
     flushSync();
     expect(gate.querySelector('[data-testid="boot-gate"]')).toBeNull();
+  });
+
+  it('a first visit to /posts, a post link and the root load ALL resolve while the refresh hangs', async () => {
+    hoisted.refresh = () => new Promise<never>(() => {});
+    // Every load of a navigation must resolve before SvelteKit renders anything: one that awaits
+    // the audience verdict (token-bound, so joined to the hanging refresh) holds the splash.
+    const done = await Promise.race([
+      Promise.all([
+        load(event('/posts')),
+        loadPosts({ url: new URL('http://x.test/posts') } as never),
+        loadPost({ params: { postId: 'p1' } } as never),
+      ]).then(() => 'resolved'),
+      new Promise<string>((r) => setTimeout(() => r('held'), 500)),
+    ]);
+    expect(done).toBe('resolved');
+  });
+
+  it('a link opened during the boot sets where login returns to', async () => {
+    const expired = Object.assign(new Error('Session expired'), { name: 'SessionExpiredError' });
+    let rejectRefresh!: (e: unknown) => void;
+    hoisted.refresh = () => new Promise<never>((_, rej) => (rejectRefresh = rej));
+    await load(event('/'));
+    await load(event('/posts/abc'));
+    rejectRefresh(expired);
+    await settle();
+    expect(String(hoisted.goto.mock.calls[0][0])).toBe('login?returnTo=%2Fposts%2Fabc');
+  });
+
+  it('a session known by another road ends the unreachable screen', async () => {
+    hoisted.refresh = () =>
+      Promise.reject(new RequestDeadlineError('read', 20_000, 'POST', '/api/auth/refresh', 0));
+    const gate = mountGate();
+    await load(event());
+    await settle();
+    expect(bootSessionPhase()).toBe('unreachable');
+    noteSessionAnswered('user-1');
+    await settle();
+    expect(bootSessionPhase()).toBe('settled');
+    expect(gate.querySelector('[data-testid="boot-gate"]')).toBeNull();
+    noteSessionAnswered(null);
+  });
+
+  it('an exception in the question never leaves the phase resolving', async () => {
+    hoisted.refresh = () => new Promise<never>(() => {});
+    const original = hoisted.userId;
+    Object.defineProperty(hoisted, 'userId', {
+      configurable: true,
+      get() {
+        throw new Error('store unreadable');
+      },
+    });
+    await load(event()).catch(() => {});
+    await settle();
+    Object.defineProperty(hoisted, 'userId', {
+      configurable: true,
+      writable: true,
+      value: original,
+    });
+    expect(bootSessionPhase()).toBe('settled');
   });
 });
