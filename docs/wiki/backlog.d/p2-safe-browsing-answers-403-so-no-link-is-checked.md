@@ -21,7 +21,8 @@ Production on 2026-11-05 (`v1.6.5`, read-only `docker logs --since 72h` of chat-
    the line.
 2. **The report (code).** A `403` or a `400` is an ANSWER: the configuration is refused. It is not a
    transport failure, so it must not share the transient branch's `warn` and 5-minute retry.
-   - Classify it at the throw, as a configuration refusal.
+   - Return a distinct refusal result from the non-2xx branch (`checkSafeBrowsing` returns a verdict, it
+     does not throw), as a configuration refusal.
    - Log it at ERROR with the `error.status` and `error.message` from Google's JSON body (they name the
      cause).
    - Count it in the daily report, so a dead check is found the day it dies rather than by reading logs.

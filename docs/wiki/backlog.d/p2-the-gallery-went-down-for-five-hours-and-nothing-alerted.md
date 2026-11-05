@@ -3,7 +3,7 @@
 From about 11:35 to 16:30 UTC, `gallery.mitv.fr` answered Cloudflare `530` / `1033`: its tunnel had no
 connector. The gallery runs on its own host, outside this estate. The effect, read only from production logs:
 
-- **Canari:** about 2 000 `502`s per hour on `GET /api/users/<id>/avatar`, and about 4 600
+- **Canari:** about 2 000 `502`s per hour on `GET /api/users/<id>/avatar` in nginx's access log, and about 4 600
   `[AvatarService] Avatar unavailable ... ERR_BAD_RESPONSE` and `[AVATAR] outcome=unavailable` warnings
   per hour in core-service. The clients fell back to initials.
 - **Le Cercle:** 602 `[MIGALLERY] Photo fetch ... answered HTTP 530` lines, growing with traffic.
