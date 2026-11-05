@@ -69,10 +69,11 @@ export function compareVersionsDesc(a: string, b: string): number {
 
 /**
  * One series per platform or version found in the buckets, drawn newest-first for versions and in
- * the platforms' fixed order for platforms. The colour of a platform is its own forever; a
- * version's is its place in the newest-first order (the eight categorical slots, then the same
- * slots again with a dash pattern, and the two unnamed words in muted ink), so a poll that adds no
- * version repaints nothing.
+ * the platforms' fixed order for platforms. The colour of a platform is its own forever. A
+ * version's slot is its place counted from the OLDEST version still shown (the eight categorical
+ * slots, then the same slots again with a dash pattern, and the two unnamed words in muted ink), so
+ * a release newer than every one on screen takes the next free slot and repaints nothing; only the
+ * oldest version leaving the window shifts the others. The legend still lists newest first.
  *
  * A bucket with a sample holds the summed devices of the matching groups - a real zero when the
  * key is absent from it; a bucket without one is `null`.
@@ -85,7 +86,7 @@ export function buildSeries(buckets: readonly Bucket[], axis: Axis): Series[] {
       : [...new Set(samples.flatMap((s) => s.groups.map((g) => g.version)))].sort(
           compareVersionsDesc
         );
-  let rank = 0;
+  const oldestFirst = keys.filter((k) => k !== 'unknown' && k !== 'other').reverse();
   return keys.map((key) => {
     const values = buckets.map((b) => {
       if (!b.sample) return null;
@@ -100,9 +101,9 @@ export function buildSeries(buckets: readonly Bucket[], axis: Axis): Series[] {
     if (key === 'unknown' || key === 'other') {
       return { key, color: 'var(--text-muted)', dash: key === 'other' ? '2 3' : undefined, values };
     }
+    const rank = oldestFirst.indexOf(key);
     const slot = rank % SERIES_SLOTS;
     const lap = Math.floor(rank / SERIES_SLOTS);
-    rank += 1;
     return {
       key,
       color: `var(--chart-series-${slot + 1})`,

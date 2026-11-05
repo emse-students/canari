@@ -606,16 +606,28 @@ const COARSE_CAS_ATTEMPTS: usize = 5;
 /// Folds the census of minute `t` into its 5-minute bucket of the coarse series `key` (the MAX of
 /// every count, see [`merge_max`]). Idempotent - applying a minute twice changes nothing - and safe
 /// across replicas through a compare-and-swap, so no lock or leader exists. Returns whether the
-/// bucket was written; `false` after [`COARSE_CAS_ATTEMPTS`] lost races (logged by the caller as a
-/// bucket that missed one minute, never a wrong count: a max only ever under-reads by a minute).
+/// bucket was written; `false` after [`COARSE_CAS_ATTEMPTS`] lost races, which this function logs at
+/// warn (a bucket that missed one minute, never a wrong count: a max only ever under-reads by a
+/// minute).
 pub async fn record_coarse(
     con: &mut MultiplexedConnection,
     key: &str,
     t: i64,
     census: &Census,
 ) -> redis::RedisResult<bool> {
+    record_coarse_with(con, key, t, census, COARSE_CAS_ATTEMPTS).await
+}
+
+/// [`record_coarse`] with the number of attempts a caller (a test, to force exhaustion) chooses.
+async fn record_coarse_with(
+    con: &mut MultiplexedConnection,
+    key: &str,
+    t: i64,
+    census: &Census,
+    attempts: usize,
+) -> redis::RedisResult<bool> {
     let bucket = t - t.rem_euclid(COARSE_INTERVAL_SECS);
-    for attempt in 1..=COARSE_CAS_ATTEMPTS {
+    for attempt in 1..=attempts {
         let current: Vec<String> = redis::cmd("ZRANGEBYSCORE")
             .arg(key)
             .arg(bucket)
@@ -666,6 +678,11 @@ pub async fn record_coarse(
             attempt
         );
     }
+    tracing::warn!(
+        "[census] coarse bucket {} lost {} races - this minute is missing from the 7/30-day series",
+        bucket,
+        attempts
+    );
     Ok(false)
 }
 
@@ -757,12 +774,8 @@ async fn sample_once(state: &AppState, now: i64) {
             // found it taken and have nothing new to add.
             if outcome == SampleOutcome::Wrote {
                 match record_coarse(&mut con, &state.census_coarse_key, bucket, &census).await {
-                    Ok(true) => {}
-                    Ok(false) => tracing::warn!(
-                        "[census] coarse bucket of minute {} lost {} races - this minute is missing from the 7/30-day series",
-                        bucket,
-                        COARSE_CAS_ATTEMPTS
-                    ),
+                    // A lost race was already logged by `record_coarse`.
+                    Ok(_) => {}
                     Err(e) => tracing::warn!(
                         "[census] the coarse write failed - minute {} is missing from the 7/30-day series: {}",
                         bucket,
@@ -1256,6 +1269,72 @@ mod redis_it {
             .iter()
             .find(|g| g.platform == p && g.version == v)
             .map(|g| g.devices)
+    }
+
+    #[tokio::test]
+    async fn concurrent_replicas_folding_one_bucket_lose_nothing() {
+        let Some(con) = redis().await else { return };
+        let key = series();
+        let t = {
+            let mut c = con.clone();
+            this_minute(&mut c).await
+        };
+        let bucket = t - t.rem_euclid(COARSE_INTERVAL_SECS);
+        // Eight "replicas", each seeing a different peak of its own cell plus a shared cell.
+        let writes = (0..8u64).map(|i| {
+            let mut con = con.clone();
+            let key = key.clone();
+            async move {
+                let version = format!("1.0.{i}");
+                let census = with_cells(
+                    10 + i,
+                    &[("web", version.as_str(), i + 1), ("ios", "9.9.9", i)],
+                );
+                record_coarse_with(&mut con, &key, bucket + (i as i64), &census, 16).await
+            }
+        });
+        let results = futures::future::join_all(writes).await;
+        assert!(results.iter().all(|r| matches!(r, Ok(true))), "{results:?}");
+
+        let mut con = con.clone();
+        let now = redis_now(&mut con).await.unwrap();
+        let got = read_series(&mut con, &key, now + 1, COARSE_RETENTION_SECS)
+            .await
+            .unwrap();
+        assert_eq!(got.len(), 1, "one member per 5 minutes");
+        let census = &got[0].census;
+        assert_eq!(census.devices, 17, "the max of the totals");
+        for i in 0..8u64 {
+            let version = format!("1.0.{i}");
+            assert_eq!(
+                cell_of_census(census, "web", &version),
+                Some(i + 1),
+                "{version}"
+            );
+        }
+        assert_eq!(
+            cell_of_census(census, "ios", "9.9.9"),
+            Some(7),
+            "the max of the shared cell"
+        );
+    }
+
+    #[tokio::test]
+    async fn exhausted_attempts_are_a_false_not_a_panic_and_write_nothing() {
+        let Some(mut con) = redis().await else { return };
+        let key = series();
+        let t = this_minute(&mut con).await;
+        // Zero attempts is the deterministic form of "every attempt lost its race".
+        let outcome = record_coarse_with(&mut con, &key, t, &census(3), 0)
+            .await
+            .unwrap();
+        assert!(!outcome);
+        let members: i64 = redis::cmd("ZCARD")
+            .arg(&key)
+            .query_async(&mut con)
+            .await
+            .unwrap();
+        assert_eq!(members, 0);
     }
 
     #[tokio::test]

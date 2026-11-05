@@ -332,7 +332,7 @@
             y2="3"
             stroke="var(--text-main)"
             stroke-width="1.5"
-            stroke-dasharray="4 2"
+            stroke-dasharray={TOTAL_DASH}
           />
         </svg>
         {m.admin_status_chart_total()}

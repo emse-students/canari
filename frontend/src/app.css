@@ -360,13 +360,17 @@
   --avatar-hue-7-to: #b45309;
 
   /* CATEGORICAL CHART SERIES (admin status curves): the eight validated slots of the dataviz
-     default palette, in fixed order, never cycled. Dark has its own steps (re-validated against the
-     dark surface), not a flipped copy. */
+     default palette, in fixed order, never cycled. Dark has its own steps, not a flipped copy.
+     CONTRAST of every slot against its surface (WCAG ratio, computed; a 2 px line needs 3:1):
+     light on #ffffff  1 4.42  2 3.20  3 3.59  4 3.34  5 3.58  6 4.95  7 5.77  8 3.95
+     dark  on #121212  1 5.15  2 4.82  3 5.50  4 6.10  5 4.75  6 6.06  7 5.99  8 5.80
+     Slots 3, 4 and 5 of the light set were darkened from the palette's #1baf7a / #eda100 / #e87ba4
+     (2.82 / 2.17 / 2.69) and dark slot 6 lightened from #008300 (3.79), to clear 3:1. */
   --chart-series-1: #2a78d6;
   --chart-series-2: #eb6834;
-  --chart-series-3: #1baf7a;
-  --chart-series-4: #eda100;
-  --chart-series-5: #e87ba4;
+  --chart-series-3: #0f9a6b;
+  --chart-series-4: #c27e00;
+  --chart-series-5: #d4608f;
   --chart-series-6: #008300;
   --chart-series-7: #6250d6;
   --chart-series-8: #e34948;
@@ -486,7 +490,7 @@
   --chart-series-3: #199e70;
   --chart-series-4: #c98500;
   --chart-series-5: #d55181;
-  --chart-series-6: #008300;
+  --chart-series-6: #34a834;
   --chart-series-7: #9085e9;
   --chart-series-8: #e66767;
   /* THE MEASURED THEME. Every value marked "measured" was read off a live Messenger thread with

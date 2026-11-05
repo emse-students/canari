@@ -65,8 +65,28 @@ describe('the series', () => {
     const series = buildSeries(buckets, 'version');
     expect(series.map((s) => s.key)).toEqual(['1.6.5', '1.6.4']);
     expect(series[1].values).toEqual([null, 0, 1, null, 0]);
-    expect(series[0].color).toBe('var(--chart-series-1)');
-    expect(series[1].color).toBe('var(--chart-series-2)');
+    // Counted from the oldest shown: the older version holds slot 1, the newer slot 2.
+    expect(series[1].color).toBe('var(--chart-series-1)');
+    expect(series[0].color).toBe('var(--chart-series-2)');
+  });
+
+  it('does not repaint an older version when a newer one ships', () => {
+    const colours = (versions: string[]) =>
+      Object.fromEntries(
+        buildSeries(
+          window5([
+            sample(
+              1000 * 60,
+              versions.map((v) => g('web', v, 1))
+            ),
+          ]),
+          'version'
+        ).map((s) => [s.key, s.color])
+      );
+    const before = colours(['1.6.3', '1.6.4', '1.6.5']);
+    const after = colours(['1.6.3', '1.6.4', '1.6.5', '1.6.6', '1.7.0-alpha.1']);
+    for (const v of ['1.6.3', '1.6.4', '1.6.5']) expect(after[v]).toBe(before[v]);
+    expect(new Set(Object.values(after)).size).toBe(5);
   });
 
   it('never cycles a colour without a dash, and keeps unnamed versions muted', () => {
@@ -76,9 +96,12 @@ describe('the series', () => {
       'version'
     );
     const named = series.filter((s) => s.key !== 'unknown');
-    expect(named.slice(0, SERIES_SLOTS).every((s) => s.dash === undefined)).toBe(true);
-    expect(named[SERIES_SLOTS].color).toBe(named[0].color);
-    expect(named[SERIES_SLOTS].dash).toBeDefined();
+    // `named` is newest first: the eight oldest hold the solid slots, the two newest lap round
+    // with a dash pattern.
+    expect(named.slice(2).every((s) => s.dash === undefined)).toBe(true);
+    expect(named[0].dash).toBeDefined();
+    expect(named[0].color).toBe(named[SERIES_SLOTS].color);
+    expect(named[1].color).toBe(named[SERIES_SLOTS + 1].color);
     expect(series.at(-1)?.color).toBe('var(--text-muted)');
   });
 

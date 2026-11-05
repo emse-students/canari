@@ -476,10 +476,13 @@ owner reversed it: *"Je veux chaque version, chaque plateforme, avec de jolies c
 (platform, version) cell now has its own line, even for one person, and `HISTORY_MIN_CELL` and the
 two-pass merge in `aggregate` are gone. **Why that was his to decide, and why it is reversible:** the
 rule was a privacy-by-design choice made by us for a tool only global admins can open, not a legal or
-security requirement; and it can come back without losing anything, because the merge happened at
-WRITE time and a restored rule can simply apply to what is written from then on (samples already written
-stay as they were - there is no retroactive un-merging, and none of the 24 h series written
-before 2026-11-05 has a split cell). **What an admin can now read, stated exactly:** for each of the 24 h /
+security requirement; and it can come back for what is written from then on, because the merge happened at WRITE
+time. **What it does NOT undo, stated plainly:** samples written BEFORE 2026-11-05 still carry the merged `other`
+cells (so the 24 h and 7 d curves show those older stretches coarser, and that is honest), and
+samples written AFTER it hold every cell: if the rule were restored, up to 30 days of fine cells would stay readable in Redis (24 h
+in the fine series, 30 d in the 5-minute one) until they expire by themselves. To drop them at once,
+purge both keys by hand with `DEL monitor:presence:samples monitor:presence:samples:5m` (disposable by
+nature: it loses the charts' history, never a fact the product needs; the sampler starts them again on the next minute). **What an admin can now read, stated exactly:** for each of the 24 h /
 7 d / 30 d windows, how many devices ran each (platform, version) at each point, down to a cell of 1, so
 a version or platform with a single device draws a line that rises and falls with that one device's
 connections (to the minute over 24 h, to 5 or 30 minutes beyond). Still no identifier of any kind on the
@@ -558,6 +561,14 @@ more than 2016 points: 24 h = 1440 (60 s), 7 d = 2016 (300 s), 30 d = 1440 (1800
 The route takes `window` from a closed set (`24h`, `7d`, `30d`; absent = `24h`); any other value is a 400, so no request
 can ask for an unbounded read. The coarse series does not backfill: it starts at the first deploy that
 carries it, and the 7 d / 30 d charts are blank (a gap) before that.
+
+**Version colours are stable (2026-11-05).** A version's line takes the categorical slot of its place counted
+from the OLDEST version still shown (`buildSeries`), not from the newest: a release newer than every one on screen takes
+the next free slot and no older line is repainted (`does not repaint an older version when a newer one ships`). The cost: the
+oldest version leaving the window shifts the others by one, and past eight versions the newest laps round with a dash
+pattern. A hash of the version string was rejected: with 5 versions in 8 slots a collision is likely, and a collision
+between two live versions is worse than a shift when an old one expires. The colours are `--chart-series-*` in `app.css`, each slot at
+least 3:1 against its surface (the computed table is in the comment there).
 
 **The size of the coarse series, in numbers.** 30 d x 288 buckets/day = **8,640 members**. A member is
 `{"t":..,"devices":..,"users":..,"groups":[{"platform":"android","version":"1.6.5-alpha.2","devices":3,"users":3}, ...]}`:
