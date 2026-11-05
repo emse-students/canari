@@ -12,7 +12,9 @@ Decisions, not open questions; this entry is deleted when the last one is carrie
   pinch zoom around the composer). But that tag's tree still carried the `1.6.3` store notes, and the
   1.6.5 work had already merged on `main`. `1.6.5-alpha.1` carries both, and its readings re-run
   the `1.6.4` rows too.
-- **Blind salon banners ("Quelqu'un")**: the fix ships in `1.6.5`.
+- **Blind salon banners ("Quelqu'un")**: what is built ships in `1.6.5`. That is the resume fix (#3030),
+  plus the `refused=` report and the counted fallback that name the push branch (#3027). The push
+  branch itself is still open ([blind banners](p1-blind-salon-banners-the-failing-branch-is-unnamed.md)).
 - **Shim removals the floor unblocked**: they start after the `1.6.5` stable.
 - **First old draft resumed after `1.6.5`**: #2832.
 - **iPhone logs on the workstation** (owner, 2026-11-05): `pymobiledevice3` may be installed on the
