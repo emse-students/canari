@@ -28,6 +28,7 @@
   import { Log } from '$lib/utils/Log';
   import { guideEngine, noteSettledPath } from '$lib/guidance/guidance.svelte';
   import { resolveGuideAnchor } from '$lib/guidance/guideAnchors.svelte';
+  import { observeElementMoves } from '$lib/guidance/guideAnchorFollow';
   import { seenHelps } from '$lib/guidance/seenHelps.svelte';
   import { quietBlocker } from '$lib/guidance/guideQuiet';
   import { placeBubble, type BubblePosition } from '$lib/guidance/guidePlacement';
@@ -186,6 +187,8 @@
   let bubbleEl = $state<HTMLElement | null>(null);
   let targetRect = $state<GuideRect | null>(null);
   let bubblePos = $state<BubblePosition | null>(null);
+  /** The corner radius that makes the ring hug the target's own corners (px), `null` = the CSS default. */
+  let targetRadius = $state<number | null>(null);
   /**
    * True while the page scrolls under the help: the spotlight and the bubble then follow the target
    * with NO transition (a glide would lag the finger). Set by a scroll, cleared by `scrollend` and
@@ -196,6 +199,17 @@
   /** One rem in px, so the paddings below follow the root font size like every token. */
   function rem(): number {
     return parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  }
+
+  /**
+   * The ring's corner radius: the target's own radius grown by the padding, so the ring is
+   * CONCENTRIC with the control (a pill stays a pill) instead of a fixed corner that leaves a wedge
+   * of gap at one and bites into the other. Capped at half the short side.
+   */
+  function hugRadius(element: HTMLElement, rect: GuideRect, pad: number): number | null {
+    const own = parseFloat(getComputedStyle(element).borderTopLeftRadius);
+    if (!Number.isFinite(own)) return null;
+    return Math.min(own + pad, (Math.min(rect.width, rect.height) + 2 * pad) / 2);
   }
 
   /** Re-reads the target's box and places the bubble. Called on every event that can move either. */
@@ -210,6 +224,7 @@
     }
     const rect = anchor?.rect() ?? null;
     const pad = 0.375 * rem();
+    targetRadius = rect && anchor?.element ? hugRadius(anchor.element, rect, pad) : null;
     targetRect = rect
       ? {
           left: rect.left - pad,
@@ -253,8 +268,8 @@
     });
   });
 
-  // Anything that can move the target or the bubble re-measures - events, never a poll - and at
-  // most ONCE PER FRAME: a scroll fires many events a frame, and each measure forces a layout.
+  // Anything that can move the target or the bubble re-measures - events, never a poll (the target's
+  // own moves come from an IntersectionObserver framing its box) - and at most ONCE PER FRAME: a scroll fires many events a frame, and each measure forces a layout.
   $effect(() => {
     if (!visible || !bubbleEl) return;
     const current = view;
@@ -278,7 +293,11 @@
     const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(schedule) : null;
     observer?.observe(bubbleEl);
     if (element) observer?.observe(element);
+    // A target MOVED with its size untouched (content settling above it, a scrollbar, a sidebar)
+    // is seen by neither the ResizeObserver nor a scroll: `observeElementMoves` sees every move.
+    const stopFollow = element ? observeElementMoves(element, schedule) : null;
     return () => {
+      stopFollow?.();
       if (frame) cancelAnimationFrame(frame);
       window.removeEventListener('resize', schedule);
       window.removeEventListener('scroll', onScroll, { capture: true });
@@ -363,7 +382,10 @@
       <div
         class="guide-spotlight"
         data-dim={view.modal || undefined}
-        style="transform: translate({targetRect.left}px, {targetRect.top}px); width: {targetRect.width}px; height: {targetRect.height}px;"
+        style="transform: translate({targetRect.left}px, {targetRect.top}px); width: {targetRect.width}px; height: {targetRect.height}px;{targetRadius ===
+        null
+          ? ''
+          : ` border-radius: ${targetRadius}px;`}"
         data-tracking={tracking || undefined}
         data-guide-spotlight
         aria-hidden="true"

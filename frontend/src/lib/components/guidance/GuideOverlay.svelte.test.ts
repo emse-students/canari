@@ -200,6 +200,39 @@ describe('the welcome tour on a phone', () => {
     expect(bubble()!.getAttribute('aria-modal')).toBe('true');
   });
 
+  it('follows a target that MOVES with its size untouched (a layout shift above it)', async () => {
+    const watchers: IntersectionObserverCallback[] = [];
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(cb: IntersectionObserverCallback) {
+          watchers.push(cb);
+        }
+        observe() {}
+        disconnect() {}
+      }
+    );
+    try {
+      await setUp();
+      click('[data-guide-next]');
+      expect(spotOffset()).toEqual({ x: '-6px', y: '790px' });
+      // The rendered copy of `nav.posts` shifts up 40px; its size is the same, so no ResizeObserver
+      // fires - only the move follower can tell the overlay.
+      const el = [
+        ...document.querySelectorAll<HTMLElement>('[data-guide-anchor="nav.posts"]'),
+      ].find((node) => node.getClientRects().length > 0)!;
+      el.getBoundingClientRect = () => new DOMRect(0, 756, 97, 48);
+      const watcher = watchers[watchers.length - 1];
+      watcher([{ intersectionRatio: 1 } as IntersectionObserverEntry], {} as never); // at observation
+      watcher([{ intersectionRatio: 0.5 } as IntersectionObserverEntry], {} as never); // the move
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+      flushSync();
+      expect(spotOffset()).toEqual({ x: '-6px', y: '750px' });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('mimes the swipe on the camera step, which has no control', async () => {
     await setUp();
     for (let i = 0; i < 3; i++) click('[data-guide-next]');
