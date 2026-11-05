@@ -51,6 +51,14 @@ describe('isGroupDrained', () => {
     expect(svc.isGroupDrained('g-1')).toBe(false);
   });
 
+  it('does not hold while a pull is owed and not yet started', () => {
+    // Asked while a drain ran (a held live key-group frame, a re-fetch): the listing it was asked
+    // for has not happened, whatever the last pull said.
+    const svc = drainedService();
+    Object.assign(svc, { owedPull: { groups: new Set(['g-1']) } });
+    expect(svc.isGroupDrained('g-1')).toBe(false);
+  });
+
   it('does not hold once the socket the pull was trusted with has dropped', () => {
     const svc = drainedService();
     Object.assign(svc, { isWsOpen: () => false });

@@ -109,7 +109,7 @@ describe('a live key-group frame enqueued before the reconnect pull listed the m
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it('is applied BEHIND the commits and seeds queued before it, even when the pull ended first', async () => {
+  it('is applied BEHIND the commits and seeds queued before it, the pull owed behind its drain', async () => {
     const { svc, inner, opened } = harness();
     // The pipeline's own hand-off (`setupMessageHandler`), gated on its FIRST frame so the pull can
     // list the mailbox - and end - before the scheduler reaches F.
@@ -142,24 +142,93 @@ describe('a live key-group frame enqueued before the reconnect pull listed the m
       },
       'live'
     );
-    // The reconnect's pull lists C1, S5, C2 and F (dropped: its live copy is still queued) - and its
-    // listing ENDS: the mailbox reads "listed" while F, ahead of those rows, has not been handled.
-    // (Not awaited whole: the pull then waits for the queue it fed, which the gate holds.)
+    // The reconnect's pull is asked while F's drain runs. PULLS ARE SINGLE-FLIGHT BEHIND THE DRAIN
+    // (`fetchPendingMessages`, #3035): it is owed, so the mailbox cannot read "listed" while F,
+    // ahead of the rows it will list, has not been handled - the window this case was written for
+    // (the pull ending first) no longer opens, and the stamp must still hold F when it does not.
     const pulled = inner.fetchPendingMessages();
     const listed = () =>
       (svc as unknown as { mailboxEmptiedByAPull: boolean }).mailboxEmptiedByAPull;
-    for (let i = 0; i < 20 && !listed(); i++) await flushMacrotask();
-    expect(listed()).toBe(true);
+    for (let i = 0; i < 5; i++) await flushMacrotask();
+    expect(listed()).toBe(false);
+    expect(svc.isGroupDrained(GROUP)).toBe(false);
     expect(opened).toEqual([]);
 
     openGate();
     await pulled;
     for (let i = 0; i < 20 && !svc.isGroupDrained(GROUP); i++) await flushMacrotask();
 
-    // No step of the log, and the seed sealed at 5 opened at its own epoch, before F. CONTROL: with
-    // the hold decided when F is HANDLED (`live && !mailboxListedOnThisLink()`, the first cut of
-    // #3030) this reads ['stepped->5', 'stepped->6', 'commit->7', 'seed@5', 'commit->8', ...] -
-    // the log replayed over the queued commits, which then applied a second time out of order.
+    // No step of the log, and the seed sealed at 5 opened at its own epoch, before F. NOT A CONTROL
+    // FOR THE STAMP: the pull is owed here, so a hold decided when F is HANDLED would hold F too.
+    // The case below, whose pull lands before F is handled, is the one that separates the two cuts.
+    expect(opened).toEqual(['commit->5', 'seed@5', 'commit->6', 'seed@6']);
+    expect(
+      (svc as unknown as { stepDistributionGroup: ReturnType<typeof vi.fn> }).stepDistributionGroup
+    ).not.toHaveBeenCalled();
+  });
+
+  it('is applied BEHIND them when the pull started before F arrived and LANDED before F was handled', async () => {
+    const { svc, inner, opened } = harness();
+    let openGate!: () => void;
+    const gate = new Promise<void>((r) => (openGate = r));
+    let first = true;
+    svc.onMessage(async (sender, content, groupId, _w, _t, _c, meta?: IncomingDeliveryMeta) => {
+      if (first) {
+        first = false;
+        await gate;
+      }
+      return svc.routeDistributionFrame(
+        groupId!,
+        sender,
+        content,
+        meta?.senderDeviceId,
+        meta?.aheadOfMailbox === true
+      );
+    });
+    // The reconnect's pull is out BEFORE F arrives - so it is not owed - and its answer is held.
+    const delivery = (svc as unknown as { delivery: { pullPendingMessagesJson: unknown } })
+      .delivery;
+    const original = delivery.pullPendingMessagesJson as (o: unknown) => Promise<void>;
+    let answer!: () => void;
+    const answered = new Promise<void>((r) => (answer = r));
+    let asked = 0;
+    delivery.pullPendingMessagesJson = vi.fn(async (opts: unknown) => {
+      asked += 1;
+      if (asked === 1) await answered;
+      return original(opts);
+    });
+    const pulled = inner.fetchPendingMessages();
+    await vi.waitFor(() => expect(asked).toBe(1));
+
+    // F arrives live while that pull is out: its drain starts, and is held on F.
+    inner.enqueueMessage(
+      {
+        senderId: 'peer',
+        ciphertext: seedAt(6),
+        groupId: GROUP,
+        isWelcome: false,
+        isCommit: false,
+        queuedMessageId: 'f',
+      },
+      'live'
+    );
+    // The pull lands: the mailbox reads listed, nothing fetching, nothing owed - with F still ahead
+    // of the rows it listed. This is the window the stamp exists for.
+    answer();
+    const listed = () =>
+      (svc as unknown as { mailboxEmptiedByAPull: boolean }).mailboxEmptiedByAPull;
+    await vi.waitFor(() => expect(listed()).toBe(true));
+    expect(inner.pendingPullInFlight).toBeNull();
+    expect((svc as unknown as { owedPull: unknown }).owedPull).toBeNull();
+    expect(opened).toEqual([]);
+
+    openGate();
+    await pulled;
+    for (let i = 0; i < 20 && !svc.isGroupDrained(GROUP); i++) await flushMacrotask();
+
+    // CONTROL: with the hold decided when F is HANDLED (`live && !mailboxListedOnThisLink()`, the
+    // first cut of #3030), F is not held here - the mailbox reads listed - and the log is stepped
+    // over the commits still queued behind it.
     expect(opened).toEqual(['commit->5', 'seed@5', 'commit->6', 'seed@6']);
     expect(
       (svc as unknown as { stepDistributionGroup: ReturnType<typeof vi.fn> }).stepDistributionGroup

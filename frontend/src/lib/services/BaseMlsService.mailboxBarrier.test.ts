@@ -135,7 +135,7 @@ describe('waitForMessageQueueIdle', () => {
       // The inbound consumer. Present in every case but the one that removes it on purpose: the
       // barrier refuses to pull without one, because nothing would drain what the pull enqueues.
       messageCallback: vi.fn().mockResolvedValue(true),
-      messageScheduler: { waitUntilIdle },
+      messageScheduler: { waitUntilIdle, hasQueuedFrom: () => false },
       delivery: {
         ackMessages: vi.fn().mockResolvedValue(undefined),
         pullPendingMessagesJson,
@@ -466,7 +466,7 @@ describe('the refused backlog and the pull that redelivers it', () => {
     poke(svc, {
       userId: 'user-a',
       messageCallback: vi.fn().mockResolvedValue(true),
-      messageScheduler: { waitUntilIdle },
+      messageScheduler: { waitUntilIdle, hasQueuedFrom: () => false },
       delivery: { ackMessages: vi.fn().mockResolvedValue(undefined), pullPendingMessagesJson },
       isWsOpen: () => true,
     });
@@ -524,7 +524,10 @@ describe('the mailbox barrier on a link known down', () => {
     poke(svc, {
       userId: 'user-a',
       messageCallback: vi.fn().mockResolvedValue(true),
-      messageScheduler: { waitUntilIdle: vi.fn().mockResolvedValue(undefined) },
+      messageScheduler: {
+        waitUntilIdle: vi.fn().mockResolvedValue(undefined),
+        hasQueuedFrom: () => false,
+      },
       delivery: { ackMessages: vi.fn().mockResolvedValue(undefined), pullPendingMessagesJson },
       isWsOpen: () => false,
     });

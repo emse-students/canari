@@ -1129,6 +1129,49 @@ Four properties, each of which would be a defect if dropped:
 `BaseMlsService.deliveryIdentity.test.ts` pins all four plus the base case, driving the real drain
 through `enqueueMessage` rather than asserting on the Map.
 
+### One pull at a time, and the one asked meanwhile is owed (2026-11-04)
+
+`done` records that this device DECIDED to acknowledge a row; the ack naming it leaves only when the
+whole drain ends (`onDrainEnd`). Two pulls used to run side by side at boot - the reconnect's, then
+`refetchFramesLeftBehind`'s re-fetch for the conversations the restore had just seeded - and the
+second listed rows the first one's drain had settled but not yet acknowledged. The repeat met `done`
+and was accused as an ack the server forgot: two `[QUEUE] delivery ... arrived twice` lines after each
+launch on the Mi 9T (`1.6.4-alpha.3`, dev).
+
+The overlap is deleted, not classified. `fetchPendingMessages` is SINGLE-FLIGHT WITH ONE OWED RE-RUN:
+
+- asked while a pull is fetching, the queue is draining, or a row a PULL listed is still queued
+  (`hasQueuedFrom('pull')`: held by a commit, or parked behind a Welcome - PENDING, not merely
+  runnable), it starts no request - the pull is OWED (`owePull`), the caller's groups are added to it
+  (an ask naming none makes it `'all'`), and the caller's promise settles when it has run;
+- the owed pull is issued (`issueOwedPull`) in the tick `onDrainEnd` announces the drain's ack (its
+  flush chains behind that ack), or at the end of a fetch or of `processQueue` when no drain runs -
+  never while a pull's row is still queued: a commit-held row's drain starts at the commit's end
+  (`resumeFramesHeldByCommit`), and its `onDrainEnd` issues it;
+- the owed record is consumed when it is issued, so a burst of asks is one pull and nothing is timed;
+  the issue re-checks the gates of an ask (resolved user, leader tab, client not destroyed), and
+  `destroy()` drops the record, releasing its askers with nothing pulled.
+
+It is NOT chained into `pendingPullInFlight` (that held every barrier behind the whole drain).
+`waitForGroupQueueIdle` waits on the owed pull's listing only for a group it was asked for, or for
+every group when an ask named none (a reconnect, a barrier, a re-enrolment: the whole mailbox);
+`mailboxListedOnThisLink` - and so `isGroupDrained` - reads false while a pull is owed. A held live
+key-group frame (`holdLiveKeyGroupFrame`) just asks for its group's pull.
+
+One crossing no pull can be ordered against is left, and it has its own shape: a row the SOCKET handed
+in, listed by a pull whose flush left before that row's ack. Every ack request carries a serial
+(`announceAck`), each delivery remembers the channel that admitted it and the serial of the ack naming
+it, and a pull records the serial of its flush (`listedAfterAck` on `DeliveryArrival`):
+
+| The repeat | Shape | Line |
+| --- | --- | --- |
+| pull lists a row the socket took in, ack not sent before the pull's flush | `pull:crossed-live-ack` | `log`, once; not acknowledged again - that ack covers it |
+| pull lists a `done` row whose ack failed | `pull:done` | `log`: the `[ACK]` failure above |
+| pull lists a `done` row a PULL took in, ack landed before | `pull:done` | `warn`: nothing routine explains it |
+
+`BaseMlsService.singleFlightPull.test.ts` drives both through the real pull, scheduler and drain:
+two asks during a drain give exactly one second pull, after the drain's ack, and no repeat.
+
 ## Outbox (outbound delivery)
 
 `utils/chat/outbox.ts` owns every outbound message. A send is persisted first and transmitted
