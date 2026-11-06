@@ -2,7 +2,7 @@
 // CLI (`bun run paraglide:compile`, run by check, test, generate, prepare and the pre-commit hook)
 // and the vite plugin in `vite.config.js`. Two sets of options meant two different outputs, and each
 // CLI compile invalidated the plugin's cache, so the next `vite dev` rewrote ~4,500 files before it
-// listened (222 s). See docs/wiki/frontend/i18n.md. Add an option HERE, never as a flag or a plugin
+// listened (222 s). See docs/wiki/frontend/architecture.md. Add an option HERE, never as a flag or a plugin
 // argument next to the call.
 //
 // `outputStructure` is read by the plugin only: the CLI forces `message-modules` itself, which is
