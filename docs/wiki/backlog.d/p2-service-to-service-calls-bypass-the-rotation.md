@@ -70,3 +70,25 @@ deploy in the production services' logs (`ECONNRESET` or `socket hang up` to a p
 release window, `docker logs --since`), compared with the count of deploys. Nothing has ever
 measured it; zero in the last ten releases would justify leaving this entry as an accepted, named
 residue rather than building a proxy.
+
+## The measurement, taken 2026-11-06: a zero that is blind
+
+Read-only on production: every replica of social, media, core and chat-delivery logged 0 lines of
+`ECONNRESET`, `socket hang up` or `ECONNREFUSED` since the `v1.6.5` deploy of 2026-11-05 (~15:09 UTC).
+**That zero is not evidence.** A reset happens during a rotation, in the CALLER, and the callers a
+deploy retires are removed with their logs; every container that could be read started after the
+rotation. The count the "Measure first" paragraph above asks for cannot be taken after the fact.
+
+**What would make it visible, cheapest first** (not built):
+
+1. **`rolling.sh` greps the retiring replica's log before `docker stop` removes it** (step 5 of the
+   rotation in [cicd](../cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)): one
+   `docker logs --since <deploy start> <old>` filtered for `ECONNRESET|socket hang up|ECONNREFUSED`,
+   its COUNT printed in the deploy log beside the existing in-flight line, one line per service. No
+   new container, no file; the deploy log already outlives the container. Run it again on the replica
+   that stays after the restore, so both sides of a rotation are counted.
+2. Persisting that count (a `[S2S_RESETS]` line in `scheduled.yml`'s daily read) only once option 1
+   shows a non-zero count; before then it would watch a zero.
+
+The decision on the `mesh` proxy waits for a few deploys of that line: a steady zero leaves the gap as
+a named residue, any other number is the case for building it.
