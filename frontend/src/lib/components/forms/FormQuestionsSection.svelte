@@ -6,6 +6,7 @@
   import { AUTHORABLE_QUESTION_TYPES } from '$lib/forms/questionTypes';
   import { ListChecks, Plus } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { draggableCard } from '$lib/actions/draggableCard';
 
   /**
    * The question builder: the list, its drag-and-drop reordering, and the type picker.
@@ -113,7 +114,7 @@
     {#each items as _item, i (_item.id)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        draggable="true"
+        use:draggableCard
         ondragstart={() => (dragIndex = i)}
         ondragover={(e) => handleDragOver(e, i)}
         ondrop={() => handleDrop(i)}

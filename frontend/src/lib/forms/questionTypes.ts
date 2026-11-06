@@ -40,15 +40,8 @@ export const QUESTION_TYPES: QuestionType[] = [
   { value: 'product_grid', label: () => m.qtype_product_grid(), Icon: ShoppingBag },
 ];
 
-/**
- * The types the builders' pickers OFFER: every type whose editor exists, named one by one.
- *
- * Not `QUESTION_TYPES`: a type the server accepts can ship before its editor does - `product_grid`
- * (WP-G1) is refused at save with `PRODUCT_GRID_DEFINITION_MISSING` until the grid editor (WP-G3)
- * writes its definition, so offering it would hand people a question no save accepts. A type joins
- * this list in the change that ships its editor (`questionTypes.test.ts`).
- */
-export const AUTHORABLE_QUESTION_TYPE_VALUES: readonly string[] = [
+/** The types every surface of this build handles: the editor writes them, the fill page draws them. */
+const TYPES_WITH_EVERY_SURFACE: readonly string[] = [
   'short_text',
   'long_text',
   'single_choice',
@@ -60,7 +53,28 @@ export const AUTHORABLE_QUESTION_TYPE_VALUES: readonly string[] = [
   'file',
 ];
 
+/**
+ * The types the builders' pickers OFFER: every type whose editor exists.
+ *
+ * Not `QUESTION_TYPES`: a type the server accepts can ship before its editor does - `product_grid`
+ * (WP-G1) is refused at save with `PRODUCT_GRID_DEFINITION_MISSING` until the grid editor (WP-G3)
+ * writes its definition, so offering it would hand people a question no save accepts. A type joins
+ * this list in the change that ships its editor (`questionTypes.test.ts`).
+ */
+export const AUTHORABLE_QUESTION_TYPE_VALUES: readonly string[] = [...TYPES_WITH_EVERY_SURFACE];
+
 /** {@link QUESTION_TYPES} restricted to {@link AUTHORABLE_QUESTION_TYPE_VALUES}, in canonical order. */
 export const AUTHORABLE_QUESTION_TYPES: QuestionType[] = QUESTION_TYPES.filter((t) =>
   AUTHORABLE_QUESTION_TYPE_VALUES.includes(t.value)
 );
+
+/**
+ * The types the fill page DRAWS an input for (`fillAnswers.ts` `isKnownQuestionType`); any other
+ * is drawn as "update the app" and blocks a send when required. Not `QUESTION_TYPES` either: a type
+ * joins this list with its fill page, which may ship apart from its editor - `product_grid` did
+ * (WP-G2, `ProductGridQuestion.svelte`) before the grid editor (WP-G3).
+ */
+export const FILLABLE_QUESTION_TYPE_VALUES: readonly string[] = [
+  ...TYPES_WITH_EVERY_SURFACE,
+  'product_grid',
+];

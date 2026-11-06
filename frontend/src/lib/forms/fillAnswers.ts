@@ -2,6 +2,7 @@ import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
 import type { FormItem } from './api';
 import { hasOrderedUnits, isProductGrid } from './productGridFill';
+import { FILLABLE_QUESTION_TYPE_VALUES } from './questionTypes';
 
 /**
  * WHAT A PERSON FILLING A FORM HAS ANSWERED - the rules the fill page applies, taken out of it.
@@ -47,15 +48,31 @@ function hasValue(value: unknown): boolean {
   return value !== '' && value !== undefined && value !== null;
 }
 
+/** The types this build can draw an input for; any other is a newer type it cannot answer. */
+const KNOWN_TYPES = new Set([...FILLABLE_QUESTION_TYPE_VALUES, 'single']);
+
 /**
- * Whether this question has an answer: every row, for a matrix; one unit ordered, for a priced
- * grid (an empty object is not an order); one value otherwise.
+ * Whether this build knows how to answer a question type. A type this build cannot draw - one added
+ * after this release - is drawn as "update the app" and blocks a send when required, rather than
+ * going out empty for the server to refuse in English.
+ */
+export function isKnownQuestionType(type: string): boolean {
+  return KNOWN_TYPES.has(type);
+}
+
+/**
+ * Whether this question has an answer - the rule the server applies to a required question
+ * (`answer-bounds.ts` `isQuestionAnswered`). A grid is answered by ONE row, or by every row when
+ * the question says `requireEveryRow` (decided 2026-11-06, D5). A priced grid is answered by one
+ * unit ordered (an empty object is not an order); anything else by one value.
  */
 export function isItemAnswered(item: FormItem, value: unknown): boolean {
   if (isProductGrid(item)) return hasOrderedUnits(value);
   if (isMatrix(item)) {
     if (!value || typeof value !== 'object') return false;
-    return (item.rows ?? []).every((row) => hasValue((value as Record<string, unknown>)[row]));
+    const rows = value as Record<string, unknown>;
+    if (item.requireEveryRow) return (item.rows ?? []).every((row) => hasValue(rows[row]));
+    return (item.rows ?? []).some((row) => hasValue(rows[row]));
   }
   return hasValue(value);
 }
@@ -70,6 +87,7 @@ export type MissingAnswer = { itemId: string } & (
   | { kind: 'select'; label: string }
   | { kind: 'order'; label: string }
   | { kind: 'answer'; label: string }
+  | { kind: 'update'; label: string }
 );
 
 /**
@@ -87,12 +105,18 @@ export function firstMissingAnswer(
     if (!item.required) continue;
     const value = selections[item.id];
     const itemId = item.id;
-    if (isProductGrid(item)) {
+    if (!isKnownQuestionType(item.type)) {
+      return { itemId, kind: 'update', label: item.label };
+    } else if (isProductGrid(item)) {
       if (!hasOrderedUnits(value)) return { itemId, kind: 'order', label: item.label };
     } else if (isMatrix(item)) {
-      if (!value || typeof value !== 'object') return { itemId, kind: 'matrix', label: item.label };
-      const row = (item.rows ?? []).find((r) => !hasValue((value as Record<string, unknown>)[r]));
-      if (row !== undefined) return { itemId, kind: 'row', label: item.label, row };
+      const rows = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
+      if (item.requireEveryRow) {
+        const row = (item.rows ?? []).find((r) => !hasValue(rows[r]));
+        if (row !== undefined) return { itemId, kind: 'row', label: item.label, row };
+      } else if (!isItemAnswered(item, rows)) {
+        return { itemId, kind: 'matrix', label: item.label };
+      }
     } else if (Array.isArray(value) || item.type === 'multiple_choice') {
       if (!hasValue(value)) return { itemId, kind: 'select', label: item.label };
     } else if (!hasValue(value)) {
@@ -115,6 +139,8 @@ export function missingAnswerMessage(missing: MissingAnswer): string {
       return m.form_view_error_order_empty({ label: missing.label });
     case 'answer':
       return m.form_view_error_answer({ label: missing.label });
+    case 'update':
+      return m.form_view_error_update_app({ label: missing.label });
   }
 }
 
@@ -170,10 +196,50 @@ export function pricedQuestionsAwaitingAnswer(
   );
 }
 
-/** Only the answers to questions the person could see - what the server is sent. */
+/**
+ * Only the ANSWERED questions the person could see - what the server is sent.
+ *
+ * An unanswered question is left out rather than sent empty: a grid's seeded `{ row: '' }` map
+ * went out for every visible grid, and every empty selection counted against the server's cap on
+ * an answer's keys, so a form of more than fifty visible questions was refused whatever was filled
+ * (D3 of the 2026-11-06 audit). A grid keeps only its answered rows. The server judges a required
+ * question by the same rule (`isItemAnswered`), so leaving one out says the same as sending it empty.
+ */
 export function visibleAnswers(visible: FormItem[], selections: Selections): Selections {
-  const ids = new Set(visible.map((item) => item.id));
-  return Object.fromEntries(Object.entries(selections).filter(([id]) => ids.has(id)));
+  const out: Selections = {};
+  for (const item of visible) {
+    const value = selections[item.id];
+    if (isProductGrid(item)) {
+      // An order holds only its ordered cells already (`withCellQuantity`); an empty one stays out.
+      if (hasOrderedUnits(value)) out[item.id] = value;
+    } else if (isMatrix(item)) {
+      if (!value || typeof value !== 'object') continue;
+      const rows = Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).filter(([, cell]) => hasValue(cell))
+      );
+      if (Object.keys(rows).length > 0) out[item.id] = rows;
+    } else if (hasValue(value)) {
+      out[item.id] = value;
+    }
+  }
+  return out;
+}
+
+/**
+ * The selections to show for an answer read back from the server: its values over the empty shape
+ * each question starts from. A stored grid holds only its answered rows (`visibleAnswers`), and a
+ * row's input binds to its key, so the missing rows are seeded again here.
+ */
+export function selectionsFromAnswers(items: FormItem[], answers: Selections): Selections {
+  const out = initialSelections(items);
+  for (const [id, value] of Object.entries(answers)) {
+    const item = items.find((i) => i.id === id);
+    out[id] =
+      item && isMatrix(item) && value && typeof value === 'object'
+        ? { ...out[id], ...(value as Record<string, unknown>) }
+        : value;
+  }
+  return out;
 }
 
 /** An amount in cents, in the reader's locale. Empty for an undefined amount. */

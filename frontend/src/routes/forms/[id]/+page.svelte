@@ -3,7 +3,7 @@
   import { gotoAppPath } from '$lib/navigation/gotoAppPath';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
-  import { refusalStatus } from '$lib/utils/apiRefusal';
+  import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
   import { page } from '$app/state';
   import { onMount } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
@@ -23,12 +23,7 @@
   } from '$lib/forms/api';
   import { fillPriceState, optionModifierOf } from '$lib/forms/fillPricing';
   import type { ProductGridPrices } from '$lib/forms/productGridContract';
-  import {
-    appliedTierLabels,
-    isProductGrid,
-    productGridRefusalMessage,
-  } from '$lib/forms/productGridFill';
-  import { refusalCode } from '$lib/utils/apiRefusal';
+  import { appliedTierLabels, isProductGrid } from '$lib/forms/productGridFill';
   import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
   import {
     getCalendarEventLinkedToForm,
@@ -49,6 +44,7 @@
     firstMissingAnswer,
     formatAmount as formatCurrency,
     initialSelections,
+    selectionsFromAnswers,
     isItemAnswered,
     missingAnswerMessage,
     visibleAnswers,
@@ -76,7 +72,8 @@
     activePaymentProvider,
     loadActivePaymentProvider,
   } from '$lib/associations/activePaymentProvider.svelte';
-  import { FORM_COTISATION_HELD, providerRefusalMessage } from '$lib/associations/paymentRefusal';
+  import { FORM_COTISATION_HELD } from '$lib/associations/paymentRefusal';
+  import { formSubmitRefusalMessage } from '$lib/forms/answerBounds';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { PAGE_WIDTHS } from '$lib/components/layout/pageWidth';
 
@@ -282,14 +279,14 @@
         pricing: view,
         hiddenItemIds: hidden,
         maySubmit: allowed,
-        refusalCode: submitRefusalCode,
+        refusalCode,
       } = submission;
       submitted = hasSubmitted;
       formFull = full;
       pricing = view;
       hiddenItemIds = hidden ?? [];
       maySubmit = allowed ?? true;
-      cotisationHeld = submitRefusalCode === FORM_COTISATION_HELD;
+      cotisationHeld = refusalCode === FORM_COTISATION_HELD;
       productGridPrices = submission.productGridPrices ?? {};
       paymentPending = hasSubmitted && paymentStatus === 'pending';
       if (paymentPending && submission.submissionId) {
@@ -302,7 +299,7 @@
       if (hasSubmitted) {
         try {
           const sub = await getSubmission(f.id);
-          if (sub?.answers) selections = sub.answers;
+          if (sub?.answers) selections = selectionsFromAnswers(f.items, sub.answers);
         } catch {
           // ignore
         }
@@ -311,7 +308,8 @@
       error =
         e instanceof FormNotFoundError
           ? m.form_view_not_found()
-          : e.message || m.form_view_load_error();
+          : (describeApiRefusal(refusalStatus(e), m.form_view_load_action()) ??
+            m.form_view_load_error());
     } finally {
       loading = false;
     }
@@ -468,11 +466,10 @@
           : m.form_view_submission_success();
         setTimeout(leaveForm, 1500);
       }
-    } catch (e: any) {
-      error =
-        productGridRefusalMessage(refusalCode(e)) ??
-        providerRefusalMessage(e) ??
-        (e.message || m.form_view_error_payment_failed());
+    } catch (e: unknown) {
+      Log.d('FormView', `submit refused status=${refusalStatus(e) ?? 'transport'}`);
+      // Worded from the refusal's CODE, never from the server's English (D6).
+      error = formSubmitRefusalMessage(e, m.form_guest_submit_failed());
     } finally {
       submitting = false;
     }

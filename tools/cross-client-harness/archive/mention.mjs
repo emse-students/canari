@@ -13,7 +13,7 @@
  *     with `formatMentionToken(id) + ' '` and the contenteditable re-renders it as a
  *     `<span data-mention-id class="mention-editor-chip">` (`createMentionChip`,
  *     `MENTION_CHIP_SELECTOR = '[data-mention-id].mention-editor-chip'`). Suggestions are scoped by
- *     `allowedUserIds` (`MainChatPage.svelte` `composerAllowedUserIds`): channel members only for a
+ *     the mention roster (`MainChatPage.svelte` `composerMentionRoster`): channel members only for a
  *     channel, `undefined` (unrestricted) for a DM unless it is also a group. The scoping is
  *     CLIENT-SIDE ONLY - `extractMentionUserIds` runs on whatever text is in the box regardless, so
  *     a raw `@[id] ` token for a non-member still parses and sends (MENTION-5).

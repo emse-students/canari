@@ -4,6 +4,7 @@ import {
   initialSelections,
   isItemAnswered,
   pricedQuestionsAwaitingAnswer,
+  selectionsFromAnswers,
   visibleAnswers,
   visibleItems,
 } from './fillAnswers';
@@ -49,8 +50,26 @@ describe('isItemAnswered and firstMissingAnswer agree', () => {
     expect(firstMissingAnswer(items, { m: [] })?.kind).toBe('select');
   });
 
-  it('names the row of a matrix left empty', () => {
+  // D5 (decided 2026-11-06): a required grid wants ONE row, unless it asks for every row.
+  it('takes a required grid answered by one row', () => {
     const item = q({ id: 'g', type: 'matrix_single', required: true, rows: ['r1', 'r2'] });
+    expect(firstMissingAnswer([item], { g: { r1: 'x', r2: '' } })).toBeNull();
+    expect(isItemAnswered(item, { r1: 'x', r2: '' })).toBe(true);
+    expect(firstMissingAnswer([item], { g: { r1: '', r2: '' } })).toEqual({
+      itemId: 'g',
+      kind: 'matrix',
+      label: 'g',
+    });
+  });
+
+  it('names the row left empty of a grid that asks for every row', () => {
+    const item = q({
+      id: 'g',
+      type: 'matrix_single',
+      required: true,
+      rows: ['r1', 'r2'],
+      requireEveryRow: true,
+    });
     expect(firstMissingAnswer([item], { g: { r1: 'x', r2: '' } })).toEqual({
       itemId: 'g',
       kind: 'row',
@@ -72,6 +91,17 @@ describe('isItemAnswered and firstMissingAnswer agree', () => {
     });
     expect(isItemAnswered(grid, { 'r:c': 2 })).toBe(true);
     expect(firstMissingAnswer([grid], { pg: { 'r:c': 2 } })).toBeNull();
+    expect(visibleAnswers([grid], { pg: {} })).toEqual({});
+    expect(visibleAnswers([grid], { pg: { 'r:c': 2 } })).toEqual({ pg: { 'r:c': 2 } });
+  });
+
+  it('asks to update the app for a required question of a type it does not know', () => {
+    const item = q({ id: 'p', type: 'gift_card', required: true, label: 'Carte' });
+    expect(firstMissingAnswer([item], { p: { a: 1 } })).toEqual({
+      itemId: 'p',
+      kind: 'update',
+      label: 'Carte',
+    });
   });
 });
 
@@ -117,5 +147,40 @@ describe('pricedQuestionsAwaitingAnswer', () => {
     expect(pricedQuestionsAwaitingAnswer([promo], ['promo'], { promo: '' }).size).toBe(0);
     expect(pricedQuestionsAwaitingAnswer([], ['formation'], { formation: '' }).size).toBe(0);
     expect(pricedQuestionsAwaitingAnswer([formation], [], { formation: '' }).size).toBe(0);
+  });
+});
+
+describe('visibleAnswers sends only what is answered (D1, D3)', () => {
+  it('leaves out empty questions and a grid with no answered row, and strips empty rows', () => {
+    const items = [
+      q({ id: 't' }),
+      q({ id: 'm', type: 'multiple_choice' }),
+      q({ id: 'n', type: 'linear_scale' }),
+      q({ id: 'g', type: 'matrix_single', rows: ['r1', 'r2'] }),
+      q({ id: 'e', type: 'matrix_multiple', rows: ['r1'] }),
+    ];
+    const sent = visibleAnswers(items, {
+      t: '',
+      m: [],
+      n: 0,
+      g: { r1: 'c1', r2: '' },
+      e: { r1: [] },
+    });
+    expect(sent).toEqual({ n: 0, g: { r1: 'c1' } });
+  });
+
+  it('sends no key for a form of many unanswered questions', () => {
+    const items = Array.from({ length: 80 }, (_, i) => q({ id: `q${i}` }));
+    expect(visibleAnswers(items, initialSelections(items))).toEqual({});
+  });
+});
+
+describe('selectionsFromAnswers', () => {
+  it('seeds the rows a stored grid answer left out, so every row input binds', () => {
+    const items = [q({ id: 'g', type: 'matrix_single', rows: ['r1', 'r2'] }), q({ id: 't' })];
+    expect(selectionsFromAnswers(items, { g: { r1: 'c1' } })).toEqual({
+      g: { r1: 'c1', r2: '' },
+      t: '',
+    });
   });
 });

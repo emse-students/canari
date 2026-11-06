@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AUTHORABLE_QUESTION_TYPES,
   AUTHORABLE_QUESTION_TYPE_VALUES,
+  FILLABLE_QUESTION_TYPE_VALUES,
   QUESTION_TYPES,
 } from './questionTypes';
 
@@ -24,5 +25,12 @@ describe('the question types the builders offer', () => {
       (value) => value !== 'product_grid' && !AUTHORABLE_QUESTION_TYPE_VALUES.includes(value)
     );
     expect(missing).toEqual([]);
+  });
+
+  it('the fill page draws every canonical type, the priced grid included (WP-G2)', () => {
+    const canonical = QUESTION_TYPES.map((t) => t.value);
+    for (const value of FILLABLE_QUESTION_TYPE_VALUES) expect(canonical).toContain(value);
+    expect([...FILLABLE_QUESTION_TYPE_VALUES].sort()).toEqual([...canonical].sort());
+    expect(FILLABLE_QUESTION_TYPE_VALUES).toContain('product_grid');
   });
 });
