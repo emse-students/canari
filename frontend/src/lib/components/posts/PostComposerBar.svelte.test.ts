@@ -213,10 +213,32 @@ it('wraps the chip row instead of clipping it, so every chip is reachable at any
   expect(row.className).not.toMatch(/overflow-(x-)?(hidden|auto|scroll)/);
 });
 
-it('holds the height of the chip row while the formatting row replaces it, so "Aa" moves nothing', () => {
-  // The chips wrap onto two or three rows, the formatting row is one: without a floor the swap
-  // shrank the footer and the text area above it jumped (iPhone 12, 2026-11-06). The height is read
-  // when the row is drawn, so the layout answer is stubbed on the element before the mount.
+it('draws the formatting actions as labelled chips of the same class, so "Aa" is a same-size swap', () => {
+  const { target } = mountBar();
+  const chipClassOf = (el: Element) => el.className;
+  const attach = target.querySelector<HTMLButtonElement>('button[data-post-camera]')!;
+  Array.from(target.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')).at(-1)!.click();
+  flushSync();
+
+  const buttons = Array.from(target.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'));
+  expect(buttons).toHaveLength(8);
+  // Every action carries its WORD, not only an icon, and wears the attachment chips' class.
+  for (const b of buttons) {
+    expect(b.textContent?.trim()).toBeTruthy();
+    expect(chipClassOf(b)).toContain('rounded-full');
+  }
+  expect(chipClassOf(buttons[0])).toContain(
+    chipClassOf(attach)
+      .split(' ')
+      .find((c) => c.startsWith('px-'))!
+  );
+  // They wrap like the chips instead of scrolling sideways.
+  expect(target.querySelector('[role="toolbar"]')!.className).toContain('flex-wrap');
+});
+
+it('holds the height of the chip row while the formatting row replaces it', () => {
+  // The two wrappings can differ by a few points; the floor keeps the swap from moving anything. The
+  // height is read when the row is drawn, so the layout answer is stubbed before the mount.
   const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
   Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
     configurable: true,

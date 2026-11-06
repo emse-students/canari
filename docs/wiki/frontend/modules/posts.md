@@ -2212,10 +2212,14 @@ toolbar, the toolbar is pinned above the keyboard, and nothing jumps.
   survives. The rebuild is therefore NOT the cause on these engines and was left alone.
 
 **What was real and is fixed:** "Aa" swapped the attachment chips (two rows on the Mi 9T, THREE on the
-iPhone 12) for one formatting row, so the footer shrank and the text area above it grew by 148 pt in
-the middle of a selection. `PostComposerBar` now binds the chip row's height while it is drawn and holds
-it as the slot's floor while the formatting row replaces it (the row sits on the slot's bottom edge,
-beside "Aa"); `PostComposerBar.svelte.test.ts` pins it.
+iPhone 12) for one row of icons, so the footer shrank and the text area above it grew by 148 pt in the
+middle of a selection. Holding the old height under a single icon row left a blank band, so the
+formatting actions are now LABELLED CHIPS of the attachment chips' own class, wrapping the same way:
+`MarkdownComposerToolbar`'s `chipClass` prop draws icon + word (Paraglide `md_toolbar_*`, lucide icons,
+the bar's `chipClass`/`idleChip` tokens), and "Aa" is a same-size content swap with nothing empty.
+`PostComposerBar` also binds the chip row's height while it is drawn and keeps it as the slot's floor,
+for the few points two wrappings can differ by. `PostComposerBar.svelte.test.ts` pins both (eight
+labelled chips of the chips' class, wrapping; the floor).
 
 **Owed:** a read on Gboard (the Mi 9T has no Gboard, only AOSP), on the iPhone with a finger rather than
 WebDriverAgent's synthetic touches (a real long press and real handle drags), and on mobile web
