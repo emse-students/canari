@@ -15,6 +15,8 @@
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { CreditCard } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { conflictsIfEnabled, type FormOptionState } from '$lib/forms/formOptionRules';
+  import { conflictHint } from '$lib/forms/formOptionConflict';
   import { activePaymentProvider } from '$lib/associations/activePaymentProvider.svelte';
   import { onlinePaymentCopy } from '$lib/associations/paymentProviderCopy';
 
@@ -37,11 +39,14 @@
   interface Props {
     /** Whether the form charges anything. */
     requiresPayment: boolean;
-    /** An anonymous form cannot charge: a payment names its payer. */
-    anonymous: boolean;
     /**
-     * A public form CAN charge (WP-P1): a guest pays on Lydia's page with an e-mail it types. Only
-     * its grid is narrowed - to answers, the one criterion a guest has.
+     * The form's options as the shared rule reads them (`editorOptionState`): what shuts the payment
+     * switch - an anonymous form, whose payer a payment would name.
+     */
+    optionState: FormOptionState;
+    /**
+     * A public form CAN charge (WP-P1): a guest pays on Lydia's page with an e-mail it types, and on
+     * a grid by who the person is pays the "everyone else" tier.
      */
     isPublic: boolean;
     /** The single price, in euros. Still the only price for a form with no grid. */
@@ -72,7 +77,7 @@
 
   let {
     requiresPayment = $bindable(),
-    anonymous,
+    optionState,
     isPublic,
     basePrice = $bindable(),
     allowCashPayment = $bindable(),
@@ -97,6 +102,9 @@
     if (!associationCanBePaid) return 'not-ready';
     return null;
   });
+
+  /** Why the payment switch is shut, by the shared rule - null while it may be switched on. */
+  const paymentConflict = $derived(conflictHint(conflictsIfEnabled(optionState, 'takesPayment')));
 
   /** Drops every price of the form at once: the switch, the base price, the grid and cash payment. */
   function makeFree(): void {
@@ -141,9 +149,9 @@
       {/if}
       <Toggle
         bind:checked={requiresPayment}
-        disabled={anonymous}
+        disabled={paymentConflict != null}
         label={m.form_requires_payment_label()}
-        hint={anonymous ? m.form_payment_disabled_anonymous() : undefined}
+        hint={paymentConflict ?? undefined}
       />
 
       {#if requiresPayment}
@@ -205,7 +213,7 @@
             {formations}
             {items}
             hasCotisation={tiers.length > 0}
-            answersOnly={isPublic}
+            {isPublic}
           />
         {/if}
 

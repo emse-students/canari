@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { OTHERS_BUCKET_ID, type Dimension } from '../pricing/audience';
 import { allCellKeys, pricedQuestionIds, type PriceMatrix } from '../pricing/price-matrix';
 import { normaliseCondition, type ConditionalItem } from './visibility';
+import { isGuestCell } from './form-option-rules';
 
 /**
  * WHAT A PRICED ANSWER MAY SAY, AND WHICH PRICE A GRID MAY NOT FALL BACK TO.
@@ -149,10 +150,12 @@ function othersReachable(dimension: Dimension, items: readonly PricedItem[]): bo
 }
 
 /**
- * The cells of a CHARGING grid a submitter can reach through an "everyone else" group and that
- * price at 0 - the free seat a public form must not offer by default (decision PP1, WP-P1). A grid
- * that charges nobody is a free form and returns none. The manager prices such a cell, or marks it
- * unavailable.
+ * The cells of a CHARGING grid a GUEST can reach through an "everyone else" group and that price at
+ * 0 - the free seat a public form must not offer by default (decision PP1, WP-P1). A guest lands in
+ * "everyone else" on every criterion about who the person is (`isGuestCell`), so a cell priced for
+ * a promo, a formation or a cotisation is a member's and is not judged here: a member is counted
+ * once like on any form. A grid that charges nobody is a free form and returns none. The manager
+ * prices such a cell, or marks it unavailable.
  */
 export function freeFallbackCells(
   matrix: PriceMatrix | null | undefined,
@@ -162,7 +165,7 @@ export function freeFallbackCells(
   if (!Object.values(matrix.cells).some((v) => typeof v === 'number' && v > 0)) return [];
   const reachable = matrix.dimensions.map((d) => othersReachable(d, items));
   return allCellKeys(matrix.dimensions).filter((key) => {
-    if (matrix.cells[key] !== 0) return false;
+    if (matrix.cells[key] !== 0 || !isGuestCell(matrix, key)) return false;
     const parts = key.split('|');
     const viaOthers = parts.some((p) => p === OTHERS_BUCKET_ID);
     return viaOthers && parts.every((p, i) => p !== OTHERS_BUCKET_ID || reachable[i]);

@@ -10,8 +10,12 @@
  * happens in `matrixPayload`.
  */
 
-/** The generated group every criterion ends with. Never stored, never editable, always last. */
-export const OTHERS_BUCKET_ID = '_others';
+/**
+ * The generated group every criterion ends with. Never stored, never editable, always last.
+ * Defined once, in the file the server shares (`formOptionRules.ts`).
+ */
+import { OTHERS_BUCKET_ID } from '$lib/forms/formOptionRules';
+export { OTHERS_BUCKET_ID };
 
 /** The four things a form can discriminate on. */
 export type DimensionKind = 'cotisation' | 'promo' | 'formation' | 'answer';

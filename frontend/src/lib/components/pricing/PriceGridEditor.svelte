@@ -12,6 +12,7 @@
     gridLayout,
     matrixProblem,
     newDimension,
+    pricesOnProfile,
     removeBucket,
     removeDimension,
     type DimensionKind,
@@ -52,10 +53,11 @@
     /** Whether the beneficiary association sells any cotisation - gates that one criterion. */
     hasCotisation: boolean;
     /**
-     * Offer only the ANSWER criterion: a public form's guest has no promo, formation or cotisation
-     * for a grid to read (the server refuses the others, `assertPublicConfigValid`).
+     * The form is public: a guest has no promo, formation or cotisation, so on a criterion about
+     * who the person is it pays the "everyone else" tier - said under the grid, never by hiding a
+     * criterion (owner, 2026-11-06).
      */
-    answersOnly?: boolean;
+    isPublic?: boolean;
   }
 
   let {
@@ -65,10 +67,12 @@
     formations,
     items,
     hasCotisation,
-    answersOnly = false,
+    isPublic = false,
   }: Props = $props();
 
   const problem = $derived(matrixProblem(matrix));
+  /** A public form's grid on who the person is: guests land in its "everyone else" tier. */
+  const guestsPayOthers = $derived(isPublic && pricesOnProfile(matrix));
   const layout = $derived(matrix ? gridLayout(matrix) : { columns: [], rows: [] });
   const usedKinds = $derived(new Set((matrix?.dimensions ?? []).map((d) => d.kind)));
 
@@ -79,10 +83,10 @@
         {
           kind: 'cotisation' as const,
           label: m.form_criterion_cotisation(),
-          enabled: hasCotisation && !answersOnly,
+          enabled: hasCotisation,
         },
-        { kind: 'promo' as const, label: m.form_criterion_promo(), enabled: !answersOnly },
-        { kind: 'formation' as const, label: m.form_criterion_formation(), enabled: !answersOnly },
+        { kind: 'promo' as const, label: m.form_criterion_promo(), enabled: true },
+        { kind: 'formation' as const, label: m.form_criterion_formation(), enabled: true },
         {
           kind: 'answer' as const,
           label: m.form_criterion_answer(),
@@ -270,6 +274,9 @@
     </div>
     <p class={CONTROL_HINT_CLASS}>{m.form_grid_currency_hint()}</p>
     <p class={CONTROL_HINT_CLASS}>{m.form_grid_unavailable_hint()}</p>
+    {#if guestsPayOthers}
+      <p class={CONTROL_HINT_CLASS}>{m.form_price_grid_guest_tier()}</p>
+    {/if}
     <p class={CONTROL_HINT_CLASS}>{m.form_grid_toggle_hint()}</p>
   {/if}
 </div>

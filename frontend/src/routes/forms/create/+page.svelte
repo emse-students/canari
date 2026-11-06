@@ -40,12 +40,7 @@
     emptyCotisationSettings,
     forgetTierSelection,
   } from '$lib/forms/cotisationSettings';
-  import {
-    matrixPayload,
-    matrixProblem,
-    pricesOnProfile,
-    type PriceMatrix,
-  } from '$lib/pricing/priceMatrix';
+  import { matrixPayload, matrixProblem, type PriceMatrix } from '$lib/pricing/priceMatrix';
   import { gridProblemMessage } from '$lib/pricing/gridProblem';
   import { formSummary } from '$lib/forms/summary';
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
@@ -56,6 +51,9 @@
     fileQuestionProblem,
     hasFileQuestion,
   } from '$lib/forms/fileQuestion';
+  import { formConfigConflicts, type GuestPricedGrid } from '$lib/forms/formOptionRules';
+  import { editorOptionState, formConflictMessage } from '$lib/forms/formOptionConflict';
+  import { Log } from '$lib/utils/Log';
   import { CircleAlert, FileText } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -191,6 +189,17 @@
   );
 
   const formHasFile = $derived(hasFileQuestion(items));
+  /** The options as the shared rule reads them: what every switch and the save are judged by. */
+  const optionState = $derived(
+    editorOptionState({
+      anonymous,
+      isPublic,
+      requiresPayment,
+      grantsCotisation: cotisation.grantsCotisation,
+      submitCondition,
+      items,
+    })
+  );
 
   async function handleSave() {
     if (titleMissing) {
@@ -201,13 +210,18 @@
       error = m.form_error_association_required();
       return;
     }
-    const fileProblem = fileQuestionProblem({
-      items,
-      isPublic,
-      anonymous,
-      fileRetentionDays,
-      submitCondition,
-    });
+    // The server's refusal, said first and in the reader's language: the same rule, whichever
+    // switch was turned on last (`formOptionRules.ts`).
+    const [conflict] = formConfigConflicts(
+      optionState,
+      matrixPayload(priceMatrix, requiresPayment) as GuestPricedGrid | null
+    );
+    if (conflict) {
+      Log.d('forms-editor', `save refused before sending: ${conflict}`);
+      error = formConflictMessage(conflict);
+      return;
+    }
+    const fileProblem = fileQuestionProblem({ items, fileRetentionDays, submitCondition });
     if (fileProblem) {
       error = fileProblem;
       return;
@@ -328,7 +342,7 @@
   <!-- 2. Money -->
   <FormPaymentSection
     bind:requiresPayment
-    {anonymous}
+    {optionState}
     {isPublic}
     bind:basePrice
     bind:allowCashPayment
@@ -355,8 +369,7 @@
       bind:anonymous
       anonymousFixed={false}
       bind:isPublic
-      profilePricing={pricesOnProfile(priceMatrix, requiresPayment)}
-      {requiresPayment}
+      {optionState}
       bind:opensAt
       bind:submitCondition
       bind:settings={cotisation}
