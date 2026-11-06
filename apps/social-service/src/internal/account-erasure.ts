@@ -197,6 +197,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'channel_roles.permissions': NO_ACCOUNT('the permission names of a role'),
   'channel_members.roleIds': NO_ACCOUNT('role ids of one member'),
   'forms.items': NO_ACCOUNT('the questions of a form'),
+  'submissions.lines': NO_ACCOUNT(
+    'the priced lines of one submission (migration 137): product id, cell, quantity, unit price'
+  ),
 
   'association_products.priceMatrix': NO_ACCOUNT('prices by tag of a product'),
   'association_products.requiredTags': NO_ACCOUNT('tag names a buyer must hold'),

@@ -1195,6 +1195,13 @@ export (WP-G4) build on it.** Decided by the owner on 2026-11-06; design, use ca
 packages: the forms capability audit of 2026-11-06 (`docs/wiki/forms-capability-audit-2026-11-06.md`),
 section 4.
 
+**The builders do not OFFER the type yet.** `QUESTION_TYPES` (frontend) lists it, because a form may
+hold it and the server's `SUPPORTED_QUESTION_TYPES` must equal that list; the two pickers
+(`FormBuilder.svelte`, `FormQuestionsSection.svelte`) read `AUTHORABLE_QUESTION_TYPES`, an explicit
+list of the types whose editor exists (`questionTypes.ts`, asserted by `questionTypes.test.ts`).
+Offering it before WP-G3 would hand people a question every save refuses
+(`PRODUCT_GRID_DEFINITION_MISSING`). WP-G3 adds `product_grid` to that list with its editor.
+
 A new question type - NOT a mode of the survey grids (`matrix_single`, `matrix_multiple`): an
 order, rows x columns ("Vert" x "M"), each cell a quantity, each unit at the price of the payer's
 category. Always required; no stock (a pre-order); no total cap per order (the cap per cell is
@@ -1268,7 +1275,9 @@ seat; the lines stay). A hidden grid is neither required, charged nor stored.
 
 **`submissions.lines`** (migration 137, `jsonb NULL`, additive, not held): per ordered cell
 `{ itemId, itemLabel, rowId, rowLabel, colId, colLabel, quantity, unitCents, lineCents, tierId,
-tierLabel }`, null on an answer without a grid. In the submitter's and the manager's views.
+tierLabel }`, null on an answer without a grid. In the submitter's and the manager's views. It
+holds no account id, so an account erasure leaves it as it is (`NO_ACCOUNT` in
+`internal/account-erasure.ts`, which the coverage spec requires of every jsonb column).
 
 **The answers validator** (`IsValidAnswers`) accepts ONE level of object (at most 600 keys of at
 most 200 characters, values string | string[] | number) - the shape the survey grids' D1 fix also

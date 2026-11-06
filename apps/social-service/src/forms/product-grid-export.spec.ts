@@ -7,6 +7,7 @@ import {
 } from './export-labels';
 import { guestReference } from './guest-receipt';
 import type { ProductGridLine } from './product-grid-contract';
+import { productGridExportLabels } from './product-grid-export';
 
 /**
  * THE PRICED GRID IN THE XLSX, READ BACK: the main sheet's "Vert / M x2; Noir / L x1", one
@@ -228,6 +229,14 @@ describe('the priced grid in the XLSX export', () => {
     await expect(makeService().exportSubmissions('f1', older)).rejects.toMatchObject({
       response: { code: 'EXPORT_LABELS_PRODUCT_GRID_MISSING' },
     });
+  });
+
+  it('asks no grid words of a form without a grid: the export of any other form is unchanged', () => {
+    const { productGrid: _words, ...older } = LABELS;
+    const items = [{ type: 'short_text' }, { type: 'matrix_single' }, { type: 'file' }];
+    expect(productGridExportLabels(items, older)).toBeNull();
+    expect(productGridExportLabels(null, older)).toBeNull();
+    expect(parseExportLabels(JSON.stringify(older)).productGrid).toBeUndefined();
   });
 
   it('parseExportLabels refuses an incomplete set of grid words', () => {
