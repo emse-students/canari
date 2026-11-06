@@ -9,6 +9,7 @@
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { Trash2, X, Plus, GripVertical, ImagePlus, GitBranch, ChevronDown } from '@lucide/svelte';
   import { QUESTION_TYPES } from '$lib/forms/questionTypes';
+  import { duplicateLabels, gridRowLabels } from '$lib/forms/answerBounds';
   import { m } from '$lib/paraglide/messages';
 
   let {
@@ -56,6 +57,20 @@
   let showTypePicker = $state(false);
 
   const isMatrix = $derived(['matrix_single', 'matrix_multiple'].includes(item.type));
+  // A grid answer is keyed by its row label, so two rows of one label are one answer (D4): marked
+  // here as it is typed, refused by the page before the save and by the server at it.
+  const duplicateRows = $derived(
+    isMatrix ? duplicateLabels(gridRowLabels(item.rows)) : new Set<string>()
+  );
+  const duplicateColumns = $derived(
+    isMatrix
+      ? duplicateLabels(
+          (item.options ?? [])
+            .filter((o: any) => o.label?.trim())
+            .map((o: any) => o.label as string)
+        )
+      : new Set<string>()
+  );
   // A DENYLIST: every type not named here gets the options editor. A type with no options (a file
   // included) must be added, or its card grows an options list it will never use.
   const hasOptions = $derived(
@@ -589,6 +604,11 @@
                 </div>
               {/if}
             </div>
+            {#if duplicateColumns.has(opt.label)}
+              <p class="text-red-err mt-1 text-xs font-semibold sm:pl-7" role="alert">
+                {m.form_builder_grid_duplicate_inline()}
+              </p>
+            {/if}
           </div>
         {/each}
       </div>
@@ -653,6 +673,11 @@
                   placeholder={m.form_builder_row_placeholder()}
                   class="{fieldClass} sm:hidden"
                 />
+                {#if duplicateRows.has(row.value)}
+                  <p class="text-red-err mt-1 text-xs font-semibold sm:pl-7" role="alert">
+                    {m.form_builder_grid_duplicate_inline()}
+                  </p>
+                {/if}
               </div>
             {/each}
           </div>
@@ -665,6 +690,19 @@
             <Plus size={18} strokeWidth={2.5} />
             {m.form_builder_add_row()}
           </button>
+
+          {#if item.required}
+            <!-- D5: a required grid wants one answered row, unless every row is asked for. -->
+            <Toggle
+              label={m.form_builder_require_every_row()}
+              bind:checked={
+                () => item.requireEveryRow === true,
+                (on) => {
+                  item.requireEveryRow = on;
+                }
+              }
+            />
+          {/if}
         </div>
       {/if}
     </div>

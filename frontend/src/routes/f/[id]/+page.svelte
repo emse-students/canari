@@ -22,7 +22,7 @@
     type Selections,
   } from '$lib/forms/fillAnswers';
   import { fillPriceState, optionModifierOf } from '$lib/forms/fillPricing';
-  import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
+  import { formSubmitRefusalMessage } from '$lib/forms/answerBounds';
   import { formatFormOpensAt } from '$lib/posts/postComposerDraft';
   import FormHeader from '$lib/components/forms/FormHeader.svelte';
   import FormQuestion from '$lib/components/forms/FormQuestion.svelte';
@@ -139,9 +139,9 @@
       submitted = true;
     } catch (e) {
       Log.d('PublicForm', `submit refused form=${form.id}: ${e}`);
-      // A payment refusal is worded in the reader's language from its code; anything else is the
-      // server's sentence, English and for the log - the guest reads ours.
-      error = providerRefusalMessage(e) ?? m.form_guest_submit_failed();
+      // Worded in the reader's language from the refusal's code (a form's, then a payment's); the
+      // server's sentence is English and for the log - the guest reads ours.
+      error = formSubmitRefusalMessage(e, m.form_guest_submit_failed());
     } finally {
       submitting = false;
     }

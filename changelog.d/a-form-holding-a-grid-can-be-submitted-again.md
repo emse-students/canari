@@ -1,0 +1,3 @@
+### Fixed - a form holding a grid question can be submitted again
+
+From 2026-06-01 every form with a visible grid (single or multiple choice per row) was refused at submit, member and guest alike, with an English error: the server's answer validator took no grid answer, and no test sent one through it. The server now accepts and checks grid answers, a required grid wants one answered row unless "every row" is asked, only answered questions are sent, a long text shows its 2000-character limit, duplicate grid labels are refused at save, and every submit refusal is worded in French from its code. Mechanism: [forms](docs/wiki/frontend/modules/forms.md#answers-grids-and-the-codes-a-submit-is-refused-with-2026-11-06).
