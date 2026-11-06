@@ -42,14 +42,20 @@ const reel: PostEntity = {
   updatedAt: '2026-10-15T08:00:00.000Z',
 } as unknown as PostEntity;
 
-function mountSlide(props: { active?: boolean; onLike?: () => boolean }) {
+function mountSlide(props: { active?: boolean; onLike?: () => boolean; post?: PostEntity }) {
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
   const target = document.createElement('div');
   document.body.appendChild(target);
   const instance = mount(ReelSlide, {
     target,
-    props: { post: reel, authToken: 't', active: props.active ?? true, preload: false, ...props },
+    props: {
+      authToken: 't',
+      active: props.active ?? true,
+      preload: false,
+      ...props,
+      post: props.post ?? reel,
+    },
   });
   mounted.push(() => unmount(instance));
   flushSync();
@@ -110,6 +116,27 @@ it("a double tap on the player's bar is the bar's", () => {
   tapOn(playPause, 1);
   tapOn(playPause, 2);
   expect(onLike).not.toHaveBeenCalled();
+});
+
+it("a caption's link is tappable, and a double tap on it is the link's, never a like", () => {
+  const onLike = vi.fn(() => true);
+  const { target } = mountSlide({
+    onLike,
+    post: { ...reel, markdown: 'voir https://example.org/page' } as PostEntity,
+  });
+  const link = target.querySelector<HTMLAnchorElement>(
+    '[data-reel-caption] .post-markdown a[href]'
+  )!;
+  expect(link.getAttribute('href')).toBe('https://example.org/page');
+  // The caption is pointer-transparent; its links are not (owner, 2026-11-06).
+  expect(link.closest('[data-reel-caption] .post-markdown')!.className).toContain(
+    '[&_a]:pointer-events-auto'
+  );
+  link.addEventListener('click', (e) => e.preventDefault());
+  tapOn(link, 1);
+  tapOn(link, 2);
+  expect(onLike).not.toHaveBeenCalled();
+  expect(hearts(target)).toBe(0);
 });
 
 it('a reel from a conversation (no like) and a reel off screen take no double tap', () => {

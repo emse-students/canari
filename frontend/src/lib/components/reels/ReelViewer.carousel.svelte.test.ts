@@ -259,10 +259,17 @@ describe('a carousel page in the reel viewer', () => {
     window.dispatchEvent(pointer('pointermove', 200));
     window.dispatchEvent(pointer('pointermove', 100));
     window.dispatchEvent(pointer('pointerup', 100));
-    // The browser dispatches the click in the same task as the pointerup.
+    // The browser dispatches the click in the same task as the pointerup. The document's link
+    // handler (capture) must never see it live, or a drag ending on a caption's link would open
+    // it: the window's capture stops it before the document.
+    let seenByDocument: boolean | null = null;
+    const documentHandler = (e: Event) => (seenByDocument = e.defaultPrevented);
+    document.addEventListener('click', documentHandler, true);
     const click = new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 });
-    document.querySelector('[data-reel-slide]')!.dispatchEvent(click);
+    document.querySelector('[data-reel-slide] [data-reel-caption]')!.dispatchEvent(click);
+    document.removeEventListener('click', documentHandler, true);
     expect(click.defaultPrevented).toBe(true);
+    expect(seenByDocument).toBeNull();
     await settle();
     expect(current()).toBe(1);
     // The next click is a tap again.

@@ -96,7 +96,7 @@ picture - the photo pages of the CanaReels viewer ([client half](../frontend/mod
 The clause is `SINGLE_PHOTO_POST_SQL` (`posts/full-screen-post-sql.ts`): exactly one element in
 `images`, typed `image` (or untyped with an `image/` mime type, a legacy row), no poll, no form, no
 attached form, no linked calendar event, no `http(s)://` in the text (whose preview the page would
-drop). A column holding JSON `null` or a scalar counts as empty through a `CASE` on
+drop; allowed since 2026-11-06 under `withLinks`, below). A column holding JSON `null` or a scalar counts as empty through a `CASE` on
 `jsonb_typeof` - `jsonb_array_length` raises on it and would fail the page. It is OR-ed into the
 reel filter of every feed arm, behind the same visibility rules, and keys its own cache entry.
 Without `kind=reel` it means nothing. **An older server strips the unknown parameter**
@@ -142,6 +142,22 @@ and videos. The cache key carries `+carousel`. Pinned by `full-screen-post-sql.i
 element, each exclusion; the `carousel` mode is exactly the union of the two clauses) and
 `posts.service.reels.spec.ts` (every arm, `singleMedia` alone never answers a carousel, "means nothing
 without `kind=reel`").
+
+**`withLinks=true` (with `multiMedia=true`, 2026-11-06)** lets a post with a LINK in its text in:
+the single and carousel rules above WITHOUT the `http(s)://` clause (owner: *a photo, video or
+carousel post with a link appears in CanaReels, the link clickable in the caption*;
+[client half](../frontend/modules/reels.md#a-post-with-a-link-in-its-text-owner-2026-11-06)).
+Poll, form, attached form and linked event still keep a post out. The clause is
+`LINKED_MEDIA_POST_SQL`, the mode `carousel-links`, the cache-key suffix `+carousel-links`.
+**It means something only with `multiMedia`** (`singleMediaModeOf`): every installed client up to
+`1.6.6-alpha.1` drops a post with a link (`fullScreenPageOf` reads it as no page and accuses it), and
+none of them sends `withLinks`, so each keeps the rule it was built for; the switch is not given a
+meaning beside an older one because no client would send that pair. A server that does not know
+`withLinks` strips it and keeps the link out, which the current client reads as before. Pinned by
+`full-screen-post-sql.integration.spec.ts` (the `carousel-links` mode is exactly the `carousel` mode
+plus the three rows whose only extra is a link; poll, form, attached form and event rows stay out)
+and `posts.service.reels.spec.ts` (every arm; `withLinks` without `multiMedia`, and `multiMedia`
+without `withLinks`, keep the link out).
 
 **Saving a feed video (decided 2026-11-06, reversible).** The 2026-10-09 rule *any reel can be
 saved* now covers a feed video shown in the viewer. It is saved under its OWN type, never relabelled

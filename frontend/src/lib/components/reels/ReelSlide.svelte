@@ -410,7 +410,14 @@
       {/if}
       {#if post.markdown}
         <!-- EXPANDED, THE TEXT SCROLLS ITSELF, up to half the screen: `data-reel-caption-open` keeps
-             the viewer's swipe off it, and `touch-pan-y` lets the engine scroll it. -->
+             the viewer's swipe off it, and `touch-pan-y` lets the engine scroll it.
+             ITS LINKS AND MENTIONS ARE TAPPABLE, folded or not (owner, 2026-11-06: a post with a
+             link is in CanaReels): the text is pointer-transparent, its `a` and `button` are not.
+             They are the post card's own (`PostMarkdown` -> `PostMentionLink` -> `AppLink`, and
+             the app's link handler with its Safe Browsing gate). A tap on one is never a double
+             tap (`tapBelongsToInnerControl`) nor a swipe (no movement); a drag that starts on one
+             still pages, as everywhere on the reel. A long URL wraps anywhere, never past the
+             frame. -->
         <div
           class="mt-1 min-h-0 {expanded
             ? 'pointer-events-auto max-h-[50dvh] touch-pan-y overflow-y-auto overscroll-contain'
@@ -420,7 +427,9 @@
           <PostMarkdown
             markdown={post.markdown}
             bind:element={textEl}
-            class="text-sm leading-snug opacity-90 {expanded ? '' : 'line-clamp-2'}"
+            class="text-sm leading-snug opacity-90 [&_a]:pointer-events-auto [&_a]:wrap-anywhere [&_a]:text-amber-300 [&_button]:pointer-events-auto {expanded
+              ? ''
+              : 'line-clamp-2'}"
           />
         </div>
         {#if overflows || expanded}

@@ -55,6 +55,8 @@ export interface ListPostsParams {
   singleMedia?: boolean;
   /** With `kind: 'reel'`, the posts of 2..10 pictures and videos come too, with the single ones; wins over both. */
   multiMedia?: boolean;
+  /** With `multiMedia`, a post with a link in its text comes too. */
+  withLinks?: boolean;
 }
 
 /** The kind a page is narrowed to: `reel` on the viewer's list whatever was asked, else the request's. */

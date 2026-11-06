@@ -27,6 +27,7 @@ import type { PostMediaRetentionService } from './post-media-retention.service';
 import type { PushService } from '../push/push.service';
 import { DAY_MS, REEL_RETENTION_DAYS } from './reel.constants';
 import {
+  LINKED_MEDIA_POST_SQL,
   MULTI_MEDIA_POST_SQL,
   SINGLE_MEDIA_POST_SQL,
   SINGLE_PHOTO_POST_SQL,
@@ -302,6 +303,57 @@ describe('reads exclude a reel past its month', () => {
     const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
     expect(sql).toContain(SINGLE_MEDIA_POST_SQL);
     expect(sql).not.toContain(MULTI_MEDIA_POST_SQL);
+  });
+
+  it('with withLinks (owner, 2026-11-06), a post with a link comes too, in EVERY feed arm', async () => {
+    for (const feed of ['all', 'associations', 'custom'] as const) {
+      const { service, queries } = makeService({});
+      await service.listPosts({
+        limit: 10,
+        offset: 0,
+        feed,
+        kind: 'reel',
+        withLinks: true,
+        multiMedia: true,
+        singleMedia: true,
+        singlePhotos: true,
+        viewerUserId: 'alice',
+      });
+      const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
+      expect(sql).toContain(LINKED_MEDIA_POST_SQL);
+      expect(sql).not.toContain(`!~* 'https?://'`);
+    }
+  });
+
+  it('withLinks without multiMedia keeps the old rule: an installed client drops a link', async () => {
+    const { service, queries } = makeService({});
+    await service.listPosts({
+      limit: 10,
+      offset: 0,
+      feed: 'all',
+      kind: 'reel',
+      withLinks: true,
+      singleMedia: true,
+    });
+    const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
+    expect(sql).toContain(SINGLE_MEDIA_POST_SQL);
+    expect(sql).not.toContain(LINKED_MEDIA_POST_SQL);
+  });
+
+  it('multiMedia alone keeps the link out: the 1.6.6-alpha.1 client cannot draw one', async () => {
+    const { service, queries } = makeService({});
+    await service.listPosts({
+      limit: 10,
+      offset: 0,
+      feed: 'all',
+      kind: 'reel',
+      multiMedia: true,
+      singleMedia: true,
+      singlePhotos: true,
+    });
+    const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
+    expect(sql).toContain(MULTI_MEDIA_POST_SQL);
+    expect(sql).not.toContain(LINKED_MEDIA_POST_SQL);
   });
 
   it('multiMedia means nothing without kind=reel', async () => {
