@@ -16,7 +16,13 @@
   } from '$lib/associations/activePaymentProvider.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { createForm, type AudienceCondition, type CreateFormPayload } from '$lib/forms/api';
+  import {
+    createForm,
+    uploadFormItemImage,
+    type AudienceCondition,
+    type CreateFormPayload,
+  } from '$lib/forms/api';
+  import { questionImageRefusalMessage } from '$lib/forms/questionImage';
   import { POST_NEW_FORM_ID_KEY, loadPostComposerDraft } from '$lib/posts/postComposerDraft';
   import {
     canAssociationReceiveFormPayments,
@@ -301,7 +307,11 @@
         );
       }
     } catch (e: any) {
-      error = formCodeMessage(refusalCode(e)) ?? providerRefusalMessage(e) ?? e.message;
+      error =
+        questionImageRefusalMessage(e) ??
+        formCodeMessage(refusalCode(e)) ??
+        providerRefusalMessage(e) ??
+        e.message;
     } finally {
       isSubmitting = false;
     }
@@ -393,6 +403,7 @@
       {gridFault}
       onPricedGridAdded={() => (allowMultipleSubmissions = true)}
       {reveal}
+      imageUploadFn={async (file) => (await uploadFormItemImage(null, file)).imageUrl}
     />
   </div>
 

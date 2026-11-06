@@ -9,6 +9,7 @@ import { m } from '$lib/paraglide/messages';
 import { productGridItemRefusal } from '$lib/forms/productGridContract';
 import {
   addAxisEntries,
+  euroInputText,
   newProductGrid,
   productGridPayload,
   setPrice,
@@ -197,6 +198,17 @@ describe('prices', () => {
     expect(valid(state.grid)).toBeNull();
   });
 
+  it('shows what it STORED: an unreadable price clears, a third decimal reads rounded', () => {
+    const { target, state } = render();
+    const field = target.querySelector<HTMLInputElement>('[data-testid="price-single"]')!;
+    type(field, '1e3');
+    expect(state.grid.pricing.prices._all['*']).toBeNull();
+    expect(field.value).toBe('');
+    type(field, '19,999');
+    expect(state.grid.pricing.prices._all['*']).toBe(20);
+    expect(field.value).toBe(euroInputText(20));
+  });
+
   it('per row: a price beside each row, seeded from the single price', () => {
     const { target, state } = render();
     byText(target, m.form_pgrid_mode_per_row()).click();
@@ -270,7 +282,10 @@ describe('the preview', () => {
     expect(target.querySelector('[data-testid="grid-preview-desktop"]')).not.toBeNull();
     byText(target, m.form_pgrid_preview_phone()).click();
     flushSync();
-    const phone = target.querySelector('[data-testid="grid-preview-phone"]')!;
+    // The fill page's own component draws both; the preview forces the phone one and hides the other.
+    const preview = target.querySelector('[data-testid="grid-preview-phone"]')!;
+    expect(preview.querySelector('[data-grid-desktop]')!.classList).toContain('hidden');
+    const phone = preview.querySelector('[data-grid-phone]')!;
     expect(phone.textContent).toContain('Noir');
     expect(phone.querySelectorAll('.line-through')).toHaveLength(1);
   });

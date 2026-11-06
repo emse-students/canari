@@ -1,6 +1,7 @@
 <script lang="ts">
   import { kindHasSection } from '$lib/associations/editSections';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
+  import { questionImageRefusalMessage } from '$lib/forms/questionImage';
   import { formCodeMessage, formItemsProblem } from '$lib/forms/answerBounds';
   import { refusalCode } from '$lib/utils/apiRefusal';
   import { resolve } from '$app/paths';
@@ -26,6 +27,7 @@
     type Form,
   } from '$lib/forms/api';
   import {
+    associationLogoSrc,
     canAssociationReceiveFormPayments,
     getAssociation,
     type Association,
@@ -333,7 +335,11 @@
       await updateForm(formId, payload);
       goto(resolve('/forms'));
     } catch (e: any) {
-      error = formCodeMessage(refusalCode(e)) ?? providerRefusalMessage(e) ?? e.message;
+      error =
+        questionImageRefusalMessage(e) ??
+        formCodeMessage(refusalCode(e)) ??
+        providerRefusalMessage(e) ??
+        e.message;
     } finally {
       isSubmitting = false;
     }
@@ -445,7 +451,7 @@
         {#if imageUrl}
           <div class="border-cn-border relative overflow-hidden rounded-xl border">
             <img
-              src={imageUrl}
+              src={associationLogoSrc(imageUrl) ?? ''}
               alt={m.form_image_section()}
               class="max-h-56 w-full object-cover"
               loading="lazy"

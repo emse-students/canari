@@ -27,9 +27,10 @@ describe('the question types the builders offer', () => {
     expect(missing).toEqual([]);
   });
 
-  it('the fill page draws no priced grid before WP-G2, and only canonical types', () => {
+  it('the fill page draws every canonical type, the priced grid included (WP-G2)', () => {
     const canonical = QUESTION_TYPES.map((t) => t.value);
     for (const value of FILLABLE_QUESTION_TYPE_VALUES) expect(canonical).toContain(value);
-    expect(FILLABLE_QUESTION_TYPE_VALUES).not.toContain('product_grid');
+    expect([...FILLABLE_QUESTION_TYPE_VALUES].sort()).toEqual([...canonical].sort());
+    expect(FILLABLE_QUESTION_TYPE_VALUES).toContain('product_grid');
   });
 });

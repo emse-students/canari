@@ -119,7 +119,8 @@ maybe('the priced grid against PostgreSQL (migration 137)', () => {
       } as any,
       ds.getRepository(FormRespondent),
       {} as any,
-      { enabled: () => false } as any
+      { enabled: () => false } as any,
+      {} as any // FormItemImagesService
     );
     jest.spyOn(axios, 'post').mockImplementation(async (url: string, body: any) => {
       if (url.endsWith('payments/cancel-request')) return { data: { outcome: 'cancelled' } };

@@ -74,7 +74,11 @@ export const AUTHORABLE_QUESTION_TYPES: QuestionType[] = QUESTION_TYPES.filter((
 
 /**
  * The types the fill page DRAWS an input for (`fillAnswers.ts` `isKnownQuestionType`); any other
- * is drawn as "update the app" and blocks a send when required. Not `QUESTION_TYPES` either:
- * `product_grid` joins this list with its fill page (WP-G2), which may ship apart from its editor.
+ * is drawn as "update the app" and blocks a send when required. Not `QUESTION_TYPES` either: a type
+ * joins this list with its fill page, which may ship apart from its editor - `product_grid` did
+ * (WP-G2, `ProductGridQuestion.svelte`) before the grid editor (WP-G3).
  */
-export const FILLABLE_QUESTION_TYPE_VALUES: readonly string[] = [...TYPES_WITH_EVERY_SURFACE];
+export const FILLABLE_QUESTION_TYPE_VALUES: readonly string[] = [
+  ...TYPES_WITH_EVERY_SURFACE,
+  'product_grid',
+];

@@ -3,7 +3,7 @@
   import { formatAmount } from '$lib/forms/fillAnswers';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
-  import { Ban, Paperclip, Upload, X } from '@lucide/svelte';
+  import { Ban, CircleAlert, Paperclip, Upload, X } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { uploadFormAnswerFile, type UploadedAnswerFile } from '$lib/forms/api';
   import {
@@ -14,6 +14,8 @@
   import { refusalStatus } from '$lib/utils/apiRefusal';
   import { UploadAbortedError, type XhrUploadOptions } from '$lib/utils/uploadXhr';
   import { Log } from '$lib/utils/Log';
+  import { associationLogoSrc } from '$lib/associations/api';
+  import { questionImageAlt } from '$lib/forms/questionImage';
   import { ANSWER_MAX_TEXT_LENGTH } from '$lib/forms/answerBounds';
 
   /**
@@ -57,6 +59,11 @@
     fileHint?: string;
     /** What a 429 (too many files uploaded and not sent) reads as. Defaults to the form's. */
     fileTooManyError?: string;
+    /**
+     * Why the page refused to send because of THIS question - said under it, the card drawn in the
+     * error colour. Null when the question is not the one at fault.
+     */
+    error?: string | null;
   }
 
   let {
@@ -73,6 +80,7 @@
     uploadFile = (itemId, file, transport) => uploadFormAnswerFile(formId, itemId, file, transport),
     fileHint,
     fileTooManyError,
+    error = null,
   }: Props = $props();
 
   /**
@@ -89,6 +97,8 @@
   let upload = $state.raw<{ controller: AbortController; percent: number | null } | null>(null);
   let fileError = $state<string | null>(null);
   const uploading = $derived(upload !== null);
+  /** The question's image, absolute on a native shell (`associationLogoSrc` prefixes the media base). */
+  const questionImageSrc = $derived(associationLogoSrc(item.imageUrl));
 
   $effect(() => {
     onUploadingChange?.(uploading);
@@ -202,7 +212,12 @@
   {/if}
 {/snippet}
 
-<div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-5 shadow-sm">
+<div
+  id={`q-${item.id}`}
+  class="rounded-2xl bg-(--cn-surface) p-4 shadow-sm sm:px-6 sm:py-5 {error
+    ? 'border-red-err border-2'
+    : 'border-cn-border border'}"
+>
   <!-- svelte-ignore a11y_label_has_associated_control -->
   <label class="mb-1.5 flex items-start gap-2">
     <span
@@ -210,9 +225,9 @@
     >
       {index + 1}
     </span>
-    <span class="text-text-main text-sm leading-snug font-bold">
+    <span class="text-text-main text-base leading-snug font-bold">
       {item.label}
-      {#if item.required}<span class="ml-0.5 text-red-500">*</span>{/if}
+      {#if item.required}<span class="text-red-err ml-0.5" aria-hidden="true">*</span>{/if}
     </span>
   </label>
 
@@ -220,10 +235,18 @@
     <p class="text-text-muted mb-3 ml-6 text-xs leading-relaxed">{item.description}</p>
   {/if}
 
-  {#if item.imageUrl}
-    <div class="border-cn-border/60 mb-3 ml-6 overflow-hidden rounded-xl border">
-      <img src={item.imageUrl} alt="" class="max-h-48 w-full object-cover" loading="lazy" />
-    </div>
+  {#if questionImageSrc}
+    <!-- The whole picture, never cropped: a question's image is often what it asks about (a plan,
+         a menu). Its src goes through the public media base, so a native shell reaches the API. -->
+    <figure class="border-cn-border/60 bg-cn-bg mb-3 ml-6 overflow-hidden rounded-lg border">
+      <img
+        src={questionImageSrc}
+        alt={questionImageAlt(item)}
+        class="mx-auto block h-auto max-h-96 w-auto max-w-full object-contain"
+        loading="lazy"
+        decoding="async"
+      />
+    </figure>
   {/if}
 
   {#if item.type === 'short_text'}
@@ -442,5 +465,11 @@
       <!-- A type this build does not know (the coming product_grid): never an empty card. -->
       {m.form_view_update_app_to_answer()}
     </div>
+  {/if}
+
+  {#if error}
+    <p role="alert" class="text-red-err mt-3 flex items-center gap-2 text-xs font-bold">
+      <CircleAlert size={16} class="shrink-0" />{error}
+    </p>
   {/if}
 </div>

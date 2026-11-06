@@ -6,7 +6,8 @@
   import ProductGridEditor from './ProductGridEditor.svelte';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
-  import type { MembershipTier } from '$lib/associations/api';
+  import { associationLogoSrc, type MembershipTier } from '$lib/associations/api';
+  import { QUESTION_IMAGE_ACCEPT, questionImageUploadError } from '$lib/forms/questionImage';
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import {
     ArrowDown,
@@ -28,6 +29,7 @@
   import { PRODUCT_GRID_TYPE } from '$lib/forms/productGridContract';
   import { newProductGrid, type ProductGridTierDimension } from '$lib/forms/productGridEditor';
   import { m } from '$lib/paraglide/messages';
+  import { Log } from '$lib/utils/Log';
 
   let {
     item = $bindable(),
@@ -286,16 +288,22 @@
   let uploadingImage = $state(false);
   let imageUploadError = $state('');
 
+  /**
+   * Uploads the picked file as this question's image - a first one or a replacement. The old image
+   * is not deleted here: the server releases it once the SAVE leaves no question citing it.
+   */
   async function handleImageUpload(e: Event) {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
     if (!file || !imageUploadFn) return;
+    Log.d('FORMS', `question image: upload ${file.type} ${file.size} bytes`);
     uploadingImage = true;
     imageUploadError = '';
     try {
       item.imageUrl = await imageUploadFn(file);
-    } catch (err: any) {
-      imageUploadError = err.message || 'Error';
+    } catch (err) {
+      Log.i('FORMS', `question image: upload refused - ${String(err)}`);
+      imageUploadError = questionImageUploadError(err);
     } finally {
       uploadingImage = false;
       input.value = '';
@@ -446,8 +454,8 @@
       </div>
     </div>
 
-    <!-- Optional description -->
-    <div class="mb-3">
+    <!-- Optional description and image: one row of affordances, each opening its own field -->
+    <div class="mb-3 space-y-3">
       {#if item.description !== undefined}
         <div class="relative">
           <Textarea
@@ -465,63 +473,96 @@
             aria-label={m.form_builder_remove_desc_title()}><X size={14} /></button
           >
         </div>
-      {:else}
-        <button
-          type="button"
-          onclick={() => {
-            item.description = '';
-          }}
-          class="text-text-muted hover:text-text-main flex items-center gap-1 text-xs font-semibold transition-colors"
-        >
-          <Plus size={12} />
-          {m.form_builder_add_desc()}
-        </button>
       {/if}
-    </div>
 
-    <!-- Optional image -->
-    {#if imageUploadFn !== undefined}
-      <div class="mb-3">
-        {#if item.imageUrl}
-          <div class="border-cn-border relative overflow-hidden rounded-xl border">
-            <img
-              src={item.imageUrl}
-              alt="Question"
-              class="max-h-40 w-full object-cover"
-              loading="lazy"
+      {#if item.imageUrl}
+        <div class="flex items-start gap-3">
+          <img
+            src={associationLogoSrc(item.imageUrl) ?? ''}
+            alt={m.form_builder_image_preview_alt()}
+            class="border-cn-border h-20 w-28 shrink-0 rounded-lg border object-cover"
+            loading="lazy"
+          />
+          <div class="flex min-w-0 flex-1 flex-col gap-2">
+            <Input
+              bind:value={item.imageAlt}
+              maxlength={300}
+              placeholder={m.form_builder_image_alt_placeholder()}
+              aria-label={m.form_builder_image_alt_placeholder()}
             />
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+              {#if imageUploadFn !== undefined}
+                <label
+                  class="text-text-muted hover:text-text-main flex cursor-pointer items-center gap-1 text-xs font-semibold whitespace-nowrap transition-colors {uploadingImage
+                    ? 'pointer-events-none opacity-50'
+                    : ''}"
+                >
+                  <ImagePlus size={12} />
+                  {uploadingImage
+                    ? m.form_builder_image_uploading()
+                    : m.form_builder_replace_image()}
+                  <input
+                    type="file"
+                    accept={QUESTION_IMAGE_ACCEPT}
+                    class="sr-only"
+                    disabled={uploadingImage}
+                    onchange={handleImageUpload}
+                  />
+                </label>
+              {/if}
+              <button
+                type="button"
+                onclick={() => {
+                  item.imageUrl = undefined;
+                  item.imageAlt = undefined;
+                }}
+                class="text-text-muted flex items-center gap-1 text-xs font-semibold whitespace-nowrap transition-colors hover:text-red-500"
+              >
+                <X size={12} />
+                {m.form_builder_remove_image_title()}
+              </button>
+            </div>
+          </div>
+        </div>
+      {/if}
+
+      {#if item.description === undefined || (!item.imageUrl && imageUploadFn !== undefined)}
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+          {#if item.description === undefined}
             <button
               type="button"
               onclick={() => {
-                item.imageUrl = undefined;
+                item.description = '';
               }}
-              class="ui-icon-button absolute top-1.5 right-1.5 rounded-full bg-black/60 text-white hover:bg-black/80"
-              title={m.form_builder_remove_image_title()}
-              aria-label={m.form_builder_remove_image_title()}><X size={14} /></button
+              class="text-text-muted hover:text-text-main flex items-center gap-1 text-xs font-semibold transition-colors"
             >
-          </div>
-        {:else}
-          {#if imageUploadError}
-            <p class="mb-1.5 text-xs text-red-500">{imageUploadError}</p>
+              <Plus size={12} />
+              {m.form_builder_add_desc()}
+            </button>
           {/if}
-          <label
-            class="border-cn-border text-text-muted hover:border-cn-yellow/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-3 py-2 text-xs font-semibold transition-colors {uploadingImage
-              ? 'pointer-events-none opacity-50'
-              : ''}"
-          >
-            <ImagePlus size={15} class="shrink-0" />
-            {uploadingImage ? m.form_builder_image_uploading() : m.form_builder_add_image()}
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              class="sr-only"
-              disabled={uploadingImage}
-              onchange={handleImageUpload}
-            />
-          </label>
-        {/if}
-      </div>
-    {/if}
+          {#if !item.imageUrl && imageUploadFn !== undefined}
+            <label
+              class="text-text-muted hover:text-text-main flex cursor-pointer items-center gap-1 text-xs font-semibold transition-colors {uploadingImage
+                ? 'pointer-events-none opacity-50'
+                : ''}"
+            >
+              <Plus size={12} />
+              {uploadingImage ? m.form_builder_image_uploading() : m.form_builder_add_image()}
+              <input
+                type="file"
+                accept={QUESTION_IMAGE_ACCEPT}
+                class="sr-only"
+                disabled={uploadingImage}
+                onchange={handleImageUpload}
+              />
+            </label>
+          {/if}
+        </div>
+      {/if}
+      {#if imageUploadError}
+        <p class="text-xs text-red-500" role="alert">{imageUploadError}</p>
+      {/if}
+    </div>
 
     {#if isPricedGrid && item.productGrid}
       <ProductGridEditor
@@ -532,6 +573,7 @@
         {orderedCells}
         {isPublic}
         problem={gridProblem}
+        title={item.label}
       />
     {:else if item.type === 'file'}
       <!-- A file question has no options to edit: the line says who reads the file and when it goes. -->

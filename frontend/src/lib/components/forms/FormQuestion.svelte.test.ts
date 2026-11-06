@@ -200,4 +200,47 @@ describe('FormQuestion - a file on its way', () => {
     expect(target.querySelector('[role=alert]')?.textContent).toBe(m.form_file_error_heic());
     expect(uploadFormAnswerFile).not.toHaveBeenCalled();
   });
+
+  it("draws a question's image whole, under its help, with the alt its author wrote", () => {
+    const { target } = render(
+      {
+        id: 'q',
+        label: 'Ton plat',
+        description: 'Regarde le menu',
+        required: false,
+        type: 'short_text',
+        imageUrl: '/api/media/public/11111111-1111-4111-8111-111111111111',
+        imageAlt: 'Le menu du gala',
+      },
+      ''
+    );
+    const img = target.querySelector('figure img') as HTMLImageElement;
+    expect(img.getAttribute('src')).toMatch(
+      /\/api\/media\/public\/11111111-1111-4111-8111-111111111111$/
+    );
+    expect(img.getAttribute('alt')).toBe('Le menu du gala');
+    expect(img.getAttribute('loading')).toBe('lazy');
+    expect(img.className).toContain('object-contain');
+    // Under the help text, not above it.
+    const help = target.querySelector('p')!;
+    expect(help.compareDocumentPosition(img) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('names the question in the alt when its author wrote none, and draws nothing without an image', () => {
+    const withImage = render(
+      {
+        id: 'q',
+        label: 'Ton plat',
+        required: false,
+        type: 'short_text',
+        imageUrl: '/api/media/public/11111111-1111-4111-8111-111111111111',
+      },
+      ''
+    );
+    expect(withImage.target.querySelector('img')!.getAttribute('alt')).toBe(
+      m.form_question_image_alt({ label: 'Ton plat' })
+    );
+    const without = render({ id: 'q2', label: 'Nom', required: false, type: 'short_text' }, '');
+    expect(without.target.querySelector('img')).toBeNull();
+  });
 });

@@ -1,8 +1,10 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import type { Form } from '$lib/forms/api';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import { Check, ClipboardList } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { associationLogoSrc } from '$lib/associations/api';
 
   /**
    * THE HEAD OF A FORM BEING FILLED IN: its title, its banner when it has one, and what it says about
@@ -15,15 +17,22 @@
     form: Pick<Form, 'title' | 'imageUrl' | 'description' | 'anonymous'>;
     /** Draws the "already sent" tick beside the title. */
     submitted: boolean;
+    /** What the page adds at the foot of the header: who is answering, at which price category. */
+    children?: Snippet;
   }
 
-  let { form, submitted }: Props = $props();
+  let { form, submitted, children }: Props = $props();
 </script>
 
 <div class="border-cn-border mb-5 overflow-hidden rounded-3xl border bg-(--cn-surface) shadow-sm">
   {#if form.imageUrl}
     <div class="relative">
-      <img src={form.imageUrl} alt="" class="max-h-72 w-full object-cover" loading="lazy" />
+      <img
+        src={associationLogoSrc(form.imageUrl) ?? ''}
+        alt=""
+        class="max-h-72 w-full object-cover"
+        loading="lazy"
+      />
       <div
         class="absolute inset-x-0 bottom-0 h-28 bg-linear-to-t from-black/60 to-transparent"
       ></div>
@@ -59,6 +68,9 @@
     <div class="border-cn-border/60 border-t px-6 py-4">
       <ProfileBioMarkdown source={form.description} />
     </div>
+  {/if}
+  {#if children}
+    <div class="border-cn-border/60 border-t px-6 py-4">{@render children()}</div>
   {/if}
   {#if form.anonymous}
     <p class="border-cn-border/60 text-text-muted border-t px-6 py-3 text-xs">

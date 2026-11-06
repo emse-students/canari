@@ -17,11 +17,14 @@ import {
   productGridItemRefusal,
   productGridLabelKey,
   productGridTierIds,
+  productGridView,
   type ProductGrid,
   type ProductGridAxisEntry,
   type ProductGridDefinitionCode,
   type ProductGridPriceMode,
   type ProductGridTiers,
+  type ProductGridView,
+  type ProductGridViewerPrices,
 } from './productGridContract';
 
 /**
@@ -335,16 +338,27 @@ export function syncTierLists(
 /** U+20AC, built from its code point so this file stays ASCII. */
 const EURO_SIGN = String.fromCharCode(0x20ac);
 
+/** What a typed price may be once cleaned: digits, at most one decimal point, nothing else. */
+const EURO_INPUT_PATTERN = /^(\d+\.?\d*|\.\d+)$/;
+
 /**
- * A typed price, in euros: a comma or a dot as the decimal separator, spaces and a euro sign
- * ignored. Blank or unreadable is null - the inputs never guess a number nobody typed.
+ * A typed price, in euros, ROUNDED TO THE CENT: a comma or a dot as the decimal separator, spaces
+ * and a euro sign ignored. Blank or unreadable is null - the inputs never guess a number nobody
+ * typed - and so is any spelling `Number()` would read but nobody means as a price (`1e3`, `0x10`,
+ * `Infinity`, a sign). Rounded here, so the field, the cell and the payload all say the same cents
+ * (`19,999` is 20,00, never a field showing one amount and a save charging another).
  */
 export function parseEuroInput(text: string): number | null {
   // A no-break space (what a French locale writes) is matched by `\s`; the euro sign is dropped too.
   const cleaned = text.replace(/\s/g, '').split(EURO_SIGN).join('').replace(',', '.');
-  if (cleaned === '') return null;
-  const value = Number(cleaned);
-  return Number.isFinite(value) && value >= 0 ? value : null;
+  if (cleaned === '' || !EURO_INPUT_PATTERN.test(cleaned)) return null;
+  // Rounded on the DIGITS, never on a float: 1.005 is the double 1.00499..., which Math.round
+  // would take to 1,00 where the manager typed a half cent up.
+  const [whole, fraction = ''] = cleaned.split('.');
+  const digits = fraction.padEnd(3, '0');
+  const cents =
+    Number(whole || '0') * 100 + Number(digits.slice(0, 2)) + (digits[2] >= '5' ? 1 : 0);
+  return cents / 100;
 }
 
 /** A price as its input shows it: blank when unset, the locale's decimal separator otherwise. */
@@ -392,6 +406,29 @@ export function productGridPayload(grid: EditorProductGrid): ProductGrid {
       prices,
     },
   };
+}
+
+/**
+ * The grid as the fill page reads it (`ProductGridView`), for the editor's preview: what
+ * `productGridPayload` would send, less the price lists - the preview draws the respondent's own
+ * component (`ProductGridQuestion.svelte`) on exactly what a buyer would be handed.
+ */
+export function editorGridView(grid: EditorProductGrid): ProductGridView {
+  return productGridView(productGridPayload(grid));
+}
+
+/**
+ * One category's prices as the fill page is handed them (`ProductGridViewerPrices`, cents), for the
+ * preview at the tab on screen. A blank price is absent, as in the payload: the preview shows no
+ * price for it rather than 0.
+ */
+export function editorViewerPrices(
+  grid: EditorProductGrid,
+  tierId: string,
+  tierLabel: string | null
+): ProductGridViewerPrices {
+  const prices = productGridPayload(grid).pricing.prices[tierId] ?? {};
+  return { tierId, tierLabel, prices };
 }
 
 /** The stored grid back into the editor: cents to euros. A missing or broken grid starts fresh. */

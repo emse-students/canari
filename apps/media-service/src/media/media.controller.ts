@@ -117,6 +117,24 @@ const PUBLIC_LOGO_MAX_BYTES = 2 * 1024 * 1024;
 const PUBLIC_ASSET_CACHE_MAX_AGE_SEC = 365 * 24 * 60 * 60;
 const ALLOWED_PUBLIC_LOGO_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
+/**
+ * The two bounds a public image is stored at. `logo` (the default, every caller before 2026-11-06)
+ * is a 256 px badge; `content` is an image READ at the width of a card - a form question's picture -
+ * so it keeps the client's own post preset (1600 px, `IMAGE_COMPRESS_PRESETS.post`) and is
+ * re-encoded only to drop its metadata. Anything else the body names is the default: an old caller
+ * sends nothing, and refusing over it would break a logo upload.
+ */
+export const PUBLIC_IMAGE_BOUNDS = {
+  logo: { side: 256, quality: 90 },
+  content: { side: 1600, quality: 85 },
+} as const;
+export type PublicImageSize = keyof typeof PUBLIC_IMAGE_BOUNDS;
+
+/** The bound a request names, or `logo`. */
+export function publicImageSize(value: unknown): PublicImageSize {
+  return value === 'content' ? 'content' : 'logo';
+}
+
 /** Upper bound on a single POST /media/touch batch; the client batches well below this. */
 const TOUCH_MAX_IDS = 500;
 
@@ -317,9 +335,12 @@ export class MediaController {
   )
   async uploadPublic(
     @UploadedFile() file: unknown,
-    @Req() req: Request
+    @Req() req: Request,
+    @Body() body?: { size?: unknown }
   ): Promise<{ mediaId: string }> {
     this.verifyToken(req);
+    const size = publicImageSize(body?.size);
+    const bound = PUBLIC_IMAGE_BOUNDS[size];
 
     let upload: ReturnType<typeof requireUploadedFile>;
     try {
@@ -334,14 +355,16 @@ export class MediaController {
       throw new BadRequestException('Logo must be JPEG, PNG, or WebP');
     }
 
-    // Resize to max 256x256, convert to WebP 90% - logos and avatars are public/unencrypted. The
+    // Resize inside the bound the caller named (256 px for a logo, 1600 px for a content image) and
+    // convert to WebP - public, unencrypted, and re-encoded so no EXIF or GPS block survives. The
     // decode is bounded (`boundedSharp`): a small file declaring huge dimensions is a 422, not an
     // allocation of gigabytes in the process that carries every chat medium.
     let compressed: Buffer;
     try {
       compressed = await boundedSharp(upload.buffer)
-        .resize(256, 256, { fit: 'inside', withoutEnlargement: true })
-        .webp({ quality: 90 })
+        .rotate()
+        .resize(bound.side, bound.side, { fit: 'inside', withoutEnlargement: true })
+        .webp({ quality: bound.quality })
         .toBuffer();
     } catch (err) {
       this.logger.warn(
@@ -352,7 +375,7 @@ export class MediaController {
 
     const mediaId = await this.mediaService.uploadPublicAsset(compressed, 'image/webp');
     this.logger.log(
-      `Stored public asset: ${mediaId} (${upload.size} → ${compressed.length} bytes, webp)`
+      `Stored public asset: ${mediaId} (${upload.size} → ${compressed.length} bytes, webp, size=${size})`
     );
     return { mediaId };
   }
@@ -654,6 +677,29 @@ export class MediaController {
       `Promoted ${promoted.length} object(s) to public assets, ${refused.length} refused`
     );
     return { promoted: promoted.length, refused };
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /media/internal/public-asset-delete - public images a service no longer cites
+  // ---------------------------------------------------------------------------
+  /**
+   * Deletes the named PUBLIC assets and nothing else ({@link MediaService.removePublicAssets}).
+   * Sole consumer: social-service's form question images, released once no form cites them
+   * (`form-item-images.service.ts`). Secret-gated with no user JWT, because the hourly
+   * reconciliation that calls it acts for nobody.
+   */
+  @Post('internal/public-asset-delete')
+  async removePublicAssets(
+    @Body() body: { mediaIds?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ deleted: string[]; refused: string[] }> {
+    assertInternalSecret(internalSecret);
+    const ids = this.boundedIds(body?.mediaIds, 'mediaIds');
+    const result = await this.mediaService.removePublicAssets(ids);
+    this.logger.log(
+      `Public assets deleted: ${result.deleted.length}, refused: ${result.refused.length}`
+    );
+    return result;
   }
 
   // ---------------------------------------------------------------------------

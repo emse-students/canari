@@ -1,10 +1,20 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { ClipboardPaste, GripVertical, Minus, Plus, X } from '@lucide/svelte';
+  import {
+    ClipboardPaste,
+    GripVertical,
+    Minus,
+    Monitor,
+    Plus,
+    Smartphone,
+    X,
+  } from '@lucide/svelte';
   import CriterionEditor from '$lib/components/pricing/CriterionEditor.svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
-  import ProductGridPreview from './ProductGridPreview.svelte';
+  import ProductGridQuestion from './ProductGridQuestion.svelte';
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import type { MembershipTier } from '$lib/associations/api';
+  import type { FormItem } from '$lib/forms/api';
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { newDimension, type Bucket } from '$lib/pricing/priceMatrix';
   import {
@@ -13,6 +23,7 @@
     PRODUCT_GRID_MIN_PER_CELL,
     PRODUCT_GRID_OTHERS_TIER,
     PRODUCT_GRID_SINGLE_KEY,
+    PRODUCT_GRID_TYPE,
     productGridAxisKey,
     productGridLabelKey,
     type ProductGridPriceMode,
@@ -23,7 +34,9 @@
     axisEntryHasOrders,
     axisMax,
     collidingLabelKeys,
+    editorGridView,
     editorTierIds,
+    editorViewerPrices,
     euroInputText,
     isCellClosed,
     moveAxisEntry,
@@ -75,6 +88,8 @@
     isPublic?: boolean;
     /** The sentence of a refused save about THIS grid, shown under the table. */
     problem?: string | null;
+    /** The question's title, which the preview's card carries as the buyer reads it. */
+    title?: string;
   }
 
   let {
@@ -85,6 +100,7 @@
     orderedCells = [],
     isPublic = false,
     problem = null,
+    title = '',
   }: Props = $props();
 
   const TAG = 'ProductGridEditor';
@@ -122,9 +138,15 @@
     return euroInputText(priceOf(grid, activeTier, axisKey));
   }
 
+  /**
+   * Stores a typed price, then writes back what was STORED: the field is bound one way, so an
+   * unreadable entry (stored blank) or a third decimal (stored rounded) would otherwise keep
+   * showing text the save does not hold.
+   */
   function commitPrice(axisKey: string, e: Event) {
-    const text = (e.currentTarget as HTMLInputElement).value;
-    setPrice(grid, activeTier, axisKey, parseEuroInput(text));
+    const input = e.currentTarget as HTMLInputElement;
+    setPrice(grid, activeTier, axisKey, parseEuroInput(input.value));
+    input.value = priceText(axisKey);
   }
 
   /** What a cell shows in the editor: its price, or a dash while that price is blank. */
@@ -267,9 +289,23 @@
     grid.pricing.tiers.buckets = grid.pricing.tiers.buckets.filter((b) => b.id !== bucketId);
   }
 
+  // The preview: the respondent's component on what the payload would send, at the tab's prices.
+  let previewLayout = $state<'desktop' | 'phone'>('desktop');
+  const previewGrid = $derived(editorGridView(grid));
+  const previewPrices = $derived(
+    editorViewerPrices(grid, activeTier, tierIds.length > 1 ? tierName(activeTier) : null)
+  );
+
   const TIER_KINDS = ['cotisation', 'promo', 'formation'] as const;
   /** Ids for the two labelled groups, unique per editor on the page. */
   const uid = crypto.randomUUID();
+  /** A question of its own id, so the preview's card never shares an element id with the page. */
+  const previewItem = $derived<FormItem>({
+    id: `preview-${uid}`,
+    label: title,
+    required: true,
+    type: PRODUCT_GRID_TYPE,
+  });
   const singleKey = PRODUCT_GRID_SINGLE_KEY;
   const segmentClass = (on: boolean) =>
     `min-h-9 rounded-full px-3.5 text-sm transition-colors ${
@@ -460,7 +496,7 @@
               aria-pressed={activeTier === tierId}
               data-tier-tab={tierId}
               onclick={() => (selectedTier = tierId)}
-              class="min-h-11 border-b-[3px] px-4 text-sm {activeTier === tierId
+              class="min-h-11 border-b-3 px-4 text-sm {activeTier === tierId
                 ? 'border-cn-yellow text-text-main font-bold'
                 : 'text-text-muted border-transparent font-semibold'}">{tierName(tierId)}</button
             >
@@ -704,9 +740,42 @@
     {/if}
   </div>
 
-  <ProductGridPreview
-    {grid}
-    tierId={activeTier}
-    tierName={tierIds.length > 1 ? tierName(activeTier) : ''}
-  />
+  <!-- What a buyer sees: the fill page's own component, forced to one drawing, at the prices of
+       the tab on screen. Inert - a preview takes no order. -->
+  <section
+    class="space-y-3 border-t border-black/10 pt-4 dark:border-white/10"
+    aria-label={m.form_pgrid_preview_aria()}
+  >
+    <div class="flex flex-wrap items-center gap-3">
+      <span class="text-text-main flex-1 text-sm font-bold">
+        {tierIds.length > 1
+          ? m.form_pgrid_preview_title_tier({ tier: tierName(activeTier) })
+          : m.form_pgrid_preview_title()}
+      </span>
+      <SegmentedControl
+        label={m.form_pgrid_preview_size_aria()}
+        value={previewLayout}
+        onSelect={(key) => (previewLayout = key)}
+        items={[
+          { key: 'desktop', label: m.form_pgrid_preview_desktop(), icon: Monitor },
+          { key: 'phone', label: m.form_pgrid_preview_phone(), icon: Smartphone },
+        ]}
+        class="w-full sm:w-64"
+      />
+    </div>
+    <div
+      class="bg-cn-bg rounded-lg p-4 {previewLayout === 'phone' ? 'mx-auto max-w-sm' : ''}"
+      inert
+      data-testid="grid-preview-{previewLayout}"
+    >
+      <ProductGridQuestion
+        item={previewItem}
+        grid={previewGrid}
+        value={{}}
+        disabled={false}
+        prices={previewPrices}
+        layout={previewLayout}
+      />
+    </div>
+  </section>
 </div>

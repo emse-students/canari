@@ -272,6 +272,43 @@ describe('the wire trip', () => {
     expect(parseEuroInput('abc')).toBeNull();
     expect(euroInputText(null)).toBe('');
   });
+
+  it('refuses what Number() reads but nobody types as a price, and rounds to the cent', () => {
+    for (const text of ['1e3', '0x10', 'Infinity', '+5', '1,000,50', '1.000,50', '.', '5-']) {
+      expect(parseEuroInput(text)).toBeNull();
+    }
+    expect(parseEuroInput('1 000,50 €')).toBe(1000.5);
+    expect(parseEuroInput(',5')).toBe(0.5);
+    expect(parseEuroInput('19,999')).toBe(20);
+    expect(parseEuroInput('1,005')).toBe(1.01);
+  });
+
+  it('turns a typed 19,99 into 1999 cents, and every stored cent amount survives the trip back', () => {
+    const grid = newProductGrid();
+    grid.rows[0].label = 'Vert';
+    grid.columns[0].label = 'M';
+    setPrice(grid, '_all', '*', parseEuroInput('19,99'));
+    expect(productGridPayload(grid).pricing.prices._all['*']).toBe(1999);
+    // Every amount the contract accepts, read back as euros and sent again, is the same cents.
+    // Checked in a plain loop (an `expect` per amount would take seconds), the misses collected.
+    const misses: number[] = [];
+    for (let cents = 0; cents <= 1_000_000; cents += 1) {
+      const euros = cents / 100;
+      if (Math.round(euros * 100) !== cents || parseEuroInput(euroInputText(euros)) !== euros) {
+        misses.push(cents);
+      }
+    }
+    expect(misses).toEqual([]);
+  });
+
+  it('keeps a price above the contract bound, so the save names it rather than clamping it', () => {
+    const grid = newProductGrid();
+    grid.rows[0].label = 'Vert';
+    grid.columns[0].label = 'M';
+    setPrice(grid, '_all', '*', parseEuroInput('10000,01'));
+    expect(productGridPayload(grid).pricing.prices._all['*']).toBe(1_000_001);
+    expect(judge(grid)?.code).toBe('PRODUCT_GRID_PRICE_INVALID');
+  });
 });
 
 describe('a duplicated grid', () => {
