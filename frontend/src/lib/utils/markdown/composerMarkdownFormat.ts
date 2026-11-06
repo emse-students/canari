@@ -108,8 +108,6 @@ interface Segment {
   end: number;
   /** How the span is wrapped today: `inside` the span, `outside` it, or not at all. */
   wrapped: { where: 'inside' | 'outside' } | null;
-  /** Starts and ends with the marker but holds several spans (`**a** b **c**`): merge, not toggle. */
-  merge: boolean;
 }
 
 /**
@@ -145,8 +143,14 @@ function wrappingOf(
   return { where, conflict: hasMarkerRun(inner, kind) };
 }
 
-/** Drops the runs of the marker that are exactly one application long (`**` for bold). */
-function removeExactRuns(s: string, kind: InlineKind): string {
+/**
+ * The selection with every run of this marker taken out: the whole selection is about to become ONE
+ * span of the style, so a run inside it (`**a** and *b*` + bold), at its edge (`**a`) or a partial
+ * one can only produce garbage (`****a**`). A bold run of 3 keeps its italic star, an italic run of
+ * 3 keeps its bold pair. Never touched: an escaped marker, and a run with whitespace on both
+ * sides (`2 * 3`), which is text and not a marker.
+ */
+function stripRuns(s: string, kind: InlineKind): string {
   const { char, len } = INLINE[kind];
   let out = '';
   for (let i = 0; i < s.length; i++) {
@@ -156,7 +160,19 @@ function removeExactRuns(s: string, kind: InlineKind): string {
     }
     let run = 1;
     while (s[i + run] === char) run++;
-    if (run !== len) out += char.repeat(run);
+    const literal = /\s/.test(s[i - 1] ?? ' ') && /\s/.test(s[i + run] ?? ' ');
+    const drop = literal
+      ? 0
+      : kind === 'italic'
+        ? run % 2
+        : kind === 'code'
+          ? run === 1
+            ? 1
+            : 0
+          : run >= len
+            ? len
+            : 0;
+    out += char.repeat(run - drop);
     i += run - 1;
   }
   return out;
@@ -185,7 +201,10 @@ function hasMarkerRun(s: string, kind: InlineKind): boolean {
  * - the line's own block marker (`## `, `> `, `- `) is never wrapped, or the heading would stop
  *   being one - a multi-line selection is wrapped line by line, since a marker does not span the
  *   blocks of a list or a quote;
- * - already wrapped (markers inside the selection, or just around it) turns the format off.
+ * - ONE rule, as a word processor has it: a selection wholly inside the style already (markers
+ *   inside it, or just around it, and no other run of that marker within) turns the style off;
+ *   anything else strips every inner run of that marker, partial edge runs included, and wraps the
+ *   trimmed selection once.
  */
 function formatInline(
   kind: InlineKind,
@@ -211,7 +230,6 @@ function formatInline(
         start,
         end,
         wrapped: state && !state.conflict ? { where: state.where } : null,
-        merge: !!state && state.conflict && state.where === 'inside',
       });
     }
   }
@@ -256,11 +274,17 @@ function formatInline(
       last = out.length;
       cursor = seg.end;
     } else {
-      out += text.slice(cursor, seg.start) + marker;
+      // ONE rule: not wholly inside the style already, so the style is taken off every inner run
+      // and the trimmed selection is wrapped once. Whitespace a strip exposes stays outside.
+      const stripped = stripRuns(body, kind);
+      const core = stripped.trim() === '' ? body : stripped;
+      const lead = /^\s*/.exec(core)?.[0] ?? '';
+      const trail = core.trim() === '' ? '' : (/\s*$/.exec(core)?.[0] ?? '');
+      out += text.slice(cursor, seg.start) + lead + marker;
       first = first === -1 ? out.length : first;
-      out += seg.merge ? removeExactRuns(body, kind) : body;
+      out += core.slice(lead.length, core.length - trail.length);
       last = out.length;
-      out += marker;
+      out += marker + trail;
       cursor = seg.end;
     }
   }

@@ -27,28 +27,49 @@ They DID differ: the preview drew `__x__` as an underline (the post renders it b
 
 1. The published post decides. The preview follows marked: `__x__` is bold (no underline exists any
    more), a single `*` / `_` needs CommonMark flanking, `_` is not intra-word.
-2. One tolerance, in BOTH: whitespace just inside a DOUBLE marker (`**`, `__`, `~~`, `***`) is moved
-   outside it (`emphasisTolerance.ts`, called first by `preprocessPostMarkdown`), so posts already
-   published render bold. **The rule that bounds it: no post that rendered a bold correctly before
-   may render differently after.** A loose span is rewritten only if (`looseSpanAccepted`, shared
-   with the preview so they pair alike): its inside does not contain the marker, its closer is not
-   glued to a letter, digit or marker, a `__` opener is not inside a word, and no more real closers
-   follow than real openers (else the first would have closed OUR opener today:
-   `foo **bar ** baz** qux` is bold from `bar` to `baz` and stays so). A rejected span resumes the scan
-   after its closer. `5 ** 2 = 25, **important**` and `x ** y **bold**` are left alone.
-   The moved space is dropped next to existing whitespace or a line edge, so `- ** item **` and
-   `1. ** x**` keep their list nesting. Never rewritten: fenced code (``` and ~~~, any indent),
-   4-space indented code outside a list, code spans (matched by backtick-run length) and autolinked
-   URLs. Single `*` / `_` are never tolerated (`2 * 3 * 4` is arithmetic).
-3. The toolbar (`computeComposerFormat`, pure) keeps edge whitespace outside, never wraps a line's
+2. One tolerance, in the renderer and mirrored in the preview: whitespace just inside a DOUBLE
+   marker (`**`, `__`, `~~`, `***`) is moved outside it (`emphasisTolerance.ts`, called first by
+   `preprocessPostMarkdown`), so posts already published render bold.
+   **The rule, TRUE BY CONSTRUCTION (decided 2026-11-06, after two adversarial reviews): no post that
+   rendered an emphasis before may render differently after.** Nothing predicts marked. Per
+   paragraph (the blocks between blank lines; code untouched), the paragraph is rendered as today.
+   Only if that render still shows a literal `**`, `__` or `~~` is a rewrite tried, one loose span at
+   a time, and a span is kept only if the new render (a) still holds every strong / em / del run of
+   the original render, same text at the same nesting depth or deeper, and (b) shows strictly fewer
+   literal markers. Otherwise the original text stays. A paragraph with no leftover marker costs one
+   extra render; a paragraph over 8000 characters, and spans past the 24th, are left alone (the
+   fallback is the original, which cannot lose anything). The first version predicted marked with
+   regexes and lost `**a **b** c**` (nested bold, which is what the old toolbar wrote around a phrase
+   holding a bold word), a bold continuing past a code span or a URL or a soft break, and any bold
+   whose closer was more than 1500 characters away.
+   The moved space is dropped next to existing whitespace or a line edge (`- ** item **` and
+   `1. ** x**` keep their nesting). Never rewritten: fenced code (``` and ~~~, any indent), 4-space
+   indented code outside a list, code spans (matched by backtick-run length) and autolinked URLs.
+   Single `*` / `_` are never tolerated. Accepted consequence: `2 ** 3 ** 2` now reads `3` as bold
+   (it shows literal markers and the rewrite loses nothing).
+3. The preview pairs by the same rules in LINEAR time (`PairingIndex` in `inlinePreview.ts`: every
+   closer search is an array lookup). The first version scanned and sliced from each opener, so 20000
+   characters of `**a ` cost two minutes per keystroke; it is 8 to 15 ms now (measured 2026-11-06:
+   20000 characters of `**a `, `*a `, `__a `, `** a `, `**a ** `, backticks or `h ` probes all between
+   7 and 15 ms; the renderer's tolerance on a 7.7k stray-marker paragraph 61 ms).
+4. The toolbar (`computeComposerFormat`, pure) keeps edge whitespace outside, never wraps a line's
    prefix (indentation, `>` levels, then ONE of `#`..`######`, `-` `*` `+`, `1.` `1)`, with its
-   `[ ]` box), wraps line by line, and toggles off. A selection that starts and ends with the marker
-   but holds two spans (`**Prix** : 5 **ce soir**`) is MERGED into one (`**Prix : 5 ce soir**`), not
-   mistaken for one wrapped span.
-4. `markdownParity.test.ts` renders one corpus through both parsers, and renders every toolbar
-   output through marked ALONE (the tolerance cannot hide a bad output), asserting also that the
-   selection lands on the text the action touched. A fuzz of 4000 strings asserts the tolerance never
-   removes a bold or strike that marked drew from the raw text.
+   `[ ]` box), wraps line by line, and applies ONE inline rule, as a word processor has it: a
+   selection wholly inside the style already (markers inside it or just around it, no other run of
+   that marker within) turns the style OFF; anything else strips every inner run of that marker,
+   partial edge runs included (`**a`), and wraps the trimmed selection once (`**a** and *b*` + bold
+   gives `**a and *b***`). A run with whitespace on both sides (`2 * 3`) is text and is kept. Known
+   limit: "wholly inside" looks at the markers adjacent to or inside the selection, so bold on the
+   middle of a longer bold span nests a second bold (it renders bold either way) instead of splitting
+   the span.
+5. Tests. `markdownParity.test.ts` renders one corpus through both parsers and every toolbar output
+   through marked ALONE (the tolerance cannot hide a bad output), asserting the selection lands on
+   the text the action touched. `emphasisToleranceRule.test.ts` proves the rule from outside: hand
+   cases from both reviews, a deterministic fuzz of 20000 documents (generator: loose and stray
+   markers, `***`, list and quote prefixes, indentation, links, URLs, code, blank lines; it asserts
+   the generator reaches the tolerance on more than 500 of them; deleting the run-preservation check
+   makes it fail), the run scanner checked against a real DOM, and the preview's cost on adversarial
+   shapes (generous bounds, no step counter).
 
 ### What parity covers, exactly
 
@@ -59,7 +80,7 @@ ATX headings, an autolinked URL containing markers, intra-word `_` / `__`.
 **Known gaps, each asserted to still differ** (`KNOWN_GAPS`, fixing one must change this list):
 a span crossing a line break (`**a` newline `b**`: the preview parses lines apart), and
 nested same-marker pairings that need a real delimiter stack (`~~a ~~b~~`, `***a** b*`,
-`**a *b** c*`). Not styled by the preview at all: links, lists, quotes (the toolbar outputs are
+`**a *b** c*`, `**a **b** c**`). Not styled by the preview at all: links, lists, quotes (the toolbar outputs are
 checked against marked directly instead).
 
 ## The cases (each is a row of `markdownParity.test.ts`)
@@ -83,6 +104,9 @@ checked against marked directly instead).
 | heading on a list line | replaces the marker: one block marker per line; a nested item loses its indent |
 | bold on a nested, quoted, `1)` or `- [ ]` item | the text only: `  - **sub**`, `> - **item**`, `- [ ] **task**` |
 | bold / italic over two separate runs (`**a** b **c**`) | merged into one span |
+| bold over `**a** and *b*` | `**a and *b***` (a, and, b bold; b italic) |
+| bold on a partial run `**a` | `**a**` |
+| bold on `2 * 3` | `**2 * 3**` (a lone `*` between spaces is text) |
 | quote on a list item | `> - a`; list on a quoted line keeps the quote |
 | list toggles off a nested item | `  b`, its indent kept |
 | quote / list, several lines | every non-blank line (list skips blank lines) |

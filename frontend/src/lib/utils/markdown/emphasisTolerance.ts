@@ -1,72 +1,107 @@
+import { Marked } from 'marked';
+import { urlLengthAt, urlMayStartAt } from './markdownText';
+
 /**
  * THE RENDERER'S HALF OF THE MARKDOWN-COHERENCE FIX (`docs/wiki/frontend/markdown-coherence.md`).
  *
  * A double marker with whitespace just inside it - `**TOP 5 MINIMOYS **`, `** x**`, `~~ gone ~~` -
  * is refused by CommonMark (a closing run after whitespace is not right-flanking), so a post written
  * with the old toolbar showed literal asterisks while the composer preview showed bold. This moves
- * the whitespace OUTSIDE the markers before marked sees the text.
+ * the whitespace OUTSIDE the markers before the renderer sees the text.
  *
- * THE RULE THAT BOUNDS IT: no post that rendered a bold correctly before may render differently
- * after. A loose span is therefore rewritten only when it cannot be a stray marker stealing a real
- * one (`looseSpanAccepted`), and `markdownParity.test.ts` asserts the rule over a fuzzed corpus.
- * Single `*` / `_` are never tolerated (`2 * 3 * 4` is arithmetic).
+ * THE RULE, TRUE BY CONSTRUCTION: no post that rendered a bold correctly before may render
+ * differently after. Nothing here PREDICTS what marked will do. Per paragraph, the paragraph is
+ * rendered as it is today; only when that render still shows a literal `**`, `__` or `~~` is a
+ * rewrite tried, one loose span at a time, and a span is kept only if the new render (a) still
+ * holds every strong, em and del run of the original render, with the same text at the same
+ * nesting depth or deeper, and (b) shows strictly fewer literal markers. Anything else keeps the
+ * original text. A paragraph with no leftover marker, the normal case, costs one extra render.
+ *
+ * Bounded so that it is safe on any input: a paragraph over `MAX_PARAGRAPH` characters is left
+ * alone, and at most `MAX_CANDIDATES` spans are tried per paragraph. Both fall back to the original
+ * text, which cannot lose anything.
  */
 
-const WORD_OR_MARKER = /[*_~\p{L}\p{N}]/u;
-const WORD = /[\p{L}\p{N}]/u;
+/** Same options `PostMarkdown` hands svelte-markdown. */
+const parser = new Marked({ gfm: true, breaks: true });
 
-/** A URL the renderer autolinks: markers inside it belong to the address, not to emphasis. */
-export const URL_AT_RE = /^(?:https?:\/\/|www\.)\S+/u;
+const MAX_PARAGRAPH = 8000;
+const MAX_CANDIDATES = 24;
 
-/** True when `ch` is a letter or a digit. */
-export const isWordChar = (ch: string | undefined): boolean => !!ch && WORD.test(ch);
-
-/** Counts `marker` occurrences in `s` that are not part of a longer run and not escaped. */
-function countMarkers(s: string, marker: string, flank: 'closer' | 'opener'): number {
-  const ch = marker[0];
-  let n = 0;
-  for (let i = 0; i <= s.length - marker.length; i++) {
-    if (!s.startsWith(marker, i) || s[i - 1] === '\\') continue;
-    if (s[i - 1] === ch || s[i + marker.length] === ch) {
-      i += marker.length - 1;
-      continue;
-    }
-    const before = s[i - 1];
-    const after = s[i + marker.length];
-    if (flank === 'closer' ? before && !/\s/.test(before) : after && !/\s/.test(after)) n++;
-    i += marker.length - 1;
-  }
-  return n;
+/** One emphasis element of a rendered paragraph. */
+export interface EmphasisRun {
+  tag: 'strong' | 'em' | 'del';
+  /** Its text, whitespace collapsed and trimmed. */
+  text: string;
+  /** How many emphasis elements enclose it. */
+  depth: number;
 }
 
+const ENTITIES: Record<string, string> = {
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+  '&#39;': "'",
+};
+const norm = (s: string): string =>
+  s
+    .replace(/&(?:amp|lt|gt|quot|#39);/g, (e) => ENTITIES[e])
+    .replace(/\s+/g, ' ')
+    .trim();
+
 /**
- * Whether the span `text[openIdx .. closeIdx + marker.length)` may be read as emphasis although
- * whitespace touches the inside of a marker. Shared with the composer preview, so the two cannot
- * pair differently. A span with no whitespace inside is plain CommonMark and always accepted.
- *
- * Rejected, because it would be a stray marker and not an emphasis:
- * - the inside contains the marker (`5 ** 2 ... **important**`);
- * - the closer is glued to a letter, digit or marker (`x ** y **bold**`);
- * - a `__` opener sits inside a word (`foo__ bar__`);
- * - more real closers follow than real openers, so the first of them would have closed OUR opener
- *   in the renderer (`foo **bar ** baz** qux` is bold from `bar` to `baz` today and stays so).
+ * Reads a rendered paragraph: its emphasis runs, and how many literal `**`, `__` or `~~` its text
+ * still shows (code excluded, where they are meant). A tag scanner, not a DOM: it runs wherever the
+ * preprocessing does.
  */
-export function looseSpanAccepted(
-  text: string,
-  openIdx: number,
-  closeIdx: number,
-  marker: string
-): boolean {
-  const content = text.slice(openIdx + marker.length, closeIdx);
-  if (content.trim() === '') return false;
-  if (!/^\s|\s$/.test(content)) return true;
-  if (content.includes(marker)) return false;
-  const after = text[closeIdx + marker.length];
-  if (after && WORD_OR_MARKER.test(after)) return false;
-  if (marker.startsWith('_') && isWordChar(text[openIdx - 1])) return false;
-  // Bounded: a pathological line of thousands of stray markers must not cost a quadratic scan.
-  const rest = text.slice(closeIdx + marker.length, closeIdx + marker.length + 1500);
-  return countMarkers(rest, marker, 'closer') <= countMarkers(rest, marker, 'opener');
+export function analyseRendered(html: string): { runs: EmphasisRun[]; literal: number } {
+  const runs: EmphasisRun[] = [];
+  const open: Array<{ tag: EmphasisRun['tag']; text: string; depth: number }> = [];
+  let literal = 0;
+  let code = 0;
+  const token = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)[^>]*>|([^<]+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = token.exec(html)) !== null) {
+    if (m[3] !== undefined) {
+      if (code === 0) literal += m[3].match(/\*\*|__|~~/g)?.length ?? 0;
+      for (const el of open) el.text += m[3];
+      continue;
+    }
+    const closing = m[1] === '/';
+    const tag = m[2].toLowerCase();
+    if (tag === 'pre' || tag === 'code') {
+      code += closing ? -1 : 1;
+    } else if (tag === 'strong' || tag === 'em' || tag === 'del') {
+      if (closing) {
+        const el = open.pop();
+        if (el) runs.push({ tag: el.tag, text: norm(el.text), depth: el.depth });
+      } else {
+        open.push({ tag, text: '', depth: open.length });
+      }
+    }
+  }
+  return { runs, literal };
+}
+
+/** True when every run of `original` is still in `candidate`, at the same depth or deeper. */
+export function preservesRuns(original: EmphasisRun[], candidate: EmphasisRun[]): boolean {
+  const pool = new Map<string, number[]>();
+  for (const run of candidate) {
+    const key = `${run.tag}\0${run.text}`;
+    const depths = pool.get(key);
+    if (depths) depths.push(run.depth);
+    else pool.set(key, [run.depth]);
+  }
+  for (const run of original) {
+    const depths = pool.get(`${run.tag}\0${run.text}`);
+    if (!depths) return false;
+    depths.sort((a, b) => a - b);
+    const at = depths.findIndex((d) => d >= run.depth);
+    if (at === -1) return false;
+    depths.splice(at, 1);
+  }
+  return true;
 }
 
 /** Ranges `[start, end)` of `line` that emphasis never reaches: code spans and autolinked URLs. */
@@ -101,11 +136,10 @@ function protectedRanges(line: string): Array<[number, number]> {
       }
       continue;
     }
-    const urlStart = i === 0 || /[\s(]/.test(line[i - 1]);
-    const url = urlStart ? URL_AT_RE.exec(line.slice(i)) : null;
-    if (url) {
-      ranges.push([i, i + url[0].length]);
-      i += url[0].length;
+    const url = urlMayStartAt(line, i) ? urlLengthAt(line, i) : 0;
+    if (url > 0) {
+      ranges.push([i, i + url]);
+      i += url;
       continue;
     }
     i++;
@@ -113,46 +147,79 @@ function protectedRanges(line: string): Array<[number, number]> {
   return ranges;
 }
 
+/** A double marker with whitespace inside it, on one line, whose inside holds no marker. */
 const LOOSE_RE = /(?<![\\*_~])(\*\*\*|\*\*|__|~~)((?:(?!\1)[^\n])+?)\1(?![*_~])/gu;
 
-/** Rewrites the loose spans of one stretch of prose (no code, no URL). */
-function tolerateProse(text: string): string {
-  let out = '';
-  let last = 0;
-  const re = new RegExp(LOOSE_RE.source, LOOSE_RE.flags);
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    const [whole, marker, inner] = m;
-    const start = m.index;
-    const lead = /^[ \t]*/.exec(inner)?.[0] ?? '';
-    const trail = /[ \t]*$/.exec(inner)?.[0] ?? '';
-    const closeIdx = start + marker.length + inner.length;
-    if (!lead && !trail) continue; // already plain CommonMark: leave the span alone
-    if (!looseSpanAccepted(text, start, closeIdx, marker)) {
-      // Resume AFTER its closer: that marker may be the real closer of an earlier opener, and
-      // reading it as a new opener is how `foo **bar ** baz** qux` would lose its bold.
-      re.lastIndex = closeIdx + marker.length;
-      continue;
-    }
-    const end = start + whole.length;
-    // The moved space is dropped next to existing whitespace or a line edge: widening a list
-    // item's content (`- ** item **`) would change what the line IS.
-    const before = lead && start > 0 && !/\s/.test(text[start - 1]) ? ' ' : '';
-    const after = trail && end < text.length && !/\s/.test(text[end]) ? ' ' : '';
-    out += `${text.slice(last, start)}${before}${marker}${inner.trim()}${marker}${after}`;
-    last = end;
-  }
-  return out + text.slice(last);
+interface Candidate {
+  start: number;
+  end: number;
+  replacement: string;
 }
 
-function tolerateLine(line: string): string {
-  let out = '';
-  let cursor = 0;
-  for (const [start, end] of protectedRanges(line)) {
-    out += tolerateProse(line.slice(cursor, start)) + line.slice(start, end);
-    cursor = end;
+/** The loose spans of one paragraph, as edits on it. The moved space is never doubled. */
+function looseCandidates(paragraph: string): Candidate[] {
+  const candidates: Candidate[] = [];
+  let lineStart = 0;
+  for (const line of paragraph.split('\n')) {
+    const prose: Array<[number, number]> = [];
+    let cursor = 0;
+    for (const [start, end] of protectedRanges(line)) {
+      prose.push([cursor, start]);
+      cursor = end;
+    }
+    prose.push([cursor, line.length]);
+    for (const [from, to] of prose) {
+      const re = new RegExp(LOOSE_RE.source, LOOSE_RE.flags);
+      const text = line.slice(from, to);
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(text)) !== null) {
+        const [whole, marker, inner] = m;
+        const lead = /^[ \t]*/.exec(inner)?.[0] ?? '';
+        const trail = /[ \t]*$/.exec(inner)?.[0] ?? '';
+        if (!lead && !trail) continue; // already plain CommonMark
+        const start = lineStart + from + m.index;
+        const end = start + whole.length;
+        // Dropped next to existing whitespace or a line edge: widening a list item's content
+        // (`- ** item **`) would change what the line IS.
+        const before = lead && start > 0 && !/\s/.test(paragraph[start - 1]) ? ' ' : '';
+        const after = trail && end < paragraph.length && !/\s/.test(paragraph[end]) ? ' ' : '';
+        candidates.push({
+          start,
+          end,
+          replacement: `${before}${marker}${inner.trim()}${marker}${after}`,
+        });
+      }
+    }
+    lineStart += line.length + 1;
   }
-  return out + tolerateProse(line.slice(cursor));
+  return candidates.slice(0, MAX_CANDIDATES);
+}
+
+function render(markdown: string): string {
+  return parser.parse(markdown, { async: false }) as string;
+}
+
+/** One paragraph (no blank line, no code): the rewrite that loses nothing, or the paragraph. */
+function tolerateParagraph(paragraph: string): string {
+  if (paragraph.length > MAX_PARAGRAPH || !/\*\*|__|~~/.test(paragraph)) return paragraph;
+  try {
+    const original = analyseRendered(render(paragraph));
+    if (original.literal === 0) return paragraph;
+    let current = paragraph;
+    let literal = original.literal;
+    // Right to left, so an accepted edit never shifts the offsets of the ones still to try.
+    for (const c of looseCandidates(paragraph).reverse()) {
+      const next = current.slice(0, c.start) + c.replacement + current.slice(c.end);
+      const seen = analyseRendered(render(next));
+      if (seen.literal < literal && preservesRuns(original.runs, seen.runs)) {
+        current = next;
+        literal = seen.literal;
+      }
+    }
+    return current;
+  } catch {
+    return paragraph;
+  }
 }
 
 const FENCE_RE = /^[ \t]*(`{3,}|~{3,})/;
@@ -160,44 +227,59 @@ const LIST_ITEM_RE = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]/;
 
 /**
  * Moves the whitespace just inside a double emphasis marker OUTSIDE it, so `**TOP 5 MINIMOYS **`
- * renders bold like the composer preview shows it.
+ * renders bold like the composer preview shows it, without ever changing a paragraph that rendered
+ * its emphasis (see the file header for the rule and how it is enforced).
  *
- * Never touched: fenced code (``` and ~~~, at any indent, since a list item may hold one), 4-space
- * indented code outside a list, inline code spans (matched by run length) and autolinked URLs.
+ * Never touched: fenced code (``` and ~~~, at any indent, since a list item may hold one) and
+ * 4-space indented code outside a list. Paragraphs are the blocks between blank lines.
  */
 export function tolerateEmphasisWhitespace(md: string): string {
+  const lines = md.split('\n');
+  const out: string[] = [];
+  let group: string[] = [];
+  const flush = () => {
+    if (group.length) out.push(...tolerateParagraph(group.join('\n')).split('\n'));
+    group = [];
+  };
   let fence: string | null = null;
   let inList = false;
   let prevBlank = true;
-  let prevIndentedCode = false;
-  return md
-    .split('\n')
-    .map((line) => {
-      const fenceMatch = FENCE_RE.exec(line);
-      if (fence) {
-        if (
-          fenceMatch &&
-          fenceMatch[1][0] === fence[0] &&
-          fenceMatch[1].length >= fence.length &&
-          line.trim() === fenceMatch[1]
-        ) {
-          fence = null;
-        }
-        return line;
+  let prevIndentedCode: boolean = false;
+  for (const line of lines) {
+    const fenceMatch = FENCE_RE.exec(line);
+    if (fence) {
+      if (
+        fenceMatch &&
+        fenceMatch[1][0] === fence[0] &&
+        fenceMatch[1].length >= fence.length &&
+        line.trim() === fenceMatch[1]
+      ) {
+        fence = null;
       }
-      if (fenceMatch) {
-        fence = fenceMatch[1];
-        prevBlank = false;
-        return line;
-      }
-      const blank = line.trim() === '';
-      const indented = /^(?: {4,}|\t)/.test(line);
-      if (!blank && LIST_ITEM_RE.test(line)) inList = true;
-      else if (!blank && !indented && prevBlank) inList = false;
-      const isCode = !blank && indented && !inList && (prevBlank || prevIndentedCode);
-      prevIndentedCode = isCode || (blank && prevIndentedCode);
-      prevBlank = blank;
-      return isCode ? line : tolerateLine(line);
-    })
-    .join('\n');
+      out.push(line);
+      continue;
+    }
+    if (fenceMatch) {
+      flush();
+      fence = fenceMatch[1];
+      prevBlank = false;
+      out.push(line);
+      continue;
+    }
+    const blank = line.trim() === '';
+    const indented = /^(?: {4,}|\t)/.test(line);
+    if (!blank && LIST_ITEM_RE.test(line)) inList = true;
+    else if (!blank && !indented && prevBlank) inList = false;
+    const isCode: boolean = !blank && indented && !inList && (prevBlank || prevIndentedCode);
+    prevIndentedCode = isCode || (blank && prevIndentedCode);
+    prevBlank = blank;
+    if (blank || isCode) {
+      flush();
+      out.push(line);
+    } else {
+      group.push(line);
+    }
+  }
+  flush();
+  return out.join('\n');
 }
