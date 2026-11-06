@@ -728,3 +728,13 @@ timer (a queue read on fake-IndexedDB, which answers on real macrotask turns), s
 `settled >= 3` then timed out. A bound counted in looks is a clock by another name. The loop now waits
 for the EVENT (`vi.getTimerCount() > 0`, or the attempt having moved on) and advances exactly one timer
 per pass; nothing asserts a duration and a genuine hang still fails at the wait's own ceiling.
+
+**Fourth reading, 2026-11-06** (`messagesPage` and `pendingMutationsStore` sqlite cases, `audioSession.captureSites`,
+`conversations.retire`, all 5 s timeouts in one full run). Measured, not guessed: the sqlite cases take 16-760 ms
+alone (the heavy ones carry their own 60 s deadline), two of the four victims were 5 ms-class cases, four parallel
+runs of the two files and 40 busy threads did not reproduce it, and a later full run failed seven DIFFERENT tests
+in six other files (one `beforeAll` import hit its 60 s hook ceiling) while other agents' dev servers and test
+runs shared the machine. That is section 8's class: the victims are random, the lever is the load. The ONE code
+cause found: `audioSession.captureSites` still walked the disk (readdir/stat/read of the whole tree inside the
+test); it now reads the shared snapshot. `conversations.retire` already did (686 ms alone, a filter over strings).
+`useConversations.salonStoredPage` had five deadline-based `vi.waitFor` calls; they now wait on the event itself.
