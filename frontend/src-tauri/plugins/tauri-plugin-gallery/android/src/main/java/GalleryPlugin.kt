@@ -49,6 +49,8 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
     class SaveVideoArgs {
         lateinit var path: String
         lateinit var name: String
+        // The container of the video: a reel is an MP4, a feed video may be a mov or a webm.
+        var mime: String? = null
     }
 
     @Command
@@ -90,7 +92,7 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
         val resolver = activity.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, args.name)
-            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            put(MediaStore.Video.Media.MIME_TYPE, args.mime ?: "video/mp4")
             put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/$ALBUM")
             put(MediaStore.Video.Media.IS_PENDING, 1)
         }
@@ -128,7 +130,7 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
             if (!dir.exists() && !dir.mkdirs()) throw IllegalStateException("cannot create $dir")
             val target = File(dir, args.name)
             File(args.path).copyTo(target, overwrite = true)
-            MediaScannerConnection.scanFile(activity, arrayOf(target.absolutePath), arrayOf("video/mp4"), null)
+            MediaScannerConnection.scanFile(activity, arrayOf(target.absolutePath), arrayOf(args.mime ?: "video/mp4"), null)
             Log.d(TAG, "saveVideo: saved to ${target.absolutePath}")
             invoke.resolve(JSObject().put("status", "saved"))
         } catch (e: Exception) {

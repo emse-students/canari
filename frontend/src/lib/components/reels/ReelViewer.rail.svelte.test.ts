@@ -289,6 +289,18 @@ it('a post of one picture is a photo page, with the rail and no player', async (
   error.mockRestore();
 });
 
+it('a post of one video is a reel page with its tools, and nothing accuses the row', async () => {
+  const feedVideo = post('v', { kind: 'post', expiresAt: null });
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  await render(feedVideo, 'alice');
+
+  expect(q('[data-reel-page="reel"]')).not.toBeNull();
+  expect(q('[data-reel-rail] [data-reel-save]')).not.toBeNull();
+  expect(q('[data-reel-rail-sound]')).not.toBeNull();
+  expect(error).not.toHaveBeenCalledWith(expect.stringContaining('neither a reel nor one picture'));
+  error.mockRestore();
+});
+
 it('the comments number is the server total, not the twenty rows a feed row carries', async () => {
   const twenty = Array.from({ length: 20 }, (_, i) => comment(`c${i}`));
   await render(post('a', { comments: twenty, commentCount: 57 }), 'alice');

@@ -40,7 +40,7 @@ import {
 } from './reel.constants';
 import { assertReelEditShape } from './reel-rules';
 import type { ReelPurgeReason } from '../internal/reel-media';
-import { SINGLE_PHOTO_POST_SQL } from './single-photo-sql';
+import { singleMediaModeOf, singleMediaSql, type SingleMediaMode } from './full-screen-post-sql';
 import { publicationTime } from './publication-time';
 import {
   invalidatePostListCache,
@@ -306,7 +306,7 @@ export class PostsService {
     limit: number,
     offset: number,
     kind: PostKind | undefined,
-    singlePhotos: boolean
+    singleMedia: SingleMediaMode | undefined
   ) {
     return postListCacheKey({
       feed,
@@ -316,7 +316,7 @@ export class PostsService {
       limit,
       offset,
       kind,
-      singlePhotos,
+      singleMedia,
     });
   }
 
@@ -336,9 +336,9 @@ export class PostsService {
    * The `kind` the caller restricted the page to; ABSENT MEANS BOTH. The value is matched against
    * the two literals rather than interpolated, so nothing a client sends reaches the SQL text.
    */
-  private kindFilterSql(kind: PostKind | undefined, singlePhotos = false): string {
-    if (kind === 'reel' && singlePhotos) {
-      return `AND (posts.kind = 'reel' OR (posts.kind = 'post' AND ${SINGLE_PHOTO_POST_SQL}))`;
+  private kindFilterSql(kind: PostKind | undefined, singleMedia?: SingleMediaMode): string {
+    if (kind === 'reel' && singleMedia) {
+      return `AND (posts.kind = 'reel' OR (posts.kind = 'post' AND ${singleMediaSql(singleMedia)}))`;
     }
     if (kind === 'reel') return `AND posts.kind = 'reel'`;
     if (kind === 'post') return `AND posts.kind = 'post'`;
@@ -1427,7 +1427,7 @@ export class PostsService {
   async listPosts(params: ListPostsParams) {
     const { feed, viewerUserId, isAdmin, promo, formation } = params;
     const kind = listKind(params);
-    const singlePhotos = params.singlePhotos === true && kind === 'reel';
+    const singleMedia = kind === 'reel' ? singleMediaModeOf(params) : undefined;
     const limit = Number(params.limit);
     const offset = Number(params.offset);
     const cacheKey = this.listPostsCacheKey(
@@ -1438,7 +1438,7 @@ export class PostsService {
       limit,
       offset,
       kind,
-      singlePhotos
+      singleMedia
     );
 
     // The stamp is read BEFORE the page is computed, so a page computed across an invalidation is
@@ -1548,7 +1548,7 @@ export class PostsService {
   private async listPostRows(params: ListPostsParams): Promise<any[]> {
     const { feed, viewerUserId, isAdmin, promo, formation } = params;
     const kind = listKind(params);
-    const singlePhotos = params.singlePhotos === true && kind === 'reel';
+    const singleMedia = kind === 'reel' ? singleMediaModeOf(params) : undefined;
     const limit = Number(params.limit);
     const offset = Number(params.offset);
 
@@ -1592,7 +1592,7 @@ export class PostsService {
 
     const hiddenFilter = this.hiddenFilterSql(isAdmin === true);
     // A dead reel is excluded in EVERY arm, and `kind` (absent = both) narrows every arm alike.
-    const reelFilters = `${this.liveReelFilterSql()}\n         ${this.kindFilterSql(kind, singlePhotos)}`;
+    const reelFilters = `${this.liveReelFilterSql()}\n         ${this.kindFilterSql(kind, singleMedia)}`;
     const serviceAccountFilter = reviewCohortAuthorFilterSql(isAdmin === true, viewerUserId);
     // WHICH POSTS THIS READER MAY SEE (WP6b), in every arm. The viewer goes LAST, after the optional
     // promo cutoff and blocked list (`tail`), so its placeholder is the next free index of each arm.

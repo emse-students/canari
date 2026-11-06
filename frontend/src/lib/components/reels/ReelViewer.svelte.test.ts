@@ -15,6 +15,7 @@ import { m } from '$lib/paraglide/messages';
 const preloads: string[] = [];
 const stopped: string[] = [];
 vi.mock('$lib/reels/reelPreload', () => ({
+  worthPreloading: () => true,
   ReelPreload: class {
     #id: string;
     constructor(ref: { mediaId: string }) {

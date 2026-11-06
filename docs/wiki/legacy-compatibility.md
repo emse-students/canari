@@ -1016,7 +1016,7 @@ deleted (reels.md point 5; `routes/posts/+page.ts` and `buildListOptions` never 
 only `listPosts({ kind })` caller in the client is `reels/allReels.ts`. Production's floor is past
 `1.2.9`, and dev's `1.2.7`-`1.2.8` builds predate the filter, so their only `kind=reel` was the
 viewer too. A `1.2.9-alpha.2`/`.3` device still filtering its "Tout" tab would get the viewer's set
-there: reels it may see, nothing more.
+there: reels it may see, nothing more. Since 2026-11-06 the current client asks `singleMedia=true` AND `singlePhotos=true`; `singlePhotos` alone stays served as pictures only, so these installed clients never receive a video (`services/reels.md`).
 **Why the client still sends the old shape:** a stable ships both stores BEFORE production deploys,
 and `feed=reels` is refused `400` by an older server's `@IsIn` - a native build sending it would
 lose the viewer for those days. So the client switches (`listAllReels`: `feed: 'reels'`, and
@@ -1346,6 +1346,39 @@ mobile only - green build, green deploy, wrong behaviour.
 **Cost of keeping it:** two shapes for one concept, and a head typed optional at every use site
 though the server always sends one. No correctness cost: a missing head means an unbounded walk,
 which is what every client did before the bound existed.
+
+### No date yet - the CanaReels list asked with BOTH `singleMedia=true` and `singlePhotos=true` (2026-11-06)
+
+**Site:** `buildListPostsSearchParams` in
+[`frontend/src/lib/posts/api.ts`](../../frontend/src/lib/posts/api.ts) (the `singlePhotos` line next to
+`singleMedia`).
+**What it humours:** a social-service that does not carry the `singleMedia` switch yet (a production
+or dev estate deployed before this change) drops the unknown parameter and would answer the reels
+alone; the extra `singlePhotos=true` keeps the pictures coming.
+**Removal condition:** both estates' social-service carry the change that introduced `singleMedia`
+(a stable shipped and deployed on production, the pre-release on dev). Then the client sends
+`singleMedia` only and the line goes.
+**Cost of keeping it:** one redundant query parameter. The server reads `singleMedia` first, so
+nothing is read twice.
+
+---
+
+### No date yet - `singlePhotos=true` answered as pictures only, after `singleMedia` exists (2026-11-06)
+
+**Site:** `singleMediaModeOf` and `SINGLE_PHOTO_POST_SQL` in
+[`apps/social-service/src/posts/full-screen-post-sql.ts`](../../apps/social-service/src/posts/full-screen-post-sql.ts),
+read by `PostsService` (`kindFilterSql`).
+**What it humours:** every installed client up to the last release that does not send `singleMedia`
+asks `GET /api/posts?kind=reel&singlePhotos=true`. Its `fullScreenPageOf` knows no video outside a
+reel and would draw one as a reel page and log an accusation, so the server must not hand it a feed
+video: the old switch keeps meaning "pictures only".
+**Removal condition:** `minClientVersion` has passed the first stable that sends `singleMedia`
+(`singlePhotos` then reaches only a client that no longer unlocks). Then `singlePhotos`, its DTO
+field, `SINGLE_PHOTO_POST_SQL` and the `'photos'` mode and cache-key suffix are deleted and
+`singleMedia` becomes the only switch.
+**Cost of keeping it:** a second SQL clause and a cache-key variant; two tests pin the precedence.
+
+---
 
 ---
 
