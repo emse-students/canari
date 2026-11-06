@@ -1,6 +1,8 @@
 <script lang="ts">
   import { kindHasSection } from '$lib/associations/editSections';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
+  import { formCodeMessage, formItemsProblem } from '$lib/forms/answerBounds';
+  import { refusalCode } from '$lib/utils/apiRefusal';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -60,7 +62,11 @@
     hasFileQuestion,
   } from '$lib/forms/fileQuestion';
   import { formConfigConflicts, type GuestPricedGrid } from '$lib/forms/formOptionRules';
-  import { editorOptionState, formConflictMessage } from '$lib/forms/formOptionConflict';
+  import {
+    conflictCodeMessage,
+    editorOptionState,
+    formConflictMessage,
+  } from '$lib/forms/formOptionConflict';
   import { Log } from '$lib/utils/Log';
   import { CircleAlert, FileText, ImagePlus, Users, X } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -234,6 +240,11 @@
       error = m.form_error_association_required();
       return;
     }
+    const itemsProblem = formItemsProblem(items);
+    if (itemsProblem) {
+      error = itemsProblem;
+      return;
+    }
     // The server's refusal, said first and in the reader's language: the same rule, whichever
     // switch was turned on last (`formOptionRules.ts`).
     const [conflict] = formConfigConflicts(
@@ -291,7 +302,11 @@
       await updateForm(formId, payload);
       goto(resolve('/forms'));
     } catch (e: any) {
-      error = providerRefusalMessage(e) ?? e.message;
+      error =
+        formCodeMessage(refusalCode(e)) ??
+        conflictCodeMessage(refusalCode(e)) ??
+        providerRefusalMessage(e) ??
+        e.message;
     } finally {
       isSubmitting = false;
     }

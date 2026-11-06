@@ -2,6 +2,8 @@ import { m } from '$lib/paraglide/messages';
 import { hasFileQuestion } from './fileQuestion';
 import {
   conditionNamesProfile,
+  FORM_OPTION_CONFLICTS,
+  FORM_PUBLIC_GUEST_TIER_UNAVAILABLE,
   type FormConfigConflict,
   type FormOptionState,
 } from './formOptionRules';
@@ -61,4 +63,18 @@ export function formConflictMessage(code: FormConfigConflict): string {
  */
 export function conflictHint(codes: readonly FormConfigConflict[]): string | null {
   return codes.length === 0 ? null : codes.map(formConflictMessage).join(' ');
+}
+
+/**
+ * The sentence for a server refusal carrying one of the option conflicts' codes, or `null` when the
+ * code is none of them (the caller tries the next mapper). Classified by the code, never the prose.
+ */
+export function conflictCodeMessage(code: string | null): string | null {
+  if (
+    code === FORM_PUBLIC_GUEST_TIER_UNAVAILABLE ||
+    (code != null && code in FORM_OPTION_CONFLICTS)
+  ) {
+    return formConflictMessage(code as FormConfigConflict);
+  }
+  return null;
 }

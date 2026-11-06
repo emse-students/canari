@@ -1,3 +1,4 @@
+import { assertFormItemsShape } from '../forms/answer-bounds';
 import {
   BadRequestException,
   ConflictException,
@@ -259,6 +260,8 @@ export class BookingSpacesService {
     if (ids.some((id) => !id) || new Set(ids).size !== ids.length) {
       throw new BadRequestException({ code: 'item-id' });
     }
+    // A grid's rows and columns each their own label, the forms' rule (`answer-bounds.ts`, D4).
+    assertFormItemsShape(items);
     const withCondition = items.filter((i) => i.showIf != null);
     if (next.audience == null && withCondition.length === 0) return;
     const tiers = next.associationId

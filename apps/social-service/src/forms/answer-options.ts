@@ -3,6 +3,7 @@ import { OTHERS_BUCKET_ID, type Dimension } from '../pricing/audience';
 import { allCellKeys, pricedQuestionIds, type PriceMatrix } from '../pricing/price-matrix';
 import { normaliseCondition, type ConditionalItem } from './visibility';
 import { isGuestCell } from './form-option-rules';
+import { FORM_ANSWER_NOT_AN_OPTION, formRefusal } from './answer-bounds';
 
 /**
  * WHAT A PRICED ANSWER MAY SAY, AND WHICH PRICE A GRID MAY NOT FALL BACK TO.
@@ -127,8 +128,10 @@ export function assertDeclaredOptionAnswers(
       new Set(chosen).size === chosen.length &&
       chosen.every((id) => typeof id === 'string' && declared.has(id));
     if (!valid) {
-      throw new BadRequestException(
-        `Answer for field ${item.label ?? item.id} is not one of its options.`
+      throw formRefusal(
+        FORM_ANSWER_NOT_AN_OPTION,
+        `Answer for field ${item.label ?? item.id} is not one of its options.`,
+        item.id
       );
     }
   }
