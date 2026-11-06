@@ -3,7 +3,7 @@
   import FormSection from './FormSection.svelte';
   import type { MembershipTier } from '$lib/associations/api';
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
-  import { QUESTION_TYPES } from '$lib/forms/questionTypes';
+  import { AUTHORABLE_QUESTION_TYPES } from '$lib/forms/questionTypes';
   import { ListChecks, Plus } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { draggableCard } from '$lib/actions/draggableCard';
@@ -169,7 +169,7 @@
           {m.form_question_type_picker_label()}
         </p>
         <div class="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-          {#each QUESTION_TYPES as qtype (qtype.value)}
+          {#each AUTHORABLE_QUESTION_TYPES as qtype (qtype.value)}
             {@const Icon = qtype.Icon}
             <button
               type="button"

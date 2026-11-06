@@ -15,6 +15,8 @@ import {
   isAcceptedAnswerValue,
   isQuestionAnswered,
   normaliseGridAnswer,
+  PRODUCT_GRID_CELL_KEY_MAX,
+  PRODUCT_GRID_MAX_CELLS,
   withNormalisedGridAnswers,
 } from './answer-bounds';
 
@@ -54,6 +56,8 @@ describe('form answer bounds', () => {
     expect(ANSWER_MAX_TEXT_LENGTH).toBe(contract.maxTextLength);
     expect(ANSWER_MAX_SELECTIONS).toBe(contract.maxSelections);
     expect(GRID_MAX_ROWS).toBe(contract.maxGridRows);
+    expect(PRODUCT_GRID_MAX_CELLS).toBe(contract.maxProductGridCells);
+    expect(PRODUCT_GRID_CELL_KEY_MAX).toBe(contract.maxProductGridCellKey);
     const exported = bounds as unknown as Record<string, unknown>;
     for (const code of Object.values(contract.codes as Record<string, string>)) {
       expect(exported[code]).toBe(code);
@@ -72,13 +76,24 @@ describe('form answer bounds', () => {
       expect(isAcceptedAnswerValue('a'.repeat(ANSWER_MAX_TEXT_LENGTH + 1))).toBe(false);
       expect(isAcceptedAnswerValue(Array(ANSWER_MAX_SELECTIONS + 1).fill('a'))).toBe(false);
       expect(isAcceptedAnswerValue({ Vert: { deeper: 'x' } })).toBe(false);
-      expect(isAcceptedAnswerValue({ Vert: 3 })).toBe(false);
+      // A number row is a priced grid's shape; a map MIXING numbers and a survey's strings is none.
+      expect(isAcceptedAnswerValue({ Vert: 3, Noir: 'c_s' })).toBe(false);
       const tooManyRows = Object.fromEntries(
         Array.from({ length: GRID_MAX_ROWS + 1 }, (_, i) => [`r${i}`, 'c'])
       );
       expect(isAcceptedAnswerValue(tooManyRows)).toBe(false);
       expect(isAcceptedAnswerValue(null)).toBe(false);
       expect(isAcceptedAnswerValue(Number.NaN)).toBe(false);
+    });
+
+    it('takes a priced grid quantities up to rows x columns cells, and nothing past it', () => {
+      const cells = (n: number, key = (i: number) => `r${i}:c`) =>
+        Object.fromEntries(Array.from({ length: n }, (_, i) => [key(i), 1]));
+      expect(isAcceptedAnswerValue({ 'vert:m': 2, 'noir:s': 0 })).toBe(true);
+      expect(isAcceptedAnswerValue(cells(PRODUCT_GRID_MAX_CELLS))).toBe(true);
+      expect(isAcceptedAnswerValue(cells(PRODUCT_GRID_MAX_CELLS + 1))).toBe(false);
+      expect(isAcceptedAnswerValue({ ['a'.repeat(PRODUCT_GRID_CELL_KEY_MAX + 1)]: 1 })).toBe(false);
+      expect(isAcceptedAnswerValue({ 'vert:m': Number.POSITIVE_INFINITY })).toBe(false);
     });
   });
 
@@ -147,6 +162,19 @@ describe('form answer bounds', () => {
       expect(
         withNormalisedGridAnswers([grid()], { q_gone: { Vert: '' }, q_grid: { Vert: 'c_s' } })
       ).toEqual({ q_grid: { Vert: 'c_s' } });
+    });
+
+    it('passes a priced grid answer through untouched, to its own rule in submit', () => {
+      const answer = { 'vert:m': 2, 'noir:s': 0 };
+      expect(
+        withNormalisedGridAnswers([{ id: 'q_pg', type: 'product_grid' }], { q_pg: answer })
+      ).toEqual({ q_pg: answer });
+      // A number map on a question that is not a grid is still no answer of it.
+      expect(
+        codeOf(() =>
+          withNormalisedGridAnswers([{ id: 'q_text', type: 'short_text' }], { q_text: answer })
+        )
+      ).toBe(FORM_GRID_ANSWER_INVALID);
     });
 
     it('keeps a row labelled after a prototype key as an own row, never as the prototype', () => {

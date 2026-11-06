@@ -1236,8 +1236,9 @@ the fulfilment flags.
 `apps/social-service/src/forms/submission.projection.ts` now decides, as an ALLOWLIST, so a column
 added later is private until someone adds it there:
 
-- the submitter's view: `id`, `formId`, `answers`, `totalPaid`, `paymentStatus`, `paymentMethod`,
-  `cashExpiresAt`, `createdAt`. `GET submissions/:id` answers `id`, `formId`, `totalPaid`,
+- the submitter's view: `id`, `formId`, `answers`, `lines` (a priced grid's charged lines,
+  [below](#the-priced-grid-product_grid-wp-g1-2026-11-06)), `totalPaid`, `paymentStatus`,
+  `paymentMethod`, `cashExpiresAt`, `createdAt`. `GET submissions/:id` answers `id`, `formId`, `totalPaid`,
   `currency` and `paymentStatus` only.
 - the manager's view adds `userId` and `email`. Both lists use `userId` to name the submitter
   (`submitterName`, the pending-cash list), and a manager already reads both on member pages.
@@ -1259,3 +1260,124 @@ with recognisable values and fails if any of the eight routes answers one, by va
 a member without the flag gets a 403 from the payout read. The token was readable by every member
 until this shipped, so whether it can be rotated is a question for Lydia
 ([backlog](../../backlog.md)).
+
+## The priced grid (`product_grid`, WP-G1, 2026-11-06)
+
+**Server side built (WP-G1); the fill page (WP-G2), the editor (WP-G3) and the client half of the
+export (WP-G4) build on it.** Decided by the owner on 2026-11-06; design, use cases and the work
+packages: the forms capability audit of 2026-11-06 (`docs/wiki/forms-capability-audit-2026-11-06.md`),
+section 4.
+
+**The builders do not OFFER the type yet.** `QUESTION_TYPES` (frontend) lists it, because a form may
+hold it and the server's `SUPPORTED_QUESTION_TYPES` must equal that list; the two pickers
+(`FormBuilder.svelte`, `FormQuestionsSection.svelte`) read `AUTHORABLE_QUESTION_TYPES`, an explicit
+list of the types whose editor exists (`questionTypes.ts`, asserted by `questionTypes.test.ts`).
+Offering it before WP-G3 would hand people a question every save refuses
+(`PRODUCT_GRID_DEFINITION_MISSING`). WP-G3 adds `product_grid` to that list with its editor. The
+fill page reads its own list, `FILLABLE_QUESTION_TYPE_VALUES` (`fillAnswers.ts`
+`isKnownQuestionType`): until WP-G2 a priced grid is drawn "update the app" and blocks the send.
+
+A new question type - NOT a mode of the survey grids (`matrix_single`, `matrix_multiple`): an
+order, rows x columns ("Vert" x "M"), each cell a quantity, each unit at the price of the payer's
+category. Always required; no stock (a pre-order); no total cap per order (the cap per cell is
+enough); a second order is a second answer (`allowMultipleSubmissions`), never an edit.
+
+### One contract, copied byte for byte
+
+`apps/social-service/src/forms/product-grid-contract.ts` = `frontend/src/lib/forms/productGridContract.ts`
+(declared duplicate, `exact`; its spec sits beside the server copy). It holds the stored shape, every
+refusal code, the structural rule a definition obeys (`productGridItemRefusal`), the rule an answer
+obeys (`parseProductGridAnswer`) and how a quantity becomes a priced line (`productGridLines`). The
+editor refuses what the save refuses and the fill page totals what the submit charges, by the same
+code - and the server recomputes every amount anyway.
+
+The definition is nested under `item.productGrid` (not flat on the item as the audit sketched): the
+DTO's `rows?: string[]` already belongs to the survey grids and cannot also hold objects.
+
+```ts
+item = { id, type: 'product_grid', label, required: true, showIf?, productGrid: {
+  rows: [{ id, label }], columns: [{ id, label }],     // ids /^[A-Za-z0-9][A-Za-z0-9_-]{0,35}$/
+  maxPerCell: 1..99,                                    // 1 = a checkbox, more = a stepper
+  closedCells: ['rowId:colId'],                         // "no Creme in XS": cannot be ordered
+  pricing: { mode: 'single' | 'per_row' | 'per_column',
+             tiers: null | Dimension,                   // ONE cotisation, promo or formation criterion
+             prices: { [tierId]: { [axisKey]: cents } } } } }
+answer = { 'rowId:colId': quantity }                    // zero cells omitted when stored
+```
+
+`tierId` is a bucket id and `_others` ("everyone else", where every guest lands), or `_all` when
+`tiers` is null; `axisKey` is `*`, a row id or a column id by the mode. No row + column surcharge.
+
+### The save (`FormsService.create`/`update` -> `normaliseProductGridItems`, `forms/product-grid.ts`)
+
+Each refusal is a 400 `{ code, message, itemId }`: `PRODUCT_GRID_DEFINITION_MISSING`,
+`_NOT_REQUIRED`, `_REQUIRES_PAYMENT` (a grid charges, so `requiresPayment` - which also makes an
+anonymous grid form impossible), `_AXIS_INVALID` (1..40 rows, 1..15 columns), `_ID_INVALID`,
+`_DUPLICATE_ID`, `_LABEL_INVALID` (empty or over 100), `_DUPLICATE_LABEL` (per axis, trimmed and
+case-folded - the survey grids' row rule should match it), `_MAX_PER_CELL_INVALID`,
+`_CLOSED_CELL_INVALID`, `_ALL_CELLS_CLOSED`, `_PRICE_MODE_INVALID`, `_TIER_INVALID` (not a profile
+criterion, or refused by the price grid's own `parseDimension` - a tier the association does not
+sell, a promo that is no year - or two categories that can hold one person, or a cotisation on a
+personal form), `_GUEST_PRICE_MISSING` (a public form without the price a guest pays, named before
+the rest of completeness), `_PRICES_INCOMPLETE` (exactly one price per category x axis key),
+`_PRICE_INVALID` (integer cents, 0..1 000 000). The grid is STORED normalised: known fields only,
+labels trimmed, the tier criterion as the parser returned it. An edit that only opens the link or
+switches payment off is judged against the stored grids. A `productGrid` sent on another type is
+dropped. The prices enter `priceFingerprint`, so a list moving a grid price meets
+`assertKindMayPrice` like any other price.
+
+### What a page is told
+
+`GET /forms/:id/check` and the public read carry `productGridPrices: { [itemId]: { tierId,
+tierLabel, prices } }`: each grid's prices for THIS viewer, the category resolved on the server
+(`viewerPricesFor`, the price grid's `bucketFor`; a guest's facts know nobody, so `_others`). The
+public read serves the grid without its price lists (`respondentItems`). `GET /forms/:id` still
+serves the whole form - the editor reads it, as it reads the whole price grid.
+
+### The submit (`FormsService.submit`)
+
+For each VISIBLE grid, before the `required` check every other type takes: `priceProductGridAnswer`
+judges the answer - 400 `PRODUCT_GRID_ANSWER_MISSING` (no object: an app that cannot draw the type,
+which a newer client words "mettez a jour l'application"), `_UNKNOWN_CELL`, `_QUANTITY_INVALID`
+(not an integer in 0..maxPerCell), `_CELL_CLOSED`, `_EMPTY` - then prices it at the viewer's
+category. The stored answer is the judged one; the lines' sum joins `totalCents` with the base price
+(or the price grid's cell) and the choice supplements. A grid order whose total exceeds
+`PROVIDER_MAX_AMOUNT_CENTS` is refused `AMOUNT_OUT_OF_RANGE` BEFORE any row is written, cash
+included. Nothing else changes: the total is the ONE `unit_amount` sent to core-service, the
+payable-range check, the 30-minute seat hold, the reuse of a pending row (its answer, lines and
+total rewritten together), the D2 settle, cash, `markPaid` and refunds (a total refund frees the
+seat; the lines stay). A hidden grid is neither required, charged nor stored.
+
+**`submissions.lines`** (migration 137, `jsonb NULL`, additive, not held): per ordered cell
+`{ itemId, itemLabel, rowId, rowLabel, colId, colLabel, quantity, unitCents, lineCents, tierId,
+tierLabel }`, null on an answer without a grid. In the submitter's and the manager's views. It
+holds no account id, so an account erasure leaves it as it is (`NO_ACCOUNT` in
+`internal/account-erasure.ts`, which the coverage spec requires of every jsonb column).
+
+**The answers validator is ONE function**, `isAcceptedAnswerValue` in `forms/answer-bounds.ts`
+(WP-G0's, which `IsValidAnswers` calls): a flat object whose values are ALL numbers is a priced
+grid's answer - at most `PRODUCT_GRID_MAX_CELLS` (40 x 15 = 600) keys of at most 73 characters,
+finite numbers - and any other flat object is a survey grid's (50 rows of strings or string
+lists); a map mixing the two is refused. Both bounds are in `libs/contracts/form-answers.json`
+(`maxProductGridCells`, `maxProductGridCellKey`). `withNormalisedGridAnswers` passes a
+`product_grid` answer through untouched to `priceProductGridAnswer`, the only judge of what it
+means; a number map on any other question is still `FORM_GRID_ANSWER_INVALID`.
+
+### Responses and export (server half of WP-G4)
+
+`answerText` (both copies) reads a grid `Vert / M x2; Noir / L x1`, from the row's `lines` (what
+was charged, so a renamed or deleted row keeps its old label) before the grid's labels. The XLSX
+adds two sheets (`forms/product-grid-export.ts`): **Articles**, one line per ordered cell (date,
+buyer - a member's name, or the guest word and its reference -, question, row, column, category,
+quantity, unit price, line total, status); **Totaux**, per grid, quantities per row x column with
+row totals, column totals and amounts, counted over `paid` + `free`, then the same block for
+`pending_cash` (money not yet received). The words come from the client's
+`ExportLabels.productGrid` (16 keys); a grid form exported without them is refused
+`EXPORT_LABELS_PRODUCT_GRID_MISSING`.
+
+Tests: `product-grid-contract.spec.ts` (every code, every mode), `forms.service.product-grid.spec.ts`
+(the save, both reads, the charge per mode and category, a guest, forged answers and amounts, cash,
+the total bound, the real `ValidationPipe`), `product-grid-export.spec.ts` (the three sheets read
+back), `answer-text.spec.ts`, and against PostgreSQL `product-grid.integration.spec.ts` (migration
+137 twice, lines through jsonb, the reused row rewritten, the seat held then freed) and
+`refunds.integration.spec.ts` (a total refund of a grid order).

@@ -35,7 +35,59 @@ export interface ExportLabels {
    */
   file?: string;
   fileDeleted?: string;
+  /**
+   * The words of the priced grid's two sheets (`product-grid-export.ts`). Optional HERE for the same
+   * reason as `file`: only a form with a `product_grid` question needs them, and its export is refused
+   * `EXPORT_LABELS_PRODUCT_GRID_MISSING` without them.
+   */
+  productGrid?: ProductGridExportLabels;
 }
+
+/** The words of the "Articles" and "Totaux" sheets, every one required when the object is sent. */
+export interface ProductGridExportLabels {
+  /** Sheet names (cut to Excel's 31 characters). */
+  articlesSheet: string;
+  totalsSheet: string;
+  /** Header of the buyer column: a member's name, or `guest` and the reference a guest was given. */
+  buyer: string;
+  guest: string;
+  /** Headers of the grid question, its row, its column and the price category. */
+  question: string;
+  row: string;
+  column: string;
+  category: string;
+  /** What the "everyone else" category reads as (a guest's, and anybody no category claims). */
+  othersCategory: string;
+  quantity: string;
+  unitPrice: string;
+  lineTotal: string;
+  /** "Total" (units) and "Amount" (euros) in the totals tables. */
+  total: string;
+  amount: string;
+  /** Titles of the two blocks per grid: paid or free answers, and cash not yet received. */
+  received: string;
+  awaitingCash: string;
+}
+
+/** Every key of `ProductGridExportLabels`, for the check below. */
+const PRODUCT_GRID_KEYS: readonly (keyof ProductGridExportLabels)[] = [
+  'articlesSheet',
+  'totalsSheet',
+  'buyer',
+  'guest',
+  'question',
+  'row',
+  'column',
+  'category',
+  'othersCategory',
+  'quantity',
+  'unitPrice',
+  'lineTotal',
+  'total',
+  'amount',
+  'received',
+  'awaitingCash',
+];
 
 const REQUIRED = ['date', 'firstName', 'lastName', 'amount', 'status'] as const;
 
@@ -75,6 +127,17 @@ export function parseExportLabels(raw: string | undefined): ExportLabels {
   for (const key of ['file', 'fileDeleted'] as const)
     if (labels[key] !== undefined && (typeof labels[key] !== 'string' || labels[key] === ''))
       throw new BadRequestException(`export label "${key}" must be a non-empty string`);
+
+  if (labels.productGrid !== undefined) {
+    const grid = labels.productGrid;
+    if (typeof grid !== 'object' || grid === null || Array.isArray(grid))
+      throw new BadRequestException('export label "productGrid" must be an object');
+    for (const key of PRODUCT_GRID_KEYS) {
+      const value = (grid as Record<string, unknown>)[key];
+      if (typeof value !== 'string' || value === '')
+        throw new BadRequestException(`export label "productGrid.${key}" is missing`);
+    }
+  }
 
   return parsed as ExportLabels;
 }
