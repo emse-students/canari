@@ -53,6 +53,11 @@
     offerPricedGrid?: boolean;
     /** A priced grid was added (or a question became one): the page switches several answers on. */
     onPricedGridAdded?: () => void;
+    /**
+     * A priced grid was removed or turned into another type, called once `items` no longer holds
+     * it: the page may switch back off what adding it switched on.
+     */
+    onPricedGridGone?: () => void;
     /** The registration price grid's profile criterion, which a priced grid may copy in one click. */
     formTiers?: ProductGridTierDimension | null;
     /** Per priced grid, the cells already ordered in an answer (edit page only). */
@@ -74,6 +79,7 @@
     reveal = null,
     offerPricedGrid = true,
     onPricedGridAdded,
+    onPricedGridGone,
     formTiers = null,
     orderedCells = {},
     isPublic = false,
@@ -152,8 +158,10 @@
    * place, else the one before it, else the "add a question" button - never the page.
    */
   async function removeItem(index: number) {
-    if (items[index]?.id === expandedId) expandedId = null;
+    const removed = items[index];
+    if (removed?.id === expandedId) expandedId = null;
     items = items.filter((_, i) => i !== index);
+    if (removed?.type === PRODUCT_GRID_TYPE) onPricedGridGone?.();
     await tick();
     const rows = listEl?.querySelectorAll<HTMLElement>('[data-row-button]');
     (rows?.[index] ?? rows?.[index - 1] ?? addButtonEl)?.focus();
@@ -233,6 +241,7 @@
           onDuplicate={() => duplicateItem(i)}
           authorableTypes={types}
           onBecamePricedGrid={onPricedGridAdded}
+          onLeftPricedGrid={onPricedGridGone}
           {formTiers}
           orderedCells={orderedCells[_item.id] ?? []}
           {isPublic}

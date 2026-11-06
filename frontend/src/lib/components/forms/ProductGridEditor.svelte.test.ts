@@ -171,6 +171,84 @@ describe('rows and columns', () => {
     flushSync();
     expect(state.grid.columns.map((c) => c.label)).toEqual(['M', 'S']);
   });
+
+  it('moves a row with its touch arrows, named after the row, focus following it', async () => {
+    const { target, state } = render();
+    const up = byAria(target, m.form_pgrid_move_row_up({ label: 'Vert' }));
+    // The first row cannot go up; the touch path shows on a coarse pointer or a phone width.
+    expect(up.disabled).toBe(true);
+    expect(up.className).toContain('ui-icon-button');
+    expect(up.className).toContain('pointer-coarse:inline-flex');
+    expect(up.className).toContain('max-sm:inline-flex');
+    byAria(target, m.form_pgrid_move_row_down({ label: 'Vert' })).click();
+    await tick();
+    flushSync();
+    expect(state.grid.rows.map((r) => r.label)).toEqual(['Noir', 'Vert']);
+    // Vert is now last: its "down" is disabled, so focus lands on its "up".
+    expect(document.activeElement).toBe(
+      byAria(target, m.form_pgrid_move_row_up({ label: 'Vert' }))
+    );
+    byAria(target, m.form_pgrid_move_row_up({ label: 'Vert' })).click();
+    await tick();
+    flushSync();
+    expect(state.grid.rows.map((r) => r.label)).toEqual(['Vert', 'Noir']);
+  });
+
+  it('moves a column with its touch arrows, the ids unchanged', async () => {
+    const { target, state } = render();
+    const ids = state.grid.columns.map((c) => c.id);
+    expect(byAria(target, m.form_pgrid_move_column_right({ label: 'M' })).disabled).toBe(true);
+    byAria(target, m.form_pgrid_move_column_left({ label: 'M' })).click();
+    await tick();
+    flushSync();
+    expect(state.grid.columns.map((c) => c.label)).toEqual(['M', 'S']);
+    expect(state.grid.columns.map((c) => c.id)).toEqual([ids[1], ids[0]]);
+  });
+
+  it('gives every touch control of the grid a 44px target on a touch screen', () => {
+    const { target } = render();
+    // The chip's grip takes no drag on touch and gives way to the arrows; its x is widened.
+    expect(byAria(target, m.form_pgrid_move_column({ label: 'S' })).className).toContain(
+      'pointer-coarse:hidden'
+    );
+    expect(byAria(target, m.form_pgrid_remove_column({ label: 'S' })).className).toContain(
+      'tap-target'
+    );
+    for (const mode of [m.form_pgrid_mode_single(), m.form_pgrid_mode_per_row()]) {
+      expect(byText(target, mode).className).toContain('tap-target');
+    }
+    expect(
+      target.querySelector<HTMLInputElement>('[data-testid="price-single"]')!.className
+    ).toContain('pointer-coarse:min-h-11');
+  });
+
+  it('refuses to remove a row when every remaining cell would be closed, and says why', async () => {
+    const grid = sweat();
+    const [vert, noir] = grid.rows;
+    grid.closedCells = grid.columns.map((c) => `${vert.id}:${c.id}`);
+    const { target, state } = render(grid, { orderedCells: [`${noir.id}:${grid.columns[0].id}`] });
+    byAria(target, m.form_pgrid_remove_row({ label: 'Noir' })).click();
+    await tick();
+    flushSync();
+    expect(state.grid.rows).toHaveLength(2);
+    // Refused before the orders confirm: nothing to confirm for a gesture that cannot happen.
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(target.querySelector('[data-testid="table-feedback"]')?.textContent).toContain(
+      m.form_pgrid_remove_closes_every_cell()
+    );
+    // Reopening a cell clears the sentence; removing then works.
+    target
+      .querySelector<HTMLButtonElement>(`[data-cell="${vert.id}:${grid.columns[0].id}"]`)!
+      .click();
+    flushSync();
+    expect(target.querySelector('[data-testid="table-feedback"]')).toBeNull();
+    confirmMock.mockResolvedValueOnce(true);
+    byAria(target, m.form_pgrid_remove_row({ label: 'Noir' })).click();
+    await tick();
+    await tick();
+    flushSync();
+    expect(state.grid.rows.map((r) => r.label)).toEqual(['Vert']);
+  });
 });
 
 describe('cells', () => {

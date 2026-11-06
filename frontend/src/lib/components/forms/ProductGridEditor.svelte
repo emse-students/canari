@@ -1,6 +1,10 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import {
+    ArrowDown,
+    ArrowLeft,
+    ArrowRight,
+    ArrowUp,
     ClipboardPaste,
     GripVertical,
     Minus,
@@ -42,6 +46,7 @@
     moveAxisEntry,
     parseEuroInput,
     priceOf,
+    removalClosesEveryCell,
     removeAxisEntry,
     setMaxPerCell,
     setPrice,
@@ -65,7 +70,8 @@
    *
    * Columns are chips in the header (renamed in place, removed by their x), rows a narrow first
    * column of inline inputs, "+" adds one of either and "Coller une liste" adds many. A grip moves
-   * a row or a column, by dragging or by the arrow keys. Clicking a cell closes the combination
+   * a row or a column, by dragging or by the arrow keys; on a touch screen or a phone-width page,
+   * where no drag reaches it, two arrow buttons per entry do. Clicking a cell closes the combination
    * ("no Creme in XS") or reopens it. Prices sit where the mode puts them - one field, a column
    * beside the rows, a row under the headers - once per category, one tab each, when the grid
    * prices per cotisation, promo or formation. Below, the buyer's view, desktop or phone.
@@ -114,6 +120,8 @@
   let pasteOpen = $state(false);
   let pasteText = $state('');
   let pasteFeedback = $state('');
+  /** Why the last removal was refused, said under the table where the gesture was made. */
+  let tableFeedback = $state('');
   let tableEl = $state<HTMLElement | null>(null);
 
   const MODES: { value: ProductGridPriceMode; label: () => string }[] = [
@@ -172,6 +180,13 @@
    * they were charged (`submissions.lines`), but the article stops being offered.
    */
   async function removeEntry(axis: ProductGridAxis, id: string) {
+    tableFeedback = '';
+    // Refused before any confirm: what would be left is a grid nobody can order from.
+    if (removalClosesEveryCell(grid, axis, id)) {
+      Log.d(TAG, `the ${axis} entry is kept: every remaining cell would be closed`);
+      tableFeedback = m.form_pgrid_remove_closes_every_cell();
+      return;
+    }
     if (axisEntryHasOrders(orderedCells, axis, id)) {
       Log.d(TAG, `the ${axis} entry to remove has orders: asking first`);
       const ok = await showConfirm(m.form_pgrid_remove_ordered_confirm(), {
@@ -180,7 +195,9 @@
       });
       if (!ok) return;
     }
-    removeAxisEntry(grid, axis, id);
+    if (removeAxisEntry(grid, axis, id) === 'closes_every_cell') {
+      tableFeedback = m.form_pgrid_remove_closes_every_cell();
+    }
   }
 
   function feedbackOf(result: AddEntriesResult, axis: ProductGridAxis): string {
@@ -259,6 +276,24 @@
     tableEl?.querySelectorAll<HTMLElement>(`[data-axis-grip="${axis}"]`)[to]?.focus();
   }
 
+  /**
+   * The touch path: an arrow button moves its entry one step. Focus follows the entry to the same
+   * button at its new place, or to the other one once that end of the axis is reached (a disabled
+   * button cannot hold focus).
+   */
+  async function moveByButton(axis: ProductGridAxis, index: number, step: -1 | 1) {
+    const to = index + step;
+    if (!moveAxisEntry(grid, axis, index, to)) return;
+    await tick();
+    const atEnd = step < 0 ? to === 0 : to === grid[axis].length - 1;
+    const side = (atEnd ? -step : step) < 0 ? 'back' : 'forward';
+    tableEl?.querySelectorAll<HTMLElement>(`[data-axis-move="${axis}:${side}"]`)[to]?.focus();
+  }
+
+  /** The arrow buttons show where no drag works: a coarse pointer, or a phone-width page. */
+  const moveButtonClass =
+    'ui-icon-button text-text-muted hover:text-text-main hidden rounded-lg hover:bg-black/5 disabled:opacity-25 max-sm:inline-flex pointer-coarse:inline-flex dark:hover:bg-white/10';
+
   // Categories: off, or one profile criterion.
   const tiered = $derived(grid.pricing.tiers !== null);
   const cotisationAvailable = $derived(tiers.length > 0);
@@ -308,13 +343,13 @@
   });
   const singleKey = PRODUCT_GRID_SINGLE_KEY;
   const segmentClass = (on: boolean) =>
-    `min-h-9 rounded-full px-3.5 text-sm transition-colors ${
+    `tap-target min-h-9 rounded-full px-3.5 text-sm transition-colors ${
       on ? 'bg-cn-surface text-text-main font-bold shadow-sm' : 'text-text-muted font-medium'
     }`;
   const priceBoxClass =
     'border-cn-border bg-cn-surface focus-within:border-cn-yellow flex items-center rounded-lg border px-2';
   const priceInputClass =
-    'text-text-main min-h-9 w-14 min-w-0 border-0 bg-transparent text-right text-sm font-bold outline-none';
+    'text-text-main min-h-9 pointer-coarse:min-h-11 w-14 min-w-0 border-0 bg-transparent text-right text-sm font-bold outline-none';
 </script>
 
 <div class="space-y-4" data-testid="product-grid-editor">
@@ -564,7 +599,7 @@
                     ondragend={endDrag}
                     onkeydown={(e) => onGripKeydown(e, 'columns', ci)}
                     aria-label={m.form_pgrid_move_column({ label: column.label || ci + 1 })}
-                    class="text-text-muted flex h-8 w-4 shrink-0 cursor-grab items-center justify-center"
+                    class="text-text-muted flex h-8 w-4 shrink-0 cursor-grab items-center justify-center pointer-coarse:hidden"
                     ><GripVertical size={12} /></button
                   >
                   <input
@@ -582,8 +617,26 @@
                     onclick={() => removeEntry('columns', column.id)}
                     disabled={grid.columns.length <= 1}
                     aria-label={m.form_pgrid_remove_column({ label: column.label || ci + 1 })}
-                    class="text-text-muted hover:text-red-err flex h-8 w-7 shrink-0 items-center justify-center rounded-full disabled:opacity-30"
+                    class="text-text-muted hover:text-red-err tap-target flex h-8 w-7 shrink-0 items-center justify-center rounded-full disabled:opacity-30"
                     ><X size={12} /></button
+                  >
+                </span>
+                <span class="mt-1 hidden justify-center gap-0.5 max-sm:flex pointer-coarse:flex">
+                  <button
+                    type="button"
+                    data-axis-move="columns:back"
+                    onclick={() => moveByButton('columns', ci, -1)}
+                    disabled={ci === 0}
+                    aria-label={m.form_pgrid_move_column_left({ label: column.label || ci + 1 })}
+                    class={moveButtonClass}><ArrowLeft size={16} /></button
+                  >
+                  <button
+                    type="button"
+                    data-axis-move="columns:forward"
+                    onclick={() => moveByButton('columns', ci, 1)}
+                    disabled={ci === grid.columns.length - 1}
+                    aria-label={m.form_pgrid_move_column_right({ label: column.label || ci + 1 })}
+                    class={moveButtonClass}><ArrowRight size={16} /></button
                   >
                 </span>
               </th>
@@ -640,8 +693,24 @@
                     ondragend={endDrag}
                     onkeydown={(e) => onGripKeydown(e, 'rows', ri)}
                     aria-label={m.form_pgrid_move_row({ label: row.label || ri + 1 })}
-                    class="ui-icon-button text-text-muted cursor-grab rounded-lg"
+                    class="ui-icon-button text-text-muted cursor-grab rounded-lg pointer-coarse:hidden"
                     ><GripVertical size={14} /></button
+                  >
+                  <button
+                    type="button"
+                    data-axis-move="rows:back"
+                    onclick={() => moveByButton('rows', ri, -1)}
+                    disabled={ri === 0}
+                    aria-label={m.form_pgrid_move_row_up({ label: row.label || ri + 1 })}
+                    class={moveButtonClass}><ArrowUp size={16} /></button
+                  >
+                  <button
+                    type="button"
+                    data-axis-move="rows:forward"
+                    onclick={() => moveByButton('rows', ri, 1)}
+                    disabled={ri === grid.rows.length - 1}
+                    aria-label={m.form_pgrid_move_row_down({ label: row.label || ri + 1 })}
+                    class={moveButtonClass}><ArrowDown size={16} /></button
                   >
                   <input
                     data-axis-input="rows"
@@ -690,7 +759,10 @@
                     type="button"
                     aria-pressed={closed}
                     data-cell="{row.id}:{column.id}"
-                    onclick={() => toggleClosedCell(grid, row.id, column.id)}
+                    onclick={() => {
+                      tableFeedback = '';
+                      toggleClosedCell(grid, row.id, column.id);
+                    }}
                     aria-label={closed
                       ? m.form_pgrid_cell_closed_aria({ row: row.label, column: column.label })
                       : m.form_pgrid_cell_open_aria({ row: row.label, column: column.label })}
@@ -727,6 +799,11 @@
       </table>
     </div>
     <p class="text-text-muted pt-1 text-xs">{m.form_pgrid_close_hint()}</p>
+    {#if tableFeedback}
+      <p class="text-red-err pt-1 text-xs font-semibold" role="status" data-testid="table-feedback">
+        {tableFeedback}
+      </p>
+    {/if}
     {#if duplicateRows.size > 0 || duplicateColumns.size > 0}
       <p class="text-red-err pt-1 text-xs font-semibold" role="alert">
         {m.form_pgrid_refusal_duplicate_label()}

@@ -189,12 +189,18 @@ async function refusal(res: Response, fallback: string): Promise<SocialApiError>
   const body = await res.json().catch(() => ({}));
   const message = Array.isArray(body.message) ? body.message.join(' ') : body.message;
   const code = typeof body.code === 'string' ? body.code : null;
-  Log.i('FORMS', `${fallback}: refused status=${res.status} code=${code ?? 'none'}`);
+  const itemId = typeof body.itemId === 'string' ? body.itemId : null;
+  Log.i(
+    'FORMS',
+    `${fallback}: refused status=${res.status} code=${code ?? 'none'} item=${itemId ?? 'none'}`
+  );
   return new SocialApiError(
     message || `${fallback} (${res.status})`,
     code,
     res.status,
-    amountBoundsOf(body)
+    amountBoundsOf(body),
+    null,
+    itemId
   );
 }
 

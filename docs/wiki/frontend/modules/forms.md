@@ -1548,11 +1548,23 @@ draws them. Built from the owner-approved mockup of 2026-11-06 with the app's to
   marked as they are typed (`collidingLabelKeys`).
 - **Reordering**: each row and column has a grip, dragged onto another entry (its drag events stop
   at the grid, so the question card does not move) or moved with the arrow keys (up/down for a
-  row, left/right for a column).
+  row, left/right for a column). **No HTML5 drag reaches a touch screen**, so on a coarse pointer
+  or below `sm` each row has up/down buttons beside its label and each column left/right buttons
+  under its chip (`ui-icon-button`, 44px, labelled with the entry: *"Monter la ligne Vert"*), the
+  way the question list moves on a phone (#3083); the grips are hidden on a coarse pointer. Focus
+  follows the entry to the same button, or to the other one at the end of the axis.
+- **Touch targets**: the chip's x keeps the chip's drawing and is widened to 44px by `tap-target`
+  (the chip still sizes it, so `iconButtonScale.test.ts` keeps its exemption); the price-mode and
+  criterion-kind buttons take `tap-target`; the price inputs, which no `::before` can widen, grow to
+  44px (`pointer-coarse:min-h-11`).
 - **Ids**: `crypto.randomUUID()`, which the contract's id pattern accepts. Renaming a label never
   changes an id - answers, prices and closed cells are keyed by it.
 - **Closing a cell**: a click closes the combination (struck through, "Fermee") and a second
-  reopens it. The last open cell cannot be closed (`PRODUCT_GRID_ALL_CELLS_CLOSED`).
+  reopens it. The last open cell cannot be closed (`PRODUCT_GRID_ALL_CELLS_CLOSED`), and neither
+  can a row or column be REMOVED when every cell left would be closed (`removalClosesEveryCell`;
+  `removeAxisEntry` answers `closes_every_cell` and touches nothing): the gesture is refused under
+  the table (*"Impossible de supprimer..."*), before any orders confirm, and nothing reopens the
+  manager's closed cells behind their back.
 - **Prices**: *Un prix pour tout / Par ligne / Par colonne*; the inputs appear where the mode puts
   them (one field, a price column beside the rows, a price row under the headers). EUROS in the
   editor, typed with a comma or a dot; a blank stays `null` and is LEFT OUT of the payload, so the
@@ -1581,7 +1593,12 @@ draws them. Built from the owner-approved mockup of 2026-11-06 with the app's to
 - **Always required**: adding a grid (or turning a question into one) sets `required` and the
   asterisk is disabled; it also calls the page's `onPricedGridAdded`, which switches
   `allowMultipleSubmissions` on (a second order is a second answer, decision Q3) - the manager may
-  turn it off.
+  turn it off. **It goes back off only if the editor turned it on**: the page keeps
+  `multipleTurnedOnByGrid` (`GridMultipleSubmissions`, `multipleSubmissionsAfterGridAdded` /
+  `...AfterGridGone` in `productGridEditor.ts`), set only when a grid switched it from off;
+  removing a grid or changing its type calls `onPricedGridGone`, which switches it off when that
+  flag is set AND no grid remains. Any write through the switch's binding - the manager's toggle,
+  or the public switch forcing it on - clears the flag, so the choice is theirs from then on.
 - **The wire** (`itemsPayload.ts`): `toFormItemsPayload` sends `productGrid` as
   `productGridPayload` builds it - the contract's exact shape, cents, one price per category x
   axis key, closed cells of live entries only - and drops it from any other type; `fromFormItems`
@@ -1591,6 +1608,12 @@ draws them. Built from the owner-approved mockup of 2026-11-06 with the app's to
   page shows the question's title and the sentence in its banner, opens the card through `reveal`,
   and the card repeats the sentence under the table (`gridFault`). The server's coded 400 is worded
   by the same `productGridDefinitionMessage`, reached through `formCodeMessage`'s default branch.
+  **A refusal only the server can make** (`PRODUCT_GRID_TIER_INVALID` for a cotisation tier the
+  association does not sell, or any definition code the local check missed) is drawn the same way:
+  its body carries `itemId` (`ProductGridRefusalBody`, `product-grid.ts`), the forms client keeps it
+  on `SocialApiError.itemId`, and `refusedProductGridFault` (`questionFault.ts`) turns it into the
+  page's `gridFault` and opens the card. A grid code naming no grid of the form is logged at error
+  level and leaves the banner alone.
 - **Duplicating** (`questionDuplicate.ts`): the copy's rows and columns get FRESH ids
   (`withFreshProductGridIds`), its closed cells and price keys following them; two questions
   sharing a row id would read as one article in the export's totals.
@@ -1602,11 +1625,16 @@ draws them. Built from the owner-approved mockup of 2026-11-06 with the app's to
 
 Tests: `productGridEditor.test.ts` (every edit, the payload judged by the contract, modes,
 categories, a guest's price, the wire trip, fresh ids, every code worded, ordered cells, colliding
-labels), `ProductGridEditor.svelte.test.ts` (add, rename, remove with and without orders, paste,
-arrows, closing a cell, the three modes, the cap, category tabs, the preview),
+labels, a removal refused for closing every cell, "Plusieurs reponses" switched back),
+`ProductGridEditor.svelte.test.ts` (add, rename, remove with and without orders, paste, arrows,
+the touch arrow buttons and 44px targets, a removal refused under the table, closing a cell, the
+three modes, the cap, category tabs, the preview),
 `FormQuestionsSection.svelte.test.ts` (offered on a form and not on a booking space, added required
-and opened, a refused save drawn under its grid), `itemsPayload.test.ts`, `questionDuplicate.test.ts`,
-`questionTypes.test.ts`.
+and opened, a refused save drawn under its grid, the page told when a grid goes), `itemsPayload.test.ts`, `questionDuplicate.test.ts`,
+`questionTypes.test.ts`, `questionFault.test.ts` (a server refusal mapped to its grid),
+`api.refusal.test.ts` (`itemId` carried), `routes/forms/create/page.pricedGridMultiple.svelte.test.ts`
+("Plusieurs reponses" back off with its grid and never against the manager; a server-only refusal
+drawn under a folded grid).
 
 ### The responses screen (client half of WP-G4, 2026-11-06)
 

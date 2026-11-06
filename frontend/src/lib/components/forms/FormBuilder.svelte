@@ -53,6 +53,7 @@
     onDuplicate,
     authorableTypes = AUTHORABLE_QUESTION_TYPES,
     onBecamePricedGrid,
+    onLeftPricedGrid,
     formTiers = null,
     orderedCells = [],
     isPublic = false,
@@ -96,6 +97,8 @@
     authorableTypes?: typeof AUTHORABLE_QUESTION_TYPES;
     /** The question just became a priced grid: the page switches several answers on. */
     onBecamePricedGrid?: () => void;
+    /** The question was a priced grid and is now another type: the page may undo what adding it did. */
+    onLeftPricedGrid?: () => void;
     /** A priced grid's one-click criterion: the registration price grid's profile criterion. */
     formTiers?: ProductGridTierDimension | null;
     /** A priced grid's cells already ordered in an answer (removing their row or column warns). */
@@ -430,8 +433,10 @@
                 <button
                   type="button"
                   onclick={() => {
+                    const wasPricedGrid = item.type === PRODUCT_GRID_TYPE;
                     item.type = qt.value;
                     if (qt.value === PRODUCT_GRID_TYPE) becomePricedGrid();
+                    else if (wasPricedGrid) onLeftPricedGrid?.();
                     showTypePicker = false;
                   }}
                   class="flex min-w-0 items-center gap-2 rounded-xl px-3 py-2 transition-all {item.type ===

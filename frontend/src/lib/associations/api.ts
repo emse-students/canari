@@ -509,7 +509,13 @@ export class SocialApiError extends ApiRefusalError {
      * How many people still hold the cotisation tier a `TIER_HAS_HOLDERS` refusal would not delete
      * ({@link holderCountOf}), so the screen words the number itself.
      */
-    readonly holderCount: number | null = null
+    readonly holderCount: number | null = null,
+    /**
+     * The question a form save's coded 400 is about (`itemId` in the body: every `PRODUCT_GRID_*`
+     * definition refusal names its grid), so the editor draws the refusal under that question
+     * instead of only in the page banner. Null when the body names none.
+     */
+    readonly itemId: string | null = null
   ) {
     super(status, code, message);
     this.name = 'SocialApiError';

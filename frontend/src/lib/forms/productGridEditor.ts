@@ -224,18 +224,44 @@ export function addBlankEntry(grid: EditorProductGrid, axis: ProductGridAxis): b
   return true;
 }
 
+/** What a removal did: removed, refused as the axis's last entry, or refused as closing every cell. */
+export type RemoveAxisEntryResult = 'removed' | 'last_entry' | 'closes_every_cell';
+
 /**
- * Removes an entry, and with it every closed cell and every price it keyed. The last entry of an
- * axis is kept: a grid needs one row and one column, and the save would refuse an empty axis.
+ * Whether removing an entry would leave every remaining cell closed - a row whose sizes are all
+ * open, removed beside rows that are all "Fermee", say. The save refuses that grid
+ * (`PRODUCT_GRID_ALL_CELLS_CLOSED`), so the gesture is refused first, before any confirm is asked.
+ */
+export function removalClosesEveryCell(
+  grid: EditorProductGrid,
+  axis: ProductGridAxis,
+  id: string
+): boolean {
+  const rows = axis === 'rows' ? grid.rows.filter((r) => r.id !== id) : grid.rows;
+  const columns = axis === 'columns' ? grid.columns.filter((c) => c.id !== id) : grid.columns;
+  if (rows.length === 0 || columns.length === 0) return false;
+  const closed = new Set(grid.closedCells);
+  return rows.every((r) => columns.every((c) => closed.has(productGridCellKey(r.id, c.id))));
+}
+
+/**
+ * Removes an entry, and with it every closed cell and every price it keyed. Refused, the grid
+ * untouched, when it is the last entry of its axis (a grid needs one row and one column, and the
+ * save would refuse an empty axis) or when what is left would be all closed cells - the closed
+ * cells are the manager's, so nothing reopens them behind their back.
  */
 export function removeAxisEntry(
   grid: EditorProductGrid,
   axis: ProductGridAxis,
   id: string
-): boolean {
+): RemoveAxisEntryResult {
   if (grid[axis].length <= 1) {
     Log.d(TAG, `the last ${axis} entry is kept`);
-    return false;
+    return 'last_entry';
+  }
+  if (removalClosesEveryCell(grid, axis, id)) {
+    Log.d(TAG, `the ${axis} entry is kept: every remaining cell would be closed`);
+    return 'closes_every_cell';
   }
   grid[axis] = grid[axis].filter((e) => e.id !== id);
   grid.closedCells = grid.closedCells.filter((key) => {
@@ -244,7 +270,7 @@ export function removeAxisEntry(
   });
   for (const list of Object.values(grid.pricing.prices)) delete list[id];
   Log.d(TAG, `removed one ${axis} entry`);
-  return true;
+  return 'removed';
 }
 
 /** Moves an entry from one position to another on its axis; out-of-range moves do nothing. */
@@ -550,6 +576,29 @@ export function productGridItemProblem(
   );
 }
 
+/** A grid question the save refuses, and the sentence the page shows and the card repeats. */
+export interface ProductGridFault {
+  itemId: string;
+  message: string;
+}
+
+/**
+ * The fault of one grid question for one definition code - the editor's own check and the server's
+ * coded 400 build it here, so both name the question and the problem in the same words.
+ */
+export function productGridFault(
+  item: { id: string; label?: string },
+  code: string
+): ProductGridFault {
+  return {
+    itemId: item.id,
+    message: m.form_pgrid_problem_in_question({
+      label: item.label?.trim() || m.form_builder_title_placeholder(),
+      problem: productGridDefinitionMessage(code) ?? m.form_pgrid_refusal_definition(),
+    }),
+  };
+}
+
 /**
  * The first priced grid the save would refuse, with the sentence the page shows - judged by the
  * contract's `productGridItemRefusal` on the payload `productGridPayload` builds, so the page refuses
@@ -564,20 +613,51 @@ export function firstProductGridProblem(
     productGrid?: EditorProductGrid;
   }[],
   form: ProductGridFormContext
-): { itemId: string; message: string } | null {
+): ProductGridFault | null {
   for (const item of items) {
     const code = productGridItemProblem(item, form);
     if (!code) continue;
     Log.d(TAG, `question ${item.id} refused before the save: ${code}`);
-    return {
-      itemId: item.id,
-      message: m.form_pgrid_problem_in_question({
-        label: item.label?.trim() || m.form_builder_title_placeholder(),
-        problem: productGridDefinitionMessage(code) ?? m.form_pgrid_refusal_definition(),
-      }),
-    };
+    return productGridFault(item, code);
   }
   return null;
+}
+
+/**
+ * "Plusieurs reponses" and who switched it on. Adding a priced grid switches it on (a second order
+ * is a second answer, decision Q3); `turnedOnByGrid` records that the EDITOR did it, so removing the
+ * last grid - or turning it into another type - switches it back off. Any choice the manager makes
+ * on the switch clears the flag: from then on it is theirs, and no grid gesture overrides it.
+ */
+export interface GridMultipleSubmissions {
+  allow: boolean;
+  turnedOnByGrid: boolean;
+}
+
+/** A grid was added (or a question became one): on, and remembered as the editor's doing if it was off. */
+export function multipleSubmissionsAfterGridAdded(
+  state: GridMultipleSubmissions
+): GridMultipleSubmissions {
+  if (state.allow) return state;
+  Log.d(TAG, 'a priced grid switches "several answers" on');
+  return { allow: true, turnedOnByGrid: true };
+}
+
+/**
+ * A grid was removed or changed type: off again only if the editor switched it on AND no grid is
+ * left among `items` (the list as it now stands). Otherwise unchanged.
+ */
+export function multipleSubmissionsAfterGridGone(
+  state: GridMultipleSubmissions,
+  items: readonly { type?: string }[]
+): GridMultipleSubmissions {
+  if (!state.turnedOnByGrid) return state;
+  if (items.some((i) => i.type === PRODUCT_GRID_TYPE)) {
+    Log.d(TAG, 'a priced grid is still there: "several answers" stays on');
+    return state;
+  }
+  Log.d(TAG, 'the last priced grid is gone: "several answers" goes back off');
+  return { allow: false, turnedOnByGrid: false };
 }
 
 /**

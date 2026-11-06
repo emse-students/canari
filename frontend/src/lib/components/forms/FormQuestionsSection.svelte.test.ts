@@ -339,6 +339,50 @@ describe('the type menus', () => {
     expect(required.getAttribute('aria-pressed')).toBe('true');
   });
 
+  it('tell the page when a grid is removed or becomes another type', () => {
+    const gone: number[] = [];
+    const grid = (id: string) => ({
+      id,
+      type: 'product_grid',
+      label: id,
+      required: true,
+      productGrid: {
+        rows: [{ id: 'r1', label: 'Vert' }],
+        columns: [{ id: 'c1', label: 'M' }],
+        maxPerCell: 5,
+        closedCells: [],
+        pricing: { mode: 'single', tiers: null, prices: { _all: { '*': 2800 } } },
+      },
+    });
+    const { target } = render([grid('g1'), grid('g2'), three()[0]], {
+      onPricedGridGone: () => gone.push(1),
+    });
+    // The first grid becomes a short text through its type menu.
+    rowButton(target, 1).click();
+    flushSync();
+    allButtons(target)
+      .find((b) => b.getAttribute('aria-haspopup') === 'listbox')!
+      .click();
+    flushSync();
+    allButtons(target)
+      .find((b) => b.textContent?.trim() === m.qtype_short_text())!
+      .click();
+    flushSync();
+    expect(gone).toHaveLength(1);
+    // The second grid is removed.
+    rowButton(target, 2).click();
+    flushSync();
+    byLabel(target, m.form_builder_delete_aria()).click();
+    flushSync();
+    expect(gone).toHaveLength(2);
+    // Removing a question that is no grid tells the page nothing.
+    rowButton(target, 1).click();
+    flushSync();
+    byLabel(target, m.form_builder_delete_aria()).click();
+    flushSync();
+    expect(gone).toHaveLength(2);
+  });
+
   it('draw a refused save under the grid it is about', () => {
     const grid = {
       id: 'g',

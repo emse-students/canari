@@ -20,6 +20,8 @@ import {
   firstProductGridProblem,
   isCellClosed,
   moveAxisEntry,
+  multipleSubmissionsAfterGridAdded,
+  multipleSubmissionsAfterGridGone,
   newProductGrid,
   orderedProductGridCells,
   parseEuroInput,
@@ -27,6 +29,7 @@ import {
   productGridDefinitionMessage,
   productGridPayload,
   profileTierCriterion,
+  removalClosesEveryCell,
   removeAxisEntry,
   setMaxPerCell,
   setPrice,
@@ -117,12 +120,34 @@ describe('rows and columns', () => {
     const [vert, noir] = grid.rows;
     toggleClosedCell(grid, vert.id, grid.columns[0].id);
     toggleClosedCell(grid, noir.id, grid.columns[0].id);
-    expect(removeAxisEntry(grid, 'rows', vert.id)).toBe(true);
+    expect(removeAxisEntry(grid, 'rows', vert.id)).toBe('removed');
     expect(grid.closedCells).toEqual([`${noir.id}:${grid.columns[0].id}`]);
     expect(grid.pricing.prices._all[vert.id]).toBeUndefined();
     removeAxisEntry(grid, 'rows', noir.id);
-    expect(removeAxisEntry(grid, 'rows', grid.rows[0].id)).toBe(false);
+    expect(removeAxisEntry(grid, 'rows', grid.rows[0].id)).toBe('last_entry');
     expect(grid.rows).toHaveLength(1);
+  });
+
+  it('refuses a removal that would leave every remaining cell closed, the grid untouched', () => {
+    const grid = sweat();
+    const [vert, noir, creme] = grid.rows;
+    // Vert and Noir sold out in every size; only Creme is open.
+    for (const row of [vert, noir]) {
+      for (const col of grid.columns) toggleClosedCell(grid, row.id, col.id);
+    }
+    const before = JSON.parse(JSON.stringify(grid));
+    expect(removalClosesEveryCell(grid, 'rows', creme.id)).toBe(true);
+    expect(removeAxisEntry(grid, 'rows', creme.id)).toBe('closes_every_cell');
+    expect(grid).toEqual(before);
+    expect(judge(grid)).toBeNull();
+    // Removing a closed row is fine, and so is a column whose loss leaves an open cell.
+    expect(removalClosesEveryCell(grid, 'rows', vert.id)).toBe(false);
+    expect(removalClosesEveryCell(grid, 'columns', grid.columns[0].id)).toBe(false);
+    // A column that holds Creme's only open cell is refused too.
+    toggleClosedCell(grid, creme.id, grid.columns[1].id);
+    toggleClosedCell(grid, creme.id, grid.columns[2].id);
+    expect(removeAxisEntry(grid, 'columns', grid.columns[0].id)).toBe('closes_every_cell');
+    expect(grid.columns).toHaveLength(3);
   });
 
   it('moves an entry, and refuses a move off the axis', () => {
@@ -387,5 +412,35 @@ describe('colliding labels', () => {
       { id: 'e', label: 'Noir' },
     ]);
     expect([...keys]).toEqual(['vert']);
+  });
+});
+
+describe('"Plusieurs reponses" and the grid that switched it on', () => {
+  const grid = { type: 'product_grid' };
+  const text = { type: 'short_text' };
+
+  it('a grid switches it on, and removing the last grid switches it back off', () => {
+    const on = multipleSubmissionsAfterGridAdded({ allow: false, turnedOnByGrid: false });
+    expect(on).toEqual({ allow: true, turnedOnByGrid: true });
+    expect(multipleSubmissionsAfterGridGone(on, [text])).toEqual({
+      allow: false,
+      turnedOnByGrid: false,
+    });
+  });
+
+  it('stays on while another grid remains', () => {
+    const on = multipleSubmissionsAfterGridAdded({ allow: false, turnedOnByGrid: false });
+    expect(multipleSubmissionsAfterGridGone(on, [text, grid])).toEqual(on);
+  });
+
+  it("never overrides the manager's own choice", () => {
+    // Already on by the manager: adding a grid does not claim it, removing it leaves it on.
+    const manager = { allow: true, turnedOnByGrid: false };
+    const added = multipleSubmissionsAfterGridAdded(manager);
+    expect(added).toEqual(manager);
+    expect(multipleSubmissionsAfterGridGone(added, [])).toEqual(manager);
+    // Switched off by the manager after the grid turned it on (the page clears the flag).
+    const off = { allow: false, turnedOnByGrid: false };
+    expect(multipleSubmissionsAfterGridGone(off, [])).toEqual(off);
   });
 });
