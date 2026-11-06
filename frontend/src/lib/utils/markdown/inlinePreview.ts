@@ -34,6 +34,18 @@ export type ParsedHeadingLine = {
   content: string;
 };
 
+/** A span the parser found: where it sits in the parsed text, and which styles it carries. */
+export type InlineSpan = {
+  /** Start of the opening marker. */
+  start: number;
+  contentStart: number;
+  contentEnd: number;
+  /** End of the closing marker. */
+  end: number;
+  marker: string;
+  kinds: ReadonlyArray<'bold' | 'italic' | 'strike' | 'code'>;
+};
+
 type DelimiterKind = 'italic' | 'bold' | 'boldItalic' | 'strike' | 'code';
 
 type DelimiterSpec = {
@@ -270,7 +282,9 @@ function stylesForKind(kind: Exclude<DelimiterKind, 'code'>): InlineMarkdownStyl
 /** An inline code span: closes on a run of backticks of EXACTLY the opening length. */
 function tryCodeSpan(
   index: PairingIndex,
-  start: number
+  start: number,
+  spans: InlineSpan[] | undefined,
+  base: number
 ): { end: number; segments: InlinePreviewSegment[] } | null {
   const { text } = index;
   if (text[start - 1] === '`') return null;
@@ -279,6 +293,14 @@ function tryCodeSpan(
   const marker = '`'.repeat(run.length);
   const content = text.slice(start + run.length, run.next);
   if (content.length === 0 || content.includes('\n')) return null;
+  spans?.push({
+    start: base + start,
+    contentStart: base + start + run.length,
+    contentEnd: base + run.next,
+    end: base + run.next + run.length,
+    marker,
+    kinds: ['code'],
+  });
   return {
     end: run.next + run.length,
     segments: [
@@ -293,14 +315,16 @@ function tryDelimiter(
   index: PairingIndex,
   start: number,
   inheritedStyles: readonly InlineMarkdownStyle[],
-  inheritedMarkers: readonly string[]
+  inheritedMarkers: readonly string[],
+  spans: InlineSpan[] | undefined,
+  base: number
 ): { end: number; segments: InlinePreviewSegment[] } | null {
   const { text } = index;
   for (const spec of DELIMITERS) {
     if (!text.startsWith(spec.marker, start) || isEscapedAt(text, start)) continue;
 
     if (spec.kind === 'code') {
-      const code = tryCodeSpan(index, start);
+      const code = tryCodeSpan(index, start, spans, base);
       if (code) return code;
       continue;
     }
@@ -320,10 +344,20 @@ function tryDelimiter(
     if (content.trim().length === 0) continue;
 
     const added = stylesForKind(spec.kind);
+    spans?.push({
+      start: base + start,
+      contentStart: base + contentStart,
+      contentEnd: base + closeIdx,
+      end: base + closeIdx + spec.marker.length,
+      marker: spec.marker,
+      kinds: added,
+    });
     const inner = parseInlineMarkdownPreview(
       content,
       [...inheritedStyles, ...added],
-      [...inheritedMarkers, spec.marker]
+      [...inheritedMarkers, spec.marker],
+      spans,
+      base + contentStart
     );
 
     return {
@@ -344,7 +378,9 @@ function tryDelimiter(
 export function parseInlineMarkdownPreview(
   text: string,
   inheritedStyles: readonly InlineMarkdownStyle[] = [],
-  inheritedMarkers: readonly string[] = []
+  inheritedMarkers: readonly string[] = [],
+  spans?: InlineSpan[],
+  base = 0
 ): InlinePreviewSegment[] {
   const segments: InlinePreviewSegment[] = [];
   const index = new PairingIndex(text);
@@ -384,7 +420,7 @@ export function parseInlineMarkdownPreview(
       }
     }
 
-    const del = tryDelimiter(index, i, inheritedStyles, inheritedMarkers);
+    const del = tryDelimiter(index, i, inheritedStyles, inheritedMarkers, spans, base);
     if (del) {
       flushText();
       segments.push(...del.segments);
@@ -398,6 +434,16 @@ export function parseInlineMarkdownPreview(
 
   flushText();
   return segments;
+}
+
+/**
+ * Every span the preview pairs in `text`, nested ones included, with its position. The toolbar
+ * reads it to know which text is ALREADY in a style, by the same pairing the editor draws.
+ */
+export function inlineSpans(text: string): InlineSpan[] {
+  const spans: InlineSpan[] = [];
+  parseInlineMarkdownPreview(text, [], [], spans);
+  return spans;
 }
 
 const HEADING_LINE_RE = /^(#{1,3})(\s+)(.*)$/;

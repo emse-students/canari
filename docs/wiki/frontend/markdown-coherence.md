@@ -35,10 +35,13 @@ They DID differ: the preview drew `__x__` as an underline (the post renders it b
    paragraph (the blocks between blank lines; code untouched), the paragraph is rendered as today.
    Only if that render still shows a literal `**`, `__` or `~~` is a rewrite tried, one loose span at
    a time, and a span is kept only if the new render (a) still holds every strong / em / del run of
-   the original render, same text at the same nesting depth or deeper, and (b) shows strictly fewer
+   the original render, same tag over the SAME PLACE (start and length counted in rendered characters that are not whitespace or `*`, `_`, `~`, so two runs with the same text are two runs and a rewrite cannot move a bold onto its twin) at the same nesting depth or deeper, and (b) shows strictly fewer
    literal markers. Otherwise the original text stays. A paragraph with no leftover marker costs one
-   extra render; a paragraph over 8000 characters, and spans past the 24th, are left alone (the
-   fallback is the original, which cannot lose anything). The first version predicted marked with
+   extra render; a paragraph over 8000 characters, and spans past the 24th, are left alone, and a
+   document has a fixed budget of 300000 rendered characters (checked before every render): past it
+   the rest of the document is left as written. Every fallback is the original, which cannot lose
+   anything. A crafted 48k post (six 7990-character paragraphs of 24+ loose spans) cost 255 ms before
+   the budget and is bounded now, the tail paragraphs byte for byte unchanged. The first version predicted marked with
    regexes and lost `**a **b** c**` (nested bold, which is what the old toolbar wrote around a phrase
    holding a bold word), a bold continuing past a code span or a URL or a soft break, and any bold
    whose closer was more than 1500 characters away.
@@ -54,22 +57,30 @@ They DID differ: the preview drew `__x__` as an underline (the post renders it b
    7 and 15 ms; the renderer's tolerance on a 7.7k stray-marker paragraph 61 ms).
 4. The toolbar (`computeComposerFormat`, pure) keeps edge whitespace outside, never wraps a line's
    prefix (indentation, `>` levels, then ONE of `#`..`######`, `-` `*` `+`, `1.` `1)`, with its
-   `[ ]` box), wraps line by line, and applies ONE inline rule, as a word processor has it: a
-   selection wholly inside the style already (markers inside it or just around it, no other run of
-   that marker within) turns the style OFF; anything else strips every inner run of that marker,
-   partial edge runs included (`**a`), and wraps the trimmed selection once (`**a** and *b*` + bold
-   gives `**a and *b***`). A run with whitespace on both sides (`2 * 3`) is text and is kept. Known
-   limit: "wholly inside" looks at the markers adjacent to or inside the selection, so bold on the
-   middle of a longer bold span nests a second bold (it renders bold either way) instead of splitting
-   the span.
+   `[ ]` box), wraps line by line, and applies ONE inline rule, as a word processor has it.
+   Coverage is read from the preview's own pairing (`inlineSpans`) on that line. A selection wholly
+   inside styled spans turns the style OFF by SPLITTING each span around it and dropping the empty
+   pieces: bold on `soir` in `**Prix ce soir**` gives `**Prix ce** soir`, on `Prix` gives
+   `Prix **ce soir**`, on `ce` gives `**Prix** ce **soir**`, on `b` in `**ab**` gives `**a**b`; a `***`
+   span keeps its other style. Anything else strips every inner run of that marker (partial edge runs
+   included, `**a`) and wraps the trimmed selection once (`**a** and *b*` + bold gives
+   `**a and *b***`). A run with whitespace on both sides (`2 * 3`) is text and is kept. Pressed
+   twice over the whole text, the button round-trips when nothing nested is absorbed
+   (`**a** b **c**` italic, `a ** b ** c` bold, plain text, a whole bold phrase); a style NESTED in the
+   selection is absorbed by the wrap and not given back (`**a *b* c**` italic twice gives
+   `**a b c**`), a documented semantic of "wrap everything".
 5. Tests. `markdownParity.test.ts` renders one corpus through both parsers and every toolbar output
    through marked ALONE (the tolerance cannot hide a bad output), asserting the selection lands on
    the text the action touched. `emphasisToleranceRule.test.ts` proves the rule from outside: hand
    cases from both reviews, a deterministic fuzz of 20000 documents (generator: loose and stray
    markers, `***`, list and quote prefixes, indentation, links, URLs, code, blank lines; it asserts
    the generator reaches the tolerance on more than 500 of them; deleting the run-preservation check
-   makes it fail), the run scanner checked against a real DOM, and the preview's cost on adversarial
-   shapes (generous bounds, no step counter).
+   makes it fail), the same four strings the third review named (`** a**a**a**`, `~~ a~~a~~a~~`,
+   `****a ***a**`, `**a **a**a*`), an EXHAUSTIVE search (every string of up to 8 tokens over
+   `** a *` and over `~~ a **`) judged by an independent DOM reader and offsets, the crafted-post
+   budget, the run scanner checked against a real DOM, and the preview's cost on adversarial shapes
+   (generous bounds, no step counter). Switching the run key back to tag and text fails the hand
+   strings and both exhaustive searches.
 
 ### What parity covers, exactly
 
@@ -103,6 +114,9 @@ checked against marked directly instead).
 | heading on `**x**` | `## **x**` |
 | heading on a list line | replaces the marker: one block marker per line; a nested item loses its indent |
 | bold on a nested, quoted, `1)` or `- [ ]` item | the text only: `  - **sub**`, `> - **item**`, `- [ ] **task**` |
+| bold on one word inside a bold phrase (`**Prix ce soir**`, `soir`) | `**Prix ce** soir`: the span is split |
+| strike on a word inside `~~Prix ce soir~~` | `~~Prix ce~~ soir` |
+| bold on `ab`'s last letter in `**ab**` | `**a**b` |
 | bold / italic over two separate runs (`**a** b **c**`) | merged into one span |
 | bold over `**a** and *b*` | `**a and *b***` (a, and, b bold; b italic) |
 | bold on a partial run `**a` | `**a**` |
@@ -112,8 +126,8 @@ checked against marked directly instead).
 | quote / list, several lines | every non-blank line (list skips blank lines) |
 | quote / list on the same marker | off |
 
-| link on a selection | `[sel](url)` (url selected), edge spaces outside |
-| link on `[x](url)` | off: `x` |
+| link on a selection | the selection becomes the link text, the word `url` as destination (selected), edge spaces outside |
+| link on an existing link | off: the label alone |
 
 Ctrl+Z does not undo a toolbar action (older than this page, [backlog](../backlog.d/p3-ctrl-z-does-not-undo-a-toolbar-action.md)).
 

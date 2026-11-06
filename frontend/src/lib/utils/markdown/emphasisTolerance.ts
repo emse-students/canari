@@ -18,8 +18,9 @@ import { urlLengthAt, urlMayStartAt } from './markdownText';
  * original text. A paragraph with no leftover marker, the normal case, costs one extra render.
  *
  * Bounded so that it is safe on any input: a paragraph over `MAX_PARAGRAPH` characters is left
- * alone, and at most `MAX_CANDIDATES` spans are tried per paragraph. Both fall back to the original
- * text, which cannot lose anything.
+ * alone, at most `MAX_CANDIDATES` spans are tried per paragraph, and a document may spend
+ * `DOCUMENT_BUDGET` rendered characters in all. Each falls back to the original text, which cannot
+ * lose anything.
  */
 
 /** Same options `PostMarkdown` hands svelte-markdown. */
@@ -27,14 +28,29 @@ const parser = new Marked({ gfm: true, breaks: true });
 
 const MAX_PARAGRAPH = 8000;
 const MAX_CANDIDATES = 24;
+/**
+ * Characters the tolerance may render per DOCUMENT (one render of a paragraph costs its length).
+ * Deterministic, unlike a clock: past it the rest of the document is left exactly as written, which
+ * cannot lose anything. Sized for about forty renders of the longest paragraph.
+ */
+const DOCUMENT_BUDGET = 300_000;
+
+/** What is left of a document's budget, shared by its paragraphs. */
+interface Budget {
+  left: number;
+}
 
 /** One emphasis element of a rendered paragraph. */
 export interface EmphasisRun {
   tag: 'strong' | 'em' | 'del';
-  /** Its text, whitespace collapsed and trimmed. */
+  /** Its text, whitespace collapsed and trimmed (for messages; identity is `start` and `length`). */
   text: string;
   /** How many emphasis elements enclose it. */
   depth: number;
+  /** Where it starts, in rendered characters that are not whitespace and not `*`, `_` or `~`. */
+  start: number;
+  /** How many such characters it holds. */
+  length: number;
 }
 
 const ENTITIES: Record<string, string> = {
@@ -44,28 +60,30 @@ const ENTITIES: Record<string, string> = {
   '&quot;': '"',
   '&#39;': "'",
 };
-const norm = (s: string): string =>
-  s
-    .replace(/&(?:amp|lt|gt|quot|#39);/g, (e) => ENTITIES[e])
-    .replace(/\s+/g, ' ')
-    .trim();
+const decode = (s: string): string => s.replace(/&(?:amp|lt|gt|quot|#39);/g, (e) => ENTITIES[e]);
+const norm = (s: string): string => decode(s).replace(/\s+/g, ' ').trim();
+/** What counts toward a run's offset: the letters, digits and punctuation a reader sees. */
+const countable = (s: string): number => decode(s).replace(/[\s*_~]/gu, '').length;
 
 /**
  * Reads a rendered paragraph: its emphasis runs, and how many literal `**`, `__` or `~~` its text
  * still shows (code excluded, where they are meant). A tag scanner, not a DOM: it runs wherever the
- * preprocessing does.
+ * preprocessing does. A run is located by where it starts among the countable characters, so two
+ * runs with the same text are two runs and a rewrite cannot move one onto another.
  */
 export function analyseRendered(html: string): { runs: EmphasisRun[]; literal: number } {
   const runs: EmphasisRun[] = [];
-  const open: Array<{ tag: EmphasisRun['tag']; text: string; depth: number }> = [];
+  const open: Array<{ tag: EmphasisRun['tag']; text: string; depth: number; start: number }> = [];
   let literal = 0;
   let code = 0;
+  let pos = 0;
   const token = /<(\/?)([a-zA-Z][a-zA-Z0-9]*)[^>]*>|([^<]+)/g;
   let m: RegExpExecArray | null;
   while ((m = token.exec(html)) !== null) {
     if (m[3] !== undefined) {
       if (code === 0) literal += m[3].match(/\*\*|__|~~/g)?.length ?? 0;
       for (const el of open) el.text += m[3];
+      pos += countable(m[3]);
       continue;
     }
     const closing = m[1] === '/';
@@ -75,26 +93,38 @@ export function analyseRendered(html: string): { runs: EmphasisRun[]; literal: n
     } else if (tag === 'strong' || tag === 'em' || tag === 'del') {
       if (closing) {
         const el = open.pop();
-        if (el) runs.push({ tag: el.tag, text: norm(el.text), depth: el.depth });
+        if (el) {
+          runs.push({
+            tag: el.tag,
+            text: norm(el.text),
+            depth: el.depth,
+            start: el.start,
+            length: pos - el.start,
+          });
+        }
       } else {
-        open.push({ tag, text: '', depth: open.length });
+        open.push({ tag, text: '', depth: open.length, start: pos });
       }
     }
   }
   return { runs, literal };
 }
 
-/** True when every run of `original` is still in `candidate`, at the same depth or deeper. */
+/**
+ * True when every run of `original` is still in `candidate`: the same tag over the same stretch
+ * of text (same start, same length), at the same nesting depth or deeper.
+ */
 export function preservesRuns(original: EmphasisRun[], candidate: EmphasisRun[]): boolean {
   const pool = new Map<string, number[]>();
+  const keyOf = (r: EmphasisRun) => `${r.tag}|${r.start}|${r.length}`;
   for (const run of candidate) {
-    const key = `${run.tag}\0${run.text}`;
+    const key = keyOf(run);
     const depths = pool.get(key);
     if (depths) depths.push(run.depth);
     else pool.set(key, [run.depth]);
   }
   for (const run of original) {
-    const depths = pool.get(`${run.tag}\0${run.text}`);
+    const depths = pool.get(keyOf(run));
     if (!depths) return false;
     depths.sort((a, b) => a - b);
     const at = depths.findIndex((d) => d >= run.depth);
@@ -195,22 +225,29 @@ function looseCandidates(paragraph: string): Candidate[] {
   return candidates.slice(0, MAX_CANDIDATES);
 }
 
-function render(markdown: string): string {
+/** Renders `markdown`, or null when the document budget cannot pay for it. */
+function render(markdown: string, budget: Budget): string | null {
+  if (budget.left < markdown.length) return null;
+  budget.left -= markdown.length;
   return parser.parse(markdown, { async: false }) as string;
 }
 
 /** One paragraph (no blank line, no code): the rewrite that loses nothing, or the paragraph. */
-function tolerateParagraph(paragraph: string): string {
+function tolerateParagraph(paragraph: string, budget: Budget): string {
   if (paragraph.length > MAX_PARAGRAPH || !/\*\*|__|~~/.test(paragraph)) return paragraph;
   try {
-    const original = analyseRendered(render(paragraph));
+    const first = render(paragraph, budget);
+    if (first === null) return paragraph;
+    const original = analyseRendered(first);
     if (original.literal === 0) return paragraph;
     let current = paragraph;
     let literal = original.literal;
     // Right to left, so an accepted edit never shifts the offsets of the ones still to try.
     for (const c of looseCandidates(paragraph).reverse()) {
       const next = current.slice(0, c.start) + c.replacement + current.slice(c.end);
-      const seen = analyseRendered(render(next));
+      const html = render(next, budget);
+      if (html === null) break; // budget spent: what was accepted so far is already safe
+      const seen = analyseRendered(html);
       if (seen.literal < literal && preservesRuns(original.runs, seen.runs)) {
         current = next;
         literal = seen.literal;
@@ -236,9 +273,10 @@ const LIST_ITEM_RE = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]/;
 export function tolerateEmphasisWhitespace(md: string): string {
   const lines = md.split('\n');
   const out: string[] = [];
+  const budget: Budget = { left: DOCUMENT_BUDGET };
   let group: string[] = [];
   const flush = () => {
-    if (group.length) out.push(...tolerateParagraph(group.join('\n')).split('\n'));
+    if (group.length) out.push(...tolerateParagraph(group.join('\n'), budget).split('\n'));
     group = [];
   };
   let fence: string | null = null;

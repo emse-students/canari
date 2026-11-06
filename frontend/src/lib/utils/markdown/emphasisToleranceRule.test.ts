@@ -1,11 +1,6 @@
 // @vitest-environment happy-dom
 import { Marked } from 'marked';
-import {
-  analyseRendered,
-  preservesRuns,
-  tolerateEmphasisWhitespace,
-  type EmphasisRun,
-} from './emphasisTolerance';
+import { analyseRendered, tolerateEmphasisWhitespace, type EmphasisRun } from './emphasisTolerance';
 import { parseInlineMarkdownPreview } from './inlinePreview';
 
 /**
@@ -26,31 +21,56 @@ function domRuns(html: string): EmphasisRun[] {
   const root = document.createElement('div');
   root.innerHTML = html;
   const runs: EmphasisRun[] = [];
-  const walk = (node: Element, depth: number) => {
-    for (const child of Array.from(node.children)) {
-      const tag = child.tagName.toLowerCase();
+  let pos = 0;
+  const walk = (node: Node, depth: number) => {
+    for (const child of Array.from(node.childNodes)) {
+      if (child.nodeType === 3) {
+        pos += (child.textContent ?? '').replace(/[\s*_~]/gu, '').length;
+        continue;
+      }
+      const el = child as Element;
+      const tag = el.tagName.toLowerCase();
       const emphasis = tag === 'strong' || tag === 'em' || tag === 'del';
+      const start = pos;
+      // Code is drawn as it is written, but its characters still count toward an offset.
+      walk(el, emphasis ? depth + 1 : depth);
       if (emphasis) {
         runs.push({
           tag: tag as EmphasisRun['tag'],
-          text: norm(child.textContent ?? ''),
+          text: norm(el.textContent ?? ''),
           depth,
+          start,
+          length: pos - start,
         });
       }
-      walk(child, emphasis ? depth + 1 : depth);
     }
   };
   walk(root, 0);
   return runs;
 }
 
-const sortRuns = (runs: EmphasisRun[]) => runs.map((r) => `${r.tag}|${r.depth}|${r.text}`).sort();
+const sortRuns = (runs: EmphasisRun[]) =>
+  runs.map((r) => `${r.tag}|${r.depth}|${r.start}|${r.length}|${r.text}`).sort();
 
-/** Every emphasis of the raw render is still drawn, at the same depth or deeper. */
+/** Every emphasis of the raw render is still drawn: same tag, same place, same depth or deeper. */
 function lossOf(md: string): string | null {
-  const before = analyseRendered(render(md)).runs;
-  const after = analyseRendered(render(tolerateEmphasisWhitespace(md))).runs;
-  return preservesRuns(before, after) ? null : md;
+  // Judged by the independent DOM reader and a local comparison, never by the production one.
+  const before = domRuns(render(md));
+  const after = domRuns(render(tolerateEmphasisWhitespace(md)));
+  const free = after.map((r) => ({ ...r, used: false }));
+  for (const run of before) {
+    const hit = free.find(
+      (c) =>
+        !c.used &&
+        c.tag === run.tag &&
+        c.start === run.start &&
+        c.length === run.length &&
+        c.depth >= run.depth
+    );
+    if (!hit) return md;
+    hit.used = true;
+  }
+  return null;
 }
 
 describe('the tolerance never removes an emphasis that rendered before', () => {
@@ -72,6 +92,11 @@ describe('the tolerance never removes an emphasis that rendered before', () => {
     'foo **bar ** http://x.com/a baz** qux',
     'foo **bar **\nbaz** qux',
     `foo **bar ${'x '.repeat(1200)}** baz** qux`,
+    // review 3: same text twice, so a rewrite could move a bold from one place to the other
+    '** a**a**a**',
+    '~~ a~~a~~a~~',
+    '****a ***a**',
+    '**a **a**a*',
   ];
 
   it.each(hand.map((h) => [h.length > 60 ? `${h.slice(0, 40)}...` : h, h]))('%j', (_name, md) => {
@@ -131,7 +156,31 @@ describe('the tolerance never removes an emphasis that rendered before', () => {
     // proves nothing.
     const touched = documents.filter((md) => tolerateEmphasisWhitespace(md) !== md).length;
     expect(touched).toBeGreaterThan(500);
-  });
+  }, 60_000);
+
+  /** Every string of up to `max` tokens over `alphabet`: small enough to be ALL of them. */
+  function exhaustive(alphabet: string[], max: number): string[] {
+    let layer = [''];
+    const all: string[] = [];
+    for (let n = 1; n <= max; n++) {
+      layer = layer.flatMap((p) => alphabet.map((t) => p + t));
+      all.push(...layer);
+    }
+    return all;
+  }
+
+  it.each([[['**', ' ', 'a', '*']], [['~~', ' ', 'a', '**']]])(
+    'loses nothing on EVERY string of up to 8 tokens over %j',
+    (alphabet) => {
+      const documents = exhaustive(alphabet, 8);
+      const broken = documents.filter((md) => lossOf(md) !== null);
+      expect(broken.slice(0, 5)).toEqual([]);
+      expect(
+        documents.filter((md) => tolerateEmphasisWhitespace(md) !== md).length
+      ).toBeGreaterThan(100);
+    },
+    60_000
+  );
 
   it('reads the same runs as a real DOM does', () => {
     for (const md of fuzz(1500)) {
@@ -170,5 +219,26 @@ describe('the composer preview stays linear on stray markers', () => {
     const started = performance.now();
     tolerateEmphasisWhitespace('x ** y '.repeat(1100));
     expect(performance.now() - started).toBeLessThan(2000);
+  });
+
+  it('spends a fixed budget per DOCUMENT: past it, the rest is left as written', () => {
+    // Six paragraphs of the worst shape (24+ loose spans, 7990 characters each): without a
+    // document budget each is rendered 25 times.
+    const paragraph = (n: number) => {
+      const unit = `** w${n} ** `;
+      return unit.repeat(Math.floor(7990 / unit.length));
+    };
+    const doc = Array.from({ length: 6 }, (_v, n) => paragraph(n)).join('\n\n');
+    expect(doc.length).toBeGreaterThan(47000);
+    const started = performance.now();
+    const out = tolerateEmphasisWhitespace(doc);
+    expect(performance.now() - started).toBeLessThan(2000);
+    const before = doc.split('\n\n');
+    const after = out.split('\n\n');
+    expect(after).toHaveLength(6);
+    // The head of the document is still tolerated, the tail is byte for byte what was written.
+    expect(after[0]).not.toBe(before[0]);
+    expect(after[5]).toBe(before[5]);
+    expect(lossOf(doc)).toBeNull();
   });
 });

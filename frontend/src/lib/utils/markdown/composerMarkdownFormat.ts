@@ -1,5 +1,6 @@
 import { tick } from 'svelte';
 import { m } from '$lib/paraglide/messages';
+import { inlineSpans, type InlineSpan } from './inlinePreview';
 import type MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
 
 /** The text a toolbar action inserts when there is nothing selected, one per action. */
@@ -97,50 +98,27 @@ function linesCovering(text: string, selStart: number, selEnd: number): Line[] {
   }
 }
 
-function runLength(s: string, char: string, fromEnd: boolean): number {
-  let n = 0;
-  while (n < s.length && s[fromEnd ? s.length - 1 - n : n] === char) n++;
-  return n;
-}
+/** One style span on a line, in absolute positions. */
+type StyleSpan = InlineSpan;
 
-interface Segment {
-  start: number;
-  end: number;
-  /** How the span is wrapped today: `inside` the span, `outside` it, or not at all. */
-  wrapped: { where: 'inside' | 'outside' } | null;
-}
-
-/**
- * How many marker characters wrap the span `[start, end)` - inside its own edges (a selection that
- * includes the markers) or just outside it (a selection of the words only). The count decides the
- * toggle: bold is on at 2 or more, italic at an odd count, so `***x***` is both and `**x**` is not
- * italic.
- */
-function wrappingOf(
-  text: string,
-  start: number,
-  end: number,
+/** The spans of the style on a line, found by the pairing the editor itself draws. */
+function styleSpans(
+  lineText: string,
+  lineStart: number,
+  prefix: number,
   kind: InlineKind
-): { where: 'inside' | 'outside'; conflict: boolean } | null {
-  const { char, len } = INLINE[kind];
-  const s = text.slice(start, end);
-  const lead = runLength(s, char, false);
-  const trail = runLength(s, char, true);
-  let where: 'inside' | 'outside' = 'inside';
-  let count = lead < s.length ? Math.min(lead, trail) : 0;
-  if (count === 0) {
-    where = 'outside';
-    count = Math.min(
-      runLength(text.slice(0, start), char, true),
-      runLength(text.slice(end), char, false)
-    );
-  }
-  const on = kind === 'italic' ? count % 2 === 1 : count >= len;
-  if (!on) return null;
-  // `**Prix** : 5 **ce soir**` selected whole STARTS and ENDS with the marker without being one
-  // span: a marker run of the same kind inside means two spans, so there is nothing to unwrap.
-  const inner = where === 'inside' ? s.slice(count, s.length - count) : s;
-  return { where, conflict: hasMarkerRun(inner, kind) };
+): StyleSpan[] {
+  const wanted = kind === 'strikethrough' ? 'strike' : kind;
+  const offset = lineStart + prefix;
+  return inlineSpans(lineText.slice(prefix))
+    .filter((span) => span.kinds.includes(wanted))
+    .map((span) => ({
+      ...span,
+      start: span.start + offset,
+      contentStart: span.contentStart + offset,
+      contentEnd: span.contentEnd + offset,
+      end: span.end + offset,
+    }));
 }
 
 /**
@@ -178,33 +156,67 @@ function stripRuns(s: string, kind: InlineKind): string {
   return out;
 }
 
-/** An unescaped run of the kind's marker inside `s` that would close or open a span of its own. */
-function hasMarkerRun(s: string, kind: InlineKind): boolean {
-  const { char, len } = INLINE[kind];
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] !== char) continue;
-    let run = 1;
-    while (s[i + run] === char) run++;
-    const escaped = s[i - 1] === '\\';
-    if (!escaped && (kind === 'italic' ? run % 2 === 1 : run >= len)) return true;
-    i += run - 1;
-  }
-  return false;
+/** What is left of a span's marker when ONE of its styles goes (`***` minus bold is `*`). */
+function remainingMarker(span: StyleSpan, kind: InlineKind): string {
+  if (span.marker !== '***') return '';
+  return kind === 'bold' ? '*' : '**';
+}
+
+/** A piece of a split span: re-wrapped in its marker, edge whitespace outside, nothing if blank. */
+function wrapPiece(raw: string, marker: string): string {
+  if (raw.trim() === '') return raw;
+  const lead = /^\s*/.exec(raw)?.[0] ?? '';
+  const trail = /\s*$/.exec(raw)?.[0] ?? '';
+  return `${lead}${marker}${raw.slice(lead.length, raw.length - trail.length)}${marker}${trail}`;
+}
+
+interface Segment {
+  start: number;
+  end: number;
+  /** The maximal spans of the style that overlap the selection, when it lies wholly inside them. */
+  covering: StyleSpan[] | null;
 }
 
 /**
- * Wraps, or unwraps, the selection in an inline marker.
+ * A selection is "wholly inside the style" when every non-blank character of it that is not one of
+ * the spans' own markers lies in the content of a span of the style.
+ */
+function coveringSpans(
+  spans: StyleSpan[],
+  start: number,
+  end: number,
+  text: string
+): StyleSpan[] | null {
+  const isMarker = (p: number) =>
+    spans.some(
+      (sp) => (p >= sp.start && p < sp.contentStart) || (p >= sp.contentEnd && p < sp.end)
+    );
+  let seen = false;
+  for (let p = start; p < end; p++) {
+    if (/\s/.test(text[p]) || isMarker(p)) continue;
+    if (!spans.some((sp) => p >= sp.contentStart && p < sp.contentEnd)) return null;
+    seen = true;
+  }
+  if (!seen) return null;
+  const overlapping = spans.filter((sp) => sp.end > start && sp.start < end);
+  return overlapping.filter(
+    (sp) => !overlapping.some((o) => o !== sp && o.start <= sp.start && o.end >= sp.end)
+  );
+}
+
+/**
+ * Applies, or takes off, an inline style on the selection.
  *
  * What makes it render as the button promises (CommonMark refuses a marker that touches
  * whitespace on its inside, and the toolbar used to write exactly that):
  * - whitespace at either edge of the selection stays OUTSIDE the markers;
- * - the line's own block marker (`## `, `> `, `- `) is never wrapped, or the heading would stop
- *   being one - a multi-line selection is wrapped line by line, since a marker does not span the
- *   blocks of a list or a quote;
- * - ONE rule, as a word processor has it: a selection wholly inside the style already (markers
- *   inside it, or just around it, and no other run of that marker within) turns the style off;
- *   anything else strips every inner run of that marker, partial edge runs included, and wraps the
- *   trimmed selection once.
+ * - the line's own prefix (indentation, quotes, `## `, `- `) is never wrapped, or the heading would
+ *   stop being one - a multi-line selection is handled line by line, since a marker does not span
+ *   the blocks of a list or a quote;
+ * - ONE rule, as a word processor has it: a selection wholly inside the style already turns the
+ *   style OFF, splitting the span around it (`soir` in `**Prix ce soir**` gives `**Prix ce** soir`,
+ *   empty pieces dropped); anything else strips every inner run of that marker, partial edge runs
+ *   included, and wraps the trimmed selection once.
  */
 function formatInline(
   kind: InlineKind,
@@ -213,7 +225,7 @@ function formatInline(
   selEnd: number,
   ph: FormatPlaceholders
 ): FormatResult {
-  const { marker, len } = INLINE[kind];
+  const { marker } = INLINE[kind];
   const placeholder = ph[kind];
   const segments: Segment[] = [];
 
@@ -225,12 +237,8 @@ function formatInline(
       while (start < end && /\s/.test(text[start])) start++;
       while (end > start && /\s/.test(text[end - 1])) end--;
       if (end <= start) continue;
-      const state = wrappingOf(text, start, end, kind);
-      segments.push({
-        start,
-        end,
-        wrapped: state && !state.conflict ? { where: state.where } : null,
-      });
+      const spans = styleSpans(line.text, line.start, prefix, kind);
+      segments.push({ start, end, covering: coveringSpans(spans, start, end, text) });
     }
   }
 
@@ -247,46 +255,54 @@ function formatInline(
     };
   }
 
-  const off = segments.every((s) => s.wrapped);
-  const mixed = !off && segments.some((s) => s.wrapped);
+  const off = segments.every((s) => s.covering);
+  const mixed = !off && segments.some((s) => s.covering);
   let out = '';
   let cursor = 0;
   let first = -1;
   let last = -1;
   for (const seg of segments) {
-    const body = text.slice(seg.start, seg.end);
-    if (off && seg.wrapped?.where === 'inside') {
-      out += text.slice(cursor, seg.start);
-      first = first === -1 ? out.length : first;
-      out += body.slice(len, body.length - len);
-      last = out.length;
-      cursor = seg.end;
-    } else if (off && seg.wrapped?.where === 'outside') {
-      out += text.slice(cursor, seg.start - len);
-      first = first === -1 ? out.length : first;
-      out += body;
-      last = out.length;
-      cursor = seg.end + len;
-    } else if (mixed && seg.wrapped) {
-      // Mixed selection: a line that already has the format keeps it.
-      out += text.slice(cursor, seg.end);
-      first = first === -1 ? out.length - body.length : first;
-      last = out.length;
-      cursor = seg.end;
-    } else {
-      // ONE rule: not wholly inside the style already, so the style is taken off every inner run
-      // and the trimmed selection is wrapped once. Whitespace a strip exposes stays outside.
-      const stripped = stripRuns(body, kind);
-      const core = stripped.trim() === '' ? body : stripped;
-      const lead = /^\s*/.exec(core)?.[0] ?? '';
-      const trail = core.trim() === '' ? '' : (/\s*$/.exec(core)?.[0] ?? '');
-      out += text.slice(cursor, seg.start) + lead + marker;
-      first = first === -1 ? out.length : first;
-      out += core.slice(lead.length, core.length - trail.length);
-      last = out.length;
-      out += marker + trail;
-      cursor = seg.end;
+    if (seg.covering && (off || mixed)) {
+      if (mixed) {
+        // Mixed selection: a line that already has the style keeps it.
+        out += text.slice(cursor, seg.end);
+        cursor = seg.end;
+        continue;
+      }
+      // Off: every span over the selection is split around it; the selected text loses the style.
+      for (const span of seg.covering) {
+        out += text.slice(cursor, span.start);
+        const from = Math.max(seg.start, span.contentStart);
+        const to = Math.min(seg.end, span.contentEnd);
+        const keep = remainingMarker(span, kind);
+        out += wrapPiece(text.slice(span.contentStart, from), span.marker);
+        out += keep;
+        first = first === -1 ? out.length : first;
+        out += stripRuns(text.slice(from, to), kind);
+        last = out.length;
+        out += keep;
+        out += wrapPiece(text.slice(to, span.contentEnd), span.marker);
+        cursor = span.end;
+      }
+      continue;
     }
+    // ONE rule: not wholly inside the style, so the style is taken off every inner run and the
+    // trimmed selection is wrapped once. Whitespace a strip exposes stays outside.
+    const body = text.slice(seg.start, seg.end);
+    const stripped = stripRuns(body, kind);
+    const core = stripped.trim() === '' ? body : stripped;
+    const lead = /^\s*/.exec(core)?.[0] ?? '';
+    const trail = core.trim() === '' ? '' : (/\s*$/.exec(core)?.[0] ?? '');
+    out += text.slice(cursor, seg.start) + lead + marker;
+    first = first === -1 ? out.length : first;
+    out += core.slice(lead.length, core.length - trail.length);
+    last = out.length;
+    out += marker + trail;
+    cursor = seg.end;
+  }
+  if (first === -1) {
+    // Mixed selection where nothing was wrapped: the selection stays where it was.
+    return { text, selStart, selEnd };
   }
   return { text: out + text.slice(cursor), selStart: first, selEnd: last };
 }

@@ -313,7 +313,7 @@ describe('every toolbar action produces what its button promises', () => {
       text: '***x***',
       sel: [0, 7],
       expected: '**x**',
-      selected: '**x**',
+      selected: 'x',
       leaves: ['bold:x'],
     },
     {
@@ -322,7 +322,7 @@ describe('every toolbar action produces what its button promises', () => {
       text: '***x***',
       sel: [0, 7],
       expected: '*x*',
-      selected: '*x*',
+      selected: 'x',
       leaves: ['italic:x'],
     },
     {
@@ -387,6 +387,69 @@ describe('every toolbar action produces what its button promises', () => {
       expected: '**2 * 3**',
       selected: '2 * 3',
       leaves: ['bold:2 * 3'],
+    },
+    {
+      name: 'bold off on the last word of a bold phrase splits the span',
+      type: 'bold',
+      text: '**Prix ce soir**',
+      sel: [10, 14],
+      expected: '**Prix ce** soir',
+      selected: 'soir',
+      leaves: ['bold:Prix ce', 'plain:soir'],
+    },
+    {
+      name: 'bold off on the first word of a bold phrase',
+      type: 'bold',
+      text: '**Prix ce soir**',
+      sel: [2, 6],
+      expected: 'Prix **ce soir**',
+      selected: 'Prix',
+      leaves: ['plain:Prix', 'bold:ce soir'],
+    },
+    {
+      name: 'bold off on the middle word of a bold phrase splits it in two',
+      type: 'bold',
+      text: '**Prix ce soir**',
+      sel: [7, 9],
+      expected: '**Prix** ce **soir**',
+      selected: 'ce',
+      leaves: ['bold:Prix', 'plain:ce', 'bold:soir'],
+    },
+    {
+      name: 'bold off on the last letter of a two-letter span',
+      type: 'bold',
+      text: '**ab**',
+      sel: [3, 4],
+      expected: '**a**b',
+      selected: 'b',
+      leaves: ['bold:a', 'plain:b'],
+    },
+    {
+      name: 'strike off on a word inside a struck phrase',
+      type: 'strikethrough',
+      text: '~~Prix ce soir~~',
+      sel: [10, 14],
+      expected: '~~Prix ce~~ soir',
+      selected: 'soir',
+      leaves: ['strike:Prix ce', 'plain:soir'],
+    },
+    {
+      name: 'bold off on a word inside a bold-italic span keeps the italic',
+      type: 'bold',
+      text: '***ab cd***',
+      sel: [6, 8],
+      expected: '***ab*** *cd*',
+      selected: 'cd',
+      leaves: ['bold+italic:ab', 'italic:cd'],
+    },
+    {
+      name: 'bold off over two adjacent bold spans and the space between',
+      type: 'bold',
+      text: '**a** **b**',
+      sel: [0, 11],
+      expected: 'a b',
+      selected: 'a b',
+      leaves: ['plain:a b'],
     },
     {
       name: 'bold inside a heading',
@@ -623,6 +686,36 @@ describe('every toolbar action produces what its button promises', () => {
     expect(r.text.slice(r.selStart, r.selEnd)).toBe(selected);
     // marked ALONE, no tolerance: a toolbar output may not lean on the renderer's leniency.
     expect(rawLeaves(r.text)).toEqual(expectedLeaves(leaves));
+  });
+
+  /** Presses `type` twice over the whole text (the second press selects what the first left). */
+  const twice = (type: Parameters<typeof computeComposerFormat>[0], text: string) => {
+    const one = computeComposerFormat(type, text, 0, text.length);
+    if (!one) throw new Error('no first result');
+    const two = computeComposerFormat(type, one.text, one.selStart, one.selEnd);
+    if (!two) throw new Error('no second result');
+    return [one.text, two.text];
+  };
+
+  // Press twice, over the whole text: [type, text, after one press, after two].
+  // The ROUND TRIPS are the rows whose last column equals the second; the others are the
+  // documented semantics of "wrap everything": a style nested inside the selection is absorbed
+  // (Google Docs does the same), so the second press cannot give it back.
+  it.each([
+    ['italic', '**a** b **c**', '***a** b **c***', '**a** b **c**'],
+    ['bold', 'a ** b ** c', '**a ** b ** c**', 'a ** b ** c'],
+    ['bold', 'plain words', '**plain words**', 'plain words'],
+    ['italic', 'plain words', '*plain words*', 'plain words'],
+    ['strikethrough', 'plain words', '~~plain words~~', 'plain words'],
+    ['bold', '**Prix ce soir**', 'Prix ce soir', '**Prix ce soir**'],
+    // not round trips: the nested style is absorbed by the wrap
+    ['bold', 'a **b** c', '**a b c**', 'a b c'],
+    ['strikethrough', 'a ~~b~~ c', '~~a b c~~', 'a b c'],
+    ['italic', '**a *b* c**', '***a b c***', '**a b c**'],
+  ] as const)('%s pressed twice on %j gives %j then %j', (type, text, first, second) => {
+    expect(twice(type, text)).toEqual([first, second]);
+    // Markers never pile up.
+    expect(first.includes('****')).toBe(false);
   });
 
   it('the italic placeholder is rendered italic', () => {
