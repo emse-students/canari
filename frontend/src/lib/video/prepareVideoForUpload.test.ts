@@ -208,6 +208,17 @@ describe('prepareVideoForUpload', () => {
     expect((state.init!.output as unknown as { target: unknown }).target).toBeDefined();
   });
 
+  it.each([24, 23.88, 30.02])(
+    'resamples a %s fps source (a 24 fps clip, a phone that dropped frames, 30 measured) to a constant 30',
+    async (fps) => {
+      // Until 2026-11-06 only a source over 30.5 fps was resampled, so a variable-rate one kept
+      // its irregular timestamps and its quarter-second holes (video-preparation.md#constant-frame-rate).
+      state.script.fps = fps;
+      await prepareVideoForUpload(SOURCE, {});
+      expect((state.init!.video as Record<string, unknown>).frameRate).toBe(30);
+    }
+  );
+
   it('drops the audio track from the OUTPUT when the sound is removed, and still refuses any other drop', async () => {
     state.script.discarded = [{ type: 'audio', reason: 'discarded_by_user' }];
     const out = await prepareVideoForUpload(SOURCE, { removeAudio: true });

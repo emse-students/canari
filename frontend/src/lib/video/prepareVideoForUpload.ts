@@ -10,8 +10,8 @@
  *   Mi 9T's WebView 152 and the iPhone 12's WKWebView, 2026-10-01). The video is always re-encoded;
  *   an AAC-LC audio track is COPIED when it costs no more than the encode would or the engine has
  *   no AAC encoder (`chooseAudioRoute`); every other track is encoded;
- * - **720p on its short side, ~2.5 Mb/s, at most 30 fps**, rotation baked into the frames - the
- *   numbers live in `videoEncodingPlan.ts`;
+ * - **720p on its short side, ~2.5 Mb/s, a CONSTANT 30 fps** (a variable-rate source is resampled
+ *   onto the grid), rotation baked into the frames - the numbers live in `videoEncodingPlan.ts`;
  * - and a `File` whose `type` NAMES ITS CODECS (`video/mp4; codecs="avc1...,mp4a.40.2"`), which is
  *   the fact `chooseSegmentedPlayback` reads to decide that a ref may stream.
  *
@@ -267,13 +267,11 @@ export async function prepareVideoForUpload(
         (canEncodeAac !== null ? `, AAC encoder ${canEncodeAac ? 'present' : 'absent'}` : '')
     );
 
-    const stats = await videoTrack.computePacketStats(120);
     const plan = planVideoEncoding(
       {
         displayWidth: await videoTrack.getDisplayWidth(),
         displayHeight: await videoTrack.getDisplayHeight(),
         durationSeconds,
-        frameRate: stats.averagePacketRate,
         audioBitrate,
       },
       maxBytes,
@@ -292,7 +290,12 @@ export async function prepareVideoForUpload(
         `video: ${durationSeconds.toFixed(1)} s cannot fit ${maxBytes} bytes at the lowest bitrate`
       );
     }
-    console.debug(`[video-prep] plan: ${describePlan(plan)}, ${durationSeconds.toFixed(2)} s`);
+    // The source's own rate, for the log only: the output is resampled to the plan's whatever it is.
+    const sourceRate = (await videoTrack.computePacketStats(120)).averagePacketRate;
+    console.debug(
+      `[video-prep] plan: ${describePlan(plan)}, ${durationSeconds.toFixed(2)} s,` +
+        ` source ${sourceRate.toFixed(2)} fps`
+    );
 
     const output = new mb.Output({
       format: new mb.Mp4OutputFormat({ fastStart: 'fragmented' }),
@@ -309,7 +312,10 @@ export async function prepareVideoForUpload(
         height: plan.height,
         fit: 'contain',
         quality: new mb.Quality({ bitrate: plan.videoBitrate, bitrateMode: 'variable' }),
-        ...(plan.frameRate !== undefined ? { frameRate: plan.frameRate } : {}),
+        // CONSTANT, whatever the source: every frame lands on the 1/30 s grid, a hole in a
+        // variable-rate source is filled by holding the frame before it, and the track's timescale
+        // is the rate itself. The audio is never retimed, so the two stay where the source had them.
+        frameRate: plan.frameRate,
         keyFrameInterval: VIDEO_KEY_FRAME_INTERVAL,
         // Baked into the frames: a rotation left in the track header is one more thing every
         // player, MSE included, has to honour for the video to stand up.
@@ -462,7 +468,7 @@ export function audioConversionOptions(
 /** The plan, as the log line prints it. */
 function describePlan(plan: VideoEncodingPlan): string {
   return (
-    `${plan.width}x${plan.height}, ${Math.round(plan.videoBitrate / 1000)} kb/s` +
-    (plan.frameRate !== undefined ? `, resampled to ${plan.frameRate} fps` : '')
+    `${plan.width}x${plan.height}, ${Math.round(plan.videoBitrate / 1000)} kb/s, ` +
+    `${plan.frameRate} fps constant`
   );
 }

@@ -25,8 +25,15 @@ export const VIDEO_MIN_BITRATE = 400_000;
  */
 export const AUDIO_BITRATE = 128_000;
 
-/** Frame rates above this are resampled down to it: a 60 fps gallery clip costs twice for no reader. */
-export const VIDEO_MAX_FRAME_RATE = 30;
+/**
+ * The ONE frame rate every output has, constant: the Canari camera's 30 fps. Every source is
+ * resampled onto its grid - a 60 fps gallery clip loses half its frames (it costs twice for no
+ * reader), and a VARIABLE-rate one (a phone that dropped frames while recording, timestamps
+ * irregular, holes of a quarter second) gets one frame per 1/30 s slot, the last one held across a
+ * hole. A player then has nothing to interpret: frame n is presented at n/30 s, against an audio
+ * track that was never retimed (docs/wiki/frontend/video-preparation.md#constant-frame-rate).
+ */
+export const VIDEO_FRAME_RATE = 30;
 
 /**
  * Seconds between key frames. Every fragment of the fragmented MP4 starts on one, so this is also
@@ -83,8 +90,8 @@ export interface VideoEncodingPlan {
   height: number;
   /** Video bitrate in bits per second. */
   videoBitrate: number;
-  /** A frame rate to resample to, or `undefined` to keep the source's. */
-  frameRate: number | undefined;
+  /** The constant frame rate the output is resampled to: always {@link VIDEO_FRAME_RATE}. */
+  frameRate: number;
 }
 
 /** Why no plan exists for this input. */
@@ -102,8 +109,6 @@ export interface VideoSourceFacts {
   displayHeight: number;
   /** Duration in seconds. */
   durationSeconds: number;
-  /** Average frames per second, measured from the packets; `0` when unknown. */
-  frameRate: number;
   /**
    * What the output's audio track costs, in bits per second, taken out of the budget: `0` with no
    * audio, {@link AUDIO_BITRATE} when it is encoded, the source's measured bitrate when it is copied.
@@ -171,7 +176,5 @@ export function planVideoEncoding(
   );
   if (videoBitrate === null) return 'too-long';
   const { width, height } = outputDimensions(facts.displayWidth, facts.displayHeight, profile);
-  // Half a frame of slack: a 30 fps clip measures 30.02 from its timestamps and must not be touched.
-  const frameRate = facts.frameRate > VIDEO_MAX_FRAME_RATE + 0.5 ? VIDEO_MAX_FRAME_RATE : undefined;
-  return { width, height, videoBitrate, frameRate };
+  return { width, height, videoBitrate, frameRate: VIDEO_FRAME_RATE };
 }

@@ -60,7 +60,7 @@
 - [Emoji: Noto pictures, replacing the bundled font](frontend/emoji.md) - the SVG set and the svgo plugins measured to damage it, the presentation rule, the gate, and the font until it is deleted
 - [Sounds](frontend/sounds.md) - every sound the app emits and its trigger, the rule that no audio output is held while nothing plays (the stream a frozen Android app kept `started`), and who owns the audio session category (the silent switch, the Android ringer)
 - [MediaFrame](frontend/media-frame.md) - the box a picture, a GIF or a video holds before it arrives: what Discord, WhatsApp, Telegram and Slack carry (sourced), what Canari shifted, and the primitive every renderer uses
-- [Video preparation](frontend/video-preparation.md) - every video re-encoded ON the phone to one fragmented MP4 (H.264 + AAC, 720p, ~2.5 Mb/s): the `prepareVideoForUpload` seam, its faults, and the device readings
+- [Video preparation](frontend/video-preparation.md) - every video re-encoded ON the phone to one fragmented MP4 (H.264 + AAC, 720p, ~2.5 Mb/s, a constant 30 fps): the `prepareVideoForUpload` seam, its faults, the device readings, and the A/V sync rig (`tools/video-av-sync`)
 - [The cold start, measured](frontend/cold-start.md) - every reading behind the under-1 s target, and every hypothesis refuted on the way
 - [From a notification tap to a sent reply, measured](frontend/notification-to-conversation-latency.md) - tap to usable conversation, killed and backgrounded, ranked costs and the fix plan
 - [UI redesign audit, 2026-10-16](frontend/ui-redesign-audit-2026-10-16.md) - every page against the /admin standard (shell, hub, segmented control, ui controls), the dashboard rebuilt as the app's hub, and the ordered work packages
