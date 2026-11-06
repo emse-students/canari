@@ -19,7 +19,7 @@ import {
   DeliveryRenewalFailedError,
   MlsDeliveryApi,
 } from '$lib/mls-client/mlsDeliveryApi';
-import { SessionExpiredError, TransientAnswerError } from '$lib/stores/auth';
+import { RefreshFailedError, SessionExpiredError, TransientAnswerError } from '$lib/stores/auth';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { plainCommitLock } from '$lib/mls-client/test/fixtures/plainCommitLock';
 
@@ -201,6 +201,9 @@ describe('runCommitTransaction - a commit answered 401', () => {
       new TransportFailureError(new TypeError('Failed to fetch')),
     ],
     ['a renewal answered 502', new TransientAnswerError(502)],
+    // The app's own 4xx on the refresh: a verdict on the REFRESH, never on the commit - left
+    // unwrapped it was resubmitted into the same refusal and kept as unknown, blocking the group.
+    ['a renewal the app refused 404', new RefreshFailedError(404)],
   ])(
     '%s after a 401 refuses the commit definitively - the stage cleared, no resubmission, no logout',
     async (_n, failure) => {

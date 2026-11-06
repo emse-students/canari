@@ -101,6 +101,8 @@ describe('submitCommit answered 401', () => {
   it.each([
     ['a refresh nobody answered', new TransportFailureError(new TypeError('Failed to fetch'))],
     ['a refresh answered 502', new TransientAnswerError(502)],
+    // The BASE too: the guard's 401 proved the request did nothing, whatever the refresh answered.
+    ["the app's own 404 on the refresh", new RefreshFailedError(404)],
   ])(
     'types %s after a 401 as a refusal of this request - never a session verdict',
     async (_n, failure) => {
@@ -116,15 +118,6 @@ describe('submitCommit answered 401', () => {
       expect(f).toHaveBeenCalledTimes(1);
     }
   );
-
-  it("passes the app's own 4xx refusal of the refresh as it came - a verdict, not a missing token", async () => {
-    const refused = new RefreshFailedError(404);
-    const f = vi.fn().mockImplementation(async () => answer(401));
-    const refresh = vi.fn().mockRejectedValue(refused);
-    const err = await submit(api(f, refresh)).catch((e: unknown) => e);
-    expect(err).toBe(refused);
-    expect(f).toHaveBeenCalledTimes(1);
-  });
 
   it('never renews again a renewed token the guard refused: N requests, ONE refresh', async () => {
     let current = 'stale';

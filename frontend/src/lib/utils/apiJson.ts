@@ -162,6 +162,13 @@ export function assertAnsweredByApi(res: Response, where: string): void {
  * took it as a verdict and sent the user to login. Whether the server acted on the request is as
  * unknown as after any lost answer, and the callers already hold that ambiguity (the outbox
  * resubmits, receivers deduplicate; a commit is resubmitted until the gate answers).
+ *
+ * THE REFRESH IS THE ONE PLACE THIS DOES NOT FULLY HEAL. A refresh 200 whose body is lost may have
+ * ROTATED the credential server-side. Where the cookie carries it, the jar may still hold the new
+ * one. Where the client carries its own token (`X-Canari-Refresh`: iOS, macOS, Linux), it still holds
+ * the OLD one: a retry within the 60 s rotation grace is answered from the grace and heals, a retry
+ * after it presents a replaced token and the session is REVOKED as a replay. Bounded (the boot
+ * retries on the user's tap or the `online` event) and rare; recorded in offline-and-weak-network.
  */
 export class AnswerBodyLostError extends TransportFailureError {
   constructor(
@@ -182,17 +189,24 @@ export class AnswerBodyLostError extends TransportFailureError {
 /**
  * The parsed JSON body of a 2xx from the API, or {@link NotFromApiError} when the response is not
  * the API's (see the module comment for the three cases), or {@link AnswerBodyLostError} when the body
- * read itself fails. A caller's own abort rejects untouched: that is the caller's decision, not the link's.
+ * read itself fails. A read the CALLER cancelled rejects with its own error, untouched: decided from
+ * the caller's `signal` being aborted - a fact - never from the error's words, since an abort WITH a
+ * reason (`abort('cancel')`) and Tauri's `Error('Request cancelled')` are no `AbortError`.
  *
  * @param where What was asked, for the log line the caller writes from the error.
+ * @param signal The signal the request was sent under, when the caller can cancel it.
  */
-export async function readApiJson(res: Response, where: string): Promise<unknown> {
+export async function readApiJson(
+  res: Response,
+  where: string,
+  signal?: AbortSignal | null
+): Promise<unknown> {
   assertAnsweredByApi(res, where);
   let text: string;
   try {
     text = await res.text();
   } catch (e) {
-    if (e instanceof DOMException && e.name === 'AbortError') throw e;
+    if (signal?.aborted) throw e;
     throw new AnswerBodyLostError(where, res.status, e);
   }
   try {

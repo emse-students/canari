@@ -70,8 +70,11 @@ export function isTransportFailure(error: unknown): boolean {
  * THE BASE, NOT THE VERDICT. Thrown as itself only for an APP-origin 4xx other than 401/403/408/429
  * (a 404 or a 410 in Nest's envelope: the endpoint refuses the request outright and no retry changes
  * that - the boot sends such a user to login, as before). Every answer that is NOT a verdict is the
- * subclass {@link TransientAnswerError}. The callers with a retry ladder (`useChannelWorkspaces`,
- * `mlsDeliveryApi`) test this base. It lives here, beside its subclass, so the boot's predicate
+ * subclass {@link TransientAnswerError}. The two readers split on that line: `useChannelWorkspaces`
+ * asks again only on the TRANSIENT subclass (a verdict is asked again for nothing), while
+ * `mlsDeliveryApi` wraps the BASE after a delivery 401 as a definitive `DeliveryRenewalFailedError` -
+ * the guard's 401 proved the request did nothing, whatever the refresh answered, and an unwrapped app
+ * 4xx left a commit's stage unknown. It lives here, beside its subclass, so the boot's predicate
  * ({@link isSessionQuestionOpen}) reads a type without importing the auth store, which re-exports it.
  */
 export class RefreshFailedError extends Error {

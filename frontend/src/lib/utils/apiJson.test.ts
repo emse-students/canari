@@ -38,11 +38,30 @@ describe('readApiJson', () => {
     expect(failure).toMatchObject({ where, status: 200 });
   });
 
-  it("lets the caller's own abort through untouched - its decision, not the link's", async () => {
-    const abort = new DOMException('aborted', 'AbortError');
-    const failure = await readApiJson(lostBody(abort), where).catch((e: unknown) => e);
-    expect(failure).not.toBeInstanceOf(AnswerBodyLostError);
-    expect((failure as DOMException).name).toBe('AbortError');
+  it.each([
+    ['an abort with a reason', 'cancel'],
+    ["Tauri's cancellation", new Error('Request cancelled')],
+    ['a plain AbortError', new DOMException('aborted', 'AbortError')],
+  ])(
+    "lets the caller's own cancel through untouched (%s) - read from its signal",
+    async (_n, reason) => {
+      const controller = new AbortController();
+      controller.abort(reason);
+      const failure = await readApiJson(lostBody(reason), where, controller.signal).catch(
+        (e: unknown) => e
+      );
+      expect(failure).not.toBeInstanceOf(AnswerBodyLostError);
+      expect(failure).toBe(reason);
+    }
+  );
+
+  it('reads the same failure as a lost body when the caller did not cancel', async () => {
+    const failure = await readApiJson(
+      lostBody(new Error('Request cancelled')),
+      where,
+      new AbortController().signal
+    ).catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(AnswerBodyLostError);
   });
 
   it('reads a 2xx without a JSON content type as no answer, and never reads its body', async () => {
