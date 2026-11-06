@@ -80,6 +80,9 @@ describe('the post a publisher gets back carries the rights they actually hold',
         // `invalidateListCache` sweeps the whole feed prefix through this one - absent, every
         // create logs a swept-cache warning, and a spec that prints a real warning teaches its
         // reader to skip the line that will matter next time.
+        // The feed's generation moves first (`invalidatePostListCache`); absent, every create
+        // logged a warning nobody should learn to skip.
+        incr: jest.fn(() => Promise.resolve(1)),
         deleteByPattern: jest.fn(() => Promise.resolve(0)),
       } as unknown as RedisService,
       {} as FollowsService,

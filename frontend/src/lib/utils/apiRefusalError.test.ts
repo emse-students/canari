@@ -32,6 +32,15 @@ describe('refusalFromResponse', () => {
     expect(refusal.retryAfterMs).toBeNull();
   });
 
+  it('says WHO answered: the app in JSON, the edge with a page', async () => {
+    expect((await refusalFromResponse(json(502, { message: 'down' }), 'x')).origin).toBe('gateway');
+    const page = new Response('<html>Bad gateway</html>', {
+      status: 502,
+      headers: { 'content-type': 'text/html' },
+    });
+    expect((await refusalFromResponse(page, 'x')).origin).toBe('edge');
+  });
+
   it('keeps only a finite, non-negative wait', async () => {
     expect((await refusalFromResponse(json(429, { retryAfterMs: -5 }), 'x')).retryAfterMs).toBe(0);
     expect(

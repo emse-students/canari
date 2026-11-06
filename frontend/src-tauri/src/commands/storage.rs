@@ -1642,7 +1642,7 @@ mod tests {
                 crate::concurrency::checkpoint_live_manager(&live, &key, |sealed| {
                     in_write_tx.send(()).unwrap();
                     release_rx.recv().unwrap();
-                    crate::concurrency::write_mls_bin_atomically(&path, sealed)
+                    crate::concurrency::write_slot_mls_bin(&path, sealed)
                 })
             })
         };

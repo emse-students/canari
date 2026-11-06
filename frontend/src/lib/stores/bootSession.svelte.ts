@@ -10,21 +10,42 @@
  * So the load starts this and returns; the layout draws a boot screen while the phase is
  * `resolving`, and the phase ends with the real outcome of the refresh:
  * - a token (or a sign-in that completed meanwhile) -> `settled`, the page the user asked for;
- * - an ANSWER that is not a token (401/403, identity split, ...) -> login, then `settled`;
- * - a TRANSPORT failure ({@link isTransportFailure}) -> `unreachable`. NEVER a login redirect: nothing
- *   answered, so "you are signed out" would be a lie, and nothing here logs anyone out. A status
- *   code is an answer, a transport failure is not.
+ * - a VERDICT that is not a token (the app's own 401/403, an app-origin 4xx such as a 404 in Nest's
+ *   envelope, an identity split, ...) -> login, then `settled`;
+ * - NO VERDICT ({@link isSessionQuestionOpen}): nobody answered (a transport failure, a deadline, a
+ *   captive portal's `200 text/html`), or the answer was a `TransientAnswerError` - a 5xx (the 503
+ *   `MAINTENANCE` included), a 408 or 429, or anything the edge wrote (a WAF's HTML 403) ->
+ *   `unreachable`, with its {@link BootUnreachableCause} so the screen blames the right party. NEVER
+ *   a login redirect: the credential was not judged, so "you are signed out" would be a lie, and
+ *   nothing here logs anyone out.
  *
- * `unreachable` is derived from the failure event itself - the refresh's own deadline or transport
- * error - never from a second timer. It ends on a retry the user asks for, or on the browser's
+ * `unreachable` is derived from the failure event itself - the refresh's own deadline, transport
+ * error or non-verdict answer - never from a second timer. It ends on a retry the user asks for, or on the browser's
  * `online` event.
  */
 
-import { isTransportFailure } from '$lib/utils/transportFailure';
+import { isSessionQuestionOpen, TransientAnswerError } from '$lib/utils/transportFailure';
 import { isSignedOutPath } from '$lib/utils/internalPath';
 
 /** `settled`: the question is answered (or was never asked). */
 export type BootSessionPhase = 'settled' | 'resolving' | 'unreachable';
+
+/**
+ * WHY the question stayed open, read from the failure's TYPE and fields (never its message), so the
+ * screen does not blame the network for a server that answered:
+ * - `network`: nobody answered, or the EDGE refused the path (a WAF ban page) - this network;
+ * - `server`: the server (or the edge in front of it) answered a 5xx, a 408 or a 429;
+ * - `maintenance`: core-service's 503 `MAINTENANCE` (the platform switch).
+ */
+export type BootUnreachableCause = 'network' | 'server' | 'maintenance';
+
+/** The cause of a failure {@link isSessionQuestionOpen} already accepted. */
+function unreachableCauseOf(error: unknown): BootUnreachableCause {
+  if (!(error instanceof TransientAnswerError)) return 'network';
+  if (error.code === 'MAINTENANCE') return 'maintenance';
+  if (error.status >= 500 || error.status === 408 || error.status === 429) return 'server';
+  return 'network';
+}
 
 /** What the boot needs from the outside - injected so the decision is testable without the stores. */
 export interface BootSessionDeps {
@@ -39,6 +60,7 @@ export interface BootSessionDeps {
 }
 
 let phase = $state<BootSessionPhase>('settled');
+let cause = $state<BootUnreachableCause>('network');
 let inFlight: Promise<void> | null = null;
 let lastDeps: BootSessionDeps | null = null;
 let removeOnline: (() => void) | null = null;
@@ -49,6 +71,11 @@ const bwarn = (msg: string) => console.warn('[boot] ' + msg);
 /** The current phase of the boot's session question. */
 export function bootSessionPhase(): BootSessionPhase {
   return phase;
+}
+
+/** Why the phase is `unreachable` (meaningless in the other phases). */
+export function bootUnreachableCause(): BootUnreachableCause {
+  return cause;
 }
 
 /**
@@ -87,8 +114,9 @@ async function run(): Promise<void> {
         await deps().refresh();
       } catch (e) {
         // A sign-in may have completed while the request was in flight: it answers the question.
-        if (!deps().currentUserId() && isTransportFailure(e)) {
-          bwarn(`session question unanswered, nothing reached the server: ${String(e)}`);
+        if (!deps().currentUserId() && isSessionQuestionOpen(e)) {
+          cause = unreachableCauseOf(e);
+          bwarn(`session question unanswered (cause ${cause}, no verdict): ${String(e)}`);
           phase = 'unreachable';
           if (typeof window !== 'undefined') {
             const onOnline = () => retryBootSession();
@@ -155,6 +183,7 @@ export function retryBootSession(): void {
 export function resetBootSessionForTest(): void {
   dropOnlineListener();
   phase = 'settled';
+  cause = 'network';
   inFlight = null;
   lastDeps = null;
 }

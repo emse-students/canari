@@ -227,10 +227,19 @@ import { trackRequestOutcome } from '$lib/utils/trackedFetch';
 import {
   releaseUploadSession,
   uploadResumable,
+  type ResumableBlobEncoding,
   type ResumableUploadPort,
   type ResumableUploadState,
 } from '$lib/utils/resumableUpload';
 import { appendLog } from '$lib/utils/sessionLog';
+
+/** The ref's `type`, from the MIME type the file was uploaded under. */
+export function mediaTypeOf(mimeType: string): MediaType {
+  if (mimeType.startsWith('video/')) return 'video';
+  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType.startsWith('audio/')) return 'audio';
+  return 'file';
+}
 
 /** How many times `complete` is asked for ONE uploadId when its answer is lost. */
 const COMPLETE_ATTEMPTS = 3;
@@ -916,13 +925,7 @@ export class MediaService {
     }
 
     // 4. Return the reference - the key is only here, never on the server
-    const type = file.type.startsWith('video/')
-      ? 'video'
-      : file.type.startsWith('image/')
-        ? 'image'
-        : file.type.startsWith('audio/')
-          ? 'audio'
-          : 'file';
+    const type = mediaTypeOf(file.type);
 
     const width =
       dimensions?.width && dimensions.width > 0 ? Math.round(dimensions.width) : undefined;
@@ -963,6 +966,8 @@ export class MediaService {
     resume: {
       state?: ResumableUploadState;
       persist: (state: ResumableUploadState) => Promise<void>;
+      /** `single-block` for a photo (see `resumableUpload.ts`); `segmented-v1` when absent. */
+      encoding?: ResumableBlobEncoding;
     },
     transport?: XhrUploadOptions
   ): Promise<MediaRef> {
@@ -974,6 +979,7 @@ export class MediaService {
       retentionClass,
       state: resume.state,
       persist: resume.persist,
+      encoding: resume.encoding,
       port: this.uploadSessionPort(token),
       transport,
       log: appendLog,
@@ -983,7 +989,7 @@ export class MediaService {
     const height =
       dimensions?.height && dimensions.height > 0 ? Math.round(dimensions.height) : undefined;
     return {
-      type: file.mimeType.startsWith('video/') ? 'video' : 'file',
+      type: mediaTypeOf(file.mimeType),
       mediaId: done.mediaId,
       key: done.keyHex,
       iv: done.ivHex,
@@ -991,7 +997,7 @@ export class MediaService {
       size: plaintext.byteLength,
       fileName: file.fileName,
       ...(width && height ? { width, height } : {}),
-      encoding: done.encoding,
+      ...(done.encoding ? { encoding: done.encoding } : {}),
     };
   }
 

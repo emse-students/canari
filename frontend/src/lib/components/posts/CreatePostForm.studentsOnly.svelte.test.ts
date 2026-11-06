@@ -10,8 +10,8 @@ import { flushSync, mount, tick, unmount } from 'svelte';
 import CreatePostForm from './CreatePostForm.svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import { m } from '$lib/paraglide/messages';
+import { setCurrentUserId } from '$lib/stores/userState.svelte';
 import { emptyPostComposerDraft, savePostComposerDraft } from '$lib/posts/postComposerDraft';
-import { createPost } from '$lib/posts/api';
 import { cameraOverlayStub } from '../reels/cameraOverlayStub.test-helper';
 import type { Association } from '$lib/associations/api';
 
@@ -22,6 +22,9 @@ const ENTITIES = vi.hoisted(() => [
 
 vi.mock('$lib/moderation/muteCheck', () => ({ assertNotMuted: () => Promise.resolve() }));
 vi.mock('$lib/forms/api', () => ({ getForms: () => Promise.resolve([]) }));
+// The composer hands the post to the background publish queue; what it hands over is the assertion.
+const enqueuePost = vi.hoisted(() => vi.fn((..._args: unknown[]) => Promise.resolve()));
+vi.mock('$lib/posts/publishQueue/publishQueue.svelte', () => ({ enqueuePost }));
 vi.mock('$lib/associations/api', async (orig) => ({
   ...(await orig<typeof import('$lib/associations/api')>()),
   listLinkableValidatedCalendarEvents: () => Promise.resolve([]),
@@ -32,7 +35,6 @@ vi.mock('$lib/posts/postIdentity', async (orig) => ({
 }));
 vi.mock('$lib/posts/api', async (orig) => ({
   ...(await orig<typeof import('$lib/posts/api')>()),
-  createPost: vi.fn(() => Promise.resolve({})),
   getReelLimits: () =>
     Promise.resolve({
       maxDurationMs: 90_000,
@@ -51,6 +53,8 @@ const mounted: Record<string, unknown>[] = [];
 
 beforeEach(() => {
   localStorage.setItem('canari_saved_user', 'user-a');
+  setCurrentUserId('user-a');
+  enqueuePost.mockClear();
   vi.spyOn(console, 'log').mockImplementation(() => {});
 });
 
@@ -58,7 +62,6 @@ afterEach(() => {
   while (mounted.length) unmount(mounted.pop()!);
   document.body.innerHTML = '';
   localStorage.clear();
-  vi.mocked(createPost).mockClear();
 });
 
 /** Opens the composer on a draft already speaking as `identity`. */
@@ -104,17 +107,19 @@ describe('CreatePostForm - "Entre étudiants"', () => {
     switchOf(on)!.click();
     flushSync();
     await publish(on);
-    expect(vi.mocked(createPost).mock.calls[0][0]).toMatchObject({
+    expect((enqueuePost.mock.calls[0][1] as { payload: unknown }).payload).toMatchObject({
       associationId: 'list-1',
       studentsOnly: true,
     });
     unmount(mounted.pop()!);
     document.body.innerHTML = '';
-    vi.mocked(createPost).mockClear();
+    enqueuePost.mockClear();
 
     const off = await openAs('list-1');
     await publish(off);
-    expect(vi.mocked(createPost).mock.calls[0][0]).not.toHaveProperty('studentsOnly');
+    expect((enqueuePost.mock.calls[0][1] as { payload: unknown }).payload).not.toHaveProperty(
+      'studentsOnly'
+    );
   });
 
   it('is not offered to an institution, nor to a personal post', async () => {

@@ -648,7 +648,7 @@ makes long - and one detail page awaits its own data.
 | 0 | **P1** Any upload body over 10 MiB is dropped by the host WAF (403 HTML) and was retried for ever | **BUILT: WP-OFF-8** (8 MiB budget, chunk route above it, a refusal ends the entry with an explicit bubble) | [host-waf-body-limit](../infrastructure/host-waf-body-limit.md) |
 | 1 | **P1** An attachment bubble is blind: no progress, cancel or retry, no deadline on the upload | **BUILT: WP-OFF-8** ([13.4](#134-wp-off-8-built-a-bubble-that-says-how-much-has-gone-and-can-be-ended)) | this page |
 | 2 | **P1** Navigation waits on a profile call (root layout) and on one post (detail page) | **BUILT: WP-NAV-1** (a separate pull request; [posts](modules/posts.md)) | `routes/+layout.ts`, `routes/posts/[postId]` |
-| 3 | **P2** Every failed upload restarts at byte 0; a 50 MB body is ONE request | open for every attachment but one: a CHAT REEL resumes since RC-5 (draft) through media-service's upload sessions, sending only the parts the server lacks ([reels-in-chat](modules/reels-in-chat.md#14-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19)); the general writer is S2 of [media-streaming-upload](../services/media-streaming-upload.md) | [reels-in-chat](modules/reels-in-chat.md), [media-service](../services/media-service.md) |
+| 3 | **P2** Every failed upload restarts at byte 0; a 50 MB body is ONE request | open for every attachment but one: a CHAT REEL resumes since RC-5 (draft) through media-service's upload sessions, sending only the parts the server lacks ([reels-in-chat](modules/reels-in-chat.md#14-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19)); the general writer is S2 of [media-streaming-upload](../services/media-streaming-upload.md); a FEED POST resumes since 2026-11-06 (its photos and videos one by one, the composer closed at once: [posts](modules/posts.md#the-background-publish-queue)) | [reels-in-chat](modules/reels-in-chat.md), [media-service](../services/media-service.md) |
 | 4 | **P2** The upload holds the conversation's lane and a send slot, so text sent behind a big file waits for it | **BUILT: WP-OFF-9** ([13.8](#138-wp-off-9-built-the-upload-runs-outside-the-lane-2026-10-18)) | this page |
 | 5 | **P2** A salon (channel) attachment blocks the composer with no progress and no cancel (`isUploadingMedia`) | **BUILT 2026-11-02**: drawn at the tap, its row carries the upload (`salonAttachmentSend.ts`) | [chat](modules/chat.md#a-salon-attachment-is-drawn-at-the-tap-and-its-row-carries-its-upload-2026-11-02) |
 | 6 | **P2** The 13 MB file lives in the outbox row and three times in memory per attempt | the file is outside the row since 13.7; RC-5 (draft) adds the raw take in the same store and a second blob slot, so replacing the bytes never overwrites what the committed row names | [reels-in-chat](modules/reels-in-chat.md) |
@@ -1091,8 +1091,13 @@ underneath (it would fetch with no token) and `components/layout/BootGate.svelte
 | outcome of the refresh | phase | screen |
 | --- | --- | --- |
 | a token, or a sign-in completed meanwhile | `settled` | the page asked for; the background profile check runs as before |
-| an ANSWER that is not a token (401/403, identity split, sign-out) | `settled` | login, carrying the page asked for |
-| a TRANSPORT failure (`isTransportFailure`: deadline or no answer) | `unreachable` | "Impossible de joindre Canari depuis ce reseau", a retry button and a hint |
+| a VERDICT that is not a token: the app's own 401/403 (`SessionExpiredError`), an app-origin 4xx in Nest's envelope such as a 404 or 410 (`RefreshFailedError` itself), an identity split, a sign-out | `settled` | login, carrying the page asked for |
+| NOBODY ANSWERED: a transport failure, a deadline, a captive portal's `200 text/html` (`NotFromApiError`, read through `readApiJson`) | `unreachable`, cause `network` | "Impossible de joindre Canari depuis ce reseau", a retry button and a hint |
+| NO VERDICT, `TransientAnswerError` (extends `RefreshFailedError`): a 5xx, a 408 or a 429 | `unreachable`, cause `server` | "Canari rencontre un probleme": the server answered, the connection is not the cause |
+| the same, core-service's 503 `MAINTENANCE` (its `code` read from the JSON body as a field) | `unreachable`, cause `maintenance` | the platform gate's maintenance wording |
+| the same, any other status the EDGE wrote (a WAF's HTML 403, a JSON block page none of our envelopes) | `unreachable`, cause `network` | the network wording: the path refused, not the server |
+
+The population is decided at the THROW in `refresh` (`stores/auth.ts`) from the status and `refusalOrigin`, and read by TYPE (`isSessionQuestionOpen`, `bootUnreachableCause`), never from a message. An edge 5xx or HTML 403 on the boot refresh used to send the user to login, and so did a captive portal's `200` (a `SyntaxError` from a bare `res.json()`); #3052 parked the first, both fixed 2026-11-06. The callers with a retry ladder (`useChannelWorkspaces`, `mlsDeliveryApi`) test the base `RefreshFailedError` and are unchanged.
 
 `unreachable` is derived from the failure event, never from a second timer, and never logs anyone out
 (a status code is an answer, a transport failure is not). It ends on the retry button or on the
@@ -1119,8 +1124,7 @@ it is waiting for. Pinned by `routes/firstPaintNeverWaits.test.ts`.
   bounded: it is not a network call, a bound would be a bare timer with no event behind it, and a hang
   there is already visible (the boot screen keeps saying it is connecting). If it is ever seen to
   hang, the fix is in the store call, not a timeout around it.
-- An edge 5xx or an HTML 403 on the refresh still goes to login (`auth.ts` calls it transient): parked in
-  `docs/wiki/backlog.d/p3-an-edge-refusal-of-the-boot-refresh-reads-as-signed-out.md`.
+- An edge 5xx, an HTML 403 or a portal's `200 text/html` on the refresh was routed to login; fixed 2026-11-06 (see the table above).
 
 **The reading (2026-11-05, Chromium, production web build, every `/api` request hangs forever, fresh isolated
 context, no stored user, first load for `/`, chunks cached for the others).** Time of the first boot screen,

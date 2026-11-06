@@ -51,6 +51,16 @@ export const ACCOUNT_KEY = {
    * group, the token of the acquisition, cleared when its release is answered.
    */
   addLockMarkers: (userId: string) => `mls_add_lock_markers:v1:${userId}`,
+  /** `postComposerDraft.ts`: the account's unsent post (its text and choices, never its media). */
+  postComposerDraft: (userId: string) => `canari_post_composer_draft:${userId}`,
+  /** `postCommentDraft.ts`: the account's unsent comment on one post. */
+  postCommentDraft: (userId: string, postId: string) =>
+    `canari_post_comment_draft:${userId}:${postId}`,
+  /**
+   * `workspaceSnapshot.ts`: the account's last community list, drawn before the network answers.
+   * Called with `''` it is the prefix every sign-out erases.
+   */
+  workspaceSnapshot: (userId: string) => `canari_workspace_snapshot:v1:${userId}`,
   /** `deviceKeyGate.ts`: the device-key change epoch. */
   deviceKeyEpoch: (userId: string) => `canari-device-key-epoch:${userId}`,
   /** `conversations.ts`: the archived conversation ids (lower-cased, as it always was). */
@@ -212,6 +222,8 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.deviceKeyEpoch(userId),
     ACCOUNT_KEY.archivedConversations(userId),
     ACCOUNT_KEY.seenCipherIndex(userId),
+    ACCOUNT_KEY.postComposerDraft(userId),
+    ACCOUNT_KEY.workspaceSnapshot(userId),
     ACCOUNT_KEY.historyHeldNothing(userId),
     ACCOUNT_KEY.admissionLedger(userId),
     ACCOUNT_KEY.historyClosedSeen(userId),
@@ -246,6 +258,7 @@ function keyPrefixes(userId: string): string[] {
     ACCOUNT_KEY.deviceName(userId, ''),
     ACCOUNT_KEY.leafRefresh(userId, ''),
     ACCOUNT_KEY.refusedDevices(userId, ''),
+    ACCOUNT_KEY.postCommentDraft(userId, ''),
   ];
 }
 

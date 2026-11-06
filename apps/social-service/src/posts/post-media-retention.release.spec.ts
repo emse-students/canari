@@ -62,6 +62,19 @@ describe('PostsService.deletePost', () => {
     expect(release).toHaveBeenCalledWith([POST_MEDIA, COMMENT_MEDIA]);
   });
 
+  it('does NOT release the ids a withdrawal deletes itself: released, they would no longer be deletable', async () => {
+    const { service, release } = makeService({
+      id: 'post-1',
+      authorId: AUTHOR,
+      media: [{ mediaId: POST_MEDIA }, { mediaId: OTHER_MEDIA }],
+      comments: [{ id: 'c1', media: { mediaId: COMMENT_MEDIA } }],
+    } as Partial<Post>);
+
+    await service.deletePost('post-1', AUTHOR, false, { keep: [POST_MEDIA, OTHER_MEDIA] });
+
+    expect(release).toHaveBeenCalledWith([COMMENT_MEDIA]);
+  });
+
   it('releases AFTER the row is gone, never as a precondition of deleting it', async () => {
     const order: string[] = [];
     const post = { id: 'post-1', authorId: AUTHOR, media: [{ mediaId: POST_MEDIA }], comments: [] };

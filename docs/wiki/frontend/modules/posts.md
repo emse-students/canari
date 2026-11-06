@@ -287,6 +287,200 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   box's black shows instead. The composer's paused preview keeps no poster: one would hide the
   first frame `#t=0.1` decodes.
 
+## The background publish queue
+
+Owner decisions of 2026-11-06 ([backlog](../../backlog.d/p2-uploads-of-several-photos-are-slow-on-a-bad-network-and-stop-in-the-background.md)):
+Publish closes the composer AT ONCE, the send goes on in the background behind a discreet progress
+line with a Retry, and the post is never lost. Code: `lib/posts/publishQueue/`.
+
+**The composer only queues.** `CreatePostForm.publishPost` answers every refusal it can from its own
+state (`localPublishBlocker`, the attachment cap), mints the post's id (`crypto.randomUUID()`), and
+hands the payload plus the RAW files to `enqueuePost`. It closes only once `enqueuePost` resolves,
+which means the post and every file were written in ONE IndexedDB transaction; a failed write (a
+full disk: `publish_queue_enqueue_storage_full`) keeps the composer and everything in it.
+
+**The durable state** (`publishQueueStore.ts`): one database per account, `CanariDBPublish_<userId>`,
+two stores - `posts` (the record: payload, landing feed, one entry per media with its prepared shape,
+its open upload session and, once uploaded, its media ref) and `files` (`<postId>/<index>`, the
+original bytes, REPLACED by the prepared bytes in the same transaction that records the prepared
+shape, so a media is never prepared twice and never uploaded from the wrong bytes). An `update` of a
+post the member deleted meanwhile writes nothing and says so, so nothing resurrects. The store
+closes itself on `versionchange`, so the device wipe's `deleteDatabase` never blocks. Like the
+composer draft, it is not sealed by the device key.
+
+**Whose it is, and how long it stays.** A plain sign-out KEEPS the queue, as it keeps the message
+database: the next sign-in of that account resumes it, and no other account can read it (the queue
+runs only for the signed-in account, and every request it makes is checked to carry that account's
+token). The account's deletion or revocation DELETES it (`accountIndexedDbNames`, review of #3061:
+the queued photos are in the clear, and outliving the account was the defect). What that means on a
+SHARED BROWSER: a member who signs out with posts still queued leaves those posts and their media on
+that browser until they sign in there again or delete their account - the same as their messages.
+Deleting the queued post (or letting it publish) before signing out is what removes them. The
+composer and comment drafts are per-account keys of the same kind (`ACCOUNT_KEY.postComposerDraft`,
+`postCommentDraft`, `workspaceSnapshot`), deleted with the account since the same review.
+
+**The pass** (`publishQueue.ts`, one at a time per account across tabs through `navigator.locks`),
+oldest post first, media in order, ONE file at a time:
+
+1. the mute check, before the first byte leaves;
+2. per media: prepare (the same `preparePostMedia` as before: the image pipeline, or the video
+   transcode under the upload ceiling), record it; then upload it RESUMABLY
+   (`MediaService.uploadResumably`, 1 MiB parts, `retentionClass: 'archive'`), the open session
+   recorded at each step so a reload or a kill resumes from the server's list of received parts
+   (`GET /api/media/upload/session/:id`), never from byte 0; what `writesSegmented` names (a video,
+   writer on) goes `segmented-v1`, everything else `single-block` (see
+   [media-streaming-upload](../../services/media-streaming-upload.md#33-session-routes-media-service-additive---the-old-chunk-routes-stay-untouched)
+   - the link preview reads only single-block images);
+3. `createPost` with the client id, `createSent` written to the record BEFORE the request leaves.
+   **The id is the idempotency key**: a create whose answer was lost is sent again with the same id
+   and the server answers with the post it already holds
+   ([social-service](../../services/social-service.md#a-post-created-twice-is-the-same-post-2026-11-06)).
+   Then the record and its files are deleted.
+
+**Between every two steps, and before the create, a checkpoint**: the pass stops if the member
+paused or deleted the post or signed out, and goes on only if the access token's subject is the
+queue's account (`assertAccount`; the upload's own token getter refuses the same way). A token of
+another account (a sign-in in another tab) or a session that ended HALTS the pass with nothing
+recorded - the post waits for its own account, and is never sent as anybody else. The create and
+the withdrawal go through `apiFetch`, whose own guard refuses a token of another account than the
+session's (`IdentitySplitError`, also `halt`).
+
+**Nothing is sent to an estate that cannot take it.** A stable reaches both stores before production
+deploys, so a new phone build meets the OLD services for days: they drop the client id (a lost
+answer then duplicates the post), refuse `single-block` (`400`) and answer the withdrawal `404`.
+core-service's `/api/version` carries the capability `publishQueue: true` (the three services are
+built from one tag and deployed together, as for `presencePost`), read by `serverPublishQueue()`;
+until it is `true` - an older estate, or no answer yet - the pass sends nothing, its rows wait, and
+it ENDS rather than climb the retry ladder (re-reading the same local value is no retry). The
+`/api/version` answer that turns it `true` starts the next pass (an `$effect` on
+`serverPublishQueue()`), so a post never sits out a rung for it.
+
+**A 2xx that is not JSON is an edge answer.** The post API's request helper types it at the throw
+(`ApiRefusalError`, `origin: 'edge'`), so a captive portal's `200` page waits instead of stopping
+the post on the `SyntaxError` of `json()`.
+
+**What stops it, and what starts it again** (`classifyPublishFailure`, by WHO answered):
+
+| What came back | Verdict | What the queue does |
+| --- | --- | --- |
+| A transport failure; an EDGE page (the host's proxy, a non-JSON answer) with no refusal cause - from an upload or the post API alike (`ApiRefusalError.origin`, as `MediaUploadError` carries it) | `wait` | waits on the ladder (`PUBLISH_RETRY_LADDER_MS`, 2 s to 60 s), cut short by any wake: a reconnect, `online`, the page visible, the app foreground |
+| The APP's `5xx`, `408`, `425`, `429`; a resumable session it lost and could not reopen (`sessionLost`) | `busy` | asked again over the ladder ONCE (a counter no wake resets), then stops with a Retry |
+| A `401`; `SessionExpiredError`; a token of another account (`PublishAccountMismatchError`, `TokenAccountChangedError`, `IdentitySplitError`) | `halt` | the pass ends, nothing recorded: the app's auth is the one authority on a 401, the queue never spins on one |
+| Anything else: moderation, a `4xx`, a `410` (a deleted id), a video that cannot be prepared, a refused media | `failed` | stops the post with its sentence, logged by `console.error`; only Retry, Pause or Delete moves it |
+
+**A post that stopped is left out of the pass, whatever it was doing.** That includes a withdrawal
+that was refused: before the review of #3061 the pass picked any `withdrawn` post first, failure or
+not, and a `403` or `404` withdrawal was asked 51 times in a few milliseconds and starved the queue.
+A refused withdrawal shows as a stopped row with Retry and Delete, each of which asks once more.
+
+Read on the local estate on 2026-11-06: before `busy` existed, a create that kept answering `500`
+was asked every minute for ever, and the review of #3061 found the same for media-service's own
+`5xx` and a lost session (which re-uploaded every part each time). The ladder is a cadence, never a
+correctness bound: what makes a resend safe is the recorded session and the client id.
+
+**What the member can do to a queued post.**
+
+- **Pause** (the cross on a row being worked on): the transfer stops, `paused` is written, the post is
+  kept and skipped; "Reprendre" clears it. This replaces the composer's old cancel of a video being
+  prepared, which the queue had dropped.
+- **Retry** a stopped post.
+- **Delete: the post exists NOWHERE afterwards.** `withdrawn` is written and the pass takes the post
+  back before forgetting it, in ONE idempotent request whether or not the create left:
+  `POST /api/posts/:id/withdraw {mediaIds}` retires the id (a create still on its way is then refused
+  `410`), deletes the post if it landed, and deletes the media the queue uploaded for it EXCEPT any a
+  live post or comment cites ([social-service](../../services/social-service.md#a-post-created-twice-is-the-same-post-2026-11-06)).
+  Then every open session is released. The citation check is made on the server because neither the
+  client nor media-service can make it: an uploader's own `archive` objects include the media of
+  posts already published (an association's among them), and the client route that once deleted
+  them by owner and class alone was the review's P2 - a former admin could strip an association's
+  images with it. `archive` is exempt from the idle sweep, so an uncited one would otherwise stay
+  for ever. **A Delete pressed while the create is on the wire wins**: the create's answer is
+  followed by a read of the store, so there is no "published" toast, and the withdrawal takes the
+  just-created post down. **A Pause pressed then does not**: a landed post cannot be paused, so it
+  is published and its row goes.
+
+**The member's marks are never erased by the runner.** `withdrawn` and `paused` are written by
+`PublishQueueStore.mark` alone, in one transaction; every runner write (`update`) takes them from
+the STORED record (`runnerWrite`) and hands them back to the runner's copy, so the next checkpoint
+sees them. Before the review of #3061, `update` wrote the runner's whole copy, read before the
+member acted: a Delete from another tab during an upload's `persist` was erased, and the post was
+published. And a SEND failure the runner writes as the member deletes the post is dropped
+(`runnerWrite`: a withdrawn post keeps only a `withdraw` failure) - kept, it would have left the
+post out of the pass and the Delete would never have run.
+
+**Several tabs.** One tab runs the pass (the Web Lock). Every tab draws the rows from the STORE at
+start (`refreshViews`, no lock needed), and the runner broadcasts its rows on a `BroadcastChannel`
+(`canari-publish-queue-<userId>`). Only the runner's rows are broadcast: rows read from the store
+carry no progress, and a tab's own `refreshViews` used to overwrite the runner's progress in every
+other tab. A Retry, Pause or Delete in a tab that is not the runner writes
+the store and NUDGES the runner on the same channel: it aborts that post's transfer at once (pause,
+delete) or ends its wait (retry) instead of acting at its next rung. A tab still behind its PIN draws nothing: the
+queue starts with the session (`globalSession.isLoggedIn`), never before. Read on the local estate on
+2026-11-06: a second tab, unlocked, drew the first tab's row at 4 %, its pause stopped the first
+tab's transfer at once, and its Resume finished the post from the recorded sessions - one create.
+
+**Backgrounding, without native code.** A native shell emits `canari:foreground` when the app comes
+back; the queue then ABORTS the transfer in flight (it was frozen with the webview and its socket is
+likely dead) and starts the pass again, which resumes from the server's part list. On the web, a
+background tab keeps uploading. A native Android foreground service and an iOS background
+`URLSession`, so the send goes on WHILE the app is away, are a later step (the backlog entry).
+
+**The composer forgets the media it handed over.** `holdPostComposerMedia([])` is called before
+`onPostCreated`: the hold `$effect` would only have run on its next flush, after the parent had
+unmounted the composer, so the next open brought the published photos back and a second Publish
+posted them again (read on the local estate, 2026-11-06; the test unmounts in `onPostCreated` as the
+parent does).
+
+**"Post publie".** When a queued post lands, a discreet in-app toast says so (owner, 2026-11-06,
+`publish_queue_published`). It exists only while the app runs: a post published by a pass that ran
+after the app came back says so then, and nothing is shown while the app is closed.
+
+**The line** (`PublishQueueBanner.svelte`, in the root layout's banner column under the offline
+banner): one row per queued post, the media being worked on 1-based, its percentage, a progress bar
+over the whole post, a pause cross while it is worked on, and Resume or Retry plus Delete on a
+paused, waiting or stopped post. The feed refreshes when a queued
+post is published (`onPostPublished`), and a toast says so.
+
+**Release order, and why it holds by itself.** core-service, media-service and social-service (with
+migration 135) ship from one tag and are deployed together; the client waits for their
+`publishQueue` capability, so a client older than the estate is harmless and a client newer than
+the estate sends nothing until the estate catches up. An older media-service refuses a
+`single-block` session (`400`) and has no `internal/own-archive-delete`; an older social-service
+strips the `id` (a duplicate on a lost answer) and has no withdrawal.
+
+### What a post sends, measured (2026-11-06, local estate, desktop Chrome)
+
+Synthetic inputs standing in for a phone's: a 4032x3024 JPEG at 3.78 MB (the size of a 12 MP phone
+photo) and a 16 s 1080p H.264 video at 16 Mb/s (45.5 MB). Read from the queue's own log lines
+(`prepared: ... in N ms`, `uploaded ... in N ms`) and the network panel. A desktop CPU: a phone's
+prepare times are owed (the Mi 9T reading of the backlog entry).
+
+| Media | In | Prepared (what is encrypted and sent) | Prepare | Requests | Upload, no throttle | Upload, Slow 3G (400 ms RTT, 50 kB/s) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Photo | JPEG 3.78 MB | WebP 2048 px q0.92, **436 KB** (8.7x smaller) | 370-670 ms (1 s once, under a reload) | 3: open, 1 part, complete | 100-140 ms | **~10 s** |
+| Video | MP4 45.5 MB | MP4 720p ~2.5 Mb/s target, **2.83 MB** (16x) | 1.6-2.1 s (WebCodecs) | 5: open, 3 parts, complete | 0.8 s | **~57 s** of transfer |
+
+What follows from it:
+
+- **The bytes are already the prepared ones**: a photo leaves at ~11 % of its size and a video at
+  ~6 %. On a weak link the time is the uplink, ~10 s per photo at 50 kB/s - which no client work
+  can hide, only shrink.
+- **The session costs two round trips per photo** (open and complete around the single part):
+  ~0.8 s on a 400 ms RTT link against ~9 s of body, about 9 %. It buys resume and the one-by-one
+  order; kept.
+- **Encryption is not a cost worth chasing**: AES-GCM of 436 KB or 2.8 MB is inside the upload
+  figures above, which are dominated by the network even unthrottled.
+
+**Reductions proposed, none taken** (each changes what a reader sees, so each is the owner's call
+on these numbers):
+
+1. **Photo quality 0.92 -> 0.85 at 2048 px**, or **2048 -> 1600 px** at 0.92. Both cut the 436 KB,
+   neither was measured here; measure them on the same inputs before deciding.
+2. **Prepare media N+1 while media N uploads** (no quality change): saves the prepare time of every
+   media but the first - ~0.5 s per photo here, several seconds per video on a phone.
+3. **A feed thumbnail** (WP-W7 of the weak-network page): the feed would download a small preview,
+   not the 2048 px image. Sending side unchanged.
+
 ## The header's Publish and search are commands, stripped BEFORE they act (2026-10-28)
 
 The phone's app header reaches the feed with a link: `/posts?compose=1` (Publish) or

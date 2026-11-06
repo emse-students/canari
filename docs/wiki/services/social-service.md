@@ -1243,6 +1243,46 @@ fallback each line already declared was the right answer. With those gone `/cale
 `frontend/src/lib/associations/serverProse.test.ts`, the guard that owns this rule. That is what
 stops the next one: the guard is extended by a tree, never by an allowlist entry.
 
+## A post created twice is the same post (2026-11-06)
+
+`POST /api/posts` takes an optional `id` (a UUID minted by the client, `CreatePostDto.id`). The
+post's PRIMARY KEY is the idempotency key, so no column and no migration were added. `createPost`
+looks the id up first (`replayClientId`): absent, the post is INSERTED under it (`insert`, never
+`save`, which would update a row); present and the caller's, the stored post is returned as if just
+created (`[POST-CREATE] post <id> sent again`); present and another author's, `409`
+(`clientIdVerdict`, `post-client-id.ts`). Two concurrent creates with one id meet at the primary
+key: the loser's `23505` is read through `violatesUniqueColumns(e, ['id'])` and answered as a
+replay (and the reel claim it made is NOT handed back - it is the winning row's). A request without
+`id` keeps the server-generated one. The id must be a random UUID v4 (`@IsUUID('4')`: the nil UUID
+and other versions are refused). The client that sends it is the background publish queue
+([posts](../frontend/modules/posts.md#the-background-publish-queue)): a create whose answer was lost
+is sent again with the same id.
+
+**A deleted post is never created again** (decided 2026-11-06, review of #3061). Migration 135
+(additive) adds `deleted_post_ids (id, "deletedAt")` and an `AFTER DELETE ON posts` trigger that
+writes it, so EVERY hard delete path writes it - the service's delete, the account erasure, the reel
+retention, a cascade, any later one - with nothing for a writer to remember. The table holds the id
+and a date and nothing else: no author, no content. A create under a retired id is `410`.
+`POST /api/posts/:id/withdraw {mediaIds}` is the queue's Delete: it writes the tombstone FIRST,
+then deletes the row if one is there (`{ deleted }` says which), then deletes the named media the
+queue uploaded EXCEPT any a live post, comment or salon message cites
+(`PostMediaRetentionService.deleteWithdrawnMedia`, one SQL read of `posts.images`, the comments'
+media and `channel_messages."reelMediaId"`, then media-service's
+`internal/own-archive-delete` under the caller as uploader). A create racing it re-reads the
+tombstone AFTER its own insert and removes itself, so in every interleaving the post does not exist
+once the withdrawal answered. **Only ever the caller's own post, a platform admin included**: the
+author is checked before the tombstone (`409`, nothing written) and again on the row it would
+delete; another author's row that appeared between the two reads is left, the tombstone this call
+wrote is deleted again, and the answer is `409`. The row is deleted as its author, never with the
+admin flag, and WITHOUT releasing the ids the queue named (`deletePost`'s `keep`): released to
+`ephemeral` they would no longer be `archive`, media-service would refuse them, and they would wait
+out the idle sweep.
+
+**The existence oracle, accepted.** A create naming an id answers `409` (another author's post holds
+it) or `410` (a deleted post held it), which tells the caller that a post holds or held that id. Low:
+the ids are random v4 UUIDs (122 bits) nobody guesses, and a live post's id is shown to everyone who
+can read the post anyway. Tests: `post-client-id.spec.ts`, `posts.service.client-id.spec.ts`.
+
 ## Redis events published
 
 The social-service publishes to `chat:channel_events`:

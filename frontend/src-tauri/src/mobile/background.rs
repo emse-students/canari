@@ -2254,6 +2254,9 @@ mod tests {
 
     /// Alice seals `frame` for the group; bob's saved state is what the push path loads.
     fn alice_frame_for_bob(tag: &str, seed: u8, frame: &[u8]) -> (Vec<u8>, Vec<u8>, String) {
+        // It sends, so it holds the serialiser like every sender here: without it, a parallel
+        // `cargo test` failed it `foreground active` (2026-11-06).
+        let _quiet = quiet_foreground();
         let (alice, bob, group_id) = joined_pair(tag);
         let key = decode_base64_to_32_bytes(&key_b64(seed)).expect("key");
         let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");
