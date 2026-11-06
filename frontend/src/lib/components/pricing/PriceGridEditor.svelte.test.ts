@@ -11,7 +11,12 @@ import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import { m } from '$lib/paraglide/messages';
 import type { FormItem } from '$lib/forms/api';
-import { OTHERS_BUCKET_ID as O, type PriceMatrix } from '$lib/pricing/priceMatrix';
+import {
+  matrixOf,
+  matrixPayload,
+  OTHERS_BUCKET_ID as O,
+  type PriceMatrix,
+} from '$lib/pricing/priceMatrix';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import Harness from './PriceGridEditorHarness.test.svelte';
 
@@ -116,6 +121,22 @@ describe('PriceGridEditor', () => {
     expect(state.matrix!.cells['a1|icm']).toBe(0);
   });
 
+  it('shows what will be saved: a price rounded to the cent, a typed 0 as an empty box', () => {
+    const { target, state } = render(stored());
+    const input = cell(target, 'a1|icm').querySelector('input')!;
+    type(input, '12,345', 'change');
+    expect(state.matrix!.cells['a1|icm']).toBe(12.35);
+    expect(input.value).toBe('12.35');
+    type(input, '1 000', 'change');
+    expect(state.matrix!.cells['a1|icm']).toBe(1000);
+    type(input, '-4', 'change');
+    expect(state.matrix!.cells['a1|icm']).toBe(1000);
+    expect(input.value).toBe('1000');
+    const free = cell(target, `a1|${O}`).querySelector('input')!;
+    type(free, '0', 'change');
+    expect(free.value).toBe('');
+  });
+
   it('closes a cell from its corner, draws it struck through, and reopens it at 0', () => {
     const { target, state } = render(stored());
     click(cell(target, 'a1|icm').querySelector('.price-corner')!);
@@ -213,6 +234,106 @@ describe('PriceGridEditor', () => {
     const { target, state } = render(three, { items });
     expect(table(target).querySelectorAll('[data-testid="price-row"]')).toHaveLength(6);
     expect(state.matrix).toEqual(three);
+  });
+
+  /**
+   * The redesign is UI only, so a stored grid opened and saved untouched must send back exactly what
+   * the server holds - for a form, a boutique product and a cotisation tier alike (one editor). The
+   * shapes are the server's own fixtures (`pricing/price-matrix.spec.ts`,
+   * `forms/forms.service.matrix.spec.ts`), in CENTS, through `matrixOf` and `matrixPayload` the way
+   * the three screens load and save them.
+   */
+  describe('an untouched stored grid saves back unchanged', () => {
+    const cotisation = {
+      id: 'cot',
+      kind: 'cotisation' as const,
+      buckets: [{ id: 'yes', label: 'Cotisant', anyTier: true }],
+    };
+    const tiers = {
+      id: 'tiers',
+      kind: 'cotisation' as const,
+      buckets: [
+        { id: 'base', label: 'Base', anyTier: false, variantKeys: [null] },
+        { id: 'gold', label: 'Or', variantKeys: ['gold', 'platinum'] },
+      ],
+    };
+    const formation = {
+      id: 'form',
+      kind: 'formation' as const,
+      buckets: [{ id: 'icm', label: 'ICM', values: ['ICM'] }],
+    };
+    const promo = {
+      id: 'promo',
+      kind: 'promo' as const,
+      buckets: [{ id: 'old', label: 'Anciens', values: [2019, 2020, 1990] }],
+    };
+    const menu = {
+      id: 'menu',
+      kind: 'answer' as const,
+      questionId: 'q_menu',
+      buckets: [
+        { id: 'veg', label: 'Vegetarien', values: ['opt_veg'] },
+        { id: 'meat', label: 'Viande', values: ['opt_meat'] },
+      ],
+    };
+    const shapes: Record<string, { dimensions: unknown[]; cells: Record<string, number | null> }> =
+      {
+        'one criterion, its "everyone else" closed': {
+          dimensions: [cotisation],
+          cells: { yes: 800, [O]: null },
+        },
+        'cotisation by formation, odd cents': {
+          dimensions: [cotisation, formation],
+          cells: { 'yes|icm': 799, [`yes|${O}`]: 1, [`${O}|icm`]: 1999, [`${O}|${O}`]: 0 },
+        },
+        'tiers with the base tier, by promo': {
+          dimensions: [tiers, promo],
+          cells: {
+            'base|old': 0,
+            [`base|${O}`]: 1500,
+            'gold|old': null,
+            [`gold|${O}`]: 3000,
+            [`${O}|old`]: 2000,
+            [`${O}|${O}`]: null,
+          },
+        },
+        'three criteria, an answer among them': {
+          dimensions: [cotisation, formation, menu],
+          cells: Object.fromEntries(
+            ['yes', O].flatMap((c, i) =>
+              ['icm', O].flatMap((f, j) =>
+                ['veg', 'meat', O].map((a, k) => [
+                  `${c}|${f}|${a}`,
+                  k === 2 && j === 1 ? null : 1000 + 100 * i + 10 * j + k,
+                ])
+              )
+            )
+          ),
+        },
+      };
+    const items: FormItem[] = [
+      {
+        id: 'q_menu',
+        label: 'Menu',
+        required: true,
+        type: 'single_choice',
+        options: [
+          { id: 'opt_veg', label: 'Vegetarien', priceModifier: 0 },
+          { id: 'opt_meat', label: 'Viande', priceModifier: 0 },
+        ],
+      },
+    ];
+
+    for (const [name, raw] of Object.entries(shapes)) {
+      it(name, () => {
+        const stored = structuredClone(raw);
+        const { state } = render(matrixOf(stored)!, { items, isPublic: true });
+        const sent = matrixPayload(state.matrix) as typeof raw;
+        expect(JSON.stringify(sent.dimensions)).toBe(JSON.stringify(raw.dimensions));
+        expect(sent.cells).toEqual(raw.cells);
+        expect(stored).toEqual(raw);
+      });
+    }
   });
 
   it('flags the free guest cell of a public form, and only there', () => {

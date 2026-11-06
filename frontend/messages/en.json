@@ -4192,7 +4192,6 @@
   "form_criterion_others": "Everyone else",
   "form_criterion_others_hint": "added automatically: nobody is left without a price",
   "form_criterion_any_tier": "Any membership tier",
-  "form_criterion_no_tiers": "This association has no membership.",
   "form_criterion_no_formations": "No track is known yet.",
   "form_criterion_no_options": "Choose a question first.",
   "form_criterion_question_label": "Question",

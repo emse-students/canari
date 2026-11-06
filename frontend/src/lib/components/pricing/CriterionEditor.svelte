@@ -155,7 +155,7 @@
                 type="button"
                 onclick={() => removeValue(bucket, v.value)}
                 aria-label={m.form_criterion_remove_value({ value: v.label })}
-                class="text-text-muted hover:text-red-err flex h-5 w-5 items-center justify-center rounded-full"
+                class="tap-target text-text-muted hover:text-red-err flex h-5 w-5 items-center justify-center rounded-full"
               >
                 <X size={12} />
               </button>
@@ -166,7 +166,7 @@
             onclick={() => (suggestingFor = suggestingFor === bucket.id ? null : bucket.id)}
             aria-expanded={suggestingFor === bucket.id}
             aria-label={m.form_criterion_add_value({ group: bucket.label })}
-            class="border-cn-border text-text-main hover:bg-cn-bg flex h-7 w-7 items-center justify-center rounded-full border border-dashed"
+            class="tap-target border-cn-border text-text-main hover:bg-cn-bg flex h-7 w-7 items-center justify-center rounded-full border border-dashed"
           >
             <Plus size={14} />
           </button>
@@ -175,7 +175,7 @@
               <button
                 type="button"
                 onclick={() => addValue(bucket, v.value)}
-                class="border-cn-border text-text-main hover:bg-cn-bg rounded-full border px-2.5 py-0.5 text-xs font-semibold"
+                class="tap-target border-cn-border text-text-main hover:bg-cn-bg rounded-full border px-2.5 py-0.5 text-xs font-semibold"
               >
                 + {v.label}
               </button>
@@ -197,6 +197,9 @@
                   class={controlClass(false, 'compact')}
                 />
               </span>
+            {:else if dimension.kind === 'answer' && !dimension.questionId}
+              <!-- Nothing to offer because no question is chosen yet - not because all is placed. -->
+              <span class="text-text-muted text-xs">{m.form_criterion_no_options()}</span>
             {:else if remaining.length === 0}
               <span class="text-text-muted text-xs">{m.form_criterion_all_placed()}</span>
             {/if}
@@ -221,7 +224,7 @@
       <button
         type="button"
         onclick={addGroup}
-        class="border-cn-border text-text-main hover:bg-cn-bg inline-flex shrink-0 items-center gap-1 rounded-full border px-3 py-1 text-xs font-bold"
+        class="tap-target border-cn-border text-text-main hover:bg-cn-bg inline-flex shrink-0 items-center gap-1 rounded-full border px-3 py-1 text-xs font-bold"
       >
         <Plus size={13} />
         {m.form_criterion_add_group_short()}

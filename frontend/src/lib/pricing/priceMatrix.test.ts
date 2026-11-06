@@ -227,6 +227,57 @@ describe('price matrix editing', () => {
       expect(parseEuros('abc')).toBeNull();
       expect(parseEuros('-3')).toBeNull();
     });
+
+    it('ignores thousands spaces, a no-break one included', () => {
+      expect(parseEuros('1 000,50')).toBe(1000.5);
+      expect(parseEuros('1 000')).toBe(1000);
+      expect(parseEuros('1 000,5')).toBe(1000.5);
+    });
+
+    // The box must show what `matrixPayload` will send: 12.345 € would be saved as 1234 cents.
+    it('rounds to the cent, as the payload does', () => {
+      expect(parseEuros('12,345')).toBe(12.35);
+      expect(parseEuros('0,001')).toBe(0);
+      expect(parseEuros('19,99')).toBe(19.99);
+      const m = matrixOf({ dimensions: [{ id: 'f', kind: 'formation', buckets: [] }], cells: {} })!;
+      m.cells[OTHERS_BUCKET_ID] = parseEuros('12,345');
+      expect((matrixPayload(m) as { cells: Record<string, number> }).cells[OTHERS_BUCKET_ID]).toBe(
+        1235
+      );
+    });
+
+    it('refuses an amount whose cents are not a safe integer, and Infinity', () => {
+      expect(parseEuros('1e300')).toBeNull();
+      expect(parseEuros('Infinity')).toBeNull();
+      expect(parseEuros('12,5,0')).toBeNull();
+    });
+  });
+
+  describe('the guest seat, read like the server', () => {
+    it('treats an empty showIf as no condition, as normaliseCondition does', () => {
+      // A required single choice every option of which sits in a group closes "everyone else".
+      const grid: PriceMatrix = {
+        dimensions: [
+          {
+            id: 'q',
+            kind: 'answer',
+            questionId: 'meal',
+            buckets: [{ id: 'y', label: 'Oui', values: ['o1'] }],
+          },
+        ],
+        cells: { y: 10, [OTHERS_BUCKET_ID]: 0 },
+      };
+      const item = {
+        id: 'meal',
+        type: 'single_choice',
+        required: true,
+        options: [{ id: 'o1' }],
+      };
+      expect(guestFreeCellKey(grid, [{ ...item, showIf: {} }])).toBeNull();
+      expect(guestFreeCellKey(grid, [{ ...item, showIf: { promos: [2026] } }])).toBe(
+        OTHERS_BUCKET_ID
+      );
+    });
   });
 
   describe('the guest seat of a public form', () => {

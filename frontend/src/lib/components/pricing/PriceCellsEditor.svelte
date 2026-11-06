@@ -110,17 +110,18 @@
   }
 
   /**
-   * Commits a typed price. Text that is not a price leaves the cell as it was, and the input is put
-   * back so it does not show a value the grid does not hold.
+   * Commits a typed price. Text that is not a price leaves the cell as it was. Either way the input
+   * is rewritten from the grid, so it never shows a value the grid does not hold - a typed "0" or
+   * "12,345" whose `shown` text did not change would otherwise stay on screen as typed.
    */
   function commit(key: string, input: HTMLInputElement) {
     const value = parseEuros(input.value);
     if (value === null) {
       Log.d('PRICE_GRID', `cell ${key}: typed text is not a price, kept as it was`);
-      input.value = shown(key);
-      return;
+    } else {
+      matrix = fillCells(matrix, [key], value);
     }
-    matrix = fillCells(matrix, [key], value);
+    input.value = shown(key);
   }
 
   /**
@@ -216,14 +217,14 @@
         type="button"
         onclick={applyBulk}
         disabled={bulkValue === null}
-        class="bg-text-main text-cn-surface rounded-full px-3 py-1.5 text-xs font-bold disabled:opacity-40"
+        class="tap-target bg-text-main text-cn-surface rounded-full px-3 py-1.5 text-xs font-bold disabled:opacity-40"
       >
         {m.form_grid_apply()}
       </button>
       <button
         type="button"
         onclick={closeSelection}
-        class="border-cn-border text-text-main hover:bg-cn-surface rounded-full border px-3 py-1.5 text-xs font-bold"
+        class="tap-target border-cn-border text-text-main hover:bg-cn-surface rounded-full border px-3 py-1.5 text-xs font-bold"
       >
         {m.form_grid_close_all()}
       </button>
@@ -334,7 +335,7 @@
                     title={closed
                       ? m.form_grid_cell_restore_named({ cell: label })
                       : m.form_grid_cell_disable_named({ cell: label })}
-                    class="price-corner"
+                    class="price-corner tap-target"
                     class:cell-action={!closed}
                   >
                     {#if closed}<Undo2 size={14} />{:else}<Ban size={14} />{/if}
@@ -406,7 +407,7 @@
             <button
               type="button"
               onclick={() => toggle(key)}
-              class="border-cn-border text-text-main rounded-full border px-3 py-1.5 text-xs font-bold"
+              class="tap-target border-cn-border text-text-main rounded-full border px-3 py-1.5 text-xs font-bold"
             >
               {matrix.cells[key] === null
                 ? m.form_grid_make_available()

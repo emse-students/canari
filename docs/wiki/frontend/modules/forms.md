@@ -315,7 +315,10 @@ boutique products and cotisation tiers, so all three get it.
   hides a row whose every cell is `null` (`rowUnavailable`) - display only.
 - **Empty is "Gratuit", said.** A cell priced `0` shows an empty box and a muted "Gratuit" chip: the
   semantics of an empty cell did not change, they are now visible. `parseEuros` reads an empty box
-  as 0 and a comma as a decimal point; text that is not a price leaves the cell as it was.
+  as 0, a comma as a decimal point and ignores spaces (a pasted "1 000,50"); it ROUNDS TO THE CENT,
+  the rounding `matrixPayload` applies, so the box shows what will be saved, and refuses a negative
+  or an amount whose cents are not a safe integer. Text that is not a price leaves the cell as it
+  was, and the box is rewritten from the grid either way.
 - **Unavailable is drawn as a closed priced-grid cell**: `.price-cell-closed`, hatched and struck
   through. `.price-cell`, `.price-cell-closed`, `.price-free-chip` in `app.css` are the shared cell
   classes, for the priced-grid question (WP-G3) to wear too.

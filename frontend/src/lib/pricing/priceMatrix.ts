@@ -278,14 +278,22 @@ export function rowUnavailable(matrix: PriceMatrix, row: GridLine, columns: Grid
 }
 
 /**
- * Reads a price typed by a manager, in euros: empty is free (0), a comma is a decimal point. Null
+ * Reads a price typed by a manager, in euros: empty is free (0), a comma is a decimal point, and
+ * spaces - the French thousands separator, often a no-break space when pasted - are ignored. Null
  * when the text is not a price at all - the caller keeps the cell as it was.
+ *
+ * The result is ROUNDED TO THE CENT here, with the rounding `matrixPayload` applies, so the box
+ * shows exactly what will be saved ("12,345" reads back as 12.35, never as a price the server
+ * would store differently). An amount whose cents are not a safe integer is refused rather than
+ * stored as a float the server's whole-cents check would let through rounded.
  */
 export function parseEuros(raw: string): number | null {
-  const text = raw.trim().replace(',', '.');
+  const text = raw.replace(/\s/g, '').replace(',', '.');
   if (text === '') return 0;
   const value = Number(text);
-  return Number.isFinite(value) && value >= 0 ? value : null;
+  if (!Number.isFinite(value) || value < 0) return null;
+  const cents = Math.round(value * 100);
+  return Number.isSafeInteger(cents) ? cents / 100 : null;
 }
 
 /** The fields of a question the guest-seat rule reads: whether "everyone else" can be reached. */
@@ -308,7 +316,14 @@ const SINGLE_CHOICE_TYPES = new Set(['single_choice', 'dropdown']);
 function othersReachable(dimension: Dimension, items: readonly GuestSeatItem[]): boolean {
   if (dimension.kind !== 'answer') return true;
   const item = items.find((i) => i.id === dimension.questionId);
-  if (!item || !item.required || item.dependsOn || item.showIf) return true;
+  if (!item || !item.required) return true;
+  // A condition as the server's `normaliseCondition` reads it: an empty `showIf` object is none.
+  const conditional =
+    !!item.dependsOn ||
+    (typeof item.showIf === 'object' &&
+      item.showIf !== null &&
+      Object.keys(item.showIf).length > 0);
+  if (conditional) return true;
   if (!SINGLE_CHOICE_TYPES.has(item.type) && item.type !== 'multiple_choice') return true;
   const grouped = new Set(dimension.buckets.flatMap((b) => b.values ?? []));
   return (item.options ?? []).some((o) => !o.id || !grouped.has(o.id));
