@@ -360,6 +360,22 @@ describe('prepareVideoForUpload', () => {
         return prepareVideoForUpload(SOURCE, { trimToVideo: true });
       };
 
+      it('says the first chunk matched no packet, not that the packets were zero', async () => {
+        state.script = {
+          ...state.script,
+          ...holed,
+          decodedChunks: contiguous(5).map((t) => ({ timestamp: t + FRAME / 2, duration: FRAME })),
+        };
+        const error = vi.spyOn(console, 'error');
+        await prepareVideoForUpload(SOURCE, {});
+        expect(state.init!.audio).toEqual({ codec: 'aac' });
+        expect(error.mock.calls).toHaveLength(1);
+        const line = String(error.mock.calls[0][0]);
+        expect(line).toContain('the first chunk at 0.011 s matches no packet');
+        expect(line).not.toContain('packet(s)');
+        error.mockRestore();
+      });
+
       it('decodes from the start to the end of the track and restores the holes', async () => {
         const error = vi.spyOn(console, 'error');
         await trimmed(30);

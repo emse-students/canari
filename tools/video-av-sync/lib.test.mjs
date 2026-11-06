@@ -85,11 +85,7 @@ describe('judge', () => {
 describe('audioHoleCount', () => {
   it('counts a packet that starts after the one before ends, and fails the verdict on it', () => {
     const f = 1024 / 48_000;
-    const chunks = [0, f, 2 * f + 0.2, 3 * f + 0.2].map((timestamp) => ({
-      timestamp,
-      duration: f,
-    }));
-    expect(audioHoleCount(chunks)).toBe(1);
+    expect(audioHoleCount([0, f, 2 * f, 3 * f + 0.2, 4 * f + 0.2])).toBe(1);
     const v = judge({
       frames: gridFrames(14),
       onsets: beeps(14),
@@ -98,5 +94,11 @@ describe('audioHoleCount', () => {
       audioHoles: 1,
     });
     expect(v.failures).toEqual(['the audio has 1 hole(s) a player will close']);
+  });
+
+  it('counts no hole after an Opus first packet whose decoded chunk is short by its pre-skip', () => {
+    // 20 ms packets; the first decodes 312 samples short, and the next packet still starts on time.
+    expect(audioHoleCount([0, 0.02, 0.04, 0.06, 0.08])).toBe(0);
+    expect(audioHoleCount([0])).toBe(0);
   });
 });

@@ -88,18 +88,18 @@ export function audioOnsets(chunks, sampleRate, { threshold = 0.3, quietS = 0.5 
 }
 
 /**
- * How many times an audio track's packets leave a hole: a packet starting more than a millisecond
- * after the one before it ends. Chrome's decoder closes such a hole on playback and plays the sound
- * after it early, so an output must have none.
+ * How many times an audio track's packets leave a hole: a step between two packets more than a
+ * millisecond longer than the median step. Chrome's decoder closes such a hole on playback and plays
+ * the sound after it early, so an output must have none. Measured on the packets' steps and never on
+ * a decoded chunk's length: an Opus first chunk is short by its pre-skip, which is no hole.
  *
- * @param {Array<{ timestamp: number, duration: number }>} chunks Decoded audio at its packets' times.
+ * @param {number[]} timestamps The audio packets' presentation times, in seconds, in order.
  */
-export function audioHoleCount(chunks) {
-  let holes = 0;
-  for (let i = 1; i < chunks.length; i++) {
-    if (chunks[i].timestamp - (chunks[i - 1].timestamp + chunks[i - 1].duration) > 0.001) holes++;
-  }
-  return holes;
+export function audioHoleCount(timestamps) {
+  const steps = timestamps.slice(1).map((t, i) => t - timestamps[i]);
+  if (steps.length === 0) return 0;
+  const median = [...steps].sort((a, b) => a - b)[Math.floor(steps.length / 2)];
+  return steps.filter((step) => step - median > 0.001).length;
 }
 
 /** The presentation times of the bright frames, one per run of bright frames. */

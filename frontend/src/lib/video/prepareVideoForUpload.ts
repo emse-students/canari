@@ -306,11 +306,14 @@ export async function prepareVideoForUpload(
           const why =
             placed.kind === 'unpaired'
               ? `the decoder emitted ${placed.decoded} chunk(s) for ${placed.packets} packet(s)`
-              : `the decoder failed: ${placed.error}`;
+              : placed.kind === 'unanchored'
+                ? `the first chunk at ${placed.firstChunk.toFixed(3)} s matches no packet`
+                : `the decoder failed: ${placed.error}`;
           const line =
             `[video-prep] audio holes NOT restored (${why}): ` + holeConsequence(audioRoute);
-          if (placed.kind === 'unpaired') console.error(line);
-          else console.warn(line);
+          // A pairing that does not hold is a decoder this code does not understand; a throw is not.
+          if (placed.kind === 'failed') console.warn(line);
+          else console.error(line);
         }
       } else {
         // No AAC encoder on this engine (Firefox, an iOS before 26): the holes go into the file.
@@ -505,14 +508,18 @@ async function readPacketTimes(
  * with its packet. Not to the window's end: the conversion cuts there on the decoder's collapsed
  * timeline, the packets on the real one, so a hole inside a trimmed window would leave more chunks
  * than packets (the audio hook does the cut instead). Only called for a track with holes that is
- * re-encoded. A decoder that throws is an answer (`failed`), never a refusal of the upload.
+ * re-encoded. A decoder that throws is an answer (`failed`), never a refusal of the upload; a first
+ * chunk no packet starts at (a hole inside the span the decoder pre-rolls) is `unanchored`, and a
+ * decoder that yields nothing is `failed`.
  */
 async function placeAudioHoles(
   mb: typeof import('mediabunny'),
   track: import('mediabunny').InputAudioTrack,
   packetTimes: number[],
   window: { start: number; signal: AbortSignal | undefined }
-): Promise<AudioHoleMap | { kind: 'failed'; error: string }> {
+): Promise<
+  AudioHoleMap | { kind: 'failed'; error: string } | { kind: 'unanchored'; firstChunk: number }
+> {
   const decoded: DecodedChunk[] = [];
   try {
     for await (const s of new mb.AudioSampleSink(track).samples(window.start)) {
@@ -526,8 +533,9 @@ async function placeAudioHoles(
     if (isVideoPrepareError(e)) throw e;
     return { kind: 'failed', error: e instanceof Error ? e.message : String(e) };
   }
+  if (decoded.length === 0) return { kind: 'failed', error: 'the decoder emitted no chunk' };
   const paired = pairedPackets(packetTimes, decoded);
-  if (!paired) return { kind: 'unpaired', packets: 0, decoded: decoded.length };
+  if (!paired) return { kind: 'unanchored', firstChunk: decoded[0].timestamp };
   return audioHoleMap(paired, decoded);
 }
 

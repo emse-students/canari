@@ -198,9 +198,7 @@ async function read(file: Blob) {
     frames,
     onsets: audioOnsets(chunks, sampleRate),
     audioEnd,
-    audioHoles: audioHoleCount(
-      chunks.map((c) => ({ timestamp: c.timestamp, duration: c.data.length / sampleRate }))
-    ),
+    audioHoles: audioHoleCount(chunks.map((c) => c.timestamp)),
   };
 }
 
