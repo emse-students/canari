@@ -132,15 +132,55 @@ it('swaps the attachment chips for the formatting row, and formats through the c
   expect(props.onFormat).toHaveBeenCalledWith('bold');
 });
 
-it('keeps focus in the editor when a formatting button is pressed', () => {
+it('keeps focus in the editor: the Aa toggle and EVERY formatting chip refuse the mousedown focus move', () => {
+  // The owner's concern is the keyboard: a tap that moves focus off the editor closes it. A button
+  // that stops preventing its mousedown fails here, not on a phone.
   const { target } = mountBar();
-  Array.from(target.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')).at(-1)!.click();
+  const aa = Array.from(target.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')).at(-1)!;
+  const downOn = (el: Element) => {
+    const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    el.dispatchEvent(down);
+    return down.defaultPrevented;
+  };
+  expect(downOn(aa)).toBe(true);
+
+  aa.click();
   flushSync();
+  const chips = Array.from(target.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'));
+  expect(chips).toHaveLength(8);
+  for (const chip of chips) expect(downOn(chip)).toBe(true);
+  // The strip between two chips is part of the toolbar: a tap there must not blur either.
+  expect(downOn(target.querySelector('[role="toolbar"]')!)).toBe(true);
+  // No pointerdown handler exists to keep in step: the compatibility mousedown is the only gate.
+});
 
-  const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
-  target.querySelector('[role="toolbar"] button')!.dispatchEvent(down);
+it('clears the height floor when Aa is toggled twice, the chips back at their natural height', () => {
+  const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+    configurable: true,
+    get() {
+      return (this as HTMLElement).hasAttribute('data-chip-row') ? 132 : 0;
+    },
+  });
+  try {
+    const { target } = mountBar();
+    flushSync();
+    const aa = () =>
+      Array.from(target.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')).at(-1)!;
+    aa().click();
+    flushSync();
+    expect(
+      (target.querySelector('[role="toolbar"]')!.parentElement as HTMLElement).style.minHeight
+    ).toBe('132px');
 
-  expect(down.defaultPrevented).toBe(true);
+    aa().click();
+    flushSync();
+    expect(target.querySelector('[role="toolbar"]')).toBeNull();
+    const row = target.querySelector<HTMLElement>('[data-chip-row]')!;
+    expect(row.parentElement!.style.minHeight).toBe('');
+  } finally {
+    if (original) Object.defineProperty(HTMLElement.prototype, 'clientHeight', original);
+  }
 });
 
 it.each([
@@ -211,4 +251,50 @@ it('wraps the chip row instead of clipping it, so every chip is reachable at any
   const row = target.querySelector<HTMLElement>('[data-chip-row]')!;
   expect(row.className).toContain('flex-wrap');
   expect(row.className).not.toMatch(/overflow-(x-)?(hidden|auto|scroll)/);
+});
+
+it('draws the formatting actions as labelled chips of the same class, so "Aa" is a same-size swap', () => {
+  const { target } = mountBar();
+  const chipClassOf = (el: Element) => el.className;
+  const attach = target.querySelector<HTMLButtonElement>('button[data-post-camera]')!;
+  Array.from(target.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')).at(-1)!.click();
+  flushSync();
+
+  const buttons = Array.from(target.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'));
+  expect(buttons).toHaveLength(8);
+  // Every action carries its WORD, not only an icon, and wears the attachment chips' class.
+  for (const b of buttons) {
+    expect(b.textContent?.trim()).toBeTruthy();
+    expect(chipClassOf(b)).toContain('rounded-full');
+  }
+  expect(chipClassOf(buttons[0])).toContain(
+    chipClassOf(attach)
+      .split(' ')
+      .find((c) => c.startsWith('px-'))!
+  );
+  // They wrap like the chips instead of scrolling sideways.
+  expect(target.querySelector('[role="toolbar"]')!.className).toContain('flex-wrap');
+});
+
+it('holds the height of the chip row while the formatting row replaces it', () => {
+  // The two wrappings can differ by a few points; the floor keeps the swap from moving anything. The
+  // height is read when the row is drawn, so the layout answer is stubbed before the mount.
+  const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+    configurable: true,
+    get() {
+      return (this as HTMLElement).hasAttribute('data-chip-row') ? 132 : 0;
+    },
+  });
+  try {
+    const { target } = mountBar();
+    flushSync();
+    Array.from(target.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')).at(-1)!.click();
+    flushSync();
+
+    const slot = target.querySelector('[role="toolbar"]')!.parentElement as HTMLElement;
+    expect(slot.style.minHeight).toBe('132px');
+  } finally {
+    if (original) Object.defineProperty(HTMLElement.prototype, 'clientHeight', original);
+  }
 });

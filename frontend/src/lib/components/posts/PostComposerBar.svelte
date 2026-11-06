@@ -113,6 +113,8 @@
   }: Props = $props();
 
   let formatting = $state(false);
+  /** The chip row's last drawn height (px): the floor of the slot while the formatting row replaces it. */
+  let chipRowHeight = $state(0);
   /** The post holds the most attachments it may: nothing more can be added. */
   const full = $derived(attachmentsFull(attachmentCount));
   /** The line beside the formatting toggle: the attachment counter, then the status, one message. */
@@ -203,11 +205,30 @@
 {/if}
 
 <div class="flex flex-col gap-2">
-  <div class="flex min-h-9 items-center">
+  <!--
+    THE SWAP IS A SAME-SIZE CONTENT CHANGE. The chips wrap onto two rows on an Android phone and three
+    on an iPhone 12 (measured, 2026-11-06: the text area jumped 148 pt taller under a selection the
+    moment "Aa" was tapped, when the formatting row was a single row of icons). The formatting actions
+    are now labelled chips of the same class, wrapping the same way, so they fill the room the
+    attachments leave; the chip row's last height is also remembered (bound while it is drawn) and
+    held as the slot's floor, for the few points two wrappings can differ by.
+  -->
+  <div
+    class="flex min-h-9 items-stretch"
+    style:min-height={formatting && chipRowHeight > 0 ? `${chipRowHeight}px` : undefined}
+  >
     {#if formatting}
-      <MarkdownComposerToolbar row {onFormat} class="w-full" />
+      <MarkdownComposerToolbar
+        chipClass="{chipClass} {idleChip}"
+        {onFormat}
+        class="w-full content-start"
+      />
     {:else}
-      <div data-chip-row class="flex w-full flex-wrap items-center gap-2">
+      <div
+        data-chip-row
+        bind:clientHeight={chipRowHeight}
+        class="flex w-full flex-wrap items-center gap-2"
+      >
         {#if nativeLibrary}
           <button
             type="button"
