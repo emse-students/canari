@@ -22,8 +22,13 @@ export function draggableCard(node: HTMLElement): { destroy: () => void } {
     window.removeEventListener('dragend', restore, true);
   };
 
+  // Every press decides afresh: a press whose gesture end was swallowed (a context menu eats its
+  // pointerup) cannot leave the card undraggable for the next one.
   const onPointerDown = (e: Event) => {
-    if (!isDragExcludedTarget(e.target)) return;
+    if (!isDragExcludedTarget(e.target)) {
+      restore();
+      return;
+    }
     const el = e.target as Element;
     Log.d('draggableCard', `drag disabled for this press: <${el.tagName?.toLowerCase()}>`);
     node.setAttribute('draggable', 'false');

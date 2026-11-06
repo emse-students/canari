@@ -44,6 +44,16 @@ describe('question card drag', () => {
     expect(card.getAttribute('draggable')).toBe('true');
   });
 
+  it('a press whose release was swallowed does not disable the next press', () => {
+    const root = render();
+    const card = root.querySelector<HTMLElement>('[draggable]')!;
+    press(card.querySelector('input, textarea')!);
+    expect(card.getAttribute('draggable')).toBe('false');
+    // No pointerup: a context menu ate it. The next press on the card chrome must still drag.
+    press(card);
+    expect(card.getAttribute('draggable')).toBe('true');
+  });
+
   it('keeps the drag for a press on the card chrome', () => {
     const root = render();
     const card = root.querySelector<HTMLElement>('[draggable]')!;
