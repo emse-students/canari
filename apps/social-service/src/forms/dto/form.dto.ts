@@ -23,6 +23,7 @@ import {
   FORM_ITEM_ID_MAX_LENGTH,
 } from '../form-files.service';
 import { SUPPORTED_QUESTION_TYPES } from './question-types';
+import { PRODUCT_GRID_MAX_COLUMNS, PRODUCT_GRID_MAX_ROWS } from '../product-grid-contract';
 
 /** Max keys per answers record - prevents oversized payloads. */
 const ANSWERS_MAX_KEYS = 50;
@@ -30,10 +31,35 @@ const ANSWERS_MAX_KEYS = 50;
 const ANSWERS_MAX_STRING_LEN = 2000;
 /** Max number of selected options per multi-select answer. */
 const ANSWERS_MAX_ARRAY_LEN = 50;
+/**
+ * Max keys of ONE object answer: a priced grid's cells (`rowId:colId` -> quantity) at the largest
+ * grid a save accepts. A survey grid (`{ row: value }`) has far fewer rows.
+ */
+const ANSWERS_MAX_OBJECT_KEYS = PRODUCT_GRID_MAX_ROWS * PRODUCT_GRID_MAX_COLUMNS;
+/** Max length of one key of an object answer: two 36-character ids and `:`, or a survey row label. */
+const ANSWERS_MAX_OBJECT_KEY_LEN = 200;
+
+/** One scalar answer value: a string, a list of strings, or a number. */
+type AnswerScalar = string | string[] | number;
+/** One answer: a scalar, or ONE level of object of scalars (a grid's answer). */
+export type AnswerValue = AnswerScalar | Record<string, AnswerScalar>;
+
+/** Whether a value is a scalar answer within bounds. */
+function isValidScalar(v: unknown): boolean {
+  if (typeof v === 'string') return v.length <= ANSWERS_MAX_STRING_LEN;
+  if (Array.isArray(v)) {
+    return (
+      v.length <= ANSWERS_MAX_ARRAY_LEN &&
+      v.every((item) => typeof item === 'string' && item.length <= ANSWERS_MAX_STRING_LEN)
+    );
+  }
+  return typeof v === 'number';
+}
 
 /**
- * Validates that `answers` is a shallow Record whose values are strings, string arrays, or numbers,
- * all within accepted size bounds.
+ * Validates that `answers` is a Record whose values are strings, string arrays, numbers, or ONE
+ * level of object of those (a grid's answer: a priced grid's `{ "rowId:colId": quantity }`), all
+ * within accepted size bounds. What each question's value MEANS is judged by `submit`.
  */
 export function IsValidAnswers(options?: ValidationOptions) {
   return function (object: object, propertyName: string) {
@@ -48,22 +74,21 @@ export function IsValidAnswers(options?: ValidationOptions) {
           const entries = Object.entries(value as Record<string, unknown>);
           if (entries.length > ANSWERS_MAX_KEYS) return false;
           for (const [, v] of entries) {
-            if (typeof v === 'string') {
-              if (v.length > ANSWERS_MAX_STRING_LEN) return false;
-            } else if (Array.isArray(v)) {
-              if (v.length > ANSWERS_MAX_ARRAY_LEN) return false;
+            if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+              const inner = Object.entries(v as Record<string, unknown>);
+              if (inner.length > ANSWERS_MAX_OBJECT_KEYS) return false;
               if (
-                v.some((item) => typeof item !== 'string' || item.length > ANSWERS_MAX_STRING_LEN)
+                inner.some(([k, x]) => k.length > ANSWERS_MAX_OBJECT_KEY_LEN || !isValidScalar(x))
               )
                 return false;
-            } else if (typeof v !== 'number') {
+            } else if (!isValidScalar(v)) {
               return false;
             }
           }
           return true;
         },
         defaultMessage() {
-          return `answers must contain at most ${ANSWERS_MAX_KEYS} keys; each value must be a string (max ${ANSWERS_MAX_STRING_LEN} chars), an array of strings (max ${ANSWERS_MAX_ARRAY_LEN} items), or a number`;
+          return `answers must contain at most ${ANSWERS_MAX_KEYS} keys; each value must be a string (max ${ANSWERS_MAX_STRING_LEN} chars), an array of strings (max ${ANSWERS_MAX_ARRAY_LEN} items), a number, or an object of those (max ${ANSWERS_MAX_OBJECT_KEYS} keys)`;
         },
       },
     });
@@ -167,6 +192,14 @@ export class FormItemDto {
    */
   @IsOptional()
   showIf?: unknown;
+
+  /**
+   * A priced grid's definition (`type: 'product_grid'`): rows, columns, max per cell, closed cells,
+   * prices. Validated structurally in the service (`normaliseProductGridItems`, the shared rule in
+   * `product-grid-contract.ts`) like `showIf`, and stored normalised; ignored on any other type.
+   */
+  @IsOptional()
+  productGrid?: unknown;
 }
 
 export class CreateFormDto {
@@ -301,7 +334,7 @@ export class UpdateFormDto extends CreateFormDto {}
  */
 export class GuestSubmitFormDto {
   @IsValidAnswers()
-  answers: Record<string, string | string[] | number>;
+  answers: Record<string, AnswerValue>;
 
   /** Where Lydia sends the payment request. Forwarded to core-service, never persisted (PP2). */
   @IsEmail()
@@ -350,7 +383,7 @@ export class SubmitFormDto {
   payerEmail?: string;
 
   @IsValidAnswers()
-  answers: Record<string, string | string[] | number>;
+  answers: Record<string, AnswerValue>;
 
   @IsString()
   @IsOptional()

@@ -8,6 +8,7 @@ import {
   LayoutGrid,
   Table2,
   Paperclip,
+  ShoppingBag,
 } from '@lucide/svelte';
 import type { Component } from 'svelte';
 import { m } from '$lib/paraglide/messages';
@@ -31,4 +32,6 @@ export const QUESTION_TYPES: QuestionType[] = [
   { value: 'matrix_multiple', label: () => m.qtype_matrix_multiple(), Icon: Table2 },
   // A CV, a certificate: read by the form's managers on the server, purged days after the answer.
   { value: 'file', label: () => m.qtype_file(), Icon: Paperclip },
+  // An order: rows x columns of quantities, priced by the server (WP-G1; editor WP-G3, fill WP-G2).
+  { value: 'product_grid', label: () => m.qtype_product_grid(), Icon: ShoppingBag },
 ];
