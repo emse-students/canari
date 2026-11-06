@@ -193,16 +193,37 @@ export function csvSheetName(
 }
 
 /**
+ * A text cell a spreadsheet would read as a FORMULA - it starts with `=`, `+`, `-`, `@`, a tab or a
+ * carriage return - prefixed with `'`, so it opens as the text it is. An xlsx cell is typed and never
+ * evaluated; a CSV cell has no type, and a buyer's name, a row label or a tier label is typed by
+ * someone other than the manager who opens the file (CSV injection). Numbers pass untouched: a
+ * negative amount is a number, not a formula.
+ */
+export function neutraliseCsvCell(value: unknown): unknown {
+  return typeof value === 'string' && /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+}
+
+/** A row as exceljs hands it to the CSV writer - an array of cells - each cell neutralised. */
+function neutraliseCsvRow<R>(row: R): R {
+  return (Array.isArray(row) ? row.map(neutraliseCsvCell) : row) as R;
+}
+
+/**
  * Writes one sheet of the workbook as CSV: `;`-separated with a byte-order mark, which is what a
  * French spreadsheet opens as columns and accents rather than one column of mojibake; dates as the
- * workbook shows them, in UTC as the workbook stores them.
+ * workbook shows them, in UTC as the workbook stores them; every text cell neutralised
+ * (`neutraliseCsvCell`).
  */
 export async function sheetAsCsv(workbook: ExcelJS.Workbook, sheetName: string): Promise<Buffer> {
   const buffer = await workbook.csv.writeBuffer({
     sheetName,
     dateFormat: 'DD/MM/YYYY HH:mm:ss',
     dateUTC: true,
-    formatterOptions: { delimiter: ';', writeBOM: true },
+    formatterOptions: {
+      delimiter: ';',
+      writeBOM: true,
+      transform: neutraliseCsvRow,
+    },
   });
   return Buffer.from(buffer as ArrayBuffer);
 }

@@ -2743,6 +2743,7 @@
   "form_responses_card_unpaid_hint": "{amount} to collect",
   "form_responses_card_collected": "Amount collected",
   "form_responses_card_refunded_hint": "{amount} refunded",
+  "form_responses_card_collected_gross_hint": "Partial refunds not deducted",
   "form_responses_tabs_label": "Response views",
   "form_responses_tab_list": "Responses",
   "form_responses_tab_totals": "Totals",
@@ -2761,14 +2762,30 @@
   "form_responses_mark_paid_confirm": "Confirm that {name} paid {amount} in cash?",
   "form_responses_mark_paid_error": "Could not mark this response as paid.",
   "form_responses_totals_all": "Supplier order · all products",
-  "form_responses_units": "{count} pieces",
-  "form_responses_units_one": "1 piece",
+  "form_responses_units": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} piece",
+        "countPlural=other": "{count} pieces"
+      }
+    }
+  ],
   "form_responses_count_unpaid": "Count unpaid responses",
   "form_responses_count_unpaid_hint": "Cash orders not received yet. A refunded response never counts.",
   "form_responses_total": "Total",
   "form_responses_summary_managers_only": "Visible to the form's managers only.",
-  "form_responses_summary_answers": "{count} responses",
-  "form_responses_summary_answers_one": "1 response",
+  "form_responses_summary_answers": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} response",
+        "countPlural=other": "{count} responses"
+      }
+    }
+  ],
   "form_responses_summary_units_chart": "Pieces per product",
   "form_responses_summary_empty": "This form has no choice question.",
   "form_responses_export_xlsx": "Excel",

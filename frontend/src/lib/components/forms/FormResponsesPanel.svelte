@@ -65,7 +65,12 @@
   const requiresPayment = $derived(form.requiresPayment ?? false);
   const items = $derived(form.items ?? []);
   const grids = $derived(productGridQuestions(items));
-  const summary = $derived(responsesSummary(submissions, anonymous));
+  const summary = $derived(
+    responsesSummary(submissions, anonymous, (sub) => {
+      const purchase = refunds?.purchaseBySubmission.get(sub.id);
+      return (purchase && refunds?.standingByPurchase.get(purchase.id)?.refundedCents) || 0;
+    })
+  );
   const counts = $derived(filterCounts(submissions));
 
   type Tab = 'list' | 'totals' | 'summary';
@@ -98,7 +103,7 @@
   };
 
   function units(count: number): string {
-    return count === 1 ? m.form_responses_units_one() : m.form_responses_units({ count });
+    return m.form_responses_units({ count });
   }
 
   // ── Refunds, through the association's existing flow ───────────────────────────────────────────
@@ -246,9 +251,11 @@
       {@render card(
         m.form_responses_card_collected(),
         formatAmount(summary.collectedCents),
-        summary.refunded
+        summary.refundedCents
           ? m.form_responses_card_refunded_hint({ amount: formatAmount(summary.refundedCents) })
-          : null
+          : refunds === null && form.associationId && summary.paid
+            ? m.form_responses_card_collected_gross_hint()
+            : null
       )}
     {/if}
   </div>
@@ -408,9 +415,7 @@
         <section class="border-cn-border rounded-2xl border p-4" data-testid="choice-result">
           <h3 class="text-text-main font-bold">{result.item.label}</h3>
           <p class="text-text-muted mb-3 text-xs">
-            {result.answered === 1
-              ? m.form_responses_summary_answers_one()
-              : m.form_responses_summary_answers({ count: result.answered })}
+            {m.form_responses_summary_answers({ count: result.answered })}
           </p>
           <ul class="flex flex-col gap-2">
             {#each result.bars as bar, index (index)}

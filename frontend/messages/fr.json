@@ -2775,6 +2775,7 @@
   "form_responses_card_unpaid_hint": "{amount} à encaisser",
   "form_responses_card_collected": "Montant encaissé",
   "form_responses_card_refunded_hint": "{amount} remboursés",
+  "form_responses_card_collected_gross_hint": "Remboursements partiels non déduits",
   "form_responses_tabs_label": "Vues des réponses",
   "form_responses_tab_list": "Réponses",
   "form_responses_tab_totals": "Totaux",
@@ -2793,14 +2794,30 @@
   "form_responses_mark_paid_confirm": "Confirmer que {name} a payé {amount} en espèces ?",
   "form_responses_mark_paid_error": "Impossible de marquer cette réponse comme payée.",
   "form_responses_totals_all": "Commande fournisseur · tous produits",
-  "form_responses_units": "{count} pièces",
-  "form_responses_units_one": "1 pièce",
+  "form_responses_units": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} pièce",
+        "countPlural=other": "{count} pièces"
+      }
+    }
+  ],
   "form_responses_count_unpaid": "Compter les réponses non payées",
   "form_responses_count_unpaid_hint": "Les commandes en espèces pas encore reçues. Une réponse remboursée ne compte jamais.",
   "form_responses_total": "Total",
   "form_responses_summary_managers_only": "Visible des gestionnaires du formulaire uniquement.",
-  "form_responses_summary_answers": "{count} réponses",
-  "form_responses_summary_answers_one": "1 réponse",
+  "form_responses_summary_answers": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} réponse",
+        "countPlural=other": "{count} réponses"
+      }
+    }
+  ],
   "form_responses_summary_units_chart": "Pièces par produit",
   "form_responses_summary_empty": "Ce formulaire n'a aucune question à choix.",
   "form_responses_export_xlsx": "Excel",

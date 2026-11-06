@@ -9,6 +9,7 @@ import { flushSync, mount, unmount, tick } from 'svelte';
 import type { Form, Submission } from '$lib/forms/api';
 import type { ProductGridLine } from '$lib/forms/productGridContract';
 import { m } from '$lib/paraglide/messages';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 
 vi.mock('$lib/associations/api', () => ({
   listAssociationPurchases: vi.fn(async () => []),
@@ -306,5 +307,70 @@ describe('refunds, through the association refund flow', () => {
       flushSync();
       expect(target.querySelectorAll('table [data-testid="refund-open"]')).toHaveLength(1);
     });
+  });
+});
+
+describe('a partial refund', () => {
+  it('is taken off the amount collected and added to the refunded one, once', async () => {
+    const associations = await import('$lib/associations/api');
+    vi.mocked(associations.listAssociationPurchases).mockResolvedValueOnce([
+      { id: 'p1', formId: 'f1', submissionId: 'paid' } as never,
+    ]);
+    vi.mocked(associations.listAssociationRefunds).mockResolvedValueOnce({
+      standings: [
+        {
+          purchaseRecordId: 'p1',
+          refundable: true,
+          reason: null,
+          withdrawal: 'form',
+          paidCents: 5600,
+          refundedCents: 1000,
+          openRefund: null,
+        },
+      ],
+      refunds: [],
+    });
+    const target = document.body.appendChild(document.createElement('div'));
+    const instance = mount(FormResponsesPanel, {
+      target,
+      props: {
+        form: { ...form, associationId: 'a1' },
+        submissions: SUBMISSIONS,
+        deletingId: null,
+        onDelete: () => {},
+        onReload: async () => {},
+      },
+    });
+    mounted.push(() => unmount(instance));
+    // Paid 56 + the guest's 28 = 84 received; 10 of it went back. The refunded answer's 112 is
+    // not collected, and is refunded once.
+    await vi.waitFor(() => {
+      flushSync();
+      const text = target.textContent!.replace(/\s+/g, ' ');
+      expect(text).toMatch(/74,00\s?€|€74.00/);
+      expect(text).toMatch(/122,00\s?€ remboursés|€122.00 refunded/);
+    });
+  });
+
+  it('cannot be read by a manager the refunds refuse: the amount says it is gross', async () => {
+    const associations = await import('$lib/associations/api');
+    vi.mocked(associations.listAssociationRefunds).mockRejectedValueOnce(
+      new ApiRefusalError(403, null, 'forbidden')
+    );
+    const target = document.body.appendChild(document.createElement('div'));
+    const instance = mount(FormResponsesPanel, {
+      target,
+      props: {
+        form: { ...form, associationId: 'a1' },
+        submissions: SUBMISSIONS.filter((s) => s.paymentStatus !== 'refunded'),
+        deletingId: null,
+        onDelete: () => {},
+        onReload: async () => {},
+      },
+    });
+    mounted.push(() => unmount(instance));
+    await tick();
+    flushSync();
+    expect(target.textContent).toContain(m.form_responses_card_collected_gross_hint());
   });
 });

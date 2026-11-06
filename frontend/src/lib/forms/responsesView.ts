@@ -54,16 +54,28 @@ export interface ResponsesSummary {
   unpaidCash: number;
   /** What the cash answers still owe. */
   unpaidCashCents: number;
-  /** Money landed and kept: paid answers, and paid over capacity until refunded. */
+  /**
+   * Money landed and kept: paid answers, and paid over capacity until refunded, LESS what a partial
+   * refund already gave back on them - when `partialRefundedCents` could tell.
+   */
   collectedCents: number;
+  /** Answers refunded in full (status `refunded`). */
   refunded: number;
+  /** Everything that went back: the full refunds, and the partial ones `partialRefundedCents` knew. */
   refundedCents: number;
 }
 
-/** Reads the summary cards off the answers. */
+/**
+ * Reads the summary cards off the answers. A PARTIAL refund leaves its answer `paid` with its
+ * `totalPaid` whole - only a refund of the whole payment moves it to `refunded` - so the amount it
+ * gave back is read from the payment's refund standing (`partialRefundedCents`, by answer) and
+ * moved from collected to refunded. Without it (a manager who may not read refunds) the collected
+ * amount is gross of partial refunds, and the card says so.
+ */
 export function responsesSummary(
   subs: readonly Submission[],
-  anonymous: boolean
+  anonymous: boolean,
+  partialRefundedCents: (sub: Submission) => number = () => 0
 ): ResponsesSummary {
   const summary: ResponsesSummary = {
     answers: subs.length,
@@ -80,8 +92,11 @@ export function responsesSummary(
     const filter = filterOf(sub.paymentStatus);
     const cents = sub.totalPaid || 0;
     if (filter === 'paid') {
+      // Never more than the answer paid: a standing cannot give back what was not received.
+      const back = Math.min(Math.max(partialRefundedCents(sub), 0), cents);
       summary.paid += 1;
-      summary.collectedCents += cents;
+      summary.collectedCents += cents - back;
+      summary.refundedCents += back;
     } else if (filter === 'unpaid') {
       summary.unpaidCash += 1;
       summary.unpaidCashCents += cents;

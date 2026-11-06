@@ -1390,7 +1390,11 @@ functions in `lib/forms/responsesView.ts`.
 
 - **Summary cards**: answers (and how many are a guest's), and on a paid form paid, unpaid cash
   (with the amount still to collect), amount collected (`paid` + `paid_over_capacity`, the money
-  that landed) and refunded.
+  that landed) and refunded. **A partial refund leaves its answer `paid` with `totalPaid` whole**
+  (only a refund of the whole payment writes `refunded`), so the amount it gave back is read from
+  the payment's refund standing (`RefundStanding.refundedCents`) and moved from collected to
+  refunded; a manager the refunds list refuses (403) cannot read it, and the card says the amount
+  is gross of partial refunds rather than show a net it does not know.
 - **"Réponses"**: a search over the name, a guest's reference and every answer's text (case and
   accents folded), and four filter chips - *Toutes*, *Payées* (`paid`, `paid_over_capacity`), *Non
   payées* (`pending_cash`: the unpaid state a manager acts on; an online `pending` is the payer's to
@@ -1416,7 +1420,10 @@ functions in `lib/forms/responsesView.ts`.
 - **Exporter**: the row's export control is now a menu (`FormExportMenu.svelte`): *Excel* (the
   workbook), and on a grid form *CSV · Articles* and *CSV · Totaux*. A CSV is written by the server
   from the SAME sheet the workbook carries (`GET /forms/:id/export?format=articles-csv|totals-csv`,
-  `sheetAsCsv`: `;`-separated with a byte-order mark, which a French spreadsheet opens as columns);
+  `sheetAsCsv`: `;`-separated with a byte-order mark, which a French spreadsheet opens as columns,
+  and every text cell starting with `=`, `+`, `-`, `@`, a tab or a carriage return prefixed with
+  `'` - a buyer's name or a row label is typed by someone else, and a CSV cell has no type to stop
+  a spreadsheet running it as a formula);
   a CSV of a form without a grid is refused `EXPORT_FORMAT_NEEDS_PRODUCT_GRID`, an unknown format
   `EXPORT_FORMAT_UNKNOWN`. `exportLabels()` now sends `productGrid` (16 Paraglide strings) on every
   export, and `refunded` joined `PAYMENT_STATUSES`, so the file names that status in words too.

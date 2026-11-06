@@ -7,7 +7,11 @@ import {
 } from './export-labels';
 import { guestReference } from './guest-receipt';
 import type { ProductGridLine } from './product-grid-contract';
-import { parseExportFormat, productGridExportLabels } from './product-grid-export';
+import {
+  neutraliseCsvCell,
+  parseExportFormat,
+  productGridExportLabels,
+} from './product-grid-export';
 
 /**
  * THE PRICED GRID IN THE XLSX, READ BACK: the main sheet's "Vert / M x2; Noir / L x1", one
@@ -269,6 +273,22 @@ describe('the priced grid in the XLSX export', () => {
     // The header, then the five lines the workbook's own sheet holds.
     expect(lines).toHaveLength(6);
     expect(lines[1]).toContain(';Ada Lovelace;Sweat;Vert;M;Autres;2;28;56;Paye');
+  });
+
+  it('a CSV cell a spreadsheet would run as a formula is written as text', async () => {
+    const service = makeService();
+    (service as any).formRepo.manager.query = jest.fn(async () => [
+      { id: 'u1', firstName: '=HYPERLINK("http://x","y")', lastName: null },
+      { id: 'u2', firstName: '@SUM(A1)', lastName: null },
+      { id: 'u3', firstName: '-1+1', lastName: null },
+    ]);
+    const { buffer } = await service.exportSubmissions('f1', LABELS, 'articles-csv');
+    const text = buffer.toString('utf8');
+    expect(text).toContain(`;"'=HYPERLINK(""http://x"",""y"")";`);
+    expect(text).toContain(";'@SUM(A1);");
+    expect(text).toContain(";'-1+1;");
+    expect(neutraliseCsvCell(-3)).toBe(-3);
+    expect(neutraliseCsvCell('Vert')).toBe('Vert');
   });
 
   it('refuses a CSV of a form without a grid, coded, and an unknown format', async () => {
