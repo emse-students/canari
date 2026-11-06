@@ -7,7 +7,7 @@
 ## Responsibilities
 
 - Render dynamic association forms for member submissions.
-- Support optional online payments (Stripe Checkout) or cash payments.
+- Support optional online payments (Lydia) or cash payments.
 - Display submission confirmation and payment status.
 - Let a form manager build and configure a form, including its price grid and the cotisation a
   paid submission grants.
@@ -52,12 +52,13 @@ than copies it:
 
 | Piece | What it owns |
 |---|---|
-| `forms/fillAnswers.ts` | The empty selection per type, "is this answered", the first required question left empty (and its sentence), which questions an answer reveals, the answers actually sent, the amount formatter |
+| `forms/fillAnswers.ts` | The empty selection per type, "is this answered", the first required question left empty (and its sentence), which questions an answer reveals, the answers actually sent (the ANSWERED ones only), the amount formatter |
+| `forms/answerBounds.ts` | The bounds of an answer (`libs/contracts/form-answers.json`), the sentence for each coded refusal of a submit or a save, and the editor's grid-label check - see [answers, grids and refusals](#answers-grids-and-the-codes-a-submit-is-refused-with-2026-11-06) |
 | `forms/FormQuestion.svelte` | One question card: label, help, image, and the input its type calls for, bound to the answer. Pricing arrives as two callbacks (`optionModifier`, `optionClosed`), because only the page holds the grid slice |
 | `forms/FormHeader.svelte` | Title, banner, the price badge (once, for both layouts), description, the anonymity notice |
 
-What stays in the page is what only a signed-in submission has: the pricing slice, saved cards,
-cash, the reminder, and the sticky submit bar.
+What stays in the page is what only a signed-in submission has: the pricing slice, cash, the
+reminder, and the sticky submit bar.
 
 **One defect closed by the extraction**: validation said `!val` where the progress bar said
 `val !== ''`, so a required linear scale starting at 0 counted as answered on the bar and was
@@ -67,23 +68,27 @@ type hands its answer back to the PARENT - the one thing moving it behind a `$bi
 
 ## Payment methods
 
+The form UI offers Lydia and cash since 2026-10-07; Stripe and saved cards are gone from it.
+
 | Method | Flow |
 |---|---|
 | Free | Direct submit, no payment |
-| Stripe Checkout | Redirect to Stripe-hosted page, return to `/forms/:id?session_id=...` |
-| Saved card | `POST /api/payments/charge-saved-method` (no redirect) |
-| Cash | Submit marked pending, association admin validates manually |
+| Lydia (online) | The payer types the address Lydia sends the request to (never stored); redirect to Lydia's payer page, return to `/forms/success?submission_id=...` (see the flow above) |
+| Cash | Submit marked `pending_cash`, association admin validates manually before its deadline |
+
+A paid answer can be refunded from Canari, in full or in part, by a payout manager of the association
+(the Achats tab, [payments](payments.md#refunds-from-canari-enrolment-lot-4)); a TOTAL refund turns the
+answer `refunded`, which frees its seat and its single-answer slot.
 
 ## Key component: forms/[id]/+page.svelte
 
-The single form submission page handles all four payment flows. Key state:
+The single form submission page handles the three payment flows. Key state:
 
 - `form` — form definition loaded on mount
 - `answers` — user-provided field values
 - `paymentStep` — `'form' | 'payment' | 'confirmation'`
 - `memberPricing` — a BOOLEAN returned by the API, never derived here. The fill page has no idea
   which tag or tier decides it, which is why swapping that rule server-side needed no change here.
-- Card registration setup: `POST /api/payments/setup-payment-method` (Stripe SetupIntent)
 
 ### The submit response names no outcome, because a service with no locale cannot (2026-09-23)
 
@@ -95,19 +100,87 @@ was not a fallback, it was an unreachable branch, which is why nothing ever repo
 
 The response now only IDENTIFIES the submission (`{ submissionId }`) and the page says what happened.
 The two other success shapes already worked this way and that is exactly why only one path showed
-English: cash returns `{ submissionId, cashPayment: true }` and Stripe returns
+English: cash returns `{ submissionId, cashPayment: true }` and an online payment returns
 `{ checkoutUrl, submissionId }`, neither carrying prose, so both fell through to Paraglide.
 
 **A response field a client RENDERS cannot be written by a service that has no locale.** The server
 may return a code or an id; the words are the client's.
 
-STILL OPEN on this page, and deliberately not fixed with it: `error = e.message || m.form_view_...`
-at [`+page.svelte`](../../../../frontend/src/routes/forms/[id]/+page.svelte) lines 259 and 529 renders
-whatever prose the server threw - `Form is closed`, `Failed to create checkout session: ...` - so the
-error half of the same screen is still English. A generic translated fallback would lose the reason,
-and picking a translation from the prose is branching on an error message, which
-[durable-rules](../../durable-rules.md) forbids. It needs typed error codes on the submit path, which
-is a design change rather than this cleanup.
+The error half of the screen followed on 2026-11-06 (D6 of the forms audit): every refusal of the
+submit path a person can meet now carries a typed `code`, and both fill pages word it through
+`formSubmitRefusalMessage` - [answers, grids and refusals](#answers-grids-and-the-codes-a-submit-is-refused-with-2026-11-06).
+
+## Answers, grids, and the codes a submit is refused with (2026-11-06)
+
+From the forms capability audit of 2026-11-06 (`docs/wiki/forms-capability-audit-2026-11-06.md`, work package WP-G0).
+
+**A form holding a visible grid could not be submitted from 2026-06-01 to this fix (D1).** A grid
+(`matrix_single`, `matrix_multiple`) is answered `{ rowLabel: columnOptionId }` (a list of ids per row
+for a multiple grid), and the fill page sent that map for every visible grid, answered or not. The DTO
+validator `IsValidAnswers` (from `c586c84cb9`, 2026-06-01) accepted only a string, a string list or a
+number per key, so the global `ValidationPipe` answered every such submit an English 400, member and
+guest alike. Nothing caught it because every grid test called `FormsService.submit` directly, never
+through the pipe. Now:
+
+- **The shape** is accepted by `isAcceptedAnswerValue` (`apps/social-service/src/forms/answer-bounds.ts`):
+  one level of object, at most `maxGridRows` keys, values a bounded string or string list.
+- **The meaning** is judged in `submit` by `normaliseGridAnswer`: every key one of the question's
+  rows, every value one of its column option ids (a list of distinct ids for a multiple grid), else
+  400 `FORM_GRID_ANSWER_INVALID`. Empty rows are dropped, and a grid with no answered row is absent,
+  so what is STORED holds only answered rows (the export's `answerText` already read a row map).
+  A row map is a GRID's shape only: on a declared question that is not a grid it is the same 400
+  (a page opened before the question changed type), on a key the form does not declare it is
+  dropped (a stale page's `{ row: '' }` for a deleted grid must not fail the send). Rows are
+  collected as entries, so a row labelled `__proto__` or `constructor` is an own key and never the
+  prototype's. Booking spaces share the rule (`bookings.service.ts` `validAnswers`), and the
+  space editor words a form's grid codes (`bookings/refusals.ts` falls back to `formCodeMessage`).
+- **`forms.submit-grid.http.spec.ts`** boots the member and guest controllers behind the real
+  `ValidationPipe`, configured as `main.ts` does, and submits grid answers over HTTP.
+
+**A required grid wants ONE answered row (D5, decided 2026-11-06).** It demanded every row, so an
+order ("which colours") could not be required. `requireEveryRow` (a per-question switch, "Exiger une
+réponse dans chaque ligne", shown in the editor for a required grid) restores the old rule. One
+predicate on each side: `isQuestionAnswered` (server) and `isItemAnswered` (client). The server's old
+`!!val` also refused a required scale answered 0; the shared predicate counts a zero.
+
+**Only answered questions are sent (D3).** `visibleAnswers` sent every visible question's EMPTY
+selection too, so a form of more than 50 visible questions was refused whatever was filled. It now
+sends answered questions only. The bounds live in ONE contract, `libs/contracts/form-answers.json`
+(read by `answer-bounds.spec.ts` and `answerBounds.test.ts`): `maxQuestions` (100) bounds BOTH the
+questions a form may hold at save (`FORM_TOO_MANY_QUESTIONS`) and the keys of an answer, so every
+savable form is answerable in full; `maxGridRows` (50) bounds a grid's rows at save
+(`FORM_GRID_TOO_MANY_ROWS`) and a grid answer's keys; `maxTextLength` (2000) and `maxSelections` (50)
+are unchanged.
+
+**A text answer shows its bound (D2).** The `long_text` textarea and the `short_text` input carry
+`maxlength` = `maxTextLength`, and the textarea a "n / 2000 caractères" counter, so a cover letter is
+stopped where it is typed instead of by an English 400.
+
+**Two rows or two columns of one label are refused at save (D4).** The answer is keyed by the row
+LABEL, so two rows "Vert" were one answer and one radio group. `assertFormItemsShape` refuses them
+with 400 `FORM_GRID_DUPLICATE_LABEL` (forms and booking spaces); the editor marks the duplicate
+inline ("En double") and the create and edit pages refuse the save first (`formItemsProblem`). The
+fill page names a row's radio group by its index, not its label. Rows keyed by id are the
+`product_grid` design (audit section 4), not this fix.
+
+**Every refusal a person can meet on the submit path carries a code (D6).** `FORM_NOT_OPEN_YET`,
+`FORM_CLOSED`, `FORM_FULL`, `FORM_ANSWER_MISSING` (with `itemId`), `FORM_ANSWER_TOO_LONG`,
+`FORM_ANSWER_TOO_MANY_SELECTIONS`, `FORM_ANSWER_NOT_AN_OPTION` (a priced answer naming no option of
+its question, `answer-options.ts`), `FORM_GRID_ANSWER_INVALID`, `FORM_COMBINATION_UNAVAILABLE` (403),
+`FORM_SIGN_IN_REQUIRED`, `FORM_FILE_NEEDS_ACCOUNT`, beside the existing `ALREADY_ANSWERED` (the
+anonymous path's second answer now answers it too, as a 409), `GUEST_PENDING_LIMIT` and the payment
+codes. `formSubmitRefusalMessage` (both fill pages) maps a form code, then a payment code
+(`providerRefusalMessage`), then the status (`describeApiRefusal`), then the page's generic line -
+never `e.message`. The contract's `codes` list is asserted on both sides, and the client test fails
+on a code with no sentence. What still carries no code: the `ValidationPipe`'s own 400 (a malformed
+body the page cannot produce) and a file answer naming no uploaded file (`fileAnswersOf`), both
+worded by the generic line. The create and edit pages map the save codes the same way but still
+fall back to `e.message` for the uncoded save refusals.
+
+**A question type this build does not know** (the coming `product_grid`) is drawn as "Mettez à jour
+l'application pour répondre à cette question" (`FormQuestion.svelte`'s `{:else}`), and a required
+one blocks the send with the same sentence (`firstMissingAnswer`, kind `update`), instead of an empty
+card the server refuses.
 
 ## The admin screens
 
@@ -1103,19 +1176,19 @@ Measured on `main` before this: `submit` counted `pending` toward `maxSubmission
 - **The hold is read from the row.** `apps/social-service/src/forms/seat-hold.ts` holds the one constant (`PENDING_PAYMENT_HOLD_SECONDS`, 30 min, from which the Lydia request's shorter lifetime is derived, D1 below) and the one SQL fragment (`PENDING_HOLD_CUTOFF_SQL`, on the DATABASE clock: the column is a `timestamp` written by the database's `now()`, and the service process does not run in the same zone - measured +2 h against a UTC session). The hold counts from **`paymentRequestedAt`** (migration 084), the instant the row's CURRENT payment request was issued, not from `createdAt`: `submit` reuses a live pending row and issues a new request, and the hold restarts with it. `seatHoldingWhere` counts `paid`, `free`, `pending_cash` and a `pending` younger than the hold; the seat count, `get`, `getPublic`, `hasSubmission` and the reuse in `submit` all read it, so a seat is free the moment the hold passes, whether or not any job ran.
 - **A retry is not a new answer.** `submit` looks the person's live pending row up BEFORE the capacity check: it already holds their seat, so a retry on a form it filled is reused instead of being refused as "Form is full" (which it was on `main`).
 - **The job only makes the row say it.** `FormReminderScheduler.expireStalePendingPayments` (every 5 min, a `running` flag against self-overlap) first reads at Lydia every `pending` row whose request has ended and settles it on a verified answer (the reconciliation sweep, [lydia-api](../../lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for)), then moves what is left `pending` past the hold to `expired` - both by ONE hold cutoff read from the database clock at the start of the tick (`pendingHoldCutoff`), so no row is expired that the read did not select - never a delete, the row is the trace a late payment is matched against. Its `WHERE` names the only state it leaves, so a second run moves nothing. `paymentMethod` tells an online `expired` (null) from a cash one (`cash`).
-- **A late payment (`markPaid`) is decided under the form's row lock** (`lockFormSeats`, `SELECT ... FOR UPDATE` on `forms`, READ COMMITTED). A row still holding its seat becomes `paid`; one that holds none (`expired`, `cancelled`, `pending` past the hold) becomes `paid` while the cap has room, else **`paid_over_capacity`**, logged at WARN with the submission, the form and the amount. It grants no cotisation (no seat was given) but keeps its purchase record (the payer's trace). Refunding is the organiser's, outside the application: no refund mechanism exists.
+- **A late payment (`markPaid`) is decided under the form's row lock** (`lockFormSeats`, `SELECT ... FOR UPDATE` on `forms`, READ COMMITTED). A row still holding its seat becomes `paid`; one that holds none (`expired`, `cancelled`, `pending` past the hold) becomes `paid` while the cap has room, else **`paid_over_capacity`**, logged at WARN with the submission, the form and the amount. It grants no cotisation (no seat was given) but keeps its purchase record (the payer's trace). It is refunded from Canari like any confirmed form payment ([payments](payments.md#refunds-from-canari-enrolment-lot-4)): a total refund turns it `refunded`.
 - **What a payment buys runs from durable flags.** The cotisation grant and the purchase record run after the payment's commit; `cotisationGrantedAt` and `purchaseRecordedAt` (migration 084) are CLAIMED by a conditional `UPDATE` only one caller can win, and released if the effect failed. A replay of the same payment (a repeated Lydia callback, or the callback and the payer's return - `confirmPayment` - both landing in `markPaid`) finishes only what is still NULL: before this, each call re-granted and wrote another purchase record, and a failed grant was lost for good. The migration sets both flags on every row already `paid`, because the old code ran both effects on every call.
 - **The row names its current request by BOTH of Lydia's ids.** `request/do` answers a numeric `request_id` (what the callbacks and `request/cancel` carry) and a `request_uuid` (what `request/state` and the return URL carry), measured on the sandbox 2026-10-15 ([payments](payments.md)). `submit` stores the first in **`paymentRequestId`** (migration 084) and the second in `stripeSessionId`, by named-column `UPDATE`: the whole-entity `save` it replaced wrote the pre-transaction `paymentRequestedAt` back and silently undid the hold restart of a reuse (measured on Postgres 18).
 - **`markPaid` never decides by id, but accuses a foreign one.** One payment can reach it under TWO ids (the callback's `request_id`, `confirmPayment`'s `request_uuid`), and the row now stores BOTH, so idempotence still comes from the row alone (a settled status is a no-op, the two flags) and a replay by either id is silent. The id that settled the row goes in **`paymentSettledBy`** (migration 084) and `stripeSessionId` is no longer overwritten. A confirmation on a settled row naming NEITHER stored id is a second request paid for one answer: logged at ERROR with both sides, status unchanged (the money landed; refusing would hide it). A row written before 084 names only its uuid, so its own callback's numeric id is not accused.
 - **One answer per person, at submit (2026-10-21).** A submit after a PAID answer on a single-answer form inserted a new row and issued a new `request/do`, and a second paid purchase was recorded for one answer. `submit` now reads the person's rows UNDER THE FORM LOCK (`answerHoldingWhere`: every seat-holding row plus `paid_over_capacity`) and refuses ANY such row other than the live pending one it reuses - every row is read, not the newest, so an older paid answer behind a newer pending one still refuses (review of #2215) - with **409 `ALREADY_ANSWERED`** (Paraglide `form_already_answered` via `paymentRefusal.ts`) before anything is issued: it is checked FIRST, before the settle that would cancel a pending request at Lydia, and again under the lock. `hasSubmission` reads the same predicate, so the page shows such an answer as answered - and, reading every such row as the guard does, shows the most decided one (`pickShownAnswer`: paid or paid over capacity, then free or cash, an online `pending` last), so a legacy older paid row behind a newer pending one no longer shows "pending" with a retry the server refuses. Logged at INFO: a second tab or a back button is expected, not an accusation. A `cancelled` or `expired` row (declined, cancelled or expired request) is no answer, so the retry after it goes on. Anonymous forms keep their registry, guests and multiple-answer forms are untouched. Tests in `forms.service.seat-hold.spec.ts`. Controls, each run by deleting the check: the lock-held check alone fails one test, two simultaneous FREE answers by the same person (both pass the early check before either row exists, and only the check under the lock stops the second insert); the early check alone fails two, an older paid answer behind a live pending row (the lock-held check still refuses, but only after the settle has cancelled the request at Lydia); both together fail seven; the newest row picked again in `hasSubmission` fails three.
 - **One answer per person, also for a late payment.** On a single-answer form, a late payment whose payer already has another row holding a seat or paid lands `paid_over_capacity`, logged at ERROR: never a silent second `paid`.
-- **Two decisions of the lead session, 2026-10-22 (decided as lead, not by the user's own word).** (1) A refund done outside the app, or a manager deleting a paid answer, does NOT free the single-answer slot: `ALREADY_ANSWERED` stays, and a refund stays a manual act on the association's Lydia account until refunds are an actual feature. (2) A person holding a `pending_cash` answer who then submits online stays REFUSED; a manager converts or cancels the cash answer first.
+- **Two decisions of the lead session, 2026-10-22 (decided as lead, not by the user's own word).** (1) A refund done OUTSIDE the app, or a manager deleting a paid answer, does NOT free the single-answer slot: `ALREADY_ANSWERED` stays. A TOTAL refund through Canari (enrolment lot 4, [payments](payments.md#refunds-from-canari-enrolment-lot-4)) does: it turns the answer `refunded` under the form lock, which no longer holds a seat nor counts as an answer. (2) A person holding a `pending_cash` answer who then submits online stays REFUSED; a manager converts or cancels the cash answer first.
 - **`cancel-pending` applies only to the row's CURRENT request.** core-service names the request it reports (the callback's `requestId`), and `cancelPendingSubmission` compares it to the stored id under the row lock: another id leaves the row as is, logged, and a report naming none is refused. A row with no stored id matches no report and leaves `pending` through the expiry job. Since #1910 (merged 2026-10-15) the multipart callbacks are parsed, so every cancel or expiry is reported; the comparison and the settled-row no-op are what make that safe. **And the report is a trigger, never the verdict (2026-10-18):** a current, payee-matching report then reads the row's `request_uuid` at Lydia (`settleFromProvider`), and only `declined` or `cancelled-or-expired` (`SETTLED_REFUSED_REQUEST_STATES`) releases the seat - under the lock, while the row still names the uuid read; `paid` records the payment; `open`, an unmeasured state or a failed read keeps the seat (`unreadable` is core's retryable 503) ([payments](payments.md#what-confirms-a-payment-2026-10-16)).
 - **What confirms a payment: the callback, and the payer's return when the callback has not (2026-10-15).** It was claimed here that "every payment reaches `markPaid` twice", the callback and `verify-session`. **False, measured on the sandbox** ([payments](payments.md#what-requeststate-answers-and-what-it-does-not-2026-10-15)): `verify-session` took the submission from the `order_ref` it expected `request/state` to echo, and no variant of that call echoes it, so it could never name a submission; and no page reached it anyway, since Lydia does not fill `{CHECKOUT_SESSION_ID}` and the return URL carries `submission_id` instead. The callback was the ONLY confirmation, and a payment whose callback was lost stayed `pending` until the job expired it. `verify-session`, `cancel-session` and `retrieveSession` are deleted. **`POST forms/submissions/:id/confirm-payment`** (submitter or manager) replaces them: on a `pending` row - and on an `expired` or `cancelled` one that names a request, since a payment made at the end of the hold whose callback is lost leaves the row released with no seat (`CONFIRMABLE_PAYMENT_STATUSES`) - it reads the row's OWN `request_uuid` through core-service `payments/request-state` with the Business's vendor token and, on `paid`, calls `markPaid` with that uuid, which decides it like any late payment (`paid` while the form has room, else `paid_over_capacity`) and re-checks UNDER THE ROW LOCK that the row still names the uuid read (`onlyIfRowNames`: a retry that replaced it settled it itself, so nothing is written, at WARN); on `declined` (the payer refused, state 5) or `cancelled-or-expired` (6) it RELEASES a `pending` row to `cancelled` under the row lock, only while the row still names that uuid (`releaseSettledRefusedRow`), so the payer may retry at once (see [a declined payment](#a-declined-payment-releases-the-answer-2026-10-21)); `open` and `unknown` answer the row unchanged, a failed read at WARN. A row whose id is not a Lydia uuid (32 hex digits, `LYDIA_REQUEST_UUID_RE`) - a Stripe-era `cs_...` - is not asked about at all, one INFO line, since core would refuse it with a 400 on every poll. It is throttled per user and submission (`UserResourceThrottlerGuard`, `CONFIRM_PAYMENT_PER_MINUTE` = 12, above the return page's 10-read poll), since each call spends the platform's tokens on Lydia; a 429 ends the poll on "awaiting confirmation". `1 = paid` and `5 = declined` were measured on dev on 2026-10-21 ([payments](payments.md#what-requeststate-answers-and-what-it-does-not-2026-10-15)). The success page polls it instead of the plain read, so a payment reaches `markPaid` once (callback, or return) or twice (both, in either order). Nothing comes from the client but the submission id it may already read - unlike the public `mark-paid` deleted on 2026-08-22. The same measurement found `payments/request-state` refusing every real request: it validated the uuid as the dashed RFC 4122 shape, and Lydia issues 32 hex digits with no dash, so every settle that reached the state read (D2 below) answered 409 on `main` from #1906 until this fix, before any release carried it. Fixed (`SESSION_ID_RE`), with a test that fails on the old shape.
 - **What confirms a payment since 2026-10-16: Lydia's answer about the row's OWN request, on either trigger.** The callback is verified with the Business private token of the association that owns the payment, over every received field but `sig` (measured on the sandbox), and is then only a TRIGGER: `provider-confirm` checks the verifying Business is the one the row's request was ISSUED to (`lydiaVendorToken`, never the payee resolved now, so a list's delegation revoked or moved meanwhile loses nothing - [payments](payments.md#who-refunds-a-delegates-payment-the-account-that-took-it-owner-review-of-2967-2026-11-03); an authentic callback of one association never settles another's row) and runs the same `settleFromProvider` read as `confirm-payment` - `markPaid` only on Lydia's `paid`, never on the callback's word or amount. An association with NO key stored has its callbacks refused (one 400, the same as a bad signature) and its form payments confirmed only on the payer's return - the designed state, shown in the Lydia panel as "callbacks cannot be verified yet" until a payout manager enters the key. Mechanism, key storage and the boutique gap: [payments](payments.md#what-confirms-a-payment-2026-10-16).
 - **The cancel page tells the payer what happened.** It reads the row first and shows a payment the callback already confirmed as paid (or over capacity), never as cancelled; a cancel that found the request PAID at Lydia (`alreadyPaid`) shows the same; the 409 `PREVIOUS_PAYMENT_OPEN` is an answer, shown with its own title and `form_previous_payment_open`, logged at info rather than as an error; anything else says the cancel is not confirmed and when the answer is released. `paymentCancelView` in `paymentReturn.ts` is the one mapping.
 - **Every status move is one locked step.** `submit` takes the form lock too (its REPEATABLE READ transaction prevented neither race its comment named: measured on Postgres 18, four concurrent submits on a 1-seat form took 4 seats on `main`, 1 now). `cancelPendingSubmission`, `validateCashPayment` and `cancelCashPayment` go through `moveLockedSubmission` (row lock, check, write), so a cancel or expiry callback of an old request cannot overwrite a `paid` committed in between.
-- **The manager sees it first.** `getSubmissions` and the XLSX put `paid_over_capacity` rows on top (`overCapacityFirst`); `frontend/src/lib/forms/paymentStatus.ts` labels both new words (the XLSX takes them from the client, as above) and colours an over-capacity pill as refused, not settled. The return page (`paymentReturn.ts`) keeps waiting on `expired` (a late payment may still land) and says "payment received, form full" on `paid_over_capacity` - it says the payment is at the top of the organiser's responses and to contact them about a refund, and promises neither a notification (D3) nor a refund nothing here enforces.
+- **The manager sees it first.** `getSubmissions` and the XLSX put `paid_over_capacity` rows on top (`overCapacityFirst`); `frontend/src/lib/forms/paymentStatus.ts` labels both new words (the XLSX takes them from the client, as above) and colours an over-capacity pill as refused, not settled. The return page (`paymentReturn.ts`) keeps waiting on `expired` (a late payment may still land) and says "payment received, form full" on `paid_over_capacity` - it says the payment is at the top of the organiser's responses and to contact them about a refund, and promises neither a notification (D3) nor a refund, which stays the organiser's decision (made from the Achats tab).
 
 ### A declined payment releases the answer (2026-10-21)
 

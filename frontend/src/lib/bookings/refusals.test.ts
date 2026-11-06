@@ -35,6 +35,19 @@ describe('describeBookingRefusal', () => {
     }
   });
 
+  it("words a form's grid refusal on a space's questions, never with the generic line", () => {
+    for (const code of [
+      'FORM_GRID_DUPLICATE_LABEL',
+      'FORM_GRID_TOO_MANY_ROWS',
+      'FORM_TOO_MANY_QUESTIONS',
+      'FORM_GRID_ANSWER_INVALID',
+    ]) {
+      const text = describeBookingRefusal(refused(code), 'Enregistrer');
+      expect(text, code).not.toBe(m.common_generic_error_label());
+      expect(text, code).not.toContain('dev text');
+    }
+  });
+
   it('words every edit refusal by its family, and says the booking has not changed', () => {
     for (const code of EDIT_REFUSAL_CODES) {
       const text = describeBookingRefusal(refused(code, 409), 'Save');

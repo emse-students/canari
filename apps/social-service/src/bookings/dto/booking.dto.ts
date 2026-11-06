@@ -14,6 +14,7 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { IsValidAnswers } from '../../forms/dto/form.dto';
+import type { FormAnswerValue } from '../../forms/answer-bounds';
 
 /**
  * AN INSTANT CARRIES ITS ZONE: ISO 8601 ending in `Z` or an offset. `IsDateString` alone accepts
@@ -62,7 +63,7 @@ export class CreateBookingDto {
   /** Answers to the space's questions, the forms' shape (D7). */
   @IsOptional()
   @IsValidAnswers()
-  answers?: Record<string, string | string[] | number>;
+  answers?: Record<string, FormAnswerValue>;
 
   /** Booking ON BEHALF of this account (D20): only an organiser may name someone else. */
   @IsOptional()

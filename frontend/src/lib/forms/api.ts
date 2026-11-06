@@ -25,6 +25,11 @@ export interface FormItem {
   type: string;
   options?: FormOption[];
   rows?: string[];
+  /**
+   * A REQUIRED grid wants every row answered only when this is on; otherwise one answered row is
+   * enough (decided 2026-11-06, D5). Read only for `matrix_single` / `matrix_multiple`.
+   */
+  requireEveryRow?: boolean;
   scale?: {
     min: number;
     max: number;

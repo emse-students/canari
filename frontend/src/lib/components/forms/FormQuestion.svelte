@@ -14,6 +14,7 @@
   import { refusalStatus } from '$lib/utils/apiRefusal';
   import { UploadAbortedError, type XhrUploadOptions } from '$lib/utils/uploadXhr';
   import { Log } from '$lib/utils/Log';
+  import { ANSWER_MAX_TEXT_LENGTH } from '$lib/forms/answerBounds';
 
   /**
    * ONE QUESTION OF A FORM BEING FILLED IN - its card, its label and the input its type calls for.
@@ -230,16 +231,31 @@
       type="text"
       class="border-cn-border text-text-main bg-cn-bg placeholder:text-text-muted/50 focus:border-cn-yellow w-full rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
       bind:value
+      maxlength={ANSWER_MAX_TEXT_LENGTH}
       placeholder={m.form_view_answer_placeholder()}
       {disabled}
     />
   {:else if item.type === 'long_text'}
+    <!-- The server's bound, told before the send (D2): a cover letter past it was an English 400. -->
     <textarea
       rows="4"
       class="border-cn-border text-text-main bg-cn-bg placeholder:text-text-muted/50 focus:border-cn-yellow w-full resize-y rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
       bind:value
+      maxlength={ANSWER_MAX_TEXT_LENGTH}
+      aria-describedby={`count-${formId}-${item.id}`}
       placeholder={m.form_view_answer_placeholder()}
       {disabled}></textarea>
+    <p
+      id={`count-${formId}-${item.id}`}
+      class="mt-1 text-right text-xs {String(value ?? '').length >= ANSWER_MAX_TEXT_LENGTH
+        ? 'text-red-err font-semibold'
+        : 'text-text-muted'}"
+    >
+      {m.form_answer_char_count({
+        count: String(value ?? '').length,
+        max: ANSWER_MAX_TEXT_LENGTH,
+      })}
+    </p>
   {:else if item.type === 'dropdown' || item.type === 'single'}
     <Picker
       value={value ?? ''}
@@ -328,7 +344,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each item.rows ?? [] as row (row)}
+          {#each item.rows ?? [] as row, rowIndex (rowIndex)}
             <tr class="hover:bg-cn-border/10 transition-colors">
               <td
                 class="text-text-main border-cn-border sticky left-0 z-10 border-t bg-(--cn-surface) px-3 py-3 text-sm font-medium"
@@ -339,7 +355,7 @@
                   {#if item.type === 'matrix_single'}
                     <input
                       type="radio"
-                      name={`matrix-${formId}-${item.id}-${row}`}
+                      name={`matrix-${formId}-${item.id}-${rowIndex}`}
                       value={col.id}
                       bind:group={value[row]}
                       class="accent-cn-yellow h-4 w-4"
@@ -422,8 +438,9 @@
       {/if}
     </div>
   {:else}
-    <div class="bg-red-err/10 text-red-err border-red-err/30 rounded-xl border p-3 text-xs">
-      {m.form_view_unsupported_type({ type: item.type })}
+    <div class="bg-cn-yellow/10 text-text-main border-cn-yellow/30 rounded-xl border p-3 text-xs">
+      <!-- A type this build does not know (the coming product_grid): never an empty card. -->
+      {m.form_view_update_app_to_answer()}
     </div>
   {/if}
 </div>
