@@ -3,7 +3,7 @@
   import { formatAmount } from '$lib/forms/fillAnswers';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
-  import { Ban, Paperclip, Upload, X } from '@lucide/svelte';
+  import { Ban, CircleAlert, Paperclip, Upload, X } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { uploadFormAnswerFile, type UploadedAnswerFile } from '$lib/forms/api';
   import {
@@ -59,6 +59,11 @@
     fileHint?: string;
     /** What a 429 (too many files uploaded and not sent) reads as. Defaults to the form's. */
     fileTooManyError?: string;
+    /**
+     * Why the page refused to send because of THIS question - said under it, the card drawn in the
+     * error colour. Null when the question is not the one at fault.
+     */
+    error?: string | null;
   }
 
   let {
@@ -75,6 +80,7 @@
     uploadFile = (itemId, file, transport) => uploadFormAnswerFile(formId, itemId, file, transport),
     fileHint,
     fileTooManyError,
+    error = null,
   }: Props = $props();
 
   /**
@@ -206,7 +212,12 @@
   {/if}
 {/snippet}
 
-<div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-5 shadow-sm">
+<div
+  id={`q-${item.id}`}
+  class="rounded-2xl bg-(--cn-surface) p-4 shadow-sm sm:px-6 sm:py-5 {error
+    ? 'border-red-err border-2'
+    : 'border-cn-border border'}"
+>
   <!-- svelte-ignore a11y_label_has_associated_control -->
   <label class="mb-1.5 flex items-start gap-2">
     <span
@@ -214,9 +225,9 @@
     >
       {index + 1}
     </span>
-    <span class="text-text-main text-sm leading-snug font-bold">
+    <span class="text-text-main text-base leading-snug font-bold">
       {item.label}
-      {#if item.required}<span class="ml-0.5 text-red-500">*</span>{/if}
+      {#if item.required}<span class="text-red-err ml-0.5" aria-hidden="true">*</span>{/if}
     </span>
   </label>
 
@@ -454,5 +465,11 @@
       <!-- A type this build does not know (the coming product_grid): never an empty card. -->
       {m.form_view_update_app_to_answer()}
     </div>
+  {/if}
+
+  {#if error}
+    <p role="alert" class="text-red-err mt-3 flex items-center gap-2 text-xs font-bold">
+      <CircleAlert size={16} class="shrink-0" />{error}
+    </p>
   {/if}
 </div>

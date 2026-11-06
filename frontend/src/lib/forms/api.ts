@@ -2,7 +2,7 @@ import { m } from '$lib/paraglide/messages';
 import { statusLabels } from './paymentStatus';
 import type { AnswerWords } from './answerText';
 import type { PaymentRequestState } from './paymentReturn';
-import type { ProductGrid, ProductGridLine } from './productGridContract';
+import type { ProductGridLine, ProductGridPrices, ProductGridView } from './productGridContract';
 
 export interface FormOption {
   label: string;
@@ -51,8 +51,13 @@ export interface FormItem {
    * criteria shape the pricing grid is built from.
    */
   showIf?: AudienceCondition | null;
-  /** A priced grid's definition (`product_grid` only): its rows, columns, closed cells and prices. */
-  productGrid?: ProductGrid;
+  /**
+   * A `product_grid` question's definition: its rows, columns, cap per cell, closed cells and price
+   * MODE - what every reader may rely on. A manager's read also carries the price lists
+   * (`ProductGrid`); a fill page never reads them from here - the viewer's own prices come resolved
+   * as `productGridPrices` (`productGridContract.ts`).
+   */
+  productGrid?: ProductGridView;
 }
 
 /** Cotisation tiers of the beneficiary association; `null` is the base tier. */
@@ -353,6 +358,11 @@ export async function checkSubmission(formId: string): Promise<{
    * or null. Absent from a server older than it, which reads as null.
    */
   refusalCode?: string | null;
+  /**
+   * Question id -> this member's prices on that priced grid, the category resolved by the server.
+   * Absent from a server older than the priced grid, which holds none.
+   */
+  productGridPrices?: ProductGridPrices;
 }> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${formId}/check`);
   if (!res.ok) throw await refusal(res, 'Failed to check submission status');
@@ -706,6 +716,8 @@ export type PublicForm = Pick<
   closedAt?: string | null;
   formFull: boolean;
   pricing: PricingView | null;
+  /** Question id -> a guest's prices on that priced grid ("everyone else", or the one list). */
+  productGridPrices?: ProductGridPrices;
 };
 
 /**

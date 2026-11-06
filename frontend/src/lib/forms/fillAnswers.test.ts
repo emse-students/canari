@@ -38,7 +38,11 @@ describe('isItemAnswered and firstMissingAnswer agree', () => {
 
   it('names the first required question left empty, and skips optional ones', () => {
     const items = [q({ id: 'a' }), q({ id: 'b', required: true, label: 'Nom' })];
-    expect(firstMissingAnswer(items, { a: '', b: '' })).toEqual({ kind: 'answer', label: 'Nom' });
+    expect(firstMissingAnswer(items, { a: '', b: '' })).toEqual({
+      itemId: 'b',
+      kind: 'answer',
+      label: 'Nom',
+    });
   });
 
   it('asks for a selection on an empty choice list', () => {
@@ -52,6 +56,7 @@ describe('isItemAnswered and firstMissingAnswer agree', () => {
     expect(firstMissingAnswer([item], { g: { r1: 'x', r2: '' } })).toBeNull();
     expect(isItemAnswered(item, { r1: 'x', r2: '' })).toBe(true);
     expect(firstMissingAnswer([item], { g: { r1: '', r2: '' } })).toEqual({
+      itemId: 'g',
       kind: 'matrix',
       label: 'g',
     });
@@ -66,6 +71,7 @@ describe('isItemAnswered and firstMissingAnswer agree', () => {
       requireEveryRow: true,
     });
     expect(firstMissingAnswer([item], { g: { r1: 'x', r2: '' } })).toEqual({
+      itemId: 'g',
       kind: 'row',
       label: 'g',
       row: 'r2',
@@ -73,9 +79,29 @@ describe('isItemAnswered and firstMissingAnswer agree', () => {
     expect(isItemAnswered(item, { r1: 'x', r2: '' })).toBe(false);
   });
 
+  it('holds a priced grid until one unit is ordered, and starts it as an empty order', () => {
+    const grid = q({ id: 'pg', type: 'product_grid', required: true, label: 'Sweat' });
+    expect(initialSelections([grid])).toEqual({ pg: {} });
+    expect(isItemAnswered(grid, {})).toBe(false);
+    expect(isItemAnswered(grid, { 'r:c': 0 })).toBe(false);
+    expect(firstMissingAnswer([grid], { pg: {} })).toEqual({
+      itemId: 'pg',
+      kind: 'order',
+      label: 'Sweat',
+    });
+    expect(isItemAnswered(grid, { 'r:c': 2 })).toBe(true);
+    expect(firstMissingAnswer([grid], { pg: { 'r:c': 2 } })).toBeNull();
+    expect(visibleAnswers([grid], { pg: {} })).toEqual({});
+    expect(visibleAnswers([grid], { pg: { 'r:c': 2 } })).toEqual({ pg: { 'r:c': 2 } });
+  });
+
   it('asks to update the app for a required question of a type it does not know', () => {
-    const item = q({ id: 'p', type: 'product_grid', required: true, label: 'Sweat' });
-    expect(firstMissingAnswer([item], { p: { a: 1 } })).toEqual({ kind: 'update', label: 'Sweat' });
+    const item = q({ id: 'p', type: 'gift_card', required: true, label: 'Carte' });
+    expect(firstMissingAnswer([item], { p: { a: 1 } })).toEqual({
+      itemId: 'p',
+      kind: 'update',
+      label: 'Carte',
+    });
   });
 });
 

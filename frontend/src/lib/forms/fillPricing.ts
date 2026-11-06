@@ -1,6 +1,12 @@
 import { OTHERS_BUCKET_ID, cellKey, hasCell, type CellValue } from '$lib/pricing/priceMatrix';
 import type { AnswerDimensionView, FormItem, PricingView } from './api';
 import { pricedQuestionsAwaitingAnswer, type Selections } from './fillAnswers';
+import {
+  productGridTotalCents,
+  type ProductGridLine,
+  type ProductGridPrices,
+} from './productGridContract';
+import { productGridOrderLines } from './productGridFill';
 
 /**
  * WHAT A FILL PAGE SHOWS ABOUT THE PRICE, FROM THE SLICE THE SERVER SENT - one function for both fill
@@ -26,7 +32,17 @@ export interface FillPriceState {
   unavailableOptionIds: Set<string>;
   /** Questions the grid prices on: their options add no supplement. */
   pricedByGrid: Set<string>;
-  /** Base plus supplements, what the pay button names; 0 while undecided or unavailable. */
+  /**
+   * Every priced line the visible grids (`product_grid`) order so far, at this viewer's prices - what
+   * the order recap lists. Empty on a form without a priced grid.
+   */
+  gridLines: ProductGridLine[];
+  /** The sum of `gridLines`, in cents. */
+  gridCents: number;
+  /**
+   * Base plus supplements plus the priced grids' lines, what the pay button names - the sum the
+   * server charges (`FormsService.submit`); 0 while undecided or unavailable.
+   */
   total: number;
   /** Why this price - " (Cotisant, ICM)" from the groups the server matched - or ''. */
   appliedLabel: string;
@@ -72,6 +88,8 @@ export function fillPriceState(input: {
   items: FormItem[];
   visibleItems: FormItem[];
   selections: Selections;
+  /** This viewer's prices on each priced grid, from the server (`productGridPrices`). */
+  productGridPrices?: ProductGridPrices | null;
 }): FillPriceState {
   const { basePrice, pricing, items, visibleItems, selections } = input;
 
@@ -123,6 +141,9 @@ export function fillPriceState(input: {
 
   // Nothing to total on an unavailable combination (zero would read as free on a form that is
   // going to refuse), nor before the cell is chosen.
+  const gridLines = productGridOrderLines(visibleItems, selections, input.productGridPrices);
+  const gridCents = productGridTotalCents(gridLines);
+
   let total = 0;
   if (priceDecided && baseCents !== null) {
     total = baseCents;
@@ -139,7 +160,9 @@ export function fillPriceState(input: {
         }
       }
     }
-    total = Math.max(0, total);
+    // The grids' lines join the same sum the server builds (base, supplements, lines) before the
+    // display's floor at zero.
+    total = Math.max(0, total + gridCents);
   }
 
   return {
@@ -149,6 +172,8 @@ export function fillPriceState(input: {
     priceCents: baseCents ?? 0,
     unavailableOptionIds,
     pricedByGrid,
+    gridLines,
+    gridCents,
     total,
     appliedLabel: pricing?.appliedLabels.length ? ` (${pricing.appliedLabels.join(', ')})` : '',
   };

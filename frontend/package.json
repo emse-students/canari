@@ -18,7 +18,7 @@
     "generate": "bun run wasm:build && bun run proto:gen",
     "proto:gen": "pbjs -t static-module -w es6 --es6 --no-service --force-number -o src/lib/proto/canari.js ../libs/proto/canari.proto && pbts -o src/lib/proto/canari.d.ts src/lib/proto/canari.js && bun ./scripts/fix-protobuf-c-alias.mjs",
     "paraglide:compile": "paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide",
-    "paraglide:compile:test": "paraglide-js compile --project ./project.inlang --outdir ./.paraglide-test --output-structure locale-modules --silent",
+    "paraglide:compile:test": "paraglide-js compile --project ./project.inlang --outdir ./.paraglide-test --output-structure locale-modules --strategy cookie globalVariable baseLocale --is-server \"typeof window === 'undefined'\" --silent",
     "check": "bun run paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:strict": "bun run paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --threshold warning",
     "check:watch": "bun run paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
