@@ -18,4 +18,5 @@
   });
 </script>
 
-<FormBuilder bind:item onRemove={() => {}} {imageUploadFn} />
+<!-- Expanded: the description and image affordances live in the open card (#3083). -->
+<FormBuilder bind:item onRemove={() => {}} {imageUploadFn} expanded />
