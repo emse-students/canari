@@ -1073,6 +1073,10 @@ export abstract class BaseMlsService implements IMlsService {
       settleOwedPull(this.owedPull);
       this.owedPull = null;
     }
+    // Nor the boot pull a seeding was going to issue: its asker is released with nothing listed.
+    this.awaitingRowSeeding = false;
+    this.bootPullOwed?.resolve();
+    this.bootPullOwed = null;
     // Nor a wake at the end of a lock the server refused: it would re-plan through a dead client.
     this.cancelAddLockExpiryWakes();
     if (this.heartbeatTimer !== null) {
@@ -1460,6 +1464,26 @@ export abstract class BaseMlsService implements IMlsService {
   private inboundReady = false;
 
   /**
+   * Whether the cold start's restore still owes the conversation rows ({@link holdInboundUntilRowsSeeded}).
+   *
+   * THE THIRD PRECONDITION OF A ROUTED FRAME, at a cold start only. MLS ready and the pipeline
+   * registered are not enough: a frame of a group this device holds is refused
+   * `absent-conversation` while its ROW does not exist, and every row is written by the restore's
+   * first phase. Measured on the Mi 9T (`1.6.5-alpha.1`, 2026-11-05): six frames of three DMs
+   * refused 200 ms before `[RESTORE] 22 conversation row(s) seeded`, then fetched again. Set by an
+   * event (the login arming it), cleared by an event (the seeding, or the login's restore
+   * returning) - never by a clock.
+   */
+  private awaitingRowSeeding = false;
+
+  /** The boot pull asked for while {@link awaitingRowSeeding}: issued by the seeding. */
+  private bootPullOwed: {
+    promise: Promise<void>;
+    resolve: () => void;
+    reject: (e: unknown) => void;
+  } | null = null;
+
+  /**
    * Hands ONE parsed gateway frame to the handler its type names. Implemented per platform because
    * each socket parses its own transport; everything in front of it is shared.
    *
@@ -1475,13 +1499,14 @@ export abstract class BaseMlsService implements IMlsService {
    * @param frameType `msg.type` when it is a string, `''` for a payload frame.
    */
   protected async deliverFrame(msg: any, frameType: string): Promise<void> {
-    if (this.inboundReady) {
+    if (this.inboundReady && !this.awaitingRowSeeding) {
       await this.routeFrame(msg, frameType);
       return;
     }
     this.heldFrames.push({ msg, frameType });
+    const until = this.inboundReady ? 'the restore seeds the conversation rows' : 'MLS is ready';
     console.log(
-      `[WS RCV] holding ${sanitizeForLog(frameType || 'payload')} frame until MLS is ready ` +
+      `[WS RCV] holding ${sanitizeForLog(frameType || 'payload')} frame until ${until} ` +
         `(${this.heldFrames.length} held)`
     );
   }
@@ -1501,14 +1526,99 @@ export abstract class BaseMlsService implements IMlsService {
    *
    * Idempotent, and silent when nothing was held, so a caller need not know whether a socket was
    * ever open.
+   *
+   * WHILE {@link awaitingRowSeeding} IS ARMED it only records that MLS is ready: the frames still
+   * have no row to land in, and the seeding replays them ({@link releaseRowSeedingHold}).
    */
   async markInboundReady(): Promise<void> {
     if (this.inboundReady) return;
     this.inboundReady = true;
+    if (this.awaitingRowSeeding) {
+      if (this.heldFrames.length > 0) {
+        console.log(
+          `[WS RCV] MLS ready - ${this.heldFrames.length} held frame(s) wait for the restore to seed the conversation rows`
+        );
+      }
+      return;
+    }
+    await this.replayHeldFrames('MLS ready');
+  }
+
+  /**
+   * Arms {@link awaitingRowSeeding}. See {@link IMlsService.holdInboundUntilRowsSeeded}.
+   *
+   * Called by the login BEFORE the gateway handshake starts, so not one socket frame can be routed
+   * in front of the rows: the held queue already exists for the window before MLS is ready, and
+   * this only widens it to the event the conversation layer needs.
+   */
+  holdInboundUntilRowsSeeded(): void {
+    if (this.inboundReady) {
+      // AT A LEVEL THAT ACCUSES: the gate is already open, so frames may have been routed in front
+      // of the rows - armed too late, by a caller that moved.
+      console.error(
+        '[WS RCV] inbound hold for the conversation rows armed AFTER the gate opened - frames may already have been routed ahead of the rows'
+      );
+    }
+    this.awaitingRowSeeding = true;
+  }
+
+  /** @inheritdoc */
+  endRowSeedingHold(): void {
+    if (!this.awaitingRowSeeding) return;
+    console.warn(
+      `[RESTORE] the boot restore ended without seeding the conversation rows - ${this.heldFrames.length} held frame(s) and the boot pull released anyway; a frame of a group with no row is refused absent-conversation until one exists`
+    );
+    this.releaseRowSeedingHold('the boot restore ended without seeding');
+  }
+
+  /** @inheritdoc */
+  fetchPendingMessagesOnceRowsSeeded(): Promise<void> {
+    if (!this.awaitingRowSeeding) return this.fetchPendingMessages();
+    if (!this.bootPullOwed) {
+      let resolve!: () => void;
+      let reject!: (e: unknown) => void;
+      const promise = new Promise<void>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      this.bootPullOwed = { promise, resolve, reject };
+    }
+    return this.bootPullOwed.promise;
+  }
+
+  /**
+   * Ends {@link awaitingRowSeeding}: issues the boot pull, then replays the held frames.
+   *
+   * THE PULL IS ISSUED FIRST AND SYNCHRONOUSLY: it is announced in the tick it is issued
+   * (`pendingPullInFlight`), and the restore's second phase, which starts right after the seeding,
+   * waits for it at every archive replay's barrier. A held socket frame is a live frame the server
+   * still queues too, so the pull lists it as well, and the one seam both pass (`enqueueMessage`)
+   * keeps the first by its queue id.
+   *
+   * @param trigger what released the hold, for the log.
+   */
+  private releaseRowSeedingHold(trigger: string): void {
+    if (!this.awaitingRowSeeding) return;
+    this.awaitingRowSeeding = false;
+    const bootPull = this.bootPullOwed;
+    this.bootPullOwed = null;
+    if (bootPull) {
+      console.log(`[PENDING] boot pull issued - ${trigger}`);
+      this.fetchPendingMessages().then(bootPull.resolve, bootPull.reject);
+    }
+    if (this.inboundReady) void this.replayHeldFrames(trigger);
+  }
+
+  /**
+   * Routes every held frame, sequentially and in arrival order.
+   *
+   * @param trigger the event that made them routable, for the log.
+   */
+  private async replayHeldFrames(trigger: string): Promise<void> {
     const held = this.heldFrames;
     this.heldFrames = [];
     if (held.length === 0) return;
-    console.log(`[WS RCV] MLS ready - draining ${held.length} held frame(s) in arrival order`);
+    console.log(`[WS RCV] ${trigger} - draining ${held.length} held frame(s) in arrival order`);
     for (const { msg, frameType } of held) {
       try {
         await this.routeFrame(msg, frameType);
@@ -2284,6 +2394,7 @@ export abstract class BaseMlsService implements IMlsService {
 
   /** @inheritdoc */
   notifyConversationRowsSeeded(): void {
+    this.releaseRowSeedingHold('the restore seeded the conversation rows');
     this.refetchFramesLeftBehind('absent-conversation', 'conversation rows seeded');
   }
 
@@ -2957,6 +3068,14 @@ export abstract class BaseMlsService implements IMlsService {
    */
   async fetchPendingMessages(forGroups: readonly string[] = []): Promise<void> {
     if (!this.mayPull('asked')) return;
+    if (this.awaitingRowSeeding) {
+      // AT A LEVEL THAT ACCUSES, and not refused: the login's own pull waits for the seeding
+      // (`fetchPendingMessagesOnceRowsSeeded`), so this is another caller ordered in front of the
+      // rows - what it lists for a group with no row yet is refused absent-conversation.
+      console.warn(
+        '[PENDING] pull asked before the boot restore seeded the conversation rows - frames of a group with no row yet are refused absent-conversation'
+      );
+    }
     if (this.pendingPullInFlight || this.messageScheduler.draining || this.pullRowsStillQueued()) {
       return this.owePull(forGroups);
     }

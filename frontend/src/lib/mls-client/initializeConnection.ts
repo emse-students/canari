@@ -145,10 +145,15 @@ export function startGatewayHandshake(
  * @param started a handshake already in flight from {@link startGatewayHandshake}. Omitted, this
  *   function starts one itself and awaits it, which is what the reconnect path does - it has
  *   nothing to overlap the wait with.
+ * @param onCatchUpStarted the login's: when given, the post-connect pull is the boot pull
+ *   (`IMlsService.fetchPendingMessagesOnceRowsSeeded`), issued once the restore has seeded the
+ *   conversation rows, and the catch-up (that pull, then `onCaughtUp`) is handed here STARTED rather
+ *   than awaited - the restore that releases it runs after this function returns. Never rejects.
  */
 export async function openGatewayConnection(
   deps: ConnectionDeps,
-  started?: StartedHandshake | null
+  started?: StartedHandshake | null,
+  onCatchUpStarted?: (caughtUp: Promise<void>) => void
 ): Promise<boolean> {
   const { mlsService, scheduleReconnect, setIsWsConnected, setReconnectAttempts, log } = deps;
 
@@ -198,14 +203,24 @@ export async function openGatewayConnection(
     } catch (e) {
       log(`[WARN] Failed to settle unresolved commits: ${String(e)}`);
     }
-    try {
-      await mlsService.fetchPendingMessages();
-    } catch (e) {
-      log(`[WARN] Failed to fetch initial pending messages: ${String(e)}`);
-    }
-    // THE CATCH-UP IS DONE (attempted, each failure said above): the groups are at the epoch the
-    // server holds, so a call joined from here derives its keys and sends its notices there.
-    deps.onCaughtUp();
+    // THE LOGIN'S PULL WAITS FOR THE RESTORE'S ROWS, and the login must not wait for it here: the
+    // rows are seeded by the restore it runs AFTER this function returns, so awaiting the pull on
+    // this line would wait for the very thing waiting on us. Handed back started, and awaited by the
+    // login once its restore returned. Every other connection pulls at once and waits, as before.
+    const caughtUp = (async () => {
+      try {
+        await (onCatchUpStarted
+          ? mlsService.fetchPendingMessagesOnceRowsSeeded()
+          : mlsService.fetchPendingMessages());
+      } catch (e) {
+        log(`[WARN] Failed to fetch initial pending messages: ${String(e)}`);
+      }
+      // THE CATCH-UP IS DONE (attempted, each failure said above): the groups are at the epoch the
+      // server holds, so a call joined from here derives its keys and sends its notices there.
+      deps.onCaughtUp();
+    })();
+    if (onCatchUpStarted) onCatchUpStarted(caughtUp);
+    else await caughtUp;
 
     if (typeof window !== 'undefined') {
       // The `disconnect` control frame is the ONLY departure signal, and it is deliberately the

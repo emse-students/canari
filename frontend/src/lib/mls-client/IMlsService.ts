@@ -1113,8 +1113,35 @@ export interface IMlsService {
    * Welcome and the Commit behind it may only be processed in the order they arrived.
    *
    * Idempotent, and silent when nothing was held.
+   *
+   * While {@link holdInboundUntilRowsSeeded} is armed it only records that the client is ready: the
+   * held frames are replayed when the restore seeds the conversation rows, not here.
    */
   markInboundReady(): Promise<void>;
+  /**
+   * Arms the cold start's third precondition: no inbound frame is handled, and the boot pull
+   * ({@link fetchPendingMessagesOnceRowsSeeded}) is not issued, before the restore has seeded the
+   * conversation rows ({@link notifyConversationRowsSeeded}).
+   *
+   * A frame of a group this device holds, handled while its row does not exist yet, is refused
+   * `absent-conversation` and fetched again once the row exists - a race that heals at every cold
+   * start, which is still a defect. The login arms this before the gateway handshake starts and
+   * ends it with {@link endRowSeedingHold} once its restore has returned.
+   */
+  holdInboundUntilRowsSeeded(): void;
+  /**
+   * The login's own end of {@link holdInboundUntilRowsSeeded}, called once its restore returned or
+   * threw. Silent when the seeding already released the hold - every ordinary boot. Otherwise the
+   * restore ended without seeding a row (it threw before, or ran against another client) and this
+   * releases what was held, at a level that accuses: the rows the frames wait for are not coming.
+   */
+  endRowSeedingHold(): void;
+  /**
+   * The boot pull: {@link fetchPendingMessages} for the whole mailbox, issued in the same tick the
+   * restore seeds the conversation rows while {@link holdInboundUntilRowsSeeded} is armed, at once
+   * otherwise. Its caller must not await it ahead of the restore - the seeding is what starts it.
+   */
+  fetchPendingMessagesOnceRowsSeeded(): Promise<void>;
   /** True when the live gateway WebSocket is open (used for reconnect watchdog). */
   isWsOpen(): boolean;
   /** Fetches all registered devices (with KeyPackages) for the given user. Throws on transport/HTTP failure; `[]` only when the user genuinely has no active device. */
@@ -1508,6 +1535,10 @@ export interface IMlsService {
    * is the order the second phase keeps with a live delivery: the pull is announced in the same
    * tick, so each archive replay waits for it at its barrier and skips what it decrypted, and every
    * later write of a row MERGES into it rather than replacing it.
+   *
+   * AND IT RELEASES THE COLD START'S HOLD ({@link holdInboundUntilRowsSeeded}): the held socket
+   * frames are replayed and the boot pull is issued here, so at a cold start nothing was refused
+   * for lack of a row in the first place.
    */
   notifyConversationRowsSeeded(): void;
 
