@@ -1,6 +1,7 @@
 <script lang="ts">
   import { kindHasSection } from '$lib/associations/editSections';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
+  import { questionImageRefusalMessage } from '$lib/forms/questionImage';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -273,7 +274,7 @@
       await updateForm(formId, payload);
       goto(resolve('/forms'));
     } catch (e: any) {
-      error = providerRefusalMessage(e) ?? e.message;
+      error = questionImageRefusalMessage(e) ?? providerRefusalMessage(e) ?? e.message;
     } finally {
       isSubmitting = false;
     }

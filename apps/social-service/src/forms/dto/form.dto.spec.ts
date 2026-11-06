@@ -102,3 +102,33 @@ describe('SUPPORTED_QUESTION_TYPES mirrors the frontend canonical list', () => {
     expect([...frontendTypes].sort()).toEqual([...SUPPORTED_QUESTION_TYPES].sort());
   });
 });
+
+describe('FormItemDto.imageUrl - only the public route of an uploaded image', () => {
+  const withImage = (extra: Record<string, unknown>): FormItemDto =>
+    plainToInstance(FormItemDto, { label: 'Q', required: false, type: 'short_text', ...extra });
+
+  it('accepts the URL the item-image upload answers, an empty string, and no image', () => {
+    expect(
+      failedProps(withImage({ imageUrl: '/api/media/public/11111111-1111-4111-8111-111111111111' }))
+    ).toEqual([]);
+    expect(failedProps(withImage({ imageUrl: '' }))).toEqual([]);
+    expect(failedProps(withImage({}))).toEqual([]);
+  });
+
+  it('refuses an outside address, another media route, and a path with a tail', () => {
+    for (const imageUrl of [
+      'https://tracker.example/pixel.gif',
+      '/api/media/11111111-1111-4111-8111-111111111111',
+      '/api/media/public/11111111-1111-4111-8111-111111111111?x=1',
+      '/api/media/public/../users/me',
+      'javascript:alert(1)',
+    ]) {
+      expect(failedProps(withImage({ imageUrl }))).toEqual(['imageUrl']);
+    }
+  });
+
+  it('bounds the alt text', () => {
+    expect(failedProps(withImage({ imageAlt: 'x'.repeat(300) }))).toEqual([]);
+    expect(failedProps(withImage({ imageAlt: 'x'.repeat(301) }))).toEqual(['imageAlt']);
+  });
+});

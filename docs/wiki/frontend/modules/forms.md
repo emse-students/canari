@@ -736,6 +736,35 @@ id sits in an answer. One log per deleted file and per failure (`[FORM_FILE_GC]`
 takes each candidate's START date as data (`{ fileId, ownerId, start, retentionDays }`), so a caller
 whose clock starts somewhere else - a booking slot's end - passes that instead of `attachedAt`.
 
+## A question's image (2026-11-06)
+
+The owner asked for it on 2026-11-06: *"pouvoir joindre une image a une question, au meme titre
+qu'une description"*. Half of it already existed and nobody saw it: an upload route
+(`POST /api/forms/:id/items/image`), `items[].imageUrl` and its render in `FormQuestion` - but only
+on the EDIT page (the create page had no form id to upload against), as a dashed box below the
+description, stored at the 256 px logo bound and cropped to 192 px high. The URL field took any
+string, and nothing ever deleted a replaced or removed image.
+
+| Piece | What holds |
+|---|---|
+| Media path | a PUBLIC asset (`POST media/upload/public`, `size=content`): no session reads it, so a guest on `/f/:id` sees it. Not the encrypted post path - a guest holds no key - and not the avatar route, whose URLs are signed per viewer since phase 1 ([backlog](../../backlog.d/p2-avatar-urls-refuse-unsigned-requests.md)); `/api/media/public/` is unsigned and stays so. Re-encoded to WebP by the media service, EXIF and GPS dropped |
+| Size | the device resizes with the post preset (`IMAGE_COMPRESS_PRESETS.post`, 1600 px / 0.85, `questionImage.ts`) and the media service stores it inside 1600 px (`PUBLIC_IMAGE_BOUNDS.content`); a result still over the public route's 2 MiB is refused on the device with its own sentence |
+| Stored as | `items[].imageUrl` = `/api/media/public/<uuid>`, the ONLY shape the DTO accepts (`@Matches`, empty string = none), and an optional `items[].imageAlt` (300 characters) |
+| Who may cite it | `form_item_images` (migration 136), one row per image: uploaded on an existing form, the row names it; uploaded from the create page (`POST /api/forms/items/image`), the row is UNBOUND and only its uploader's next save may cite it, which binds it. A save citing any other id is a 400 `QUESTION_IMAGE_NOT_YOURS` (`claimForSave`, inside the save's transaction). An id is not a secret: without this a manager could cite another form's image and then have it deleted by removing it |
+| Release | when no form cites it any more: the blob through `media/internal/public-asset-delete` (public assets only), then the row - each id in its own transaction under its advisory lock, the citation re-read there (`items @> [{"imageUrl": ...}]`). Called after an edit drops an image and after a form's delete; an ARCHIVED form still cites its images and keeps them |
+| Reconciliation | hourly at :19, every row older than 24 h that no form cites: an upload never saved, a form removed with its association, a release that failed |
+| Respondent | `FormQuestion` draws it under the label and the help, WHOLE (`object-contain`, at most 384 px high), lazy, its src through the public media base (`associationLogoSrc`, so a native shell reaches the API); alt = `imageAlt`, else "Illustration de la question « label »" - never empty, since the picture is usually what the question is about |
+| Editor | "+ Ajouter une image" beside "+ Ajouter une description" on BOTH pages; then a thumbnail, the alt field, "Remplacer l'image" and "Supprimer l'image". The old image is not deleted by the editor: the server releases it when the SAVE leaves no question citing it |
+
+**A duplicated question cites the same image** (same id, same form): it is claimed once, and the
+release keeps it while either copy does - asserted in `form-item-images.integration.spec.ts`.
+
+**What is left open, deliberately**: a booking space's questions reuse `FormItemDto`, so they accept
+the same URL shape, but no booking screen uploads one and `booking_spaces` is not read by the
+citation check. A booking question citing a form's image would lose it with that form.
+
+**Submissions and exports are unchanged**: an image is part of the question, never of an answer.
+
 ## A form's association is chosen once, at creation
 
 A form is either personal or an association's, and `update` refuses any change to `associationId`

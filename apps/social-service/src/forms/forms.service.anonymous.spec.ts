@@ -72,7 +72,8 @@ describe('FormsService - anonymous forms', () => {
       respondentRepo,
       {} as any,
       // FormOrganiserAlertService: switched off, as it ships.
-      { enabled: () => false } as any
+      { enabled: () => false } as any,
+      {} as any
     );
     return { service, manager, saved, formRepo, submissionRepo, respondentRepo };
   }

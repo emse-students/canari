@@ -14,7 +14,13 @@
   } from '$lib/associations/activePaymentProvider.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { createForm, type AudienceCondition, type CreateFormPayload } from '$lib/forms/api';
+  import {
+    createForm,
+    uploadFormItemImage,
+    type AudienceCondition,
+    type CreateFormPayload,
+  } from '$lib/forms/api';
+  import { questionImageRefusalMessage } from '$lib/forms/questionImage';
   import { POST_NEW_FORM_ID_KEY, loadPostComposerDraft } from '$lib/posts/postComposerDraft';
   import {
     canAssociationReceiveFormPayments,
@@ -264,7 +270,7 @@
         );
       }
     } catch (e: any) {
-      error = providerRefusalMessage(e) ?? e.message;
+      error = questionImageRefusalMessage(e) ?? providerRefusalMessage(e) ?? e.message;
     } finally {
       isSubmitting = false;
     }
@@ -344,7 +350,14 @@
 
   <!-- 3. Questions -->
   <div use:guideAnchor={'forms.create.questions'}>
-    <FormQuestionsSection bind:items {requiresPayment} {gridQuestionIds} {tiers} {formations} />
+    <FormQuestionsSection
+      bind:items
+      {requiresPayment}
+      {gridQuestionIds}
+      {tiers}
+      {formations}
+      imageUploadFn={async (file) => (await uploadFormItemImage(null, file)).imageUrl}
+    />
   </div>
 
   <!-- 4. Rarely wanted, and folded away -->

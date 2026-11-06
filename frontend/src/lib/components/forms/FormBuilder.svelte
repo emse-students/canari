@@ -5,11 +5,13 @@
   import AudienceConditionEditor from './AudienceConditionEditor.svelte';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
-  import type { MembershipTier } from '$lib/associations/api';
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { Trash2, X, Plus, GripVertical, ImagePlus, GitBranch, ChevronDown } from '@lucide/svelte';
   import { QUESTION_TYPES } from '$lib/forms/questionTypes';
   import { m } from '$lib/paraglide/messages';
+  import { associationLogoSrc, type MembershipTier } from '$lib/associations/api';
+  import { QUESTION_IMAGE_ACCEPT, questionImageUploadError } from '$lib/forms/questionImage';
+  import { Log } from '$lib/utils/Log';
 
   let {
     item = $bindable(),
@@ -165,16 +167,22 @@
   let uploadingImage = $state(false);
   let imageUploadError = $state('');
 
+  /**
+   * Uploads the picked file as this question's image - a first one or a replacement. The old image
+   * is not deleted here: the server releases it once the SAVE leaves no question citing it.
+   */
   async function handleImageUpload(e: Event) {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
     if (!file || !imageUploadFn) return;
+    Log.d('FORMS', `question image: upload ${file.type} ${file.size} bytes`);
     uploadingImage = true;
     imageUploadError = '';
     try {
       item.imageUrl = await imageUploadFn(file);
-    } catch (err: any) {
-      imageUploadError = err.message || 'Error';
+    } catch (err) {
+      Log.i('FORMS', `question image: upload refused - ${String(err)}`);
+      imageUploadError = questionImageUploadError(err);
     } finally {
       uploadingImage = false;
       input.value = '';
@@ -336,8 +344,8 @@
     </div>
   </div>
 
-  <!-- Optional description -->
-  <div class="mb-4 sm:mb-5">
+  <!-- Optional description and image: one row of affordances, each opening its own field -->
+  <div class="mb-4 space-y-3 sm:mb-5">
     {#if item.description !== undefined}
       <div class="relative">
         <Textarea
@@ -354,62 +362,94 @@
           title={m.form_builder_remove_desc_title()}><X size={14} /></button
         >
       </div>
-    {:else}
-      <button
-        type="button"
-        onclick={() => {
-          item.description = '';
-        }}
-        class="text-text-muted hover:text-text-main flex items-center gap-1 text-xs font-semibold transition-colors"
-      >
-        <Plus size={12} />
-        {m.form_builder_add_desc()}
-      </button>
     {/if}
-  </div>
 
-  <!-- Optional image -->
-  {#if imageUploadFn !== undefined}
-    <div class="mb-4 sm:mb-5">
-      {#if item.imageUrl}
-        <div class="border-cn-border relative overflow-hidden rounded-xl border">
-          <img
-            src={item.imageUrl}
-            alt="Question"
-            class="max-h-40 w-full object-cover"
-            loading="lazy"
+    {#if item.imageUrl}
+      <div class="flex items-start gap-3">
+        <img
+          src={associationLogoSrc(item.imageUrl) ?? ''}
+          alt={m.form_builder_image_preview_alt()}
+          class="border-cn-border h-20 w-28 shrink-0 rounded-lg border object-cover"
+          loading="lazy"
+        />
+        <div class="flex min-w-0 flex-1 flex-col gap-2">
+          <Input
+            bind:value={item.imageAlt}
+            maxlength={300}
+            placeholder={m.form_builder_image_alt_placeholder()}
+            aria-label={m.form_builder_image_alt_placeholder()}
           />
+          <div class="flex items-center gap-3">
+            {#if imageUploadFn !== undefined}
+              <label
+                class="text-text-muted hover:text-text-main flex cursor-pointer items-center gap-1 text-xs font-semibold transition-colors {uploadingImage
+                  ? 'pointer-events-none opacity-50'
+                  : ''}"
+              >
+                <ImagePlus size={12} />
+                {uploadingImage ? m.form_builder_image_uploading() : m.form_builder_replace_image()}
+                <input
+                  type="file"
+                  accept={QUESTION_IMAGE_ACCEPT}
+                  class="sr-only"
+                  disabled={uploadingImage}
+                  onchange={handleImageUpload}
+                />
+              </label>
+            {/if}
+            <button
+              type="button"
+              onclick={() => {
+                item.imageUrl = undefined;
+                item.imageAlt = undefined;
+              }}
+              class="text-text-muted flex items-center gap-1 text-xs font-semibold transition-colors hover:text-red-500"
+            >
+              <X size={12} />
+              {m.form_builder_remove_image_title()}
+            </button>
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    {#if item.description === undefined || (!item.imageUrl && imageUploadFn !== undefined)}
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+        {#if item.description === undefined}
           <button
             type="button"
             onclick={() => {
-              item.imageUrl = undefined;
+              item.description = '';
             }}
-            class="ui-icon-button absolute top-1.5 right-1.5 rounded-full bg-black/60 text-white hover:bg-black/80"
-            title={m.form_builder_remove_image_title()}><X size={14} /></button
+            class="text-text-muted hover:text-text-main flex items-center gap-1 text-xs font-semibold transition-colors"
           >
-        </div>
-      {:else}
-        {#if imageUploadError}
-          <p class="mb-1.5 text-xs text-red-500">{imageUploadError}</p>
+            <Plus size={12} />
+            {m.form_builder_add_desc()}
+          </button>
         {/if}
-        <label
-          class="border-cn-border text-text-muted hover:border-cn-yellow/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-3 py-2.5 text-xs font-semibold transition-colors {uploadingImage
-            ? 'pointer-events-none opacity-50'
-            : ''}"
-        >
-          <ImagePlus size={15} class="shrink-0" />
-          {uploadingImage ? m.form_builder_image_uploading() : m.form_builder_add_image()}
-          <input
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            class="sr-only"
-            disabled={uploadingImage}
-            onchange={handleImageUpload}
-          />
-        </label>
-      {/if}
-    </div>
-  {/if}
+        {#if !item.imageUrl && imageUploadFn !== undefined}
+          <label
+            class="text-text-muted hover:text-text-main flex cursor-pointer items-center gap-1 text-xs font-semibold transition-colors {uploadingImage
+              ? 'pointer-events-none opacity-50'
+              : ''}"
+          >
+            <Plus size={12} />
+            {uploadingImage ? m.form_builder_image_uploading() : m.form_builder_add_image()}
+            <input
+              type="file"
+              accept={QUESTION_IMAGE_ACCEPT}
+              class="sr-only"
+              disabled={uploadingImage}
+              onchange={handleImageUpload}
+            />
+          </label>
+        {/if}
+      </div>
+    {/if}
+    {#if imageUploadError}
+      <p class="text-xs text-red-500" role="alert">{imageUploadError}</p>
+    {/if}
+  </div>
 
   <!-- Required toggle -->
   <div class="mb-4 flex justify-start sm:mb-6 sm:justify-end">

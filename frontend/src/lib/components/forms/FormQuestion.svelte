@@ -14,6 +14,8 @@
   import { refusalStatus } from '$lib/utils/apiRefusal';
   import { UploadAbortedError, type XhrUploadOptions } from '$lib/utils/uploadXhr';
   import { Log } from '$lib/utils/Log';
+  import { associationLogoSrc } from '$lib/associations/api';
+  import { questionImageAlt } from '$lib/forms/questionImage';
 
   /**
    * ONE QUESTION OF A FORM BEING FILLED IN - its card, its label and the input its type calls for.
@@ -88,6 +90,8 @@
   let upload = $state.raw<{ controller: AbortController; percent: number | null } | null>(null);
   let fileError = $state<string | null>(null);
   const uploading = $derived(upload !== null);
+  /** The question's image, absolute on a native shell (`associationLogoSrc` prefixes the media base). */
+  const questionImageSrc = $derived(associationLogoSrc(item.imageUrl));
 
   $effect(() => {
     onUploadingChange?.(uploading);
@@ -219,10 +223,18 @@
     <p class="text-text-muted mb-3 ml-6 text-xs leading-relaxed">{item.description}</p>
   {/if}
 
-  {#if item.imageUrl}
-    <div class="border-cn-border/60 mb-3 ml-6 overflow-hidden rounded-xl border">
-      <img src={item.imageUrl} alt="" class="max-h-48 w-full object-cover" loading="lazy" />
-    </div>
+  {#if questionImageSrc}
+    <!-- The whole picture, never cropped: a question's image is often what it asks about (a plan,
+         a menu). Its src goes through the public media base, so a native shell reaches the API. -->
+    <figure class="border-cn-border/60 bg-cn-bg mb-3 ml-6 overflow-hidden rounded-lg border">
+      <img
+        src={questionImageSrc}
+        alt={questionImageAlt(item)}
+        class="mx-auto block h-auto max-h-96 w-auto max-w-full object-contain"
+        loading="lazy"
+        decoding="async"
+      />
+    </figure>
   {/if}
 
   {#if item.type === 'short_text'}

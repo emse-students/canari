@@ -1090,6 +1090,44 @@ export class MediaService {
   }
 
   /**
+   * Deletes PUBLIC assets a service has stopped citing - a form question's image (`form_item_images`
+   * in social-service is the caller's allowlist; this is the second one).
+   *
+   * Only an entry stored as a public asset (`publicAsset: true`, written by
+   * {@link uploadPublicAsset} or {@link promoteToPublicAssets}) is deleted: a chat medium, a form
+   * file, a reel, a poster or an object whose class is unknown is REFUSED, whatever id the caller
+   * names. An id already tombstoned answers `deleted` (the work is done, and its tombstone keeps its
+   * own date and reason); an id with no entry is refused, since nothing proves it public.
+   */
+  async removePublicAssets(mediaIds: string[]): Promise<{ deleted: string[]; refused: string[] }> {
+    const deleted: string[] = [];
+    const refused: string[] = [];
+    for (const mediaId of mediaIds) {
+      const entry = UUID_REGEX.test(mediaId) ? this.meta.items[mediaId] : undefined;
+      if (entry?.purgedAt) {
+        deleted.push(mediaId);
+        continue;
+      }
+      if (entry?.publicAsset !== true) {
+        this.logger.warn(`media ${mediaId}: public-asset delete refused - not a public asset`);
+        refused.push(mediaId);
+        continue;
+      }
+      await this.storage.delete(mediaId);
+      const now = Date.now();
+      this.meta.items[mediaId] = {
+        createdAt: entry.createdAt ?? now,
+        lastAccessAt: entry.lastAccessAt ?? now,
+        purgedAt: now,
+        purgeReason: 'manual_delete',
+      };
+      deleted.push(mediaId);
+    }
+    if (deleted.length > 0) await this.persistMetadata();
+    return { deleted, refused };
+  }
+
+  /**
    * Claims objects for CanaReels: sets class `reel` on every one that is the named owner's.
    *
    * The claim is what makes the later purge safe. A reel's row names its blob by id, ids are not
