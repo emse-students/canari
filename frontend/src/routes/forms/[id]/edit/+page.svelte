@@ -24,6 +24,7 @@
     type Form,
   } from '$lib/forms/api';
   import {
+    associationLogoSrc,
     canAssociationReceiveFormPayments,
     getAssociation,
     type Association,
@@ -385,7 +386,7 @@
         {#if imageUrl}
           <div class="border-cn-border relative overflow-hidden rounded-xl border">
             <img
-              src={imageUrl}
+              src={associationLogoSrc(imageUrl) ?? ''}
               alt={m.form_image_section()}
               class="max-h-56 w-full object-cover"
               loading="lazy"

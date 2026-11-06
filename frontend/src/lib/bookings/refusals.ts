@@ -21,6 +21,7 @@ export const ORGANISER_REFUSAL_CODES = [
   'quota-pair',
   'export-labels',
   'item-id',
+  'item-image',
   'audience-invalid',
   'unknown-account',
   'line-kind',
@@ -150,6 +151,7 @@ function sentenceFor(code: string, count: number): string | null {
     case 'export-labels':
       return m.bookings_refusal_export();
     case 'item-id':
+    case 'item-image':
     case 'audience-invalid':
       return m.bookings_refusal_questions();
     case 'unknown-account':

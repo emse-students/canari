@@ -253,11 +253,24 @@ export class BookingSpacesService {
     if ((next.maxMinutesPerPeriod === null) !== (next.quotaPeriod === null)) {
       throw new BadRequestException({ code: 'quota-pair' });
     }
-    const items = (next.items ?? []) as { id?: string; type?: string; showIf?: unknown }[];
+    const items = (next.items ?? []) as {
+      id?: string;
+      type?: string;
+      showIf?: unknown;
+      imageUrl?: unknown;
+    }[];
     // Every question its own id: an answer, a condition and the export are keyed by it.
     const ids = items.map((i) => i.id);
     if (ids.some((id) => !id) || new Set(ids).size !== ids.length) {
       throw new BadRequestException({ code: 'item-id' });
+    }
+    // A booking question carries no image: nothing uploads one for a space, and a form's question
+    // image is deleted once no FORM cites it (`form-item-images.service.ts`), so a space citing one
+    // would lose it with that form.
+    const imaged = items.find((i) => typeof i.imageUrl === 'string' && i.imageUrl !== '');
+    if (imaged) {
+      this.logger.debug(`[BOOKINGS] item-image refused: question ${imaged.id} cites an image`);
+      throw new BadRequestException({ code: 'item-image' });
     }
     const withCondition = items.filter((i) => i.showIf != null);
     if (next.audience == null && withCondition.length === 0) return;

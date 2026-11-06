@@ -19,14 +19,16 @@
 -- No foreign key on "formId", for form_files' reason (085): a form with no submission is deleted
 -- outright (`retireForms`), and its images must stay listed until their blobs are released.
 --
--- BACKFILL: every image a stored question already cites in the canonical form the upload route has
--- always answered (`/api/media/public/<uuid>`) gets its row, on the form citing it, the form's owner as
--- uploader (the real one was never recorded). ON CONFLICT keeps the first. A value of any other shape
--- gets no row: the DTO now refuses it, so the form's next save must drop it.
+-- NO BACKFILL, deliberately. Before this migration `imageUrl` took any string, so a stored value of
+-- the public shape names an object whose ORIGIN nothing recorded: it may be an association logo, a
+-- form banner or a community image pasted into a question. A row here is a licence to DELETE that
+-- object once no form cites it, so a row is written only by the upload route, for the id it has just
+-- minted. A form already citing such a value (production, read 2026-11-06: none) is refused on its
+-- next save (`QUESTION_IMAGE_NOT_YOURS`) until the question's image is removed and uploaded again.
 --
--- ADDITIVE: a new table, two indexes, an INSERT ... SELECT. Idempotent for CD: IF NOT EXISTS and ON
--- CONFLICT DO NOTHING. `forms` is only read. LOCKS: CREATE TABLE and its indexes lock only the new
--- table; the migration gives up after 5 s rather than queue.
+-- ADDITIVE: a new table and two indexes. Idempotent for CD: IF NOT EXISTS. `forms` is not touched.
+-- LOCKS: CREATE TABLE and its indexes lock only the new table; the migration gives up after 5 s
+-- rather than queue.
 
 SET lock_timeout = '5s';
 
@@ -41,18 +43,5 @@ CREATE TABLE IF NOT EXISTS form_item_images (
 
 CREATE INDEX IF NOT EXISTS form_item_images_form_idx ON form_item_images ("formId");
 CREATE INDEX IF NOT EXISTS form_item_images_created_idx ON form_item_images ("createdAt");
-
-INSERT INTO form_item_images ("mediaId", "formId", "uploaderId", "createdAt")
-SELECT DISTINCT ON (m.id) m.id::uuid, f.id, f."ownerId", f."createdAt"
-FROM forms f
-CROSS JOIN LATERAL jsonb_array_elements(
-  CASE WHEN jsonb_typeof(f.items) = 'array' THEN f.items ELSE '[]'::jsonb END
-) AS it
-CROSS JOIN LATERAL (
-  SELECT substring(it->>'imageUrl' FROM '^/api/media/public/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$') AS id
-) AS m
-WHERE m.id IS NOT NULL
-ORDER BY m.id, f."createdAt"
-ON CONFLICT ("mediaId") DO NOTHING;
 
 COMMIT;

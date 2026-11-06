@@ -759,9 +759,16 @@ string, and nothing ever deleted a replaced or removed image.
 **A duplicated question cites the same image** (same id, same form): it is claimed once, and the
 release keeps it while either copy does - asserted in `form-item-images.integration.spec.ts`.
 
-**What is left open, deliberately**: a booking space's questions reuse `FormItemDto`, so they accept
-the same URL shape, but no booking screen uploads one and `booking_spaces` is not read by the
-citation check. A booking question citing a form's image would lose it with that form.
+**A booking space's question carries no image**: its questions reuse `FormItemDto`, so they would
+take the same URL shape, and a space citing a form's image would lose it with that form - the
+citation check reads `forms` only. `assertSettingsValid` refuses one (400 `item-image`); no booking
+screen uploads one.
+
+**No backfill**: before 136 `imageUrl` took any string, so a stored value of the public shape may
+name an association logo or a form banner pasted into a question. A row is a licence to delete, so
+136 writes none; such a form is refused on its next save until the image is removed and uploaded
+again (production, read 2026-11-06: no form cites one). Asserted in
+`form-item-images.integration.spec.ts`.
 
 **Submissions and exports are unchanged**: an image is part of the question, never of an answer.
 

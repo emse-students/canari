@@ -3,8 +3,8 @@
  *
  * The citation check is a jsonb containment and the lock an advisory one, so what they DO is a fact
  * about PostgreSQL. `FormItemImagesService` runs here on a real connection with only the media
- * service faked (a store applying its public-asset allowlist): the backfill of the images already
- * cited, the claim at create and on edit, another form's image refused, a duplicated question citing
+ * service faked (a store applying its public-asset allowlist): NO row for an id already cited
+ * before 136 (its origin was never recorded - a logo pasted into a question), the claim at create and on edit, another form's image refused, a duplicated question citing
  * its source's image, a replace, a remove, a form deleted, an upload never saved, and a release the
  * media service refuses.
  *
@@ -131,19 +131,21 @@ maybe('question images against PostgreSQL (migration 136)', () => {
     await admin?.end();
   });
 
-  it('backfills a row for every canonical image already cited, and only those, twice over', async () => {
-    const legacy = randomUUID();
-    const formId = await form([
-      item('q1', legacy),
-      item('q2', legacy),
-      { id: 'q3', imageUrl: 'https://tracker.example/pixel.gif' },
-    ]);
+  it('writes no row for an id a form cited before 136, so its owner can never have it deleted', async () => {
+    // A logo pasted into a question before the URL was checked: same shape as an upload, unknown origin.
+    const logo = randomUUID();
+    publicAssets.add(logo);
+    const formId = await form([item('q1', logo), item('q2', logo)]);
     // Applied TWICE: the deploy re-runs every migration, so 136 must be a no-op the second time.
     await q(migration('136_form_item_images.sql'));
     await q(migration('136_form_item_images.sql'));
-    expect(await q(`SELECT "mediaId", "formId", "uploaderId" FROM form_item_images`)).toEqual([
-      { mediaId: legacy, formId, uploaderId: ALICE },
-    ]);
+    expect(await q(`SELECT "mediaId" FROM form_item_images`)).toEqual([]);
+    // Its next save keeping it is refused; one dropping it releases nothing (no row, no licence).
+    await expect(save(formId, [item('q1', logo)])).rejects.toThrow(BadRequestException);
+    await save(formId, [item('q1')]);
+    await images.releaseUncited([logo], 'question edited');
+    await images.reconcileOnce();
+    expect(publicAssets.has(logo)).toBe(true);
   });
 
   it('binds an upload from the create page to the form its uploader saves, and refuses anyone else', async () => {

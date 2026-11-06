@@ -199,8 +199,10 @@ export class FormItemImagesService {
           await m.query(`DELETE FROM form_item_images WHERE "mediaId" = $1`, [id]);
           return 'released' as const;
         });
-        if (outcome === 'released') released++;
-        else if (outcome === 'cited') kept++;
+        if (outcome === 'released') {
+          released++;
+          this.logger.log(`[FORM_IMAGE] media=${id} (${why}): no form cites it - deleted`);
+        } else if (outcome === 'cited') kept++;
         else if (outcome === 'refused') {
           this.logger.error(
             `[FORM_IMAGE] media=${id} (${why}): the media service refused the delete - it is not a public asset, so the row is wrong; left for a look`
