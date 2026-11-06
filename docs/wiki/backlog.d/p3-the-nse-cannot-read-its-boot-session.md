@@ -1,22 +1,15 @@
-## P3 - the NSE cannot read `kern.bootsessionuuid`, so its boot proof never runs and every cold launch says so
+## P3 - the NSE's boot proof: replaced by the continuous uptime, one reading owed
 
-Read on the bench iPhone 12 (`v1.6.5-alpha.2`, 2026-11-05, over `pymobiledevice3 syslog live`): every
-cold launch of the extension logs `[CanariNSE] outcome: kern.bootsessionuuid unreadable errno=1`.
-`errno=1` is `EPERM`, so this is not a transient kernel answer. The extension's sandbox refuses this
-sysctl, and `bootSession` (`NotificationService.swift`, about line 648) is therefore nil in EVERY run.
+The extension's sandbox refuses `kern.bootsessionuuid` (`EPERM`, iPhone 12, `v1.6.5-alpha.2`), so the
+boot proof never ran and every cold launch logged the refusal. Since 2026-11-06 each marker carries
+`up` (`mach_continuous_time`), and the app's reader, reading its own uptime after every marker, calls
+a marker stamped AHEAD of it another boot's: an uptime never goes back within a boot. A one-sided
+proof - an earlier boot's marker stamped below the reading is left to `kill(pid, 0)` and the marker
+cap. Both twins of the old sysctl are deleted
+([mobile](../frontend/mobile.md#what-the-extension-did-in-the-apps-log-2026-11-01)).
 
-Two consequences:
-
-- **The line is noise.** It repeats a fixed fact at every launch.
-- **The mechanism is dead in the NSE.** A marker left by a run that died with an earlier boot can never
-  be told apart from a live run by the boot proof. Only the pid check is left.
-
-The fix is not to demote the line. Instead:
-
-1. Find a boot identity the sandbox allows. Candidates are `kern.boottime` read together with a
-   monotonic clock (`mach_continuous_time`), or a value the main app stamps into the App Group at
-   each launch.
-2. Or show that the pid check alone answers the question, and delete the boot proof from both twins:
-   this one and `boot_session` in `commands/nse_outcomes.rs`.
-
-The Rust twin runs in the main app, where the sysctl may be allowed. Read it there before choosing.
+**Owed on the iPhone 12:** a cold launch of the extension no longer logs
+`kern.bootsessionuuid unreadable`; and after a reboot with a marker left behind (a push run killed
+mid-decrypt), the next drain's `[NSE_OUTCOME]` carries it as `killed`, or - if its stamp was below
+the new uptime and `kill(pid, 0)` cannot prove the pid gone - the marker is still waiting, which is
+what decides whether the one-sided proof is enough. Closes when read.

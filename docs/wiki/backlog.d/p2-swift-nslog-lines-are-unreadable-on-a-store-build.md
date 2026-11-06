@@ -1,14 +1,15 @@
-## P2 - the Swift `NSLog` lines outside the tab-bar plugin are unreadable on a store build
+## P2 - the Swift log lines on a store build: built, two readings owed
 
-The tab-bar plugin's lines were moved to a public `Logger` once a store build was measured to redact
-a Swift `NSLog` to `<private>` ([durable-rules](../durable-rules.md), [mobile](../frontend/mobile.md)).
+A store build redacts a Swift `NSLog` to `<private>` whole, so every Swift line moved to a public
+`Logger` with each value's privacy named: the extension (`NseLog`, `1.6.5-alpha.1`), then on
+2026-11-06 the keystore patch, the system-components button, the custom-tabs and the gallery
+plugins. `nativeLogContent.test.ts` refuses a Swift `NSLog` in any `.swift` file under `gen/apple`,
+`patches` and `plugins` ([mobile](../frontend/mobile.md#the-extensions-copy-of-the-state-follows-every-write-2026-11-05)).
 
-**Measured for the extension (iPhone 12, `1.6.5-alpha.1` TestFlight, 2026-11-05):** a push read
-with the app killed left every notification service extension line `<private>`, so the cause of a
-generic DM banner could not be read. **The extension is moved** to `NseLog.log` with each value's
-privacy named ([mobile](../frontend/mobile.md#the-extensions-copy-of-the-state-follows-every-write-2026-11-05)),
-and `nativeLogContent.test.ts` refuses a Swift `NSLog` there. Owed: one push read in clear on the
-first pre-release carrying it.
+**Owed on the iPhone 12, on the first pre-release carrying it** (`pymobiledevice3 syslog live`):
 
-**Left:** the 5 lines of the keystore patch (`patches/tauri-plugin-keystore/ios`), then the gate: a
-test refusing a Swift `NSLog` anywhere under `gen/apple` and `patches/*/ios`.
+1. One push read with the app killed: the `[CanariNSE]` lines in clear, `outcome=` included.
+2. One sign-in: a `[KeystorePlugin]` or `[CustomTabsPlugin]` line in clear (subsystem
+   `fr.emse.canari`), not `Canari{Foundation} <private>`.
+
+Closes when both are read.

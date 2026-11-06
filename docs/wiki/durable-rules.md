@@ -1525,13 +1525,15 @@ What must not be forgotten between the pages:
   `Canari{Foundation} <private>` 2 ms after the tap it proved, and a reading concluded the catcher was
   never picked (iPhone 12, `1.6.4-alpha.4`). The Objective-C `NSLog` lines are readable; a Swift one
   is only an anonymous `Foundation` line. A `Logger`'s literal text is public, an interpolation is
-  marked `.public` only for ids, counts and states ([mobile](frontend/mobile.md#back-to-the-top-a-re-tap-of-the-open-tab-and-the-ios-status-bar-owner-2026-11-04)).
+  marked `.public` only for ids, counts and states; `nativeLogContent.test.ts` refuses a Swift `NSLog`
+  in any `.swift` file under `gen/apple`, `patches` and `plugins` ([mobile](frontend/mobile.md#back-to-the-top-a-re-tap-of-the-open-tab-and-the-ios-status-bar-owner-2026-11-04)).
 - **WHAT AN EXTENSION READS IS WRITTEN AT THE MUTATION, NEVER AT A LIFECYCLE EVENT.** The iOS
   notification extension decrypted against an App Group copy of `mls.bin` made only at
   `didBecomeActive` / `willResignActive`; a process killed in the foreground never resigns, so a DM
   created since the last activation read `Nouveau message de <sender>` (iPhone 12, `1.6.5-alpha.1`).
-  Every slot write goes through `write_slot_mls_bin`, which carries the copy along, and a test refuses
-  any other writer ([mobile](frontend/mobile.md#the-extensions-copy-of-the-state-follows-every-write-2026-11-05)).
+  Every slot write goes through `write_slot_mls_bin`, which carries the copy along, and the compiler
+  refuses any other writer (the atomic write is private to `slot_file`); `push_context.json` follows
+  every edit the same way (`write_push_context_file`) ([mobile](frontend/mobile.md#the-extensions-copy-of-the-state-follows-every-write-2026-11-05)).
 - **A NATIVE VIEW OVER THE WEBVIEW CANNOT BE COVERED BY ANY WEB LAYER - EVERY SURFACE THAT COVERS THE
   SCREEN DECLARES IT.** The iOS tab bar is a `UITabBar` drawn above the WebView: no `z-index` reaches
   it, so it sat over the post composer's "Publier" and stayed tappable over every dialog (iPhone 12,

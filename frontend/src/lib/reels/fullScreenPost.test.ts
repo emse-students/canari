@@ -51,6 +51,13 @@ describe('fullScreenPageOf', () => {
     expect(fullScreenPageOf(post({ media: [video], markdown: 'Soiree au foyer' }))).toBe('reel');
   });
 
+  it('keeps a post with a link in its text (owner, 2026-11-06): the caption draws the link', () => {
+    const markdown = 'voir https://example.org';
+    expect(fullScreenPageOf(post({ media: [picture], markdown }))).toBe('photo');
+    expect(fullScreenPageOf(post({ media: [video], markdown }))).toBe('reel');
+    expect(fullScreenPageOf(post({ media: [picture, video], markdown }))).toBe('carousel');
+  });
+
   it('reads `images` from a server older than the rename', () => {
     expect(fullScreenPageOf(post({ media: undefined, images: [picture] }))).toBe('photo');
   });
@@ -96,14 +103,9 @@ describe('fullScreenPageOf', () => {
     ],
     ['a carousel with an attached form', { media: [picture, video], attachedFormId: 'form-1' }],
     ['a carousel with a linked event', { media: [picture, video], linkedCalendarEventId: 'ev-1' }],
-    [
-      'a carousel with a link in its text',
-      { media: [picture, video], markdown: 'voir https://example.org' },
-    ],
     ['a video with a poll', { media: [video], polls: [{ id: 'q' }] as PostEntity['polls'] }],
     ['a video with an attached form', { media: [video], attachedFormId: 'form-1' }],
     ['a video with a linked event', { media: [video], linkedCalendarEventId: 'ev-1' }],
-    ['a video with a link in its text', { media: [video], markdown: 'voir https://example.org' }],
     [
       'a file',
       { media: [{ type: 'file', mediaId: 'f', mimeType: 'application/pdf' } as PostMediaRef] },
@@ -113,10 +115,6 @@ describe('fullScreenPageOf', () => {
     ['a picture with a form', { media: [picture], forms: [{ id: 'f' }] as PostEntity['forms'] }],
     ['a picture with an attached form', { media: [picture], attachedFormId: 'form-1' }],
     ['a picture with a linked event', { media: [picture], linkedCalendarEventId: 'ev-1' }],
-    [
-      'a picture with a link in its text',
-      { media: [picture], markdown: 'voir https://example.org' },
-    ],
   ])('keeps %s out', (_label, fields) => {
     expect(fullScreenPageOf(post(fields as Partial<PostEntity>))).toBeNull();
   });

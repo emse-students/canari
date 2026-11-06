@@ -37,9 +37,74 @@ describe('the iOS activation mirror of mls.bin', () => {
     const start = push.indexOf('void CanariMirrorPushStateToAppGroup(void) {');
     const body = push.slice(start, push.indexOf('\n}\n', start));
     expect(body).toContain('canari_ios_mirror_mls_bin_to_app_group(src.UTF8String)');
-    expect(body).toContain(
-      'for (NSString *name in @[ kPushContextFileName, kGraineSeedsFileName ])'
-    );
+    expect(body).toContain('for (NSString *name in @[ kGraineSeedsFileName ])');
     expect(body).not.toMatch(/@\[[^\]]*kMlsBinFileName/);
+  });
+});
+
+/**
+ * `push_context.json` FOLLOWS EVERY EDIT, NOT A LIFECYCLE EVENT (the rule `mls.bin` met in #3040): a
+ * process killed in the foreground after an account switch never resigns, so a copy made only by the
+ * activation mirror paired account B's state with A's context. Every edit goes through
+ * `write_push_context_file`, which copies it into the App Group; the activation mirror hands the file
+ * to Rust, under the lock every edit takes, and never copies it itself.
+ */
+describe('the iOS copy of push_context.json', () => {
+  const pushRs = read(resolve(TAURI, 'src/commands/push.rs'));
+  const registration = read(resolve(TAURI, 'src/commands/push_registration.rs'));
+  /** The text of `fn name(` up to the first line holding only `}`. */
+  const fnBody = (src: string, name: string) => {
+    const start = src.indexOf(`fn ${name}(`);
+    expect(start, name).toBeGreaterThan(0);
+    return src.slice(start, src.indexOf('\n}\n', start));
+  };
+
+  it('is written by one writer that every edit goes through', () => {
+    for (const [name, src] of [
+      ['push.rs', pushRs],
+      ['push_registration.rs', registration],
+    ] as const) {
+      // The app's own directory is `data_dir` in shipped code; the tests' scratch directories are
+      // named otherwise, and write fixtures there.
+      const direct = [...src.matchAll(/std::fs::write\(([^,]+),/g)]
+        .map((m) => m[1].trim())
+        .filter((target) => /^&?data_dir/.test(target))
+        .filter((target) => /push_context|PUSH_CONTEXT_FILE/.test(target));
+      // Only the one writer names the file.
+      expect(direct, name).toEqual(name === 'push.rs' ? ['data_dir.join(PUSH_CONTEXT_FILE)'] : []);
+    }
+    // The edits that read the file into a `path` and patch it hand the result to the writer.
+    for (const name of ['store_device_identity', 'set_push_context_locale']) {
+      expect(fnBody(pushRs, name)).toContain('write_push_context_file(&data_dir, ');
+      expect(fnBody(pushRs, name)).not.toContain('std::fs::write(');
+    }
+    const strip = fnBody(registration, 'keep_device_context_only');
+    expect(strip).toContain('crate::commands::push::write_push_context_file_then(');
+    // The extension's copy follows the strip inside the same hold of the lock (review of #3075).
+    expect(strip).toContain('crate::commands::push::sync_push_context_copy(dir, group)');
+    expect(strip).not.toContain('std::fs::write(');
+    // ...and nothing after the lock touches that copy: a sign-in landing there keeps its own.
+    expect(fnBody(registration, 'end_push_registration_files_then')).not.toContain(
+      'PUSH_CONTEXT_FILE'
+    );
+    expect(fnBody(pushRs, 'write_push_context_file')).toContain(
+      'write_push_context_file_then(data_dir, json, follow_push_context_in_extension)'
+    );
+  });
+
+  it('is mirrored at activation through Rust, under the lock', () => {
+    const start = push.indexOf('void CanariMirrorPushStateToAppGroup(void) {');
+    const body = push.slice(start, push.indexOf('\n}\n', start));
+    expect(body).toContain('canari_ios_mirror_push_context_to_app_group(src.UTF8String)');
+    expect(body).not.toMatch(/@\[[^\]]*kPushContextFileName/);
+    expect(header).toContain(
+      'int canari_ios_mirror_push_context_to_app_group(const char *data_dir);'
+    );
+    expect(pushRs).toContain(
+      'pub unsafe extern "C" fn canari_ios_mirror_push_context_to_app_group('
+    );
+    expect(fnBody(pushRs, 'mirror_push_context_copy')).toContain(
+      'let _guard = push_context_guard();'
+    );
   });
 });

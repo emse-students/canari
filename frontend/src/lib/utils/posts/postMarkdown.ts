@@ -1,4 +1,5 @@
 import { BARE_DOMAIN_RE, trimUrlTrailingPunctuation } from '$lib/utils/chat/messageDisplay';
+import { tolerateEmphasisWhitespace } from '$lib/utils/markdown/emphasisTolerance';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import {
   MENTION_HREF_PREFIX,
@@ -49,13 +50,17 @@ export function normalizePostLineBreaks(md: string): string {
  * - @[uuid] → [@DisplayName](#mention-uuid)
  * - #word   → [#word](#hashtag-word)
  * - bare domain → [domain](https://domain)
+ * - `**x **` → `**x** ` (whitespace inside a double marker moved out, `emphasisTolerance.ts`)
  */
 export function preprocessPostMarkdown(md: string): string {
-  const withMentions = md.replace(mentionTokenInTextRegex(), (_, userId: string) => {
-    const id = normalizeMentionUserId(userId);
-    const label = getUserDisplayNameSync(id, id);
-    return `[@${label}](${MENTION_HREF_PREFIX}${id})`;
-  });
+  const withMentions = tolerateEmphasisWhitespace(md).replace(
+    mentionTokenInTextRegex(),
+    (_, userId: string) => {
+      const id = normalizeMentionUserId(userId);
+      const label = getUserDisplayNameSync(id, id);
+      return `[@${label}](${MENTION_HREF_PREFIX}${id})`;
+    }
+  );
 
   const withHashtags = withMentions.replace(
     /(?<![[\w@./&#(])#([\wÀ-ž]{2,50})/g,

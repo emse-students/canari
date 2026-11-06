@@ -4,7 +4,8 @@
  * Instagram; `GET /api/posts?kind=reel&singlePhotos=true`); a video not filmed with the Canari
  * camera since 2026-11-06 (owner; `singleMedia=true`, which answers pictures AND videos); a post of
  * SEVERAL pictures and videos since 2026-11-06 too (owner; `multiMedia=true`, the carousel pages,
- * `MULTI_MEDIA_POST_SQL` below).
+ * `MULTI_MEDIA_POST_SQL` below). And since 2026-11-06 (owner), a post with a LINK in its text
+ * comes too when the client says it draws one (`withLinks=true`, the caption's link is tappable).
  *
  * Exactly one attachment (`images` is the stored column of `media`), and that attachment a
  * picture (or a video): its `type`, or - for a row stored before `type` existed - its `mimeType`,
@@ -20,10 +21,13 @@
  *
  * KEPT OUT, because the page would drop what the post says: a poll or a form (a full-screen page
  * could not be answered), a linked calendar event (its card - date, place, the way to add it - is
- * not drawn on a page) and a link in the text (the card draws its preview, the page does not). The
- * link test is a SUPERSET of the client's `extractFirstUrl` (any `http(s)://`), so a row this lets
- * through is never one the client would read as carrying a preview. The client reads one row the
- * same way (`reels/fullScreenPost.ts`); both are pinned against the same cases by
+ * not drawn on a page). A LINK IN THE TEXT kept the post out until 2026-11-06 (the card draws its
+ * preview, the page did not); the owner then decided such a post belongs in CanaReels with the link
+ * tappable in the caption. The old rule stays for every client that does not send `withLinks`
+ * (docs/wiki/legacy-compatibility.md): those clients read a row with a link as no page at all. The
+ * link test is a SUPERSET of the client's `extractFirstUrl` (any `http(s)://`), so a row the old
+ * rule lets through is never one such a client would read as carrying a preview. The client reads
+ * one row the same way (`reels/fullScreenPost.ts`); both are pinned against the same cases by
  * `full-screen-post-sql.integration.spec.ts` and `fullScreenPost.test.ts`.
  *
  * WHO MAY SEE THE POST IS NOT DECIDED HERE: this narrows a feed arm that already carries every
@@ -37,22 +41,35 @@ const attachmentIs = (type: 'image' | 'video') =>
   `(posts.images->0->>'type' = '${type}'
              OR (posts.images->0->>'type' IS NULL AND posts.images->0->>'mimeType' LIKE '${type}/%'))`;
 
-/** What the post says apart from its one attachment: nothing a full-screen page would drop. */
-const NOTHING_ELSE_SQL = `AND ${arrayLength('posts.polls')} = 0
+/**
+ * Whether a link in the text keeps the post out: `kept-out` for every client that does not send
+ * `withLinks` (the rule up to 2026-11-06), `allowed` for the one that draws the link in its caption.
+ */
+type LinkRule = 'kept-out' | 'allowed';
+
+/** What the post says apart from its media: nothing a full-screen page would drop. */
+const nothingElseSql = (links: LinkRule) => `AND ${arrayLength('posts.polls')} = 0
            AND ${arrayLength('posts.forms')} = 0
            AND posts."attachedFormId" IS NULL
-           AND posts."linkedCalendarEventId" IS NULL
-           AND COALESCE(posts.markdown, '') !~* 'https?://'`;
+           AND posts."linkedCalendarEventId" IS NULL${
+             links === 'kept-out'
+               ? `\n           AND COALESCE(posts.markdown, '') !~* 'https?://'`
+               : ''
+           }`;
+
+const singlePhotoSql = (links: LinkRule) => `${arrayLength('posts.images')} = 1
+           AND ${attachmentIs('image')}
+           ${nothingElseSql(links)}`;
+
+const singleMediaPostSql = (links: LinkRule) => `${arrayLength('posts.images')} = 1
+           AND (${attachmentIs('image')} OR ${attachmentIs('video')})
+           ${nothingElseSql(links)}`;
 
 /** One picture, nothing else: the `singlePhotos=true` list, which an installed client still asks. */
-export const SINGLE_PHOTO_POST_SQL = `${arrayLength('posts.images')} = 1
-           AND ${attachmentIs('image')}
-           ${NOTHING_ELSE_SQL}`;
+export const SINGLE_PHOTO_POST_SQL = singlePhotoSql('kept-out');
 
 /** One picture OR one video, nothing else: the `singleMedia=true` list. */
-export const SINGLE_MEDIA_POST_SQL = `${arrayLength('posts.images')} = 1
-           AND (${attachmentIs('image')} OR ${attachmentIs('video')})
-           ${NOTHING_ELSE_SQL}`;
+export const SINGLE_MEDIA_POST_SQL = singleMediaPostSql('kept-out');
 
 /**
  * The most attachments a carousel page draws: Instagram's carousel cap. A post with more stays a
@@ -80,35 +97,52 @@ const EVERY_ATTACHMENT_IS_VISUAL_SQL = `(CASE WHEN jsonb_typeof(posts.images) = 
  * videos in CanaReels, swiped left and right as on Instagram). A file or an audio among them keeps
  * the whole post out - a page draws pictures and videos only.
  */
-export const MULTI_MEDIA_POST_SQL = `${arrayLength('posts.images')} BETWEEN 2 AND ${CAROUSEL_MAX_MEDIA}
+const multiMediaPostSql = (
+  links: LinkRule
+) => `${arrayLength('posts.images')} BETWEEN 2 AND ${CAROUSEL_MAX_MEDIA}
            AND ${EVERY_ATTACHMENT_IS_VISUAL_SQL}
-           ${NOTHING_ELSE_SQL}`;
+           ${nothingElseSql(links)}`;
+
+export const MULTI_MEDIA_POST_SQL = multiMediaPostSql('kept-out');
+
+/**
+ * The single and carousel pages again, a LINK IN THE TEXT ALLOWED (owner, 2026-11-06): the
+ * `withLinks=true` list. Poll, form, attached form and linked event still keep a post out.
+ */
+export const LINKED_MEDIA_POST_SQL = `((${singleMediaPostSql('allowed')}) OR (${multiMediaPostSql('allowed')}))`;
 
 /**
  * Which non-reel posts the CanaReels list adds to the reels; absent adds none. `photos`: one
- * picture; `media`: one picture or one video; `carousel`: those, AND several pictures and videos.
+ * picture; `media`: one picture or one video; `carousel`: those, AND several pictures and videos;
+ * `carousel-links`: the same, a link in the text allowed.
  */
-export type SingleMediaMode = 'photos' | 'media' | 'carousel';
+export type SingleMediaMode = 'photos' | 'media' | 'carousel' | 'carousel-links';
 
 /** The clause of a mode. */
 export const singleMediaSql = (mode: SingleMediaMode): string => {
+  if (mode === 'carousel-links') return LINKED_MEDIA_POST_SQL;
   if (mode === 'carousel') return `((${SINGLE_MEDIA_POST_SQL}) OR (${MULTI_MEDIA_POST_SQL}))`;
   return mode === 'media' ? SINGLE_MEDIA_POST_SQL : SINGLE_PHOTO_POST_SQL;
 };
 
 /**
  * The mode a request asks for: `multiMedia` wins over `singleMedia`, which wins over
- * `singlePhotos`; none means none. Each older switch keeps its own meaning for the installed
- * client that sends it alone (docs/wiki/legacy-compatibility.md): a client that cannot draw a
- * carousel never receives one.
+ * `singlePhotos`; none means none. `withLinks` means something only WITH `multiMedia` - the client
+ * that draws a caption's link draws carousels too, and an older switch alone keeps its old rule.
+ * Each older switch keeps its own meaning for the installed client that sends it
+ * (docs/wiki/legacy-compatibility.md): a client that cannot draw a carousel never receives one,
+ * and one that drops a caption's link never receives a post that has one.
  */
 export const singleMediaModeOf = (p: {
+  withLinks?: boolean;
   multiMedia?: boolean;
   singleMedia?: boolean;
   singlePhotos?: boolean;
 }): SingleMediaMode | undefined =>
   p.multiMedia === true
-    ? 'carousel'
+    ? p.withLinks === true
+      ? 'carousel-links'
+      : 'carousel'
     : p.singleMedia === true
       ? 'media'
       : p.singlePhotos === true

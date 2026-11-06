@@ -12,6 +12,7 @@ import {
   writePostListPage,
 } from './post-list-cache';
 import type { RedisService } from '../common/redis/redis.service';
+import type { SingleMediaMode } from './full-screen-post-sql';
 
 /**
  * A DELETED POST KEPT RENDERING FOR THIRTY SECONDS, AND ONLY FOR PEOPLE WHO WERE SIGNED IN.
@@ -149,7 +150,7 @@ describe('invalidatePostListCacheFor', () => {
   });
 
   it('keys the pictures-only and the pictures-and-videos pages apart', () => {
-    const key = (singleMedia: 'photos' | 'media' | 'carousel' | undefined) =>
+    const key = (singleMedia: SingleMediaMode | undefined) =>
       postListCacheKey({
         feed: 'reels',
         viewerUserId: 'u',
@@ -160,7 +161,13 @@ describe('invalidatePostListCacheFor', () => {
         kind: 'reel',
         singleMedia,
       });
-    expect(new Set([key(undefined), key('photos'), key('media'), key('carousel')]).size).toBe(4);
+    expect(
+      new Set([key(undefined), key('photos'), key('media'), key('carousel'), key('carousel-links')])
+        .size
+    ).toBe(5);
+    expect(key('carousel-links')).toBe(
+      `${POST_LIST_CACHE_PREFIX}reels:u:-:-:10:0:reel+carousel-links`
+    );
     expect(key('media')).toBe(`${POST_LIST_CACHE_PREFIX}reels:u:-:-:10:0:reel+media`);
     expect(key('carousel')).toBe(`${POST_LIST_CACHE_PREFIX}reels:u:-:-:10:0:reel+carousel`);
   });

@@ -1411,6 +1411,26 @@ carousel: `singleMedia` keeps meaning "one picture or one video".
 
 ---
 
+### No date yet - the CanaReels list keeps a post with a link OUT unless `withLinks=true` (2026-11-06)
+
+**Site:** `singleMediaModeOf`, the `carousel` mode and the `http(s)://` clause of `nothingElseSql` in
+[`apps/social-service/src/posts/full-screen-post-sql.ts`](../../apps/social-service/src/posts/full-screen-post-sql.ts).
+**What it humours:** every client built without the change that introduced `withLinks` - every
+release through `1.6.6-alpha.1`, and any later one cut before that change merged - reads a photo,
+video or carousel post with a link in its text as no page at all (`fullScreenPageOf`), draws it
+wrong and logs an accusation. None of them sends `withLinks`, so the server keeps the link out for
+them, in every mode. The first client that sends it is `1.6.6-alpha.2` at the earliest, the first
+stable `1.6.6` at the earliest.
+**Removal condition:** `minClientVersion` has passed the first stable that sends `withLinks`
+(`1.6.6` at the earliest; read the release that actually carries the change, never this line). Then
+the link clause, the `kept-out` rule, the `carousel` mode and its `+carousel` cache-key suffix go,
+and `multiMedia` alone means `carousel-links` (with the `singleMedia` and `singlePhotos` entries
+above, `withLinks` and `multiMedia` collapse into one switch).
+**Cost of keeping it:** one more mode and cache-key variant; `posts.service.reels.spec.ts` pins
+that neither `multiMedia` nor `withLinks` alone lets a link in.
+
+---
+
 Retired shims are not listed here. Each one's story is in `CHANGELOG.md` at the release that removed
 it - `history_bundle` with no `to` and `history_request` with no `withDigest` on 2026-08-12,
 `history_bundle` with no `since` on 2026-08-17.

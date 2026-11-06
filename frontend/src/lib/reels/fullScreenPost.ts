@@ -1,6 +1,5 @@
 import { isReel, type PostEntity, type PostMediaRef } from '$lib/posts/api';
 import { resolveMediaType } from '$lib/utils/mediaLayout';
-import { extractFirstUrl } from '$lib/utils/chat/messageDisplay';
 
 /**
  * WHAT THE CANAREELS VIEWER DRAWS AS A FULL-SCREEN PAGE (user, 2026-10-19; videos and carousels
@@ -9,11 +8,13 @@ import { extractFirstUrl } from '$lib/utils/chat/messageDisplay';
  * right, as on Instagram. A video outside a reel (not filmed with the Canari camera) is drawn as a
  * `reel` page, and it never expires: only a row of kind `reel` has an `expiresAt`. A file or an
  * audio among the media, a poll or a form keep the post OUT - a page draws pictures and videos and
- * a caption, and a poll or a form drawn there could not be answered. A linked calendar event or a
- * link in the text keep it out too: the card draws the event's card and the link's preview, and a
- * page would silently drop them. A post of text alone is out: there is nothing to look at.
+ * a caption, and a poll or a form drawn there could not be answered. A linked calendar event keeps
+ * it out too: the card draws the event's card, and a page would silently drop it. A LINK IN THE
+ * TEXT does not (owner, 2026-11-06): the caption draws it tappable, through the post's own
+ * renderer (`PostMarkdown`); only its preview card is not drawn. A post of text alone is out:
+ * there is nothing to look at.
  *
- * THE SERVER CHOOSES THE LIST (`GET /api/posts?kind=reel&multiMedia=true`, the same rule in SQL,
+ * THE SERVER CHOOSES THE LIST (`GET /api/posts?kind=reel&multiMedia=true&withLinks=true`, the same rule in SQL,
  * docs/wiki/services/reels.md); this is the CLIENT's reading of one row, so the slide knows which
  * page to draw and a row the rule does not cover is said in a log instead of drawn wrong.
  */
@@ -39,19 +40,13 @@ export function fullScreenMediaKindOf(ref: PostMediaRef): FullScreenMediaKind | 
 /**
  * The page a post is drawn as in the CanaReels viewer, or `null` when it has none: a reel, and a post
  * with exactly one video, is a `reel` page; exactly one picture, a `photo` page; two to ten pictures
- * and videos, a `carousel` page. Never with a poll, a form, a linked event or a link in the text.
+ * and videos, a `carousel` page. Never with a poll, a form or a linked event; a link in the text is
+ * drawn in the caption.
  */
 export function fullScreenPageOf(
   post: Pick<
     PostEntity,
-    | 'kind'
-    | 'media'
-    | 'images'
-    | 'polls'
-    | 'forms'
-    | 'attachedFormId'
-    | 'linkedCalendarEventId'
-    | 'markdown'
+    'kind' | 'media' | 'images' | 'polls' | 'forms' | 'attachedFormId' | 'linkedCalendarEventId'
   >
 ): FullScreenPage | null {
   if (isReel(post)) return 'reel';
@@ -62,7 +57,7 @@ export function fullScreenPageOf(
   if ((post.polls?.length ?? 0) > 0 || (post.forms?.length ?? 0) > 0 || post.attachedFormId) {
     return null;
   }
-  if (post.linkedCalendarEventId || (post.markdown && extractFirstUrl(post.markdown))) return null;
+  if (post.linkedCalendarEventId) return null;
   if (media.length > 1) return 'carousel';
   return kinds[0] === 'video' ? 'reel' : 'photo';
 }
