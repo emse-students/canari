@@ -34,7 +34,7 @@
     placeholder?: string;
     disabled?: boolean;
     singleLine?: boolean;
-    /** Live markdown preview (* / _ italic_, __underline__, **bold**, escapes, muted delimiters). */
+    /** Live markdown preview (* / _ italic_, **bold** / __bold__, escapes, muted delimiters). */
     markdownPreview?: boolean;
     maxlength?: number;
     minHeight?: string;
@@ -622,7 +622,6 @@
       :is(
         .md-composer-muted,
         .md-composer-italic,
-        .md-composer-underline,
         .md-composer-bold,
         .md-composer-bold-italic,
         .md-composer-strike,
@@ -670,11 +669,6 @@
 
   :global(.md-composer-italic) {
     font-style: italic;
-  }
-
-  :global(.md-composer-underline) {
-    text-decoration: underline;
-    text-underline-offset: 2px;
   }
 
   :global(.md-composer-bold) {

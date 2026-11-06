@@ -3499,6 +3499,7 @@
   "md_toolbar_bold": "Bold",
   "md_toolbar_italic": "Italic",
   "md_toolbar_strikethrough": "Strikethrough",
+  "md_toolbar_refused": "This style cannot be applied here",
   "md_toolbar_heading": "Heading",
   "md_toolbar_quote": "Quote",
   "md_toolbar_code": "Code",
