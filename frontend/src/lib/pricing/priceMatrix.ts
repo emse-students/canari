@@ -197,34 +197,141 @@ export function newBucket(kind: DimensionKind, label: string): Bucket {
 }
 
 /**
- * How the grid is laid out: the LAST criterion across the top, the others nested down the side.
- *
- * One criterion gives one row and n+1 columns; more give a row per combination of all but the last.
- * Chosen so the widest thing on screen is the criterion the manager added most recently, which is
- * the one they are editing.
+ * The most criteria the editor lets a manager ADD (owner, 2026-11-06): two is a table a person can
+ * read, rows by columns, and a third turned it into a list of combinations nobody could scan. A
+ * stored grid with more still loads, lays out and saves - the server has no such bound, and an
+ * existing form must open unchanged.
  */
-export function gridLayout(matrix: PriceMatrix): {
-  columns: { id: string; label: string }[];
-  rows: { ids: string[]; labels: string[] }[];
-} {
-  if (matrix.dimensions.length === 0) return { columns: [], rows: [] };
-  const last = matrix.dimensions[matrix.dimensions.length - 1];
-  const columns = bucketIds(last).map((id) => ({
-    id,
-    label: last.buckets.find((b) => b.id === id)?.label ?? '',
-  }));
-  const leading = matrix.dimensions.slice(0, -1);
-  const rows = leading.reduce<{ ids: string[]; labels: string[] }[]>(
-    (acc, d) =>
-      acc.flatMap((row) =>
-        bucketIds(d).map((id) => ({
-          ids: [...row.ids, id],
-          labels: [...row.labels, d.buckets.find((b) => b.id === id)?.label ?? ''],
-        }))
-      ),
-    [{ ids: [], labels: [] }]
-  );
-  return { columns, rows };
+export const MAX_CRITERIA = 2;
+
+/**
+ * One row or one column of the price table: the bucket ids it contributes to a cell key, in
+ * dimension order, and the group labels they carry (`''` for "everyone else").
+ */
+export interface GridLine {
+  /** The ids joined - stable across renders, so it is the line's identity. */
+  key: string;
+  ids: string[];
+  labels: string[];
+}
+
+/**
+ * How the grid is laid out: a TRUE table, the first criterion down the side and the second across
+ * the top, so a cell is read where a row meets a column.
+ *
+ * One criterion gives one row per group and a single price column (`ids` empty). A stored grid with
+ * more than two criteria - no longer offered, still loadable - nests all but the last down the side,
+ * so every cell is still exactly one row by one column.
+ */
+export function gridAxes(matrix: PriceMatrix): { rows: GridLine[]; columns: GridLine[] } {
+  const { dimensions } = matrix;
+  if (dimensions.length === 0) return { rows: [], columns: [] };
+  const lines = (dims: Dimension[]): GridLine[] =>
+    dims
+      .reduce<{ ids: string[]; labels: string[] }[]>(
+        (acc, d) =>
+          acc.flatMap((line) =>
+            bucketIds(d).map((id) => ({
+              ids: [...line.ids, id],
+              labels: [...line.labels, d.buckets.find((b) => b.id === id)?.label ?? ''],
+            }))
+          ),
+        [{ ids: [], labels: [] }]
+      )
+      .map((line) => ({ ...line, key: cellKey(line.ids) }));
+  if (dimensions.length === 1) return { rows: lines(dimensions), columns: lines([]) };
+  return { rows: lines(dimensions.slice(0, -1)), columns: lines(dimensions.slice(-1)) };
+}
+
+/** The cell key where a row meets a column. */
+export function crossKey(row: GridLine, column: GridLine): string {
+  return cellKey([...row.ids, ...column.ids]);
+}
+
+/** Every cell key of one row or one column - what a header selection fills or closes at once. */
+export function lineCellKeys(
+  axes: { rows: GridLine[]; columns: GridLine[] },
+  axis: 'row' | 'column',
+  lineKey: string
+): string[] {
+  if (axis === 'row') {
+    const row = axes.rows.find((r) => r.key === lineKey);
+    return row ? axes.columns.map((c) => crossKey(row, c)) : [];
+  }
+  const column = axes.columns.find((c) => c.key === lineKey);
+  return column ? axes.rows.map((r) => crossKey(r, column)) : [];
+}
+
+/**
+ * Writes one value into many cells - a price, or `null` for "does not exist". The grid's keys are
+ * untouched, so it stays as complete as it was.
+ */
+export function fillCells(matrix: PriceMatrix, keys: string[], value: CellValue): PriceMatrix {
+  const cells = { ...matrix.cells };
+  for (const key of keys) cells[key] = value;
+  return { ...matrix, cells };
+}
+
+/** Whether every cell of a row is unavailable - the rows "Masquer les lignes indisponibles" hides. */
+export function rowUnavailable(matrix: PriceMatrix, row: GridLine, columns: GridLine[]): boolean {
+  return columns.every((c) => matrix.cells[crossKey(row, c)] === null);
+}
+
+/**
+ * Reads a price typed by a manager, in euros: empty is free (0), a comma is a decimal point. Null
+ * when the text is not a price at all - the caller keeps the cell as it was.
+ */
+export function parseEuros(raw: string): number | null {
+  const text = raw.trim().replace(',', '.');
+  if (text === '') return 0;
+  const value = Number(text);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/** The fields of a question the guest-seat rule reads: whether "everyone else" can be reached. */
+export interface GuestSeatItem {
+  id: string;
+  type: string;
+  required: boolean;
+  options?: { id?: string }[];
+  dependsOn?: string;
+  showIf?: unknown;
+}
+
+/** Single-choice question types, whose one answer sits in at most one group. */
+const SINGLE_CHOICE_TYPES = new Set(['single_choice', 'dropdown']);
+
+/**
+ * Whether a submitter can land in a criterion's "everyone else" group. Only an `answer` criterion
+ * can close it: a required, always-shown choice question whose every option sits in a group.
+ */
+function othersReachable(dimension: Dimension, items: readonly GuestSeatItem[]): boolean {
+  if (dimension.kind !== 'answer') return true;
+  const item = items.find((i) => i.id === dimension.questionId);
+  if (!item || !item.required || item.dependsOn || item.showIf) return true;
+  if (!SINGLE_CHOICE_TYPES.has(item.type) && item.type !== 'multiple_choice') return true;
+  const grouped = new Set(dimension.buckets.flatMap((b) => b.values ?? []));
+  return (item.options ?? []).some((o) => !o.id || !grouped.has(o.id));
+}
+
+/**
+ * The cell a PUBLIC form's guest would get for free, or null - the one the server refuses on save
+ * (`freeFallbackCells`, social-service `forms/answer-options.ts`, decision PP1).
+ *
+ * Only the TRUE fallback counts: "everyone else" on every criterion, each reachable, priced 0, in a
+ * grid that charges somebody. A named option priced 0 ("Sans repas") is a choice the manager made,
+ * and a grid that charges nobody is a free form. The editor flags the cell so the refusal is seen
+ * where it is fixed, not met as a save error.
+ */
+export function guestFreeCellKey(
+  matrix: PriceMatrix | null,
+  items: readonly GuestSeatItem[]
+): string | null {
+  if (!matrix || matrix.dimensions.length === 0) return null;
+  if (!Object.values(matrix.cells).some((v) => typeof v === 'number' && v > 0)) return null;
+  if (!matrix.dimensions.every((d) => othersReachable(d, items))) return null;
+  const key = cellKey(matrix.dimensions.map(() => OTHERS_BUCKET_ID));
+  return matrix.cells[key] === 0 ? key : null;
 }
 
 /** Reads a grid off a loaded form, converting cents to euros. Null when the form has no grid. */

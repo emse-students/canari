@@ -197,8 +197,10 @@ labelled component on the other). Everything shared now lives in one place:
 | `FormQuestionsSection.svelte` | The builder list, drag-and-drop, the type picker |
 | `FormAdvancedSettings.svelte` | The collapsed "advanced" category: responses, audience, cotisation |
 | `FormSaveBar.svelte` | The footer summary and the save button |
-| `pricing/PriceGridEditor.svelte` | The dimensions, and the cell grid they cross into |
-| `pricing/CriterionEditor.svelte` | One dimension's buckets |
+| `pricing/PriceGridEditor.svelte` | The criteria (two at most to add) and the "Critère" menu; titled "Prix d'inscription" on a form - see [the price table](#the-price-table---two-criteria-rows-by-columns-owner-2026-11-06) |
+| `pricing/PriceCellsEditor.svelte` | The 2D price table, its header bulk bar, and the phone's cards |
+| `pricing/CriterionEditor.svelte` | One criterion as compact rows: a line per group, chips, a "+" offering what is left |
+| `pricing/bucketValues.ts` | A group's values as chips, and the values no group holds yet |
 | `AudienceConditionEditor.svelte` | One condition's criteria, used by the form AND by a question |
 | `pricing/priceMatrix.ts` | The matrix state, its cross product, and the payload it becomes |
 | `pricing/criteriaOptions.ts` | The promo / formation option lists a criterion offers |
@@ -294,6 +296,41 @@ terms the manager on that screen recognises. A product's `CriteriaContext.questi
 is exactly what refuses an `answer` dimension on it - a product has no questions to price on, and
 that refusal costs no code of its own.
 
+### The price table - two criteria, rows by columns (owner, 2026-11-06)
+
+Redesigned for `1.6.6` from the owner-approved mockup ("Prix d'inscription"); a UI change only, the
+stored grid is untouched and an existing form opens unchanged. The editor is shared by forms,
+boutique products and cotisation tiers, so all three get it.
+
+- **Two criteria at most.** The "Critère" menu (Promotion / Formation / Cotisation / Réponse à une
+  question) greys a used kind ("Déjà utilisé") and every kind once two are set ("Deux critères au
+  plus : retirez-en un"), and `add` refuses too (`MAX_CRITERIA`). The SERVER has no such bound
+  (`parsePriceMatrix` maps any number of dimensions), so a stored grid with three still loads and
+  saves: `gridAxes` nests every criterion but the last down the side, and every cell is still one
+  row by one column.
+- **A true table.** `gridAxes` puts the first criterion's groups down the side and the second's
+  across the top, the corner naming both ("Promotion \ Formation"); one criterion is a single price
+  column. A row or column header selects the line and opens a bar with "Même prix partout" and
+  "Tout rendre indisponible" (`lineCellKeys` + `fillCells`). "Masquer les lignes indisponibles"
+  hides a row whose every cell is `null` (`rowUnavailable`) - display only.
+- **Empty is "Gratuit", said.** A cell priced `0` shows an empty box and a muted "Gratuit" chip: the
+  semantics of an empty cell did not change, they are now visible. `parseEuros` reads an empty box
+  as 0 and a comma as a decimal point; text that is not a price leaves the cell as it was.
+- **Unavailable is drawn as a closed priced-grid cell**: `.price-cell-closed`, hatched and struck
+  through. `.price-cell`, `.price-cell-closed`, `.price-free-chip` in `app.css` are the shared cell
+  classes, for the priced-grid question (WP-G3) to wear too.
+- **The guest's free seat is flagged where it is fixed.** On a public form, `guestFreeCellKey`
+  mirrors the server's `freeFallbackCells` (`answer-options.ts`, PR #3084's rule): only the TRUE
+  fallback - "Tous les autres" on every criterion, each reachable, priced 0, in a grid that charges
+  someone. That cell carries "Un invité ne peut pas avoir un tarif gratuit" and a status line under
+  the table names it.
+- **Criteria are compact rows**: one line per group (an underlined name, the values as chips, a "+"
+  that offers only what no group of the criterion holds - the server refuses overlapping groups;
+  a promo offers the six most recent unplaced years and takes an older one typed), and "Tous les
+  autres" as one muted line. A new group is named "Groupe N" at once.
+- **A phone (< 640px)** gets one card per row with a labelled pill per price; a tap opens an inline
+  editor under the card, a hold toggles availability. Nothing scrolls sideways.
+
 ### A cell may say the combination DOES NOT EXIST
 
 Some configurations are not sold: "non-cotisant, formule week-end" is a combination the association
@@ -316,20 +353,16 @@ no priority rule. What changed is that the cell a person lands in may refuse the
 
 Where each part of that lives:
 
-- **Editor**: a cell toggles between a number and `Indisponible`, and the CELL is the gesture. An
-  unavailable cell has nothing to type in, so clicking it is what reopens it; an open cell owes its
-  click to the caret, so closing it is the one action left on a control that overlays the cell and
-  costs no width (`.cell-action`, shown on hover or while the cell holds the focus, and always shown
-  on a coarse pointer - the only affordance a touch screen has). Coming back restores `0`, not the
-  price that was there, because that price is gone and `0` is the one value nobody mistakes for a
-  considered one. A grid with EVERY cell unavailable is refused on both sides
-  (`all_unavailable`, `assertMatrixValid`): that is a closed form, not a priced one.
-- **Geometry**: `.price-grid` in `app.css` owns the column sizes; the editor supplies only the two
-  counts. The total width has to be NAMED, which is the non-obvious part: `table-layout: fixed` on a
-  table of width `auto` treats column widths as PROPORTIONS, not sizes - nine columns declared at
-  8rem inside a 1020px box measured 83-91px in Chrome, and unequal. With the total named, every
-  price column is exactly its declared size and the wrapper scrolls once they no longer fit; below
-  that total each column stretches by the same factor, so they stay equal.
+- **Editor**: a cell toggles between a number and `Indisponible` from a button in its CORNER, or
+  a touch hold (`longPress`); an open cell owes its click to the caret, so the corner overlays it
+  and costs no width (`.cell-action`, shown on hover or focus, always on a coarse pointer). Coming
+  back restores `0`, shown as "Gratuit". A grid with EVERY cell unavailable is refused on both
+  sides (`all_unavailable`, `assertMatrixValid`): that is a closed form, not a priced one.
+- **Geometry**: `.price-grid` in `app.css` owns the column sizes; the editor supplies only the
+  price-column count. The total width has to be NAMED: `table-layout: fixed` on a table of width
+  `auto` treats column widths as PROPORTIONS - nine columns declared at 8rem inside a 1020px box
+  measured 83-91px in Chrome, and unequal. With the total named, every price column is exactly its
+  declared size and the wrapper scrolls once they no longer fit.
 - **Server**: `resolveCellPrice` returns `null` rather than throwing, and `submit` refuses right
   after it - not in `assertMaySubmit`, because only the VISIBLE answers decide which cell applies.
   `hasSubmission` reports `maySubmit: false` when the submitter's whole row is closed, the same
