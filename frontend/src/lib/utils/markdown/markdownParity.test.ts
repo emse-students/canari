@@ -303,8 +303,8 @@ describe('every toolbar action produces what its button promises', () => {
       type: 'italic',
       text: '**x**',
       sel: [0, 5],
-      expected: '***x***',
-      selected: '**x**',
+      expected: '**_x_**',
+      selected: 'x',
       leaves: ['bold+italic:x'],
     },
     {
@@ -330,8 +330,8 @@ describe('every toolbar action produces what its button promises', () => {
       type: 'bold',
       text: '*x*',
       sel: [0, 3],
-      expected: '***x***',
-      selected: '*x*',
+      expected: '**_x_**',
+      selected: 'x',
       leaves: ['bold+italic:x'],
     },
     {
@@ -366,8 +366,8 @@ describe('every toolbar action produces what its button promises', () => {
       type: 'bold',
       text: '**a** and *b*',
       sel: [0, 13],
-      expected: '**a and *b***',
-      selected: 'a and *b*',
+      expected: '**a and _b_**',
+      selected: 'a and _b_',
       leaves: ['bold:a and', 'bold+italic:b'],
     },
     {
@@ -438,7 +438,7 @@ describe('every toolbar action produces what its button promises', () => {
       type: 'bold',
       text: '***ab cd***',
       sel: [6, 8],
-      expected: '***ab** cd*',
+      expected: '_**ab** cd_',
       selected: 'cd',
       leaves: ['bold+italic:ab', 'italic:cd'],
     },
@@ -783,8 +783,8 @@ describe('every toolbar action produces what its button promises', () => {
   // documented semantics of "wrap everything": a style nested inside the selection is absorbed
   // (Google Docs does the same), so the second press cannot give it back.
   it.each([
-    ['italic', '**a** b **c**', '***a** b **c***', '**a** b **c**'],
-    ['bold', 'a ** b ** c', '**a ** b ** c**', 'a ** b ** c'],
+    ['italic', '**a** b **c**', '_**a** b **c**_', '**a** b **c**'],
+    ['bold', 'a ** b ** c', '**a  b  c**', 'a  b  c'],
     ['bold', 'plain words', '**plain words**', 'plain words'],
     ['italic', 'plain words', '*plain words*', 'plain words'],
     ['strikethrough', 'plain words', '~~plain words~~', 'plain words'],
@@ -792,7 +792,7 @@ describe('every toolbar action produces what its button promises', () => {
     // not round trips: the nested style is absorbed by the wrap
     ['bold', 'a **b** c', '**a b c**', 'a b c'],
     ['strikethrough', 'a ~~b~~ c', '~~a b c~~', 'a b c'],
-    ['italic', '**a *b* c**', '***a b c***', '**a b c**'],
+    ['italic', '**a *b* c**', '**_a b c_**', '**a b c**'],
   ] as const)('%s pressed twice on %j gives %j then %j', (type, text, first, second) => {
     expect(twice(type, text)).toEqual([first, second]);
     // Markers never pile up.

@@ -46,6 +46,33 @@ function randomLine(): string {
   return run(0, words.length, []);
 }
 
+/**
+ * The wild family: three levels deep, a style inside the same style, `***`, underscore spellings,
+ * spans glued to the next word. Only what marked itself cannot read is filtered, by the caller.
+ */
+function wildLine(): string {
+  const words = Array.from({ length: 4 + rand(8) }, () =>
+    'abcdefghijklmn'.slice(rand(8), 9 + rand(5))
+  );
+  const markers = ['**', '*', '~~', '***', '_', '__'];
+  let i = 0;
+  const run = (depth: number, limit: number): string => {
+    let out = '';
+    while (i < limit) {
+      const glue = out === '' ? '' : rand(5) === 0 ? '' : ' ';
+      if (depth < 3 && rand(3) === 0) {
+        const m = markers[rand(markers.length)];
+        const end = Math.min(limit, i + 1 + rand(4));
+        out += glue + m + run(depth + 1, end) + m;
+      } else {
+        out += glue + words[i++];
+      }
+    }
+    return out;
+  };
+  return run(0, words.length);
+}
+
 /** Every letter of the rendering with the styles over it, and the text left showing as markers. */
 function read(md: string): { letters: Array<Set<string>>; literal: number } {
   const html = marked.parse(md, { async: false }) as string;
@@ -83,13 +110,15 @@ interface Failure {
   why: string;
 }
 
-function check(text: string, s: number, e: number, kind: Kind): Failure | null {
+function check(text: string, s: number, e: number, kind: Kind): Failure | 'refused' | null {
   const letterAt = (p: number) => (text.slice(0, p).match(/[a-z]/g) ?? []).length;
   const l0 = letterAt(s);
   const l1 = letterAt(e);
   if (l1 <= l0) return null;
   const r = computeComposerFormat(kind, text, s, e);
   if (!r) return null;
+  // A refusal writes nothing: the text comes back as it was.
+  if (r.text === text) return 'refused';
   const before = read(text);
   const after = read(r.text);
   const fail = (why: string): Failure => ({ text, sel: [s, e], kind, out: r.text, why });
@@ -138,29 +167,38 @@ function selections(text: string, wholeWords: boolean): Array<[number, number]> 
 
 describe('the toolbar over random styled lines', () => {
   it.each([
-    ['whole words', true, 600],
-    ['any range, edges snapped off markers', false, 600],
+    ['realistic, whole words', true, false, 600, 0.001],
+    ['realistic, any range with edges snapped off markers', false, false, 600, 0.01],
+    ['wild (***, same style inside itself, underscores, glued), whole words', true, true, 600, 0.2],
+    ['wild, any range with edges snapped off markers', false, true, 600, 0.2],
   ] as const)(
-    '%s: no literal marker, no style lost outside the selection',
-    (_n, whole, lines) => {
-      seed = whole ? 20261106 : 20261107;
+    '%s: no literal marker, no style lost, refusals at most %s of the presses',
+    (_n, whole, wild, lines, maxRefused) => {
+      seed = (whole ? 20261106 : 20261107) + (wild ? 100 : 0);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
       let actions = 0;
+      let refused = 0;
       const failures: Failure[] = [];
       for (let n = 0; n < lines; n++) {
-        const text = randomLine();
-        // A line marked cannot read cleanly on its own (`*a **b***`) proves nothing about the toolbar.
-        // The preview and marked also disagree on a run of three (`*a **b***`, a known gap).
-        if (text.includes('***') || read(text).literal > 0) continue;
+        const text = wild ? wildLine() : randomLine();
+        // Only what marked itself cannot read cleanly before the action is skipped.
+        if ((!wild && text.includes('***')) || read(text).literal > 0) continue;
         for (const [s, e] of selections(text, whole)) {
           for (const kind of KINDS) {
             actions++;
             const f = check(text, s, e, kind);
-            if (f) failures.push(f);
+            if (f === 'refused') refused++;
+            else if (f) failures.push(f);
           }
         }
       }
+      const refusals = warn.mock.calls.filter((c) => String(c[0]).includes('REFUSED')).length;
+      warn.mockRestore();
       expect(actions).toBeGreaterThan(5000);
       expect(failures.slice(0, 5)).toEqual([]);
+      // Every refusal is accused on the console, and (nearly) none is taken.
+      expect(refusals).toBe(refused);
+      expect(refused / actions).toBeLessThanOrEqual(maxRefused);
     },
     60_000
   );

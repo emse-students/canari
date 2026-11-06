@@ -71,17 +71,37 @@ They DID differ: the preview drew `__x__` as an underline (the post renders it b
    (`**a** b **c**` italic, `a ** b ** c` bold, plain text, a whole bold phrase); a style NESTED in the
    selection is absorbed by the wrap and not given back (`**a *b* c**` italic twice gives
    `**a b c**`), a documented semantic of "wrap everything".
-   **A selection that crosses an edge of a span of ANOTHER style, or an un-styling that would cut
-   one** (`lm **h` over `lm **h lm**` for italic; bold off inside `**~~a b~~**`) is written from a
-   per-character model: every character keeps the styles it had, the selected ones gain or lose this
-   one, runs of one style are cut where they would cross another and reopened (`*lm **h***
-   **lm**`), whitespace stays outside, and the markers are written again nested. Selection edges
-   inside a marker run snap to the text beside it. **The renderer is the judge**: every inline action
-   is checked by rendering before and after with marked (no marker character newly showing, no
-   character losing a style but the one toggled, that style reaching more or fewer characters); when
-   the default writing fails, the same model is written in up to 36 marker styles (nesting order, `*`
-   or `_` for italic, `**` or `__` for bold) until one is read right. Why: marked reads `***a* b`
-   and a `**` after `~~` in more than one way, and `*a*b` next to another emphasis not at all.
+   **Whenever a span touches the selection** (it crosses an edge, contains it, or is of the same style
+   and adjacent) the line is written from a per-character model (`rewriteSpans`): every character
+   keeps its styles, the selected ones gain or lose this one, runs of one style are maximal (a strike
+   inside a strike is one strike), whitespace stays outside, a run that would cross another is cut at
+   the crossing and reopened (`lm **h` italic over `lm **h lm**` gives `*lm **h***` then `**lm**`),
+   and the markers are written again nested. Selection edges inside another style's marker run snap to
+   the text beside it, and a selection that includes another style's marker (`~~*word`) still counts
+   as inside the style. With no span near, stray runs of the marker are stripped and the text wrapped.
+   **The spelling is derived, in one pass, from how marked reads markers** (measured, not assumed):
+   - two markers made of one character never touch: `***a***` and `**a****b**` are read several
+     ways, so where two star markers would touch the italic is written with `_` when no letter or
+     digit touches it outside (underscore emphasis is refused inside a word), else the bold with `__`
+     under the same condition;
+   - a star marker never touches a `~~` marker: marked does not compose a `**` that opens straight
+     after, or closes straight before, a strike (`**~~a *b*~~** c` and `*e ~~**b** c~~* g` render
+     literal asterisks), so the star run is spelled with underscores there too;
+   - two `~~` never touch: same-style runs are merged and cut pieces are kept apart where a space
+     allows.
+   **marked is ONE final check, on the edited paragraph only**: no marker character newly showing,
+   every visible character keeps every style but the toggled one, that style changes only inside a
+   window as wide as the selection, and it reaches more characters (or fewer, off). **If the check
+   fails NOTHING is written**: the text comes back unchanged, no error is shown, and
+   `console.warn` accuses `[toolbar] REFUSED <style> on|off` with the selection length and the
+   marker shape around it (letters blanked, never the text). A render that throws is a refusal too.
+   Measured on the seeded fuzz (`composerFormatFuzz.test.ts`): realistic lines, whole words 4
+   refusals in 36444 presses and any range 228 in 50061; the wild generator (`***`, a style inside
+   itself, underscores, glued spans, three levels) 5395 in 32712 and 7717 in 48222, which are
+   inputs such as `*****a*****` that preview and marked read differently; 0 literal markers and 0
+   style lost in all four families. Cost per press (desktop): 0.3 to 0.7 ms for a post of short
+   paragraphs, 3 ms for one 5k paragraph, 10 ms for one 20k paragraph, the same when refused; a phone
+   is estimated at 10 to 20 times that (an ESTIMATE).
 5. Tests. `markdownParity.test.ts` renders one corpus through both parsers and every toolbar output
    through marked ALONE (the tolerance cannot hide a bad output), asserting the selection lands on
    the text the action touched. `emphasisToleranceRule.test.ts` proves the rule from outside: hand
@@ -91,9 +111,9 @@ They DID differ: the preview drew `__x__` as an underline (the post renders it b
    makes it fail), the same four strings the third review named (`** a**a**a**`, `~~ a~~a~~a~~`,
    `****a ***a**`, `**a **a**a*`), an EXHAUSTIVE search (every string of up to 8 tokens over
    `** a *` and over `~~ a **`) judged by an independent DOM reader and offsets, the crafted-post
-   budget, `composerFormatFuzz.test.ts` (seeded random lines of nested bold, italic and strike, every
-   action on whole-word selections and snapped any-range selections: 36444 and 50061 actions, no
-   literal marker and no style lost outside the selection, plus the reviewers' own examples), the run scanner checked against a real DOM, and the preview's cost on adversarial shapes
+   budget, `composerFormatFuzz.test.ts` (seeded random lines in two families, realistic and wild, every
+   action on whole-word selections and snapped any-range selections; it asserts no literal marker,
+   no style lost, every refusal accused, and a bound on the refusal rate; plus the reviewers' own examples), the run scanner checked against a real DOM, and the preview's cost on adversarial shapes
    (generous bounds, no step counter). Switching the run key back to tag and text fails the hand
    strings and both exhaustive searches.
 
