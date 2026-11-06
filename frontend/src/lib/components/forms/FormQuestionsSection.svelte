@@ -4,6 +4,7 @@
   import type { MembershipTier } from '$lib/associations/api';
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { QUESTION_TYPES } from '$lib/forms/questionTypes';
+  import { duplicateQuestion } from '$lib/forms/questionDuplicate';
   import { ListChecks, Plus } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -36,6 +37,11 @@
     imageUploadFn?: (file: File) => Promise<string>;
     /** What a FILE question says it does, in the editor; a booking space passes its own. */
     fileHint?: string;
+    /**
+     * A question to open: the page sets a NEW object each time a save refuses because of that
+     * question, so asking twice for the same one still opens it again.
+     */
+    reveal?: { id: string } | null;
   }
 
   let {
@@ -46,11 +52,23 @@
     formations = [],
     imageUploadFn,
     fileHint,
+    reveal = null,
   }: Props = $props();
 
   let dragIndex = $state(-1);
   let dropIndex = $state(-1);
   let showTypePicker = $state(false);
+  /** The one question being edited; the others are a single line each. */
+  let expandedId = $state<string | null>(null);
+  /** The copy of a question opens with its title selected. */
+  let selectTitleId = $state<string | null>(null);
+
+  $effect(() => {
+    if (reveal) {
+      expandedId = reveal.id;
+      selectTitleId = null;
+    }
+  });
 
   const countLabel = $derived(
     items.length === 1
@@ -59,10 +77,13 @@
   );
 
   function addItem(type: string = 'short_text') {
+    const id = crypto.randomUUID();
+    expandedId = id;
+    selectTitleId = null;
     items = [
       ...items,
       {
-        id: crypto.randomUUID(),
+        id,
         label: '',
         required: false,
         type,
@@ -73,7 +94,16 @@
     showTypePicker = false;
   }
 
+  function duplicateItem(index: number) {
+    const result = duplicateQuestion(items, index);
+    if (!result) return;
+    items = result.items;
+    selectTitleId = result.copyId;
+    expandedId = result.copyId;
+  }
+
   function removeItem(index: number) {
+    if (items[index]?.id === expandedId) expandedId = null;
     items = items.filter((_, i) => i !== index);
   }
 
@@ -109,7 +139,7 @@
 </script>
 
 <FormSection title={m.form_section_questions()} icon={ListChecks} badge={countLabel} dense>
-  <div class="space-y-3 sm:space-y-4">
+  <div class="space-y-2">
     {#each items as _item, i (_item.id)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
@@ -139,6 +169,16 @@
           {formations}
           {imageUploadFn}
           {fileHint}
+          expanded={expandedId === _item.id}
+          selectTitleOnOpen={selectTitleId === _item.id}
+          onExpand={() => {
+            selectTitleId = null;
+            expandedId = _item.id;
+          }}
+          onCollapse={() => {
+            if (expandedId === _item.id) expandedId = null;
+          }}
+          onDuplicate={() => duplicateItem(i)}
         />
       </div>
     {/each}

@@ -142,6 +142,20 @@ Section order, top to bottom: **General** (title, description, poster), **Paymen
 **Advanced settings** (collapsed). The two pages carry the SAME sections in the SAME order: a
 setting reachable only once a form exists is a setting a manager cannot plan for.
 
+### The question editor is one line per question (owner, 2026-11-06)
+
+The owner: *"on peut carrément compresser l'interface d'édition des formulaires, là c'est beaucoup trop d'espace et de choses inutiles."* Four decisions, all answered, plus one added the same day.
+
+1. **Collapsed questions, one line each** (like Google Forms): number, handle, title, type icon and name, an asterisk when required. Clicking the line (or Enter / Space on it) expands it; **only one question is expanded at a time**, the list (`FormQuestionsSection`) owning which. Escape collapses and returns focus to the row. A question just added or just duplicated is created expanded, and expanding moves focus to its title. A form loaded for editing starts fully collapsed.
+2. **The grey preview box is deleted** ("L'utilisateur verra un champ court..."): the type's icon and name say it. Choice lists, scale and matrix editors stay, they are the content. A FILE question's explanation (who reads the file, when it goes - `fileHint`, which a booking space overrides) became the tooltip of its type menu rather than a box.
+3. **One icon row at the bottom of the open card**, in this order: Obligatoire (asterisk toggle), Conditions (opens the "show only to certain people" panel, `AudienceConditionEditor`, only while switched on; the long explanation is the tooltip), Dupliquer, Supprimer; on touch, where there is no drag handle, two reorder arrows follow, and a collapse chevron ends the row. Every icon has an accessible name. The "show if another answer" picker pair (`dependsOn`) is unchanged and sits above the row.
+4. **No visible field labels.** The title is the main field, larger, placeholder "Question sans titre"; the type is a compact menu beside it (icon only below `sm`). The labels remain as `aria-label`s.
+5. **Duplicate, easy** (added the same day): the icon on the collapsed row (hover or focus on desktop, always visible on touch), the icon row, and **Ctrl/Cmd+D** on a focused question (the browser's bookmark shortcut is cancelled). The copy is inserted right AFTER the original, opens expanded with its title selected. It copies everything (`questionDuplicate.ts`) under a NEW question id and new option and row ids. The original keeps its id, so conditions in OTHER questions keep pointing at the original. The copy's own answer condition stays valid because its source is before the original; one that is not (a stale reference to itself or a later question) is dropped and logged. A copy is an ordinary added question: the server rules for a form that already has submissions apply exactly as for any new question.
+
+**A save refused because of a question opens that question.** A folded card hides its own error, so the pages call `firstQuestionAtFault` (an empty audience condition, or the file question when the form refuses on files) and hand the id to the section through `reveal`, a fresh object each time. The form-level option toggles (public, anonymous, tiered pricing) live outside the question cards and are untouched. The drag wrapper in `FormQuestionsSection` is unchanged: the row's handle drags, and the rule that an input never starts a drag is another change's.
+
+Tests: `FormQuestionsSection.svelte.test.ts` (collapsed / expanded, one at a time, asterisk, conditions panel, reveal, Escape, duplicate by icon and Ctrl+D), `questionDuplicate.test.ts` (the copy's contents, ids, position, references).
+
 ### Four sections, because six of them buried the common case
 
 The screen carried six top-level cards on 2026-08-26, and a manager writing a plain free form -

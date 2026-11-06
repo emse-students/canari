@@ -54,6 +54,7 @@
   import { formSummary } from '$lib/forms/summary';
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { firstEmptyCondition } from '$lib/forms/audience';
+  import { firstQuestionAtFault } from '$lib/forms/questionDuplicate';
   import { fromFormItems, toFormItemsPayload } from '$lib/forms/itemsPayload';
   import {
     FILE_RETENTION_DEFAULT_DAYS,
@@ -212,6 +213,13 @@
 
   const formHasFile = $derived(hasFileQuestion(items));
 
+  /** A save refused on a question opens that question: a folded card hides its own error. */
+  let reveal = $state<{ id: string } | null>(null);
+  function revealFault(fileProblem: boolean) {
+    const id = firstQuestionAtFault(items, fileProblem);
+    if (id) reveal = { id };
+  }
+
   async function handleSave() {
     if (titleMissing) {
       error = m.form_error_title_required();
@@ -230,10 +238,12 @@
     });
     if (fileProblem) {
       error = fileProblem;
+      revealFault(true);
       return;
     }
     const empty = firstEmptyCondition(submitCondition, items);
     if (empty) {
+      revealFault(false);
       error =
         empty.scope === 'form'
           ? m.form_error_audience_empty()
@@ -438,6 +448,7 @@
     <!-- 3. Questions -->
     <FormQuestionsSection
       bind:items
+      {reveal}
       {requiresPayment}
       {gridQuestionIds}
       {tiers}
