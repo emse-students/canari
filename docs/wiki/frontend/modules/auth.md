@@ -198,7 +198,7 @@ defect (`CLAUDE.md`).
 **No deadlock**: the restore's first phase reads only the store and awaits no barrier, and nothing
 the login awaits before it waits on a routed frame or on a pull (`settleUnresolvedCommits`,
 `adoptOrphanedMirrorEntries`, the landing preview and phase 1 were each read for it). A reconnect
-outside the login's window pulls at once, because the hold is no longer armed. Behaviour (with the real restore
+outside the login's window pulls at once, because the hold is no longer armed. A reconnect INSIDE the window waits for the seeding like every other pull, so `isReconnecting` stays true until then, and a second drop in that window is picked up by the 60 s connection watchdog rather than by a new rung - accepted for now. Behaviour (with the real restore
 doing the seeding, and the old order reproduced as a case) is in
 `BaseMlsService.bootDrainAfterSeeding.test.ts`; the login's half of the order is three more source
 guards in `offlineUnlock.test.ts`.

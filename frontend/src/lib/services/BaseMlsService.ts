@@ -2226,6 +2226,10 @@ export abstract class BaseMlsService implements IMlsService {
    */
   /** @inheritdoc */
   async waitForGroupQueueIdle(caller: string, groupId: string): Promise<void> {
+    // DURING THE COLD START'S HOLD, THE SAME RULE AS THE WHOLE-MAILBOX BARRIER: no group is listed
+    // before the restore has seeded the rows, so this group's frames come with the boot pull the
+    // seeding issues (`fetchPendingMessages`), and its barrier waits for that pull.
+    if (this.awaitingRowSeeding) await this.joinBootPull().catch(() => {});
     // THE PULL FIRST, exactly as the whole-mailbox barrier does it: a bucket that is empty because
     // nothing has been FETCHED yet is not a bucket that has nothing left. What this skips is the
     // other twenty-eight conversations' frames, not the round trip that lists our own.

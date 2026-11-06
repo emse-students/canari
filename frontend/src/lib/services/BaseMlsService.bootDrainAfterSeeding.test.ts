@@ -67,6 +67,7 @@ function makeService(conversations: SvelteMap<string, Conversation>) {
     messageCallback: vi.fn().mockResolvedValue(true),
     messageScheduler: {
       waitUntilIdle: vi.fn().mockResolvedValue(undefined),
+      waitUntilGroupIdle: vi.fn().mockResolvedValue(undefined),
       hasQueuedFrom: () => false,
       draining: false,
     },
@@ -264,6 +265,26 @@ describe('the boot drain and the restore that seeds the conversation rows', () =
     expect(seen.pullWithRow[0]).toBe(true);
     expect(seen.pullWithRow).not.toContain(false);
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('holds a group barrier taken during the hold until the seeding has issued the boot pull', async () => {
+    // The whole-mailbox barrier's rule, for one group: its frames come with the boot pull, so a
+    // barrier that resolved before it would answer from a mailbox nobody listed.
+    const conversations = new SvelteMap<string, Conversation>();
+    const { svc, seen } = makeService(conversations);
+    svc.holdInboundUntilRowsSeeded();
+    await svc.markInboundReady();
+    let idle = false;
+    const barrier = svc.waitForGroupQueueIdle('history answer', DM).then(() => (idle = true));
+    await settle();
+
+    expect(idle).toBe(false);
+    expect(seen.pullWithRow).toEqual([]);
+
+    await restore(conversations, svc);
+    await barrier;
+
+    expect(seen.pullWithRow[0]).toBe(true);
   });
 
   it('joins a reconnect racing the login to the boot pull, instead of pulling ahead of the rows', async () => {

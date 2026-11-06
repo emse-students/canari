@@ -108,6 +108,8 @@ export function createMlsServiceStub(
     getDeviceId: vi.fn().mockReturnValue('device-test'),
     resolveDeviceId: vi.fn().mockResolvedValue('device-test'),
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
+    // Not destroyed by default: `openGatewayConnection` reads it outside its `try`.
+    isDestroyed: () => false,
     waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     getLocalGroups: vi.fn().mockReturnValue([]),
     heldGroupsKnown: vi.fn().mockReturnValue(true),
