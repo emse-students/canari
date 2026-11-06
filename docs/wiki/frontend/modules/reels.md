@@ -585,6 +585,24 @@ has finished, the preload is ABORTED and the player fetches (or streams) it alon
 known and accepted: a reel whose FEED card is still streaming when it is opened is fetched a second
 time by the viewer, since an MSE URL feeds one element - the same rule the media viewer lives by.
 
+### What plays behind the viewer stops when it opens (owner, 2026-11-06)
+
+**Cause, read from the code.** The only "a viewer is open" signal was `followVideoSound`'s counter in
+`actions/playWhileVisible.ts`, raised when a viewer's `<video>` is MOUNTED. A reel mounts its player
+(`PostMedia` -> `VideoPlayer`) after the download or the stream's first segment, and a photo page or a
+reel whose file fails never mounts one. In that gap the feed's ambient video kept decoding (and talking,
+unmuted), and a card scrolling into view started under the viewer.
+
+**The fix is one mechanism**: `holdPlayback(reason)` in the same file. `ReelViewer` calls it in its
+script init and releases it on destroy. A hold pauses EVERY registered media at once (the feed, an
+inline video of a post page, a lightbox video, a voice note), refuses every inline start while any hold
+or viewer player is open, and when the LAST one is released the video last come into view plays again
+if nothing else does (`resumeVisible`). The viewer's own players register later and claim as before.
+Nothing is a timer. Tests: `playbackArbiter.test.ts` (hold pauses ambient and foreground, blocks
+scroll-in starts, release is idempotent, two holds) and `ReelViewer.svelte.test.ts` (hold on open,
+release on close). Not covered, deliberately: `MediaLightbox` on a PHOTO still leaves the feed playing
+(not asked); it can take the same one-line hold.
+
 ### A loading reel shows its first frame, never a play glyph (owner, 2026-10-31)
 
 **Reported:** *while a CanaReel loads, a yellow play button shows on a neutral background.* That was

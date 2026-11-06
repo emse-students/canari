@@ -14,7 +14,7 @@ import {
   isForegroundPlaying,
   pausePlayback,
 } from '$lib/actions/playbackArbiter';
-import { followVideoSound, playWhileVisible } from '$lib/actions/playWhileVisible';
+import { followVideoSound, holdPlayback, playWhileVisible } from '$lib/actions/playWhileVisible';
 import { reportCallSoundPhase, resetCallSoundGateForTest } from '$lib/utils/callSoundGate';
 
 const runtime = vi.hoisted(() => ({ mobile: false }));
@@ -250,6 +250,45 @@ it('a viewer opening pauses an inline video, and closing it gives the feed back'
   action.destroy();
   expect(feed.paused, 'the viewer closed: the video on screen returns').toBe(false);
   expect(inline.paused, 'what the reader started inline stays paused').toBe(true);
+});
+
+it('a held playback pauses the feed AND a foreground media, starts nothing, and releasing brings the feed back', () => {
+  const feed = fake(document.createElement('video'));
+  feed.muted = true;
+  const observer = playWhileVisible(feed);
+  teardown.push(() => observer.destroy?.());
+  observed.at(-1)!([{ isIntersecting: true }]);
+  const lightbox = video();
+  const note = voice();
+  expect(feed.paused).toBe(false);
+
+  const release = holdPlayback('test viewer');
+  expect(feed.paused, 'the feed stops before any viewer player exists').toBe(true);
+
+  observed.at(-1)!([{ isIntersecting: false }]);
+  observed.at(-1)!([{ isIntersecting: true }]);
+  expect(feed.paused, 'a card scrolling into view does not start under the viewer').toBe(true);
+
+  lightbox.startPlaying();
+  note.startPlaying();
+  release();
+  release();
+  note.pause();
+  lightbox.pause();
+  expect(feed.paused, 'the last hold released, nothing else plays: the feed returns').toBe(false);
+});
+
+it('two holds: the feed stays down until the last one is released', () => {
+  const feed = fake(document.createElement('video'));
+  const observer = playWhileVisible(feed);
+  teardown.push(() => observer.destroy?.());
+  observed.at(-1)!([{ isIntersecting: true }]);
+  const first = holdPlayback('first');
+  const second = holdPlayback('second');
+  first();
+  expect(feed.paused).toBe(true);
+  second();
+  expect(feed.paused).toBe(false);
 });
 
 it('the recorder silences every playing media, and the media can play again afterwards', () => {

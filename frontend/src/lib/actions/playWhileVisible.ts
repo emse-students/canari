@@ -3,6 +3,7 @@ import {
   claimPlayback,
   isForegroundPlaying,
   onPlaybackIdle,
+  pausePlayback,
 } from '$lib/actions/playbackArbiter';
 import { videoSound } from '$lib/stores/videoSound.svelte';
 import { isAppOnScreen } from '$lib/utils/appForeground';
@@ -35,6 +36,36 @@ export interface PlayWhileVisibleOptions {
 const visibleInline = new Set<HTMLVideoElement>();
 /** Viewers open: while one is, no inline video starts. */
 let openViewers = 0;
+
+/**
+ * A FULL-SCREEN VIEWER IS OPEN, WHETHER OR NOT IT HAS A PLAYER YET (owner, 2026-11-06: opening a
+ * CanaReel left the feed's video playing behind it).
+ *
+ * `followVideoSound` counts a viewer only once its `<video>` is MOUNTED, and a reel mounts its player
+ * after the download or the stream's first segment - seconds on a weak link - while a photo page or a
+ * reel that fails never mounts one. In that gap nothing said "a viewer is open": the feed's ambient
+ * video behind kept decoding, talking if unmuted, and a card scrolling into view started too. A viewer
+ * that is a page of its own (`ReelViewer`) holds playback from its first line instead, so the answer
+ * does not depend on what it later mounts.
+ *
+ * Holding PAUSES EVERY registered media at once (ambient and foreground: a video in a lightbox
+ * underneath, a voice note) - the viewer's own players register later and claim playback themselves -
+ * and no inline video starts until the LAST hold is released, when the video last come into view
+ * plays again if nothing else does. Returns the release, idempotent.
+ */
+export function holdPlayback(reason: string): () => void {
+  Log.d('VIDEO', `playback held: ${reason}`);
+  openViewers += 1;
+  pausePlayback(undefined, false, reason);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    openViewers -= 1;
+    Log.d('VIDEO', `playback released: ${reason}`);
+    if (openViewers === 0 && !isForegroundPlaying() && isAppOnScreen()) resumeVisible();
+  };
+}
 
 function tryPlay(video: HTMLVideoElement) {
   video.play().catch((err: unknown) => {
