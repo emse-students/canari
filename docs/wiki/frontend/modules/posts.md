@@ -2193,3 +2193,32 @@ Plan: a full-screen sheet from the comment icon, the composer pinned above the k
 ### The thread on a phone is the CanaReels drawer, with nothing quoted above it (user, 2026-10-23, phones only)
 
 `PostCommentsSheet` picks by `phoneViewport()` (below `md`): the shared `shared/CommentsDrawer` - the very component `ReelCommentsSheet` is built on - rising over the interface on `motion-sheet-in` over a dimmed, tappable backdrop, closed by a drag down on its grabber/title, Back (one history entry), Escape, the X or a tap above. Over the page (`scrim`) it is portalled to the body, `aria-modal`, `focusTrap`ped, and the opener (read at initialisation, BEFORE `focusTrap` moves the focus) gets the focus back. It rides the keyboard (`keyboard-aware-bottom`, capped at `--app-viewport-height`) exactly as the reels sheet does. From `md` up the dialog (`Modal`) is unchanged. **The quoted-post reminder (avatar, author, two lines of text) under the title is REMOVED everywhere**, dialog included; the sheet no longer takes a `post` prop. Tests: `PostCard.drawer.svelte.test.ts` (phone) and `PostCard.sheet.svelte.test.ts` (wide). Only a phone confirms the entrance feel and the soft-keyboard behaviour.
+
+## The formatting row keeps the keyboard and the footer's height (2026-11-06)
+
+The owner reported that on a phone the keyboard closed as soon as text was selected to be formatted, and
+that the screen kept moving. Decided: the keyboard stays open while selecting and while tapping the
+toolbar, the toolbar is pinned above the keyboard, and nothing jumps.
+
+**Read on the benches, and NOT reproduced** (real post composer, test accounts, nothing published):
+- iPhone 12, iOS 27.0.1, installed build, taps through WebDriverAgent: double tap on a word (selection
+  and handles), "Aa", Bold, a handle dragged across "world", twelve line breaks so the editor scrolls,
+  then Bold on a selection in the last line. The keyboard stayed up at every step, the selection
+  survived Bold, the scroll position held, the toolbar stayed on the keyboard.
+- Mi 9T, Tauri app, AOSP LatinIME and the ADB keyboard: long press, "Aa", Bold: `mInputShown=true`
+  throughout, toolbar pinned.
+- Desktop emulation: Bold fires no `focusout`; the editor is rebuilt by `renderPlainTextToMentionEditor`
+  (one burst of childList mutations) and the selection is restored after it, which is why the keyboard
+  survives. The rebuild is therefore NOT the cause on these engines and was left alone.
+
+**What was real and is fixed:** "Aa" swapped the attachment chips (two rows on the Mi 9T, THREE on the
+iPhone 12) for one formatting row, so the footer shrank and the text area above it grew by 148 pt in
+the middle of a selection. `PostComposerBar` now binds the chip row's height while it is drawn and holds
+it as the slot's floor while the formatting row replaces it (the row sits on the slot's bottom edge,
+beside "Aa"); `PostComposerBar.svelte.test.ts` pins it.
+
+**Owed:** a read on Gboard (the Mi 9T has no Gboard, only AOSP), on the iPhone with a finger rather than
+WebDriverAgent's synthetic touches (a real long press and real handle drags), and on mobile web
+(Chrome Android, Safari iOS), where the overlay's `top 180ms` transition follows a visual-viewport pan
+and was not measured. If the keyboard still drops there, the first thing to log is `focusout` on the
+editor and the `visualViewport` height around it.

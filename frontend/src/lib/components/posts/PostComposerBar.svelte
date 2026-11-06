@@ -113,6 +113,8 @@
   }: Props = $props();
 
   let formatting = $state(false);
+  /** The chip row's last drawn height (px): the floor of the slot while the formatting row replaces it. */
+  let chipRowHeight = $state(0);
   /** The post holds the most attachments it may: nothing more can be added. */
   const full = $derived(attachmentsFull(attachmentCount));
   /** The line beside the formatting toggle: the attachment counter, then the status, one message. */
@@ -203,11 +205,26 @@
 {/if}
 
 <div class="flex flex-col gap-2">
-  <div class="flex min-h-9 items-center">
+  <!--
+    THE SLOT KEEPS ITS HEIGHT WHEN "Aa" SWAPS THE CHIPS FOR THE FORMATTING ROW. The chips wrap onto
+    two rows on an Android phone and three on an iPhone 12 (measured, 2026-11-06: the text area
+    jumped 148 pt taller under a selection the moment "Aa" was tapped), the formatting row is one, so
+    the swap moved the whole screen. The chip row's last height is remembered (it is bound while the
+    chips are drawn) and held as the slot's floor while the formatting row stands in; the row sits
+    on the bottom edge, beside "Aa".
+  -->
+  <div
+    class="flex min-h-9 {formatting ? 'items-end' : 'items-center'}"
+    style:min-height={formatting && chipRowHeight > 0 ? `${chipRowHeight}px` : undefined}
+  >
     {#if formatting}
       <MarkdownComposerToolbar row {onFormat} class="w-full" />
     {:else}
-      <div data-chip-row class="flex w-full flex-wrap items-center gap-2">
+      <div
+        data-chip-row
+        bind:clientHeight={chipRowHeight}
+        class="flex w-full flex-wrap items-center gap-2"
+      >
         {#if nativeLibrary}
           <button
             type="button"

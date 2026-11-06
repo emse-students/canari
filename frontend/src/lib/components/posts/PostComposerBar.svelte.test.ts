@@ -212,3 +212,27 @@ it('wraps the chip row instead of clipping it, so every chip is reachable at any
   expect(row.className).toContain('flex-wrap');
   expect(row.className).not.toMatch(/overflow-(x-)?(hidden|auto|scroll)/);
 });
+
+it('holds the height of the chip row while the formatting row replaces it, so "Aa" moves nothing', () => {
+  // The chips wrap onto two or three rows, the formatting row is one: without a floor the swap
+  // shrank the footer and the text area above it jumped (iPhone 12, 2026-11-06). The height is read
+  // when the row is drawn, so the layout answer is stubbed on the element before the mount.
+  const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+    configurable: true,
+    get() {
+      return (this as HTMLElement).hasAttribute('data-chip-row') ? 132 : 0;
+    },
+  });
+  try {
+    const { target } = mountBar();
+    flushSync();
+    Array.from(target.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')).at(-1)!.click();
+    flushSync();
+
+    const slot = target.querySelector('[role="toolbar"]')!.parentElement as HTMLElement;
+    expect(slot.style.minHeight).toBe('132px');
+  } finally {
+    if (original) Object.defineProperty(HTMLElement.prototype, 'clientHeight', original);
+  }
+});
