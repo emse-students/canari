@@ -417,8 +417,13 @@
              the app's link handler with its Safe Browsing gate). A tap on one is never a double
              tap (`tapBelongsToInnerControl`) nor a swipe (no movement); a drag that starts on one
              still pages, as everywhere on the reel. A long URL wraps anywhere, never past the
-             frame. -->
+             frame.
+             THE TEXT IS ALWAYS ON THE VIEWER'S DARK SCRIM, whatever the app's theme: `data-theme="dark"`
+             puts it in the `dark:` variant's scope (`app.css`), so its links, mentions and hashtags
+             - and their hover - take the colours they were given for a dark surface, the post
+             card's own. One attribute for every renderer, never a recolour per element. -->
         <div
+          data-theme="dark"
           class="mt-1 min-h-0 {expanded
             ? 'pointer-events-auto max-h-[50dvh] touch-pan-y overflow-y-auto overscroll-contain'
             : 'shrink-0'}"
@@ -427,7 +432,7 @@
           <PostMarkdown
             markdown={post.markdown}
             bind:element={textEl}
-            class="text-sm leading-snug opacity-90 [&_a]:pointer-events-auto [&_a]:wrap-anywhere [&_a]:text-amber-300 [&_button]:pointer-events-auto {expanded
+            class="text-sm leading-snug opacity-90 [&_a]:pointer-events-auto [&_a]:wrap-anywhere [&_button]:pointer-events-auto {expanded
               ? ''
               : 'line-clamp-2'}"
           />

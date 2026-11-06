@@ -132,6 +132,9 @@ it("a caption's link is tappable, and a double tap on it is the link's, never a 
   expect(link.closest('[data-reel-caption] .post-markdown')!.className).toContain(
     '[&_a]:pointer-events-auto'
   );
+  // On the viewer's dark scrim in either app theme: the `dark:` colours of the link, the mention and
+  // the hashtag apply (`data-theme="dark"`, the scope of `app.css`'s dark variant).
+  expect(link.closest('[data-theme="dark"]')).not.toBeNull();
   link.addEventListener('click', (e) => e.preventDefault());
   tapOn(link, 1);
   tapOn(link, 2);

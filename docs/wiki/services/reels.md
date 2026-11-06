@@ -149,8 +149,9 @@ carousel post with a link appears in CanaReels, the link clickable in the captio
 [client half](../frontend/modules/reels.md#a-post-with-a-link-in-its-text-owner-2026-11-06)).
 Poll, form, attached form and linked event still keep a post out. The clause is
 `LINKED_MEDIA_POST_SQL`, the mode `carousel-links`, the cache-key suffix `+carousel-links`.
-**It means something only with `multiMedia`** (`singleMediaModeOf`): every installed client up to
-`1.6.6-alpha.1` drops a post with a link (`fullScreenPageOf` reads it as no page and accuses it), and
+**It means something only with `multiMedia`** (`singleMediaModeOf`): every client built without
+this change (every release through `1.6.6-alpha.1`; the first that sends `withLinks` is
+`1.6.6-alpha.2` at the earliest, the first stable `1.6.6`) drops a post with a link (`fullScreenPageOf` reads it as no page and accuses it), and
 none of them sends `withLinks`, so each keeps the rule it was built for; the switch is not given a
 meaning beside an older one because no client would send that pair. A server that does not know
 `withLinks` strips it and keeps the link out, which the current client reads as before. Pinned by

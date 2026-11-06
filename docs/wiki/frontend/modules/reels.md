@@ -952,7 +952,8 @@ the link's preview card; the preview is still not drawn - the link itself is, wh
 - **Which posts:** `fullScreenPageOf` no longer reads the text. Poll, form, attached form and linked
   event still keep a post out. The list asks for it with `withLinks=true` beside `multiMedia=true`
   ([server half](../../services/reels.md#reading)), so a client that does not draw the link - every
-  installed one up to `1.6.6-alpha.1` - never receives such a post.
+  client built without this change, every release through `1.6.6-alpha.1` - never receives such a
+  post ([legacy-compatibility](../../legacy-compatibility.md)).
 - **The link is the post card's own**: the caption is `PostMarkdown`, whose `link` renderer is
   `PostMentionLink` - an in-app Canari link goes through `AppLink`, an outside one is an `<a>`
   that the app's document-level handler (`installAppLinkClickHandler`) sends to `openExternal` and
@@ -960,8 +961,12 @@ the link's preview card; the preview is still not drawn - the link itself is, wh
 - **Tappable, folded or not.** The caption is pointer-transparent so a tap beside the text reaches
   the video; its `a` and `button` (a mention) are not (`[&_a]:pointer-events-auto`). A long URL
   wraps anywhere (`wrap-anywhere`), never past the frame; a long caption folds to two lines and
-  unfolds into its own scroll, as before. The link is `amber-300`, readable on the caption's black
-  gradient.
+  unfolds into its own scroll, as before. **The text is always on the viewer's dark scrim**, whatever
+  the app's theme, so its block carries `data-theme="dark"`: the `dark:` variant (`app.css`) then
+  applies inside it, and a link, a mention and a hashtag - hover included - take the colours the post
+  card gives them on a dark surface (`amber-400`, an in-app link's hover `amber-300`). One attribute,
+  never a recolour per renderer: the first build recoloured only the `a`, leaving a mention and a
+  hashtag `amber-700` on black (about 3:1) in the light theme and an in-app link darkening on hover.
 - **Never a swipe nor a like.** A tap does not move, so the viewer's gesture never locks an axis; a
   drag that STARTS on a link still pages, as everywhere on the page. A tap on a link is the link's
   for the double tap (`tapBelongsToInnerControl`). The click that ends a MOUSE drag is swallowed in

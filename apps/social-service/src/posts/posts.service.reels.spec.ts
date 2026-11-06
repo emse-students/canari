@@ -340,7 +340,7 @@ describe('reads exclude a reel past its month', () => {
     expect(sql).not.toContain(LINKED_MEDIA_POST_SQL);
   });
 
-  it('multiMedia alone keeps the link out: the 1.6.6-alpha.1 client cannot draw one', async () => {
+  it('multiMedia alone keeps the link out: a client built before withLinks cannot draw one', async () => {
     const { service, queries } = makeService({});
     await service.listPosts({
       limit: 10,
