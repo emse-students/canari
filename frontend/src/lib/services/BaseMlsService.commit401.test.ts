@@ -19,7 +19,7 @@ import {
   DeliveryRenewalFailedError,
   MlsDeliveryApi,
 } from '$lib/mls-client/mlsDeliveryApi';
-import { RefreshFailedError, SessionExpiredError } from '$lib/stores/auth';
+import { SessionExpiredError, TransientAnswerError } from '$lib/stores/auth';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { plainCommitLock } from '$lib/mls-client/test/fixtures/plainCommitLock';
 
@@ -200,7 +200,7 @@ describe('runCommitTransaction - a commit answered 401', () => {
       'TOK-2: a renewal nobody answered',
       new TransportFailureError(new TypeError('Failed to fetch')),
     ],
-    ['a renewal answered 502', new RefreshFailedError(502)],
+    ['a renewal answered 502', new TransientAnswerError(502)],
   ])(
     '%s after a 401 refuses the commit definitively - the stage cleared, no resubmission, no logout',
     async (_n, failure) => {

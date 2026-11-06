@@ -242,13 +242,19 @@ async function readRefusalBody(res: Response): Promise<unknown> {
 }
 
 /**
- * The `code` of a coded refusal body (`{ code, message }`, core-service's `MAINTENANCE`), or null.
- * Read as a FIELD, so the boot screen names a maintenance without matching the message's words.
+ * The `code` of a coded refusal body (`{ code, message }`, core-service's `MAINTENANCE`) and, for a
+ * maintenance, the operator's own text (`maintenanceMessage`, null when none was set). Read as
+ * FIELDS, so the boot screen names a maintenance without matching the message's words.
  */
-function refusalCodeOf(body: unknown): string | null {
-  if (!body || typeof body !== 'object') return null;
-  const { code } = body as { code?: unknown };
-  return typeof code === 'string' && code ? code : null;
+function codedRefusalOf(body: unknown): { code: string | null; maintenanceMessage: string | null } {
+  if (!body || typeof body !== 'object') return { code: null, maintenanceMessage: null };
+  const { code, maintenanceMessage } = body as { code?: unknown; maintenanceMessage?: unknown };
+  const named = typeof code === 'string' && code ? code : null;
+  const operatorText =
+    named === 'MAINTENANCE' && typeof maintenanceMessage === 'string' && maintenanceMessage.trim()
+      ? maintenanceMessage
+      : null;
+  return { code: named, maintenanceMessage: operatorText };
 }
 
 /**
@@ -1231,9 +1237,11 @@ async function _doRefresh(fetchImpl: typeof fetch, why?: string): Promise<string
       // The code is read for the boot screen's WORDING only, so the JSON content type suffices: the
       // 503 `MAINTENANCE` body (`{ code, message }`) is outside the shared contract, and
       // `refusalOrigin` - built for destructive readings - calls it the edge's.
-      const code =
-        responseOrigin(res) === 'gateway' ? refusalCodeOf(await readRefusalBody(res)) : null;
-      throw new TransientAnswerError(res.status, code);
+      const coded =
+        responseOrigin(res) === 'gateway'
+          ? codedRefusalOf(await readRefusalBody(res))
+          : { code: null, maintenanceMessage: null };
+      throw new TransientAnswerError(res.status, coded.code, coded.maintenanceMessage);
     }
     awarn(
       `refresh✗${res.status} is the app's own refusal of the request - a verdict, not on the session`

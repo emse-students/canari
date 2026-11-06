@@ -28,7 +28,7 @@ import {
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 import { readServerInstant, type ServerInstant } from './serverInstant';
 import { RefusedRenewedToken, renewingOn401, resendAfter401 } from '$lib/utils/renewOn401';
-import { RefreshFailedError, SessionEndedByDeviceRevocationError } from '$lib/stores/auth';
+import { SessionEndedByDeviceRevocationError, TransientAnswerError } from '$lib/stores/auth';
 import { DEVICE_REVOKED_BY_OWNER, REVIEW_COHORT_BOUNDARY_CODE } from '$lib/utils/refusalCodes';
 
 /**
@@ -936,8 +936,9 @@ export class DeliveryRefusedRenewedTokenError extends ApiRefusalError {
 }
 
 /**
- * The delivery service answered 401 and the RENEWAL that followed failed - a refresh answered 5xx
- * (`RefreshFailedError`) or one nobody answered (a transport failure, kept in `renewalFailure`).
+ * The delivery service answered 401 and the RENEWAL that followed failed - a refresh whose answer
+ * was not a verdict (`TransientAnswerError`: a 5xx, 408, 429 or the edge's) or one nobody answered
+ * (a transport failure), kept in `renewalFailure`.
  *
  * Typed HERE, where it is known that the server ANSWERED: the 401 came from the guard before any
  * handler, so the request did nothing. Rethrown as it came, a transport failure of the refresh read
@@ -963,12 +964,13 @@ export class DeliveryRenewalFailedError extends ApiRefusalError {
 
 /**
  * What a renewal failure after a delivery 401 becomes. An ALLOWLIST of the failures that say only
- * "no new token now": a refresh answered 5xx and a refresh nobody answered. Every other one is a
- * verdict the app routes on by its own type (a dead cookie, a sign-out under way, a split identity)
- * and passes as it came.
+ * "no new token now": a refresh whose answer was not a verdict (`TransientAnswerError`) and a
+ * refresh nobody answered. Every other one is a verdict and passes as it came: a dead cookie, a
+ * sign-out under way, a split identity, or the app's own 4xx refusal of the refresh (a plain
+ * `RefreshFailedError`).
  */
 function deliveryRenewalFailed(error: unknown, where: string): unknown {
-  return error instanceof RefreshFailedError || isTransportFailure(error)
+  return error instanceof TransientAnswerError || isTransportFailure(error)
     ? new DeliveryRenewalFailedError(where, error)
     : error;
 }

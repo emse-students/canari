@@ -1,4 +1,5 @@
 import {
+  AnswerBodyLostError,
   assertAnsweredByApi,
   NotFromApiError,
   readApiJson,
@@ -15,6 +16,33 @@ describe('readApiJson', () => {
     await expect(readApiJson(Response.json({ a: 1 }), where)).resolves.toEqual({ a: 1 });
     await expect(readApiJson(Response.json([1]), where)).resolves.toEqual([1]);
     await expect(readApiJson(Response.json(null), where)).resolves.toBeNull();
+  });
+
+  /** A JSON-typed 200 whose body stream fails with `reason` after the head. */
+  const lostBody = (reason: unknown) =>
+    new Response(
+      new ReadableStream({
+        start(c) {
+          c.error(reason);
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+
+  it('reads a body lost after the head as no answer - a transport failure, never the engine error', async () => {
+    const failure = await readApiJson(lostBody(new TypeError('network error')), where).catch(
+      (e: unknown) => e
+    );
+    expect(failure).toBeInstanceOf(AnswerBodyLostError);
+    expect(isTransportFailure(failure)).toBe(true);
+    expect(failure).toMatchObject({ where, status: 200 });
+  });
+
+  it("lets the caller's own abort through untouched - its decision, not the link's", async () => {
+    const abort = new DOMException('aborted', 'AbortError');
+    const failure = await readApiJson(lostBody(abort), where).catch((e: unknown) => e);
+    expect(failure).not.toBeInstanceOf(AnswerBodyLostError);
+    expect((failure as DOMException).name).toBe('AbortError');
   });
 
   it('reads a 2xx without a JSON content type as no answer, and never reads its body', async () => {

@@ -17,7 +17,7 @@ import {
 } from './mlsDeliveryApi';
 import { TokenAccountChangedError } from '$lib/utils/renewOn401';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
-import { RefreshFailedError, SessionExpiredError } from '$lib/stores/auth';
+import { RefreshFailedError, SessionExpiredError, TransientAnswerError } from '$lib/stores/auth';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 
 const ACCEPTED = { accepted: true, newEpoch: 2 };
@@ -100,7 +100,7 @@ describe('submitCommit answered 401', () => {
   // never as "no answer", and it keeps what the renewal threw.
   it.each([
     ['a refresh nobody answered', new TransportFailureError(new TypeError('Failed to fetch'))],
-    ['a refresh answered 502', new RefreshFailedError(502)],
+    ['a refresh answered 502', new TransientAnswerError(502)],
   ])(
     'types %s after a 401 as a refusal of this request - never a session verdict',
     async (_n, failure) => {
@@ -116,6 +116,15 @@ describe('submitCommit answered 401', () => {
       expect(f).toHaveBeenCalledTimes(1);
     }
   );
+
+  it("passes the app's own 4xx refusal of the refresh as it came - a verdict, not a missing token", async () => {
+    const refused = new RefreshFailedError(404);
+    const f = vi.fn().mockImplementation(async () => answer(401));
+    const refresh = vi.fn().mockRejectedValue(refused);
+    const err = await submit(api(f, refresh)).catch((e: unknown) => e);
+    expect(err).toBe(refused);
+    expect(f).toHaveBeenCalledTimes(1);
+  });
 
   it('never renews again a renewed token the guard refused: N requests, ONE refresh', async () => {
     let current = 'stale';

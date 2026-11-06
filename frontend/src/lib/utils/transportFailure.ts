@@ -105,7 +105,13 @@ export class TransientAnswerError extends RefreshFailedError {
      * The `code` of a JSON-typed body (`{ code, message }`: core-service's 503 `MAINTENANCE`), else
      * null. Read for WORDING only, so the content type is proof enough (`responseOrigin`).
      */
-    readonly code: string | null = null
+    readonly code: string | null = null,
+    /**
+     * The OPERATOR's maintenance text (`maintenanceMessage` of the 503 `MAINTENANCE` body), or null
+     * when there is none - the screen then words the default in the user's language. Never the
+     * body's `message`, which falls back to an English default the client cannot tell apart.
+     */
+    readonly maintenanceMessage: string | null = null
   ) {
     super(status, `Token refresh answered ${status}${code ? ` (${code})` : ''} - not a verdict`);
     this.name = 'TransientAnswerError';

@@ -20,6 +20,8 @@
  *   truncated one): the same type, carrying the parse error as its cause.
  * - A body that parses is the API's answer, WHATEVER ITS SHAPE: a field it lacks (a server older
  *   than the field) is the caller's question, never this helper's.
+ * - A body LOST on the way (the stream failed after the head) is no answer either:
+ *   {@link AnswerBodyLostError}, a transport failure too.
  */
 
 import { isContractRefusalCode } from './refusalCodes';
@@ -153,15 +155,46 @@ export function assertAnsweredByApi(res: Response, where: string): void {
 }
 
 /**
+ * A 2xx whose head arrived and whose BODY was lost on the way (the stream failed: the engine's
+ * `TypeError`, Tauri's string). The answer never reached the caller, so it is NO ANSWER - a
+ * {@link TransportFailureError}, read by every caller exactly as a request nobody answered. It used to
+ * escape as the engine's own error, which no predicate reads as a transport failure: the boot refresh
+ * took it as a verdict and sent the user to login. Whether the server acted on the request is as
+ * unknown as after any lost answer, and the callers already hold that ambiguity (the outbox
+ * resubmits, receivers deduplicate; a commit is resubmitted until the gate answers).
+ */
+export class AnswerBodyLostError extends TransportFailureError {
+  constructor(
+    /** What was being asked, for the log. */
+    readonly where: string,
+    /** The status whose body was lost. */
+    readonly status: number,
+    cause: unknown
+  ) {
+    super(
+      cause,
+      `${where} answered ${status} and its body was lost (${String(cause)}) - no answer`
+    );
+    this.name = 'AnswerBodyLostError';
+  }
+}
+
+/**
  * The parsed JSON body of a 2xx from the API, or {@link NotFromApiError} when the response is not
- * the API's (see the module comment for the three cases). A body read that fails rejects with the
- * engine's own error, untouched - that is a lost link, not an impostor.
+ * the API's (see the module comment for the three cases), or {@link AnswerBodyLostError} when the body
+ * read itself fails. A caller's own abort rejects untouched: that is the caller's decision, not the link's.
  *
  * @param where What was asked, for the log line the caller writes from the error.
  */
 export async function readApiJson(res: Response, where: string): Promise<unknown> {
   assertAnsweredByApi(res, where);
-  const text = await res.text();
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') throw e;
+    throw new AnswerBodyLostError(where, res.status, e);
+  }
   try {
     return JSON.parse(text) as unknown;
   } catch (e) {
