@@ -5,7 +5,8 @@ import type { Conversation } from '$lib/types';
 
 /**
  * THE REQUEST COUNT OF A RECORDED BOOT (WP-W4). HAR 2026-10-18: a cold start sent `devices/<id>`
- * three times and `unread-counts` twice. Every caller of the boot path below goes through ONE
+ * three times and `unread-counts` twice. The device list is shared as a ROSTER read (`?peek=1`)
+ * only: since 2026-11-06 a claim of it is never joined (`fetchUserDevices`). Every caller of the boot path below goes through ONE
  * recording `fetch`, in the order the boot raises them, and the test pins how many requests reach the
  * wire. No sleep and no clock: the callers run concurrently and the answer is released by hand.
  */
@@ -42,10 +43,10 @@ describe('a recorded boot sends each account-level read once', () => {
       });
 
     const boot = Promise.all([
-      // the pending-invitation sweep, the welcome-request answer, the group reconcile
-      api.fetchUserDevices('u1'),
-      api.fetchUserDevices('u1'),
-      api.fetchUserDevices('u1'),
+      // the settings device count, the device-notice pre-claim, a device's name
+      api.listUserDevices('u1'),
+      api.listUserDevices('u1'),
+      api.listUserDevices('u1'),
       // the community load, then the live stream coming back
       unread('community load'),
       unread('live stream back'),
@@ -57,6 +58,6 @@ describe('a recorded boot sends each account-level read once', () => {
     await boot;
 
     expect(urls.filter((u) => u.endsWith('/api/channels/unread-counts'))).toHaveLength(1);
-    expect(urls.filter((u) => u.endsWith('/api/mls/devices/u1'))).toHaveLength(1);
+    expect(urls.filter((u) => u.endsWith('/api/mls/devices/u1?peek=1'))).toHaveLength(1);
   });
 });
