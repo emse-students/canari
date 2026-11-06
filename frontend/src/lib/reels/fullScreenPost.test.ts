@@ -41,10 +41,8 @@ describe('fullScreenPageOf', () => {
     expect(fullScreenPageOf(post({ media: [legacy] }))).toBe('reel');
   });
 
-  it('keeps a video with a caption that carries no link, and never reads an expiry', () => {
-    const plain = post({ media: [video], markdown: 'Soiree au foyer' });
-    expect(plain.expiresAt).toBeUndefined();
-    expect(fullScreenPageOf(plain)).toBe('reel');
+  it('keeps a video with a caption that carries no link', () => {
+    expect(fullScreenPageOf(post({ media: [video], markdown: 'Soiree au foyer' }))).toBe('reel');
   });
 
   it('reads `images` from a server older than the rename', () => {

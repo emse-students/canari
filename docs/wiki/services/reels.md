@@ -125,6 +125,22 @@ sheet read it like any post. Pagination order is unchanged (`publishedAt DESC, i
 exclusion, a legacy video by mime type) and `posts.service.reels.spec.ts` (the wiring in every arm,
 the precedence, and "means nothing without `kind=reel`").
 
+**Saving a feed video (decided 2026-11-06, reversible).** The 2026-10-09 rule *any reel can be
+saved* now covers a feed video shown in the viewer. It is saved under its OWN type, never relabelled
+an MP4: `saveReel.ts` takes the extension and the mime from `ref.mimeType` (mp4, mov, webm, m4v,
+3gp; anything else an mp4) and names it `canari-video-...` rather than `canari-reel-...` (a reel in
+a conversation, with no `kind`, stays `canari-reel-...`). The mime goes down to the native save
+(`save_video`'s optional `mime`, default `video/mp4`, so an older client still works): Android's
+`GalleryPlugin.kt` writes it into MediaStore, and the Rust command renames the staged file to the
+name's extension because iOS Photos reads the container off the extension. **iOS Photos reads no
+WebM, so the rail hides the save for a WebM in the iOS app** (`canSaveVideo`); the web and Android
+keep it.
+
+**The next slide's preload skips a long feed video (decided 2026-11-06).** A feed video is not
+prepared into a reel and may be hundreds of MB; `ReelSlide` preloads the next slide's video only
+when it streams (`encoding: 'segmented-v1'`) or weighs at most 28 MB (`worthPreloading`,
+`REEL_PRELOAD_MAX_BYTES`, the reel cap); any other loads when its slide becomes active.
+
 **An expired reel is never served**, whether the worker has reached it or not: a reel whose
 `expiresAt` has passed is excluded from every read (`GET /api/posts/:id` answers `404`). The client
 needs no clock to decide that - it simply never receives one. The row and its blob go at the next

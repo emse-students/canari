@@ -52,7 +52,7 @@
   import { Repeat2 } from '@lucide/svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { REEL_FRAME_RATIO } from '$lib/reels/reelFrame';
-  import { ReelPreload } from '$lib/reels/reelPreload';
+  import { ReelPreload, worthPreloading } from '$lib/reels/reelPreload';
   import { captureReelPoster, reelPosterUrl } from '$lib/reels/reelPosters.svelte';
   import { placeholderDataUrl } from '$lib/utils/mediaPlaceholder';
   import { watchClampOverflow } from '$lib/utils/posts/clampOverflow';
@@ -262,6 +262,8 @@
 
   $effect(() => {
     if (!preload || active || !video || !authToken) return;
+    // A long feed video is not fetched whole for a slide not yet reached (`worthPreloading`).
+    if (!worthPreloading(video)) return;
     const ref = video;
     const ahead = new ReelPreload(
       ref,

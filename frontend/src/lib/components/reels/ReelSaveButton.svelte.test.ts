@@ -11,7 +11,10 @@ import type { SaveableReel } from '$lib/reels/saveReel';
 const saveReel = vi.fn();
 const openAppSettings = vi.fn(async () => {});
 const showToast = vi.fn();
-vi.mock('$lib/reels/saveReel', () => ({ saveReel: (r: SaveableReel) => saveReel(r) }));
+vi.mock('$lib/reels/saveReel', () => ({
+  saveReel: (r: SaveableReel) => saveReel(r),
+  canSaveVideo: () => true,
+}));
 vi.mock('$lib/reels/gallery', () => ({ openAppSettings: () => openAppSettings() }));
 vi.mock('$lib/stores/toast.svelte', () => ({
   showToast: (...a: unknown[]) => showToast(...a),
