@@ -1369,8 +1369,8 @@ until this shipped, so whether it can be rotated is a question for Lydia
 
 ## The priced grid (`product_grid`, WP-G1, 2026-11-06)
 
-**Server side built (WP-G1); the fill page (WP-G2), the editor (WP-G3) and the client half of the
-export (WP-G4) build on it.** Decided by the owner on 2026-11-06; design, use cases and the work
+**Server side built (WP-G1) and the fill page (WP-G2, [below](#the-fill-page-wp-g2)); the editor
+(WP-G3) and the client half of the export (WP-G4) build on it.** Decided by the owner on 2026-11-06; design, use cases and the work
 packages: the forms capability audit of 2026-11-06 (`docs/wiki/forms-capability-audit-2026-11-06.md`),
 section 4.
 
@@ -1381,7 +1381,8 @@ list of the types whose editor exists (`questionTypes.ts`, asserted by `question
 Offering it before WP-G3 would hand people a question every save refuses
 (`PRODUCT_GRID_DEFINITION_MISSING`). WP-G3 adds `product_grid` to that list with its editor. The
 fill page reads its own list, `FILLABLE_QUESTION_TYPE_VALUES` (`fillAnswers.ts`
-`isKnownQuestionType`): until WP-G2 a priced grid is drawn "update the app" and blocks the send.
+`isKnownQuestionType`), which holds `product_grid` since WP-G2: an older build draws a priced grid
+"update the app" and blocks the send.
 
 A new question type - NOT a mode of the survey grids (`matrix_single`, `matrix_multiple`): an
 order, rows x columns ("Vert" x "M"), each cell a quantity, each unit at the price of the payer's
@@ -1468,6 +1469,58 @@ lists); a map mixing the two is refused. Both bounds are in `libs/contracts/form
 (`maxProductGridCells`, `maxProductGridCellKey`). `withNormalisedGridAnswers` passes a
 `product_grid` answer through untouched to `priceProductGridAnswer`, the only judge of what it
 means; a number map on any other question is still `FORM_GRID_ANSWER_INVALID`.
+
+### The fill page (WP-G2)
+
+Both fill pages hand a `product_grid` question to `ProductGridQuestion.svelte` instead of
+`FormQuestion.svelte` (its own card: the product photo across the top, the title and the
+viewer's price - "des X" when rows or sizes differ - and the description as the spec line). The
+design is the owner's mockup of 2026-11-06 (`Fill-Desktop`, `Fill-Mobile`, `Fill-Guest-Mobile`),
+drawn with the app's tokens.
+
+- **Two drawings of one answer, picked by CSS alone (`sm`, 640px).** From 640px a table with
+  alternating rows: each open cell a "+" that becomes a - n + stepper (+ disabled at `maxPerCell`),
+  a checkbox when `maxPerCell` is 1. Below it a card per row, its sizes as pills that wrap - a tapped
+  pill becomes "M x1" with - and + (a toggled pill at a cap of 1) - so nothing scrolls sideways. A
+  closed cell is struck through and has no control. A grid of ONE row has no row label anywhere.
+  `per_row` writes the price on each row (both drawings), `per_column` under each size (and in each
+  pill).
+- **The answer** is `{ "rowId:colId": quantity }` holding only the cells ordered
+  (`productGridFill.ts` `withCellQuantity`: clamped to 0..`maxPerCell`, a cell at 0 dropped, a new
+  object per write so `bind:value` sees it), sent through the unchanged submit path.
+  `initialSelections` starts it `{}`; `isItemAnswered` / `firstMissingAnswer` want one unit
+  (`kind: 'order'`). The fill page draws it because `FILLABLE_QUESTION_TYPE_VALUES` holds
+  `product_grid` (`questionTypes.test.ts` asserts the fill page draws every canonical type).
+- **The total.** `fillPriceState` takes `productGridPrices` and returns `gridLines` (every visible
+  grid's lines, `productGridOrderLines` -> the contract's `parseProductGridAnswer` +
+  `productGridLines`) and `gridCents`; its `total` is base + supplements + lines, the sum
+  `FormsService.submit` charges. It is a PREVIEW. A grid the server sent no prices for, or an answer
+  the contract refuses, adds no line and logs at error level - never a total the submit would
+  contradict.
+- **The bar.** `ProductGridOrderBar.svelte`: "Total : 84 EUR", the article count, and a recap that
+  unfolds line by line ("Sweat capuche Noir M x1 28 EUR"; a one-row grid's line has no row), beside
+  the page's own pay button (one `{#snippet}` per page, shared with the plain bar). A member form
+  holding a visible grid keeps its bar `sticky` from the start (the `reachedEnd` latch still governs
+  every other form); the guest page sticks its footer the same way.
+- **Who pays what.** `FormViewerTier.svelte`, at the foot of `FormHeader`: "<display name> - Tarif
+  applique : <category>" for a member, "Tarif applique : Tous les autres" and a sign-in link
+  (`/login?returnTo=/forms/:id`) for a guest. The category is `productGridPrices[id].tierLabel`, or
+  `form_criterion_others` for `_others`; a grid with one list (`_all`) names none, and the line is
+  absent when no visible grid prices by category.
+- **Refusals.** A send with no article is held on the grid's card (red border, the sentence under
+  it, the card scrolled into view) - every required question now does the same (`MissingAnswer`
+  carries `itemId`). The server's five answer codes are worded by `productGridRefusalMessage`
+  (`PRODUCT_GRID_ANSWER_MISSING` -> reload or update; the three cell codes -> "an item is no longer
+  offered"; `_EMPTY`), reached through the ONE entry point both pages call,
+  `formSubmitRefusalMessage` (`answerBounds.ts`), whose `formCodeMessage` falls through to it for
+  any code that is not a form's own. An empty order is also left out of the answer sent
+  (`visibleAnswers`).
+
+Tests: `productGridFill.test.ts` (clamping, lines and total across two grids, a hidden grid, missing
+prices, the category words, every code), `ProductGridQuestion.svelte.test.ts` (stepper bounds,
+closed cells, the checkbox, the phone pill path, a one-row grid, both price modes, the error
+state), `routes/forms/[id]/page.productGrid.svelte.test.ts` (the bar's total and recap across two
+grids, the category line, a send held on the grid).
 
 ### Responses and export (server half of WP-G4)
 

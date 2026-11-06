@@ -1,6 +1,7 @@
 import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
 import type { FormItem } from './api';
+import { hasOrderedUnits, isProductGrid } from './productGridFill';
 import { FILLABLE_QUESTION_TYPE_VALUES } from './questionTypes';
 
 /**
@@ -21,6 +22,9 @@ export function initialSelections(items: FormItem[]): Selections {
   for (const item of items) {
     if (item.type === 'multiple_choice') {
       initial[item.id] = [];
+    } else if (isProductGrid(item)) {
+      // A priced grid's answer: `"rowId:colId"` -> quantity, holding only the cells ordered.
+      initial[item.id] = {};
     } else if (isMatrix(item)) {
       initial[item.id] = {};
       for (const row of item.rows ?? []) {
@@ -49,7 +53,7 @@ const KNOWN_TYPES = new Set([...FILLABLE_QUESTION_TYPE_VALUES, 'single']);
 
 /**
  * Whether this build knows how to answer a question type. A type this build cannot draw - one added
- * after this release, or `product_grid` until its fill page (WP-G2) - is drawn as "update the app" and blocks a send when required, rather than
+ * after this release - is drawn as "update the app" and blocks a send when required, rather than
  * going out empty for the server to refuse in English.
  */
 export function isKnownQuestionType(type: string): boolean {
@@ -59,9 +63,11 @@ export function isKnownQuestionType(type: string): boolean {
 /**
  * Whether this question has an answer - the rule the server applies to a required question
  * (`answer-bounds.ts` `isQuestionAnswered`). A grid is answered by ONE row, or by every row when
- * the question says `requireEveryRow` (decided 2026-11-06, D5); one value otherwise.
+ * the question says `requireEveryRow` (decided 2026-11-06, D5). A priced grid is answered by one
+ * unit ordered (an empty object is not an order); anything else by one value.
  */
 export function isItemAnswered(item: FormItem, value: unknown): boolean {
+  if (isProductGrid(item)) return hasOrderedUnits(value);
   if (isMatrix(item)) {
     if (!value || typeof value !== 'object') return false;
     const rows = value as Record<string, unknown>;
@@ -71,13 +77,18 @@ export function isItemAnswered(item: FormItem, value: unknown): boolean {
   return hasValue(value);
 }
 
-/** Why a required question is not answered yet - what the page has to say about it. */
-export type MissingAnswer =
+/**
+ * Why a required question is not answered yet - what the page has to say about it, and which
+ * question (`itemId`), so the page can mark that card and bring it into view.
+ */
+export type MissingAnswer = { itemId: string } & (
   | { kind: 'matrix'; label: string }
   | { kind: 'row'; label: string; row: string }
   | { kind: 'select'; label: string }
+  | { kind: 'order'; label: string }
   | { kind: 'answer'; label: string }
-  | { kind: 'update'; label: string };
+  | { kind: 'update'; label: string }
+);
 
 /**
  * The first REQUIRED question, in order, that has no answer - or null when the form may be sent.
@@ -93,20 +104,23 @@ export function firstMissingAnswer(
   for (const item of items) {
     if (!item.required) continue;
     const value = selections[item.id];
+    const itemId = item.id;
     if (!isKnownQuestionType(item.type)) {
-      return { kind: 'update', label: item.label };
+      return { itemId, kind: 'update', label: item.label };
+    } else if (isProductGrid(item)) {
+      if (!hasOrderedUnits(value)) return { itemId, kind: 'order', label: item.label };
     } else if (isMatrix(item)) {
       const rows = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
       if (item.requireEveryRow) {
         const row = (item.rows ?? []).find((r) => !hasValue(rows[r]));
-        if (row !== undefined) return { kind: 'row', label: item.label, row };
+        if (row !== undefined) return { itemId, kind: 'row', label: item.label, row };
       } else if (!isItemAnswered(item, rows)) {
-        return { kind: 'matrix', label: item.label };
+        return { itemId, kind: 'matrix', label: item.label };
       }
     } else if (Array.isArray(value) || item.type === 'multiple_choice') {
-      if (!hasValue(value)) return { kind: 'select', label: item.label };
+      if (!hasValue(value)) return { itemId, kind: 'select', label: item.label };
     } else if (!hasValue(value)) {
-      return { kind: 'answer', label: item.label };
+      return { itemId, kind: 'answer', label: item.label };
     }
   }
   return null;
@@ -121,6 +135,8 @@ export function missingAnswerMessage(missing: MissingAnswer): string {
       return m.form_view_error_complete_row({ row: missing.row, label: missing.label });
     case 'select':
       return m.form_view_error_select_option({ label: missing.label });
+    case 'order':
+      return m.form_view_error_order_empty({ label: missing.label });
     case 'answer':
       return m.form_view_error_answer({ label: missing.label });
     case 'update':
@@ -193,7 +209,10 @@ export function visibleAnswers(visible: FormItem[], selections: Selections): Sel
   const out: Selections = {};
   for (const item of visible) {
     const value = selections[item.id];
-    if (isMatrix(item)) {
+    if (isProductGrid(item)) {
+      // An order holds only its ordered cells already (`withCellQuantity`); an empty one stays out.
+      if (hasOrderedUnits(value)) out[item.id] = value;
+    } else if (isMatrix(item)) {
       if (!value || typeof value !== 'object') continue;
       const rows = Object.fromEntries(
         Object.entries(value as Record<string, unknown>).filter(([, cell]) => hasValue(cell))

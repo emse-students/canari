@@ -1,6 +1,7 @@
 import { m } from '$lib/paraglide/messages';
 import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
 import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
+import { productGridRefusalMessage } from './productGridFill';
 
 /**
  * THE BOUNDS OF A FORM AND OF AN ANSWER, AND THE SENTENCE FOR EACH CODED REFUSAL OF A FORM.
@@ -70,7 +71,8 @@ export function formCodeMessage(code: string | null): string | null {
     case FORM_TOO_MANY_QUESTIONS:
       return m.form_builder_too_many_questions({ max: FORM_MAX_QUESTIONS });
     default:
-      return null;
+      // A priced grid's answer codes (`PRODUCT_GRID_*`), worded beside the grid's other rules.
+      return productGridRefusalMessage(code);
   }
 }
 

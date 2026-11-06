@@ -43,6 +43,13 @@ describe('formSubmitRefusalMessage (D6)', () => {
     expect(formSubmitRefusalMessage(err, 'fallback')).toBe(m.form_refusal_answer_invalid());
   });
 
+  it("words a priced grid's answer refusal through the same entry point (WP-G2)", () => {
+    const empty = new SocialApiError('Grid order is empty', 'PRODUCT_GRID_EMPTY', 400);
+    expect(formSubmitRefusalMessage(empty, 'fallback')).toBe(m.form_refusal_grid_empty());
+    const closed = new SocialApiError('Cell is closed', 'PRODUCT_GRID_CELL_CLOSED', 400);
+    expect(formSubmitRefusalMessage(closed, 'fallback')).toBe(m.form_refusal_grid_changed());
+  });
+
   it('falls back to the caller line for an uncoded 400, and never to its message', () => {
     const err = new SocialApiError('answers must contain at most 100 keys', null, 400);
     expect(formSubmitRefusalMessage(err, 'fallback')).toBe('fallback');
