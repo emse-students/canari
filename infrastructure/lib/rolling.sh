@@ -73,22 +73,23 @@ ROLLING_QUIESCE_READS="${ROLLING_QUIESCE_READS:-100}"
 #     retiring, so the targets it finds (named by DNS, rotation_restore) must expire as fast.
 # deploy-replace.test.sh holds this number to both proxies' configurations and to the frozen libraries.
 ROLLING_RESOLVER_TTL_SECONDS=2
+# The default stands for a caller of retire() outside replace_services (deploy-rolling.test.sh case 2b
+# retires a replica directly): the window is then the whole log.
 ROLLING_STARTED_AT="${ROLLING_STARTED_AT:-1970-01-01T00:00:00Z}"
 TRANSPORT_RESETS_TOTAL=0
 TRANSPORT_RESETS_UNKNOWN=0
 
-# containers_of <service> - every container of that service in this project, running or not, one id
-# per line. One-off `compose run` containers are not replicas and are left out.
+# containers_of <service> [running] - every container of that service in this project, one id per
+# line: running or not, or only the running ones with the second argument. One-off `compose run`
+# containers are not replicas and are left out.
 containers_of() {
-  $DOCKER_CLI ps -aq \
+  local all=-a
+  [ "${2:-}" = running ] && all=""
+  $DOCKER_CLI ps -q $all \
     --filter "label=com.docker.compose.project=$PROJECT" \
     --filter "label=com.docker.compose.service=$1" \
-    --filter "label=com.docker.compose.oneoff=False"
-}
-
-# containers_running_of <service> - the running containers of that service, one id per line.
-containers_running_of() {
-  $DOCKER_CLI ps -q     --filter "label=com.docker.compose.project=$PROJECT"     --filter "label=com.docker.compose.service=$1"     --filter "label=com.docker.compose.oneoff=False"     --filter "status=running"
+    --filter "label=com.docker.compose.oneoff=False" \
+    ${2:+--filter status=$2}
 }
 
 # wait_healthy <container> <service> - returns 0 once the container is healthy (or merely running,
@@ -799,13 +800,20 @@ transport_resets() {
     echo unknown
     return 0
   fi
-  n="$(grep -cE "$TRANSPORT_RESET_PATTERN" <<<"$out" || true)"
+  # grep -c answers 0 or 1 when it ran (1: no match) and 2 when it did not: that one is UNKNOWN.
+  local rc=0
+  n="$(grep -cE "$TRANSPORT_RESET_PATTERN" <<<"$out")" || rc=$?
+  if [ "$rc" -gt 1 ]; then
+    printf '::warning::[TRANSPORT_RESETS] could not count the log of %s - the count is UNKNOWN, not zero\n' "${1:0:12}" >&2
+    echo unknown
+    return 0
+  fi
   echo "${n:-0}"
 }
 
 # transport_resets_report <service> <state> <container> - reads one container and prints its line,
-# adding the count to the deploy-wide totals. `retired` is read BEFORE `docker rm` takes the log with
-# the container; `running` is read by the sweep that ends the deploy.
+# adding the count to the deploy-wide totals. `retired` is read AFTER `docker stop` (drain-time resets
+# are in the log by then) and BEFORE `docker rm` takes the log with the container; `running` is read by the sweep that ends the deploy.
 transport_resets_report() {
   local service="$1" state="$2" cid="$3" n
   n="$(transport_resets "$cid")"
@@ -822,9 +830,16 @@ transport_resets_report() {
 # or after its peer depending on the order, so only a read at the END sees the resets a peer's
 # retirement caused in a caller replaced earlier - or one never replaced at all.
 transport_resets_sweep() {
-  local service cid
+  local service cid ids
   for service in "$@"; do
-    for cid in $(containers_running_of "$service"); do
+    if ! ids="$(containers_of "$service" running)"; then
+      # A failed listing is not "no container": the service's count is UNKNOWN.
+      printf '::warning::[TRANSPORT_RESETS] could not list the containers of %s - the count is UNKNOWN, not zero\n' "$service" >&2
+      printf '[TRANSPORT_RESETS] service=%s container=- state=running count=unknown\n' "$service"
+      TRANSPORT_RESETS_UNKNOWN=$((TRANSPORT_RESETS_UNKNOWN + 1))
+      continue
+    fi
+    for cid in $ids; do
       transport_resets_report "$service" running "$cid"
     done
   done
@@ -838,11 +853,12 @@ retire() {
   local service="$1" cid
   shift
   for cid in "$@"; do
-    # Read BEFORE this replica's `docker rm`: the log goes with the container.
-    transport_resets_report "$service" retired "$cid"
     wait_unqueued "$service" "$cid" || return 1
     printf '  %s: retiring %s (drain up to %ss)\n' "$service" "${cid:0:12}" "$ROLLING_DRAIN_SECONDS"
     $DOCKER_CLI stop --time "$ROLLING_DRAIN_SECONDS" "$cid" >/dev/null || return 1
+    # A stopped container's log is still readable, and the drain's own resets are in it: read it
+    # here, BEFORE `docker rm` takes the log with the container.
+    transport_resets_report "$service" retired "$cid"
     $DOCKER_CLI rm "$cid" >/dev/null || return 1
   done
 }
@@ -930,7 +946,7 @@ replace_in_place() {
 replace_services() {
   local plan service mode ports replaced=""
   plan="$(cat)"
-  ROLLING_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  ROLLING_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)"
   rotation_routes_set <<<"$plan"
   while read -r service mode ports _ <&3; do
     [ -n "$service" ] || continue
