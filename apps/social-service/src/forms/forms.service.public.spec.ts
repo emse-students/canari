@@ -792,6 +792,28 @@ describe('FormsService - public forms', () => {
       it.each(cases)('public first, %s added', async (_name, option, code) => {
         expect(await refusalCode(PUBLISH, option)).toBe(code);
       });
+
+      // Stored before the supplement counted as a payment: `submit` refuses to charge it.
+      const supplemented = [
+        {
+          id: 'q_menu',
+          label: 'Menu',
+          type: 'single_choice',
+          options: [{ id: 'o1', label: 'Vin', priceModifier: 500 }],
+        },
+      ];
+      const legacy = { isPublic: false, anonymous: true, items: supplemented };
+
+      it('keeps a form stored with a conflict editable', async () => {
+        expect(await refusalCode(legacy, { title: 'Gala 2027' })).toBeNull();
+        expect(await refusalCode(legacy, { title: 'Gala', items: supplemented })).toBeNull();
+      });
+
+      it('still refuses an edit that introduces ANOTHER conflict on it', async () => {
+        expect(await refusalCode(legacy, { grantsCotisation: true })).toBe(
+          'FORM_ANONYMOUS_COTISATION_GRANT'
+        );
+      });
     });
   });
 });

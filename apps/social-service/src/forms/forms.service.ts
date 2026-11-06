@@ -321,11 +321,22 @@ export class FormsService {
    * them, lands in the "everyone else" group of each (`PricingFactsService.build` with no user)
    * and pays that tier (owner, 2026-11-06).
    */
-  private assertFormOptionsCoherent(input: CreateFormDto & { anonymous?: boolean }): void {
-    const conflicts = formConfigConflicts(
-      formOptionStateOf(input),
-      input.priceMatrix as PriceMatrix | null | undefined
-    );
+  private assertFormOptionsCoherent(
+    input: CreateFormDto & { anonymous?: boolean },
+    stored?: CreateFormDto & { anonymous?: boolean }
+  ): void {
+    const judge = (form: CreateFormDto & { anonymous?: boolean }) =>
+      formConfigConflicts(
+        formOptionStateOf(form),
+        form.priceMatrix as PriceMatrix | null | undefined
+      );
+    // An EDIT answers for what it introduces, never for what the form already was: a form stored
+    // before a rule (an anonymous one whose option still carries a supplement, which `submit`
+    // refuses to charge) must stay editable - a title, a closing date - or its manager could never
+    // save it again. A conflict already stored is not the edit's; adding a conflicting option to a
+    // form that has none stays refused.
+    const alreadyStored = new Set<FormConfigConflict>(stored ? judge(stored) : []);
+    const conflicts = judge(input).filter((code) => !alreadyStored.has(code));
     if (conflicts.length === 0) return;
     const [code] = conflicts;
     this.logger.log(
@@ -845,7 +856,7 @@ export class FormsService {
       requiresPayment: input.requiresPayment ?? form.requiresPayment,
       basePrice: input.basePrice ?? form.basePrice,
     } as CreateFormDto & { anonymous: boolean };
-    this.assertFormOptionsCoherent(effective);
+    this.assertFormOptionsCoherent(effective, form as unknown as CreateFormDto);
     this.assertPublicConfigValid(effective);
     // An absent condition keeps the stored one, which still meets the questions sent now.
     this.assertFileQuestionConfigValid({
