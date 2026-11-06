@@ -34,6 +34,9 @@ RESULTS="${UPSTREAM_RESULTS:-}"
 DRY="${UPSTREAM_DRY_RUN:-0}"
 NOW="${NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 readonly STATE_TITLE='Upstream monitor state'
+# The standing issue's first line; the backticks are Markdown, not command substitutions.
+# shellcheck disable=SC2016
+readonly STATE_HEADER='Written by `upstream-issues.sh`; do not close or edit. One line per target that failed its LAST reading: `suspect <name> <since>`. A second consecutive failure opens an issue; a success clears the line.'
 
 die() {
   echo "::error::upstream-issues: $1"
@@ -86,7 +89,7 @@ if [ -z "$state_no" ]; then
     echo "dry-run: would create the standing issue '$STATE_TITLE'"
   else
     url="$("$GH" issue create --repo "$REPO" --title "$STATE_TITLE" --body \
-      'Written by `upstream-issues.sh`; do not close or edit. One line per target that failed its LAST reading: `suspect <name> <since>`. A second consecutive failure opens an issue; a success clears the line.' 2>&1)" ||
+      "$STATE_HEADER" 2>&1)" ||
       die "could not create the standing state issue: $url"
     state_no="${url##*/}"
   fi
@@ -107,6 +110,8 @@ while IFS=$'\t' read -r name class code url; do
   if [ "$class" = up ]; then
     if [ -n "$open_no" ]; then
       since="$("$GH" issue view "$open_no" --repo "$REPO" --json body --jq .body 2>/dev/null | sed -n 's/.*<!-- since=\([^ ]*\) -->.*/\1/p' | sed -n 1p)"
+      # $0..$3 below are the bash -c positional parameters, expanded by the inner shell.
+      # shellcheck disable=SC2016
       act "comment on #$open_no that $name is back, then close it" \
         bash -c '"$0" issue comment "$1" --repo "$2" --body "$3" && "$0" issue close "$1" --repo "$2"' \
         "$GH" "$open_no" "$REPO" "$name answers again (HTTP $code) at $NOW, after $(since_text "${since:-}" "$NOW"). Closing; a new outage opens a new issue."
@@ -150,8 +155,7 @@ done <"$RESULTS"
 if [ -n "$state_no" ] && [ "$DRY" != 1 ]; then
   current="$("$GH" issue view "$state_no" --repo "$REPO" --json body --jq .body 2>&1)" ||
     die "could not re-read the standing state issue #$state_no: $current"
-  header='Written by `upstream-issues.sh`; do not close or edit. One line per target that failed its LAST reading: `suspect <name> <since>`. A second consecutive failure opens an issue; a success clears the line.'
-  new="$header
+  new="$STATE_HEADER
 $(printf '%s\n' "$suspects" | grep '^suspect ' || true)"
   if [ "$(printf '%s' "$new" | sed '/^$/d')" != "$(printf '%s' "$current" | sed '/^$/d')" ]; then
     "$GH" issue edit "$state_no" --repo "$REPO" --body "$new" >/dev/null ||

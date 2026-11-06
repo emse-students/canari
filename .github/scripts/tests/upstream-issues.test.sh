@@ -12,6 +12,8 @@
 #  - a dry run writes nothing.
 #
 # Run by `make test-ci-scripts`.
+# `A && ok || fail` is the whole idiom of this file: `ok` cannot fail, so C never runs after a true A.
+# shellcheck disable=SC2015
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
