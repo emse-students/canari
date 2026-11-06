@@ -3531,6 +3531,7 @@
   "md_toolbar_bold": "Gras",
   "md_toolbar_italic": "Italique",
   "md_toolbar_strikethrough": "Barré",
+  "md_toolbar_refused": "Impossible d'appliquer ce style ici",
   "md_toolbar_heading": "Titre",
   "md_toolbar_quote": "Citation",
   "md_toolbar_code": "Code",

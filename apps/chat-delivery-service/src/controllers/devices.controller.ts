@@ -684,8 +684,19 @@ export class DevicesController {
 
   @UseGuards(HeaderAuthGuard)
   @Get('mls/devices/:userId')
-  /** Lists all registered devices for a user, including their key packages (within the retention window). */
-  async getUserDevices(@Param('userId') userId: string) {
+  /**
+   * Lists all registered devices for a user, including their key packages (within the retention window).
+   *
+   * **WITHOUT `?peek=1` THIS CLAIMS ONE ONE-TIME PACKAGE FROM EVERY DEVICE IT LISTS** - the answer of
+   * an adder that is about to add every one of them. A caller that only needs the roster (a settings
+   * count, the device panel, a device's name) asks `?peek=1`: each device is judged as the
+   * single-device peek judges it (`resolveKeyPackagePayloadForDevice`), its static row is the package,
+   * and no one-time row is touched. Production 2026-11-06: roster reads drained every pool of one
+   * account (`docs/wiki/protocols/key-package-pool.md`). A server without it ignores the query and
+   * claims, as before, so the client needs no floor.
+   */
+  async getUserDevices(@Param('userId') userId: string, @Query('peek') peek?: string) {
+    const mode = peek === '1' ? 'peek' : 'claim';
     // Only return devices seen within the retention window. Aligned with the
     // staleness / key-package retention so a still-recoverable device stays a valid
     // invite target (a device reset to stale only past the same window is otherwise
@@ -709,7 +720,8 @@ export class DevicesController {
       activeDevices.map(async (device) => {
         const resolved = await this.resolveKeyPackagePayloadForDevice(
           device.userId,
-          device.deviceId
+          device.deviceId,
+          mode
         );
         // A DEVICE WITH NOTHING USABLE IS NOT AN INVITE TARGET, and dropping it here is what makes
         // the refusal reach a person: the client throws "no active device found" rather than
