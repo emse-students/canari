@@ -1,6 +1,7 @@
 <script lang="ts">
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
   import AudienceConditionEditor from './AudienceConditionEditor.svelte';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
@@ -22,6 +23,7 @@
     X,
   } from '@lucide/svelte';
   import { QUESTION_TYPES } from '$lib/forms/questionTypes';
+  import { duplicateLabels, gridRowLabels } from '$lib/forms/answerBounds';
   import { m } from '$lib/paraglide/messages';
 
   let {
@@ -81,6 +83,9 @@
     onDuplicate?: () => void;
   } = $props();
 
+  /** Apple platforms use Cmd for shortcuts; read once, a platform does not change. */
+  const IS_APPLE =
+    typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform ?? '');
   let showTypePicker = $state(false);
   let titleEl = $state<HTMLInputElement | null>(null);
   let rowButtonEl = $state<HTMLButtonElement | null>(null);
@@ -102,9 +107,12 @@
 
   /** Ctrl/Cmd+D duplicates (the browser's bookmark shortcut is cancelled); Escape collapses. */
   function onCardKeydown(e: KeyboardEvent) {
-    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'd') {
+    // Cmd on Apple platforms, Ctrl elsewhere - never both, so Ctrl+D on a Mac stays the OS's.
+    const modifier = IS_APPLE ? e.metaKey : e.ctrlKey;
+    if (modifier && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'd') {
+      // The browser's bookmark shortcut is cancelled even for an auto-repeat, which copies nothing.
       e.preventDefault();
-      onDuplicate?.();
+      if (!e.repeat) onDuplicate?.();
     } else if (e.key === 'Escape' && expanded && !e.defaultPrevented) {
       if (showTypePicker) {
         showTypePicker = false;
@@ -124,6 +132,20 @@
   }
 
   const isMatrix = $derived(['matrix_single', 'matrix_multiple'].includes(item.type));
+  // A grid answer is keyed by its row label, so two rows of one label are one answer (D4): marked
+  // here as it is typed, refused by the page before the save and by the server at it.
+  const duplicateRows = $derived(
+    isMatrix ? duplicateLabels(gridRowLabels(item.rows)) : new Set<string>()
+  );
+  const duplicateColumns = $derived(
+    isMatrix
+      ? duplicateLabels(
+          (item.options ?? [])
+            .filter((o: any) => o.label?.trim())
+            .map((o: any) => o.label as string)
+        )
+      : new Set<string>()
+  );
   // A DENYLIST: every type not named here gets the options editor. A type with no options (a file
   // included) must be added, or its card grows an options list it will never use.
   const hasOptions = $derived(
@@ -261,20 +283,26 @@
     <!-- Collapsed: one line. The handle and the duplicate icon are their own controls beside the
          one button that expands, so no interactive element sits inside another. -->
     <div class="flex min-w-0 items-center gap-1">
-      <GripVertical
-        size={16}
-        class="text-text-muted/50 hidden shrink-0 cursor-grab active:cursor-grabbing sm:block"
-        aria-hidden="true"
-      />
+      <!-- The grip is the drag target of a collapsed row (the row itself is a button, which a press
+           never drags from): a real 44 x 44 px area, marked as the handle. -->
+      <span
+        data-drag-handle
+        class="text-text-muted/50 hidden min-h-11 w-11 shrink-0 cursor-grab items-center justify-center active:cursor-grabbing sm:flex"
+        role="img"
+        aria-label={m.form_builder_drag_handle_aria()}
+      >
+        <GripVertical size={16} aria-hidden="true" />
+      </span>
       <button
         bind:this={rowButtonEl}
+        data-row-button
         type="button"
         onclick={onExpand}
         aria-label={m.form_builder_open_question_aria({
           n: questionIndex ?? 1,
           title: item.label || m.form_builder_title_placeholder(),
         })}
-        class="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60"
+        class="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60"
       >
         <span
           class="text-text-muted bg-cn-border/50 text-2xs shrink-0 rounded-md px-1.5 py-0.5 font-bold tabular-nums"
@@ -300,7 +328,7 @@
       <button
         type="button"
         onclick={onDuplicate}
-        class="ui-icon-button text-text-muted hover:text-text-main shrink-0 rounded-lg transition-colors outline-none hover:bg-black/5 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 dark:hover:bg-white/10"
+        class="ui-icon-button text-text-muted hover:text-text-main min-h-11 min-w-11 shrink-0 rounded-lg transition-colors outline-none hover:bg-black/5 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 dark:hover:bg-white/10"
         title={m.form_builder_duplicate_title()}
         aria-label={m.form_builder_duplicate_aria()}
       >
@@ -310,11 +338,13 @@
   {:else}
     <!-- Title + type: the title is the main field, the type a compact menu beside it. -->
     <div class="mb-3 flex items-center gap-2">
-      <GripVertical
-        size={16}
+      <span
+        data-drag-handle
         class="text-text-muted/50 hidden shrink-0 cursor-grab active:cursor-grabbing sm:block"
         aria-hidden="true"
-      />
+      >
+        <GripVertical size={16} />
+      </span>
       <span
         class="text-text-muted bg-cn-border/50 text-2xs shrink-0 rounded-md px-1.5 py-0.5 font-bold tabular-nums"
         >{questionIndex}</span
@@ -332,7 +362,6 @@
           id="type-picker-{item.id}"
           type="button"
           aria-label="{m.form_builder_type_label()}: {currentType?.label() ?? item.type}"
-          title={item.type === 'file' && fileHint ? fileHint : undefined}
           aria-haspopup="listbox"
           aria-expanded={showTypePicker}
           onclick={() => (showTypePicker = !showTypePicker)}
@@ -462,7 +491,12 @@
       </div>
     {/if}
 
-    {#if item.type === 'linear_scale'}
+    {#if item.type === 'file'}
+      <!-- A file question has no options to edit: the line says who reads the file and when it goes. -->
+      <p class="text-text-muted text-xs leading-relaxed">
+        {fileHint ?? m.form_builder_file_hint()}
+      </p>
+    {:else if item.type === 'linear_scale'}
       <div
         class="space-y-4 rounded-xl border border-black/5 bg-white/30 p-3 sm:space-y-5 sm:rounded-2xl sm:p-5 dark:border-white/10 dark:bg-black/20"
       >
@@ -610,6 +644,11 @@
                   </div>
                 {/if}
               </div>
+              {#if duplicateColumns.has(opt.label)}
+                <p class="text-red-err mt-1 text-xs font-semibold sm:pl-7" role="alert">
+                  {m.form_builder_grid_duplicate_inline()}
+                </p>
+              {/if}
             </div>
           {/each}
         </div>
@@ -677,6 +716,11 @@
                     placeholder={m.form_builder_row_placeholder()}
                     class="{fieldClass} sm:hidden"
                   />
+                  {#if duplicateRows.has(row.value)}
+                    <p class="text-red-err mt-1 text-xs font-semibold sm:pl-7" role="alert">
+                      {m.form_builder_grid_duplicate_inline()}
+                    </p>
+                  {/if}
                 </div>
               {/each}
             </div>
@@ -689,6 +733,19 @@
               <Plus size={18} strokeWidth={2.5} />
               {m.form_builder_add_row()}
             </button>
+
+            {#if item.required}
+              <!-- D5: a required grid wants one answered row, unless every row is asked for. -->
+              <Toggle
+                label={m.form_builder_require_every_row()}
+                bind:checked={
+                  () => item.requireEveryRow === true,
+                  (on) => {
+                    item.requireEveryRow = on;
+                  }
+                }
+              />
+            {/if}
           </div>
         {/if}
       </div>

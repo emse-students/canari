@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { duplicateQuestion, firstQuestionAtFault } from './questionDuplicate';
+import { duplicateQuestion } from './questionDuplicate';
 
 const base = () => [
   {
@@ -69,13 +69,5 @@ describe('duplicateQuestion', () => {
 
   it('returns null for an unknown index', () => {
     expect(duplicateQuestion(base(), 9)).toBeNull();
-  });
-});
-
-describe('firstQuestionAtFault', () => {
-  it('names the first empty audience condition, else the file question when asked', () => {
-    expect(firstQuestionAtFault([{ id: 'x' }, { id: 'y', showIf: {} }], false)).toBe('y');
-    expect(firstQuestionAtFault([{ id: 'x', type: 'file' }], true)).toBe('x');
-    expect(firstQuestionAtFault([{ id: 'x', type: 'file' }], false)).toBeNull();
   });
 });

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import FormBuilder from './FormBuilder.svelte';
   import FormSection from './FormSection.svelte';
   import type { MembershipTier } from '$lib/associations/api';
@@ -7,6 +8,7 @@
   import { duplicateQuestion } from '$lib/forms/questionDuplicate';
   import { ListChecks, Plus } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { draggableCard } from '$lib/actions/draggableCard';
 
   /**
    * The question builder: the list, its drag-and-drop reordering, and the type picker.
@@ -58,6 +60,8 @@
   let dragIndex = $state(-1);
   let dropIndex = $state(-1);
   let showTypePicker = $state(false);
+  let listEl = $state<HTMLElement | null>(null);
+  let addButtonEl = $state<HTMLButtonElement | null>(null);
   /** The one question being edited; the others are a single line each. */
   let expandedId = $state<string | null>(null);
   /** The copy of a question opens with its title selected. */
@@ -102,9 +106,16 @@
     expandedId = result.copyId;
   }
 
-  function removeItem(index: number) {
+  /**
+   * Removes a question and puts focus where the person is still working: the row that took its
+   * place, else the one before it, else the "add a question" button - never the page.
+   */
+  async function removeItem(index: number) {
     if (items[index]?.id === expandedId) expandedId = null;
     items = items.filter((_, i) => i !== index);
+    await tick();
+    const rows = listEl?.querySelectorAll<HTMLElement>('[data-row-button]');
+    (rows?.[index] ?? rows?.[index - 1] ?? addButtonEl)?.focus();
   }
 
   function moveItem(index: number, direction: 'up' | 'down') {
@@ -139,11 +150,11 @@
 </script>
 
 <FormSection title={m.form_section_questions()} icon={ListChecks} badge={countLabel} dense>
-  <div class="space-y-2">
+  <div class="space-y-2" bind:this={listEl}>
     {#each items as _item, i (_item.id)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        draggable="true"
+        use:draggableCard
         ondragstart={() => (dragIndex = i)}
         ondragover={(e) => handleDragOver(e, i)}
         ondrop={() => handleDrop(i)}
@@ -186,6 +197,7 @@
 
   <div class="relative">
     <button
+      bind:this={addButtonEl}
       type="button"
       onclick={() => (showTypePicker = !showTypePicker)}
       class="border-cn-border text-text-muted hover:border-cn-yellow hover:text-cn-dark hover:bg-cn-yellow/5 flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed py-3 text-sm font-bold transition-all"

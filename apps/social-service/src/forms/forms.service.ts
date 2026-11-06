@@ -105,6 +105,23 @@ import {
   isChoiceQuestion,
   type PricedItem,
 } from './answer-options';
+import {
+  ANSWER_MAX_SELECTIONS,
+  ANSWER_MAX_TEXT_LENGTH,
+  assertFormItemsShape,
+  FORM_ANSWER_MISSING,
+  FORM_ANSWER_TOO_LONG,
+  FORM_ANSWER_TOO_MANY_SELECTIONS,
+  FORM_CLOSED,
+  FORM_COMBINATION_UNAVAILABLE,
+  FORM_FILE_NEEDS_ACCOUNT,
+  FORM_FULL,
+  FORM_NOT_OPEN_YET,
+  FORM_SIGN_IN_REQUIRED,
+  formRefusal,
+  isQuestionAnswered,
+  withNormalisedGridAnswers,
+} from './answer-bounds';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import {
@@ -573,6 +590,7 @@ export class FormsService {
       }
     }
     assertUniqueItemIds(input.items);
+    assertFormItemsShape(input.items);
     this.assertAnonymousConfigValid(input);
     this.assertPublicConfigValid(input);
     this.assertFileQuestionConfigValid(input);
@@ -807,7 +825,10 @@ export class FormsService {
     const items = input.items ?? form.items;
     // Only the questions this edit SENDS are judged, against the stored ones: a duplicate already
     // stored never blocks an edit that leaves the questions' ids as they are.
-    if (input.items !== undefined) assertUniqueItemIds(input.items, form.items);
+    if (input.items !== undefined) {
+      assertUniqueItemIds(input.items, form.items);
+      assertFormItemsShape(input.items);
+    }
     this.assertAnonymousConfigValid({ ...input, items, anonymous: form.anonymous });
     // Unlike anonymity, a link can be opened or withdrawn at any time: it promises nothing about
     // the answers already stored. An absent value means "leave it", so the stored one is checked -
@@ -1369,22 +1390,36 @@ export class FormsService {
     }
 
     if (form.opensAt && new Date(form.opensAt) > new Date()) {
-      throw new BadRequestException('The form is not open yet.');
+      throw formRefusal(FORM_NOT_OPEN_YET, 'The form is not open yet.');
     }
 
     if (form.closedAt && new Date(form.closedAt) < new Date()) {
-      throw new BadRequestException('The form is closed.');
+      throw formRefusal(FORM_CLOSED, 'The form is closed.');
     }
 
-    // Validate answer sizes to prevent oversized payloads.
+    // Validate answer sizes to prevent oversized payloads. The DTO already bounds them for an HTTP
+    // caller (`IsValidAnswers`); this holds for any caller of `submit`, with the typed code the
+    // page words (the textarea's `maxlength` keeps a person from ever meeting it).
     for (const [key, value] of Object.entries(input.answers ?? {})) {
-      if (typeof value === 'string' && (value as string).length > 2000) {
-        throw new BadRequestException(`Answer for field ${key} exceeds 2000 characters`);
+      if (typeof value === 'string' && value.length > ANSWER_MAX_TEXT_LENGTH) {
+        throw formRefusal(
+          FORM_ANSWER_TOO_LONG,
+          `Answer for field ${key} exceeds ${ANSWER_MAX_TEXT_LENGTH} characters`,
+          key
+        );
       }
-      if (Array.isArray(value) && (value as unknown[]).length > 50) {
-        throw new BadRequestException(`Answer for field ${key} has too many selections (max 50)`);
+      if (Array.isArray(value) && value.length > ANSWER_MAX_SELECTIONS) {
+        throw formRefusal(
+          FORM_ANSWER_TOO_MANY_SELECTIONS,
+          `Answer for field ${key} has too many selections (max ${ANSWER_MAX_SELECTIONS})`,
+          key
+        );
       }
     }
+
+    // A grid's answer is a map of rows, judged against the question's own rows and columns and
+    // stripped of its empty rows - from here on, `answers` holds it in that form (D1).
+    input = { ...input, answers: withNormalisedGridAnswers(form.items ?? [], input.answers ?? {}) };
 
     // The files this answer cites: their SHAPE here, their ownership inside the transaction below
     // (`FormFilesService.attach`), where it is checked and taken in one write. A form that cannot
@@ -1394,7 +1429,10 @@ export class FormsService {
       this.logger.warn(
         `[FORMS] submit refused: a file answer on form=${form.id.slice(0, 8)} without an account`
       );
-      throw new BadRequestException('This form cannot receive a file without an account.');
+      throw formRefusal(
+        FORM_FILE_NEEDS_ACCOUNT,
+        'This form cannot receive a file without an account.'
+      );
     }
 
     // Answers keyed by the form's own question ids and nothing else (`answerSelections`); the size
@@ -1435,7 +1473,10 @@ export class FormsService {
       this.logger.debug(
         `[FORMS] submit refused by an unavailable grid cell form=${form.id.slice(0, 8)}`
       );
-      throw new ForbiddenException('This combination is not available on this form.');
+      throw new ForbiddenException({
+        code: FORM_COMBINATION_UNAVAILABLE,
+        message: 'This combination is not available on this form.',
+      });
     }
 
     // Validation & Price Calculation
@@ -1458,8 +1499,8 @@ export class FormsService {
       // A question this submitter never saw neither charges them nor blocks them.
       if (!visible.has(item.id)) continue;
       const answer = input.answers[item.id];
-      if (item.required && !this.hasValue(answer)) {
-        throw new BadRequestException(`Missing required field: ${item.label}`);
+      if (item.required && !isQuestionAnswered(item, answer)) {
+        throw formRefusal(FORM_ANSWER_MISSING, `Missing required field: ${item.label}`, item.id);
       }
 
       // A question the grid prices on has already been paid for by the cell it selected. Adding its
@@ -1584,7 +1625,7 @@ export class FormsService {
 
       if (form.maxSubmissions && !holdsSeat) {
         const count = await manager.count(Submission, { where: seatHoldingWhere(id) });
-        if (count >= form.maxSubmissions) throw new BadRequestException('Form is full');
+        if (count >= form.maxSubmissions) throw formRefusal(FORM_FULL, 'Form is full');
       }
       // PP5, under the form lock like the capacity count: two submits from one visitor queue here,
       // so the fourth sees the three before it. Counted from the rows that still WAIT - an online
@@ -1616,7 +1657,9 @@ export class FormsService {
       // path below with no account (`userId` null), like a member's: the payer is the e-mail they
       // typed for Lydia, never stored (decision PP2).
       if (form.anonymous || (guest && totalCents === 0)) {
-        if (!guest && !input.userId) throw new BadRequestException('Sign in to answer this form.');
+        if (!guest && !input.userId) {
+          throw formRefusal(FORM_SIGN_IN_REQUIRED, 'Sign in to answer this form.');
+        }
         // An option supplement could still charge on an anonymous form saved free; a charge would
         // need the payer, which is the one thing an anonymous answer promised not to keep.
         if (totalCents > 0) {
@@ -1633,7 +1676,10 @@ export class FormsService {
             [id, input.userId]
           );
           if (inserted.length === 0) {
-            throw new BadRequestException('You have already answered this form.');
+            throw new ConflictException({
+              code: ALREADY_ANSWERED,
+              message: 'You have already answered this form.',
+            });
           }
         }
         // A guest on a form that is NOT anonymous keeps its real time: the manager was promised no
@@ -2774,13 +2820,6 @@ export class FormsService {
       this.logger.log(`[Forms] Forgot the visitor of ${count} guest answer(s) no longer waiting`);
     }
     return count;
-  }
-
-  /** Returns false for empty arrays, empty objects, null, undefined, and empty strings - used to validate required fields. */
-  private hasValue(val: any): boolean {
-    if (Array.isArray(val)) return val.length > 0;
-    if (val && typeof val === 'object') return Object.keys(val).length > 0;
-    return !!val;
   }
 
   /**

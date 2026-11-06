@@ -164,3 +164,121 @@ describe('duplicate', () => {
     expect(state.items.length).toBe(4);
   });
 });
+
+describe('shortcuts and focus', () => {
+  const key = (init: KeyboardEventInit) =>
+    new KeyboardEvent('keydown', { key: 'd', bubbles: true, cancelable: true, ...init });
+
+  it('Ctrl+D ignores Meta (macOS owns that one), Shift, Alt and auto-repeat', () => {
+    const { target, state } = render();
+    const row = rowButton(target, 1);
+    row.dispatchEvent(key({ metaKey: true }));
+    row.dispatchEvent(key({ ctrlKey: true, shiftKey: true }));
+    row.dispatchEvent(key({ ctrlKey: true, altKey: true }));
+    flushSync();
+    expect(state.items.length).toBe(3);
+    const repeat = key({ ctrlKey: true, repeat: true });
+    row.dispatchEvent(repeat);
+    flushSync();
+    // Cancelled so the browser does not bookmark, but nothing is copied.
+    expect(repeat.defaultPrevented).toBe(true);
+    expect(state.items.length).toBe(3);
+  });
+
+  it('deleting moves focus to the next row, else the previous, else the add button', async () => {
+    const { target } = render();
+    rowButton(target, 2).click();
+    flushSync();
+    byLabel(target, m.form_builder_delete_aria()).click();
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r));
+    expect(document.activeElement).toBe(rowButton(target, 2));
+    expect(document.activeElement?.getAttribute('aria-label')).toContain('Third');
+
+    rowButton(target, 2).click();
+    flushSync();
+    byLabel(target, m.form_builder_delete_aria()).click();
+    await new Promise((r) => setTimeout(r));
+    expect(document.activeElement).toBe(rowButton(target, 1));
+
+    rowButton(target, 1).click();
+    flushSync();
+    byLabel(target, m.form_builder_delete_aria()).click();
+    await new Promise((r) => setTimeout(r));
+    expect(document.activeElement?.textContent).toContain(m.form_add_question_button());
+  });
+});
+
+describe('what an open card shows', () => {
+  it('a FILE question says, visibly, who reads the file', () => {
+    const { target } = render();
+    target.querySelectorAll<HTMLButtonElement>('[data-row-button]')[0].click();
+    flushSync();
+    expect(target.textContent).not.toContain(m.form_builder_file_hint());
+    const file = render([{ id: 'f', type: 'file', label: 'CV' }]);
+    file.target.querySelector<HTMLButtonElement>('[data-row-button]')!.click();
+    flushSync();
+    expect(file.target.textContent).toContain(m.form_builder_file_hint());
+  });
+
+  it('a duplicated row or column of a grid is marked when the card is revealed', () => {
+    const grid = {
+      id: 'g',
+      type: 'matrix_single',
+      label: 'Grille',
+      rows: [
+        { id: 'r1', value: 'R' },
+        { id: 'r2', value: 'R' },
+      ],
+      options: [{ id: 'c1', label: 'A' }],
+    };
+    const { target } = render([grid], { reveal: { id: 'g' } });
+    expect(target.textContent).toContain(m.form_builder_grid_duplicate_inline());
+  });
+
+  it('a required grid offers "every row"; an optional one does not', () => {
+    const grid = (required: boolean) => ({
+      id: 'g',
+      type: 'matrix_single',
+      label: 'Grille',
+      required,
+      rows: [{ id: 'r1', value: 'R' }],
+      options: [{ id: 'c1', label: 'A' }],
+    });
+    expect(render([grid(true)], { reveal: { id: 'g' } }).target.textContent).toContain(
+      m.form_builder_require_every_row()
+    );
+    expect(render([grid(false)], { reveal: { id: 'g' } }).target.textContent).not.toContain(
+      m.form_builder_require_every_row()
+    );
+  });
+});
+
+describe('touch and drag targets', () => {
+  it('the grip of a collapsed row is a 44 px handle and a press on it keeps the card draggable', () => {
+    const { target } = render();
+    const grip = target.querySelector<HTMLElement>('[data-drag-handle]')!;
+    expect(grip.className).toContain('min-h-11');
+    expect(grip.className).toContain('w-11');
+    const card = grip.closest<HTMLElement>('[draggable]')!;
+    grip.dispatchEvent(new Event('pointerdown', { bubbles: true, cancelable: true }));
+    expect(card.getAttribute('draggable')).toBe('true');
+    // ...while the row's own button, which edits, does not start a drag.
+    rowButton(target, 1).dispatchEvent(
+      new Event('pointerdown', { bubbles: true, cancelable: true })
+    );
+    expect(card.getAttribute('draggable')).toBe('false');
+    window.dispatchEvent(new Event('pointerup'));
+    expect(card.getAttribute('draggable')).toBe('true');
+  });
+
+  it('the collapsed row and its duplicate icon are at least 44 px', () => {
+    const { target } = render();
+    expect(rowButton(target, 1).className).toContain('min-h-11');
+    const dup = target.querySelector<HTMLElement>(
+      `button[aria-label="${m.form_builder_duplicate_aria()}"]`
+    )!;
+    expect(dup.className).toContain('min-h-11');
+    expect(dup.className).toContain('min-w-11');
+  });
+});

@@ -52,18 +52,3 @@ export function duplicateQuestion<T extends DuplicableQuestion>(
   next.splice(index + 1, 0, copy);
   return { items: next, copyId: copy.id };
 }
-
-/**
- * The first question that makes a save refuse, so the editor can open it: one whose audience
- * condition is switched on and empty, or - when the form refuses on its file question - the first
- * FILE question. Null when no question is to blame.
- */
-export function firstQuestionAtFault(
-  items: { id: string; type?: string; showIf?: object | null }[],
-  fileProblem: boolean
-): string | null {
-  const empty = items.find((q) => q.showIf != null && Object.keys(q.showIf).length === 0);
-  if (empty) return empty.id;
-  if (fileProblem) return items.find((q) => q.type === 'file')?.id ?? null;
-  return null;
-}
