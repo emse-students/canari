@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { NotFromApiError } from '$lib/utils/apiJson';
+import { AnswerBodyLostError, NotFromApiError } from '$lib/utils/apiJson';
 import {
   isSessionQuestionOpen,
   isTransportFailure,
@@ -155,6 +155,46 @@ describe('the session-expired announcement', () => {
     expect(outcome).toBeInstanceOf(NotFromApiError);
     expect(isTransportFailure(outcome)).toBe(true);
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('reads a 200 whose body is lost on the way as NO answer, never a verdict', async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    fetchMock.mockResolvedValue(
+      new Response(
+        new ReadableStream({
+          start(c) {
+            c.error(new TypeError('network error'));
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )
+    );
+
+    const outcome = await refresh().catch((e: unknown) => e);
+    expect(outcome).toBeInstanceOf(AnswerBodyLostError);
+    expect(isTransportFailure(outcome)).toBe(true);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("carries the operator's maintenance text, and only the operator's", async () => {
+    fetchMock.mockResolvedValue(
+      Response.json(
+        { code: 'MAINTENANCE', message: 'Back at noon', maintenanceMessage: 'Back at noon' },
+        { status: 503 }
+      )
+    );
+    const withText = await refresh().catch((e: unknown) => e);
+    expect((withText as TransientAnswerError).maintenanceMessage).toBe('Back at noon');
+
+    fetchMock.mockResolvedValue(
+      Response.json(
+        { code: 'MAINTENANCE', message: 'Canari is under maintenance.', maintenanceMessage: null },
+        { status: 503 }
+      )
+    );
+    const without = await refresh().catch((e: unknown) => e);
+    expect((without as TransientAnswerError).maintenanceMessage).toBeNull();
   });
 
   it("stays silent on an edge's HTML 403 - a WAF or a portal says nothing about the cookie", async () => {
