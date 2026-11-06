@@ -19,7 +19,7 @@ import { extractFirstUrl } from '$lib/utils/chat/messageDisplay';
 export type FullScreenPage = 'reel' | 'photo';
 
 /** The attachments of a post: `media`, or `images` from a server older than the rename. */
-function mediaOf(post: Pick<PostEntity, 'media' | 'images'>): PostMediaRef[] {
+function mediaOf(post: Partial<Pick<PostEntity, 'media' | 'images'>>): PostMediaRef[] {
   return post.media ?? post.images ?? [];
 }
 
@@ -53,7 +53,7 @@ export function fullScreenPageOf(
 
 /** The one picture of a `photo` page, or the one video of a `reel` page (a reel, or a post of one video). */
 export function fullScreenMediaOf(
-  post: Pick<PostEntity, 'media' | 'images'>
+  post: Partial<Pick<PostEntity, 'media' | 'images'>>
 ): PostMediaRef | undefined {
   return mediaOf(post)[0];
 }

@@ -585,6 +585,25 @@ has finished, the preload is ABORTED and the player fetches (or streams) it alon
 known and accepted: a reel whose FEED card is still streaming when it is opened is fetched a second
 time by the viewer, since an MSE URL feeds one element - the same rule the media viewer lives by.
 
+### What plays behind the viewer stops when it opens (owner, 2026-11-06)
+
+**Cause, read from the code.** The only "a viewer is open" signal was `followVideoSound`'s counter in
+`actions/playWhileVisible.ts`, raised when a viewer's `<video>` is MOUNTED. A reel mounts its player
+(`PostMedia` -> `VideoPlayer`) after the download or the stream's first segment, and a photo page or a
+reel whose file fails never mounts one. In that gap the feed's ambient video kept decoding (and talking,
+unmuted), and a card scrolling into view started under the viewer.
+
+**The fix is one mechanism**: `holdPlayback(reason)` in the same file. `ReelViewer` calls it in its
+script init and releases it on destroy. A hold pauses every registered VIDEO at once (the feed, an
+inline video of a post page, a lightbox video) and NEVER an audio-only media: a voice note playing in a
+chat plays on when a viewer opens. While any hold or viewer player is open no inline video starts. At
+the FIRST hold it records whether a video was playing, and on the LAST release the video last come
+into view plays again only if one was (`videoWasPlaying`, and nothing foreground plays): a viewer never
+starts a video the reader had not playing. The viewer's own players register later and claim as before.
+Nothing is a timer. Tests: `playbackArbiter.test.ts` (hold pauses ambient and foreground, blocks
+scroll-in starts, release is idempotent, two holds) and `ReelViewer.svelte.test.ts` (hold on open,
+release on close). `MediaLightbox` takes the same hold while `open` (an `$effect.pre`, so it lands before the lightbox's own video mounts); test `MediaLightbox.hold.svelte.test.ts`.
+
 ### A loading reel shows its first frame, never a play glyph (owner, 2026-10-31)
 
 **Reported:** *while a CanaReel loads, a yellow play button shows on a neutral background.* That was
