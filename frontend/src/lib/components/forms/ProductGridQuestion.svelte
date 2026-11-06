@@ -33,7 +33,9 @@
    * The prices shown are the ones the server resolved for this viewer; the server charges its own.
    */
   interface Props {
-    item: FormItem & { productGrid: ProductGridView };
+    item: FormItem;
+    /** The grid itself (`item.productGrid`), handed apart so the type says it is present. */
+    grid: ProductGridView;
     /** The answer, bound: `"rowId:colId"` -> quantity. */
     value: unknown;
     disabled: boolean;
@@ -46,6 +48,7 @@
 
   let {
     item,
+    grid,
     value = $bindable(),
     disabled,
     prices,
@@ -53,7 +56,6 @@
     error = null,
   }: Props = $props();
 
-  const grid = $derived(item.productGrid);
   const multiRow = $derived(grid.rows.length > 1);
   const checkbox = $derived(grid.maxPerCell === 1);
   const mode = $derived(grid.pricing.mode);

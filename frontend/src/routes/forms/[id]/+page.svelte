@@ -42,6 +42,7 @@
   import FormHeader from '$lib/components/forms/FormHeader.svelte';
   import FormQuestion from '$lib/components/forms/FormQuestion.svelte';
   import FormViewerTier from '$lib/components/forms/FormViewerTier.svelte';
+  import ProductGridQuestion from '$lib/components/forms/ProductGridQuestion.svelte';
   import ProductGridOrderBar from '$lib/components/forms/ProductGridOrderBar.svelte';
   import PaymentMethodChoice from '$lib/components/forms/PaymentMethodChoice.svelte';
   import {
@@ -765,21 +766,33 @@
     <!-- ── Questions ── -->
     <div class="space-y-3 sm:space-y-4">
       {#each visibleItems as item, qi (item.id)}
-        <FormQuestion
-          {item}
-          index={qi}
-          bind:value={selections[item.id]}
-          disabled={submitted || isNotOpenYet}
-          formId={form.id}
-          currency={form.currency}
-          fileRetentionDays={form.fileRetentionDays}
-          {optionModifier}
-          {optionClosed}
-          gridPrices={productGridPrices[item.id]}
-          error={questionError(item)}
-          onUploadingChange={(busy) =>
-            busy ? uploadingFiles.add(item.id) : uploadingFiles.delete(item.id)}
-        />
+        <!-- A priced grid draws its own card: the product photo spans it, the price sits by the title. -->
+        {#if isProductGrid(item) && item.productGrid}
+          <ProductGridQuestion
+            {item}
+            grid={item.productGrid}
+            bind:value={selections[item.id]}
+            disabled={submitted || isNotOpenYet}
+            prices={productGridPrices[item.id]}
+            currency={form.currency}
+            error={questionError(item)}
+          />
+        {:else}
+          <FormQuestion
+            {item}
+            index={qi}
+            bind:value={selections[item.id]}
+            disabled={submitted || isNotOpenYet}
+            formId={form.id}
+            currency={form.currency}
+            fileRetentionDays={form.fileRetentionDays}
+            {optionModifier}
+            {optionClosed}
+            error={questionError(item)}
+            onUploadingChange={(busy) =>
+              busy ? uploadingFiles.add(item.id) : uploadingFiles.delete(item.id)}
+          />
+        {/if}
       {/each}
     </div>
 

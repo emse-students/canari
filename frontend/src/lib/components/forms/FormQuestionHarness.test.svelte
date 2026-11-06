@@ -2,7 +2,6 @@
   /** Test-only parent: owns the bound answer the way the fill page does, and reports each change. */
   import { untrack } from 'svelte';
   import type { FormItem, FormOption } from '$lib/forms/api';
-  import type { ProductGridViewerPrices } from '$lib/forms/productGridContract';
   import FormQuestion from './FormQuestion.svelte';
 
   interface Props {
@@ -12,20 +11,10 @@
     optionModifier?: (item: FormItem, opt: FormOption) => number;
     optionClosed?: (opt: FormOption) => boolean;
     onUploadingChange?: (uploading: boolean) => void;
-    gridPrices?: ProductGridViewerPrices;
-    error?: string | null;
   }
 
-  let {
-    item,
-    initial,
-    onChange,
-    optionModifier,
-    optionClosed,
-    onUploadingChange,
-    gridPrices,
-    error,
-  }: Props = $props();
+  let { item, initial, onChange, optionModifier, optionClosed, onUploadingChange }: Props =
+    $props();
 
   // A deep `$state`, as `selections` is on the page, so a matrix row write is seen here. The props
   // are a SEED read once, which `untrack` says out loud.
@@ -47,6 +36,4 @@
   {optionModifier}
   {optionClosed}
   {onUploadingChange}
-  {gridPrices}
-  {error}
 />

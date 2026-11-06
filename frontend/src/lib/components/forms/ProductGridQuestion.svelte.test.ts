@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 /**
- * A PRICED GRID HANDS ITS ORDER BACK (`product_grid`, WP-G2) - through FormQuestion, as the fill
+ * A PRICED GRID HANDS ITS ORDER BACK (`product_grid`, WP-G2) - through a bound value, as the fill
  * pages mount it, and the value the PARENT holds is what is asserted.
  *
  * Both drawings are in the DOM (the width picks one by CSS alone), so each test drives the one it
@@ -11,7 +11,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import type { FormItem } from '$lib/forms/api';
 import type { ProductGridView, ProductGridViewerPrices } from '$lib/forms/productGridContract';
 import { m } from '$lib/paraglide/messages';
-import FormQuestionHarness from './FormQuestionHarness.test.svelte';
+import ProductGridQuestionHarness from './ProductGridQuestionHarness.test.svelte';
 
 const mounted: (() => void)[] = [];
 
@@ -50,10 +50,11 @@ function render(productGrid: ProductGridView, value: unknown = {}, extra = {}) {
   const state = { value };
   const target = document.createElement('div');
   document.body.appendChild(target);
-  const component = mount(FormQuestionHarness, {
+  const component = mount(ProductGridQuestionHarness, {
     target,
     props: {
       item: item(productGrid),
+      grid: productGrid,
       initial: value,
       onChange: (v: unknown) => (state.value = v),
       gridPrices: prices,

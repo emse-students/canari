@@ -35,6 +35,7 @@
   import FormHeader from '$lib/components/forms/FormHeader.svelte';
   import FormQuestion from '$lib/components/forms/FormQuestion.svelte';
   import FormViewerTier from '$lib/components/forms/FormViewerTier.svelte';
+  import ProductGridQuestion from '$lib/components/forms/ProductGridQuestion.svelte';
   import ProductGridOrderBar from '$lib/components/forms/ProductGridOrderBar.svelte';
   import PaymentMethodChoice from '$lib/components/forms/PaymentMethodChoice.svelte';
   import PayerEmailPrompt from '$lib/components/payments/PayerEmailPrompt.svelte';
@@ -286,18 +287,30 @@
 
       <div class="space-y-3 sm:space-y-4">
         {#each visibleItems as item, index (item.id)}
-          <FormQuestion
-            {item}
-            {index}
-            bind:value={selections[item.id]}
-            disabled={isNotOpenYet || isClosed || form.formFull || submitting}
-            formId={form.id}
-            currency={form.currency}
-            optionModifier={(question, option) => optionModifierOf(price, question, option)}
-            optionClosed={(option) => !!option.id && price.unavailableOptionIds.has(option.id)}
-            gridPrices={form.productGridPrices?.[item.id]}
-            error={questionError(item)}
-          />
+          <!-- A priced grid draws its own card: the product photo spans it, the price sits by the title. -->
+          {#if isProductGrid(item) && item.productGrid}
+            <ProductGridQuestion
+              {item}
+              grid={item.productGrid}
+              bind:value={selections[item.id]}
+              disabled={isNotOpenYet || isClosed || form.formFull || submitting}
+              prices={form.productGridPrices?.[item.id]}
+              currency={form.currency}
+              error={questionError(item)}
+            />
+          {:else}
+            <FormQuestion
+              {item}
+              {index}
+              bind:value={selections[item.id]}
+              disabled={isNotOpenYet || isClosed || form.formFull || submitting}
+              formId={form.id}
+              currency={form.currency}
+              optionModifier={(question, option) => optionModifierOf(price, question, option)}
+              optionClosed={(option) => !!option.id && price.unavailableOptionIds.has(option.id)}
+              error={questionError(item)}
+            />
+          {/if}
         {/each}
       </div>
 

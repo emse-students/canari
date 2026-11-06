@@ -1285,8 +1285,8 @@ needs.
 
 ### The fill page (WP-G2)
 
-Both fill pages draw a grid through `FormQuestion.svelte`, which hands a `product_grid` question to
-`ProductGridQuestion.svelte` (its own card: the product photo across the top, the title and the
+Both fill pages hand a `product_grid` question to `ProductGridQuestion.svelte` instead of
+`FormQuestion.svelte` (its own card: the product photo across the top, the title and the
 viewer's price - "des X" when rows or sizes differ - and the description as the spec line). The
 design is the owner's mockup of 2026-11-06 (`Fill-Desktop`, `Fill-Mobile`, `Fill-Guest-Mobile`),
 drawn with the app's tokens.
