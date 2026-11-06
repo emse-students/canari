@@ -23,7 +23,7 @@ retry on a connect refused / reset BEFORE a byte of the request was acknowledged
 closes it:** a rig case sending POSTs from one fixture service to another across a release of the
 second, all answered.
 
-## Design worked out 2026-11-06 (nothing built: it needs a new container on the shared estate)
+### Design worked out 2026-11-06 (nothing built: it needs a new container on the shared estate)
 
 **The retry option is out, by the rule the rotation was built on.** A client-side retry "before a byte
 was acknowledged" cannot be proven to be that: a reset after the request line left can follow a POST
@@ -71,7 +71,7 @@ release window, `docker logs --since`), compared with the count of deploys. Noth
 measured it; zero in the last ten releases would justify leaving this entry as an accepted, named
 residue rather than building a proxy.
 
-## The measurement, taken 2026-11-06: a zero that is blind
+### The measurement, taken 2026-11-06: a zero that is blind
 
 Read-only on production: every replica of social, media, core and chat-delivery logged 0 lines of
 `ECONNRESET`, `socket hang up` or `ECONNREFUSED` since the `v1.6.5` deploy of 2026-11-05 (~15:09 UTC).
@@ -79,15 +79,29 @@ Read-only on production: every replica of social, media, core and chat-delivery 
 deploy retires are removed with their logs; every container that could be read started after the
 rotation. The count the "Measure first" paragraph above asks for cannot be taken after the fact.
 
-**BUILT 2026-11-06 (the count; the proxy is not).** `rolling.sh` (`s2s_resets`) reads each retiring
-replica's log since the deploy started BEFORE `docker rm` and the staying replica's after the restore,
-counting `ECONNRESET`, `socket hang up` and `ECONNREFUSED`, and prints one line per overlap service in
-the deploy log: `[S2S_RESETS] service=<name> retiring=<n> staying=<n>`. It is best effort: a failed
-read prints a `::warning::` naming the count UNKNOWN (`unknown` in the line, never `0`) and the deploy
-goes on. Closed by `deploy-rolling.test.sh` case 2 (a reset line in the retiring api replica's log is
-counted as `retiring=1`, `staying=0`; run locally 44 passed, 0 failed).
+**BUILT 2026-11-06 (the count; the proxy is not).** `rolling.sh` (`transport_resets`) reads each
+retiring replica's log since the deploy started BEFORE its `docker rm`, and ONE sweep at the end of
+`replace_services` reads every running container of every service the deploy replaced, so the callers
+replaced BEFORE their peer (the order is chat-gateway, chat-delivery, core, social, frontend-ssr,
+frontend) are counted too. The deploy log carries one line per container,
+`[TRANSPORT_RESETS] service=<name> container=<id> state=<retired|running> count=<n>`, then
+`[TRANSPORT_RESETS] total=<n> unknown=<k>`. Best effort: an unreadable log is `unknown` with a
+`::warning::`, never `0`, and the deploy goes on.
 
-**Owed:** read the `[S2S_RESETS]` lines of the next deploys (the Actions log of the deploy job). **The
-`mesh` decision waits for those readings**: a steady zero leaves the gap a named residue, any other
-number is the case for building it. A daily `[S2S_RESETS]` count in `scheduled.yml` only if a
-non-zero shows.
+**It is called TRANSPORT_RESETS and not S2S, because the logs do not name the peer.** The services run
+on bun 1.4, and a sample (a `fetch` POSTing to a socket that resets, then to a closed port) reads:
+`The socket connection was closed unexpectedly` with `code: ECONNRESET`, and `Unable to connect` with
+`code: ConnectionRefused` - no host, no port. A line cannot be matched to a service-to-service call, so
+the count is of resets in a service's own log, external callers (Safe Browsing, Lydia, Authentik)
+included, and it is read against the rate of an ordinary day. Refusals are not counted: they match
+boot-time retries to Postgres and Redis, and a stopped replica leaves Docker's DNS. If the total of a
+deploy sits at the ordinary rate, the gap is a named residue; a rise only at deploys is the case for
+`mesh`.
+
+Closed by `deploy-rolling.test.sh` case 2: the exact set of lines (api's retired replica holds one
+line inside the window and one before it, which is excluded; api's new replica logs one at its start,
+seen only by the sweep because api is replaced before the frontend) and `total=2 unknown=0`.
+
+**Owed:** read the `[TRANSPORT_RESETS]` lines of the next deploys (the Actions log of the deploy job)
+and one ordinary day's count from `docker logs` for the baseline. **The `mesh` decision waits for those
+readings.** A daily count in `scheduled.yml` only if a rise shows.

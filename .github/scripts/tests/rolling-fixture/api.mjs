@@ -61,4 +61,9 @@ process.once('SIGTERM', () => {
   });
 });
 
+// v3 is the release that logs one reset line at its own start: a caller that was replaced BEFORE its
+// peer and logged a reset while the deploy went on. The end-of-deploy sweep of rolling.sh must count
+// it, the replica being neither retired nor the last one replaced (deploy-rolling.test.sh, case 2).
+if (VERSION === 'v3') console.error('Error: socket hang up (ECONNRESET)');
+
 server.listen(3000, () => console.log(`api ${VERSION} listening`));

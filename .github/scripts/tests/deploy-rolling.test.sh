@@ -351,8 +351,12 @@ export TAG=v3
 # that worker can no longer choose a replica, not wait for it to exit - which would be never.
 curl -sN "http://127.0.0.1:${ROLLTEST_PORT}/api/hold" >/dev/null 2>&1 &
 HOLD_PID=$!
-# One reset line in the OLD replica's log, which the release retires: the count must be read before
-# the container (and its log) is removed.
+# TWO reset lines in the OLD replica's log, the first BEFORE the window the library reads (the one
+# second between them is the resolution of `docker logs --since`, a boundary and not an assertion
+# about time): only the second may be counted, and it must be read before the container (and its log)
+# is removed.
+curl -s "http://127.0.0.1:${ROLLTEST_PORT}/api/s2s-reset" >/dev/null 2>&1
+sleep 2
 export ROLLING_LOG_SINCE
 ROLLING_LOG_SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 curl -s "http://127.0.0.1:${ROLLTEST_PORT}/api/s2s-reset" >/dev/null 2>&1
@@ -360,15 +364,21 @@ start_client release
 if deploy | tee "$TMP/release.log"; then ok "replace_services succeeded"; else fail "replace_services succeeded"; fi
 kill "$HOLD_PID" 2>/dev/null || true
 unset ROLLING_LOG_SINCE
-if grep -qE '^\[S2S_RESETS\] service=api retiring=[1-9][0-9]* staying=0$' "$TMP/release.log"; then
-  ok "the reset line the retiring api replica logged was counted before it was removed (retiring>=1, staying=0)"
+# The EXACT set of lines: every replaced service's retired replica (read before removal), then every
+# running container of every service of the plan (the end-of-deploy sweep), then the total. api's
+# retired replica holds ONE line inside the window (the one before it is excluded); v3's own start line
+# is seen only by the sweep, api having been replaced before the frontend.
+got="$(sed -nE 's/^\[TRANSPORT_RESETS\] service=([a-z_-]+) container=[0-9a-f]+ state=([a-z]+) count=([0-9a-z]+)$/\1 \2 \3/p' "$TMP/release.log" | sort | tr '\n' '|')"
+want='api retired 1|api running 1|auth running 0|edge running 0|frontend retired 0|frontend running 0|'
+if [ "$got" = "$want" ]; then
+  ok "the transport-reset lines are exactly the retired and running containers, one reset inside the window and one outside excluded"
 else
-  fail "no [S2S_RESETS] line with the retiring api replica's count: $(grep S2S_RESETS "$TMP/release.log" | tr '\n' ' ')"
+  fail "transport-reset lines: got '$got', wanted '$want'"
 fi
-if grep -qE '^\[S2S_RESETS\] service=[a-z_-]+ retiring=([0-9]+|unknown) staying=([0-9]+|unknown)$' "$TMP/release.log"; then
-  ok "every replaced service prints its [S2S_RESETS] line"
+if grep -qxF '[TRANSPORT_RESETS] total=2 unknown=0' "$TMP/release.log"; then
+  ok "the deploy-wide total counts the retired replica's line and the caller replaced before its peer"
 else
-  fail "no well-formed [S2S_RESETS] line in the release log"
+  fail "no '[TRANSPORT_RESETS] total=2 unknown=0' line: $(grep 'total=' "$TMP/release.log" | tr '\n' ' ')"
 fi
 if grep -qE '^  frontend: [0-9a-f]+ reloaded; paired .*\([1-9][0-9]* old worker\(s\) still finishing' "$TMP/release.log"; then
   ok "a connection an old frontend worker was still proxying did not hold the release back"
