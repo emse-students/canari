@@ -34,7 +34,13 @@ interface Script {
   outputBytes?: number;
   /** Fires the conversion's progress at these fractions. */
   progress?: number[];
+  /** The audio packets' timestamps, and what the decoder stamps its chunks (default: contiguous). */
+  audioPackets?: number[];
+  decodedChunks?: { timestamp: number; duration: number }[];
 }
+
+const FRAME = 1024 / 48_000;
+const contiguous = (n: number) => Array.from({ length: n }, (_, i) => i * FRAME);
 
 const state: { script: Script; init: Record<string, unknown> | null; cancelled: boolean } = {
   script: { video: true, audio: true, duration: 20, width: 1080, height: 1920, fps: 60 },
@@ -70,6 +76,9 @@ vi.mock('mediabunny', () => {
     async computeDuration() {
       return state.script.duration;
     }
+    async getFirstTimestamp() {
+      return 0;
+    }
     dispose() {
       this.disposed = true;
     }
@@ -92,6 +101,19 @@ vi.mock('mediabunny', () => {
     },
     Input,
     Output,
+    EncodedPacketSink: class {
+      async *packets() {
+        for (const timestamp of state.script.audioPackets ?? contiguous(3)) yield { timestamp };
+      }
+    },
+    AudioSampleSink: class {
+      async *samples() {
+        const chunks =
+          state.script.decodedChunks ??
+          contiguous(3).map((timestamp) => ({ timestamp, duration: FRAME }));
+        for (const c of chunks) yield { ...c, close() {} };
+      }
+    },
     UnsupportedInputFormatError,
     ConversionCanceledError,
     canEncodeAudio: async () => state.script.canEncodeAac ?? true,
@@ -212,12 +234,51 @@ describe('prepareVideoForUpload', () => {
     'resamples a %s fps source (a 24 fps clip, a phone that dropped frames, 30 measured) to a constant 30',
     async (fps) => {
       // Until 2026-11-06 only a source over 30.5 fps was resampled, so a variable-rate one kept
-      // its irregular timestamps and its quarter-second holes (video-preparation.md#constant-frame-rate).
+      // its irregular timestamps and its quarter-second holes (video-preparation.md#constant-frame-rate-and-the-audio-holes-the-decoder-closes).
       state.script.fps = fps;
       await prepareVideoForUpload(SOURCE, {});
       expect((state.init!.video as Record<string, unknown>).frameRate).toBe(30);
     }
   );
+
+  it('puts the audio back over the holes the decoder closed, and encodes rather than copies it', async () => {
+    // A recorder lost 10 packets after the 3rd: the packets say so, the decoder does not.
+    const hole = 10 * FRAME;
+    state.script = {
+      ...state.script,
+      audioCodec: 'mp4a.40.2',
+      audioBitrate: 96_000,
+      audioPackets: [0, FRAME, 2 * FRAME, 3 * FRAME + hole, 4 * FRAME + hole],
+      decodedChunks: contiguous(5).map((timestamp) => ({ timestamp, duration: FRAME })),
+    };
+    await prepareVideoForUpload(SOURCE, {});
+    const audio = state.init!.audio as {
+      forceTranscode?: boolean;
+      process?: (s: unknown) => { timestamp: number };
+    };
+    expect(audio.forceTranscode).toBe(true);
+    // A decoded chunk as mediabunny hands it: cloned, and the clone re-stamped.
+    const sampleAt = (timestamp: number) => ({
+      timestamp,
+      clone() {
+        const copy = {
+          timestamp,
+          setTimestamp(t: number) {
+            copy.timestamp = t;
+          },
+        };
+        return copy;
+      },
+    });
+    expect(audio.process!(sampleAt(2 * FRAME)).timestamp).toBeCloseTo(2 * FRAME, 9);
+    expect(audio.process!(sampleAt(4 * FRAME)).timestamp).toBeCloseTo(4 * FRAME + hole, 9);
+  });
+
+  it('copies an AAC-LC track with no hole, with no process hook', async () => {
+    state.script = { ...state.script, audioCodec: 'mp4a.40.2', audioBitrate: 96_000 };
+    await prepareVideoForUpload(SOURCE, {});
+    expect(state.init!.audio).toEqual({ codec: 'aac' });
+  });
 
   it('drops the audio track from the OUTPUT when the sound is removed, and still refuses any other drop', async () => {
     state.script.discarded = [{ type: 'audio', reason: 'discarded_by_user' }];

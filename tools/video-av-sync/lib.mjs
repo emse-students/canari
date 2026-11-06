@@ -4,7 +4,7 @@
  * A source is made with a KNOWN sync: a white frame and a 1 kHz beep at every whole second. The rig
  * runs it through `prepareVideoForUpload` and reads the output back; these functions find the
  * flashes and the beeps again and say whether the two still meet - at the START and at the END,
- * where a drift shows (docs/wiki/frontend/video-preparation.md#constant-frame-rate).
+ * where a drift shows (docs/wiki/frontend/video-preparation.md#constant-frame-rate-and-the-audio-holes-the-decoder-closes).
  */
 
 /** The output's frame rate, the Canari camera's (`VIDEO_FRAME_RATE` in `videoEncodingPlan.ts`). */
@@ -87,6 +87,21 @@ export function audioOnsets(chunks, sampleRate, { threshold = 0.3, quietS = 0.5 
   return onsets;
 }
 
+/**
+ * How many times an audio track's packets leave a hole: a packet starting more than a millisecond
+ * after the one before it ends. Chrome's decoder closes such a hole on playback and plays the sound
+ * after it early, so an output must have none.
+ *
+ * @param {Array<{ timestamp: number, duration: number }>} chunks Decoded audio at its packets' times.
+ */
+export function audioHoleCount(chunks) {
+  let holes = 0;
+  for (let i = 1; i < chunks.length; i++) {
+    if (chunks[i].timestamp - (chunks[i - 1].timestamp + chunks[i - 1].duration) > 0.001) holes++;
+  }
+  return holes;
+}
+
 /** The presentation times of the bright frames, one per run of bright frames. */
 export function flashTimes(frames, { luma = 128, apartS = 0.5 } = {}) {
   const out = [];
@@ -103,11 +118,11 @@ export function flashTimes(frames, { luma = 128, apartS = 0.5 } = {}) {
  * and the LAST included; the frames are on the constant grid; the two tracks end together.
  *
  * @param {{ frames: Array<{ timestamp: number, duration: number, luma: number }>,
- *           onsets: number[], audioEnd: number, seconds: number }} reading
+ *           onsets: number[], audioEnd: number, seconds: number, audioHoles?: number }} reading
  * @returns {{ ok: boolean, failures: string[], pairs: Array<{ flash: number, beep: number, skewMs: number }>,
  *             maxFrameGapMs: number, videoEnd: number, audioEnd: number }}
  */
-export function judge({ frames, onsets, audioEnd, seconds }) {
+export function judge({ frames, onsets, audioEnd, seconds, audioHoles = 0 }) {
   const failures = [];
   const flashes = flashTimes(frames);
   const pairs = [];
@@ -148,8 +163,10 @@ export function judge({ frames, onsets, audioEnd, seconds }) {
       `the audio ends at ${audioEnd.toFixed(3)} s, the video at ${videoEnd.toFixed(3)} s`
     );
   }
+  if (audioHoles > 0) failures.push(`the audio has ${audioHoles} hole(s) a player will close`);
   return {
     ok: failures.length === 0,
+    audioHoles,
     failures,
     pairs,
     maxFrameGapMs: Math.round(maxGap * 1000),

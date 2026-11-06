@@ -1,5 +1,5 @@
-### Changed - every uploaded video is a constant 30 fps
+### Fixed - a prepared video's sound no longer runs ahead of its picture
 
-A variable-rate gallery clip (a phone that dropped frames) used to keep its irregular timestamps and
-its holes; it is now resampled onto the Canari camera's 30 fps grid, the audio untouched. Measured
-with a new A/V sync rig ([video-preparation](docs/wiki/frontend/video-preparation.md#constant-frame-rate)).
+Chrome's audio decoder closed the holes of a phone's audio track, so a re-encoded video's sound ran
+early by the sum of them, growing to the end; the holes are now restored as silence, and every video
+is also resampled to a constant 30 fps ([video-preparation](docs/wiki/frontend/video-preparation.md#constant-frame-rate-and-the-audio-holes-the-decoder-closes)).

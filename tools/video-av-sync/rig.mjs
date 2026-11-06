@@ -7,7 +7,7 @@
  *   bun tools/video-av-sync/rig.mjs --only vfr-aac  # one row
  *
  * The exit code fails when a row's verdict fails or a row does not complete. Results and their
- * reading: docs/wiki/frontend/video-preparation.md#constant-frame-rate.
+ * reading: docs/wiki/frontend/video-preparation.md#constant-frame-rate-and-the-audio-holes-the-decoder-closes.
  */
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -39,6 +39,24 @@ const CASES = [
     fps: 30,
     seconds: 14,
     audioBitrate: 96_000,
+  },
+  {
+    name: 'holes-aac-96',
+    container: 'mp4',
+    mode: 'vfr',
+    fps: 30,
+    seconds: 14,
+    audioBitrate: 96_000,
+    audioHoles: true,
+  },
+  {
+    name: 'holes-aac-192',
+    container: 'mp4',
+    mode: 'vfr',
+    fps: 30,
+    seconds: 14,
+    audioBitrate: 192_000,
+    audioHoles: true,
   },
   { name: 'cfr-60', container: 'mp4', mode: 'cfr', fps: 60, seconds: 14, audioBitrate: 96_000 },
   { name: 'cfr-24', container: 'mp4', mode: 'cfr', fps: 24, seconds: 14, audioBitrate: 96_000 },
@@ -106,7 +124,8 @@ try {
         `${v.ok ? 'PASS' : 'FAIL'} ${c.name}: source ${r.source.frames} frames, max gap ${r.source.maxFrameGapMs} ms` +
           ` (${r.source.gapsOver60ms} over 60 ms) -> output ${r.output.frames} frames, max gap ${v.maxFrameGapMs} ms;` +
           ` video-audio at ${first?.flash.toFixed(3)} s: ${first?.skewMs} ms, at ${last?.flash.toFixed(3)} s: ${last?.skewMs} ms;` +
-          ` ends video ${v.videoEnd.toFixed(3)} s, audio ${v.audioEnd.toFixed(3)} s`
+          ` ends video ${v.videoEnd.toFixed(3)} s, audio ${v.audioEnd.toFixed(3)} s;` +
+          ` source audio holes ${r.source.audioHoles}, output ${v.audioHoles}`
       );
       for (const l of r.logs) console.log(`    ${l}`);
       for (const f of v.failures) console.log(`    - ${f}`);

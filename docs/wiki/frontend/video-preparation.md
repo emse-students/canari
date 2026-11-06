@@ -1,9 +1,9 @@
 # Video preparation: the phone compresses, the server stores (CanaReels R2, decision C3)
 
 **Every video leaves the device as ONE format, made ON the device**: a fragmented MP4, H.264 + AAC,
-720p on its short side at ~2.5 Mb/s, a CONSTANT 30 fps ([why](#constant-frame-rate)), rotation baked into the frames, in a `File`
+720p on its short side at ~2.5 Mb/s, a CONSTANT 30 fps ([why](#constant-frame-rate-and-the-audio-holes-the-decoder-closes)), rotation baked into the frames, in a `File`
 whose `type` names its codecs. The video is always re-encoded; an AAC-LC audio track is COPIED
-when it costs no more than an encode would, or when the engine has no AAC encoder ([why](#an-aac-lc-track-is-copied-and-a-firefox-avcc-is-rebuilt-2026-10-14)). The server transcodes nothing and draws no thumbnail - the user's
+when it has no hole and costs no more than an encode would, or when the engine has no AAC encoder ([why](#an-aac-lc-track-is-copied-and-a-firefox-avcc-is-rebuilt-2026-10-14)). The server transcodes nothing and draws no thumbnail - the user's
 decision C3, 2026-09-29 (*"il faut que la charge serveur soit minimale"*), recorded on
 [backlog](../backlog.md#the-composer-and-canareels-chantier---compared-on-the-mi-9t-2026-09-29-every-decision-taken).
 
@@ -49,7 +49,7 @@ and the exact server cost C3 refused.
 | Video bitrate | 2.5 Mb/s, LOWERED to fit `maxBytes` over the duration, floor 400 kb/s | C3: ~28 MB for 90 s; a longer video fits by losing bitrate, not by being cut |
 | Budget share | 90 % of `maxBytes` asked of the encoder | the fragments' boxes and a variable-rate encoder's overshoot |
 | Audio | AAC, 128 kb/s; an AAC-LC (`mp4a.40.2`) source at most 128 kb/s, or on an engine with no AAC encoder, is COPIED and budgeted at its measured bitrate | a copy loses nothing; a dearer track is re-encoded where it can be, so a long clip's video keeps its budget |
-| Frame rate | a CONSTANT 30 (`VIDEO_FRAME_RATE`), every source resampled onto the grid | the Canari camera's rate; a 60 fps clip costs twice for no reader, and a variable-rate one hands every player [timestamps to interpret](#constant-frame-rate) |
+| Frame rate | a CONSTANT 30 (`VIDEO_FRAME_RATE`), every source resampled onto the grid | the Canari camera's rate; a 60 fps clip costs twice for no reader, and a variable-rate one hands every player [timestamps to interpret](#constant-frame-rate-and-the-audio-holes-the-decoder-closes) |
 | Key frames | every 2 s | every fragment starts on one: the seek granularity |
 
 ## Why WebCodecs + mediabunny, and not the alternatives
@@ -182,102 +182,120 @@ AAC-LC source of at most 128 kb/s is copied rather than re-encoded.
 needs an AAC encoder Firefox lacks. Writing Opus into the MP4 would be a second output format the
 readers and `chooseSegmentedPlayback` would carry, which is a decision, not a fix.
 
-## Constant frame rate
+## Constant frame rate, and the audio holes the decoder closes
 
-**Decided by the owner on 2026-11-06, after a report on one production feed post**: a 13.6 s
-720x1280 H.264/AAC fragmented MP4 (moov, 8 moof/mdat pairs, mfra; video timescale 57600, audio
-48000) whose picture was "really late" and whose sound no longer matched the picture at the END.
-A desktop Chrome playing it showed 11 frame gaps over 60 ms in 9 s, the longest 258 ms. Decision:
-measure, then NORMALISE - every video is converted at upload to the Canari camera's format, a
-constant 30 fps.
+**The report (owner, 2026-11-06), on one production feed post**: a 13.6 s 720x1280 H.264/AAC
+fragmented MP4 whose picture was "really late" and whose sound no longer matched the picture at
+the END. A desktop Chrome playing it showed 11 frame gaps over 60 ms in 9 s, the longest 258 ms.
+**Decision**: measure, then NORMALISE - every video converted at upload to the Canari camera's
+format, a constant 30 fps.
 
-**What the production file's header already says.** The video timescale 57600 is mediabunny's
-`GLOBAL_TIMESCALE`, which the muxer uses only when the track has NO frame rate - so the file was made
-by this seam, and its source measured at most 30.5 fps: it was never resampled, and its frames kept
-the source's own timestamps. The fragment starts (video `tfdt` 0, 116463, 231890 = 0, 2.0219,
-4.0259 s) are not on any 30 fps grid (2.0333, 4.0333 would be): the frames were irregular. The audio
-starts (1792, 96000, 192256 = 0.0373, 2.0000, 4.0053 s) differ by whole 1024-sample AAC frames
-(92 and 94 of them): the audio is contiguous, with no hole and no overlap. Each fragment starting
-with its audio a few milliseconds before its video key frame is the muxer's interleaving (a
-fragment is closed by whichever track first meets the next key frame), not a defect: a fragment's
-`tfdt` is the earliest presentation time of its samples and its `trun` durations are decode-time
-deltas, so each track's times run on continuously across fragments.
+### The production file, read in the owner's browser (never named here)
 
-**What the seam does to timestamps, read in mediabunny 1.65.0** (the version the app ships):
+`avcC` profile 100 (High), level 31; no `elst` on either track; no composition offsets; video
+timescale 57600 (mediabunny's `GLOBAL_TIMESCALE`, used only for a track with NO frame rate: this
+seam made the file and did not resample it), audio 48000.
 
-- **video**: every decoded frame keeps its source timestamp through the encoder (`conversion.js`,
-  `sample.setTimestamp(clamped + offset)`), and the fragmented muxer writes each sample's duration as
-  the delta to the next decode timestamp (`isobmff-muxer.js`, `processTimestamps`). A variable-rate
-  source therefore came out variable-rate, holes included - faithfully, never retimed from a
-  nominal rate;
-- **audio, copied**: the AAC packets keep their own timestamps;
-- **audio, encoded**: gaps of 64 samples or more between decoded chunks are filled with silence
-  (`media-source.js`, mediabunny issue 176), overlaps are not trimmed;
-- **frame rate, when set** (`transform.frameRate`): each frame is placed on `floor(t * fps) / fps`,
-  a later frame in the same slot replaces it, an empty slot repeats the frame before, and the end is
-  padded to the last frame's end. The video track's timescale becomes the rate itself.
+| `moof` | video start s | samples | sum s | min-max ms | gaps > 66 ms | audio start s | samples | sum s |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | 0 | 46 | 2.0219 | 16.2-257.5 | 4 | 0.0373 | 92 | 1.9627 |
+| 2 | 2.0219 | 60 | 2.0039 | 27.4-39.8 | 0 | 2.0000 | 94 | 2.0053 |
+| 3 | 4.0259 | 60 | 2.0025 | 27.5-39.7 | 0 | 4.0053 | 94 | 2.0053 |
+| 4 | 6.0284 | 60 | 1.9817 | 15.4-50.4 | 0 | 6.0107 | 93 | 1.984 |
+| 5 | 8.0101 | 60 | 1.9992 | 16.6-50.5 | 0 | 7.9947 | 93 | 1.984 |
+| 6 | 10.0094 | 60 | 2.0022 | 10.8-53.7 | 0 | 9.9787 | 94 | 2.0053 |
+| 7 | 12.0116 | 36 | 1.2024 | 24.4-42.4 | 0 | 11.984 | 37 | 0.7893 |
+| 8 | 13.2139 | 12 | 0.404 | - | 0 | (video only) | | |
 
-**Measured 2026-11-06, Windows desktop, headless Chrome, the seam itself**
-([`tools/video-av-sync`](../../../tools/video-av-sync/README.md)): a 14 s source made in the page
-with a white frame and a 1 kHz beep on every whole second. The `vfr` rows are a phone that drops
-frames - single frames dropped, holes of 8 frames, frames jittered by up to +-6 ms, flashes off
-the grid: max gap 332 ms, 41 gaps over 60 ms. "Skew" is flash minus beep, read back through
-mediabunny's sinks (the times a player schedules), at the FIRST second and at the LAST.
+The video ends at 13.6179 s, the audio at 12.7733 s - **0.845 s earlier**. Every audio sample lasts
+exactly 1024 ticks (21.3 ms), contiguous across fragments: the audio track has no hole at all. The
+video is irregular (4 stalls up to 258 ms in its first 2 s, frames 11-54 ms apart after that).
+The fragment starts of the two tracks stay within ~30 ms of each other, but that only says where
+the muxer cut: it interleaves the output's own timestamps, whatever those have lost.
 
-| Row | Before (`main`: the source's frame times kept) | After (a constant 30) |
+### The cause, proven: Chrome's audio decoder closes the source's holes
+
+A phone that drops audio buffers while recording writes an audio track with HOLES - packet n+1
+starts later than packet n ends, and its timestamp says so. **Chrome's WebCodecs `AudioDecoder`
+ignores that**: it stamps its first output with the first packet's time and every later output
+with the frames decoded so far. Measured 2026-11-06 on desktop Chrome, one source whose AAC track
+had 7 holes of 213 ms (10 packets dropped out of every 94, the rest keeping their timestamps):
+
+| | packet 20 | packet 21 | last |
+| --- | --- | --- | --- |
+| the packets' timestamps | 0.3840 s | 0.6187 s | 13.9947 s |
+| Chrome's `AudioDecoder` output | 0.3840 s | 0.4053 s | 12.5013 s |
+| mediabunny's `AudioSampleSink` | 0.3840 s | 0.4053 s | 12.5013 s |
+
+Same for Opus in WebM. The decoder emitted exactly one chunk per packet (588 for 588, 627 for 627).
+mediabunny resyncs to a decoder timestamp a whole frame off (`media-sink.js`) and fills a gap of
+64 samples or more with silence before the encoder (`media-source.js`), but neither can see a hole
+the decoder already closed. So **the ENCODE route** (any non-AAC source, Android's Opus recordings
+among them, or an AAC track over 128 kb/s) **wrote the audio contiguous and short, every sound after
+a hole early by the sum of the holes before it** - growing to the end of the file:
+
+| Row (rig, VFR video, AAC with 7 holes) | `main` | this change |
 | --- | --- | --- |
-| VFR, AAC 192 kb/s (re-encoded) | skew -10 / +1 ms; 345 frames, max gap 332 ms, 293 off the grid | skew -10 / 0 ms; 420 frames, every gap 33.3 ms |
-| VFR, AAC 96 kb/s (copied) | skew -10 / +1 ms; max gap 332 ms | skew -10 / 0 ms; every gap 33.3 ms |
-| VFR, VP8 + Opus WebM (the Android recorder's shape) | skew -10 / +1 ms; max gap 332 ms | skew -10 / 0 ms; every gap 33.3 ms |
-| CFR 60 fps | already resampled: skew -10 / 0 ms | same |
-| CFR 24 fps | kept at 24: every gap 41.7 ms | skew -10 / 0 ms; 30 fps |
+| 192 kb/s (re-encoded) | audio ends 12.523 s, video 14.000 s; sound early by 209, 427, 639, 856, 1069, 1285, **1494 ms** at seconds 1-13; output audio contiguous | in sync within 1 ms at second 13; audio ends 14.016 s, holes filled with silence |
+| 96 kb/s (copied) | in sync by the packets' times, but the 7 holes copied into the output, where Chrome's decoder closes them again on playback | re-encoded, as above |
 
-Every row, before and after, ends video 14.000 s and audio 14.016 s. The -10 ms at the first
-second is the AAC encoder's onset smear in the SOURCE (its 13th second reads 0). One `main` run of
-the WebM row did not finish within 300 s; its re-run did, and it was not seen again. The same kind
-of sources made with `ffmpeg` and read back through `ffmpeg`'s decoder (edit lists applied) gave the
-same skews, plus one row only `ffmpeg` could make: an AAC track whose container timestamps run
-2.5 % faster than its samples (`setts=ts=N*1050`), copied and re-encoded - skew a constant -21 ms
-from the first second to the last, the source's own (the remux dropped its priming edit).
+**That is the production file's signature**: contiguous 1024-tick audio ending 0.845 s before the
+picture, the sound running ahead of the picture more and more towards the end (the picture "late").
+Its source's own holes are gone from the output, so their places cannot be read back from it; the
+shape is the proof, and an old phone dropping audio buffers is the owner's own guess for the source.
 
-**What this proves, and what it does not.**
+**The fix** (`frontend/src/lib/video/audioTimeline.ts`, used by `prepareVideoForUpload.ts`): before
+converting, every audio packet's timestamp is read (metadata only) and the audio decoded once;
+`audioHoleMap` pairs chunk k with packet k - REFUSING to pair, with a `console.error`, when the
+counts differ - and records where each hole starts on the decoder's timeline. A hole is a packet at
+least one chunk later than the decoder put it, beyond the holes already counted (mediabunny's own
+"a whole frame off" rule: timestamp jitter is never a hole); a packet earlier than that is counted as
+an overlap and left alone. The conversion's audio `process` hook moves each decoded chunk back
+(`restoreAudioTimestamp`); mediabunny's encoder then fills the gap with silence. A source with holes
+is ENCODED even when it is AAC-LC under 128 kb/s, because a copy keeps the holes for the player to
+close (`chooseAudioRoute`'s `hasHoles`). An engine with no AAC encoder (Firefox) still copies it,
+holes included; the console names the holes.
 
-- **The seam makes no drift on desktop Chrome.** A variable-rate source with holes of a third of a
-  second, copied or re-encoded audio, MP4 or WebM: flash and beep meet within 1 ms at the 13th
-  second, before the change as after it. The production file's header shows nothing the seam would
-  have retimed either.
-- **The seam DID pass a variable frame rate through**, holes and all - which is what the desktop
-  reading of the production post shows (gaps to 258 ms): those holes were the source's. A player
-  that schedules frames from a nominal rate, or a hardware decoder that drops what it judges late,
-  plays such a file with its picture drifting from its sound; a constant-rate file leaves it nothing
-  to interpret.
-- **NOT proven: what made the production post drift.** Three causes stay open, and the numbers
-  that separate them are owed (below): the SOURCE was already out of sync (an old phone's recorder,
-  the owner's guess); a PHONE's encoder path (the Android WebView's MediaCodec, WKWebView's
-  VideoToolbox) moves timestamps where desktop Chrome does not - the rig has not run on a phone; or
-  the reader's player mishandles the variable rate.
+### The video: a variable frame rate, and what a phone does with it
 
-**The change** (`videoEncodingPlan.ts`, `prepareVideoForUpload.ts`): the plan's `frameRate` is
-always `VIDEO_FRAME_RATE` (30); it used to be set only above 30.5 fps. The audio is not touched, so
-the two stay where the source had them; a picture moves by at most one frame, always EARLIER (the
-slot is a floor) - the direction lip sync tolerates best. Costs taken knowingly: a 24 or 25 fps clip
-gets a repeated frame every 4 or 5 (a slight judder on a slow pan), and a variable-rate source's
-holes become HELD frames, still a visible stutter - normalisation regularises the timeline, it
-cannot invent frames the phone never recorded. The web, the Android WebView and WKWebView all run
-this one seam, so the change is the same on each; only desktop Chrome was MEASURED.
+The seam kept each decoded frame's source timestamp and only resampled above 30.5 fps, so a
+variable-rate source came out variable-rate, holes included (the production file's 258 ms stalls).
+Now the plan's `frameRate` is always `VIDEO_FRAME_RATE` (30): each frame lands on
+`floor(t * 30) / 30`, a later frame in the same slot replaces it, an empty slot repeats the frame
+before. A picture moves by at most one frame, always EARLIER - the direction lip sync tolerates
+best. Costs taken knowingly: a 24 or 25 fps clip gets a repeated frame every 4 or 5, and a source's
+missing frames become HELD frames, still a visible stutter - the timeline is regular, the frames
+the phone never recorded are not invented.
 
-**Owed:**
+**Played on the Mi 9T** (Chrome 156, the same 14 s 720x1280 file prepared both ways, read with
+`requestVideoFrameCallback` and `getVideoPlaybackQuality`; the file itself has 55 gaps over 60 ms):
 
-- **The production file's per-sample numbers**, read in the owner's browser (the post is never named
-  here): for each `moof`, the video `trun`'s sample count, duration sum, min and max duration, the
-  count over 2/30 s, and whether it carries composition offsets; the audio `trun`'s sample count and
-  duration sum; the `mdhd`/`tkhd` durations and any `elst`; the `avcC` profile and level (Android's
-  MediaCodec usually writes Baseline or Main, Apple and desktop Chrome High - it names the device that
-  encoded it). The last video sample's end against the last audio sample's end says whether the FILE
-  drifts or only its playback.
-- **The rig's rows on the Mi 9T and the iPhone 12**, through their own encoders.
-- **A CI gate**: the rig makes its source with an AAC encoder, which Chrome on Linux lacks; a
-  committed AAC fixture would let the copied-audio row (OpenH264 video) run on a runner.
+| Output | Played | Dropped | Gaps over 60 ms (wall / media time) | Longest |
+| --- | --- | --- | --- | --- |
+| `main` (VFR kept) | whole file | 18 of 316 | 45 / 72 | 348 ms |
+| `main` (VFR kept) | through MSE | 18 of 316 | 40 / 70 | 382 ms |
+| constant 30 | whole file | 0 of 420 | 1 / 0 | 83 ms |
+| constant 30 | through MSE | 0 of 420 | 0 / 0 | 50 ms |
+
+The phone's player ADDS stalls to a variable-rate file (18 frames dropped, 72 media-time gaps where
+the file has 55) - the lead's desktop reading of the production post (more gaps than the file
+holds) is the same effect. A constant-rate file drops none.
+
+### The rig, and what it still does not cover
+
+[`tools/video-av-sync`](../../../tools/video-av-sync/README.md) makes each source in a headless
+Chrome (a white frame and a beep on every whole second; the `vfr` rows drop frames, leave 8-frame
+holes and jitter frames by up to +-6 ms; the `holes` rows drop audio packets), runs the app's own
+`prepareVideoForUpload` and judges the output by its PACKETS' times - the decoder's would hide the
+very drift it looks for. Every row passes on this change (Windows desktop Chrome, 2026-11-06), the
+skew at second 13 at most 1 ms; on `main` the hole rows fail as above and every VFR and 24 fps row
+fails the 30 fps grid. Owed:
+
+- **The rig on the phones' own encoders and decoders** (the Android WebView's MediaCodec, WKWebView):
+  the one-chunk-per-packet pairing is CHECKED there by the console error above, not yet observed.
+- **A CI gate**: the rig makes its sources with an AAC encoder, which Chrome on Linux lacks; a
+  committed AAC source would let the copied-audio rows run on a runner.
+- **The production post itself** stays as it is: its holes are no longer in the file.
 
 ## Who calls it
 

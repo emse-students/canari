@@ -5,7 +5,7 @@
  */
 import * as mb from 'mediabunny';
 import { prepareVideoForUpload } from '../../../frontend/src/lib/video/prepareVideoForUpload';
-import { audioOnsets, beepSample, frameSchedule, judge, seeded } from '../lib.mjs';
+import { audioHoleCount, audioOnsets, beepSample, frameSchedule, judge, seeded } from '../lib.mjs';
 
 /** One row of the rig. */
 interface Case {
@@ -18,6 +18,11 @@ interface Case {
   seconds: number;
   /** The source's audio bitrate: at most 128 kb/s an AAC-LC track is copied, above it re-encoded. */
   audioBitrate: number;
+  /**
+   * Drops 10 audio packets (213 ms) out of every 94, the rest keeping their timestamps: a recorder
+   * that lost audio buffers. The beeps all sit outside the holes, so every one must still be heard.
+   */
+  audioHoles?: boolean;
 }
 
 const SAMPLE_RATE = 48_000;
@@ -90,6 +95,50 @@ async function makeSource(c: Case): Promise<File> {
   return new File([output.target.buffer!], `${c.name}.${c.container}`, { type });
 }
 
+/**
+ * The same file with holes in its audio track: every packet copied as it is, video untouched, and
+ * audio packets 20-29 of every 94 left out (a beep is in packets 0-1 of each second, never there).
+ */
+async function withAudioHoles(file: File): Promise<File> {
+  const input = new mb.Input({ source: new mb.BlobSource(file), formats: mb.ALL_FORMATS });
+  const vTrack = (await input.getPrimaryVideoTrack())!;
+  const aTrack = (await input.getPrimaryAudioTrack())!;
+  const output = new mb.Output({ format: new mb.Mp4OutputFormat(), target: new mb.BufferTarget() });
+  const video = new mb.EncodedVideoPacketSource((await vTrack.getCodec())!);
+  const audio = new mb.EncodedAudioPacketSource((await aTrack.getCodec())!);
+  output.addVideoTrack(video);
+  output.addAudioTrack(audio);
+  await output.start();
+  const vConfig = (await vTrack.getDecoderConfig())!;
+  const aConfig = (await aTrack.getDecoderConfig())!;
+  const vPackets = new mb.EncodedPacketSink(vTrack).packets();
+  const aPackets = new mb.EncodedPacketSink(aTrack).packets();
+  let v = await vPackets.next();
+  let a = await aPackets.next();
+  let n = 0;
+  let firstV = true;
+  let firstA = true;
+  // Interleaved by time, as the muxer wants them.
+  while (!v.done || !a.done) {
+    if (!v.done && (a.done || v.value.timestamp <= a.value.timestamp)) {
+      await video.add(v.value, firstV ? { decoderConfig: vConfig } : undefined);
+      firstV = false;
+      v = await vPackets.next();
+    } else if (!a.done) {
+      const keep = n % 94 < 20 || n % 94 >= 30;
+      if (keep) await audio.add(a.value, firstA ? { decoderConfig: aConfig } : undefined);
+      if (keep) firstA = false;
+      n++;
+      a = await aPackets.next();
+    }
+  }
+  video.close();
+  audio.close();
+  await output.finalize();
+  input.dispose();
+  return new File([output.target.buffer!], file.name, { type: file.type });
+}
+
 /** Reads a file back: every frame's time and brightness, every audio chunk with its time. */
 async function read(file: Blob) {
   const input = new mb.Input({ source: new mb.BlobSource(file), formats: mb.ALL_FORMATS });
@@ -109,21 +158,42 @@ async function read(file: Blob) {
   const chunks: { timestamp: number; data: Float32Array }[] = [];
   let audioEnd = 0;
   let sampleRate = SAMPLE_RATE;
+  // Where the PACKETS put the sound, not where the decoder stamps it: Chrome's decoder closes every
+  // hole in a track (audioTimeline.ts), and a reading through it would hide the very drift it is
+  // here to see. Chunk k is packet k's (the decoder emits one per packet, checked below).
+  const packetTimes: number[] = [];
+  for await (const p of new mb.EncodedPacketSink(aTrack).packets(undefined, undefined, {
+    metadataOnly: true,
+  })) {
+    packetTimes.push(p.timestamp);
+  }
   for await (const s of new mb.AudioSampleSink(aTrack).samples()) {
     const data = new Float32Array(s.numberOfFrames);
     s.copyTo(data, { planeIndex: 0, format: 'f32-planar' });
-    chunks.push({ timestamp: s.timestamp, data });
+    const at = packetTimes[chunks.length] ?? s.timestamp;
+    chunks.push({ timestamp: at, data });
     sampleRate = s.sampleRate;
-    audioEnd = Math.max(audioEnd, s.timestamp + s.duration);
+    audioEnd = Math.max(audioEnd, at + s.duration);
     s.close();
   }
   input.dispose();
-  return { frames, onsets: audioOnsets(chunks, sampleRate), audioEnd };
+  if (chunks.length !== packetTimes.length) {
+    throw new Error(`${chunks.length} decoded chunks for ${packetTimes.length} audio packets`);
+  }
+  return {
+    frames,
+    onsets: audioOnsets(chunks, sampleRate),
+    audioEnd,
+    audioHoles: audioHoleCount(
+      chunks.map((c) => ({ timestamp: c.timestamp, duration: c.data.length / sampleRate }))
+    ),
+  };
 }
 
 /** One row: make, prepare, read both, judge both. */
 async function runCase(c: Case) {
-  const source = await makeSource(c);
+  const made = await makeSource(c);
+  const source = c.audioHoles ? await withAudioHoles(made) : made;
   const logs: string[] = [];
   const debug = console.debug;
   console.debug = (...a: unknown[]) => {
@@ -141,6 +211,7 @@ async function runCase(c: Case) {
       name: c.name,
       logs: logs.filter((l) => l.includes('audio:') || l.includes('plan:')),
       source: {
+        audioHoles: before.audioHoles,
         frames: before.frames.length,
         maxFrameGapMs: Math.round(Math.max(...sourceGaps) * 1000),
         gapsOver60ms: sourceGaps.filter((g) => g > 0.06).length,

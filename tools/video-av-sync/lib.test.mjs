@@ -4,7 +4,7 @@
  * included, which is where the production report saw it.
  */
 import { describe, expect, it } from 'bun:test';
-import { audioOnsets, frameSchedule, judge, OUTPUT_FPS } from './lib.mjs';
+import { audioHoleCount, audioOnsets, frameSchedule, judge, OUTPUT_FPS } from './lib.mjs';
 
 /** An output on the 30 fps grid, flashes on whole seconds shifted by `videoShift(k)`. */
 function gridFrames(seconds, videoShift = () => 0) {
@@ -79,5 +79,24 @@ describe('judge', () => {
     expect(v.failures.some((f) => f.startsWith('the audio ends'))).toBe(true);
     const short = judge({ frames: gridFrames(13), onsets: beeps(13), audioEnd: 13, seconds: 14 });
     expect(short.failures.some((f) => f.startsWith('the video ends'))).toBe(true);
+  });
+});
+
+describe('audioHoleCount', () => {
+  it('counts a packet that starts after the one before ends, and fails the verdict on it', () => {
+    const f = 1024 / 48_000;
+    const chunks = [0, f, 2 * f + 0.2, 3 * f + 0.2].map((timestamp) => ({
+      timestamp,
+      duration: f,
+    }));
+    expect(audioHoleCount(chunks)).toBe(1);
+    const v = judge({
+      frames: gridFrames(14),
+      onsets: beeps(14),
+      audioEnd: 14.02,
+      seconds: 14,
+      audioHoles: 1,
+    });
+    expect(v.failures).toEqual(['the audio has 1 hole(s) a player will close']);
   });
 });

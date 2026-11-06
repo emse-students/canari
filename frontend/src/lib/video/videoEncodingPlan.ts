@@ -31,7 +31,7 @@ export const AUDIO_BITRATE = 128_000;
  * reader), and a VARIABLE-rate one (a phone that dropped frames while recording, timestamps
  * irregular, holes of a quarter second) gets one frame per 1/30 s slot, the last one held across a
  * hole. A player then has nothing to interpret: frame n is presented at n/30 s, against an audio
- * track that was never retimed (docs/wiki/frontend/video-preparation.md#constant-frame-rate).
+ * track kept on the source's own timeline (docs/wiki/frontend/video-preparation.md#constant-frame-rate-and-the-audio-holes-the-decoder-closes).
  */
 export const VIDEO_FRAME_RATE = 30;
 
