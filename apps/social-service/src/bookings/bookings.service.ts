@@ -55,6 +55,12 @@ import {
 import { BookingFilesService } from './booking-files.service';
 import { BookingNotificationsService } from './booking-notifications.service';
 import { fileAnswersOf, type FileAnswer } from '../forms/form-files.service';
+import {
+  isQuestionAnswered,
+  withNormalisedGridAnswers,
+  type FormAnswerValue,
+  type GridItem,
+} from '../forms/answer-bounds';
 import { bookingsWorkbook, type BookingExportLabels } from './booking-export';
 import {
   bookingCalendarPath,
@@ -875,19 +881,22 @@ export class BookingsService {
   private async validAnswers(
     space: BookingSpace,
     holderId: string,
-    answers: Record<string, string | string[] | number>
-  ): Promise<Record<string, string | string[] | number> | null> {
-    const items = (space.items ?? []) as (ConditionalItem & { required?: boolean })[];
+    raw: Record<string, FormAnswerValue>
+  ): Promise<Record<string, FormAnswerValue> | null> {
+    const items = (space.items ?? []) as (ConditionalItem & GridItem)[];
     if (items.length === 0) return null;
+    // A grid's answer judged against its rows and columns and stripped of its empty rows, the
+    // forms' rule (`answer-bounds.ts`) - the DTO accepts the shape for both since 2026-11-06.
+    const answers = withNormalisedGridAnswers(items, raw);
     // Keyed by the space's own question ids only: a `__proto__` key off the body never reaches
     // a map (`answerSelections`, the forms' rule).
     const selections = answerSelections(items, answers);
     const visible = visibleItemIds(items, await this.factsFor(space, holderId, selections));
-    const kept: Record<string, string | string[] | number> = {};
+    const kept: Record<string, FormAnswerValue> = {};
     for (const item of items) {
       if (!visible.has(item.id)) continue;
       const value = answers[item.id];
-      const present = Array.isArray(value) ? value.length > 0 : value !== undefined && value !== '';
+      const present = isQuestionAnswered(item, value);
       if (item.required && !present) {
         throw new BadRequestException({ code: 'answer-required', itemId: item.id });
       }

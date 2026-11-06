@@ -3,7 +3,7 @@
   import { gotoAppPath } from '$lib/navigation/gotoAppPath';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
-  import { refusalStatus } from '$lib/utils/apiRefusal';
+  import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
   import { page } from '$app/state';
   import { onMount } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
@@ -39,6 +39,7 @@
     firstMissingAnswer,
     formatAmount as formatCurrency,
     initialSelections,
+    selectionsFromAnswers,
     isItemAnswered,
     missingAnswerMessage,
     visibleAnswers,
@@ -65,7 +66,8 @@
     activePaymentProvider,
     loadActivePaymentProvider,
   } from '$lib/associations/activePaymentProvider.svelte';
-  import { FORM_COTISATION_HELD, providerRefusalMessage } from '$lib/associations/paymentRefusal';
+  import { FORM_COTISATION_HELD } from '$lib/associations/paymentRefusal';
+  import { formSubmitRefusalMessage } from '$lib/forms/answerBounds';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { PAGE_WIDTHS } from '$lib/components/layout/pageWidth';
 
@@ -283,7 +285,7 @@
       if (hasSubmitted) {
         try {
           const sub = await getSubmission(f.id);
-          if (sub?.answers) selections = sub.answers;
+          if (sub?.answers) selections = selectionsFromAnswers(f.items, sub.answers);
         } catch {
           // ignore
         }
@@ -292,7 +294,8 @@
       error =
         e instanceof FormNotFoundError
           ? m.form_view_not_found()
-          : e.message || m.form_view_load_error();
+          : (describeApiRefusal(refusalStatus(e), m.form_view_load_action()) ??
+            m.form_view_load_error());
     } finally {
       loading = false;
     }
@@ -429,8 +432,10 @@
           : m.form_view_submission_success();
         setTimeout(leaveForm, 1500);
       }
-    } catch (e: any) {
-      error = providerRefusalMessage(e) ?? (e.message || m.form_view_error_payment_failed());
+    } catch (e: unknown) {
+      Log.d('FormView', `submit refused status=${refusalStatus(e) ?? 'transport'}`);
+      // Worded from the refusal's CODE, never from the server's English (D6).
+      error = formSubmitRefusalMessage(e, m.form_guest_submit_failed());
     } finally {
       submitting = false;
     }

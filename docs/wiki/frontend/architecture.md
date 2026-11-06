@@ -890,3 +890,12 @@ One pull request, because `adapter-node@6` requires `@sveltejs/kit@3` and `kit@3
 The vitest stub of `$app/paths` matches against `src/routes` for the same reason: a stub matching nothing would send every caller down the document branch and test nothing.
 
 **Still a fallback, and why it stays:** the checkout return in `hooks.client.ts` (`navigate`) catches any `goto` failure and assigns `window.location.href`. Its targets are `AppPath`, so a missing route is no longer what it catches; what is left is a navigation failing for another reason on the payment return, which nothing here has observed. It is filed in [backlog](../backlog.d/p3-sveltekit-3-what-the-audit-of-2613-left-open.md) rather than removed blind.
+
+## A draggable card never starts a drag from a field (2026-11-06)
+
+Reported by the owner: in the form editor, dragging across the question title to select text ghosted the whole card away. Cause: the card carried a static `draggable="true"`, and Chromium and WebKit take the drag source from the press itself, so a field inside is hijacked.
+
+- **The rule**, one place: `utils/dragExclusion.ts` (`isDragExcludedTarget`) - `input`, `textarea`, `select`, `button`, `a[href]`, `label`, `summary`, `[contenteditable]`, `[role=textbox]` and `[data-no-drag]` never start a drag; a `[data-drag-handle]` is the exception (a grip that is itself a button).
+- **The mechanism**: the action `actions/draggableCard.ts` sets `draggable` true, flips it to false at `pointerdown` on an excluded target and back on `pointerup`/`pointercancel`/`dragend`. Deciding at pointerdown is the only moment that works in every engine, and it also leaves the touch long-press text selection alone. Keyboard reordering (the move up/down buttons) is not a drag and is untouched.
+- **Surfaces using native HTML5 drag** (both fixed): `FormQuestionsSection` question cards, `EditMembersTab` member rows. The salon list in `Sidebar` uses `svelte-dnd-action` on rows that are buttons with no field inside; it is unchanged. Any new native-draggable card uses `use:draggableCard`, never a bare `draggable`.
+- Tests: `dragExclusion.test.ts`, `FormQuestionsSection.drag.svelte.test.ts`.
