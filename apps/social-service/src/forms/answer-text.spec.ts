@@ -79,4 +79,40 @@ describe('answerText - a file answer', () => {
   it('refuses to read a file answer without words, rather than print its id', () => {
     expect(() => answerText(FILE_ID, FILE)).toThrow('words of its reader');
   });
+
+  describe('a priced grid (product_grid)', () => {
+    const GRID: AnswerQuestion = {
+      id: 'q-grid',
+      type: 'product_grid',
+      productGrid: {
+        rows: [
+          { id: 'vert', label: 'Vert' },
+          { id: 'noir', label: 'Noir' },
+        ],
+        columns: [
+          { id: 'm', label: 'M' },
+          { id: 'l', label: 'L' },
+        ],
+      },
+    };
+    const answer = { 'vert:m': 2, 'noir:l': 1 };
+
+    it('reads the grid labels when no lines are given', () => {
+      expect(answerText(answer, GRID)).toBe('Vert / M x2; Noir / L x1');
+    });
+
+    it('reads what was CHARGED first: a row renamed or deleted since keeps its old label', () => {
+      const lines = [
+        { itemId: 'q-grid', rowLabel: 'Vert sapin', colLabel: 'M', quantity: 2 },
+        { itemId: 'q-grid', rowLabel: 'Noir', colLabel: 'L', quantity: 1 },
+        { itemId: 'other-grid', rowLabel: 'Mug', colLabel: 'Unique', quantity: 9 },
+      ];
+      expect(answerText(answer, GRID, undefined, lines)).toBe('Vert sapin / M x2; Noir / L x1');
+    });
+
+    it('an empty or malformed answer reads empty', () => {
+      expect(answerText('', GRID)).toBe('');
+      expect(answerText(['vert:m'], GRID)).toBe('');
+    });
+  });
 });

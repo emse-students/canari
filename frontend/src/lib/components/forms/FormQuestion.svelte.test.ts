@@ -12,6 +12,7 @@ import { flushSync, mount, tick, unmount } from 'svelte';
 import { uploadFormAnswerFile, type FormItem } from '$lib/forms/api';
 import { UploadAbortedError, type XhrUploadOptions } from '$lib/utils/uploadXhr';
 import { m } from '$lib/paraglide/messages';
+import { ANSWER_MAX_TEXT_LENGTH } from '$lib/forms/answerBounds';
 import FormQuestionHarness from './FormQuestionHarness.test.svelte';
 
 vi.mock('$lib/forms/api', async (importOriginal) => ({
@@ -61,6 +62,28 @@ describe('FormQuestion', () => {
     input.dispatchEvent(new Event('input'));
     flushSync();
     expect(state.value).toBe('Ada');
+  });
+
+  // D2: the server's bound is the textarea's, and the reader sees how much is left.
+  it('bounds a long answer at the server limit and counts it', () => {
+    const { target } = render(
+      { id: 'q', label: 'Lettre', required: false, type: 'long_text' },
+      'abc'
+    );
+    expect(target.querySelector('textarea')!.maxLength).toBe(ANSWER_MAX_TEXT_LENGTH);
+    expect(target.textContent).toContain(
+      m.form_answer_char_count({ count: 3, max: ANSWER_MAX_TEXT_LENGTH })
+    );
+  });
+
+  // A type added after this build (the coming product_grid) is never an empty card.
+  it('asks to update the app for a type it does not know', () => {
+    const { target } = render(
+      { id: 'q', label: 'Sweat', required: true, type: 'product_grid' },
+      ''
+    );
+    expect(target.textContent).toContain(m.form_view_update_app_to_answer());
+    expect(target.querySelector('input, textarea')).toBeNull();
   });
 
   it('hands a single choice back', () => {

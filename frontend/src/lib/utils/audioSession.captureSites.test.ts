@@ -8,41 +8,28 @@
  * fails on it. A video-only `getUserMedia` (a call's camera) may stay direct. KNOWN GAP: it reads
  * the call's text, so constraints passed as a VARIABLE (`getUserMedia(constraints)`) slip through.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
 import { expect, it } from 'vitest';
+import { relativeTo, sourceFiles } from '../../test/sourceTree';
 
-const SRC = join(__dirname, '..', '..');
 /** The one implementation, which is allowed to call `getUserMedia` with audio. */
-const OWNER = join('lib', 'utils', 'audioSession.ts');
-
-function sources(dir: string): string[] {
-  const out: string[] = [];
-  for (const name of readdirSync(dir)) {
-    const path = join(dir, name);
-    if (statSync(path).isDirectory()) {
-      if (name === 'wasm' || name === 'paraglide' || name === 'proto') continue;
-      out.push(...sources(path));
-    } else if (/\.(ts|svelte)$/.test(name) && !/\.test\.ts$|\.test-helper\.ts$/.test(name)) {
-      out.push(path);
-    }
-  }
-  return out;
-}
+const OWNER = 'lib/utils/audioSession.ts';
 
 it('no capture site calls getUserMedia with audio except audioSession.ts', () => {
   const offenders: string[] = [];
-  for (const file of sources(SRC)) {
-    const rel = relative(SRC, file);
-    if (rel === OWNER) continue;
-    const text = readFileSync(file, 'utf-8');
+  // The run's shared snapshot, read once: this scan never touches the disk (test-suite-reform s8).
+  // The snapshot holds no generated tree (`wasm`, `paraglide`, `proto`), as the walk it replaces skipped.
+  const files = sourceFiles({ under: 'src', extensions: ['ts', 'svelte'], tests: 'exclude' });
+  // It is reading the tree it thinks it is: the one owner is in it.
+  expect(files.some((f) => relativeTo(f.path, 'src') === OWNER)).toBe(true);
+  for (const { path, text } of files) {
+    const rel = relativeTo(path, 'src');
+    if (rel === OWNER || rel.endsWith('.test-helper.ts')) continue;
     for (const match of text.matchAll(/\.getUserMedia\(/g)) {
       // The constraints of this call: up to its closing parenthesis, which a few lines hold.
       const call = text.slice(match.index, match.index + 400);
       const end = call.indexOf(');');
       const args = end >= 0 ? call.slice(0, end) : call;
-      if (/\baudio\b/.test(args))
-        offenders.push(`${rel.split(sep).join('/')}: ${args.split('\n')[0]}`);
+      if (/\baudio\b/.test(args)) offenders.push(`${rel}: ${args.split('\n')[0]}`);
     }
   }
   expect(offenders).toEqual([]);

@@ -23,6 +23,8 @@ export const SUPPORTED_QUESTION_TYPES = [
   'matrix_single',
   'matrix_multiple',
   'file',
+  // An order: rows x columns of quantities, priced server-side (`forms/product-grid.ts`).
+  'product_grid',
 ] as const;
 
 /** One of the question types a write may carry. */

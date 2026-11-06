@@ -2,6 +2,8 @@
   import { kindHasSection } from '$lib/associations/editSections';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { questionImageRefusalMessage } from '$lib/forms/questionImage';
+  import { formCodeMessage, formItemsProblem } from '$lib/forms/answerBounds';
+  import { refusalCode } from '$lib/utils/apiRefusal';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -223,6 +225,11 @@
       error = m.form_error_association_required();
       return;
     }
+    const itemsProblem = formItemsProblem(items);
+    if (itemsProblem) {
+      error = itemsProblem;
+      return;
+    }
     const fileProblem = fileQuestionProblem({
       items,
       isPublic,
@@ -275,7 +282,11 @@
       await updateForm(formId, payload);
       goto(resolve('/forms'));
     } catch (e: any) {
-      error = questionImageRefusalMessage(e) ?? providerRefusalMessage(e) ?? e.message;
+      error =
+        questionImageRefusalMessage(e) ??
+        formCodeMessage(refusalCode(e)) ??
+        providerRefusalMessage(e) ??
+        e.message;
     } finally {
       isSubmitting = false;
     }

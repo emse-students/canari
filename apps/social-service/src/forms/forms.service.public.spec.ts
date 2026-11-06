@@ -146,6 +146,7 @@ describe('FormsService - public forms', () => {
           'opensAt',
           'paymentsPaused',
           'pricing',
+          'productGridPrices',
           'title',
         ].sort()
       );

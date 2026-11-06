@@ -25,17 +25,22 @@ import {
 } from '../form-files.service';
 import { SUPPORTED_QUESTION_TYPES } from './question-types';
 import { QUESTION_IMAGE_ALT_MAX_LENGTH, QUESTION_IMAGE_URL_RE } from '../form-item-images.service';
-
-/** Max keys per answers record - prevents oversized payloads. */
-const ANSWERS_MAX_KEYS = 50;
-/** Max character length per string answer. */
-const ANSWERS_MAX_STRING_LEN = 2000;
-/** Max number of selected options per multi-select answer. */
-const ANSWERS_MAX_ARRAY_LEN = 50;
+import {
+  ANSWER_MAX_SELECTIONS,
+  ANSWER_MAX_TEXT_LENGTH,
+  FORM_MAX_QUESTIONS,
+  GRID_MAX_ROWS,
+  isAcceptedAnswerValue,
+  PRODUCT_GRID_MAX_CELLS,
+  type FormAnswerValue,
+} from '../answer-bounds';
 
 /**
- * Validates that `answers` is a shallow Record whose values are strings, string arrays, or numbers,
- * all within accepted size bounds.
+ * Validates that `answers` is a shallow Record of at most {@link FORM_MAX_QUESTIONS} keys whose
+ * values are strings, string arrays, numbers, a survey grid's flat row map or a priced grid's
+ * cell quantities - all within the bounds of
+ * `libs/contracts/form-answers.json` (`isAcceptedAnswerValue`). A grid's rows and columns are judged
+ * against the form by `submit`; this checks only the shape and the size.
  */
 export function IsValidAnswers(options?: ValidationOptions) {
   return function (object: object, propertyName: string) {
@@ -48,24 +53,11 @@ export function IsValidAnswers(options?: ValidationOptions) {
         validate(value: unknown): boolean {
           if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
           const entries = Object.entries(value as Record<string, unknown>);
-          if (entries.length > ANSWERS_MAX_KEYS) return false;
-          for (const [, v] of entries) {
-            if (typeof v === 'string') {
-              if (v.length > ANSWERS_MAX_STRING_LEN) return false;
-            } else if (Array.isArray(v)) {
-              if (v.length > ANSWERS_MAX_ARRAY_LEN) return false;
-              if (
-                v.some((item) => typeof item !== 'string' || item.length > ANSWERS_MAX_STRING_LEN)
-              )
-                return false;
-            } else if (typeof v !== 'number') {
-              return false;
-            }
-          }
-          return true;
+          if (entries.length > FORM_MAX_QUESTIONS) return false;
+          return entries.every(([, v]) => isAcceptedAnswerValue(v));
         },
         defaultMessage() {
-          return `answers must contain at most ${ANSWERS_MAX_KEYS} keys; each value must be a string (max ${ANSWERS_MAX_STRING_LEN} chars), an array of strings (max ${ANSWERS_MAX_ARRAY_LEN} items), or a number`;
+          return `answers must contain at most ${FORM_MAX_QUESTIONS} keys; each value must be a string (max ${ANSWER_MAX_TEXT_LENGTH} chars), an array of strings (max ${ANSWER_MAX_SELECTIONS} items), a number, a survey grid of at most ${GRID_MAX_ROWS} rows, or a priced grid of at most ${PRODUCT_GRID_MAX_CELLS} cells`;
         },
       },
     });
@@ -116,6 +108,14 @@ export class FormItemDto {
   @IsString({ each: true })
   @IsOptional()
   rows?: string[];
+
+  /**
+   * A REQUIRED grid demands an answer in every row when this is on; off (the default) one answered
+   * row is enough (decided 2026-11-06, D5). Read only for `matrix_single` / `matrix_multiple`.
+   */
+  @IsBoolean()
+  @IsOptional()
+  requireEveryRow?: boolean;
 
   @IsOptional()
   scale?: {
@@ -183,6 +183,14 @@ export class FormItemDto {
    */
   @IsOptional()
   showIf?: unknown;
+
+  /**
+   * A priced grid's definition (`type: 'product_grid'`): rows, columns, max per cell, closed cells,
+   * prices. Validated structurally in the service (`normaliseProductGridItems`, the shared rule in
+   * `product-grid-contract.ts`) like `showIf`, and stored normalised; ignored on any other type.
+   */
+  @IsOptional()
+  productGrid?: unknown;
 }
 
 export class CreateFormDto {
@@ -317,7 +325,7 @@ export class UpdateFormDto extends CreateFormDto {}
  */
 export class GuestSubmitFormDto {
   @IsValidAnswers()
-  answers: Record<string, string | string[] | number>;
+  answers: Record<string, FormAnswerValue>;
 
   /** Where Lydia sends the payment request. Forwarded to core-service, never persisted (PP2). */
   @IsEmail()
@@ -366,7 +374,7 @@ export class SubmitFormDto {
   payerEmail?: string;
 
   @IsValidAnswers()
-  answers: Record<string, string | string[] | number>;
+  answers: Record<string, FormAnswerValue>;
 
   @IsString()
   @IsOptional()

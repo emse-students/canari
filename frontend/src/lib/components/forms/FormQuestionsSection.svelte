@@ -3,9 +3,10 @@
   import FormSection from './FormSection.svelte';
   import type { MembershipTier } from '$lib/associations/api';
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
-  import { QUESTION_TYPES } from '$lib/forms/questionTypes';
+  import { AUTHORABLE_QUESTION_TYPES } from '$lib/forms/questionTypes';
   import { ListChecks, Plus } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { draggableCard } from '$lib/actions/draggableCard';
 
   /**
    * The question builder: the list, its drag-and-drop reordering, and the type picker.
@@ -113,7 +114,7 @@
     {#each items as _item, i (_item.id)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        draggable="true"
+        use:draggableCard
         ondragstart={() => (dragIndex = i)}
         ondragover={(e) => handleDragOver(e, i)}
         ondrop={() => handleDrop(i)}
@@ -168,7 +169,7 @@
           {m.form_question_type_picker_label()}
         </p>
         <div class="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-          {#each QUESTION_TYPES as qtype (qtype.value)}
+          {#each AUTHORABLE_QUESTION_TYPES as qtype (qtype.value)}
             {@const Icon = qtype.Icon}
             <button
               type="button"

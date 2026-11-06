@@ -1,0 +1,25 @@
+{
+  "description": "The bounds of a form and of an answer to it, and the typed refusal codes of the submit and save paths. social-service enforces them (apps/social-service/src/forms/answer-bounds.ts: the DTO validator, `submit`, the save checks) and the fill page announces them before anyone sends (frontend/src/lib/forms/answerBounds.ts: the textarea's `maxlength` and counter, the refusal sentences). Each side's spec asserts its constants equal these, so the two cannot drift apart. `maxQuestions` bounds both the questions a form may hold and the keys of one answer, so every form that can be saved can be answered in full; `maxGridRows` bounds a survey grid's rows at save and the keys of one survey-grid answer; `maxProductGridCells` (rows x columns of the largest priced grid a save accepts, `product-grid-contract.ts`) and `maxProductGridCellKey` (two 36-character ids and `:`) bound the keys of one priced-grid answer, `{ \"rowId:colId\": quantity }`.",
+  "maxQuestions": 100,
+  "maxTextLength": 2000,
+  "maxSelections": 50,
+  "maxGridRows": 50,
+  "maxProductGridCells": 600,
+  "maxProductGridCellKey": 73,
+  "codes": {
+    "notOpenYet": "FORM_NOT_OPEN_YET",
+    "closed": "FORM_CLOSED",
+    "full": "FORM_FULL",
+    "answerMissing": "FORM_ANSWER_MISSING",
+    "answerTooLong": "FORM_ANSWER_TOO_LONG",
+    "answerTooManySelections": "FORM_ANSWER_TOO_MANY_SELECTIONS",
+    "answerNotAnOption": "FORM_ANSWER_NOT_AN_OPTION",
+    "gridAnswerInvalid": "FORM_GRID_ANSWER_INVALID",
+    "combinationUnavailable": "FORM_COMBINATION_UNAVAILABLE",
+    "signInRequired": "FORM_SIGN_IN_REQUIRED",
+    "fileNeedsAccount": "FORM_FILE_NEEDS_ACCOUNT",
+    "gridDuplicateLabel": "FORM_GRID_DUPLICATE_LABEL",
+    "gridTooManyRows": "FORM_GRID_TOO_MANY_ROWS",
+    "tooManyQuestions": "FORM_TOO_MANY_QUESTIONS"
+  }
+}

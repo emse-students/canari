@@ -1,3 +1,4 @@
+import { assertFormItemsShape } from '../forms/answer-bounds';
 import {
   BadRequestException,
   ConflictException,
@@ -294,6 +295,8 @@ export class BookingSpacesService {
       this.logger.debug(`[BOOKINGS] item-image refused: question ${i.id} introduces an image`);
       throw new BadRequestException({ code: 'item-image' });
     }
+    // A grid's rows and columns each their own label, the forms' rule (`answer-bounds.ts`, D4).
+    assertFormItemsShape(items);
     const withCondition = items.filter((i) => i.showIf != null);
     if (next.audience == null && withCondition.length === 0) return;
     const tiers = next.associationId

@@ -1,3 +1,4 @@
+import type { ProductGridLine } from '../product-grid-contract';
 import {
   Entity,
   Column,
@@ -35,6 +36,15 @@ export class Submission {
 
   @Column({ default: 0 })
   totalPaid: number;
+
+  /**
+   * The priced lines of the answer's product grids AS CHARGED (migration 137): per ordered cell, the
+   * row and column labels, the category, the unit price and the quantity - so an export says what
+   * was charged even after the creator renames a row or moves a price. Written by `submit` (and
+   * rewritten with the answer on a retry that reuses the row); null on an answer with no grid.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  lines: ProductGridLine[] | null;
 
   /**
    * Lifecycle status of the payment.

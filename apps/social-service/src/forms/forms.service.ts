@@ -106,6 +106,23 @@ import {
   isChoiceQuestion,
   type PricedItem,
 } from './answer-options';
+import {
+  ANSWER_MAX_SELECTIONS,
+  ANSWER_MAX_TEXT_LENGTH,
+  assertFormItemsShape,
+  FORM_ANSWER_MISSING,
+  FORM_ANSWER_TOO_LONG,
+  FORM_ANSWER_TOO_MANY_SELECTIONS,
+  FORM_CLOSED,
+  FORM_COMBINATION_UNAVAILABLE,
+  FORM_FILE_NEEDS_ACCOUNT,
+  FORM_FULL,
+  FORM_NOT_OPEN_YET,
+  FORM_SIGN_IN_REQUIRED,
+  formRefusal,
+  isQuestionAnswered,
+  withNormalisedGridAnswers,
+} from './answer-bounds';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import {
@@ -122,6 +139,24 @@ import {
   questionImageIds,
   questionImageUrl,
 } from './form-item-images.service';
+import {
+  isProductGridItem,
+  normaliseProductGridItems,
+  priceProductGridAnswer,
+  productGridItems,
+  productGridPriceFingerprint,
+  productGridPricesFor,
+  productGridsCharge,
+  productGridsNameCotisation,
+  productGridsNeedProfile,
+  respondentItems,
+} from './product-grid';
+import {
+  productGridTotalCents,
+  type ProductGridLine,
+  type ProductGridPrices,
+} from './product-grid-contract';
+import { addProductGridSheets, productGridExportLabels } from './product-grid-export';
 
 /** Generates a short random ID with the given prefix, e.g. "item_a3b9x1". */
 function makeId(prefix: string): string {
@@ -152,6 +187,7 @@ function chargesMoney(input: CreateFormDto): boolean {
   if (input.requiresPayment === true || (input.basePrice ?? 0) > 0) return true;
   const cells = (input.priceMatrix as PriceMatrix | null | undefined)?.cells;
   if (cells && Object.values(cells).some((c) => (c ?? 0) > 0)) return true;
+  if (productGridsCharge(input.items)) return true;
   return ((input.items ?? []) as PricedItem[]).some((item) => decidesPrice(item, new Set()));
 }
 
@@ -169,7 +205,8 @@ export function stableJson(value: unknown): string {
 
 /**
  * Everything that sets what a form charges, as one comparable string: the base price, the payment
- * switch, the grid (key-order-insensitive) and every choice option's supplement.
+ * switch, the grid (key-order-insensitive), every choice option's supplement and every priced grid
+ * question's prices.
  */
 export function priceFingerprint(form: CreateFormDto): string {
   const supplements = ((form.items ?? []) as PricedItem[])
@@ -182,6 +219,7 @@ export function priceFingerprint(form: CreateFormDto): string {
     pay: form.requiresPayment === true,
     grid: form.priceMatrix ?? null,
     supplements,
+    productGrids: productGridPriceFingerprint(form.items),
   });
 }
 
@@ -499,6 +537,28 @@ export class FormsService {
   }
 
   /**
+   * The questions of a form about to be saved, with every priced grid judged and normalised
+   * (`normaliseProductGridItems`, coded `PRODUCT_GRID_*` refusals). Judged on the form as it WILL be
+   * saved: an edit that only opens the public link, or switches payment off, is judged against the
+   * stored grids too. The association's cotisation tiers are fetched only when a grid prices on one.
+   */
+  private async normalisedProductGrids<T extends { type?: string }>(
+    items: readonly T[] | null | undefined,
+    form: { isPublic: boolean; requiresPayment: boolean; associationId: string | null }
+  ): Promise<T[]> {
+    const list = [...(items ?? [])];
+    const tiers =
+      form.associationId && productGridsNameCotisation(list)
+        ? await this.userTagService.listCotisationTiers(form.associationId)
+        : [];
+    const normalised = normaliseProductGridItems(list, criteriaContextFor(tiers, []), form);
+    const grids = productGridItems(normalised).length;
+    if (grids > 0)
+      this.logger.debug(`[FORMS] save: ${grids} product grid(s) judged and normalised`);
+    return normalised;
+  }
+
+  /**
    * The facts a form's criteria are evaluated against, fetching only what the form actually asks
    * for. A form with no profile criterion never reaches core-service.
    */
@@ -512,7 +572,9 @@ export class FormsService {
       ...(form.items ?? []).map((item: any) => normaliseCondition(item)),
     ];
     const needProfile =
-      dimensionsNeedProfile(form.priceMatrix?.dimensions ?? []) || conditions.some(needsProfile);
+      dimensionsNeedProfile(form.priceMatrix?.dimensions ?? []) ||
+      conditions.some(needsProfile) ||
+      productGridsNeedProfile(form.items);
     return this.pricingFacts.build({
       userId,
       associationId: form.associationId,
@@ -580,9 +642,18 @@ export class FormsService {
       }
     }
     assertUniqueItemIds(input.items);
+    assertFormItemsShape(input.items);
     this.assertAnonymousConfigValid(input);
     this.assertPublicConfigValid(input);
     this.assertFileQuestionConfigValid(input);
+    input = {
+      ...input,
+      items: await this.normalisedProductGrids(input.items, {
+        isPublic: input.isPublic === true,
+        requiresPayment: input.requiresPayment === true,
+        associationId: input.associationId?.trim() || null,
+      }),
+    };
     await this.assertKindMayPrice(input, input.associationId?.trim());
     await this.assertPaidFormAssociationReady(input);
     await this.assertCotisationConfigValid(input, {
@@ -737,9 +808,8 @@ export class FormsService {
     // The guest's slice of the grid, exactly as a member's is built (`hasSubmission`), from facts
     // that know nobody: a public form's grid prices on answers only (`assertPublicConfigValid`),
     // so the slice is the whole grid. The page totals from it; `submit` recomputes what is charged.
-    const pricing = form.priceMatrix
-      ? pricingViewFor(form.priceMatrix, await this.factsFor(form, undefined))
-      : null;
+    const guestFacts = await this.factsFor(form, undefined);
+    const pricing = form.priceMatrix ? pricingViewFor(form.priceMatrix, guestFacts) : null;
     // AN ALLOWLIST, like `submission.projection.ts`: a column added to the form later is not served
     // to anybody holding the link until someone adds it here. The price fields are what the page
     // needs to show a total; nothing names the owner, the association or its payment account.
@@ -748,7 +818,9 @@ export class FormsService {
       title: form.title,
       description: form.description,
       imageUrl: form.imageUrl,
-      items: form.items,
+      // A priced grid without its price lists: a guest is told its OWN prices (`productGridPrices`,
+      // "everyone else"), never what a cotisant pays.
+      items: respondentItems(form.items ?? []),
       opensAt: form.opensAt,
       closedAt: form.closedAt,
       anonymous: form.anonymous,
@@ -757,6 +829,7 @@ export class FormsService {
       currency: form.currency,
       allowCashPayment: form.allowCashPayment,
       pricing,
+      productGridPrices: productGridPricesFor(form.items, guestFacts),
       paymentsPaused: await this.paymentsPaused(form),
     };
   }
@@ -822,7 +895,10 @@ export class FormsService {
     const items = input.items ?? form.items;
     // Only the questions this edit SENDS are judged, against the stored ones: a duplicate already
     // stored never blocks an edit that leaves the questions' ids as they are.
-    if (input.items !== undefined) assertUniqueItemIds(input.items, form.items);
+    if (input.items !== undefined) {
+      assertUniqueItemIds(input.items, form.items);
+      assertFormItemsShape(input.items);
+    }
     this.assertAnonymousConfigValid({ ...input, items, anonymous: form.anonymous });
     // Unlike anonymity, a link can be opened or withdrawn at any time: it promises nothing about
     // the answers already stored. An absent value means "leave it", so the stored one is checked -
@@ -853,6 +929,15 @@ export class FormsService {
       submitCondition:
         input.submitCondition !== undefined ? input.submitCondition : form.submitCondition,
     });
+
+    // The grids as this edit WILL save them: sent ones are normalised and stored, stored ones are
+    // re-judged when only a flag they depend on (public link, payment) moves.
+    const gridItems = await this.normalisedProductGrids(items, {
+      isPublic: input.isPublic ?? form.isPublic,
+      requiresPayment: input.requiresPayment ?? form.requiresPayment,
+      associationId: form.associationId ?? null,
+    });
+    if (input.items !== undefined) input = { ...input, items: gridItems };
 
     await this.assertKindMayPrice(input, form.associationId, form);
     await this.assertPaidFormAssociationReady({ ...input, associationId: form.associationId });
@@ -1281,6 +1366,11 @@ export class FormsService {
      * WHY (`FORM_COTISATION_HELD`: they already hold the cotisation the form is for people without).
      */
     refusalCode: SubmitRefusalCode | null;
+    /**
+     * Each priced grid's prices for THIS person (their category resolved here, from their profile):
+     * the page shows and totals them, `submit` recomputes what is charged. Never another category's.
+     */
+    productGridPrices: ProductGridPrices;
   }> {
     const form = await this.formRepo.findOne({ where: { id: formId, deletedAt: IsNull() } });
     if (!form)
@@ -1291,6 +1381,7 @@ export class FormsService {
         hiddenItemIds: [],
         maySubmit: false,
         refusalCode: null,
+        productGridPrices: {},
       };
 
     // Check global capacity independently of per-user state
@@ -1312,9 +1403,18 @@ export class FormsService {
     // Only the PROFILE half is resolved here. An answer condition stays for the page to evaluate as
     // the person types, which it already did for `dependsOn` - so no predicate is duplicated there.
     const hiddenItemIds = profileHiddenItemIds((form.items ?? []) as ConditionalItem[], facts);
+    const productGridPrices = productGridPricesFor(form.items, facts);
 
     if (form.allowMultipleSubmissions)
-      return { hasSubmitted: false, formFull, pricing, hiddenItemIds, maySubmit, refusalCode };
+      return {
+        hasSubmitted: false,
+        formFull,
+        pricing,
+        hiddenItemIds,
+        maySubmit,
+        refusalCode,
+        productGridPrices,
+      };
 
     // An anonymous form's answers know no author, so "has this account answered" is read from the
     // registry that knows no answer. The status is always `free`: an anonymous form takes no money.
@@ -1328,6 +1428,7 @@ export class FormsService {
         hiddenItemIds,
         maySubmit,
         refusalCode,
+        productGridPrices,
       };
     }
 
@@ -1355,6 +1456,7 @@ export class FormsService {
       hiddenItemIds,
       maySubmit,
       refusalCode,
+      productGridPrices,
     };
   }
 
@@ -1398,22 +1500,36 @@ export class FormsService {
     }
 
     if (form.opensAt && new Date(form.opensAt) > new Date()) {
-      throw new BadRequestException('The form is not open yet.');
+      throw formRefusal(FORM_NOT_OPEN_YET, 'The form is not open yet.');
     }
 
     if (form.closedAt && new Date(form.closedAt) < new Date()) {
-      throw new BadRequestException('The form is closed.');
+      throw formRefusal(FORM_CLOSED, 'The form is closed.');
     }
 
-    // Validate answer sizes to prevent oversized payloads.
+    // Validate answer sizes to prevent oversized payloads. The DTO already bounds them for an HTTP
+    // caller (`IsValidAnswers`); this holds for any caller of `submit`, with the typed code the
+    // page words (the textarea's `maxlength` keeps a person from ever meeting it).
     for (const [key, value] of Object.entries(input.answers ?? {})) {
-      if (typeof value === 'string' && (value as string).length > 2000) {
-        throw new BadRequestException(`Answer for field ${key} exceeds 2000 characters`);
+      if (typeof value === 'string' && value.length > ANSWER_MAX_TEXT_LENGTH) {
+        throw formRefusal(
+          FORM_ANSWER_TOO_LONG,
+          `Answer for field ${key} exceeds ${ANSWER_MAX_TEXT_LENGTH} characters`,
+          key
+        );
       }
-      if (Array.isArray(value) && (value as unknown[]).length > 50) {
-        throw new BadRequestException(`Answer for field ${key} has too many selections (max 50)`);
+      if (Array.isArray(value) && value.length > ANSWER_MAX_SELECTIONS) {
+        throw formRefusal(
+          FORM_ANSWER_TOO_MANY_SELECTIONS,
+          `Answer for field ${key} has too many selections (max ${ANSWER_MAX_SELECTIONS})`,
+          key
+        );
       }
     }
+
+    // A grid's answer is a map of rows, judged against the question's own rows and columns and
+    // stripped of its empty rows - from here on, `answers` holds it in that form (D1).
+    input = { ...input, answers: withNormalisedGridAnswers(form.items ?? [], input.answers ?? {}) };
 
     // The files this answer cites: their SHAPE here, their ownership inside the transaction below
     // (`FormFilesService.attach`), where it is checked and taken in one write. A form that cannot
@@ -1423,7 +1539,10 @@ export class FormsService {
       this.logger.warn(
         `[FORMS] submit refused: a file answer on form=${form.id.slice(0, 8)} without an account`
       );
-      throw new BadRequestException('This form cannot receive a file without an account.');
+      throw formRefusal(
+        FORM_FILE_NEEDS_ACCOUNT,
+        'This form cannot receive a file without an account.'
+      );
     }
 
     // Answers keyed by the form's own question ids and nothing else (`answerSelections`); the size
@@ -1464,7 +1583,10 @@ export class FormsService {
       this.logger.debug(
         `[FORMS] submit refused by an unavailable grid cell form=${form.id.slice(0, 8)}`
       );
-      throw new ForbiddenException('This combination is not available on this form.');
+      throw new ForbiddenException({
+        code: FORM_COMBINATION_UNAVAILABLE,
+        message: 'This combination is not available on this form.',
+      });
     }
 
     // Validation & Price Calculation
@@ -1483,12 +1605,25 @@ export class FormsService {
       });
     }
 
+    // The priced grids' lines, computed HERE from the stored grid and this person's category - never
+    // from an amount a client sent - and snapshotted on the row (`submissions.lines`, migration 137).
+    const gridLines: ProductGridLine[] = [];
     for (const item of form.items) {
       // A question this submitter never saw neither charges them nor blocks them.
       if (!visible.has(item.id)) continue;
       const answer = input.answers[item.id];
-      if (item.required && !this.hasValue(answer)) {
-        throw new BadRequestException(`Missing required field: ${item.label}`);
+      // A priced grid is judged by its own rule (always required, at least one unit, declared cells,
+      // 0..maxPerCell, no closed cell) with a CODED refusal - an app that cannot draw it sends no
+      // object and is told to update (`PRODUCT_GRID_ANSWER_MISSING`). What is stored is the answer
+      // as judged: the ordered cells only.
+      if (isProductGridItem(item)) {
+        const priced = priceProductGridAnswer(item, answer, facts);
+        storedAnswers[item.id] = priced.answer;
+        gridLines.push(...priced.lines);
+        continue;
+      }
+      if (item.required && !isQuestionAnswered(item, answer)) {
+        throw formRefusal(FORM_ANSWER_MISSING, `Missing required field: ${item.label}`, item.id);
       }
 
       // A question the grid prices on has already been paid for by the cell it selected. Adding its
@@ -1501,6 +1636,29 @@ export class FormsService {
         !pricedQuestions.has(item.id)
       ) {
         totalCents = this.calculateModifiers(item, answer, totalCents, lineItems, currency);
+      }
+    }
+    const lines = gridLines.length > 0 ? gridLines : null;
+    if (lines) {
+      const gridCents = productGridTotalCents(lines);
+      totalCents += gridCents;
+      this.logger.debug(
+        `[FORMS] submit form=${form.id.slice(0, 8)}: ${lines.length} grid line(s), ` +
+          `${gridCents} cents, total ${totalCents} cents`
+      );
+      // Refused BEFORE any row is written, whichever the payment method: a total above what one
+      // payment may carry is no order anybody can pay, and a row must never hold it.
+      if (totalCents > PROVIDER_MAX_AMOUNT_CENTS) {
+        this.logger.warn(
+          `[FORMS] grid order refused: total=${totalCents} cents above ${PROVIDER_MAX_AMOUNT_CENTS} ` +
+            `form=${form.id.slice(0, 8)}`
+        );
+        throw amountOutOfRange(
+          PROVIDER_MIN_AMOUNT_CENTS,
+          PROVIDER_MAX_AMOUNT_CENTS,
+          `Total amount (${(totalCents / 100).toFixed(2)} ${currency.toUpperCase()}) is above the ` +
+            `payable maximum ${(PROVIDER_MAX_AMOUNT_CENTS / 100).toFixed(2)} ${currency.toUpperCase()}.`
+        );
       }
     }
 
@@ -1613,7 +1771,7 @@ export class FormsService {
 
       if (form.maxSubmissions && !holdsSeat) {
         const count = await manager.count(Submission, { where: seatHoldingWhere(id) });
-        if (count >= form.maxSubmissions) throw new BadRequestException('Form is full');
+        if (count >= form.maxSubmissions) throw formRefusal(FORM_FULL, 'Form is full');
       }
       // PP5, under the form lock like the capacity count: two submits from one visitor queue here,
       // so the fourth sees the three before it. Counted from the rows that still WAIT - an online
@@ -1645,7 +1803,9 @@ export class FormsService {
       // path below with no account (`userId` null), like a member's: the payer is the e-mail they
       // typed for Lydia, never stored (decision PP2).
       if (form.anonymous || (guest && totalCents === 0)) {
-        if (!guest && !input.userId) throw new BadRequestException('Sign in to answer this form.');
+        if (!guest && !input.userId) {
+          throw formRefusal(FORM_SIGN_IN_REQUIRED, 'Sign in to answer this form.');
+        }
         // An option supplement could still charge on an anonymous form saved free; a charge would
         // need the payer, which is the one thing an anonymous answer promised not to keep.
         if (totalCents > 0) {
@@ -1662,7 +1822,10 @@ export class FormsService {
             [id, input.userId]
           );
           if (inserted.length === 0) {
-            throw new BadRequestException('You have already answered this form.');
+            throw new ConflictException({
+              code: ALREADY_ANSWERED,
+              message: 'You have already answered this form.',
+            });
           }
         }
         // A guest on a form that is NOT anonymous keeps its real time: the manager was promised no
@@ -1675,6 +1838,7 @@ export class FormsService {
             userId: null,
             email: undefined,
             answers: storedAnswers,
+            lines,
             totalPaid: 0,
             paymentStatus: 'free',
             paymentMethod: null,
@@ -1687,6 +1851,8 @@ export class FormsService {
 
       if (existingPending) {
         existingPending.answers = storedAnswers;
+        // The retry's lines replace the old ones with its answer: the row says what THIS request charges.
+        existingPending.lines = lines;
         existingPending.totalPaid = totalCents;
         existingPending.email = input.email;
         // Its old request is settled (above), so the row stops naming it: a late report about it
@@ -1711,6 +1877,7 @@ export class FormsService {
           userId: input.userId ?? null,
           email: input.email,
           answers: storedAnswers,
+          lines,
           totalPaid: totalCents,
           paymentStatus: totalCents > 0 ? 'pending' : 'free',
           paymentMethod: null,
@@ -2805,13 +2972,6 @@ export class FormsService {
     return count;
   }
 
-  /** Returns false for empty arrays, empty objects, null, undefined, and empty strings - used to validate required fields. */
-  private hasValue(val: any): boolean {
-    if (Array.isArray(val)) return val.length > 0;
-    if (val && typeof val === 'object') return Object.keys(val).length > 0;
-    return !!val;
-  }
-
   /**
    * Adds price modifiers for each selected option to the running total and pushes matching Stripe
    * line-item entries.
@@ -2918,6 +3078,8 @@ export class FormsService {
   ): Promise<{ buffer: Buffer; title: string }> {
     const form = await this.formRepo.findOne({ where: { id: formId } });
     if (!form) throw new NotFoundException('Form not found');
+    // Refused BEFORE any read when a grid form's words are missing: never a file half in English.
+    const gridWords = productGridExportLabels(form.items, labels);
 
     // Same order as the responses list, a payment over capacity first.
     const submissions = overCapacityFirst(
@@ -3004,12 +3166,20 @@ export class FormsService {
         row.status = label ?? sub.paymentStatus;
       }
 
+      // A priced grid reads from the row's lines - what was charged - before the grid as it is now.
       form.items.forEach((item: FormItemLike) => {
-        row[item.id] = answerText(sub.answers[item.id], item, words);
+        row[item.id] = answerText(sub.answers[item.id], item, words, sub.lines);
       });
 
       sheet.addRow(row);
     });
+
+    if (gridWords) {
+      addProductGridSheets(workbook, form.items, submissions, nameMap, labels, gridWords);
+      this.logger.debug(
+        `[FORMS] export form=${formId.slice(0, 8)}: Articles and Totaux sheets added`
+      );
+    }
 
     const buffer = (await workbook.xlsx.writeBuffer()) as unknown as Buffer;
     return { buffer, title: form.title };
