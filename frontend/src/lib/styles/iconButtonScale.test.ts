@@ -45,6 +45,10 @@ const cssPath = join(src, 'app.css');
  * button is added or removed - which is exactly when someone should be asked to justify it again.
  */
 const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
+  'lib/components/forms/ProductGridQuestion.svelte': {
+    count: 4,
+    why: 'the - and + halves of a priced-grid stepper pill, each the full 44px height of the pill and a third of its width, so the pill reads as one control',
+  },
   'lib/components/bookings/booker/PlanningList.svelte': {
     count: 1,
     why: 'the planning floating "+" (a 56px floating action button, larger than the 44px touch box, floating over the list)',
