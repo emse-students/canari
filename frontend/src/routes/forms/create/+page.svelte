@@ -58,9 +58,19 @@
   import { formSummary } from '$lib/forms/summary';
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { firstEmptyCondition } from '$lib/forms/audience';
-  import { firstEmptyConditionQuestion, firstItemsFaultQuestion } from '$lib/forms/questionFault';
+  import {
+    firstEmptyConditionQuestion,
+    firstItemsFaultQuestion,
+    refusedProductGridFault,
+  } from '$lib/forms/questionFault';
   import { toFormItemsPayload } from '$lib/forms/itemsPayload';
-  import { firstProductGridProblem, profileTierCriterion } from '$lib/forms/productGridEditor';
+  import {
+    firstProductGridProblem,
+    multipleSubmissionsAfterGridAdded,
+    multipleSubmissionsAfterGridGone,
+    profileTierCriterion,
+    type GridMultipleSubmissions,
+  } from '$lib/forms/productGridEditor';
   import {
     FILE_RETENTION_DEFAULT_DAYS,
     fileQuestionProblem,
@@ -206,6 +216,19 @@
   let reveal = $state<{ id: string } | null>(null);
   /** The priced grid a refused save is about, and its sentence, drawn under that grid. */
   let gridFault = $state<{ itemId: string; message: string } | null>(null);
+  /**
+   * Whether a priced grid - not the manager - switched "several answers" on: only then does removing
+   * the last grid switch it back off. Any choice made on the switch itself clears it.
+   */
+  let multipleTurnedOnByGrid = $state(false);
+  const multipleSubmissions = (): GridMultipleSubmissions => ({
+    allow: allowMultipleSubmissions,
+    turnedOnByGrid: multipleTurnedOnByGrid,
+  });
+  function applyMultipleSubmissions(next: GridMultipleSubmissions) {
+    allowMultipleSubmissions = next.allow;
+    multipleTurnedOnByGrid = next.turnedOnByGrid;
+  }
   /** A priced grid may copy the registration price grid's categories in one click. */
   const formTiers = $derived(profileTierCriterion(priceMatrix, requiresPayment));
   function revealQuestion(id: string | null) {
@@ -307,7 +330,12 @@
         );
       }
     } catch (e: any) {
+      // A grid the server alone could refuse (a cotisation tier it does not sell) is drawn under
+      // that grid and its card opened, as the page's own check does.
+      gridFault = refusedProductGridFault(e, items);
+      if (gridFault) revealQuestion(gridFault.itemId);
       error =
+        gridFault?.message ??
         questionImageRefusalMessage(e) ??
         formCodeMessage(refusalCode(e)) ??
         providerRefusalMessage(e) ??
@@ -401,7 +429,10 @@
       {formTiers}
       {isPublic}
       {gridFault}
-      onPricedGridAdded={() => (allowMultipleSubmissions = true)}
+      onPricedGridAdded={() =>
+        applyMultipleSubmissions(multipleSubmissionsAfterGridAdded(multipleSubmissions()))}
+      onPricedGridGone={() =>
+        applyMultipleSubmissions(multipleSubmissionsAfterGridGone(multipleSubmissions(), items))}
       {reveal}
       imageUploadFn={async (file) => (await uploadFormItemImage(null, file)).imageUrl}
     />
@@ -411,7 +442,13 @@
   <div use:guideAnchor={'forms.create.settings'}>
     <FormAdvancedSettings
       bind:maxSubmissions
-      bind:allowMultipleSubmissions
+      bind:allowMultipleSubmissions={
+        () => allowMultipleSubmissions,
+        (on) => {
+          allowMultipleSubmissions = on;
+          multipleTurnedOnByGrid = false;
+        }
+      }
       bind:anonymous
       anonymousFixed={false}
       bind:isPublic

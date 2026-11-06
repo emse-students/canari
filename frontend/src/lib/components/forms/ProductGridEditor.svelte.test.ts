@@ -57,7 +57,14 @@ const byAria = (t: HTMLElement, label: string) =>
 const byText = (t: HTMLElement, text: string) =>
   buttons(t).find((b) => b.textContent?.trim() === text)!;
 const inputOf = (t: HTMLElement, label: string) =>
-  t.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+  t.querySelector<HTMLInputElement>(
+    `input[aria-label="${label}"], textarea[aria-label="${label}"]`
+  )!;
+/** The paste box (the row labels are textareas too, so they wrap). */
+const pasteBox = (t: HTMLElement) =>
+  t.querySelector<HTMLTextAreaElement>(
+    `textarea[placeholder="${m.form_pgrid_paste_placeholder()}"]`
+  );
 const valid = (grid: EditorProductGrid) =>
   productGridItemRefusal(
     { required: true, productGrid: productGridPayload(grid) },
@@ -136,18 +143,18 @@ describe('rows and columns', () => {
     const { target, state } = render(newProductGrid());
     byText(target, m.form_pgrid_paste_button()).click();
     flushSync();
-    type(target.querySelector('textarea')!, 'Vert\nBordeaux, Noir');
+    type(pasteBox(target)!, 'Vert\nBordeaux, Noir');
     byText(target, m.form_pgrid_paste_as_rows()).click();
     flushSync();
     expect(state.grid.rows.map((r) => r.label)).toEqual(['Vert', 'Bordeaux', 'Noir']);
-    expect(target.querySelector('textarea')).toBeNull();
+    expect(pasteBox(target)).toBeNull();
   });
 
   it('pastes columns and names the ones already there', () => {
     const { target, state } = render();
     byText(target, m.form_pgrid_paste_button()).click();
     flushSync();
-    type(target.querySelector('textarea')!, 'M, L, XL');
+    type(pasteBox(target)!, 'M, L, XL');
     byText(target, m.form_pgrid_paste_as_columns()).click();
     flushSync();
     expect(state.grid.columns.map((c) => c.label)).toEqual(['S', 'M', 'L', 'XL']);
@@ -170,6 +177,105 @@ describe('rows and columns', () => {
     await tick();
     flushSync();
     expect(state.grid.columns.map((c) => c.label)).toEqual(['M', 'S']);
+  });
+
+  it('moves a row with its touch arrows, named after the row, focus following it', async () => {
+    const { target, state } = render();
+    const up = byAria(target, m.form_pgrid_move_row_up({ label: 'Vert' }));
+    // The first row cannot go up; the touch path shows on a coarse pointer or a phone width.
+    expect(up.disabled).toBe(true);
+    expect(up.className).toContain('ui-icon-button');
+    expect(up.className).toContain('pointer-coarse:inline-flex');
+    expect(up.className).toContain('max-sm:inline-flex');
+    byAria(target, m.form_pgrid_move_row_down({ label: 'Vert' })).click();
+    await tick();
+    flushSync();
+    expect(state.grid.rows.map((r) => r.label)).toEqual(['Noir', 'Vert']);
+    // Vert is now last: its "down" is disabled, so focus lands on its "up".
+    expect(document.activeElement).toBe(
+      byAria(target, m.form_pgrid_move_row_up({ label: 'Vert' }))
+    );
+    byAria(target, m.form_pgrid_move_row_up({ label: 'Vert' })).click();
+    await tick();
+    flushSync();
+    expect(state.grid.rows.map((r) => r.label)).toEqual(['Vert', 'Noir']);
+  });
+
+  it('moves a column with its touch arrows, the ids unchanged', async () => {
+    const { target, state } = render();
+    const ids = state.grid.columns.map((c) => c.id);
+    expect(byAria(target, m.form_pgrid_move_column_right({ label: 'M' })).disabled).toBe(true);
+    byAria(target, m.form_pgrid_move_column_left({ label: 'M' })).click();
+    await tick();
+    flushSync();
+    expect(state.grid.columns.map((c) => c.label)).toEqual(['M', 'S']);
+    expect(state.grid.columns.map((c) => c.id)).toEqual([ids[1], ids[0]]);
+  });
+
+  it('gives every touch control of the grid a 44px target on a touch screen', () => {
+    const { target } = render();
+    // The chip's grip takes no drag on touch and gives way to the arrows; its x is widened.
+    expect(byAria(target, m.form_pgrid_move_column({ label: 'S' })).className).toContain(
+      'pointer-coarse:hidden'
+    );
+    expect(byAria(target, m.form_pgrid_remove_column({ label: 'S' })).className).toContain(
+      'tap-target'
+    );
+    for (const mode of [m.form_pgrid_mode_single(), m.form_pgrid_mode_per_row()]) {
+      expect(byText(target, mode).className).toContain('tap-target');
+    }
+    expect(
+      target.querySelector<HTMLInputElement>('[data-testid="price-single"]')!.className
+    ).toContain('pointer-coarse:min-h-11');
+  });
+
+  it('fits a phone: wrapping sticky labels, arrows under them, stacked chips, "+" in the footer', () => {
+    const { target, state } = render();
+    const label = inputOf(target, m.form_pgrid_row_label({ n: 1 }));
+    // A textarea, so a long label wraps in the narrow column; a line break is no label.
+    expect(label.tagName).toBe('TEXTAREA');
+    type(label, 'Vert\nsapin');
+    expect(state.grid.rows[0].label).toBe('Vert sapin');
+    const rowHeader = label.closest('th')!;
+    expect(rowHeader.className).toContain('sticky');
+    expect(rowHeader.className).toContain('max-sm:min-w-26');
+    const arrows = byAria(target, m.form_pgrid_move_row_up({ label: 'Vert sapin' })).parentElement!;
+    expect(arrows.className).toContain('max-sm:order-last');
+    // The column chip stacks its controls; the header "+" gives way to a footer button.
+    const chip = inputOf(target, m.form_pgrid_column_label({ n: 1 })).parentElement!;
+    expect(chip.className).toContain('max-sm:flex-col');
+    expect(byAria(target, m.form_pgrid_add_column()).className).toContain('max-sm:hidden');
+    byText(target, m.form_pgrid_add_column()).click();
+    flushSync();
+    expect(state.grid.columns).toHaveLength(3);
+  });
+
+  it('refuses to remove a row when every remaining cell would be closed, and says why', async () => {
+    const grid = sweat();
+    const [vert, noir] = grid.rows;
+    grid.closedCells = grid.columns.map((c) => `${vert.id}:${c.id}`);
+    const { target, state } = render(grid, { orderedCells: [`${noir.id}:${grid.columns[0].id}`] });
+    byAria(target, m.form_pgrid_remove_row({ label: 'Noir' })).click();
+    await tick();
+    flushSync();
+    expect(state.grid.rows).toHaveLength(2);
+    // Refused before the orders confirm: nothing to confirm for a gesture that cannot happen.
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(target.querySelector('[data-testid="table-feedback"]')?.textContent).toContain(
+      m.form_pgrid_remove_closes_every_cell()
+    );
+    // Reopening a cell clears the sentence; removing then works.
+    target
+      .querySelector<HTMLButtonElement>(`[data-cell="${vert.id}:${grid.columns[0].id}"]`)!
+      .click();
+    flushSync();
+    expect(target.querySelector('[data-testid="table-feedback"]')).toBeNull();
+    confirmMock.mockResolvedValueOnce(true);
+    byAria(target, m.form_pgrid_remove_row({ label: 'Noir' })).click();
+    await tick();
+    await tick();
+    flushSync();
+    expect(state.grid.rows.map((r) => r.label)).toEqual(['Vert']);
   });
 });
 

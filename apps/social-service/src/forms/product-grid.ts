@@ -107,17 +107,29 @@ const MESSAGES: Record<ProductGridDefinitionCode | ProductGridAnswerCode, string
   PRODUCT_GRID_EMPTY: 'Order at least one article.',
 };
 
-/** The 400 a refusal is answered with: its code, and the sentence for a client that has no word. */
+/**
+ * The body of a grid's 400. `itemId` names the question refused, so the editor draws the refusal
+ * under that grid and opens its card - a refusal only the server can make (a cotisation tier the
+ * association does not sell) included.
+ */
+export interface ProductGridRefusalBody {
+  code: ProductGridDefinitionCode | ProductGridAnswerCode;
+  message: string;
+  itemId: string | null;
+}
+
+/** The 400 a refusal is answered with: its code, the question, and the sentence for a client that has no word. */
 export function productGridRefused(
   item: { id?: string },
   refusal: ProductGridRefusal<ProductGridDefinitionCode | ProductGridAnswerCode>
 ): BadRequestException {
   const where = refusal.detail ? ` (${refusal.detail})` : '';
-  return new BadRequestException({
+  const body: ProductGridRefusalBody = {
     code: refusal.code,
     message: `${MESSAGES[refusal.code]}${where}`,
     itemId: item.id ?? null,
-  });
+  };
+  return new BadRequestException(body);
 }
 
 /** The form-level facts a grid definition is judged with. */

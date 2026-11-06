@@ -9,6 +9,7 @@
     reveal?: { id: string } | null;
     offerPricedGrid?: boolean;
     onPricedGridAdded?: () => void;
+    onPricedGridGone?: () => void;
     gridFault?: { itemId: string; message: string } | null;
   }
 
@@ -18,6 +19,7 @@
     reveal = null,
     offerPricedGrid = true,
     onPricedGridAdded,
+    onPricedGridGone,
     gridFault = null,
   }: Props = $props();
   let items = $state(untrack(() => initial));
@@ -30,5 +32,6 @@
   {reveal}
   {offerPricedGrid}
   {onPricedGridAdded}
+  {onPricedGridGone}
   {gridFault}
 />
