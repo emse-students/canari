@@ -31,9 +31,9 @@ const MAX_CANDIDATES = 24;
 /**
  * Characters the tolerance may render per DOCUMENT (one render of a paragraph costs its length).
  * Deterministic, unlike a clock: past it the rest of the document is left exactly as written, which
- * cannot lose anything. Sized for about forty renders of the longest paragraph.
+ * cannot lose anything. Sized for about a dozen renders of the longest paragraph.
  */
-const DOCUMENT_BUDGET = 300_000;
+const DOCUMENT_BUDGET = 100_000;
 
 /** What is left of a document's budget, shared by its paragraphs. */
 interface Budget {

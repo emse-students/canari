@@ -38,10 +38,12 @@ They DID differ: the preview drew `__x__` as an underline (the post renders it b
    the original render, same tag over the SAME PLACE (start and length counted in rendered characters that are not whitespace or `*`, `_`, `~`, so two runs with the same text are two runs and a rewrite cannot move a bold onto its twin) at the same nesting depth or deeper, and (b) shows strictly fewer
    literal markers. Otherwise the original text stays. A paragraph with no leftover marker costs one
    extra render; a paragraph over 8000 characters, and spans past the 24th, are left alone, and a
-   document has a fixed budget of 300000 rendered characters (checked before every render): past it
+   document has a fixed budget of 100000 rendered characters (checked before every render): past it
    the rest of the document is left as written. Every fallback is the original, which cannot lose
    anything. A crafted 48k post (six 7990-character paragraphs of 24+ loose spans) cost 255 ms before
-   the budget and is bounded now, the tail paragraphs byte for byte unchanged. The first version predicted marked with
+   the budget and 17 ms after it (desktop), the tail paragraphs byte for byte unchanged. Desktop, same
+   budget: a 20k post of clean paragraphs 5 ms, of loose-marker paragraphs 8 ms; a phone is estimated
+   at 10 to 20 times slower, an ESTIMATE and not a measurement. The first version predicted marked with
    regexes and lost `**a **b** c**` (nested bold, which is what the old toolbar wrote around a phrase
    holding a bold word), a bold continuing past a code span or a URL or a soft break, and any bold
    whose closer was more than 1500 characters away.
@@ -117,6 +119,10 @@ checked against marked directly instead).
 | bold on one word inside a bold phrase (`**Prix ce soir**`, `soir`) | `**Prix ce** soir`: the span is split |
 | strike on a word inside `~~Prix ce soir~~` | `~~Prix ce~~ soir` |
 | bold on `ab`'s last letter in `**ab**` | `**a**b` |
+| bold over `soir** demain` of `**Prix ce soir** demain` (selection crosses the END of a span) | `**Prix ce soir demain**`: the span joins the wrap whole |
+| bold crossing the START of a span (`hier **Pr` of `hier **Prix ce soir**`) | `**hier Prix ce soir**` |
+| italic / strike crossing an edge (`*a b* c`, `~~a b~~ c`) | `*a b c*`, `~~a b c~~` |
+| bold on `b` in `**a**b` (touching a span) | `**ab**`: merged, never `**a****b**` |
 | bold / italic over two separate runs (`**a** b **c**`) | merged into one span |
 | bold over `**a** and *b*` | `**a and *b***` (a, and, b bold; b italic) |
 | bold on a partial run `**a` | `**a**` |

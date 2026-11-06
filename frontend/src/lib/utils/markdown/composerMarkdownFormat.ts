@@ -175,6 +175,8 @@ interface Segment {
   end: number;
   /** The maximal spans of the style that overlap the selection, when it lies wholly inside them. */
   covering: StyleSpan[] | null;
+  /** Every span of the style on the segment's line, to extend the wrap over a half-covered one. */
+  spans: StyleSpan[];
 }
 
 /**
@@ -216,7 +218,9 @@ function coveringSpans(
  * - ONE rule, as a word processor has it: a selection wholly inside the style already turns the
  *   style OFF, splitting the span around it (`soir` in `**Prix ce soir**` gives `**Prix ce** soir`,
  *   empty pieces dropped); anything else strips every inner run of that marker, partial edge runs
- *   included, and wraps the trimmed selection once.
+ *   included, and wraps the trimmed selection once. A span the selection crosses an edge of, or
+ *   touches, is taken into the wrap whole (`soir** demain` over `**Prix ce soir** demain` gives
+ *   `**Prix ce soir demain**`; bold on `b` in `**a**b` gives `**ab**`).
  */
 function formatInline(
   kind: InlineKind,
@@ -238,7 +242,7 @@ function formatInline(
       while (end > start && /\s/.test(text[end - 1])) end--;
       if (end <= start) continue;
       const spans = styleSpans(line.text, line.start, prefix, kind);
-      segments.push({ start, end, covering: coveringSpans(spans, start, end, text) });
+      segments.push({ start, end, covering: coveringSpans(spans, start, end, text), spans });
     }
   }
 
@@ -288,17 +292,31 @@ function formatInline(
     }
     // ONE rule: not wholly inside the style, so the style is taken off every inner run and the
     // trimmed selection is wrapped once. Whitespace a strip exposes stays outside.
-    const body = text.slice(seg.start, seg.end);
+    // A span the selection crosses one edge of, or touches (`**a**b`), joins it whole: stripping
+    // only its inner marker would leave the other one orphaned (`**a **b c**`).
+    let from = seg.start;
+    let to = seg.end;
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const sp of seg.spans) {
+        if (sp.end >= from && sp.start <= to && (sp.start < from || sp.end > to)) {
+          from = Math.min(from, sp.start);
+          to = Math.max(to, sp.end);
+          grew = true;
+        }
+      }
+    }
+    const body = text.slice(from, to);
     const stripped = stripRuns(body, kind);
     const core = stripped.trim() === '' ? body : stripped;
     const lead = /^\s*/.exec(core)?.[0] ?? '';
     const trail = core.trim() === '' ? '' : (/\s*$/.exec(core)?.[0] ?? '');
-    out += text.slice(cursor, seg.start) + lead + marker;
+    out += text.slice(cursor, from) + lead + marker;
     first = first === -1 ? out.length : first;
     out += core.slice(lead.length, core.length - trail.length);
     last = out.length;
     out += marker + trail;
-    cursor = seg.end;
+    cursor = to;
   }
   if (first === -1) {
     // Mixed selection where nothing was wrapped: the selection stays where it was.
