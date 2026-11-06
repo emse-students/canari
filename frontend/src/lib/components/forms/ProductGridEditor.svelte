@@ -473,9 +473,8 @@
       </div>
       <CriterionEditor
         dimension={grid.pricing.tiers}
-        {tiers}
-        {formations}
-        items={[]}
+        axisLabel={m.form_pgrid_tiers_badge()}
+        sources={{ tiers, formations, items: [] }}
         onAddBucket={addBucket}
         onRemoveBucket={removeBucket}
         onRemove={stopTiers}

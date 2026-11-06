@@ -205,7 +205,9 @@
             {formations}
             {items}
             hasCotisation={tiers.length > 0}
+            title={m.form_grid_registration_title()}
             answersOnly={isPublic}
+            {isPublic}
           />
         {/if}
 

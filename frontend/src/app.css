@@ -1260,23 +1260,24 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   }
 }
 
-/**
- * The pricing grid's geometry: every price column the same size, and never below a readable one.
+/*
+ * THE PRICE TABLE - one row per group of the first criterion, one column per group of the second
+ * (`PriceCellsEditor`). The grid supplies only `--price-cols`, the count it alone knows.
  *
- * The sizes are declared here, and the grid supplies only `--group-cols` and `--price-cols` - the
- * two counts it alone knows. Naming the total width is the whole point: `table-layout: fixed` on a
- * table of width `auto` treats column widths as PROPORTIONS rather than sizes, and nine columns
- * declared at 8rem inside a 1020px box were measured in Chrome at 83-91px, unequal - which is the
- * illegibility this replaces, not a fix for it. With the total named, each column is exactly its
+ * Naming the total width is the point: `table-layout: fixed` on a table of width `auto` treats
+ * column widths as PROPORTIONS rather than sizes, and nine columns declared at 8rem inside a 1020px
+ * box were measured in Chrome at 83-91px, unequal. With the total named, each column is exactly its
  * declared width and the wrapper scrolls once they no longer fit; below that total, `min-width`
  * stretches every column by the same factor, so they stay equal and the box is never half empty.
  */
 .price-grid {
   --group-col: 10rem;
-  --price-col: 8rem;
+  --price-col: 7.5rem;
   min-width: 100%;
   table-layout: fixed;
-  width: calc(var(--group-cols) * var(--group-col) + var(--price-cols) * var(--price-col));
+  border-collapse: separate;
+  border-spacing: 0;
+  width: calc(var(--group-col) + var(--price-cols) * var(--price-col));
 }
 
 .price-grid col.group-col {
@@ -1287,39 +1288,174 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   width: var(--price-col);
 }
 
+/* A row or column header is a button: it selects the line for the bulk edits. */
+.price-header {
+  display: block;
+  min-height: 2.75rem;
+  padding: 0.375rem 0.625rem;
+  border-radius: var(--radius-lg);
+  background: var(--cn-bg);
+  color: var(--text-main);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.price-header:hover {
+  background: color-mix(in srgb, var(--cn-yellow) 18%, var(--cn-bg));
+}
+
+.price-header-picked,
+.price-header-picked:hover {
+  background: var(--text-main);
+  color: var(--cn-surface);
+}
+
+.price-header-sub {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.price-header-picked .price-header-sub {
+  color: inherit;
+  opacity: 0.8;
+}
+
 /*
- * Room for the overlaid action. It belongs here and not on the input's class list because a
- * `pr-8` appended after the shared control string would be settled by the order Tailwind emits
- * `padding-right` and `padding-inline` in - a cascade race for something that is simply true of
- * every cell in this grid.
+ * ONE PRICE CELL, shared by every grid that prices something - this editor's table and phone pills,
+ * and the priced-grid question (WP-G3) - so an open, a free and a closed cell read the same
+ * wherever a manager or a respondent meets them.
  */
-.price-grid input {
-  padding-right: 2rem;
+.price-cell {
+  display: flex;
+  height: 4.75rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 0 0.375rem;
+  border: 1px solid var(--cn-border);
+  border-radius: var(--radius-lg);
+  background: var(--cn-surface);
+  text-align: center;
 }
 
-/**
- * A number input without its native steppers.
- *
- * The steppers cost about a fifth of a narrow cell and step by 0.01, which is not a gesture anybody
- * wants for a price: the amount is typed. Removing them is what gives a grid cell its width back.
- */
-.no-spinner {
-  appearance: textfield;
+.price-cell-picked {
+  border: 2px solid var(--text-main);
+  background: color-mix(in srgb, var(--cn-yellow) 15%, var(--cn-surface));
 }
 
-.no-spinner::-webkit-outer-spin-button,
-.no-spinner::-webkit-inner-spin-button {
-  appearance: none;
-  margin: 0;
+/* The one cell a public form's guest would get free - refused by the server, so said here. */
+.price-cell-guest {
+  border: 2px solid var(--amber-warn);
+  background: color-mix(in srgb, var(--amber-warn) 12%, var(--cn-surface));
+}
+
+/*
+ * A combination that DOES NOT EXIST: hatched and struck through, so it can never be read as free
+ * (which is "Gratuit") or as unfilled.
+ */
+.price-cell-closed {
+  border: 1px dashed var(--text-muted);
+  background-color: var(--cn-bg);
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 0.375rem,
+    color-mix(in srgb, var(--text-main) 6%, transparent) 0.375rem 0.4375rem
+  );
+  color: var(--text-main);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-decoration: line-through;
+}
+
+/* "Gratuit": what an empty price has always meant, now shown. */
+.price-free-chip {
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  background: var(--cn-bg);
+  color: var(--text-main);
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+.price-input {
+  width: 3.5rem;
+  min-height: 1.75rem;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  color: var(--text-main);
+  font-size: var(--text-base);
+  font-weight: 700;
+  text-align: right;
+}
+
+.price-input:focus {
+  outline: none;
+  border-bottom-color: var(--text-main);
+}
+
+/* The corner of a cell: makes it unavailable, or brings it back. */
+.price-corner {
+  position: absolute;
+  top: 0.125rem;
+  right: 0.125rem;
+  display: flex;
+  width: 1.625rem;
+  height: 1.625rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--text-main);
+}
+
+.price-corner:hover {
+  background: var(--cn-bg);
+}
+
+/* A phone's price pill: the column it is for, and its price. */
+.price-pill {
+  display: inline-flex;
+  min-height: 2.75rem;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 0.25rem 0.75rem;
+  border: 1px solid var(--cn-border);
+  border-radius: var(--radius-lg);
+  background: var(--cn-surface);
+  color: var(--text-main);
+  font-size: var(--text-xs);
+  text-align: left;
+}
+
+.price-pill-free {
+  background: var(--cn-bg);
+}
+
+/* A pill takes the cell states too, drawn after its own base so they win. */
+.price-pill.price-cell-guest {
+  border: 2px solid var(--amber-warn);
+  background: color-mix(in srgb, var(--amber-warn) 12%, var(--cn-surface));
+}
+
+.price-pill.price-cell-picked {
+  border: 2px solid var(--text-main);
+  background: color-mix(in srgb, var(--cn-yellow) 15%, var(--cn-surface));
+}
+
+.price-pill.price-cell-closed {
+  border: 1px dashed var(--text-muted);
+  background-color: var(--cn-bg);
 }
 
 /**
  * An action that lives INSIDE a table cell instead of beside it.
  *
- * A permanent button per cell cost as much width as the price it sat next to, which is what made
- * the pricing grid unreadable past a few columns. This one overlays the cell and takes no width at
- * all: invisible at rest, shown on hover or when the cell it belongs to holds the focus - the only
- * affordance a touch screen has, hence the coarse-pointer rule that keeps it always visible there.
+ * A permanent button per cell cost as much width as the price it sat next to. This one overlays the
+ * cell and takes no width at all: invisible at rest, shown on hover or when the cell it belongs to
+ * holds the focus - the only affordance a touch screen has, hence the coarse-pointer rule that
+ * keeps it always visible there.
  */
 .cell-action {
   opacity: 0;
