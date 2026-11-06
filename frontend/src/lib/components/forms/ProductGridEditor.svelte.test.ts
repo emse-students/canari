@@ -57,7 +57,14 @@ const byAria = (t: HTMLElement, label: string) =>
 const byText = (t: HTMLElement, text: string) =>
   buttons(t).find((b) => b.textContent?.trim() === text)!;
 const inputOf = (t: HTMLElement, label: string) =>
-  t.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!;
+  t.querySelector<HTMLInputElement>(
+    `input[aria-label="${label}"], textarea[aria-label="${label}"]`
+  )!;
+/** The paste box (the row labels are textareas too, so they wrap). */
+const pasteBox = (t: HTMLElement) =>
+  t.querySelector<HTMLTextAreaElement>(
+    `textarea[placeholder="${m.form_pgrid_paste_placeholder()}"]`
+  );
 const valid = (grid: EditorProductGrid) =>
   productGridItemRefusal(
     { required: true, productGrid: productGridPayload(grid) },
@@ -136,18 +143,18 @@ describe('rows and columns', () => {
     const { target, state } = render(newProductGrid());
     byText(target, m.form_pgrid_paste_button()).click();
     flushSync();
-    type(target.querySelector('textarea')!, 'Vert\nBordeaux, Noir');
+    type(pasteBox(target)!, 'Vert\nBordeaux, Noir');
     byText(target, m.form_pgrid_paste_as_rows()).click();
     flushSync();
     expect(state.grid.rows.map((r) => r.label)).toEqual(['Vert', 'Bordeaux', 'Noir']);
-    expect(target.querySelector('textarea')).toBeNull();
+    expect(pasteBox(target)).toBeNull();
   });
 
   it('pastes columns and names the ones already there', () => {
     const { target, state } = render();
     byText(target, m.form_pgrid_paste_button()).click();
     flushSync();
-    type(target.querySelector('textarea')!, 'M, L, XL');
+    type(pasteBox(target)!, 'M, L, XL');
     byText(target, m.form_pgrid_paste_as_columns()).click();
     flushSync();
     expect(state.grid.columns.map((c) => c.label)).toEqual(['S', 'M', 'L', 'XL']);
@@ -220,6 +227,27 @@ describe('rows and columns', () => {
     expect(
       target.querySelector<HTMLInputElement>('[data-testid="price-single"]')!.className
     ).toContain('pointer-coarse:min-h-11');
+  });
+
+  it('fits a phone: wrapping sticky labels, arrows under them, stacked chips, "+" in the footer', () => {
+    const { target, state } = render();
+    const label = inputOf(target, m.form_pgrid_row_label({ n: 1 }));
+    // A textarea, so a long label wraps in the narrow column; a line break is no label.
+    expect(label.tagName).toBe('TEXTAREA');
+    type(label, 'Vert\nsapin');
+    expect(state.grid.rows[0].label).toBe('Vert sapin');
+    const rowHeader = label.closest('th')!;
+    expect(rowHeader.className).toContain('sticky');
+    expect(rowHeader.className).toContain('max-sm:min-w-26');
+    const arrows = byAria(target, m.form_pgrid_move_row_up({ label: 'Vert sapin' })).parentElement!;
+    expect(arrows.className).toContain('max-sm:order-last');
+    // The column chip stacks its controls; the header "+" gives way to a footer button.
+    const chip = inputOf(target, m.form_pgrid_column_label({ n: 1 })).parentElement!;
+    expect(chip.className).toContain('max-sm:flex-col');
+    expect(byAria(target, m.form_pgrid_add_column()).className).toContain('max-sm:hidden');
+    byText(target, m.form_pgrid_add_column()).click();
+    flushSync();
+    expect(state.grid.columns).toHaveLength(3);
   });
 
   it('refuses to remove a row when every remaining cell would be closed, and says why', async () => {

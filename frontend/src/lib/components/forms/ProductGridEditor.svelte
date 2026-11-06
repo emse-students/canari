@@ -71,7 +71,10 @@
    * Columns are chips in the header (renamed in place, removed by their x), rows a narrow first
    * column of inline inputs, "+" adds one of either and "Coller une liste" adds many. A grip moves
    * a row or a column, by dragging or by the arrow keys; on a touch screen or a phone-width page,
-   * where no drag reaches it, two arrow buttons per entry do. Clicking a cell closes the combination
+   * where no drag reaches it, two arrow buttons per entry do. Below `sm` the table is drawn to fit
+   * a phone: the row labels narrow and wrap, a row's arrows sit under its label, a column's chip
+   * stacks its controls, and a cell shows its state without its price - six sizes fit at 390px. A
+   * wider grid scrolls inside its own box, the row labels sticky. Clicking a cell closes the combination
    * ("no Creme in XS") or reopens it. Prices sit where the mode puts them - one field, a column
    * beside the rows, a row under the headers - once per category, one tab each, when the grid
    * prices per cotisation, promo or formation. Below, the buyer's view, desktop or phone.
@@ -293,6 +296,55 @@
   /** The arrow buttons show where no drag works: a coarse pointer, or a phone-width page. */
   const moveButtonClass =
     'ui-icon-button text-text-muted hover:text-text-main hidden rounded-lg hover:bg-black/5 disabled:opacity-25 max-sm:inline-flex pointer-coarse:inline-flex dark:hover:bg-white/10';
+  /** A column's arrows on a phone: as wide as its narrow column, the 44px hit box from `tap-target`. */
+  const columnMoveButtonClass =
+    'text-text-muted hover:text-text-main tap-target hidden h-11 w-11 items-center justify-center rounded-lg hover:bg-black/5 disabled:opacity-25 max-sm:inline-flex max-sm:w-full pointer-coarse:inline-flex dark:hover:bg-white/10';
+  /** The row label column is sticky, so a grid too wide for the phone scrolls under it. */
+  const stickyLabelClass = 'bg-cn-surface sticky left-0 z-1';
+
+  /**
+   * A row label is a textarea so it WRAPS in the phone's narrow column; it grows to its content
+   * here rather than through `field-sizing`, which older WebKit lacks. A line break is no label:
+   * Enter and pasted newlines become nothing and a space.
+   */
+  function fitLabel(node: HTMLTextAreaElement) {
+    const fit = () => {
+      node.style.height = 'auto';
+      // Border-box: the underline counts in the height, not in `scrollHeight`.
+      node.style.height = `${node.scrollHeight + node.offsetHeight - node.clientHeight}px`;
+    };
+    fit();
+    node.addEventListener('input', fit);
+    // The column's width settles after mount (and changes with the page): the lines follow it.
+    // Only a WIDTH change refits: the height this sets must not feed back into the observer.
+    let width = node.clientWidth;
+    const resize =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => {
+            if (node.clientWidth === width) return;
+            width = node.clientWidth;
+            fit();
+          });
+    resize?.observe(node);
+    return {
+      destroy: () => {
+        node.removeEventListener('input', fit);
+        resize?.disconnect();
+      },
+    };
+  }
+
+  function onRowLabelKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') e.preventDefault();
+  }
+
+  function onRowLabelInput(row: { label: string }, e: Event) {
+    const field = e.currentTarget as HTMLTextAreaElement;
+    const label = field.value.replace(/[\r\n]+/g, ' ');
+    if (label !== field.value) field.value = label;
+    row.label = label;
+  }
 
   // Categories: off, or one profile criterion.
   const tiered = $derived(grid.pricing.tiers !== null);
@@ -564,12 +616,12 @@
 
     <!-- The table: the editor and its own preview. -->
     <div class="overflow-x-auto pt-3" bind:this={tableEl}>
-      <table class="border-separate border-spacing-0">
+      <table class="border-separate border-spacing-0 max-sm:w-full">
         <thead>
           <tr>
             <th
               scope="col"
-              class="text-text-muted w-56 min-w-44 pr-2 pb-2 text-left text-xs font-bold"
+              class="text-text-muted {stickyLabelClass} w-56 min-w-44 pr-2 pb-2 text-left text-xs font-bold max-sm:w-auto max-sm:min-w-26 max-sm:pr-1"
               >{m.form_pgrid_corner()}</th
             >
             {#if mode === 'per_row'}
@@ -580,12 +632,12 @@
             {#each grid.columns as column, ci (column.id)}
               <th
                 scope="col"
-                class="w-26 px-1 pb-2 align-bottom"
+                class="w-26 px-1 pb-2 align-bottom max-sm:w-8 max-sm:min-w-8 max-sm:px-0.5"
                 ondragover={(e) => onEntryDragOver(e, 'columns')}
                 ondrop={(e) => onEntryDrop(e, 'columns', ci)}
               >
                 <span
-                  class="bg-cn-border/60 flex items-center justify-center gap-0.5 rounded-full py-0.5 pr-0.5 pl-1 {duplicateColumns.has(
+                  class="bg-cn-border/60 flex items-center justify-center gap-0.5 rounded-full py-0.5 pr-0.5 pl-1 max-sm:flex-col max-sm:rounded-lg max-sm:px-0 {duplicateColumns.has(
                     productGridLabelKey(column.label)
                   )
                     ? 'ring-red-err ring-2'
@@ -599,7 +651,7 @@
                     ondragend={endDrag}
                     onkeydown={(e) => onGripKeydown(e, 'columns', ci)}
                     aria-label={m.form_pgrid_move_column({ label: column.label || ci + 1 })}
-                    class="text-text-muted flex h-8 w-4 shrink-0 cursor-grab items-center justify-center pointer-coarse:hidden"
+                    class="text-text-muted flex h-8 w-4 shrink-0 cursor-grab items-center justify-center max-sm:hidden pointer-coarse:hidden"
                     ><GripVertical size={12} /></button
                   >
                   <input
@@ -610,25 +662,27 @@
                       !column.label.trim()}
                     placeholder={m.form_pgrid_column_placeholder()}
                     maxlength={100}
-                    class="text-text-main placeholder:text-text-muted/60 min-h-8 w-12 min-w-0 border-0 bg-transparent text-center text-sm font-bold outline-none"
+                    class="text-text-main placeholder:text-text-muted/60 min-h-8 w-12 min-w-0 border-0 bg-transparent text-center text-sm font-bold outline-none max-sm:w-full max-sm:text-xs"
                   />
                   <button
                     type="button"
                     onclick={() => removeEntry('columns', column.id)}
                     disabled={grid.columns.length <= 1}
                     aria-label={m.form_pgrid_remove_column({ label: column.label || ci + 1 })}
-                    class="text-text-muted hover:text-red-err tap-target flex h-8 w-7 shrink-0 items-center justify-center rounded-full disabled:opacity-30"
+                    class="text-text-muted hover:text-red-err tap-target flex h-8 w-7 shrink-0 items-center justify-center rounded-full disabled:opacity-30 max-sm:w-full"
                     ><X size={12} /></button
                   >
                 </span>
-                <span class="mt-1 hidden justify-center gap-0.5 max-sm:flex pointer-coarse:flex">
+                <span
+                  class="mt-1 hidden justify-center gap-0.5 max-sm:flex max-sm:flex-col pointer-coarse:flex"
+                >
                   <button
                     type="button"
                     data-axis-move="columns:back"
                     onclick={() => moveByButton('columns', ci, -1)}
                     disabled={ci === 0}
                     aria-label={m.form_pgrid_move_column_left({ label: column.label || ci + 1 })}
-                    class={moveButtonClass}><ArrowLeft size={16} /></button
+                    class={columnMoveButtonClass}><ArrowLeft size={16} /></button
                   >
                   <button
                     type="button"
@@ -636,25 +690,29 @@
                     onclick={() => moveByButton('columns', ci, 1)}
                     disabled={ci === grid.columns.length - 1}
                     aria-label={m.form_pgrid_move_column_right({ label: column.label || ci + 1 })}
-                    class={moveButtonClass}><ArrowRight size={16} /></button
+                    class={columnMoveButtonClass}><ArrowRight size={16} /></button
                   >
                 </span>
               </th>
             {/each}
-            <th class="pb-2 pl-1 align-bottom">
+            <!-- On a phone this "+" gives way to the footer's, and the cell keeps a sliver so the last
+                 column's widened hit boxes stay inside the table. -->
+            <th class="pb-2 pl-1 align-bottom max-sm:w-2 max-sm:p-0">
               <button
                 type="button"
                 onclick={() => addEntry('columns')}
                 aria-label={m.form_pgrid_add_column()}
                 title={m.form_pgrid_add_column()}
-                class="ui-icon-button border-cn-border bg-cn-surface text-text-main rounded-full border"
+                class="ui-icon-button border-cn-border bg-cn-surface text-text-main rounded-full border max-sm:hidden"
                 ><Plus size={16} /></button
               >
             </th>
           </tr>
           {#if mode === 'per_column'}
             <tr>
-              <th scope="row" class="text-text-main pr-2 pb-2 text-left text-xs font-bold"
+              <th
+                scope="row"
+                class="text-text-main {stickyLabelClass} pr-2 pb-2 text-left text-xs font-bold"
                 >{m.form_pgrid_price_header()}</th
               >
               {#each grid.columns as column (column.id)}
@@ -683,8 +741,11 @@
               ondragover={(e) => onEntryDragOver(e, 'rows')}
               ondrop={(e) => onEntryDrop(e, 'rows', ri)}
             >
-              <th scope="row" class="py-0.5 pr-2 text-left font-normal">
-                <span class="flex items-center gap-1">
+              <th
+                scope="row"
+                class="{stickyLabelClass} py-0.5 pr-2 text-left font-normal max-sm:min-w-26 max-sm:pr-1"
+              >
+                <span class="flex items-center gap-1 max-sm:flex-wrap max-sm:gap-0">
                   <button
                     type="button"
                     draggable="true"
@@ -693,45 +754,51 @@
                     ondragend={endDrag}
                     onkeydown={(e) => onGripKeydown(e, 'rows', ri)}
                     aria-label={m.form_pgrid_move_row({ label: row.label || ri + 1 })}
-                    class="ui-icon-button text-text-muted cursor-grab rounded-lg pointer-coarse:hidden"
+                    class="ui-icon-button text-text-muted cursor-grab rounded-lg max-sm:hidden pointer-coarse:hidden"
                     ><GripVertical size={14} /></button
                   >
-                  <button
-                    type="button"
-                    data-axis-move="rows:back"
-                    onclick={() => moveByButton('rows', ri, -1)}
-                    disabled={ri === 0}
-                    aria-label={m.form_pgrid_move_row_up({ label: row.label || ri + 1 })}
-                    class={moveButtonClass}><ArrowUp size={16} /></button
-                  >
-                  <button
-                    type="button"
-                    data-axis-move="rows:forward"
-                    onclick={() => moveByButton('rows', ri, 1)}
-                    disabled={ri === grid.rows.length - 1}
-                    aria-label={m.form_pgrid_move_row_down({ label: row.label || ri + 1 })}
-                    class={moveButtonClass}><ArrowDown size={16} /></button
-                  >
-                  <input
+                  <!-- On a phone the arrows go under the label, the label keeping the width. -->
+                  <span class="contents max-sm:order-last max-sm:flex max-sm:w-full">
+                    <button
+                      type="button"
+                      data-axis-move="rows:back"
+                      onclick={() => moveByButton('rows', ri, -1)}
+                      disabled={ri === 0}
+                      aria-label={m.form_pgrid_move_row_up({ label: row.label || ri + 1 })}
+                      class={moveButtonClass}><ArrowUp size={16} /></button
+                    >
+                    <button
+                      type="button"
+                      data-axis-move="rows:forward"
+                      onclick={() => moveByButton('rows', ri, 1)}
+                      disabled={ri === grid.rows.length - 1}
+                      aria-label={m.form_pgrid_move_row_down({ label: row.label || ri + 1 })}
+                      class={moveButtonClass}><ArrowDown size={16} /></button
+                    >
+                  </span>
+                  <textarea
+                    rows="1"
+                    use:fitLabel
                     data-axis-input="rows"
-                    bind:value={row.label}
+                    value={row.label}
+                    oninput={(e) => onRowLabelInput(row, e)}
+                    onkeydown={onRowLabelKeydown}
                     aria-label={m.form_pgrid_row_label({ n: ri + 1 })}
                     aria-invalid={duplicateRows.has(productGridLabelKey(row.label)) ||
                       !row.label.trim()}
                     placeholder={m.form_pgrid_row_placeholder()}
                     maxlength={100}
-                    class="text-text-main placeholder:text-text-muted/60 focus:border-cn-yellow min-h-10 min-w-0 flex-1 border-0 border-b bg-transparent px-1 text-sm font-semibold outline-none {duplicateRows.has(
+                    class="text-text-main placeholder:text-text-muted/60 focus:border-cn-yellow min-h-10 w-0 min-w-0 flex-1 resize-none overflow-hidden border-0 border-b bg-transparent px-1 py-2.5 text-sm font-semibold break-words outline-none max-sm:px-0 {duplicateRows.has(
                       productGridLabelKey(row.label)
                     )
                       ? 'border-red-err'
-                      : 'border-cn-border'}"
-                  />
+                      : 'border-cn-border'}"></textarea>
                   <button
                     type="button"
                     onclick={() => removeEntry('rows', row.id)}
                     disabled={grid.rows.length <= 1}
                     aria-label={m.form_pgrid_remove_row({ label: row.label || ri + 1 })}
-                    class="ui-icon-button text-text-muted hover:text-red-err shrink-0 rounded-full disabled:opacity-30"
+                    class="text-text-muted hover:text-red-err tap-target flex h-11 w-11 shrink-0 items-center justify-center rounded-full disabled:opacity-30 max-sm:w-8"
                     ><X size={14} /></button
                   >
                 </span>
@@ -754,7 +821,7 @@
               {/if}
               {#each grid.columns as column (column.id)}
                 {@const closed = isCellClosed(grid, row.id, column.id)}
-                <td class="px-1 py-0.5">
+                <td class="px-1 py-0.5 max-sm:px-0.5">
                   <button
                     type="button"
                     aria-pressed={closed}
@@ -769,12 +836,14 @@
                     title={closed
                       ? m.form_pgrid_cell_reopen_title()
                       : m.form_pgrid_cell_close_title()}
-                    class="h-11 w-full min-w-18 rounded-lg text-xs transition-colors {closed
+                    class="flex h-11 w-full min-w-18 items-center justify-center rounded-lg text-xs transition-colors max-sm:min-w-0 {closed
                       ? 'border-text-muted bg-cn-surface-alt text-text-main border border-dashed font-bold line-through'
                       : 'bg-cn-surface text-text-muted hover:bg-cn-yellow/15 border border-black/10 font-semibold dark:border-white/10'}"
-                    >{closed
-                      ? m.form_pgrid_cell_closed()
-                      : cellPriceLabel(row.id, column.id)}</button
+                    ><span class="max-sm:hidden"
+                      >{closed
+                        ? m.form_pgrid_cell_closed()
+                        : cellPriceLabel(row.id, column.id)}</span
+                    >{#if closed}<X size={14} class="sm:hidden" aria-hidden="true" />{/if}</button
                   >
                 </td>
               {/each}
@@ -782,21 +851,26 @@
             </tr>
           {/each}
         </tbody>
-        <tfoot>
-          <tr>
-            <td class="pt-1.5" colspan={grid.columns.length + 3}>
-              <button
-                type="button"
-                onclick={() => addEntry('rows')}
-                class="text-text-muted hover:text-text-main inline-flex min-h-11 items-center gap-2 px-1 text-sm font-bold"
-              >
-                <Plus size={16} />
-                {m.form_pgrid_add_row()}
-              </button>
-            </td>
-          </tr>
-        </tfoot>
       </table>
+    </div>
+    <!-- Outside the table, so a grid that scrolls sideways never carries them out of view. -->
+    <div class="flex flex-wrap gap-x-4 pt-1.5">
+      <button
+        type="button"
+        onclick={() => addEntry('rows')}
+        class="text-text-muted hover:text-text-main inline-flex min-h-11 items-center gap-2 px-1 text-sm font-bold"
+      >
+        <Plus size={16} />
+        {m.form_pgrid_add_row()}
+      </button>
+      <button
+        type="button"
+        onclick={() => addEntry('columns')}
+        class="text-text-muted hover:text-text-main inline-flex min-h-11 items-center gap-2 px-1 text-sm font-bold sm:hidden"
+      >
+        <Plus size={16} />
+        {m.form_pgrid_add_column()}
+      </button>
     </div>
     <p class="text-text-muted pt-1 text-xs">{m.form_pgrid_close_hint()}</p>
     {#if tableFeedback}

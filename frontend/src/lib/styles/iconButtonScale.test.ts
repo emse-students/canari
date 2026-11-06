@@ -46,8 +46,8 @@ const cssPath = join(src, 'app.css');
  */
 const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
   'lib/components/forms/ProductGridEditor.svelte': {
-    count: 2,
-    why: "the grip and the x inside a priced grid's column chip, sized by the chip so fifteen columns still fit a table row; on a touch screen the x is widened by `tap-target` and the grip, which no drag reaches there, gives way to 44px arrow buttons",
+    count: 3,
+    why: "the grip and the x inside a priced grid's column chip, sized by the chip so fifteen columns still fit a table row (on a touch screen the x is widened by `tap-target` and the grip, which no drag reaches there, gives way to 44px arrow buttons); and a row's x, 32px wide in the phone's narrow label column so a word like Bordeaux fits beside it, its hit box widened to 44px by `tap-target`. A column's arrows take the same shape (44px tall, the column's width on a phone, `tap-target`) through `columnMoveButtonClass`, a constant this scan does not read",
   },
   'lib/components/forms/ProductGridQuestion.svelte': {
     count: 4,

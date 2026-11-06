@@ -1553,6 +1553,19 @@ draws them. Built from the owner-approved mockup of 2026-11-06 with the app's to
   under its chip (`ui-icon-button`, 44px, labelled with the entry: *"Monter la ligne Vert"*), the
   way the question list moves on a phone (#3083); the grips are hidden on a coarse pointer. Focus
   follows the entry to the same button, or to the other one at the end of the axis.
+- **On a phone (below `sm`) the table fits the screen**: measured at 390px, a grid of six sizes
+  draws in the 304px the question card leaves, with no sideways scroll. The table takes the full
+  width; each size column is 32px (`max-sm:w-8 min-w-8`), its chip stacked (label, x, then the
+  left/right arrows under it, as wide as the column with `tap-target` hit boxes); the row label
+  column takes the rest (at least 104px), its label a `textarea` that wraps and
+  grows (`fitLabel`: on input, and on a WIDTH change only, so the height it sets never feeds the
+  observer back; a typed or pasted line break becomes a space), the row's x 32px beside it and its
+  up/down arrows under it. A cell shows its state without its price (a closed one an x); the
+  header "+" gives way to an "Ajouter une colonne" button beside "Ajouter une ligne", both now
+  under the table rather than in its footer so a scrolled table never carries them away. **A grid
+  too wide to fit** (more than six sizes, or a per-row / per-column price) scrolls inside its own
+  box, never the page, with the row labels and the corner `sticky` on the card's surface. From
+  `sm` up nothing changed.
 - **Touch targets**: the chip's x keeps the chip's drawing and is widened to 44px by `tap-target`
   (the chip still sizes it, so `iconButtonScale.test.ts` keeps its exemption); the price-mode and
   criterion-kind buttons take `tap-target`; the price inputs, which no `::before` can widen, grow to
