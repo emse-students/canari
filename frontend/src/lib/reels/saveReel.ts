@@ -15,6 +15,7 @@ import {
 import { mediaUrl } from '$lib/utils/apiUrl';
 import { saveBlobAs } from '$lib/utils/fileDownload';
 import { GalleryError, hasNativeGallery, saveVideoToGallery } from './gallery';
+import { fullScreenMediaOf } from './fullScreenPost';
 
 /** What a save came to: in the gallery, refused gallery access, downloaded, or a dialog cancelled. */
 export type ReelSaveOutcome = 'saved' | 'denied' | 'downloaded' | 'cancelled';
@@ -44,15 +45,20 @@ export function reelFileName(reel: Pick<SaveableReel, 'id' | 'createdAt'>): stri
 }
 
 /**
- * What a save needs of a reel: an id and a day for the file name, and `media[0]` with its key. A
+ * What a save needs of a reel: an id and a day for the file name, and its video with its key. A
  * feed reel, one of the member's own and a reel received in a conversation all have them.
+ *
+ * THE VIDEO IS READ AS THE VIEWER READS IT (`fullScreenMediaOf`): `media`, or `images` from a server
+ * older than the rename. Reading `media[0]` alone threw `media is undefined` on a row that carried
+ * only `images` - the viewer played it, the save button crashed on it.
  */
 export interface SaveableReel {
   id: string;
   /** ISO date; its day names the saved file. */
   createdAt: string;
-  /** `media[0]` is the video, with its key. */
-  media: PostMediaRef[];
+  /** The first of `media` (else of `images`) is the video, with its key. */
+  media?: PostMediaRef[];
+  images?: PostMediaRef[];
 }
 
 /** Saves a reel - ANY reel the member can watch, public or not. @throws {GalleryError} when it cannot be saved. */
@@ -60,7 +66,7 @@ export async function saveReel(
   reel: SaveableReel,
   deps: SaveReelDeps = defaultDeps
 ): Promise<ReelSaveOutcome> {
-  const ref = reel.media[0];
+  const ref = fullScreenMediaOf(reel);
   if (!ref) throw new GalleryError('failed', `reel ${reel.id} carries no video`);
   const name = reelFileName(reel);
   console.debug(`[reel-save] ${reel.id} as ${name}`);
