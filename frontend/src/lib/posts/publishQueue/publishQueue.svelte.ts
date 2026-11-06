@@ -4,21 +4,35 @@
  * screen again). The mechanism and its reasons are in `publishQueue.ts`; this file only connects it.
  *
  * ONE QUEUE, FOR THE ACCOUNT THAT IS SIGNED IN. Started by the root layout once the session is up,
- * stopped at sign-out (the store stays on the device: the next sign-in of that account resumes it).
+ * stopped at sign-out. A plain sign-out KEEPS the store on the device, as it keeps the message
+ * database: the next sign-in of that account resumes it. The account's deletion or revocation wipes
+ * it (`accountIndexedDbNames`). Every request it makes is checked to be THIS account's
+ * (`assertAccount`): a tab signed in as somebody else never sends this account's post.
+ *
+ * SEVERAL TABS. One runs the pass (the Web Lock); it BROADCASTS its rows, and the others draw them
+ * and pass their Retry, Pause and Delete back on the same channel (`nudge`), so a member acting in
+ * any tab acts at once, not at the runner's next rung.
  */
 import { SvelteSet } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
-import { createPost } from '$lib/posts/api';
+import { createPost, withdrawPost } from '$lib/posts/api';
 import { MediaService, preparePostMedia } from '$lib/media';
 import { SEGMENTED_MEDIA_ENCODING, writesSegmented } from '$lib/mediaSegmented';
 import { assertNotMuted } from '$lib/moderation/muteCheck';
 import { publishFailureMessage } from '$lib/posts/publishFailure';
-import { getToken } from '$lib/stores/auth';
+import { getToken, SessionExpiredError } from '$lib/stores/auth';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { showToast } from '$lib/stores/toast.svelte';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
+import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { appendLog } from '$lib/utils/sessionLog';
-import { PublishQueue, type PublishView } from './publishQueue';
+import {
+  PublishAccountMismatchError,
+  PublishQueue,
+  type PublishNudge,
+  type PublishView,
+} from './publishQueue';
 import { PublishQueueStore, type QueuedPost } from './publishQueueStore';
 
 class PublishQueueViews {
@@ -29,10 +43,16 @@ class PublishQueueViews {
 /** The reactive state of the progress line. */
 export const publishQueueState = new PublishQueueViews();
 
+/** What the tabs of one account say to each other about its queue. */
+type ChannelMessage =
+  | { type: 'views'; views: PublishView[] }
+  | { type: 'nudge'; postId: string; what: PublishNudge };
+
 interface Running {
   userId: string;
   store: PublishQueueStore;
   queue: PublishQueue;
+  channel: BroadcastChannel | null;
   unsubscribe: Array<() => void>;
 }
 
@@ -55,7 +75,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/** One pass per account across tabs, through the Web Locks API where the engine has it. */
+/** One pass per account across tabs, through the Web Lock API where the engine has it. */
 function lockFor(userId: string) {
   return <T>(fn: () => Promise<T>): Promise<T> => {
     const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
@@ -64,12 +84,37 @@ function lockFor(userId: string) {
   };
 }
 
-/** Starts the queue of `userId` (a no-op when it already runs) and drains what it holds. */
+/**
+ * The access token for a request of `userId`'s queue, refused when it names anybody else: the token
+ * is the session's, the queue is one account's, and a sign-in to another account in another tab
+ * changes the first without the second.
+ */
+async function tokenOf(userId: string): Promise<string> {
+  const token = await getToken();
+  if (decodeTokenClaims(token)?.sub !== userId) throw new PublishAccountMismatchError(userId);
+  return token;
+}
+
+/** The channel the tabs of `userId` share, or `null` where the engine has none. */
+function channelFor(userId: string): BroadcastChannel | null {
+  if (typeof BroadcastChannel === 'undefined') return null;
+  return new BroadcastChannel(`canari-publish-queue-${userId}`);
+}
+
+/**
+ * Starts the queue of `userId` and drains what it holds. Called again for the account already
+ * running, it only drains: a pass that ended because the session was not yet this account's goes on.
+ */
 export function startPublishQueue(userId: string): void {
-  if (running?.userId === userId) return;
+  if (running?.userId === userId) {
+    void running.queue.drain();
+    return;
+  }
   stopPublishQueue();
   const store = new PublishQueueStore(userId);
   const media = new MediaService();
+  const channel = channelFor(userId);
+  const token = () => tokenOf(userId);
   const queue = new PublishQueue({
     store,
     prepare: async (file, onProgress, signal) => {
@@ -82,21 +127,31 @@ export function startPublishQueue(userId: string): void {
       media.uploadResumably(
         a.bytes,
         { mimeType: a.mimeType, fileName: a.fileName },
-        getToken,
+        token,
         a.dims,
         'archive',
         { state: a.state, persist: a.persist, encoding: a.encoding },
         a.transport
       ),
     release: (uploadId) =>
-      media.releaseResumableUpload(uploadId, getToken, 'post deleted from the publish queue'),
+      media.releaseResumableUpload(uploadId, token, 'post deleted from the publish queue'),
+    deleteMedia: (mediaId) => media.deleteOwnArchive(mediaId, token),
     createPost: (payload) => createPost(payload),
+    withdrawPost: (postId) => withdrawPost(postId),
     assertNotMuted,
-    failureMessage: (error) => publishFailureMessage(error, m.post_create_publish_error()),
+    assertAccount: async () => {
+      await token();
+    },
+    sessionEnded: (error) => error instanceof SessionExpiredError,
+    failureMessage: (error) =>
+      error instanceof ApiRefusalError && error.status === 410
+        ? m.publish_queue_gone()
+        : publishFailureMessage(error, m.post_create_publish_error()),
     lock: lockFor(userId),
     sleep,
     onViews: (views) => {
       publishQueueState.views = views;
+      channel?.postMessage({ type: 'views', views } satisfies ChannelMessage);
     },
     onPublished: (post) => {
       showToast(m.publish_queue_published(), 'info');
@@ -116,10 +171,21 @@ export function startPublishQueue(userId: string): void {
   };
   window.addEventListener('online', onOnline);
   document.addEventListener('visibilitychange', onVisible);
+  if (channel) {
+    channel.onmessage = (event: MessageEvent<ChannelMessage>) => {
+      const message = event.data;
+      if (message?.type === 'views') publishQueueState.views = message.views;
+      else if (message?.type === 'nudge') {
+        running?.queue.nudge(message.postId, message.what);
+        void running?.queue.drain();
+      } else appendLog('[PUBLISH-QUEUE] a channel message of no known type was ignored');
+    };
+  }
   running = {
     userId,
     store,
     queue,
+    channel,
     unsubscribe: [
       connectivity.onReconnect(() => queue.wake('reconnect')),
       // Only the native shells emit it; on the web a background tab keeps uploading.
@@ -131,16 +197,18 @@ export function startPublishQueue(userId: string): void {
     ],
   };
   appendLog(`[PUBLISH-QUEUE] started`);
+  void queue.refreshViews();
   void queue.drain();
 }
 
 /** Stops the running queue (sign-out). What it holds stays on the device for the next sign-in. */
 export function stopPublishQueue(): void {
   if (!running) return;
-  const { queue, store, unsubscribe } = running;
+  const { queue, store, unsubscribe, channel } = running;
   running = null;
   queue.stop();
   for (const off of unsubscribe) off();
+  channel?.close();
   void store.close();
   publishQueueState.views = [];
   appendLog('[PUBLISH-QUEUE] stopped');
@@ -154,17 +222,35 @@ export async function enqueuePost(userId: string, post: QueuedPost, files: File[
   startPublishQueue(userId);
   await running!.store.enqueue(post, files);
   appendLog(`[PUBLISH-QUEUE] ${post.id} queued with ${files.length} media`);
+  await running!.queue.refreshViews();
   void running!.queue.drain();
 }
 
-/** The member's Retry on a post that stopped. */
-export function retryQueuedPost(postId: string): Promise<void> {
-  return running?.queue.retry(postId) ?? Promise.resolve();
+/** Tells the runner - in whichever tab it is - what the member did to `postId`. */
+function tellTheRunner(postId: string, what: PublishNudge): void {
+  running?.channel?.postMessage({ type: 'nudge', postId, what } satisfies ChannelMessage);
 }
 
-/** The member's Delete on a queued post. */
-export function deleteQueuedPost(postId: string): Promise<void> {
-  return running?.queue.remove(postId) ?? Promise.resolve();
+/** The member's Retry on a post that stopped, or "Reprendre" on one they paused. */
+export async function retryQueuedPost(postId: string): Promise<void> {
+  if (!running) return;
+  const done = running.queue.retry(postId);
+  tellTheRunner(postId, 'retry');
+  await done;
+}
+
+/** The member stops a post being prepared or sent; it is kept, paused. */
+export async function pauseQueuedPost(postId: string): Promise<void> {
+  if (!running) return;
+  await running.queue.pause(postId);
+  tellTheRunner(postId, 'paused');
+}
+
+/** The member's Delete on a queued post: taken back everywhere, then forgotten. */
+export async function deleteQueuedPost(postId: string): Promise<void> {
+  if (!running) return;
+  await running.queue.remove(postId);
+  tellTheRunner(postId, 'deleted');
 }
 
 /** Calls `listener` each time a queued post is published; returns the unsubscribe. */

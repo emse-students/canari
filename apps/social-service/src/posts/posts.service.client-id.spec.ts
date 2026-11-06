@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, GoneException } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { PostsService } from './posts.service';
 import { Post } from './entities/post.entity';
@@ -19,8 +19,10 @@ import { PostMediaRetentionService } from './post-media-retention.service';
  */
 const ID = '0b6a3c1e-8f2d-4a5b-9c7d-1e2f3a4b5c6d';
 
-function makeService(opts: { raceOnInsert?: boolean } = {}) {
+function makeService(opts: { raceOnInsert?: boolean; withdrawnDuringInsert?: boolean } = {}) {
   const rows = new Map<string, Partial<Post>>();
+  // `deleted_post_ids`, written by the trigger on every delete of a row (migration 134).
+  const deleted = new Set<string>();
   const pkError = Object.assign(new Error('duplicate key'), {
     code: '23505',
     constraint: 'PK_posts',
@@ -43,18 +45,36 @@ function makeService(opts: { raceOnInsert?: boolean } = {}) {
     insert: jest.fn((post: Partial<Post>) => {
       if (rows.has(post.id as string)) return Promise.reject(pkError);
       rows.set(post.id as string, { ...post, publishedAt: new Date(0) });
+      // A withdrawal that wrote the tombstone while this insert was on its way.
+      if (opts.withdrawnDuringInsert) deleted.add(post.id as string);
+      return Promise.resolve({});
+    }),
+    delete: jest.fn(({ id }: { id: string }) => {
+      if (rows.delete(id)) deleted.add(id);
       return Promise.resolve({});
     }),
     findOneOrFail: jest.fn(({ where: { id } }: { where: { id: string } }) =>
       Promise.resolve(rows.get(id))
     ),
     // The catalog read of `violatesUniqueColumns`: PK_posts is the index over `id`.
-    query: jest.fn((_sql: string, params: unknown[]) =>
-      Promise.resolve(params[0] === 'PK_posts' ? [{ attname: 'id' }] : [])
-    ),
+    query: jest.fn((sql: string, params: unknown[]) => {
+      if (sql.startsWith('SELECT 1 FROM deleted_post_ids')) {
+        return Promise.resolve(deleted.has(params[0] as string) ? [{ '?column?': 1 }] : []);
+      }
+      if (sql.startsWith('INSERT INTO deleted_post_ids')) {
+        deleted.add(params[0] as string);
+        return Promise.resolve([]);
+      }
+      return Promise.resolve(params[0] === 'PK_posts' ? [{ attname: 'id' }] : []);
+    }),
     manager: { query: jest.fn(() => Promise.resolve([])) },
   };
-  const retention = { release: jest.fn() };
+  const retention = {
+    release: jest.fn(),
+    claimReelFor: jest.fn((_a: string, ids: string[]) =>
+      Promise.resolve({ claimed: ids, refused: [] })
+    ),
+  };
   const service = new PostsService(
     postRepo as unknown as Repository<Post>,
     {
@@ -75,7 +95,7 @@ function makeService(opts: { raceOnInsert?: boolean } = {}) {
     { resolveMentionedUserIds: () => [] } as unknown as PostNotificationsService,
     retention as unknown as PostMediaRetentionService
   );
-  return { service, rows, postRepo };
+  return { service, rows, postRepo, deleted, retention };
 }
 
 describe('PostsService.createPost with a client id', () => {
@@ -124,5 +144,66 @@ describe('PostsService.createPost with a client id', () => {
       service.createPost({ markdown: 'Soiree', authorId: 'alice' }, false)
     ).resolves.toMatchObject({ id: 'gen-1' });
     expect(postRepo.insert).not.toHaveBeenCalled();
+  });
+
+  it("the race's replay keeps the reel claim: it belongs to the row that won, which shows the reel", async () => {
+    const { service, rows, retention } = makeService({ raceOnInsert: true });
+    const media = [
+      { type: 'video', mediaId: 'reel-blob', key: 'k', iv: 'i', mimeType: 'video/mp4' },
+    ];
+    rows.set(ID, {
+      id: ID,
+      authorId: 'alice',
+      kind: 'reel',
+      media,
+      publishedAt: new Date(0),
+    } as never);
+    await expect(
+      service.createPost(
+        { id: ID, kind: 'reel', durationMs: 5000, markdown: 'r', media, authorId: 'alice' },
+        false
+      )
+    ).resolves.toMatchObject({ id: ID });
+    expect(retention.release).not.toHaveBeenCalled();
+  });
+
+  it('refuses (410) the id of a deleted post: a resend after a delete never brings it back', async () => {
+    const { service, rows, deleted } = makeService();
+    deleted.add(ID);
+    await expect(
+      service.createPost({ id: ID, markdown: 'Soiree', authorId: 'alice' }, false)
+    ).rejects.toThrow(GoneException);
+    expect(rows.size).toBe(0);
+  });
+
+  it('a withdrawal landing during the insert removes the row it raced, and answers 410', async () => {
+    const { service, rows, retention } = makeService({ withdrawnDuringInsert: true });
+    await expect(
+      service.createPost({ id: ID, markdown: 'Soiree', authorId: 'alice' }, false)
+    ).rejects.toThrow(GoneException);
+    expect(rows.size).toBe(0);
+    expect(retention.release).toHaveBeenCalled();
+  });
+});
+
+describe('PostsService.withdrawPost - the author takes back a queued post', () => {
+  it('retires an id no row holds, so the create still on its way is refused', async () => {
+    const { service, deleted } = makeService();
+    await expect(service.withdrawPost(ID, 'alice', false)).resolves.toEqual({
+      ok: true,
+      deleted: false,
+    });
+    expect(deleted.has(ID)).toBe(true);
+    await expect(
+      service.createPost({ id: ID, markdown: 'Soiree', authorId: 'alice' }, false)
+    ).rejects.toThrow(GoneException);
+  });
+
+  it("refuses (409) another author's post, and writes nothing", async () => {
+    const { service, rows, deleted } = makeService();
+    rows.set(ID, { id: ID, authorId: 'bob', markdown: 'x', publishedAt: new Date(0) });
+    await expect(service.withdrawPost(ID, 'alice', false)).rejects.toThrow(ConflictException);
+    expect(deleted.has(ID)).toBe(false);
+    expect(rows.has(ID)).toBe(true);
   });
 });

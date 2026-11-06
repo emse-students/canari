@@ -308,6 +308,17 @@ post the member deleted meanwhile writes nothing and says so, so nothing resurre
 closes itself on `versionchange`, so the device wipe's `deleteDatabase` never blocks. Like the
 composer draft, it is not sealed by the device key.
 
+**Whose it is, and how long it stays.** A plain sign-out KEEPS the queue, as it keeps the message
+database: the next sign-in of that account resumes it, and no other account can read it (the queue
+runs only for the signed-in account, and every request it makes is checked to carry that account's
+token). The account's deletion or revocation DELETES it (`accountIndexedDbNames`, review of #3061:
+the queued photos are in the clear, and outliving the account was the defect). What that means on a
+SHARED BROWSER: a member who signs out with posts still queued leaves those posts and their media on
+that browser until they sign in there again or delete their account - the same as their messages.
+Deleting the queued post (or letting it publish) before signing out is what removes them. The
+composer and comment drafts are per-account keys of the same kind (`ACCOUNT_KEY.postComposerDraft`,
+`postCommentDraft`, `workspaceSnapshot`), deleted with the account since the same review.
+
 **The pass** (`publishQueue.ts`, one at a time per account across tabs through `navigator.locks`),
 oldest post first, media in order, ONE file at a time:
 
@@ -316,24 +327,59 @@ oldest post first, media in order, ONE file at a time:
    transcode under the upload ceiling), record it; then upload it RESUMABLY
    (`MediaService.uploadResumably`, 1 MiB parts, `retentionClass: 'archive'`), the open session
    recorded at each step so a reload or a kill resumes from the server's list of received parts
-   (`GET /api/media/upload/session/:id`), never from byte 0; a video goes `segmented-v1`, a photo
-   `single-block` (see [media-streaming-upload](../../services/media-streaming-upload.md#33-session-routes-media-service-additive---the-old-chunk-routes-stay-untouched)
+   (`GET /api/media/upload/session/:id`), never from byte 0; what `writesSegmented` names (a video,
+   writer on) goes `segmented-v1`, everything else `single-block` (see
+   [media-streaming-upload](../../services/media-streaming-upload.md#33-session-routes-media-service-additive---the-old-chunk-routes-stay-untouched)
    - the link preview reads only single-block images);
-3. `createPost` with the client id. **The id is the idempotency key**: a create whose answer was lost
-   is sent again with the same id and the server answers with the post it already holds
+3. `createPost` with the client id, `createSent` written to the record BEFORE the request leaves.
+   **The id is the idempotency key**: a create whose answer was lost is sent again with the same id
+   and the server answers with the post it already holds
    ([social-service](../../services/social-service.md#a-post-created-twice-is-the-same-post-2026-11-06)).
    Then the record and its files are deleted.
 
-**What stops it, and what starts it again** (`classifyPublishFailure`): a transport failure or an
-upload refused without a cause WAITS on a ladder (`PUBLISH_RETRY_LADDER_MS`, 2 s to 60 s) that any
-wake cuts short - a reconnect, `online`, the page visible again, the app back in the foreground. A
-server that answers "not now" (`5xx`, `408`, `425`, `429`) is asked again over the ladder ONCE (a
-counter no wake resets), then the post stops with its Retry: read on the local estate on
-2026-11-06, a create that kept answering `500` was otherwise asked every minute for ever. Anything else (moderation, a `4xx`, a video that
-cannot be prepared, a refused media) STOPS the post with its reason on the line, logged by
-`console.error`, and only the member's Retry or Delete moves it. Delete releases an open upload
-session at once rather than at the server's 24 h sweep. The ladder is a cadence, never a
+**Between every two steps, and before the create, a checkpoint**: the pass stops if the member
+paused or deleted the post or signed out, and goes on only if the access token's subject is the
+queue's account (`assertAccount`; the upload's own token getter refuses the same way). A token of
+another account (a sign-in in another tab) or a session that ended HALTS the pass with nothing
+recorded - the post waits for its own account, and is never sent as anybody else.
+
+**What stops it, and what starts it again** (`classifyPublishFailure`, by WHO answered):
+
+| What came back | Verdict | What the queue does |
+| --- | --- | --- |
+| A transport failure; an EDGE page (the host's proxy) with no refusal cause | `wait` | waits on the ladder (`PUBLISH_RETRY_LADDER_MS`, 2 s to 60 s), cut short by any wake: a reconnect, `online`, the page visible, the app foreground |
+| The APP's `5xx`, `408`, `425`, `429`; a resumable session it lost and could not reopen (`sessionLost`) | `busy` | asked again over the ladder ONCE (a counter no wake resets), then stops with a Retry |
+| A `401`; `SessionExpiredError`; a token of another account | `halt` | the pass ends, nothing recorded: the app's auth is the one authority on a 401, the queue never spins on one |
+| Anything else: moderation, a `4xx`, a `410` (a deleted id), a video that cannot be prepared, a refused media | `failed` | stops the post with its sentence, logged by `console.error`; only Retry, Pause or Delete moves it |
+
+Read on the local estate on 2026-11-06: before `busy` existed, a create that kept answering `500`
+was asked every minute for ever, and the review of #3061 found the same for media-service's own
+`5xx` and a lost session (which re-uploaded every part each time). The ladder is a cadence, never a
 correctness bound: what makes a resend safe is the recorded session and the client id.
+
+**What the member can do to a queued post.**
+
+- **Pause** (the cross on a row being worked on): the transfer stops, `paused` is written, the post is
+  kept and skipped; "Reprendre" clears it. This replaces the composer's old cancel of a video being
+  prepared, which the queue had dropped.
+- **Retry** a stopped post.
+- **Delete: the post exists NOWHERE afterwards.** `withdrawn` is written and the pass takes the post
+  back before forgetting it, every step idempotent: when `createSent`, `POST /api/posts/:id/withdraw`
+  retires the id (a create still on its way is then refused `410`) and deletes the post if it landed;
+  every uploaded media no post will cite is deleted (`DELETE /api/media/own/:id`, the caller's own
+  `archive` objects only - `archive` is exempt from the idle sweep, so it would otherwise stay for
+  ever); every open session is released. **A Delete pressed while the create is on the wire wins**:
+  the create's answer is followed by a checkpoint that sees the abort, so there is no "published"
+  toast, and the withdrawal takes the just-created post down.
+
+**Several tabs.** One tab runs the pass (the Web Lock). Every tab draws the rows from the STORE at
+start (`refreshViews`, no lock needed), and the runner broadcasts its rows on a `BroadcastChannel`
+(`canari-publish-queue-<userId>`). A Retry, Pause or Delete in a tab that is not the runner writes
+the store and NUDGES the runner on the same channel: it aborts that post's transfer at once (pause,
+delete) or ends its wait (retry) instead of acting at its next rung. A tab still behind its PIN draws nothing: the
+queue starts with the session (`globalSession.isLoggedIn`), never before. Read on the local estate on
+2026-11-06: a second tab, unlocked, drew the first tab's row at 4 %, its pause stopped the first
+tab's transfer at once, and its Resume finished the post from the recorded sessions - one create.
 
 **Backgrounding, without native code.** A native shell emits `canari:foreground` when the app comes
 back; the queue then ABORTS the transfer in flight (it was frozen with the webview and its socket is
@@ -349,12 +395,13 @@ parent does).
 
 **The line** (`PublishQueueBanner.svelte`, in the root layout's banner column under the offline
 banner): one row per queued post, the media being worked on 1-based, its percentage, a progress bar
-over the whole post, and Retry/Delete on a stopped or waiting post. The feed refreshes when a queued
+over the whole post, a pause cross while it is worked on, and Resume or Retry plus Delete on a
+paused, waiting or stopped post. The feed refreshes when a queued
 post is published (`onPostPublished`), and a toast says so.
 
-**Release order.** media-service and social-service ship BEFORE the client: an older media-service
-refuses a `single-block` session (`400`), and an older social-service strips the `id`, which brings
-back a duplicate on a lost answer until it is deployed.
+**Release order.** media-service and social-service (with migration 134) ship BEFORE the client: an
+older media-service refuses a `single-block` session (`400`) and has no `DELETE /api/media/own/:id`,
+and an older social-service strips the `id` (a duplicate on a lost answer) and has no withdrawal.
 
 ### What a post sends, measured (2026-11-06, local estate, desktop Chrome)
 

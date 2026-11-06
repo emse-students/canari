@@ -14,7 +14,8 @@ first what is sent per media type, propose reductions, and change no quality wit
 
 **Step 1, built (the feed post composer).** A durable publish queue per account, the composer closed
 at once, files one by one through media-service's resumable sessions (a new `single-block` mode for
-photos), and a client-minted post id as the idempotency key of `POST /api/posts`
+photos), a client-minted post id as the idempotency key of `POST /api/posts`, Pause and a Delete
+that takes the post back everywhere (a retired id, migration 134; the uploaded blobs deleted)
 ([posts](../frontend/modules/posts.md#the-background-publish-queue)). Release order: media-service and
 social-service before the client.
 

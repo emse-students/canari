@@ -513,6 +513,17 @@ export async function deletePost(postId: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/api/posts/${postId}`, { method: 'DELETE' });
 }
 
+/**
+ * Takes back a post the publish queue may have created (`POST /api/posts/:id/withdraw`): the id is
+ * retired on the server, so a create still on its way is refused, and the post is deleted if it
+ * landed. `deleted` says whether a row was there.
+ */
+export async function withdrawPost(postId: string): Promise<{ ok: boolean; deleted: boolean }> {
+  return request<{ ok: boolean; deleted: boolean }>(`/api/posts/${postId}/withdraw`, {
+    method: 'POST',
+  });
+}
+
 /** @param limitOrOptions Pass a number for backward compatibility (`limit` only) or query options. */
 export async function listPosts(
   limitOrOptions: number | ListPostsOptions = 30

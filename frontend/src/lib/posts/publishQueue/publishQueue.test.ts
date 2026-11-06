@@ -10,15 +10,24 @@
  *  - an ANSWER that refuses stops the post with its sentence, kept until the member's Retry;
  *  - the app back on screen restarts the transfer at once; a deleted post stops, gives its session
  *    back, and is never created;
- *  - a new queue over the same store (a reload, a kill) picks the post up where it was.
+ *  - a new queue over the same store (a reload, a kill) picks the post up where it was;
+ *  - nothing is ever sent while the session is another account's, and a sign-out between two steps
+ *    sends nothing more;
+ *  - a Delete takes the post back EVERYWHERE: the uploaded blobs no post will cite, the server's
+ *    post when a create may have landed - and a Delete during the create wins over it;
+ *  - a Pause keeps the post and stops it; another tab sees the rows from the store.
  */
 import { describe, expect, it } from 'vitest';
 import {
   PUBLISH_RETRY_LADDER_MS,
+  PublishAccountMismatchError,
   PublishQueue,
   classifyPublishFailure,
   type PublishUploadArgs,
+  type PublishView,
 } from './publishQueue';
+import { MediaUploadError } from '$lib/utils/mediaErrors';
+import { TokenAccountChangedError } from '$lib/utils/renewOn401';
 import type { QueuedFile, QueuedPost } from './publishQueueStore';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { TransportFailureError } from '$lib/utils/transportFailure';
@@ -92,6 +101,15 @@ interface Rig {
   /** Per-call behaviour of the upload: return a ref, or throw. */
   uploadPlan: Array<(a: PublishUploadArgs) => Promise<MediaRef>>;
   createPlan: Array<() => Promise<unknown>>;
+  deletedMedia: string[];
+  withdrawn: string[];
+  /** What the server's withdrawal answers: whether a post was there. */
+  withdrawLanded: boolean;
+  /** The account the session would carry the next request as. */
+  sessionUser: string;
+  /** Called at every account check, before the check - a test's hook between two steps. */
+  onCheckpoint: (() => void) | null;
+  views: PublishView[];
 }
 
 function rig(store = memoryStore()): Rig {
@@ -104,6 +122,12 @@ function rig(store = memoryStore()): Rig {
     published: [] as string[],
     uploadPlan: [] as Rig['uploadPlan'],
     createPlan: [] as Rig['createPlan'],
+    deletedMedia: [] as string[],
+    withdrawn: [] as string[],
+    withdrawLanded: false,
+    sessionUser: 'alice',
+    onCheckpoint: null,
+    views: [] as PublishView[],
   } as Rig;
   let n = 0;
   r.queue = new PublishQueue({
@@ -146,6 +170,20 @@ function rig(store = memoryStore()): Rig {
     release: async (id) => {
       r.released.push(id);
     },
+    deleteMedia: async (id) => {
+      r.calls.push(`deleteMedia:${id}`);
+      r.deletedMedia.push(id);
+    },
+    withdrawPost: async (id) => {
+      r.calls.push(`withdraw:${id}`);
+      r.withdrawn.push(id);
+      return { deleted: r.withdrawLanded };
+    },
+    assertAccount: async () => {
+      r.onCheckpoint?.();
+      if (r.sessionUser !== 'alice') throw new PublishAccountMismatchError('alice');
+    },
+    sessionEnded: (e) => e instanceof Error && e.name === 'SessionExpiredError',
     createPost: async (p) => {
       r.calls.push(`create:${p.id}`);
       const step = r.createPlan.shift();
@@ -161,7 +199,9 @@ function rig(store = memoryStore()): Rig {
         if (signal.aborted) return resolve();
         signal.addEventListener('abort', () => resolve(), { once: true });
       }),
-    onViews: () => undefined,
+    onViews: (v) => {
+      r.views = v;
+    },
     onPublished: (p) => r.published.push(p.id),
     log: () => undefined,
   });
@@ -387,9 +427,189 @@ describe('classifyPublishFailure', () => {
   it('waits out what is no answer, and stops on what is one', () => {
     expect(classifyPublishFailure(new TransportFailureError('x'))).toBe('wait');
     expect(classifyPublishFailure(new ApiRefusalError(503, null, 'x'))).toBe('busy');
+    // A refusal that answers about the post - a deleted id is one.
+    expect(classifyPublishFailure(new ApiRefusalError(410, null, 'x'))).toBe('failed');
     expect(classifyPublishFailure(new ApiRefusalError(429, null, 'x'))).toBe('busy');
     expect(classifyPublishFailure(new ApiRefusalError(400, null, 'x'))).toBe('failed');
     expect(classifyPublishFailure(new ApiRefusalError(403, null, 'x'))).toBe('failed');
     expect(classifyPublishFailure(new Error('local'))).toBe('failed');
+  });
+});
+
+describe('classifyPublishFailure - who answered decides', () => {
+  it('an EDGE page with no cause is no answer: waited out', () => {
+    expect(classifyPublishFailure(new MediaUploadError(502, 'x', 'edge'))).toBe('wait');
+  });
+
+  it("the app's own 5xx and a lost session are a counted 'not now', never an endless wait", () => {
+    expect(classifyPublishFailure(new MediaUploadError(503, 'x', 'gateway'))).toBe('busy');
+    expect(classifyPublishFailure(new MediaUploadError(404, 'x', 'gateway', true))).toBe('busy');
+    expect(classifyPublishFailure(new MediaUploadError(429, 'x', 'gateway'))).toBe('busy');
+  });
+
+  it('a 401, a session that ended, or a token of another account halt the pass', () => {
+    expect(classifyPublishFailure(new MediaUploadError(401, 'x', 'gateway'))).toBe('halt');
+    expect(classifyPublishFailure(new ApiRefusalError(401, null, 'x'))).toBe('halt');
+    expect(classifyPublishFailure(new TokenAccountChangedError('x'))).toBe('halt');
+    expect(classifyPublishFailure(new PublishAccountMismatchError('alice'))).toBe('halt');
+    const ended = Object.assign(new Error('x'), { name: 'SessionExpiredError' });
+    expect(classifyPublishFailure(ended, (e) => e === ended)).toBe('halt');
+  });
+});
+
+describe('PublishQueue - one account, and only while it is signed in', () => {
+  it('sends NOTHING while the session is another account, and goes on once it is its own again', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-1', 2);
+    // Another tab signs in as bob after the first media is up.
+    r.uploadPlan.push(async (a) => {
+      r.sessionUser = 'bob';
+      return {
+        type: 'image',
+        mediaId: `m-${a.fileName}`,
+        key: 'k',
+        iv: 'i',
+        mimeType: a.mimeType,
+        size: 1,
+      };
+    });
+    await r.queue.drain();
+    expect(r.calls.filter((c) => c.startsWith('upload:'))).toHaveLength(1);
+    expect(r.created).toHaveLength(0);
+    // Halted, not failed: no sentence, the post waits for its own account.
+    expect(r.store.posts.get('post-1')!.failure).toBeUndefined();
+
+    r.sessionUser = 'alice';
+    await r.queue.drain();
+    expect(r.calls.filter((c) => c.startsWith('upload:'))).toHaveLength(2);
+    expect(r.created.map((c) => c.id)).toEqual(['post-1']);
+  });
+
+  it('a sign-out between the last media and the create sends no create', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-1', 1);
+    let checks = 0;
+    // moderation, mediaPrepare, mediaUpload, then the create's own check: sign out there.
+    r.onCheckpoint = () => {
+      checks += 1;
+      if (checks === 4) r.queue.stop();
+    };
+    await r.queue.drain();
+    expect(r.calls.filter((c) => c.startsWith('upload:'))).toHaveLength(1);
+    expect(r.created).toHaveLength(0);
+    expect(r.store.posts.has('post-1')).toBe(true);
+  });
+});
+
+describe('PublishQueue - Delete takes the post back everywhere', () => {
+  it('a post whose media went up but whose create never left: its blobs are deleted, the server is not asked', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-1', 2);
+    // The session changes before the create's own check: the create never leaves.
+    r.onCheckpoint = () => {
+      if (r.calls.filter((c) => c.startsWith('upload:')).length === 2) r.sessionUser = 'bob';
+    };
+    await r.queue.drain();
+    expect(r.created).toHaveLength(0);
+    expect(r.store.posts.get('post-1')!.createSent).toBeUndefined();
+
+    r.onCheckpoint = null;
+    r.sessionUser = 'alice';
+    await r.queue.remove('post-1');
+    await r.queue.drain();
+    expect(r.withdrawn).toEqual([]);
+    expect(r.deletedMedia.sort()).toEqual(['m-p0.webp-1', 'm-p1.webp-2']);
+    expect(r.store.posts.size).toBe(0);
+    expect(r.store.files.size).toBe(0);
+  });
+
+  it('a post whose create may have landed: withdrawn on the server, its blobs left to the deleted post', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-1', 1);
+    r.createPlan.push(async () => {
+      throw new TransportFailureError('answer lost');
+    });
+    const running = r.queue.drain();
+    await settle();
+    expect(r.store.posts.get('post-1')!.createSent).toBe(true);
+    r.withdrawLanded = true;
+    await r.queue.remove('post-1');
+    await running;
+    expect(r.withdrawn).toEqual(['post-1']);
+    expect(r.deletedMedia).toEqual([]);
+    expect(r.store.posts.size).toBe(0);
+  });
+
+  it('the server had no row after all: the blobs are deleted too', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-1', 1);
+    r.createPlan.push(async () => {
+      throw new TransportFailureError('never arrived');
+    });
+    const running = r.queue.drain();
+    await settle();
+    r.withdrawLanded = false;
+    await r.queue.remove('post-1');
+    await running;
+    expect(r.withdrawn).toEqual(['post-1']);
+    expect(r.deletedMedia).toEqual(['m-p0.webp-1']);
+  });
+
+  it('a Delete pressed while the create is on the wire wins: no "published", the post is taken down', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-1', 0);
+    r.createPlan.push(async () => {
+      await r.queue.remove('post-1');
+    });
+    r.withdrawLanded = true;
+    await r.queue.drain();
+    expect(r.created.map((c) => c.id)).toEqual(['post-1']);
+    expect(r.published).toEqual([]);
+    expect(r.withdrawn).toEqual(['post-1']);
+    expect(r.store.posts.size).toBe(0);
+  });
+});
+
+describe('PublishQueue - Pause, and the rows of another tab', () => {
+  it('a paused post is kept and skipped; "Reprendre" sends it', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-1', 1);
+    await r.queue.pause('post-1');
+    await r.queue.drain();
+    expect(r.calls).toEqual([]);
+    expect(r.views.map((v) => v.phase)).toEqual(['paused']);
+    await r.queue.retry('post-1');
+    expect(r.published).toEqual(['post-1']);
+  });
+
+  it('a Pause during the upload stops the transfer and keeps the post', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-1', 1);
+    r.uploadPlan.push(
+      (a) =>
+        new Promise((_, reject) => {
+          a.transport.signal!.addEventListener('abort', () =>
+            reject(new UploadAbortedError('test'))
+          );
+          void r.queue.pause('post-1');
+        })
+    );
+    await r.queue.drain();
+    expect(r.created).toHaveLength(0);
+    expect(r.store.posts.get('post-1')!.paused).toBe(true);
+  });
+
+  it('a tab that is not the runner draws every row from the store', async () => {
+    const store = memoryStore();
+    queuePost(store, 'post-1', 1, 1);
+    queuePost(store, 'post-2', 2, 2);
+    store.posts.get('post-2')!.failure = { stage: 'createPost', message: 'refused' };
+    const other = rig(store);
+    await other.queue.refreshViews();
+    expect(other.views.map((v) => [v.id, v.phase])).toEqual([
+      ['post-1', 'queued'],
+      ['post-2', 'failed'],
+    ]);
+    expect(other.calls).toEqual([]);
   });
 });

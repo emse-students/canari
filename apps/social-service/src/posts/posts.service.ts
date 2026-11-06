@@ -9,6 +9,8 @@ import {
 import type { RepostConsent } from './member-reposts.service';
 import {
   BadRequestException,
+  ConflictException,
+  GoneException,
   Injectable,
   Logger,
   NotFoundException,
@@ -1179,11 +1181,9 @@ export class PostsService {
         ? await this.insertWithClientId(post, clientId)
         : await this.postRepo.save(post);
     } catch (e) {
-      // The blob was claimed for a reel that now will not exist. Hand it back to the idle clock so
-      // it is not an exempt object nothing will ever reap - best-effort and logged by `release`.
-      if (reelMediaIds.length > 0) await this.mediaRetention.release(reelMediaIds);
       // Two requests of one queued post raced past the check: the primary key took the first, and
-      // this one is the replay it would have been a moment later.
+      // this one is the replay it would have been a moment later. ITS reel claim is the row's that
+      // won, so it is NOT handed back - the replay answers that row, which still shows the reel.
       if (
         clientId &&
         (await violatesUniqueColumns(e, ['id'], (q, p) => this.postRepo.query(q, p)))
@@ -1191,7 +1191,21 @@ export class PostsService {
         const replayed = await this.replayClientId(clientId, data.authorId, isGlobalAdmin);
         if (replayed) return replayed;
       }
+      // The blob was claimed for a reel that now will not exist. Hand it back to the idle clock so
+      // it is not an exempt object nothing will ever reap - best-effort and logged by `release`.
+      if (reelMediaIds.length > 0) await this.mediaRetention.release(reelMediaIds);
       throw e;
+    }
+    // A withdrawal that wrote the id's tombstone while this insert was on its way: the row must
+    // not survive it. Read AFTER the insert committed, so either the withdrawal saw this row (and
+    // deletes it) or this read sees its tombstone - never neither (`withdrawPost`).
+    if (clientId && (await this.isDeletedPostId(clientId))) {
+      this.logger.warn(
+        `[POST-CREATE] post ${clientId.slice(0, 8)} withdrawn while it was created: removed again`
+      );
+      await this.postRepo.delete({ id: clientId });
+      await this.mediaRetention.release(postMediaIds({ media: data.media }));
+      throw new GoneException('This post was deleted');
     }
     await this.invalidateListCache();
 
@@ -1222,12 +1236,58 @@ export class PostsService {
    */
   private async replayClientId(clientId: string, authorId: string, isGlobalAdmin: boolean) {
     const existing = await this.postRepo.findOne({ where: { id: clientId } });
-    if (clientIdVerdict(existing, authorId) === 'create') return null;
+    const deleted = !existing && (await this.isDeletedPostId(clientId));
+    if (deleted) {
+      this.logger.warn(
+        `[POST-CREATE] post ${clientId.slice(0, 8)} refused: that id belongs to a deleted post`
+      );
+    }
+    if (clientIdVerdict(existing, deleted, authorId) === 'create') return null;
     this.logger.log(`[POST-CREATE] post ${clientId.slice(0, 8)} sent again: answered from its row`);
     return this.toPublicPostFromEntity(
       existing!,
       await this.viewerContext([existing!], authorId || undefined, isGlobalAdmin)
     );
+  }
+
+  /** Whether a post that held `postId` was deleted (`deleted_post_ids`, migration 134). */
+  private async isDeletedPostId(postId: string): Promise<boolean> {
+    const rows: unknown[] = await this.postRepo.query(
+      'SELECT 1 FROM deleted_post_ids WHERE id = $1',
+      [postId]
+    );
+    return rows.length > 0;
+  }
+
+  /**
+   * THE AUTHOR TAKES BACK A POST THEY QUEUED, whether or not its create ever landed: the publish
+   * queue's Delete once the create may have been sent (`posts.md#the-background-publish-queue`).
+   *
+   * Writes the id's tombstone FIRST, then deletes the row if there is one. A create of that id still
+   * on its way either is seen here (and deleted) or sees the tombstone after its own insert (and
+   * removes itself, `createPost`) - so the post never exists once this answered.
+   *
+   * @returns `deleted: true` when a row was removed, `false` when there was none (never created, or
+   *          already gone) - both mean the post does not exist and never will.
+   * @throws ConflictException when the id is another author's post; nothing is written.
+   */
+  async withdrawPost(postId: string, userId: string, isAdmin: boolean) {
+    const before = await this.postRepo.findOne({ where: { id: postId } });
+    if (before && before.authorId !== userId) {
+      throw new ConflictException("This post id is another author's");
+    }
+    await this.postRepo.query(
+      'INSERT INTO deleted_post_ids (id) VALUES ($1) ON CONFLICT (id) DO NOTHING',
+      [postId]
+    );
+    const row = await this.postRepo.findOne({ where: { id: postId } });
+    if (!row) {
+      this.logger.log(`[POST-WITHDRAW] post ${postId.slice(0, 8)}: no row, the id is retired`);
+      return { ok: true, deleted: false };
+    }
+    await this.deletePost(postId, userId, isAdmin);
+    this.logger.log(`[POST-WITHDRAW] post ${postId.slice(0, 8)}: deleted, the id is retired`);
+    return { ok: true, deleted: true };
   }
 
   /** INSERTs `post` under the client's id and reads back the row with its database defaults. */

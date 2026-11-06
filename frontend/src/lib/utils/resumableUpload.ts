@@ -22,11 +22,14 @@
  * Every request body is one part, {@link REEL_UPLOAD_PART_BYTES} (1 MiB): under the host WAF's 10 MiB
  * drop and the 8 MiB budget, and the most a cut on a weak link can cost.
  *
- * TWO BLOB FORMATS, ONE PROTOCOL (2026-11-06, the background publish queue). A video is
- * `segmented-v1`, sealed range by range. A PHOTO stays `single-block` - ONE AES-GCM block - because
- * the link preview (`post-preview.service.ts`) and every reader before the segmented one read a
- * photo that way: the whole ciphertext is sealed once per call (a post photo is at most a few MB
- * after `compressImage`) and sent as byte ranges. The same nonce argument holds: the same key, IV and
+ * TWO BLOB FORMATS, ONE PROTOCOL (2026-11-06, the background publish queue). What `writesSegmented`
+ * names - a video, while the segmented writer is on - is `segmented-v1`, sealed range by range.
+ * EVERYTHING ELSE is `single-block` - ONE AES-GCM block - because the link preview
+ * (`post-preview.service.ts`) and every reader before the segmented one read it that way: a photo,
+ * and a video too while the writer is off. The whole ciphertext is sealed once per call and held in
+ * memory while its parts are sent, so its size is bounded only by the upload ceiling the file was
+ * prepared under (`uploadLimits`) - a photo after `compressImage` is a few hundred KB, a video with
+ * the writer off can reach that ceiling. The same nonce argument holds: the same key, IV and
  * plaintext give the same block, and the digest guard keeps the plaintext the same.
  */
 import type { ReleaseAnswer } from '$lib/utils/chat/uploadReleaseMarks';

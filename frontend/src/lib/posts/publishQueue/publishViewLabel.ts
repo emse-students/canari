@@ -14,6 +14,10 @@ export function publishViewLabel(view: PublishView): string {
       return m.publish_queue_failed({ reason: view.failure ?? m.post_create_publish_error() });
     case 'waiting':
       return m.publish_queue_waiting();
+    case 'paused':
+      return m.publish_queue_paused();
+    case 'withdrawing':
+      return m.publish_queue_withdrawing();
     case 'preparing':
       return percent > 0
         ? m.publish_queue_preparing_percent({ current, count, percent })

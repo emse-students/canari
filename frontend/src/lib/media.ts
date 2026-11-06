@@ -1010,6 +1010,26 @@ export class MediaService {
   }
 
   /**
+   * Deletes the caller's own uploaded post media that no post will cite (`DELETE /api/media/own/:id`):
+   * the publish queue's Delete of a post whose create never landed. Resolves on a 2xx or on
+   * media-service's own 404 (already gone: the same end state). THROWS the rest, typed at the throw
+   * (`fetchUpload`'s transport and session errors, `uploadRefusalFrom` for a status), so the queue
+   * waits on no answer and stops on a refusal.
+   */
+  async deleteOwnArchive(mediaId: string, token: () => Promise<string>): Promise<void> {
+    const res = await fetchUpload(
+      `${this.baseUrl}/api/media/own/${mediaId}`,
+      (t) => ({ method: 'DELETE', headers: { Authorization: `Bearer ${t}` } }),
+      await token()
+    );
+    if (res.ok || (res.status === 404 && responseOrigin(res) === 'gateway')) {
+      appendLog(`[media] own post media ${mediaId} deleted: HTTP ${res.status}`);
+      return;
+    }
+    throw await uploadRefusalFrom(res, 'own post media delete failed');
+  }
+
+  /**
    * Places the CHAT HOLD on a file a chat-reel take adopted from the CanaReels publish step
    * (`POST /api/media/chat-reel/:id/hold`, reels-in-chat 15.5 / RC-14): the post's `reel-pending`
    * upload is then kept for the chats however the post ends. Never throws:

@@ -18,6 +18,7 @@
  *   POST /media/internal/reel-purge - end reels' blobs, per owner, with the reason (X-Internal-Secret)
  *   POST /media/internal/chat-reel-purge - a salon moderator's purge of a sent reel (X-Internal-Secret)
  *   POST /media/chat-reel/:id/hold - the sender's chat hold on a reel file (JWT, owner only)
+ *   DELETE /media/own/:id - the uploader takes back a post media no post will cite (JWT, owner only)
  *   POST /media/internal/form-file - store a form answer's file, plaintext, class form-file
  *   POST /media/internal/form-file-purge - delete form files, per uploader (X-Internal-Secret)
  *   GET  /media/internal/form-file/:id - read a form file, and nothing else (X-Internal-Secret)
@@ -1231,6 +1232,21 @@ export class MediaController {
   // message cannot be forwarded, and a take sent to several conversations is the sender's own
   // fan-out (reels-in-chat 15.7). Two segments, so it never collides with `@Delete(':id')` below.
   // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // DELETE /media/own/:id - the uploader takes back a post media no post will cite
+  //
+  // A user route (JWT): the publish queue's Delete of a post whose files were uploaded but whose
+  // create never landed. Only the caller's own `archive` object (`removeOwnArchive`). Two segments,
+  // so it never collides with `@Delete(':id')` below.
+  // ---------------------------------------------------------------------------
+  @Delete('own/:id')
+  async removeOwnArchive(@Param('id') id: string, @Req() req: Request): Promise<{ ok: boolean }> {
+    const ownerId = this.verifyToken(req);
+    const outcome = await this.mediaService.removeOwnArchive(id, ownerId);
+    if (outcome === 'refused') throw new ForbiddenException('Not a post media you uploaded');
+    return { ok: true };
+  }
+
   @Delete('chat-reel/:id')
   async removeChatReel(@Param('id') id: string, @Req() req: Request): Promise<{ ok: boolean }> {
     const ownerId = this.verifyToken(req);

@@ -89,11 +89,14 @@ from a `File`/`Blob`, and sealing segment `i` needs only the CEK, the IV, the he
 `header`: the blob is one AES-GCM block (plaintext + 16 bytes of tag), there is no public header to
 check at `complete`, and `totalBytes` must exceed 16. A body carrying both, or an unknown encoding,
 is a `400` (`declaredBlobShape`, `upload-session.ts`). The sidecar records `{encoding}` in place of
-`headerHex`, and records written before keep reading as segmented. It exists for PHOTOS of the
-background publish queue ([posts](../frontend/modules/posts.md#the-background-publish-queue)): the
-post link preview reads only single-block images, so a photo must stay one, while the queue needs
-every file resumable. The client seals the whole block once and slices it per part
-(`resumableUpload.ts`, `encoding: 'single-block'`).
+`headerHex`, and records written before keep reading as segmented. It exists for the background
+publish queue ([posts](../frontend/modules/posts.md#the-background-publish-queue)), which needs every
+file resumable: everything `writesSegmented` does not name - every photo, and a video while the
+segmented writer is off - is single-block, the format the post link preview and every older reader
+decrypt. The client seals the whole block once and slices it per part (`resumableUpload.ts`,
+`encoding: 'single-block'`), so the block sits in memory for the whole upload: a compressed photo
+is a few hundred KB, but a video with the writer off is bounded only by the upload ceiling it was
+prepared under.
 
 Class, ownership and budget reuse the machinery of the `chat-reel` section: declared at `init`, a part past
 the declared total is refused, completion by another member is `403`. New: a **cap of open sessions per

@@ -1855,6 +1855,47 @@ export class MediaService {
     await this.persistMetadata();
   }
 
+  /**
+   * THE UPLOADER TAKES BACK A POST MEDIA THAT NO POST WILL CITE: the app's publish queue, when the
+   * member deletes a queued post whose files were already uploaded (frontend
+   * `posts/publishQueue/`). An `archive` object is exempt from the idle sweep, so without this it
+   * would stay for ever, cited by nothing.
+   *
+   * Narrow on purpose - it is a user route, unlike the generic {@link remove}: the entry's recorded
+   * uploader is `ownerId` (none recorded: refused, never on trust) and its class is `archive` (a
+   * post's media - never a reel, a chat file, a form file, a poster or a public asset). The caller
+   * is the only one who could be hurt: if a post of theirs did cite it, that post loses an image.
+   * The client calls it only for a post whose create never landed, or after withdrawing the post.
+   *
+   * @returns `deleted`, `absent` (unknown or already purged: the same end state, so idempotent), or
+   *          `refused` (not theirs, or not a post's media).
+   */
+  async removeOwnArchive(
+    mediaId: string,
+    ownerId: string
+  ): Promise<'deleted' | 'absent' | 'refused'> {
+    if (!UUID_REGEX.test(mediaId)) throw new BadRequestException('Invalid mediaId');
+    const entry = this.meta.items[mediaId];
+    if (!entry || entry.purgedAt) {
+      this.logger.log(`media ${mediaId}: withdrawal by its uploader - already gone`);
+      return 'absent';
+    }
+    if (
+      !entry.ownerId ||
+      entry.ownerId !== ownerId ||
+      entry.retentionClass !== 'archive' ||
+      this.isPublicAssetEntry(entry)
+    ) {
+      this.logger.warn(
+        `media ${mediaId}: withdrawal by ${ownerId} refused (owner ${entry.ownerId ? 'another' : 'unrecorded'} or class ${entry.retentionClass ?? 'unclassified'})`
+      );
+      return 'refused';
+    }
+    await this.remove(mediaId);
+    this.logger.log(`media ${mediaId}: withdrawn by its uploader, its post was never published`);
+    return 'deleted';
+  }
+
   async remove(mediaId: string): Promise<void> {
     // Validate mediaId is a UUID to prevent prototype pollution via property key injection.
     if (!UUID_REGEX.test(mediaId)) {

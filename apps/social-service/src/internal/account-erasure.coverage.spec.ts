@@ -55,6 +55,9 @@ const RAW_TABLES = [
   'lydia_cashiers',
   // Migration 125's delegation acceptances: two association ids, who accepted, when.
   'payment_delegation_acceptances',
+  // Migration 134's retired post ids: an id and a date, no account - written BY the erasure's own
+  // delete of the member's posts, so a resend of one never brings it back.
+  'deleted_post_ids',
   // Migration 127's per-space pins (WP-PIN): who pinned.
   'post_space_pins',
   // Migration 129's dependency journal: the platform admin who changed a parent or a governor.

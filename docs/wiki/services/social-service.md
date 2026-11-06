@@ -1252,10 +1252,26 @@ looks the id up first (`replayClientId`): absent, the post is INSERTED under it 
 created (`[POST-CREATE] post <id> sent again`); present and another author's, `409`
 (`clientIdVerdict`, `post-client-id.ts`). Two concurrent creates with one id meet at the primary
 key: the loser's `23505` is read through `violatesUniqueColumns(e, ['id'])` and answered as a
-replay. A request without `id` keeps the server-generated one. The client that sends it is the
-background publish queue ([posts](../frontend/modules/posts.md#the-background-publish-queue)): a
-create whose answer was lost is sent again with the same id. Tests: `post-client-id.spec.ts`,
-`posts.service.client-id.spec.ts`.
+replay (and the reel claim it made is NOT handed back - it is the winning row's). A request without
+`id` keeps the server-generated one. The id must be a random UUID v4 (`@IsUUID('4')`: the nil UUID
+and other versions are refused). The client that sends it is the background publish queue
+([posts](../frontend/modules/posts.md#the-background-publish-queue)): a create whose answer was lost
+is sent again with the same id.
+
+**A deleted post is never created again** (decided 2026-11-06, review of #3061). Migration 134
+(additive) adds `deleted_post_ids (id, "deletedAt")` and an `AFTER DELETE ON posts` trigger that
+writes it, so EVERY hard delete path writes it - the service's delete, the account erasure, the reel
+retention, a cascade, any later one - with nothing for a writer to remember. The table holds the id
+and a date and nothing else: no author, no content. A create under a retired id is `410`.
+`POST /api/posts/:id/withdraw` is the queue's Delete once a create may have been sent: it writes the
+tombstone FIRST, then deletes the row if one is there (`{ deleted }` says which); `409` for another
+author's post, with nothing written. A create racing it re-reads the tombstone AFTER its own insert
+and removes itself, so in every interleaving the post does not exist once the withdrawal answered.
+
+**The existence oracle, accepted.** A create naming an id answers `409` (another author's post holds
+it) or `410` (a deleted post held it), which tells the caller that a post holds or held that id. Low:
+the ids are random v4 UUIDs (122 bits) nobody guesses, and a live post's id is shown to everyone who
+can read the post anyway. Tests: `post-client-id.spec.ts`, `posts.service.client-id.spec.ts`.
 
 ## Redis events published
 

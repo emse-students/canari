@@ -21,9 +21,15 @@
  */
 import type { CreatePostPayload, PostFeed, PostMediaRef } from '$lib/posts/api';
 import type { OutboxResumableUpload } from '$lib/db/types';
+import { idbCommitted, idbRequest } from '$lib/db/outboxBlob';
 import { appendLog } from '$lib/utils/sessionLog';
 
 const DB_PREFIX = 'CanariDBPublish_';
+
+/** The queue's database for `userId` - also what the account wipe deletes (`accountIndexedDbNames`). */
+export function publishQueueDbName(userId: string): string {
+  return DB_PREFIX + userId;
+}
 const DB_VERSION = 1;
 const POSTS = 'posts';
 const FILES = 'files';
@@ -49,7 +55,7 @@ export interface QueuedMedia {
 
 /** Why a queued post stopped for good until the member acts: a sentence and the stage it stopped at. */
 export interface QueuedPostFailure {
-  stage: 'moderation' | 'mediaPrepare' | 'mediaUpload' | 'createPost';
+  stage: 'moderation' | 'mediaPrepare' | 'mediaUpload' | 'createPost' | 'withdraw';
   /** The sentence shown, in the member's language at the time it failed. */
   message: string;
 }
@@ -67,6 +73,15 @@ export interface QueuedPost {
   landing: PostFeed | null;
   /** Set when the post stopped for good; cleared by a retry. Absent: the queue works on it. */
   failure?: QueuedPostFailure;
+  /** The member paused it: kept, not worked on until "Reprendre". */
+  paused?: true;
+  /**
+   * Written BEFORE the first create request leaves: from then on the post may exist on the server,
+   * so a Delete must withdraw it there rather than only forget it here.
+   */
+  createSent?: true;
+  /** The member deleted it: the queue takes it back everywhere, then forgets it (`withdraw`). */
+  withdrawn?: true;
 }
 
 /** The bytes of one media. */
@@ -86,26 +101,6 @@ export class QueuedFileMissingError extends Error {
 
 const fileKey = (postId: string, index: number) => `${postId}/${index}`;
 
-function request<T>(req: IDBRequest<T>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-
-/** Resolves when the transaction COMMITS, rejecting with the request's own error first. */
-function committed(tx: IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
-    let failure: unknown = null;
-    tx.oncomplete = () => resolve();
-    tx.onerror = (e) => {
-      failure ??= (e.target as IDBRequest | null)?.error ?? tx.error;
-    };
-    tx.onabort = () =>
-      reject(failure ?? tx.error ?? new Error('publish queue transaction aborted'));
-  });
-}
-
 /** The queue's durable store for one account. */
 export class PublishQueueStore {
   private db: Promise<IDBDatabase> | null = null;
@@ -114,7 +109,7 @@ export class PublishQueueStore {
 
   private open(): Promise<IDBDatabase> {
     this.db ??= new Promise<IDBDatabase>((resolve, reject) => {
-      const req = indexedDB.open(`${DB_PREFIX}${this.userId}`, DB_VERSION);
+      const req = indexedDB.open(publishQueueDbName(this.userId), DB_VERSION);
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains(POSTS)) db.createObjectStore(POSTS, { keyPath: 'id' });
@@ -148,7 +143,7 @@ export class PublishQueueStore {
     const buffers = await Promise.all(files.map((f) => f.arrayBuffer()));
     const db = await this.open();
     const tx = db.transaction([POSTS, FILES], 'readwrite');
-    const done = committed(tx);
+    const done = idbCommitted(tx);
     tx.objectStore(POSTS).put(post);
     files.forEach((f, i) => {
       const record: QueuedFile = { bytes: buffers[i], name: f.name, type: f.type };
@@ -160,7 +155,7 @@ export class PublishQueueStore {
   /** Every queued post, oldest first. */
   async list(): Promise<QueuedPost[]> {
     const db = await this.open();
-    const all = (await request(
+    const all = (await idbRequest(
       db.transaction(POSTS, 'readonly').objectStore(POSTS).getAll()
     )) as QueuedPost[];
     return all.sort((a, b) => a.queuedAt - b.queuedAt || a.id.localeCompare(b.id));
@@ -169,7 +164,7 @@ export class PublishQueueStore {
   /** One queued post, or `null` once it is gone (published or deleted). */
   async get(postId: string): Promise<QueuedPost | null> {
     const db = await this.open();
-    const row = await request(db.transaction(POSTS, 'readonly').objectStore(POSTS).get(postId));
+    const row = await idbRequest(db.transaction(POSTS, 'readonly').objectStore(POSTS).get(postId));
     return (row as QueuedPost | undefined) ?? null;
   }
 
@@ -180,7 +175,7 @@ export class PublishQueueStore {
    */
   async readFile(postId: string, index: number): Promise<QueuedFile> {
     const db = await this.open();
-    const file = (await request(
+    const file = (await idbRequest(
       db.transaction(FILES, 'readonly').objectStore(FILES).get(fileKey(postId, index))
     )) as QueuedFile | undefined;
     if (!file) throw new QueuedFileMissingError(postId, index);
@@ -197,7 +192,7 @@ export class PublishQueueStore {
   async update(post: QueuedPost, bytes?: { index: number; file: QueuedFile }): Promise<boolean> {
     const db = await this.open();
     const tx = db.transaction([POSTS, FILES], 'readwrite');
-    const done = committed(tx);
+    const done = idbCommitted(tx);
     const posts = tx.objectStore(POSTS);
     let written = false;
     const read = posts.get(post.id);
@@ -215,7 +210,7 @@ export class PublishQueueStore {
   async remove(postId: string): Promise<void> {
     const db = await this.open();
     const tx = db.transaction([POSTS, FILES], 'readwrite');
-    const done = committed(tx);
+    const done = idbCommitted(tx);
     tx.objectStore(POSTS).delete(postId);
     tx.objectStore(FILES).delete(IDBKeyRange.bound(`${postId}/`, `${postId}/￿`));
     await done;
