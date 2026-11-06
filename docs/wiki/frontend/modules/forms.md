@@ -4,6 +4,8 @@
 **Components**: `src/lib/components/forms/` (the fill page: `FormQuestion`, `FormHeader`)
 **Shared logic**: `src/lib/forms/` (`fillAnswers.ts`, `cotisationSettings.ts`, `itemsPayload.ts`, `questionTypes.ts`)
 
+**What forms cannot do yet, and the decided priced grid**: [forms capability audit, 2026-11-06](../../forms-capability-audit-2026-11-06.md).
+
 ## Responsibilities
 
 - Render dynamic association forms for member submissions.
