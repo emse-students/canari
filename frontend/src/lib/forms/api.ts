@@ -1,3 +1,4 @@
+import type { ProductGrid } from './productGridContract';
 import { m } from '$lib/paraglide/messages';
 import { statusLabels } from './paymentStatus';
 import type { AnswerWords } from './answerText';
@@ -48,6 +49,8 @@ export interface FormItem {
    * criteria shape the pricing grid is built from.
    */
   showIf?: AudienceCondition | null;
+  /** A priced grid's definition (`product_grid` only), in the contract's shape: cents, ids. */
+  productGrid?: ProductGrid;
 }
 
 /** Cotisation tiers of the beneficiary association; `null` is the base tier. */
@@ -150,6 +153,8 @@ export interface Form extends CreateFormPayload {
   associationName?: string | null;
   /** Banner/header image URL (public, served via media-service). */
   imageUrl?: string | null;
+  /** Answers holding a place (`GET /forms/:id` only): the editor warns before removing an ordered row. */
+  submissionCount?: number;
 }
 
 import { apiFetch } from '$lib/utils/apiFetch';

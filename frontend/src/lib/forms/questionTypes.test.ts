@@ -15,14 +15,14 @@ describe('the question types the builders offer', () => {
     ]);
   });
 
-  it('does not offer the priced grid while it has no editor (WP-G3): a save would refuse it', () => {
+  it('offers the priced grid now that its editor exists (WP-G3)', () => {
     expect(QUESTION_TYPES.map((t) => t.value)).toContain('product_grid');
-    expect(AUTHORABLE_QUESTION_TYPES.map((t) => t.value)).not.toContain('product_grid');
+    expect(AUTHORABLE_QUESTION_TYPES.map((t) => t.value)).toContain('product_grid');
   });
 
-  it('offers every other type', () => {
+  it('offers every type of the canonical list', () => {
     const missing = QUESTION_TYPES.map((t) => t.value).filter(
-      (value) => value !== 'product_grid' && !AUTHORABLE_QUESTION_TYPE_VALUES.includes(value)
+      (value) => !AUTHORABLE_QUESTION_TYPE_VALUES.includes(value)
     );
     expect(missing).toEqual([]);
   });

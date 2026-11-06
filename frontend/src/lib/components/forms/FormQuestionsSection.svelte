@@ -6,6 +6,8 @@
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { AUTHORABLE_QUESTION_TYPES } from '$lib/forms/questionTypes';
   import { duplicateQuestion } from '$lib/forms/questionDuplicate';
+  import { PRODUCT_GRID_TYPE } from '$lib/forms/productGridContract';
+  import { newProductGrid, type ProductGridTierDimension } from '$lib/forms/productGridEditor';
   import { ListChecks, Plus } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { draggableCard } from '$lib/actions/draggableCard';
@@ -44,6 +46,21 @@
      * question, so asking twice for the same one still opens it again.
      */
     reveal?: { id: string } | null;
+    /**
+     * Whether the type menus offer the priced grid. A builder whose answers never pay (a booking
+     * space) passes false: every grid there would be refused `PRODUCT_GRID_REQUIRES_PAYMENT`.
+     */
+    offerPricedGrid?: boolean;
+    /** A priced grid was added (or a question became one): the page switches several answers on. */
+    onPricedGridAdded?: () => void;
+    /** The registration price grid's profile criterion, which a priced grid may copy in one click. */
+    formTiers?: ProductGridTierDimension | null;
+    /** Per priced grid, the cells already ordered in an answer (edit page only). */
+    orderedCells?: Record<string, string[]>;
+    /** A public form: a priced grid's guest pays "everyone else". */
+    isPublic?: boolean;
+    /** The priced grid a refused save is about, and its sentence - drawn under that grid. */
+    gridFault?: { itemId: string; message: string } | null;
   }
 
   let {
@@ -55,7 +72,19 @@
     imageUploadFn,
     fileHint,
     reveal = null,
+    offerPricedGrid = true,
+    onPricedGridAdded,
+    formTiers = null,
+    orderedCells = {},
+    isPublic = false,
+    gridFault = null,
   }: Props = $props();
+
+  const types = $derived(
+    offerPricedGrid
+      ? AUTHORABLE_QUESTION_TYPES
+      : AUTHORABLE_QUESTION_TYPES.filter((t) => t.value !== PRODUCT_GRID_TYPE)
+  );
 
   let dragIndex = $state(-1);
   let dropIndex = $state(-1);
@@ -84,18 +113,30 @@
     const id = crypto.randomUUID();
     expandedId = id;
     selectTitleId = null;
+    const pricedGrid = type === PRODUCT_GRID_TYPE;
     items = [
       ...items,
-      {
-        id,
-        label: '',
-        required: false,
-        type,
-        options: [{ label: '', priceModifier: undefined }],
-        rows: [],
-      },
+      pricedGrid
+        ? {
+            id,
+            label: '',
+            required: true,
+            type,
+            options: [],
+            rows: [],
+            productGrid: newProductGrid(),
+          }
+        : {
+            id,
+            label: '',
+            required: false,
+            type,
+            options: [{ label: '', priceModifier: undefined }],
+            rows: [],
+          },
     ];
     showTypePicker = false;
+    if (pricedGrid) onPricedGridAdded?.();
   }
 
   function duplicateItem(index: number) {
@@ -190,6 +231,12 @@
             if (expandedId === _item.id) expandedId = null;
           }}
           onDuplicate={() => duplicateItem(i)}
+          authorableTypes={types}
+          onBecamePricedGrid={onPricedGridAdded}
+          {formTiers}
+          orderedCells={orderedCells[_item.id] ?? []}
+          {isPublic}
+          gridProblem={gridFault?.itemId === _item.id ? (gridFault?.message ?? null) : null}
         />
       </div>
     {/each}
@@ -220,7 +267,7 @@
           {m.form_question_type_picker_label()}
         </p>
         <div class="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-          {#each AUTHORABLE_QUESTION_TYPES as qtype (qtype.value)}
+          {#each types as qtype (qtype.value)}
             {@const Icon = qtype.Icon}
             <button
               type="button"

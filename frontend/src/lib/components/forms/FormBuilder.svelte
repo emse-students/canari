@@ -3,6 +3,7 @@
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import AudienceConditionEditor from './AudienceConditionEditor.svelte';
+  import ProductGridEditor from './ProductGridEditor.svelte';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import type { MembershipTier } from '$lib/associations/api';
@@ -24,6 +25,8 @@
   } from '@lucide/svelte';
   import { AUTHORABLE_QUESTION_TYPES, QUESTION_TYPES } from '$lib/forms/questionTypes';
   import { duplicateLabels, gridRowLabels } from '$lib/forms/answerBounds';
+  import { PRODUCT_GRID_TYPE } from '$lib/forms/productGridContract';
+  import { newProductGrid, type ProductGridTierDimension } from '$lib/forms/productGridEditor';
   import { m } from '$lib/paraglide/messages';
 
   let {
@@ -46,6 +49,12 @@
     onExpand,
     onCollapse,
     onDuplicate,
+    authorableTypes = AUTHORABLE_QUESTION_TYPES,
+    onBecamePricedGrid,
+    formTiers = null,
+    orderedCells = [],
+    isPublic = false,
+    gridProblem = null,
   }: {
     item: any;
     onRemove: () => void;
@@ -81,6 +90,18 @@
     onCollapse?: () => void;
     /** The duplicate icon or Ctrl/Cmd+D. */
     onDuplicate?: () => void;
+    /** The types the type menu offers (a builder with no payment leaves the priced grid out). */
+    authorableTypes?: typeof AUTHORABLE_QUESTION_TYPES;
+    /** The question just became a priced grid: the page switches several answers on. */
+    onBecamePricedGrid?: () => void;
+    /** A priced grid's one-click criterion: the registration price grid's profile criterion. */
+    formTiers?: ProductGridTierDimension | null;
+    /** A priced grid's cells already ordered in an answer (removing their row or column warns). */
+    orderedCells?: string[];
+    /** A public form: a priced grid's guest pays "everyone else". */
+    isPublic?: boolean;
+    /** The sentence of a refused save about this priced grid. */
+    gridProblem?: string | null;
   } = $props();
 
   /** Apple platforms use Cmd for shortcuts; read once, a platform does not change. */
@@ -149,8 +170,17 @@
   // A DENYLIST: every type not named here gets the options editor. A type with no options (a file
   // included) must be added, or its card grows an options list it will never use.
   const hasOptions = $derived(
-    !['short_text', 'long_text', 'linear_scale', 'file'].includes(item.type)
+    !['short_text', 'long_text', 'linear_scale', 'file', PRODUCT_GRID_TYPE].includes(item.type)
   );
+  /** A priced grid is always required (its order is the answer): the asterisk is not a choice. */
+  const isPricedGrid = $derived(item.type === PRODUCT_GRID_TYPE);
+
+  /** Turns the question into a priced grid: its definition, required, and the page told. */
+  function becomePricedGrid() {
+    if (!item.productGrid) item.productGrid = newProductGrid();
+    item.required = true;
+    onBecamePricedGrid?.();
+  }
 
   const fieldClass =
     'w-full min-w-0 px-3 py-2.5 sm:px-4 sm:py-3 border-2 border-cn-border sm:border-black/10 dark:sm:border-white/10 rounded-xl sm:rounded-2xl text-sm sm:text-base text-text-main bg-(--cn-surface) outline-none transition-all placeholder:text-text-muted/50 focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]';
@@ -182,6 +212,7 @@
     item.rows = item.rows.filter((_: any, i: number) => i !== idx);
   }
 
+  if (item.type === PRODUCT_GRID_TYPE && !item.productGrid) item.productGrid = newProductGrid();
   if (!item.scale) item.scale = { min: 1, max: 5 };
   if (!item.options) item.options = [];
   item.options = item.options.map((opt: any) => ({ ...opt, id: opt.id || crypto.randomUUID() }));
@@ -386,12 +417,13 @@
             class="border-cn-border absolute top-full right-0 z-(--z-popover) mt-1 w-64 max-w-[calc(100vw-2rem)] rounded-2xl border-2 bg-(--cn-surface) p-2 shadow-xl"
           >
             <div class="grid grid-cols-2 gap-1">
-              {#each AUTHORABLE_QUESTION_TYPES as qt (qt.value)}
+              {#each authorableTypes as qt (qt.value)}
                 {@const QIcon = qt.Icon}
                 <button
                   type="button"
                   onclick={() => {
                     item.type = qt.value;
+                    if (qt.value === PRODUCT_GRID_TYPE) becomePricedGrid();
                     showTypePicker = false;
                   }}
                   class="flex min-w-0 items-center gap-2 rounded-xl px-3 py-2 transition-all {item.type ===
@@ -491,7 +523,17 @@
       </div>
     {/if}
 
-    {#if item.type === 'file'}
+    {#if isPricedGrid && item.productGrid}
+      <ProductGridEditor
+        grid={item.productGrid}
+        {tiers}
+        {formations}
+        {formTiers}
+        {orderedCells}
+        {isPublic}
+        problem={gridProblem}
+      />
+    {:else if item.type === 'file'}
       <!-- A file question has no options to edit: the line says who reads the file and when it goes. -->
       <p class="text-text-muted text-xs leading-relaxed">
         {fileHint ?? m.form_builder_file_hint()}
@@ -795,8 +837,9 @@
         type="button"
         onclick={() => (item.required = !item.required)}
         aria-pressed={!!item.required}
+        disabled={isPricedGrid}
         aria-label={m.form_builder_required_label()}
-        title={m.form_builder_required_label()}
+        title={isPricedGrid ? m.form_pgrid_always_required() : m.form_builder_required_label()}
         class="ui-icon-button rounded-lg transition-colors {item.required
           ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
           : 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"

@@ -57,11 +57,15 @@ const TYPES_WITH_EVERY_SURFACE: readonly string[] = [
  * The types the builders' pickers OFFER: every type whose editor exists.
  *
  * Not `QUESTION_TYPES`: a type the server accepts can ship before its editor does - `product_grid`
- * (WP-G1) is refused at save with `PRODUCT_GRID_DEFINITION_MISSING` until the grid editor (WP-G3)
- * writes its definition, so offering it would hand people a question no save accepts. A type joins
- * this list in the change that ships its editor (`questionTypes.test.ts`).
+ * (WP-G1) was refused at save with `PRODUCT_GRID_DEFINITION_MISSING` until its editor (WP-G3,
+ * `ProductGridEditor.svelte`) wrote its definition. A type joins this list in the change that ships
+ * its editor (`questionTypes.test.ts`). A builder with no payment (a booking space) leaves the priced
+ * grid out on its own (`FormQuestionsSection`'s `offerPricedGrid`).
  */
-export const AUTHORABLE_QUESTION_TYPE_VALUES: readonly string[] = [...TYPES_WITH_EVERY_SURFACE];
+export const AUTHORABLE_QUESTION_TYPE_VALUES: readonly string[] = [
+  ...TYPES_WITH_EVERY_SURFACE,
+  'product_grid',
+];
 
 /** {@link QUESTION_TYPES} restricted to {@link AUTHORABLE_QUESTION_TYPE_VALUES}, in canonical order. */
 export const AUTHORABLE_QUESTION_TYPES: QuestionType[] = QUESTION_TYPES.filter((t) =>
