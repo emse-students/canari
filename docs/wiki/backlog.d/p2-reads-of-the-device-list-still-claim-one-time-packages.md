@@ -10,6 +10,12 @@ What that fix left, in order:
   `sendWelcome` without a device id (it needs only the ids). The fix is the same `peek` on the list,
   with a client method that reads the roster without packages. The callers that do use every package
   (group creation adding every device of a person, `admitNewcomer`) keep claiming.
+- **P2 - `fetchUserDevices` shares one in-flight CLAIMING request between callers.** `joinInFlight`
+  keyed `${userId}:devices` (`mlsDeliveryApi.ts`) hands the same answer to group creation
+  (`groupCreation.ts`, three call sites) and `admitNewcomer` (`graine/admitNewcomer.ts`). Two
+  concurrent adds of one person would build two groups' Welcomes on ONE one-time package, and the
+  second would fail `NoMatchingKeyPackage` on the joiner. A claiming route must never share an
+  in-flight request; only a peek may.
 - **The pending sweep claims before it asks whether the device is already a leaf.** A fulfilled
   invitation is vouched and the claimed package is discarded. The tree read needs no package, but
   moving it first changes the order against the refusal cleanup (a revoked device already in the
@@ -22,3 +28,6 @@ What that fix left, in order:
   measure. Report it once per device per empty episode, plus an hourly count against the devices
   served, once the refill-while-connected item has made an empty pool rare. Today the line is the
   only witness, so it stays as it is.
+- **P3 - `awaitOwnKeyPackagePublished` peeks once per group**: about 131 requests on the connection
+  measured here. Remember `published` until the next key-package round settles, and peek again only
+  then.

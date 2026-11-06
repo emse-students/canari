@@ -1384,7 +1384,9 @@ export class MlsDeliveryApi {
    * is `unanswered`, which establishes nothing about the device and must not be acted on.
    *
    * `peek` ASKS WHETHER THE DEVICE IS PUBLISHED WITHOUT CLAIMING ONE OF ITS PACKAGES: the server
-   * answers the same refusals and its static row, and leaves the one-time pool alone. A caller
+   * answers its static row, and leaves the one-time pool alone. `expired` is judged on the static
+   * row alone, so a device holding fresh one-time packages may answer `expired` to a peek and a
+   * package to a claim - both are `published` to `keyPackagePublication`. A caller
    * that only reads the fact (an external join waiting on its own publication) must peek - a claim
    * spends a package nobody uses. A server predating `peek` ignores it and claims, as before.
    */
