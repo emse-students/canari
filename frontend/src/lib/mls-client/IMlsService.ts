@@ -1180,12 +1180,12 @@ export interface IMlsService {
   publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void>;
   /** Bulk-upload multiple one-time prekeys to the server pool. */
   publishKeyPackages(packages: DatedKeyPackage[]): Promise<void>;
-  /** Delivers a Welcome message to the target user/device via the delivery service. */
+  /** Delivers a Welcome message to ONE device of the target user via the delivery service. */
   sendWelcome(
     welcomeBytes: Uint8Array,
     targetUserId: string,
     groupId: string,
-    targetDeviceId?: string,
+    targetDeviceId: string,
     ratchetTreeBytes?: Uint8Array
   ): Promise<void>;
   /** Returns the current MLS epoch number for a group (needed for epoch-gating). */

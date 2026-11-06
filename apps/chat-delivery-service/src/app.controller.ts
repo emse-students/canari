@@ -9,7 +9,7 @@ import {
   KEY_PACKAGE_LIFETIME_DAYS,
   lastResortDeadline,
 } from './entities/key-package.entity';
-import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
+import { OneTimeKeyPackage, usableOneTimePackage } from './entities/one-time-key-package.entity';
 import { Group } from './entities/group.entity';
 import { GroupMember } from './entities/group-member.entity';
 import { DeviceGroupMembership } from './entities/device-group-membership.entity';
@@ -1457,9 +1457,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       // TOTAL, LIKE THE TWO READ SITES: `IS NOT NULL AND <= now()` left every undated row in place
       // for ever, and undated rows were arriving at ~290 a day on production on 2026-09-18. They are
       // exactly the rows the resolver could not judge, so they are exactly the ones worth reclaiming.
-      .where(
-        `COALESCE("notAfter", ("createdAt" AT TIME ZONE 'UTC') + interval '${KEY_PACKAGE_LIFETIME_DAYS} days') <= now()`
-      )
+      // The NEGATION of what the claim serves, from the one spelling, so nothing is reclaimed that a
+      // claim would still hand out and nothing is left that it would refuse.
+      .where(`NOT (${usableOneTimePackage()})`)
       .execute();
     if (reclaimed.affected && reclaimed.affected > 0) {
       this.logger.log(

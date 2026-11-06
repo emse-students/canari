@@ -14,7 +14,7 @@ import { RevokedDevice } from '../entities/revoked-device.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
 import { DeviceSignatureKeysService } from '../services/device-signature-keys.service';
-import { stubPool } from '../testing/queryBuilder';
+import { stubPool, stubQueryBuilder } from '../testing/queryBuilder';
 
 /**
  * THE SERVER PROMISES REUSE, AND THIS IS WHERE IT MAKES THE PROMISE.
@@ -37,6 +37,9 @@ import { stubPool } from '../testing/queryBuilder';
 describe('DevicesController - the static KeyPackage row once the pool is empty', () => {
   let controller: DevicesController;
   let keyPackageRepo: { findOne: jest.Mock; find: jest.Mock };
+  /** The usable one-time packages a peek COUNTS (never takes) once a static row elapsed. */
+  let usableOneTime: number;
+  let oneTimeRepo: { createQueryBuilder: jest.Mock };
   let warn: jest.SpyInstance;
 
   /** A pool that is empty: the locked SELECT finds nothing, so nothing is deleted. */
@@ -45,6 +48,10 @@ describe('DevicesController - the static KeyPackage row once the pool is empty',
   beforeEach(async () => {
     emptyPool.transaction.mockClear();
     emptyPool.delete.mockClear();
+    usableOneTime = 0;
+    oneTimeRepo = {
+      createQueryBuilder: jest.fn(() => stubQueryBuilder({ getCount: usableOneTime })),
+    };
     keyPackageRepo = {
       findOne: jest.fn().mockResolvedValue({
         userId: 'u1',
@@ -63,7 +70,7 @@ describe('DevicesController - the static KeyPackage row once the pool is empty',
       controllers: [DevicesController],
       providers: [
         { provide: getRepositoryToken(KeyPackage), useValue: keyPackageRepo },
-        { provide: getRepositoryToken(OneTimeKeyPackage), useValue: {} },
+        { provide: getRepositoryToken(OneTimeKeyPackage), useValue: oneTimeRepo },
         { provide: getRepositoryToken(GroupMember), useValue: { find: jest.fn(() => []) } },
         { provide: getRepositoryToken(Group), useValue: { find: jest.fn(() => []) } },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
@@ -124,6 +131,46 @@ describe('DevicesController - the static KeyPackage row once the pool is empty',
     expect(emptyPool.transaction).not.toHaveBeenCalled();
   });
 
+  describe('a peek of a device whose static row elapsed refuses exactly when a claim would', () => {
+    beforeEach(() => {
+      keyPackageRepo.findOne.mockResolvedValue({
+        userId: 'u1',
+        deviceId: 'd1',
+        keyPackage: 'THE-STATIC-ROW',
+        // A reported date in the past: `lastResortDeadline` answers `reported`, whatever `createdAt`.
+        notAfter: new Date(Date.now() - 60_000),
+        createdAt: new Date(),
+      });
+    });
+
+    // A claim serves a fresh one-time package here, so the roster must list the device - left out,
+    // the device panel could neither show nor revoke it.
+    it('is published while a usable one-time package is left, and none is claimed', async () => {
+      usableOneTime = 3;
+
+      const answer = await controller.getDeviceKeyPackage('u1', 'd1', '1');
+
+      expect(answer.keyPackage).toBe('THE-STATIC-ROW');
+      expect(oneTimeRepo.createQueryBuilder).toHaveBeenCalledTimes(1);
+      expect(emptyPool.transaction).not.toHaveBeenCalled();
+      expect(emptyPool.delete).not.toHaveBeenCalled();
+    });
+
+    it('is `expired` once the pool holds nothing usable either, as a claim answers', async () => {
+      usableOneTime = 0;
+
+      await expect(controller.getDeviceKeyPackage('u1', 'd1', '1')).rejects.toMatchObject({
+        response: { reason: 'expired' },
+      });
+      expect(emptyPool.transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  it('a peek of a live static row counts nothing at all', async () => {
+    await controller.getDeviceKeyPackage('u1', 'd1', '1');
+    expect(oneTimeRepo.createQueryBuilder).not.toHaveBeenCalled();
+  });
+
   it('any other value of the query still claims, as every client before it did', async () => {
     await controller.getDeviceKeyPackage('u1', 'd1', 'yes');
     expect(emptyPool.transaction).toHaveBeenCalledTimes(1);
@@ -153,6 +200,22 @@ describe('DevicesController - the static KeyPackage row once the pool is empty',
       expect(emptyPool.transaction).not.toHaveBeenCalled();
       expect(emptyPool.delete).not.toHaveBeenCalled();
       expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('a peek lists a device whose static row elapsed while it still holds usable one-time packages', async () => {
+      rows[1] = { ...rows[1], createdAt: new Date(0) };
+      usableOneTime = 2;
+      try {
+        const listed = await controller.getUserDevices('u1', '1');
+        expect(listed.map((d) => d.deviceId)).toEqual(['d1', 'd2', 'd3']);
+        expect(emptyPool.delete).not.toHaveBeenCalled();
+
+        usableOneTime = 0;
+        const without = await controller.getUserDevices('u1', '1');
+        expect(without.map((d) => d.deviceId)).toEqual(['d1', 'd3']);
+      } finally {
+        rows[1] = { ...rows[1], createdAt: new Date() };
+      }
     });
 
     it('without the query it still claims one package per device, for the adder that uses them', async () => {

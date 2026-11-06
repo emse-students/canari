@@ -3588,7 +3588,7 @@ export abstract class BaseMlsService implements IMlsService {
     welcomeBytes: Uint8Array,
     targetUserId: string,
     groupId: string,
-    targetDeviceId?: string,
+    targetDeviceId: string,
     ratchetTreeBytes?: Uint8Array
   ): Promise<void> {
     await this.sendWelcomeConsuming(
@@ -3610,21 +3610,11 @@ export abstract class BaseMlsService implements IMlsService {
     welcomeBytes: Uint8Array,
     targetUserId: string,
     groupId: string,
-    targetDeviceId: string | undefined,
+    targetDeviceId: string,
     ratchetTreeBytes: Uint8Array | undefined,
     persistEach: boolean
   ): Promise<void> {
-    const recipient = targetDeviceId ? `${targetUserId}:${targetDeviceId}` : null;
-    if (!recipient) {
-      await this.delivery.sendWelcome(
-        welcomeBytes,
-        targetUserId,
-        groupId,
-        undefined,
-        ratchetTreeBytes
-      );
-      return;
-    }
+    const recipient = `${targetUserId}:${targetDeviceId}`;
     const key = `${groupId}|${recipient}`;
     const inFlight = this.welcomeSendsInFlight.get(key);
     if (inFlight && sameBytes(inFlight.welcome, welcomeBytes)) {
@@ -3654,7 +3644,7 @@ export abstract class BaseMlsService implements IMlsService {
         }
         throw e;
       }
-      recordWelcomeSent(groupId, targetDeviceId!);
+      recordWelcomeSent(groupId, targetDeviceId);
       await this.consumeOwedWelcome(groupId, recipient, welcomeBytes, 'delivered', persistEach);
     })();
     const entry = { welcome: welcomeBytes, done };

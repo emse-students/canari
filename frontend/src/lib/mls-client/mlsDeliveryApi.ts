@@ -1388,9 +1388,8 @@ export class MlsDeliveryApi {
    * is `unanswered`, which establishes nothing about the device and must not be acted on.
    *
    * `peek` ASKS WHETHER THE DEVICE IS PUBLISHED WITHOUT CLAIMING ONE OF ITS PACKAGES: the server
-   * answers its static row, and leaves the one-time pool alone. `expired` is judged on the static
-   * row alone, so a device holding fresh one-time packages may answer `expired` to a peek and a
-   * package to a claim - both are `published` to `keyPackagePublication`. A caller
+   * answers its static row, and leaves the one-time pool alone. It refuses exactly when a claim
+   * would: `expired` only once the static row elapsed AND no usable one-time package is left. A caller
    * that only reads the fact (an external join waiting on its own publication) must peek - a claim
    * spends a package nobody uses. A server predating `peek` ignores it and claims, as before.
    */
@@ -1522,9 +1521,11 @@ export class MlsDeliveryApi {
 
   /**
    * The roster of `userId`'s active devices, read WITHOUT claiming any of their KeyPackages
-   * (`?peek=1`): the settings count, the device panel, a device's name, the Welcome fan-out to
-   * every device. Same list, same refusals and the same throw contract as {@link fetchUserDevices};
-   * no package is returned, because none was claimed for the caller to use.
+   * (`?peek=1`): the settings count, the device panel, a device's name, the pre-claim at
+   * registration. Same list, same refusals and the same throw contract as {@link fetchUserDevices}:
+   * the server judges each device as a claim would - a device whose static row elapsed is still
+   * listed while a usable one-time package is left - and only counts the pool, never takes from it.
+   * No package is returned, because none was claimed for the caller to use.
    *
    * SIMULTANEOUS ASKERS SHARE ONE REQUEST (WP-W4), which a read may and a claim may not. The entry
    * lives as long as the request, so no answer is served older than the request a caller joined
@@ -1740,66 +1741,48 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * Delivers an MLS Welcome (and optional ratchet tree) to `targetUserId`.
-   * If `targetDeviceId` is omitted, fans out to all active devices for that user.
+   * Delivers an MLS Welcome (and optional ratchet tree) to ONE device, `targetUserId:targetDeviceId`.
+   *
+   * THE DEVICE IS REQUIRED: a Welcome is built on the package one device published, so it can only
+   * ever be addressed to that device. Every caller (the Add's sender, the pending sweep, the
+   * `welcome_request` answer, the admission, the owed-Welcome drain) knows it; a fan-out to the
+   * account's roster had no caller left and was deleted (2026-11-06).
    */
   async sendWelcome(
     welcomeBytes: Uint8Array,
     targetUserId: string,
     groupId: string,
-    targetDeviceId?: string,
-    ratchetTreeBytes?: Uint8Array,
-    /** Tauri: when `targetDeviceId` is omitted, deliver only to the first online device (Web sends to all). */
-    welcomeOpts?: { firstDeviceOnly?: boolean }
+    targetDeviceId: string,
+    ratchetTreeBytes?: Uint8Array
   ): Promise<void> {
-    const base64 = this.uint8ToB64(welcomeBytes);
-    const ratchetTreeBase64 = ratchetTreeBytes ? this.uint8ToB64(ratchetTreeBytes) : undefined;
-
-    let deviceIds: string[];
-    if (targetDeviceId) {
-      deviceIds = [targetDeviceId];
-    } else {
-      const devices = await this.listUserDevices(targetUserId);
-      deviceIds =
-        welcomeOpts?.firstDeviceOnly && devices.length > 0
-          ? [devices[0].deviceId]
-          : devices.map((d) => d.deviceId);
+    const response = await this.f(`${this.historyUrl}/api/mls/welcome`, {
+      method: 'POST',
+      headers: await this.auth({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        targetDeviceId,
+        targetUserId,
+        senderUserId: this.userId,
+        welcomePayload: this.uint8ToB64(welcomeBytes),
+        ratchetTreePayload: ratchetTreeBytes ? this.uint8ToB64(ratchetTreeBytes) : undefined,
+        groupId,
+      }),
+    });
+    // The refusals a sender must act on, typed at the throw from the server's code.
+    if (response.status === 403) {
+      const refusal = await refusalFromResponse(response, 'Welcome delivery');
+      if (refusal.code === 'WELCOME_TARGET_NOT_MEMBER') {
+        throw new WelcomeTargetNotMemberError(groupId, targetUserId, targetDeviceId);
+      }
     }
-    if (deviceIds.length === 0) {
-      throw new Error(`Cannot send secure invitation to ${targetUserId}: no active device found.`);
+    if (response.status === 404) {
+      const refusal = await refusalFromResponse(response, 'Welcome delivery');
+      if (refusal.code === 'WELCOME_TARGET_UNKNOWN') {
+        throw new WelcomeTargetUnknownError(groupId, targetUserId, targetDeviceId);
+      }
     }
-    await Promise.all(
-      deviceIds.map(async (deviceId) => {
-        const response = await this.f(`${this.historyUrl}/api/mls/welcome`, {
-          method: 'POST',
-          headers: await this.auth({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({
-            targetDeviceId: deviceId,
-            targetUserId,
-            senderUserId: this.userId,
-            welcomePayload: base64,
-            ratchetTreePayload: ratchetTreeBase64,
-            groupId,
-          }),
-        });
-        // The refusals a sender must act on, typed at the throw from the server's code.
-        if (response.status === 403) {
-          const refusal = await refusalFromResponse(response, 'Welcome delivery');
-          if (refusal.code === 'WELCOME_TARGET_NOT_MEMBER') {
-            throw new WelcomeTargetNotMemberError(groupId, targetUserId, deviceId);
-          }
-        }
-        if (response.status === 404) {
-          const refusal = await refusalFromResponse(response, 'Welcome delivery');
-          if (refusal.code === 'WELCOME_TARGET_UNKNOWN') {
-            throw new WelcomeTargetUnknownError(groupId, targetUserId, deviceId);
-          }
-        }
-        await assertOkMlsDeliveryResponse(
-          response,
-          `Welcome delivery to ${targetUserId}:${deviceId} (group ${groupId})`
-        );
-      })
+    await assertOkMlsDeliveryResponse(
+      response,
+      `Welcome delivery to ${targetUserId}:${targetDeviceId} (group ${groupId})`
     );
   }
 
