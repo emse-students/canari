@@ -1,0 +1,395 @@
+/**
+ * THE BACKGROUND PUBLISH QUEUE, driven over fakes (no clock: a wait ends only when the test wakes it).
+ *
+ * What is pinned, each because its opposite is the plausible mistake:
+ *  - media go ONE AT A TIME, in the post's order, and the post is created once, under the id minted
+ *    at the press, with the refs in that order;
+ *  - every step's result is durable before the next: after a cut, nothing prepared is prepared again,
+ *    nothing uploaded is uploaded again, and the media in progress resumes from its recorded session;
+ *  - a create whose answer was lost is sent again under the SAME id (the server's idempotence key);
+ *  - an ANSWER that refuses stops the post with its sentence, kept until the member's Retry;
+ *  - the app back on screen restarts the transfer at once; a deleted post stops, gives its session
+ *    back, and is never created;
+ *  - a new queue over the same store (a reload, a kill) picks the post up where it was.
+ */
+import { describe, expect, it } from 'vitest';
+import {
+  PUBLISH_RETRY_LADDER_MS,
+  PublishQueue,
+  classifyPublishFailure,
+  type PublishUploadArgs,
+} from './publishQueue';
+import type { QueuedFile, QueuedPost } from './publishQueueStore';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { TransportFailureError } from '$lib/utils/transportFailure';
+import { UploadAbortedError } from '$lib/utils/uploadXhr';
+import type { MediaRef } from '$lib/media';
+
+/** An in-memory stand-in for `PublishQueueStore`, cloning like IndexedDB does. */
+function memoryStore() {
+  const posts = new Map<string, QueuedPost>();
+  const files = new Map<string, QueuedFile>();
+  return {
+    posts,
+    files,
+    async list() {
+      return [...posts.values()]
+        .map((p) => structuredClone(p))
+        .sort((a, b) => a.queuedAt - b.queuedAt);
+    },
+    async get(id: string) {
+      const p = posts.get(id);
+      return p ? structuredClone(p) : null;
+    },
+    async readFile(id: string, i: number) {
+      const f = files.get(`${id}/${i}`);
+      if (!f) throw new Error('missing');
+      return f;
+    },
+    async update(post: QueuedPost, bytes?: { index: number; file: QueuedFile }) {
+      if (!posts.has(post.id)) return false;
+      posts.set(post.id, structuredClone(post));
+      if (bytes) files.set(`${post.id}/${bytes.index}`, bytes.file);
+      return true;
+    },
+    async remove(id: string) {
+      posts.delete(id);
+      for (const k of files.keys()) if (k.startsWith(`${id}/`)) files.delete(k);
+    },
+  };
+}
+
+function queuePost(store: ReturnType<typeof memoryStore>, id: string, n: number, queuedAt = 1) {
+  store.posts.set(id, {
+    id,
+    queuedAt,
+    payload: { markdown: `post ${id}` },
+    media: Array.from({ length: n }, (_, i) => ({
+      name: `p${i}.jpg`,
+      type: 'image/jpeg',
+      size: 100 + i,
+      ...(i === 0 ? { caption: 'first' } : {}),
+    })),
+    landing: 'all',
+  });
+  for (let i = 0; i < n; i++) {
+    store.files.set(`${id}/${i}`, {
+      bytes: new Uint8Array([i, i, i]).buffer,
+      name: `p${i}.jpg`,
+      type: 'image/jpeg',
+    });
+  }
+}
+
+interface Rig {
+  store: ReturnType<typeof memoryStore>;
+  queue: PublishQueue;
+  calls: string[];
+  uploads: PublishUploadArgs[];
+  created: Array<{ id: string; media: MediaRef[] }>;
+  released: string[];
+  published: string[];
+  /** Per-call behaviour of the upload: return a ref, or throw. */
+  uploadPlan: Array<(a: PublishUploadArgs) => Promise<MediaRef>>;
+  createPlan: Array<() => Promise<unknown>>;
+}
+
+function rig(store = memoryStore()): Rig {
+  const r = {
+    store,
+    calls: [] as string[],
+    uploads: [] as PublishUploadArgs[],
+    created: [] as Array<{ id: string; media: MediaRef[] }>,
+    released: [] as string[],
+    published: [] as string[],
+    uploadPlan: [] as Rig['uploadPlan'],
+    createPlan: [] as Rig['createPlan'],
+  } as Rig;
+  let n = 0;
+  r.queue = new PublishQueue({
+    store,
+    prepare: async (file) => {
+      r.calls.push(`prepare:${file.name}`);
+      return {
+        file: new File(
+          [await file.arrayBuffer(), new Uint8Array([9])],
+          file.name.replace('.jpg', '.webp'),
+          {
+            type: 'image/webp',
+          }
+        ),
+        dims: { width: 40, height: 30 },
+      };
+    },
+    encodingFor: () => 'single-block',
+    upload: async (a) => {
+      r.uploads.push(a);
+      r.calls.push(`upload:${a.fileName}`);
+      const step = r.uploadPlan.shift();
+      if (step) return step(a);
+      await a.persist({
+        keyHex: 'k',
+        ivHex: 'i',
+        plaintextSha256: 's',
+        plaintextBytes: a.bytes.length,
+        uploadId: `u-${a.fileName}`,
+      });
+      return {
+        type: 'image',
+        mediaId: `m-${a.fileName}-${++n}`,
+        key: 'k',
+        iv: 'i',
+        mimeType: a.mimeType,
+        size: a.bytes.length,
+      };
+    },
+    release: async (id) => {
+      r.released.push(id);
+    },
+    createPost: async (p) => {
+      r.calls.push(`create:${p.id}`);
+      const step = r.createPlan.shift();
+      if (step) await step();
+      r.created.push({ id: p.id, media: p.media! });
+    },
+    assertNotMuted: async () => undefined,
+    failureMessage: (e) => `refused: ${(e as Error).message}`,
+    lock: (fn) => fn(),
+    // NO CLOCK: a wait ends only when the queue is woken.
+    sleep: (_ms, signal) =>
+      new Promise((resolve) => {
+        if (signal.aborted) return resolve();
+        signal.addEventListener('abort', () => resolve(), { once: true });
+      }),
+    onViews: () => undefined,
+    onPublished: (p) => r.published.push(p.id),
+    log: () => undefined,
+  });
+  return r;
+}
+
+/** Lets every pending microtask and macrotask of the queue run. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+describe('PublishQueue', () => {
+  it('sends the media one at a time, in order, then creates the post ONCE under its own id', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-1', 3);
+    await r.queue.drain();
+    expect(r.calls).toEqual([
+      'prepare:p0.jpg',
+      'upload:p0.webp',
+      'prepare:p1.jpg',
+      'upload:p1.webp',
+      'prepare:p2.jpg',
+      'upload:p2.webp',
+      'create:post-1',
+    ]);
+    expect(r.created).toHaveLength(1);
+    expect(r.created[0].media.map((m) => m.mediaId)).toEqual([
+      'm-p0.webp-1',
+      'm-p1.webp-2',
+      'm-p2.webp-3',
+    ]);
+    expect(r.created[0].media[0]).toMatchObject({ caption: 'first' });
+    expect(r.store.posts.size).toBe(0);
+    expect(r.store.files.size).toBe(0);
+    expect(r.published).toEqual(['post-1']);
+  });
+
+  it('a cut on media 2 waits, then resumes it from its session: nothing prepared or uploaded twice', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-1', 3);
+    r.uploadPlan.push(
+      async (a) => {
+        await a.persist({
+          keyHex: 'k',
+          ivHex: 'i',
+          plaintextSha256: 's',
+          plaintextBytes: 4,
+          uploadId: 'u0',
+        });
+        return { type: 'image', mediaId: 'm0', key: 'k', iv: 'i', mimeType: a.mimeType, size: 4 };
+      },
+      async (a) => {
+        await a.persist({
+          keyHex: 'k1',
+          ivHex: 'i1',
+          plaintextSha256: 's1',
+          plaintextBytes: 4,
+          uploadId: 'u1',
+        });
+        throw new TransportFailureError('link cut');
+      }
+    );
+    const running = r.queue.drain();
+    await settle();
+    // Waiting: the post is still queued, media 1 recorded as sent, media 2's session recorded.
+    const held = r.store.posts.get('post-1')!;
+    expect(held.media[0].ref?.mediaId).toBe('m0');
+    expect(held.media[1].upload?.uploadId).toBe('u1');
+    expect(held.media[1].prepared).toBeDefined();
+    expect(r.created).toHaveLength(0);
+
+    r.queue.wake('test: the link is back');
+    await running;
+    expect(r.calls.filter((c) => c === 'prepare:p1.jpg')).toHaveLength(1);
+    expect(r.calls.filter((c) => c.startsWith('upload:p0'))).toHaveLength(1);
+    // The resumed attempt of media 2 was handed the session the cut one recorded.
+    expect(r.uploads[2].state?.uploadId).toBe('u1');
+    expect(r.created).toHaveLength(1);
+  });
+
+  it('a create whose answer was lost is sent again under the SAME id', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-1', 1);
+    r.createPlan.push(async () => {
+      throw new TransportFailureError('answer lost');
+    });
+    const running = r.queue.drain();
+    await settle();
+    r.queue.wake('test');
+    await running;
+    expect(r.calls.filter((c) => c.startsWith('create:'))).toEqual([
+      'create:post-1',
+      'create:post-1',
+    ]);
+    expect(r.calls.filter((c) => c.startsWith('upload:'))).toHaveLength(1);
+    expect(r.created).toHaveLength(1);
+  });
+
+  it('a server that keeps answering 503 is asked over the ladder ONCE, then the post stops with its Retry', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-1', 0);
+    for (let i = 0; i < 20; i++) {
+      r.createPlan.push(async () => {
+        throw new ApiRefusalError(503, null, 'busy');
+      });
+    }
+    let finished = false;
+    const running = r.queue.drain().then(() => (finished = true));
+    // Each wake ends one wait; a wake with no wait pending is a no-op, so wake until the pass ends.
+    for (let i = 0; i < 100 && !finished; i++) {
+      await settle();
+      r.queue.wake('test');
+    }
+    await running;
+    expect(r.calls.filter((c) => c.startsWith('create:'))).toHaveLength(
+      PUBLISH_RETRY_LADDER_MS.length + 1
+    );
+    expect(r.store.posts.get('post-1')!.failure).toEqual({
+      stage: 'createPost',
+      message: 'refused: busy',
+    });
+  });
+
+  it('a refusal stops the post with its sentence, kept until Retry; the next post is not held behind it', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-1', 1, 1);
+    queuePost(r.store, 'post-2', 0, 2);
+    r.createPlan.push(async () => {
+      throw new ApiRefusalError(400, null, 'bad poll');
+    });
+    await r.queue.drain();
+    expect(r.store.posts.get('post-1')!.failure).toEqual({
+      stage: 'createPost',
+      message: 'refused: bad poll',
+    });
+    expect(r.published).toEqual(['post-2']);
+
+    await r.queue.retry('post-1');
+    expect(r.published).toEqual(['post-2', 'post-1']);
+    // The retry did not upload the media again: its ref was durable.
+    expect(r.calls.filter((c) => c.startsWith('upload:'))).toHaveLength(1);
+  });
+
+  it('back on screen after a suspension: the transfer in flight is aborted and restarted at once', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-1', 1);
+    let started!: () => void;
+    const onWire = new Promise<void>((resolve) => (started = resolve));
+    r.uploadPlan.push(
+      (a) =>
+        new Promise((_, reject) => {
+          started();
+          a.transport.signal!.addEventListener('abort', () =>
+            reject(new UploadAbortedError('test'))
+          );
+        })
+    );
+    const running = r.queue.drain();
+    await onWire;
+    r.queue.resumeAfterSuspension();
+    await running;
+    expect(r.calls.filter((c) => c.startsWith('upload:'))).toHaveLength(2);
+    expect(r.created).toHaveLength(1);
+  });
+
+  it('a post deleted during its upload stops, gives its session back, and is never created', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-1', 1);
+    let started!: () => void;
+    const onWire = new Promise<void>((resolve) => (started = resolve));
+    r.uploadPlan.push(
+      (a) =>
+        new Promise((_, reject) => {
+          void a
+            .persist({
+              keyHex: 'k',
+              ivHex: 'i',
+              plaintextSha256: 's',
+              plaintextBytes: 4,
+              uploadId: 'u-del',
+            })
+            .then(started);
+          a.transport.signal!.addEventListener('abort', () =>
+            reject(new UploadAbortedError('test'))
+          );
+        })
+    );
+    const running = r.queue.drain();
+    await onWire;
+    await r.queue.remove('post-1');
+    await running;
+    expect(r.store.posts.size).toBe(0);
+    expect(r.store.files.size).toBe(0);
+    expect(r.released).toEqual(['u-del']);
+    expect(r.created).toHaveLength(0);
+  });
+
+  it('a NEW queue over the same store (a reload, a kill) resumes the post where it was', async () => {
+    const store = memoryStore();
+    queuePost(store, 'post-1', 2);
+    const first = rig(store);
+    first.uploadPlan.push(async (a) => {
+      await a.persist({
+        keyHex: 'k',
+        ivHex: 'i',
+        plaintextSha256: 's',
+        plaintextBytes: 4,
+        uploadId: 'u0',
+      });
+      throw new TransportFailureError('killed');
+    });
+    void first.queue.drain();
+    await settle();
+    first.queue.stop();
+
+    const second = rig(store);
+    await second.queue.drain();
+    expect(second.calls[0]).toBe('upload:p0.webp'); // prepared before the kill: not prepared again
+    expect(second.uploads[0].state?.uploadId).toBe('u0');
+    expect(second.created).toHaveLength(1);
+  });
+});
+
+describe('classifyPublishFailure', () => {
+  it('waits out what is no answer, and stops on what is one', () => {
+    expect(classifyPublishFailure(new TransportFailureError('x'))).toBe('wait');
+    expect(classifyPublishFailure(new ApiRefusalError(503, null, 'x'))).toBe('busy');
+    expect(classifyPublishFailure(new ApiRefusalError(429, null, 'x'))).toBe('busy');
+    expect(classifyPublishFailure(new ApiRefusalError(400, null, 'x'))).toBe('failed');
+    expect(classifyPublishFailure(new ApiRefusalError(403, null, 'x'))).toBe('failed');
+    expect(classifyPublishFailure(new Error('local'))).toBe('failed');
+  });
+});

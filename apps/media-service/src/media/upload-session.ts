@@ -66,6 +66,53 @@ export function parseDeclaredHeader(headerHex: unknown): { raw: Buffer; header: 
   };
 }
 
+/**
+ * The encoding a session declares for a blob sealed as ONE AES-GCM block (frontend `mediaCrypto.ts`
+ * `encryptMediaBuffer`): what a post PHOTO is, because the link preview (`post-preview.service.ts`)
+ * and every reader before the segmented one read a photo that way. Absent means `segmented-v1`.
+ */
+export const SINGLE_BLOCK_ENCODING = 'single-block';
+
+/** The AES-GCM tag a single-block blob ends with: its smallest possible size. */
+const SINGLE_BLOCK_TAG_BYTES = 16;
+
+/**
+ * The keyless structural check of a session's declared blob, by its declared ENCODING - never by
+ * guessing from the bytes:
+ *  - absent or `segmented-v1`: the 20 header bytes must parse and imply exactly `totalBytes`;
+ *  - `single-block`: no header may be sent (there is no public prefix to check at `complete`), and
+ *    the blob must be longer than its tag.
+ *
+ * @returns the lowercase header to re-check at `complete`, or `null` for a single-block blob.
+ */
+export function declaredBlobShape(
+  encoding: unknown,
+  headerHex: unknown,
+  totalBytes: number
+): { headerHex: string | null } {
+  if (encoding === SINGLE_BLOCK_ENCODING) {
+    if (headerHex !== undefined && headerHex !== null) {
+      throw new BadRequestException('a single-block session declares no header');
+    }
+    if (totalBytes <= SINGLE_BLOCK_TAG_BYTES) {
+      throw new BadRequestException(
+        `a single-block blob is longer than its ${SINGLE_BLOCK_TAG_BYTES}-byte tag`
+      );
+    }
+    return { headerHex: null };
+  }
+  if (encoding !== undefined && encoding !== null && encoding !== 'segmented-v1') {
+    throw new BadRequestException(`encoding must be segmented-v1 or ${SINGLE_BLOCK_ENCODING}`);
+  }
+  const { header } = parseDeclaredHeader(headerHex);
+  if (header.ciphertextLength !== totalBytes) {
+    throw new BadRequestException(
+      `header declares ${header.ciphertextLength} stored bytes, totalBytes is ${totalBytes}`
+    );
+  }
+  return { headerHex: (headerHex as string).toLowerCase() };
+}
+
 /** How many parts a blob of `totalBytes` is cut into. */
 export function partCount(totalBytes: number, partBytes: number): number {
   return Math.ceil(totalBytes / partBytes);

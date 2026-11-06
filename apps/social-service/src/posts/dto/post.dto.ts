@@ -260,6 +260,15 @@ export class FormInputDto {
 }
 
 export class CreatePostDto {
+  /**
+   * The post's id, minted by the CLIENT when it queued the post, so a resend after a lost answer
+   * is answered from the row the first request wrote instead of making a second post
+   * (`post-client-id.ts`). Optional: without it the database generates the id, as before.
+   */
+  @IsUUID()
+  @IsOptional()
+  id?: string;
+
   @IsString()
   @IsOptional()
   authorId?: string;

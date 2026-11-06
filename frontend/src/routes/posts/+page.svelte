@@ -3,6 +3,7 @@
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { feedToShowAfterPublish } from '$lib/posts/landingFeed';
+  import { onPostPublished } from '$lib/posts/publishQueue/publishQueue.svelte';
   import { onMount, untrack } from 'svelte';
   import { pullToRefresh } from '$lib/actions/pullToRefresh';
   import { registerRetapRefresh } from '$lib/navigation/scrollToTop';
@@ -718,6 +719,16 @@
     void refreshPosts();
     void loadScheduled();
   }
+
+  // THE COMPOSER CLOSES BEFORE THE POST EXISTS (the background publish queue): the list is read
+  // again when the queue says the server holds it, so the post appears where its author is.
+  $effect(() =>
+    onPostPublished((post) => {
+      Log.d('POSTS', `queued post ${post.id} published: refreshing the feed`);
+      void refreshPosts();
+      void loadScheduled();
+    })
+  );
 
   function postPublishedAt(post: PostEntity): number {
     return new Date(post.publishedAt).getTime();

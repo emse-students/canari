@@ -42,6 +42,8 @@ import { assertReelEditShape } from './reel-rules';
 import type { ReelPurgeReason } from '../internal/reel-media';
 import { singleMediaModeOf, singleMediaSql, type SingleMediaMode } from './full-screen-post-sql';
 import { publicationTime } from './publication-time';
+import { clientIdVerdict } from './post-client-id';
+import { violatesUniqueColumns } from '../common/pg-errors';
 import {
   invalidatePostListCache,
   postListCacheKey,
@@ -1108,6 +1110,14 @@ export class PostsService {
   }
 
   async createPost(data: any, isGlobalAdmin: boolean) {
+    // A RESEND OF A QUEUED POST IS ONE POST (`post-client-id.ts`): the client minted the id, so a
+    // row already holding it is this author's earlier request whose answer was lost. Answered
+    // before anything is claimed or announced, so a replay claims no reel blob twice.
+    const clientId: string | undefined = typeof data.id === 'string' ? data.id : undefined;
+    if (clientId) {
+      const replayed = await this.replayClientId(clientId, data.authorId, isGlobalAdmin);
+      if (replayed) return replayed;
+    }
     // "Entre étudiants": OFF unless asked, and refused (typed) where it is not offered.
     data.studentsOnly = data.studentsOnly === true;
     if (data.studentsOnly) {
@@ -1163,11 +1173,24 @@ export class PostsService {
     post.publishedAt = publicationTime(post.scheduledAt, new Date());
     let entity: Post;
     try {
-      entity = await this.postRepo.save(post);
+      // A client id is INSERTED, never saved: `save` would turn into an UPDATE of a row that
+      // appeared under that id since the check above, and a create must never overwrite a post.
+      entity = clientId
+        ? await this.insertWithClientId(post, clientId)
+        : await this.postRepo.save(post);
     } catch (e) {
       // The blob was claimed for a reel that now will not exist. Hand it back to the idle clock so
       // it is not an exempt object nothing will ever reap - best-effort and logged by `release`.
       if (reelMediaIds.length > 0) await this.mediaRetention.release(reelMediaIds);
+      // Two requests of one queued post raced past the check: the primary key took the first, and
+      // this one is the replay it would have been a moment later.
+      if (
+        clientId &&
+        (await violatesUniqueColumns(e, ['id'], (q, p) => this.postRepo.query(q, p)))
+      ) {
+        const replayed = await this.replayClientId(clientId, data.authorId, isGlobalAdmin);
+        if (replayed) return replayed;
+      }
       throw e;
     }
     await this.invalidateListCache();
@@ -1189,6 +1212,29 @@ export class PostsService {
       entity,
       await this.viewerContext([entity], authorId || undefined, isGlobalAdmin)
     );
+  }
+
+  /**
+   * The row an earlier request of the same queued post wrote under `clientId`, stamped for its
+   * author as a create's answer is - or `null` when there is none and the create goes ahead.
+   *
+   * @throws ConflictException when the id is another author's post (`clientIdVerdict`).
+   */
+  private async replayClientId(clientId: string, authorId: string, isGlobalAdmin: boolean) {
+    const existing = await this.postRepo.findOne({ where: { id: clientId } });
+    if (clientIdVerdict(existing, authorId) === 'create') return null;
+    this.logger.log(`[POST-CREATE] post ${clientId.slice(0, 8)} sent again: answered from its row`);
+    return this.toPublicPostFromEntity(
+      existing!,
+      await this.viewerContext([existing!], authorId || undefined, isGlobalAdmin)
+    );
+  }
+
+  /** INSERTs `post` under the client's id and reads back the row with its database defaults. */
+  private async insertWithClientId(post: Post, clientId: string): Promise<Post> {
+    post.id = clientId;
+    await this.postRepo.insert(post);
+    return this.postRepo.findOneOrFail({ where: { id: clientId } });
   }
 
   /**

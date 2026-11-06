@@ -6,10 +6,31 @@ at most) and 2 chunked completions at 0.4 s, so the time is the client's uplink 
 before it (encoding, encryption). Nothing in the app lets a send outlive the webview: a backgrounded
 app is suspended and the upload dies with it.
 
-Open design questions (to ask the owner, four at a time): what survives a backgrounding (a native
-Android foreground service / WorkManager and an iOS background `URLSession`, versus a resumable
-chunked upload that restarts on return), whether several files go in parallel or one after the
-other on a weak link, and whether a send in progress is shown as a persistent row with a retry.
+**The owner's answers (2026-11-06).** (1) Publish closes the composer at once; the send goes on in the
+background behind a discreet progress line with a Retry, and the post is never lost. (2) Backgrounding:
+AUTOMATIC RESUME with no native code in this step - the upload pauses when the OS suspends the app and
+resumes where it stopped on return. (3) Files go ONE BY ONE, each in resumable parts. (4) Measure
+first what is sent per media type, propose reductions, and change no quality without the numbers.
 
-The chunked path already exists (`/api/media/upload/chunk/*`); a resumable client over it is the
-smallest step and needs no native code.
+**Step 1, built (the feed post composer).** A durable publish queue per account, the composer closed
+at once, files one by one through media-service's resumable sessions (a new `single-block` mode for
+photos), and a client-minted post id as the idempotency key of `POST /api/posts`
+([posts](../frontend/modules/posts.md#the-background-publish-queue)). Release order: media-service and
+social-service before the client.
+
+**What is left, in order.**
+
+1. **The native step: send while the app is AWAY.** An Android foreground service (or WorkManager
+   with an expedited job) and an iOS background `URLSession` upload task, fed the queue's prepared,
+   encrypted parts, so a send does not wait for the member to come back. Step 1 only resumes on return.
+2. **The other composers on the same queue**: `EditPostForm` (a media added on edit), the comment
+   composer, the CanaReels publish, and chat media sharing it (the chat outbox has its own resumable
+   path for reels only, RC-5).
+3. **The reductions the measurements point to**, each a quality decision for the owner, none taken:
+   [the numbers and the three proposals](../frontend/modules/posts.md#what-a-post-sends-measured-2026-11-06-local-estate-desktop-chrome).
+   In short: a 12 MP photo leaves as 436 KB (~10 s at 50 kB/s), a 16 s 1080p video as 2.83 MB.
+4. **Readings owed**: the Mi 9T and the iPhone 12 (a phone on a weak link, the app backgrounded
+   mid-send and brought back), and the production rate of `[POST-CREATE] post <id> sent again`.
+5. **The stall detector after a reload on a throttled link**: a reload while a part was in flight
+   re-sent that part after an `UploadStalledError` (the reload's own downloads shared the 50 kB/s
+   link). It healed, but say whether the stall bound is right for a weak link.

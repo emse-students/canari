@@ -287,6 +287,108 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   box's black shows instead. The composer's paused preview keeps no poster: one would hide the
   first frame `#t=0.1` decodes.
 
+## The background publish queue
+
+Owner decisions of 2026-11-06 ([backlog](../../backlog.d/p2-uploads-of-several-photos-are-slow-on-a-bad-network-and-stop-in-the-background.md)):
+Publish closes the composer AT ONCE, the send goes on in the background behind a discreet progress
+line with a Retry, and the post is never lost. Code: `lib/posts/publishQueue/`.
+
+**The composer only queues.** `CreatePostForm.publishPost` answers every refusal it can from its own
+state (`localPublishBlocker`, the attachment cap), mints the post's id (`crypto.randomUUID()`), and
+hands the payload plus the RAW files to `enqueuePost`. It closes only once `enqueuePost` resolves,
+which means the post and every file were written in ONE IndexedDB transaction; a failed write (a
+full disk: `publish_queue_enqueue_storage_full`) keeps the composer and everything in it.
+
+**The durable state** (`publishQueueStore.ts`): one database per account, `CanariDBPublish_<userId>`,
+two stores - `posts` (the record: payload, landing feed, one entry per media with its prepared shape,
+its open upload session and, once uploaded, its media ref) and `files` (`<postId>/<index>`, the
+original bytes, REPLACED by the prepared bytes in the same transaction that records the prepared
+shape, so a media is never prepared twice and never uploaded from the wrong bytes). An `update` of a
+post the member deleted meanwhile writes nothing and says so, so nothing resurrects. The store
+closes itself on `versionchange`, so the device wipe's `deleteDatabase` never blocks. Like the
+composer draft, it is not sealed by the device key.
+
+**The pass** (`publishQueue.ts`, one at a time per account across tabs through `navigator.locks`),
+oldest post first, media in order, ONE file at a time:
+
+1. the mute check, before the first byte leaves;
+2. per media: prepare (the same `preparePostMedia` as before: the image pipeline, or the video
+   transcode under the upload ceiling), record it; then upload it RESUMABLY
+   (`MediaService.uploadResumably`, 1 MiB parts, `retentionClass: 'archive'`), the open session
+   recorded at each step so a reload or a kill resumes from the server's list of received parts
+   (`GET /api/media/upload/session/:id`), never from byte 0; a video goes `segmented-v1`, a photo
+   `single-block` (see [media-streaming-upload](../../services/media-streaming-upload.md#33-session-routes-media-service-additive---the-old-chunk-routes-stay-untouched)
+   - the link preview reads only single-block images);
+3. `createPost` with the client id. **The id is the idempotency key**: a create whose answer was lost
+   is sent again with the same id and the server answers with the post it already holds
+   ([social-service](../../services/social-service.md#a-post-created-twice-is-the-same-post-2026-11-06)).
+   Then the record and its files are deleted.
+
+**What stops it, and what starts it again** (`classifyPublishFailure`): a transport failure or an
+upload refused without a cause WAITS on a ladder (`PUBLISH_RETRY_LADDER_MS`, 2 s to 60 s) that any
+wake cuts short - a reconnect, `online`, the page visible again, the app back in the foreground. A
+server that answers "not now" (`5xx`, `408`, `425`, `429`) is asked again over the ladder ONCE (a
+counter no wake resets), then the post stops with its Retry: read on the local estate on
+2026-11-06, a create that kept answering `500` was otherwise asked every minute for ever. Anything else (moderation, a `4xx`, a video that
+cannot be prepared, a refused media) STOPS the post with its reason on the line, logged by
+`console.error`, and only the member's Retry or Delete moves it. Delete releases an open upload
+session at once rather than at the server's 24 h sweep. The ladder is a cadence, never a
+correctness bound: what makes a resend safe is the recorded session and the client id.
+
+**Backgrounding, without native code.** A native shell emits `canari:foreground` when the app comes
+back; the queue then ABORTS the transfer in flight (it was frozen with the webview and its socket is
+likely dead) and starts the pass again, which resumes from the server's part list. On the web, a
+background tab keeps uploading. A native Android foreground service and an iOS background
+`URLSession`, so the send goes on WHILE the app is away, are a later step (the backlog entry).
+
+**The composer forgets the media it handed over.** `holdPostComposerMedia([])` is called before
+`onPostCreated`: the hold `$effect` would only have run on its next flush, after the parent had
+unmounted the composer, so the next open brought the published photos back and a second Publish
+posted them again (read on the local estate, 2026-11-06; the test unmounts in `onPostCreated` as the
+parent does).
+
+**The line** (`PublishQueueBanner.svelte`, in the root layout's banner column under the offline
+banner): one row per queued post, the media being worked on 1-based, its percentage, a progress bar
+over the whole post, and Retry/Delete on a stopped or waiting post. The feed refreshes when a queued
+post is published (`onPostPublished`), and a toast says so.
+
+**Release order.** media-service and social-service ship BEFORE the client: an older media-service
+refuses a `single-block` session (`400`), and an older social-service strips the `id`, which brings
+back a duplicate on a lost answer until it is deployed.
+
+### What a post sends, measured (2026-11-06, local estate, desktop Chrome)
+
+Synthetic inputs standing in for a phone's: a 4032x3024 JPEG at 3.78 MB (the size of a 12 MP phone
+photo) and a 16 s 1080p H.264 video at 16 Mb/s (45.5 MB). Read from the queue's own log lines
+(`prepared: ... in N ms`, `uploaded ... in N ms`) and the network panel. A desktop CPU: a phone's
+prepare times are owed (the Mi 9T reading of the backlog entry).
+
+| Media | In | Prepared (what is encrypted and sent) | Prepare | Requests | Upload, no throttle | Upload, Slow 3G (400 ms RTT, 50 kB/s) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Photo | JPEG 3.78 MB | WebP 2048 px q0.92, **436 KB** (8.7x smaller) | 370-670 ms (1 s once, under a reload) | 3: open, 1 part, complete | 100-140 ms | **~10 s** |
+| Video | MP4 45.5 MB | MP4 720p ~2.5 Mb/s target, **2.83 MB** (16x) | 1.6-2.1 s (WebCodecs) | 5: open, 3 parts, complete | 0.8 s | **~57 s** of transfer |
+
+What follows from it:
+
+- **The bytes are already the prepared ones**: a photo leaves at ~11 % of its size and a video at
+  ~6 %. On a weak link the time is the uplink, ~10 s per photo at 50 kB/s - which no client work
+  can hide, only shrink.
+- **The session costs two round trips per photo** (open and complete around the single part):
+  ~0.8 s on a 400 ms RTT link against ~9 s of body, about 9 %. It buys resume and the one-by-one
+  order; kept.
+- **Encryption is not a cost worth chasing**: AES-GCM of 436 KB or 2.8 MB is inside the upload
+  figures above, which are dominated by the network even unthrottled.
+
+**Reductions proposed, none taken** (each changes what a reader sees, so each is the owner's call
+on these numbers):
+
+1. **Photo quality 0.92 -> 0.85 at 2048 px**, or **2048 -> 1600 px** at 0.92. Both cut the 436 KB,
+   neither was measured here; measure them on the same inputs before deciding.
+2. **Prepare media N+1 while media N uploads** (no quality change): saves the prepare time of every
+   media but the first - ~0.5 s per photo here, several seconds per video on a phone.
+3. **A feed thumbnail** (WP-W7 of the weak-network page): the feed would download a small preview,
+   not the 2048 px image. Sending side unchanged.
+
 ## The header's Publish and search are commands, stripped BEFORE they act (2026-10-28)
 
 The phone's app header reaches the feed with a link: `/posts?compose=1` (Publish) or

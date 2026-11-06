@@ -1243,6 +1243,20 @@ fallback each line already declared was the right answer. With those gone `/cale
 `frontend/src/lib/associations/serverProse.test.ts`, the guard that owns this rule. That is what
 stops the next one: the guard is extended by a tree, never by an allowlist entry.
 
+## A post created twice is the same post (2026-11-06)
+
+`POST /api/posts` takes an optional `id` (a UUID minted by the client, `CreatePostDto.id`). The
+post's PRIMARY KEY is the idempotency key, so no column and no migration were added. `createPost`
+looks the id up first (`replayClientId`): absent, the post is INSERTED under it (`insert`, never
+`save`, which would update a row); present and the caller's, the stored post is returned as if just
+created (`[POST-CREATE] post <id> sent again`); present and another author's, `409`
+(`clientIdVerdict`, `post-client-id.ts`). Two concurrent creates with one id meet at the primary
+key: the loser's `23505` is read through `violatesUniqueColumns(e, ['id'])` and answered as a
+replay. A request without `id` keeps the server-generated one. The client that sends it is the
+background publish queue ([posts](../frontend/modules/posts.md#the-background-publish-queue)): a
+create whose answer was lost is sent again with the same id. Tests: `post-client-id.spec.ts`,
+`posts.service.client-id.spec.ts`.
+
 ## Redis events published
 
 The social-service publishes to `chat:channel_events`:

@@ -415,6 +415,11 @@ export interface OutboxResumableUpload {
   uploadId?: string;
   /** The part size the session was opened with (the server's answer). */
   partBytes?: number;
+  /**
+   * `single-block` when the blob is ONE AES-GCM block (a post photo); absent for `segmented-v1`,
+   * which every state written before the field existed was.
+   */
+  encoding?: 'single-block';
 }
 
 /**

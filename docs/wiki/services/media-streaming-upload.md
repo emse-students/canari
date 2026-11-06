@@ -85,6 +85,16 @@ from a `File`/`Blob`, and sealing segment `i` needs only the CEK, the IV, the he
 | `DELETE .../:id` | Cancel: removes the staging file and RELEASES the reservation now rather than at the 24 h sweep |
 | `DELETE /api/media/internal/users/:userId` (the account erasure fan-out) | Ends every open session of the erased owner FIRST (`UploadSessionService.cancelAllOwnedBy`, under the `complete` lock; a completed session is left to the media erasure), then removes the owned objects. No device of a deleted account holds a token to release its sessions, so the erasure is the only party that can (2026-11-01) |
 
+**A `single-block` session (2026-11-06).** `init` may say `{encoding: 'single-block'}` instead of a
+`header`: the blob is one AES-GCM block (plaintext + 16 bytes of tag), there is no public header to
+check at `complete`, and `totalBytes` must exceed 16. A body carrying both, or an unknown encoding,
+is a `400` (`declaredBlobShape`, `upload-session.ts`). The sidecar records `{encoding}` in place of
+`headerHex`, and records written before keep reading as segmented. It exists for PHOTOS of the
+background publish queue ([posts](../frontend/modules/posts.md#the-background-publish-queue)): the
+post link preview reads only single-block images, so a photo must stay one, while the queue needs
+every file resumable. The client seals the whole block once and slices it per part
+(`resumableUpload.ts`, `encoding: 'single-block'`).
+
 Class, ownership and budget reuse the machinery of the `chat-reel` section: declared at `init`, a part past
 the declared total is refused, completion by another member is `403`. New: a **cap of open sessions per
 owner (4)**, because only `chat-reel` is bounded today (500 MB / 100 MB), and a `totalBytes` reservation

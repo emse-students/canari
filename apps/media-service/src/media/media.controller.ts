@@ -446,7 +446,13 @@ export class MediaController {
   async initUploadSession(
     @Body()
     body:
-      | { retentionClass?: unknown; totalBytes?: unknown; partBytes?: unknown; header?: unknown }
+      | {
+          retentionClass?: unknown;
+          totalBytes?: unknown;
+          partBytes?: unknown;
+          header?: unknown;
+          encoding?: unknown;
+        }
       | undefined,
     @Req() req: Request
   ) {
@@ -459,6 +465,7 @@ export class MediaController {
         totalBytes: body?.totalBytes,
         partBytes: body?.partBytes,
         header: body?.header,
+        encoding: body?.encoding,
       },
       MAX_BYTES
     );
