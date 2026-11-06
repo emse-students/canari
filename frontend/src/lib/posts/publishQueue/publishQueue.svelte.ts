@@ -35,6 +35,7 @@ import {
   type PublishView,
 } from './publishQueue';
 import { PublishQueueStore, type QueuedPost } from './publishQueueStore';
+import { whenBecomesTrue } from './whenBecomesTrue.svelte';
 
 class PublishQueueViews {
   /** One line per queued post, oldest first: what the progress line draws. */
@@ -202,15 +203,16 @@ export function startPublishQueue(userId: string): void {
     ],
   };
   // The estate's capability is read from `/api/version`, which may answer after the first pass:
-  // that answer starts the pass the gate ended. Reactive, no timer.
-  const stopWatchingVersion = $effect.root(() => {
-    $effect(() => {
-      if (serverPublishQueue() !== true) return;
-      queue.wake('version answered');
-      void queue.drain();
-    });
-  });
-  running.unsubscribe.push(stopWatchingVersion);
+  // that answer starts the pass the gate ended. Reactive, no timer, and only on a CHANGE.
+  running.unsubscribe.push(
+    whenBecomesTrue(
+      () => serverPublishQueue() === true,
+      () => {
+        queue.wake('version answered');
+        void queue.drain();
+      }
+    )
+  );
   appendLog(`[PUBLISH-QUEUE] started`);
   void queue.refreshViews();
   void queue.drain();

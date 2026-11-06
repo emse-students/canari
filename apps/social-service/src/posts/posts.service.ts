@@ -1298,12 +1298,44 @@ export class PostsService {
     // The ids the queue names are NOT released to the idle window first: released, they would no
     // longer be `archive`, media-service would refuse to delete them, and they would wait out the
     // sweep. `deleteWithdrawnMedia` deletes them now unless a live row cites them.
+    //
+    // HELD BACK means owed: an id held back and then NOT deleted (refused, missing from the answer,
+    // or media-service unreachable) is released after all, or it would stay `archive` - exempt from
+    // every sweep - for ever: a crafted request, or an app uninstalled between two attempts, would
+    // otherwise strand it. Only the deleted row's own media can be held back (`deletePost` filters
+    // its own list), so nothing another post holds is ever released here.
+    const heldBack = row && row.kind !== 'reel' ? this.heldBackMedia(row, mediaIds) : [];
     if (row) await this.deletePost(postId, userId, false, { keep: mediaIds });
-    const media = await this.mediaRetention.deleteWithdrawnMedia(userId, mediaIds);
+    let media: Awaited<ReturnType<PostMediaRetentionService['deleteWithdrawnMedia']>>;
+    try {
+      media = await this.mediaRetention.deleteWithdrawnMedia(userId, mediaIds);
+    } catch (e) {
+      if (heldBack.length > 0) {
+        this.logger.warn(
+          `[POST-WITHDRAW] post ${postId.slice(0, 8)}: media delete failed - ${heldBack.length} held-back media released to the idle window`
+        );
+        await this.mediaRetention.release(heldBack);
+      }
+      throw e;
+    }
+    const notTaken = new Set(media.notTaken);
+    const stranded = heldBack.filter((id) => notTaken.has(id));
+    if (stranded.length > 0) {
+      this.logger.warn(
+        `[POST-WITHDRAW] post ${postId.slice(0, 8)}: ${stranded.length} held-back media not deleted - released to the idle window`
+      );
+      await this.mediaRetention.release(stranded);
+    }
     this.logger.log(
       `[POST-WITHDRAW] post ${postId.slice(0, 8)}: ${row ? 'deleted' : 'no row'}, the id is retired; media ${media.deleted} deleted, ${media.absent} gone, ${media.cited} cited, ${media.refused} refused`
     );
     return { ok: true, deleted: !!row };
+  }
+
+  /** The ids of `row`'s own media (its attachments and its comments') that `named` holds back. */
+  private heldBackMedia(row: Post, named: string[]): string[] {
+    const wanted = new Set(named);
+    return [...postMediaIds(row), ...commentMediaIds(row.comments)].filter((id) => wanted.has(id));
   }
 
   /** INSERTs `post` under the client's id and reads back the row with its database defaults. */

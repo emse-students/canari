@@ -13,6 +13,7 @@ import type { Post } from './entities/post.entity';
 const FREE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const CITED = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const GONE = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const REEL = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 
 function build(cited: string[], results: Record<string, string>) {
   const query = jest.fn((_sql: string, [ids]: [string[]]) =>
@@ -34,7 +35,7 @@ describe('PostMediaRetentionService.deleteWithdrawnMedia', () => {
   it('sends only the ids no live row cites, each under the withdrawing author', async () => {
     const { service, post } = build([CITED], { [FREE]: 'deleted', [GONE]: 'absent' });
     await expect(service.deleteWithdrawnMedia('alice', [FREE, CITED, GONE, FREE])).resolves.toEqual(
-      { deleted: 1, absent: 1, cited: 1, refused: 0 }
+      { deleted: 1, absent: 1, cited: 1, refused: 0, notTaken: [] }
     );
     expect(post).toHaveBeenCalledTimes(1);
     const [url, body] = post.mock.calls[0];
@@ -55,11 +56,24 @@ describe('PostMediaRetentionService.deleteWithdrawnMedia', () => {
     expect(query).toHaveBeenCalledTimes(1);
   });
 
+  it('counts a reel a salon message shares as CITED: the citation read covers channel_messages', async () => {
+    const { service, post, query } = build([REEL], {});
+    await expect(service.deleteWithdrawnMedia('alice', [REEL])).resolves.toMatchObject({
+      cited: 1,
+    });
+    expect(post).not.toHaveBeenCalled();
+    // The shape of the read: the salon branch is one of its three, on the reel column.
+    const sql = query.mock.calls[0][0];
+    expect(sql).toMatch(/FROM channel_messages cm/);
+    expect(sql).toMatch(/cm\."reelMediaId"::text = ANY\(\$1::text\[\]\)/);
+  });
+
   it("counts a media-service refusal (another uploader's, or not a post's media)", async () => {
     const { service } = build([], { [FREE]: 'refused' });
     await expect(service.deleteWithdrawnMedia('alice', [FREE])).resolves.toMatchObject({
       refused: 1,
       deleted: 0,
+      notTaken: [FREE],
     });
   });
 });

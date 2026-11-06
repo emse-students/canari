@@ -207,13 +207,21 @@ export class PostMediaRetentionService implements OnModuleInit {
    * Throws on a transport failure: the withdrawal answers 5xx and the queue asks again; every step
    * is idempotent (an object already gone answers `absent`).
    *
-   * @returns how many were deleted, already gone, kept because a row cites them, or refused.
+   * @returns how many were deleted, already gone, kept because a row cites them, or refused - and
+   *   `notTaken`, the uncited ids media-service did not answer `deleted` or `absent` for (refused, or
+   *   missing from its answer): still stored, so a caller that held them back must release them.
    */
   async deleteWithdrawnMedia(
     ownerId: string,
     mediaIds: string[]
-  ): Promise<{ deleted: number; absent: number; cited: number; refused: number }> {
-    const counts = { deleted: 0, absent: 0, cited: 0, refused: 0 };
+  ): Promise<{
+    deleted: number;
+    absent: number;
+    cited: number;
+    refused: number;
+    notTaken: string[];
+  }> {
+    const counts = { deleted: 0, absent: 0, cited: 0, refused: 0, notTaken: [] as string[] };
     const ids = [...new Set(mediaIds)];
     if (ids.length === 0) return counts;
     const rows: Array<{ mediaId: string | null }> = await this.postRepo.query(
@@ -253,7 +261,10 @@ export class PostMediaRetentionService implements OnModuleInit {
       const outcome = results[id];
       if (outcome === 'deleted') counts.deleted += 1;
       else if (outcome === 'absent') counts.absent += 1;
-      else counts.refused += 1;
+      else {
+        counts.refused += 1;
+        counts.notTaken.push(id);
+      }
     }
     return counts;
   }

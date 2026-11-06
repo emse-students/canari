@@ -248,4 +248,45 @@ describe('PostsService.withdrawPost - the author takes back a queued post', () =
     expect(retention.deleteWithdrawnMedia).toHaveBeenCalledWith('alice', ['m-1', 'm-2']);
     expect(deleted.has(ID)).toBe(true);
   });
+
+  /** A landed post of alice's with two media, its delete stubbed as the row going. */
+  function landedPost() {
+    const made = makeService();
+    made.rows.set(ID, {
+      id: ID,
+      authorId: 'alice',
+      markdown: 'x',
+      media: [{ mediaId: 'm-1' }, { mediaId: 'm-2' }],
+      publishedAt: new Date(0),
+    } as never);
+    jest.spyOn(made.service, 'deletePost').mockImplementation(async (id: string) => {
+      made.rows.delete(id);
+      return { ok: true };
+    });
+    return made;
+  }
+
+  it('releases a held-back media the media service did NOT delete, and only that one', async () => {
+    const { service, retention } = landedPost();
+    retention.deleteWithdrawnMedia.mockResolvedValueOnce({
+      deleted: 1,
+      absent: 0,
+      cited: 0,
+      refused: 1,
+      notTaken: ['m-2'],
+    } as never);
+    await service.withdrawPost(ID, 'alice', ['m-1', 'm-2', 'not-this-post']);
+    expect(retention.release).toHaveBeenCalledTimes(1);
+    expect(retention.release).toHaveBeenCalledWith(['m-2']);
+  });
+
+  it('releases every held-back media when the media delete throws, then rethrows', async () => {
+    const { service, retention } = landedPost();
+    retention.deleteWithdrawnMedia.mockRejectedValueOnce(new Error('media-service unreachable'));
+    await expect(
+      service.withdrawPost(ID, 'alice', ['m-1', 'm-2', 'not-this-post'])
+    ).rejects.toThrow('media-service unreachable');
+    // Only the deleted row's own media were held back - a named id of another post never is.
+    expect(retention.release).toHaveBeenCalledWith(['m-1', 'm-2']);
+  });
 });

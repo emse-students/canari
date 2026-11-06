@@ -801,12 +801,13 @@ export class MediaController {
     @Headers('x-internal-secret') internalSecret: string | undefined
   ): Promise<{ results: Record<string, 'deleted' | 'absent' | 'refused'> }> {
     assertInternalSecret(internalSecret);
-    // No prototype: the keys are ids a request named (CodeQL js/remote-property-injection).
-    const results = Object.create(null) as Record<string, 'deleted' | 'absent' | 'refused'>;
+    // A Map, not an object: `mediaId` is caller-supplied, so it must never be a property name - the
+    // same shape as `purgeReels` (CodeQL js/remote-property-injection).
+    const results = new Map<string, 'deleted' | 'absent' | 'refused'>();
     for (const { mediaId, ownerId } of this.purgeItems(body?.items)) {
-      results[mediaId] = await this.mediaService.removeOwnArchive(mediaId, ownerId);
+      results.set(mediaId, await this.mediaService.removeOwnArchive(mediaId, ownerId));
     }
-    return { results };
+    return { results: Object.fromEntries(results) };
   }
 
   /** The `{items: [{mediaId, ownerId}]}` body the purges take, bounded and typed - or a 400. */
