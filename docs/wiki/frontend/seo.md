@@ -254,7 +254,7 @@ Two details that are the whole difference between this working and failing:
 
 An image over **5 MB is not offered at all** and the card falls back to the logo: Twitter refuses one
 that size outright and then shows *no* card, which is worse. The client compresses a post image to
-2048px at 0.92 (`IMAGE_COMPRESS_PRESETS.post`), so the ceiling is far above anything the app
+1600px at 0.85 (`IMAGE_COMPRESS_PRESETS.post`), so the ceiling is far above anything the app
 produces; it exists for rows that predate that preset.
 
 **`og:image:width`/`height` are declared only where both are known, and both or neither.** An

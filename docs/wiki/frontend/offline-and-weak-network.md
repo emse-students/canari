@@ -155,7 +155,7 @@ The gzip fix and its measurement are [section 10](#10-package-status-2026-10-09)
 Warm navigation is cheap and one-RTT deep: the local-first work of 2026-09-23 holds. What this phase
 could NOT measure is the weight of a real feed (20 posts with media), a real salon page (100 rows) and
 a long DM history; the code says: chat images are compressed to **2560 px / q 0.92** and uploaded as ONE
-encrypted blob each (`media.ts:130`), posts to 2048 px, comments to 1280 px; the server cannot make
+encrypted blob each (`media.ts:130`), posts to 1600 px / q 0.85 (2048 px / q 0.92 until 2026-11-06), comments to 1280 px; the server cannot make
 thumbnails of ciphertext, so **a 300 px bubble downloads the full image**; the media route is
 `no-store` (`media.controller.ts:546`) so only the client's blob cache keeps it.
 
