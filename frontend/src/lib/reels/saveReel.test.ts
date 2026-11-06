@@ -124,3 +124,33 @@ describe('a feed video saved from the viewer keeps its own type', () => {
     expect(canSaveVideo(reel, true)).toBe(true);
   });
 });
+
+describe('a video of a carousel saved from the viewer (owner, 2026-11-06)', () => {
+  const picture = { ...video, type: 'image' as const, mediaId: 'p-1', mimeType: 'image/webp' };
+  const second = { ...video, mediaId: 'm-2', mimeType: 'video/quicktime' };
+  const carousel: SaveableReel = { ...reel, kind: 'post', media: [picture, second] };
+
+  it('saves the VISIBLE media, never the first', async () => {
+    const d = deps(true);
+    await saveReel({ ...carousel, mediaIndex: 1 }, d);
+    expect(d.acquire).toHaveBeenCalledWith(second, 'https://media.test');
+    expect(vi.mocked(d.saveToGallery).mock.calls[0].slice(1)).toEqual([
+      'canari-video-2026-10-01-01234567-2.mov',
+      'video/quicktime',
+    ]);
+    expect(d.release).toHaveBeenCalledWith(second);
+  });
+
+  it('names each video by its place, so two of one post differ', () => {
+    expect(reelFileName({ ...carousel, mediaIndex: 1 })).toBe(
+      'canari-video-2026-10-01-01234567-2.mov'
+    );
+    expect(reelFileName(reel)).toBe('canari-reel-2026-10-01-01234567.mp4');
+  });
+
+  it('reads the iOS WebM rule off the visible media', () => {
+    const webm = { ...video, mimeType: 'video/webm' };
+    expect(canSaveVideo({ ...carousel, media: [second, webm], mediaIndex: 1 }, true)).toBe(false);
+    expect(canSaveVideo({ ...carousel, media: [second, webm], mediaIndex: 0 }, true)).toBe(true);
+  });
+});

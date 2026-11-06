@@ -873,6 +873,67 @@ be about seven times FASTER. These numbers are the reference for tuning it; this
 none of them. **Follow-up, after the phone reading of RR:** decide whether the reel pager moves
 towards these thresholds (lead's decision: not in the rail's pull request).
 
+### Carousel pages - a post of several photos and videos (owner, 2026-11-06)
+
+**Asked by the owner:** *"montrer aussi les posts avec plusieurs photos/videos, avec un swipe gauche /
+droite pour passer au media precedent / suivant du post, comme Instagram"*. Every decision below is
+the lead's, taken 2026-11-06, reversible.
+
+- **Which posts** (`fullScreenPageOf` returns `carousel`; the server's `MULTI_MEDIA_POST_SQL`,
+  [server half](../../services/reels.md#reading)): **2 to 10 media, every one a picture or a video**
+  (10 is Instagram's cap, `CAROUSEL_MAX_MEDIA` on both sides), with the SAME exclusions as a single
+  media - no poll, no form, no attached form, no linked event, no link in the text. **A file or an
+  audio among them keeps the whole post out**: a page draws pictures and videos only.
+- **The two axes.** Vertical pages the POSTS, horizontal pages the MEDIA of the post on screen
+  (`reelViewerNav.ts`: `reelReleaseVerdict` answers `media-next` / `media-prev`, `stepMediaIndex`).
+  The axis is locked by `classifyMove` on the first movement past the slop, so a curving swipe never
+  does both and the horizontal drag never fights the vertical paging. **On the first media a drag to
+  the right still closes the viewer** - the way out is the same on every page - and on the last media
+  a drag to the left springs back with the edge resistance.
+- **The strip** (`ReelSlide`): one `ReelMediaPane` per media, side by side inside the ONE frame (its
+  ratio is the first media's, each media `object-contain` in it), moved as one transform; a held drag
+  moves it 1:1 with no transition (`mediaDragX`, `mediaDragging`), a release snaps it with the
+  viewer's own `GESTURE.SETTLE_MS` curve. Nothing waits on the strip's `transitionend`: the index
+  moves at once. Reduced motion makes the snap instant through the global rule in `app.css`.
+  **The blurred backdrop reads only the media on show**: the panes out of view carry
+  `data-backdrop-ignore`, and the slide hands `ReelFrame` the visible index as `sourceKey`, so a
+  swipe repaints it - otherwise a neighbour's picture that finished loading last painted the
+  backdrop of the one being looked at (seen in the browser, 2026-11-06).
+- **The position** is a row of dots under the top bar, the visible one lit, named "2 sur 5" for
+  assistive tech (`reels_carousel_position`).
+- **The visible media is kept PER POST** for the viewer's life (`mediaIndexById`): a post scrolled
+  away and back opens where the reader left it.
+- **What plays.** `ReelMediaPane` owns what used to be the slide's media half (download, player,
+  first frame, settle), so the rule is unchanged and per media: ONLY THE ACTIVE PANE - the visible
+  media of the page on screen - MOUNTS A PLAYER. A swipe to the next media unmounts the video that
+  leaves, exactly as a swipe to the next post does, and the playback arbiter sees one viewer at most.
+- **What is fetched ahead** (`carouselMediaRole`): once the visible media has SETTLED (whole and, for
+  a video, playing), its neighbours - the NEXT media, and the previous one, which was fetched to be
+  seen so holding it again is a cache hit - and the opening media of the NEXT post (the viewer's
+  existing `preload`). A video is preloaded only when `worthPreloading` says so (segmented, or under
+  the 28 MB reel cap). The viewer keys its settle on the post AND the visible media
+  (`settleKeyOf`), so each media settles anew.
+- **Desktop.** The arrow keys left and right step the media (off a carousel they are left free), the
+  slide draws left/right chevron buttons on a wide screen, and **the mouse drives the same gesture as
+  the finger**: pointer events of type `mouse` feed the one gesture implementation (a touch keeps the
+  touch path). The click that ends a mouse drag is swallowed in the frame's capture phase, so it
+  neither toggles the player nor counts towards a double-tap like; a picture's native drag is
+  prevented so it cannot cancel the pointer stream.
+- **The double tap.** A swipe makes no `click`, so the double tap (`doubleTapLike`) never sees one;
+  the mouse case is the swallowed click above.
+- **What belongs to the POST, not a media:** the caption, the author line, the rail's reactions, the
+  comments and the send - they do not move with the strip. **The rail's save and sound follow the
+  VISIBLE media**: a video shows them, a picture shows neither, because **no picture save exists**
+  (a photo page has never had one); the save takes the visible video (`SaveableReel.mediaIndex`,
+  `savedMediaOf`) and names it with its place, `canari-video-<day>-<id>-2.mov`, so two videos of one
+  post differ.
+- Pinned by `reelViewerNav.test.ts`, `fullScreenPost.test.ts`, `saveReel.test.ts` and
+  `ReelViewer.carousel.svelte.test.ts` (the swipes, the per-post memory, the players, the
+  preloads, the keys and buttons, the mouse drag and its swallowed click, the save).
+  **Owed on a phone**: the feel of the two axes on the Mi 9T and the iPhone 12 (a diagonal flick,
+  a horizontal swipe right after a vertical fling), a carousel video's sound and pause on a swipe,
+  and the save of a carousel video into each gallery.
+
 ### The minimal player and the rail tools (user, 2026-10-23)
 
 *"Les Reels d'instagram sont beaucoup plus epures, la barre de lecture est discrete et collee en bas,

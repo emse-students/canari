@@ -390,6 +390,13 @@ export interface ListPostsOptions {
    * answers the reels alone.
    */
   singleMedia?: boolean;
+  /**
+   * With `kind: 'reel'`: the posts of TWO TO TEN pictures and videos come too, with the single
+   * ones - the carousel pages (owner, 2026-11-06). The URL carries both older switches with it: a
+   * server that does not know `multiMedia` answers the single pictures and videos, one older still
+   * the pictures (docs/wiki/legacy-compatibility.md).
+   */
+  multiMedia?: boolean;
 }
 
 export interface ScheduledPost {
@@ -467,7 +474,8 @@ export function buildListPostsSearchParams(options: ListPostsOptions): string {
   if (options.promo != null && !Number.isNaN(options.promo)) p.set('promo', String(options.promo));
   if (options.formation?.trim()) p.set('formation', options.formation.trim());
   if (options.kind) p.set('kind', options.kind);
-  if (options.singleMedia) {
+  if (options.multiMedia) p.set('multiMedia', 'true');
+  if (options.singleMedia || options.multiMedia) {
     p.set('singleMedia', 'true');
     // An installed server knows only the pictures' switch and drops the unknown one: it keeps
     // serving pictures, and the client draws no video it was not sent (docs/wiki/legacy-compatibility.md).

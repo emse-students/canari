@@ -13,7 +13,13 @@
  * happens in a throwaway schema, dropped at the end.
  */
 import { Client } from 'pg';
-import { SINGLE_MEDIA_POST_SQL, SINGLE_PHOTO_POST_SQL } from './full-screen-post-sql';
+import {
+  CAROUSEL_MAX_MEDIA,
+  MULTI_MEDIA_POST_SQL,
+  SINGLE_MEDIA_POST_SQL,
+  SINGLE_PHOTO_POST_SQL,
+  singleMediaSql,
+} from './full-screen-post-sql';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -106,6 +112,59 @@ maybe('the one-picture clause against PostgreSQL', () => {
     await client.query(`INSERT INTO posts (id, images) VALUES ('video-and-picture', $1)`, [
       JSON.stringify([JSON.parse(clip)[0], picture]),
     ]);
+    // Carousels (2026-11-06): several pictures and videos, with every exclusion of the single rule,
+    // a file or an audio among them, a legacy element typed by its mime alone, and the size bounds.
+    const video = JSON.parse(clip)[0];
+    const many = (n: number) => JSON.stringify(Array.from({ length: n }, () => picture));
+    const carousels: Array<[string, string, string | null]> = [
+      ['carousel-max', many(CAROUSEL_MAX_MEDIA), null],
+      ['carousel-too-many', many(CAROUSEL_MAX_MEDIA + 1), null],
+      ['carousel-mixed-caption', JSON.stringify([picture, video, picture]), 'Soiree au foyer'],
+      ['carousel-and-link', JSON.stringify([picture, picture]), 'voir https://example.org'],
+      [
+        'carousel-legacy-mime',
+        JSON.stringify([
+          { mediaId: 'm', mimeType: 'image/png' },
+          { mediaId: 'v', mimeType: 'video/mp4' },
+        ]),
+        null,
+      ],
+      [
+        'carousel-and-file',
+        JSON.stringify([picture, { type: 'file', mediaId: 'f', mimeType: 'application/pdf' }]),
+        null,
+      ],
+      [
+        'carousel-and-audio',
+        JSON.stringify([picture, { type: 'audio', mediaId: 'a', mimeType: 'audio/ogg' }]),
+        null,
+      ],
+      ['carousel-untyped-unknown', JSON.stringify([picture, { mediaId: 'x' }]), null],
+    ];
+    for (const [id, images, markdown] of carousels) {
+      await client.query(`INSERT INTO posts (id, images, markdown) VALUES ($1, $2, $3)`, [
+        id,
+        images,
+        markdown,
+      ]);
+    }
+    const two = JSON.stringify([picture, video]);
+    await client.query(
+      `INSERT INTO posts (id, images, polls) VALUES ('carousel-and-poll', $1, '[{"id":"p"}]')`,
+      [two]
+    );
+    await client.query(
+      `INSERT INTO posts (id, images, forms) VALUES ('carousel-and-form', $1, '[{"id":"f"}]')`,
+      [two]
+    );
+    await client.query(
+      `INSERT INTO posts (id, images, "attachedFormId") VALUES ('carousel-and-attached-form', $1, '00000000-0000-4000-8000-000000000003')`,
+      [two]
+    );
+    await client.query(
+      `INSERT INTO posts (id, images, "linkedCalendarEventId") VALUES ('carousel-and-event', $1, '00000000-0000-4000-8000-000000000004')`,
+      [two]
+    );
   });
 
   afterAll(async () => {
@@ -138,5 +197,34 @@ maybe('the one-picture clause against PostgreSQL', () => {
       'picture-scalar-polls',
       'video-and-caption',
     ]);
+  });
+
+  it('a carousel: 2..10 pictures and videos, nothing else, never raising on a scalar', async () => {
+    const res = await client.query<{ id: string }>(
+      `SELECT id FROM posts WHERE ${MULTI_MEDIA_POST_SQL} ORDER BY id`
+    );
+    expect(res.rows.map((r) => r.id)).toEqual([
+      'carousel-legacy-mime',
+      'carousel-max',
+      'carousel-mixed-caption',
+      'two-pictures',
+      'video-and-picture',
+    ]);
+  });
+
+  it('the carousel mode answers the single rows AND the carousels, and neither older mode does', async () => {
+    const res = await client.query<{ id: string }>(
+      `SELECT id FROM posts WHERE ${singleMediaSql('carousel')} ORDER BY id`
+    );
+    const single = await client.query<{ id: string }>(
+      `SELECT id FROM posts WHERE ${SINGLE_MEDIA_POST_SQL} ORDER BY id`
+    );
+    const multi = await client.query<{ id: string }>(
+      `SELECT id FROM posts WHERE ${MULTI_MEDIA_POST_SQL} ORDER BY id`
+    );
+    expect(res.rows.map((r) => r.id).sort((a, b) => a.localeCompare(b))).toEqual(
+      [...single.rows, ...multi.rows].map((r) => r.id).sort((a, b) => a.localeCompare(b))
+    );
+    expect(single.rows.map((r) => r.id)).not.toContain('two-pictures');
   });
 });

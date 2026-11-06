@@ -149,7 +149,7 @@ describe('invalidatePostListCacheFor', () => {
   });
 
   it('keys the pictures-only and the pictures-and-videos pages apart', () => {
-    const key = (singleMedia: 'photos' | 'media' | undefined) =>
+    const key = (singleMedia: 'photos' | 'media' | 'carousel' | undefined) =>
       postListCacheKey({
         feed: 'reels',
         viewerUserId: 'u',
@@ -160,8 +160,9 @@ describe('invalidatePostListCacheFor', () => {
         kind: 'reel',
         singleMedia,
       });
-    expect(new Set([key(undefined), key('photos'), key('media')]).size).toBe(3);
+    expect(new Set([key(undefined), key('photos'), key('media'), key('carousel')]).size).toBe(4);
     expect(key('media')).toBe(`${POST_LIST_CACHE_PREFIX}reels:u:-:-:10:0:reel+media`);
+    expect(key('carousel')).toBe(`${POST_LIST_CACHE_PREFIX}reels:u:-:-:10:0:reel+carousel`);
   });
 });
 
