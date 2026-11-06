@@ -39,16 +39,21 @@ reglages est actif, avec la raison en dessous.
      dans aucun groupe) : donnez-lui un prix ou marquez-la indisponible.
 3. Dans **Parametres avances**, activez **"Formulaire public"**. Les reponses multiples
    s'activent toutes seules : un invite peut repondre plusieurs fois.
-4. **Ajoutez une question "Nom prenom"** (obligatoire) : c'est la seule facon de savoir qui a
-   repondu, Canari ne connait pas l'invite.
+4. Juste en dessous, cochez ce que vous voulez **"Demander aux invites" : Nom, Prenom, E-mail**
+   (rien n'est coche par defaut). Chaque case cochee devient obligatoire pour l'invite ; un
+   membre connecte ne voit jamais ces champs. C'est la facon de savoir qui a repondu : Canari ne
+   connait pas l'invite. **Conseille pour un formulaire payant**, pour retrouver qui a commande.
 5. Partagez le lien ou le QR code du formulaire : pour un formulaire public, ils menent a la
    page sans compte.
 
 ## Ce que voit l'invite
 
 - Il remplit le formulaire et voit le **total** a payer.
-- **En ligne** : il saisit une **adresse e-mail** (celle ou Lydia envoie la demande de
-  paiement ; Canari ne la conserve pas), puis paie sur la page de Lydia. Il revient ensuite
+- Si vous les avez demandes, il remplit un bloc **"Vos coordonnees"** (nom, prenom, e-mail).
+- **En ligne** : si vous avez demande l'e-mail, c'est cette adresse que Lydia utilise (il ne la
+  saisit qu'une fois, et elle est gardee avec sa reponse) ; sinon il saisit une **adresse e-mail**
+  au moment de payer (celle ou Lydia envoie la demande de paiement ; Canari ne la conserve pas).
+  Il paie ensuite sur la page de Lydia. Il revient ensuite
   sur une page qui verifie le paiement aupres de Lydia et affiche une **reference**
   (ex. `1A2B-3C4D`). **Aucun e-mail de confirmation n'est envoye** : l'invite doit noter sa
   reference. Le lien de cette page reste valable : il peut y revenir si le paiement met du
@@ -58,9 +63,11 @@ reglages est actif, avec la raison en dessous.
 
 ## Retrouver un invite et valider ses especes
 
-- Dans la liste des reponses, un invite qui a paye ou doit payer apparait comme
-  **"Invite - 1A2B-3C4D"** : c'est la reference qu'il vous donne. Sa question "Nom prenom"
-  dit qui il est.
+- Dans la liste des reponses, un invite apparait sous le **nom** qu'il a donne (ou son e-mail),
+  avec le badge **"Invite"**. Si vous ne lui avez rien demande, un invite qui a paye ou doit payer
+  apparait sous sa reference (ex. `1A2B-3C4D`), celle qu'il vous donne.
+- L'**export** reprend son nom et son prenom dans les colonnes de nom, et son e-mail dans une
+  colonne **"E-mail"**.
 - Les **especes** se valident comme pour un membre : **"Valider"** une fois l'argent recu.
 - Dans l'onglet **Achats** de l'association, un paiement d'invite apparait au nom de
   **"Invite"**.

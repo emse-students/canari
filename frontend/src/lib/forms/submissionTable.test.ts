@@ -159,6 +159,14 @@ describe('submitterName', () => {
     expect(name).toContain('1A2B-3C4D');
   });
 
+  it('files a guest under the name they gave, else the e-mail, before the reference', () => {
+    const guest = { firstName: null, lastName: null, userId: null, reference: '1A2B-3C4D' };
+    expect(submitterName({ ...guest, guestFirstName: 'Marie', guestLastName: 'Curie' })).toBe(
+      'Marie Curie'
+    );
+    expect(submitterName({ ...guest, guestEmail: 'marie@x.fr' })).toBe('marie@x.fr');
+  });
+
   it('prefers the stored name', () => {
     expect(submitterName({ firstName: 'Ada', lastName: 'Lovelace', userId: 'u1' })).toBe(
       'Ada Lovelace'

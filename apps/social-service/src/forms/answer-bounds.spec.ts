@@ -58,6 +58,8 @@ describe('form answer bounds', () => {
     expect(GRID_MAX_ROWS).toBe(contract.maxGridRows);
     expect(PRODUCT_GRID_MAX_CELLS).toBe(contract.maxProductGridCells);
     expect(PRODUCT_GRID_CELL_KEY_MAX).toBe(contract.maxProductGridCellKey);
+    expect(bounds.GUEST_NAME_MAX_LENGTH).toBe(contract.maxGuestNameLength);
+    expect(bounds.GUEST_EMAIL_MAX_LENGTH).toBe(contract.maxGuestEmailLength);
     const exported = bounds as unknown as Record<string, unknown>;
     for (const code of Object.values(contract.codes as Record<string, string>)) {
       expect(exported[code]).toBe(code);

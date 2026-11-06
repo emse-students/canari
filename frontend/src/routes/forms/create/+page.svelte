@@ -77,6 +77,7 @@
     hasFileQuestion,
   } from '$lib/forms/fileQuestion';
   import { CircleAlert, FileText } from '@lucide/svelte';
+  import { askedGuestFields } from '$lib/forms/guestIdentity';
   import { m } from '$lib/paraglide/messages';
 
   // General
@@ -87,6 +88,8 @@
   let allowMultipleSubmissions = $state(false);
   let anonymous = $state(false);
   let isPublic = $state(false);
+  /** What a public form asks a guest (`guestIdentity.ts`); none by default. */
+  let guestFields = $state<string[]>([]);
 
   // Payment
   let basePrice = $state(0);
@@ -307,6 +310,8 @@
         allowMultipleSubmissions,
         ...(anonymous ? { anonymous } : {}),
         isPublic,
+        // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
+        guestFields: isPublic && !anonymous ? askedGuestFields(guestFields) : [],
         ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
         requiresPayment,
         // NEVER conditioned on `requiresPayment` - a free form belongs to the association it was
@@ -452,6 +457,7 @@
       bind:anonymous
       anonymousFixed={false}
       bind:isPublic
+      bind:guestFields
       profilePricing={pricesOnProfile(priceMatrix, requiresPayment)}
       {requiresPayment}
       bind:opensAt

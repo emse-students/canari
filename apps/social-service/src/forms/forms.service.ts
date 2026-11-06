@@ -75,6 +75,12 @@ import { receivedStatus } from '../users/entities/purchase-record.entity';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { toManagerView, toSubmitterView } from './submission.projection';
 import {
+  askedGuestFields,
+  guestIdentityFor,
+  guestPayerEmail,
+  storedGuestFields,
+} from './guest-identity';
+import {
   bucketFor,
   dimensionsNeedProfile,
   needsProfile,
@@ -347,6 +353,12 @@ export class FormsService {
     if (hasFileQuestion(input.items)) {
       throw new BadRequestException(
         'An anonymous form cannot ask for a file: a file is tied to the account that uploads it.'
+      );
+    }
+    // A guest's name or e-mail stored with the answer is the identity the form promised not to keep.
+    if (askedGuestFields(input.guestFields).length > 0) {
+      throw new BadRequestException(
+        'An anonymous form cannot ask a guest for a name or an e-mail: it promised not to keep who answered.'
       );
     }
   }
@@ -670,6 +682,8 @@ export class FormsService {
     const { opensAt: opensAtRaw, closedAt: closedAtRaw, ...rest } = input;
     const form = this.formRepo.create({
       ...rest,
+      // One stored shape for "asks a guest nothing": null (`guest-identity.ts`).
+      guestFields: storedGuestFields(input.guestFields),
       currency: 'eur',
       opensAt: opensAtRaw ? new Date(opensAtRaw) : null,
       closedAt: closedAtRaw ? new Date(closedAtRaw) : null,
@@ -831,6 +845,8 @@ export class FormsService {
       opensAt: form.opensAt,
       closedAt: form.closedAt,
       anonymous: form.anonymous,
+      // What the page asks a guest about who they are, canonical; [] asks nothing.
+      guestFields: askedGuestFields(form.guestFields),
       formFull,
       basePrice: form.basePrice,
       currency: form.currency,
@@ -906,7 +922,12 @@ export class FormsService {
       assertUniqueItemIds(input.items, form.items);
       assertFormItemsShape(input.items);
     }
-    this.assertAnonymousConfigValid({ ...input, items, anonymous: form.anonymous });
+    this.assertAnonymousConfigValid({
+      ...input,
+      items,
+      anonymous: form.anonymous,
+      guestFields: input.guestFields !== undefined ? input.guestFields : form.guestFields,
+    });
     // Unlike anonymity, a link can be opened or withdrawn at any time: it promises nothing about
     // the answers already stored. An absent value means "leave it", so the stored one is checked -
     // for every field the check reads, or an edit sending only `isPublic: true` would publish a
@@ -963,6 +984,10 @@ export class FormsService {
     const citedBefore = questionImageIds(form.items);
     Object.assign(form, {
       ...rest,
+      // Absent keeps the stored list; a sent one (null and [] included) is stored canonical.
+      ...(input.guestFields !== undefined
+        ? { guestFields: storedGuestFields(input.guestFields) }
+        : {}),
       currency: 'eur',
       opensAt: opensAtRaw ? new Date(opensAtRaw) : null,
       closedAt: closedAtRaw ? new Date(closedAtRaw) : null,
@@ -1534,6 +1559,16 @@ export class FormsService {
       }
     }
 
+    // Who a guest says they are, ONLY what the form asks (`guest-identity.ts`): every asked field
+    // required, an unasked one refused, and a member carrying any of them refused - a member is
+    // never asked. Judged before anything is written or issued.
+    const guestIdentity = guestIdentityFor(
+      askedGuestFields(form.guestFields),
+      input,
+      guest ? 'guest' : 'member',
+      id
+    );
+
     // A grid's answer is a map of rows, judged against the question's own rows and columns and
     // stripped of its empty rows - from here on, `answers` holds it in that form (D1).
     input = { ...input, answers: withNormalisedGridAnswers(form.items ?? [], input.answers ?? {}) };
@@ -1844,6 +1879,7 @@ export class FormsService {
             formId: id,
             userId: null,
             email: undefined,
+            ...guestIdentity,
             answers: storedAnswers,
             lines,
             totalPaid: 0,
@@ -1883,6 +1919,7 @@ export class FormsService {
           formId: id,
           userId: input.userId ?? null,
           email: input.email,
+          ...guestIdentity,
           answers: storedAnswers,
           lines,
           totalPaid: totalCents,
@@ -2009,7 +2046,8 @@ export class FormsService {
             metadata: { submissionId: savedSubmission.id, formId: id, userId: input.userId ?? '' },
             connectAccountId,
             idempotencyKey,
-            payerEmail: input.payerEmail,
+            // A guest's e-mail, when the form asked for it, IS the payer address: typed once.
+            payerEmail: guestPayerEmail(guestIdentity, input.payerEmail),
             // The request dies before the seat is released (`seat-hold.ts`).
             expireAfterSeconds: PAYMENT_REQUEST_LIFETIME_SECONDS,
           },
@@ -3129,6 +3167,15 @@ export class FormsService {
       headers.push({ header: labels.firstName, key: 'firstName', width: 20 });
       headers.push({ header: labels.lastName, key: 'lastName', width: 20 });
     }
+    // A guest's e-mail, when the form asks for it now or an answer carries one from when it did
+    // (`guest-identity.ts`): a column of its own. The word is the client's, like every other here.
+    const emailColumn =
+      askedGuestFields(form.guestFields).includes('email') ||
+      submissions.some((s) => !!s.guestEmail);
+    if (emailColumn) {
+      if (!labels.email) throw new BadRequestException('export label "email" is required');
+      headers.push({ header: labels.email, key: 'guestEmail', width: 28 });
+    }
     if (form.requiresPayment) {
       headers.push({ header: labels.amount, key: 'total', width: 14 });
       headers.push({ header: labels.status, key: 'status', width: 14 });
@@ -3161,9 +3208,11 @@ export class FormsService {
         date: sub.createdAt instanceof Date ? sub.createdAt : new Date(sub.createdAt as string),
       };
       if (!form.anonymous) {
-        row.firstName = names.firstName ?? '';
-        row.lastName = names.lastName ?? '';
+        // A guest's answer is named by what the guest typed, when the form asked for it.
+        row.firstName = (sub.userId ? names.firstName : sub.guestFirstName) ?? '';
+        row.lastName = (sub.userId ? names.lastName : sub.guestLastName) ?? '';
       }
+      if (emailColumn) row.guestEmail = sub.guestEmail ?? '';
       if (form.requiresPayment) {
         row.total = (sub.totalPaid || 0) / 100;
         // A status the client had no word for is written AS STORED and accused in the log: the file

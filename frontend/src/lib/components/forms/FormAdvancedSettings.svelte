@@ -13,6 +13,7 @@
   import AudienceConditionEditor from './AudienceConditionEditor.svelte';
   import CotisationTierPicker from '$lib/components/pricing/CotisationTierPicker.svelte';
   import FormSection from './FormSection.svelte';
+  import GuestIdentitySettings from './GuestIdentitySettings.svelte';
   import { Settings2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -45,6 +46,8 @@
      * price grid on who the person is. A guest CAN pay (WP-P1).
      */
     isPublic: boolean;
+    /** What a public form asks a guest (`guestIdentity.ts`): last name, first name, e-mail. */
+    guestFields: string[];
     /** Whether the price grid divides on promo, formation or cotisation - what a guest has not got. */
     profilePricing: boolean;
     /** A paid form cannot be anonymous: a payment names its payer. */
@@ -78,6 +81,7 @@
     anonymous = $bindable(),
     anonymousFixed,
     isPublic = $bindable(),
+    guestFields = $bindable(),
     profilePricing,
     requiresPayment,
     opensAt = $bindable(),
@@ -97,6 +101,7 @@
       (allowMultipleSubmissions ? 1 : 0) +
       (anonymous ? 1 : 0) +
       (isPublic ? 1 : 0) +
+      (isPublic && guestFields.length > 0 ? 1 : 0) +
       (opensAt ? 1 : 0) +
       (settings.grantsCotisation ? 1 : 0) +
       // A file question puts a deletion delay to work, which is a setting doing something.
@@ -181,6 +186,8 @@
           ? m.form_public_hint_blocked_file()
           : m.form_public_hint()}
     />
+
+    <GuestIdentitySettings bind:guestFields {isPublic} {anonymous} charges={requiresPayment} />
 
     <!-- Shown only when a question asks for a file: a setting about files on a form that takes none
          would be a number nobody can see the effect of. -->

@@ -23,6 +23,8 @@ describe('form answer bounds', () => {
     expect(ANSWER_MAX_TEXT_LENGTH).toBe(contract.maxTextLength);
     expect(ANSWER_MAX_SELECTIONS).toBe(contract.maxSelections);
     expect(GRID_MAX_ROWS).toBe(contract.maxGridRows);
+    expect(bounds.GUEST_NAME_MAX_LENGTH).toBe(contract.maxGuestNameLength);
+    expect(bounds.GUEST_EMAIL_MAX_LENGTH).toBe(contract.maxGuestEmailLength);
     const exported = bounds as unknown as Record<string, unknown>;
     for (const code of Object.values(contract.codes as Record<string, string>)) {
       expect(exported[code]).toBe(code);

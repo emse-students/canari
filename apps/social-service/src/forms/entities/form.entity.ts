@@ -1,3 +1,4 @@
+import type { GuestIdentityField } from '../guest-identity';
 import type { AudienceCondition } from '../../pricing/audience';
 import type { PriceMatrix } from '../../pricing/price-matrix';
 import {
@@ -118,6 +119,14 @@ export class Form {
    */
   @Column({ default: false })
   isPublic: boolean;
+
+  /**
+   * What a PUBLIC form asks a guest about who they are (migration 138, owner 2026-11-06): a list
+   * drawn from `lastName`, `firstName`, `email`, each required once asked. Null asks nothing - the
+   * default, and every form before 138. A member is never asked (`guest-identity.ts`).
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  guestFields: GuestIdentityField[] | null;
 
   /** When true, a user can submit the form multiple times (e.g. product orders). */
   @Column({ default: false })

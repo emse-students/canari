@@ -153,6 +153,23 @@ export class Submission {
   @Column({ type: 'varchar', length: 64, nullable: true, select: false })
   guestVisitorKey: string | null;
 
+  /**
+   * What a guest typed when the PUBLIC form asked for it (migration 138, `guest-identity.ts`): a
+   * last name, a first name, an e-mail - each null unless the form asked it. Never a member's: a
+   * member is never asked. When the form asks for the e-mail it is also the address Lydia's request
+   * went to; when it does not, that address is not stored (PP2).
+   */
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  guestLastName: string | null;
+
+  /** See `guestLastName`. */
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  guestFirstName: string | null;
+
+  /** See `guestLastName`. */
+  @Column({ type: 'varchar', length: 254, nullable: true })
+  guestEmail: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

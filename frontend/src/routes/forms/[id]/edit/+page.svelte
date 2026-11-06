@@ -80,6 +80,7 @@
     hasFileQuestion,
   } from '$lib/forms/fileQuestion';
   import { CircleAlert, FileText, ImagePlus, Users, X } from '@lucide/svelte';
+  import { askedGuestFields } from '$lib/forms/guestIdentity';
   import { m } from '$lib/paraglide/messages';
 
   const formId = $derived(page.params.id as string);
@@ -95,6 +96,8 @@
   let allowMultipleSubmissions = $state(false);
   let anonymous = $state(false);
   let isPublic = $state(false);
+  /** What a public form asks a guest (`guestIdentity.ts`); none by default. */
+  let guestFields = $state<string[]>([]);
 
   // Payment
   let basePrice = $state(0);
@@ -212,6 +215,7 @@
       allowMultipleSubmissions = f.allowMultipleSubmissions ?? false;
       anonymous = f.anonymous ?? false;
       isPublic = f.isPublic ?? false;
+      guestFields = askedGuestFields(f.guestFields);
       cashPaymentExpiryDays = f.cashPaymentExpiryDays ?? undefined;
       fileRetentionDays = f.fileRetentionDays ?? FILE_RETENTION_DEFAULT_DAYS;
       imageUrl = f.imageUrl ?? null;
@@ -342,6 +346,8 @@
         maxSubmissions,
         allowMultipleSubmissions,
         isPublic,
+        // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
+        guestFields: isPublic && !anonymous ? askedGuestFields(guestFields) : [],
         ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
         requiresPayment,
         // `associationId` is deliberately absent: it is fixed at creation and the API refuses a
@@ -562,6 +568,7 @@
       bind:anonymous
       anonymousFixed
       bind:isPublic
+      bind:guestFields
       profilePricing={pricesOnProfile(priceMatrix, requiresPayment)}
       {requiresPayment}
       bind:opensAt
