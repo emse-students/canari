@@ -1,0 +1,3 @@
+### Added - a post of several photos and videos now appears in CanaReels, swiped left and right
+
+A feed post of two to ten photos and videos (no file, poll, form, linked event or link in its text) is a carousel page in the CanaReels viewer: up and down still change the post, left and right change the photo or video, dots show the position, and only the visible video plays. Installed apps keep their lists through a new switch (`multiMedia`). Decisions in [reels](docs/wiki/frontend/modules/reels.md#carousel-pages---a-post-of-several-photos-and-videos-owner-2026-11-06), the server rule in [services/reels](docs/wiki/services/reels.md#reading).

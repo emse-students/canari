@@ -1380,6 +1380,35 @@ field, `SINGLE_PHOTO_POST_SQL` and the `'photos'` mode and cache-key suffix are 
 
 ---
 
+### No date yet - the CanaReels list asked with `multiMedia=true` AND both older switches (2026-11-06)
+
+**Site:** `buildListPostsSearchParams` in
+[`frontend/src/lib/posts/api.ts`](../../frontend/src/lib/posts/api.ts) (`multiMedia` sets
+`singleMedia` and `singlePhotos` too).
+**What it humours:** a social-service without the `multiMedia` switch (an estate deployed before
+this change) drops the unknown parameter; the two older switches keep the single pictures and
+videos coming, and the client simply draws no carousel it was not sent.
+**Removal condition:** both estates' social-service carry the change that introduced `multiMedia`
+(a stable deployed on production, the pre-release on dev). Then the client sends `multiMedia` alone
+and both lines go (this entry and the `singleMedia` + `singlePhotos` one above).
+**Cost of keeping it:** two redundant query parameters. The server reads `multiMedia` first.
+
+---
+
+### No date yet - `singleMedia=true` answered without carousels, after `multiMedia` exists (2026-11-06)
+
+**Site:** `singleMediaModeOf` and the `media` mode in
+[`apps/social-service/src/posts/full-screen-post-sql.ts`](../../apps/social-service/src/posts/full-screen-post-sql.ts).
+**What it humours:** every installed client up to the last release that does not send `multiMedia`
+asks `kind=reel&singleMedia=true`. Its `fullScreenPageOf` reads a post of several media as no page at
+all, draws it as a reel of its first media and logs an accusation, so the server must not hand it a
+carousel: `singleMedia` keeps meaning "one picture or one video".
+**Removal condition:** `minClientVersion` has passed the first stable that sends `multiMedia`. Then
+`singleMedia`, its DTO field, the `media` mode and its `+media` cache-key suffix go (with
+`singlePhotos`, per the entry above), and `multiMedia` becomes the only switch.
+**Cost of keeping it:** one more mode and cache-key variant; `posts.service.reels.spec.ts` pins that
+`singleMedia` alone never answers a carousel.
+
 ---
 
 Retired shims are not listed here. Each one's story is in `CHANGELOG.md` at the release that removed

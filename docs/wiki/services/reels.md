@@ -125,6 +125,24 @@ sheet read it like any post. Pagination order is unchanged (`publishedAt DESC, i
 exclusion, a legacy video by mime type) and `posts.service.reels.spec.ts` (the wiring in every arm,
 the precedence, and "means nothing without `kind=reel`").
 
+**`multiMedia=true` (with `kind=reel`, 2026-11-06)** adds the CAROUSELS to that list: the posts of
+**2 to 10 attachments, every one a picture or a video** (each by its `type`, or untyped with an
+`image/` or `video/` mime type), with the same exclusions (owner: *a post of several photos and
+videos, swiped left and right as on Instagram*; [client half](../frontend/modules/reels.md#carousel-pages---a-post-of-several-photos-and-videos-owner-2026-11-06)).
+The clause is `MULTI_MEDIA_POST_SQL` (same file), OR-ed with `SINGLE_MEDIA_POST_SQL` under the mode
+`carousel` (`singleMediaSql`). "Every element" is a `NOT EXISTS` over `jsonb_array_elements`, behind
+a `CASE` on `jsonb_typeof` for the same reason as the length: the function raises on a scalar. A
+file, an audio or an element with neither type nor mime keeps the whole post out; eleven or more
+attachments too (`CAROUSEL_MAX_MEDIA`, Instagram's cap). **Precedence: `multiMedia` > `singleMedia` >
+`singlePhotos`** (`singleMediaModeOf`), and each older switch keeps its meaning, so an installed
+client that sends `singleMedia` alone - and cannot draw a carousel - never receives one. The current
+client sends all three, so a server that does not know `multiMedia` still serves the single pictures
+and videos. The cache key carries `+carousel`. Pinned by `full-screen-post-sql.integration.spec.ts`
+(the bounds 10 and 11, a mix with a caption, a legacy element by mime, a file, an audio, an untyped
+element, each exclusion; the `carousel` mode is exactly the union of the two clauses) and
+`posts.service.reels.spec.ts` (every arm, `singleMedia` alone never answers a carousel, "means nothing
+without `kind=reel`").
+
 **Saving a feed video (decided 2026-11-06, reversible).** The 2026-10-09 rule *any reel can be
 saved* now covers a feed video shown in the viewer. It is saved under its OWN type, never relabelled
 an MP4: `saveReel.ts` takes the extension and the mime from `ref.mimeType` (mp4, mov, webm, m4v,

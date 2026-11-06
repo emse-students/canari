@@ -99,7 +99,7 @@ export interface PostListCacheKeyParts {
   offset: number;
   kind: string | undefined;
   /** The single-attachment posts the CanaReels list adds, or none (`full-screen-post-sql.ts`). */
-  singleMedia: 'photos' | 'media' | undefined;
+  singleMedia: 'photos' | 'media' | 'carousel' | undefined;
 }
 
 /**
