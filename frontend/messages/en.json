@@ -5347,5 +5347,7 @@
   "boot_connecting": "Connecting to Canari...",
   "boot_unreachable_title": "Cannot reach Canari from this network",
   "boot_unreachable_hint": "Your connection may be down or very slow. Check it, try Wi-Fi or mobile data, then retry. Canari resumes by itself when the network returns.",
-  "boot_unreachable_retry": "Retry"
+  "boot_unreachable_retry": "Retry",
+  "boot_server_error_title": "Canari is having a problem",
+  "boot_server_error_hint": "The server answered but could not open your session right now. Your connection is not the cause: retry in a few moments."
 }
