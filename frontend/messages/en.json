@@ -2725,6 +2725,91 @@
   "form_payment_disabled_anonymous": "Unavailable on an anonymous form: paying identifies the person.",
   "form_view_anonymous_notice": "Anonymous form: your answers are stored without your name. The organiser will only know that you answered, never what you answered.",
   "form_list_delete_anonymous_submission_confirm": "Delete this anonymous response?",
+  "form_status_refunded": "Refunded",
+  "form_responses_card_answers": "Responses",
+  "form_responses_card_guests": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "including {count} guest",
+        "countPlural=other": "including {count} guests"
+      }
+    }
+  ],
+  "form_responses_card_paid": "Paid",
+  "form_responses_card_paid_hint": "Lydia or cash received",
+  "form_responses_card_unpaid": "Unpaid (cash)",
+  "form_responses_card_unpaid_hint": "{amount} to collect",
+  "form_responses_card_collected": "Amount collected",
+  "form_responses_card_refunded_hint": "{amount} refunded",
+  "form_responses_card_collected_gross_hint": "Partial refunds not deducted",
+  "form_responses_tabs_label": "Response views",
+  "form_responses_tab_list": "Responses",
+  "form_responses_tab_totals": "Totals",
+  "form_responses_tab_summary": "Summary",
+  "form_responses_search": "Search",
+  "form_responses_filters_label": "Filter by payment",
+  "form_responses_filter_all": "All",
+  "form_responses_filter_paid": "Paid",
+  "form_responses_filter_unpaid": "Unpaid",
+  "form_responses_filter_refunded": "Refunded",
+  "form_responses_no_match": "No response matches.",
+  "form_responses_status_with_method": "{status} · {method}",
+  "form_responses_method_online": "Lydia",
+  "form_responses_method_cash": "cash",
+  "form_responses_mark_paid": "Mark as paid",
+  "form_responses_mark_paid_confirm": "Confirm that {name} paid {amount} in cash?",
+  "form_responses_mark_paid_error": "Could not mark this response as paid.",
+  "form_responses_totals_all": "Supplier order · all products",
+  "form_responses_units": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} piece",
+        "countPlural=other": "{count} pieces"
+      }
+    }
+  ],
+  "form_responses_count_unpaid": "Count unpaid responses",
+  "form_responses_count_unpaid_hint": "Cash orders not received yet. A refunded response never counts.",
+  "form_responses_total": "Total",
+  "form_responses_summary_managers_only": "Visible to the form's managers only.",
+  "form_responses_summary_answers": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} response",
+        "countPlural=other": "{count} responses"
+      }
+    }
+  ],
+  "form_responses_summary_units_chart": "Pieces per product",
+  "form_responses_summary_empty": "This form has no choice question.",
+  "form_responses_export_xlsx": "Excel",
+  "form_responses_export_xlsx_hint": "One row per response",
+  "form_responses_export_xlsx_grid_hint": "Two sheets: Items, Totals",
+  "form_responses_export_articles": "CSV · Items",
+  "form_responses_export_articles_hint": "One line per item ordered",
+  "form_responses_export_totals": "CSV · Totals",
+  "form_responses_export_totals_hint": "The supplier order",
+  "form_export_grid_articles_sheet": "Items",
+  "form_export_grid_totals_sheet": "Totals",
+  "form_export_grid_buyer": "Buyer",
+  "form_export_grid_question": "Question",
+  "form_export_grid_row": "Row",
+  "form_export_grid_column": "Column",
+  "form_export_grid_category": "Category",
+  "form_export_grid_others_category": "Others",
+  "form_export_grid_quantity": "Quantity",
+  "form_export_grid_unit_price": "Unit price",
+  "form_export_grid_line_total": "Line total",
+  "form_export_grid_total": "Total",
+  "form_export_grid_amount": "Amount",
+  "form_export_grid_received": "Paid or free",
+  "form_export_grid_awaiting_cash": "Cash not received",
   "form_opens_at_label": "Opening date (shotgun)",
   "form_opens_at_hint": "Leave empty to open immediately. Responses will be blocked before this date.",
   "form_requires_payment_label": "This form requires payment",

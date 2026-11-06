@@ -486,3 +486,104 @@ export function productGridView(grid: ProductGrid): ProductGridView {
     pricing: { mode: grid.pricing.mode },
   };
 }
+
+/**
+ * WHICH ANSWERS THE TOTALS COUNT - ONE RULE for the export's "Totaux" sheet and the responses
+ * screen's "Totaux" tab (owner, 2026-11-06). Units are counted as ordered when the money landed or
+ * nothing was owed (`paid`, `free`); an order placed in cash whose money is not received yet
+ * (`pending_cash`) is counted apart, and the screen's switch adds it or leaves it out. A refunded,
+ * cancelled, expired or still-pending online answer is never counted: no status outside these two
+ * lists ever reaches a total.
+ */
+export const PRODUCT_GRID_RECEIVED_STATUSES: readonly string[] = ['paid', 'free'];
+/** Ordered in cash, the money not yet received: counted apart, or added by the screen's switch. */
+export const PRODUCT_GRID_AWAITING_CASH_STATUSES: readonly string[] = ['pending_cash'];
+
+/** The lines of the answers whose status is in `statuses`, in the answers' order. */
+export function productGridLinesOf(
+  submissions: readonly { paymentStatus: string; lines?: readonly ProductGridLine[] | null }[],
+  statuses: readonly string[]
+): ProductGridLine[] {
+  const wanted = new Set(statuses);
+  return submissions
+    .filter((sub) => wanted.has(sub.paymentStatus))
+    .flatMap((sub) => (sub.lines ? [...sub.lines] : []));
+}
+
+/** Units and cents of one row, one column, or the whole grid. */
+export interface ProductGridSum {
+  units: number;
+  cents: number;
+}
+
+/** One grid's totals over a set of lines: per cell, per row, per column, and in all. */
+export interface ProductGridTotals {
+  /** The grid's rows as they stand, then any row the lines name that the grid no longer has. */
+  rows: ProductGridAxisEntry[];
+  /** The same for the columns. */
+  columns: ProductGridAxisEntry[];
+  /** `productGridCellKey` -> units and cents. A cell nobody ordered is absent. */
+  cells: Record<string, ProductGridSum>;
+  /** Row id -> its sum. Every listed row is present. */
+  rowTotals: Record<string, ProductGridSum>;
+  /** Column id -> its sum. Every listed column is present. */
+  columnTotals: Record<string, ProductGridSum>;
+  /** The grid's sum. */
+  total: ProductGridSum;
+}
+
+/**
+ * An axis as the totals list it: the grid's entries as they stand, then any entry the lines name
+ * that the grid no longer has (a deleted row keeps its past orders), under the label it was charged
+ * with.
+ */
+function axisWithPast(
+  current: readonly ProductGridAxisEntry[],
+  lines: readonly ProductGridLine[],
+  pick: (line: ProductGridLine) => ProductGridAxisEntry
+): ProductGridAxisEntry[] {
+  const axis = current.map((entry) => ({ id: entry.id, label: entry.label }));
+  const known = new Set(axis.map((entry) => entry.id));
+  for (const line of lines) {
+    const entry = pick(line);
+    if (known.has(entry.id)) continue;
+    known.add(entry.id);
+    axis.push(entry);
+  }
+  return axis;
+}
+
+/**
+ * Sums the lines of ONE grid question - its own, `itemId` matched - into its totals. Reads what was
+ * CHARGED (`submissions.lines`), never the grid's current prices.
+ */
+export function productGridTotals(
+  item: { id: string; productGrid: Pick<ProductGrid, 'rows' | 'columns'> },
+  lines: readonly ProductGridLine[]
+): ProductGridTotals {
+  const ownLines = lines.filter((line) => line.itemId === item.id);
+  const rows = axisWithPast(item.productGrid.rows, ownLines, (l) => ({
+    id: l.rowId,
+    label: l.rowLabel,
+  }));
+  const columns = axisWithPast(item.productGrid.columns, ownLines, (l) => ({
+    id: l.colId,
+    label: l.colLabel,
+  }));
+  const zero = (): ProductGridSum => ({ units: 0, cents: 0 });
+  const cells: Record<string, ProductGridSum> = {};
+  const rowTotals: Record<string, ProductGridSum> = {};
+  const columnTotals: Record<string, ProductGridSum> = {};
+  for (const row of rows) rowTotals[row.id] = zero();
+  for (const col of columns) columnTotals[col.id] = zero();
+  const total = zero();
+  for (const line of ownLines) {
+    const key = productGridCellKey(line.rowId, line.colId);
+    const cell = own(cells, key) ? cells[key] : (cells[key] = zero());
+    for (const sum of [cell, rowTotals[line.rowId], columnTotals[line.colId], total]) {
+      sum.units += line.quantity;
+      sum.cents += line.lineCents;
+    }
+  }
+  return { rows, columns, cells, rowTotals, columnTotals, total };
+}

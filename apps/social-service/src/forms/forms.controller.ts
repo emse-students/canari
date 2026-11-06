@@ -27,6 +27,7 @@ export const CONFIRM_PAYMENT_PER_MINUTE = 12;
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import { FormsService } from './forms.service';
 import { parseExportLabels } from './export-labels';
+import { parseExportFormat } from './product-grid-export';
 import { AssociationsService } from '../associations/associations.service';
 import { withOneEventIcsSig } from '../associations/agenda-signature';
 import { PurchaseRecordService } from '../users/purchase-record.service';
@@ -425,7 +426,8 @@ export class FormsController {
   }
 
   /**
-   * Exports all submissions for a form as an XLSX file download. Requires form owner or MANAGE_FORMS flag.
+   * Exports all submissions for a form as an XLSX file download - or, with `format`, one of a priced
+   * grid's two sheets as CSV (`product-grid-export.ts`). Requires form owner or MANAGE_FORMS flag.
    *
    * `labels` carries every word the file is written with, because this service has none - see
    * `export-labels.ts`. It is REQUIRED: a client that does not send it is refused rather than served
@@ -438,17 +440,22 @@ export class FormsController {
     @Res() res: Response,
     @Headers('x-user-id') xUserId: string,
     @Query('labels') rawLabels?: string,
-    @Headers('x-global-admin') ga?: string
+    @Headers('x-global-admin') ga?: string,
+    @Query('format') rawFormat?: string
   ) {
     await this.service.assertFormManager(id, xUserId, ga === 'true');
-    const { buffer, title } = await this.service.exportSubmissions(
+    const { buffer, title, extension } = await this.service.exportSubmissions(
       id,
-      parseExportLabels(rawLabels)
+      parseExportLabels(rawLabels),
+      parseExportFormat(rawFormat)
     );
 
     res.set({
-      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': contentDisposition(`${title}.xlsx`, 'export'),
+      'Content-Type':
+        extension === 'csv'
+          ? 'text/csv; charset=utf-8'
+          : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': contentDisposition(`${title}.${extension}`, 'export'),
       'Content-Length': buffer.byteLength,
     });
 

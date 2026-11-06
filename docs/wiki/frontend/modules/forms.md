@@ -1395,3 +1395,54 @@ the total bound, the real `ValidationPipe`), `product-grid-export.spec.ts` (the 
 back), `answer-text.spec.ts`, and against PostgreSQL `product-grid.integration.spec.ts` (migration
 137 twice, lines through jsonb, the reused row rewritten, the seat held then freed) and
 `refunds.integration.spec.ts` (a total refund of a grid order).
+
+### The responses screen (client half of WP-G4, 2026-11-06)
+
+The `/forms` accordion is now `FormResponsesPanel.svelte`, the owner-approved mockup reproduced with
+the app's tokens. Everything is derived from `getSubmissions` (no new read); the rules are pure
+functions in `lib/forms/responsesView.ts`.
+
+- **Summary cards**: answers (and how many are a guest's), and on a paid form paid, unpaid cash
+  (with the amount still to collect), amount collected (`paid` + `paid_over_capacity`, the money
+  that landed) and refunded. **A partial refund leaves its answer `paid` with `totalPaid` whole**
+  (only a refund of the whole payment writes `refunded`), so the amount it gave back is read from
+  the payment's refund standing (`RefundStanding.refundedCents`) and moved from collected to
+  refunded; a manager the refunds list refuses (403) cannot read it, and the card says the amount
+  is gross of partial refunds rather than show a net it does not know.
+- **"Réponses"**: a search over the name, a guest's reference and every answer's text (case and
+  accents folded), and four filter chips - *Toutes*, *Payées* (`paid`, `paid_over_capacity`), *Non
+  payées* (`pending_cash`: the unpaid state a manager acts on; an online `pending` is the payer's to
+  finish and reads under *Toutes* only), *Remboursées* (`refunded`). The table is
+  `FormSubmissionsTable`, which now marks a guest's answer **Invité** (no account on a non-anonymous
+  form; its name is the reference it was given), says how a paid answer paid (*Payé · Lydia* /
+  *Payé · espèces*), strikes a refunded amount, and draws two row actions: **Marquer payé** on a
+  `pending_cash` answer (the existing `validate-cash`) and **Rembourser** on a paid answer of an
+  association form, which opens the association's own `RefundDialog` on the payment that paid that
+  answer. The purchases list now carries `submissionId` for that; a manager without
+  `MANAGE_PRODUCTS` + `MANAGE_PAYOUT_ACCOUNT` gets a 403 there and simply sees no refund control.
+- **"Totaux"** (a form with a priced grid): one row x column table per grid with row, column and
+  grid totals, a grand total in pieces, and the switch **Compter les réponses non payées** (on by
+  default). **The counting rule is ONE implementation**: `PRODUCT_GRID_RECEIVED_STATUSES` (`paid`,
+  `free`), `PRODUCT_GRID_AWAITING_CASH_STATUSES` (`pending_cash`), `productGridLinesOf` and
+  `productGridTotals` moved into `product-grid-contract.ts` (copied byte for byte), and the export's
+  "Totaux" sheet calls the same functions. A refunded, cancelled, expired or still-pending answer is
+  in neither list, so it never counts (owner).
+- **"Résumé"**: a bar per option of every single choice, multiple choice and dropdown question
+  (refunded, cancelled and expired answers left out; a multiple choice counts once per ticked
+  option), plus pieces per product on a grid form. **Managers only** (owner): the whole screen is
+  - `getSubmissions` answers a form manager and nobody else - and the tab says so.
+- **Exporter**: the row's export control is now a menu (`FormExportMenu.svelte`): *Excel* (the
+  workbook), and on a grid form *CSV · Articles* and *CSV · Totaux*. A CSV is written by the server
+  from the SAME sheet the workbook carries (`GET /forms/:id/export?format=articles-csv|totals-csv`,
+  `sheetAsCsv`: `;`-separated with a byte-order mark, which a French spreadsheet opens as columns,
+  and every text cell starting with `=`, `+`, `-`, `@`, a tab or a carriage return prefixed with
+  `'` - a buyer's name or a row label is typed by someone else, and a CSV cell has no type to stop
+  a spreadsheet running it as a formula);
+  a CSV of a form without a grid is refused `EXPORT_FORMAT_NEEDS_PRODUCT_GRID`, an unknown format
+  `EXPORT_FORMAT_UNKNOWN`. `exportLabels()` now sends `productGrid` (16 Paraglide strings) on every
+  export, and `refunded` joined `PAYMENT_STATUSES`, so the file names that status in words too.
+
+Tests: `FormResponsesPanel.svelte.test.ts` (filters, search, the guest badge, the cards, the totals
+with and without unpaid cash, a closed cell, the bars, the refund control),
+`FormExportMenu.svelte.test.ts`, `product-grid-contract.spec.ts` (the counting rule) and
+`product-grid-export.spec.ts` (both CSVs read back, both refusals).

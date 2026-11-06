@@ -1,4 +1,4 @@
-import { answerText, type AnswerWords } from './answerText';
+import { answerText, type AnswerGridLine, type AnswerWords } from './answerText';
 import type { FormItem } from './api';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { m } from '$lib/paraglide/messages';
@@ -77,16 +77,19 @@ export interface AnsweredItem {
  * answers, and a list of what they did not say is longer than the list of what they did.
  *
  * `words` reads a FILE answer ("file" / "file deleted", never its id) and is required as soon as the
- * form asks for one - `answerText` throws without it rather than print an id.
+ * form asks for one - `answerText` throws without it rather than print an id. `lines` reads a PRICED
+ * GRID from what was charged (`submissions.lines`), so a row renamed since keeps the name it was
+ * ordered under.
  */
 export function answeredItems(
   items: FormItem[],
   answers: Record<string, unknown> | undefined,
-  words?: AnswerWords
+  words?: AnswerWords,
+  lines?: readonly AnswerGridLine[] | null
 ): AnsweredItem[] {
   if (!answers) return [];
   return items
-    .map((item) => ({ item, text: answerText(answers[item.id], item, words) }))
+    .map((item) => ({ item, text: answerText(answers[item.id], item, words, lines) }))
     .filter((answered) => answered.text !== '');
 }
 

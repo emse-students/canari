@@ -150,7 +150,14 @@ import {
   type ProductGridLine,
   type ProductGridPrices,
 } from './product-grid-contract';
-import { addProductGridSheets, productGridExportLabels } from './product-grid-export';
+import {
+  addProductGridSheets,
+  assertExportFormatFits,
+  csvSheetName,
+  productGridExportLabels,
+  sheetAsCsv,
+  type SubmissionsExportFormat,
+} from './product-grid-export';
 
 /** Generates a short random ID with the given prefix, e.g. "item_a3b9x1". */
 function makeId(prefix: string): string {
@@ -3045,12 +3052,15 @@ export class FormsService {
    */
   async exportSubmissions(
     formId: string,
-    labels: ExportLabels
-  ): Promise<{ buffer: Buffer; title: string }> {
+    labels: ExportLabels,
+    format: SubmissionsExportFormat = 'xlsx'
+  ): Promise<{ buffer: Buffer; title: string; extension: 'xlsx' | 'csv' }> {
     const form = await this.formRepo.findOne({ where: { id: formId } });
     if (!form) throw new NotFoundException('Form not found');
     // Refused BEFORE any read when a grid form's words are missing: never a file half in English.
     const gridWords = productGridExportLabels(form.items, labels);
+    // A CSV is one grid sheet: a form without a grid is refused here, not written empty.
+    assertExportFormatFits(format, gridWords);
 
     // Same order as the responses list, a payment over capacity first.
     const submissions = overCapacityFirst(
@@ -3152,8 +3162,18 @@ export class FormsService {
       );
     }
 
+    if (format !== 'xlsx' && gridWords) {
+      const sheet = csvSheetName(format, gridWords);
+      this.logger.debug(`[FORMS] export form=${formId.slice(0, 8)}: ${format} (sheet "${sheet}")`);
+      return {
+        buffer: await sheetAsCsv(workbook, sheet),
+        title: `${form.title} - ${sheet}`,
+        extension: 'csv',
+      };
+    }
+
     const buffer = (await workbook.xlsx.writeBuffer()) as unknown as Buffer;
-    return { buffer, title: form.title };
+    return { buffer, title: form.title, extension: 'xlsx' };
   }
 
   /** Subscribes a user to reminders for a form (upsert). Rejects if opensAt is null or already past. */

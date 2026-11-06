@@ -7,7 +7,11 @@ import {
 } from './export-labels';
 import { guestReference } from './guest-receipt';
 import type { ProductGridLine } from './product-grid-contract';
-import { productGridExportLabels } from './product-grid-export';
+import {
+  neutraliseCsvCell,
+  parseExportFormat,
+  productGridExportLabels,
+} from './product-grid-export';
 
 /**
  * THE PRICED GRID IN THE XLSX, READ BACK: the main sheet's "Vert / M x2; Noir / L x1", one
@@ -245,5 +249,61 @@ describe('the priced grid in the XLSX export', () => {
       'export label "productGrid.buyer" is missing'
     );
     expect(parseExportLabels(JSON.stringify(LABELS)).productGrid).toEqual(GRID_WORDS);
+  });
+
+  it('"CSV Totaux" is the Totaux sheet, ";"-separated, behind a byte-order mark', async () => {
+    const { buffer, title, extension } = await makeService().exportSubmissions(
+      'f1',
+      LABELS,
+      'totals-csv'
+    );
+    expect(extension).toBe('csv');
+    expect(title).toMatch(/ - Totaux$/);
+    const text = buffer.toString('utf8');
+    expect(text.charCodeAt(0)).toBe(0xfeff);
+    const lines = text.slice(1).split(/\r?\n/);
+    expect(lines).toContain('Vert;2;0;2;56');
+    expect(lines).toContain('Total;3;1;4;114');
+  });
+
+  it('"CSV Articles" is the Articles sheet, one line per ordered cell', async () => {
+    const { buffer, title } = await makeService().exportSubmissions('f1', LABELS, 'articles-csv');
+    expect(title).toMatch(/ - Articles$/);
+    const lines = buffer.toString('utf8').slice(1).trim().split(/\r?\n/);
+    // The header, then the five lines the workbook's own sheet holds.
+    expect(lines).toHaveLength(6);
+    expect(lines[1]).toContain(';Ada Lovelace;Sweat;Vert;M;Autres;2;28;56;Paye');
+  });
+
+  it('a CSV cell a spreadsheet would run as a formula is written as text', async () => {
+    const service = makeService();
+    (service as any).formRepo.manager.query = jest.fn(async () => [
+      { id: 'u1', firstName: '=HYPERLINK("http://x","y")', lastName: null },
+      { id: 'u2', firstName: '@SUM(A1)', lastName: null },
+      { id: 'u3', firstName: '-1+1', lastName: null },
+    ]);
+    const { buffer } = await service.exportSubmissions('f1', LABELS, 'articles-csv');
+    const text = buffer.toString('utf8');
+    expect(text).toContain(`;"'=HYPERLINK(""http://x"",""y"")";`);
+    expect(text).toContain(";'@SUM(A1);");
+    expect(text).toContain(";'-1+1;");
+    expect(neutraliseCsvCell(-3)).toBe(-3);
+    expect(neutraliseCsvCell('Vert')).toBe('Vert');
+  });
+
+  it('refuses a CSV of a form without a grid, coded, and an unknown format', async () => {
+    const service = makeService();
+    const plain = { ...LABELS };
+    (service as any).formRepo.findOne = jest.fn(async () => ({
+      id: 'f1',
+      title: 'Sondage',
+      items: [{ id: 'q', type: 'short_text', label: 'Nom' }],
+    }));
+    await expect(service.exportSubmissions('f1', plain, 'totals-csv')).rejects.toMatchObject({
+      response: { code: 'EXPORT_FORMAT_NEEDS_PRODUCT_GRID' },
+    });
+    expect(parseExportFormat(undefined)).toBe('xlsx');
+    expect(parseExportFormat('articles-csv')).toBe('articles-csv');
+    expect(() => parseExportFormat('pdf')).toThrow('export format "pdf" is not one of');
   });
 });
