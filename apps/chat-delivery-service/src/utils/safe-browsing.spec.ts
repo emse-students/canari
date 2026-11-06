@@ -109,7 +109,7 @@ describe('checkSafeBrowsing', () => {
     expect(takeSafeBrowsingRefusalCount()).toBe(0);
   });
 
-  it('classifies a 400 as a refusal, even when the body is not JSON', async () => {
+  it('treats a 400 as ambiguous: ERROR, transient TTL, not counted, even without a JSON body', async () => {
     process.env.GOOGLE_SAFE_BROWSING_API_KEY = 'test-key';
     const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation();
     const res = fakeResponse(false, 400, null);
@@ -120,10 +120,41 @@ describe('checkSafeBrowsing', () => {
 
     const verdict = await checkSafeBrowsing('https://example.com');
 
-    expect(verdict.kind).toBe('refused');
+    expect(verdict.kind).toBe('unavailable');
     expect(verdict.flagged).toBe(false);
+    expect(verdict.cacheTtlMs).toBe(5 * 60 * 1000);
     expect(String(errorSpy.mock.calls[0][0])).toContain('http=400');
+    expect(takeSafeBrowsingRefusalCount()).toBe(0);
+  });
+
+  it('classifies a 401 as a refusal and counts it', async () => {
+    process.env.GOOGLE_SAFE_BROWSING_API_KEY = 'test-key';
+    jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    jest
+      .spyOn(global, 'fetch')
+      .mockResolvedValue(
+        fakeResponse(false, 401, { error: { status: 'UNAUTHENTICATED', message: 'bad key' } })
+      );
+
+    const verdict = await checkSafeBrowsing('https://example.com');
+
+    expect(verdict.kind).toBe('refused');
+    expect(verdict.cacheTtlMs).toBe(60 * 60 * 1000);
     expect(takeSafeBrowsingRefusalCount()).toBe(1);
+  });
+
+  it('keeps a 429 (quota) transient: warn, not counted', async () => {
+    process.env.GOOGLE_SAFE_BROWSING_API_KEY = 'test-key';
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation();
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    jest.spyOn(global, 'fetch').mockResolvedValue(fakeResponse(false, 429, {}));
+
+    const verdict = await checkSafeBrowsing('https://example.com');
+
+    expect(verdict.kind).toBe('unavailable');
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(takeSafeBrowsingRefusalCount()).toBe(0);
   });
 
   it('keeps a 5xx transient: warn, short TTL, not counted', async () => {

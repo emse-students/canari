@@ -340,7 +340,6 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       ['reportCommitLogHealth', () => this.reportCommitLogHealth()],
       // After the GC above, so it counts only what the GC left - the population it cannot reach.
       ['reportOrphanDevices', () => this.reportOrphanDevices()],
-      ['reportSafeBrowsing', async () => this.reportSafeBrowsing()],
     ];
     for (const [name, run] of jobs) {
       // One failing job must never cost the others their only run of the deployment.
@@ -1155,7 +1154,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * The daily Safe Browsing refusal count (per replica, since the last report). Non-zero means the
+   * The daily Safe Browsing refusal count (per replica, since this process started or last reported;
+   * deliberately NOT in the boot sweep, where it would always read 0). Non-zero means the
    * link check is dead and every link reads "not flagged": logged at ERROR so it is read.
    */
   private reportSafeBrowsing() {

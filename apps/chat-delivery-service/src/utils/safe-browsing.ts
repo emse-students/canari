@@ -20,21 +20,24 @@ const CLEAN_VERDICT_TTL_MS = 30 * 60 * 1000;
 const FAILURE_TTL_MS = 5 * 60 * 1000;
 
 /**
- * How long a CONFIGURATION REFUSAL (400/401/403) is remembered: one hour. A refusal is an answer,
+ * How long a CONFIGURATION REFUSAL (401/403) is remembered: one hour. A refusal is an answer,
  * not an outage - it ends only when someone fixes the key or the project, so asking again every
  * 5 minutes would spend quota and log an ERROR per URL for nothing, while a whole day would hide
  * a fix. An hour bounds both.
  */
 const REFUSAL_TTL_MS = 60 * 60 * 1000;
 
-/** HTTP statuses that mean Google refused OUR configuration (bad request, bad key, API not allowed). */
-const CONFIGURATION_REFUSAL_STATUSES = new Set([400, 401, 403]);
+/**
+ * HTTP statuses that mean Google refused OUR configuration (bad key, API not allowed). A 400 is
+ * NOT among them: INVALID_ARGUMENT can be a malformed URL, so it cannot prove the key is bad.
+ */
+const CONFIGURATION_REFUSAL_STATUSES = new Set([401, 403]);
 
 /**
  * What a lookup came to, decided at the return and never read back from a message:
  * - `answered`: Google answered about the URL (flagged or clean);
- * - `refused`: Google refused our configuration (400/401/403) - the check is DEAD until fixed;
- * - `unavailable`: network error, timeout, 5xx or any other non-2xx - transient, fails open;
+ * - `refused`: Google refused our configuration (401/403) - the check is DEAD until fixed;
+ * - `unavailable`: network error, timeout, 5xx, 429 (quota) or any other non-2xx - transient, fails open;
  * - `unconfigured`: no API key set, no lookup made.
  */
 export type SafeBrowsingVerdictKind = 'answered' | 'refused' | 'unavailable' | 'unconfigured';
@@ -82,7 +85,7 @@ async function readGoogleError(res: Response): Promise<{ status: string; message
  *
  * Fails OPEN: a missing key, a network error, a timeout or a non-2xx response all resolve to
  * "not flagged" - a safety check that is unreachable must never become an outage for every link
- * in the app (WP-SAFELINK-1). A 400/401/403 is different in KIND, not in outcome: Google answered
+ * in the app (WP-SAFELINK-1). A 401/403 is different in KIND, not in outcome: Google answered
  * and refused our configuration, so it is classified `refused`, logged at ERROR and counted for
  * the daily report, instead of sharing the transient branch's warn and short retry. No SSRF guard
  * is needed here: unlike the link-preview fetch, the target of this request is Google's own fixed
@@ -127,6 +130,15 @@ export async function checkSafeBrowsing(url: string): Promise<SafeBrowsingVerdic
         `[SAFE_BROWSING] configuration refused: http=${res.status} status=${google.status} message=${google.message}`
       );
       return { flagged: false, cacheTtlMs: REFUSAL_TTL_MS, kind: 'refused' };
+    }
+
+    if (res.status === 400) {
+      // Ambiguous (malformed URL or bad request): ERROR with Google's diagnosis, but transient and uncounted.
+      const google = await readGoogleError(res);
+      logger.error(
+        `[SAFE_BROWSING] lookup rejected: http=400 status=${google.status} message=${google.message}`
+      );
+      return { flagged: false, cacheTtlMs: FAILURE_TTL_MS, kind: 'unavailable' };
     }
 
     if (!res.ok) {

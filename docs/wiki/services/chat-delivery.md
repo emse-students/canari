@@ -2293,15 +2293,22 @@ means no future caller can bypass it by forgetting to call `confirmUnsafeLinkIfN
   cannot answer must never become an outage for every link in the app; the config-side warning
   (`::warning::GOOGLE_SAFE_BROWSING_API_KEY is not set...` in `serve-prod.yml`) is the only trace of a
   missing key.
-- **A `400`, `401` or `403` is a refusal, not a transient failure** (2026-11-06). `checkSafeBrowsing`
+- **A `401` or `403` is a refusal, not a transient failure** (2026-11-06). `checkSafeBrowsing`
   returns a verdict with a `kind` (`answered`, `refused`, `unavailable`, `unconfigured`) decided at the
   return, never read from a message. A refusal means Google answered and rejected OUR configuration
-  (API not enabled, key restricted, no quota), so the check is dead until someone fixes it: it is still
+  (API not enabled, key restricted), so the check is dead until someone fixes it: it is still
   "not flagged" for the caller, but it logs at ERROR with Google's JSON `error.status` and
   `error.message` (never the key or the request URL), is cached for an hour (`REFUSAL_TTL_MS`), and is
-  counted. The daily `reportSafeBrowsing` job (`app.controller.ts`, with the other daily reports and
-  the boot sweep) prints `[SAFE_BROWSING] refusals=N` per replica, at ERROR when `N > 0`. The count is
-  in-process, since the last report. A network error or a `5xx` stays `unavailable`: warn, 5 minutes.
+  counted. The daily `reportSafeBrowsing` job (`app.controller.ts`, with the other daily reports)
+  prints `[SAFE_BROWSING] refusals=N` per replica, at ERROR when `N > 0`. The count is in-process, per
+  replica, since this process started or last reported, and the job is NOT in the boot sweep (it would
+  always read 0). A restart loses the count, so the per-refusal ERROR line is the real signal.
+  A network error or a `5xx` stays `unavailable`: warn, 5 minutes. A `429` (`RESOURCE_EXHAUSTED`) stays
+  `unavailable` too, so an exhausted quota does not show in the daily count. A `400`
+  (`INVALID_ARGUMENT`) is ambiguous - the backlog said "403 or 400", but measuring shows it can be a
+  malformed URL rather than a bad key - so it logs at ERROR with Google's status but is `unavailable`:
+  transient TTL, not counted. The one-hour refusal TTL means a fixed key takes up to an hour to take
+  effect, and the link-safety route sends `Cache-Control: public, max-age=3600` with that verdict.
   Why it exists: production answered `403` to every lookup (6 of 6 over 72 hours to 2026-11-05) and it
   read as a passing warning. The key was fixed on the Google side; on 2026-11-06 a lookup with
   production's own key on Google's malware test URL answered `200` with 1 match, and no `403` was
