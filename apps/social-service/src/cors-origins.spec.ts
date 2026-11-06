@@ -52,6 +52,13 @@ describe('CORS denial log', () => {
     expect(optionsFor('/api/posts', ['X-A']).exposedHeaders).toEqual(['X-A']);
   });
 
+  it('never silences the line for a path nginx would normalise to another route', () => {
+    expect(verdict('/api/public/../posts', 'https://crafted.example')).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(isEdgeOwnedCorsPath('/api/public/%2E%2e/posts')).toBe(false);
+    expect(isEdgeOwnedCorsPath('/api/public%2Fx')).toBe(false);
+  });
+
   it('matches the prefix on a path, not a lookalike', () => {
     expect(isEdgeOwnedCorsPath('/api/public/forms/1?x=1')).toBe(true);
     expect(isEdgeOwnedCorsPath('/api/publicity')).toBe(false);

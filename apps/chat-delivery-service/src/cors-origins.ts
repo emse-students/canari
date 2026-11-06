@@ -92,6 +92,10 @@ export const EDGE_OWNED_CORS_PREFIXES = ['/api/public/'] as const;
 /** True when the edge nginx, not this service, decides the CORS answer for `url`. */
 export function isEdgeOwnedCorsPath(url: string | undefined): boolean {
   if (!url) return false;
+  // nginx normalises `..` and percent-encoded dots and slashes before choosing a location, so a
+  // crafted path could LOOK like a public one here while the edge answers it as another route:
+  // such a path never silences the line for itself.
+  if (url.includes('..') || url.includes('\\') || /%2[ef]|%5c/i.test(url)) return false;
   return EDGE_OWNED_CORS_PREFIXES.some((prefix) => url.startsWith(prefix));
 }
 

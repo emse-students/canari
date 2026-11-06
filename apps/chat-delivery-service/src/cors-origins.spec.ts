@@ -1,10 +1,21 @@
+import type { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 import {
   buildAllowedOrigins,
   corsOptions,
+  isEdgeOwnedCorsPath,
   CORS_PREFLIGHT_MAX_AGE_S,
   isAllowedOrigin,
   TAURI_WEBVIEW_ORIGINS,
 } from './cors-origins';
+
+/** The options the delegate hands `cors` for an ordinary credentialed request. */
+function optionsFor(allowed: Set<string>, exposed: string[] = []) {
+  let out: CorsOptions | undefined;
+  corsOptions(allowed, exposed)({ originalUrl: '/api/messages' }, (_err, options) => {
+    out = options as CorsOptions;
+  });
+  return out as CorsOptions;
+}
 
 /**
  * Guards the allowlist against the way it broke: a client platform whose origin nobody wrote down.
@@ -69,11 +80,19 @@ describe('cors-origins', () => {
 
   // A Bearer read from the phone apps preflights `authorization`; a `*` answer does not cover it.
   it('names back the preflight headers rather than a wildcard, and caches the preflight', () => {
-    const options = corsOptions(allowed, ['X-Exposed']);
+    const options = optionsFor(allowed, ['X-Exposed']);
     expect(options.allowedHeaders).toBeUndefined();
     expect(options.maxAge).toBe(CORS_PREFLIGHT_MAX_AGE_S);
     expect(options.credentials).toBe(true);
     expect(options.exposedHeaders).toEqual(['X-Exposed']);
-    expect(corsOptions(allowed)).not.toHaveProperty('exposedHeaders');
+    expect(optionsFor(allowed)).not.toHaveProperty('exposedHeaders');
+  });
+
+  it('skips the denial log only for a clean edge-owned path', () => {
+    expect(isEdgeOwnedCorsPath('/api/public/associations')).toBe(true);
+    expect(isEdgeOwnedCorsPath('/api/public/../posts')).toBe(false);
+    expect(isEdgeOwnedCorsPath('/api/public/%2e%2e/posts')).toBe(false);
+    expect(isEdgeOwnedCorsPath('/api/public%2fx')).toBe(false);
+    expect(isEdgeOwnedCorsPath('/api/public/a\b')).toBe(false);
   });
 });
