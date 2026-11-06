@@ -50,6 +50,14 @@ function isPlaying(el: HTMLMediaElement) {
   return !el.paused && !el.ended;
 }
 
+/** Whether a registered `<video>` (not an audio-only media) is playing right now. */
+export function isVideoPlaying(): boolean {
+  for (const el of registry.keys()) {
+    if (el instanceof HTMLVideoElement && isPlaying(el)) return true;
+  }
+  return false;
+}
+
 /** Whether a non-ambient registered media (other than `except`) is playing right now. */
 export function isForegroundPlaying(except?: HTMLMediaElement): boolean {
   for (const [el, { ambient }] of registry) {
@@ -83,13 +91,19 @@ function isAnythingPlaying(): boolean {
 
 /**
  * Pauses every registered media playing but `except`, restricted to the ambient ones when
- * `ambientOnly`. Also what a recorder calls (without `except`): a microphone open next to a speaker
+ * `ambientOnly`. `videoOnly` leaves audio-only media (a voice note) alone. Also what a recorder calls (without `except`): a microphone open next to a speaker
  * is feedback, and a clip with the previous one in it.
  */
-export function pausePlayback(except?: HTMLMediaElement, ambientOnly = false, reason = 'claim') {
+export function pausePlayback(
+  except?: HTMLMediaElement,
+  ambientOnly = false,
+  reason = 'claim',
+  videoOnly = false
+) {
   for (const [el, { ambient }] of registry) {
     if (el === except || !isPlaying(el)) continue;
     if (ambientOnly && !ambient) continue;
+    if (videoOnly && !(el instanceof HTMLVideoElement)) continue;
     Log.d('VIDEO', `playback arbiter: pausing a ${el.tagName.toLowerCase()} (${reason})`);
     el.pause();
   }
