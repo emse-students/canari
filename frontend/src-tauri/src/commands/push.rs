@@ -2033,7 +2033,130 @@ fn write_session_push_context(
         "pushToken": push_token,
         "locale": locale,
     });
-    std::fs::write(data_dir.join(PUSH_CONTEXT_FILE), json.to_string()).map_err(|e| e.to_string())
+    write_push_context_file(data_dir, &json.to_string())
+}
+
+/// Replaces `push_context.json` with `json` and makes the notification extension's copy in the iOS
+/// App Group follow it - the ONE writer of the file, called by every edit under [`PUSH_CONTEXT_LOCK`]
+/// (the caller holds it).
+///
+/// **WHY AT THE WRITE, NOT AT A LIFECYCLE EVENT** (the rule `mls.bin` met first, #3040). The copy was
+/// made only by `CanariMirrorPushStateToAppGroup` at `didBecomeActive` / `willResignActive`; a
+/// process killed in the foreground never resigns, so an account switch in the foreground followed
+/// by such a kill left the extension pairing account B's state (which follows every write) with A's
+/// context - a generic banner for every push until the app was opened and left again.
+pub(crate) fn write_push_context_file(
+    data_dir: &std::path::Path,
+    json: &str,
+) -> Result<(), String> {
+    write_push_context_file_then(data_dir, json, follow_push_context_in_extension)
+}
+
+/// [`write_push_context_file`] with the follower handed in - the App Group exists only on a device,
+/// so a test hands a directory of its own. The follower runs only once the file is written.
+fn write_push_context_file_then(
+    data_dir: &std::path::Path,
+    json: &str,
+    follow: impl FnOnce(&std::path::Path),
+) -> Result<(), String> {
+    std::fs::write(data_dir.join(PUSH_CONTEXT_FILE), json).map_err(|e| e.to_string())?;
+    follow(data_dir);
+    Ok(())
+}
+
+/// Makes the extension's `push_context.json` follow `data_dir`'s, on iOS; nothing elsewhere, where
+/// no extension exists. A failure is logged and not returned: the app's own file IS written, and
+/// failing the edit would make the app lose a context it holds for the sake of a copy.
+pub(crate) fn follow_push_context_in_extension(data_dir: &std::path::Path) {
+    #[cfg(target_os = "ios")]
+    match crate::app_group::app_group_dir() {
+        Ok(group) => {
+            if let Err(e) = sync_push_context_copy(data_dir, &group) {
+                log::error!(
+                    "[PushCtx] the extension's copy of the push context was not refreshed: {e}"
+                );
+            }
+        }
+        Err(e) => log::error!(
+            "[PushCtx] no App Group container - the extension's push context was not refreshed: {e}"
+        ),
+    }
+    #[cfg(not(target_os = "ios"))]
+    let _ = data_dir;
+}
+
+/// `data_dir`'s `push_context.json` copied into `group` atomically (tmp + rename: the extension reads
+/// it from another process), or `group`'s copy removed when `data_dir` holds none.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn sync_push_context_copy(
+    data_dir: &std::path::Path,
+    group: &std::path::Path,
+) -> Result<(), String> {
+    let copy = group.join(PUSH_CONTEXT_FILE);
+    match std::fs::read(data_dir.join(PUSH_CONTEXT_FILE)) {
+        Ok(bytes) => {
+            let tmp = group.join(format!("{PUSH_CONTEXT_FILE}.tmp"));
+            std::fs::write(&tmp, bytes)
+                .and_then(|()| std::fs::rename(&tmp, &copy))
+                .map_err(|e| format!("copy {PUSH_CONTEXT_FILE}: {e}"))?;
+            log::debug!("[PushCtx] the extension's copy of the push context follows the app's");
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => match std::fs::remove_file(&copy) {
+            Ok(()) => {
+                log::info!("[PushCtx] no push context in the app - the extension's copy removed");
+                Ok(())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!("remove the {PUSH_CONTEXT_FILE} copy: {e}")),
+        },
+        Err(e) => Err(format!("{PUSH_CONTEXT_FILE} unreadable: {e}")),
+    }
+}
+
+/// The activation mirror's push-context half: [`sync_push_context_copy`] UNDER [`PUSH_CONTEXT_LOCK`],
+/// so a mirror cannot read the file before an edit and write its copy after the edit's own - the
+/// copy every edit makes is the newest. It only catches up a copy an earlier build left stale.
+#[cfg(target_os = "ios")]
+fn mirror_push_context_copy(data_dir: &std::path::Path, group: &std::path::Path) -> i32 {
+    log::debug!("[PushCtx] activation mirror of the push context into the App Group");
+    let _guard = push_context_guard();
+    match sync_push_context_copy(data_dir, group) {
+        Ok(()) => crate::commands::mls_account_state::MIRROR_OK,
+        Err(e) => {
+            log::error!("[PushCtx] activation mirror of the push context failed: {e}");
+            crate::commands::mls_account_state::MIRROR_FAILED
+        }
+    }
+}
+
+/// The C entry of [`mirror_push_context_copy`], called by `CanariMirrorPushStateToAppGroup`
+/// (`canari_push.mm`) with the app data directory. Answers one of the `MIRROR_*` codes of
+/// `mls_account_state.rs` (`CANARI_MLS_MIRROR_*` in `canari_rust_bridge.h`), which the caller logs.
+///
+/// # Safety
+/// `data_dir` is null or a valid NUL-terminated string for the duration of the call.
+#[cfg(target_os = "ios")]
+#[no_mangle]
+pub unsafe extern "C" fn canari_ios_mirror_push_context_to_app_group(
+    data_dir: *const std::os::raw::c_char,
+) -> i32 {
+    use crate::commands::mls_account_state::{MIRROR_NO_DIR, MIRROR_NO_GROUP};
+    if data_dir.is_null() {
+        return MIRROR_NO_DIR;
+    }
+    // SAFETY: non-null, and NUL-terminated for the call by this function's contract.
+    let Ok(dir) = std::ffi::CStr::from_ptr(data_dir).to_str() else {
+        return MIRROR_NO_DIR;
+    };
+    let group = match crate::app_group::app_group_dir() {
+        Ok(group) => group,
+        Err(e) => {
+            log::error!("[PushCtx] activation mirror: no App Group container: {e}");
+            return MIRROR_NO_GROUP;
+        }
+    };
+    mirror_push_context_copy(std::path::Path::new(dir), &group)
 }
 
 /// Mirrors THIS DEVICE'S IDENTITY, and nothing else, so it survives the WebView losing
@@ -2088,7 +2211,7 @@ pub(crate) fn store_device_identity(
 
     ctx.insert("userId".to_string(), serde_json::Value::String(user_id));
     ctx.insert("deviceId".to_string(), serde_json::Value::String(device_id));
-    std::fs::write(&path, serde_json::Value::Object(ctx).to_string()).map_err(|e| e.to_string())
+    write_push_context_file(&data_dir, &serde_json::Value::Object(ctx).to_string())
 }
 
 /// The language a background notification falls back to when nothing has been mirrored yet.
@@ -2135,7 +2258,7 @@ pub(crate) fn set_push_context_locale(locale: String, app: tauri::AppHandle) -> 
         Err(_) => return Ok(()),
     };
     ctx.insert("locale".to_string(), serde_json::Value::String(locale));
-    std::fs::write(&path, serde_json::Value::Object(ctx).to_string()).map_err(|e| e.to_string())
+    write_push_context_file(&data_dir, &serde_json::Value::Object(ctx).to_string())
 }
 
 /// Reads {app_data_dir}/push_context.json and returns its contents.
@@ -2320,8 +2443,8 @@ pub(crate) const PUSH_CONTEXT_FILE: &str = "push_context.json";
 
 /// Deletes the push-side files of a DELETED account (WP-DEL-LOCAL) - see [`remove_user_push_files`].
 ///
-/// On iOS the App Group container is part of the deletion: `CanariMirrorPushStateToAppGroup`
-/// copies `push_context.json` there and the notification extension writes its decrypted
+/// On iOS the App Group container is part of the deletion: every edit of `push_context.json` copies it
+/// there ([`write_push_context_file`]) and the notification extension writes its decrypted
 /// `fcm_message_cache.ndjson` there, and neither writer ever deletes. With no container the
 /// app's own files still go and the error is returned: the mirror resolves the container through
 /// the same entitlement, so a container this call cannot reach is one nothing was copied into.
@@ -3421,5 +3544,56 @@ mod push_context_lock_tests {
         );
         assert_eq!(owner(&dir).as_deref(), Some("new"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod push_context_copy_tests {
+    use super::{sync_push_context_copy, write_push_context_file_then, PUSH_CONTEXT_FILE};
+
+    fn scratch(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let root =
+            std::env::temp_dir().join(format!("canari_push_ctx_copy_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (app, group) = (root.join("app"), root.join("group"));
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::create_dir_all(&group).unwrap();
+        (app, group)
+    }
+
+    /// Every edit is followed into the extension's directory, with the bytes the edit wrote.
+    #[test]
+    fn an_edit_is_followed_into_the_extension_copy() {
+        let (app, group) = scratch("follow");
+        write_push_context_file_then(&app, r#"{"userId":"b"}"#, |dir| {
+            sync_push_context_copy(dir, &group).unwrap()
+        })
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(group.join(PUSH_CONTEXT_FILE)).unwrap(),
+            r#"{"userId":"b"}"#
+        );
+        assert!(!group.join(format!("{PUSH_CONTEXT_FILE}.tmp")).exists());
+    }
+
+    /// A write that failed is not followed: the copy never runs ahead of the app's file.
+    #[test]
+    fn a_failed_edit_is_not_followed() {
+        let (app, _) = scratch("fail");
+        let mut followed = false;
+        let refused = write_push_context_file_then(&app.join("missing"), "{}", |_| followed = true);
+        assert!(refused.is_err());
+        assert!(!followed);
+    }
+
+    /// The app holding no context leaves the extension none either - never the previous account's.
+    #[test]
+    fn no_context_in_the_app_removes_the_extension_copy() {
+        let (app, group) = scratch("remove");
+        std::fs::write(group.join(PUSH_CONTEXT_FILE), r#"{"userId":"a"}"#).unwrap();
+        sync_push_context_copy(&app, &group).unwrap();
+        assert!(!group.join(PUSH_CONTEXT_FILE).exists());
+        // ...and an absent copy is nothing to remove.
+        sync_push_context_copy(&app, &group).unwrap();
     }
 }

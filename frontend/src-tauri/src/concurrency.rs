@@ -709,20 +709,12 @@ fn background_write_mls_bin_compare_and_swap<R>(
     Ok(then())
 }
 
-/// Writes `data` to `path` atomically: write to a temporary file followed by a `rename(2)`, which
-/// is atomic on Linux/Android within the same filesystem. Guarantees a reader never sees a
-/// partially written file.
-pub(crate) fn write_mls_bin_atomically(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
-    let tmp = path.with_extension("bin.tmp");
-    std::fs::write(&tmp, data).map_err(|e| format!("write mls.bin.tmp: {e}"))?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("rename mls.bin.tmp -> mls.bin: {e}"))
-}
-
 /// Writes the SLOT - `<data_dir>/mls.bin`, the state the app runs on - and makes the iOS
 /// notification extension's copy in the App Group follow it, in the caller's hold of
-/// [`mls_bin_write_lock`]. EVERY write of the slot goes through here: the test
-/// `only_the_slot_writer_writes_mls_bin` refuses a [`write_mls_bin_atomically`] call anywhere else
-/// in the crate's non-test code.
+/// [`mls_bin_write_lock`]. EVERY write of the slot goes through here, and THE COMPILER SAYS SO: the
+/// atomic write is private to `slot_file`, whose only other item is the follower-taking writer
+/// below - so no other code of the crate, test code included, can write `mls.bin` bytes without the
+/// copy following them.
 ///
 /// **WHY AT THE WRITE, NOT AT A LIFECYCLE EVENT** (`1.6.5-alpha.1`, iPhone 12): the copy was made
 /// only at `didBecomeActive` and `willResignActive` (`canari_ios.mm`). A DM created while the app
@@ -739,22 +731,39 @@ pub(crate) fn write_slot_mls_bin(slot: &std::path::Path, data: &[u8]) -> Result<
     )
 }
 
-/// [`write_slot_mls_bin`] with the follower handed in - the App Group exists only on a device, so a
-/// test hands a directory of its own. The follower runs only once the slot is written.
-fn write_slot_mls_bin_then(
-    slot: &std::path::Path,
-    data: &[u8],
-    follow: impl FnOnce(&std::path::Path),
-) -> Result<(), String> {
-    write_mls_bin_atomically(slot, data)?;
-    match slot.parent() {
-        Some(data_dir) => follow(data_dir),
-        None => log::error!(
-            "[MLS] the slot written has no directory - the extension's copy does not follow it"
-        ),
+/// The slot's bytes reach the disk here and nowhere else. Until 2026-11-06 the rule was a source
+/// scan (`only_the_slot_writer_writes_mls_bin`) refusing a call of the atomic write outside the slot
+/// writer; the write is now PRIVATE to this module, so a second caller is a compile error rather
+/// than a test failure - the same rule at a stronger layer.
+mod slot_file {
+    /// Writes `data` to `path` atomically: write to a temporary file followed by a `rename(2)`,
+    /// which is atomic within one filesystem. Guarantees a reader never sees a partially written
+    /// file. Private: [`write_slot_mls_bin_then`] is its only caller.
+    fn write_mls_bin_atomically(path: &std::path::Path, data: &[u8]) -> Result<(), String> {
+        let tmp = path.with_extension("bin.tmp");
+        std::fs::write(&tmp, data).map_err(|e| format!("write mls.bin.tmp: {e}"))?;
+        std::fs::rename(&tmp, path).map_err(|e| format!("rename mls.bin.tmp -> mls.bin: {e}"))
     }
-    Ok(())
+
+    /// [`super::write_slot_mls_bin`] with the follower handed in - the App Group exists only on a
+    /// device, so a test hands a directory of its own. The follower runs only once the slot is
+    /// written.
+    pub(super) fn write_slot_mls_bin_then(
+        slot: &std::path::Path,
+        data: &[u8],
+        follow: impl FnOnce(&std::path::Path),
+    ) -> Result<(), String> {
+        write_mls_bin_atomically(slot, data)?;
+        match slot.parent() {
+            Some(data_dir) => follow(data_dir),
+            None => log::error!(
+                "[MLS] the slot written has no directory - the extension's copy does not follow it"
+            ),
+        }
+        Ok(())
+    }
 }
+use slot_file::write_slot_mls_bin_then;
 
 /// Writes the MLS state to `{app_data_dir}/mls.bin` under the global lock, refreshing the
 /// foreground guard.
@@ -1324,49 +1333,6 @@ mod tests {
             write_slot_mls_bin_then(&dir.join("mls.bin"), b"never written", |_| followed = true);
         assert!(refused.is_err());
         assert!(!followed);
-    }
-
-    /// The source half of the guarantee: a slot written by anything but [`write_slot_mls_bin`] is a
-    /// state the extension would not see until the next activation. Every call of
-    /// [`write_mls_bin_atomically`] in non-test code is the slot writer's own.
-    #[test]
-    fn only_the_slot_writer_writes_mls_bin() {
-        fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-            for entry in std::fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_dir() {
-                    rust_files(&path, out);
-                } else if path.extension().is_some_and(|e| e == "rs") {
-                    out.push(path);
-                }
-            }
-        }
-        let mut files = Vec::new();
-        rust_files(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
-            &mut files,
-        );
-        assert!(files.len() > 10, "the crate's sources were not found");
-        let mut callers = Vec::new();
-        for file in files {
-            let src = std::fs::read_to_string(&file).unwrap();
-            // The non-test part: everything before the file's test module.
-            let shipped = src.split("#[cfg(test)]\nmod ").next().unwrap();
-            for (n, line) in shipped.lines().enumerate() {
-                let code = line.split("//").next().unwrap();
-                if code.contains("write_mls_bin_atomically(")
-                    && !code.contains("fn write_mls_bin_atomically(")
-                {
-                    callers.push(format!("{}:{}", file.display(), n + 1));
-                }
-            }
-        }
-        assert_eq!(
-            callers.len(),
-            1,
-            "the slot writer must be the only caller: {callers:?}"
-        );
-        assert!(callers[0].contains("concurrency.rs"), "{callers:?}");
     }
 
     /// A checkpoint asked of an empty slot is refused with the typed code, never a silent success.

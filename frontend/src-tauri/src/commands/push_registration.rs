@@ -90,8 +90,8 @@ pub(crate) fn end_push_registration_files(
         crate::commands::storage::remove_entry(&data_dir.join(name), &mut removed, &mut failures);
     }
     if let Some(dir) = extension_dir {
-        // The extension's copies: its secret, and the context it decrypts with. The next mirror
-        // (`CanariMirrorPushStateToAppGroup`) copies the stripped context back, never this one.
+        // The extension's copies: its secret, and the context it decrypts with - the stripped
+        // context the strip above copied there goes too, the extension needing none signed out.
         for name in [EXTENSION_PUSH_SECRET_FILE, PUSH_CONTEXT_FILE] {
             crate::commands::storage::remove_entry(&dir.join(name), &mut removed, &mut failures);
         }
@@ -126,13 +126,18 @@ fn keep_device_context_only(data_dir: &std::path::Path) -> Result<(), String> {
     let Ok(serde_json::Value::Object(ctx)) = serde_json::from_slice::<serde_json::Value>(&bytes)
     else {
         log::error!("[PushEnd] {PUSH_CONTEXT_FILE} is not a JSON object - removed whole");
-        return std::fs::remove_file(&path).map_err(|e| e.to_string());
+        std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+        crate::commands::push::follow_push_context_in_extension(data_dir);
+        return Ok(());
     };
     let kept: serde_json::Map<String, serde_json::Value> = ctx
         .into_iter()
         .filter(|(k, _)| DEVICE_CONTEXT_KEYS.contains(&k.as_str()))
         .collect();
-    std::fs::write(&path, serde_json::Value::Object(kept).to_string()).map_err(|e| e.to_string())
+    crate::commands::push::write_push_context_file(
+        data_dir,
+        &serde_json::Value::Object(kept).to_string(),
+    )
 }
 
 /// Removes [`SIGNED_OUT_FILE`]: the server has just answered a registration, so this device is a

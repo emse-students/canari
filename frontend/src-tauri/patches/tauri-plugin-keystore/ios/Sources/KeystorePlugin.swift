@@ -4,6 +4,17 @@ import UIKit
 import WebKit
 
 import LocalAuthentication
+import os
+
+/// CANARI PATCH: the plugin's native log. A Swift `NSLog` reaches the unified log WHOLE as
+/// `<private>` on a store build, literal text included (the tab-bar plugin's line, `1.6.4-alpha.4`;
+/// the notification extension's, `1.6.5-alpha.1`) - so a failed background keychain write, the one
+/// that leaves every push generic, was unreadable. A `Logger`'s literal text is public, and each
+/// interpolation names its privacy: an `OSStatus` only, never an alias or a key
+/// (`nativeLogContent.test.ts` refuses a Swift `NSLog` anywhere the app compiles).
+enum KeystoreLog {
+  static let log = Logger(subsystem: "fr.emse.canari", category: "keystore")
+}
 
 /// Keychain service namespacing every item this plugin writes. Each key-bytes item is then
 /// addressed by an account built from the caller's alias (`mls_key_<alias>` for the app process,
@@ -113,7 +124,8 @@ class KeystorePlugin: Plugin {
     guard bgStatus == errSecSuccess else {
       // Hard failure: the NSE has no JSON fallback to read the key from any more, so a silently
       // skipped background item means every push shows generic text with nothing in the logs.
-      NSLog("[KeystorePlugin] storeKeyBytes: background keychain item failed (status=\(bgStatus))")
+      KeystoreLog.log.error(
+        "[KeystorePlugin] storeKeyBytes: background keychain item failed (status=\(bgStatus, privacy: .public))")
       throw NSError(
         domain: NSOSStatusErrorDomain, code: Int(bgStatus), userInfo: nil)
     }
@@ -150,12 +162,13 @@ class KeystorePlugin: Plugin {
 
       let status = SecItemAdd(addQuery as CFDictionary, nil)
       guard status == errSecSuccess else {
-        NSLog("[KeystorePlugin] storeKeyBytes: primary keychain item failed (status=\(status))")
+        KeystoreLog.log.error(
+          "[KeystorePlugin] storeKeyBytes: primary keychain item failed (status=\(status, privacy: .public))")
         throw NSError(
           domain: NSOSStatusErrorDomain, code: Int(status), userInfo: nil)
       }
     } else {
-      NSLog(
+      KeystoreLog.log.notice(
         "[KeystorePlugin] storeKeyBytes: no device passcode - no biometric item, background copy only")
     }
 
@@ -232,7 +245,8 @@ class KeystorePlugin: Plugin {
       return
     }
     guard status == errSecSuccess, let data = item as? Data else {
-      NSLog("[KeystorePlugin] getKeyBytesUnattended: ERROR bg item read failed (status=\(status))")
+      KeystoreLog.log.error(
+        "[KeystorePlugin] getKeyBytesUnattended: ERROR bg item read failed (status=\(status, privacy: .public))")
       throw NSError(
         domain: NSOSStatusErrorDomain, code: Int(status), userInfo: nil)
     }
@@ -265,7 +279,8 @@ class KeystorePlugin: Plugin {
     ]
     let bgStatus = SecItemDelete(bgQuery as CFDictionary)
     if bgStatus != errSecSuccess && bgStatus != errSecItemNotFound {
-      NSLog("[KeystorePlugin] deleteKeyBytes: bg item delete failed (status=\(bgStatus))")
+      KeystoreLog.log.error(
+        "[KeystorePlugin] deleteKeyBytes: bg item delete failed (status=\(bgStatus, privacy: .public))")
     }
 
     invoke.resolve()

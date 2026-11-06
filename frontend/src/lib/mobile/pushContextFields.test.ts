@@ -84,7 +84,7 @@ describe('push_context.json contract (Rust writer vs 3 native readers)', () => {
   const rustJsonBlock = functionBody(
     rustSource,
     /fn write_session_push_context/,
-    /std::fs::write\(data_dir\.join\(PUSH_CONTEXT_FILE\)/
+    /write_push_context_file\(data_dir, &json\.to_string\(\)\)/
   );
   const rustKeys = extractKeys(rustJsonBlock, /"(\w+)"\s*:/g);
 
@@ -179,7 +179,7 @@ describe('push_context.json contract (Rust writer vs 3 native readers)', () => {
     const identityBlock = functionBody(
       rustSource,
       /fn store_device_identity/,
-      /std::fs::write\(&path/
+      /write_push_context_file\(&data_dir, /
     );
     const identityKeys = extractKeys(identityBlock, /ctx\.insert\("(\w+)"/g);
 

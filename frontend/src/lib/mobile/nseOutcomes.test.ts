@@ -99,14 +99,17 @@ describe('the extension and the reader agree on the file contract', () => {
     expect(block).not.toMatch(/flock\(lockFd, LOCK_EX\)/);
     expect(swift).toContain('"nse_done."');
     expect(rust).toContain('"nse_done."');
-    // A marker is stamped with its boot, which the reader compares.
-    // ...by its boot SESSION, an identity compared for equality: `kern.boottime` moves when the
-    // clock is stepped and would call a live run killed.
-    expect(block).toContain('fields["boot"] = session');
-    expect(block).toContain('sysctlbyname("kern.bootsessionuuid"');
-    expect(rust).toContain('c"kern.bootsessionuuid"');
-    expect(rust).toContain('marker.text("boot")');
-    expect(`${block}\n${rust}`).not.toMatch(/KERN_BOOTTIME/);
+    // A marker is stamped with the continuous uptime, which the reader compares one-sidedly: a
+    // stamp ahead of its own reading was written before a reboot. Not `kern.bootsessionuuid`, which
+    // the extension's sandbox refuses (EPERM, iPhone 12, `v1.6.5-alpha.2`), and not `kern.boottime`,
+    // which moves when the clock is stepped and would call a live run killed.
+    expect(block).toContain('fields["up"] = NSNumber(value: NseOutcomeLog.uptimeTicks())');
+    expect(block).toContain('mach_continuous_time()');
+    expect(rust).toContain('fn mach_continuous_time() -> u64;');
+    expect(rust).toMatch(
+      /\.zip\(marker\.ticks\(\)\)\s*\.is_some_and\(\|\(now, then\)\| then > now\)/
+    );
+    expect(`${block}\n${rust}`).not.toMatch(/sysctlbyname\(|KERN_BOOTTIME/);
   });
 
   it('cuts a short write back to the size measured under the lock', () => {
@@ -135,11 +138,13 @@ describe('the extension and the reader agree on the file contract', () => {
     expect(end).not.toContain('log busy');
   });
 
-  it('reads the boot session once per process, on both sides', () => {
-    const block = swift.match(/enum NseOutcomeLog \{[\s\S]*?\n {2}\}\n/)?.[0] ?? '';
-    expect(block).toMatch(/static let bootSession: String\? = \{/);
-    expect(block).not.toContain('bootSession()');
-    expect(rust).toMatch(/static SESSION: std::sync::OnceLock<Option<String>>/);
+  it('reads the uptime after every marker, so a stamp written meanwhile is never compared', () => {
+    const take = rust.slice(rust.indexOf('pub(crate) fn take_locked('));
+    const lastRead = take.indexOf('markers.push(Marker {');
+    const reading = take.indexOf('let now_up = uptime();');
+    expect(lastRead).toBeGreaterThan(0);
+    expect(reading).toBeGreaterThan(lastRead);
+    expect(reading).toBeLessThan(take.indexOf('let other_boot = now_up'));
   });
 
   it('names a run by (pid, at, n): the sequence is in its record and the reader keeps it', () => {
