@@ -594,10 +594,12 @@ reel whose file fails never mounts one. In that gap the feed's ambient video kep
 unmuted), and a card scrolling into view started under the viewer.
 
 **The fix is one mechanism**: `holdPlayback(reason)` in the same file. `ReelViewer` calls it in its
-script init and releases it on destroy. A hold pauses EVERY registered media at once (the feed, an
-inline video of a post page, a lightbox video, a voice note), refuses every inline start while any hold
-or viewer player is open, and when the LAST one is released the video last come into view plays again
-if nothing else does (`resumeVisible`). The viewer's own players register later and claim as before.
+script init and releases it on destroy. A hold pauses every registered VIDEO at once (the feed, an
+inline video of a post page, a lightbox video) and NEVER an audio-only media: a voice note playing in a
+chat plays on when a viewer opens. While any hold or viewer player is open no inline video starts. At
+the FIRST hold it records whether a video was playing, and on the LAST release the video last come
+into view plays again only if one was (`videoWasPlaying`, and nothing foreground plays): a viewer never
+starts a video the reader had not playing. The viewer's own players register later and claim as before.
 Nothing is a timer. Tests: `playbackArbiter.test.ts` (hold pauses ambient and foreground, blocks
 scroll-in starts, release is idempotent, two holds) and `ReelViewer.svelte.test.ts` (hold on open,
 release on close). `MediaLightbox` takes the same hold while `open` (an `$effect.pre`, so it lands before the lightbox's own video mounts); test `MediaLightbox.hold.svelte.test.ts`.

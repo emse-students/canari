@@ -2,6 +2,7 @@ import {
   arbitratePlayback,
   claimPlayback,
   isForegroundPlaying,
+  isVideoPlaying,
   onPlaybackIdle,
   pausePlayback,
 } from '$lib/actions/playbackArbiter';
@@ -37,6 +38,11 @@ const visibleInline = new Set<HTMLVideoElement>();
 /** Viewers open: while one is, no inline video starts. */
 let openViewers = 0;
 
+/** Holds taken ({@link holdPlayback}) and not yet released. */
+let holds = 0;
+/** Whether a video was playing when the first of the current holds was taken. */
+let videoWasPlaying = false;
+
 /**
  * A FULL-SCREEN VIEWER IS OPEN, WHETHER OR NOT IT HAS A PLAYER YET (owner, 2026-11-06: opening a
  * CanaReel left the feed's video playing behind it).
@@ -48,22 +54,29 @@ let openViewers = 0;
  * that is a page of its own (`ReelViewer`) holds playback from its first line instead, so the answer
  * does not depend on what it later mounts.
  *
- * Holding PAUSES EVERY registered media at once (ambient and foreground: a video in a lightbox
- * underneath, a voice note) - the viewer's own players register later and claim playback themselves -
- * and no inline video starts until the LAST hold is released, when the video last come into view
- * plays again if nothing else does. Returns the release, idempotent.
+ * Holding PAUSES EVERY registered VIDEO at once (the feed, a post page's, a lightbox's) and never an
+ * audio-only media: a voice note playing in a chat plays on when a photo opens. The viewer's own
+ * players register later and claim playback themselves. No inline video starts until the LAST hold is
+ * released; then the video last come into view plays again only if a video was playing when the FIRST
+ * hold was taken - a viewer never starts a video the reader had not playing. Returns the release,
+ * idempotent.
  */
 export function holdPlayback(reason: string): () => void {
   Log.d('VIDEO', `playback held: ${reason}`);
+  if (holds === 0) videoWasPlaying = isVideoPlaying();
+  holds += 1;
   openViewers += 1;
-  pausePlayback(undefined, false, reason);
+  pausePlayback(undefined, false, reason, true);
   let released = false;
   return () => {
     if (released) return;
     released = true;
     openViewers -= 1;
+    holds -= 1;
     Log.d('VIDEO', `playback released: ${reason}`);
-    if (openViewers === 0 && !isForegroundPlaying() && isAppOnScreen()) resumeVisible();
+    if (holds === 0 && videoWasPlaying && !isForegroundPlaying() && isAppOnScreen()) {
+      resumeVisible();
+    }
   };
 }
 

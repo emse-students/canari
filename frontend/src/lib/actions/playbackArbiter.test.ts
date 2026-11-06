@@ -252,30 +252,77 @@ it('a viewer opening pauses an inline video, and closing it gives the feed back'
   expect(inline.paused, 'what the reader started inline stays paused').toBe(true);
 });
 
-it('a held playback pauses the feed AND a foreground media, starts nothing, and releasing brings the feed back', () => {
+it('a hold pauses videos only: a voice note plays on, and a viewer video registered after it keeps playing', () => {
   const feed = fake(document.createElement('video'));
   feed.muted = true;
   const observer = playWhileVisible(feed);
   teardown.push(() => observer.destroy?.());
   observed.at(-1)!([{ isIntersecting: true }]);
   const lightbox = video();
+  lightbox.startPlaying();
+  // The lightbox video is foreground and took the playback from the feed; both are videos.
   const note = voice();
+  note.startPlaying();
+  expect(lightbox.paused, 'the voice note took the playback from the video').toBe(true);
+  const clip = video();
+  clip.startPlaying();
+  note.startPlaying();
+  expect(feed.paused && clip.paused).toBe(true);
+
+  const release = holdPlayback('test viewer');
+  expect(note.paused, 'an audio-only media is never paused by a hold').toBe(false);
+
+  const viewer = fake(document.createElement('video'));
+  const action = followVideoSound(viewer, 'local');
+  viewer.startPlaying();
+  expect(viewer.paused, 'the viewer video registered after the hold stays playing').toBe(false);
+  expect(note.paused, 'and, as ever, claimed the playback from the voice note').toBe(true);
+  action.destroy();
+  release();
+});
+
+it('a hold pauses the feed video, blocks scroll-in starts, and its release resumes it only because it was playing', () => {
+  const feed = fake(document.createElement('video'));
+  feed.muted = true;
+  const observer = playWhileVisible(feed);
+  teardown.push(() => observer.destroy?.());
+  observed.at(-1)!([{ isIntersecting: true }]);
   expect(feed.paused).toBe(false);
 
   const release = holdPlayback('test viewer');
   expect(feed.paused, 'the feed stops before any viewer player exists').toBe(true);
-
   observed.at(-1)!([{ isIntersecting: false }]);
   observed.at(-1)!([{ isIntersecting: true }]);
   expect(feed.paused, 'a card scrolling into view does not start under the viewer').toBe(true);
+  release();
+  release();
+  expect(feed.paused, 'it was playing before the hold: it returns').toBe(false);
+});
 
-  lightbox.startPlaying();
+it('a release starts no video that was not playing when the hold was taken', () => {
+  const feed = fake(document.createElement('video'));
+  const observer = playWhileVisible(feed);
+  teardown.push(() => observer.destroy?.());
+  const release = holdPlayback('test viewer');
+  // Scrolled into view under the viewer: held back, and nothing was playing when the hold began.
+  observed.at(-1)!([{ isIntersecting: true }]);
+  expect(feed.paused).toBe(true);
+  release();
+  expect(feed.paused, 'nothing was playing before the hold: nothing starts after it').toBe(true);
+});
+
+it('a voice note keeps playing across a hold, and the feed stays down while it plays after the release', () => {
+  const feed = fake(document.createElement('video'));
+  const observer = playWhileVisible(feed);
+  teardown.push(() => observer.destroy?.());
+  observed.at(-1)!([{ isIntersecting: true }]);
+  const note = voice();
   note.startPlaying();
+  expect(feed.paused).toBe(true);
+  const release = holdPlayback('test viewer');
   release();
-  release();
-  note.pause();
-  lightbox.pause();
-  expect(feed.paused, 'the last hold released, nothing else plays: the feed returns').toBe(false);
+  expect(note.paused, 'untouched by the hold').toBe(false);
+  expect(feed.paused, 'a foreground media plays: the feed does not start over it').toBe(true);
 });
 
 it('two holds: the feed stays down until the last one is released', () => {
