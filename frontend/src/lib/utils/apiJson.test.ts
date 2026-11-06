@@ -1,4 +1,5 @@
 import {
+  AnswerBodyLostError,
   assertAnsweredByApi,
   NotFromApiError,
   readApiJson,
@@ -15,6 +16,52 @@ describe('readApiJson', () => {
     await expect(readApiJson(Response.json({ a: 1 }), where)).resolves.toEqual({ a: 1 });
     await expect(readApiJson(Response.json([1]), where)).resolves.toEqual([1]);
     await expect(readApiJson(Response.json(null), where)).resolves.toBeNull();
+  });
+
+  /** A JSON-typed 200 whose body stream fails with `reason` after the head. */
+  const lostBody = (reason: unknown) =>
+    new Response(
+      new ReadableStream({
+        start(c) {
+          c.error(reason);
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } }
+    );
+
+  it('reads a body lost after the head as no answer - a transport failure, never the engine error', async () => {
+    const failure = await readApiJson(lostBody(new TypeError('network error')), where).catch(
+      (e: unknown) => e
+    );
+    expect(failure).toBeInstanceOf(AnswerBodyLostError);
+    expect(isTransportFailure(failure)).toBe(true);
+    expect(failure).toMatchObject({ where, status: 200 });
+  });
+
+  it.each([
+    ['an abort with a reason', 'cancel'],
+    ["Tauri's cancellation", new Error('Request cancelled')],
+    ['a plain AbortError', new DOMException('aborted', 'AbortError')],
+  ])(
+    "lets the caller's own cancel through untouched (%s) - read from its signal",
+    async (_n, reason) => {
+      const controller = new AbortController();
+      controller.abort(reason);
+      const failure = await readApiJson(lostBody(reason), where, controller.signal).catch(
+        (e: unknown) => e
+      );
+      expect(failure).not.toBeInstanceOf(AnswerBodyLostError);
+      expect(failure).toBe(reason);
+    }
+  );
+
+  it('reads the same failure as a lost body when the caller did not cancel', async () => {
+    const failure = await readApiJson(
+      lostBody(new Error('Request cancelled')),
+      where,
+      new AbortController().signal
+    ).catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(AnswerBodyLostError);
   });
 
   it('reads a 2xx without a JSON content type as no answer, and never reads its body', async () => {

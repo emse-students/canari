@@ -748,7 +748,8 @@ export class MediaService {
         // below like any other lost answer (the server's complete is idempotent).
         const { mediaId } = (await readApiJson(
           res,
-          `POST /api/media/upload/chunk/${uploadId}/complete`
+          `POST /api/media/upload/chunk/${uploadId}/complete`,
+          transport?.signal
         )) as { mediaId: string };
         return mediaId;
       } catch (err) {
