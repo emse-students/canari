@@ -244,25 +244,45 @@ picture, the sound running ahead of the picture more and more towards the end (t
 Its source's own holes are gone from the output, so their places cannot be read back from it; the
 shape is the proof, and an old phone dropping audio buffers is the owner's own guess for the source.
 
-**The fix** (`frontend/src/lib/video/audioTimeline.ts`, used by `prepareVideoForUpload.ts`): before
-converting, every audio packet's timestamp is read (metadata only) and the audio decoded once;
-`audioHoleMap` pairs chunk k with packet k - REFUSING to pair, with a `console.error`, when the
-counts differ - and records where each hole starts on the decoder's timeline. A hole is a packet at
-least one chunk later than the decoder put it, beyond the holes already counted (mediabunny's own
-"a whole frame off" rule: timestamp jitter is never a hole); a packet earlier than that is counted as
-an overlap and left alone. The conversion's audio `process` hook moves each decoded chunk back
-(`restoreAudioTimestamp`); mediabunny's encoder then fills the gap with silence. A source with holes
-is ENCODED even when it is AAC-LC under 128 kb/s, because a copy keeps the holes for the player to
-close (`chooseAudioRoute`'s `hasHoles`). An engine with no AAC encoder (Firefox) still copies it,
-holes included; the console names the holes.
+**The fix** (`frontend/src/lib/video/audioTimeline.ts`, used by `prepareVideoForUpload.ts`), in two
+steps, each from the fact that decides it:
+
+1. **Whether the track has holes - from its PACKETS alone** (`packetHoles`, metadata only, no
+   decode). A packet's length is the median step between packets (an MP4's own durations cannot be
+   used: it writes each one as the step to the next packet, the hole included), and a hole is a step
+   longer by at least `HOLE_MIN_FRAMES` (2) packet lengths. Two, not one: a recorder whose audio
+   clock runs slightly fast drifts by a few samples a packet, and a one-frame rule would cut that
+   into a 21 ms silence - a click - every time the drift reached a frame (the rig's `drift` row,
+   0.5 % fast, finds no hole). The route rests on this fact and never on the uploader's decoder: a
+   decoder that keeps timestamps would find no hole, the track would be copied, and a Chrome reader
+   would hear it early. A track with holes is ENCODED, even AAC-LC under 128 kb/s, because a copy
+   keeps the holes for the player to close (`chooseAudioRoute`'s `hasHoles`).
+2. **Where the holes land on this decoder - only for a holed track that is encoded.** The window the
+   conversion reads is decoded once, exactly as the conversion will read it (`samples(start, end)`:
+   the trim of a CanaReel included), and `audioHoleMap` pairs each chunk with its packet
+   (`pairedPackets`: from the packet the first chunk is stamped with, to the last before the
+   window's end). A packet at least two chunk lengths later than the decoder put it, beyond the holes
+   already counted, is a step; a run of packets earlier than that is ONE overlap, left alone. The
+   conversion's audio `process` hook moves each chunk back (`restoreAudioTimestamp`) and cuts what a
+   restore pushes past the window's end (the conversion cut its window on the decoder's timeline,
+   where a chunk sits earlier than it belongs); mediabunny's encoder fills the gaps with silence. A
+   decoder that keeps the packets' timestamps yields no step, correctly: the encoder sees the gaps.
+
+**Nothing here refuses an upload.** A decoder that throws in step 2 (an engine with no AAC decoder,
+a corrupt packet) or that does not emit one chunk per packet leaves the route the source would have
+had without its holes, and the console says the restore was lost: `audio holes NOT restored (...)`,
+at `warn` for a failed decoder and in ONE `console.error` line with the counts for an unpaired one.
+A track without holes is never decoded before the conversion. An engine with no AAC encoder
+(Firefox) still copies a holed AAC track, holes included, and the console names them. The pre-pass
+stops on the member's cancel.
 
 ### The video: a variable frame rate, and what a phone does with it
 
 The seam kept each decoded frame's source timestamp and only resampled above 30.5 fps, so a
 variable-rate source came out variable-rate, holes included (the production file's 258 ms stalls).
 Now the plan's `frameRate` is always `VIDEO_FRAME_RATE` (30): each frame lands on
-`floor(t * 30) / 30`, a later frame in the same slot replaces it, an empty slot repeats the frame
-before. A picture moves by at most one frame, always EARLIER - the direction lip sync tolerates
+`floor(t * 30) / 30`; the FIRST frame of each 1/30 s slot is the one encoded, the later ones in
+that slot are dropped, and an empty slot repeats the last frame seen. A picture moves by at most one frame, always EARLIER - the direction lip sync tolerates
 best. Costs taken knowingly: a 24 or 25 fps clip gets a repeated frame every 4 or 5, and a source's
 missing frames become HELD frames, still a visible stutter - the timeline is regular, the frames
 the phone never recorded are not invented.
@@ -285,14 +305,16 @@ holds) is the same effect. A constant-rate file drops none.
 
 [`tools/video-av-sync`](../../../tools/video-av-sync/README.md) makes each source in a headless
 Chrome (a white frame and a beep on every whole second; the `vfr` rows drop frames, leave 8-frame
-holes and jitter frames by up to +-6 ms; the `holes` rows drop audio packets), runs the app's own
+holes and jitter frames by up to +-6 ms; the `holes` rows drop audio packets, one of them
+trimmed as a CanaReel; the `drift` row stamps its audio 0.5 % fast), runs the app's own
 `prepareVideoForUpload` and judges the output by its PACKETS' times - the decoder's would hide the
 very drift it looks for. Every row passes on this change (Windows desktop Chrome, 2026-11-06), the
 skew at second 13 at most 1 ms; on `main` the hole rows fail as above and every VFR and 24 fps row
 fails the 30 fps grid. Owed:
 
-- **The rig on the phones' own encoders and decoders** (the Android WebView's MediaCodec, WKWebView):
-  the one-chunk-per-packet pairing is CHECKED there by the console error above, not yet observed.
+- **The rig on the phones' own encoders and decoders** (the Android WebView's MediaCodec, WKWebView),
+  BEFORE the stable that ships this: the one-chunk-per-packet pairing is CHECKED there by the
+  console error above, not yet observed, and the pre-pass decode has not been timed on a phone.
 - **A CI gate**: the rig makes its sources with an AAC encoder, which Chrome on Linux lacks; a
   committed AAC source would let the copied-audio rows run on a runner.
 - **The production post itself** stays as it is: its holes are no longer in the file.

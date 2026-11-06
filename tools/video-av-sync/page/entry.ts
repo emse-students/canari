@@ -23,6 +23,14 @@ interface Case {
    * that lost audio buffers. The beeps all sit outside the holes, so every one must still be heard.
    */
   audioHoles?: boolean;
+  /**
+   * Stamps audio packet n at n x 1029 samples instead of n x 1024: a recorder whose audio clock runs
+   * 0.5 % fast. No packet is missing, so no hole may be restored - a restore at every whole frame of
+   * drift would be a 21 ms silence, a click, every 4 s.
+   */
+  audioDrift?: boolean;
+  /** Prepared as a CanaReel is: cut to the video's own span (`trimToVideo`). */
+  trimToVideo?: boolean;
 }
 
 const SAMPLE_RATE = 48_000;
@@ -96,10 +104,13 @@ async function makeSource(c: Case): Promise<File> {
 }
 
 /**
- * The same file with holes in its audio track: every packet copied as it is, video untouched, and
- * audio packets 20-29 of every 94 left out (a beep is in packets 0-1 of each second, never there).
+ * The same file with its audio packets re-stamped or left out by `retime(n, packet)` (`null` drops
+ * packet n); the video is copied untouched.
  */
-async function withAudioHoles(file: File): Promise<File> {
+async function remuxAudio(
+  file: File,
+  retime: (n: number, packet: import('mediabunny').EncodedPacket) => number | null
+): Promise<File> {
   const input = new mb.Input({ source: new mb.BlobSource(file), formats: mb.ALL_FORMATS });
   const vTrack = (await input.getPrimaryVideoTrack())!;
   const aTrack = (await input.getPrimaryAudioTrack())!;
@@ -125,9 +136,12 @@ async function withAudioHoles(file: File): Promise<File> {
       firstV = false;
       v = await vPackets.next();
     } else if (!a.done) {
-      const keep = n % 94 < 20 || n % 94 >= 30;
-      if (keep) await audio.add(a.value, firstA ? { decoderConfig: aConfig } : undefined);
-      if (keep) firstA = false;
+      const at = retime(n, a.value);
+      if (at !== null) {
+        const packet = a.value.clone({ timestamp: at });
+        await audio.add(packet, firstA ? { decoderConfig: aConfig } : undefined);
+        firstA = false;
+      }
       n++;
       a = await aPackets.next();
     }
@@ -193,15 +207,25 @@ async function read(file: Blob) {
 /** One row: make, prepare, read both, judge both. */
 async function runCase(c: Case) {
   const made = await makeSource(c);
-  const source = c.audioHoles ? await withAudioHoles(made) : made;
+  // Holes: packets 20-29 of every 94 left out (a beep is in packets 0-1 of each second, never there).
+  const source = c.audioHoles
+    ? await remuxAudio(made, (n, p) => (n % 94 < 20 || n % 94 >= 30 ? p.timestamp : null))
+    : c.audioDrift
+      ? await remuxAudio(made, (n, p) => (n === 0 ? p.timestamp : (n * 1029) / SAMPLE_RATE))
+      : made;
   const logs: string[] = [];
   const debug = console.debug;
+  const warn = console.warn;
   console.debug = (...a: unknown[]) => {
     logs.push(a.map(String).join(' '));
     debug(...a);
   };
+  console.warn = (...a: unknown[]) => {
+    logs.push(a.map(String).join(' '));
+    warn(...a);
+  };
   try {
-    const prepared = await prepareVideoForUpload(source);
+    const prepared = await prepareVideoForUpload(source, { trimToVideo: c.trimToVideo ?? false });
     const before = await read(source);
     const after = await read(prepared.file);
     const sourceGaps = before.frames.map((f, i) =>
@@ -209,7 +233,7 @@ async function runCase(c: Case) {
     );
     return {
       name: c.name,
-      logs: logs.filter((l) => l.includes('audio:') || l.includes('plan:')),
+      logs: logs.filter((l) => /audio:|plan:|hole/.test(l)),
       source: {
         audioHoles: before.audioHoles,
         frames: before.frames.length,
@@ -221,6 +245,7 @@ async function runCase(c: Case) {
     };
   } finally {
     console.debug = debug;
+    console.warn = warn;
   }
 }
 

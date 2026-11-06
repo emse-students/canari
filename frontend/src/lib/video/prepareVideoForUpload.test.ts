@@ -37,15 +37,24 @@ interface Script {
   /** The audio packets' timestamps, and what the decoder stamps its chunks (default: contiguous). */
   audioPackets?: number[];
   decodedChunks?: { timestamp: number; duration: number }[];
+  /** The audio decoder throws (an engine with none, a corrupt packet). */
+  decoderThrows?: boolean;
 }
 
 const FRAME = 1024 / 48_000;
 const contiguous = (n: number) => Array.from({ length: n }, (_, i) => i * FRAME);
 
-const state: { script: Script; init: Record<string, unknown> | null; cancelled: boolean } = {
+const state: {
+  script: Script;
+  init: Record<string, unknown> | null;
+  cancelled: boolean;
+  /** Every window the audio was decoded over, before the conversion. */
+  decodes: [number, number | undefined][];
+} = {
   script: { video: true, audio: true, duration: 20, width: 1080, height: 1920, fps: 60 },
   init: null,
   cancelled: false,
+  decodes: [],
 };
 
 vi.mock('mediabunny', () => {
@@ -107,7 +116,9 @@ vi.mock('mediabunny', () => {
       }
     },
     AudioSampleSink: class {
-      async *samples() {
+      async *samples(start: number, end?: number) {
+        state.decodes.push([start, end]);
+        if (state.script.decoderThrows) throw new Error('no decoder for mp4a.40.2');
         const chunks =
           state.script.decodedChunks ??
           contiguous(3).map((timestamp) => ({ timestamp, duration: FRAME }));
@@ -170,6 +181,7 @@ beforeEach(() => {
   state.script = { video: true, audio: true, duration: 20, width: 1080, height: 1920, fps: 60 };
   state.init = null;
   state.cancelled = false;
+  state.decodes = [];
 });
 
 describe('videoSpanTrim', () => {
@@ -241,43 +253,98 @@ describe('prepareVideoForUpload', () => {
     }
   );
 
-  it('puts the audio back over the holes the decoder closed, and encodes rather than copies it', async () => {
-    // A recorder lost 10 packets after the 3rd: the packets say so, the decoder does not.
-    const hole = 10 * FRAME;
-    state.script = {
-      ...state.script,
+  describe('holes in the source audio (2026-11-06, a sound that ran ahead of its picture)', () => {
+    // A recorder lost 10 packets after the 3rd: the packets say so, Chrome's decoder does not.
+    const HOLE = 10 * FRAME;
+    const holed = {
       audioCodec: 'mp4a.40.2',
       audioBitrate: 96_000,
-      audioPackets: [0, FRAME, 2 * FRAME, 3 * FRAME + hole, 4 * FRAME + hole],
+      audioPackets: [0, FRAME, 2 * FRAME, 3 * FRAME + HOLE, 4 * FRAME + HOLE],
       decodedChunks: contiguous(5).map((timestamp) => ({ timestamp, duration: FRAME })),
     };
-    await prepareVideoForUpload(SOURCE, {});
-    const audio = state.init!.audio as {
-      forceTranscode?: boolean;
-      process?: (s: unknown) => { timestamp: number };
-    };
-    expect(audio.forceTranscode).toBe(true);
-    // A decoded chunk as mediabunny hands it: cloned, and the clone re-stamped.
-    const sampleAt = (timestamp: number) => ({
-      timestamp,
-      clone() {
-        const copy = {
+    /** A decoded chunk as mediabunny hands the hook: cloned or trimmed, then re-stamped. */
+    const chunkAt = (timestamp: number, numberOfFrames = 1024) => {
+      const make = (frames: number) => {
+        const out = {
           timestamp,
+          numberOfFrames: frames,
           setTimestamp(t: number) {
-            copy.timestamp = t;
+            out.timestamp = t;
           },
         };
-        return copy;
-      },
-    });
-    expect(audio.process!(sampleAt(2 * FRAME)).timestamp).toBeCloseTo(2 * FRAME, 9);
-    expect(audio.process!(sampleAt(4 * FRAME)).timestamp).toBeCloseTo(4 * FRAME + hole, 9);
-  });
+        return out;
+      };
+      return {
+        timestamp,
+        numberOfFrames,
+        sampleRate: 48_000,
+        clone: () => make(numberOfFrames),
+        trim: (_from: number, to: number) => make(to),
+      };
+    };
+    type Hook = (s: unknown) => { timestamp: number; numberOfFrames: number } | null;
+    const hook = () => (state.init!.audio as { process?: Hook }).process;
 
-  it('copies an AAC-LC track with no hole, with no process hook', async () => {
-    state.script = { ...state.script, audioCodec: 'mp4a.40.2', audioBitrate: 96_000 };
-    await prepareVideoForUpload(SOURCE, {});
-    expect(state.init!.audio).toEqual({ codec: 'aac' });
+    it('moves each chunk back over its hole, and encodes rather than copies the track', async () => {
+      state.script = { ...state.script, ...holed };
+      await prepareVideoForUpload(SOURCE, {});
+      expect(state.init!.audio).toMatchObject({ forceTranscode: true });
+      expect(hook()!(chunkAt(2 * FRAME))!.timestamp).toBeCloseTo(2 * FRAME, 9);
+      expect(hook()!(chunkAt(4 * FRAME))!.timestamp).toBeCloseTo(4 * FRAME + HOLE, 9);
+    });
+
+    it('never decodes a track without holes: it is copied as before', async () => {
+      state.script = { ...state.script, audioCodec: 'mp4a.40.2', audioBitrate: 96_000 };
+      await prepareVideoForUpload(SOURCE, {});
+      expect(state.init!.audio).toEqual({ codec: 'aac' });
+      expect(state.decodes).toEqual([]);
+    });
+
+    it('keeps the old route and never refuses the upload when the decoder fails', async () => {
+      state.script = { ...state.script, ...holed, decoderThrows: true };
+      const warn = vi.spyOn(console, 'warn');
+      const out = await prepareVideoForUpload(SOURCE, {});
+      expect(out.file.name).toBe('clip.mp4');
+      expect(state.init!.audio).toEqual({ codec: 'aac' });
+      expect(warn.mock.calls.flat().join('\n')).toContain('audio holes NOT restored');
+      warn.mockRestore();
+    });
+
+    it('names an unpaired decoder in ONE error line with the counts, and keeps the old route', async () => {
+      state.script = { ...state.script, ...holed, decodedChunks: holed.decodedChunks.slice(0, 4) };
+      const error = vi.spyOn(console, 'error');
+      await prepareVideoForUpload(SOURCE, {});
+      expect(state.init!.audio).toEqual({ codec: 'aac' });
+      expect(error.mock.calls).toHaveLength(1);
+      expect(String(error.mock.calls[0][0])).toContain('4 chunk(s) for 5 packet(s)');
+      error.mockRestore();
+    });
+
+    it('decodes the window the conversion reads, and cuts what a restore pushes past its end', async () => {
+      // A reel trimmed to its video, 0 to 4 frames + the hole: the conversion cuts on the decoder's
+      // timeline, so the last chunk is restored past the window's end and must not outlast it.
+      state.script = {
+        ...state.script,
+        ...holed,
+        duration: 1,
+        videoStart: 0,
+        videoEnd: 4 * FRAME + HOLE + FRAME / 2,
+      };
+      await prepareVideoForUpload(SOURCE, { trimToVideo: true });
+      const end = 4 * FRAME + HOLE + FRAME / 2;
+      expect(state.decodes).toEqual([[0, end]]);
+      const last = hook()!(chunkAt(4 * FRAME))!;
+      expect(last.timestamp).toBeCloseTo(4 * FRAME + HOLE, 9);
+      expect(last.numberOfFrames).toBe(512);
+    });
+
+    it('stops reading the packets when the member cancels', async () => {
+      state.script = { ...state.script, ...holed };
+      const controller = new AbortController();
+      const reading = prepareVideoForUpload(SOURCE, { signal: controller.signal });
+      controller.abort();
+      expect(await faultOf(reading)).toBe('aborted');
+    });
   });
 
   it('drops the audio track from the OUTPUT when the sound is removed, and still refuses any other drop', async () => {

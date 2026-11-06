@@ -36,6 +36,8 @@ import {
 } from './videoEncodingPlan';
 import {
   audioHoleMap,
+  packetHoles,
+  pairedPackets,
   restoreAudioTimestamp,
   type AudioHoleMap,
   type AudioHoleStep,
@@ -255,18 +257,63 @@ export async function prepareVideoForUpload(
             quality: new mb.Quality({ bitrate: profile.audioBitrate }),
           })
         : null;
-    // Where the source's audio really is: the decoder closes every hole in it, so the holes are read
-    // from the packets BEFORE anything is converted (audioTimeline.ts).
-    const holeMap = audioTrack && !removeAudio ? await readAudioHoles(mb, audioTrack) : null;
-    const audioHoles = holeMap?.kind === 'map' ? holeMap.steps : [];
-    const audioRoute = chooseAudioRoute({
+    // The window the conversion reads (mediabunny's own rule: the trim, or from the earliest
+    // timestamp of the converted tracks, never below 0, to their end). Every sample it hands the
+    // audio hook is relative to its start.
+    const keptAudio = audioTrack && !removeAudio ? audioTrack : null;
+    const windowStart =
+      trim?.start ??
+      Math.max(
+        0,
+        await input.getFirstTimestamp(keptAudio ? [videoTrack, keptAudio] : [videoTrack])
+      );
+    const windowEnd = trim?.end ?? Infinity;
+
+    // Whether the source's audio has holes is read from its PACKETS, never from this engine's
+    // decoder: Chrome's closes them (audioTimeline.ts), another may not, and the route must not
+    // depend on which one did the uploading.
+    const packetTimes = keptAudio ? await readPacketTimes(mb, keptAudio, signal) : [];
+    const holes = packetHoles(packetTimes);
+    const routeFacts = {
       codecString,
       removeAudio,
       sourceBitrate: sourceAudioBitrate,
       canEncodeAac,
       audioBitrate: profile.audioBitrate,
-      hasHoles: audioHoles.length > 0,
-    });
+    };
+    let audioRoute = chooseAudioRoute({ ...routeFacts, hasHoles: holes.holes > 0 });
+    let audioHoles: AudioHoleStep[] = [];
+    if (holes.holes > 0 && keptAudio) {
+      console.warn(
+        `[video-prep] the source's audio has ${holes.holes} hole(s) in its packets,` +
+          ` ${Math.round(holes.holeSeconds * 1000)} ms in all`
+      );
+      if (audioRoute === 'encode') {
+        const placed = await placeAudioHoles(mb, keptAudio, packetTimes, {
+          start: windowStart,
+          end: windowEnd,
+          signal,
+        });
+        if (placed.kind === 'map') {
+          audioHoles = placed.steps;
+          console.debug(
+            `[video-prep] audio holes placed on the decoder's timeline: ${placed.holes} step(s),` +
+              ` ${Math.round(placed.holeSeconds * 1000)} ms, ${placed.overlaps} overlap(s)`
+          );
+        } else {
+          // The restore cannot run: the route the source would have had without its holes is kept,
+          // and the loss is named - the sound after each hole may play early.
+          audioRoute = chooseAudioRoute({ ...routeFacts, hasHoles: false });
+          const why =
+            placed.kind === 'unpaired'
+              ? `the decoder emitted ${placed.decoded} chunk(s) for ${placed.packets} packet(s)`
+              : `the decoder failed: ${placed.error}`;
+          const line = `[video-prep] audio holes NOT restored (${why}), route ${audioRoute}`;
+          if (placed.kind === 'unpaired') console.error(line);
+          else console.warn(line);
+        }
+      }
+    }
     // A copied track costs what it carries, measured over every packet; an encoded one, the plan's.
     const audioBitrate =
       audioRoute === 'copy'
@@ -309,17 +356,6 @@ export async function prepareVideoForUpload(
         ` source ${sourceRate.toFixed(2)} fps`
     );
 
-    // The conversion presents every sample relative to this start (mediabunny's own rule: the trim's
-    // start, or the earliest timestamp of the converted tracks, never below 0); a hole map is on the
-    // decoder's absolute timeline, so the restore converts between the two.
-    const conversionStart =
-      trim?.start ??
-      Math.max(
-        0,
-        await input.getFirstTimestamp(
-          audioTrack && audioRoute !== 'none' ? [videoTrack, audioTrack] : [videoTrack]
-        )
-      );
     const output = new mb.Output({
       format: new mb.Mp4OutputFormat({ fastStart: 'fragmented' }),
       target: new mb.BufferTarget(),
@@ -347,7 +383,8 @@ export async function prepareVideoForUpload(
       },
       audio: audioConversionOptions(mb, audioRoute, profile.audioBitrate, {
         holes: audioHoles,
-        start: conversionStart,
+        start: windowStart,
+        end: windowEnd,
       }),
       ...(trim ? { trim } : {}),
     });
@@ -434,42 +471,51 @@ export function videoSpanTrim(
   return { start, end };
 }
 
-/**
- * Reads the holes of a source's audio track: every packet's timestamp (metadata only) against every
- * chunk the decoder emits for it. One decode of the audio alone - a fraction of a second for a
- * minute of AAC, against the video's encode.
- */
-async function readAudioHoles(
+/** Every audio packet's timestamp, metadata only (no packet data is read). */
+async function readPacketTimes(
   mb: typeof import('mediabunny'),
-  track: import('mediabunny').InputAudioTrack
-): Promise<AudioHoleMap> {
-  const packets: number[] = [];
+  track: import('mediabunny').InputAudioTrack,
+  signal: AbortSignal | undefined
+): Promise<number[]> {
+  const times: number[] = [];
   for await (const p of new mb.EncodedPacketSink(track).packets(undefined, undefined, {
     metadataOnly: true,
   })) {
-    packets.push(p.timestamp);
+    if (signal?.aborted) throw new VideoPrepareError('aborted', 'video preparation aborted');
+    times.push(p.timestamp);
   }
+  return times;
+}
+
+/**
+ * Where a holed track's holes land on this engine's decoder: the conversion's window decoded once,
+ * exactly as the conversion will read it (`samples(start, end)`), each chunk paired with its packet.
+ * Only called for a track with holes that is re-encoded. A decoder that throws is an answer
+ * (`failed`), never a refusal of the upload.
+ */
+async function placeAudioHoles(
+  mb: typeof import('mediabunny'),
+  track: import('mediabunny').InputAudioTrack,
+  packetTimes: number[],
+  window: { start: number; end: number; signal: AbortSignal | undefined }
+): Promise<AudioHoleMap | { kind: 'failed'; error: string }> {
   const decoded: DecodedChunk[] = [];
-  for await (const s of new mb.AudioSampleSink(track).samples()) {
-    decoded.push({ timestamp: s.timestamp, duration: s.duration });
-    s.close();
+  try {
+    const end = Number.isFinite(window.end) ? window.end : undefined;
+    for await (const s of new mb.AudioSampleSink(track).samples(window.start, end)) {
+      decoded.push({ timestamp: s.timestamp, duration: s.duration });
+      s.close();
+      if (window.signal?.aborted) {
+        throw new VideoPrepareError('aborted', 'video preparation aborted');
+      }
+    }
+  } catch (e) {
+    if (isVideoPrepareError(e)) throw e;
+    return { kind: 'failed', error: e instanceof Error ? e.message : String(e) };
   }
-  const map = audioHoleMap(packets, decoded);
-  if (map.kind === 'unpaired') {
-    // The pairing the restore rests on does not hold on this engine: its holes cannot be placed, and
-    // a source with holes will play its sound early. Accused, never guessed.
-    console.error(
-      `[video-prep] audio holes unreadable: the decoder emitted ${map.decoded} chunk(s)` +
-        ` for ${map.packets} packet(s)`
-    );
-  } else if (map.holes > 0 || map.overlaps > 0) {
-    console.warn(
-      `[video-prep] the source's audio has ${map.holes} hole(s), ` +
-        `${Math.round(map.holeSeconds * 1000)} ms in all, and ${map.overlaps} overlap(s):` +
-        ` restored as silence`
-    );
-  }
-  return map;
+  const paired = pairedPackets(packetTimes, decoded, window.end);
+  if (!paired) return { kind: 'unpaired', packets: 0, decoded: decoded.length };
+  return audioHoleMap(paired, decoded);
 }
 
 /** The codec string of AAC-LC, the one audio format the output carries. */
@@ -488,9 +534,9 @@ export interface AudioRouteFacts {
   /** The profile's AAC bitrate: the most a copied track may cost; defaults to {@link AUDIO_BITRATE}. */
   audioBitrate?: number;
   /**
-   * The source's audio has holes (`audioHoleMap`). A copy would keep them as long samples in the
-   * output, which Chrome's decoder closes again on playback: the sound after each one plays early.
-   * Only an encode fills them with silence.
+   * The source's audio PACKETS leave holes (`packetHoles` - never this engine's decoder, which may
+   * hide them). A copy would keep them as long samples in the output, which Chrome's decoder closes
+   * again on playback: the sound after each one plays early. Only an encode fills them with silence.
    */
   hasHoles?: boolean;
 }
@@ -526,11 +572,18 @@ export function audioConversionOptions(
   mb: typeof import('mediabunny'),
   route: 'none' | 'copy' | 'encode',
   audioBitrate: number = AUDIO_BITRATE,
-  timeline: { holes: AudioHoleStep[]; start: number } = { holes: [], start: 0 }
+  timeline: { holes: AudioHoleStep[]; start: number; end: number } = {
+    holes: [],
+    start: 0,
+    end: Infinity,
+  }
 ) {
   if (route === 'none') return { discard: true as const };
   if (route === 'copy') return { codec: 'aac' as const };
-  const { holes, start } = timeline;
+  const { holes, start, end } = timeline;
+  // The conversion cut its window on the decoder's timeline, where a chunk sits EARLIER than it
+  // belongs: a restored chunk can land past the window's end, and is cut there.
+  const limit = end - start;
   return {
     codec: 'aac' as const,
     quality: new mb.Quality({ bitrate: audioBitrate }),
@@ -540,8 +593,14 @@ export function audioConversionOptions(
     ...(holes.length > 0
       ? {
           process: (sample: import('mediabunny').AudioSample) => {
-            const moved = sample.clone();
-            moved.setTimestamp(restoreAudioTimestamp(holes, sample.timestamp + start) - start);
+            const at = restoreAudioTimestamp(holes, sample.timestamp + start) - start;
+            if (at >= limit) return null;
+            const frames = Math.min(
+              sample.numberOfFrames,
+              Math.round((limit - at) * sample.sampleRate)
+            );
+            const moved = frames < sample.numberOfFrames ? sample.trim(0, frames) : sample.clone();
+            moved.setTimestamp(at);
             return moved;
           },
         }

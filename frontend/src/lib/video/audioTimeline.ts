@@ -10,13 +10,60 @@
  * short, and an encoded output ended with its sound 1.49 s ahead of its picture). mediabunny resyncs
  * to the decoder's timestamps, so it cannot see the hole either.
  *
- * The packets still carry the truth. `audioHoleMap` pairs each decoded chunk with its packet (the
- * decoder emits exactly one per packet - checked, never assumed) and returns where each hole
- * starts on the decoder's timeline and how much later everything after it belongs;
- * `restoreAudioTimestamp` moves a decoded chunk back there. The encoder then sees the gap and fills
- * it with silence, so the output is contiguous AND in sync. See
- * docs/wiki/frontend/video-preparation.md#constant-frame-rate-and-the-audio-holes-the-decoder-closes.
+ * Two steps, each from the fact that decides it:
+ *
+ * - `packetHoles` - WHETHER the track has holes, read from the PACKETS alone (no decode): it decides
+ *   the route, so it must not depend on how this engine's decoder stamps its output;
+ * - `audioHoleMap` - WHERE each hole lands on THIS decoder's timeline, by pairing each decoded chunk
+ *   with its packet (one per packet - checked, never assumed). Only run for a holed track that is
+ *   re-encoded. `restoreAudioTimestamp` then moves a decoded chunk back where its packet says, and
+ *   the encoder fills the gap with silence.
+ *
+ * See docs/wiki/frontend/video-preparation.md#constant-frame-rate-and-the-audio-holes-the-decoder-closes.
  */
+
+/**
+ * The smallest hole restored, in packet lengths. One frame of slack would turn a slow timestamp
+ * drift (a recorder whose audio clock runs a little fast) into a 21 ms silence - a click - each time
+ * the drift reached one frame; two frames is a dropped BUFFER, which a drift never makes at once.
+ */
+export const HOLE_MIN_FRAMES = 2;
+
+/** What the packets alone say about the holes of a track. */
+export interface PacketHoles {
+  /** How many holes of at least {@link HOLE_MIN_FRAMES} packet lengths. */
+  holes: number;
+  /** Their total length, in seconds. */
+  holeSeconds: number;
+  /** The packet length the holes are measured in: the median step between packets, in seconds. */
+  frame: number;
+}
+
+/**
+ * Whether an audio track has holes, from its packets' timestamps alone.
+ *
+ * A packet's length is the MEDIAN step between consecutive packets (a container's own durations
+ * cannot be used: an MP4 writes each one as the step to the next packet, the hole included). A step
+ * longer than that by at least {@link HOLE_MIN_FRAMES} lengths is a hole.
+ *
+ * @param timestamps Every packet's presentation time, in seconds, in order.
+ */
+export function packetHoles(timestamps: number[]): PacketHoles {
+  const steps = timestamps.slice(1).map((t, i) => t - timestamps[i]);
+  if (steps.length === 0) return { holes: 0, holeSeconds: 0, frame: 0 };
+  const sorted = [...steps].sort((a, b) => a - b);
+  const frame = sorted[Math.floor(sorted.length / 2)];
+  let holes = 0;
+  let holeSeconds = 0;
+  for (const step of steps) {
+    const gap = step - frame;
+    if (frame > 0 && gap >= HOLE_MIN_FRAMES * frame) {
+      holes++;
+      holeSeconds += gap;
+    }
+  }
+  return { holes, holeSeconds, frame };
+}
 
 /** One hole: from `at` on the decoder's timeline, add `offset` seconds (holes before it included). */
 export interface AudioHoleStep {
@@ -24,7 +71,7 @@ export interface AudioHoleStep {
   offset: number;
 }
 
-/** The holes of one track, or why they could not be placed. */
+/** Where the holes land on a decoder's timeline, or why they could not be placed. */
 export type AudioHoleMap =
   | { kind: 'map'; steps: AudioHoleStep[]; holes: number; holeSeconds: number; overlaps: number }
   /** The decoder did not emit one chunk per packet, so no chunk can be paired with its packet. */
@@ -32,23 +79,24 @@ export type AudioHoleMap =
 
 /** One decoded chunk, as the decoder stamped it. */
 export interface DecodedChunk {
-  /** Its timestamp, in seconds, on the decoder's (collapsed) timeline. */
+  /** Its timestamp, in seconds, on the decoder's timeline. */
   timestamp: number;
   /** Its length in seconds (frames / sample rate). */
   duration: number;
 }
 
 /**
- * The holes of an audio track, from its packets' timestamps and the decoder's chunks.
+ * Where the holes land on the decoder's timeline, from the packets' timestamps and the chunks the
+ * decoder emitted for them, paired one to one.
  *
- * A hole is counted where a packet starts at least one chunk's length later than the decoder put it,
- * beyond the holes already counted - the same "a whole frame off" rule mediabunny uses to resync, so
- * a few hundred microseconds of timestamp jitter is never a hole. A packet EARLIER than the decoder
- * put it (an overlap) is counted and left alone: shifting a sound earlier than the one before it
- * would play two sounds at once.
+ * A hole is counted where a packet starts at least {@link HOLE_MIN_FRAMES} chunk lengths later than
+ * the decoder put it, beyond the holes already counted. A decoder that KEEPS the packets' timestamps
+ * yields no step at all - correctly: the encoder then sees the gaps itself. An overlap (a run of
+ * packets earlier than the decoder put them) is counted once per run and left alone: moving a
+ * sound earlier than the one before it would play two sounds at once.
  *
- * @param packetTimestamps Every packet's presentation time, in seconds, in order.
- * @param decoded Every chunk the decoder emitted, in order.
+ * @param packetTimestamps The paired packets' presentation times, in seconds, in order.
+ * @param decoded Every chunk the decoder emitted for them, in order.
  */
 export function audioHoleMap(packetTimestamps: number[], decoded: DecodedChunk[]): AudioHoleMap {
   if (packetTimestamps.length !== decoded.length || decoded.length === 0) {
@@ -60,18 +108,43 @@ export function audioHoleMap(packetTimestamps: number[], decoded: DecodedChunk[]
   let offset = 0;
   let holeSeconds = 0;
   let overlaps = 0;
+  let inOverlap = false;
   for (let i = 1; i < decoded.length; i++) {
     const behind = packetTimestamps[i] - decoded[i].timestamp - base - offset;
     const frame = decoded[i - 1].duration;
-    if (behind >= frame) {
+    if (behind >= HOLE_MIN_FRAMES * frame) {
       offset += behind;
       holeSeconds += behind;
       steps.push({ at: decoded[i].timestamp, offset });
-    } else if (behind <= -frame) {
-      overlaps++;
     }
+    const overlapping = behind <= -frame;
+    if (overlapping && !inOverlap) overlaps++;
+    inOverlap = overlapping;
   }
   return { kind: 'map', steps, holes: steps.length, holeSeconds, overlaps };
+}
+
+/**
+ * The packets a decoder read for a window, to pair with the chunks it yielded: from the packet the
+ * first chunk is stamped with (the decoder starts there) to the last packet starting before the
+ * window's end. `audioHoleMap` then refuses the pairing unless there is one chunk per packet.
+ * `null` when no packet is where the first chunk says.
+ *
+ * @param packetTimestamps Every packet of the track, in order.
+ * @param end The window's end, in seconds (`Infinity` for the whole track).
+ */
+export function pairedPackets(
+  packetTimestamps: number[],
+  decoded: DecodedChunk[],
+  end: number
+): number[] | null {
+  if (decoded.length === 0) return null;
+  const first = decoded[0];
+  const at = packetTimestamps.findIndex((t) => Math.abs(t - first.timestamp) < first.duration / 2);
+  if (at < 0) return null;
+  const run = packetTimestamps.slice(at);
+  const stop = run.findIndex((t) => t >= end);
+  return stop < 0 ? run : run.slice(0, stop);
 }
 
 /**

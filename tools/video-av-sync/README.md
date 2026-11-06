@@ -17,7 +17,8 @@ bun tools/video-av-sync/rig.mjs --only vfr-aac-96 --chrome <path>
 The rows (`CASES` in `rig.mjs`): a phone that drops frames (holes of a quarter second, frames
 jittered, flashes off the grid) with AAC re-encoded, AAC copied, and VP8 + Opus in WebM (the Android
 recorder's shape); the same with 7 holes of 213 ms in its AAC track (a recorder that lost audio
-buffers); a 60 fps and a 24 fps clip. The output's audio is read at its PACKETS' times - Chrome's
+buffers), once trimmed as a CanaReel; an AAC track stamped 0.5 % fast, which must NOT be cut into
+clicks; a 60 fps and a 24 fps clip. The output's audio is read at its PACKETS' times - Chrome's
 decoder closes holes, so a reading through it would hide the drift - and a hole left in the output
 fails the row. The exit code fails on a failed verdict or a row that
 does not complete.
