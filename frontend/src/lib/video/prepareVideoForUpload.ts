@@ -531,7 +531,7 @@ async function placeAudioHoles(
     }
   } catch (e) {
     if (isVideoPrepareError(e)) throw e;
-    return { kind: 'failed', error: e instanceof Error ? e.message : String(e) };
+    return { kind: 'failed', error: String(e) };
   }
   if (decoded.length === 0) return { kind: 'failed', error: 'the decoder emitted no chunk' };
   const paired = pairedPackets(packetTimes, decoded);

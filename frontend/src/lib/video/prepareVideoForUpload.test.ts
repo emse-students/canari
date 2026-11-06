@@ -312,7 +312,7 @@ describe('prepareVideoForUpload', () => {
       expect(out.file.name).toBe('clip.mp4');
       expect(state.init!.audio).toEqual({ codec: 'aac' });
       expect(warn.mock.calls.flat().join('\n')).toContain(
-        'audio holes NOT restored (the decoder failed: no decoder for mp4a.40.2): copied with its' +
+        'audio holes NOT restored (the decoder failed: Error: no decoder for mp4a.40.2): copied with its' +
           ' holes: the sound after each hole plays early on Chrome'
       );
       warn.mockRestore();
