@@ -679,6 +679,7 @@ The largest area here, and the one that has cost the most. `chat` = [chat](front
 
 - **A tab is "read-only" only where something CHECKS**, and whoever inherits the role must reload its state. [chat](frontend/modules/chat.md)
 - **A repair whose result nobody reads must be STARTED, never awaited** - an await inside the drain freezes all inbound traffic. [chat](frontend/modules/chat.md)
+- **A frame's last precondition at a cold start is its ROW, not MLS**: the boot pull and the held socket frames wait for the restore's seeding, and the login that awaits the pull does so AFTER the restore, or it waits on itself. [auth](frontend/modules/auth.md#and-since-2026-11-06-nothing-is-handled-before-the-conversation-rows-exist)
 - **A mutual-exclusion window needs ONE entry point for awaiting.** Report the freeze, never trade it for a loss. [chat](frontend/modules/chat.md)
 - **COALESCING PLACED AFTER A GATE CANNOT REACH THE WAITING ON IT.** One tab election, twenty boot flushes: `flushing`/`rerun` folded the work, but each caller awaited the decision on its own and logged its own resolution - twenty lines inside one second for one event, differing only by a wait, so not even the dedup key could fold them. A gate many callers await is awaited ONCE through a shared promise, and its outcome is logged by that one wait. [chat](frontend/modules/chat.md)
 - **A termination proof covers the structure it is written over**, so **a window must be closed by what opened it, through one exit.** [chat](frontend/modules/chat.md)

@@ -103,8 +103,8 @@ bundle that wires its handler, and there is no interval in which it is visible b
 | Phase | What it does |
 |---|---|
 | `setup_handler` | registers the inbound pipeline, so nothing can arrive unhandled |
-| `open_gateway` | `openGatewayConnection` ADOPTS a socket that has been opening since before `setup_handler` |
-| `load_conversations` | the archive replay out of the local store, one conversation at a time |
+| `open_gateway` | `openGatewayConnection` ADOPTS a socket that has been opening since before `setup_handler`; its pull waits for the rows ([below](#and-since-2026-11-06-nothing-is-handled-before-the-conversation-rows-exist)) |
+| `load_conversations` | seeds every conversation row (which issues the boot pull and replays the held frames), then the archive replay out of the local store, one conversation at a time |
 | `fcm_cache` | merges what a background notification decrypted while the app was dead |
 | `initialize_connection` | `syncConnectionAfterWsOpen` - KeyPackages, the group sweep, reconciliation |
 
@@ -156,6 +156,52 @@ The gate lives on the base class, so both sockets pass it, and the per-frame rou
 to `routeFrame` on each platform so that a held frame and a live one take literally the same path.
 Behaviour is in `BaseMlsService.inboundGate.test.ts` and `startGatewayHandshake.test.ts`; the boot
 ORDER, which no behavioural test can see, is in six source guards in `offlineUnlock.test.ts`.
+
+### And since 2026-11-06 nothing is handled before the conversation rows exist
+
+**MLS ready is not the last precondition of a frame at a cold start: its ROW is.** A frame of a group
+this device holds is refused `absent-conversation` (`setupMessageHandler.ts`, `handleKnownGroup`)
+while the conversation map has no row for it, and every row is written by the restore's first phase
+(`loadExistingConversations`, `[RESTORE] N conversation row(s) seeded`). Until this date the login
+opened the inbound gate at `markInboundReady` and `open_gateway` pulled the whole mailbox, both
+BEFORE `load_conversations`. Measured on the Mi 9T (`1.6.5-alpha.1`, 2026-11-05): six frames of three
+DMs refused 200 ms before the seeding, a `[PENDING] 6 frame(s) left unacknowledged` WARN, then the
+seeding's re-fetch applied them. Nothing was lost, at every cold start - a race that heals, which is a
+defect (`CLAUDE.md`).
+
+**The fix is an ORDER, carried by one event, the seeding** (`BaseMlsService`, so web and Tauri alike):
+
+- The login arms `holdInboundUntilRowsSeeded()` BEFORE the handshake starts. While armed, the gate
+  holds every socket frame even once MLS is ready (`markInboundReady` then only records readiness),
+  and EVERY `fetchPendingMessages()` asked meanwhile joins ONE owed whole-mailbox pull, the boot
+  pull (a superset of any group ask) - the login's catch-up, an outbox flush's barrier (an owed DM
+  read mark queued at `registerOutbox`), a reconnect, a visibility change alike.
+- `notifyConversationRowsSeeded()` - the restore's first phase, for any number of rows - releases
+  it: it issues the boot pull FIRST and synchronously, so `pendingPullInFlight` is announced before
+  the second phase reaches its first archive-replay barrier, then replays the held frames in arrival
+  order. A held socket frame is also listed by the pull; `enqueueMessage` keeps the first by queue id.
+- `openGatewayConnection` takes a third argument, the login's: the catch-up (the boot pull, then
+  `onCaughtUp`) is handed back STARTED, never awaited there - awaiting it would wait for the seeding
+  of a restore that runs after the function returns. The login awaits it right after the restore,
+  so everything below (`reconcileOutboxSent`, `consumeFcmCache`, the restore verdict, the
+  post-connect sync) still reads a drained mailbox, exactly as when the pull ran first.
+- **Termination is a proof, not the seeding alone**: the login calls `endRowSeedingHold()` in a
+  `finally` around the restore. Silent when the seeding released the hold; otherwise (a restore that
+  threw before seeding, or ran on another client) it releases everything at `warn`. `destroy`
+  releases the owed boot pull with nothing listed, and its catch-up is not reported as caught up
+  (`openGatewayConnection` reads `isDestroyed()`).
+- **The boot mailbox's acked inbound state stays unsaved until the restore's second phase ends**: the
+  boot drain now overlaps phase 2, whose bulk-ingest window encloses its own, and `mlsStatePersister`'s
+  `onBulkIngestEnd` checkpoints only when the outermost window closes - a kill before then is
+  recovered by replay, as any inbound state is.
+
+**No deadlock**: the restore's first phase reads only the store and awaits no barrier, and nothing
+the login awaits before it waits on a routed frame or on a pull (`settleUnresolvedCommits`,
+`adoptOrphanedMirrorEntries`, the landing preview and phase 1 were each read for it). A reconnect
+outside the login's window pulls at once, because the hold is no longer armed. A reconnect INSIDE the window waits for the seeding like every other pull, so `isReconnecting` stays true until then, and a second drop in that window is picked up by the 60 s connection watchdog rather than by a new rung - accepted for now. Behaviour (with the real restore
+doing the seeding, and the old order reproduced as a case) is in
+`BaseMlsService.bootDrainAfterSeeding.test.ts`; the login's half of the order is three more source
+guards in `offlineUnlock.test.ts`.
 
 #### The device id is not final when the handshake starts (fixed 2026-10-25)
 

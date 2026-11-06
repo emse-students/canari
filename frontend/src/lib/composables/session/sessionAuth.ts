@@ -1766,6 +1766,13 @@ export async function loginImpl(
     // this socket before MLS is ready is HELD by `BaseMlsService`, in arrival order, and replayed by
     // the `markInboundReady` below - which is the precondition of this line and must stay paired
     // with it. An offline session opens nothing: there is no token to carry and no server to reach.
+    //
+    // AND NOTHING IS PROCESSED BEFORE THE ROWS IT LANDS IN EXIST EITHER: a frame of a group this
+    // device holds, handled before the restore below has seeded its conversation row, is refused
+    // `absent-conversation` and fetched again - at every cold start (Mi 9T, 2026-11-05). So the hold
+    // is armed BEFORE the socket can deliver a byte, and the restore's seeding releases it - the
+    // held frames and the boot pull alike (`notifyConversationRowsSeeded`).
+    mlsService.holdInboundUntilRowsSeeded();
     if (!offlineSession) markBoot('gateway-handshake-started');
     const startedHandshake = offlineSession
       ? null
@@ -2329,7 +2336,9 @@ export async function loginImpl(
      * Since 2026-09-16 the handshake no longer STARTS here either - it was started before the MLS
      * state load, 182 ms further up, and what remains on this path is the gate and the await. The
      * concurrency that buys is paid for by the hold queue and by nothing else: frames are held, not
-     * dropped, and they are replayed by the call below before a single line past it runs.
+     * dropped. AND SINCE 2026-11-06 THEY ARE NOT REPLAYED HERE: the hold armed before the handshake
+     * keeps them until the restore below has seeded the conversation rows they land in, and the
+     * seeding replays them (`notifyConversationRowsSeeded`). This call only says MLS is ready.
      *
      * Only the SOCKET moved, twice. `syncConnectionAfterWsOpen` - KeyPackage publication, the group
      * sweep, reconciliation - stays where it was, below the restore, because it reasons about the
@@ -2342,13 +2351,23 @@ export async function loginImpl(
     // degrade correctly on its own, but the attempt costs a timeout on a launch that already knows
     // there is no network, and it logs "[WS] Gateway connection failed" for a device that never had one.
     let gatewayIsOpen = false;
+    /**
+     * The boot catch-up (the pull, then `onCaughtUp`), STARTED by the connection and released by the
+     * restore's seeding - so it is awaited only once the restore below has returned, never before
+     * it: the restore is what issues its pull. `null` when no socket opened.
+     */
+    let bootCatchUp: Promise<void> | null = null;
     if (offlineSession) {
       cb.log('[INIT] Offline session - gateway connection deferred until the network returns.');
     } else {
       beginStartupCatchupPhase('open_gateway');
       // The handshake this awaits was started before the MLS state load, not here - see
       // `startGatewayHandshake` above. Everything after the socket opens is unchanged.
-      gatewayIsOpen = await openGatewayConnection(makeConnectionDeps(ctx, cb), startedHandshake);
+      gatewayIsOpen = await openGatewayConnection(
+        makeConnectionDeps(ctx, cb),
+        startedHandshake,
+        (caughtUp) => (bootCatchUp = caughtUp)
+      );
       endStartupCatchupPhase();
       stopIfSignedOut('open-gateway');
     }
@@ -2379,8 +2398,20 @@ export async function loginImpl(
       // Load conversations first: consumeFcmCache can access
       // the conversations Map via addMessageToChat once it is populated.
       beginStartupCatchupPhase('load_conversations');
-      await cb.loadAndRestoreConversations();
+      try {
+        await cb.loadAndRestoreConversations();
+      } finally {
+        // THE HOLD ARMED ABOVE ENDS HERE AT THE LATEST, so it terminates on a proof - this line -
+        // and not on the seeding alone: a restore that threw before seeding would otherwise leave
+        // every socket frame held, and the boot pull unissued, for the whole session.
+        mlsService.endRowSeedingHold();
+      }
       stopIfSignedOut('load-conversations');
+      // THE MAILBOX IS DRAINED BEFORE ANYTHING BELOW, as it was when the pull ran ahead of the
+      // restore: the outbox reconcile, the push cache merge and the restore verdict all read the
+      // conversations as the queue left them. Started by the seeding, so it never waits on itself.
+      if (bootCatchUp) await bootCatchUp;
+      stopIfSignedOut('boot-catch-up');
       {
         const stats = summarizeConversationStats(cb.conversations);
         endStartupCatchupPhase({
