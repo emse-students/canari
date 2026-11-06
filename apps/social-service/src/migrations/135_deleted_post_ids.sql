@@ -1,4 +1,4 @@
--- Migration 134 : a deleted post's id is never created again (2026-11-06).
+-- Migration 135 : a deleted post's id is never created again (2026-11-06).
 --
 -- docs/wiki/services/social-service.md, "A post created twice is the same post". The app's publish
 -- queue mints a post's id on the device and sends it again until an answer arrives, so a resend of a

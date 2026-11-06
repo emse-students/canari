@@ -36,6 +36,7 @@ import {
   AddReactionDto,
   EditCommentDto,
   UpdatePostDto,
+  WithdrawPostDto,
 } from './dto/post.dto';
 
 /** Manages post resources including reactions, comments, polls, and notifications. */
@@ -281,16 +282,17 @@ export class PostsController {
 
   /**
    * The author takes back a post the app queued under a client id, whether or not its create landed:
-   * the id is retired (410 on a later create) and the row, if any, deleted (`withdrawPost`).
+   * the id is retired (410 on a later create), the row, if any, deleted, and the uploaded media no
+   * live row cites deleted (`withdrawPost`). Only ever the caller's own post, admin or not.
    */
   @UseGuards(NginxAuthGuard)
   @HttpPost(':postId/withdraw')
   withdrawPost(
     @Headers('x-user-id') xUserId: string,
-    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId', ParseUUIDPipe) postId: string
+    @Param('postId', ParseUUIDPipe) postId: string,
+    @Body() body: WithdrawPostDto
   ) {
-    return this.service.withdrawPost(postId, xUserId, xGlobalAdmin === 'true');
+    return this.service.withdrawPost(postId, xUserId, body?.mediaIds ?? []);
   }
 
   /** Deletes a post; global admins may delete any post. */

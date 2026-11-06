@@ -1250,7 +1250,7 @@ export class PostsService {
     );
   }
 
-  /** Whether a post that held `postId` was deleted (`deleted_post_ids`, migration 134). */
+  /** Whether a post that held `postId` was deleted (`deleted_post_ids`, migration 135). */
   private async isDeletedPostId(postId: string): Promise<boolean> {
     const rows: unknown[] = await this.postRepo.query(
       'SELECT 1 FROM deleted_post_ids WHERE id = $1',
@@ -1261,17 +1261,23 @@ export class PostsService {
 
   /**
    * THE AUTHOR TAKES BACK A POST THEY QUEUED, whether or not its create ever landed: the publish
-   * queue's Delete once the create may have been sent (`posts.md#the-background-publish-queue`).
+   * queue's Delete (`posts.md#the-background-publish-queue`).
    *
    * Writes the id's tombstone FIRST, then deletes the row if there is one. A create of that id still
    * on its way either is seen here (and deleted) or sees the tombstone after its own insert (and
-   * removes itself, `createPost`) - so the post never exists once this answered.
+   * removes itself, `createPost`) - so the post never exists once this answered. Then the media the
+   * queue uploaded for it (`mediaIds`) are deleted, except any a live row cites
+   * (`deleteWithdrawnMedia`).
+   *
+   * ONLY EVER THE CALLER'S OWN POST, admin or not: the author is checked before the tombstone and
+   * again on the row it would delete. Another author's post found on the second read (it was
+   * created between the two) is left, and the tombstone this call wrote is taken back.
    *
    * @returns `deleted: true` when a row was removed, `false` when there was none (never created, or
    *          already gone) - both mean the post does not exist and never will.
-   * @throws ConflictException when the id is another author's post; nothing is written.
+   * @throws ConflictException when the id is another author's post.
    */
-  async withdrawPost(postId: string, userId: string, isAdmin: boolean) {
+  async withdrawPost(postId: string, userId: string, mediaIds: string[] = []) {
     const before = await this.postRepo.findOne({ where: { id: postId } });
     if (before && before.authorId !== userId) {
       throw new ConflictException("This post id is another author's");
@@ -1281,13 +1287,20 @@ export class PostsService {
       [postId]
     );
     const row = await this.postRepo.findOne({ where: { id: postId } });
-    if (!row) {
-      this.logger.log(`[POST-WITHDRAW] post ${postId.slice(0, 8)}: no row, the id is retired`);
-      return { ok: true, deleted: false };
+    if (row && row.authorId !== userId) {
+      // Created by another author between the two reads: their post stays, and so must its id.
+      await this.postRepo.query('DELETE FROM deleted_post_ids WHERE id = $1', [postId]);
+      this.logger.warn(
+        `[POST-WITHDRAW] post ${postId.slice(0, 8)}: another author's row appeared - left, tombstone taken back`
+      );
+      throw new ConflictException("This post id is another author's");
     }
-    await this.deletePost(postId, userId, isAdmin);
-    this.logger.log(`[POST-WITHDRAW] post ${postId.slice(0, 8)}: deleted, the id is retired`);
-    return { ok: true, deleted: true };
+    if (row) await this.deletePost(postId, userId, false);
+    const media = await this.mediaRetention.deleteWithdrawnMedia(userId, mediaIds);
+    this.logger.log(
+      `[POST-WITHDRAW] post ${postId.slice(0, 8)}: ${row ? 'deleted' : 'no row'}, the id is retired; media ${media.deleted} deleted, ${media.absent} gone, ${media.cited} cited, ${media.refused} refused`
+    );
+    return { ok: true, deleted: !!row };
   }
 
   /** INSERTs `post` under the client's id and reads back the row with its database defaults. */

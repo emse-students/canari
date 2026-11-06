@@ -84,6 +84,43 @@ export interface QueuedPost {
   withdrawn?: true;
 }
 
+/**
+ * What the MEMBER sets on a queued post (Delete, Pause, Resume, Retry), written by
+ * {@link PublishQueueStore.mark} alone. The runner's writes never carry them: a runner's copy is read
+ * before the member acted, and writing it whole would erase a Delete or a Pause another tab - or this
+ * one - set meanwhile (review of #3061: a Delete during an upload's `persist` was lost and the post
+ * published).
+ */
+export interface MemberMarks {
+  withdrawn?: true;
+  paused?: boolean;
+  /** Retry, Resume, Delete: the stopped post's failure goes. */
+  clearFailure?: true;
+}
+
+/**
+ * The record a RUNNER's write leaves: its copy, with the member's marks taken from the STORED record
+ * - set once, they stay set until {@link markedPost} clears them. The runner's copy learns them too,
+ * so the step that wrote it sees a Delete or a Pause at once.
+ */
+export function runnerWrite(stored: QueuedPost, incoming: QueuedPost): QueuedPost {
+  delete incoming.withdrawn;
+  delete incoming.paused;
+  if (stored.withdrawn) incoming.withdrawn = true;
+  if (stored.paused) incoming.paused = true;
+  return incoming;
+}
+
+/** The record the member's `marks` leave on `stored`. */
+export function markedPost(stored: QueuedPost, marks: MemberMarks): QueuedPost {
+  const next: QueuedPost = { ...stored };
+  if (marks.withdrawn) next.withdrawn = true;
+  if (marks.paused === true) next.paused = true;
+  if (marks.paused === false) delete next.paused;
+  if (marks.clearFailure) delete next.failure;
+  return next;
+}
+
 /** The bytes of one media. */
 export interface QueuedFile {
   bytes: ArrayBuffer;
@@ -183,9 +220,10 @@ export class PublishQueueStore {
   }
 
   /**
-   * Writes the record - only if it is still queued: a post the member deleted while a step was
-   * running stays deleted. With `bytes`, the media's bytes are replaced in the SAME transaction
-   * (the prepared file takes the place of the original the moment the record says so).
+   * The RUNNER writes its copy of the record - only if it is still queued, and never over the
+   * member's marks ({@link runnerWrite}, read and written in ONE transaction). With `bytes`, the
+   * media's bytes are replaced in the SAME transaction (the prepared file takes the place of the
+   * original the moment the record says so).
    *
    * @returns `false` when the post is no longer queued and nothing was written.
    */
@@ -199,8 +237,29 @@ export class PublishQueueStore {
     read.onsuccess = () => {
       if (!read.result) return;
       written = true;
-      posts.put(post);
+      posts.put(runnerWrite(read.result as QueuedPost, post));
       if (bytes) tx.objectStore(FILES).put(bytes.file, fileKey(post.id, bytes.index));
+    };
+    await done;
+    return written;
+  }
+
+  /**
+   * The MEMBER's Delete, Pause, Resume or Retry, applied to the stored record in one transaction.
+   *
+   * @returns the record as written, or `null` when the post is no longer queued.
+   */
+  async mark(postId: string, marks: MemberMarks): Promise<QueuedPost | null> {
+    const db = await this.open();
+    const tx = db.transaction(POSTS, 'readwrite');
+    const done = idbCommitted(tx);
+    const posts = tx.objectStore(POSTS);
+    let written: QueuedPost | null = null;
+    const read = posts.get(postId);
+    read.onsuccess = () => {
+      if (!read.result) return;
+      written = markedPost(read.result as QueuedPost, marks);
+      posts.put(written);
     };
     await done;
     return written;

@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
 import { applyMediaRetentionClass } from '../internal/media-retention-class';
 import {
+  deleteNeverCitedMedia,
   claimReelMedia,
   purgeReelMedia,
   type ReelPurgeOutcome,
@@ -193,6 +194,62 @@ export class PostMediaRetentionService implements OnModuleInit {
     if (mediaIds.length > 0) {
       await applyMediaRetentionClass(this.httpService, this.logger, mediaIds, 'archive');
     }
+  }
+
+  /**
+   * THE PUBLISH QUEUE'S DELETE, server side: deletes the media a withdrawn post uploaded, under
+   * `ownerId` as their uploader, EXCEPT any id a live post or comment cites. The client cannot be
+   * trusted with that check (an uploader's `archive` objects include the media of posts already
+   * published, an association's among them - review of #3061), and media-service cannot make it,
+   * so it is made here, where the rows are. Cited ids are left alone and logged.
+   *
+   * Throws on a transport failure: the withdrawal answers 5xx and the queue asks again; every step
+   * is idempotent (an object already gone answers `absent`).
+   *
+   * @returns how many were deleted, already gone, kept because a row cites them, or refused.
+   */
+  async deleteWithdrawnMedia(
+    ownerId: string,
+    mediaIds: string[]
+  ): Promise<{ deleted: number; absent: number; cited: number; refused: number }> {
+    const counts = { deleted: 0, absent: 0, cited: 0, refused: 0 };
+    const ids = [...new Set(mediaIds)];
+    if (ids.length === 0) return counts;
+    const rows: Array<{ mediaId: string | null }> = await this.postRepo.query(
+      `
+      SELECT m->>'mediaId' AS "mediaId"
+        FROM posts p, jsonb_array_elements(p.images) m
+       WHERE jsonb_typeof(p.images) = 'array'
+         AND m->>'mediaId' = ANY($1::text[])
+      UNION
+      SELECT c->'media'->>'mediaId' AS "mediaId"
+        FROM posts p, jsonb_array_elements(p.comments) c
+       WHERE jsonb_typeof(p.comments) = 'array'
+         AND jsonb_typeof(c->'media') = 'object'
+         AND c->'media'->>'mediaId' = ANY($1::text[])
+      `,
+      [ids]
+    );
+    const cited = new Set(rows.map((row) => row.mediaId));
+    const free = ids.filter((id) => !cited.has(id));
+    counts.cited = ids.length - free.length;
+    if (counts.cited > 0) {
+      this.logger.warn(
+        `[POST-WITHDRAW] ${counts.cited} media a live row cites left alone (named by a withdrawal)`
+      );
+    }
+    if (free.length === 0) return counts;
+    const results = await deleteNeverCitedMedia(
+      this.httpService,
+      free.map((mediaId) => ({ mediaId, ownerId }))
+    );
+    for (const id of free) {
+      const outcome = results[id];
+      if (outcome === 'deleted') counts.deleted += 1;
+      else if (outcome === 'absent') counts.absent += 1;
+      else counts.refused += 1;
+    }
+    return counts;
   }
 
   /**

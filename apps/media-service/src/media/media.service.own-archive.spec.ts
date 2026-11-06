@@ -2,8 +2,9 @@
 
 /**
  * `removeOwnArchive`: the publish queue's Delete takes back the post media it uploaded for a post
- * that will never exist. A user route, so it is pinned to exactly one thing - the caller's own
- * `archive` object - and is idempotent on an object already gone.
+ * that will never exist. Reached only through `internal/own-archive-delete`, from social-service,
+ * which checked that no live row cites the id; here it is pinned to the uploader's own `archive`
+ * object, and is idempotent on an object already gone.
  */
 import { BadRequestException } from '@nestjs/common';
 import { MediaService } from './media.service';

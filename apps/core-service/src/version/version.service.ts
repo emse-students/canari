@@ -55,6 +55,15 @@ export type AppVersionResponse = {
    * (docs/wiki/legacy-compatibility.md, "the presence ids in a URL").
    */
   presencePost: true;
+  /**
+   * A CAPABILITY OF THIS ESTATE'S SOCIAL- AND MEDIA-SERVICE, published here for the same reason:
+   * social-service keeps a post's client id and serves `POST /api/posts/:id/withdraw` (migration
+   * 135), media-service opens `single-block` sessions. The client's background publish queue sends
+   * nothing to an estate that does not say so - an older one would duplicate a post whose answer was
+   * lost - and the three services are built from ONE release tag and deployed together. Always
+   * `true` from this release on (docs/wiki/frontend/modules/posts.md#the-background-publish-queue).
+   */
+  publishQueue: true;
 };
 
 /** Resolves deployed app version and platform gates from core-service. */
@@ -78,6 +87,7 @@ export class VersionService {
       lives: { mode: platform.livesMode },
       oidcPkce: true,
       presencePost: true,
+      publishQueue: true,
     };
   }
 }

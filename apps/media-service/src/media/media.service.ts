@@ -1861,11 +1861,13 @@ export class MediaService {
    * `posts/publishQueue/`). An `archive` object is exempt from the idle sweep, so without this it
    * would stay for ever, cited by nothing.
    *
-   * Narrow on purpose - it is a user route, unlike the generic {@link remove}: the entry's recorded
-   * uploader is `ownerId` (none recorded: refused, never on trust) and its class is `archive` (a
-   * post's media - never a reel, a chat file, a form file, a poster or a public asset). The caller
-   * is the only one who could be hurt: if a post of theirs did cite it, that post loses an image.
-   * The client calls it only for a post whose create never landed, or after withdrawing the post.
+   * Narrow on purpose: the entry's recorded uploader is `ownerId` (none recorded: refused, never on
+   * trust) and its class is `archive` (a post's media - never a reel, a chat file, a form file, a
+   * poster or a public asset). Owner and class do NOT prove the object is uncited - an uploader's
+   * `archive` objects include the media of posts already published, an association's among them,
+   * which a former admin would otherwise strip. So it is reached only through
+   * `internal/own-archive-delete`, from social-service's withdrawal, which checked that no live
+   * post or comment cites the id (review of #3061).
    *
    * @returns `deleted`, `absent` (unknown or already purged: the same end state, so idempotent), or
    *          `refused` (not theirs, or not a post's media).

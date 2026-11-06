@@ -516,11 +516,16 @@ export async function deletePost(postId: string): Promise<{ ok: boolean }> {
 /**
  * Takes back a post the publish queue may have created (`POST /api/posts/:id/withdraw`): the id is
  * retired on the server, so a create still on its way is refused, and the post is deleted if it
- * landed. `deleted` says whether a row was there.
+ * landed. `mediaIds` are the post's uploaded media: social-service deletes the ones no live row
+ * cites, under this caller as their uploader. `deleted` says whether a row was there.
  */
-export async function withdrawPost(postId: string): Promise<{ ok: boolean; deleted: boolean }> {
+export async function withdrawPost(
+  postId: string,
+  mediaIds: string[]
+): Promise<{ ok: boolean; deleted: boolean }> {
   return request<{ ok: boolean; deleted: boolean }>(`/api/posts/${postId}/withdraw`, {
     method: 'POST',
+    body: JSON.stringify({ mediaIds }),
   });
 }
 

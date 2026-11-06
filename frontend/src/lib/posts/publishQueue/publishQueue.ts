@@ -30,10 +30,18 @@
  *
  * WHAT THE MEMBER CAN DO TO A POST. Pause it (the transfer stops, the post stays, "Reprendre" goes
  * on), Retry it, or Delete it. DELETE MEANS THE POST EXISTS NOWHERE: it is marked `withdrawn` and
- * the pass takes it back - the server's withdrawal when a create may have been sent (the id is
- * retired, so a create still on its way is refused), the uploaded blobs deleted when no post will
- * cite them, the open sessions given back - and only then does the record go. A Delete pressed while
- * the create is on the wire wins: no "published" toast, and the post is taken down.
+ * the pass takes it back - ONE server withdrawal (the id is retired, so a create still on its way is
+ * refused; the post deleted if it landed; the uploaded media no live row cites deleted by
+ * social-service), the open sessions given back - and only then does the record go. A Delete pressed
+ * while the create is on the wire wins: no "published" toast, and the post is taken down. A Pause
+ * pressed then does not: a landed post cannot be paused, so it is published. The member's marks
+ * are written by `PublishQueueStore.mark` alone, so no runner write ever erases them.
+ *
+ * AN ESTATE THAT CANNOT TAKE IT IS WAITED FOR, never sent to. A stable reaches both stores before
+ * production deploys, so a new phone build meets the old services for days: they would drop the
+ * client id (a lost answer then duplicates the post), refuse `single-block`, and answer the
+ * withdrawal `404`. The queue sends nothing until `/api/version` says `publishQueue`
+ * (`serverReady`), and its rows wait meanwhile.
  *
  * ONE RUNNER PER ACCOUNT ACROSS TABS: a pass holds a Web Lock where the engine has one, so two tabs
  * never upload the same media; a tab whose pass waits behind another's runs it after, from the store.
@@ -49,6 +57,7 @@ import { MediaUploadError, uploadRefusalCause } from '$lib/utils/mediaErrors';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { TokenAccountChangedError } from '$lib/utils/renewOn401';
+import { IdentitySplitError } from '$lib/stores/tokenIdentity.svelte';
 import type {
   PublishQueueStore,
   QueuedFile,
@@ -96,7 +105,7 @@ export interface PublishUploadArgs {
 
 /** Everything the queue touches outside itself - injected, so a test drives it with fakes. */
 export interface PublishQueueDeps {
-  store: Pick<PublishQueueStore, 'list' | 'get' | 'readFile' | 'update' | 'remove'>;
+  store: Pick<PublishQueueStore, 'list' | 'get' | 'readFile' | 'update' | 'mark' | 'remove'>;
   /** Prepares one media as the composer used to (`preparePostMedia`). */
   prepare: (
     file: File,
@@ -108,11 +117,17 @@ export interface PublishQueueDeps {
   upload: (args: PublishUploadArgs) => Promise<MediaRef>;
   /** Gives a resumable session back to the server, best effort (a deleted post). */
   release: (uploadId: string) => Promise<unknown>;
-  /** Deletes the caller's own uploaded post media no post will cite (`DELETE /api/media/own/:id`). */
-  deleteMedia: (mediaId: string) => Promise<unknown>;
   createPost: (payload: CreatePostPayload & { id: string }) => Promise<unknown>;
-  /** Retires the id and deletes the post if it landed (`POST /api/posts/:id/withdraw`). */
-  withdrawPost: (postId: string) => Promise<{ deleted: boolean }>;
+  /**
+   * Retires the id, deletes the post if it landed, and deletes the named uploaded media that no
+   * live row cites (`POST /api/posts/:id/withdraw`).
+   */
+  withdrawPost: (postId: string, mediaIds: string[]) => Promise<{ deleted: boolean }>;
+  /**
+   * Whether the estate serves what the queue sends (`publishQueue` in `/api/version`): `true`, or
+   * `false`/`null` (an older estate, or not known yet) - then nothing is sent and the rows wait.
+   */
+  serverReady: () => boolean | null;
   /**
    * Throws unless the session that would carry the next request is the queue's own account: a
    * {@link PublishAccountMismatchError}, or what the session throws when there is none.
@@ -127,7 +142,12 @@ export interface PublishQueueDeps {
   lock: <T>(fn: () => Promise<T>) => Promise<T>;
   /** Waits `ms` or until `signal` aborts - the ladder's cadence. */
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
-  onViews: (views: PublishView[]) => void;
+  /**
+   * The rows changed. `fromRunner`: drawn by the pass that works on them, so other tabs may adopt
+   * them; `false` when they were read from the store alone ({@link PublishQueue.refreshViews}) and
+   * must not overwrite a runner's progress elsewhere.
+   */
+  onViews: (views: PublishView[], fromRunner: boolean) => void;
   onPublished: (post: QueuedPost) => void;
   log: (line: string) => void;
 }
@@ -172,13 +192,14 @@ export type PublishFailureVerdict = 'wait' | 'busy' | 'halt' | 'failed';
  * What a failure says about this post.
  *
  * - `wait`: NO ANSWER reached us - a transport failure, or an EDGE page (the host's proxy, never the
- *   app) with no cause. Waited out; any wake ends the wait.
+ *   app) with no cause, from an upload or from the post API alike. Waited out; any wake ends the wait.
  * - `busy`: the APP answered "not now" - a `5xx`, `408`, `425`, `429`, or a resumable session it lost
  *   and could not reopen (`sessionLost`). Asked again over the ladder ONCE, then a failure with its
  *   Retry: a server that keeps refusing is never asked for ever, and a lost session is never
  *   re-uploaded part by part every minute.
  * - `halt`: the SESSION is not this queue's - it ended (`sessionEnded`, the one authority on a 401),
- *   a token names another account, or a `401` reached us anyway. The pass ends, nothing recorded:
+ *   a token names another account (`apiFetch`'s `IdentitySplitError` guards the create and the
+ *   withdrawal the same way), or a `401` reached us anyway. The pass ends, nothing recorded:
  *   the app's auth decides what a 401 means, and the queue never spins on one.
  * - `failed`: an answer about the post - kept until the member acts.
  */
@@ -189,6 +210,7 @@ export function classifyPublishFailure(
   if (
     error instanceof PublishAccountMismatchError ||
     error instanceof TokenAccountChangedError ||
+    error instanceof IdentitySplitError ||
     sessionEnded(error)
   ) {
     return 'halt';
@@ -201,6 +223,7 @@ export function classifyPublishFailure(
   }
   if (error instanceof ApiRefusalError) {
     if (error.status === 401) return 'halt';
+    if (error.origin === 'edge') return 'wait';
     return error.status >= 500 || RETRIED_STATUSES.has(error.status) ? 'busy' : 'failed';
   }
   return 'failed';
@@ -293,9 +316,7 @@ export class PublishQueue {
       this.deps.log(
         `[PUBLISH-QUEUE] ${postId} resumed by the member after: ${post.failure?.stage ?? 'a pause'}`
       );
-      delete post.failure;
-      delete post.paused;
-      await this.deps.store.update(post);
+      await this.deps.store.mark(postId, { paused: false, clearFailure: true });
     }
     await this.refreshViews();
     this.nudge(postId, 'retry');
@@ -306,8 +327,7 @@ export class PublishQueue {
   async pause(postId: string): Promise<void> {
     const post = await this.deps.store.get(postId);
     if (!post || post.withdrawn) return;
-    post.paused = true;
-    if (!(await this.deps.store.update(post))) return;
+    if (!(await this.deps.store.mark(postId, { paused: true }))) return;
     this.deps.log(`[PUBLISH-QUEUE] ${postId} paused by the member`);
     this.nudge(postId, 'paused');
     await this.refreshViews();
@@ -319,12 +339,12 @@ export class PublishQueue {
    * just a local forget of a post the server may hold, nor of blobs no post will ever cite.
    */
   async remove(postId: string): Promise<void> {
-    const post = await this.deps.store.get(postId);
-    if (!post) return;
-    post.withdrawn = true;
-    delete post.failure;
-    delete post.paused;
-    if (!(await this.deps.store.update(post))) return;
+    const marked = await this.deps.store.mark(postId, {
+      withdrawn: true,
+      paused: false,
+      clearFailure: true,
+    });
+    if (!marked) return;
     this.deps.log(`[PUBLISH-QUEUE] ${postId} deleted by the member: taking it back`);
     this.nudge(postId, 'deleted');
     await this.refreshViews();
@@ -354,8 +374,8 @@ export class PublishQueue {
     for (const id of this.views.keys()) {
       if (!posts.some((p) => p.id === id)) this.views.delete(id);
     }
-    for (const p of posts) this.setView(p);
-    this.emitViews();
+    for (const p of posts) this.setView(p, {}, false);
+    this.emitViews(false);
   }
 
   /** Stops for good (sign-out): the transfer is aborted, nothing more starts. The store is kept. */
@@ -365,8 +385,8 @@ export class PublishQueue {
     this.wakeWait?.abort();
   }
 
-  private emitViews(): void {
-    this.deps.onViews([...this.views.values()]);
+  private emitViews(fromRunner = true): void {
+    this.deps.onViews([...this.views.values()], fromRunner);
   }
 
   /**
@@ -374,7 +394,7 @@ export class PublishQueue {
    * keeps its last phase unless the patch names another - except a `failed` line left from before a
    * Retry, which is `queued` again.
    */
-  private setView(post: QueuedPost, patch: Partial<PublishView> = {}): void {
+  private setView(post: QueuedPost, patch: Partial<PublishView> = {}, emit = true): void {
     const done = post.media.filter((m) => m.ref).length;
     const prev = this.views.get(post.id);
     const view: PublishView = {
@@ -389,17 +409,18 @@ export class PublishQueue {
         : {}),
       ...patch,
     };
-    if (post.withdrawn) {
-      view.phase = 'withdrawing';
-    } else if (post.failure) {
+    // A withdrawal that was refused is a failure the member sees, with its Retry and Delete.
+    if (post.failure) {
       view.phase = 'failed';
       view.failure = post.failure.message;
+    } else if (post.withdrawn) {
+      view.phase = 'withdrawing';
     } else if (post.paused) {
       view.phase = 'paused';
     }
-    if (!post.failure || post.withdrawn) delete view.failure;
+    if (!post.failure) delete view.failure;
     this.views.set(post.id, view);
-    this.emitViews();
+    if (emit) this.emitViews();
   }
 
   /** One pass: the oldest post that has not stopped, until none is left or one must wait. */
@@ -411,9 +432,17 @@ export class PublishQueue {
         if (!posts.some((p) => p.id === id)) this.views.delete(id);
       }
       for (const p of posts) this.setView(p);
-      const next = posts.find((p) => p.withdrawn) ?? posts.find((p) => !p.failure && !p.paused);
+      // A post that STOPPED is left out whatever it was doing - a refused withdrawal included, which
+      // was picked again at once and asked 51 times in a few ms (review of #3061). Only the member's
+      // Retry or Delete clears the failure.
+      const workable = posts.filter((p) => !p.failure);
+      const next = workable.find((p) => p.withdrawn) ?? workable.find((p) => !p.paused);
       if (!next) return;
-      const outcome = next.withdrawn ? await this.withdraw(next) : await this.process(next);
+      const outcome: Outcome = !this.estateServes()
+        ? 'wait'
+        : next.withdrawn
+          ? await this.withdraw(next)
+          : await this.process(next);
       if (outcome === 'halt') return;
       if (outcome === 'wait') {
         const ms =
@@ -432,13 +461,28 @@ export class PublishQueue {
   }
 
   /**
-   * Between two steps: the pass goes on only if nothing stopped it (a Pause, a Delete, a sign-out)
-   * and the session is still the queue's account - checked before EVERY request, the create included.
+   * Whether the estate serves the queue's routes; when not, said once per rung and the post waits.
+   * Nothing is sent to an estate that would drop the client id or answer the withdrawal `404`.
    */
-  private async checkpoint(abort: AbortController): Promise<void> {
-    if (this.stopped || abort.signal.aborted) throw new StepAbortedError();
+  private estateServes(): boolean {
+    if (this.deps.serverReady() === true) return true;
+    this.deps.log(
+      '[PUBLISH-QUEUE] the estate does not say publishQueue (older, or not known yet): nothing sent'
+    );
+    return false;
+  }
+
+  /**
+   * Between two steps: the pass goes on only if nothing stopped it (a Pause, a Delete - this tab's
+   * abort, or the mark the store gave back on the runner's last write - a sign-out) and the session
+   * is still the queue's account: checked before EVERY request, the create included.
+   */
+  private async checkpoint(abort: AbortController, post: QueuedPost): Promise<void> {
+    const stoppedHere = () =>
+      this.stopped || abort.signal.aborted || !!post.withdrawn || !!post.paused;
+    if (stoppedHere()) throw new StepAbortedError();
     await this.deps.assertAccount();
-    if (this.stopped || abort.signal.aborted) throw new StepAbortedError();
+    if (stoppedHere()) throw new StepAbortedError();
   }
 
   /** Takes one post as far as it can go. */
@@ -447,7 +491,7 @@ export class PublishQueue {
     this.current = { id: post.id, abort };
     let stage: QueuedPostFailure['stage'] = 'moderation';
     try {
-      await this.checkpoint(abort);
+      await this.checkpoint(abort, post);
       // Before the first byte leaves, as the composer did: the server refuses a muted author's post
       // anyway, but only after every media went up a weak link for nothing.
       if (!post.media.some((m) => m.ref)) await this.deps.assertNotMuted();
@@ -459,7 +503,7 @@ export class PublishQueue {
         let file: QueuedFile;
         if (!media.prepared) {
           stage = 'mediaPrepare';
-          await this.checkpoint(abort);
+          await this.checkpoint(abort, post);
           this.setView(post, { phase: 'preparing', index: i, fraction: share(0), step: 0 });
           const original = await this.deps.store.readFile(post.id, i);
           // Durations are logged only: the measurement the weak-network page quotes, never a bound.
@@ -486,7 +530,7 @@ export class PublishQueue {
         }
 
         stage = 'mediaUpload';
-        await this.checkpoint(abort);
+        await this.checkpoint(abort, post);
         const prepared = media.prepared!;
         this.setView(post, { phase: 'uploading', index: i, fraction: share(0), step: 0 });
         const uploadedAt = performance.now();
@@ -531,8 +575,9 @@ export class PublishQueue {
       // Re-read: a Pause or a Delete from another tab is in the store, not in this copy.
       const latest = await this.deps.store.get(post.id);
       if (!latest) return 'gone';
-      if (latest.withdrawn || latest.paused) return 'again';
-      await this.checkpoint(abort);
+      if (latest.withdrawn) post.withdrawn = true;
+      if (latest.paused) post.paused = true;
+      await this.checkpoint(abort, post);
       // Durable BEFORE the request: from here a Delete must ask the server, the create may land.
       if (!post.createSent) {
         post.createSent = true;
@@ -544,7 +589,16 @@ export class PublishQueue {
         media: post.media.map((m) => m.ref!),
       });
       // A Delete pressed while the create was on the wire wins: no toast, the runner takes it down.
-      await this.checkpoint(abort);
+      // A Pause pressed then does NOT: a landed post cannot be paused, so it is published - the
+      // record goes, and the mark with it. A sign-out leaves the record: the next session's create
+      // is answered from the row (the client id), and only then is the post called published.
+      if (this.stopped) return 'gone';
+      const after = await this.deps.store.get(post.id);
+      if (!after) return 'gone';
+      if (after.withdrawn) {
+        this.deps.log(`[PUBLISH-QUEUE] ${post.id} deleted while its create was on the wire`);
+        return 'again';
+      }
       await this.deps.store.remove(post.id);
       this.views.delete(post.id);
       this.emitViews();
@@ -560,7 +614,10 @@ export class PublishQueue {
         abort.signal.aborted ||
         this.stopped
       ) {
-        const reason = this.stopped ? 'stopped' : (abort.signal.reason as AbortReason | undefined);
+        const reason: AbortReason | undefined = this.stopped
+          ? 'stopped'
+          : ((abort.signal.reason as AbortReason | undefined) ??
+            (post.withdrawn ? 'deleted' : post.paused ? 'paused' : undefined));
         this.deps.log(`[PUBLISH-QUEUE] ${post.id} stopped at ${stage}: ${reason ?? 'aborted'}`);
         // Paused and deleted posts are the store's to say: the pass reads them again.
         if (reason === 'resume' || reason === 'deleted' || reason === 'paused') return 'again';
@@ -585,15 +642,15 @@ export class PublishQueue {
     const stage: QueuedPostFailure['stage'] = 'withdraw';
     try {
       this.setView(post);
-      await this.checkpoint(abort);
-      // A create may have landed: the server takes it down and retires the id. Its media are then
-      // the deleted post's, released by social-service - unless no row was there to delete.
-      const landed = post.createSent ? (await this.deps.withdrawPost(post.id)).deleted : false;
+      // Only the account and a sign-out are checked: the post's own marks are what brought it here.
+      await this.checkpoint(abort, { ...post, withdrawn: undefined, paused: undefined });
+      // ONE request, whether or not the create left: the id is retired, a landed post deleted, and
+      // the uploaded media no live row cites deleted by social-service - the one place that can
+      // tell a never-cited blob from a published post's (review of #3061).
+      const mediaIds = post.media.flatMap((m) => (m.ref ? [m.ref.mediaId] : []));
+      const landed = (await this.deps.withdrawPost(post.id, mediaIds)).deleted;
       for (const media of post.media) {
-        if (media.ref && !landed) {
-          await this.checkpoint(abort);
-          await this.deps.deleteMedia(media.ref.mediaId);
-        } else if (!media.ref && media.upload?.uploadId) {
+        if (!media.ref && media.upload?.uploadId) {
           // Best effort: the server's session sweep is the backstop, and `release` logs a failure.
           void this.deps.release(media.upload.uploadId);
         }

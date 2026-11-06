@@ -18,7 +18,8 @@
  *   POST /media/internal/reel-purge - end reels' blobs, per owner, with the reason (X-Internal-Secret)
  *   POST /media/internal/chat-reel-purge - a salon moderator's purge of a sent reel (X-Internal-Secret)
  *   POST /media/chat-reel/:id/hold - the sender's chat hold on a reel file (JWT, owner only)
- *   DELETE /media/own/:id - the uploader takes back a post media no post will cite (JWT, owner only)
+ *   POST /media/internal/own-archive-delete - a withdrawn queued post's never-cited media, per
+ *                         uploader (X-Internal-Secret; social-service checked no row cites them)
  *   POST /media/internal/form-file - store a form answer's file, plaintext, class form-file
  *   POST /media/internal/form-file-purge - delete form files, per uploader (X-Internal-Secret)
  *   GET  /media/internal/form-file/:id - read a form file, and nothing else (X-Internal-Secret)
@@ -784,7 +785,30 @@ export class MediaController {
     return { results };
   }
 
-  /** The `{items: [{mediaId, ownerId}]}` body both purges take, bounded and typed - or a 400. */
+  // ---------------------------------------------------------------------------
+  // POST /media/internal/own-archive-delete - a withdrawn queued post's never-cited media
+  // ---------------------------------------------------------------------------
+  /**
+   * Deletes the named `archive` objects of their uploader. Sole consumer: social-service's
+   * `POST /posts/:id/withdraw`, the publish queue's Delete, which has checked that NO live post or
+   * comment cites them - the one fact this service cannot see, and the reason this is not a user
+   * route (review of #3061: an uploader's own `archive` objects include the media of posts already
+   * published, an association's among them). Each outcome is on {@link MediaService.removeOwnArchive}.
+   */
+  @Post('internal/own-archive-delete')
+  async removeOwnArchives(
+    @Body() body: { items?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ results: Record<string, 'deleted' | 'absent' | 'refused'> }> {
+    assertInternalSecret(internalSecret);
+    const results: Record<string, 'deleted' | 'absent' | 'refused'> = {};
+    for (const { mediaId, ownerId } of this.purgeItems(body?.items)) {
+      results[mediaId] = await this.mediaService.removeOwnArchive(mediaId, ownerId);
+    }
+    return { results };
+  }
+
+  /** The `{items: [{mediaId, ownerId}]}` body the purges take, bounded and typed - or a 400. */
   private purgeItems(raw: unknown): Array<{ mediaId: string; ownerId: string }> {
     if (!Array.isArray(raw)) {
       throw new BadRequestException('items must be an array');
@@ -1232,21 +1256,6 @@ export class MediaController {
   // message cannot be forwarded, and a take sent to several conversations is the sender's own
   // fan-out (reels-in-chat 15.7). Two segments, so it never collides with `@Delete(':id')` below.
   // ---------------------------------------------------------------------------
-  // ---------------------------------------------------------------------------
-  // DELETE /media/own/:id - the uploader takes back a post media no post will cite
-  //
-  // A user route (JWT): the publish queue's Delete of a post whose files were uploaded but whose
-  // create never landed. Only the caller's own `archive` object (`removeOwnArchive`). Two segments,
-  // so it never collides with `@Delete(':id')` below.
-  // ---------------------------------------------------------------------------
-  @Delete('own/:id')
-  async removeOwnArchive(@Param('id') id: string, @Req() req: Request): Promise<{ ok: boolean }> {
-    const ownerId = this.verifyToken(req);
-    const outcome = await this.mediaService.removeOwnArchive(id, ownerId);
-    if (outcome === 'refused') throw new ForbiddenException('Not a post media you uploaded');
-    return { ok: true };
-  }
-
   @Delete('chat-reel/:id')
   async removeChatReel(@Param('id') id: string, @Req() req: Request): Promise<{ ok: boolean }> {
     const ownerId = this.verifyToken(req);

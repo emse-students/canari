@@ -1,5 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
@@ -257,6 +258,18 @@ export class FormInputDto {
   @ValidateNested({ each: true })
   @Type(() => FormItemInputDto)
   items: FormItemInputDto[];
+}
+
+/**
+ * The publish queue's withdrawal of a post it queued (`POST /posts/:id/withdraw`): the media it
+ * uploaded for it, which social-service deletes unless a live row cites them.
+ */
+export class WithdrawPostDto {
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsUUID('all', { each: true })
+  mediaIds?: string[];
 }
 
 export class CreatePostDto {

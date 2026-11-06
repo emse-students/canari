@@ -63,7 +63,7 @@
           onclick={() => void pauseQueuedPost(view.id)}
           aria-label={m.publish_queue_pause()}
           title={m.publish_queue_pause()}
-          class="text-text-muted hover:text-text-main hover:bg-cn-surface shrink-0 rounded-lg p-1"
+          class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-surface shrink-0 rounded-lg"
           data-testid="publish-queue-pause"
         >
           <X size={15} aria-hidden="true" />

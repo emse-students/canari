@@ -1258,15 +1258,22 @@ and other versions are refused). The client that sends it is the background publ
 ([posts](../frontend/modules/posts.md#the-background-publish-queue)): a create whose answer was lost
 is sent again with the same id.
 
-**A deleted post is never created again** (decided 2026-11-06, review of #3061). Migration 134
+**A deleted post is never created again** (decided 2026-11-06, review of #3061). Migration 135
 (additive) adds `deleted_post_ids (id, "deletedAt")` and an `AFTER DELETE ON posts` trigger that
 writes it, so EVERY hard delete path writes it - the service's delete, the account erasure, the reel
 retention, a cascade, any later one - with nothing for a writer to remember. The table holds the id
 and a date and nothing else: no author, no content. A create under a retired id is `410`.
-`POST /api/posts/:id/withdraw` is the queue's Delete once a create may have been sent: it writes the
-tombstone FIRST, then deletes the row if one is there (`{ deleted }` says which); `409` for another
-author's post, with nothing written. A create racing it re-reads the tombstone AFTER its own insert
-and removes itself, so in every interleaving the post does not exist once the withdrawal answered.
+`POST /api/posts/:id/withdraw {mediaIds}` is the queue's Delete: it writes the tombstone FIRST,
+then deletes the row if one is there (`{ deleted }` says which), then deletes the named media the
+queue uploaded EXCEPT any a live post or comment cites (`PostMediaRetentionService.deleteWithdrawnMedia`,
+one SQL read of `posts.images` and the comments' media, then media-service's
+`internal/own-archive-delete` under the caller as uploader). A create racing it re-reads the
+tombstone AFTER its own insert and removes itself, so in every interleaving the post does not exist
+once the withdrawal answered. **Only ever the caller's own post, a platform admin included**: the
+author is checked before the tombstone (`409`, nothing written) and again on the row it would
+delete; another author's row that appeared between the two reads is left, the tombstone this call
+wrote is deleted again, and the answer is `409`. The row is deleted as its author, never with the
+admin flag.
 
 **The existence oracle, accepted.** A create naming an id answers `409` (another author's post holds
 it) or `410` (a deleted post held it), which tells the caller that a post holds or held that id. Low:

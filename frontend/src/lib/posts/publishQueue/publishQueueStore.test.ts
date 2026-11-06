@@ -53,6 +53,25 @@ describe('PublishQueueStore', () => {
     await expect(store.readFile('gone', 0)).rejects.toThrow(QueuedFileMissingError);
   });
 
+  it("a runner's stale copy never erases the member's Delete or Pause, and learns them", async () => {
+    const store = new PublishQueueStore(user());
+    const p = post('marked', 1);
+    await store.enqueue(p, [file(1)]);
+    const stale = (await store.get('marked'))!;
+    await store.mark('marked', { withdrawn: true, paused: true });
+    stale.createSent = true;
+    expect(await store.update(stale)).toBe(true);
+    const stored = (await store.get('marked'))!;
+    expect(stored.withdrawn).toBe(true);
+    expect(stored.paused).toBe(true);
+    expect(stored.createSent).toBe(true);
+    expect(stale.withdrawn).toBe(true);
+    // Only the member's own mark clears them.
+    await store.mark('marked', { paused: false, clearFailure: true });
+    expect((await store.get('marked'))!.paused).toBeUndefined();
+    expect(await store.mark('nobody', { paused: true })).toBeNull();
+  });
+
   it('replaces the original by the prepared file in the same write as the record', async () => {
     const store = new PublishQueueStore(user());
     const p = post('p');

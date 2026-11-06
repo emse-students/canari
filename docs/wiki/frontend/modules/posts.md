@@ -341,16 +341,30 @@ oldest post first, media in order, ONE file at a time:
 paused or deleted the post or signed out, and goes on only if the access token's subject is the
 queue's account (`assertAccount`; the upload's own token getter refuses the same way). A token of
 another account (a sign-in in another tab) or a session that ended HALTS the pass with nothing
-recorded - the post waits for its own account, and is never sent as anybody else.
+recorded - the post waits for its own account, and is never sent as anybody else. The create and
+the withdrawal go through `apiFetch`, whose own guard refuses a token of another account than the
+session's (`IdentitySplitError`, also `halt`).
+
+**Nothing is sent to an estate that cannot take it.** A stable reaches both stores before production
+deploys, so a new phone build meets the OLD services for days: they drop the client id (a lost
+answer then duplicates the post), refuse `single-block` (`400`) and answer the withdrawal `404`.
+core-service's `/api/version` carries the capability `publishQueue: true` (the three services are
+built from one tag and deployed together, as for `presencePost`), read by `serverPublishQueue()`;
+until it is `true` - an older estate, or no answer yet - the pass sends nothing and the rows wait.
 
 **What stops it, and what starts it again** (`classifyPublishFailure`, by WHO answered):
 
 | What came back | Verdict | What the queue does |
 | --- | --- | --- |
-| A transport failure; an EDGE page (the host's proxy) with no refusal cause | `wait` | waits on the ladder (`PUBLISH_RETRY_LADDER_MS`, 2 s to 60 s), cut short by any wake: a reconnect, `online`, the page visible, the app foreground |
+| A transport failure; an EDGE page (the host's proxy, a non-JSON answer) with no refusal cause - from an upload or the post API alike (`ApiRefusalError.origin`, as `MediaUploadError` carries it) | `wait` | waits on the ladder (`PUBLISH_RETRY_LADDER_MS`, 2 s to 60 s), cut short by any wake: a reconnect, `online`, the page visible, the app foreground |
 | The APP's `5xx`, `408`, `425`, `429`; a resumable session it lost and could not reopen (`sessionLost`) | `busy` | asked again over the ladder ONCE (a counter no wake resets), then stops with a Retry |
-| A `401`; `SessionExpiredError`; a token of another account | `halt` | the pass ends, nothing recorded: the app's auth is the one authority on a 401, the queue never spins on one |
+| A `401`; `SessionExpiredError`; a token of another account (`PublishAccountMismatchError`, `TokenAccountChangedError`, `IdentitySplitError`) | `halt` | the pass ends, nothing recorded: the app's auth is the one authority on a 401, the queue never spins on one |
 | Anything else: moderation, a `4xx`, a `410` (a deleted id), a video that cannot be prepared, a refused media | `failed` | stops the post with its sentence, logged by `console.error`; only Retry, Pause or Delete moves it |
+
+**A post that stopped is left out of the pass, whatever it was doing.** That includes a withdrawal
+that was refused: before the review of #3061 the pass picked any `withdrawn` post first, failure or
+not, and a `403` or `404` withdrawal was asked 51 times in a few milliseconds and starved the queue.
+A refused withdrawal shows as a stopped row with Retry and Delete, each of which asks once more.
 
 Read on the local estate on 2026-11-06: before `busy` existed, a create that kept answering `500`
 was asked every minute for ever, and the review of #3061 found the same for media-service's own
@@ -364,17 +378,32 @@ correctness bound: what makes a resend safe is the recorded session and the clie
   prepared, which the queue had dropped.
 - **Retry** a stopped post.
 - **Delete: the post exists NOWHERE afterwards.** `withdrawn` is written and the pass takes the post
-  back before forgetting it, every step idempotent: when `createSent`, `POST /api/posts/:id/withdraw`
-  retires the id (a create still on its way is then refused `410`) and deletes the post if it landed;
-  every uploaded media no post will cite is deleted (`DELETE /api/media/own/:id`, the caller's own
-  `archive` objects only - `archive` is exempt from the idle sweep, so it would otherwise stay for
-  ever); every open session is released. **A Delete pressed while the create is on the wire wins**:
-  the create's answer is followed by a checkpoint that sees the abort, so there is no "published"
-  toast, and the withdrawal takes the just-created post down.
+  back before forgetting it, in ONE idempotent request whether or not the create left:
+  `POST /api/posts/:id/withdraw {mediaIds}` retires the id (a create still on its way is then refused
+  `410`), deletes the post if it landed, and deletes the media the queue uploaded for it EXCEPT any a
+  live post or comment cites ([social-service](../../services/social-service.md#a-post-created-twice-is-the-same-post-2026-11-06)).
+  Then every open session is released. The citation check is made on the server because neither the
+  client nor media-service can make it: an uploader's own `archive` objects include the media of
+  posts already published (an association's among them), and the client route that once deleted
+  them by owner and class alone was the review's P2 - a former admin could strip an association's
+  images with it. `archive` is exempt from the idle sweep, so an uncited one would otherwise stay
+  for ever. **A Delete pressed while the create is on the wire wins**: the create's answer is
+  followed by a read of the store, so there is no "published" toast, and the withdrawal takes the
+  just-created post down. **A Pause pressed then does not**: a landed post cannot be paused, so it
+  is published and its row goes.
+
+**The member's marks are never erased by the runner.** `withdrawn` and `paused` are written by
+`PublishQueueStore.mark` alone, in one transaction; every runner write (`update`) takes them from
+the STORED record (`runnerWrite`) and hands them back to the runner's copy, so the next checkpoint
+sees them. Before the review of #3061, `update` wrote the runner's whole copy, read before the
+member acted: a Delete from another tab during an upload's `persist` was erased, and the post was
+published.
 
 **Several tabs.** One tab runs the pass (the Web Lock). Every tab draws the rows from the STORE at
 start (`refreshViews`, no lock needed), and the runner broadcasts its rows on a `BroadcastChannel`
-(`canari-publish-queue-<userId>`). A Retry, Pause or Delete in a tab that is not the runner writes
+(`canari-publish-queue-<userId>`). Only the runner's rows are broadcast: rows read from the store
+carry no progress, and a tab's own `refreshViews` used to overwrite the runner's progress in every
+other tab. A Retry, Pause or Delete in a tab that is not the runner writes
 the store and NUDGES the runner on the same channel: it aborts that post's transfer at once (pause,
 delete) or ends its wait (retry) instead of acting at its next rung. A tab still behind its PIN draws nothing: the
 queue starts with the session (`globalSession.isLoggedIn`), never before. Read on the local estate on
@@ -399,9 +428,12 @@ over the whole post, a pause cross while it is worked on, and Resume or Retry pl
 paused, waiting or stopped post. The feed refreshes when a queued
 post is published (`onPostPublished`), and a toast says so.
 
-**Release order.** media-service and social-service (with migration 134) ship BEFORE the client: an
-older media-service refuses a `single-block` session (`400`) and has no `DELETE /api/media/own/:id`,
-and an older social-service strips the `id` (a duplicate on a lost answer) and has no withdrawal.
+**Release order, and why it holds by itself.** core-service, media-service and social-service (with
+migration 135) ship from one tag and are deployed together; the client waits for their
+`publishQueue` capability, so a client older than the estate is harmless and a client newer than
+the estate sends nothing until the estate catches up. An older media-service refuses a
+`single-block` session (`400`) and has no `internal/own-archive-delete`; an older social-service
+strips the `id` (a duplicate on a lost answer) and has no withdrawal.
 
 ### What a post sends, measured (2026-11-06, local estate, desktop Chrome)
 

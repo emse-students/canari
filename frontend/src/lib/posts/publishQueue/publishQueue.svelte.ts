@@ -21,6 +21,7 @@ import { SEGMENTED_MEDIA_ENCODING, writesSegmented } from '$lib/mediaSegmented';
 import { assertNotMuted } from '$lib/moderation/muteCheck';
 import { publishFailureMessage } from '$lib/posts/publishFailure';
 import { getToken, SessionExpiredError } from '$lib/stores/auth';
+import { serverPublishQueue } from '$lib/stores/appVersionCheck.svelte';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { showToast } from '$lib/stores/toast.svelte';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
@@ -135,9 +136,11 @@ export function startPublishQueue(userId: string): void {
       ),
     release: (uploadId) =>
       media.releaseResumableUpload(uploadId, token, 'post deleted from the publish queue'),
-    deleteMedia: (mediaId) => media.deleteOwnArchive(mediaId, token),
+    // The create and the withdrawal go through `apiFetch`, whose own guard refuses a token of
+    // another account than the session's (`IdentitySplitError`, classified `halt`).
     createPost: (payload) => createPost(payload),
-    withdrawPost: (postId) => withdrawPost(postId),
+    withdrawPost: (postId, mediaIds) => withdrawPost(postId, mediaIds),
+    serverReady: serverPublishQueue,
     assertNotMuted,
     assertAccount: async () => {
       await token();
@@ -149,9 +152,11 @@ export function startPublishQueue(userId: string): void {
         : publishFailureMessage(error, m.post_create_publish_error()),
     lock: lockFor(userId),
     sleep,
-    onViews: (views) => {
+    onViews: (views, fromRunner) => {
       publishQueueState.views = views;
-      channel?.postMessage({ type: 'views', views } satisfies ChannelMessage);
+      // Only the runner's rows go to the other tabs: rows read from the store alone carry no
+      // progress, and would overwrite the runner's in every tab that adopted them.
+      if (fromRunner) channel?.postMessage({ type: 'views', views } satisfies ChannelMessage);
     },
     onPublished: (post) => {
       showToast(m.publish_queue_published(), 'info');

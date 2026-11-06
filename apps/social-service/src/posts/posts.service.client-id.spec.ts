@@ -19,9 +19,16 @@ import { PostMediaRetentionService } from './post-media-retention.service';
  */
 const ID = '0b6a3c1e-8f2d-4a5b-9c7d-1e2f3a4b5c6d';
 
-function makeService(opts: { raceOnInsert?: boolean; withdrawnDuringInsert?: boolean } = {}) {
+function makeService(
+  opts: {
+    raceOnInsert?: boolean;
+    withdrawnDuringInsert?: boolean;
+    /** Another author's row lands between the withdrawal's two reads. */
+    rowAppearsOnSecondRead?: Partial<Post>;
+  } = {}
+) {
   const rows = new Map<string, Partial<Post>>();
-  // `deleted_post_ids`, written by the trigger on every delete of a row (migration 134).
+  // `deleted_post_ids`, written by the trigger on every delete of a row (migration 135).
   const deleted = new Set<string>();
   const pkError = Object.assign(new Error('duplicate key'), {
     code: '23505',
@@ -40,6 +47,7 @@ function makeService(opts: { raceOnInsert?: boolean; withdrawnDuringInsert?: boo
       checks += 1;
       // The race: the FIRST check sees nothing, then another request's row lands before the insert.
       if (opts.raceOnInsert && checks === 1) return Promise.resolve(null);
+      if (opts.rowAppearsOnSecondRead && checks === 2) rows.set(id, opts.rowAppearsOnSecondRead);
       return Promise.resolve(rows.get(id) ?? null);
     }),
     insert: jest.fn((post: Partial<Post>) => {
@@ -65,12 +73,19 @@ function makeService(opts: { raceOnInsert?: boolean; withdrawnDuringInsert?: boo
         deleted.add(params[0] as string);
         return Promise.resolve([]);
       }
+      if (sql.startsWith('DELETE FROM deleted_post_ids')) {
+        deleted.delete(params[0] as string);
+        return Promise.resolve([]);
+      }
       return Promise.resolve(params[0] === 'PK_posts' ? [{ attname: 'id' }] : []);
     }),
     manager: { query: jest.fn(() => Promise.resolve([])) },
   };
   const retention = {
     release: jest.fn(),
+    deleteWithdrawnMedia: jest.fn(() =>
+      Promise.resolve({ deleted: 0, absent: 0, cited: 0, refused: 0 })
+    ),
     claimReelFor: jest.fn((_a: string, ids: string[]) =>
       Promise.resolve({ claimed: ids, refused: [] })
     ),
@@ -189,7 +204,7 @@ describe('PostsService.createPost with a client id', () => {
 describe('PostsService.withdrawPost - the author takes back a queued post', () => {
   it('retires an id no row holds, so the create still on its way is refused', async () => {
     const { service, deleted } = makeService();
-    await expect(service.withdrawPost(ID, 'alice', false)).resolves.toEqual({
+    await expect(service.withdrawPost(ID, 'alice', [])).resolves.toEqual({
       ok: true,
       deleted: false,
     });
@@ -202,8 +217,35 @@ describe('PostsService.withdrawPost - the author takes back a queued post', () =
   it("refuses (409) another author's post, and writes nothing", async () => {
     const { service, rows, deleted } = makeService();
     rows.set(ID, { id: ID, authorId: 'bob', markdown: 'x', publishedAt: new Date(0) });
-    await expect(service.withdrawPost(ID, 'alice', false)).rejects.toThrow(ConflictException);
+    await expect(service.withdrawPost(ID, 'alice', [])).rejects.toThrow(ConflictException);
     expect(deleted.has(ID)).toBe(false);
     expect(rows.has(ID)).toBe(true);
+  });
+
+  it("another author's row that appears between the two reads is never deleted, and its id stays live", async () => {
+    const { service, rows, deleted, retention } = makeService({
+      rowAppearsOnSecondRead: { id: ID, authorId: 'bob', markdown: 'x', publishedAt: new Date(0) },
+    });
+    await expect(service.withdrawPost(ID, 'alice', ['m-1'])).rejects.toThrow(ConflictException);
+    expect(rows.get(ID)?.authorId).toBe('bob');
+    expect(deleted.has(ID)).toBe(false);
+    expect(retention.deleteWithdrawnMedia).not.toHaveBeenCalled();
+  });
+
+  it('deletes its own landed post, then hands the media it uploaded to the never-cited delete', async () => {
+    const { service, rows, deleted, retention } = makeService();
+    rows.set(ID, { id: ID, authorId: 'alice', markdown: 'x', media: [], publishedAt: new Date(0) });
+    const remove = jest.spyOn(service, 'deletePost').mockImplementation(async (id: string) => {
+      rows.delete(id);
+      return { ok: true };
+    });
+    await expect(service.withdrawPost(ID, 'alice', ['m-1', 'm-2'])).resolves.toEqual({
+      ok: true,
+      deleted: true,
+    });
+    // As the author, never as an admin: the flag a global admin carries is not passed on.
+    expect(remove).toHaveBeenCalledWith(ID, 'alice', false);
+    expect(retention.deleteWithdrawnMedia).toHaveBeenCalledWith('alice', ['m-1', 'm-2']);
+    expect(deleted.has(ID)).toBe(true);
   });
 });
