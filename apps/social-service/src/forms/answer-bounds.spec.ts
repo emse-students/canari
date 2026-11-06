@@ -135,6 +135,27 @@ describe('form answer bounds', () => {
         })
       ).toEqual({ q_text: 'bonjour' });
     });
+
+    it('refuses a row map on a question that is not a grid, and drops one on an undeclared key', () => {
+      expect(
+        codeOf(() =>
+          withNormalisedGridAnswers([{ id: 'q_text', type: 'short_text' }], {
+            q_text: { a: 'x' },
+          })
+        )
+      ).toBe(FORM_GRID_ANSWER_INVALID);
+      expect(
+        withNormalisedGridAnswers([grid()], { q_gone: { Vert: '' }, q_grid: { Vert: 'c_s' } })
+      ).toEqual({ q_grid: { Vert: 'c_s' } });
+    });
+
+    it('keeps a row labelled after a prototype key as an own row, never as the prototype', () => {
+      const proto = grid({ rows: ['__proto__', 'constructor'] });
+      const kept = normaliseGridAnswer(proto, JSON.parse('{"__proto__":"c_s"}'))!;
+      expect(Object.getPrototypeOf(kept)).toBe(Object.prototype);
+      expect(Object.keys(kept)).toEqual(['__proto__']);
+      expect(isQuestionAnswered({ ...proto, requireEveryRow: true }, kept)).toBe(false);
+    });
   });
 
   describe('assertFormItemsShape (D4)', () => {

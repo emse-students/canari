@@ -120,7 +120,12 @@ export function isQuestionAnswered(item: GridItem, value: unknown): boolean {
   if (isGridQuestion(item)) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
     const rows = value as Record<string, unknown>;
-    if (item.requireEveryRow) return (item.rows ?? []).every((row) => hasValue(rows[row]));
+    // Own keys only: a row labelled `constructor` must not read the prototype's as an answer.
+    if (item.requireEveryRow) {
+      return (item.rows ?? []).every(
+        (row) => Object.prototype.hasOwnProperty.call(rows, row) && hasValue(rows[row])
+      );
+    }
     return Object.values(rows).some(hasValue);
   }
   return hasValue(value);
@@ -153,7 +158,9 @@ export function normaliseGridAnswer(
   const rows = new Set(item.rows ?? []);
   const columns = new Set((item.options ?? []).map((o) => o.id).filter(Boolean));
   const multiple = item.type === 'matrix_multiple';
-  const kept: Record<string, string | string[]> = {};
+  // Collected as entries and built with `fromEntries`, which DEFINES each key: a row an organiser
+  // labelled `__proto__` is kept as that row rather than assigned to the map's prototype.
+  const kept: [string, string | string[]][] = [];
   for (const [row, cell] of Object.entries(value as Record<string, unknown>)) {
     if (!rows.has(row)) throw refuse('an undeclared row');
     if (!hasValue(cell)) continue;
@@ -163,13 +170,13 @@ export function normaliseGridAnswer(
         new Set(cell).size === cell.length &&
         cell.every((id) => typeof id === 'string' && columns.has(id));
       if (!valid) throw refuse('an undeclared or repeated column');
-      kept[row] = cell as string[];
+      kept.push([row, cell as string[]]);
     } else {
       if (typeof cell !== 'string' || !columns.has(cell)) throw refuse('an undeclared column');
-      kept[row] = cell;
+      kept.push([row, cell]);
     }
   }
-  return Object.keys(kept).length > 0 ? kept : undefined;
+  return kept.length > 0 ? Object.fromEntries(kept) : undefined;
 }
 
 /** The subset of a question the save-time shape checks read. */
@@ -230,21 +237,50 @@ export function assertFormItemsShape(items: readonly SavedItem[] | null | undefi
   }
 }
 
+/** Whether `v` is a grid-shaped value: an object that is not a list. */
+function isRowMap(v: unknown): boolean {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
 /**
  * `answers` with every grid question's answer checked and stripped of its empty rows
  * ({@link normaliseGridAnswer}); a grid with no answered row is left out, as any unanswered
- * question. Every other key is returned untouched - its own checks run where they always did.
+ * question.
+ *
+ * A row map is a GRID's shape and nothing else's: the DTO accepts it for any key, so it is judged
+ * here against the form. On a declared question that is not a grid it is the typed
+ * {@link FORM_GRID_ANSWER_INVALID} (a page opened before the question stopped being a grid - the
+ * refusal says to reload); on a key the form does not declare it is dropped, as a stale page's
+ * answer to a since-deleted grid (`{ row: '' }`) must not fail the send. Every other value is
+ * returned untouched - its own checks run where they always did.
  */
 export function withNormalisedGridAnswers<T>(
   items: readonly GridItem[],
   answers: Record<string, T>
 ): Record<string, T> {
-  const out: Record<string, T> = { ...answers };
-  for (const item of items) {
-    if (!isGridQuestion(item) || !(item.id in out)) continue;
-    const grid = normaliseGridAnswer(item, out[item.id]);
-    if (grid === undefined) delete out[item.id];
-    else out[item.id] = grid as T;
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const out: [string, T][] = [];
+  for (const [key, value] of Object.entries(answers)) {
+    const item = byId.get(key);
+    if (item && isGridQuestion(item)) {
+      const grid = normaliseGridAnswer(item, value);
+      if (grid !== undefined) out.push([key, grid as T]);
+      continue;
+    }
+    if (!isRowMap(value)) {
+      out.push([key, value]);
+      continue;
+    }
+    if (!item) {
+      logger.log(`[FORMS] a row map on an undeclared key dropped key=${key.slice(0, 8)}`);
+      continue;
+    }
+    logger.log(`[FORMS] a row map refused on a non-grid item=${item.id.slice(0, 8)}`);
+    throw formRefusal(
+      FORM_GRID_ANSWER_INVALID,
+      `Answer for field ${item.label ?? item.id} is a grid answer, and the question is not a grid.`,
+      item.id
+    );
   }
-  return out;
+  return Object.fromEntries(out);
 }

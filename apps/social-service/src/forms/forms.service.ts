@@ -2822,7 +2822,6 @@ export class FormsService {
     return count;
   }
 
-  /** Returns false for empty arrays, empty objects, null, undefined, and empty strings - used to validate required fields. */
   /**
    * Adds price modifiers for each selected option to the running total and pushes matching Stripe
    * line-item entries.

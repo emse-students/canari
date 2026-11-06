@@ -128,7 +128,12 @@ through the pipe. Now:
   rows, every value one of its column option ids (a list of distinct ids for a multiple grid), else
   400 `FORM_GRID_ANSWER_INVALID`. Empty rows are dropped, and a grid with no answered row is absent,
   so what is STORED holds only answered rows (the export's `answerText` already read a row map).
-  Booking spaces share the rule (`bookings.service.ts` `validAnswers`).
+  A row map is a GRID's shape only: on a declared question that is not a grid it is the same 400
+  (a page opened before the question changed type), on a key the form does not declare it is
+  dropped (a stale page's `{ row: '' }` for a deleted grid must not fail the send). Rows are
+  collected as entries, so a row labelled `__proto__` or `constructor` is an own key and never the
+  prototype's. Booking spaces share the rule (`bookings.service.ts` `validAnswers`), and the
+  space editor words a form's grid codes (`bookings/refusals.ts` falls back to `formCodeMessage`).
 - **`forms.submit-grid.http.spec.ts`** boots the member and guest controllers behind the real
   `ValidationPipe`, configured as `main.ts` does, and submits grid answers over HTTP.
 
