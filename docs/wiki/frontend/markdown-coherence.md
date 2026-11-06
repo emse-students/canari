@@ -92,8 +92,7 @@ They DID differ: the preview drew `__x__` as an underline (the post renders it b
    **marked is ONE final check, on the edited paragraph only**: no marker character newly showing,
    every visible character keeps every style but the toggled one, that style changes only inside a
    window as wide as the selection, and it reaches more characters (or fewer, off). **If the check
-   fails NOTHING is written**: the text comes back unchanged, no error is shown, and
-   `console.warn` accuses `[toolbar] REFUSED <style> on|off` with the selection length and the
+   fails NOTHING is written**: the text comes back unchanged, the member sees the toast `md_toolbar_refused` ("Impossible d'appliquer ce style ici", decided by the owner on 2026-11-06), and `console.warn` accuses `[toolbar] REFUSED <style> on|off` with the selection length and the
    marker shape around it (letters blanked, never the text). A render that throws is a refusal too.
    Measured on the seeded fuzz (`composerFormatFuzz.test.ts`): realistic lines, whole words 4
    refusals in 36444 presses and any range 228 in 50061; the wild generator (`***`, a style inside

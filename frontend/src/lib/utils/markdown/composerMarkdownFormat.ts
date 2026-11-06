@@ -1,5 +1,6 @@
 import { tick } from 'svelte';
 import { Marked } from 'marked';
+import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { inlineSpans, type InlineSpan } from './inlinePreview';
 import type MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
@@ -21,6 +22,8 @@ export interface FormatResult {
   text: string;
   selStart: number;
   selEnd: number;
+  /** True when the action could not be written cleanly: `text` is the input, unchanged. */
+  refused?: true;
 }
 
 /** The placeholders from the message catalogue (`messages/*.json`). */
@@ -682,7 +685,7 @@ function formatInline(
     `[toolbar] REFUSED ${kind} ${direction > 0 ? 'on' : 'off'}: marked would not draw it as promised; ` +
       `selection ${selEnd - selStart} chars, shape ${shapeAround(text, selStart, selEnd)}`
   );
-  return { text, selStart, selEnd };
+  return { text, selStart, selEnd, refused: true };
 }
 
 /**
@@ -839,6 +842,11 @@ export async function applyComposerMarkdownFormat(
   const { start, end } = composer.getSelectionRange();
   const result = computeComposerFormat(type, getText(), start, end);
   if (!result) return;
+  if (result.refused) {
+    // The text stays as it is; the member is told, and the console already counted the shape.
+    showToast(m.md_toolbar_refused(), 'warning');
+    return;
+  }
 
   setText(result.text);
   await tick();
