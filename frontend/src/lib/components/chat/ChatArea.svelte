@@ -70,6 +70,7 @@
   import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
+  import type { MentionRosterMember } from '$lib/utils/users/mentionRoster';
   import { scrollMessageIntoList } from '$lib/utils/chat/scrollToMessage';
   import { openSalonPolls, salonPolls } from '$lib/utils/chat/activePolls';
   import { getPollMeta } from '$lib/stores/pollStore.svelte';
@@ -206,7 +207,7 @@
     /** Called when the user clicks the "Rejoindre la communauté" button on a channel invitation card. */
     onJoinChannel?: (channelId: string) => void;
     /** When set, only users whose IDs are in this list appear in @mention suggestions. */
-    allowedUserIds?: string[];
+    mentionRoster?: MentionRosterMember[];
     /**
      * Whether the viewer may POST in the open channel, per its `writePolicy` and the viewer's roles.
      *
@@ -290,7 +291,7 @@
     isHidden = false,
     groupMembers = [],
     pendingInvites = [],
-    allowedUserIds,
+    mentionRoster,
     canWrite = true,
     sendError = '',
     onGroupRename,
@@ -1841,7 +1842,7 @@
              reconciliation probes on a server carrying no other traffic. -->
         <ChatComposer
           {messageText}
-          {allowedUserIds}
+          {mentionRoster}
           {onMessageChange}
           {onTyping}
           {onSendGif}
