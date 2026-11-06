@@ -213,7 +213,7 @@ import {
 import { Space } from '../spaces/space.entity';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 import { assertWithinCoOrganiserCap } from './co-organiser-cap';
-import { assertAssociationImageUrl } from './association-image-url';
+import { assertAssociationImageUrl, assertNotQuestionImage } from './association-image-url';
 import type {
   CoOrganiserAfterCommit,
   CoOrganiserPort,
@@ -639,7 +639,10 @@ export class AssociationsService {
     }
     // The logo is normally set by the upload path; a value sent here is held to the same allowlist.
     const logoUrl = dto.logoUrl?.trim() ? dto.logoUrl.trim() : null;
-    if (logoUrl !== null) assertAssociationImageUrl(logoUrl);
+    if (logoUrl !== null) {
+      assertAssociationImageUrl(logoUrl);
+      await assertNotQuestionImage(this.assoRepo, logoUrl);
+    }
 
     if (explicitSlug !== null) {
       // An old client's own slug: refused when taken, as before. The unique index still arbitrates
@@ -1187,6 +1190,8 @@ export class AssociationsService {
         patch.logoUrl = null;
       } else {
         assertAssociationImageUrl(logoUrl);
+        // A logo already stored is kept as it is: only a CHANGE is held to the question-image rule.
+        if (logoUrl !== asso.logoUrl) await assertNotQuestionImage(this.assoRepo, logoUrl);
         patch.logoUrl = logoUrl;
       }
     }

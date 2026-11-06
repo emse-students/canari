@@ -73,6 +73,17 @@ export const SPACE_SETTING_KEYS = [
   'reminderMinutes',
 ] as const satisfies readonly (keyof SpaceSettingsDto & keyof BookingSpace)[];
 
+/** The non-empty `imageUrl`s a space's stored questions carry - grandfathered by an edit. */
+function questionImageUrlsOf(items: unknown): Set<string> {
+  const urls = new Set<string>();
+  if (!Array.isArray(items)) return urls;
+  for (const item of items) {
+    const url = (item as { imageUrl?: unknown } | null)?.imageUrl;
+    if (typeof url === 'string' && url !== '') urls.add(url);
+  }
+  return urls;
+}
+
 /** The fields a request may write onto a resource, by name, for the reason above. */
 export const RESOURCE_KEYS = [
   'name',
@@ -228,9 +239,13 @@ export class BookingSpacesService {
 
   /**
    * The settings of `next` that the database's CHECKs would refuse, refused first as codes - a 500
-   * from a constraint is a defect, a code is an answer the editor can word.
+   * from a constraint is a defect, a code is an answer the editor can word. `storedImageUrls`: the
+   * question images the space held before this edit (empty on a create), which are grandfathered.
    */
-  private async assertSettingsValid(next: BookingSpace) {
+  private async assertSettingsValid(
+    next: BookingSpace,
+    storedImageUrls: ReadonlySet<string> = new Set()
+  ) {
     if (!isValidTimeZone(next.timeZone)) throw new BadRequestException({ code: 'time-zone' });
     const stepShape =
       next.slotMode === 'step'
@@ -266,10 +281,17 @@ export class BookingSpacesService {
     }
     // A booking question carries no image: nothing uploads one for a space, and a form's question
     // image is deleted once no FORM cites it (`form-item-images.service.ts`), so a space citing one
-    // would lose it with that form.
-    const imaged = items.find((i) => typeof i.imageUrl === 'string' && i.imageUrl !== '');
-    if (imaged) {
-      this.logger.debug(`[BOOKINGS] item-image refused: question ${imaged.id} cites an image`);
+    // would lose it with that form. Only an image the edit INTRODUCES is refused; one the stored
+    // space already cites is kept and reported, so an older space still saves its other settings.
+    for (const i of items) {
+      if (typeof i.imageUrl !== 'string' || i.imageUrl === '') continue;
+      if (storedImageUrls.has(i.imageUrl)) {
+        this.logger.warn(
+          `[BOOKINGS] question ${i.id} keeps a stored image - a booking question has none since 2026-11-06; kept, not refused`
+        );
+        continue;
+      }
+      this.logger.debug(`[BOOKINGS] item-image refused: question ${i.id} introduces an image`);
       throw new BadRequestException({ code: 'item-image' });
     }
     const withCondition = items.filter((i) => i.showIf != null);
@@ -436,8 +458,9 @@ export class BookingSpacesService {
         const oldPoster = space.poster?.mediaId ?? null;
         const before: SlotConfig = { ...space };
         const formerName = space.name;
+        const storedImageUrls = questionImageUrlsOf(space.items);
         this.applySettings(space, dto);
-        await this.assertSettingsValid(space);
+        await this.assertSettingsValid(space, storedImageUrls);
         if (SHAPE_KEYS.some((k) => before[k] !== space[k])) {
           const resources = await m.find(BookingResource, { where: { spaceId } });
           for (const r of resources) {

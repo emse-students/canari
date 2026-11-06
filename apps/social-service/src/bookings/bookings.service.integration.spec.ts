@@ -2078,6 +2078,15 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       const pictured = { ...q1, imageUrl: `/api/media/public/${randomUUID()}` };
       expect(await refusal(patch({ items: [pictured] }))).toEqual({ code: 'item-image' });
       await expect(patch({ items: [{ ...q1, imageUrl: '' }] })).resolves.toEqual({ ok: true });
+      // An image a space ALREADY holds (stored before the refusal existed) is kept: its rename,
+      // sending the questions back unchanged, still saves; a second, new image is still refused.
+      await q(`UPDATE booking_spaces SET items = $2 WHERE id = $1`, [
+        id,
+        JSON.stringify([pictured]),
+      ]);
+      await expect(patch({ name: 'renamed', items: [pictured] })).resolves.toEqual({ ok: true });
+      const second = { ...q1, id: 'q2', imageUrl: `/api/media/public/${randomUUID()}` };
+      expect(await refusal(patch({ items: [pictured, second] }))).toEqual({ code: 'item-image' });
       expect(await refusal(patch({ opensAt: '2026-11-02T10:00:00' }))).toEqual({
         code: 'opens-at',
       });

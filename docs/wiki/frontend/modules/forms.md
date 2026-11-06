@@ -761,8 +761,16 @@ release keeps it while either copy does - asserted in `form-item-images.integrat
 
 **A booking space's question carries no image**: its questions reuse `FormItemDto`, so they would
 take the same URL shape, and a space citing a form's image would lose it with that form - the
-citation check reads `forms` only. `assertSettingsValid` refuses one (400 `item-image`); no booking
-screen uploads one.
+citation check reads `forms` only. `assertSettingsValid` refuses an image the edit INTRODUCES (400
+`item-image`); one the stored space already holds is kept and logged at WARN, so an older space
+still saves its rename. No booking screen uploads one.
+
+**Nor does an association's logo**: `logoUrl` takes our own `/api/media/public/<id>` reference by
+hand, so a logo naming a question image would vanish with that form's question. A NEW value whose id
+is a row of `form_item_images` - relative or absolute, any host - is a 400
+`ASSOCIATION_IMAGE_IS_QUESTION_IMAGE` (`assertNotQuestionImage`, `association-image-url.ts`); a
+stored value is kept. No lock is needed: the row is written before the upload's URL is returned.
+No client sends a typed `logoUrl`, so no sentence is mapped.
 
 **No backfill**: before 136 `imageUrl` took any string, so a stored value of the public shape may
 name an association logo or a form banner pasted into a question. A row is a licence to delete, so
