@@ -298,10 +298,10 @@
 
   const TIER_KINDS = ['cotisation', 'promo', 'formation'] as const;
   /** Ids for the two labelled groups, unique per editor on the page. */
-  const uid = crypto.randomUUID();
+  const domKey = crypto.randomUUID();
   /** A question of its own id, so the preview's card never shares an element id with the page. */
   const previewItem = $derived<FormItem>({
-    id: `preview-${uid}`,
+    id: `preview-${domKey}`,
     label: title,
     required: true,
     type: PRODUCT_GRID_TYPE,
@@ -321,12 +321,12 @@
   <!-- Settings bar: price mode, cap per cell, paste a list. -->
   <div class="bg-cn-surface-alt flex flex-wrap items-end gap-x-6 gap-y-4 rounded-lg p-4">
     <div class="flex flex-col gap-1.5">
-      <span id="pg-mode-{uid}" class="text-text-main text-xs font-bold"
+      <span id="pg-mode-{domKey}" class="text-text-main text-xs font-bold"
         >{m.form_pgrid_mode_label()}</span
       >
       <div
         role="group"
-        aria-labelledby="pg-mode-{uid}"
+        aria-labelledby="pg-mode-{domKey}"
         class="bg-cn-border/60 flex flex-wrap gap-1 rounded-full p-1"
       >
         {#each MODES as option (option.value)}
@@ -341,12 +341,12 @@
     </div>
 
     <div class="flex flex-col gap-1.5">
-      <span id="pg-max-{uid}" class="text-text-main text-xs font-bold"
+      <span id="pg-max-{domKey}" class="text-text-main text-xs font-bold"
         >{m.form_pgrid_max_label()}</span
       >
       <div
         role="group"
-        aria-labelledby="pg-max-{uid}"
+        aria-labelledby="pg-max-{domKey}"
         class="bg-cn-surface flex items-center gap-1 rounded-full p-0.5"
       >
         <button
