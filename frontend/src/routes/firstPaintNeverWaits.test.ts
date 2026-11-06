@@ -51,12 +51,26 @@ import { load as loadPost } from './posts/[postId]/+page';
 import BootGate from '$lib/components/layout/BootGate.svelte';
 import {
   bootSessionPhase,
+  bootUnreachableCause,
   resetBootSessionForTest,
   startBootSession,
 } from '$lib/stores/bootSession.svelte';
 import { noteSessionAnswered } from '$lib/stores/sessionAnswer.svelte';
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
+import {
+  RefreshFailedError,
+  TransientAnswerError,
+  TransportFailureError,
+} from '$lib/utils/transportFailure';
+import { NotFromApiError } from '$lib/utils/apiJson';
 import { m } from '$lib/paraglide/messages';
+
+/** The title the unreachable screen shows for each cause. */
+const COPY = {
+  network: m.boot_unreachable_title,
+  server: m.boot_server_error_title,
+  maintenance: m.platform_gate_maintenance_title,
+} as const;
 import { adoptTransitionAnimations } from '../test/adoptTransitionAnimations';
 
 // The gate is a ModalOverlay: its intro/outro animations are adopted so teardown rejects nothing.
@@ -116,6 +130,101 @@ describe('first paint never waits on the network', () => {
     expect(document.body.textContent).toContain(m.boot_unreachable_title());
     expect(document.body.textContent).toContain(m.boot_unreachable_retry());
     expect(hoisted.goto).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a 5xx', new TransientAnswerError(503), 'server'],
+    ['a 429', new TransientAnswerError(429), 'server'],
+    ['the 503 MAINTENANCE', new TransientAnswerError(503, 'MAINTENANCE'), 'maintenance'],
+    ['an edge HTML 403', new TransientAnswerError(403), 'network'],
+    ['a network error', new TransportFailureError(new TypeError('Failed to fetch')), 'network'],
+    [
+      'a portal 200 text/html',
+      new NotFromApiError('POST /api/auth/refresh', 200, 'text/html'),
+      'network',
+    ],
+  ] as const)(
+    'keeps the session question open on %s, without a login redirect, and names its cause',
+    async (_name, failure, cause) => {
+      hoisted.refresh = () => Promise.reject(failure);
+      mountGate();
+
+      await load(event());
+      await settle();
+
+      expect(bootSessionPhase()).toBe('unreachable');
+      expect(bootUnreachableCause()).toBe(cause);
+      expect(document.body.textContent).toContain(COPY[cause]());
+      expect(hoisted.goto).not.toHaveBeenCalled();
+    }
+  );
+
+  it('an app 404 (a verdict on the request, not on the network) still routes to login', async () => {
+    hoisted.refresh = () => Promise.reject(new RefreshFailedError(404));
+    mountGate();
+
+    await load(event());
+    await settle();
+
+    expect(hoisted.goto).toHaveBeenCalledTimes(1);
+    expect(bootSessionPhase()).toBe('settled');
+  });
+
+  describe('through the REAL refresh', () => {
+    const fetchMock = vi.fn<(...args: unknown[]) => Promise<Response>>();
+    beforeEach(async () => {
+      fetchMock.mockReset();
+      vi.stubGlobal('fetch', fetchMock);
+      const real = await vi.importActual<typeof import('$lib/stores/auth')>('$lib/stores/auth');
+      hoisted.refresh = () => real.refresh();
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    it.each([
+      [
+        'a 503 from the server',
+        () => Response.json({ statusCode: 503, message: 'Service Unavailable' }, { status: 503 }),
+        'server',
+      ],
+      [
+        'a 503 MAINTENANCE',
+        () => Response.json({ code: 'MAINTENANCE', message: 'Back soon' }, { status: 503 }),
+        'maintenance',
+      ],
+      [
+        "a captive portal's 200 text/html",
+        () =>
+          new Response('<html>Hotel Wi-Fi</html>', {
+            status: 200,
+            headers: { 'content-type': 'text/html' },
+          }),
+        'network',
+      ],
+    ] as const)('goes from %s to unreachable, never to login', async (_name, answer, cause) => {
+      fetchMock.mockImplementation(async () => answer());
+      mountGate();
+
+      await load(event());
+      await vi.waitFor(() => expect(bootSessionPhase()).toBe('unreachable'));
+      flushSync();
+
+      expect(fetchMock).toHaveBeenCalled();
+      expect(bootUnreachableCause()).toBe(cause);
+      expect(document.body.textContent).toContain(COPY[cause]());
+      expect(hoisted.goto).not.toHaveBeenCalled();
+    });
+  });
+
+  it('still routes an app 403 (a refusal the app itself answered) to the login screen', async () => {
+    const refused = Object.assign(new Error('Forbidden'), { name: 'SessionExpiredError' });
+    hoisted.refresh = () => Promise.reject(refused);
+    mountGate();
+
+    await load(event());
+    await settle();
+
+    expect(hoisted.goto).toHaveBeenCalledTimes(1);
+    expect(bootSessionPhase()).toBe('settled');
   });
 
   it('still routes a 401 to the login screen', async () => {

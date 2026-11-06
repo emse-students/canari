@@ -1,4 +1,5 @@
 import type { RedisService } from '../common/redis/redis.service';
+import type { SingleMediaMode } from './full-screen-post-sql';
 
 /**
  * THE FEED CACHE HAS ONE NAME AND ONE WAY TO THROW IT AWAY.
@@ -99,7 +100,7 @@ export interface PostListCacheKeyParts {
   offset: number;
   kind: string | undefined;
   /** The single-attachment posts the CanaReels list adds, or none (`full-screen-post-sql.ts`). */
-  singleMedia: 'photos' | 'media' | undefined;
+  singleMedia: SingleMediaMode | undefined;
 }
 
 /**

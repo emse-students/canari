@@ -3,8 +3,10 @@ import { listPosts, type PostEntity } from '$lib/posts/api';
 /**
  * THE LIST THE REEL VIEWER SWIPES THROUGH (C7): every live reel the reader may see, and since
  * 2026-10-19 every post whose only content is ONE picture or ONE video (user: photos in CanaReels, as on
- * Instagram), newest first, whatever tab the feed is on - the server narrows
- * (`GET /api/posts?kind=reel&singleMedia=true`), never the client. The server reads that shape as
+ * Instagram) and since 2026-11-06 every post of two to ten pictures and videos (owner: a carousel),
+ * a link in its text included (owner, the same day: the caption draws it), newest first, whatever
+ * tab the feed is on - the server narrows (`GET /api/posts?kind=reel&multiMedia=true&withLinks=true`),
+ * never the client. The server reads that shape as
  * its `feed=reels` list, the union of the three tabs; the client sends `feed: 'reels'` only once
  * both estates serve it, since an older server refuses the value
  * (docs/wiki/legacy-compatibility.md, "`kind=reel` on `feed=all` read as the CanaReels viewer list").
@@ -20,7 +22,7 @@ export const REEL_PAGE = 10;
 
 /** The C7 list. */
 export const listAllReels: ReelPageLoader = (offset, limit) =>
-  listPosts({ kind: 'reel', singleMedia: true, feed: 'all', offset, limit });
+  listPosts({ kind: 'reel', multiMedia: true, withLinks: true, feed: 'all', offset, limit });
 
 /**
  * The C7 list, with its first page already in hand: the entry read it to know whether there is a

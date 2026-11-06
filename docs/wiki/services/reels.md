@@ -96,7 +96,7 @@ picture - the photo pages of the CanaReels viewer ([client half](../frontend/mod
 The clause is `SINGLE_PHOTO_POST_SQL` (`posts/full-screen-post-sql.ts`): exactly one element in
 `images`, typed `image` (or untyped with an `image/` mime type, a legacy row), no poll, no form, no
 attached form, no linked calendar event, no `http(s)://` in the text (whose preview the page would
-drop). A column holding JSON `null` or a scalar counts as empty through a `CASE` on
+drop; allowed since 2026-11-06 under `withLinks`, below). A column holding JSON `null` or a scalar counts as empty through a `CASE` on
 `jsonb_typeof` - `jsonb_array_length` raises on it and would fail the page. It is OR-ed into the
 reel filter of every feed arm, behind the same visibility rules, and keys its own cache entry.
 Without `kind=reel` it means nothing. **An older server strips the unknown parameter**
@@ -124,6 +124,41 @@ sheet read it like any post. Pagination order is unchanged (`publishedAt DESC, i
 `full-screen-post-sql.integration.spec.ts` (both clauses on a real PostgreSQL, a video with each
 exclusion, a legacy video by mime type) and `posts.service.reels.spec.ts` (the wiring in every arm,
 the precedence, and "means nothing without `kind=reel`").
+
+**`multiMedia=true` (with `kind=reel`, 2026-11-06)** adds the CAROUSELS to that list: the posts of
+**2 to 10 attachments, every one a picture or a video** (each by its `type`, or untyped with an
+`image/` or `video/` mime type), with the same exclusions (owner: *a post of several photos and
+videos, swiped left and right as on Instagram*; [client half](../frontend/modules/reels.md#carousel-pages---a-post-of-several-photos-and-videos-owner-2026-11-06)).
+The clause is `MULTI_MEDIA_POST_SQL` (same file), OR-ed with `SINGLE_MEDIA_POST_SQL` under the mode
+`carousel` (`singleMediaSql`). "Every element" is a `NOT EXISTS` over `jsonb_array_elements`, behind
+a `CASE` on `jsonb_typeof` for the same reason as the length: the function raises on a scalar. A
+file, an audio or an element with neither type nor mime keeps the whole post out; eleven or more
+attachments too (`CAROUSEL_MAX_MEDIA`, Instagram's cap). **Precedence: `multiMedia` > `singleMedia` >
+`singlePhotos`** (`singleMediaModeOf`), and each older switch keeps its meaning, so an installed
+client that sends `singleMedia` alone - and cannot draw a carousel - never receives one. The current
+client sends all three, so a server that does not know `multiMedia` still serves the single pictures
+and videos. The cache key carries `+carousel`. Pinned by `full-screen-post-sql.integration.spec.ts`
+(the bounds 10 and 11, a mix with a caption, a legacy element by mime, a file, an audio, an untyped
+element, each exclusion; the `carousel` mode is exactly the union of the two clauses) and
+`posts.service.reels.spec.ts` (every arm, `singleMedia` alone never answers a carousel, "means nothing
+without `kind=reel`").
+
+**`withLinks=true` (with `multiMedia=true`, 2026-11-06)** lets a post with a LINK in its text in:
+the single and carousel rules above WITHOUT the `http(s)://` clause (owner: *a photo, video or
+carousel post with a link appears in CanaReels, the link clickable in the caption*;
+[client half](../frontend/modules/reels.md#a-post-with-a-link-in-its-text-owner-2026-11-06)).
+Poll, form, attached form and linked event still keep a post out. The clause is
+`LINKED_MEDIA_POST_SQL`, the mode `carousel-links`, the cache-key suffix `+carousel-links`.
+**It means something only with `multiMedia`** (`singleMediaModeOf`): every client built without
+this change (every release through `1.6.6-alpha.1`; the first that sends `withLinks` is
+`1.6.6-alpha.2` at the earliest, the first stable `1.6.6`) drops a post with a link (`fullScreenPageOf` reads it as no page and accuses it), and
+none of them sends `withLinks`, so each keeps the rule it was built for; the switch is not given a
+meaning beside an older one because no client would send that pair. A server that does not know
+`withLinks` strips it and keeps the link out, which the current client reads as before. Pinned by
+`full-screen-post-sql.integration.spec.ts` (the `carousel-links` mode is exactly the `carousel` mode
+plus the three rows whose only extra is a link; poll, form, attached form and event rows stay out)
+and `posts.service.reels.spec.ts` (every arm; `withLinks` without `multiMedia`, and `multiMedia`
+without `withLinks`, keep the link out).
 
 **Saving a feed video (decided 2026-11-06, reversible).** The 2026-10-09 rule *any reel can be
 saved* now covers a feed video shown in the viewer. It is saved under its OWN type, never relabelled

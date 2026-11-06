@@ -178,7 +178,9 @@ export interface PendingMediaFile {
 /** Per-context presets - higher quality, less aggressive resize. */
 export const IMAGE_COMPRESS_PRESETS = {
   chat: { maxWidth: 2560, maxHeight: 2560, quality: 0.92 },
-  post: { maxWidth: 2048, maxHeight: 2048, quality: 0.92 },
+  // 1600 px at 0.85 since 2026-11-06 (owner): a post photo at 2048 px / 0.92 measured 436 KB, about
+  // 10 s on slow 3G. The new size is read again on the next pre-release.
+  post: { maxWidth: 1600, maxHeight: 1600, quality: 0.85 },
   comment: { maxWidth: 1280, maxHeight: 1280, quality: 0.9 },
 } as const;
 

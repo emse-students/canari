@@ -17,6 +17,15 @@
    * reel (`ReelCommentsSheet`). A conversation's reel is not a post and gets neither - the rail is
    * drawn only for a signed-in reader (`likerId`). A dialog opened from in here (a report, the GIF
    * picker) is drawn above the viewer (`markViewerLayer`).
+   *
+   * A CAROUSEL PAGE (owner, 2026-11-06): vertical still pages POSTS, horizontal pages the MEDIA of
+   * the post on screen (`reelViewerNav.ts` decides, `ReelSlide` draws the strip). The visible media
+   * is kept PER POST for the viewer's life, so a swipe back up lands where the reader left that
+   * post. The axis is locked on the first movement, for the finger and the mouse alike; the arrow
+   * keys left and right and the slide's arrow buttons step the media too. A swipe right on its
+   * first media springs back (Back and the X close). The settle that gates the next POST's preload
+   * is the PAGE's: once its first visible media settled, a media swipe keeps it, so the next post's
+   * download is never aborted and restarted by a swipe inside the strip.
    */
   import { onDestroy, onMount } from 'svelte';
   import { holdPlayback } from '$lib/actions/playWhileVisible';
@@ -37,9 +46,12 @@
     reelDragOffset,
     reelReleaseVerdict,
     shouldLoadMoreReels,
+    stepMediaIndex,
     stepReelIndex,
+    type MediaPosition,
     type ReelSwipeVerdict,
   } from '$lib/reels/reelViewerNav';
+  import { fullScreenMediaListOf, fullScreenPageOf } from '$lib/reels/fullScreenPost';
   import {
     GESTURE,
     classifyMove,
@@ -124,6 +136,32 @@
   let settling = $state(false);
   let afterSettle: (() => void) | null = null;
 
+  /**
+   * THE VISIBLE MEDIA OF EACH CAROUSEL, by post id, for the viewer's life: a post scrolled away and
+   * back opens where the reader left it. Absent means the first.
+   */
+  let mediaIndexById = $state<Record<string, number>>({});
+  /** Where a held horizontal drag has taken the current carousel's strip (`reelDragOffset`). */
+  let mediaDragX = $state(0);
+  /** A drag is held: the strip follows the finger with no transition. */
+  let mediaDragging = $state(false);
+
+  /** The media position of a page: its visible media out of how many (1 off a carousel). */
+  function mediaPositionOf(post: PostEntity | undefined): MediaPosition {
+    if (!post || fullScreenPageOf(post) !== 'carousel') return { index: 0, count: 1 };
+    const count = fullScreenMediaListOf(post).length;
+    return { index: Math.min(mediaIndexById[post.id] ?? 0, count - 1), count };
+  }
+
+  /**
+   * What a settle is keyed on: the PAGE. A media swipe inside a settled page keeps it, so the next
+   * post's preload is not aborted and restarted; the strip's own neighbours settle per media
+   * (`ReelSlide`).
+   */
+  function settleKeyOf(post: PostEntity | undefined): string | null {
+    return post ? post.id : null;
+  }
+
   const overlay = bindHistoryOverlay(
     () => true,
     () => {
@@ -151,14 +189,14 @@
    * on screen may set it (`onReady` checks its index), never one torn down mid-swipe.
    */
   let settledId = $state<string | null>(null);
-  const currentSettled = $derived(settledId !== null && settledId === reels[index]?.id);
+  const currentSettled = $derived(settledId !== null && settledId === settleKeyOf(reels[index]));
 
   function markSettled(i: number) {
     if (i !== index) {
       console.debug(`[reel-viewer] slide ${i} settled off screen - ignored`);
       return;
     }
-    settledId = reels[i].id;
+    settledId = settleKeyOf(reels[i]);
   }
 
   // The next page, asked for as the reader nears the end of what is loaded.
@@ -399,8 +437,31 @@
     next?.();
   }
 
+  /**
+   * Steps the current carousel to its previous or next media. Nothing waits on a landing: the strip
+   * moves by its own transition from where the finger left it, the index moves at once, so the
+   * media that leaves unmounts its player at once (only the visible media plays).
+   */
+  function stepMedia(verdict: 'media-next' | 'media-prev') {
+    const post = reels[index];
+    const at = mediaPositionOf(post);
+    const target = stepMediaIndex(at.index, verdict, at.count);
+    mediaDragging = false;
+    mediaDragX = 0;
+    if (!post || target === at.index) return;
+    console.debug(`[reel-viewer] ${verdict} on ${post.id}: ${at.index} -> ${target}`);
+    // The page's settle is kept: the next post's preload goes on behind the strip.
+    mediaIndexById = { ...mediaIndexById, [post.id]: target };
+  }
+
   /** Carries out a verdict: the track leaves towards it, then the index moves and the track rests. */
   function go(verdict: ReelSwipeVerdict) {
+    if (verdict === 'media-next' || verdict === 'media-prev') {
+      stepMedia(verdict);
+      return;
+    }
+    mediaDragging = false;
+    mediaDragX = 0;
     const height = frame?.clientHeight ?? window.innerHeight;
     const width = frame?.clientWidth ?? window.innerWidth;
     const target = stepReelIndex(index, verdict, reels.length);
@@ -456,28 +517,36 @@
   });
 
   // Touch listeners by hand with `passive: false`: Svelte registers touch handlers as passive, where
-  // `preventDefault()` is ignored and the page would scroll under the drag.
+  // `preventDefault()` is ignored and the page would scroll under the drag. THE MOUSE DRIVES THE SAME
+  // GESTURE (owner, 2026-11-06: a carousel is dragged on a desktop too) through pointer events of
+  // type `mouse` - a touch or a pen keeps the touch path, so nothing is read twice.
   $effect(() => {
     const el = frame;
     if (!el) return;
     let gesture: GestureKind | null = null;
     let start: Sample = { x: 0, y: 0, t: 0 };
     let samples: Sample[] = [];
+    /** A mouse drag that moved the page: the click it ends with is not a tap. */
+    let swallowClick = false;
     const sampleOf = (t: Touch, time: number): Sample => ({ x: t.clientX, y: t.clientY, t: time });
 
-    function onStart(e: TouchEvent) {
-      if ((e.target as HTMLElement).closest(NOT_A_GESTURE) || settling) {
+    /** A press: whether it starts a gesture of ours. */
+    function begin(target: EventTarget | null, at: Sample, pointers: number) {
+      if ((target as HTMLElement | null)?.closest?.(NOT_A_GESTURE) || settling) {
         gesture = null;
         return;
       }
-      gesture = e.touches.length >= 2 ? 'pinch' : 'pending';
-      start = sampleOf(e.touches[0], e.timeStamp);
+      gesture = pointers >= 2 ? 'pinch' : 'pending';
+      start = at;
       samples = [start];
     }
 
-    function onMove(e: TouchEvent) {
-      if (!gesture || gesture === 'pinch' || e.touches.length !== 1) return;
-      const now = sampleOf(e.touches[0], e.timeStamp);
+    /**
+     * A move. `claim` takes it from the engine and says whether it could (a touch the engine is
+     * already scrolling cannot be claimed). False when the move is not ours.
+     */
+    function move(now: Sample, claim: () => boolean): boolean {
+      if (!gesture || gesture === 'pinch') return false;
       samples.push(now);
       if (samples.length > 12) samples.shift();
       const dx = now.x - start.x;
@@ -485,56 +554,154 @@
       if (gesture === 'pending') {
         // Classified ONCE, then kept until the finger lifts: a swipe that curves stays a swipe.
         gesture = classifyMove({ dx, dy, zoomed: false, touches: 1 });
-        if (gesture === 'pending') return;
+        if (gesture === 'pending') return false;
+        console.debug(`[reel-viewer] drag locked to ${gesture}`);
       }
       // A move the engine is already scrolling is not ours: the drag stands down and springs back.
-      if (!claimTouchMove(e)) {
+      if (!claim()) {
         gesture = null;
+        mediaDragging = false;
+        mediaDragX = 0;
         settle(0, 0);
-        return;
+        return false;
       }
-      const o = reelDragOffset(gesture, dx, dy, index > 0, index < reels.length - 1);
+      const o = reelDragOffset(
+        gesture,
+        dx,
+        dy,
+        index > 0,
+        index < reels.length - 1,
+        mediaPositionOf(reels[index])
+      );
       offsetX = o.x;
       offsetY = o.y;
+      mediaDragging = true;
+      mediaDragX = o.mediaX;
+      return true;
     }
 
-    function onEnd(e: TouchEvent) {
-      if (!gesture || e.touches.length > 0) return;
+    /** A release: what the drag meant. */
+    function end(at: Sample) {
       const kind = gesture;
       gesture = null;
-      if (kind === 'pending' || kind === 'pinch') return;
-      const end = sampleOf(e.changedTouches[0], e.timeStamp);
-      samples.push(end);
+      if (!kind || kind === 'pending' || kind === 'pinch') return;
+      samples.push(at);
       go(
         reelReleaseVerdict({
           kind,
-          dx: end.x - start.x,
-          dy: end.y - start.y,
+          dx: at.x - start.x,
+          dy: at.y - start.y,
           velocity: releaseVelocity(samples),
           width: el!.clientWidth,
           height: el!.clientHeight,
           hasPrevious: index > 0,
           hasNext: index < reels.length - 1,
+          media: mediaPositionOf(reels[index]),
         })
       );
     }
 
     // A cancel ends a drag of OURS; one arriving while a page lands (no drag was taken) moves nothing.
-    function onCancel() {
+    function cancel() {
       if (!gesture) return;
       gesture = null;
+      mediaDragging = false;
+      mediaDragX = 0;
       settle(0, 0);
+    }
+
+    function onStart(e: TouchEvent) {
+      begin(e.target, sampleOf(e.touches[0], e.timeStamp), e.touches.length);
+    }
+
+    function onMove(e: TouchEvent) {
+      if (e.touches.length !== 1) return;
+      move(sampleOf(e.touches[0], e.timeStamp), () => claimTouchMove(e));
+    }
+
+    function onEnd(e: TouchEvent) {
+      if (!gesture || e.touches.length > 0) return;
+      end(sampleOf(e.changedTouches[0], e.timeStamp));
+    }
+
+    const pointSample = (e: PointerEvent): Sample => ({
+      x: e.clientX,
+      y: e.clientY,
+      t: e.timeStamp,
+    });
+
+    function onPointerDown(e: PointerEvent) {
+      if (e.pointerType !== 'mouse' || e.button !== 0) return;
+      swallowClick = false;
+      begin(e.target, pointSample(e), 1);
+    }
+
+    function onPointerMove(e: PointerEvent) {
+      if (e.pointerType !== 'mouse' || !gesture) return;
+      if (e.buttons === 0) {
+        // The button is up and no pointerup came (a context menu opened mid-drag): the drag is over.
+        console.debug('[reel-viewer] a mouse drag lost its pointerup - cancelled');
+        swallowClick = false;
+        cancel();
+        return;
+      }
+      if (
+        move(pointSample(e), () => {
+          // A mouse drag is ours once it moved past the slop: no text selection, no image drag.
+          e.preventDefault();
+          return true;
+        })
+      ) {
+        swallowClick = true;
+      }
+    }
+
+    function onPointerUp(e: PointerEvent) {
+      if (e.pointerType !== 'mouse' || !gesture) return;
+      end(pointSample(e));
+      // The click this pointerup makes is dispatched in the same task; a drag that ends outside
+      // the frame makes none, so the flag must not outlive this frame and eat a later real tap.
+      if (swallowClick) requestAnimationFrame(() => (swallowClick = false));
+    }
+
+    /**
+     * THE CLICK THAT ENDS A MOUSE DRAG IS NOT A TAP: it would pause the video under it and count
+     * towards a double tap's like - and, ending on a caption's LINK (owner, 2026-11-06: a post with
+     * a link is in CanaReels), it would open it. Taken in the capture phase of the WINDOW, before
+     * the document's link handler (`installAppLinkClickHandler`, which leaves a prevented click
+     * alone), the slide's double tap and the player see it; only a click inside the viewer.
+     */
+    function onClickCapture(e: MouseEvent) {
+      if (!swallowClick || !(e.target instanceof Node) || !el!.contains(e.target)) return;
+      swallowClick = false;
+      console.debug('[reel-viewer] the click ending a mouse drag is not a tap - swallowed');
+      e.preventDefault();
+      e.stopPropagation();
     }
 
     el.addEventListener('touchstart', onStart, { passive: false });
     el.addEventListener('touchmove', onMove, { passive: false });
     el.addEventListener('touchend', onEnd, { passive: false });
-    el.addEventListener('touchcancel', onCancel);
+    el.addEventListener('touchcancel', cancel);
+    el.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', cancel);
+    window.addEventListener('click', onClickCapture, { capture: true });
+    // A picture's native drag would steal the mouse's pointer events (`pointercancel`).
+    const noNativeDrag = (e: DragEvent) => e.preventDefault();
+    el.addEventListener('dragstart', noNativeDrag);
     return () => {
+      el.removeEventListener('dragstart', noNativeDrag);
       el.removeEventListener('touchstart', onStart);
       el.removeEventListener('touchmove', onMove);
       el.removeEventListener('touchend', onEnd);
-      el.removeEventListener('touchcancel', onCancel);
+      el.removeEventListener('touchcancel', cancel);
+      el.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('click', onClickCapture, { capture: true });
     };
   });
 
@@ -558,7 +725,10 @@
     return true;
   }
 
-  /** The keyboard: up/down page, Escape closes. A key the player already used is left to it. */
+  /** The page on screen is a carousel: the left and right keys step its media. */
+  const carouselOnScreen = $derived(mediaPositionOf(reels[index]).count > 1);
+
+  /** The keyboard: up/down page, left/right a carousel's media, Escape closes. A key the player already used is left to it. */
   function onKeydown(e: KeyboardEvent) {
     // The comments sheet has the keyboard while it is open: its field types, and Escape closes IT.
     if (e.defaultPrevented || settling || commentsFor || shareFor) return;
@@ -569,6 +739,10 @@
     } else if (e.key === 'ArrowUp' || e.key === 'PageUp') {
       e.preventDefault();
       go('prev');
+    } else if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && carouselOnScreen) {
+      // A carousel's media, left and right: the swipe's own step. Off a carousel the keys are free.
+      e.preventDefault();
+      go(e.key === 'ArrowRight' ? 'media-next' : 'media-prev');
     } else if (e.key === 'Escape') {
       e.preventDefault();
       overlay.dismissFromUi();
@@ -625,6 +799,10 @@
               onMediaGone={onMediaGone ? () => onMediaGone(reels[i].id) : undefined}
               onLike={likerId ? () => likeReel(reels[i]) : undefined}
               rail={railFor(reels[i])}
+              mediaIndex={mediaPositionOf(reels[i]).index}
+              mediaDragX={i === index ? mediaDragX : 0}
+              mediaDragging={i === index && mediaDragging}
+              onMediaStep={(step) => !settling && i === index && go(step)}
             />
           </div>
         {/each}

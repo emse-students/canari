@@ -26,7 +26,12 @@ import type { PostNotificationsService } from './post-notifications.service';
 import type { PostMediaRetentionService } from './post-media-retention.service';
 import type { PushService } from '../push/push.service';
 import { DAY_MS, REEL_RETENTION_DAYS } from './reel.constants';
-import { SINGLE_MEDIA_POST_SQL, SINGLE_PHOTO_POST_SQL } from './full-screen-post-sql';
+import {
+  LINKED_MEDIA_POST_SQL,
+  MULTI_MEDIA_POST_SQL,
+  SINGLE_MEDIA_POST_SQL,
+  SINGLE_PHOTO_POST_SQL,
+} from './full-screen-post-sql';
 import { republishedFeedAtSql } from './republished-feed-sql';
 
 const NOW = Date.parse('2026-11-01T12:00:00Z');
@@ -80,6 +85,7 @@ function makeService(opts: {
       setex: jest.fn(),
       get: jest.fn(),
       deleteByPattern: jest.fn(() => Promise.resolve(0)),
+      incr: jest.fn(() => Promise.resolve(1)),
     } as unknown as RedisService,
     {} as FollowsService,
     {
@@ -262,6 +268,99 @@ describe('reads exclude a reel past its month', () => {
     const photosSql = photos.queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
     expect(photosSql).toContain(SINGLE_PHOTO_POST_SQL);
     expect(photosSql).not.toContain(SINGLE_MEDIA_POST_SQL);
+  });
+
+  it('with multiMedia, reels AND single AND 2..10-media posts, in EVERY feed arm', async () => {
+    for (const feed of ['all', 'associations', 'custom'] as const) {
+      const { service, queries } = makeService({});
+      await service.listPosts({
+        limit: 10,
+        offset: 0,
+        feed,
+        kind: 'reel',
+        multiMedia: true,
+        singleMedia: true,
+        singlePhotos: true,
+        viewerUserId: 'alice',
+      });
+      const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
+      expect(sql).toContain(`posts.kind = 'reel' OR (posts.kind = 'post' AND`);
+      expect(sql).toContain(MULTI_MEDIA_POST_SQL);
+      expect(sql).toContain(SINGLE_MEDIA_POST_SQL);
+    }
+  });
+
+  it('singleMedia alone never answers a carousel: an installed client cannot draw one', async () => {
+    const { service, queries } = makeService({});
+    await service.listPosts({
+      limit: 10,
+      offset: 0,
+      feed: 'all',
+      kind: 'reel',
+      singleMedia: true,
+      singlePhotos: true,
+    });
+    const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
+    expect(sql).toContain(SINGLE_MEDIA_POST_SQL);
+    expect(sql).not.toContain(MULTI_MEDIA_POST_SQL);
+  });
+
+  it('with withLinks (owner, 2026-11-06), a post with a link comes too, in EVERY feed arm', async () => {
+    for (const feed of ['all', 'associations', 'custom'] as const) {
+      const { service, queries } = makeService({});
+      await service.listPosts({
+        limit: 10,
+        offset: 0,
+        feed,
+        kind: 'reel',
+        withLinks: true,
+        multiMedia: true,
+        singleMedia: true,
+        singlePhotos: true,
+        viewerUserId: 'alice',
+      });
+      const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
+      expect(sql).toContain(LINKED_MEDIA_POST_SQL);
+      expect(sql).not.toContain(`!~* 'https?://'`);
+    }
+  });
+
+  it('withLinks without multiMedia keeps the old rule: an installed client drops a link', async () => {
+    const { service, queries } = makeService({});
+    await service.listPosts({
+      limit: 10,
+      offset: 0,
+      feed: 'all',
+      kind: 'reel',
+      withLinks: true,
+      singleMedia: true,
+    });
+    const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
+    expect(sql).toContain(SINGLE_MEDIA_POST_SQL);
+    expect(sql).not.toContain(LINKED_MEDIA_POST_SQL);
+  });
+
+  it('multiMedia alone keeps the link out: a client built before withLinks cannot draw one', async () => {
+    const { service, queries } = makeService({});
+    await service.listPosts({
+      limit: 10,
+      offset: 0,
+      feed: 'all',
+      kind: 'reel',
+      multiMedia: true,
+      singleMedia: true,
+      singlePhotos: true,
+    });
+    const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
+    expect(sql).toContain(MULTI_MEDIA_POST_SQL);
+    expect(sql).not.toContain(LINKED_MEDIA_POST_SQL);
+  });
+
+  it('multiMedia means nothing without kind=reel', async () => {
+    const { service, queries } = makeService({});
+    await service.listPosts({ limit: 10, offset: 0, feed: 'all', multiMedia: true });
+    const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
+    expect(sql).not.toContain(MULTI_MEDIA_POST_SQL);
   });
 
   it('singleMedia means nothing without kind=reel', async () => {

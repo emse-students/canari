@@ -750,7 +750,7 @@ export async function processPendingInvitations(params: {
         try {
           // CLAIM ONE DEVICE'S PACKAGE, NEVER THE ACCOUNT'S. It is claimed before the leaf check
           // below, so a fulfilled invitation (vouched) still discards it - that order is owed a
-          // decision (`docs/wiki/backlog.d/p2-reads-of-the-device-list-still-claim-one-time-packages.md`).
+          // decision (`docs/wiki/backlog.d/p2-what-the-key-package-claim-fix-left.md`).
           // This read used to be the user's whole device list, which claims a one-time package from
           // EVERY device of theirs: production
           // 2026-11-06, a new device admitted to 131 groups by another device of the account

@@ -18,7 +18,7 @@ import { mediaUrl } from '$lib/utils/apiUrl';
 import { saveBlobAs } from '$lib/utils/fileDownload';
 import { isIosTauriRuntime } from '$lib/utils/appVersion';
 import { GalleryError, hasNativeGallery, saveVideoToGallery } from './gallery';
-import { fullScreenMediaOf } from './fullScreenPost';
+import { fullScreenMediaListOf } from './fullScreenPost';
 
 /** What a save came to: in the gallery, refused gallery access, downloaded, or a dialog cancelled. */
 export type ReelSaveOutcome = 'saved' | 'denied' | 'downloaded' | 'cancelled';
@@ -69,34 +69,46 @@ export function savedVideoType(mimeType: string | undefined): SavedVideoType {
 }
 
 /**
+ * The video a save takes: the media at `mediaIndex` - the visible one of a carousel page (owner,
+ * 2026-11-06) - else the first, a reel's one video.
+ */
+export function savedMediaOf(
+  reel: Pick<SaveableReel, 'media' | 'images' | 'mediaIndex'>
+): PostMediaRef | undefined {
+  return fullScreenMediaListOf(reel)[reel.mediaIndex ?? 0];
+}
+
+/**
  * Whether the platform's gallery can take this video. Photos on iOS reads no WebM; everything else
  * (Android's gallery, the browser's download) takes what it is given. The rail hides the save for a
  * video this says no to, rather than offering a save that fails.
  */
 export function canSaveVideo(
-  reel: Pick<SaveableReel, 'media' | 'images'>,
+  reel: Pick<SaveableReel, 'media' | 'images' | 'mediaIndex'>,
   iosApp: boolean = isIosTauriRuntime()
 ): boolean {
-  return !(iosApp && savedVideoType(fullScreenMediaOf(reel)?.mimeType).ext === 'webm');
+  return !(iosApp && savedVideoType(savedMediaOf(reel)?.mimeType).ext === 'webm');
 }
 
 /**
  * The file name a saved video gets: its day and a short id, so two of one day differ. A reel is
  * `canari-reel-...`; a feed post of one video (`kind: 'post'`) is not a reel and is not called one.
+ * A video of a carousel carries its 1-based place in the post, so two videos of one post differ.
  */
 export function reelFileName(
-  reel: Pick<SaveableReel, 'id' | 'createdAt' | 'kind' | 'media' | 'images'>
+  reel: Pick<SaveableReel, 'id' | 'createdAt' | 'kind' | 'media' | 'images' | 'mediaIndex'>
 ): string {
   const day = reel.createdAt.slice(0, 10);
   const what = reel.kind === 'post' ? 'video' : 'reel';
-  return `canari-${what}-${day}-${reel.id.slice(0, 8)}.${savedVideoType(fullScreenMediaOf(reel)?.mimeType).ext}`;
+  const place = reel.mediaIndex !== undefined ? `-${reel.mediaIndex + 1}` : '';
+  return `canari-${what}-${day}-${reel.id.slice(0, 8)}${place}.${savedVideoType(savedMediaOf(reel)?.mimeType).ext}`;
 }
 
 /**
  * What a save needs of a reel: an id and a day for the file name, and its video with its key. A
  * feed reel, one of the member's own and a reel received in a conversation all have them.
  *
- * THE VIDEO IS READ AS THE VIEWER READS IT (`fullScreenMediaOf`): `media`, or `images` from a server
+ * THE VIDEO IS READ AS THE VIEWER READS IT (`fullScreenMediaListOf`): `media`, or `images` from a server
  * older than the rename. Reading `media[0]` alone threw `media is undefined` on a row that carried
  * only `images` - the viewer played it, the save button crashed on it.
  */
@@ -109,6 +121,8 @@ export interface SaveableReel {
   images?: PostMediaRef[];
   /** `'post'` for a feed video shown in the viewer; absent (a reel in a conversation) or `'reel'` is a reel. */
   kind?: string;
+  /** On a carousel page: the visible media, the one saved. Absent: the first, a reel's one video. */
+  mediaIndex?: number;
 }
 
 /** Saves a reel - ANY reel the member can watch, public or not. @throws {GalleryError} when it cannot be saved. */
@@ -116,7 +130,7 @@ export async function saveReel(
   reel: SaveableReel,
   deps: SaveReelDeps = defaultDeps
 ): Promise<ReelSaveOutcome> {
-  const ref = fullScreenMediaOf(reel);
+  const ref = savedMediaOf(reel);
   if (!ref) throw new GalleryError('failed', `reel ${reel.id} carries no video`);
   const name = reelFileName(reel);
   const { mime } = savedVideoType(ref.mimeType);

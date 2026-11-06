@@ -8,7 +8,11 @@ import { ackMessagesWithRetry } from './ackRetry';
 import { ADDRESSED_HISTORY_CAPABILITY, DELIVERY, type FrameDelivery } from './frameDelivery';
 import type { DeviceMembershipRow, GroupMeta, UserGroupRow } from './IMlsService';
 import type { DatedKeyPackage } from './keyPackages';
-import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
+import type {
+  DeviceKeyPackageAnswer,
+  DeviceSignatureKeys,
+  UserDeviceEntry,
+} from './deviceKeyPackage';
 import { toBase64, fromBase64 } from '$lib/utils/hex';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
@@ -1479,13 +1483,20 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * Fetches KeyPackages for all active devices of `userId`.
+   * CLAIMS one KeyPackage from every active device of `userId` - for an adder about to add every
+   * one of them, and nobody else: each answer DELETEs one one-time package per listed device on the
+   * server. A caller that needs only the roster asks {@link listUserDevices}, which claims nothing.
    *
    * THROWS on transport/HTTP failure (network down, non-2xx): a `[]` must NEVER be
    * indistinguishable from a failure (see audit S2). Returns `[]` only for a genuine 200 with no
    * device. Best-effort callers (creation, KeyPackage fallback) opt in explicitly via
    * `.catch(() => [])`; the invitation path lets the error propagate so it never invites a
    * silent subset of members.
+   *
+   * **NEVER SHARED BETWEEN CALLERS.** A one-time package is spent by the first Welcome built on it, so
+   * two adders handed the SAME answer (two groups created at once with one person, or a creation and
+   * an admission) would build two Welcomes on one package, and the joiner would refuse the second
+   * with `NoMatchingKeyPackage`. Each claim is its own request; only the peek is joined.
    */
   async fetchUserDevices(userId: string): Promise<
     Array<{
@@ -1498,34 +1509,80 @@ export class MlsDeliveryApi {
       deviceAppVersion?: string;
     }>
   > {
-    // SIMULTANEOUS ASKERS SHARE ONE REQUEST (WP-W4): a boot asked for the account's own device list
-    // three times - the pending-invitation sweep, the welcome-request answer and the group
-    // reconcile each sent theirs. The entry lives as long as the request, so no answer is served
-    // older than the request a caller joined (see {@link joinInFlight}).
-    return this.joinInFlight(`${userId}:devices`, async () => {
-      const res = await this.f(`${this.historyUrl}/api/mls/devices/${userId}`, {
-        headers: await this.auth(),
-      });
-      if (!res.ok) throw await refusalFromResponse(res, 'fetchUserDevices failed');
-      // Raw device rows as returned by the server (untyped JSON). Optional metadata fields
-      // are re-validated with `typeof` below before being kept.
-      const devices = (await res.json()) as Array<{
-        keyPackage: string;
-        deviceId: string;
-        deviceName?: string;
-        deviceOs?: string;
-        deviceAppVersion?: string;
-      }>;
+    const devices = await this.readUserDevices(userId, false);
+    return devices.map((d) => ({
+      keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
+      deviceId: d.deviceId,
+      userId,
+      deviceName: d.deviceName,
+      deviceOs: d.deviceOs,
+      deviceAppVersion: d.deviceAppVersion,
+    }));
+  }
 
+  /**
+   * The roster of `userId`'s active devices, read WITHOUT claiming any of their KeyPackages
+   * (`?peek=1`): the settings count, the device panel, a device's name, the Welcome fan-out to
+   * every device. Same list, same refusals and the same throw contract as {@link fetchUserDevices};
+   * no package is returned, because none was claimed for the caller to use.
+   *
+   * SIMULTANEOUS ASKERS SHARE ONE REQUEST (WP-W4), which a read may and a claim may not. The entry
+   * lives as long as the request, so no answer is served older than the request a caller joined
+   * (see {@link joinInFlight}). A server predating the peek ignores the query and claims, as every
+   * client did before, so nothing needs a floor and nothing falls back.
+   */
+  async listUserDevices(userId: string): Promise<UserDeviceEntry[]> {
+    return this.joinInFlight(`${userId}:devices:peek`, async () => {
+      const devices = await this.readUserDevices(userId, true);
       return devices.map((d) => ({
-        keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
         deviceId: d.deviceId,
         userId,
-        deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
-        deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
-        deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
+        deviceName: d.deviceName,
+        deviceOs: d.deviceOs,
+        deviceAppVersion: d.deviceAppVersion,
       }));
     });
+  }
+
+  /** `GET mls/devices/:userId`, claiming or peeking, with the optional metadata re-validated. */
+  private async readUserDevices(
+    userId: string,
+    peek: boolean
+  ): Promise<
+    Array<{
+      keyPackage: string;
+      deviceId: string;
+      deviceName?: string;
+      deviceOs?: string;
+      deviceAppVersion?: string;
+    }>
+  > {
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/devices/${encodeURIComponent(userId)}${peek ? '?peek=1' : ''}`,
+      { headers: await this.auth() }
+    );
+    if (!res.ok) {
+      throw await refusalFromResponse(
+        res,
+        peek ? 'listUserDevices failed' : 'fetchUserDevices failed'
+      );
+    }
+    // Raw device rows as returned by the server (untyped JSON). Optional metadata fields
+    // are re-validated with `typeof` below before being kept.
+    const devices = (await res.json()) as Array<{
+      keyPackage: string;
+      deviceId: string;
+      deviceName?: unknown;
+      deviceOs?: unknown;
+      deviceAppVersion?: unknown;
+    }>;
+    return devices.map((d) => ({
+      keyPackage: d.keyPackage,
+      deviceId: d.deviceId,
+      deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
+      deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
+      deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
+    }));
   }
 
   /**
@@ -1702,7 +1759,7 @@ export class MlsDeliveryApi {
     if (targetDeviceId) {
       deviceIds = [targetDeviceId];
     } else {
-      const devices = await this.fetchUserDevices(targetUserId);
+      const devices = await this.listUserDevices(targetUserId);
       deviceIds =
         welcomeOpts?.firstDeviceOnly && devices.length > 0
           ? [devices[0].deviceId]

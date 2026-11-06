@@ -3549,6 +3549,7 @@
   "md_toolbar_bold": "Gras",
   "md_toolbar_italic": "Italique",
   "md_toolbar_strikethrough": "Barré",
+  "md_toolbar_refused": "Impossible d'appliquer ce style ici",
   "md_toolbar_heading": "Titre",
   "md_toolbar_quote": "Citation",
   "md_toolbar_code": "Code",
@@ -4241,6 +4242,9 @@
   "reels_viewer_close": "Fermer les CanaReels",
   "reels_viewer_prev": "CanaReel précédent",
   "reels_viewer_next": "CanaReel suivant",
+  "reels_carousel_prev": "Photo ou vidéo précédente",
+  "reels_carousel_next": "Photo ou vidéo suivante",
+  "reels_carousel_position": "{index} sur {total}",
   "reels_viewer_load_error": "Les CanaReels suivants n'ont pas pu être chargés.",
   "reels_rail_label": "Actions du CanaReel",
   "reels_rail_drawer_label": "Choisir une réaction",
@@ -5361,5 +5365,7 @@
   "boot_connecting": "Connexion à Canari...",
   "boot_unreachable_title": "Impossible de joindre Canari depuis ce réseau",
   "boot_unreachable_hint": "Votre connexion est peut-être coupée ou très lente. Vérifiez-la, essayez le Wi-Fi ou les données mobiles, puis réessayez. Canari reprend tout seul au retour du réseau.",
-  "boot_unreachable_retry": "Réessayer"
+  "boot_unreachable_retry": "Réessayer",
+  "boot_server_error_title": "Canari rencontre un problème",
+  "boot_server_error_hint": "Le serveur a répondu mais n'a pas pu ouvrir votre session pour l'instant. Votre connexion n'est pas en cause : réessayez dans quelques instants."
 }

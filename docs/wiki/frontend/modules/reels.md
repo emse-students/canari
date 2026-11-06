@@ -820,9 +820,10 @@ below; **owed on both phones**
 - **Photo pages** (`reels/fullScreenPost.ts`): a post whose ONLY content is one picture - no other
   media, no poll, no form - is a page like a reel: the same frame, caption and rail, its picture
   instead of the video, no player bar (so the caption sits lower). Several media, a video outside a
-  reel, a file and text alone stay out, and so do **a linked calendar event and a link in the
-  text**: the card draws the event's card (date, place, add to calendar) and the link's preview,
-  and a page would silently drop both. **The list is newest first and nothing else** (lead's
+  reel, a file and text alone stay out, and so does **a linked calendar event**: the card draws
+  the event's card (date, place, add to calendar), and a page would silently drop it. A link in the
+  text kept a post out too until the owner reversed it on 2026-11-06
+  ([below](#a-post-with-a-link-in-its-text-owner-2026-11-06)). **The list is newest first and nothing else** (lead's
   decision): a pin is a feed concept, and a pinned post would head every reader's CanaReels. The list comes from the server
   (`kind=reel&singlePhotos=true`, [server half](../../services/reels.md#reading)); a row it serves
   that the client reads as neither is drawn as a reel and accused once in the log.
@@ -872,6 +873,111 @@ dp in the WebView. So a slow drag commits SOONER in Canari (25 % against 50 %) a
 be about seven times FASTER. These numbers are the reference for tuning it; this change applies
 none of them. **Follow-up, after the phone reading of RR:** decide whether the reel pager moves
 towards these thresholds (lead's decision: not in the rail's pull request).
+
+### Carousel pages - a post of several photos and videos (owner, 2026-11-06)
+
+**Asked by the owner:** *"montrer aussi les posts avec plusieurs photos/videos, avec un swipe gauche /
+droite pour passer au media precedent / suivant du post, comme Instagram"*. Every decision below is
+the lead's, taken 2026-11-06, reversible.
+
+- **Which posts** (`fullScreenPageOf` returns `carousel`; the server's `MULTI_MEDIA_POST_SQL`,
+  [server half](../../services/reels.md#reading)): **2 to 10 media, every one a picture or a video**
+  (10 is Instagram's cap, `CAROUSEL_MAX_MEDIA` on both sides), with the SAME exclusions as a single
+  media - no poll, no form, no attached form, no linked event (a link in the text is allowed,
+  [below](#a-post-with-a-link-in-its-text-owner-2026-11-06)). **A file or an
+  audio among them keeps the whole post out**: a page draws pictures and videos only.
+- **The two axes.** Vertical pages the POSTS, horizontal pages the MEDIA of the post on screen
+  (`reelViewerNav.ts`: `reelReleaseVerdict` answers `media-next` / `media-prev`, `stepMediaIndex`).
+  The axis is locked by `classifyMove` on the first movement past the slop, so a curving swipe never
+  does both and the horizontal drag never fights the vertical paging. **Past either end of the strip
+  a drag springs back with the edge resistance - on the first media a drag to the right does NOT
+  close the viewer** (decided 2026-11-06 at review, replacing a first build that closed there: a
+  reader flicking back through the media closed it by overshooting, and Instagram does not close
+  there). Back and the X close a carousel; a page of ONE media keeps the close on the right.
+- **The strip** (`ReelSlide`): one `ReelMediaPane` per media, side by side inside the ONE frame (its
+  ratio is the first media's, each media `object-contain` in it), moved as one transform; a held drag
+  moves it 1:1 with no transition (`mediaDragX`, `mediaDragging`), a release snaps it with the
+  viewer's own `GESTURE.SETTLE_MS` curve. Nothing waits on the strip's `transitionend`: the index
+  moves at once. Reduced motion makes the snap instant through the global rule in `app.css`.
+  **The blurred backdrop reads only the media on show**: the panes out of view carry
+  `data-backdrop-ignore`, and the slide hands `ReelFrame` the visible index as `sourceKey`, so a
+  swipe repaints it - otherwise a neighbour's picture that finished loading last painted the
+  backdrop of the one being looked at (seen in the browser, 2026-11-06).
+- **The position** is a row of dots under the top bar, the visible one lit, named "2 sur 5" for
+  assistive tech (`reels_carousel_position`).
+- **The visible media is kept PER POST** for the viewer's life (`mediaIndexById`): a post scrolled
+  away and back opens where the reader left it.
+- **What plays.** `ReelMediaPane` owns what used to be the slide's media half (download, player,
+  first frame, settle), so the rule is unchanged and per media: ONLY THE ACTIVE PANE - the visible
+  media of the page on screen - MOUNTS A PLAYER. A swipe to the next media unmounts the video that
+  leaves, exactly as a swipe to the next post does, and the playback arbiter sees one viewer at most.
+- **What is fetched ahead** (`carouselMediaRole`): once the visible media has SETTLED (whole and, for
+  a video, playing), its neighbours - the NEXT media, and the previous one, which was fetched to be
+  seen so holding it again is a cache hit - and the opening media of the NEXT post (the viewer's
+  existing `preload`). A video is preloaded only when `worthPreloading` says so (segmented, or under
+  the 28 MB reel cap). The strip's neighbours settle per media (`ReelSlide`), but the settle that
+  gates the NEXT POST is the PAGE's (`settleKeyOf` is the post): once the page has settled, a media
+  swipe keeps it, so the next post's download is never aborted and restarted by a swipe inside the
+  strip.
+- **Desktop.** The arrow keys left and right step the media (off a carousel they are left free), the
+  slide draws left/right chevron buttons on a wide screen, and **the mouse drives the same gesture as
+  the finger**: pointer events of type `mouse` feed the one gesture implementation (a touch keeps the
+  touch path). The click that ends a mouse drag is swallowed in the frame's capture phase, so it
+  neither toggles the player nor counts towards a double-tap like; the flag lives one frame at most
+  (a drag ending outside the frame makes no click, and must not eat the next real tap). A move with
+  no button down (`buttons === 0`: the pointerup was lost, a context menu opened mid-drag) cancels
+  the drag. A picture's native drag is prevented so it cannot cancel the pointer stream.
+- **The double tap.** A swipe makes no `click`, so the double tap (`doubleTapLike`) never sees one;
+  the mouse case is the swallowed click above.
+- **What belongs to the POST, not a media:** the caption, the author line, the rail's reactions, the
+  comments and the send - they do not move with the strip. **The rail's save and sound follow the
+  VISIBLE media**: a video shows them, a picture shows neither, because **no picture save exists**
+  (a photo page has never had one); the save takes the visible video (`SaveableReel.mediaIndex`,
+  `savedMediaOf`) and names it with its place, `canari-video-<day>-<id>-2.mov`, so two videos of one
+  post differ.
+- Pinned by `reelViewerNav.test.ts`, `fullScreenPost.test.ts`, `saveReel.test.ts` and
+  `ReelViewer.carousel.svelte.test.ts` (the swipes, the per-post memory, the players, the
+  preloads and the next post's kept preload, the keys and buttons, the mouse drag, its swallowed
+  click, the lost pointerup, the save).
+  **Owed on a phone**: the feel of the two axes on the Mi 9T and the iPhone 12 (a diagonal flick,
+  a horizontal swipe right after a vertical fling), a carousel video's sound and pause on a swipe,
+  and the save of a carousel video into each gallery.
+
+### A post with a link in its text (owner, 2026-11-06)
+
+**Decided by the owner:** a photo, video or carousel post whose text carries a link DOES appear in
+CanaReels, the link tappable in the caption. Until then it stayed out because the page did not draw
+the link's preview card; the preview is still not drawn - the link itself is, which was the point.
+
+- **Which posts:** `fullScreenPageOf` no longer reads the text. Poll, form, attached form and linked
+  event still keep a post out. The list asks for it with `withLinks=true` beside `multiMedia=true`
+  ([server half](../../services/reels.md#reading)), so a client that does not draw the link - every
+  client built without this change, every release through `1.6.6-alpha.1` - never receives such a
+  post ([legacy-compatibility](../../legacy-compatibility.md)).
+- **The link is the post card's own**: the caption is `PostMarkdown`, whose `link` renderer is
+  `PostMentionLink` - an in-app Canari link goes through `AppLink`, an outside one is an `<a>`
+  that the app's document-level handler (`installAppLinkClickHandler`) sends to `openExternal` and
+  its Safe Browsing gate, as on a card. Nothing new opens a URL.
+- **Tappable, folded or not.** The caption is pointer-transparent so a tap beside the text reaches
+  the video; its `a` and `button` (a mention) are not (`[&_a]:pointer-events-auto`). A long URL
+  wraps anywhere (`wrap-anywhere`), never past the frame; a long caption folds to two lines and
+  unfolds into its own scroll, as before. **The text is always on the viewer's dark scrim**, whatever
+  the app's theme, so its block carries `data-theme="dark"`: the `dark:` variant (`app.css`) then
+  applies inside it, and a link, a mention and a hashtag - hover included - take the colours the post
+  card gives them on a dark surface (`amber-400`, an in-app link's hover `amber-300`). One attribute,
+  never a recolour per renderer: the first build recoloured only the `a`, leaving a mention and a
+  hashtag `amber-700` on black (about 3:1) in the light theme and an in-app link darkening on hover.
+- **Never a swipe nor a like.** A tap does not move, so the viewer's gesture never locks an axis; a
+  drag that STARTS on a link still pages, as everywhere on the page. A tap on a link is the link's
+  for the double tap (`tapBelongsToInnerControl`). The click that ends a MOUSE drag is swallowed in
+  the WINDOW's capture phase, before the document's link handler, so a drag released over a link
+  does not open it.
+- Pinned by `fullScreenPost.test.ts` (a link no longer keeps a picture, a video or a carousel out),
+  `ReelSlide.doubleTap.svelte.test.ts` (the caption's link is an `<a>`, pointer-live, and a double
+  tap on it is no like), `ReelViewer.carousel.svelte.test.ts` (the document's handler sees the
+  drag's click already prevented), `listPostsSearchParams.test.ts` and `allReels.test.ts`.
+  **Owed on a phone:** a tap on a caption link opens it (with the Safe Browsing prompt on a flagged
+  URL), and a swipe started on one still pages, on the Mi 9T and the iPhone 12.
 
 ### The minimal player and the rail tools (user, 2026-10-23)
 

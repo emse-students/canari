@@ -1,0 +1,5 @@
+s = open('src/lib/utils/markdown/composerFormatFuzz.test.ts', encoding='utf8').read()
+s = s.replace("if (f === 'refused') refused++;", "if (f === 'refused') { refused++; if (refused % 25 === 1 && examples.length < 16) examples.push(JSON.stringify([text, text.slice(s, e), kind])); }")
+s = s.replace("let refused = 0;", "let refused = 0; const examples: string[] = [];")
+s = s.replace("expect(actions).toBeGreaterThan(5000);", "if (!wild) throw new Error('EX ' + examples.join(' ## '));")
+open('src/lib/utils/markdown/zzfz.test.ts', 'w', encoding='utf8').write(s)

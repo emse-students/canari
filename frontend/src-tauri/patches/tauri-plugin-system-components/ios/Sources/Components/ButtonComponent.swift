@@ -4,6 +4,7 @@
 //
 
 import UIKit
+import os
 import WebKit
 
 /// UIButton — glass configuration on iOS 26, filled/gray on iOS 15, plain
@@ -259,9 +260,10 @@ final class CanariButton: UIButton {
         guard changed else { return }
         let free = CanariButton.holders.isEmpty
         webView?.isUserInteractionEnabled = free
-        NSLog(
-            "[CanariButton] %@: the page %@ touch (%ld menu(s) holding it)",
-            why, free ? "takes" : "takes no", CanariButton.holders.count)
+        let verb = free ? "takes" : "takes no"
+        let holding = CanariButton.holders.count
+        PendiNav.log.notice(
+            "[CanariButton] \(why, privacy: .public): the page \(verb, privacy: .public) touch (\(holding, privacy: .public) menu(s) holding it)")
     }
 
     /// The accessible name and the menu. An EMPTY menu turns the button back

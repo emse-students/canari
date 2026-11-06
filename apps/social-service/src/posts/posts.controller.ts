@@ -185,6 +185,8 @@ export class PostsController {
       kind: query.kind,
       singlePhotos: query.singlePhotos === true,
       singleMedia: query.singleMedia === true,
+      multiMedia: query.multiMedia === true,
+      withLinks: query.withLinks === true,
     });
   }
 

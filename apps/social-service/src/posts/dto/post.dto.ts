@@ -415,6 +415,27 @@ export class ListPostsQueryDto {
   @IsBoolean()
   singleMedia?: boolean;
 
+  /**
+   * With `kind=reel`: the posts of TWO TO TEN pictures and videos and nothing else come too, as
+   * well as the single ones (owner, 2026-11-06: a carousel, swiped left and right as on
+   * Instagram). Wins over `singleMedia` and `singlePhotos`, which keep their meaning for an
+   * installed client that cannot draw a carousel. Ignored without `kind=reel`.
+   */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  multiMedia?: boolean;
+
+  /**
+   * With `multiMedia`: a post with a LINK in its text comes too, the client drawing the link in the
+   * caption (owner, 2026-11-06). Ignored without `multiMedia`, so an installed client that sends an
+   * older switch keeps the rule it was built for.
+   */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  withLinks?: boolean;
+
   /** Custom feed: filter by author promotion (personal posts only). */
   @IsOptional()
   @Type(() => Number)

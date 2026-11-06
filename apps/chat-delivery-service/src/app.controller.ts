@@ -46,6 +46,7 @@ import { expireUnansweredAsks, seatKey } from './utils/group-membership';
 import { announceExpiredAsks, trackJoinAskWork } from './utils/join-ask-announce';
 import { checkDatabaseClockAgreement } from './utils/clock-agreement';
 import { reportOrphanDevices } from './utils/orphan-devices';
+import { takeSafeBrowsingRefusalCount } from './utils/safe-browsing';
 
 /**
  * Thin lifecycle controller: Firebase init, DB migration helpers, and cron jobs.
@@ -70,6 +71,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private reportSingleHolderInterval: ReturnType<typeof setInterval>;
   private reportCommitLogInterval: ReturnType<typeof setInterval>;
   private reportOrphanDevicesInterval: ReturnType<typeof setInterval>;
+  private reportSafeBrowsingInterval: ReturnType<typeof setInterval>;
   private initialSweepTimeout: ReturnType<typeof setTimeout>;
 
   /**
@@ -236,6 +238,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, 24 * ONE_HOUR);
 
+    // Count the Safe Browsing configuration refusals of the day, so a dead link check is found the
+    // day it dies - see utils/safe-browsing.ts.
+    this.reportSafeBrowsingInterval = setInterval(() => {
+      this.reportSafeBrowsing();
+    }, 24 * ONE_HOUR);
+
     // Observe the undelivered queue. Purely a report: it deletes nothing, and it exists because
     // a single device silently accumulated 29 499 frames (39 MB) in five hours on production and
     // nothing said so - the shape was only found by hand, a day later.
@@ -386,6 +394,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.reportSingleHolderInterval);
     clearInterval(this.reportCommitLogInterval);
     clearInterval(this.reportOrphanDevicesInterval);
+    clearInterval(this.reportSafeBrowsingInterval);
     clearTimeout(this.initialSweepTimeout);
   }
 
@@ -1142,6 +1151,22 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const sorted = [...values].sort((a, b) => a - b);
     const rank = (q: number) => sorted[Math.max(0, Math.ceil(q * sorted.length) - 1)];
     return `p50=${rank(0.5)} p90=${rank(0.9)} max=${sorted[sorted.length - 1]}`;
+  }
+
+  /**
+   * The daily Safe Browsing refusal count (per replica, since this process started or last reported;
+   * deliberately NOT in the boot sweep, where it would always read 0). Non-zero means the
+   * link check is dead and every link reads "not flagged": logged at ERROR so it is read.
+   */
+  private reportSafeBrowsing() {
+    const refusals = takeSafeBrowsingRefusalCount();
+    if (refusals > 0) {
+      this.logger.error(
+        `[SAFE_BROWSING] refusals=${refusals} - Google refused the configuration, no link was checked`
+      );
+    } else {
+      this.logger.log('[SAFE_BROWSING] refusals=0');
+    }
   }
 
   /** The daily orphan-device count - read-only; see {@link reportOrphanDevices}. */
