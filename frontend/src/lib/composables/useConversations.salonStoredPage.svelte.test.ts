@@ -104,13 +104,20 @@ function makeCtx(storage: unknown) {
 }
 
 /**
- * Yields queue position by queue position until the salon's drawn rows are `ids`. It waits for the
- * store to BE that, however many hops the read and the merge take: no poll interval and no
- * deadline to lose under load (the test's own timeout is the only bound).
+ * Yields queue position by queue position until `happened()` holds. It waits for the EVENT, however
+ * many hops it takes: no poll interval and no deadline to lose under load (the test's own timeout
+ * is the only bound).
  */
-async function drawnAs(convs: ReturnType<typeof useConversations>, ids: string[]): Promise<void> {
-  const drawn = () => (convs.conversations.get(SALON)?.messages ?? []).map((m) => m.id).join(',');
-  while (drawn() !== ids.join(',')) await flushMacrotask();
+async function until(happened: () => boolean): Promise<void> {
+  while (!happened()) await flushMacrotask();
+}
+
+/** Waits until the salon's drawn rows are exactly `ids`. */
+function drawnAs(convs: ReturnType<typeof useConversations>, ids: string[]): Promise<void> {
+  return until(
+    () =>
+      (convs.conversations.get(SALON)?.messages ?? []).map((m) => m.id).join(',') === ids.join(',')
+  );
 }
 
 function salon(): Conversation {
@@ -275,11 +282,11 @@ describe("a salon's stored page", () => {
     const ctx = makeCtx(storage);
 
     void convs.loadHistoryForConversation(SALON, SALON, ctx);
-    await vi.waitFor(() => expect(reads).toBe(1));
+    await until(() => reads === 1);
     // A stale mark makes the next load its own rather than a join, and the newer generation.
     convs.invalidateChannelHistoryCache(SALON);
     void convs.loadHistoryForConversation(SALON, SALON, ctx);
-    await vi.waitFor(() => expect(reads).toBe(2));
+    await until(() => reads === 2);
     releaseFirstRead([storedRow('old', 1_000)]);
     await flushMacrotask();
 
@@ -299,12 +306,10 @@ describe("a salon's stored page", () => {
     const ctx = makeCtx(storage);
 
     const first = convs.loadHistoryForConversation(SALON, SALON, ctx);
-    await vi.waitFor(() =>
-      expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['a', 'z'])
-    );
+    await drawnAs(convs, ['a', 'z']);
     convs.invalidateChannelHistoryCache(SALON);
     const second = convs.loadHistoryForConversation(SALON, SALON, ctx);
-    await vi.waitFor(() => expect(answers).toHaveLength(2));
+    await until(() => answers.length === 2);
     answers[0]([{ id: 'a', at: 1_000 }]);
     await first;
     answers[1]([{ id: 'a', at: 1_000 }]);
