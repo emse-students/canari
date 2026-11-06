@@ -5,7 +5,11 @@ import { m } from '$lib/paraglide/messages';
 
 const submission = vi.hoisted(() => ({ productGridPrices: {} as Record<string, unknown> }));
 const form = vi.hoisted(() => ({ items: [] as unknown[] }));
-const submitForm = vi.hoisted(() => vi.fn(() => Promise.resolve({ submissionId: 's1' })));
+const submitForm = vi.hoisted(() =>
+  vi.fn((_formId: string, _body: { answers: Record<string, unknown> }) =>
+    Promise.resolve({ submissionId: 's1' })
+  )
+);
 
 vi.mock('$app/state', () => ({
   page: { params: { id: 'f1' }, url: new URL('https://canari.test/forms/f1'), state: {} },
@@ -186,7 +190,7 @@ describe('a form of priced grids', () => {
     expect(document.querySelector('[role="alert"]')).toBeNull();
     // The send imports its checkout callbacks first: wait for the call rather than count ticks.
     await vi.waitFor(() => expect(submitForm).toHaveBeenCalledTimes(1));
-    const [, body] = submitForm.mock.calls[0] as [string, { answers: Record<string, unknown> }];
+    const [, body] = submitForm.mock.calls[0];
     expect(body.answers).toEqual({ jacket: { 'Taille:XL': 1 } });
   });
 });
