@@ -92,7 +92,7 @@ describe('applyComposerMarkdownFormat', () => {
    */
   it('leaves the text unchanged and shows a toast when a style cannot be written cleanly', async () => {
     toasts.length = 0;
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'log').mockImplementation(() => {});
     const original = '___efghi__ ghijklm ghijk bcdefghi_';
     const { text, composer } = await apply('italic', original, { start: 14, end: 16 });
     expect(text).toBe(original);

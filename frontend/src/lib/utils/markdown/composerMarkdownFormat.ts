@@ -1,6 +1,8 @@
 import { tick } from 'svelte';
 import { Marked } from 'marked';
 import { showToast } from '$lib/stores/toast.svelte';
+import { appendLog } from '$lib/utils/sessionLog';
+import { tolerateEmphasisWhitespace } from './emphasisTolerance';
 import { m } from '$lib/paraglide/messages';
 import { inlineSpans, type InlineSpan } from './inlinePreview';
 import type MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
@@ -630,8 +632,10 @@ function rendersAsPromised(
 ): boolean {
   try {
     const [was, is] = editedBlock(before, after);
-    const a = renderedStyles(was);
-    const b = renderedStyles(is);
+    // Both sides as the published post draws them: through the tolerance, so a text already
+    // written by the old toolbar (`**TOP 5 MINIMOYS **`) is judged by what readers see.
+    const a = renderedStyles(tolerateEmphasisWhitespace(was));
+    const b = renderedStyles(tolerateEmphasisWhitespace(is));
     if (b.literal > a.literal || a.bits.length !== b.bits.length) return false;
     const mine = STYLE_BIT[kind];
     let had = 0;
@@ -645,6 +649,8 @@ function rendersAsPromised(
       if ((a.bits[i] ^ b.bits[i]) & mine) {
         if (lo === -1) lo = i;
         hi = i;
+        // Applying a style never takes it from a character, nor does taking it off give it to one.
+        if ((b.bits[i] & mine) !== 0 ? direction < 0 : direction > 0) return false;
       }
     }
     // The toggled style may change only where the selection is: its changes fit in a window as
@@ -652,7 +658,7 @@ function rendersAsPromised(
     if (lo !== -1 && hi - lo + 1 > selected) return false;
     return direction > 0 ? has > had : has < had;
   } catch (error) {
-    console.warn('[toolbar] marked threw while judging an inline action, so it is refused', error);
+    appendLog(`[toolbar] REFUSED ${kind}: marked threw while judging the action: ${String(error)}`);
     return false;
   }
 }
@@ -680,8 +686,13 @@ function formatInline(
   const { result, direction } = formatInlineOnce(kind, text, selStart, selEnd, ph);
   if (kind === 'code' || direction === 0) return result;
   const visible = text.slice(selStart, selEnd).replace(/[\s*_~]/gu, '').length;
-  if (rendersAsPromised(kind, text, result.text, direction, visible)) return result;
-  console.warn(
+  // A run of four stars or underscores (or three tildes) is read several ways by the preview and by
+  // marked, and the check below cannot tell which letters it was meant for: refused up front.
+  const ambiguous = linesCovering(text, selStart, selEnd).some((l) =>
+    /\*{4,}|_{4,}|~{3,}/.test(l.text)
+  );
+  if (!ambiguous && rendersAsPromised(kind, text, result.text, direction, visible)) return result;
+  appendLog(
     `[toolbar] REFUSED ${kind} ${direction > 0 ? 'on' : 'off'}: marked would not draw it as promised; ` +
       `selection ${selEnd - selStart} chars, shape ${shapeAround(text, selStart, selEnd)}`
   );

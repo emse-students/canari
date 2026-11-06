@@ -92,11 +92,12 @@ They DID differ: the preview drew `__x__` as an underline (the post renders it b
    **marked is ONE final check, on the edited paragraph only**: no marker character newly showing,
    every visible character keeps every style but the toggled one, that style changes only inside a
    window as wide as the selection, and it reaches more characters (or fewer, off). **If the check
-   fails NOTHING is written**: the text comes back unchanged, the member sees the toast `md_toolbar_refused` ("Impossible d'appliquer ce style ici", decided by the owner on 2026-11-06), and `console.warn` accuses `[toolbar] REFUSED <style> on|off` with the selection length and the
+   fails NOTHING is written**: the text comes back unchanged, the member sees the toast `md_toolbar_refused` ("Impossible d'appliquer ce style ici", decided by the owner on 2026-11-06), and the app log (`appendLog`, which reaches the collected logs, so the rate can be measured) accuses `[toolbar] REFUSED <style> on|off` with the selection length and the
    marker shape around it (letters blanked, never the text). A render that throws is a refusal too.
+   The marked check judges BOTH sides after `tolerateEmphasisWhitespace`, as the published post is drawn (a text the old toolbar wrote, `**TOP 5 MINIMOYS **`, is judged by what readers see). Known refusal, owed: [un-bolding the last word of a bold that ends in an italic](../backlog.d/p3-toolbar-refuses-to-unbold-the-last-word-of-a-bold-ending-in-an-italic.md).
    Measured on the seeded fuzz (`composerFormatFuzz.test.ts`): realistic lines, whole words 4
    refusals in 36444 presses and any range 228 in 50061; the wild generator (`***`, a style inside
-   itself, underscores, glued spans, three levels) 5395 in 32712 and 7717 in 48222, which are
+   itself, underscores, glued spans, three levels) 9811 in 32712 and 12144 in 48222 (a run of four stars or underscores, or three tildes, in the paragraph is refused up front, because preview and marked pair it differently), which are
    inputs such as `*****a*****` that preview and marked read differently; 0 literal markers and 0
    style lost in all four families. Cost per press (desktop): 0.3 to 0.7 ms for a post of short
    paragraphs, 3 ms for one 5k paragraph, 10 ms for one 20k paragraph, the same when refused; a phone
