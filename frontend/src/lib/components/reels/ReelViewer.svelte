@@ -18,7 +18,8 @@
    * drawn only for a signed-in reader (`likerId`). A dialog opened from in here (a report, the GIF
    * picker) is drawn above the viewer (`markViewerLayer`).
    */
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
+  import { holdPlayback } from '$lib/actions/playWhileVisible';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import { ChevronDown, ChevronUp, X } from '@lucide/svelte';
   import ReelSlide from './ReelSlide.svelte';
@@ -104,6 +105,11 @@
     'button, [data-video-controls], [data-reel-caption-open], [data-reel-rail], [data-comments-drawer]';
 
   markViewerLayer();
+
+  // WHATEVER PLAYS BEHIND THE VIEWER STOPS WHEN IT OPENS, not when its first player mounts (owner,
+  // 2026-11-06): held from the first line, released on destroy, which brings the feed's video back.
+  const releasePlayback = holdPlayback('the reel viewer is open');
+  onDestroy(releasePlayback);
 
   let reels = $state<PostEntity[]>([]);
   let index = $state(0);

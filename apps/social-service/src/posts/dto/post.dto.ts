@@ -380,6 +380,17 @@ export class ListPostsQueryDto {
   @IsBoolean()
   singlePhotos?: boolean;
 
+  /**
+   * With `kind=reel`: the posts whose only content is ONE picture OR ONE video come too (owner,
+   * 2026-11-06: a feed video not filmed with the Canari camera is in CanaReels as a picture is).
+   * Wins over `singlePhotos`, which stays for an installed client that asks for pictures alone.
+   * Ignored without `kind=reel`.
+   */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  singleMedia?: boolean;
+
   /** Custom feed: filter by author promotion (personal posts only). */
   @IsOptional()
   @Type(() => Number)

@@ -3,7 +3,13 @@
  * download elsewhere, the cache hold is always given back, and the outcome is typed.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { reelFileName, saveReel, type SaveReelDeps } from './saveReel';
+import {
+  canSaveVideo,
+  reelFileName,
+  saveReel,
+  savedVideoType,
+  type SaveReelDeps,
+} from './saveReel';
 import type { SaveableReel } from '$lib/reels/saveReel';
 
 vi.mock('$lib/utils/apiUrl', () => ({ mediaUrl: () => 'https://media.test' }));
@@ -38,7 +44,8 @@ describe('saveReel', () => {
     const d = deps(true);
     expect(await saveReel(reel, d)).toBe('saved');
     expect(d.acquire).toHaveBeenCalledWith(video, 'https://media.test');
-    const [given, name] = vi.mocked(d.saveToGallery).mock.calls[0];
+    const [given, name, mime] = vi.mocked(d.saveToGallery).mock.calls[0];
+    expect(mime).toBe('video/mp4');
     expect(new Uint8Array(await given.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
     expect(name).toBe('canari-reel-2026-10-01-01234567.mp4');
     expect(d.release).toHaveBeenCalledWith(video);
@@ -77,5 +84,43 @@ describe('saveReel', () => {
 describe('reelFileName', () => {
   it('names the day and a short id', () => {
     expect(reelFileName(reel)).toBe('canari-reel-2026-10-01-01234567.mp4');
+  });
+});
+
+describe('a feed video saved from the viewer keeps its own type', () => {
+  const mov = { ...video, mimeType: 'video/quicktime' };
+  const feedVideo: SaveableReel = { ...reel, kind: 'post', media: [mov] };
+
+  it('is not called a reel, and takes its extension from its mime type', () => {
+    expect(reelFileName(feedVideo)).toBe('canari-video-2026-10-01-01234567.mov');
+    expect(reelFileName({ ...feedVideo, media: [{ ...video, mimeType: 'video/webm' }] })).toBe(
+      'canari-video-2026-10-01-01234567.webm'
+    );
+    expect(reelFileName({ ...feedVideo, media: [{ ...video, mimeType: 'video/mp4' }] })).toBe(
+      'canari-video-2026-10-01-01234567.mp4'
+    );
+  });
+
+  it('defaults to mp4 for a type it does not know', () => {
+    expect(savedVideoType('application/octet-stream')).toEqual({ ext: 'mp4', mime: 'video/mp4' });
+    expect(savedVideoType(undefined).ext).toBe('mp4');
+    expect(savedVideoType('video/webm; codecs=vp9').ext).toBe('webm');
+  });
+
+  it('hands the native gallery the real mime type', async () => {
+    const d = deps(true);
+    await saveReel(feedVideo, d);
+    expect(vi.mocked(d.saveToGallery).mock.calls[0].slice(1)).toEqual([
+      'canari-video-2026-10-01-01234567.mov',
+      'video/quicktime',
+    ]);
+  });
+
+  it('is not offered on iOS when it is a WebM, and offered everywhere else', () => {
+    const webm: SaveableReel = { ...feedVideo, media: [{ ...video, mimeType: 'video/webm' }] };
+    expect(canSaveVideo(webm, true)).toBe(false);
+    expect(canSaveVideo(webm, false)).toBe(true);
+    expect(canSaveVideo(feedVideo, true)).toBe(true);
+    expect(canSaveVideo(reel, true)).toBe(true);
   });
 });

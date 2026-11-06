@@ -10,7 +10,9 @@ import WebKit
 /// member once whether Canari may ADD photos and videos (`NSPhotoLibraryAddUsageDescription`), and it
 /// can read nothing back. A refusal is an OUTCOME the screen draws (`status: denied`, with the way
 /// to Settings), not a failure. The file must be a container Photos accepts - the reel is the
-/// fragmented H.264/AAC MP4 `prepareVideoForUpload` produced, which it does.
+/// fragmented H.264/AAC MP4 `prepareVideoForUpload` produced, which it does. A feed video may be a
+/// MOV, which Photos takes too (the staged file carries its extension); a WebM is never sent here:
+/// the rail hides its save (`canSaveVideo`).
 class GalleryPlugin: Plugin {
   class SaveVideoArgs: Decodable {
     let path: String

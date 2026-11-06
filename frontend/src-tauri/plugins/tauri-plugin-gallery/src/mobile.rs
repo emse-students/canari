@@ -29,6 +29,7 @@ pub struct Gallery<R: Runtime>(PluginHandle<R>);
 struct SaveVideoPayload {
     path: String,
     name: String,
+    mime: String,
 }
 
 #[derive(Serialize)]
@@ -72,9 +73,14 @@ pub struct SaveOutcome {
 }
 
 impl<R: Runtime> Gallery<R> {
-    pub fn save_video(&self, path: String, name: String) -> crate::Result<SaveOutcome> {
+    pub fn save_video(
+        &self,
+        path: String,
+        name: String,
+        mime: String,
+    ) -> crate::Result<SaveOutcome> {
         self.0
-            .run_mobile_plugin("saveVideo", SaveVideoPayload { path, name })
+            .run_mobile_plugin("saveVideo", SaveVideoPayload { path, name, mime })
             .map_err(Into::into)
     }
 

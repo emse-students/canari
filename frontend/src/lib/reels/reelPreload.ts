@@ -31,6 +31,20 @@ const defaultCache: ReelPreloadCache = {
   release: releaseDecryptedMediaBlobUrl,
 };
 
+/**
+ * The most a preload fetches of a video it cannot stream: the reel cap (about 28 MB of ciphertext,
+ * what a reel of the 90 s cap weighs). A FEED VIDEO is not prepared into a reel (owner, 2026-11-06:
+ * a post of one video is drawn as a reel page) and may be hundreds of MB; fetching it whole for a
+ * slide the reader may never reach would cost more than the head start is worth, so it loads when
+ * its slide becomes active.
+ */
+export const REEL_PRELOAD_MAX_BYTES = 28 * 1024 * 1024;
+
+/** Whether the next slide's video is worth fetching ahead: it streams (segmented), or it is reel-sized. */
+export function worthPreloading(ref: Pick<MediaRef, 'encoding' | 'size'>): boolean {
+  return ref.encoding === 'segmented-v1' || ref.size <= REEL_PRELOAD_MAX_BYTES;
+}
+
 /** One reel's preload: started at once, ended by {@link ReelPreload.stop}. */
 export class ReelPreload {
   readonly #ref: MediaRef;

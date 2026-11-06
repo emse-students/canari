@@ -30,7 +30,7 @@ fn valid_session(session: &str) -> bool {
 }
 
 /// The file a session stages into: a reel saved to the gallery, a file shared out, or a document
-/// written through its provider. `.mp4` whatever the content, because iOS Photos reads the container
+/// written through its provider. `.mp4` until `save_video` renames it to the extension of the name it is given, because iOS Photos reads the container
 /// off the extension of the URL it is given; the other two never read the staged file's name.
 fn staged_path<R: Runtime>(app: &AppHandle<R>, session: &str) -> crate::Result<PathBuf> {
     if !valid_session(session) {
@@ -115,24 +115,56 @@ pub(crate) async fn save_video<R: Runtime>(
     app: AppHandle<R>,
     session: String,
     name: String,
+    mime: Option<String>,
 ) -> crate::Result<SaveVideoAnswer> {
     if !valid_name(&name) {
         return Err(crate::Error::BadName);
     }
-    let path = staged_path(&app, &session)?;
-    log::debug!("[gallery] save_video {session} as {name}");
+    // A reel is an MP4 and a client older than feed videos names no type; a type that is not a
+    // plain `type/subtype` is refused, never forwarded.
+    let mime = mime.unwrap_or_else(|| "video/mp4".to_string());
+    if !valid_mime(&mime) {
+        return Err(crate::Error::BadName);
+    }
+    let staged = staged_path(&app, &session)?;
+    let path = match renamed_to_extension_of(&staged, &name) {
+        Ok(path) => path,
+        Err(e) => {
+            remove_staged(&staged);
+            return Err(e.into());
+        }
+    };
+    log::debug!("[gallery] save_video {session} as {name} ({mime})");
     #[cfg(mobile)]
     let outcome = app
         .gallery()
-        .save_video(path.to_string_lossy().into_owned(), name)
+        .save_video(path.to_string_lossy().into_owned(), name, mime)
         .map(|o| SaveVideoAnswer { status: o.status });
     #[cfg(not(mobile))]
     let outcome = {
-        let _ = name;
+        let _ = (name, mime);
         Err(crate::Error::Unsupported)
     };
     remove_staged(&path);
     outcome
+}
+
+/// The staged file under the extension of `name` (`.mov`, `.webm`...): iOS Photos reads the
+/// container off the extension of the URL it is given, so an MOV must not wait under `.mp4`. The
+/// extension is a short alphanumeric token or the file keeps its own.
+fn renamed_to_extension_of(staged: &std::path::Path, name: &str) -> std::io::Result<PathBuf> {
+    let ext = std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .filter(|e| (1..=5).contains(&e.len()) && e.chars().all(|c| c.is_ascii_alphanumeric()));
+    let Some(ext) = ext else {
+        return Ok(staged.to_path_buf());
+    };
+    let target = staged.with_extension(ext.to_ascii_lowercase());
+    if target != staged {
+        std::fs::rename(staged, &target)?;
+    }
+    Ok(target)
 }
 
 /// Removes a session's staged file - the frontend's answer to a save that failed before
@@ -434,7 +466,9 @@ pub(crate) async fn open_app_settings<R: Runtime>(app: AppHandle<R>) -> crate::R
 
 #[cfg(test)]
 mod tests {
-    use super::{valid_document_uri, valid_mime, valid_name, valid_session};
+    use super::{
+        renamed_to_extension_of, valid_document_uri, valid_mime, valid_name, valid_session,
+    };
 
     #[test]
     fn a_session_is_a_token_never_a_path() {
@@ -454,6 +488,25 @@ mod tests {
         assert!(!valid_name("a/b.png"));
         assert!(!valid_name("a\\b.png"));
         assert!(!valid_name(&"a".repeat(201)));
+    }
+
+    #[test]
+    fn a_staged_file_takes_the_extension_of_the_saved_name() {
+        let dir = std::env::temp_dir().join(format!("gallery-ext-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let staged = dir.join("gallery-s.mp4");
+        std::fs::write(&staged, b"x").unwrap();
+        let moved =
+            renamed_to_extension_of(&staged, "canari-video-2026-11-06-abcd1234.MOV").unwrap();
+        assert_eq!(moved, dir.join("gallery-s.mov"));
+        assert!(moved.exists() && !staged.exists());
+        // A name with no usable extension leaves the file where it is.
+        assert_eq!(renamed_to_extension_of(&moved, "noext").unwrap(), moved);
+        assert_eq!(
+            renamed_to_extension_of(&moved, "a.way-too-long").unwrap(),
+            moved
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

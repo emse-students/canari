@@ -384,11 +384,12 @@ export interface ListPostsOptions {
   /** Only reels, or only posts; absent means both, which is what the feed asks (C7). */
   kind?: PostKind;
   /**
-   * With `kind: 'reel'`: the posts whose only content is ONE picture come too - the CanaReels list
-   * (`reels/fullScreenPost.ts`). A server older than it drops the unknown parameter and answers
-   * the reels alone.
+   * With `kind: 'reel'`: the posts whose only content is ONE picture or ONE video come too - the CanaReels list
+   * (`reels/fullScreenPost.ts`). The URL carries the older switch too (`singlePhotos`): a server that
+   * does not know `singleMedia` answers the pictures with the reels, and one older than both
+   * answers the reels alone.
    */
-  singlePhotos?: boolean;
+  singleMedia?: boolean;
 }
 
 export interface ScheduledPost {
@@ -457,7 +458,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export { request as socialRequest };
 
-function buildListPostsSearchParams(options: ListPostsOptions): string {
+/** The query string of a list read (exported for its test). */
+export function buildListPostsSearchParams(options: ListPostsOptions): string {
   const p = new URLSearchParams();
   if (options.limit != null) p.set('limit', String(options.limit));
   if (options.offset != null) p.set('offset', String(options.offset));
@@ -465,7 +467,12 @@ function buildListPostsSearchParams(options: ListPostsOptions): string {
   if (options.promo != null && !Number.isNaN(options.promo)) p.set('promo', String(options.promo));
   if (options.formation?.trim()) p.set('formation', options.formation.trim());
   if (options.kind) p.set('kind', options.kind);
-  if (options.singlePhotos) p.set('singlePhotos', 'true');
+  if (options.singleMedia) {
+    p.set('singleMedia', 'true');
+    // An installed server knows only the pictures' switch and drops the unknown one: it keeps
+    // serving pictures, and the client draws no video it was not sent (docs/wiki/legacy-compatibility.md).
+    p.set('singlePhotos', 'true');
+  }
   const s = p.toString();
   return s ? `?${s}` : '';
 }
