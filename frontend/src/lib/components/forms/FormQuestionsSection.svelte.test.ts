@@ -318,7 +318,7 @@ describe('the type menus', () => {
     expect(target.textContent).not.toContain(m.qtype_product_grid());
   });
 
-  it('add a priced grid required, with its definition, opened, and tell the page', () => {
+  it('add a priced grid stored required, with its definition, opened, and tell the page', () => {
     let told = 0;
     const { target, state } = render(three(), { onPricedGridAdded: () => (told += 1) });
     openAddMenu(target);
@@ -333,10 +333,9 @@ describe('the type menus', () => {
     expect(added.productGrid.maxPerCell).toBe(5);
     expect(told).toBe(1);
     expect(target.querySelector('[data-testid="product-grid-editor"]')).not.toBeNull();
-    // The asterisk is not a choice on a grid: it stays on and cannot be switched off.
-    const required = byLabel(target, m.form_builder_required_label());
-    expect(required.disabled).toBe(true);
-    expect(required.getAttribute('aria-pressed')).toBe('true');
+    // A grid is never required on its own (the ORDER is): no required switch, no asterisk.
+    expect(byLabel(target, m.form_builder_required_label())).toBeNull();
+    expect(target.querySelectorAll('[data-testid="required-mark"]').length).toBe(1);
   });
 
   it('tell the page when a grid is removed or becomes another type', () => {

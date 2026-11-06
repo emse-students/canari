@@ -455,13 +455,15 @@ describe('FormsService - product grid: what a submit charges', () => {
   it('refuses a forged answer, coded, before any row is written', async () => {
     const { service, saved } = makeService();
     const cases: [unknown, string][] = [
-      [undefined, 'PRODUCT_GRID_ANSWER_MISSING'],
       ['', 'PRODUCT_GRID_ANSWER_MISSING'],
+      [['vert:m'], 'PRODUCT_GRID_ANSWER_MISSING'],
       [{ 'rose:m': 1 }, 'PRODUCT_GRID_UNKNOWN_CELL'],
       [{ 'vert:m': 4 }, 'PRODUCT_GRID_QUANTITY_INVALID'],
       [{ 'vert:m': 1.5 }, 'PRODUCT_GRID_QUANTITY_INVALID'],
       [{ 'vert:m': -2, 'noir:m': 3 }, 'PRODUCT_GRID_QUANTITY_INVALID'],
       [{ 'noir:xs': 1 }, 'PRODUCT_GRID_CELL_CLOSED'],
+      // The form's only grid left untouched: the ORDER is empty.
+      [undefined, 'PRODUCT_GRID_EMPTY'],
       [{}, 'PRODUCT_GRID_EMPTY'],
       [{ 'vert:m': 0 }, 'PRODUCT_GRID_EMPTY'],
     ];
@@ -515,6 +517,108 @@ describe('FormsService - product grid: what a submit charges', () => {
       await refusalCode(submit(service, { 'q-grid': { 'vert:m': 3 } }, { paymentMethod: 'cash' }))
     ).toBe('AMOUNT_OUT_OF_RANGE');
     expect(saved).toHaveLength(0);
+  });
+});
+
+describe('FormsService - product grid: the order is the form, across its grids', () => {
+  /** A second article: a jacket, one colour x two sizes, 50 EUR flat. */
+  const JACKET = hoodie({ mode: 'single', tiers: null, prices: { _all: { '*': 5000 } } });
+  const jacketItem = (over: Record<string, unknown> = {}) =>
+    gridItem(JACKET, { id: 'q-veste', label: 'Veste', ...over });
+  const twoGrids = (over: Record<string, unknown> = {}) =>
+    baseForm({ items: [gridItem(), jacketItem()], ...over });
+  const submit = (service: FormsService, answers: Record<string, unknown>) =>
+    service.submit('f1', { userId: 'u1', answers } as any);
+
+  /** The refusal's whole body, read where a client reads it. */
+  async function refusalBody(promise: Promise<unknown>): Promise<ProductGridRefusalBody> {
+    try {
+      await promise;
+    } catch (error) {
+      if (error instanceof HttpException) return error.getResponse() as ProductGridRefusalBody;
+      throw error;
+    }
+    throw new Error('expected a refusal');
+  }
+
+  it.each([
+    ['absent', undefined],
+    ['empty', {}],
+    ['all zero', { 'vert:m': 0 }],
+  ])(
+    'one grid ordered, the other %s: accepted, the untouched one stores nothing',
+    async (_, other) => {
+      const { service, saved } = makeService({ form: twoGrids(), facts: COTISANT });
+      const answers: Record<string, unknown> = { 'q-grid': { 'vert:m': 1 } };
+      if (other !== undefined) answers['q-veste'] = other;
+      await submit(service, answers);
+      expect(chargedCents()).toBe(2500);
+      expect(saved[0].answers).toEqual({ 'q-grid': { 'vert:m': 1 } });
+      expect((saved[0].lines as any[]).map((line) => line.itemId)).toEqual(['q-grid']);
+    }
+  );
+
+  it('only the SECOND grid ordered: accepted and charged for it alone', async () => {
+    const { service, saved } = makeService({ form: twoGrids(), facts: COTISANT });
+    await submit(service, { 'q-veste': { 'noir:m': 2 } });
+    expect(chargedCents()).toBe(2 * 5000);
+    expect(saved[0].answers).toEqual({ 'q-veste': { 'noir:m': 2 } });
+  });
+
+  it('every grid empty: refused PRODUCT_GRID_EMPTY, naming no grid, before any row is written', async () => {
+    const { service, saved } = makeService({ form: twoGrids() });
+    const body = await refusalBody(submit(service, { 'q-grid': {}, 'q-veste': { 'vert:m': 0 } }));
+    expect(body.code).toBe('PRODUCT_GRID_EMPTY');
+    expect(body.itemId).toBeNull();
+    expect(await refusalCode(submit(service, {}))).toBe('PRODUCT_GRID_EMPTY');
+    expect(saved).toHaveLength(0);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('a forged cell in an untouched-looking grid is still refused, coded', async () => {
+    const { service } = makeService({ form: twoGrids() });
+    expect(
+      await refusalCode(submit(service, { 'q-grid': { 'vert:m': 1 }, 'q-veste': { 'noir:xs': 1 } }))
+    ).toBe('PRODUCT_GRID_CELL_CLOSED');
+  });
+
+  it('a hidden grid neither counts toward the order nor is demanded', async () => {
+    const hiddenJacket = jacketItem({ showIf: { promo: { values: [2020] } } });
+    const form = baseForm({ items: [gridItem(), hiddenJacket] });
+    // Its units do not rescue an empty visible order...
+    const a = makeService({ form, facts: COTISANT });
+    expect(await refusalCode(submit(a.service, { 'q-veste': { 'vert:m': 1 } }))).toBe(
+      'PRODUCT_GRID_EMPTY'
+    );
+    expect(a.saved).toHaveLength(0);
+    // ...and its absence blocks nothing when the visible grid holds the order.
+    const b = makeService({ form, facts: COTISANT });
+    await submit(b.service, { 'q-grid': { 'vert:m': 1 } });
+    expect(b.saved[0].answers).toEqual({ 'q-grid': { 'vert:m': 1 } });
+  });
+
+  it('a form whose every grid is hidden from this person asks no order of them', async () => {
+    const name = { id: 'q1', label: 'Nom', type: 'short_text', required: true };
+    const hidden = { showIf: { promo: { values: [2020] } } };
+    const { service, saved } = makeService({
+      form: baseForm({ items: [name, gridItem(SINGLE_TIERED, hidden), jacketItem(hidden)] }),
+      facts: COTISANT,
+    });
+    await submit(service, { q1: 'Ada' });
+    expect(saved[0].answers).toEqual({ q1: 'Ada' });
+    expect(saved[0].lines).toBeNull();
+  });
+
+  it('a guest orders from one grid of two, and an empty guest order is refused', async () => {
+    const { service, saved } = makeService({ form: twoGrids({ isPublic: true }) });
+    const guestSubmit = (answers: Record<string, unknown>) =>
+      service.submit('f1', { answers } as any, 'guest', '198.51.100.7');
+    expect(await refusalCode(guestSubmit({ 'q-grid': {} }))).toBe('PRODUCT_GRID_EMPTY');
+    expect(saved).toHaveLength(0);
+    await guestSubmit({ 'q-veste': { 'vert:xs': 1 } });
+    expect(chargedCents()).toBe(5000);
+    expect(saved[0].userId).toBeNull();
+    expect(saved[0].answers).toEqual({ 'q-veste': { 'vert:xs': 1 } });
   });
 });
 

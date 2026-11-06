@@ -426,6 +426,12 @@
 
     const missing = firstMissingAnswer(visibleItems, selections);
     missingAnswer = missing;
+    if (missing?.itemId === null) {
+      // An empty ORDER is the form's, no card's: said beside the send button.
+      Log.d('FormView', 'submit held: the order across the grids is empty');
+      error = missingAnswerMessage(missing);
+      return;
+    }
     if (missing) {
       // Said on the question's own card, which is brought into view: the bar is far from it.
       error = '';

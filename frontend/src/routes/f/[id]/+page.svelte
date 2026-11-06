@@ -125,6 +125,12 @@
     if (!form || submitting || blocked) return;
     const missing = firstMissingAnswer(visibleItems, selections);
     missingAnswer = missing;
+    if (missing?.itemId === null) {
+      // An empty ORDER is the form's, no card's: said beside the send button.
+      Log.d('PublicForm', 'submit held: the order across the grids is empty');
+      error = missingAnswerMessage(missing);
+      return;
+    }
     if (missing) {
       // Said on the question's own card, brought into view.
       error = '';
