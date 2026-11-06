@@ -1,5 +1,8 @@
 import { Logger } from '@nestjs/common';
-import type { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
+import type {
+  CorsOptions,
+  CorsOptionsDelegate,
+} from '@nestjs/common/interfaces/external/cors-options.interface';
 
 /**
  * The origins Canari's own clients present, and the CORS predicate every service applies to them.
@@ -77,6 +80,22 @@ export function isAllowedOrigin(origin: string | undefined, allowed: Set<string>
 const logger = new Logger('Cors');
 
 /**
+ * The paths whose CORS answer belongs to the edge nginx and not to the service: `location
+ * /api/public/` hides this service's `Access-Control-Allow-*` headers and sends
+ * `Access-Control-Allow-Origin: *` itself (`infrastructure/local/Dockerfile.frontend`). The service's
+ * verdict on an origin is invisible there, so a `CORS DENIED` line for such a path claims a browser
+ * failure that cannot happen. The line is skipped by construction for these prefixes, never demoted:
+ * on every other route it is a real refusal.
+ */
+export const EDGE_OWNED_CORS_PREFIXES = ['/api/public/'] as const;
+
+/** True when the edge nginx, not this service, decides the CORS answer for `url`. */
+export function isEdgeOwnedCorsPath(url: string | undefined): boolean {
+  if (!url) return false;
+  return EDGE_OWNED_CORS_PREFIXES.some((prefix) => url.startsWith(prefix));
+}
+
+/**
  * How many distinct denied origins are worth naming before the log is just an inventory of
  * whoever is scanning the internet today. The point of the line is to catch OUR client presenting
  * an origin nobody wrote down, and that population is three or four values wide.
@@ -101,16 +120,25 @@ const deniedOrigins = new Set<string>();
  * cross-origin read it should while leaving the response correct for everything else.
  *
  * @param allowed - Exact-match allowlist from {@link buildAllowedOrigins}.
+ * @param edgeOwned - The request's path is one the edge nginx answers CORS for: the verdict is
+ *   still computed (the headers are hidden by nginx anyway) but a denial is not logged, because it
+ *   names no failure.
  */
 export function corsOriginDelegate(
-  allowed: Set<string>
+  allowed: Set<string>,
+  edgeOwned = false
 ): (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => void {
   return (origin, callback) => {
     if (isAllowedOrigin(origin, allowed)) {
       callback(null, true);
       return;
     }
-    if (origin && !deniedOrigins.has(origin) && deniedOrigins.size < DENIAL_LOG_BUDGET) {
+    if (
+      !edgeOwned &&
+      origin &&
+      !deniedOrigins.has(origin) &&
+      deniedOrigins.size < DENIAL_LOG_BUDGET
+    ) {
       deniedOrigins.add(origin);
       logger.warn(
         `CORS DENIED origin "${origin}" - no Access-Control-Allow-Origin was sent, so a browser ` +
@@ -143,11 +171,22 @@ export const CORS_PREFLIGHT_MAX_AGE_S = 7200;
  * @param exposedHeaders - Response headers a cross-origin client must be able to read; a header left
  *   out reads as `null` on the phone apps, with no error anywhere.
  */
-export function corsOptions(allowed: Set<string>, exposedHeaders: string[] = []): CorsOptions {
-  return {
-    origin: corsOriginDelegate(allowed),
-    credentials: true,
-    maxAge: CORS_PREFLIGHT_MAX_AGE_S,
-    ...(exposedHeaders.length > 0 && { exposedHeaders }),
+export function corsOptions(
+  allowed: Set<string>,
+  exposedHeaders: string[] = []
+): CorsOptionsDelegate<CorsRequest> {
+  return (req, callback) => {
+    callback(null, {
+      origin: corsOriginDelegate(allowed, isEdgeOwnedCorsPath(req.originalUrl ?? req.url)),
+      credentials: true,
+      maxAge: CORS_PREFLIGHT_MAX_AGE_S,
+      ...(exposedHeaders.length > 0 && { exposedHeaders }),
+    } satisfies CorsOptions);
   };
+}
+
+/** The part of the HTTP request {@link corsOptions} reads: the path, before and after Nest's prefix. */
+export interface CorsRequest {
+  originalUrl?: string;
+  url?: string;
 }

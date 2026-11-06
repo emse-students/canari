@@ -115,6 +115,15 @@ a literal on the service in `docker-compose.prod.yml` and the allowlist CD wrote
 container. The measurement, the fix and how to verify an origin list at all are on
 [chat-gateway](../services/chat-gateway.md#cors-the-list-is-a-fact-about-the-clients).
 
+**`/api/public/*` has ONE CORS layer, nginx's, and the services do not log a denial there** (2026-11-06).
+`location /api/public/` hides the upstream `Access-Control-Allow-*` headers and sends
+`Access-Control-Allow-Origin: *`, so a browser reads those routes from any origin whatever the NestJS
+allowlist says. The services' `CORS DENIED` line (`cors-origins.ts`) used to fire there for
+`https://portail-etu.emse.fr`, claiming a failure that cannot happen. `corsOptions` now reads the request
+path and skips the line for `EDGE_OWNED_CORS_PREFIXES` (`/api/public/`); every other route still logs a
+real refusal. A new `location` where nginx answers CORS itself belongs in that list
+(`cors-origins.spec.ts`).
+
 ## The generated config is validated at build time
 
 The `RUN printf` that writes `default.conf` is a shell string: nothing checks it.
