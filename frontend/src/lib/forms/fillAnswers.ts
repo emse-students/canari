@@ -1,7 +1,7 @@
 import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
 import type { FormItem } from './api';
-import { QUESTION_TYPES } from './questionTypes';
+import { FILLABLE_QUESTION_TYPE_VALUES } from './questionTypes';
 
 /**
  * WHAT A PERSON FILLING A FORM HAS ANSWERED - the rules the fill page applies, taken out of it.
@@ -45,11 +45,11 @@ function hasValue(value: unknown): boolean {
 }
 
 /** The types this build can draw an input for; any other is a newer type it cannot answer. */
-const KNOWN_TYPES = new Set([...QUESTION_TYPES.map((t) => t.value), 'single']);
+const KNOWN_TYPES = new Set([...FILLABLE_QUESTION_TYPE_VALUES, 'single']);
 
 /**
- * Whether this build knows how to answer a question type. A type added after this release (the
- * coming `product_grid`) is drawn as "update the app" and blocks a send when required, rather than
+ * Whether this build knows how to answer a question type. A type this build cannot draw - one added
+ * after this release, or `product_grid` until its fill page (WP-G2) - is drawn as "update the app" and blocks a send when required, rather than
  * going out empty for the server to refuse in English.
  */
 export function isKnownQuestionType(type: string): boolean {

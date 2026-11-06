@@ -1273,7 +1273,9 @@ hold it and the server's `SUPPORTED_QUESTION_TYPES` must equal that list; the tw
 (`FormBuilder.svelte`, `FormQuestionsSection.svelte`) read `AUTHORABLE_QUESTION_TYPES`, an explicit
 list of the types whose editor exists (`questionTypes.ts`, asserted by `questionTypes.test.ts`).
 Offering it before WP-G3 would hand people a question every save refuses
-(`PRODUCT_GRID_DEFINITION_MISSING`). WP-G3 adds `product_grid` to that list with its editor.
+(`PRODUCT_GRID_DEFINITION_MISSING`). WP-G3 adds `product_grid` to that list with its editor. The
+fill page reads its own list, `FILLABLE_QUESTION_TYPE_VALUES` (`fillAnswers.ts`
+`isKnownQuestionType`): until WP-G2 a priced grid is drawn "update the app" and blocks the send.
 
 A new question type - NOT a mode of the survey grids (`matrix_single`, `matrix_multiple`): an
 order, rows x columns ("Vert" x "M"), each cell a quantity, each unit at the price of the payer's
