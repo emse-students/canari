@@ -6,9 +6,15 @@ VM's L2 showed periodic unicast loss at the same time, so the probable cause is 
 fault. Dev and the old domain answered Cloudflare 1033 for 25 minutes and nothing reported it.
 Production was NOT affected: it is not behind this tunnel.
 
-Owed:
+**Built 2026-11-06:** the report (the `upstream` job of `scheduled.yml`, every 15 minutes, classing a `1033` as
+`tunnel-down`) and the transport analysis, with its recommendation:
+[upstream-reachability](../infrastructure/upstream-reachability.md#the-transport-decision---protocol-http2-for-the-dev-connector).
 
-- A report that counts tunnel connector loss, so the next one is seen the minute it starts rather than found by hand.
-- A decision on the transport: run the connector with `--protocol http2` (TCP, which survived), or keep auto with a fallback. Weigh both: http2 gives up QUIC's behaviour on a lossy path but is the transport that stayed up here; auto keeps the default but needs the fallback to be real, not assumed.
+**Owed, a host action for the owner or the DSI (an agent changes no unit on the host):**
+
+1. Run the dev and legacy-name connector with `--protocol http2` (the flag on its `ExecStart`, or
+   `protocol: http2` in its config), restart it detached with a verdict left in a log, and check the journal
+   shows four `protocol=http2` connections. Reversible: remove the flag.
+2. Read the 15-minute report for a week. A `tunnel-down` under http2 refutes the transport as the cause.
 
 The edge is described in [cloudflare-edge](../infrastructure/cloudflare-edge.md).

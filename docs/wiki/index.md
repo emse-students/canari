@@ -109,6 +109,7 @@
 - [What Canari serves without an account](anonymous-surface.md) — the owner's rule of 2026-11-02 (the public showcase is the ceiling) and every anonymous route, page head and sitemap entry with its verdict: closed, stripped or kept, and why
 - [Spaces, audiences and dependencies (proposal)](spaces-and-audiences-reform.md) — PROPOSAL 2026-11-02, for the owner to decide: audience and dependencies as two independent axes with two admin panels, a two-level dependency (an association or list under at most one BDE) and one governor per space, institution-only item narrowing, events and partnerships validated per governor slice, associations vs lists vs institutions compared, the work packages and the owner's open questions
 - [Cloudflare edge](infrastructure/cloudflare-edge.md) — the zone configured by hand with no representation in git: what lives there, how to read it, and the tunnel token rotation
+- [Upstream reachability](infrastructure/upstream-reachability.md) — the 15-minute report for a public name whose tunnel has no connector (gallery, dev, legacy, production), and the `--protocol http2` decision
 - [Databases](infrastructure/databases.md) — PostgreSQL, Redis, Garage
 - [Backup system](infrastructure/backup.md) — Daily cron, offsite rsync
 - [Host OS updates](infrastructure/host-updates.md) — the four boxes' security updates, the `#clear` without which the policy is decorative, the 30-second `502` this scope does NOT incur, and the daily run that fails on a finding

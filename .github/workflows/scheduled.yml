@@ -47,13 +47,16 @@ on:
     # Adding a job here means editing this line too: a schedule serves whichever `if:` names it, and
     # a comment naming one hides the rest.
     - cron: '0 4 * * 1'
+    # Every 15 minutes, and ONE job reads it: do the public names the estate depends on answer?
+    # The only slot here that is not a daily floor - an outage of five hours was found by hand.
+    - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
       job:
         description: 'Which one to run by hand'
         type: choice
         default: all
-        options: [all, hosts, backups, log-retention, resolver, analysis, alerts, caches, ghcr-cleanup, dev-reset, stores, cargo-unreachable, vendored-upstream, cargo-lock-refresh]
+        options: [all, hosts, backups, log-retention, resolver, analysis, alerts, caches, ghcr-cleanup, upstream, dev-reset, stores, cargo-unreachable, vendored-upstream, cargo-lock-refresh]
       dry_run:
         description: 'dev-reset only: report what would happen and change nothing'
         type: boolean
@@ -216,6 +219,31 @@ jobs:
 
       - name: Count the proxies' DNS failures of the last day
         run: bash infrastructure/deploy/resolver-report.sh
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # DO THE PUBLIC NAMES THE ESTATE DEPENDS ON STILL ANSWER?
+  #
+  # 2026-11-05: the gallery (avatars) answered Cloudflare 530/1033 for five hours and the dev estate's
+  # tunnel lost every connection for 25 minutes, and nothing reported either. One reader asks the
+  # gallery, dev, the legacy name and production from OUTSIDE (a GitHub-hosted runner - the
+  # self-hosted one shares the network whose tunnel may be the thing that failed), classes each
+  # failure (tunnel-down, origin-failing, unreachable) and goes RED on any that is not up for three
+  # attempts in a row. A red run is the report. .github/scripts/upstream-reachability-report.sh;
+  # docs/wiki/infrastructure/upstream-reachability.md.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  upstream:
+    name: Public names answer
+    if: >
+      github.event.schedule == '*/15 * * * *' ||
+      (github.event_name == 'workflow_dispatch' &&
+      contains(fromJSON('["all", "upstream"]'), inputs.job))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Ask every upstream
+        run: bash .github/scripts/upstream-reachability-report.sh
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # THE NIGHTLY SECURITY PASS
