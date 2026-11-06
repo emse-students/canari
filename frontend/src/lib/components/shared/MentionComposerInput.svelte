@@ -28,6 +28,7 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
+  import type { MentionRosterMember } from '$lib/utils/users/mentionRoster';
 
   interface Props {
     value?: string;
@@ -40,8 +41,8 @@
     minHeight?: string;
     class?: string;
     editorClass?: string;
-    /** When set, only users whose IDs are in this list appear in @mention suggestions. */
-    allowedUserIds?: string[];
+    /** The conversation's members, suggested locally by the @mention picker. */
+    mentionRoster?: MentionRosterMember[];
     onchange?: (text: string) => void;
     onkeydown?: (e: KeyboardEvent) => void;
     onpaste?: (e: ClipboardEvent) => void;
@@ -67,7 +68,7 @@
     minHeight = '44px',
     class: className = '',
     editorClass = '',
-    allowedUserIds,
+    mentionRoster,
     onchange,
     onkeydown,
     onpaste,
@@ -97,9 +98,16 @@
       if (editorEl) setPlainTextSelection(editorEl, pos, pos);
     },
     focus: () => editorEl?.focus(),
-    get allowedUserIds() {
-      return allowedUserIds;
+    get roster() {
+      return mentionRoster;
     },
+  });
+
+  // An open picker follows the roster prop (a member list that finished loading, a conversation
+  // switch) instead of keeping the rows it opened on.
+  $effect(() => {
+    void mentionRoster;
+    mention.refreshRoster();
   });
 
   const renderOptions = $derived({ markdownPreview });

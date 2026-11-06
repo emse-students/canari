@@ -1,5 +1,6 @@
 import { apiFetch } from '$lib/utils/apiFetch';
-import { refusalFromResponse } from '$lib/utils/apiRefusalError';
+import { ApiRefusalError, refusalFromResponse } from '$lib/utils/apiRefusalError';
+import { responseOrigin } from '$lib/utils/apiJson';
 import { socialUrl } from '$lib/utils/apiUrl';
 import type { MediaRef } from '$lib/media';
 import type { FormItem } from '$lib/forms/api';
@@ -466,6 +467,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     // A typed refusal: a screen reads the status and the code, never this sentence.
     throw await refusalFromResponse(res, `post-service ${path.split('?')[0]}`);
   }
+  // A 2xx that is not JSON is not the app's answer - a captive portal's page, an edge's: typed here,
+  // at the throw, as the edge's, rather than left to the SyntaxError of `json()`.
+  if (responseOrigin(res) === 'edge') {
+    throw new ApiRefusalError(
+      res.status,
+      null,
+      `post-service ${path.split('?')[0]} answered ${res.status} without JSON (edge)`,
+      { origin: 'edge' }
+    );
+  }
   return (await res.json()) as T;
 }
 
@@ -526,6 +537,22 @@ export async function updatePost(postId: string, payload: UpdatePostPayload): Pr
 
 export async function deletePost(postId: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>(`/api/posts/${postId}`, { method: 'DELETE' });
+}
+
+/**
+ * Takes back a post the publish queue may have created (`POST /api/posts/:id/withdraw`): the id is
+ * retired on the server, so a create still on its way is refused, and the post is deleted if it
+ * landed. `mediaIds` are the post's uploaded media: social-service deletes the ones no live row
+ * cites, under this caller as their uploader. `deleted` says whether a row was there.
+ */
+export async function withdrawPost(
+  postId: string,
+  mediaIds: string[]
+): Promise<{ ok: boolean; deleted: boolean }> {
+  return request<{ ok: boolean; deleted: boolean }>(`/api/posts/${postId}/withdraw`, {
+    method: 'POST',
+    body: JSON.stringify({ mediaIds }),
+  });
 }
 
 /** @param limitOrOptions Pass a number for backward compatibility (`limit` only) or query options. */

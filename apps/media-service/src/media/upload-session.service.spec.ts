@@ -1066,3 +1066,85 @@ describe('the client resume protocol of a chat reel (reels-in-chat RC-5), walked
     expect(reserved(r)).toBe(again.blob.length);
   });
 });
+
+describe('a single-block session (a post photo: ONE AES-GCM block, no public header)', () => {
+  /** A single-block blob: opaque bytes, the last 16 standing for the tag. Nothing keyless to read. */
+  const singleBlock = (bytes: number) => {
+    const blob = Buffer.alloc(bytes);
+    for (let i = 0; i < bytes; i++) blob[i] = (i * 13 + 5) & 0xff;
+    return blob;
+  };
+
+  it('opens with no header, resumes from the server fact, and stores the bytes as sent', async () => {
+    const r = rig();
+    const blob = singleBlock(3000);
+    const s = await r.svc.init(
+      'alice',
+      { totalBytes: blob.length, partBytes: 1024, header: undefined, encoding: 'single-block' },
+      MAX
+    );
+    expect(s.totalParts).toBe(3);
+    await put(r, 'alice', s.uploadId, 0, sliceOf(blob, 1024, 0));
+    // The kill: a new service over the same directory still knows part 0 and nothing else.
+    const after = rig(r.dir);
+    expect(await after.svc.status('alice', s.uploadId)).toMatchObject({ received: [0] });
+    await put(after, 'alice', s.uploadId, 1, sliceOf(blob, 1024, 1));
+    await put(after, 'alice', s.uploadId, 2, sliceOf(blob, 1024, 2));
+    const done = await after.svc.complete('alice', s.uploadId);
+    expect(after.stored).toEqual([{ id: done.mediaId, bytes: blob }]);
+  });
+
+  it('refuses a header sent with it, a blob no longer than its tag, and an unknown encoding (400)', async () => {
+    const r = rig();
+    const { hex, total } = headerFor(3000);
+    await expect(
+      r.svc.init(
+        'alice',
+        { totalBytes: total, partBytes: 1024, header: hex, encoding: 'single-block' },
+        MAX
+      )
+    ).rejects.toThrow(BadRequestException);
+    await expect(
+      r.svc.init(
+        'alice',
+        { totalBytes: 16, partBytes: 1024, header: undefined, encoding: 'single-block' },
+        MAX
+      )
+    ).rejects.toThrow(BadRequestException);
+    await expect(
+      r.svc.init('alice', { totalBytes: total, partBytes: 1024, header: hex, encoding: 'zip' }, MAX)
+    ).rejects.toThrow(BadRequestException);
+    // The control: the same header under the default encoding opens.
+    await expect(
+      r.svc.init('alice', { totalBytes: total, partBytes: 1024, header: hex }, MAX)
+    ).resolves.toMatchObject({ totalParts: Math.ceil(total / 1024) });
+  });
+
+  it('keeps an old segmented sidecar readable, and refuses a sidecar mixing the two shapes', async () => {
+    const first = rig();
+    const seg = await open(first, 'alice', 3000);
+    const blob = singleBlock(2000);
+    const single = await first.svc.init(
+      'alice',
+      { totalBytes: blob.length, partBytes: 1024, header: undefined, encoding: 'single-block' },
+      MAX
+    );
+    const segRecord = await fs.readJson(path.join(first.dir, `${seg.uploadId}.json`));
+    expect(segRecord.encoding).toBeUndefined();
+    const singleRecord = await fs.readJson(path.join(first.dir, `${single.uploadId}.json`));
+    expect(singleRecord).toMatchObject({ encoding: 'single-block' });
+    expect(singleRecord.headerHex).toBeUndefined();
+    const mixed = '55555555-5555-4555-8555-555555555555';
+    await fs.writeJson(path.join(first.dir, `${mixed}.json`), {
+      ...singleRecord,
+      id: mixed,
+      headerHex: segRecord.headerHex,
+    });
+    await fs.writeFile(path.join(first.dir, `${mixed}.data`), 'x');
+
+    const second = rig(first.dir);
+    await expect(second.svc.status('alice', seg.uploadId)).resolves.toBeDefined();
+    await expect(second.svc.status('alice', single.uploadId)).resolves.toBeDefined();
+    expect(await fs.pathExists(path.join(first.dir, `${mixed}.json`))).toBe(false);
+  });
+});

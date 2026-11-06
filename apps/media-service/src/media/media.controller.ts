@@ -18,6 +18,8 @@
  *   POST /media/internal/reel-purge - end reels' blobs, per owner, with the reason (X-Internal-Secret)
  *   POST /media/internal/chat-reel-purge - a salon moderator's purge of a sent reel (X-Internal-Secret)
  *   POST /media/chat-reel/:id/hold - the sender's chat hold on a reel file (JWT, owner only)
+ *   POST /media/internal/own-archive-delete - a withdrawn queued post's never-cited media, per
+ *                         uploader (X-Internal-Secret; social-service checked no row cites them)
  *   POST /media/internal/form-file - store a form answer's file, plaintext, class form-file
  *   POST /media/internal/form-file-purge - delete form files, per uploader (X-Internal-Secret)
  *   GET  /media/internal/form-file/:id - read a form file, and nothing else (X-Internal-Secret)
@@ -446,7 +448,13 @@ export class MediaController {
   async initUploadSession(
     @Body()
     body:
-      | { retentionClass?: unknown; totalBytes?: unknown; partBytes?: unknown; header?: unknown }
+      | {
+          retentionClass?: unknown;
+          totalBytes?: unknown;
+          partBytes?: unknown;
+          header?: unknown;
+          encoding?: unknown;
+        }
       | undefined,
     @Req() req: Request
   ) {
@@ -459,6 +467,7 @@ export class MediaController {
         totalBytes: body?.totalBytes,
         partBytes: body?.partBytes,
         header: body?.header,
+        encoding: body?.encoding,
       },
       MAX_BYTES
     );
@@ -776,7 +785,32 @@ export class MediaController {
     return { results };
   }
 
-  /** The `{items: [{mediaId, ownerId}]}` body both purges take, bounded and typed - or a 400. */
+  // ---------------------------------------------------------------------------
+  // POST /media/internal/own-archive-delete - a withdrawn queued post's never-cited media
+  // ---------------------------------------------------------------------------
+  /**
+   * Deletes the named `archive` objects of their uploader. Sole consumer: social-service's
+   * `POST /posts/:id/withdraw`, the publish queue's Delete, which has checked that NO live post or
+   * comment cites them - the one fact this service cannot see, and the reason this is not a user
+   * route (review of #3061: an uploader's own `archive` objects include the media of posts already
+   * published, an association's among them). Each outcome is on {@link MediaService.removeOwnArchive}.
+   */
+  @Post('internal/own-archive-delete')
+  async removeOwnArchives(
+    @Body() body: { items?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ results: Record<string, 'deleted' | 'absent' | 'refused'> }> {
+    assertInternalSecret(internalSecret);
+    // A Map, not an object: `mediaId` is caller-supplied, so it must never be a property name - the
+    // same shape as `purgeReels` (CodeQL js/remote-property-injection).
+    const results = new Map<string, 'deleted' | 'absent' | 'refused'>();
+    for (const { mediaId, ownerId } of this.purgeItems(body?.items)) {
+      results.set(mediaId, await this.mediaService.removeOwnArchive(mediaId, ownerId));
+    }
+    return { results: Object.fromEntries(results) };
+  }
+
+  /** The `{items: [{mediaId, ownerId}]}` body the purges take, bounded and typed - or a 400. */
   private purgeItems(raw: unknown): Array<{ mediaId: string; ownerId: string }> {
     if (!Array.isArray(raw)) {
       throw new BadRequestException('items must be an array');

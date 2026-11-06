@@ -1342,21 +1342,49 @@ not be read. The salon was untouched because its key group was older than the ac
 one now: every write of the slot goes through `write_slot_mls_bin` (`concurrency.rs`) - the
 foreground checkpoint, `save_mls_state`, the re-sealed legacy snapshot and the background engines'
 compare-and-swap - which, under the same hold of `mls_bin_write_lock`, makes the App Group copy the
-slot's (`refresh_extension_copy` -> `sync_extension_copy`, the same code an account switch uses). A
-test (`only_the_slot_writer_writes_mls_bin`) refuses any other caller of `write_mls_bin_atomically`
-in non-test code. The copy is an APFS clone where the volume allows it (`std::fs::copy`), and its
-time is in the `[MLS_ACCOUNT]` debug line. The activation mirror stays for the push context, the
-seeds and the secret; its `mls.bin` half re-copies a slot that is already followed. The bench
+slot's (`refresh_extension_copy` -> `sync_extension_copy`, the same code an account switch uses).
+**The compiler refuses any other writer** (2026-11-06): `write_mls_bin_atomically` is private to the
+module `slot_file` in `concurrency.rs`, whose only other item is the follower-taking writer - it
+replaced a source scan (`only_the_slot_writer_writes_mls_bin`) that did the same job one layer lower.
+The copy is an APFS clone where the volume allows it (`std::fs::copy`), and its time is in the
+`[MLS_ACCOUNT]` debug line. The activation mirror stays for the seeds and the secret; its `mls.bin`
+and `push_context.json` halves re-copy files that are already followed. The bench
 commands' deliberate damage (`commands/bench.rs`) is not followed: a CORRUPT row measures the app.
 
 **Owed:** the same reading on a build carrying this (`ios.mjs terminate` after a foreground DM), and
 the extension's `outcome=` line, now readable, saying `decrypted`.
 
+**`push_context.json` follows every edit too (2026-11-06).** The same defect waited in the context:
+it was copied into the App Group only by the activation mirror, so an account switch in the
+foreground followed by a foreground kill paired account B's state (which follows every write) with
+A's context, and the extension drew a generic banner. Every edit of the file - `store_push_context`,
+`store_device_identity`, `set_push_context_locale` and the sign-out strip - now goes through
+`write_push_context_file` (`push.rs`), which writes it and makes the extension's copy follow
+(`sync_push_context_copy`: tmp + rename, or the copy removed when the app holds none), under
+`PUSH_CONTEXT_LOCK`, which every edit already held. The activation mirror no longer copies the file
+itself: it calls `canari_ios_mirror_push_context_to_app_group`, which copies it under the same lock,
+so a mirror can no longer read the file before an edit and write its copy after the edit's own.
+`iosMlsMirror.test.ts` holds both halves. **Owed on the iPhone 12:** an account switch A -> B in the
+foreground, `ios.mjs terminate`, a DM pushed to B - its banner drawn with its text.
+
 **The extension's lines are readable.** `NotificationService.swift` logs through
 `NseLog.log` (`Logger`, subsystem `fr.emse.canari`, category `nse`); every interpolation names its
 privacy, `.public` for ids and id prefixes, counts, states, outcome reasons and error domains and
-codes. `nativeLogContent.test.ts` refuses a Swift `NSLog` in the extension and an interpolation with
-no privacy argument, on top of its content scan.
+codes. `nativeLogContent.test.ts` refuses an interpolation with no privacy argument there, on top of
+its content scan. **And every other Swift line since 2026-11-06**: the keystore patch
+(`KeystoreLog`, category `keystore` - its failed background keychain write is the one that leaves
+every push generic), the system-components patch's button (`PendiNav`), the custom-tabs plugin
+(`CustomTabsLog`) and the gallery plugin (`GalleryLog`) log through a `Logger`, the two packages
+whose floor was iOS 13 raised to 14 for it (the app's floor is 16). `nativeLogContent.test.ts`
+refuses a Swift `NSLog` in ANY `.swift` file under `gen/apple`, `patches` and `plugins`, the set
+derived from the tree, and its content scan reads the two plugins too.
+
+**A frame ahead of the stored state is not called a failure (2026-11-06).** Since #3042 Rust answers
+`mls-refused` with `kind: EpochAhead` for a frame whose cleartext epoch is ahead of the extension's
+copy - the designed case after any commit, which the commit catch-up reads. The ladder's line was
+still `direct decrypt failed ... locality=...`; it reads the kind now (`refusalKind`) and says
+`frame ahead of the stored state ... - the commit catch-up reads it` at `info`, Android's `Log.d`
+twin. Every other refusal keeps the failure line.
 
 **A salon banner names its speaker (2026-11-01), the iOS half of Android's `ChannelBannerAuthor`.**
 Both Apple composers (the NSE's `handleChannelMessage`, `canari_push.mm`'s `CanariHandleChannelMessage`)
@@ -1415,17 +1443,22 @@ tethered Mac's Console.app sees and nothing else. Three changes, one pull reques
   `Trace` property is read and written under the run's lock, because the expiry reads it on another
   thread while the decrypt writes it.
 - **`killed`, the outcome no run can write.** Each run keeps an in-flight marker
-  `nse_inflight.<pid>.<n>.json`, stamped with the boot session it ran in (`kern.bootsessionuuid`,
-  compared for EQUALITY - not `kern.boottime`, which Darwin recomputes when the clock is stepped and
-  would call a live run killed), rewritten at every stage, removed with its line - under the run's
-  lock, and never rewritten once the run has ended, so an expired run cannot come back as a marker.
-  The boot session is read ONCE per process on both sides (a `static let` in the extension, a
-  `OnceLock` in the app), so a kernel that does not answer is said once, not at every stage.
+  `nse_inflight.<pid>.<n>.json`, stamped with the device's continuous uptime (`up`,
+  `mach_continuous_time` ticks, sleep included, reset by a reboot), rewritten at every stage, removed
+  with its line - under the run's lock, and never rewritten once the run has ended, so an expired run
+  cannot come back as a marker. **The boot proof is one-sided** (2026-11-06): the app reads its own
+  uptime AFTER reading every marker, and a marker whose `up` is GREATER was written before a reboot -
+  an uptime never goes back within one boot. A marker of an earlier boot stamped below the reading is
+  left to the pid proof. It replaced `kern.bootsessionuuid`, compared for equality, which the
+  extension's sandbox refuses with `EPERM` (iPhone 12, `v1.6.5-alpha.2`, `[CanariNSE] outcome:
+  kern.bootsessionuuid unreadable errno=1` at every cold launch): no marker ever carried it, so that
+  proof never ran. `kern.boottime` stays refused - Darwin recomputes it when the clock is stepped, and
+  it would call a live run killed. The uptime is a clock read, not a filtered sysctl (its bench reading is owed).
   **A run's identity is `(pid, at, n)`**: `at` is a millisecond and two runs of one process can
   start in the same one, so the sequence `n` its file names carry is written into its record too
   (and kept by the allowlist - a per-process counter from 1, no more personal than `pid`). A marker
   whose run's line was already taken (same identity) is removed uncounted, alive or not; otherwise
-  the app turns the marker of a process PROVEN gone (stamped in another boot session, or
+  the app turns the marker of a process PROVEN gone (stamped ahead of the app's uptime, or
   `kill(pid, 0)` answering `ESRCH`) into a `killed` line carrying the stage and footprint it
   reached - **but only when the app's own removal of that marker is what removed it**. A proof of
   death is not a proof the run never ended: between the listing and the proof the run can write its

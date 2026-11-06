@@ -21,7 +21,8 @@
  *   `SessionExpiredError` (core's guard IS the session authority); the MLS delivery API answers a
  *   typed refusal that is never a logout, because its guard also answers 401 for its own faults;
  * - whatever the renewal threw, AS IT CAME: `refresh()` separates a dead cookie
- *   (`SessionExpiredError`), an answer that is not a verdict (`RefreshFailedError`), a sign-out under
+ *   (`SessionExpiredError`), an answer that is not a verdict (`TransientAnswerError`), the app's own 4xx
+ *   refusal of the refresh (its base, a plain `RefreshFailedError`), a sign-out under
  *   way, a split identity, and a transport failure that reached nobody (`isTransportFailure`) - unless
  *   the caller types it (`renewalFailed`), knowing the server answered 401 and the request did nothing;
  * - `refusedRenewed(first)` at once, with no renewal, for a token the guard already refused once

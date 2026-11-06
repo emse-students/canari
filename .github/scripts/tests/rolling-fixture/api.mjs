@@ -16,6 +16,12 @@ const server = http.createServer((req, res) => {
     res.end('ok');
     return;
   }
+  // What a CALLER logs when a peer resets it: the line rolling.sh counts before it retires a replica.
+  if (req.url === '/api/s2s-reset') {
+    console.error('Error: socket hang up (ECONNRESET)');
+    res.end('logged');
+    return;
+  }
   // A connection that stays open, as a WebSocket does: a byte every 200 ms until the client leaves.
   // The nginx worker proxying it outlives a reload, and the release must not wait for it to end.
   if (req.url === '/api/hold') {
@@ -54,5 +60,10 @@ process.once('SIGTERM', () => {
     process.exit(0);
   });
 });
+
+// v3 is the release that logs one reset line at its own start: a caller that was replaced BEFORE its
+// peer and logged a reset while the deploy went on. The end-of-deploy sweep of rolling.sh must count
+// it, the replica being neither retired nor the last one replaced (deploy-rolling.test.sh, case 2).
+if (VERSION === 'v3') console.error('Error: socket hang up (ECONNRESET)');
 
 server.listen(3000, () => console.log(`api ${VERSION} listening`));

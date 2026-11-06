@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="03/11/2026"
+  updated="06/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -99,8 +99,14 @@
         <dd>
           Contenus que vous publiez volontairement sur le fil, visibles par les membres de la
           plateforme selon l'audience choisie. Les fichiers joints sont chiffrés avant l'envoi. Une
-          association, une liste ou une institution peut vous demander de relayer une de vos
-          publications personnelles : la demande (l'association, la liste ou l'institution, le
+          publication en cours d'envoi attend sur votre appareil, avec ses fichiers non chiffrés,
+          jusqu'à ce qu'elle soit publiée ou que vous la supprimiez ; une simple déconnexion la
+          conserve, la suppression de votre compte l'efface. Quand une publication est supprimée, le
+          serveur garde son identifiant et la date de suppression, sans auteur ni contenu, pour
+          qu'un envoi encore en route ne la fasse pas réapparaître ; cet identifiant ne désigne plus
+          personne et il est conservé sans limite de durée, même après la suppression de votre
+          compte. Une association, une liste ou une institution peut vous demander de relayer une de
+          vos publications personnelles : la demande (l'association, la liste ou l'institution, le
           membre qui l'a faite, la publication, le nombre de personnes qui la verraient pour la
           première fois et, pour une institution, son public possible) vous est adressée, et rien
           n'est montré à son public tant que vous n'avez pas accepté. Si vous acceptez la demande

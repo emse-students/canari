@@ -52,6 +52,12 @@ describe('VersionService', () => {
     expect(out.presencePost).toBe(true);
   });
 
+  it('says its estate serves the background publish queue, so a client queues posts only when it does', async () => {
+    const out = await service.getVersion();
+
+    expect(out.publishQueue).toBe(true);
+  });
+
   it('reports no build when the environment was not given one', async () => {
     delete process.env.DEPLOY_BUILD;
 

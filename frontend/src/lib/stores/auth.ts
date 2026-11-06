@@ -47,12 +47,17 @@ import {
 import { clearPersistedPendingAcks } from '$lib/mls-client/ackRetry';
 import { forgetPinSaltAhead } from '$lib/composables/session/pinSaltAhead';
 import { connectivity } from '$lib/stores/connectivity.svelte';
-import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
+import {
+  isTransportFailure,
+  RefreshFailedError,
+  TransientAnswerError,
+  TransportFailureError,
+} from '$lib/utils/transportFailure';
 import { DEADLINE_MS, RequestDeadlineError } from '$lib/utils/requestDeadline';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { flushAndroidCookies } from '$lib/utils/androidCookies';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
-import { refusalOrigin } from '$lib/utils/apiJson';
+import { readApiJson, refusalOrigin, responseOrigin } from '$lib/utils/apiJson';
 import { revokedDeviceOfRefusal, type RevokedDeviceIdentity } from '$lib/utils/refusalCodes';
 import { setAvatarToken } from '$lib/utils/avatarUrl';
 import {
@@ -237,6 +242,22 @@ async function readRefusalBody(res: Response): Promise<unknown> {
 }
 
 /**
+ * The `code` of a coded refusal body (`{ code, message }`, core-service's `MAINTENANCE`) and, for a
+ * maintenance, the operator's own text (`maintenanceMessage`, null when none was set). Read as
+ * FIELDS, so the boot screen names a maintenance without matching the message's words.
+ */
+function codedRefusalOf(body: unknown): { code: string | null; maintenanceMessage: string | null } {
+  if (!body || typeof body !== 'object') return { code: null, maintenanceMessage: null };
+  const { code, maintenanceMessage } = body as { code?: unknown; maintenanceMessage?: unknown };
+  const named = typeof code === 'string' && code ? code : null;
+  const operatorText =
+    named === 'MAINTENANCE' && typeof maintenanceMessage === 'string' && maintenanceMessage.trim()
+      ? maintenanceMessage
+      : null;
+  return { code: named, maintenanceMessage: operatorText };
+}
+
+/**
  * Thrown when the HttpOnly refresh cookie has expired or been revoked (HTTP 401).
  * Callers must distinguish this from transient network errors to avoid retrying
  * a definitively dead session.
@@ -292,27 +313,12 @@ export class SignOutInProgressError extends Error {
 }
 
 /**
- * The refresh endpoint ANSWERED, and the answer was not a verdict on the session.
- *
- * THE MIRROR OF {@link SessionExpiredError}, and the pair is the whole point: `_doRefresh` is
- * careful that only 401/403 prove the cookie dead, because a 502 while the backend restarts during
- * a deploy is a hiccup and logging the user out for it costs a full OIDC round trip. That care was
- * spent at the throw and then lost one frame later - the other half arrived as a bare
- * `new Error('Token refresh failed (HTTP 502)')`, and every caller that wanted to know which of
- * the two it held had to read the sentence and find the digits in it.
- *
- * So the status travels as a FIELD. Reaching this variant at all means the server is there and
- * unhappy, which makes it transient by construction - a caller with a retry ladder should climb it.
+ * The refresh endpoint ANSWERED with no token: {@link RefreshFailedError} (an app-origin 4xx, a
+ * verdict on the request) and its subclass {@link TransientAnswerError} (a 5xx, 408, 429 or an edge's
+ * answer - no verdict). Defined in `transportFailure.ts` so the boot reads them without this store;
+ * re-exported here, where every caller has always imported them.
  */
-export class RefreshFailedError extends Error {
-  constructor(
-    /** The HTTP status the refresh endpoint answered with. Never 401 or 403 - those are the sibling. */
-    readonly status: number
-  ) {
-    super(`Token refresh failed (HTTP ${status})`);
-    this.name = 'RefreshFailedError';
-  }
-}
+export { RefreshFailedError, TransientAnswerError };
 
 const alog = (msg: string) => console.log('[A] ' + msg);
 const awarn = (msg: string) => console.warn('[A] ' + msg);
@@ -1201,13 +1207,14 @@ async function _doRefresh(fetchImpl: typeof fetch, why?: string): Promise<string
     _accessToken = null;
     clearWsSessionCookie();
     awarn(`refresh✗${res.status} ${Date.now() - t0}ms`);
-    // Only 401/403 prove the refresh cookie is dead. Any other status (e.g. 502/503
-    // while the backend restarts during a deploy) is transient: throwing
+    // Only 401/403 prove the refresh cookie is dead. No other status does (a 502/503
+    // while the backend restarts during a deploy is transient): throwing
     // SessionExpiredError there would force a logout + cookie revocation for a hiccup.
     // ...and only when core-service SAID it: an edge's HTML 403 (a WAF ban page, a portal) is a
     // verdict on the network path, never on the credential, so it is transient like a 5xx. Read
     // from Nest's error envelope, not the header alone: an edge can answer in JSON too.
-    if ((res.status === 401 || res.status === 403) && (await refusalOrigin(res)) === 'gateway') {
+    const origin = await refusalOrigin(res);
+    if ((res.status === 401 || res.status === 403) && origin === 'gateway') {
       // The proof, latched: only a new credential can change this answer. WHY it is dead is latched
       // with it, from the refusal's CODE and the device it NAMES - the one cause a device answers
       // with a full reset, and only when the device named is itself.
@@ -1222,14 +1229,38 @@ async function _doRefresh(fetchImpl: typeof fetch, why?: string): Promise<string
       notifySessionExpired();
       throw revoked ? new SessionEndedByDeviceRevocationError(revoked) : new SessionExpiredError();
     }
+    // NOT A VERDICT, typed at the throw (`TransientAnswerError`): a 5xx (core-service's 503
+    // `MAINTENANCE` among them, its code carried), a 408 or 429, or any answer the edge wrote. An
+    // app-origin 4xx left is a verdict on the REQUEST (a 404 or 410 in Nest's envelope) that no retry
+    // changes: the plain base, which closes the boot's session question.
+    if (res.status >= 500 || res.status === 408 || res.status === 429 || origin === 'edge') {
+      // The code is read for the boot screen's WORDING only, so the JSON content type suffices: the
+      // 503 `MAINTENANCE` body (`{ code, message }`) is outside the shared contract, and
+      // `refusalOrigin` - built for destructive readings - calls it the edge's.
+      const coded =
+        responseOrigin(res) === 'gateway'
+          ? codedRefusalOf(await readRefusalBody(res))
+          : { code: null, maintenanceMessage: null };
+      throw new TransientAnswerError(res.status, coded.code, coded.maintenanceMessage);
+    }
+    awarn(
+      `refresh✗${res.status} is the app's own refusal of the request - a verdict, not on the session`
+    );
     throw new RefreshFailedError(res.status);
   }
 
-  const data = (await res.json()) as {
-    access_token: string;
-    refresh_token?: string;
-    avatar_token?: string;
-  };
+  // A 2xx that is not the API's JSON (a captive portal's `200 text/html`) is NO ANSWER: typed at the
+  // throw as `NotFromApiError`, a transport failure, so the boot says "cannot reach" instead of
+  // sending the user to login on a `SyntaxError`.
+  let data: { access_token: string; refresh_token?: string; avatar_token?: string };
+  try {
+    data = (await readApiJson(res, 'POST /api/auth/refresh')) as typeof data;
+  } catch (e) {
+    _accessToken = null;
+    clearWsSessionCookie();
+    awarn(`refresh✗not the API ${Date.now() - t0}ms: ${String(e)}`);
+    throw e;
+  }
   // The body is read across an await too.
   const droppedBody = supersededBySignOut('answer');
   if (droppedBody) throw droppedBody;

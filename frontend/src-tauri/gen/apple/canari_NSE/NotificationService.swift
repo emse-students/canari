@@ -637,28 +637,19 @@ class NotificationService: UNNotificationServiceExtension {
       return kr == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
     }
 
-    /// This boot's `kern.bootsessionuuid`: a marker stamped with another boot's is a run that died
-    /// with that boot, whatever process holds its pid now. An IDENTITY, compared for equality - not
-    /// `kern.boottime`, which Darwin recomputes when the clock is stepped (NTP, a time zone or a
-    /// manual change), so a live run would read as another boot's and be reported `killed`. Nil when
-    /// the kernel does not answer, which only disables the boot proof (twin: `boot_session` in
-    /// `commands/nse_outcomes.rs`). READ ONCE PER PROCESS (a lazy, thread-safe `static let`): the
-    /// session cannot change under a running process, and every `mark` stamps it, so a kernel that
-    /// does not answer is said once rather than at every stage of every run.
-    static let bootSession: String? = {
-      var size = 0
-      guard sysctlbyname("kern.bootsessionuuid", nil, &size, nil, 0) == 0, size > 0 else {
-        NseLog.log.notice("[CanariNSE] outcome: kern.bootsessionuuid unreadable errno=\(errno, privacy: .public)")
-        return nil
-      }
-      var buffer = [CChar](repeating: 0, count: size + 1)
-      guard sysctlbyname("kern.bootsessionuuid", &buffer, &size, nil, 0) == 0 else {
-        NseLog.log.notice("[CanariNSE] outcome: kern.bootsessionuuid unreadable errno=\(errno, privacy: .public)")
-        return nil
-      }
-      let session = String(cString: buffer)
-      return session.isEmpty ? nil : session
-    }()
+    /// The device's continuous uptime (`mach_continuous_time`, ticks, sleep included), stamped into
+    /// every marker as `up`: the app's reader proves a marker of an EARLIER BOOT by finding its `up`
+    /// greater than its own, read after the marker - a clock that only moves forward within one boot
+    /// can only go back across a reboot. A one-sided proof, never a guess: an earlier boot's marker
+    /// stamped lower than the reader's uptime is left to the pid proof (twin: `continuous_ticks` in
+    /// `commands/nse_outcomes.rs`).
+    ///
+    /// NOT `kern.bootsessionuuid`, which this extension's sandbox refuses with `EPERM` at every launch
+    /// (iPhone 12, `v1.6.5-alpha.2`), so its boot proof never ran and the refusal was a line at every
+    /// cold start. NOT `kern.boottime`, which Darwin recomputes when the clock is stepped (NTP, a time
+    /// zone or a manual change), so a live run would read as another boot's and be reported `killed`.
+    /// The uptime is a clock read, not a sysctl the sandbox filters (owed: the bench reading).
+    static func uptimeTicks() -> UInt64 { mach_continuous_time() }
 
     /// One run's record: what it is, how far it got, and what it decided. EVERY mutable property is
     /// read and written under `lock`, because the expiry reads it from another thread while the
@@ -824,7 +815,7 @@ class NotificationService: UNNotificationServiceExtension {
       private func writeMarkerLocked() {
         guard !written, let dir = NotificationService.appGroupDir() else { return }
         var fields = recordLocked(outcome: nil, cause: nil)
-        if let session = NseOutcomeLog.bootSession { fields["boot"] = session }
+        fields["up"] = NSNumber(value: NseOutcomeLog.uptimeTicks())
         guard let data = try? JSONSerialization.data(withJSONObject: fields) else { return }
         do {
           try data.write(to: dir.appendingPathComponent(markerName), options: .atomic)
@@ -1224,7 +1215,16 @@ class NotificationService: UNNotificationServiceExtension {
 
     trace?.mark("locality")
     let locality = groupLocality(groupId: groupId, ctx: ctx)
-    NseLog.log.notice("[CanariNSE] direct decrypt failed group=\(groupId.prefix(8), privacy: .public) locality=\(String(describing: locality), privacy: .public)")
+    // AHEAD OF THE STORED STATE IS NOT A FAILURE: Rust read the frame's epoch from its cleartext
+    // header (`kind: EpochAhead`, `background.rs` `decrypt_loaded`, #3042) - this extension never
+    // writes mls.bin, so after any commit every push of the group is ahead of it until the app
+    // drains, and the commit catch-up below is the designed answer. Said at info, as Android's
+    // `Log.d` twin does; every other refusal keeps the failure line.
+    if Self.refusalKind(directJson) == "EpochAhead" {
+      NseLog.log.info("[CanariNSE] frame ahead of the stored state group=\(groupId.prefix(8), privacy: .public) locality=\(String(describing: locality), privacy: .public) - the commit catch-up reads it")
+    } else {
+      NseLog.log.notice("[CanariNSE] direct decrypt failed group=\(groupId.prefix(8), privacy: .public) locality=\(String(describing: locality), privacy: .public)")
+    }
 
     if locality == .unknown {
       // Nothing was established, so nothing is retried: the catch-up answers an epoch gap, and
@@ -2197,6 +2197,17 @@ class NotificationService: UNNotificationServiceExtension {
       (dict["ok"] as? Bool) != true
     else { return nil }
     return dict["reason"] as? String
+  }
+
+  /// The `kind` Rust put beside a refusal (`DecryptErrorKind`, or `EpochAhead` for a frame read
+  /// ahead of the stored state) - a type the layer that KNOWS classified, never re-derived from a
+  /// message here. Nil for an answer that is not a refusal or carries no kind.
+  private static func refusalKind(_ json: String?) -> String? {
+    guard let json = json, let data = json.data(using: .utf8),
+      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      (dict["ok"] as? Bool) != true
+    else { return nil }
+    return dict["kind"] as? String
   }
 
   /// The sessions whose v1 seed Rust refused in a `graine-key-material` answer (`v1Refused`).

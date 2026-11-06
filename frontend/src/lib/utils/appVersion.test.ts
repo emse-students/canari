@@ -84,6 +84,7 @@ describe('parseServerVersionInfo', () => {
       livesMode: 'off',
       oidcPkce: false,
       presencePost: false,
+      publishQueue: false,
     });
   });
 
@@ -99,6 +100,16 @@ describe('parseServerVersionInfo', () => {
     );
     expect(parseServerVersionInfo({ version: '1.2.3' })?.presencePost).toBe(false);
     expect(parseServerVersionInfo({ version: '1.2.3', presencePost: 1 })?.presencePost).toBe(false);
+  });
+
+  it('reads the publish queue capability, absent or non-true as none, and stores it round-trip', () => {
+    const info = parseServerVersionInfo({ version: '1.2.3', publishQueue: true });
+    expect(info?.publishQueue).toBe(true);
+    expect(parseServerVersionInfo(serverVersionInfoToWire(info!))?.publishQueue).toBe(true);
+    expect(parseServerVersionInfo({ version: '1.2.3' })?.publishQueue).toBe(false);
+    expect(parseServerVersionInfo({ version: '1.2.3', publishQueue: 'yes' })?.publishQueue).toBe(
+      false
+    );
   });
 
   it('stores the presence POST capability in the shape it is read back with', () => {
@@ -177,6 +188,7 @@ describe('buildAppVersionCheckResult', () => {
       livesMode: 'on',
       oidcPkce: true,
       presencePost: false,
+      publishQueue: false,
     });
     expect(result.callsMode).toBe('audio');
     expect(result.livesMode).toBe('on');
@@ -195,6 +207,7 @@ describe('buildAppVersionCheckResult', () => {
       livesMode: 'off',
       oidcPkce: false,
       presencePost: false,
+      publishQueue: false,
     });
     expect(result.belowMinVersion).toBe(true);
   });
@@ -257,6 +270,7 @@ describe('fetchServerAppVersionReliable', () => {
       livesMode: 'off',
       oidcPkce: false,
       presencePost: false,
+      publishQueue: false,
     });
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });

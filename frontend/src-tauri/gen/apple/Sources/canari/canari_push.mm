@@ -561,9 +561,18 @@ void CanariMirrorPushStateToAppGroup(void) {
   if (mirrored != CANARI_MLS_MIRROR_OK) {
     NSLog(@"[CanariPush] mirror %@ failed: code %d", kMlsBinFileName, mirrored);
   }
+  // push_context.json IS RUST'S TO COPY TOO, UNDER ITS OWN LOCK: every edit of the file copies it
+  // here at the edit (`write_push_context_file`, push.rs), so a process killed in the foreground
+  // after an account switch no longer leaves the extension the previous account's context. This
+  // call only catches up a copy an earlier build left stale; a copy made here without the lock
+  // could read the file before an edit and write it after the edit's own copy.
+  int contextMirrored = canari_ios_mirror_push_context_to_app_group(src.UTF8String);
+  if (contextMirrored != CANARI_MLS_MIRROR_OK) {
+    NSLog(@"[CanariPush] mirror %@ failed: code %d", kPushContextFileName, contextMirrored);
+  }
   NSDataWritingOptions opts =
       NSDataWritingAtomic | NSDataWritingFileProtectionCompleteUntilFirstUserAuthentication;
-  for (NSString *name in @[ kPushContextFileName, kGraineSeedsFileName ]) {
+  for (NSString *name in @[ kGraineSeedsFileName ]) {
     NSData *data = [NSData dataWithContentsOfFile:[src stringByAppendingPathComponent:name]];
     if (data == nil) {
       continue;

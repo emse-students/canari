@@ -1,6 +1,10 @@
-## P3 - `push_context.json` (user and device) is mirrored to the App Group only at activation and resignation
+## P3 - `push_context.json` follows every edit into the App Group: built, one reading owed
 
-An account switch in the foreground followed by a foreground kill would pair account B's state with
-A's push context, so the extension shows a generic banner. This predates #3040, which made `mls.bin`
-follow every write; the context should follow the same rule: what an extension reads is written at
-the mutation, never at a lifecycle event ([durable-rules](../durable-rules.md)).
+It was copied to the App Group only at activation and resignation, so an account switch in the
+foreground followed by a foreground kill paired account B's state with A's push context. Since
+2026-11-06 every edit goes through `write_push_context_file` (`push.rs`), which copies it under
+`PUSH_CONTEXT_LOCK`, and the activation mirror copies it through Rust under the same lock
+([mobile](../frontend/mobile.md#the-extensions-copy-of-the-state-follows-every-write-2026-11-05)).
+
+**Owed on the iPhone 12:** sign in as A, switch to B in the foreground, `ios.mjs terminate`, push a DM
+to B - the banner carries its text and the extension's `outcome=decrypted`. Closes when read.

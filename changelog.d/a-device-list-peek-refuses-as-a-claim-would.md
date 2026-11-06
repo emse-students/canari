@@ -1,0 +1,3 @@
+### Fixed - the device list no longer leaves out a device that still holds fresh KeyPackages
+
+A roster read (`?peek=1`) judged a device on its static KeyPackage alone, so a device whose static row had expired but whose one-time packages were fresh vanished from the device panel and from the pre-claim. The peek now refuses exactly when a claim would, counting the pool without taking from it. Also: `sendWelcome` always names its device, and a seed bundle refuses (unacknowledged, redelivered) once the session it began for ends. See [key-package-pool](docs/wiki/protocols/key-package-pool.md#a-read-is-not-a-claim---the-empty-pool-storm-of-2026-11-06).

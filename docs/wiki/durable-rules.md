@@ -679,6 +679,7 @@ The largest area here, and the one that has cost the most. `chat` = [chat](front
 
 - **A tab is "read-only" only where something CHECKS**, and whoever inherits the role must reload its state. [chat](frontend/modules/chat.md)
 - **A repair whose result nobody reads must be STARTED, never awaited** - an await inside the drain freezes all inbound traffic. [chat](frontend/modules/chat.md)
+- **A frame's last precondition at a cold start is its ROW, not MLS**: the boot pull and the held socket frames wait for the restore's seeding, and the login that awaits the pull does so AFTER the restore, or it waits on itself. [auth](frontend/modules/auth.md#and-since-2026-11-06-nothing-is-handled-before-the-conversation-rows-exist)
 - **A mutual-exclusion window needs ONE entry point for awaiting.** Report the freeze, never trade it for a loss. [chat](frontend/modules/chat.md)
 - **COALESCING PLACED AFTER A GATE CANNOT REACH THE WAITING ON IT.** One tab election, twenty boot flushes: `flushing`/`rerun` folded the work, but each caller awaited the decision on its own and logged its own resolution - twenty lines inside one second for one event, differing only by a wait, so not even the dedup key could fold them. A gate many callers await is awaited ONCE through a shared promise, and its outcome is logged by that one wait. [chat](frontend/modules/chat.md)
 - **A termination proof covers the structure it is written over**, so **a window must be closed by what opened it, through one exit.** [chat](frontend/modules/chat.md)
@@ -1525,13 +1526,15 @@ What must not be forgotten between the pages:
   `Canari{Foundation} <private>` 2 ms after the tap it proved, and a reading concluded the catcher was
   never picked (iPhone 12, `1.6.4-alpha.4`). The Objective-C `NSLog` lines are readable; a Swift one
   is only an anonymous `Foundation` line. A `Logger`'s literal text is public, an interpolation is
-  marked `.public` only for ids, counts and states ([mobile](frontend/mobile.md#back-to-the-top-a-re-tap-of-the-open-tab-and-the-ios-status-bar-owner-2026-11-04)).
+  marked `.public` only for ids, counts and states; `nativeLogContent.test.ts` refuses a Swift `NSLog`
+  in any `.swift` file under `gen/apple`, `patches` and `plugins` ([mobile](frontend/mobile.md#back-to-the-top-a-re-tap-of-the-open-tab-and-the-ios-status-bar-owner-2026-11-04)).
 - **WHAT AN EXTENSION READS IS WRITTEN AT THE MUTATION, NEVER AT A LIFECYCLE EVENT.** The iOS
   notification extension decrypted against an App Group copy of `mls.bin` made only at
   `didBecomeActive` / `willResignActive`; a process killed in the foreground never resigns, so a DM
   created since the last activation read `Nouveau message de <sender>` (iPhone 12, `1.6.5-alpha.1`).
-  Every slot write goes through `write_slot_mls_bin`, which carries the copy along, and a test refuses
-  any other writer ([mobile](frontend/mobile.md#the-extensions-copy-of-the-state-follows-every-write-2026-11-05)).
+  Every slot write goes through `write_slot_mls_bin`, which carries the copy along, and the compiler
+  refuses any other writer (the atomic write is private to `slot_file`); `push_context.json` follows
+  every edit the same way (`write_push_context_file`) ([mobile](frontend/mobile.md#the-extensions-copy-of-the-state-follows-every-write-2026-11-05)).
 - **A NATIVE VIEW OVER THE WEBVIEW CANNOT BE COVERED BY ANY WEB LAYER - EVERY SURFACE THAT COVERS THE
   SCREEN DECLARES IT.** The iOS tab bar is a `UITabBar` drawn above the WebView: no `z-index` reaches
   it, so it sat over the post composer's "Publier" and stayed tappable over every dialog (iPhone 12,
