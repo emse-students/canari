@@ -94,7 +94,7 @@ else
   suspects="$("$GH" issue view "$state_no" --repo "$REPO" --json body --jq .body 2>&1)" ||
     die "could not read the standing state issue #$state_no: $suspects"
 fi
-suspect_since() { printf '%s\n' "$suspects" | awk -v n="$1" '$1 == "suspect" && $2 == n {print $3; exit}'; }
+suspect_since() { awk -v n="$1" '$1 == "suspect" && $2 == n {print $3}' <<<"$suspects" | sed -n 1p; }
 suspects_without() { printf '%s\n' "$suspects" | awk -v n="$1" '!($1 == "suspect" && $2 == n)'; }
 suspects_with() { { suspects_without "$1"; printf 'suspect %s %s\n' "$1" "$2"; } | grep -v '^$' || true; }
 
@@ -106,7 +106,7 @@ while IFS=$'\t' read -r name class code url; do
 
   if [ "$class" = up ]; then
     if [ -n "$open_no" ]; then
-      since="$("$GH" issue view "$open_no" --repo "$REPO" --json body --jq .body 2>/dev/null | sed -n 's/.*<!-- since=\([^ ]*\) -->.*/\1/p' | head -1)"
+      since="$("$GH" issue view "$open_no" --repo "$REPO" --json body --jq .body 2>/dev/null | sed -n 's/.*<!-- since=\([^ ]*\) -->.*/\1/p' | sed -n 1p)"
       act "comment on #$open_no that $name is back, then close it" \
         bash -c '"$0" issue comment "$1" --repo "$2" --body "$3" && "$0" issue close "$1" --repo "$2"' \
         "$GH" "$open_no" "$REPO" "$name answers again (HTTP $code) at $NOW, after $(since_text "${since:-}" "$NOW"). Closing; a new outage opens a new issue."

@@ -53,7 +53,7 @@ classify() {
   case "$code" in
   2??) echo up ;;
   530)
-    if printf '%s' "$body" | grep -qE '1033'; then echo tunnel-down; else echo unclassified-530; fi
+    if grep -qE '1033' <<<"$body"; then echo tunnel-down; else echo unclassified-530; fi
     ;;
   52? | 502 | 503 | 504) echo origin-failing ;;
   000) echo unreachable ;;
