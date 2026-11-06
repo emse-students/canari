@@ -887,9 +887,11 @@ the lead's, taken 2026-11-06, reversible.
 - **The two axes.** Vertical pages the POSTS, horizontal pages the MEDIA of the post on screen
   (`reelViewerNav.ts`: `reelReleaseVerdict` answers `media-next` / `media-prev`, `stepMediaIndex`).
   The axis is locked by `classifyMove` on the first movement past the slop, so a curving swipe never
-  does both and the horizontal drag never fights the vertical paging. **On the first media a drag to
-  the right still closes the viewer** - the way out is the same on every page - and on the last media
-  a drag to the left springs back with the edge resistance.
+  does both and the horizontal drag never fights the vertical paging. **Past either end of the strip
+  a drag springs back with the edge resistance - on the first media a drag to the right does NOT
+  close the viewer** (decided 2026-11-06 at review, replacing a first build that closed there: a
+  reader flicking back through the media closed it by overshooting, and Instagram does not close
+  there). Back and the X close a carousel; a page of ONE media keeps the close on the right.
 - **The strip** (`ReelSlide`): one `ReelMediaPane` per media, side by side inside the ONE frame (its
   ratio is the first media's, each media `object-contain` in it), moved as one transform; a held drag
   moves it 1:1 with no transition (`mediaDragX`, `mediaDragging`), a release snaps it with the
@@ -911,14 +913,18 @@ the lead's, taken 2026-11-06, reversible.
   a video, playing), its neighbours - the NEXT media, and the previous one, which was fetched to be
   seen so holding it again is a cache hit - and the opening media of the NEXT post (the viewer's
   existing `preload`). A video is preloaded only when `worthPreloading` says so (segmented, or under
-  the 28 MB reel cap). The viewer keys its settle on the post AND the visible media
-  (`settleKeyOf`), so each media settles anew.
+  the 28 MB reel cap). The strip's neighbours settle per media (`ReelSlide`), but the settle that
+  gates the NEXT POST is the PAGE's (`settleKeyOf` is the post): once the page has settled, a media
+  swipe keeps it, so the next post's download is never aborted and restarted by a swipe inside the
+  strip.
 - **Desktop.** The arrow keys left and right step the media (off a carousel they are left free), the
   slide draws left/right chevron buttons on a wide screen, and **the mouse drives the same gesture as
   the finger**: pointer events of type `mouse` feed the one gesture implementation (a touch keeps the
   touch path). The click that ends a mouse drag is swallowed in the frame's capture phase, so it
-  neither toggles the player nor counts towards a double-tap like; a picture's native drag is
-  prevented so it cannot cancel the pointer stream.
+  neither toggles the player nor counts towards a double-tap like; the flag lives one frame at most
+  (a drag ending outside the frame makes no click, and must not eat the next real tap). A move with
+  no button down (`buttons === 0`: the pointerup was lost, a context menu opened mid-drag) cancels
+  the drag. A picture's native drag is prevented so it cannot cancel the pointer stream.
 - **The double tap.** A swipe makes no `click`, so the double tap (`doubleTapLike`) never sees one;
   the mouse case is the swallowed click above.
 - **What belongs to the POST, not a media:** the caption, the author line, the rail's reactions, the
@@ -929,7 +935,8 @@ the lead's, taken 2026-11-06, reversible.
   post differ.
 - Pinned by `reelViewerNav.test.ts`, `fullScreenPost.test.ts`, `saveReel.test.ts` and
   `ReelViewer.carousel.svelte.test.ts` (the swipes, the per-post memory, the players, the
-  preloads, the keys and buttons, the mouse drag and its swallowed click, the save).
+  preloads and the next post's kept preload, the keys and buttons, the mouse drag, its swallowed
+  click, the lost pointerup, the save).
   **Owed on a phone**: the feel of the two axes on the Mi 9T and the iPhone 12 (a diagonal flick,
   a horizontal swipe right after a vertical fling), a carousel video's sound and pause on a swipe,
   and the save of a carousel video into each gallery.

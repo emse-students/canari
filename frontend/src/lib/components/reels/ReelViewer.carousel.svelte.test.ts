@@ -174,14 +174,14 @@ describe('a carousel page in the reel viewer', () => {
     expect(players()).toEqual([]);
   });
 
-  it('a swipe right steps back, and on the first media it closes the viewer', async () => {
+  it('a swipe right steps back, and on the first media it springs back, never closing', async () => {
     const { current, swipe, onClose } = await render();
     await swipe(-200, 0);
     await swipe(200, 0);
     expect(current()).toBe(0);
-    expect(onClose).not.toHaveBeenCalled();
     await swipe(200, 0);
-    expect(onClose).toHaveBeenCalled();
+    expect(current()).toBe(0);
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it('a mostly vertical drag pages the POST, never the media', async () => {
@@ -209,6 +209,17 @@ describe('a carousel page in the reel viewer', () => {
     // The neighbour pictures mount; the next post's opening video is fetched ahead.
     expect(drawn()).toEqual(expect.arrayContaining(['p1', 'v2', 'p3']));
     expect(preloads).toEqual(['m-next']);
+  });
+
+  it("a media swipe in a settled page keeps the next post's preload going", async () => {
+    const { current, swipe, settleVisible } = await render();
+    await settleVisible();
+    expect(preloads.filter((id) => id === 'm-next')).toEqual(['m-next']);
+    await swipe(-200, 0);
+    await swipe(-200, 0);
+    // Not aborted and restarted: still the one fetch.
+    expect(preloads.filter((id) => id === 'm-next')).toEqual(['m-next']);
+    expect(current()).toBe(2);
   });
 
   it('the next media of a settled picture is fetched ahead when it is a video', async () => {
@@ -240,6 +251,7 @@ describe('a carousel page in the reel viewer', () => {
         cancelable: true,
         pointerType: 'mouse',
         button: 0,
+        buttons: type === 'pointerup' ? 0 : 1,
         clientX: x,
         clientY: 400,
       });
@@ -247,15 +259,61 @@ describe('a carousel page in the reel viewer', () => {
     window.dispatchEvent(pointer('pointermove', 200));
     window.dispatchEvent(pointer('pointermove', 100));
     window.dispatchEvent(pointer('pointerup', 100));
-    await settle();
-    expect(current()).toBe(1);
+    // The browser dispatches the click in the same task as the pointerup.
     const click = new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 });
     document.querySelector('[data-reel-slide]')!.dispatchEvent(click);
     expect(click.defaultPrevented).toBe(true);
+    await settle();
+    expect(current()).toBe(1);
     // The next click is a tap again.
     const next = new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 });
     document.querySelector('[data-reel-slide]')!.dispatchEvent(next);
     expect(next.defaultPrevented).toBe(false);
+  });
+
+  it('a mouse drag whose pointerup was lost (a context menu) is cancelled on the next move', async () => {
+    const { current, frame } = await render();
+    const pointer = (type: string, x: number, buttons: number) =>
+      new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        pointerType: 'mouse',
+        button: 0,
+        buttons,
+        clientX: x,
+        clientY: 400,
+      });
+    frame.dispatchEvent(pointer('pointerdown', 300, 1));
+    window.dispatchEvent(pointer('pointermove', 100, 1));
+    // The button came up elsewhere: the next move carries no button.
+    window.dispatchEvent(pointer('pointermove', 50, 0));
+    window.dispatchEvent(pointer('pointerup', 50, 0));
+    await settle();
+    expect(current()).toBe(0);
+    const click = new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 });
+    document.querySelector('[data-reel-slide]')!.dispatchEvent(click);
+    expect(click.defaultPrevented).toBe(false);
+  });
+
+  it('a drag that makes no click does not swallow the next real tap', async () => {
+    const { frame } = await render();
+    const pointer = (type: string, x: number) =>
+      new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        pointerType: 'mouse',
+        button: 0,
+        buttons: type === 'pointerup' ? 0 : 1,
+        clientX: x,
+        clientY: 400,
+      });
+    frame.dispatchEvent(pointer('pointerdown', 300));
+    window.dispatchEvent(pointer('pointermove', 100));
+    window.dispatchEvent(pointer('pointerup', 100));
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const tap = new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 });
+    document.querySelector('[data-reel-slide]')!.dispatchEvent(tap);
+    expect(tap.defaultPrevented).toBe(false);
   });
 
   it("the rail's save follows the visible media: none on a picture, the video's on a video", async () => {

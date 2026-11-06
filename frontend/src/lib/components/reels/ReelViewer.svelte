@@ -22,8 +22,10 @@
    * the post on screen (`reelViewerNav.ts` decides, `ReelSlide` draws the strip). The visible media
    * is kept PER POST for the viewer's life, so a swipe back up lands where the reader left that
    * post. The axis is locked on the first movement, for the finger and the mouse alike; the arrow
-   * keys left and right and the slide's arrow buttons step the media too. The settle that gates
-   * the next preload is keyed on the post AND its visible media, so each media settles anew.
+   * keys left and right and the slide's arrow buttons step the media too. A swipe right on its
+   * first media springs back (Back and the X close). The settle that gates the next POST's preload
+   * is the PAGE's: once its first visible media settled, a media swipe keeps it, so the next post's
+   * download is never aborted and restarted by a swipe inside the strip.
    */
   import { onDestroy, onMount } from 'svelte';
   import { holdPlayback } from '$lib/actions/playWhileVisible';
@@ -151,9 +153,13 @@
     return { index: Math.min(mediaIndexById[post.id] ?? 0, count - 1), count };
   }
 
-  /** What a settle is keyed on: the post and its visible media, so each media settles anew. */
+  /**
+   * What a settle is keyed on: the PAGE. A media swipe inside a settled page keeps it, so the next
+   * post's preload is not aborted and restarted; the strip's own neighbours settle per media
+   * (`ReelSlide`).
+   */
   function settleKeyOf(post: PostEntity | undefined): string | null {
-    return post ? `${post.id}#${mediaPositionOf(post).index}` : null;
+    return post ? post.id : null;
   }
 
   const overlay = bindHistoryOverlay(
@@ -444,8 +450,7 @@
     mediaDragX = 0;
     if (!post || target === at.index) return;
     console.debug(`[reel-viewer] ${verdict} on ${post.id}: ${at.index} -> ${target}`);
-    // The media landed on has not settled IN THIS VISIT, whatever it did before.
-    settledId = null;
+    // The page's settle is kept: the next post's preload goes on behind the strip.
     mediaIndexById = { ...mediaIndexById, [post.id]: target };
   }
 
@@ -633,6 +638,13 @@
 
     function onPointerMove(e: PointerEvent) {
       if (e.pointerType !== 'mouse' || !gesture) return;
+      if (e.buttons === 0) {
+        // The button is up and no pointerup came (a context menu opened mid-drag): the drag is over.
+        console.debug('[reel-viewer] a mouse drag lost its pointerup - cancelled');
+        swallowClick = false;
+        cancel();
+        return;
+      }
       if (
         move(pointSample(e), () => {
           // A mouse drag is ours once it moved past the slop: no text selection, no image drag.
@@ -647,6 +659,9 @@
     function onPointerUp(e: PointerEvent) {
       if (e.pointerType !== 'mouse' || !gesture) return;
       end(pointSample(e));
+      // The click this pointerup makes is dispatched in the same task; a drag that ends outside
+      // the frame makes none, so the flag must not outlive this frame and eat a later real tap.
+      if (swallowClick) requestAnimationFrame(() => (swallowClick = false));
     }
 
     /**

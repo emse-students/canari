@@ -129,8 +129,12 @@ describe('a carousel page (owner, 2026-11-06)', () => {
     expect(reelReleaseVerdict(release({ kind: 'swipe-h', dx: -40, ...at(0) }))).toBe('stay');
   });
 
-  it('right on the first media still closes; left on the last springs back', () => {
-    expect(reelReleaseVerdict(release({ kind: 'swipe-h', dx: 200, ...at(0) }))).toBe('close');
+  it('past either end of the strip a drag springs back: right on the first media never closes', () => {
+    expect(reelReleaseVerdict(release({ kind: 'swipe-h', dx: 200, ...at(0) }))).toBe('stay');
+    const flick = { x: 1, y: 0 };
+    expect(
+      reelReleaseVerdict(release({ kind: 'swipe-h', dx: 40, velocity: flick, ...at(0) }))
+    ).toBe('stay');
     expect(reelReleaseVerdict(release({ kind: 'swipe-h', dx: -200, ...at(2) }))).toBe('stay');
   });
 
@@ -144,17 +148,17 @@ describe('a carousel page (owner, 2026-11-06)', () => {
     expect(reelReleaseVerdict(release({ kind: 'swipe-h', dx: 200, ...at(0, 1) }))).toBe('close');
   });
 
-  it('a horizontal drag moves the strip, except the close on the first media', () => {
+  it('a horizontal drag moves the strip, with resistance past either end', () => {
     expect(reelDragOffset('swipe-h', -50, 0, true, true, { index: 0, count: 3 })).toEqual({
       x: 0,
       y: 0,
       mediaX: -50,
     });
-    expect(reelDragOffset('swipe-h', 50, 0, true, true, { index: 0, count: 3 })).toEqual({
-      x: 50,
-      y: 0,
-      mediaX: 0,
-    });
+    // Before the first media: resistance, and the reel itself never moves (no close).
+    const before = reelDragOffset('swipe-h', 100, 0, true, true, { index: 0, count: 3 });
+    expect(before.x).toBe(0);
+    expect(before.mediaX).toBeGreaterThan(0);
+    expect(before.mediaX).toBeLessThan(100);
     // Past the last media: resistance, and the reel itself never moves.
     const past = reelDragOffset('swipe-h', -100, 0, true, true, { index: 2, count: 3 });
     expect(past.x).toBe(0);
