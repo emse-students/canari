@@ -221,7 +221,7 @@
       <MarkdownComposerToolbar
         chipClass="{chipClass} {idleChip}"
         {onFormat}
-        class="w-full content-center"
+        class="w-full content-start"
       />
     {:else}
       <div

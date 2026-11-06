@@ -132,15 +132,55 @@ it('swaps the attachment chips for the formatting row, and formats through the c
   expect(props.onFormat).toHaveBeenCalledWith('bold');
 });
 
-it('keeps focus in the editor when a formatting button is pressed', () => {
+it('keeps focus in the editor: the Aa toggle and EVERY formatting chip refuse the mousedown focus move', () => {
+  // The owner's concern is the keyboard: a tap that moves focus off the editor closes it. A button
+  // that stops preventing its mousedown fails here, not on a phone.
   const { target } = mountBar();
-  Array.from(target.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')).at(-1)!.click();
+  const aa = Array.from(target.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')).at(-1)!;
+  const downOn = (el: Element) => {
+    const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    el.dispatchEvent(down);
+    return down.defaultPrevented;
+  };
+  expect(downOn(aa)).toBe(true);
+
+  aa.click();
   flushSync();
+  const chips = Array.from(target.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button'));
+  expect(chips).toHaveLength(8);
+  for (const chip of chips) expect(downOn(chip)).toBe(true);
+  // The strip between two chips is part of the toolbar: a tap there must not blur either.
+  expect(downOn(target.querySelector('[role="toolbar"]')!)).toBe(true);
+  // No pointerdown handler exists to keep in step: the compatibility mousedown is the only gate.
+});
 
-  const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
-  target.querySelector('[role="toolbar"] button')!.dispatchEvent(down);
+it('clears the height floor when Aa is toggled twice, the chips back at their natural height', () => {
+  const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+    configurable: true,
+    get() {
+      return (this as HTMLElement).hasAttribute('data-chip-row') ? 132 : 0;
+    },
+  });
+  try {
+    const { target } = mountBar();
+    flushSync();
+    const aa = () =>
+      Array.from(target.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')).at(-1)!;
+    aa().click();
+    flushSync();
+    expect(
+      (target.querySelector('[role="toolbar"]')!.parentElement as HTMLElement).style.minHeight
+    ).toBe('132px');
 
-  expect(down.defaultPrevented).toBe(true);
+    aa().click();
+    flushSync();
+    expect(target.querySelector('[role="toolbar"]')).toBeNull();
+    const row = target.querySelector<HTMLElement>('[data-chip-row]')!;
+    expect(row.parentElement!.style.minHeight).toBe('');
+  } finally {
+    if (original) Object.defineProperty(HTMLElement.prototype, 'clientHeight', original);
+  }
 });
 
 it.each([
