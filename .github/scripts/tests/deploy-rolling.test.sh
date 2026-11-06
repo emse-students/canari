@@ -351,9 +351,25 @@ export TAG=v3
 # that worker can no longer choose a replica, not wait for it to exit - which would be never.
 curl -sN "http://127.0.0.1:${ROLLTEST_PORT}/api/hold" >/dev/null 2>&1 &
 HOLD_PID=$!
+# One reset line in the OLD replica's log, which the release retires: the count must be read before
+# the container (and its log) is removed.
+export ROLLING_LOG_SINCE
+ROLLING_LOG_SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+curl -s "http://127.0.0.1:${ROLLTEST_PORT}/api/s2s-reset" >/dev/null 2>&1
 start_client release
 if deploy | tee "$TMP/release.log"; then ok "replace_services succeeded"; else fail "replace_services succeeded"; fi
 kill "$HOLD_PID" 2>/dev/null || true
+unset ROLLING_LOG_SINCE
+if grep -qE '^\[S2S_RESETS\] service=api retiring=[1-9][0-9]* staying=0$' "$TMP/release.log"; then
+  ok "the reset line the retiring api replica logged was counted before it was removed (retiring>=1, staying=0)"
+else
+  fail "no [S2S_RESETS] line with the retiring api replica's count: $(grep S2S_RESETS "$TMP/release.log" | tr '\n' ' ')"
+fi
+if grep -qE '^\[S2S_RESETS\] service=[a-z_-]+ retiring=([0-9]+|unknown) staying=([0-9]+|unknown)$' "$TMP/release.log"; then
+  ok "every replaced service prints its [S2S_RESETS] line"
+else
+  fail "no well-formed [S2S_RESETS] line in the release log"
+fi
 if grep -qE '^  frontend: [0-9a-f]+ reloaded; paired .*\([1-9][0-9]* old worker\(s\) still finishing' "$TMP/release.log"; then
   ok "a connection an old frontend worker was still proxying did not hold the release back"
 else

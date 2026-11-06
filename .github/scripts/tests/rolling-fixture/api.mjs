@@ -16,6 +16,12 @@ const server = http.createServer((req, res) => {
     res.end('ok');
     return;
   }
+  // What a CALLER logs when a peer resets it: the line rolling.sh counts before it retires a replica.
+  if (req.url === '/api/s2s-reset') {
+    console.error('Error: socket hang up (ECONNRESET)');
+    res.end('logged');
+    return;
+  }
   // A connection that stays open, as a WebSocket does: a byte every 200 ms until the client leaves.
   // The nginx worker proxying it outlives a reload, and the release must not wait for it to end.
   if (req.url === '/api/hold') {

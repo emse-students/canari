@@ -73,6 +73,8 @@ ROLLING_QUIESCE_READS="${ROLLING_QUIESCE_READS:-100}"
 #     retiring, so the targets it finds (named by DNS, rotation_restore) must expire as fast.
 # deploy-replace.test.sh holds this number to both proxies' configurations and to the frozen libraries.
 ROLLING_RESOLVER_TTL_SECONDS=2
+ROLLING_STARTED_AT="${ROLLING_STARTED_AT:-1970-01-01T00:00:00Z}"
+S2S_RETIRING=unknown
 
 # containers_of <service> - every container of that service in this project, running or not, one id
 # per line. One-off `compose run` containers are not replicas and are left out.
@@ -769,12 +771,37 @@ wait_unqueued() {
   return 1
 }
 
+# s2s_resets <container...> - prints how many lines of those containers' logs, since this deploy
+# started, name a connection a peer reset or refused (ECONNRESET, "socket hang up", ECONNREFUSED), or
+# `unknown` when ANY read failed. BEST EFFORT, NEVER A GATE: a failed read prints an accusing line to
+# stderr and returns 0 with `unknown` - never a zero, which would read as "none seen" - and the deploy
+# goes on. It exists because those lines are written by the CALLERS a deploy retires, and the retired
+# container takes its log with it: a count read afterwards is blind (production, 2026-11-06).
+# ROLLING_LOG_SINCE (RFC 3339) overrides the start of the window, for the test.
+S2S_RESET_PATTERN='ECONNRESET|socket hang up|ECONNREFUSED'
+s2s_resets() {
+  local cid out n total=0
+  for cid in "$@"; do
+    if ! out="$($DOCKER_CLI logs --since "${ROLLING_LOG_SINCE:-$ROLLING_STARTED_AT}" "$cid" 2>&1)"; then
+      printf '::warning::[S2S_RESETS] could not read the log of %s - the count is UNKNOWN, not zero
+' "${cid:0:12}" >&2
+      echo unknown
+      return 0
+    fi
+    n="$(grep -cE "$S2S_RESET_PATTERN" <<<"$out" || true)"
+    total=$((total + ${n:-0}))
+  done
+  echo "$total"
+}
+
 # retire <service> <container...> - drains and removes replicas already out of rotation. `docker
 # stop` sends the image's stop signal and waits ROLLING_DRAIN_SECONDS for the process to leave by
 # itself.
 retire() {
   local service="$1" cid
   shift
+  # Read BEFORE the first `docker rm`: the log goes with the container.
+  S2S_RETIRING="$(s2s_resets "$@")"
   for cid in "$@"; do
     wait_unqueued "$service" "$cid" || return 1
     printf '  %s: retiring %s (drain up to %ss)\n' "$service" "${cid:0:12}" "$ROLLING_DRAIN_SECONDS"
@@ -843,6 +870,9 @@ replace_overlap() {
   fi
   rotation_restore "$service" || return 1
   ROTATION_IN_FLIGHT=""
+  # The staying replica, read after the restore: the other side of the same rotation.
+  printf '[S2S_RESETS] service=%s retiring=%s staying=%s
+' "$service" "${S2S_RETIRING:-unknown}" "$(s2s_resets "$new")"
 }
 
 # replace_in_place <service> <publishes-a-host-port> - compose recreates the container if, and only
@@ -866,6 +896,7 @@ replace_in_place() {
 replace_services() {
   local plan service mode ports
   plan="$(cat)"
+  ROLLING_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   rotation_routes_set <<<"$plan"
   while read -r service mode ports _ <&3; do
     [ -n "$service" ] || continue

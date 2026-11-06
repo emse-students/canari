@@ -79,16 +79,15 @@ Read-only on production: every replica of social, media, core and chat-delivery 
 deploy retires are removed with their logs; every container that could be read started after the
 rotation. The count the "Measure first" paragraph above asks for cannot be taken after the fact.
 
-**What would make it visible, cheapest first** (not built):
+**BUILT 2026-11-06 (the count; the proxy is not).** `rolling.sh` (`s2s_resets`) reads each retiring
+replica's log since the deploy started BEFORE `docker rm` and the staying replica's after the restore,
+counting `ECONNRESET`, `socket hang up` and `ECONNREFUSED`, and prints one line per overlap service in
+the deploy log: `[S2S_RESETS] service=<name> retiring=<n> staying=<n>`. It is best effort: a failed
+read prints a `::warning::` naming the count UNKNOWN (`unknown` in the line, never `0`) and the deploy
+goes on. Closed by `deploy-rolling.test.sh` case 2 (a reset line in the retiring api replica's log is
+counted as `retiring=1`, `staying=0`; run locally 44 passed, 0 failed).
 
-1. **`rolling.sh` greps the retiring replica's log before `docker stop` removes it** (step 5 of the
-   rotation in [cicd](../cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)): one
-   `docker logs --since <deploy start> <old>` filtered for `ECONNRESET|socket hang up|ECONNREFUSED`,
-   its COUNT printed in the deploy log beside the existing in-flight line, one line per service. No
-   new container, no file; the deploy log already outlives the container. Run it again on the replica
-   that stays after the restore, so both sides of a rotation are counted.
-2. Persisting that count (a `[S2S_RESETS]` line in `scheduled.yml`'s daily read) only once option 1
-   shows a non-zero count; before then it would watch a zero.
-
-The decision on the `mesh` proxy waits for a few deploys of that line: a steady zero leaves the gap as
-a named residue, any other number is the case for building it.
+**Owed:** read the `[S2S_RESETS]` lines of the next deploys (the Actions log of the deploy job). **The
+`mesh` decision waits for those readings**: a steady zero leaves the gap a named residue, any other
+number is the case for building it. A daily `[S2S_RESETS]` count in `scheduled.yml` only if a
+non-zero shows.
