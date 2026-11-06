@@ -103,6 +103,16 @@ function makeCtx(storage: unknown) {
   } as never;
 }
 
+/**
+ * Yields queue position by queue position until the salon's drawn rows are `ids`. It waits for the
+ * store to BE that, however many hops the read and the merge take: no poll interval and no
+ * deadline to lose under load (the test's own timeout is the only bound).
+ */
+async function drawnAs(convs: ReturnType<typeof useConversations>, ids: string[]): Promise<void> {
+  const drawn = () => (convs.conversations.get(SALON)?.messages ?? []).map((m) => m.id).join(',');
+  while (drawn() !== ids.join(',')) await flushMacrotask();
+}
+
 function salon(): Conversation {
   return { id: SALON, name: SALON, messages: [] } as unknown as Conversation;
 }
@@ -124,9 +134,7 @@ describe("a salon's stored page", () => {
     const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx(storage), {
       atTap: true,
     });
-    await vi.waitFor(() =>
-      expect(convs.conversations.get(SALON)?.messages.map((m) => m.id)).toEqual(['a', 'b'])
-    );
+    await drawnAs(convs, ['a', 'b']);
     expect(storage.deleteMessagesForConversation).not.toHaveBeenCalled();
 
     answer([
@@ -237,7 +245,7 @@ describe("a salon's stored page", () => {
     convs.conversations.set(SALON, salon());
 
     const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx(storage));
-    await vi.waitFor(() => expect(convs.conversations.get(SALON)?.messages).toHaveLength(2));
+    await drawnAs(convs, ['a', 'z']);
     const drawn = convs.conversations.get(SALON)!;
     convs.conversations.set(SALON, {
       ...drawn,
