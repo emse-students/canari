@@ -93,6 +93,6 @@ describe('cors-origins', () => {
     expect(isEdgeOwnedCorsPath('/api/public/../posts')).toBe(false);
     expect(isEdgeOwnedCorsPath('/api/public/%2e%2e/posts')).toBe(false);
     expect(isEdgeOwnedCorsPath('/api/public%2fx')).toBe(false);
-    expect(isEdgeOwnedCorsPath('/api/public/a\b')).toBe(false);
+    expect(isEdgeOwnedCorsPath('/api/public/a\b\b')).toBe(false);
   });
 });
