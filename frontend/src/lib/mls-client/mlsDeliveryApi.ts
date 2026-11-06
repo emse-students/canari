@@ -1382,13 +1382,24 @@ export class MlsDeliveryApi {
    * that made the distinction load-bearing. A 404 is an ANSWER and carries the server's reason;
    * anything else - a 5xx, a gateway error, an unreachable network, a body that does not parse -
    * is `unanswered`, which establishes nothing about the device and must not be acted on.
+   *
+   * `peek` ASKS WHETHER THE DEVICE IS PUBLISHED WITHOUT CLAIMING ONE OF ITS PACKAGES: the server
+   * answers its static row, and leaves the one-time pool alone. `expired` is judged on the static
+   * row alone, so a device holding fresh one-time packages may answer `expired` to a peek and a
+   * package to a claim - both are `published` to `keyPackagePublication`. A caller
+   * that only reads the fact (an external join waiting on its own publication) must peek - a claim
+   * spends a package nobody uses. A server predating `peek` ignores it and claims, as before.
    */
-  async fetchDeviceKeyPackage(userId: string, deviceId: string): Promise<DeviceKeyPackageAnswer> {
+  async fetchDeviceKeyPackage(
+    userId: string,
+    deviceId: string,
+    opts?: { peek?: boolean }
+  ): Promise<DeviceKeyPackageAnswer> {
     // UNDER THE DEADLINE, because the wait of an external join reads this to learn whether its own
     // device is published: a hang here must be an `unanswered`, not a join that never ends.
     try {
       return await this.underDeadline('device-key-package', (signal) =>
-        this.fetchDeviceKeyPackageOnce(userId, deviceId, signal)
+        this.fetchDeviceKeyPackageOnce(userId, deviceId, signal, opts?.peek === true)
       );
     } catch (e) {
       if (e instanceof DeliveryDeadlineError) return { kind: 'unanswered', detail: e.message };
@@ -1399,12 +1410,13 @@ export class MlsDeliveryApi {
   private async fetchDeviceKeyPackageOnce(
     userId: string,
     deviceId: string,
-    signal: AbortSignal
+    signal: AbortSignal,
+    peek: boolean
   ): Promise<DeviceKeyPackageAnswer> {
     let res: Response;
     try {
       res = await this.f(
-        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/key-package`,
+        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/key-package${peek ? '?peek=1' : ''}`,
         { headers: await this.auth(), signal }
       );
     } catch (e) {

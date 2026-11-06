@@ -55,4 +55,12 @@ describe('awaitOwnKeyPackagePublished while the first publication runs', () => {
     await expect(wait(ctx)).resolves.toBe('published');
     expect(fetchDeviceKeyPackage).toHaveBeenCalledTimes(1);
   });
+
+  // A READ, NEVER A CLAIM: a claim spent one of this device's own one-time packages per join
+  // attempt, and a device retrying unjoinable groups drained its pool (production 2026-11-06).
+  it('reads its own publication with a peek, which claims no package', async () => {
+    const { ctx, fetchDeviceKeyPackage } = makeCtx(true);
+    await wait(ctx);
+    expect(fetchDeviceKeyPackage).toHaveBeenCalledWith('u', 'd', { peek: true });
+  });
 });

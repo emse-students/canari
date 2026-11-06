@@ -751,6 +751,40 @@ against 2026-09-18 - 677 undated then, 597 four days later. The only shape that 
 is the server decoding the `keyPackage` bytes it already holds, which means an MLS decoder in a
 service built never to interpret them; the trade is in `docs/wiki/backlog.md`.
 
+## A READ IS NOT A CLAIM - THE EMPTY-POOL STORM OF 2026-11-06
+
+`GET mls/devices/:userId/:deviceId/key-package` and the account list `GET mls/devices/:userId`
+**claim**: each answer DELETEs one one-time package per device it names (`resolveKeyPackagePayloadForDevice`).
+Three client paths used them only to READ, so packages left the pool and were thrown away.
+
+**Measured on production, read-only, 2026-11-06.** 430 `[KP] one-time pool EMPTY` warnings in one
+hour against 1 to 12 an hour the rest of the evening, 426 of them in two minutes. Two accounts:
+
+| what happened | the claims it made |
+| --- | --- |
+| A new web device of an account holding about 140 groups sent 131 `welcome_request`s. Another device of the same account answered each one: add lock, then `GET mls/devices/:userId` (131 requests), then commit and Welcome. | Every list call claimed one package from EACH of the account's four devices to use one. The three devices that were not joining lost 131 packages each: 83, 84 and 83 empty serves, pools at 0 afterwards. |
+| The same new device, before each recovery external join, asked whether it was itself published (`awaitOwnKeyPackagePublished`): about 120 `GET .../key-package` for its own id. | One of its OWN packages claimed per question. With the 131 adds, that made 176 empty serves. |
+| Earlier in the evening a new web device of a second account retried seven unjoinable groups on the recovery cadence: an own-publication read, then a `welcome_request` that met `NO_PEER_ONLINE`, every five minutes for an hour. | 77 empty serves. Its pool was 0 when it was read. |
+
+None of this is a client retry loop gone wrong, and none of it is a large group: it is two reads
+that claim. The adder device stayed connected throughout, and a pool is refilled only at connection
+([backlog](../backlog.md#p2---a-devices-one-time-keypackage-pool-is-topped-up-only-when-it-connects-measured-2026-10-25-after-the-stable)).
+So the account's pools stayed empty until each device reconnected.
+
+**What changed.** The pending-invitation sweep and the `welcome_request` answer claim the one device
+they add (`fetchDeviceKeyPackage`), never the account list. The list's 30-day cutoff needed a second
+request anyway, which is now gone. The own-publication read asks `?peek=1`, which answers the same
+refusals and the static row and touches no one-time row. A server without `peek` ignores the query
+and claims, as before, so no client floor is needed and nothing falls back.
+
+**What a static-row serve costs, and why it stays a WARN.** The row carries `last_resort`, so a
+device can join every group built on it (see the section above). The cost is in MLS: one HPKE init
+key opens every Welcome built on that row until the device mints a new last-resort package, which
+happens only when the package reaches the end of its lifetime. With the two reads fixed, an empty
+pool means one remaining thing: the device was added faster than it refills. The line still accuses
+that. What is still open is in
+[backlog](../backlog.d/p2-reads-of-the-device-list-still-claim-one-time-packages.md).
+
 ## How a client reads a key-package 404, and which answers retire an invitation (floor 1.2.7)
 
 `GET mls/devices/:userId/:deviceId/key-package` 404s only with a `reason` in its body: `revoked`,
