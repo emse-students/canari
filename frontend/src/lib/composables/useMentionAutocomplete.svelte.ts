@@ -4,7 +4,18 @@ import { coreUrl } from '$lib/utils/apiUrl';
 import { formatMentionToken } from '$lib/utils/mentions';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import { filterUserSuggestions } from '$lib/utils/users/suggestionFilter';
-import { seedUserDisplayName } from '$lib/utils/users/displayName';
+import {
+  peekUserDisplayName,
+  resolveDisplayNames,
+  seedUserDisplayName,
+} from '$lib/utils/users/displayName';
+import {
+  MENTION_MAX_ROWS,
+  suggestFromRoster,
+  type MentionRosterMember,
+} from '$lib/utils/users/mentionRoster';
+import { listBlockedUsers } from '$lib/users/blocks';
+import { Log } from '$lib/utils/Log';
 
 export type MentionUser = { id: string; displayName: string | null };
 
@@ -21,8 +32,12 @@ export function useMentionAutocomplete(opts: {
   getCursor?: () => number;
   setCursor?: (pos: number) => void;
   focus?: () => void;
-  /** When set, only users whose IDs are in this list appear in suggestions. */
-  allowedUserIds?: string[];
+  /**
+   * The conversation's members. When non-empty the picker suggests from them LOCALLY (no request,
+   * no debounce) and a bare `@` opens the list. Absent or empty - posts and comments, or a roster
+   * still loading - it falls back to the server search over the whole directory.
+   */
+  roster?: MentionRosterMember[];
 }) {
   let query = $state('');
   let suggestions = $state<MentionUser[]>([]);
@@ -30,6 +45,10 @@ export function useMentionAutocomplete(opts: {
   let start = $state(-1);
   let selectedIdx = $state(-1);
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Accounts the reader blocked, read once when a roster picker first opens (null = not read). */
+  let blockedIds: string[] | null = null;
+  /** Whether this picker already read the blocks and resolved the roster's names. */
+  let rosterPrepared = false;
 
   function applyCursor(pos: number) {
     if (opts.setCursor) {
@@ -67,18 +86,10 @@ export function useMentionAutocomplete(opts: {
       const res = await apiFetch(`${coreUrl()}/api/users/search?q=${encodeURIComponent(q)}`);
       if (res.ok) {
         const data: MentionUser[] = await res.json();
-        const allowed = opts.allowedUserIds;
         const me = currentUserId();
         suggestions = filterUserSuggestions(data, {
           excludeIds: me ? [me] : [],
-          // AN EMPTY ALLOWLIST MEANS "NO RESTRICTION" HERE, WHICH IS THE OPPOSITE OF WHAT
-          // `filterUserSuggestions` DOES WITH ONE - it would offer nobody. The array is a channel's
-          // member list or a group's roster, and it is legitimately empty before that list has
-          // loaded, so the two readings differ exactly while a reader is typing into a
-          // conversation that has not settled. Passing it only when non-empty keeps the reading
-          // this composable has always had.
-          ...(allowed && allowed.length > 0 ? { filterUserIds: allowed } : {}),
-        }).slice(0, 6);
+        }).slice(0, MENTION_MAX_ROWS);
         open = suggestions.length > 0;
         selectedIdx = -1;
       }
@@ -88,10 +99,62 @@ export function useMentionAutocomplete(opts: {
     }
   }
 
+  /**
+   * Suggests from the conversation's own members, with no request.
+   *
+   * The server search only returned the school's top 10 matches, so with one letter a member of a
+   * small group was almost never among them and "@M" proposed nobody. The members are already on
+   * the client, so the roster is filtered here. The reader is never offered (see {@link search}),
+   * nor an account the reader blocked: the server hides blocked accounts from every picker, and a
+   * group formed before the block still lists them. The reverse direction (someone who blocked the
+   * reader) is not known to the client and stays offered.
+   */
+  function suggestLocally(roster: MentionRosterMember[]) {
+    const me = currentUserId();
+    suggestions = suggestFromRoster(roster, query, {
+      excludeIds: [...(me ? [me] : []), ...(blockedIds ?? [])],
+      resolveName: peekUserDisplayName,
+    }).slice(0, MENTION_MAX_ROWS);
+    open = suggestions.length > 0;
+    selectedIdx = -1;
+  }
+
+  /**
+   * Once per picker, when it first opens on a roster: reads the reader's blocks and resolves the
+   * names the cache lacks (one batch, never per keystroke), then re-filters the current query.
+   */
+  async function prepareRoster(roster: MentionRosterMember[]) {
+    if (rosterPrepared) return;
+    rosterPrepared = true;
+    const unnamed = roster.filter((r) => !r.displayName?.trim() && !peekUserDisplayName(r.id));
+    Log.d('[mention] roster first open', { members: roster.length, unnamed: unnamed.length });
+    const [blocks] = await Promise.all([
+      listBlockedUsers().catch((e) => {
+        console.warn('[mention] blocked list unreadable, blocked accounts stay offered', e);
+        return [];
+      }),
+      unnamed.length > 0
+        ? resolveDisplayNames(unnamed.map((r) => r.id)).catch((e) => {
+            console.warn('[mention] roster names unresolved', e);
+          })
+        : Promise.resolve(),
+    ]);
+    blockedIds = blocks.map((b) => b.userId);
+    if (start >= 0 && opts.roster?.length) suggestLocally(opts.roster);
+  }
+
   function detectMentionAtCursor(text: string, cursor: number) {
     const textBeforeCursor = text.slice(0, cursor);
     const m = textBeforeCursor.match(/@([\wÀ-ž]*)$/);
-    if (m && m[1].length > 0) {
+    const roster = opts.roster;
+    if (m && roster && roster.length > 0) {
+      start = cursor - m[0].length;
+      query = m[1];
+      if (debounceTimer) clearTimeout(debounceTimer);
+      suggestLocally(roster);
+      void prepareRoster(roster);
+    } else if (m && m[1].length > 0) {
+      if (roster) Log.d('[mention] roster not loaded, falling back to the server search');
       start = cursor - m[0].length;
       query = m[1];
       if (debounceTimer) clearTimeout(debounceTimer);

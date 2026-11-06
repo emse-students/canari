@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useMentionAutocomplete, type MentionUser } from './useMentionAutocomplete.svelte';
+import type { MentionRosterMember } from '$lib/utils/users/mentionRoster';
 import { flushMacrotask } from '../../test/flush';
 
 vi.mock('$lib/stores/auth', () => ({
@@ -16,6 +17,13 @@ vi.mock('$lib/stores/userState.svelte', () => ({
   currentUserId: () => signedInAs,
 }));
 
+// The reader's blocks are read once when a roster picker first opens; the tests set them here.
+let blocked: string[] = [];
+vi.mock('$lib/users/blocks', () => ({
+  listBlockedUsers: async () =>
+    blocked.map((userId) => ({ userId, displayName: null, createdAt: '' })),
+}));
+
 // apiFetch wraps global fetch with auth, so stubbing fetch is enough.
 function makeFetchStub(results: MentionUser[]) {
   // A real Response, headers included: who answered is read from its content type.
@@ -26,7 +34,7 @@ function tick() {
   return flushMacrotask();
 }
 
-describe('useMentionAutocomplete - allowedUserIds filtering', () => {
+describe('useMentionAutocomplete - the server search without a roster', () => {
   let text = '';
   const setText = (newText: string) => {
     text = newText;
@@ -43,7 +51,7 @@ describe('useMentionAutocomplete - allowedUserIds filtering', () => {
     vi.restoreAllMocks();
   });
 
-  it('returns all API suggestions when allowedUserIds is not provided', async () => {
+  it('returns all API suggestions when no roster is provided', async () => {
     const users: MentionUser[] = [
       { id: 'alice', displayName: 'Alice' },
       { id: 'bob', displayName: 'Bob' },
@@ -66,71 +74,110 @@ describe('useMentionAutocomplete - allowedUserIds filtering', () => {
     expect(autocomplete.suggestions.map((u) => u.id)).toEqual(['alice', 'bob', 'charlie']);
   });
 
-  it('filters suggestions to allowedUserIds when provided', async () => {
-    const users: MentionUser[] = [
-      { id: 'alice', displayName: 'Alice' },
-      { id: 'bob', displayName: 'Bob' },
-      { id: 'charlie', displayName: 'Charlie' },
-    ];
-    globalThis.fetch = makeFetchStub(users);
-
+  it('uses the server search when the roster is empty', async () => {
+    globalThis.fetch = makeFetchStub([{ id: 'alice', displayName: 'Alice' }]);
     const autocomplete = useMentionAutocomplete({
       getText: () => text,
       setText,
       getCursor: () => text.length,
-      allowedUserIds: ['bob', 'charlie'],
+      roster: [],
     });
 
     autocomplete.handleEditorInput('@a', 2);
     vi.advanceTimersByTime(250);
     await tick();
 
-    expect(autocomplete.open).toBe(true);
-    expect(autocomplete.suggestions).toHaveLength(2);
-    expect(autocomplete.suggestions.map((u) => u.id)).toEqual(['bob', 'charlie']);
+    expect(autocomplete.suggestions.map((u) => u.id)).toEqual(['alice']);
+  });
+});
+
+describe('useMentionAutocomplete - a roster is suggested locally', () => {
+  let text = '';
+  const setText = (newText: string) => {
+    text = newText;
+  };
+  const day = 86_400_000;
+  const roster: MentionRosterMember[] = [
+    { id: 'u-marie', displayName: 'Marie Dupont', lastSpokeAt: 1 * day },
+    { id: 'u-eric', displayName: 'Éric Martin', lastSpokeAt: 3 * day },
+    { id: 'u-zoe', displayName: 'Zoé Bernard' },
+    { id: 'u-adam', displayName: 'Adam Lemaire' },
+    { id: 'u-me', displayName: 'Moi Même', lastSpokeAt: 9 * day },
+  ];
+
+  function open(opts: { roster?: MentionRosterMember[] } = { roster }) {
+    return useMentionAutocomplete({
+      getText: () => text,
+      setText,
+      getCursor: () => text.length,
+      ...opts,
+    });
+  }
+
+  beforeEach(() => {
+    text = '';
+    signedInAs = 'u-me';
+    blocked = [];
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('no network expected'));
   });
 
-  it('is case-insensitive when filtering allowedUserIds', async () => {
-    const users: MentionUser[] = [
-      { id: 'Alice', displayName: 'Alice' },
-      { id: 'BOB', displayName: 'Bob' },
-      { id: 'charlie', displayName: 'Charlie' },
-    ];
-    globalThis.fetch = makeFetchStub(users);
-
-    const autocomplete = useMentionAutocomplete({
-      getText: () => text,
-      setText,
-      getCursor: () => text.length,
-      allowedUserIds: ['alice', 'bob'],
-    });
-
-    autocomplete.handleEditorInput('@a', 2);
-    vi.advanceTimersByTime(250);
-    await tick();
-
-    expect(autocomplete.open).toBe(true);
-    expect(autocomplete.suggestions).toHaveLength(2);
-    expect(autocomplete.suggestions.map((u) => u.id)).toEqual(['Alice', 'BOB']);
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
-  it('closes the suggestion list when no allowed users match', async () => {
-    const users: MentionUser[] = [{ id: 'alice', displayName: 'Alice' }];
-    globalThis.fetch = makeFetchStub(users);
+  it('opens the whole roster on a bare @, recent speakers first then alphabetical', () => {
+    const ac = open();
+    ac.handleEditorInput('@', 1);
+    expect(ac.open).toBe(true);
+    expect(ac.suggestions.map((u) => u.id)).toEqual(['u-eric', 'u-marie', 'u-adam', 'u-zoe']);
+  });
 
-    const autocomplete = useMentionAutocomplete({
-      getText: () => text,
-      setText,
-      getCursor: () => text.length,
-      allowedUserIds: ['bob'],
-    });
+  it('filters on one letter, matching any word of the name', () => {
+    const ac = open();
+    ac.handleEditorInput('@m', 2);
+    // Marie (first word), Eric MARTIN (second word); Moi is the reader and Adam LEMAIRE has no word
+    // starting with m.
+    expect(ac.suggestions.map((u) => u.id)).toEqual(['u-eric', 'u-marie']);
+  });
 
-    autocomplete.handleEditorInput('@a', 2);
-    vi.advanceTimersByTime(250);
+  it('ignores accents on both sides', () => {
+    const ac = open();
+    ac.handleEditorInput('@er', 3);
+    expect(ac.suggestions.map((u) => u.id)).toEqual(['u-eric']);
+    ac.handleEditorInput('@zo', 3);
+    expect(ac.suggestions.map((u) => u.id)).toEqual(['u-zoe']);
+  });
+
+  it('never offers the signed-in reader, even with the roster naming them', () => {
+    const ac = open();
+    ac.handleEditorInput('@', 1);
+    expect(ac.suggestions.map((u) => u.id)).not.toContain('u-me');
+  });
+
+  it('never offers an account the reader blocked, once the list is read', async () => {
+    blocked = ['u-eric'];
+    const ac = open();
+    ac.handleEditorInput('@', 1);
     await tick();
+    expect(ac.suggestions.map((u) => u.id)).toEqual(['u-marie', 'u-adam', 'u-zoe']);
+  });
 
-    expect(autocomplete.open).toBe(false);
-    expect(autocomplete.suggestions).toHaveLength(0);
+  it('makes no search request', async () => {
+    const ac = open();
+    ac.handleEditorInput('@m', 2);
+    await tick();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the server search while the roster is empty', async () => {
+    globalThis.fetch = makeFetchStub([{ id: 'alice', displayName: 'Alice' }]);
+    signedInAs = null;
+    const ac = open({ roster: [] });
+    ac.handleEditorInput('@', 1);
+    expect(ac.open).toBe(false);
+    ac.handleEditorInput('@a', 2);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(ac.suggestions.map((u) => u.id)).toEqual(['alice']);
   });
 });
 
@@ -151,7 +198,7 @@ describe('useMentionAutocomplete - the signed-in reader is never offered', () =>
     vi.restoreAllMocks();
   });
 
-  async function suggest(opts: { allowedUserIds?: string[] } = {}) {
+  async function suggest(opts: { roster?: MentionRosterMember[] } = {}) {
     const autocomplete = useMentionAutocomplete({
       getText: () => text,
       setText,
@@ -211,29 +258,6 @@ describe('useMentionAutocomplete - the signed-in reader is never offered', () =>
 
     expect(autocomplete.open).toBe(false);
     expect(autocomplete.suggestions).toHaveLength(0);
-  });
-
-  // An allowlist that CONTAINS the reader still does not offer them: the two filters are `and`,
-  // not a precedence, and a channel's member list of course contains its own members.
-  it('still drops the reader when the allowlist names them', async () => {
-    globalThis.fetch = makeFetchStub(three);
-    signedInAs = 'bob';
-
-    const autocomplete = await suggest({ allowedUserIds: ['bob', 'charlie'] });
-
-    expect(autocomplete.suggestions.map((u) => u.id)).toEqual(['charlie']);
-  });
-
-  // An EMPTY allowlist means "no restriction" in this composable, which is the opposite of what
-  // `filterUserSuggestions` does with one. It is the reading a channel relies on before its member
-  // list has loaded, so it is pinned here rather than left to the shared helper's default.
-  it('treats an empty allowlist as no restriction at all', async () => {
-    globalThis.fetch = makeFetchStub(three);
-    signedInAs = 'bob';
-
-    const autocomplete = await suggest({ allowedUserIds: [] });
-
-    expect(autocomplete.suggestions.map((u) => u.id)).toEqual(['alice', 'charlie']);
   });
 });
 

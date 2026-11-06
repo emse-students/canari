@@ -99,6 +99,7 @@
     MessageBatchOrigin,
   } from '$lib/types';
   import type { BulkIngestPhase } from '$lib/mls-client';
+  import { buildMentionRoster } from '$lib/utils/users/mentionRoster';
 
   interface Props {
     /** Controls whether the sidebar shows private chat conversations or community channels. */
@@ -282,13 +283,15 @@
   /** The conversation the panels describe: a channel's own id, or the selected group's. */
   const selectedConversationId = $derived(activeConversation?.id ?? '');
 
-  /** User IDs allowed in @mention suggestions for the active chat/channel, or undefined for unrestricted (e.g. posts). */
-  const composerAllowedUserIds = $derived(
-    isSelectedChannel
-      ? selectedChannelMemberIds
-      : convs.groupMembers.length > 0
-        ? convs.groupMembers
-        : undefined
+  /**
+   * The active group's or salon's members for the @mention picker, each stamped with when they last
+   * spoke here. Empty while the list loads, which makes the picker fall back to the server search.
+   */
+  const composerMentionRoster = $derived(
+    buildMentionRoster(
+      isSelectedChannel ? selectedChannelMemberIds : convs.groupMembers,
+      activeConversation?.messages ?? []
+    )
   );
 
   // Deep-link landing (notification tap, invite card, invite link) is owned by
@@ -1649,7 +1652,7 @@
           isCatchupAnnounced={messaging.isCatchupOverlayVisible}
           groupMembers={convs.groupMembers}
           pendingInvites={convs.pendingGroupInvites}
-          allowedUserIds={composerAllowedUserIds}
+          mentionRoster={composerMentionRoster}
           canWrite={canWriteToSelectedChannel}
           sendError={convs.sendError}
           onGroupRename={(name) => void convs.handleRenameGroup(name, convCtx())}

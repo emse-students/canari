@@ -867,6 +867,18 @@ uses and which is case-insensitive on BOTH sides for reasons its own doc comment
 not agree about one input: an EMPTY `allowedUserIds` means "no restriction" here and "offer nobody"
 there, and the array is legitimately empty while a channel's member list is still loading. So it is
 passed only when non-empty, and a test pins that reading rather than leaving it to the helper's
+
+**A conversation with a roster suggests from it, locally (2026-11-06).** `allowedUserIds` filtered
+the server's answer, and that answer is the school's top 10 matches: with one letter a small group's
+members were rarely among them, so "@M" proposed nobody. `MainChatPage` now passes the group's or
+salon's members as `mentionRoster` (ids stamped with when each last spoke here,
+`buildMentionRoster`), and the composable filters them itself (`suggestFromRoster`): a bare `@`
+opens the list, a word of the name must start with the folded query, latest speakers first then
+alphabetical, six rows. No debounce and no search request. Names come from the display-name cache;
+the first open batch-resolves the missing ones and reads the reader's blocks, once per picker. The
+reader and the accounts the reader blocked are never offered (the server hides blocked accounts both
+ways from search; the client only knows its own blocks). An EMPTY roster, a list still loading,
+falls back to the server search, logged. Posts and comments pass no roster and keep the search.
 default.
 
 ### The composer's own emoji picker, and what it shares with the reaction one
