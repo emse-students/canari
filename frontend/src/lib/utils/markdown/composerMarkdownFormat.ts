@@ -1,4 +1,5 @@
 import { tick } from 'svelte';
+import { Marked } from 'marked';
 import { m } from '$lib/paraglide/messages';
 import { inlineSpans, type InlineSpan } from './inlinePreview';
 import type MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
@@ -101,24 +102,247 @@ function linesCovering(text: string, selStart: number, selEnd: number): Line[] {
 /** One style span on a line, in absolute positions. */
 type StyleSpan = InlineSpan;
 
-/** The spans of the style on a line, found by the pairing the editor itself draws. */
-function styleSpans(
-  lineText: string,
-  lineStart: number,
-  prefix: number,
-  kind: InlineKind
-): StyleSpan[] {
-  const wanted = kind === 'strikethrough' ? 'strike' : kind;
+/** Every span on a line (any style, code included), found by the pairing the editor itself draws. */
+function allSpans(lineText: string, lineStart: number, prefix: number): StyleSpan[] {
   const offset = lineStart + prefix;
-  return inlineSpans(lineText.slice(prefix))
-    .filter((span) => span.kinds.includes(wanted))
-    .map((span) => ({
-      ...span,
-      start: span.start + offset,
-      contentStart: span.contentStart + offset,
-      contentEnd: span.contentEnd + offset,
-      end: span.end + offset,
-    }));
+  return inlineSpans(lineText.slice(prefix)).map((span) => ({
+    ...span,
+    start: span.start + offset,
+    contentStart: span.contentStart + offset,
+    contentEnd: span.contentEnd + offset,
+    end: span.end + offset,
+  }));
+}
+
+/** The name `inlineSpans` gives a toolbar action's style. */
+const wantedKind = (kind: InlineKind) => (kind === 'strikethrough' ? 'strike' : kind);
+
+/** The spans of the style among `all`. */
+const styleSpans = (all: StyleSpan[], kind: InlineKind): StyleSpan[] =>
+  all.filter((span) => span.kinds.includes(wantedKind(kind)));
+
+type Style = 'strike' | 'bold' | 'italic';
+/** Outermost first: the order two runs that start and end together are nested in. */
+const STYLE_MARKER: Array<[Style, string]> = [
+  ['strike', '~~'],
+  ['bold', '**'],
+  ['italic', '*'],
+];
+
+/** A span the range `[from, to)` crosses an edge of: neither inside it, nor around it. */
+const partlyOverlaps = (sp: StyleSpan, from: number, to: number): boolean =>
+  sp.end > from &&
+  sp.start < to &&
+  !(from <= sp.start && sp.end <= to) &&
+  !(sp.contentStart <= from && to <= sp.contentEnd);
+
+interface Run {
+  style: Style;
+  a: number;
+  b: number;
+}
+
+/**
+ * How the model writes its markers. Two runs that start and end together nest in `order` (outermost
+ * first); bold and italic are written with stars or, where legal, underscores (`auto`: an italic that
+ * shares an edge with a bold, which marked reads in more than one way with three stars).
+ */
+interface Variant {
+  order: Style[];
+  bold: 'star' | 'under';
+  italic: 'star' | 'under' | 'auto';
+}
+
+const DEFAULT_VARIANT: Variant = {
+  order: ['strike', 'bold', 'italic'],
+  bold: 'star',
+  italic: 'star',
+};
+
+/** Every way to write a model, tried in this order until marked reads one as promised. */
+const VARIANTS: Variant[] = (
+  [
+    ['strike', 'bold', 'italic'],
+    ['strike', 'italic', 'bold'],
+    ['bold', 'strike', 'italic'],
+    ['bold', 'italic', 'strike'],
+    ['italic', 'strike', 'bold'],
+    ['italic', 'bold', 'strike'],
+  ] as Style[][]
+).flatMap((order) =>
+  (['star', 'under'] as const).flatMap((bold) =>
+    (['star', 'auto', 'under'] as const).map((italic) => ({ order, bold, italic }))
+  )
+);
+
+/**
+ * The wrap (or, with `remove`, the un-styling), when the selection crosses an edge of a span of
+ * ANOTHER style (`lm **h` over
+ * `lm **h lm**`). Whatever is in the way is re-written from a per-character model: every character
+ * keeps the styles it had, the selected ones gain this one, a style that would cross another is cut
+ * at the crossing and reopened, and the markers are written again, nested, whitespace outside. So no
+ * style is lost outside the selection and no marker is left over. Null when nothing crosses, or
+ * when the cuts cannot be made clean (the caller falls back to the plain wrap).
+ */
+function wrapAcrossStyles(
+  text: string,
+  selStart: number,
+  selEnd: number,
+  fromIn: number,
+  toIn: number,
+  kind: InlineKind,
+  all: StyleSpan[],
+  remove: boolean,
+  variant: Variant,
+  force: boolean
+): { from: number; to: number; text: string; first: number; last: number } | null {
+  const style = wantedKind(kind) as Style;
+  const styled = (sp: StyleSpan) => !sp.kinds.includes('code');
+  if (kind === 'code') return null;
+  if (
+    !force &&
+    !all.some(
+      (sp) =>
+        styled(sp) &&
+        sp.kinds.some((k) => k !== 'code' && k !== style) &&
+        (partlyOverlaps(sp, fromIn, toIn) ||
+          partlyOverlaps(sp, selStart, selEnd) ||
+          // An un-styling cuts the spans around the selection, and a cut through another style's
+          // span leaves half of its markers on each side.
+          (remove &&
+            ((sp.start < selStart && selStart < sp.end) || (sp.start < selEnd && selEnd < sp.end))))
+    )
+  ) {
+    return null;
+  }
+  let from = fromIn;
+  let to = toIn;
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const sp of all) {
+      // Forced: every span around the selection is written again too, so the whole nest can take
+      // the marker style marked reads right.
+      const reached = force ? sp.end > from && sp.start < to : partlyOverlaps(sp, from, to);
+      if (reached && (from > sp.start || to < sp.end)) {
+        from = Math.min(from, sp.start);
+        to = Math.max(to, sp.end);
+        grew = true;
+      }
+    }
+  }
+  const inside = all.filter((sp) => styled(sp) && from <= sp.start && sp.end <= to);
+  const isMarker = (p: number) =>
+    inside.some(
+      (sp) => (p >= sp.start && p < sp.contentStart) || (p >= sp.contentEnd && p < sp.end)
+    );
+  const chars: Array<{ p: number; set: Set<Style> }> = [];
+  for (let p = from; p < to; p++) {
+    if (isMarker(p)) continue;
+    const set = new Set<Style>();
+    for (const sp of inside) {
+      if (p >= sp.contentStart && p < sp.contentEnd) {
+        for (const k of sp.kinds) if (k !== 'code') set.add(k);
+      }
+    }
+    if (p >= selStart && p < selEnd) {
+      if (remove) set.delete(style);
+      else set.add(style);
+    }
+    chars.push({ p, set });
+  }
+  const selected = chars.flatMap((c, i) => (c.p >= selStart && c.p < selEnd ? [i] : []));
+  if (selected.length === 0) return null;
+  const space = (i: number) => /\s/.test(text[chars[i].p]);
+  /** `[a, b)` with the whitespace at both ends cut off; null when nothing is left. */
+  const trimmed = (st: Style, a: number, b: number): Run | null => {
+    while (a < b && space(a)) a++;
+    while (b > a && space(b - 1)) b--;
+    return b > a ? { style: st, a, b } : null;
+  };
+  let runs: Run[] = [];
+  for (const [st] of STYLE_MARKER) {
+    let i = 0;
+    while (i < chars.length) {
+      if (!chars[i].set.has(st)) {
+        i++;
+        continue;
+      }
+      let j = i;
+      while (j < chars.length && chars[j].set.has(st)) j++;
+      const run = trimmed(st, i, j);
+      if (run) runs.push(run);
+      i = j;
+    }
+  }
+  const crossing = (): [Run, Run] | null => {
+    for (const x of runs) {
+      for (const y of runs) {
+        if (x.a < y.a && y.a < x.b && x.b < y.b) return [x, y];
+      }
+    }
+    return null;
+  };
+  /** A cut at `c` leaves the two pieces touching when neither side of it is whitespace. */
+  const abuts = (c: number) => !space(c - 1) && !space(c);
+  for (let guard = 0; guard < 400; guard++) {
+    const pair = crossing();
+    if (!pair) break;
+    const [x, y] = pair;
+    // Cut the run of another style, not the one being applied, unless that cut would leave its
+    // two pieces touching and the other would not.
+    let victim = y;
+    let at = x.b;
+    let other = x;
+    let otherAt = y.a;
+    if (y.style === style && x.style !== style) {
+      victim = x;
+      at = y.a;
+      other = y;
+      otherAt = x.b;
+    }
+    if (abuts(at) && !abuts(otherAt)) {
+      victim = other;
+      at = otherAt;
+    }
+    const pieces = [trimmed(victim.style, victim.a, at), trimmed(victim.style, at, victim.b)];
+    runs = runs.filter((r) => r !== victim);
+    for (const piece of pieces) if (piece) runs.push(piece);
+  }
+  if (crossing()) return null;
+  const rank = (st: Style) => variant.order.indexOf(st);
+  const wordy = (i: number) => {
+    const p = i < 0 ? from - 1 : i >= chars.length ? to : chars[i].p;
+    return p >= 0 && p < text.length && /[\p{L}\p{N}]/u.test(text[p]);
+  };
+  /** Underscores are legal only where no letter or digit touches the run on the outside. */
+  const legal = (r: Run) => !wordy(r.a - 1) && !wordy(r.b);
+  const marker = (r: Run): string => {
+    if (r.style === 'strike') return '~~';
+    if (r.style === 'bold') return variant.bold === 'under' && legal(r) ? '__' : '**';
+    const withBold = runs.some((y) => y.style === 'bold' && (y.a === r.a || y.b === r.b));
+    const under = variant.italic === 'under' || (variant.italic === 'auto' && withBold);
+    return under && legal(r) ? '_' : '*';
+  };
+  runs.sort((x, y) => x.a - y.a || y.b - x.b || rank(x.style) - rank(y.style));
+  let out = '';
+  let first = -1;
+  let last = -1;
+  const stack: Run[] = [];
+  let next = 0;
+  for (let i = 0; i <= chars.length; i++) {
+    while (stack.length && stack[stack.length - 1].b === i) {
+      out += marker(stack.pop()!);
+    }
+    if (i === chars.length) break;
+    while (next < runs.length && runs[next].a === i) {
+      out += marker(runs[next]);
+      stack.push(runs[next++]);
+    }
+    if (i === selected[0]) first = out.length;
+    out += text[chars[i].p];
+    if (i === selected[selected.length - 1]) last = out.length;
+  }
+  return { from, to, text: out, first, last };
 }
 
 /**
@@ -177,6 +401,8 @@ interface Segment {
   covering: StyleSpan[] | null;
   /** Every span of the style on the segment's line, to extend the wrap over a half-covered one. */
   spans: StyleSpan[];
+  /** Every span of any style on that line. */
+  all: StyleSpan[];
 }
 
 /**
@@ -222,13 +448,15 @@ function coveringSpans(
  *   touches, is taken into the wrap whole (`soir** demain` over `**Prix ce soir** demain` gives
  *   `**Prix ce soir demain**`; bold on `b` in `**a**b` gives `**ab**`).
  */
-function formatInline(
+function formatInlineOnce(
   kind: InlineKind,
   text: string,
   selStart: number,
   selEnd: number,
-  ph: FormatPlaceholders
-): FormatResult {
+  ph: FormatPlaceholders,
+  variant: Variant,
+  force: boolean
+): { result: FormatResult; direction: -1 | 0 | 1 } {
   const { marker } = INLINE[kind];
   const placeholder = ph[kind];
   const segments: Segment[] = [];
@@ -241,8 +469,18 @@ function formatInline(
       while (start < end && /\s/.test(text[start])) start++;
       while (end > start && /\s/.test(text[end - 1])) end--;
       if (end <= start) continue;
-      const spans = styleSpans(line.text, line.start, prefix, kind);
-      segments.push({ start, end, covering: coveringSpans(spans, start, end, text), spans });
+      const all = allSpans(line.text, line.start, prefix);
+      // An edge inside the MARKER of a span of another style snaps to the text beside it.
+      for (const sp of all) {
+        if (sp.kinds.includes(wantedKind(kind)) || sp.kinds.includes('code')) continue;
+        if (start > sp.start && start < sp.contentStart) start = sp.contentStart;
+        if (end > sp.contentEnd && end < sp.end) end = sp.contentEnd;
+      }
+      while (start < end && /\s/.test(text[start])) start++;
+      while (end > start && /\s/.test(text[end - 1])) end--;
+      if (end <= start) continue;
+      const spans = styleSpans(all, kind);
+      segments.push({ start, end, covering: coveringSpans(spans, start, end, text), spans, all });
     }
   }
 
@@ -253,9 +491,12 @@ function formatInline(
     const at = Math.max(selEnd, line.start + prefix);
     const start = at + marker.length;
     return {
-      text: text.slice(0, at) + marker + placeholder + marker + text.slice(at),
-      selStart: start,
-      selEnd: start + placeholder.length,
+      result: {
+        text: text.slice(0, at) + marker + placeholder + marker + text.slice(at),
+        selStart: start,
+        selEnd: start + placeholder.length,
+      },
+      direction: 0,
     };
   }
 
@@ -274,6 +515,28 @@ function formatInline(
         continue;
       }
       // Off: every span over the selection is split around it; the selected text loses the style.
+      const lo = Math.min(seg.start, ...seg.covering.map((sp) => sp.start));
+      const hi = Math.max(seg.end, ...seg.covering.map((sp) => sp.end));
+      const across = wrapAcrossStyles(
+        text,
+        seg.start,
+        seg.end,
+        lo,
+        hi,
+        kind,
+        seg.all,
+        true,
+        variant,
+        force
+      );
+      if (across) {
+        out += text.slice(cursor, across.from);
+        first = first === -1 ? out.length + across.first : first;
+        last = out.length + across.last;
+        out += across.text;
+        cursor = across.to;
+        continue;
+      }
       for (const span of seg.covering) {
         out += text.slice(cursor, span.start);
         const from = Math.max(seg.start, span.contentStart);
@@ -306,6 +569,26 @@ function formatInline(
         }
       }
     }
+    const across = wrapAcrossStyles(
+      text,
+      seg.start,
+      seg.end,
+      from,
+      to,
+      kind,
+      seg.all,
+      false,
+      variant,
+      force
+    );
+    if (across) {
+      out += text.slice(cursor, across.from);
+      first = first === -1 ? out.length + across.first : first;
+      last = out.length + across.last;
+      out += across.text;
+      cursor = across.to;
+      continue;
+    }
     const body = text.slice(from, to);
     const stripped = stripRuns(body, kind);
     const core = stripped.trim() === '' ? body : stripped;
@@ -320,9 +603,108 @@ function formatInline(
   }
   if (first === -1) {
     // Mixed selection where nothing was wrapped: the selection stays where it was.
-    return { text, selStart, selEnd };
+    return { result: { text, selStart, selEnd }, direction: 0 };
   }
-  return { text: out + text.slice(cursor), selStart: first, selEnd: last };
+  return {
+    result: { text: out + text.slice(cursor), selStart: first, selEnd: last },
+    direction: off ? -1 : 1,
+  };
+}
+
+const verifier = new Marked({ gfm: true, breaks: true });
+const STYLE_BIT = { bold: 1, italic: 2, strikethrough: 4, code: 0 } as const;
+const TAG_BIT: Record<string, number> = { strong: 1, em: 2, del: 4 };
+const ENTITY: Record<string, string> = {
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+  '&#39;': "'",
+};
+
+/** What marked draws: the styles over each visible character, and the marker characters left over. */
+function renderedStyles(md: string): { bits: number[]; literal: number } {
+  const html = verifier.parse(md, { async: false }) as string;
+  const bits: number[] = [];
+  const open: number[] = [];
+  let code = 0;
+  let literal = 0;
+  for (const m of html.matchAll(/<(\/?)([a-zA-Z][a-zA-Z0-9]*)[^>]*>|([^<]+)/g)) {
+    if (m[3] !== undefined) {
+      const chars = m[3].replace(/&(?:amp|lt|gt|quot|#39);/g, (e) => ENTITY[e]);
+      if (code === 0) literal += (chars.match(/[*_~]/g) ?? []).length;
+      const mask = open.reduce((a, b) => a | b, 0);
+      for (const ch of chars) if (!/[\s*_~]/.test(ch)) bits.push(mask);
+      continue;
+    }
+    const tag = m[2].toLowerCase();
+    if (tag === 'pre' || tag === 'code') code += m[1] ? -1 : 1;
+    else if (TAG_BIT[tag]) {
+      if (m[1]) open.pop();
+      else open.push(TAG_BIT[tag]);
+    }
+  }
+  return { bits, literal };
+}
+
+/**
+ * True when marked draws `after` as the action promised relative to `before`: no marker character
+ * left showing that was not showing already, every visible character keeps every style but the one
+ * toggled, and that style reaches more characters (`direction` 1) or fewer (-1).
+ */
+function rendersAsPromised(
+  kind: InlineKind,
+  before: string,
+  after: string,
+  direction: -1 | 1
+): boolean {
+  try {
+    const a = renderedStyles(before);
+    const b = renderedStyles(after);
+    if (b.literal > a.literal || a.bits.length !== b.bits.length) return false;
+    const mine = STYLE_BIT[kind];
+    let had = 0;
+    let has = 0;
+    for (let i = 0; i < a.bits.length; i++) {
+      if (((a.bits[i] ^ b.bits[i]) & ~mine) !== 0) return false;
+      if (a.bits[i] & mine) had++;
+      if (b.bits[i] & mine) has++;
+    }
+    return direction > 0 ? has > had : has < had;
+  } catch {
+    // A page that cannot be rendered cannot be judged: the plain result stands.
+    return true;
+  }
+}
+
+/**
+ * The inline action, as `formatInlineOnce` writes it by default, KEPT only if marked draws it as
+ * promised (`rendersAsPromised`). Otherwise the same action is written from the per-character model
+ * in every marker style until one is read right, and when none is the default stands. Markdown
+ * readers disagree on runs of stars and on a star next to `~~`, so the only judge is the renderer
+ * itself, the same way the post tolerance is judged.
+ */
+function formatInline(
+  kind: InlineKind,
+  text: string,
+  selStart: number,
+  selEnd: number,
+  ph: FormatPlaceholders
+): FormatResult {
+  const plain = formatInlineOnce(kind, text, selStart, selEnd, ph, DEFAULT_VARIANT, false);
+  const { direction } = plain;
+  if (kind === 'code' || direction === 0) return plain.result;
+  if (rendersAsPromised(kind, text, plain.result.text, direction)) return plain.result;
+  for (const variant of VARIANTS) {
+    const tried = formatInlineOnce(kind, text, selStart, selEnd, ph, variant, true);
+    if (
+      tried.direction === direction &&
+      rendersAsPromised(kind, text, tried.result.text, direction)
+    ) {
+      return tried.result;
+    }
+  }
+  return plain.result;
 }
 
 /**

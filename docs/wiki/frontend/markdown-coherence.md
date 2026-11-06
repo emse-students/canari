@@ -71,6 +71,17 @@ They DID differ: the preview drew `__x__` as an underline (the post renders it b
    (`**a** b **c**` italic, `a ** b ** c` bold, plain text, a whole bold phrase); a style NESTED in the
    selection is absorbed by the wrap and not given back (`**a *b* c**` italic twice gives
    `**a b c**`), a documented semantic of "wrap everything".
+   **A selection that crosses an edge of a span of ANOTHER style, or an un-styling that would cut
+   one** (`lm **h` over `lm **h lm**` for italic; bold off inside `**~~a b~~**`) is written from a
+   per-character model: every character keeps the styles it had, the selected ones gain or lose this
+   one, runs of one style are cut where they would cross another and reopened (`*lm **h***
+   **lm**`), whitespace stays outside, and the markers are written again nested. Selection edges
+   inside a marker run snap to the text beside it. **The renderer is the judge**: every inline action
+   is checked by rendering before and after with marked (no marker character newly showing, no
+   character losing a style but the one toggled, that style reaching more or fewer characters); when
+   the default writing fails, the same model is written in up to 36 marker styles (nesting order, `*`
+   or `_` for italic, `**` or `__` for bold) until one is read right. Why: marked reads `***a* b`
+   and a `**` after `~~` in more than one way, and `*a*b` next to another emphasis not at all.
 5. Tests. `markdownParity.test.ts` renders one corpus through both parsers and every toolbar output
    through marked ALONE (the tolerance cannot hide a bad output), asserting the selection lands on
    the text the action touched. `emphasisToleranceRule.test.ts` proves the rule from outside: hand
@@ -80,7 +91,9 @@ They DID differ: the preview drew `__x__` as an underline (the post renders it b
    makes it fail), the same four strings the third review named (`** a**a**a**`, `~~ a~~a~~a~~`,
    `****a ***a**`, `**a **a**a*`), an EXHAUSTIVE search (every string of up to 8 tokens over
    `** a *` and over `~~ a **`) judged by an independent DOM reader and offsets, the crafted-post
-   budget, the run scanner checked against a real DOM, and the preview's cost on adversarial shapes
+   budget, `composerFormatFuzz.test.ts` (seeded random lines of nested bold, italic and strike, every
+   action on whole-word selections and snapped any-range selections: 36444 and 50061 actions, no
+   literal marker and no style lost outside the selection, plus the reviewers' own examples), the run scanner checked against a real DOM, and the preview's cost on adversarial shapes
    (generous bounds, no step counter). Switching the run key back to tag and text fails the hand
    strings and both exhaustive searches.
 

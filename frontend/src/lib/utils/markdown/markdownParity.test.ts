@@ -438,7 +438,7 @@ describe('every toolbar action produces what its button promises', () => {
       type: 'bold',
       text: '***ab cd***',
       sel: [6, 8],
-      expected: '***ab*** *cd*',
+      expected: '***ab** cd*',
       selected: 'cd',
       leaves: ['bold+italic:ab', 'italic:cd'],
     },
