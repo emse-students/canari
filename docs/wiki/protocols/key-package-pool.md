@@ -788,12 +788,17 @@ that. What is still open is in
 
 **The account list peeks too, and a claim is never shared (2026-11-06, second step).** The list
 takes the same `?peek=1`: every device is judged as the single-device peek judges it, its static
-row is the package, and no one-time row is touched (`getUserDevices`, `devices.controller.ts`). The
-client has two methods, one per question:
+row is the package, and no one-time row is touched (`getUserDevices`, `devices.controller.ts`).
+**A peek refuses exactly when a claim would** (third step): a device whose static row elapsed is
+still listed while it holds a usable one-time package, because a claim would serve it one. The peek
+COUNTS those packages (`countUsableOneTimePackages`, the same `USABLE_ONE_TIME_PACKAGE` predicate the
+claim and `prekeys/count` read) and never takes one. Before this, such a device was missing from the
+roster, so the device panel could neither show nor revoke it and the pre-claim marker was written
+without it. The client has two methods, one per question:
 
 | method | request | who calls it | shared in flight |
 | --- | --- | --- | --- |
-| `listUserDevices` | `GET mls/devices/:u?peek=1`, returns no package | the settings device count (polled every 30 s), the device panel, the device-notice wiring (a device's name, the pre-claim at registration), `sendWelcome` without a device id | yes, `${userId}:devices:peek` |
+| `listUserDevices` | `GET mls/devices/:u?peek=1`, returns no package | the settings device count (polled every 30 s), the device panel, the device-notice wiring (a device's name, the pre-claim at registration) | yes, `${userId}:devices:peek` |
 | `fetchUserDevices` | `GET mls/devices/:u`, claims one package per device | group and DM creation (every device of a person, and the creator's own), `admitNewcomer` | **never** |
 
 A claim is not joined because a one-time package serves one Welcome: two adders handed one answer

@@ -73,6 +73,14 @@ import { RefusalCode } from '../utils/refusal-codes';
  */
 export type KeyPackageRefusal = 'revoked' | 'unregistered' | 'expired';
 
+/**
+ * The SQL predicate a one-time row (aliased `otkp`) must meet to be a package at all: its own
+ * `notAfter`, or one lifetime past its `createdAt` when no client dated it. ONE spelling, read by
+ * the claim, the peek and the pool count, so "usable" cannot mean three things - why the undated arm
+ * is sound is written at the claim (`resolveKeyPackagePayloadForDevice`).
+ */
+const USABLE_ONE_TIME_PACKAGE = `COALESCE(otkp."notAfter", (otkp."createdAt" AT TIME ZONE 'UTC') + interval '${KEY_PACKAGE_LIFETIME_DAYS} days') > now()`;
+
 /** Either a package to serve, or {@link KeyPackageRefusal} saying why there is none. */
 export type KeyPackageResolution = { keyPackage: string } | { refusal: KeyPackageRefusal };
 
@@ -193,10 +201,11 @@ export class DevicesController {
    * published - the device itself, before each external join - used to pop one of its own one-time
    * packages per question and throw it away: a device retrying a handful of unjoinable groups on the
    * recovery cadence drained its whole pool, and every peer was then served the static row
-   * (`docs/wiki/protocols/key-package-pool.md`). A peek touches no one-time row: it answers
-   * `revoked` and `unregistered` as a claim does, and otherwise judges the STATIC row alone - so a
-   * device whose static row elapsed answers `expired` to a peek where a claim would still hand out a
-   * fresh one-time package. Both read as published (`keyPackagePublication`), which is the question.
+   * (`docs/wiki/protocols/key-package-pool.md`). A peek claims no one-time row and refuses exactly
+   * when a claim would: `revoked`, `unregistered`, and `expired` only when the static row elapsed
+   * AND no usable one-time package is left (it COUNTS them, it never takes one). Its package is the
+   * static row, a presence answer - elapsed in that one case, so no caller may build a Welcome on
+   * it; an adder claims.
    */
   private async resolveKeyPackagePayloadForDevice(
     userId: string,
@@ -214,11 +223,19 @@ export class DevicesController {
     if (!device) return { refusal: 'unregistered' };
 
     if (mode === 'peek') {
+      // JUDGED AS THE CLAIM JUDGES IT, or the roster disagrees with the adder: a device whose static
+      // row elapsed while it still holds a usable one-time package is served one by a claim, so a
+      // peek must list it too - left out, the device panel could neither show nor revoke it, and the
+      // client's pre-claim marker was written without it. Only the elapsed case pays the count.
       const deadline = lastResortDeadline(device);
+      const usable = deadline ? await this.countUsableOneTimePackages(userId, deviceId) : 0;
+      const published = !deadline || usable > 0;
       this.logger.debug(
-        `[KP] peek ${userId}/${deviceId} - ${deadline ? 'static row elapsed' : 'published'}, no one-time package claimed`
+        `[KP] peek ${userId}/${deviceId} - ${
+          deadline ? `static row elapsed, ${usable} usable one-time package(s)` : 'published'
+        }, none claimed`
       );
-      return deadline ? { refusal: 'expired' } : { keyPackage: device.keyPackage };
+      return published ? { keyPackage: device.keyPackage } : { refusal: 'expired' };
     }
 
     const otkp = await this.dataSource.transaction(async (manager) => {
@@ -239,9 +256,7 @@ export class DevicesController {
         // refused since `minClientVersion` 1.2.7; the NULLs they wrote remain). The bound below is
         // the same arithmetic the backfill proved exact for THIS table, whose rows are inserted once
         // and never updated, so every row now answers the question whether or not a client spoke.
-        .andWhere(
-          `COALESCE(otkp."notAfter", (otkp."createdAt" AT TIME ZONE 'UTC') + interval '${KEY_PACKAGE_LIFETIME_DAYS} days') > now()`
-        )
+        .andWhere(USABLE_ONE_TIME_PACKAGE)
         // NEAREST TO EXPIRY FIRST, which is only correct now that the line above excludes the
         // elapsed ones: of the packages that can still be used, spending the shortest-lived first
         // is what stops it elapsing unused. `createdAt ASC` said the same thing by proxy and said it
@@ -605,8 +620,8 @@ export class DevicesController {
    * Unlike the user device list, there is no 30-day cutoff - only revoked / missing devices 404.
    *
    * `?peek=1` asks whether the device is published WITHOUT claiming a package (see
-   * `resolveKeyPackagePayloadForDevice`): same body, the static row as the package, and `expired`
-   * judged on the static row alone (a claim with fresh one-time packages answers a package there).
+   * `resolveKeyPackagePayloadForDevice`): same body, the static row as the package, and the same
+   * refusals a claim would answer - `expired` only once no usable one-time package is left either.
    * A server without it ignores the query and claims, which is what every client did before - so
    * the client needs no floor and nothing falls back.
    */
@@ -772,17 +787,17 @@ export class DevicesController {
     // up with a pool of fifty that every peer is refused. Expired rows are left to the reclaim
     // rather than deleted here: a read endpoint that deletes is a surprise, and the sweep says how
     // many it took.
-    const count = await this.oneTimeKeyPackageRepo
-      .createQueryBuilder('otkp')
-      .where('otkp.userId = :userId AND otkp.deviceId = :deviceId', {
-        userId: safeUserId,
-        deviceId: safeDeviceId,
-      })
-      .andWhere(
-        `COALESCE(otkp."notAfter", (otkp."createdAt" AT TIME ZONE 'UTC') + interval '${KEY_PACKAGE_LIFETIME_DAYS} days') > now()`
-      )
-      .getCount();
+    const count = await this.countUsableOneTimePackages(safeUserId, safeDeviceId);
     return { count };
+  }
+
+  /** How many of a device's one-time packages are still usable ({@link USABLE_ONE_TIME_PACKAGE}). Reads, never claims. */
+  private countUsableOneTimePackages(userId: string, deviceId: string): Promise<number> {
+    return this.oneTimeKeyPackageRepo
+      .createQueryBuilder('otkp')
+      .where('otkp.userId = :userId AND otkp.deviceId = :deviceId', { userId, deviceId })
+      .andWhere(USABLE_ONE_TIME_PACKAGE)
+      .getCount();
   }
 
   @UseGuards(HeaderAuthGuard)

@@ -366,6 +366,16 @@ export function requireGraineRuntime(what: string): GraineRuntime {
   return runtime;
 }
 
+/**
+ * True while `rt` is still the installed wiring. Each install is a fresh object
+ * ({@link setGraineRuntime} copies it), so a work loop that took the runtime at its start can tell
+ * that the session it began for has ended or been replaced - and must stop, rather than read the
+ * NEXT session's store and key on its next step.
+ */
+export function isCurrentGraineRuntime(rt: GraineRuntime): boolean {
+  return runtime === rt;
+}
+
 /** True when a session is wired, for callers that must degrade rather than throw. */
 export function isGraineReady(): boolean {
   return runtime !== null;

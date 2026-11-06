@@ -13,6 +13,7 @@ import {
   cachedGraineSession,
   awaitSalonListing,
   isCommunityListed,
+  isCurrentGraineRuntime,
   knownHistoryVisibility,
   rawChannelId,
   requireGraineRuntime,
@@ -1121,6 +1122,10 @@ async function absorbSeedBundle(
     }
     return;
   }
+  // THE SESSION THIS BUNDLE IS ABSORBED FOR, taken once. Each seed below reads the runtime when it
+  // starts, so a sign-out (or an account switch) between two seeds would otherwise store the rest
+  // of one account's bundle in the NEXT account's store, under its key. Checked before every seed.
+  const absorbingFor = requireGraineRuntime('cannot absorb a seed bundle');
   // After the wait, never before it: a held bundle re-enters here, and its numbering is said once.
   const page = pageNote(frame, bundle);
   const repaired = new Set<string>();
@@ -1138,7 +1143,14 @@ async function absorbSeedBundle(
   let absorbed = 0;
   let alreadyHeld = 0;
   let endorsedByServer = 0;
-  for (const seed of toStore) {
+  for (const [i, seed] of toStore.entries()) {
+    if (!isCurrentGraineRuntime(absorbingFor)) {
+      console.warn(
+        `[GRAINE] the session ended while a bundle from ${frame.sender} was being absorbed in community ` +
+          `${frame.workspaceId.slice(0, 8)} - ${toStore.length - i} of its ${toStore.length} seed(s) left unstored`
+      );
+      return;
+    }
     const { outcome, endorsedBy } = await storeIncomingSeed(
       frame.workspaceId,
       frame.sender,
@@ -1186,7 +1198,7 @@ async function absorbSeedBundle(
   // here, which is what an incomplete history answer is judged on at the next start (section 4.4).
   // A bundle answering anything but this device's history ask is ignored there.
   noteHistoryPage(
-    requireGraineRuntime('cannot record a history page').userId,
+    absorbingFor.userId,
     frame.workspaceId,
     String(bundle.requestId ?? ''),
     frame.sender,

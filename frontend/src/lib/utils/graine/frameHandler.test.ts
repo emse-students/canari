@@ -2003,6 +2003,37 @@ describe('a bundle answering our own request (WP-33)', () => {
     debug.mockRestore();
   });
 
+  // A bundle in flight across a session change wrote its remaining seeds into the NEXT session's
+  // store, since each seed reads the runtime when it starts. The suite met it as a flake: a test
+  // outliving its body under load landed its `s-19` in a later test's `saved`.
+  it('stops absorbing when the session it began for ends: no seed reaches the next one', async () => {
+    const next = fakeStorage();
+    const first = fakeStorage();
+    const saveFirst = first.storage.saveGraineSession.bind(first.storage);
+    first.storage.saveGraineSession = async (s, key) => {
+      await saveFirst(s, key);
+      // The session changes right after the first seed is stored.
+      wire(next.storage);
+    };
+    wire(first.storage);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const seeds = [];
+    for (let i = 0; i < 3; i++) seeds.push(await v2SeedFor(`chan-${i}`, `s-${i}`, 0));
+
+    await handleDistributionFrame({
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-1',
+      sender: 'bob',
+      plaintext: encodeAppMessage(mkGraineBundle({ workspaceId: 'ws-1', requestId: 'r-1', seeds })),
+    });
+
+    expect(first.saved.map((s) => s.sessionId)).toEqual(['s-0']);
+    expect(next.saved).toEqual([]);
+    expect(warn.mock.calls.flat().join(' ')).toContain('2 of its 3 seed(s) left unstored');
+    warn.mockRestore();
+  });
+
   it("names a seed checked against the server's published keys, in the stored-seed line", async () => {
     const { storage, saved } = fakeStorage();
     wire(storage);

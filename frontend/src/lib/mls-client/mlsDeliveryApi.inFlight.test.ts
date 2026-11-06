@@ -100,32 +100,6 @@ describe('the account-level reads of a boot (WP-W4)', () => {
     expect(urls.filter((u) => u.endsWith('/api/mls/devices/u1'))).toHaveLength(1);
   });
 
-  it('a Welcome sent to every device of a person reads their ids with a peek, claiming nothing', async () => {
-    const urls: string[] = [];
-    const api = new MlsDeliveryApi({
-      historyUrl: 'https://test.local',
-      getToken: async () => 'tok',
-      fetchImpl: async (input) => {
-        urls.push(String(input));
-        const body = String(input).includes('/api/mls/devices/')
-          ? [
-              { deviceId: 'd1', keyPackage: 'AQID' },
-              { deviceId: 'd2', keyPackage: 'AQID' },
-            ]
-          : {};
-        return new Response(JSON.stringify(body), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      },
-    });
-    await api.sendWelcome(new Uint8Array([1]), 'bob', 'g1');
-    expect(urls.filter((u) => u.includes('/api/mls/devices/'))).toEqual([
-      'https://test.local/api/mls/devices/bob?peek=1',
-    ]);
-    expect(urls.filter((u) => u.endsWith('/api/mls/welcome'))).toHaveLength(2);
-  });
-
   it('a roster entry carries no KeyPackage, because none was claimed for it', async () => {
     const { api } = counting(
       JSON.stringify([{ deviceId: 'd1', keyPackage: 'AQID', deviceName: 'Mi 9T', deviceOs: 7 }])
