@@ -4,6 +4,7 @@
   import {
     bootSessionBlocks,
     bootSessionPhase,
+    bootMaintenanceMessage,
     bootUnreachableCause,
     noteSessionKnownElsewhere,
     retryBootSession,
@@ -33,7 +34,8 @@
         return {
           icon: Wrench,
           title: m.platform_gate_maintenance_title(),
-          hint: m.platform_gate_maintenance_default_msg(),
+          // The operator's own text when one was set, as the platform gate shows it.
+          hint: bootMaintenanceMessage() || m.platform_gate_maintenance_default_msg(),
         };
       case 'server':
         return {

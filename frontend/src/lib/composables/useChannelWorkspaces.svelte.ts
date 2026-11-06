@@ -8,7 +8,11 @@ import {
 } from '$lib/utils/chat/salonUnread';
 import { flushSalonReadMarks } from '$lib/utils/chat/salonReadMarkQueue';
 import { ChannelApiError, ChannelService } from '$lib/services/ChannelService';
-import { RefreshFailedError, SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
+import {
+  SessionExpiredError,
+  SignOutInProgressError,
+  TransientAnswerError,
+} from '$lib/stores/auth';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import type { IMlsService } from '$lib/mlsService';
@@ -351,9 +355,10 @@ export function useChannelWorkspaces() {
   function isRetryableLoadError(error: unknown): boolean {
     // The server answered. Only its own 5xx is worth asking again; a 4xx is a decision about us.
     if (error instanceof ApiRefusalError) return error.status >= 500;
-    // The refresh endpoint answered something that is not a verdict on the session - transient by
-    // construction, since 401 and 403 leave as `SessionExpiredError` instead.
-    if (error instanceof RefreshFailedError) return true;
+    // The refresh endpoint answered something that is NOT A VERDICT (a 5xx, 408, 429, an edge's
+    // answer): typed at its throw as `TransientAnswerError`. Its base, a plain `RefreshFailedError`,
+    // is the app's own 4xx refusal of the refresh - a verdict, asked again for nothing.
+    if (error instanceof TransientAnswerError) return true;
     // NOBODY ANSWERED: the one predicate, by type (`transportFailure.ts`). It is what reads Tauri's
     // `error sending request for url ...` as the network failure it is - that bare string used to
     // fall through every test here and give up as `non-retryable` (Mi 9T, `v1.2.7-alpha.1`).

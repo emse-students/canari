@@ -17,7 +17,7 @@ import {
 } from './mlsDeliveryApi';
 import { TokenAccountChangedError } from '$lib/utils/renewOn401';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
-import { RefreshFailedError, SessionExpiredError } from '$lib/stores/auth';
+import { RefreshFailedError, SessionExpiredError, TransientAnswerError } from '$lib/stores/auth';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 
 const ACCEPTED = { accepted: true, newEpoch: 2 };
@@ -100,7 +100,9 @@ describe('submitCommit answered 401', () => {
   // never as "no answer", and it keeps what the renewal threw.
   it.each([
     ['a refresh nobody answered', new TransportFailureError(new TypeError('Failed to fetch'))],
-    ['a refresh answered 502', new RefreshFailedError(502)],
+    ['a refresh answered 502', new TransientAnswerError(502)],
+    // The BASE too: the guard's 401 proved the request did nothing, whatever the refresh answered.
+    ["the app's own 404 on the refresh", new RefreshFailedError(404)],
   ])(
     'types %s after a 401 as a refusal of this request - never a session verdict',
     async (_n, failure) => {
