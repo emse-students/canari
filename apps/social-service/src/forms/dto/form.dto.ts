@@ -10,6 +10,7 @@ import {
   IsOptional,
   IsString,
   Max,
+  Matches,
   MaxLength,
   Min,
   ValidateNested,
@@ -23,18 +24,21 @@ import {
   FORM_ITEM_ID_MAX_LENGTH,
 } from '../form-files.service';
 import { SUPPORTED_QUESTION_TYPES } from './question-types';
+import { QUESTION_IMAGE_ALT_MAX_LENGTH, QUESTION_IMAGE_URL_RE } from '../form-item-images.service';
 import {
   ANSWER_MAX_SELECTIONS,
   ANSWER_MAX_TEXT_LENGTH,
   FORM_MAX_QUESTIONS,
   GRID_MAX_ROWS,
   isAcceptedAnswerValue,
+  PRODUCT_GRID_MAX_CELLS,
   type FormAnswerValue,
 } from '../answer-bounds';
 
 /**
  * Validates that `answers` is a shallow Record of at most {@link FORM_MAX_QUESTIONS} keys whose
- * values are strings, string arrays, numbers, or a grid's flat row map - all within the bounds of
+ * values are strings, string arrays, numbers, a survey grid's flat row map or a priced grid's
+ * cell quantities - all within the bounds of
  * `libs/contracts/form-answers.json` (`isAcceptedAnswerValue`). A grid's rows and columns are judged
  * against the form by `submit`; this checks only the shape and the size.
  */
@@ -53,7 +57,7 @@ export function IsValidAnswers(options?: ValidationOptions) {
           return entries.every(([, v]) => isAcceptedAnswerValue(v));
         },
         defaultMessage() {
-          return `answers must contain at most ${FORM_MAX_QUESTIONS} keys; each value must be a string (max ${ANSWER_MAX_TEXT_LENGTH} chars), an array of strings (max ${ANSWER_MAX_SELECTIONS} items), a number, or a grid of at most ${GRID_MAX_ROWS} rows`;
+          return `answers must contain at most ${FORM_MAX_QUESTIONS} keys; each value must be a string (max ${ANSWER_MAX_TEXT_LENGTH} chars), an array of strings (max ${ANSWER_MAX_SELECTIONS} items), a number, a survey grid of at most ${GRID_MAX_ROWS} rows, or a priced grid of at most ${PRODUCT_GRID_MAX_CELLS} cells`;
         },
       },
     });
@@ -135,10 +139,24 @@ export class FormItemDto {
   @IsOptional()
   description?: string;
 
-  /** Optional image URL displayed above the input field in the fill page. */
+  /**
+   * Optional image shown under the question's label and help: the public URL the item-image upload
+   * answered (`/api/media/public/<uuid>`) and nothing else - never an outside address a guest's
+   * browser would be sent to. An empty string is no image. WHICH ids a form may cite is the
+   * service's check (`FormItemImagesService.claimForSave`).
+   */
   @IsString()
   @IsOptional()
+  @Matches(new RegExp(`${QUESTION_IMAGE_URL_RE.source}|^$`), {
+    message: 'imageUrl must be an image uploaded for this form',
+  })
   imageUrl?: string;
+
+  /** The image's text alternative, read by a screen reader; absent: the question's label is used. */
+  @IsString()
+  @IsOptional()
+  @MaxLength(QUESTION_IMAGE_ALT_MAX_LENGTH)
+  imageAlt?: string;
 
   /**
    * Legacy conditional display: the id of the question this one depends on. Still accepted and
@@ -165,6 +183,14 @@ export class FormItemDto {
    */
   @IsOptional()
   showIf?: unknown;
+
+  /**
+   * A priced grid's definition (`type: 'product_grid'`): rows, columns, max per cell, closed cells,
+   * prices. Validated structurally in the service (`normaliseProductGridItems`, the shared rule in
+   * `product-grid-contract.ts`) like `showIf`, and stored normalised; ignored on any other type.
+   */
+  @IsOptional()
+  productGrid?: unknown;
 }
 
 export class CreateFormDto {

@@ -1,9 +1,11 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import FormBuilder from './FormBuilder.svelte';
   import FormSection from './FormSection.svelte';
   import type { MembershipTier } from '$lib/associations/api';
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
-  import { QUESTION_TYPES } from '$lib/forms/questionTypes';
+  import { AUTHORABLE_QUESTION_TYPES } from '$lib/forms/questionTypes';
+  import { duplicateQuestion } from '$lib/forms/questionDuplicate';
   import { ListChecks, Plus } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { draggableCard } from '$lib/actions/draggableCard';
@@ -37,6 +39,11 @@
     imageUploadFn?: (file: File) => Promise<string>;
     /** What a FILE question says it does, in the editor; a booking space passes its own. */
     fileHint?: string;
+    /**
+     * A question to open: the page sets a NEW object each time a save refuses because of that
+     * question, so asking twice for the same one still opens it again.
+     */
+    reveal?: { id: string } | null;
   }
 
   let {
@@ -47,11 +54,25 @@
     formations = [],
     imageUploadFn,
     fileHint,
+    reveal = null,
   }: Props = $props();
 
   let dragIndex = $state(-1);
   let dropIndex = $state(-1);
   let showTypePicker = $state(false);
+  let listEl = $state<HTMLElement | null>(null);
+  let addButtonEl = $state<HTMLButtonElement | null>(null);
+  /** The one question being edited; the others are a single line each. */
+  let expandedId = $state<string | null>(null);
+  /** The copy of a question opens with its title selected. */
+  let selectTitleId = $state<string | null>(null);
+
+  $effect(() => {
+    if (reveal) {
+      expandedId = reveal.id;
+      selectTitleId = null;
+    }
+  });
 
   const countLabel = $derived(
     items.length === 1
@@ -60,10 +81,13 @@
   );
 
   function addItem(type: string = 'short_text') {
+    const id = crypto.randomUUID();
+    expandedId = id;
+    selectTitleId = null;
     items = [
       ...items,
       {
-        id: crypto.randomUUID(),
+        id,
         label: '',
         required: false,
         type,
@@ -74,8 +98,24 @@
     showTypePicker = false;
   }
 
-  function removeItem(index: number) {
+  function duplicateItem(index: number) {
+    const result = duplicateQuestion(items, index);
+    if (!result) return;
+    items = result.items;
+    selectTitleId = result.copyId;
+    expandedId = result.copyId;
+  }
+
+  /**
+   * Removes a question and puts focus where the person is still working: the row that took its
+   * place, else the one before it, else the "add a question" button - never the page.
+   */
+  async function removeItem(index: number) {
+    if (items[index]?.id === expandedId) expandedId = null;
     items = items.filter((_, i) => i !== index);
+    await tick();
+    const rows = listEl?.querySelectorAll<HTMLElement>('[data-row-button]');
+    (rows?.[index] ?? rows?.[index - 1] ?? addButtonEl)?.focus();
   }
 
   function moveItem(index: number, direction: 'up' | 'down') {
@@ -110,7 +150,7 @@
 </script>
 
 <FormSection title={m.form_section_questions()} icon={ListChecks} badge={countLabel} dense>
-  <div class="space-y-3 sm:space-y-4">
+  <div class="space-y-2" bind:this={listEl}>
     {#each items as _item, i (_item.id)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
@@ -140,6 +180,16 @@
           {formations}
           {imageUploadFn}
           {fileHint}
+          expanded={expandedId === _item.id}
+          selectTitleOnOpen={selectTitleId === _item.id}
+          onExpand={() => {
+            selectTitleId = null;
+            expandedId = _item.id;
+          }}
+          onCollapse={() => {
+            if (expandedId === _item.id) expandedId = null;
+          }}
+          onDuplicate={() => duplicateItem(i)}
         />
       </div>
     {/each}
@@ -147,6 +197,7 @@
 
   <div class="relative">
     <button
+      bind:this={addButtonEl}
       type="button"
       onclick={() => (showTypePicker = !showTypePicker)}
       class="border-cn-border text-text-muted hover:border-cn-yellow hover:text-cn-dark hover:bg-cn-yellow/5 flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed py-3 text-sm font-bold transition-all"
@@ -169,7 +220,7 @@
           {m.form_question_type_picker_label()}
         </p>
         <div class="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-          {#each QUESTION_TYPES as qtype (qtype.value)}
+          {#each AUTHORABLE_QUESTION_TYPES as qtype (qtype.value)}
             {@const Icon = qtype.Icon}
             <button
               type="button"

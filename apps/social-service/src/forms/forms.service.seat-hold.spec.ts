@@ -395,7 +395,8 @@ describe('FormsService - the seat a pending payment holds', () => {
       {} as any,
       // FormFilesService: these forms ask for no file, so nothing here reaches it.
       {} as any,
-      organiserAlert as any
+      organiserAlert as any,
+      {} as any
     );
     return {
       service,

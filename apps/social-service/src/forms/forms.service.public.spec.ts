@@ -75,7 +75,8 @@ describe('FormsService - public forms', () => {
       { count: jest.fn() } as any,
       {} as any,
       // FormOrganiserAlertService: switched off, as it ships.
-      { enabled: () => false } as any
+      { enabled: () => false } as any,
+      {} as any
     );
     return { service, manager, saved, formRepo, submissionRepo, pricingFacts };
   }
@@ -104,6 +105,29 @@ describe('FormsService - public forms', () => {
       expect(form.formFull).toBe(false);
     });
 
+    // A guest reads a question's image with no session: the item carries the PUBLIC route, which
+    // needs no token (unlike an avatar, signed since phase 1), and its alt text.
+    it("serves a question's image as its public media route, readable with no session", async () => {
+      const imageUrl = '/api/media/public/11111111-1111-4111-8111-111111111111';
+      const { service } = makeService({
+        form: baseForm({
+          items: [
+            {
+              id: 'q1',
+              label: 'Plat',
+              required: true,
+              type: 'short_text',
+              imageUrl,
+              imageAlt: 'Menu',
+            },
+          ],
+        }),
+      });
+      const [item] = (await service.getPublic('f1')).items;
+      expect(item).toMatchObject({ imageUrl, imageAlt: 'Menu' });
+      expect(item.imageUrl).toMatch(/^\/api\/media\/public\/[0-9a-f-]{36}$/);
+    });
+
     // An allowlist: a guest is served exactly these keys. Control: answer `{ ...form, formFull }`
     // and this fails on `ownerId`, `associationId` and every other stored column.
     it('serves exactly the allowlisted fields, the price included', async () => {
@@ -126,6 +150,7 @@ describe('FormsService - public forms', () => {
           'opensAt',
           'paymentsPaused',
           'pricing',
+          'productGridPrices',
           'title',
         ].sort()
       );

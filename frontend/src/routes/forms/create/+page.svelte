@@ -9,14 +9,20 @@
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import {
     activePaymentProvider,
     loadActivePaymentProvider,
   } from '$lib/associations/activePaymentProvider.svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { createForm, type AudienceCondition, type CreateFormPayload } from '$lib/forms/api';
+  import {
+    createForm,
+    uploadFormItemImage,
+    type AudienceCondition,
+    type CreateFormPayload,
+  } from '$lib/forms/api';
+  import { questionImageRefusalMessage } from '$lib/forms/questionImage';
   import { POST_NEW_FORM_ID_KEY, loadPostComposerDraft } from '$lib/posts/postComposerDraft';
   import {
     canAssociationReceiveFormPayments,
@@ -47,6 +53,7 @@
   import { formSummary } from '$lib/forms/summary';
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { firstEmptyCondition } from '$lib/forms/audience';
+  import { firstEmptyConditionQuestion, firstItemsFaultQuestion } from '$lib/forms/questionFault';
   import { toFormItemsPayload } from '$lib/forms/itemsPayload';
   import {
     FILE_RETENTION_DEFAULT_DAYS,
@@ -207,6 +214,18 @@
     })
   );
 
+  /** A save refused on a question opens that question: a folded card hides its own error. */
+  let reveal = $state<{ id: string } | null>(null);
+  function revealQuestion(id: string | null) {
+    if (id) reveal = { id };
+  }
+  /** The banner sits at the top: a refusal about settings must be seen from the save bar. */
+  let errorBanner = $state<HTMLElement | null>(null);
+  async function scrollToError() {
+    await tick();
+    errorBanner?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+
   async function handleSave() {
     if (titleMissing) {
       error = m.form_error_title_required();
@@ -219,6 +238,7 @@
     const itemsProblem = formItemsProblem(items);
     if (itemsProblem) {
       error = itemsProblem;
+      revealQuestion(firstItemsFaultQuestion(items));
       return;
     }
     // The server's refusal, said first and in the reader's language: the same rule, whichever
@@ -234,11 +254,15 @@
     }
     const fileProblem = fileQuestionProblem({ items, fileRetentionDays, submitCondition });
     if (fileProblem) {
+      // A form-level refusal (public, anonymous, retention): no question is at fault, the
+      // settings are, so the banner is brought into view instead of opening a card.
       error = fileProblem;
+      await scrollToError();
       return;
     }
     const empty = firstEmptyCondition(submitCondition, items);
     if (empty) {
+      revealQuestion(firstEmptyConditionQuestion(items));
       error =
         empty.scope === 'form'
           ? m.form_error_audience_empty()
@@ -290,6 +314,7 @@
       }
     } catch (e: any) {
       error =
+        questionImageRefusalMessage(e) ??
         formCodeMessage(refusalCode(e)) ??
         conflictCodeMessage(refusalCode(e)) ??
         providerRefusalMessage(e) ??
@@ -310,6 +335,7 @@
 
   {#if error}
     <div
+      bind:this={errorBanner}
       class="bg-red-err/10 border-red-err/30 text-red-err mb-6 flex items-center gap-2 rounded-2xl border-2 px-4 py-3 text-sm font-medium"
     >
       <CircleAlert size={18} class="shrink-0" />
@@ -373,7 +399,15 @@
 
   <!-- 3. Questions -->
   <div use:guideAnchor={'forms.create.questions'}>
-    <FormQuestionsSection bind:items {requiresPayment} {gridQuestionIds} {tiers} {formations} />
+    <FormQuestionsSection
+      bind:items
+      {requiresPayment}
+      {gridQuestionIds}
+      {tiers}
+      {formations}
+      {reveal}
+      imageUploadFn={async (file) => (await uploadFormItemImage(null, file)).imageUrl}
+    />
   </div>
 
   <!-- 4. Rarely wanted, and folded away -->

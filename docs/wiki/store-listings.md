@@ -41,11 +41,13 @@ description named no platform.
 Stale against `store/whats-new.txt` (v1.1.2) and `CHANGELOG`:
 
 1. **"Stripe" is false, and so is any payment promise (2026-10-22).** Stripe was removed (#1589)
-   and Lydia, the only provider left, is NOT live in production (`payment_provider` is `disabled`,
-   [backlog WP-LYDIA-1](backlog.md)). A listing may therefore name no provider AND promise no
+   and Lydia, the only provider left, was NOT live in production when this was written; it is live
+   since 2026-11-06 ([backlog WP-LYDIA-1](backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end)). The "name no provider"
+   rule still holds (a store text never names a processor), and the payment promise stays out until
+   the lead decides it is true for users. A listing may therefore name no provider AND promise no
    payment, shop or ticketing flow that rests on one: `FORBIDDEN` in `tools/store-listings/listings.mjs`
    now refuses "paiement", "payment", "billetterie" and "ticketing". The shop bullet is OUT of
-   both texts until payments are live; it comes back in the same week as that stable.
+   both texts until that decision; it comes back in the same week as that stable.
 2. **"audio calls" is false.** Calling is held off (`CALLS_ENABLED = false`). It becomes true with
    the stable that flips `CALLS_COMPILED`, AUDIO 1:1 only (owner, 2026-10-21): the bullet then says
    audio calls and never video, and changes in the same week as that stable, with the store answers

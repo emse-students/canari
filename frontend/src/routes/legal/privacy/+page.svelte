@@ -235,7 +235,9 @@
           le paiement avait apporté (la cotisation, la place du formulaire), sauf une recharge du
           Cercle, dont le solde ne change pas. Aucune donnée bancaire n'est reçue ni conservée par
           Canari. Les fichiers déposés dans un formulaire (par exemple un CV) sont lisibles par
-          l'association qui l'a créé.
+          l'association qui l'a créé. Une image ajoutée à une question par l'auteur d'un formulaire
+          est publique : quiconque a le lien du formulaire peut la voir, sans compte. Elle est
+          effacée quand plus aucun formulaire ne l'affiche.
         </dd>
       </div>
       <div>

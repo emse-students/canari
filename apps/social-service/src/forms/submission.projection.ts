@@ -18,6 +18,8 @@ const SUBMITTER_FIELDS = [
   'id',
   'formId',
   'answers',
+  // What each ordered grid cell was charged (migration 137): the payer's own receipt, line by line.
+  'lines',
   'totalPaid',
   'paymentStatus',
   'paymentMethod',

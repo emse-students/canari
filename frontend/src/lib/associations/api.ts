@@ -2031,6 +2031,8 @@ export interface AssociationPurchase {
   source: 'form' | 'product';
   productId: string | null;
   formId: string | null;
+  /** The form answer this payment paid for; null for a boutique purchase (and older servers). */
+  submissionId?: string | null;
   productName: string;
   amountCents: number;
   /** `stripe` is the historic value of rows written before the processor left: it means online. */
