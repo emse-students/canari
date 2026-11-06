@@ -54,7 +54,8 @@ describe('FormsService.exportSubmissions', () => {
       {} as any,
       { deletedFileIds: jest.fn(() => Promise.resolve(new Set(opts.deletedFiles ?? []))) } as any,
       // FormOrganiserAlertService: switched off, as it ships.
-      { enabled: () => false } as any
+      { enabled: () => false } as any,
+      {} as any
     );
   }
 

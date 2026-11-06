@@ -37,8 +37,10 @@ export interface FormItem {
     minLabel?: string;
     maxLabel?: string;
   };
-  /** Optional image URL displayed above the input field. */
+  /** Optional image shown under the label and help: `/api/media/public/<id>`, from `uploadFormItemImage`. */
   imageUrl?: string;
+  /** The image's text alternative; absent: `questionImageAlt` names the question. */
+  imageAlt?: string;
   /** ID of the question this question depends on (branching logic). */
   dependsOn?: string;
   /** Option id that must be selected in the dependsOn question to show this one. */
@@ -163,6 +165,7 @@ import type { XhrUploadOptions } from '$lib/utils/uploadXhr';
 import { amountBoundsOf, SocialApiError } from '$lib/associations/api';
 import { Log } from '$lib/utils/Log';
 import { assertWithinRequestBudget } from '$lib/utils/mediaRequestLimits';
+import { prepareQuestionImage } from './questionImage';
 
 /**
  * A refused call, typed at the THROW: the status always, the server's stable `code` when the body
@@ -252,18 +255,25 @@ export async function uploadFormImage(id: string, file: File): Promise<Form> {
   return (await res.json()) as Form;
 }
 
-/** Uploads a public image for use in a form question. Returns `{ imageUrl }`. */
+/**
+ * Uploads the image of a form question, resized with the post preset first
+ * (`prepareQuestionImage`). `formId` null: the form is not created yet (the create page) - the
+ * server records the image as the caller's, and the form's first save binds it. Returns
+ * `{ imageUrl }`, the one value the question may store.
+ */
 export async function uploadFormItemImage(
-  formId: string,
+  formId: string | null,
   file: File
 ): Promise<{ imageUrl: string }> {
+  const prepared = await prepareQuestionImage(file);
   const token = await getToken().catch(() => '');
   const fd = new FormData();
-  fd.append('file', file);
+  fd.append('file', prepared);
   assertWithinRequestBudget(fd);
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch(`${socialUrl()}/api/forms/${formId}/items/image`, {
+  const route = formId === null ? 'items/image' : `${formId}/items/image`;
+  const res = await fetch(`${socialUrl()}/api/forms/${route}`, {
     method: 'POST',
     headers,
     body: fd,

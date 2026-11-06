@@ -9,6 +9,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository, type EntityManager } from 'typeorm';
@@ -133,6 +134,11 @@ import {
 } from '../common/core-payment-error';
 import { PAYMENTS_DISABLED_MESSAGE } from '../associations/payment-delegation.util';
 import { FormOrganiserAlertService } from './organiser-alert.service';
+import {
+  FormItemImagesService,
+  questionImageIds,
+  questionImageUrl,
+} from './form-item-images.service';
 import {
   isProductGridItem,
   normaliseProductGridItems,
@@ -271,7 +277,8 @@ export class FormsService {
     private readonly pricingFacts: PricingFactsService,
     @InjectRepository(FormRespondent) private readonly respondentRepo: Repository<FormRespondent>,
     private readonly formFiles: FormFilesService,
-    private readonly organiserAlert: FormOrganiserAlertService
+    private readonly organiserAlert: FormOrganiserAlertService,
+    private readonly formItemImages: FormItemImagesService
   ) {}
 
   /**
@@ -675,7 +682,15 @@ export class FormsService {
         })),
       })),
     });
-    return this.formRepo.save(form);
+    // A question citing an image: the citation is checked and bound in the transaction that stores
+    // the form, under each image's lock (`FormItemImagesService`). None cited, nothing to claim.
+    if (questionImageIds(form.items).length === 0) return this.formRepo.save(form);
+    return this.formRepo.manager.transaction(async (m) => {
+      const ids = await this.formItemImages.claimForSave(m, form.items, null, input.ownerId!);
+      const saved = await m.save(Form, form);
+      await this.formItemImages.bindToForm(m, ids, saved.id);
+      return saved;
+    });
   }
 
   /**
@@ -945,6 +960,7 @@ export class FormsService {
       anonymous: _anonymous,
       ...rest
     } = input;
+    const citedBefore = questionImageIds(form.items);
     Object.assign(form, {
       ...rest,
       currency: 'eur',
@@ -959,7 +975,17 @@ export class FormsService {
         })),
       })),
     });
-    return this.formRepo.save(form);
+    const citedAfter = questionImageIds(form.items);
+    if (citedBefore.length === 0 && citedAfter.length === 0) return this.formRepo.save(form);
+    const saved = await this.formRepo.manager.transaction(async (m) => {
+      await this.formItemImages.claimForSave(m, form.items, formId, userId);
+      return m.save(Form, form);
+    });
+    // Replaced or removed: released once no question of any form cites it (a duplicated question
+    // still does). After the commit, so the release re-reads the citations this save wrote.
+    const dropped = citedBefore.filter((id) => !citedAfter.includes(id));
+    if (dropped.length > 0) await this.formItemImages.releaseUncited(dropped, 'question edited');
+    return saved;
   }
 
   /**
@@ -971,6 +997,9 @@ export class FormsService {
   async delete(formId: string, userId: string, isGlobalAdmin: boolean) {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
     await retireForms(this.formRepo.manager, { formId: form.id });
+    // A removed form cites nothing any more; an archived one still does, and keeps its images.
+    const images = questionImageIds(form.items);
+    if (images.length > 0) await this.formItemImages.releaseUncited(images, 'form deleted');
     return { ok: true };
   }
 
@@ -3230,20 +3259,38 @@ export class FormsService {
     return this.formRepo.findOne({ where: { id: formId } });
   }
 
-  /** Uploads a public image for use in a form question (not tied to the form banner). */
+  /**
+   * Uploads the image of a form question (not the banner): a public asset at the 1600 px `content`
+   * bound, recorded in `form_item_images` for `formId` - or unbound when null, from the create page,
+   * where the form does not exist yet and its first save binds it. Only a manager of an existing
+   * form may upload for it. Returns `{ imageUrl }`, the one value the question may store.
+   */
   async uploadItemImage(
-    formId: string,
+    formId: string | null,
     file: { buffer: Buffer; mimetype: string; size: number },
     callerId: string,
     isGlobalAdmin: boolean,
     authorization: string | undefined
   ): Promise<{ imageUrl: string }> {
-    await this.assertFormManager(formId, callerId, isGlobalAdmin);
+    if (formId !== null) await this.assertFormManager(formId, callerId, isGlobalAdmin);
     if (!authorization?.startsWith('Bearer ')) {
       throw new BadRequestException('Missing authorization header');
     }
-    const mediaId = await this.associationsService.uploadPublicImage(file, authorization);
-    return { imageUrl: `/api/media/public/${mediaId}` };
+    const mediaId = await this.associationsService.uploadPublicImage(
+      file,
+      authorization,
+      'content'
+    );
+    try {
+      await this.formItemImages.record(mediaId, formId, callerId);
+    } catch (err) {
+      this.logger.error(
+        `[FORM_IMAGE] upload media=${mediaId.slice(0, 8)} stored but its row was not written - deleting it: ${err instanceof Error ? err.message : String(err)}`
+      );
+      await this.formItemImages.deleteUnrecorded(mediaId);
+      throw new ServiceUnavailableException({ code: 'try-again' });
+    }
+    return { imageUrl: questionImageUrl(mediaId) };
   }
 
   /** Removes the banner image from a form. */

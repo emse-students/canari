@@ -10,6 +10,7 @@ import {
   IsOptional,
   IsString,
   Max,
+  Matches,
   MaxLength,
   Min,
   ValidateNested,
@@ -23,6 +24,7 @@ import {
   FORM_ITEM_ID_MAX_LENGTH,
 } from '../form-files.service';
 import { SUPPORTED_QUESTION_TYPES } from './question-types';
+import { QUESTION_IMAGE_ALT_MAX_LENGTH, QUESTION_IMAGE_URL_RE } from '../form-item-images.service';
 import {
   ANSWER_MAX_SELECTIONS,
   ANSWER_MAX_TEXT_LENGTH,
@@ -137,10 +139,24 @@ export class FormItemDto {
   @IsOptional()
   description?: string;
 
-  /** Optional image URL displayed above the input field in the fill page. */
+  /**
+   * Optional image shown under the question's label and help: the public URL the item-image upload
+   * answered (`/api/media/public/<uuid>`) and nothing else - never an outside address a guest's
+   * browser would be sent to. An empty string is no image. WHICH ids a form may cite is the
+   * service's check (`FormItemImagesService.claimForSave`).
+   */
   @IsString()
   @IsOptional()
+  @Matches(new RegExp(`${QUESTION_IMAGE_URL_RE.source}|^$`), {
+    message: 'imageUrl must be an image uploaded for this form',
+  })
   imageUrl?: string;
+
+  /** The image's text alternative, read by a screen reader; absent: the question's label is used. */
+  @IsString()
+  @IsOptional()
+  @MaxLength(QUESTION_IMAGE_ALT_MAX_LENGTH)
+  imageAlt?: string;
 
   /**
    * Legacy conditional display: the id of the question this one depends on. Still accepted and

@@ -76,6 +76,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // part of the erasure deletes the blob (class `form-file`, owned by the uploader).
   'form_files.uploaderId': { action: 'delete' },
   'form_files.fileName': { action: 'delete', via: 'uploaderId' },
+  // A form question's image (migration 136) belongs to its form, not to whoever uploaded it: the row
+  // is the licence of its release, so it stays and only the uploader becomes `[deleted]`. An unbound
+  // one (never saved) is then citable by nobody and goes with the hourly reconciliation.
+  'form_item_images.uploaderId': { action: 'anonymise' },
   // A republication request addressed to the account (D38b): it is about the account's own post,
   // which goes with it, so the request goes too.
   'proposals.toUserId': { action: 'delete' },
@@ -590,6 +594,10 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     sql: `UPDATE submissions SET "paymentSettledBy" = $2 WHERE "paymentSettledBy" = $1`,
   },
   { label: 'forms', sql: `UPDATE forms SET "ownerId" = $2 WHERE "ownerId" = $1` },
+  {
+    label: 'form_item_images',
+    sql: `UPDATE form_item_images SET "uploaderId" = $2 WHERE "uploaderId" = $1`,
+  },
   // Unique per row: `idx_partnership_codes_card_claimant` is UNIQUE (cardId, claimedByUserId) WHERE
   // claimedByUserId IS NOT NULL, so two erased accounts on one card would collide on a constant -
   // and the transaction, the job and the person's sign-in with it, would fail for ever.

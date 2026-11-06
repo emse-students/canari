@@ -151,7 +151,8 @@ function makeService() {
     {} as any,
     {} as any,
     {} as any,
-    { enabled: () => false } as any
+    { enabled: () => false } as any,
+    {} as any // FormItemImagesService
   );
 }
 
