@@ -202,6 +202,8 @@ export function useConversations() {
     isMobileOverlayLayout() ? null : 'members'
   );
   let groupMembers = $state<string[]>([]);
+  /** The conversation `groupMembers` belongs to, so a switch can drop the previous one's list. */
+  let groupMembersFor = '';
   // Optimistic invite feedback: user IDs with an add-member operation in flight,
   // keyed by group so a mid-invite conversation switch never leaks pending rows.
   let pendingInvites = $state<{ groupId: string; ids: string[] } | null>(null);
@@ -1859,6 +1861,10 @@ export function useConversations() {
       ctx.log(`[VERIFY] Roster of ${id.slice(0, 8)}… not requested - conversation retired`);
       return;
     }
+    // Another conversation's members are never shown while this one's are fetched: the @mention
+    // picker would offer group A's people in group B. The same group's refresh keeps its list.
+    if (groupMembersFor !== id) groupMembers = [];
+    groupMembersFor = id;
     try {
       groupMembers = await fetchGroupRoster(ctx.ensureMls(), id, opts);
     } catch (e) {

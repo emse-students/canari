@@ -75,6 +75,7 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import VoiceMessagePlayer from '$lib/components/messages/VoiceMessagePlayer.svelte';
   import { isNarrowChatLayout, NARROW_CHAT_QUERY, onViewportChange } from '$lib/utils/viewport';
+  import type { MentionRosterMember } from '$lib/utils/users/mentionRoster';
 
   interface ReplyTo {
     id: string;
@@ -138,8 +139,8 @@
     onRemovePendingFile?: (index: number) => void;
     /** A picked video being re-encoded before it joins `pendingFiles` - drawn with its cancel. */
     videoPreparation?: VideoPreparationState;
-    /** When set, only users whose IDs are in this list appear in @mention suggestions. */
-    allowedUserIds?: string[];
+    /** The conversation's members, suggested locally by the @mention picker. */
+    mentionRoster?: MentionRosterMember[];
     /**
      * A line ABOUT the send (its refusal, or what it waits for), drawn at the top of the composer
      * stack. Inside the footer on purpose: the footer's measured height is the thread's
@@ -168,7 +169,7 @@
     pendingFiles = [],
     onRemovePendingFile,
     videoPreparation,
-    allowedUserIds,
+    mentionRoster,
     notice,
   }: Props = $props();
 
@@ -1294,7 +1295,7 @@
         <MentionComposerInput
           bind:this={mentionComposer}
           value={messageText}
-          {allowedUserIds}
+          {mentionRoster}
           onchange={handleMessageChange}
           class="min-w-0 flex-1"
           editorClass="chat-composer-textarea"
