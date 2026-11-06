@@ -188,10 +188,18 @@ export class DevicesController {
    * re-added at once on a Mi 9T produced one join and nineteen `NoMatchingKeyPackage` refusals,
    * and the device re-asked for a Welcome for ever. See
    * `frontend/mls-core/tests/last_resort_key_package.rs`.
+   *
+   * **`peek` READS, IT NEVER CLAIMS** (2026-11-06). A caller that only asks whether the device is
+   * published - the device itself, before each external join - used to pop one of its own one-time
+   * packages per question and throw it away: a device retrying a handful of unjoinable groups on the
+   * recovery cadence drained its whole pool, and every peer was then served the static row
+   * (`docs/wiki/protocols/key-package-pool.md`). A peek answers the same
+   * three refusals and otherwise the static row, and touches no one-time row.
    */
   private async resolveKeyPackagePayloadForDevice(
     userId: string,
-    deviceId: string
+    deviceId: string,
+    mode: 'claim' | 'peek' = 'claim'
   ): Promise<KeyPackageResolution> {
     const revoked = await this.revokedDeviceRepo.findOne({
       where: activeRevocationWhere({ userId, deviceId }),
@@ -202,6 +210,14 @@ export class DevicesController {
       where: { userId, deviceId },
     });
     if (!device) return { refusal: 'unregistered' };
+
+    if (mode === 'peek') {
+      const deadline = lastResortDeadline(device);
+      this.logger.debug(
+        `[KP] peek ${userId}/${deviceId} - ${deadline ? 'static row elapsed' : 'published'}, no one-time package claimed`
+      );
+      return deadline ? { refusal: 'expired' } : { keyPackage: device.keyPackage };
+    }
 
     const otkp = await this.dataSource.transaction(async (manager) => {
       const found = await manager
@@ -585,11 +601,24 @@ export class DevicesController {
   /**
    * Returns one consumable KeyPackage for a specific device (invite / welcome flows).
    * Unlike the user device list, there is no 30-day cutoff - only revoked / missing devices 404.
+   *
+   * `?peek=1` asks whether the device is published WITHOUT claiming a package (see
+   * `resolveKeyPackagePayloadForDevice`): same body, same refusals, the static row as the package.
+   * A server without it ignores the query and claims, which is what every client did before - so
+   * the client needs no floor and nothing falls back.
    */
-  async getDeviceKeyPackage(@Param('userId') userId: string, @Param('deviceId') deviceId: string) {
+  async getDeviceKeyPackage(
+    @Param('userId') userId: string,
+    @Param('deviceId') deviceId: string,
+    @Query('peek') peek?: string
+  ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
-    const resolved = await this.resolveKeyPackagePayloadForDevice(safeUserId, safeDeviceId);
+    const resolved = await this.resolveKeyPackagePayloadForDevice(
+      safeUserId,
+      safeDeviceId,
+      peek === '1' ? 'peek' : 'claim'
+    );
     if ('refusal' in resolved) {
       // The resolver refuses in exactly three cases and the docblock above names all of them. None
       // is a malformed request - see the sibling refusal in `updateDeviceMetadata` for why "absent"

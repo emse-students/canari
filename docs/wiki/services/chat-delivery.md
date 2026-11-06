@@ -1376,7 +1376,7 @@ All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (inj
 | POST | `/api/mls/register-device` | Register static key package for a device |
 | POST | `/api/mls/register-device/prekeys` | Bulk-upload one-time prekeys |
 | PATCH | `/api/mls/devices/:userId/:deviceId/metadata` | Update device name/OS/version |
-| GET | `/api/mls/devices/:userId/:deviceId/key-package` | Get a consumable key package |
+| GET | `/api/mls/devices/:userId/:deviceId/key-package` | Get a consumable key package; `?peek=1` reads whether the device is published and claims none ([key-package-pool](../protocols/key-package-pool.md#a-read-is-not-a-claim---the-empty-pool-storm-of-2026-11-06)) |
 | GET | `/api/mls/devices/:userId/:deviceId/signature-keys` | Every MLS signature key the device ever published (Graine v2 endorsements) |
 | GET | `/api/mls/devices/:userId` | List all registered devices for a user |
 | GET | `/api/mls/devices/:userId/:deviceId/revoked` | Is this device denylisted (gates the wipe) |

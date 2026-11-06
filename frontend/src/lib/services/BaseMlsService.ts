@@ -3899,7 +3899,10 @@ export abstract class BaseMlsService implements IMlsService {
         this.keyPackageRoundsSettled === 0;
       const answer = firstPublicationRunning
         ? null
-        : await this.delivery.fetchDeviceKeyPackage(this.userId, this.deviceId);
+        : // A PEEK: this reads a fact, and a claim would spend one of this device's own one-time
+          // packages per join attempt - production 2026-11-06, a device retrying seven unjoinable
+          // groups on the recovery cadence drained its whole pool this way.
+          await this.delivery.fetchDeviceKeyPackage(this.userId, this.deviceId, { peek: true });
       const publication = answer ? keyPackagePublication(answer) : 'absent';
       if (publication === 'published') {
         this.ownKeyPackageUnverifiedReported = null;

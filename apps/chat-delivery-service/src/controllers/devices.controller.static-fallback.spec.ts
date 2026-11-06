@@ -43,6 +43,8 @@ describe('DevicesController - the static KeyPackage row once the pool is empty',
   const emptyPool = stubPool(null);
 
   beforeEach(async () => {
+    emptyPool.transaction.mockClear();
+    emptyPool.delete.mockClear();
     keyPackageRepo = {
       findOne: jest.fn().mockResolvedValue({
         userId: 'u1',
@@ -100,5 +102,30 @@ describe('DevicesController - the static KeyPackage row once the pool is empty',
     await controller.getDeviceKeyPackage('u1', 'd1');
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('one-time pool EMPTY'));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('u1/d1'));
+  });
+
+  // A READ IS NOT A CLAIM: production 2026-11-06, a device asking whether it was published before
+  // every recovery join drained its own pool on the retry cadence.
+  it('a peek answers the static row and claims nothing from the pool', async () => {
+    const answer = await controller.getDeviceKeyPackage('u1', 'd1', '1');
+
+    expect(answer.keyPackage).toBe('THE-STATIC-ROW');
+    expect(emptyPool.transaction).not.toHaveBeenCalled();
+    expect(emptyPool.delete).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('a peek of an unregistered device is the same 404, reason included', async () => {
+    keyPackageRepo.findOne.mockResolvedValue(null);
+
+    await expect(controller.getDeviceKeyPackage('u1', 'd1', '1')).rejects.toMatchObject({
+      response: { reason: 'unregistered' },
+    });
+    expect(emptyPool.transaction).not.toHaveBeenCalled();
+  });
+
+  it('any other value of the query still claims, as every client before it did', async () => {
+    await controller.getDeviceKeyPackage('u1', 'd1', 'yes');
+    expect(emptyPool.transaction).toHaveBeenCalledTimes(1);
   });
 });
