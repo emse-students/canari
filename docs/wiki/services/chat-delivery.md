@@ -2291,12 +2291,26 @@ means no future caller can bypass it by forgetting to call `confirmUnsafeLinkIfN
 - **Fails OPEN at every layer** - no `GOOGLE_SAFE_BROWSING_API_KEY` configured, a network error, a
   timeout, or a non-2xx response from Google all resolve to "not flagged". A safety check that
   cannot answer must never become an outage for every link in the app; the config-side warning
-  (`::warning::GOOGLE_SAFE_BROWSING_API_KEY is not set...` in `serve-prod.yml`) is the only trace of it.
+  (`::warning::GOOGLE_SAFE_BROWSING_API_KEY is not set...` in `serve-prod.yml`) is the only trace of a
+  missing key.
+- **A `400`, `401` or `403` is a refusal, not a transient failure** (2026-11-06). `checkSafeBrowsing`
+  returns a verdict with a `kind` (`answered`, `refused`, `unavailable`, `unconfigured`) decided at the
+  return, never read from a message. A refusal means Google answered and rejected OUR configuration
+  (API not enabled, key restricted, no quota), so the check is dead until someone fixes it: it is still
+  "not flagged" for the caller, but it logs at ERROR with Google's JSON `error.status` and
+  `error.message` (never the key or the request URL), is cached for an hour (`REFUSAL_TTL_MS`), and is
+  counted. The daily `reportSafeBrowsing` job (`app.controller.ts`, with the other daily reports and
+  the boot sweep) prints `[SAFE_BROWSING] refusals=N` per replica, at ERROR when `N > 0`. The count is
+  in-process, since the last report. A network error or a `5xx` stays `unavailable`: warn, 5 minutes.
+  Why it exists: production answered `403` to every lookup (6 of 6 over 72 hours to 2026-11-05) and it
+  read as a passing warning. The key was fixed on the Google side; on 2026-11-06 a lookup with
+  production's own key on Google's malware test URL answered `200` with 1 match, and no `403` was
+  logged after 2026-11-05 16:57 UTC.
 - **Cached in its own `TtlCache<boolean>`**, independent of `previewCache` for the reason above.
   Google gives no cache guidance for a clean verdict (only a flagged match carries its own
   `cacheDuration`, e.g. `"300s"` - the longest one wins when several matches disagree), so a clean
-  result gets a conservative 30-minute TTL chosen here; a failed lookup gets 5 minutes, short enough
-  that a transient outage or a bad key self-heals on the next request rather than silently
+  result gets a conservative 30-minute TTL chosen here; a transient failure gets 5 minutes, short enough
+  that an outage self-heals on the next request rather than silently
   disabling the check for as long as a real answer would be trusted.
 - **Client-side dedup, not a client-side TTL**: `checkLinkSafety` keeps a `Map<string, Promise<boolean>>`
   for the page's lifetime so `AppLink` and `LinkPreviewCard` asking about the same URL around the
