@@ -797,6 +797,31 @@ check in the same file, which is also what catches a fourteenth builder.
   check` always has - it is not a step to remember. An Android or iOS build triggers this, because
   `beforeBuildCommand` is `bun run build`.
 
+### Two writers of `src/lib/paraglide`, ONE set of options (2026-11-06)
+
+The folder has two writers: the CLI (`bun run paraglide:compile`, run by `check`, `test`, `generate`,
+`prepare` and the pre-commit hook) and the vite plugin in `vite.config.js`. They used to carry
+different options (the plugin pinned a strategy and defaulted to `locale-modules` in dev, with its own
+`isServer`), so they emitted DIFFERENT files, and each CLI compile invalidated the plugin's cache in
+`project.inlang/cache/paraglide-js`: the next `vite dev` rewrote ~4,500 files before it listened and
+chokidar fired one event per file (222 s cold, 229 s after a CLI compile, 9 s when nothing had
+changed).
+
+**`project.inlang/paraglide.config.js` is the one source**: paraglide reads it from both writers, and
+the plugin call in `vite.config.js` passes only `project` and `outdir`. Add or change an option THERE,
+never as a flag or a plugin argument. Three traps, all read in `@inlang/paraglide-js` 2.29:
+
+- **The CLI forces `outputStructure` itself** (`message-modules` unless `--output-structure` is
+  given), so the config's value reaches the plugin only; it equals the CLI default, and
+  `paraglideOptions.test.ts` fails if it drifts. Pinning `outputStructure` alone is NOT enough: the
+  strategy and the server check changed the output too (122 s measured).
+- **`isServer` must be identical too**: the config carries the plugin's expression
+  (`import.meta.env?.SSR ?? typeof window === 'undefined'`), which wins over the CLI's default.
+- **The test compile (`paraglide:compile:test`, `.paraglide-test/`) re-states the old CLI defaults**
+  (`--strategy cookie globalVariable baseLocale`, `--is-server "typeof window === 'undefined'"`) so
+  the vitest suites keep resolving the locale as before. It writes another outdir, hence another
+  cache key, and never touches the app's folder.
+
 ## Mobile keyboard detection
 
 The root layout detects the virtual keyboard via `visualViewport`:
