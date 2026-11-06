@@ -57,6 +57,32 @@ export function isTransportFailure(error: unknown): boolean {
   return error instanceof TransportFailureError || error instanceof RequestDeadlineError;
 }
 
+/**
+ * A server or an EDGE ANSWERED, and the answer is not a verdict on the question asked: a 5xx, or a
+ * 401/403 that came from the edge (a WAF ban page, a portal) rather than from the app. Typed at the
+ * throw so the session boot reads it like a transport failure - the credential is untouched, so
+ * "you are signed out" would be a lie - without anyone reading a sentence. The status travels as a field.
+ */
+export class TransientAnswerError extends Error {
+  constructor(
+    /** The HTTP status that answered. */
+    readonly status: number,
+    message = `answered ${status}, not a verdict`
+  ) {
+    super(message);
+    this.name = 'TransientAnswerError';
+  }
+}
+
+/**
+ * True when the session question stays OPEN after `error`: nobody answered
+ * ({@link isTransportFailure}) or the answer was not a verdict ({@link TransientAnswerError}).
+ * Only a 401/403 from the app itself may end a session.
+ */
+export function isSessionQuestionOpen(error: unknown): boolean {
+  return isTransportFailure(error) || error instanceof TransientAnswerError;
+}
+
 /** Whether a `fetch` call was aborted by the caller's own signal (on `init` or on a `Request`). */
 function abortedSignal(input: RequestInfo | URL, init?: RequestInit): AbortSignal | null {
   const signal =

@@ -56,6 +56,7 @@ import {
 } from '$lib/stores/bootSession.svelte';
 import { noteSessionAnswered } from '$lib/stores/sessionAnswer.svelte';
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
+import { TransientAnswerError, TransportFailureError } from '$lib/utils/transportFailure';
 import { m } from '$lib/paraglide/messages';
 import { adoptTransitionAnimations } from '../test/adoptTransitionAnimations';
 
@@ -116,6 +117,33 @@ describe('first paint never waits on the network', () => {
     expect(document.body.textContent).toContain(m.boot_unreachable_title());
     expect(document.body.textContent).toContain(m.boot_unreachable_retry());
     expect(hoisted.goto).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an edge 5xx', new TransientAnswerError(503)],
+    ['an edge HTML 403', new TransientAnswerError(403)],
+    ['a network error', new TransportFailureError(new TypeError('Failed to fetch'))],
+  ])('keeps the session question open on %s, without a login redirect', async (_name, failure) => {
+    hoisted.refresh = () => Promise.reject(failure);
+    mountGate();
+
+    await load(event());
+    await settle();
+
+    expect(bootSessionPhase()).toBe('unreachable');
+    expect(hoisted.goto).not.toHaveBeenCalled();
+  });
+
+  it('still routes an app 403 (a refusal the app itself answered) to the login screen', async () => {
+    const refused = Object.assign(new Error('Forbidden'), { name: 'SessionExpiredError' });
+    hoisted.refresh = () => Promise.reject(refused);
+    mountGate();
+
+    await load(event());
+    await settle();
+
+    expect(hoisted.goto).toHaveBeenCalledTimes(1);
+    expect(bootSessionPhase()).toBe('settled');
   });
 
   it('still routes a 401 to the login screen', async () => {

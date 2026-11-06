@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { TransientAnswerError } from '$lib/utils/transportFailure';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -105,6 +106,7 @@ describe('the session-expired announcement', () => {
 
     const outcome = await refresh().catch((e: unknown) => e);
     expect(outcome).not.toBeInstanceOf(SessionExpiredError);
+    expect(outcome).toBeInstanceOf(TransientAnswerError);
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -117,6 +119,7 @@ describe('the session-expired announcement', () => {
 
     const outcome = await refresh().catch((e: unknown) => e);
     expect(outcome).not.toBeInstanceOf(SessionExpiredError);
+    expect(outcome).toBeInstanceOf(TransientAnswerError);
     expect(handler).not.toHaveBeenCalled();
   });
 

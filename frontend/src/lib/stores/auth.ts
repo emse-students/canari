@@ -47,7 +47,11 @@ import {
 import { clearPersistedPendingAcks } from '$lib/mls-client/ackRetry';
 import { forgetPinSaltAhead } from '$lib/composables/session/pinSaltAhead';
 import { connectivity } from '$lib/stores/connectivity.svelte';
-import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
+import {
+  isTransportFailure,
+  TransientAnswerError,
+  TransportFailureError,
+} from '$lib/utils/transportFailure';
 import { DEADLINE_MS, RequestDeadlineError } from '$lib/utils/requestDeadline';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { flushAndroidCookies } from '$lib/utils/androidCookies';
@@ -304,12 +308,12 @@ export class SignOutInProgressError extends Error {
  * So the status travels as a FIELD. Reaching this variant at all means the server is there and
  * unhappy, which makes it transient by construction - a caller with a retry ladder should climb it.
  */
-export class RefreshFailedError extends Error {
+export class RefreshFailedError extends TransientAnswerError {
   constructor(
     /** The HTTP status the refresh endpoint answered with. Never 401 or 403 - those are the sibling. */
     readonly status: number
   ) {
-    super(`Token refresh failed (HTTP ${status})`);
+    super(status, `Token refresh failed (HTTP ${status})`);
     this.name = 'RefreshFailedError';
   }
 }

@@ -1092,7 +1092,9 @@ underneath (it would fetch with no token) and `components/layout/BootGate.svelte
 | --- | --- | --- |
 | a token, or a sign-in completed meanwhile | `settled` | the page asked for; the background profile check runs as before |
 | an ANSWER that is not a token (401/403, identity split, sign-out) | `settled` | login, carrying the page asked for |
-| a TRANSPORT failure (`isTransportFailure`: deadline or no answer) | `unreachable` | "Impossible de joindre Canari depuis ce reseau", a retry button and a hint |
+| a TRANSPORT failure or a NON-VERDICT answer (`isSessionQuestionOpen`: no answer, a 5xx, an edge's HTML or JSON 401/403, i.e. `TransientAnswerError`, which `RefreshFailedError` extends) | `unreachable` | "Impossible de joindre Canari depuis ce reseau", a retry button and a hint |
+
+Only the app's own 401/403 (`SessionExpiredError`, read from Nest's envelope) sends a user to login; an edge 5xx or HTML 403 on the boot refresh used to (#3052 parked it, fixed 2026-11-06 by typing it at the throw, not by reading a message).
 
 `unreachable` is derived from the failure event, never from a second timer, and never logs anyone out
 (a status code is an answer, a transport failure is not). It ends on the retry button or on the
@@ -1119,8 +1121,7 @@ it is waiting for. Pinned by `routes/firstPaintNeverWaits.test.ts`.
   bounded: it is not a network call, a bound would be a bare timer with no event behind it, and a hang
   there is already visible (the boot screen keeps saying it is connecting). If it is ever seen to
   hang, the fix is in the store call, not a timeout around it.
-- An edge 5xx or an HTML 403 on the refresh still goes to login (`auth.ts` calls it transient): parked in
-  `docs/wiki/backlog.d/p3-an-edge-refusal-of-the-boot-refresh-reads-as-signed-out.md`.
+- An edge 5xx or an HTML 403 on the refresh was routed to login; fixed 2026-11-06 (see the table above).
 
 **The reading (2026-11-05, Chromium, production web build, every `/api` request hangs forever, fresh isolated
 context, no stored user, first load for `/`, chunks cached for the others).** Time of the first boot screen,

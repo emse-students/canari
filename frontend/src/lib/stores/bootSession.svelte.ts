@@ -11,7 +11,8 @@
  * `resolving`, and the phase ends with the real outcome of the refresh:
  * - a token (or a sign-in that completed meanwhile) -> `settled`, the page the user asked for;
  * - an ANSWER that is not a token (401/403, identity split, ...) -> login, then `settled`;
- * - a TRANSPORT failure ({@link isTransportFailure}) -> `unreachable`. NEVER a login redirect: nothing
+ * - a TRANSPORT failure or a non-verdict answer ({@link isSessionQuestionOpen}: no answer, a 5xx, an
+ *   edge's 401/403) -> `unreachable`. NEVER a login redirect: nothing
  *   answered, so "you are signed out" would be a lie, and nothing here logs anyone out. A status
  *   code is an answer, a transport failure is not.
  *
@@ -20,7 +21,7 @@
  * `online` event.
  */
 
-import { isTransportFailure } from '$lib/utils/transportFailure';
+import { isSessionQuestionOpen } from '$lib/utils/transportFailure';
 import { isSignedOutPath } from '$lib/utils/internalPath';
 
 /** `settled`: the question is answered (or was never asked). */
@@ -87,8 +88,10 @@ async function run(): Promise<void> {
         await deps().refresh();
       } catch (e) {
         // A sign-in may have completed while the request was in flight: it answers the question.
-        if (!deps().currentUserId() && isTransportFailure(e)) {
-          bwarn(`session question unanswered, nothing reached the server: ${String(e)}`);
+        if (!deps().currentUserId() && isSessionQuestionOpen(e)) {
+          bwarn(
+            `session question unanswered (no answer, or an edge/5xx that is not a verdict): ${String(e)}`
+          );
           phase = 'unreachable';
           if (typeof window !== 'undefined') {
             const onOnline = () => retryBootSession();
