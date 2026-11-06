@@ -94,7 +94,7 @@ describe('invalidatePostListCacheFor', () => {
       limit: 20,
       offset,
       kind: feed === 'followed' ? 'reel' : undefined,
-      singlePhotos: feed === 'followed',
+      singleMedia: feed === 'followed' ? 'photos' : undefined,
     });
 
   /** A Redis whose SCAN honours the prefix glob and hands every match to the selector. */
@@ -147,6 +147,22 @@ describe('invalidatePostListCacheFor', () => {
       `${POST_LIST_CACHE_PREFIX}followed:anon:-:-:20:0:reel+photos`
     );
   });
+
+  it('keys the pictures-only and the pictures-and-videos pages apart', () => {
+    const key = (singleMedia: 'photos' | 'media' | undefined) =>
+      postListCacheKey({
+        feed: 'reels',
+        viewerUserId: 'u',
+        promo: undefined,
+        formation: undefined,
+        limit: 10,
+        offset: 0,
+        kind: 'reel',
+        singleMedia,
+      });
+    expect(new Set([key(undefined), key('photos'), key('media')]).size).toBe(3);
+    expect(key('media')).toBe(`${POST_LIST_CACHE_PREFIX}reels:u:-:-:10:0:reel+media`);
+  });
 });
 
 /**
@@ -196,7 +212,7 @@ describe('the feed cache generation', () => {
     limit: 20,
     offset: 0,
     kind: undefined,
-    singlePhotos: false,
+    singleMedia: undefined,
   });
 
   it('serves a page stored under the current generation', async () => {

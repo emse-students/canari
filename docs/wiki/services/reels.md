@@ -93,7 +93,7 @@ Every filter the feed has applies (blocked authors, moderation-hidden, promo gat
 
 **`singlePhotos=true` (with `kind=reel`, 2026-10-19)** adds the posts whose ONLY content is one
 picture - the photo pages of the CanaReels viewer ([client half](../frontend/modules/reels.md#the-rail-the-comments-sheet-and-the-photo-pages-user-2026-10-19-instagrams-reels)).
-The clause is `SINGLE_PHOTO_POST_SQL` (`posts/single-photo-sql.ts`): exactly one element in
+The clause is `SINGLE_PHOTO_POST_SQL` (`posts/full-screen-post-sql.ts`): exactly one element in
 `images`, typed `image` (or untyped with an `image/` mime type, a legacy row), no poll, no form, no
 attached form, no linked calendar event, no `http(s)://` in the text (whose preview the page would
 drop). A column holding JSON `null` or a scalar counts as empty through a `CASE` on
@@ -105,7 +105,25 @@ shows no photo pages. **`kind=reel` is ordered by `publishedAt` alone** (`listOr
 a feed concept and does not head the CanaReels list. Every `listPosts` and `searchPosts` order ends
 in `posts.id DESC`, so posts published at the same instant (scheduled ones) can neither repeat nor
 be skipped across `OFFSET` pages; the post an event card links back to is picked the same way. Pinned by `posts.service.reels.spec.ts` (every
-arm) and `single-photo-sql.integration.spec.ts` (the `jsonb` arithmetic, on a real PostgreSQL).
+arm) and `full-screen-post-sql.integration.spec.ts` (the `jsonb` arithmetic, on a real PostgreSQL).
+
+**`singleMedia=true` (with `kind=reel`, 2026-11-06)** is the same list with ONE VIDEO too: the posts
+whose only content is one picture OR one video, a video not filmed with the Canari camera (owner:
+*a feed post of a single video exists and does not appear*). The clause is `SINGLE_MEDIA_POST_SQL`
+(same file): the picture rule above, OR-ed with the same rule on a `video`-typed (or untyped with a
+`video/` mime type) attachment, with the SAME exclusions (poll, form, attached form, linked event,
+link in the text). It wins over `singlePhotos` when both are sent, and **`singlePhotos` stays
+served, pictures only** (`singleMediaModeOf`): an installed client keeps asking for it and its
+`fullScreenPageOf` would draw a foreign video as a reel and log an accusation, so it must never
+receive one. The current client sends BOTH (`buildListPostsSearchParams`), so a server that does
+not know `singleMedia` still serves the pictures. The cache key carries `+photos` or `+media`.
+**A video post never expires**: only a `kind = 'reel'` row has an `expiresAt`, and the live-reel
+clause (`posts.kind <> 'reel' OR "expiresAt" > NOW()`) leaves a plain post alone; the viewer draws
+it as a `reel` page (`fullScreenPageOf`), so the save button, the rail's reactions and the comments
+sheet read it like any post. Pagination order is unchanged (`publishedAt DESC, id DESC`). Pinned by
+`full-screen-post-sql.integration.spec.ts` (both clauses on a real PostgreSQL, a video with each
+exclusion, a legacy video by mime type) and `posts.service.reels.spec.ts` (the wiring in every arm,
+the precedence, and "means nothing without `kind=reel`").
 
 **An expired reel is never served**, whether the worker has reached it or not: a reel whose
 `expiresAt` has passed is excluded from every read (`GET /api/posts/:id` answers `404`). The client

@@ -183,6 +183,7 @@ export class PostsController {
       formation: query.formation?.trim() || undefined,
       kind: query.kind,
       singlePhotos: query.singlePhotos === true,
+      singleMedia: query.singleMedia === true,
     });
   }
 

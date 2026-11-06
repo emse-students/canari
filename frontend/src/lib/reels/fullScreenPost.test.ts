@@ -1,6 +1,6 @@
 /**
  * Which rows the CanaReels viewer draws as a full-screen page. The cases are the server's
- * (`apps/social-service/src/posts/single-photo-sql.integration.spec.ts`), so the client and the
+ * (`apps/social-service/src/posts/full-screen-post-sql.integration.spec.ts`), so the client and the
  * SQL read one row the same way.
  */
 import { describe, expect, it } from 'vitest';
@@ -32,12 +32,32 @@ describe('fullScreenPageOf', () => {
     expect(fullScreenPageOf(post({ media: [picture], markdown: 'Soiree au foyer' }))).toBe('photo');
   });
 
+  it('draws a post of exactly one video, outside a reel, as a reel page', () => {
+    expect(fullScreenPageOf(post({ media: [video] }))).toBe('reel');
+  });
+
+  it("reads a legacy row's video from its mime type", () => {
+    const legacy = { mediaId: 'l', mimeType: 'video/quicktime' } as PostMediaRef;
+    expect(fullScreenPageOf(post({ media: [legacy] }))).toBe('reel');
+  });
+
+  it('keeps a video with a caption that carries no link, and never reads an expiry', () => {
+    const plain = post({ media: [video], markdown: 'Soiree au foyer' });
+    expect(plain.expiresAt).toBeUndefined();
+    expect(fullScreenPageOf(plain)).toBe('reel');
+  });
+
   it('reads `images` from a server older than the rename', () => {
     expect(fullScreenPageOf(post({ media: undefined, images: [picture] }))).toBe('photo');
   });
 
   it.each([
-    ['a video outside a reel', { media: [video] }],
+    ['a video and a picture', { media: [video, picture] }],
+    ['two videos', { media: [video, video] }],
+    ['a video with a poll', { media: [video], polls: [{ id: 'q' }] as PostEntity['polls'] }],
+    ['a video with an attached form', { media: [video], attachedFormId: 'form-1' }],
+    ['a video with a linked event', { media: [video], linkedCalendarEventId: 'ev-1' }],
+    ['a video with a link in its text', { media: [video], markdown: 'voir https://example.org' }],
     ['two pictures', { media: [picture, picture] }],
     [
       'a file',
@@ -60,5 +80,11 @@ describe('fullScreenPageOf', () => {
 describe('fullScreenMediaOf', () => {
   it('is the one attachment', () => {
     expect(fullScreenMediaOf(post({ media: [picture] }))).toBe(picture);
+  });
+});
+
+describe('fullScreenMediaOf for a post of one video', () => {
+  it('is the video, which the save button reads from `media[0]`', () => {
+    expect(fullScreenMediaOf(post({ media: [video] }))).toBe(video);
   });
 });

@@ -2,7 +2,7 @@
  * The CanaReels list's "one picture and nothing else" clause, against a REAL PostgreSQL.
  *
  * `posts.service.reels.spec.ts` proves the clause reaches every feed arm; only a database proves
- * the `jsonb` arithmetic says what `single-photo-sql.ts` claims. The cases are the client's
+ * the `jsonb` arithmetic says what `full-screen-post-sql.ts` claims. The cases are the client's
  * (`frontend/src/lib/reels/fullScreenPost.test.ts`): one picture in, one picture with a legacy
  * row's `mimeType` only in, a video, two pictures, a file, text alone, a picture with a poll and a
  * picture with a form out; a linked calendar event and a link in the text out (the page would drop
@@ -13,7 +13,7 @@
  * happens in a throwaway schema, dropped at the end.
  */
 import { Client } from 'pg';
-import { SINGLE_PHOTO_POST_SQL } from './single-photo-sql';
+import { SINGLE_MEDIA_POST_SQL, SINGLE_PHOTO_POST_SQL } from './full-screen-post-sql';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -82,6 +82,30 @@ maybe('the one-picture clause against PostgreSQL', () => {
       `INSERT INTO posts (id, images, markdown) VALUES ('picture-and-caption', $1, 'Soiree au foyer')`,
       [one]
     );
+    // A video, by its `type` or - a legacy row - by its `mimeType` alone, with the exclusions.
+    const clip = JSON.stringify([{ type: 'video', mediaId: 'v', mimeType: 'video/mp4' }]);
+    await client.query(
+      `INSERT INTO posts (id, images) VALUES ('legacy-video', '[{"mediaId":"v","mimeType":"video/quicktime"}]')`
+    );
+    await client.query(
+      `INSERT INTO posts (id, images, markdown) VALUES ('video-and-caption', $1, 'Soiree au foyer')`,
+      [clip]
+    );
+    await client.query(
+      `INSERT INTO posts (id, images, markdown) VALUES ('video-and-link', $1, 'voir https://example.org')`,
+      [clip]
+    );
+    await client.query(
+      `INSERT INTO posts (id, images, polls) VALUES ('video-and-poll', $1, '[{"id":"p"}]')`,
+      [clip]
+    );
+    await client.query(
+      `INSERT INTO posts (id, images, "linkedCalendarEventId") VALUES ('video-and-event', $1, '00000000-0000-4000-8000-000000000002')`,
+      [clip]
+    );
+    await client.query(`INSERT INTO posts (id, images) VALUES ('video-and-picture', $1)`, [
+      JSON.stringify([JSON.parse(clip)[0], picture]),
+    ]);
   });
 
   afterAll(async () => {
@@ -98,6 +122,21 @@ maybe('the one-picture clause against PostgreSQL', () => {
       'one-picture',
       'picture-and-caption',
       'picture-scalar-polls',
+    ]);
+  });
+
+  it('with videos too: one picture OR one video, nothing else, and no expiry to read', async () => {
+    const res = await client.query<{ id: string }>(
+      `SELECT id FROM posts WHERE ${SINGLE_MEDIA_POST_SQL} ORDER BY id`
+    );
+    expect(res.rows.map((r) => r.id)).toEqual([
+      'legacy-picture',
+      'legacy-video',
+      'one-picture',
+      'one-video',
+      'picture-and-caption',
+      'picture-scalar-polls',
+      'video-and-caption',
     ]);
   });
 });

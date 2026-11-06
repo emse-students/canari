@@ -154,7 +154,7 @@ maybe('member reposts against PostgreSQL (migrations 121, 123)', () => {
       limit: 20,
       offset: 0,
       kind: undefined,
-      singlePhotos: false,
+      singleMedia: undefined,
     });
   const cachedReaders = () => CACHED_READERS.filter((u) => cache.has(pageOf(u)));
   const refillCache = () => {

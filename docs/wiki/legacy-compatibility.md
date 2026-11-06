@@ -1016,7 +1016,7 @@ deleted (reels.md point 5; `routes/posts/+page.ts` and `buildListOptions` never 
 only `listPosts({ kind })` caller in the client is `reels/allReels.ts`. Production's floor is past
 `1.2.9`, and dev's `1.2.7`-`1.2.8` builds predate the filter, so their only `kind=reel` was the
 viewer too. A `1.2.9-alpha.2`/`.3` device still filtering its "Tout" tab would get the viewer's set
-there: reels it may see, nothing more.
+there: reels it may see, nothing more. Since 2026-11-06 the current client asks `singleMedia=true` AND `singlePhotos=true`; `singlePhotos` alone stays served as pictures only, so these installed clients never receive a video (`services/reels.md`).
 **Why the client still sends the old shape:** a stable ships both stores BEFORE production deploys,
 and `feed=reels` is refused `400` by an older server's `@IsIn` - a native build sending it would
 lose the viewer for those days. So the client switches (`listAllReels`: `feed: 'reels'`, and
