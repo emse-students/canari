@@ -37,6 +37,7 @@ import { incompleteHistoryPages, noteHistoryAsked } from './pagedHistoryAnswer';
 import {
   announceGraineRepair,
   forgetWorkspaceGraineState,
+  GraineNotReadyError,
   graineRepairHoldObserver,
   holdGraineRepairs,
   markCommunityListed,
@@ -2005,33 +2006,63 @@ describe('a bundle answering our own request (WP-33)', () => {
 
   // A bundle in flight across a session change wrote its remaining seeds into the NEXT session's
   // store, since each seed reads the runtime when it starts. The suite met it as a flake: a test
-  // outliving its body under load landed its `s-19` in a later test's `saved`.
-  it('stops absorbing when the session it began for ends: no seed reaches the next one', async () => {
-    const next = fakeStorage();
-    const first = fakeStorage();
-    const saveFirst = first.storage.saveGraineSession.bind(first.storage);
-    first.storage.saveGraineSession = async (s, key) => {
-      await saveFirst(s, key);
-      // The session changes right after the first seed is stored.
-      wire(next.storage);
-    };
-    wire(first.storage);
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const seeds = [];
-    for (let i = 0; i < 3; i++) seeds.push(await v2SeedFor(`chan-${i}`, `s-${i}`, 0));
+  // outliving its body under load landed its `s-19` in a later test's `saved`. It REJECTS, never
+  // resolves: `routeDistributionFrame` acknowledges a frame whose handler resolved, and this one must
+  // be redelivered to the session wired then.
+  describe('a session change while a bundle is absorbed', () => {
+    async function bundleOf(n: number) {
+      const seeds = [];
+      for (let i = 0; i < n; i++) seeds.push(await v2SeedFor(`chan-${i}`, `s-${i}`, 0));
+      return {
+        scope: workspaceScope('ws-1'),
+        workspaceId: 'ws-1',
+        groupId: 'g-1',
+        sender: 'bob',
+        plaintext: encodeAppMessage(
+          mkGraineBundle({ workspaceId: 'ws-1', requestId: 'r-1', seeds })
+        ),
+      };
+    }
 
-    await handleDistributionFrame({
-      scope: workspaceScope('ws-1'),
-      workspaceId: 'ws-1',
-      groupId: 'g-1',
-      sender: 'bob',
-      plaintext: encodeAppMessage(mkGraineBundle({ workspaceId: 'ws-1', requestId: 'r-1', seeds })),
+    it('after a seed is written: rejects, and no seed reaches the next session', async () => {
+      const next = fakeStorage();
+      const first = fakeStorage();
+      const saveFirst = first.storage.saveGraineSession.bind(first.storage);
+      first.storage.saveGraineSession = async (s, key) => {
+        await saveFirst(s, key);
+        wire(next.storage);
+      };
+      wire(first.storage);
+      const frame = await bundleOf(3);
+
+      const handled = handleDistributionFrame(frame);
+
+      await expect(handled).rejects.toBeInstanceOf(GraineNotReadyError);
+      await expect(handled).rejects.toThrow('cannot cache seed s-0 once stored');
+      expect(first.saved.map((s) => s.sessionId)).toEqual(['s-0']);
+      expect(next.saved).toEqual([]);
     });
 
-    expect(first.saved.map((s) => s.sessionId)).toEqual(['s-0']);
-    expect(next.saved).toEqual([]);
-    expect(warn.mock.calls.flat().join(' ')).toContain('2 of its 3 seed(s) left unstored');
-    warn.mockRestore();
+    // `deviceKey` is a live getter: a seed whose admission spans the switch would be sealed under
+    // the NEXT account's key into this account's store.
+    it('while a seed is being admitted: rejects before the write, sealed under no key', async () => {
+      const next = fakeStorage();
+      const first = fakeStorage();
+      const readFirst = first.storage.getGraineSession.bind(first.storage);
+      first.storage.getGraineSession = async (id, key) => {
+        const row = await readFirst(id, key);
+        if (id === 's-1') wire(next.storage);
+        return row;
+      };
+      wire(first.storage);
+      const frame = await bundleOf(3);
+
+      const handled = handleDistributionFrame(frame);
+
+      await expect(handled).rejects.toThrow('cannot store seed s-1');
+      expect(first.saved.map((s) => s.sessionId)).toEqual(['s-0']);
+      expect(next.saved).toEqual([]);
+    });
   });
 
   it("names a seed checked against the server's published keys, in the stored-seed line", async () => {

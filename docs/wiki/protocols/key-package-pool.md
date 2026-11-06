@@ -791,8 +791,8 @@ takes the same `?peek=1`: every device is judged as the single-device peek judge
 row is the package, and no one-time row is touched (`getUserDevices`, `devices.controller.ts`).
 **A peek refuses exactly when a claim would** (third step): a device whose static row elapsed is
 still listed while it holds a usable one-time package, because a claim would serve it one. The peek
-COUNTS those packages (`countUsableOneTimePackages`, the same `USABLE_ONE_TIME_PACKAGE` predicate the
-claim and `prekeys/count` read) and never takes one. Before this, such a device was missing from the
+COUNTS those packages (`countUsableOneTimePackages`, the same `usableOneTimePackage` predicate the
+claim, `prekeys/count` and, negated, `reclaimExpiredKeyPackages` read) and never takes one. Before this, such a device was missing from the
 roster, so the device panel could neither show nor revoke it and the pre-claim marker was written
 without it. The client has two methods, one per question:
 

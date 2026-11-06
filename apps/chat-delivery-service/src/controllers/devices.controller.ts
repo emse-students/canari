@@ -26,7 +26,7 @@ import {
   KEY_PACKAGE_LIFETIME_DAYS,
   lastResortDeadline,
 } from '../entities/key-package.entity';
-import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
+import { OneTimeKeyPackage, usableOneTimePackage } from '../entities/one-time-key-package.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
@@ -72,14 +72,6 @@ import { RefusalCode } from '../utils/refusal-codes';
  * group its owner is already in.
  */
 export type KeyPackageRefusal = 'revoked' | 'unregistered' | 'expired';
-
-/**
- * The SQL predicate a one-time row (aliased `otkp`) must meet to be a package at all: its own
- * `notAfter`, or one lifetime past its `createdAt` when no client dated it. ONE spelling, read by
- * the claim, the peek and the pool count, so "usable" cannot mean three things - why the undated arm
- * is sound is written at the claim (`resolveKeyPackagePayloadForDevice`).
- */
-const USABLE_ONE_TIME_PACKAGE = `COALESCE(otkp."notAfter", (otkp."createdAt" AT TIME ZONE 'UTC') + interval '${KEY_PACKAGE_LIFETIME_DAYS} days') > now()`;
 
 /** Either a package to serve, or {@link KeyPackageRefusal} saying why there is none. */
 export type KeyPackageResolution = { keyPackage: string } | { refusal: KeyPackageRefusal };
@@ -256,7 +248,7 @@ export class DevicesController {
         // refused since `minClientVersion` 1.2.7; the NULLs they wrote remain). The bound below is
         // the same arithmetic the backfill proved exact for THIS table, whose rows are inserted once
         // and never updated, so every row now answers the question whether or not a client spoke.
-        .andWhere(USABLE_ONE_TIME_PACKAGE)
+        .andWhere(usableOneTimePackage('otkp'))
         // NEAREST TO EXPIRY FIRST, which is only correct now that the line above excludes the
         // elapsed ones: of the packages that can still be used, spending the shortest-lived first
         // is what stops it elapsing unused. `createdAt ASC` said the same thing by proxy and said it
@@ -791,12 +783,12 @@ export class DevicesController {
     return { count };
   }
 
-  /** How many of a device's one-time packages are still usable ({@link USABLE_ONE_TIME_PACKAGE}). Reads, never claims. */
+  /** How many of a device's one-time packages are still usable ({@link usableOneTimePackage}). Reads, never claims. */
   private countUsableOneTimePackages(userId: string, deviceId: string): Promise<number> {
     return this.oneTimeKeyPackageRepo
       .createQueryBuilder('otkp')
       .where('otkp.userId = :userId AND otkp.deviceId = :deviceId', { userId, deviceId })
-      .andWhere(USABLE_ONE_TIME_PACKAGE)
+      .andWhere(usableOneTimePackage('otkp'))
       .getCount();
   }
 

@@ -63,12 +63,6 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 }));
 
 const { useConversations } = await import('./useConversations.svelte');
-// `loadChannelHistory` imports these on its first call. Loaded HERE, so the first test's
-// `vi.waitFor` window holds the load and not a cold transform of them, which under full-suite load
-// outlasted it (2026-11-06: the first test timed out with nothing drawn, beside the second in the same run).
-await import('$lib/services/ChannelService');
-await import('$lib/utils/chat/channelCrypto');
-await import('$lib/utils/chat/olderMessagesNotice');
 
 const SALON = 'channel_7d2f0aa0-0000-4000-8000-000000000001';
 

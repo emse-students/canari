@@ -22,10 +22,15 @@ import {
  * Protocol: `docs/wiki/protocols/channel-encryption.md`.
  */
 
-/** Thrown when something asks the Graine layer to work before a session has wired it. */
+/**
+ * Thrown when something asks the Graine layer to work for a session that is not wired: none yet,
+ * or - `reason` - no longer the one the work began for (a sign-out or an account switch between
+ * two awaits). Either way nothing was stored, so the frame it came from stays unacknowledged and is
+ * redelivered to whichever session is wired then.
+ */
 export class GraineNotReadyError extends GraineSealUnavailableError {
-  constructor(what: string) {
-    super(`[GRAINE] ${what} - no session is wired`, 'no-session');
+  constructor(what: string, reason = 'no session is wired') {
+    super(`[GRAINE] ${what} - ${reason}`, 'no-session');
     this.name = 'GraineNotReadyError';
   }
 }
@@ -367,13 +372,18 @@ export function requireGraineRuntime(what: string): GraineRuntime {
 }
 
 /**
- * True while `rt` is still the installed wiring. Each install is a fresh object
- * ({@link setGraineRuntime} copies it), so a work loop that took the runtime at its start can tell
- * that the session it began for has ended or been replaced - and must stop, rather than read the
- * NEXT session's store and key on its next step.
+ * Throws unless `rt` is still the installed wiring. Each install is a fresh object
+ * ({@link setGraineRuntime} copies it), so work that took the runtime at its start can tell that
+ * the session it began for has ended or been replaced - and must stop before its next store access
+ * rather than read the NEXT session's store or key. A THROW, never a quiet return: the frame the
+ * work came from must stay unacknowledged so it is redelivered to the session wired then.
+ *
+ * @throws {GraineNotReadyError} naming `what` and how many steps were left, when the session moved.
  */
-export function isCurrentGraineRuntime(rt: GraineRuntime): boolean {
-  return runtime === rt;
+export function assertGraineRuntimeUnchanged(rt: GraineRuntime, what: string): void {
+  if (runtime !== rt) {
+    throw new GraineNotReadyError(what, 'the session it began for has ended or been replaced');
+  }
 }
 
 /** True when a session is wired, for callers that must degrade rather than throw. */
