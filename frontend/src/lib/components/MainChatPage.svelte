@@ -287,6 +287,7 @@
    * The active group's or salon's members for the @mention picker, each stamped with when they last
    * spoke here. Empty while the list loads, which makes the picker fall back to the server search.
    */
+  // O(messages) per message change: one pass over an in-memory array, left as is on purpose.
   const composerMentionRoster = $derived(
     buildMentionRoster(
       isSelectedChannel ? selectedChannelMemberIds : convs.groupMembers,

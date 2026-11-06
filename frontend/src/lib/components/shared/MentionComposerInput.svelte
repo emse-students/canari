@@ -103,6 +103,13 @@
     },
   });
 
+  // An open picker follows the roster prop (a member list that finished loading, a conversation
+  // switch) instead of keeping the rows it opened on.
+  $effect(() => {
+    void mentionRoster;
+    mention.refreshRoster();
+  });
+
   const renderOptions = $derived({ markdownPreview });
 
   function clampText(text: string): string {

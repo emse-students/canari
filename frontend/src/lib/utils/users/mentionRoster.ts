@@ -39,7 +39,7 @@ export function buildMentionRoster(
  * finds "Marie Dupont" and "Jean Martin" and a bare "@" finds everybody. Order: whoever spoke most
  * recently here first, then alphabetical on the folded name. `resolveName` supplies the name of a
  * member that carries none; a member with no name at all is left out, because a row that can only
- * read as a raw id is not one a reader can pick by typing.
+ * read as a raw id is not one a reader can pick by typing (reported through `onUnnamed`).
  *
  * @param excludeIds - ids never offered (the signed-in reader, accounts they blocked)
  */
@@ -49,7 +49,13 @@ export function suggestFromRoster(
   {
     excludeIds,
     resolveName,
-  }: { excludeIds: readonly string[]; resolveName: (id: string) => string | null }
+    onUnnamed,
+  }: {
+    excludeIds: readonly string[];
+    resolveName: (id: string) => string | null;
+    /** Called for each member dropped because no name is known, so the drop is never silent. */
+    onUnnamed?: (id: string) => void;
+  }
 ): { id: string; displayName: string }[] {
   const excluded = new Set(excludeIds.map((id) => id.toLowerCase()));
   const q = foldForSearch(query.trim());
@@ -59,7 +65,10 @@ export function suggestFromRoster(
     const key = member.id.toLowerCase();
     if (excluded.has(key) || seen.has(key)) continue;
     const name = member.displayName?.trim() || resolveName(member.id);
-    if (!name) continue;
+    if (!name) {
+      onUnnamed?.(member.id);
+      continue;
+    }
     const folded = foldForSearch(name);
     if (q && !folded.split(/[\s'-]+/).some((word) => word.startsWith(q))) continue;
     seen.add(key);

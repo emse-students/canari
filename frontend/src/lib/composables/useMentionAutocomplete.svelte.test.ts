@@ -17,6 +17,18 @@ vi.mock('$lib/stores/userState.svelte', () => ({
   currentUserId: () => signedInAs,
 }));
 
+// Names the display-name cache is told about; the batch resolver is replaceable per test.
+const names = new Map<string, string>();
+let resolveSpy: (ids: string[]) => Promise<void> = async () => {};
+vi.mock('$lib/utils/users/displayName', () => ({
+  peekUserDisplayName: (id: string) => names.get(id) ?? null,
+  resolveDisplayNames: async (ids: string[]) => {
+    await resolveSpy(ids);
+    return (id: string) => names.get(id) ?? id;
+  },
+  seedUserDisplayName: () => {},
+}));
+
 // The reader's blocks are read once when a roster picker first opens; the tests set them here.
 let blocked: string[] = [];
 vi.mock('$lib/users/blocks', () => ({
@@ -118,6 +130,8 @@ describe('useMentionAutocomplete - a roster is suggested locally', () => {
     text = '';
     signedInAs = 'u-me';
     blocked = [];
+    names.clear();
+    resolveSpy = async () => {};
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('no network expected'));
   });
 
@@ -167,6 +181,50 @@ describe('useMentionAutocomplete - a roster is suggested locally', () => {
     ac.handleEditorInput('@m', 2);
     await tick();
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('resolves the unnamed members of EACH successive roster on one instance', async () => {
+    const resolved: string[][] = [];
+    resolveSpy = async (ids) => {
+      resolved.push(ids);
+      for (const id of ids) names.set(id, 'Resolu ' + id);
+    };
+    const first: MentionRosterMember[] = [{ id: 'g1-a' }, { id: 'g1-b' }];
+    const second: MentionRosterMember[] = [{ id: 'g2-a' }, { id: 'g1-b' }];
+    let current = first;
+    const ac = useMentionAutocomplete({
+      getText: () => text,
+      setText,
+      getCursor: () => text.length,
+      get roster() {
+        return current;
+      },
+    });
+    ac.handleEditorInput('@', 1);
+    await tick();
+    expect(ac.suggestions.map((u) => u.id).sort()).toEqual(['g1-a', 'g1-b']);
+    current = second;
+    ac.refreshRoster();
+    await tick();
+    expect(resolved).toEqual([['g1-a', 'g1-b'], ['g2-a']]);
+    expect(ac.suggestions.map((u) => u.id).sort()).toEqual(['g1-b', 'g2-a']);
+  });
+
+  it('refreshes an open picker when the roster prop changes', async () => {
+    let current: MentionRosterMember[] = [{ id: 'u-a', displayName: 'Ana' }];
+    const ac = useMentionAutocomplete({
+      getText: () => text,
+      setText,
+      getCursor: () => text.length,
+      get roster() {
+        return current;
+      },
+    });
+    ac.handleEditorInput('@', 1);
+    expect(ac.suggestions.map((u) => u.id)).toEqual(['u-a']);
+    current = [{ id: 'u-b', displayName: 'Bea' }];
+    ac.refreshRoster();
+    expect(ac.suggestions.map((u) => u.id)).toEqual(['u-b']);
   });
 
   it('falls back to the server search while the roster is empty', async () => {

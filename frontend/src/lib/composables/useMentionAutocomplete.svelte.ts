@@ -1,4 +1,5 @@
 import { tick } from 'svelte';
+import { SvelteSet } from 'svelte/reactivity';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { formatMentionToken } from '$lib/utils/mentions';
@@ -47,8 +48,10 @@ export function useMentionAutocomplete(opts: {
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   /** Accounts the reader blocked, read once when a roster picker first opens (null = not read). */
   let blockedIds: string[] | null = null;
-  /** Whether this picker already read the blocks and resolved the roster's names. */
-  let rosterPrepared = false;
+  /** Member ids whose name this picker already asked for: a roster change asks only for new ones. */
+  const namesRequested = new SvelteSet<string>();
+  /** Member ids already reported as dropped for lacking a name (one line each, not per keystroke). */
+  const droppedLogged = new SvelteSet<string>();
 
   function applyCursor(pos: number) {
     if (opts.setCursor) {
@@ -114,20 +117,37 @@ export function useMentionAutocomplete(opts: {
     suggestions = suggestFromRoster(roster, query, {
       excludeIds: [...(me ? [me] : []), ...(blockedIds ?? [])],
       resolveName: peekUserDisplayName,
+      onUnnamed: (id) => {
+        if (droppedLogged.has(id)) return;
+        droppedLogged.add(id);
+        console.warn(`[mention] member ${id.slice(0, 8)} has no known name and is not offered`);
+      },
     }).slice(0, MENTION_MAX_ROWS);
     open = suggestions.length > 0;
     selectedIdx = -1;
   }
 
   /**
-   * Once per picker, when it first opens on a roster: reads the reader's blocks and resolves the
-   * names the cache lacks (one batch, never per keystroke), then re-filters the current query.
+   * Prepares a roster for the picker, PER ROSTER: asks once for the names of members it has not
+   * asked for yet (one batch, never per keystroke) and reads the reader's blocks (a cached read,
+   * dropped on block and unblock). The composer outlives a conversation switch, so a once-per-picker
+   * flag would leave every later conversation's unnamed members unresolved and silently dropped.
+   * Re-filters the current query when either answer changed what may be offered.
    */
   async function prepareRoster(roster: MentionRosterMember[]) {
-    if (rosterPrepared) return;
-    rosterPrepared = true;
-    const unnamed = roster.filter((r) => !r.displayName?.trim() && !peekUserDisplayName(r.id));
-    Log.d('[mention] roster first open', { members: roster.length, unnamed: unnamed.length });
+    const unnamed = roster.filter(
+      (r) =>
+        !r.displayName?.trim() &&
+        !peekUserDisplayName(r.id) &&
+        !namesRequested.has(r.id.toLowerCase())
+    );
+    for (const r of unnamed) namesRequested.add(r.id.toLowerCase());
+    if (unnamed.length > 0) {
+      Log.d('[mention] resolving roster names', {
+        members: roster.length,
+        unnamed: unnamed.length,
+      });
+    }
     const [blocks] = await Promise.all([
       listBlockedUsers().catch((e) => {
         console.warn('[mention] blocked list unreadable, blocked accounts stay offered', e);
@@ -139,8 +159,23 @@ export function useMentionAutocomplete(opts: {
           })
         : Promise.resolve(),
     ]);
-    blockedIds = blocks.map((b) => b.userId);
-    if (start >= 0 && opts.roster?.length) suggestLocally(opts.roster);
+    const next = blocks.map((b) => b.userId);
+    const blocksChanged = next.join(',') !== (blockedIds ?? []).join(',');
+    blockedIds = next;
+    if ((unnamed.length > 0 || blocksChanged) && start >= 0 && opts.roster === roster) {
+      suggestLocally(roster);
+    }
+  }
+
+  /**
+   * Call when the roster prop changes (a member list that finished loading, a conversation switch):
+   * an open picker re-reads it instead of keeping the rows of the roster it opened on.
+   */
+  function refreshRoster() {
+    const roster = opts.roster;
+    if (start < 0 || !roster || roster.length === 0) return;
+    suggestLocally(roster);
+    void prepareRoster(roster);
   }
 
   function detectMentionAtCursor(text: string, cursor: number) {
@@ -256,6 +291,7 @@ export function useMentionAutocomplete(opts: {
     },
     handleInput,
     handleEditorInput,
+    refreshRoster,
     select,
     handleKeydown,
   };
