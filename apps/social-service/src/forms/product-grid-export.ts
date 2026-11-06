@@ -2,11 +2,16 @@ import { BadRequestException } from '@nestjs/common';
 import type * as ExcelJS from 'exceljs';
 import type { ExportLabels, ProductGridExportLabels } from './export-labels';
 import { guestReference } from './guest-receipt';
-import { productGridItems, type ProductGridItem } from './product-grid';
+import { productGridItems } from './product-grid';
 import {
+  PRODUCT_GRID_AWAITING_CASH_STATUSES,
   PRODUCT_GRID_OTHERS_TIER,
-  type ProductGridAxisEntry,
+  PRODUCT_GRID_RECEIVED_STATUSES,
+  productGridCellKey,
+  productGridLinesOf,
+  productGridTotals,
   type ProductGridLine,
+  type ProductGridTotals,
 } from './product-grid-contract';
 
 /**
@@ -17,11 +22,6 @@ import {
  * header of the export.
  */
 
-/** Statuses whose units are counted as ordered: the money landed, or nothing was owed. */
-export const RECEIVED_STATUSES: ReadonlySet<string> = new Set(['paid', 'free']);
-/** Statuses whose units are counted apart: ordered in cash, the money not yet received. */
-export const AWAITING_CASH_STATUSES: ReadonlySet<string> = new Set(['pending_cash']);
-
 /** The part of a submission the sheets read. */
 export interface GridExportSubmission {
   id: string;
@@ -29,16 +29,6 @@ export interface GridExportSubmission {
   paymentStatus: string;
   createdAt: Date | string;
   lines: ProductGridLine[] | null;
-}
-
-/** Quantities and amounts of one grid, by row x column, over one set of answers. */
-export interface GridTotals {
-  rows: ProductGridAxisEntry[];
-  columns: ProductGridAxisEntry[];
-  /** `rowId:colId` -> units. */
-  quantities: Map<string, number>;
-  /** `rowId:colId` -> cents. */
-  amounts: Map<string, number>;
 }
 
 /**
@@ -61,65 +51,13 @@ export function productGridExportLabels(
 }
 
 /**
- * An axis of a grid as the totals list it: the grid's entries as they stand, then any entry the
- * lines name that the grid no longer has (a deleted row keeps its past orders), under the label it
- * was charged with.
- */
-function axisWithPast(
-  current: readonly ProductGridAxisEntry[],
-  lines: readonly ProductGridLine[],
-  pick: (line: ProductGridLine) => ProductGridAxisEntry
-): ProductGridAxisEntry[] {
-  const axis = current.map((entry) => ({ id: entry.id, label: entry.label }));
-  const known = new Set(axis.map((entry) => entry.id));
-  for (const line of lines) {
-    const entry = pick(line);
-    if (known.has(entry.id)) continue;
-    known.add(entry.id);
-    axis.push(entry);
-  }
-  return axis;
-}
-
-/** Sums the lines of ONE grid question into quantities and amounts per cell. */
-export function gridTotals(item: ProductGridItem, lines: readonly ProductGridLine[]): GridTotals {
-  const own = lines.filter((line) => line.itemId === item.id);
-  const quantities = new Map<string, number>();
-  const amounts = new Map<string, number>();
-  for (const line of own) {
-    const key = `${line.rowId}:${line.colId}`;
-    quantities.set(key, (quantities.get(key) ?? 0) + line.quantity);
-    amounts.set(key, (amounts.get(key) ?? 0) + line.lineCents);
-  }
-  return {
-    rows: axisWithPast(item.productGrid.rows, own, (l) => ({ id: l.rowId, label: l.rowLabel })),
-    columns: axisWithPast(item.productGrid.columns, own, (l) => ({
-      id: l.colId,
-      label: l.colLabel,
-    })),
-    quantities,
-    amounts,
-  };
-}
-
-/** A sum over a map's entries matching a predicate on the cell key. */
-function sumWhere(map: Map<string, number>, match: (rowId: string, colId: string) => boolean) {
-  let total = 0;
-  for (const [key, value] of map) {
-    const [rowId, colId] = key.split(':');
-    if (match(rowId, colId)) total += value;
-  }
-  return total;
-}
-
-/**
  * One block of the "Totaux" sheet: a title, then rows x columns of quantities with a total column
  * and an amount column, then a total row (units per column) and an amount row (euros per column).
  */
 function writeTotalsBlock(
   sheet: ExcelJS.Worksheet,
   title: string,
-  totals: GridTotals,
+  totals: ProductGridTotals,
   words: ProductGridExportLabels
 ): void {
   sheet.addRow([title]).font = { bold: true };
@@ -132,20 +70,20 @@ function writeTotalsBlock(
   for (const row of totals.rows) {
     sheet.addRow([
       row.label,
-      ...totals.columns.map((c) => totals.quantities.get(`${row.id}:${c.id}`) ?? 0),
-      sumWhere(totals.quantities, (r) => r === row.id),
-      sumWhere(totals.amounts, (r) => r === row.id) / 100,
+      ...totals.columns.map((c) => totals.cells[productGridCellKey(row.id, c.id)]?.units ?? 0),
+      totals.rowTotals[row.id].units,
+      totals.rowTotals[row.id].cents / 100,
     ]);
   }
   sheet.addRow([
     words.total,
-    ...totals.columns.map((c) => sumWhere(totals.quantities, (_r, col) => col === c.id)),
-    sumWhere(totals.quantities, () => true),
-    sumWhere(totals.amounts, () => true) / 100,
+    ...totals.columns.map((c) => totals.columnTotals[c.id].units),
+    totals.total.units,
+    totals.total.cents / 100,
   ]).font = { bold: true };
   sheet.addRow([
     `${words.amount} (EUR)`,
-    ...totals.columns.map((c) => sumWhere(totals.amounts, (_r, col) => col === c.id) / 100),
+    ...totals.columns.map((c) => totals.columnTotals[c.id].cents / 100),
   ]);
   sheet.addRow([]);
 }
@@ -201,13 +139,70 @@ export function addProductGridSheets(
 
   const totals = workbook.addWorksheet(words.totalsSheet.slice(0, 31));
   totals.getColumn(1).width = 26;
-  const linesOf = (statuses: ReadonlySet<string>) =>
-    submissions.filter((s) => statuses.has(s.paymentStatus)).flatMap((s) => s.lines ?? []);
-  const received = linesOf(RECEIVED_STATUSES);
-  const awaiting = linesOf(AWAITING_CASH_STATUSES);
+  // The ONE counting rule, shared with the responses screen (`product-grid-contract.ts`).
+  const received = productGridLinesOf(submissions, PRODUCT_GRID_RECEIVED_STATUSES);
+  const awaiting = productGridLinesOf(submissions, PRODUCT_GRID_AWAITING_CASH_STATUSES);
   for (const item of grids) {
     totals.addRow([item.label]).font = { bold: true, size: 13 };
-    writeTotalsBlock(totals, words.received, gridTotals(item, received), words);
-    writeTotalsBlock(totals, words.awaitingCash, gridTotals(item, awaiting), words);
+    writeTotalsBlock(totals, words.received, productGridTotals(item, received), words);
+    writeTotalsBlock(totals, words.awaitingCash, productGridTotals(item, awaiting), words);
   }
+}
+
+/**
+ * What the export endpoint writes: the whole workbook, or ONE of the grid's two sheets as CSV - the
+ * "CSV Articles" (one line per ordered cell) and "CSV Totaux" (the supplier order) of the responses
+ * screen's export menu. A CSV is the SAME sheet the workbook carries, written by the same code, so
+ * the two files cannot disagree.
+ */
+export const SUBMISSIONS_EXPORT_FORMATS = ['xlsx', 'articles-csv', 'totals-csv'] as const;
+export type SubmissionsExportFormat = (typeof SUBMISSIONS_EXPORT_FORMATS)[number];
+
+/** Reads the `format` query parameter: absent is the workbook (every client before the CSVs). */
+export function parseExportFormat(raw: string | undefined): SubmissionsExportFormat {
+  if (raw === undefined || raw === '') return 'xlsx';
+  if ((SUBMISSIONS_EXPORT_FORMATS as readonly string[]).includes(raw))
+    return raw as SubmissionsExportFormat;
+  throw new BadRequestException({
+    code: 'EXPORT_FORMAT_UNKNOWN',
+    message: `export format "${raw}" is not one of ${SUBMISSIONS_EXPORT_FORMATS.join(', ')}`,
+  });
+}
+
+/**
+ * A CSV format names a grid sheet, so a form without a priced grid has nothing to write: refused,
+ * typed, before any read - never an empty file that looks like "nobody ordered".
+ */
+export function assertExportFormatFits(
+  format: SubmissionsExportFormat,
+  gridWords: ProductGridExportLabels | null
+): void {
+  if (format === 'xlsx' || gridWords) return;
+  throw new BadRequestException({
+    code: 'EXPORT_FORMAT_NEEDS_PRODUCT_GRID',
+    message: `export format "${format}" needs a form with a product grid`,
+  });
+}
+
+/** The sheet a CSV format writes, as `addProductGridSheets` named it. */
+export function csvSheetName(
+  format: Exclude<SubmissionsExportFormat, 'xlsx'>,
+  words: ProductGridExportLabels
+): string {
+  return (format === 'articles-csv' ? words.articlesSheet : words.totalsSheet).slice(0, 31);
+}
+
+/**
+ * Writes one sheet of the workbook as CSV: `;`-separated with a byte-order mark, which is what a
+ * French spreadsheet opens as columns and accents rather than one column of mojibake; dates as the
+ * workbook shows them, in UTC as the workbook stores them.
+ */
+export async function sheetAsCsv(workbook: ExcelJS.Workbook, sheetName: string): Promise<Buffer> {
+  const buffer = await workbook.csv.writeBuffer({
+    sheetName,
+    dateFormat: 'DD/MM/YYYY HH:mm:ss',
+    dateUTC: true,
+    formatterOptions: { delimiter: ';', writeBOM: true },
+  });
+  return Buffer.from(buffer as ArrayBuffer);
 }

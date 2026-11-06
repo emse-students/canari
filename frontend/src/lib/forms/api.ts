@@ -2,6 +2,7 @@ import { m } from '$lib/paraglide/messages';
 import { statusLabels } from './paymentStatus';
 import type { AnswerWords } from './answerText';
 import type { PaymentRequestState } from './paymentReturn';
+import type { ProductGrid, ProductGridLine } from './productGridContract';
 
 export interface FormOption {
   label: string;
@@ -43,6 +44,8 @@ export interface FormItem {
    * criteria shape the pricing grid is built from.
    */
   showIf?: AudienceCondition | null;
+  /** A priced grid's definition (`product_grid` only): its rows, columns, closed cells and prices. */
+  productGrid?: ProductGrid;
 }
 
 /** Cotisation tiers of the beneficiary association; `null` is the base tier. */
@@ -353,6 +356,10 @@ export interface Submission {
   answers: Record<string, unknown>;
   totalPaid: number;
   paymentStatus: string;
+  /** How the answer pays - online (Lydia) or cash; null on a free answer. */
+  paymentMethod?: 'online' | 'cash' | null;
+  /** What each ordered cell of a priced grid was CHARGED (migration 137); null without a grid. */
+  lines?: ProductGridLine[] | null;
   createdAt: string;
   /** The reference a PAYING GUEST was given ("1A2B-3C4D"); null on every other row. */
   reference?: string | null;
@@ -446,6 +453,32 @@ export interface ExportLabels {
   file: string;
   /** The same cell once the retention purge has deleted the file. */
   fileDeleted: string;
+  /**
+   * The words of a priced grid's "Articles" and "Totaux" sheets (`product-grid-export.ts`). Sent
+   * with every export: the server refuses a grid form's export without them
+   * (`EXPORT_LABELS_PRODUCT_GRID_MISSING`), and checks them, unused, on any other form.
+   */
+  productGrid: ProductGridExportLabels;
+}
+
+/** The words of the priced grid's two sheets, mirrored by `export-labels.ts`. */
+export interface ProductGridExportLabels {
+  articlesSheet: string;
+  totalsSheet: string;
+  buyer: string;
+  guest: string;
+  question: string;
+  row: string;
+  column: string;
+  category: string;
+  othersCategory: string;
+  quantity: string;
+  unitPrice: string;
+  lineTotal: string;
+  total: string;
+  amount: string;
+  received: string;
+  awaitingCash: string;
 }
 
 /** The labels this client would write an export in, resolved through Paraglide. */
@@ -459,6 +492,24 @@ export function exportLabels(): ExportLabels {
     statuses: statusLabels(),
     file: m.form_answer_file(),
     fileDeleted: m.form_answer_file_deleted(),
+    productGrid: {
+      articlesSheet: m.form_export_grid_articles_sheet(),
+      totalsSheet: m.form_export_grid_totals_sheet(),
+      buyer: m.form_export_grid_buyer(),
+      guest: m.form_submitter_guest(),
+      question: m.form_export_grid_question(),
+      row: m.form_export_grid_row(),
+      column: m.form_export_grid_column(),
+      category: m.form_export_grid_category(),
+      othersCategory: m.form_export_grid_others_category(),
+      quantity: m.form_export_grid_quantity(),
+      unitPrice: m.form_export_grid_unit_price(),
+      lineTotal: m.form_export_grid_line_total(),
+      total: m.form_export_grid_total(),
+      amount: m.form_export_grid_amount(),
+      received: m.form_export_grid_received(),
+      awaitingCash: m.form_export_grid_awaiting_cash(),
+    },
   };
 }
 
@@ -518,9 +569,22 @@ export async function downloadFormAnswerFile(formId: string, fileId: string): Pr
   return res.blob();
 }
 
-export async function exportSubmissions(id: string, labels: ExportLabels): Promise<Blob> {
+/**
+ * What an export writes: the workbook (one row per answer, and a priced grid's "Articles" and
+ * "Totaux" sheets), or ONE of those two grid sheets as CSV. Mirrors `SUBMISSIONS_EXPORT_FORMATS`.
+ */
+export type SubmissionsExportFormat = 'xlsx' | 'articles-csv' | 'totals-csv';
+
+/** Downloads a form's answers in `format`; a CSV format is refused on a form without a grid. */
+export async function exportSubmissions(
+  id: string,
+  labels: ExportLabels,
+  format: SubmissionsExportFormat = 'xlsx'
+): Promise<Blob> {
   const query = encodeURIComponent(JSON.stringify(labels));
-  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/export?labels=${query}`);
+  const res = await apiFetch(
+    `${socialUrl()}/api/forms/${id}/export?labels=${query}&format=${format}`
+  );
   if (!res.ok) throw await refusal(res, 'Failed to export submissions');
   return res.blob();
 }
