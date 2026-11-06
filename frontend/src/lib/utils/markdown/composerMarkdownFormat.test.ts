@@ -1,4 +1,9 @@
 import { m } from '$lib/paraglide/messages';
+
+const toasts: Array<[string, string | undefined]> = [];
+vi.mock('$lib/stores/toast.svelte', () => ({
+  showToast: (message: string, type?: string) => toasts.push([message, type]),
+}));
 import { applyComposerMarkdownFormat } from './composerMarkdownFormat';
 
 function mockComposer(selection: { start: number; end: number }) {
@@ -79,5 +84,27 @@ describe('applyComposerMarkdownFormat', () => {
       const { text } = await apply(type, '', { start: 0, end: 0 });
       expect(text).toContain(placeholder);
     }
+  });
+
+  /**
+   * A STYLE MARKED WOULD NOT DRAW IS NOT WRITTEN (owner, 2026-11-06): the text stays as it was, the
+   * selection is not moved, and the member is told with a toast in their language.
+   */
+  it('leaves the text unchanged and shows a toast when a style cannot be written cleanly', async () => {
+    toasts.length = 0;
+    const warn = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const original = '___efghi__ ghijklm ghijk bcdefghi_';
+    const { text, composer } = await apply('italic', original, { start: 14, end: 16 });
+    expect(text).toBe(original);
+    expect(composer.setSelectionRange).not.toHaveBeenCalled();
+    expect(toasts).toEqual([[m.md_toolbar_refused(), 'warning']]);
+    expect(String(warn.mock.calls[0]?.[0])).toContain('REFUSED italic');
+    warn.mockRestore();
+  });
+
+  it('shows no toast when the style is written', async () => {
+    toasts.length = 0;
+    await apply('bold', 'hello world', { start: 6, end: 11 });
+    expect(toasts).toEqual([]);
   });
 });

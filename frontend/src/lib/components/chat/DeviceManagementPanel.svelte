@@ -26,7 +26,6 @@
 
   interface DeviceInfo {
     deviceId: string;
-    keyPackage: Uint8Array;
     deviceName?: string;
     deviceOs?: string;
     deviceAppVersion?: string;
@@ -211,7 +210,7 @@
     try {
       console.log('[DevicePanel] Loading devices and sessions for user:', userId);
       const [deviceResult, sessionResult] = await Promise.allSettled([
-        mlsService.fetchUserDevices(userId),
+        mlsService.listUserDevices(userId),
         fetchAuthSessions(),
       ]);
 

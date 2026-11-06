@@ -666,11 +666,13 @@
 
     /**
      * THE CLICK THAT ENDS A MOUSE DRAG IS NOT A TAP: it would pause the video under it and count
-     * towards a double tap's like. Taken in the capture phase of the frame, before the slide's
-     * double tap and the player see it.
+     * towards a double tap's like - and, ending on a caption's LINK (owner, 2026-11-06: a post with
+     * a link is in CanaReels), it would open it. Taken in the capture phase of the WINDOW, before
+     * the document's link handler (`installAppLinkClickHandler`, which leaves a prevented click
+     * alone), the slide's double tap and the player see it; only a click inside the viewer.
      */
     function onClickCapture(e: MouseEvent) {
-      if (!swallowClick) return;
+      if (!swallowClick || !(e.target instanceof Node) || !el!.contains(e.target)) return;
       swallowClick = false;
       console.debug('[reel-viewer] the click ending a mouse drag is not a tap - swallowed');
       e.preventDefault();
@@ -685,7 +687,7 @@
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', cancel);
-    el.addEventListener('click', onClickCapture, { capture: true });
+    window.addEventListener('click', onClickCapture, { capture: true });
     // A picture's native drag would steal the mouse's pointer events (`pointercancel`).
     const noNativeDrag = (e: DragEvent) => e.preventDefault();
     el.addEventListener('dragstart', noNativeDrag);
@@ -699,7 +701,7 @@
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', cancel);
-      el.removeEventListener('click', onClickCapture, { capture: true });
+      window.removeEventListener('click', onClickCapture, { capture: true });
     };
   });
 

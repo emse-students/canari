@@ -105,6 +105,7 @@ import {
   keyPackagePublication,
   type DeviceKeyPackageAnswer,
   type DeviceSignatureKeys,
+  type UserDeviceEntry,
 } from '$lib/mls-client/deviceKeyPackage';
 import { MlsPerGroupScheduler, type MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 import {
@@ -4357,6 +4358,10 @@ export abstract class BaseMlsService implements IMlsService {
     }>
   > {
     return this.delivery.fetchUserDevices(userId);
+  }
+
+  async listUserDevices(userId: string): Promise<UserDeviceEntry[]> {
+    return this.delivery.listUserDevices(userId);
   }
 
   /**

@@ -755,7 +755,8 @@ service built never to interpret them; the trade is in `docs/wiki/backlog.md`.
 
 `GET mls/devices/:userId/:deviceId/key-package` and the account list `GET mls/devices/:userId`
 **claim**: each answer DELETEs one one-time package per device it names (`resolveKeyPackagePayloadForDevice`).
-Three client paths used them only to READ, so packages left the pool and were thrown away.
+Three client paths used them only to READ, so packages left the pool and were thrown away. Both
+take `?peek=1` since 2026-11-06, which reads without claiming (below).
 
 **Measured on production, read-only, 2026-11-06.** 430 `[KP] one-time pool EMPTY` warnings in one
 hour against 1 to 12 an hour the rest of the evening, 426 of them in two minutes. Two accounts:
@@ -783,7 +784,33 @@ key opens every Welcome built on that row until the device mints a new last-reso
 happens only when the package reaches the end of its lifetime. With the two reads fixed, an empty
 pool means one remaining thing: the device was added faster than it refills. The line still accuses
 that. What is still open is in
-[backlog](../backlog.d/p2-reads-of-the-device-list-still-claim-one-time-packages.md).
+[backlog](../backlog.d/p2-what-the-key-package-claim-fix-left.md).
+
+**The account list peeks too, and a claim is never shared (2026-11-06, second step).** The list
+takes the same `?peek=1`: every device is judged as the single-device peek judges it, its static
+row is the package, and no one-time row is touched (`getUserDevices`, `devices.controller.ts`). The
+client has two methods, one per question:
+
+| method | request | who calls it | shared in flight |
+| --- | --- | --- | --- |
+| `listUserDevices` | `GET mls/devices/:u?peek=1`, returns no package | the settings device count (polled every 30 s), the device panel, the device-notice wiring (a device's name, the pre-claim at registration), `sendWelcome` without a device id | yes, `${userId}:devices:peek` |
+| `fetchUserDevices` | `GET mls/devices/:u`, claims one package per device | group and DM creation (every device of a person, and the creator's own), `admitNewcomer` | **never** |
+
+A claim is not joined because a one-time package serves one Welcome: two adders handed one answer
+(two groups created with one person at once, or a creation and an admission) would build two
+Welcomes on one package and the joiner would refuse the second with `NoMatchingKeyPackage`. A peek
+and a claim have different keys, so they never share a promise either. Who may call
+`fetchUserDevices` is an allowlist, `deviceListClaims.test.ts`; the server half is pinned in
+`devices.controller.static-fallback.spec.ts`.
+
+No legacy entry: the server's default (no query) still claims, because that is what an adder asks
+for, not a shim kept for old clients. Installed clients below this change keep claiming on their
+roster reads until they update; a new client against an older server sends `?peek=1`, which that
+server ignores, and claims as before.
+
+**The expected effect on the WARN.** A roster read no longer reaches `[KP] one-time pool EMPTY`.
+The line is then written only when an adder claims (creation, admission, the sweep and the
+`welcome_request` answer, one device each) faster than the device refills at its next connection.
 
 ## How a client reads a key-package 404, and which answers retire an invitation (floor 1.2.7)
 

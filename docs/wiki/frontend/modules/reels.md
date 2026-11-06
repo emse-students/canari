@@ -820,9 +820,10 @@ below; **owed on both phones**
 - **Photo pages** (`reels/fullScreenPost.ts`): a post whose ONLY content is one picture - no other
   media, no poll, no form - is a page like a reel: the same frame, caption and rail, its picture
   instead of the video, no player bar (so the caption sits lower). Several media, a video outside a
-  reel, a file and text alone stay out, and so do **a linked calendar event and a link in the
-  text**: the card draws the event's card (date, place, add to calendar) and the link's preview,
-  and a page would silently drop both. **The list is newest first and nothing else** (lead's
+  reel, a file and text alone stay out, and so does **a linked calendar event**: the card draws
+  the event's card (date, place, add to calendar), and a page would silently drop it. A link in the
+  text kept a post out too until the owner reversed it on 2026-11-06
+  ([below](#a-post-with-a-link-in-its-text-owner-2026-11-06)). **The list is newest first and nothing else** (lead's
   decision): a pin is a feed concept, and a pinned post would head every reader's CanaReels. The list comes from the server
   (`kind=reel&singlePhotos=true`, [server half](../../services/reels.md#reading)); a row it serves
   that the client reads as neither is drawn as a reel and accused once in the log.
@@ -882,7 +883,8 @@ the lead's, taken 2026-11-06, reversible.
 - **Which posts** (`fullScreenPageOf` returns `carousel`; the server's `MULTI_MEDIA_POST_SQL`,
   [server half](../../services/reels.md#reading)): **2 to 10 media, every one a picture or a video**
   (10 is Instagram's cap, `CAROUSEL_MAX_MEDIA` on both sides), with the SAME exclusions as a single
-  media - no poll, no form, no attached form, no linked event, no link in the text. **A file or an
+  media - no poll, no form, no attached form, no linked event (a link in the text is allowed,
+  [below](#a-post-with-a-link-in-its-text-owner-2026-11-06)). **A file or an
   audio among them keeps the whole post out**: a page draws pictures and videos only.
 - **The two axes.** Vertical pages the POSTS, horizontal pages the MEDIA of the post on screen
   (`reelViewerNav.ts`: `reelReleaseVerdict` answers `media-next` / `media-prev`, `stepMediaIndex`).
@@ -940,6 +942,42 @@ the lead's, taken 2026-11-06, reversible.
   **Owed on a phone**: the feel of the two axes on the Mi 9T and the iPhone 12 (a diagonal flick,
   a horizontal swipe right after a vertical fling), a carousel video's sound and pause on a swipe,
   and the save of a carousel video into each gallery.
+
+### A post with a link in its text (owner, 2026-11-06)
+
+**Decided by the owner:** a photo, video or carousel post whose text carries a link DOES appear in
+CanaReels, the link tappable in the caption. Until then it stayed out because the page did not draw
+the link's preview card; the preview is still not drawn - the link itself is, which was the point.
+
+- **Which posts:** `fullScreenPageOf` no longer reads the text. Poll, form, attached form and linked
+  event still keep a post out. The list asks for it with `withLinks=true` beside `multiMedia=true`
+  ([server half](../../services/reels.md#reading)), so a client that does not draw the link - every
+  client built without this change, every release through `1.6.6-alpha.1` - never receives such a
+  post ([legacy-compatibility](../../legacy-compatibility.md)).
+- **The link is the post card's own**: the caption is `PostMarkdown`, whose `link` renderer is
+  `PostMentionLink` - an in-app Canari link goes through `AppLink`, an outside one is an `<a>`
+  that the app's document-level handler (`installAppLinkClickHandler`) sends to `openExternal` and
+  its Safe Browsing gate, as on a card. Nothing new opens a URL.
+- **Tappable, folded or not.** The caption is pointer-transparent so a tap beside the text reaches
+  the video; its `a` and `button` (a mention) are not (`[&_a]:pointer-events-auto`). A long URL
+  wraps anywhere (`wrap-anywhere`), never past the frame; a long caption folds to two lines and
+  unfolds into its own scroll, as before. **The text is always on the viewer's dark scrim**, whatever
+  the app's theme, so its block carries `data-theme="dark"`: the `dark:` variant (`app.css`) then
+  applies inside it, and a link, a mention and a hashtag - hover included - take the colours the post
+  card gives them on a dark surface (`amber-400`, an in-app link's hover `amber-300`). One attribute,
+  never a recolour per renderer: the first build recoloured only the `a`, leaving a mention and a
+  hashtag `amber-700` on black (about 3:1) in the light theme and an in-app link darkening on hover.
+- **Never a swipe nor a like.** A tap does not move, so the viewer's gesture never locks an axis; a
+  drag that STARTS on a link still pages, as everywhere on the page. A tap on a link is the link's
+  for the double tap (`tapBelongsToInnerControl`). The click that ends a MOUSE drag is swallowed in
+  the WINDOW's capture phase, before the document's link handler, so a drag released over a link
+  does not open it.
+- Pinned by `fullScreenPost.test.ts` (a link no longer keeps a picture, a video or a carousel out),
+  `ReelSlide.doubleTap.svelte.test.ts` (the caption's link is an `<a>`, pointer-live, and a double
+  tap on it is no like), `ReelViewer.carousel.svelte.test.ts` (the document's handler sees the
+  drag's click already prevented), `listPostsSearchParams.test.ts` and `allReels.test.ts`.
+  **Owed on a phone:** a tap on a caption link opens it (with the Safe Browsing prompt on a flagged
+  URL), and a swipe started on one still pages, on the Mi 9T and the iPhone 12.
 
 ### The minimal player and the rail tools (user, 2026-10-23)
 

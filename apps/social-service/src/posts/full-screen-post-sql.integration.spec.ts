@@ -5,8 +5,8 @@
  * the `jsonb` arithmetic says what `full-screen-post-sql.ts` claims. The cases are the client's
  * (`frontend/src/lib/reels/fullScreenPost.test.ts`): one picture in, one picture with a legacy
  * row's `mimeType` only in, a video, two pictures, a file, text alone, a picture with a poll and a
- * picture with a form out; a linked calendar event and a link in the text out (the page would drop
- * the card each one draws); a column holding JSON `null` or a scalar read as empty, never raising.
+ * picture with a form out; a linked calendar event out, and a link in the text out unless the
+ * client sends `withLinks` (owner, 2026-11-06); a column holding JSON `null` or a scalar read as empty, never raising.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like every integration spec here: skipped without a database,
  * never passing. CI's `test-social-integration` sets it and fails on a skipped test. Everything
@@ -226,5 +226,36 @@ maybe('the one-picture clause against PostgreSQL', () => {
       [...single.rows, ...multi.rows].map((r) => r.id).sort((a, b) => a.localeCompare(b))
     );
     expect(single.rows.map((r) => r.id)).not.toContain('two-pictures');
+  });
+
+  it('withLinks (owner, 2026-11-06): the carousel mode plus exactly the rows whose only extra is a link', async () => {
+    const byId = (rows: Array<{ id: string }>) =>
+      rows.map((r) => r.id).sort((a, b) => a.localeCompare(b));
+    const linked = await client.query<{ id: string }>(
+      `SELECT id FROM posts WHERE ${singleMediaSql('carousel-links')}`
+    );
+    const carousel = await client.query<{ id: string }>(
+      `SELECT id FROM posts WHERE ${singleMediaSql('carousel')}`
+    );
+    expect(byId(linked.rows)).toEqual(
+      byId([
+        ...carousel.rows,
+        { id: 'carousel-and-link' },
+        { id: 'picture-and-link' },
+        { id: 'video-and-link' },
+      ])
+    );
+    // A poll, a form, an attached form and a linked event still keep a post out.
+    for (const out of [
+      'picture-and-poll',
+      'picture-and-form',
+      'picture-and-attached-form',
+      'picture-and-event',
+      'video-and-event',
+      'carousel-and-event',
+      'carousel-and-poll',
+    ]) {
+      expect(byId(linked.rows)).not.toContain(out);
+    }
   });
 });

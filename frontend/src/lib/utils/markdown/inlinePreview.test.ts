@@ -50,18 +50,18 @@ describe('parseInlineMarkdownPreview', () => {
     });
   });
 
-  it('parses underline with double underscores', () => {
+  it('parses double underscores as BOLD, as the published post does', () => {
     const segs = parseInlineMarkdownPreview('__test__');
-    expect(kinds(segs)).toEqual(['delimiter', 'formatted:underline', 'delimiter']);
+    expect(kinds(segs)).toEqual(['delimiter', 'formatted:bold', 'delimiter']);
     expect(segs[1]).toMatchObject({
       kind: 'formatted',
-      styles: ['underline'],
+      styles: ['bold'],
       content: 'test',
       marker: '__',
     });
   });
 
-  it('keeps * / _ for italic and __ for underline', () => {
+  it('keeps * / _ for italic and __ for bold', () => {
     const segs = parseInlineMarkdownPreview('*i* _j_ __u__');
     expect(kinds(segs)).toEqual([
       'delimiter',
@@ -73,7 +73,7 @@ describe('parseInlineMarkdownPreview', () => {
       'delimiter',
       'text',
       'delimiter',
-      'formatted:underline',
+      'formatted:bold',
       'delimiter',
     ]);
   });
@@ -116,27 +116,38 @@ describe('parseInlineMarkdownPreview', () => {
     });
   });
 
-  it('combines underline with italic and bold', () => {
+  it('combines double underscores with italic and bold', () => {
     const segs = parseInlineMarkdownPreview('__*i*__');
     expect(segs[2]).toMatchObject({
       kind: 'formatted',
-      styles: ['underline', 'italic'],
+      styles: ['bold', 'italic'],
       content: 'i',
     });
 
     const underlineBold = parseInlineMarkdownPreview('__**bi**__');
     expect(underlineBold[2]).toMatchObject({
       kind: 'formatted',
-      styles: ['underline', 'bold'],
+      styles: ['bold', 'bold'],
       content: 'bi',
     });
 
     const allStyles = parseInlineMarkdownPreview('__***all***__');
     expect(allStyles[2]).toMatchObject({
       kind: 'formatted',
-      styles: ['underline', 'bold', 'italic'],
+      styles: ['bold', 'bold', 'italic'],
       content: 'all',
     });
+  });
+
+  it('follows CommonMark flanking for a single * or _, as the post does', () => {
+    expect(kinds(parseInlineMarkdownPreview('2 * 3 * 4'))).toEqual(['text']);
+    expect(kinds(parseInlineMarkdownPreview('snake_case_name'))).toEqual(['text']);
+    expect(kinds(parseInlineMarkdownPreview('*x *'))).toEqual(['text']);
+  });
+
+  it('tolerates whitespace inside a double marker, like the renderer', () => {
+    const segs = parseInlineMarkdownPreview('**TOP 5 **');
+    expect(kinds(segs)).toEqual(['delimiter', 'formatted:bold', 'delimiter']);
   });
 
   it('parses strikethrough and inline code', () => {

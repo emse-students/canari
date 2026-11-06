@@ -57,6 +57,7 @@
 - [SEO and link previews](frontend/seo.md) — why a login-gated SPA needs server-rendered heads, the sitemap and robots routes, and what each decision follows from
 - [Local-first UI](frontend/local-first-ui.md) - the rule that no interaction servable from local state may await the network, what a shaped link measured on the phone, and the ledger of what is fixed
 - [Offline and weak network](frontend/offline-and-weak-network.md) - what each send and load path does offline and on Slow 3G / 2G, measured on the sandbox pair, the root causes with file:line, and the ordered work packages (salon outbox, deadlines, boot chain)
+- [Markdown coherence: toolbar, composer preview and post render one grammar](frontend/markdown-coherence.md) - the `**x **` bug, the tolerance, the cases table
 - [Emoji: Noto pictures, replacing the bundled font](frontend/emoji.md) - the SVG set and the svgo plugins measured to damage it, the presentation rule, the gate, and the font until it is deleted
 - [Sounds](frontend/sounds.md) - every sound the app emits and its trigger, the rule that no audio output is held while nothing plays (the stream a frozen Android app kept `started`), and who owns the audio session category (the silent switch, the Android ringer)
 - [MediaFrame](frontend/media-frame.md) - the box a picture, a GIF or a video holds before it arrives: what Discord, WhatsApp, Telegram and Slack carry (sourced), what Canari shifted, and the primitive every renderer uses
@@ -109,6 +110,7 @@
 - [What Canari serves without an account](anonymous-surface.md) — the owner's rule of 2026-11-02 (the public showcase is the ceiling) and every anonymous route, page head and sitemap entry with its verdict: closed, stripped or kept, and why
 - [Spaces, audiences and dependencies (proposal)](spaces-and-audiences-reform.md) — PROPOSAL 2026-11-02, for the owner to decide: audience and dependencies as two independent axes with two admin panels, a two-level dependency (an association or list under at most one BDE) and one governor per space, institution-only item narrowing, events and partnerships validated per governor slice, associations vs lists vs institutions compared, the work packages and the owner's open questions
 - [Cloudflare edge](infrastructure/cloudflare-edge.md) — the zone configured by hand with no representation in git: what lives there, how to read it, and the tunnel token rotation
+- [Upstream reachability](infrastructure/upstream-reachability.md) — the 15-minute report for a public name whose tunnel has no connector (gallery, dev, legacy, production), and the `--protocol http2` decision
 - [Databases](infrastructure/databases.md) — PostgreSQL, Redis, Garage
 - [Backup system](infrastructure/backup.md) — Daily cron, offsite rsync
 - [Host OS updates](infrastructure/host-updates.md) — the four boxes' security updates, the `#clear` without which the policy is decorative, the 30-second `502` this scope does NOT incur, and the daily run that fails on a finding
