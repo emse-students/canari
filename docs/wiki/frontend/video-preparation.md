@@ -257,23 +257,35 @@ steps, each from the fact that decides it:
    decoder that keeps timestamps would find no hole, the track would be copied, and a Chrome reader
    would hear it early. A track with holes is ENCODED, even AAC-LC under 128 kb/s, because a copy
    keeps the holes for the player to close (`chooseAudioRoute`'s `hasHoles`).
-2. **Where the holes land on this decoder - only for a holed track that is encoded.** The window the
-   conversion reads is decoded once, exactly as the conversion will read it (`samples(start, end)`:
-   the trim of a CanaReel included), and `audioHoleMap` pairs each chunk with its packet
-   (`pairedPackets`: from the packet the first chunk is stamped with, to the last before the
-   window's end). A packet at least two chunk lengths later than the decoder put it, beyond the holes
+   **What the median cannot see** (a known limit, not a defect seen in a file): with three packets,
+   one hole is one of two steps and the median is the hole, so it is missed; when MORE than half the
+   steps are holes, the median is a hole's length and none is found; and a codec whose packets vary
+   in length (Vorbis's short and long blocks) has no single packet length, so its holes are measured
+   against the median of mixed steps. Every case errs towards "no hole", which is the old route.
+2. **Where the holes land on this decoder - only for a holed track that is encoded.** The track is
+   decoded once from where the conversion starts (`samples(start)`: a CanaReel's trim included) to
+   the END of the track, and `audioHoleMap` pairs each chunk with its packet (`pairedPackets`: every
+   packet from the one the first chunk is stamped with). Never to the window's end: the conversion
+   cuts there on the decoder's collapsed timeline and the packets sit on the real one, so a hole
+   inside a trimmed window left more chunks than packets and the restore was refused (a review
+   finding of 2026-11-06; a test now decodes 40 chunks for a 30-frame window holding 20 packets).
+   A packet at least two chunk lengths later than the decoder put it, beyond the holes
    already counted, is a step; a run of packets earlier than that is ONE overlap, left alone. The
    conversion's audio `process` hook moves each chunk back (`restoreAudioTimestamp`) and cuts what a
    restore pushes past the window's end (the conversion cut its window on the decoder's timeline,
-   where a chunk sits earlier than it belongs); mediabunny's encoder fills the gaps with silence. A
+   where a chunk sits earlier than it belongs), dropping a chunk left with no sample rather than
+   handing WebCodecs an empty `AudioData`; mediabunny's encoder fills the gaps with silence. A
    decoder that keeps the packets' timestamps yields no step, correctly: the encoder sees the gaps.
 
 **Nothing here refuses an upload.** A decoder that throws in step 2 (an engine with no AAC decoder,
 a corrupt packet) or that does not emit one chunk per packet leaves the route the source would have
-had without its holes, and the console says the restore was lost: `audio holes NOT restored (...)`,
-at `warn` for a failed decoder and in ONE `console.error` line with the counts for an unpaired one.
-A track without holes is never decoded before the conversion. An engine with no AAC encoder
-(Firefox) still copies a holed AAC track, holes included, and the console names them. The pre-pass
+had without its holes, and the console says the restore was lost AND what it costs:
+`audio holes NOT restored (...): copied with its holes: the sound after each hole plays early on
+Chrome` (or `encoded without its holes` for a codec that is encoded anyway), at `warn` for a failed
+decoder and in ONE `console.error` line with the counts for an unpaired one. A track without holes
+is never decoded before the conversion. An engine with no AAC encoder (Firefox, an iOS before 26)
+still copies a holed AAC track, holes included, and says so in the same words:
+`audio holes NOT restored (no AAC encoder): copied with its holes: ...`. The pre-pass
 stops on the member's cancel.
 
 ### The video: a variable frame rate, and what a phone does with it

@@ -291,7 +291,6 @@ export async function prepareVideoForUpload(
       if (audioRoute === 'encode') {
         const placed = await placeAudioHoles(mb, keptAudio, packetTimes, {
           start: windowStart,
-          end: windowEnd,
           signal,
         });
         if (placed.kind === 'map') {
@@ -302,16 +301,22 @@ export async function prepareVideoForUpload(
           );
         } else {
           // The restore cannot run: the route the source would have had without its holes is kept,
-          // and the loss is named - the sound after each hole may play early.
+          // and the loss is named below with its consequence.
           audioRoute = chooseAudioRoute({ ...routeFacts, hasHoles: false });
           const why =
             placed.kind === 'unpaired'
               ? `the decoder emitted ${placed.decoded} chunk(s) for ${placed.packets} packet(s)`
               : `the decoder failed: ${placed.error}`;
-          const line = `[video-prep] audio holes NOT restored (${why}), route ${audioRoute}`;
+          const line =
+            `[video-prep] audio holes NOT restored (${why}): ` + holeConsequence(audioRoute);
           if (placed.kind === 'unpaired') console.error(line);
           else console.warn(line);
         }
+      } else {
+        // No AAC encoder on this engine (Firefox, an iOS before 26): the holes go into the file.
+        console.warn(
+          `[video-prep] audio holes NOT restored (no AAC encoder): ` + holeConsequence(audioRoute)
+        );
       }
     }
     // A copied track costs what it carries, measured over every packet; an encoded one, the plan's.
@@ -471,6 +476,13 @@ export function videoSpanTrim(
   return { start, end };
 }
 
+/** What a holed track that could not be restored becomes, said where the loss is logged. */
+function holeConsequence(route: 'none' | 'copy' | 'encode'): string {
+  return route === 'copy'
+    ? 'copied with its holes: the sound after each hole plays early on Chrome'
+    : 'encoded without its holes: the sound after each hole plays early';
+}
+
 /** Every audio packet's timestamp, metadata only (no packet data is read). */
 async function readPacketTimes(
   mb: typeof import('mediabunny'),
@@ -488,21 +500,22 @@ async function readPacketTimes(
 }
 
 /**
- * Where a holed track's holes land on this engine's decoder: the conversion's window decoded once,
- * exactly as the conversion will read it (`samples(start, end)`), each chunk paired with its packet.
- * Only called for a track with holes that is re-encoded. A decoder that throws is an answer
- * (`failed`), never a refusal of the upload.
+ * Where a holed track's holes land on this engine's decoder: the track decoded once from the
+ * conversion's start - where the conversion's decoder starts too - to its END, each chunk paired
+ * with its packet. Not to the window's end: the conversion cuts there on the decoder's collapsed
+ * timeline, the packets on the real one, so a hole inside a trimmed window would leave more chunks
+ * than packets (the audio hook does the cut instead). Only called for a track with holes that is
+ * re-encoded. A decoder that throws is an answer (`failed`), never a refusal of the upload.
  */
 async function placeAudioHoles(
   mb: typeof import('mediabunny'),
   track: import('mediabunny').InputAudioTrack,
   packetTimes: number[],
-  window: { start: number; end: number; signal: AbortSignal | undefined }
+  window: { start: number; signal: AbortSignal | undefined }
 ): Promise<AudioHoleMap | { kind: 'failed'; error: string }> {
   const decoded: DecodedChunk[] = [];
   try {
-    const end = Number.isFinite(window.end) ? window.end : undefined;
-    for await (const s of new mb.AudioSampleSink(track).samples(window.start, end)) {
+    for await (const s of new mb.AudioSampleSink(track).samples(window.start)) {
       decoded.push({ timestamp: s.timestamp, duration: s.duration });
       s.close();
       if (window.signal?.aborted) {
@@ -513,7 +526,7 @@ async function placeAudioHoles(
     if (isVideoPrepareError(e)) throw e;
     return { kind: 'failed', error: e instanceof Error ? e.message : String(e) };
   }
-  const paired = pairedPackets(packetTimes, decoded, window.end);
+  const paired = pairedPackets(packetTimes, decoded);
   if (!paired) return { kind: 'unpaired', packets: 0, decoded: decoded.length };
   return audioHoleMap(paired, decoded);
 }
@@ -599,6 +612,9 @@ export function audioConversionOptions(
               sample.numberOfFrames,
               Math.round((limit - at) * sample.sampleRate)
             );
+            // Less than half a frame before the end: nothing left to encode (an empty AudioData is a
+            // TypeError in WebCodecs).
+            if (frames <= 0) return null;
             const moved = frames < sample.numberOfFrames ? sample.trim(0, frames) : sample.clone();
             moved.setTimestamp(at);
             return moved;

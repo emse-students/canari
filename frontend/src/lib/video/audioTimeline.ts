@@ -125,26 +125,24 @@ export function audioHoleMap(packetTimestamps: number[], decoded: DecodedChunk[]
 }
 
 /**
- * The packets a decoder read for a window, to pair with the chunks it yielded: from the packet the
- * first chunk is stamped with (the decoder starts there) to the last packet starting before the
- * window's end. `audioHoleMap` then refuses the pairing unless there is one chunk per packet.
- * `null` when no packet is where the first chunk says.
+ * The packets a decoder read from a start to the END of the track, to pair with the chunks it
+ * yielded: every packet from the one the first chunk is stamped with (the decoder starts there).
+ * Never cut at a window's end - a decoder cuts there on its own collapsed timeline and the packets
+ * sit on the real one, so a hole inside the window would leave more chunks than packets; the decode
+ * must run to the track's end instead. `audioHoleMap` then refuses the pairing unless there is one
+ * chunk per packet. `null` when no packet is where the first chunk says.
  *
  * @param packetTimestamps Every packet of the track, in order.
- * @param end The window's end, in seconds (`Infinity` for the whole track).
  */
 export function pairedPackets(
   packetTimestamps: number[],
-  decoded: DecodedChunk[],
-  end: number
+  decoded: DecodedChunk[]
 ): number[] | null {
   if (decoded.length === 0) return null;
   const first = decoded[0];
   const at = packetTimestamps.findIndex((t) => Math.abs(t - first.timestamp) < first.duration / 2);
   if (at < 0) return null;
-  const run = packetTimestamps.slice(at);
-  const stop = run.findIndex((t) => t >= end);
-  return stop < 0 ? run : run.slice(0, stop);
+  return packetTimestamps.slice(at);
 }
 
 /**

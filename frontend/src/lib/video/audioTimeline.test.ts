@@ -91,14 +91,16 @@ describe('audioHoleMap', () => {
 });
 
 describe('pairedPackets', () => {
-  it('starts the pairing at the packet the decoder started from (a trimmed window)', () => {
-    expect(pairedPackets(times(10), chunks(3, 4 * F), 6.5 * F)).toEqual(times(10).slice(4, 7));
-    // Without an end, every packet from there on: a decoder that yields fewer is then unpaired.
-    expect(pairedPackets(times(10), chunks(3, 4 * F), Infinity)).toEqual(times(10).slice(4));
+  it('pairs every packet from the one the decoder started at (a trimmed start) to the end', () => {
+    expect(pairedPackets(times(10), chunks(6, 4 * F))).toEqual(times(10).slice(4));
+    // A decoder that yields fewer chunks than that is then refused by audioHoleMap.
+    expect(audioHoleMap(pairedPackets(times(10), chunks(3, 4 * F))!, chunks(3, 4 * F)).kind).toBe(
+      'unpaired'
+    );
   });
 
   it('pairs nothing when no packet is where the first chunk says', () => {
-    expect(pairedPackets(times(10), chunks(3, 20 * F), Infinity)).toBeNull();
-    expect(pairedPackets(times(10), [], Infinity)).toBeNull();
+    expect(pairedPackets(times(10), chunks(3, 20 * F))).toBeNull();
+    expect(pairedPackets(times(10), [])).toBeNull();
   });
 });
