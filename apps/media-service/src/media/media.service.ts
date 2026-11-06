@@ -1103,7 +1103,14 @@ export class MediaService {
     const deleted: string[] = [];
     const refused: string[] = [];
     for (const mediaId of mediaIds) {
-      const entry = UUID_REGEX.test(mediaId) ? this.meta.items[mediaId] : undefined;
+      // Checked first and on its own: the id is a key of the metadata map below, so nothing that is
+      // not a UUID (`__proto__`, `constructor`) ever reaches the read or the write.
+      if (!UUID_REGEX.test(mediaId)) {
+        this.logger.warn(`media ${mediaId}: public-asset delete refused - not a media id`);
+        refused.push(mediaId);
+        continue;
+      }
+      const entry = this.meta.items[mediaId];
       if (entry?.purgedAt) {
         deleted.push(mediaId);
         continue;
