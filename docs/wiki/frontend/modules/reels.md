@@ -600,8 +600,7 @@ or viewer player is open, and when the LAST one is released the video last come 
 if nothing else does (`resumeVisible`). The viewer's own players register later and claim as before.
 Nothing is a timer. Tests: `playbackArbiter.test.ts` (hold pauses ambient and foreground, blocks
 scroll-in starts, release is idempotent, two holds) and `ReelViewer.svelte.test.ts` (hold on open,
-release on close). Not covered, deliberately: `MediaLightbox` on a PHOTO still leaves the feed playing
-(not asked); it can take the same one-line hold.
+release on close). `MediaLightbox` takes the same hold while `open` (an `$effect.pre`, so it lands before the lightbox's own video mounts); test `MediaLightbox.hold.svelte.test.ts`.
 
 ### A loading reel shows its first frame, never a play glyph (owner, 2026-10-31)
 
