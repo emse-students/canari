@@ -3,7 +3,9 @@
   import { formatAmount } from '$lib/forms/fillAnswers';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
-  import { Ban, Paperclip, Upload, X } from '@lucide/svelte';
+  import { Ban, CircleAlert, Paperclip, Upload, X } from '@lucide/svelte';
+  import ProductGridQuestion from './ProductGridQuestion.svelte';
+  import type { ProductGridViewerPrices } from '$lib/forms/productGridContract';
   import { m } from '$lib/paraglide/messages';
   import { uploadFormAnswerFile, type UploadedAnswerFile } from '$lib/forms/api';
   import {
@@ -56,6 +58,13 @@
     fileHint?: string;
     /** What a 429 (too many files uploaded and not sent) reads as. Defaults to the form's. */
     fileTooManyError?: string;
+    /** A PRICED GRID's prices for this viewer (`productGridPrices[item.id]`). */
+    gridPrices?: ProductGridViewerPrices;
+    /**
+     * Why the page refused to send because of THIS question - said under it, the card drawn in the
+     * error colour. Null when the question is not the one at fault.
+     */
+    error?: string | null;
   }
 
   let {
@@ -72,6 +81,8 @@
     uploadFile = (itemId, file, transport) => uploadFormAnswerFile(formId, itemId, file, transport),
     fileHint,
     fileTooManyError,
+    gridPrices,
+    error = null,
   }: Props = $props();
 
   /**
@@ -201,229 +212,253 @@
   {/if}
 {/snippet}
 
-<div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-5 shadow-sm">
-  <!-- svelte-ignore a11y_label_has_associated_control -->
-  <label class="mb-1.5 flex items-start gap-2">
-    <span
-      class="text-text-muted bg-cn-border/50 text-2xs mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 font-bold tabular-nums"
-    >
-      {index + 1}
-    </span>
-    <span class="text-text-main text-sm leading-snug font-bold">
-      {item.label}
-      {#if item.required}<span class="ml-0.5 text-red-500">*</span>{/if}
-    </span>
-  </label>
-
-  {#if item.description}
-    <p class="text-text-muted mb-3 ml-6 text-xs leading-relaxed">{item.description}</p>
-  {/if}
-
-  {#if item.imageUrl}
-    <div class="border-cn-border/60 mb-3 ml-6 overflow-hidden rounded-xl border">
-      <img src={item.imageUrl} alt="" class="max-h-48 w-full object-cover" loading="lazy" />
-    </div>
-  {/if}
-
-  {#if item.type === 'short_text'}
-    <input
-      type="text"
-      class="border-cn-border text-text-main bg-cn-bg placeholder:text-text-muted/50 focus:border-cn-yellow w-full rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
-      bind:value
-      placeholder={m.form_view_answer_placeholder()}
-      {disabled}
-    />
-  {:else if item.type === 'long_text'}
-    <textarea
-      rows="4"
-      class="border-cn-border text-text-main bg-cn-bg placeholder:text-text-muted/50 focus:border-cn-yellow w-full resize-y rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
-      bind:value
-      placeholder={m.form_view_answer_placeholder()}
-      {disabled}></textarea>
-  {:else if item.type === 'dropdown' || item.type === 'single'}
-    <Picker
-      value={value ?? ''}
-      options={dropdownOptions()}
-      label={item.label}
-      placeholder={m.form_view_select_placeholder()}
-      {disabled}
-      triggerClass="border-cn-border text-text-main bg-cn-bg focus-visible:border-cn-yellow flex w-full items-center justify-between gap-2 rounded-2xl border-2 px-4 py-3 text-left text-sm transition-all outline-none focus-visible:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
-      onValueChange={(v) => (value = v)}
-    />
-  {:else if item.type === 'single_choice' || item.type === 'multiple_choice'}
-    {@const multiple = item.type === 'multiple_choice'}
-    <div class="space-y-2">
-      {#each item.options ?? [] as opt (opt.id)}
-        {@const selected = multiple ? (value ?? []).includes(opt.id) : value === opt.id}
-        <label
-          class="flex cursor-pointer items-center gap-3 rounded-2xl border-2 px-4 py-3 transition-all select-none {selected
-            ? 'border-cn-yellow bg-cn-yellow/8'
-            : 'border-cn-border hover:border-cn-yellow/60 bg-cn-bg'} {disabled || optionClosed(opt)
-            ? 'cursor-not-allowed opacity-60'
-            : ''}"
-        >
-          {#if multiple}
-            <input
-              type="checkbox"
-              value={opt.id}
-              bind:group={value}
-              class="accent-cn-yellow h-4 w-4 shrink-0 rounded"
-              disabled={disabled || optionClosed(opt)}
-            />
-          {:else}
-            <input
-              type="radio"
-              name={`radio-${formId}-${item.id}`}
-              value={opt.id}
-              bind:group={value}
-              class="accent-cn-yellow h-4 w-4 shrink-0"
-              disabled={disabled || optionClosed(opt)}
-            />
-          {/if}
-          <span class="text-text-main flex-1 text-sm font-medium">{opt.label}</span>
-          {@render optionBadge(opt)}
-        </label>
-      {/each}
-    </div>
-  {:else if item.type === 'linear_scale'}
-    <div>
-      <div class="text-text-muted mb-2 flex justify-between px-1 text-xs font-semibold">
-        <span>{item.scale?.minLabel || item.scale?.min}</span>
-        <span>{item.scale?.maxLabel || item.scale?.max}</span>
-      </div>
-      <div
-        class="border-cn-border bg-cn-bg flex items-stretch gap-1 overflow-hidden rounded-2xl border-2"
+<!-- A priced grid draws its own card: the product photo spans it, and the price sits by the title. -->
+{#if item.type === 'product_grid' && item.productGrid}
+  <ProductGridQuestion
+    item={{ ...item, productGrid: item.productGrid }}
+    bind:value
+    {disabled}
+    prices={gridPrices}
+    {currency}
+    {error}
+  />
+{:else}
+  <div
+    id={`q-${item.id}`}
+    class="rounded-2xl bg-(--cn-surface) p-4 shadow-sm sm:px-6 sm:py-5 {error
+      ? 'border-red-err border-2'
+      : 'border-cn-border border'}"
+  >
+    <!-- svelte-ignore a11y_label_has_associated_control -->
+    <label class="mb-1.5 flex items-start gap-2">
+      <span
+        class="text-text-muted bg-cn-border/50 text-2xs mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 font-bold tabular-nums"
       >
-        {#each scaleValues as val (val)}
+        {index + 1}
+      </span>
+      <span class="text-text-main text-base leading-snug font-bold">
+        {item.label}
+        {#if item.required}<span class="text-red-err ml-0.5" aria-hidden="true">*</span>{/if}
+      </span>
+    </label>
+
+    {#if item.description}
+      <p class="text-text-muted mb-3 ml-6 text-xs leading-relaxed">{item.description}</p>
+    {/if}
+
+    {#if item.imageUrl}
+      <div class="border-cn-border/60 mb-3 ml-6 overflow-hidden rounded-xl border">
+        <img src={item.imageUrl} alt="" class="max-h-48 w-full object-cover" loading="lazy" />
+      </div>
+    {/if}
+
+    {#if item.type === 'short_text'}
+      <input
+        type="text"
+        class="border-cn-border text-text-main bg-cn-bg placeholder:text-text-muted/50 focus:border-cn-yellow w-full rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
+        bind:value
+        placeholder={m.form_view_answer_placeholder()}
+        {disabled}
+      />
+    {:else if item.type === 'long_text'}
+      <textarea
+        rows="4"
+        class="border-cn-border text-text-main bg-cn-bg placeholder:text-text-muted/50 focus:border-cn-yellow w-full resize-y rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
+        bind:value
+        placeholder={m.form_view_answer_placeholder()}
+        {disabled}></textarea>
+    {:else if item.type === 'dropdown' || item.type === 'single'}
+      <Picker
+        value={value ?? ''}
+        options={dropdownOptions()}
+        label={item.label}
+        placeholder={m.form_view_select_placeholder()}
+        {disabled}
+        triggerClass="border-cn-border text-text-main bg-cn-bg focus-visible:border-cn-yellow flex w-full items-center justify-between gap-2 rounded-2xl border-2 px-4 py-3 text-left text-sm transition-all outline-none focus-visible:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
+        onValueChange={(v) => (value = v)}
+      />
+    {:else if item.type === 'single_choice' || item.type === 'multiple_choice'}
+      {@const multiple = item.type === 'multiple_choice'}
+      <div class="space-y-2">
+        {#each item.options ?? [] as opt (opt.id)}
+          {@const selected = multiple ? (value ?? []).includes(opt.id) : value === opt.id}
           <label
-            class="flex flex-1 cursor-pointer flex-col items-center justify-center gap-1.5 py-3 transition-all select-none
- {value === val ? 'bg-cn-yellow/15' : 'hover:bg-cn-border/30'}
- {disabled ? 'cursor-not-allowed opacity-60' : ''}"
+            class="flex cursor-pointer items-center gap-3 rounded-2xl border-2 px-4 py-3 transition-all select-none {selected
+              ? 'border-cn-yellow bg-cn-yellow/8'
+              : 'border-cn-border hover:border-cn-yellow/60 bg-cn-bg'} {disabled ||
+            optionClosed(opt)
+              ? 'cursor-not-allowed opacity-60'
+              : ''}"
           >
-            <input
-              type="radio"
-              name={`scale-${formId}-${item.id}`}
-              value={val}
-              bind:group={value}
-              class="accent-cn-yellow h-4 w-4"
-              {disabled}
-            />
-            <span class="text-text-muted text-xs font-bold">{val}</span>
+            {#if multiple}
+              <input
+                type="checkbox"
+                value={opt.id}
+                bind:group={value}
+                class="accent-cn-yellow h-4 w-4 shrink-0 rounded"
+                disabled={disabled || optionClosed(opt)}
+              />
+            {:else}
+              <input
+                type="radio"
+                name={`radio-${formId}-${item.id}`}
+                value={opt.id}
+                bind:group={value}
+                class="accent-cn-yellow h-4 w-4 shrink-0"
+                disabled={disabled || optionClosed(opt)}
+              />
+            {/if}
+            <span class="text-text-main flex-1 text-sm font-medium">{opt.label}</span>
+            {@render optionBadge(opt)}
           </label>
         {/each}
       </div>
-    </div>
-  {:else if item.type === 'matrix_single' || item.type === 'matrix_multiple'}
-    <div class="border-cn-border overflow-x-auto rounded-2xl border-2">
-      <table class="w-full border-separate border-spacing-0 text-sm">
-        <thead>
-          <tr class="bg-cn-border/20">
-            <th class="sticky left-0 z-10 w-1/3 min-w-30 bg-(--cn-surface) p-3"></th>
-            {#each item.options ?? [] as col (col.id)}
-              <th
-                class="text-text-muted min-w-20 px-3 py-3 text-center text-xs font-bold tracking-wide uppercase"
-                >{col.label}</th
-              >
-            {/each}
-          </tr>
-        </thead>
-        <tbody>
-          {#each item.rows ?? [] as row (row)}
-            <tr class="hover:bg-cn-border/10 transition-colors">
-              <td
-                class="text-text-main border-cn-border sticky left-0 z-10 border-t bg-(--cn-surface) px-3 py-3 text-sm font-medium"
-                >{row}</td
-              >
+    {:else if item.type === 'linear_scale'}
+      <div>
+        <div class="text-text-muted mb-2 flex justify-between px-1 text-xs font-semibold">
+          <span>{item.scale?.minLabel || item.scale?.min}</span>
+          <span>{item.scale?.maxLabel || item.scale?.max}</span>
+        </div>
+        <div
+          class="border-cn-border bg-cn-bg flex items-stretch gap-1 overflow-hidden rounded-2xl border-2"
+        >
+          {#each scaleValues as val (val)}
+            <label
+              class="flex flex-1 cursor-pointer flex-col items-center justify-center gap-1.5 py-3 transition-all select-none
+ {value === val ? 'bg-cn-yellow/15' : 'hover:bg-cn-border/30'}
+ {disabled ? 'cursor-not-allowed opacity-60' : ''}"
+            >
+              <input
+                type="radio"
+                name={`scale-${formId}-${item.id}`}
+                value={val}
+                bind:group={value}
+                class="accent-cn-yellow h-4 w-4"
+                {disabled}
+              />
+              <span class="text-text-muted text-xs font-bold">{val}</span>
+            </label>
+          {/each}
+        </div>
+      </div>
+    {:else if item.type === 'matrix_single' || item.type === 'matrix_multiple'}
+      <div class="border-cn-border overflow-x-auto rounded-2xl border-2">
+        <table class="w-full border-separate border-spacing-0 text-sm">
+          <thead>
+            <tr class="bg-cn-border/20">
+              <th class="sticky left-0 z-10 w-1/3 min-w-30 bg-(--cn-surface) p-3"></th>
               {#each item.options ?? [] as col (col.id)}
-                <td class="border-cn-border border-t py-3 text-center">
-                  {#if item.type === 'matrix_single'}
-                    <input
-                      type="radio"
-                      name={`matrix-${formId}-${item.id}-${row}`}
-                      value={col.id}
-                      bind:group={value[row]}
-                      class="accent-cn-yellow h-4 w-4"
-                      {disabled}
-                    />
-                  {:else}
-                    <input
-                      type="checkbox"
-                      value={col.id}
-                      bind:group={value[row]}
-                      class="accent-cn-yellow h-4 w-4"
-                      {disabled}
-                    />
-                  {/if}
-                </td>
+                <th
+                  class="text-text-muted min-w-20 px-3 py-3 text-center text-xs font-bold tracking-wide uppercase"
+                  >{col.label}</th
+                >
               {/each}
             </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
-  {:else if item.type === 'file'}
-    <div class="space-y-2">
-      {#if value}
-        <div
-          class="border-cn-border bg-cn-bg flex items-center gap-2 rounded-2xl border-2 px-4 py-3"
-        >
-          <Paperclip size={16} class="text-text-muted shrink-0" />
-          <span class="text-text-main min-w-0 flex-1 truncate text-sm font-medium"
-            >{pickedName ?? m.form_answer_file()}</span
+          </thead>
+          <tbody>
+            {#each item.rows ?? [] as row (row)}
+              <tr class="hover:bg-cn-border/10 transition-colors">
+                <td
+                  class="text-text-main border-cn-border sticky left-0 z-10 border-t bg-(--cn-surface) px-3 py-3 text-sm font-medium"
+                  >{row}</td
+                >
+                {#each item.options ?? [] as col (col.id)}
+                  <td class="border-cn-border border-t py-3 text-center">
+                    {#if item.type === 'matrix_single'}
+                      <input
+                        type="radio"
+                        name={`matrix-${formId}-${item.id}-${row}`}
+                        value={col.id}
+                        bind:group={value[row]}
+                        class="accent-cn-yellow h-4 w-4"
+                        {disabled}
+                      />
+                    {:else}
+                      <input
+                        type="checkbox"
+                        value={col.id}
+                        bind:group={value[row]}
+                        class="accent-cn-yellow h-4 w-4"
+                        {disabled}
+                      />
+                    {/if}
+                  </td>
+                {/each}
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {:else if item.type === 'file'}
+      <div class="space-y-2">
+        {#if value}
+          <div
+            class="border-cn-border bg-cn-bg flex items-center gap-2 rounded-2xl border-2 px-4 py-3"
           >
+            <Paperclip size={16} class="text-text-muted shrink-0" />
+            <span class="text-text-main min-w-0 flex-1 truncate text-sm font-medium"
+              >{pickedName ?? m.form_answer_file()}</span
+            >
+            <button
+              type="button"
+              onclick={removeFile}
+              disabled={disabled || uploading}
+              class="ui-icon-button text-text-muted hover:text-text-main rounded-lg disabled:opacity-50"
+              aria-label={m.form_file_remove()}
+              title={m.form_file_remove()}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        {/if}
+        <label
+          class="border-cn-border hover:border-cn-yellow/60 bg-cn-bg text-text-main flex cursor-pointer items-center justify-center gap-2 rounded-2xl border-2 border-dashed px-4 py-3 text-sm font-semibold transition-all {disabled ||
+          uploading
+            ? 'cursor-not-allowed opacity-60'
+            : ''}"
+        >
+          <input
+            type="file"
+            class="sr-only"
+            accept={FORM_FILE_ACCEPT}
+            disabled={disabled || uploading}
+            onchange={onFilePicked}
+          />
+          <Upload size={16} />
+          {#if upload}
+            {upload.percent === null
+              ? m.form_file_uploading()
+              : m.form_file_uploading_percent({ percent: upload.percent })}
+          {:else}
+            {value ? m.form_file_replace() : m.form_file_choose()}
+          {/if}
+        </label>
+        {#if upload}
           <button
             type="button"
-            onclick={removeFile}
-            disabled={disabled || uploading}
-            class="ui-icon-button text-text-muted hover:text-text-main rounded-lg disabled:opacity-50"
-            aria-label={m.form_file_remove()}
-            title={m.form_file_remove()}
+            onclick={cancelUpload}
+            class="text-text-muted hover:text-text-main text-xs font-semibold underline"
           >
-            <X size={14} />
+            {m.form_file_cancel()}
           </button>
-        </div>
-      {/if}
-      <label
-        class="border-cn-border hover:border-cn-yellow/60 bg-cn-bg text-text-main flex cursor-pointer items-center justify-center gap-2 rounded-2xl border-2 border-dashed px-4 py-3 text-sm font-semibold transition-all {disabled ||
-        uploading
-          ? 'cursor-not-allowed opacity-60'
-          : ''}"
-      >
-        <input
-          type="file"
-          class="sr-only"
-          accept={FORM_FILE_ACCEPT}
-          disabled={disabled || uploading}
-          onchange={onFilePicked}
-        />
-        <Upload size={16} />
-        {#if upload}
-          {upload.percent === null
-            ? m.form_file_uploading()
-            : m.form_file_uploading_percent({ percent: upload.percent })}
-        {:else}
-          {value ? m.form_file_replace() : m.form_file_choose()}
         {/if}
-      </label>
-      {#if upload}
-        <button
-          type="button"
-          onclick={cancelUpload}
-          class="text-text-muted hover:text-text-main text-xs font-semibold underline"
-        >
-          {m.form_file_cancel()}
-        </button>
-      {/if}
-      <p class="text-text-muted text-xs">
-        {fileHint ?? m.form_file_hint_fill({ days: fileRetentionDays })}
+        <p class="text-text-muted text-xs">
+          {fileHint ?? m.form_file_hint_fill({ days: fileRetentionDays })}
+        </p>
+        {#if fileError}
+          <p class="text-red-err text-xs font-medium" role="alert">{fileError}</p>
+        {/if}
+      </div>
+    {:else}
+      <div class="bg-red-err/10 text-red-err border-red-err/30 rounded-xl border p-3 text-xs">
+        {m.form_view_unsupported_type({ type: item.type })}
+      </div>
+    {/if}
+
+    {#if error}
+      <p role="alert" class="text-red-err mt-3 flex items-center gap-2 text-xs font-bold">
+        <CircleAlert size={16} class="shrink-0" />{error}
       </p>
-      {#if fileError}
-        <p class="text-red-err text-xs font-medium" role="alert">{fileError}</p>
-      {/if}
-    </div>
-  {:else}
-    <div class="bg-red-err/10 text-red-err border-red-err/30 rounded-xl border p-3 text-xs">
-      {m.form_view_unsupported_type({ type: item.type })}
-    </div>
-  {/if}
-</div>
+    {/if}
+  </div>
+{/if}

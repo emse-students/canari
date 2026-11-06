@@ -9,7 +9,7 @@
   import { SvelteSet } from 'svelte/reactivity';
   import { getToken } from '$lib/stores/auth';
   import { showToast } from '$lib/stores/toast.svelte';
-  import { currentUserId } from '$lib/stores/user';
+  import { currentUserId, getSavedDisplayName } from '$lib/stores/user';
   import {
     FormNotFoundError,
     getForm,
@@ -22,6 +22,13 @@
     type Form,
   } from '$lib/forms/api';
   import { fillPriceState, optionModifierOf } from '$lib/forms/fillPricing';
+  import type { ProductGridPrices } from '$lib/forms/productGridContract';
+  import {
+    appliedTierLabels,
+    isProductGrid,
+    productGridRefusalMessage,
+  } from '$lib/forms/productGridFill';
+  import { refusalCode } from '$lib/utils/apiRefusal';
   import { formatFormOpensAt, formOpensAtIso } from '$lib/posts/postComposerDraft';
   import {
     getCalendarEventLinkedToForm,
@@ -34,6 +41,8 @@
   import Button from '$lib/components/ui/Button.svelte';
   import FormHeader from '$lib/components/forms/FormHeader.svelte';
   import FormQuestion from '$lib/components/forms/FormQuestion.svelte';
+  import FormViewerTier from '$lib/components/forms/FormViewerTier.svelte';
+  import ProductGridOrderBar from '$lib/components/forms/ProductGridOrderBar.svelte';
   import PaymentMethodChoice from '$lib/components/forms/PaymentMethodChoice.svelte';
   import {
     firstMissingAnswer,
@@ -43,6 +52,7 @@
     missingAnswerMessage,
     visibleAnswers,
     visibleItems as visibleItemsOf,
+    type MissingAnswer,
   } from '$lib/forms/fillAnswers';
   import {
     ArrowLeft,
@@ -101,6 +111,13 @@
    * recomputes the whole thing at submit and that figure is what gets charged.
    */
   let pricing = $state<PricingView | null>(null);
+  /** This member's prices on each priced grid (`product_grid`), their category resolved server-side. */
+  let productGridPrices = $state<ProductGridPrices>({});
+  /**
+   * The required question the last send stopped on: its card says why, until it is answered. Kept
+   * as the refusal rather than its sentence, so the card stops saying it the moment it is answered.
+   */
+  let missingAnswer = $state<MissingAnswer | null>(null);
   /** Questions a profile criterion hides from this submitter, whatever they answer. */
   let hiddenItemIds = $state<string[]>([]);
   /** False when a `submitCondition` excludes them from the form entirely. */
@@ -264,14 +281,15 @@
         pricing: view,
         hiddenItemIds: hidden,
         maySubmit: allowed,
-        refusalCode,
+        refusalCode: submitRefusalCode,
       } = submission;
       submitted = hasSubmitted;
       formFull = full;
       pricing = view;
       hiddenItemIds = hidden ?? [];
       maySubmit = allowed ?? true;
-      cotisationHeld = refusalCode === FORM_COTISATION_HELD;
+      cotisationHeld = submitRefusalCode === FORM_COTISATION_HELD;
+      productGridPrices = submission.productGridPrices ?? {};
       paymentPending = hasSubmitted && paymentStatus === 'pending';
       if (paymentPending && submission.submissionId) {
         void settlePendingPayment(submission.submissionId);
@@ -323,8 +341,13 @@
       items: form?.items ?? [],
       visibleItems,
       selections,
+      productGridPrices,
     })
   );
+  /** Whether the form holds a priced grid this member sees: the bar then totals the order. */
+  const hasProductGrid = $derived(visibleItems.some(isProductGrid));
+  /** The categories this member is charged under, for the read-only line under the header. */
+  const tierLabels = $derived(appliedTierLabels(visibleItems, productGridPrices));
   const priceUnavailable = $derived(price.priceUnavailable);
   const appliedPricingLabel = $derived(price.appliedLabel);
 
@@ -340,6 +363,15 @@
 
   function calculateTotal(): number {
     return form ? price.total : 0;
+  }
+
+  /** What a question's card says after a refused send: why, while it is still unanswered. */
+  function questionError(item: { id: string }): string | null {
+    if (!missingAnswer || missingAnswer.itemId !== item.id) return null;
+    const answered = visibleItems.find((i) => i.id === item.id);
+    return answered && isItemAnswered(answered, selections[item.id])
+      ? null
+      : missingAnswerMessage(missingAnswer);
   }
 
   /** The FILE questions whose file is still travelling: the answer is not sent while any is. */
@@ -394,8 +426,14 @@
     }
 
     const missing = firstMissingAnswer(visibleItems, selections);
+    missingAnswer = missing;
     if (missing) {
-      error = missingAnswerMessage(missing);
+      // Said on the question's own card, which is brought into view: the bar is far from it.
+      error = '';
+      Log.d('FormView', `submit held: required question ${missing.itemId} (${missing.kind})`);
+      document
+        .getElementById(`q-${missing.itemId}`)
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
       return;
     }
 
@@ -430,7 +468,10 @@
         setTimeout(leaveForm, 1500);
       }
     } catch (e: any) {
-      error = providerRefusalMessage(e) ?? (e.message || m.form_view_error_payment_failed());
+      error =
+        productGridRefusalMessage(refusalCode(e)) ??
+        providerRefusalMessage(e) ??
+        (e.message || m.form_view_error_payment_failed());
     } finally {
       submitting = false;
     }
@@ -501,6 +542,46 @@
   });
 </script>
 
+<!-- The send button, one markup for the plain bar and the order bar of a form with priced grids. -->
+{#snippet payButton()}
+  <Button
+    variant="primary"
+    class="shrink-0 px-6"
+    disabled={submitted ||
+      formFull ||
+      submitting ||
+      isNotOpenYet ||
+      !maySubmit ||
+      priceUnavailable ||
+      onlinePaymentPaused}
+    loading={submitting}
+    onclick={() => void handleSubmit()}
+  >
+    {#if paymentPending}
+      <Check size={16} class="mr-1.5" />{m.form_view_pending()}
+    {:else if submitted}
+      <Check size={16} class="mr-1.5" />{m.form_view_sent()}
+    {:else if !maySubmit}
+      {cotisationHeld ? m.form_view_cotisation_held_title() : m.form_view_not_open_to_you_title()}
+    {:else if priceUnavailable}
+      {m.form_view_combination_closed_title()}
+    {:else if formFull}
+      {m.form_view_full()}
+    {:else if calculateTotal() > 0}
+      <CreditCard size={16} class="mr-1.5" />{m.form_view_pay_button({
+        amount: formatCurrency(calculateTotal(), form?.currency),
+      })}
+    {:else}
+      <Check size={16} class="mr-1.5" />{m.form_view_submit()}
+    {/if}
+  </Button>
+{/snippet}
+
+<!-- Who is answering and at which price category: a form whose grids price by category. -->
+{#snippet viewerTier()}
+  <FormViewerTier name={getSavedDisplayName()} {tierLabels} />
+{/snippet}
+
 {#if askingPayerEmail}
   <PayerEmailPrompt
     onSubmit={(email) => {
@@ -562,7 +643,7 @@
     </div>
   {:else if form}
     <!-- ── Header ── -->
-    <FormHeader {form} {submitted} />
+    <FormHeader {form} {submitted} children={tierLabels.length > 0 ? viewerTier : undefined} />
 
     <!-- ── Progress bar ── -->
     {#if !submitted && totalCount > 0}
@@ -682,7 +763,7 @@
     {/if}
 
     <!-- ── Questions ── -->
-    <div class="space-y-3">
+    <div class="space-y-3 sm:space-y-4">
       {#each visibleItems as item, qi (item.id)}
         <FormQuestion
           {item}
@@ -694,6 +775,8 @@
           fileRetentionDays={form.fileRetentionDays}
           {optionModifier}
           {optionClosed}
+          gridPrices={productGridPrices[item.id]}
+          error={questionError(item)}
           onUploadingChange={(busy) =>
             busy ? uploadingFiles.add(item.id) : uploadingFiles.delete(item.id)}
         />
@@ -754,67 +837,48 @@
     at every breakpoint for the same reason.
   -->
   <div
-    class="keyboard-aware-bottom mx-auto {PAGE_WIDTHS.reading} px-4 pb-3 md:px-8 {reachedEnd
+    class="keyboard-aware-bottom mx-auto {PAGE_WIDTHS.reading} px-4 pb-3 md:px-8 {reachedEnd ||
+    hasProductGrid
       ? 'sticky bottom-0 z-50 md:pb-5'
       : ''}"
   >
-    <div
-      class="border-cn-border/60 bg-cn-surface flex items-center gap-3 rounded-2xl border px-4 py-3 shadow-lg"
-    >
-      <div class="min-w-0 flex-1">
-        {#if submitted}
-          <span class="text-green-ok flex items-center gap-1.5 text-sm font-bold"
-            ><Check size={16} /> {m.form_view_response_sent()}</span
-          >
-        {:else if priceUnavailable}
-          <span class="text-text-muted text-sm">{m.form_view_combination_closed_title()}</span>
-        {:else if calculateTotal() > 0}
-          <div>
-            <p class="text-text-muted text-xs font-medium">
-              {m.form_view_total_to_pay()}{appliedPricingLabel}
-            </p>
-            <p class="text-cn-dark text-lg font-bold">
-              {formatCurrency(calculateTotal(), form.currency)}
-            </p>
-          </div>
-        {:else}
-          <span class="text-text-muted text-sm">{m.form_view_submit()}</span>
-        {/if}
-      </div>
-      <Button
-        variant="primary"
-        class="shrink-0 px-6"
-        disabled={submitted ||
-          formFull ||
-          submitting ||
-          isNotOpenYet ||
-          !maySubmit ||
-          priceUnavailable ||
-          onlinePaymentPaused}
-        loading={submitting}
-        onclick={() => void handleSubmit()}
+    <!-- AN ORDER IS TOTALLED WHERE IT IS PAID, from the first item (owner's mockup, 2026-11-06): a
+         form with a priced grid keeps the bar stuck from the start, with the order's recap. -->
+    {#if hasProductGrid && !submitted && !priceUnavailable}
+      <ProductGridOrderBar
+        lines={price.gridLines}
+        totalCents={calculateTotal()}
+        currency={form.currency}
+        items={form.items}
+        action={payButton}
+      />
+    {:else}
+      <div
+        class="border-cn-border/60 bg-cn-surface flex items-center gap-3 rounded-2xl border px-4 py-3 shadow-lg"
       >
-        {#if paymentPending}
-          <Check size={16} class="mr-1.5" />{m.form_view_pending()}
-        {:else if submitted}
-          <Check size={16} class="mr-1.5" />{m.form_view_sent()}
-        {:else if !maySubmit}
-          {cotisationHeld
-            ? m.form_view_cotisation_held_title()
-            : m.form_view_not_open_to_you_title()}
-        {:else if priceUnavailable}
-          {m.form_view_combination_closed_title()}
-        {:else if formFull}
-          {m.form_view_full()}
-        {:else if calculateTotal() > 0}
-          <CreditCard size={16} class="mr-1.5" />{m.form_view_pay_button({
-            amount: formatCurrency(calculateTotal(), form.currency),
-          })}
-        {:else}
-          <Check size={16} class="mr-1.5" />{m.form_view_submit()}
-        {/if}
-      </Button>
-    </div>
+        <div class="min-w-0 flex-1">
+          {#if submitted}
+            <span class="text-green-ok flex items-center gap-1.5 text-sm font-bold"
+              ><Check size={16} /> {m.form_view_response_sent()}</span
+            >
+          {:else if priceUnavailable}
+            <span class="text-text-muted text-sm">{m.form_view_combination_closed_title()}</span>
+          {:else if calculateTotal() > 0}
+            <div>
+              <p class="text-text-muted text-xs font-medium">
+                {m.form_view_total_to_pay()}{appliedPricingLabel}
+              </p>
+              <p class="text-cn-dark text-lg font-bold">
+                {formatCurrency(calculateTotal(), form.currency)}
+              </p>
+            </div>
+          {:else}
+            <span class="text-text-muted text-sm">{m.form_view_submit()}</span>
+          {/if}
+        </div>
+        {@render payButton()}
+      </div>
+    {/if}
 
     {#if paymentPending}
       <p class="text-amber-warn mt-2 text-center text-sm font-medium">

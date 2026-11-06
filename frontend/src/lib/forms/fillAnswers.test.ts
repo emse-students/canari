@@ -37,7 +37,11 @@ describe('isItemAnswered and firstMissingAnswer agree', () => {
 
   it('names the first required question left empty, and skips optional ones', () => {
     const items = [q({ id: 'a' }), q({ id: 'b', required: true, label: 'Nom' })];
-    expect(firstMissingAnswer(items, { a: '', b: '' })).toEqual({ kind: 'answer', label: 'Nom' });
+    expect(firstMissingAnswer(items, { a: '', b: '' })).toEqual({
+      itemId: 'b',
+      kind: 'answer',
+      label: 'Nom',
+    });
   });
 
   it('asks for a selection on an empty choice list', () => {
@@ -48,11 +52,26 @@ describe('isItemAnswered and firstMissingAnswer agree', () => {
   it('names the row of a matrix left empty', () => {
     const item = q({ id: 'g', type: 'matrix_single', required: true, rows: ['r1', 'r2'] });
     expect(firstMissingAnswer([item], { g: { r1: 'x', r2: '' } })).toEqual({
+      itemId: 'g',
       kind: 'row',
       label: 'g',
       row: 'r2',
     });
     expect(isItemAnswered(item, { r1: 'x', r2: '' })).toBe(false);
+  });
+
+  it('holds a priced grid until one unit is ordered, and starts it as an empty order', () => {
+    const grid = q({ id: 'pg', type: 'product_grid', required: true, label: 'Sweat' });
+    expect(initialSelections([grid])).toEqual({ pg: {} });
+    expect(isItemAnswered(grid, {})).toBe(false);
+    expect(isItemAnswered(grid, { 'r:c': 0 })).toBe(false);
+    expect(firstMissingAnswer([grid], { pg: {} })).toEqual({
+      itemId: 'pg',
+      kind: 'order',
+      label: 'Sweat',
+    });
+    expect(isItemAnswered(grid, { 'r:c': 2 })).toBe(true);
+    expect(firstMissingAnswer([grid], { pg: { 'r:c': 2 } })).toBeNull();
   });
 });
 
