@@ -20,6 +20,7 @@ it('asks the server for reels and one-photo posts across every tab', async () =>
   expect(listPosts).toHaveBeenCalledWith({
     kind: 'reel',
     multiMedia: true,
+    withLinks: true,
     feed: 'all',
     offset: 20,
     limit: 10,
@@ -35,6 +36,7 @@ it('serves the first page it was handed, then asks the server for the rest', asy
   expect(listPosts).toHaveBeenCalledWith({
     kind: 'reel',
     multiMedia: true,
+    withLinks: true,
     feed: 'all',
     offset: 10,
     limit: 10,

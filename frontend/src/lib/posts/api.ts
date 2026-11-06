@@ -397,6 +397,12 @@ export interface ListPostsOptions {
    * the pictures (docs/wiki/legacy-compatibility.md).
    */
   multiMedia?: boolean;
+  /**
+   * With `multiMedia`: a post with a link in its text comes too, its link drawn in the caption
+   * (owner, 2026-11-06). Sent only with `multiMedia`; a server that does not know it keeps the
+   * link out, which this client reads as before.
+   */
+  withLinks?: boolean;
 }
 
 export interface ScheduledPost {
@@ -475,6 +481,7 @@ export function buildListPostsSearchParams(options: ListPostsOptions): string {
   if (options.formation?.trim()) p.set('formation', options.formation.trim());
   if (options.kind) p.set('kind', options.kind);
   if (options.multiMedia) p.set('multiMedia', 'true');
+  if (options.multiMedia && options.withLinks) p.set('withLinks', 'true');
   if (options.singleMedia || options.multiMedia) {
     p.set('singleMedia', 'true');
     // An installed server knows only the pictures' switch and drops the unknown one: it keeps

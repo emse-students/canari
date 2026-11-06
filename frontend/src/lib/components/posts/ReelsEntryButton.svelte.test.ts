@@ -125,6 +125,7 @@ it('the icon opens the viewer at the newest reel, across every tab', async () =>
   expect(listPosts).toHaveBeenCalledWith({
     kind: 'reel',
     multiMedia: true,
+    withLinks: true,
     feed: 'all',
     offset: 0,
     limit: 10,
