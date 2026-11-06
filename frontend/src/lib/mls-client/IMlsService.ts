@@ -1119,9 +1119,10 @@ export interface IMlsService {
    */
   markInboundReady(): Promise<void>;
   /**
-   * Arms the cold start's third precondition: no inbound frame is handled, and the boot pull
-   * ({@link fetchPendingMessagesOnceRowsSeeded}) is not issued, before the restore has seeded the
-   * conversation rows ({@link notifyConversationRowsSeeded}).
+   * Arms the cold start's third precondition: no inbound frame is handled, and no pull is issued,
+   * before the restore has seeded the conversation rows ({@link notifyConversationRowsSeeded}).
+   * Every {@link fetchPendingMessages} asked meanwhile, by any caller, joins the ONE boot pull the
+   * seeding issues - so none of them may be awaited ahead of the restore.
    *
    * A frame of a group this device holds, handled while its row does not exist yet, is refused
    * `absent-conversation` and fetched again once the row exists - a race that heals at every cold
@@ -1136,12 +1137,6 @@ export interface IMlsService {
    * releases what was held, at a level that accuses: the rows the frames wait for are not coming.
    */
   endRowSeedingHold(): void;
-  /**
-   * The boot pull: {@link fetchPendingMessages} for the whole mailbox, issued in the same tick the
-   * restore seeds the conversation rows while {@link holdInboundUntilRowsSeeded} is armed, at once
-   * otherwise. Its caller must not await it ahead of the restore - the seeding is what starts it.
-   */
-  fetchPendingMessagesOnceRowsSeeded(): Promise<void>;
   /** True when the live gateway WebSocket is open (used for reconnect watchdog). */
   isWsOpen(): boolean;
   /** Fetches all registered devices (with KeyPackages) for the given user. Throws on transport/HTTP failure; `[]` only when the user genuinely has no active device. */
@@ -1455,7 +1450,8 @@ export interface IMlsService {
   /** Fetches messages queued on the delivery service that were not yet delivered
    * (e.g. during a disconnect). Should be called after every connect/reconnect. Single-flight: an
    * ask made while a pull is fetching, the queue is draining or a pulled row is still queued is
-   * owed and run once all have ended, and resolves then.
+   * owed and run once all have ended, and resolves then. While {@link holdInboundUntilRowsSeeded}
+   * is armed, every ask joins the whole-mailbox boot pull the restore's seeding issues.
    * @param forGroups the groups the ask is for, if any - a group barrier on one of them waits for
    *   the owed pull's listing; none means the whole mailbox, and every group's barrier waits. */
   fetchPendingMessages(forGroups?: readonly string[]): Promise<void>;
@@ -1977,4 +1973,9 @@ export interface IMlsService {
    * reference to this object and blocking GC.
    */
   destroy(): void;
+  /**
+   * Whether {@link destroy} ran: set once, never cleared. What a continuation that outlived its
+   * client (a catch-up released by the destroy) reads before it reports anything for the session.
+   */
+  isDestroyed(): boolean;
 }

@@ -1145,6 +1145,11 @@ export abstract class BaseMlsService implements IMlsService {
    */
   private socketRetired = false;
 
+  /** @inheritdoc */
+  isDestroyed(): boolean {
+    return this.socketRetired;
+  }
+
   /** Settles the open in flight as abandoned; kept so a pause never leaves the queue to a deadline. */
   private abandonPendingOpen: ((reason: string) => void) | null = null;
 
@@ -1476,7 +1481,10 @@ export abstract class BaseMlsService implements IMlsService {
    */
   private awaitingRowSeeding = false;
 
-  /** The boot pull asked for while {@link awaitingRowSeeding}: issued by the seeding. */
+  /**
+   * The ONE pull every ask made while {@link awaitingRowSeeding} joins - the login's, an outbox
+   * flush's barrier, a reconnect's, any other - for the whole mailbox: issued by the seeding.
+   */
   private bootPullOwed: {
     promise: Promise<void>;
     resolve: () => void;
@@ -1571,9 +1579,11 @@ export abstract class BaseMlsService implements IMlsService {
     this.releaseRowSeedingHold('the boot restore ended without seeding');
   }
 
-  /** @inheritdoc */
-  fetchPendingMessagesOnceRowsSeeded(): Promise<void> {
-    if (!this.awaitingRowSeeding) return this.fetchPendingMessages();
+  /**
+   * Joins the ask to {@link bootPullOwed}, the whole-mailbox pull the seeding issues - a superset
+   * of whatever groups the ask named. See {@link fetchPendingMessages}.
+   */
+  private joinBootPull(): Promise<void> {
     if (!this.bootPullOwed) {
       let resolve!: () => void;
       let reject!: (e: unknown) => void;
@@ -3068,14 +3078,14 @@ export abstract class BaseMlsService implements IMlsService {
    */
   async fetchPendingMessages(forGroups: readonly string[] = []): Promise<void> {
     if (!this.mayPull('asked')) return;
-    if (this.awaitingRowSeeding) {
-      // AT A LEVEL THAT ACCUSES, and not refused: the login's own pull waits for the seeding
-      // (`fetchPendingMessagesOnceRowsSeeded`), so this is another caller ordered in front of the
-      // rows - what it lists for a group with no row yet is refused absent-conversation.
-      console.warn(
-        '[PENDING] pull asked before the boot restore seeded the conversation rows - frames of a group with no row yet are refused absent-conversation'
-      );
-    }
+    // AT A COLD START, NO PULL BEFORE THE ROWS: whoever asks while the restore still owes the
+    // conversation rows - the login's own catch-up, an outbox flush's barrier (an owed DM read mark
+    // queued at `registerOutbox`), a reconnect, a visibility change - joins the ONE boot pull the
+    // seeding issues. Run at once, it listed frames of groups with no row yet, refused
+    // absent-conversation and fetched again: the race this hold exists to delete. None of those
+    // askers is awaited on the login's path before its restore, and the hold always ends - the
+    // seeding, the login's `endRowSeedingHold`, or `destroy` - so the join cannot deadlock.
+    if (this.awaitingRowSeeding) return this.joinBootPull();
     if (this.pendingPullInFlight || this.messageScheduler.draining || this.pullRowsStillQueued()) {
       return this.owePull(forGroups);
     }

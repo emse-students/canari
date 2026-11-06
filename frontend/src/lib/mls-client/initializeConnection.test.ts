@@ -98,6 +98,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
       socketFence: () => 0,
       settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
+      isDestroyed: () => false,
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
@@ -175,6 +176,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
       socketFence: () => 0,
       settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
+      isDestroyed: () => false,
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
@@ -223,6 +225,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       settleUnresolvedCommits: vi.fn(async () => {
         steps.push('settle');
       }),
+      isDestroyed: () => false,
       fetchPendingMessages: vi.fn(async () => {
         steps.push('fetch');
       }),
@@ -252,6 +255,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
       socketFence: () => 0,
       settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
+      isDestroyed: () => false,
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
@@ -306,6 +310,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
       socketFence: () => 0,
       settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
+      isDestroyed: () => false,
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
@@ -347,6 +352,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
       socketFence: () => 0,
       settleUnresolvedCommits: vi.fn(),
+      isDestroyed: () => false,
       fetchPendingMessages: vi.fn(),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
@@ -433,6 +439,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       settleUnresolvedCommits: vi.fn(async () => {
         order.push('settle');
       }),
+      isDestroyed: () => false,
       fetchPendingMessages: vi.fn(async () => {
         order.push('fetch');
       }),

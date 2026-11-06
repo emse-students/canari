@@ -29,6 +29,18 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   appendLog: vi.fn(),
 }));
 
+// The reconnect path reaches the pull through `openGatewayConnection`, which fetches a token and
+// is a leader-tab path: both stubbed, the rest of each module real.
+vi.mock('$lib/stores/auth', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/stores/auth')>()),
+  getToken: async () => 'jwt',
+}));
+vi.mock('$lib/mls-client/tabLeader', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/mls-client/tabLeader')>()),
+  getIsTabLeader: () => true,
+}));
+
+const { openGatewayConnection } = await import('$lib/mls-client/initializeConnection');
 const { loadExistingConversations } = await import('$lib/utils/chat/conversations');
 
 /** @see BaseMlsService.inboundGate.test.ts - the cast is what instantiates the abstract base. */
@@ -144,7 +156,7 @@ describe('the boot drain and the restore that seeds the conversation rows', () =
     await svc.markInboundReady();
     await deliver(svc, 'after-mls');
     let pulled = false;
-    const bootPull = svc.fetchPendingMessagesOnceRowsSeeded().then(() => (pulled = true));
+    const bootPull = svc.fetchPendingMessages().then(() => (pulled = true));
     await settle();
 
     expect(seen.routedWithRow).toEqual([]);
@@ -165,7 +177,7 @@ describe('the boot drain and the restore that seeds the conversation rows', () =
     const conversations = new SvelteMap<string, Conversation>();
     const { svc } = makeService(conversations);
     svc.holdInboundUntilRowsSeeded();
-    void svc.fetchPendingMessagesOnceRowsSeeded();
+    void svc.fetchPendingMessages();
 
     svc.notifyConversationRowsSeeded();
 
@@ -193,7 +205,7 @@ describe('the boot drain and the restore that seeds the conversation rows', () =
     svc.holdInboundUntilRowsSeeded();
     await deliver(svc, 'held');
     await svc.markInboundReady();
-    const bootPull = svc.fetchPendingMessagesOnceRowsSeeded();
+    const bootPull = svc.fetchPendingMessages();
 
     svc.endRowSeedingHold();
     await bootPull;
@@ -222,11 +234,118 @@ describe('the boot drain and the restore that seeds the conversation rows', () =
     const { svc, seen } = makeService(conversations);
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     svc.holdInboundUntilRowsSeeded();
-    const bootPull = svc.fetchPendingMessagesOnceRowsSeeded();
+    const bootPull = svc.fetchPendingMessages();
 
     svc.destroy();
     await bootPull;
 
     expect(seen.pullWithRow).toEqual([]);
   });
+
+  it('holds an outbox flush barrier asked during the hold until the rows exist, with no warn', async () => {
+    // THE ORDINARY COLD START THAT OWES A DM READ MARK: `registerOutbox` runs after the hold is armed
+    // and before the restore, its flush takes `waitForMessageQueueIdle('outbox flush')`, and that
+    // barrier pulls. It used to run at once, warned, and listed frames with no row yet.
+    const conversations = new SvelteMap<string, Conversation>();
+    const { svc, seen } = makeService(conversations);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    svc.holdInboundUntilRowsSeeded();
+    await svc.markInboundReady();
+    let flushed = false;
+    const barrier = svc.waitForMessageQueueIdle('outbox flush', null).then(() => (flushed = true));
+    await settle();
+
+    expect(seen.pullWithRow).toEqual([]);
+    expect(flushed).toBe(false);
+
+    await restore(conversations, svc);
+    await barrier;
+
+    expect(seen.pullWithRow[0]).toBe(true);
+    expect(seen.pullWithRow).not.toContain(false);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('joins a reconnect racing the login to the boot pull, instead of pulling ahead of the rows', async () => {
+    // `openGatewayConnection` WITHOUT the login's third argument is the reconnect path: it awaits
+    // its pull. While the login's hold is armed that pull is the boot pull, issued by the seeding.
+    const conversations = new SvelteMap<string, Conversation>();
+    const { svc, seen } = makeService(conversations);
+    // THE STEP RIGHT BEFORE THE PULL, as an event: the assertions below are about a reconnect that
+    // has reached its pull, not one still in its token fetch.
+    let reachedPull!: () => void;
+    const atPull = new Promise<void>((r) => (reachedPull = r));
+    Object.assign(svc, {
+      connect: vi.fn().mockResolvedValue(undefined),
+      socketFence: () => 0,
+      gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
+      onDisconnect: vi.fn(),
+      sendDisconnect: vi.fn(),
+      settleUnresolvedCommits: vi.fn(async () => reachedPull()),
+    });
+    const onCaughtUp = vi.fn();
+    svc.holdInboundUntilRowsSeeded();
+    await svc.markInboundReady();
+    let opened = false;
+    const reconnect = openGatewayConnection(connectionDeps(svc, onCaughtUp)).then(
+      () => (opened = true)
+    );
+    await atPull;
+    await settle();
+
+    expect(seen.pullWithRow).toEqual([]);
+    expect(opened).toBe(false);
+    expect(onCaughtUp).not.toHaveBeenCalled();
+
+    await restore(conversations, svc);
+    await reconnect;
+
+    expect(seen.pullWithRow[0]).toBe(true);
+    expect(seen.pullWithRow).not.toContain(false);
+    expect(onCaughtUp).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not report a catch-up the destroy released as caught up', async () => {
+    // The login's catch-up is handed back started; a failed login destroys the client, which
+    // releases the boot pull with nothing listed. The client's own destroyed state - not a clock -
+    // is what says nothing was caught up.
+    const conversations = new SvelteMap<string, Conversation>();
+    const { svc, seen } = makeService(conversations);
+    Object.assign(svc, {
+      connect: vi.fn().mockResolvedValue(undefined),
+      socketFence: () => 0,
+      gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
+      onDisconnect: vi.fn(),
+      sendDisconnect: vi.fn(),
+      settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const onCaughtUp = vi.fn();
+    svc.holdInboundUntilRowsSeeded();
+    let caughtUp: Promise<void> | null = null;
+    await openGatewayConnection(connectionDeps(svc, onCaughtUp), null, (p) => (caughtUp = p));
+
+    svc.destroy();
+    await caughtUp;
+
+    expect(seen.pullWithRow).toEqual([]);
+    expect(onCaughtUp).not.toHaveBeenCalled();
+  });
 });
+
+/** The connection deps of `openGatewayConnection` over the real service. */
+function connectionDeps(svc: BaseMlsService, onCaughtUp: () => void) {
+  return {
+    mlsService: svc,
+    userId: 'u1',
+    deviceKeyB64: 'k',
+    scheduleReconnect: vi.fn(),
+    setIsWsConnected: vi.fn(),
+    setReconnectAttempts: vi.fn(),
+    onCaughtUp,
+    processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+    onGroupMissing: vi.fn().mockResolvedValue(undefined),
+    onStrandedSeat: vi.fn().mockResolvedValue(undefined),
+    log: vi.fn(),
+  };
+}

@@ -173,7 +173,9 @@ defect (`CLAUDE.md`).
 
 - The login arms `holdInboundUntilRowsSeeded()` BEFORE the handshake starts. While armed, the gate
   holds every socket frame even once MLS is ready (`markInboundReady` then only records readiness),
-  and `fetchPendingMessagesOnceRowsSeeded()` - the boot pull - is owed rather than issued.
+  and EVERY `fetchPendingMessages()` asked meanwhile joins ONE owed whole-mailbox pull, the boot
+  pull (a superset of any group ask) - the login's catch-up, an outbox flush's barrier (an owed DM
+  read mark queued at `registerOutbox`), a reconnect, a visibility change alike.
 - `notifyConversationRowsSeeded()` - the restore's first phase, for any number of rows - releases
   it: it issues the boot pull FIRST and synchronously, so `pendingPullInFlight` is announced before
   the second phase reaches its first archive-replay barrier, then replays the held frames in arrival
@@ -186,13 +188,17 @@ defect (`CLAUDE.md`).
 - **Termination is a proof, not the seeding alone**: the login calls `endRowSeedingHold()` in a
   `finally` around the restore. Silent when the seeding released the hold; otherwise (a restore that
   threw before seeding, or ran on another client) it releases everything at `warn`. `destroy`
-  releases the owed boot pull with nothing listed.
-- Any other pull asked while the hold is armed still runs, at `warn` - no caller is expected there,
-  and refusing it would turn a barrier awaited in front of the restore into a login that never ends.
+  releases the owed boot pull with nothing listed, and its catch-up is not reported as caught up
+  (`openGatewayConnection` reads `isDestroyed()`).
+- **The boot mailbox's acked inbound state stays unsaved until the restore's second phase ends**: the
+  boot drain now overlaps phase 2, whose bulk-ingest window encloses its own, and `mlsStatePersister`'s
+  `onBulkIngestEnd` checkpoints only when the outermost window closes - a kill before then is
+  recovered by replay, as any inbound state is.
 
 **No deadlock**: the restore's first phase reads only the store and awaits no barrier, and nothing
-the login awaits before it waits on a routed frame or on the pull. The reconnect path is unchanged:
-it pulls at once, because a reconnecting session has its rows. Behaviour (with the real restore
+the login awaits before it waits on a routed frame or on a pull (`settleUnresolvedCommits`,
+`adoptOrphanedMirrorEntries`, the landing preview and phase 1 were each read for it). A reconnect
+outside the login's window pulls at once, because the hold is no longer armed. Behaviour (with the real restore
 doing the seeding, and the old order reproduced as a case) is in
 `BaseMlsService.bootDrainAfterSeeding.test.ts`; the login's half of the order is three more source
 guards in `offlineUnlock.test.ts`.
