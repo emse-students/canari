@@ -667,18 +667,30 @@ describe("PublishQueue - the member's marks survive every runner write", () => {
 });
 
 describe('PublishQueue - an estate that cannot take it', () => {
-  it('sends nothing until /api/version says publishQueue, then sends', async () => {
+  it('sends nothing to an estate not known to serve it, ENDS the pass (no ladder), and goes on when it is', async () => {
     const r = rig();
     r.serverReady = null;
     queuePost(r.store, 'post-1', 1);
-    const running = r.queue.drain();
-    await settle();
+    // The pass ends by itself: no wait, so no wake is needed for it to resolve.
+    await r.queue.drain();
     expect(r.calls).toEqual([]);
     expect(r.views.map((v) => v.phase)).toEqual(['waiting']);
+    // What `/api/version`'s answer does in the wiring: the next pass.
     r.serverReady = true;
-    r.queue.wake('version answered');
-    await running;
+    await r.queue.drain();
     expect(r.published).toEqual(['post-1']);
+  });
+
+  it('a refusal of the send that lands as the member deletes the post does not stop the Delete', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-1', 0);
+    r.createPlan.push(async () => {
+      await r.store.mark('post-1', { withdrawn: true, clearFailure: true });
+      throw new ApiRefusalError(422, null, 'refused');
+    });
+    await r.queue.drain();
+    expect(r.withdrawn).toEqual(['post-1']);
+    expect(r.store.posts.size).toBe(0);
   });
 
   it('an EDGE page from the post API is no answer: waited out, never counted', () => {

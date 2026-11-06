@@ -41,7 +41,7 @@
  * production deploys, so a new phone build meets the old services for days: they would drop the
  * client id (a lost answer then duplicates the post), refuse `single-block`, and answer the
  * withdrawal `404`. The queue sends nothing until `/api/version` says `publishQueue`
- * (`serverReady`), and its rows wait meanwhile.
+ * (`serverReady`): its rows wait, and the answer that says so starts the pass.
  *
  * ONE RUNNER PER ACCOUNT ACROSS TABS: a pass holds a Web Lock where the engine has one, so two tabs
  * never upload the same media; a tab whose pass waits behind another's runs it after, from the store.
@@ -438,11 +438,15 @@ export class PublishQueue {
       const workable = posts.filter((p) => !p.failure);
       const next = workable.find((p) => p.withdrawn) ?? workable.find((p) => !p.paused);
       if (!next) return;
-      const outcome: Outcome = !this.estateServes()
-        ? 'wait'
-        : next.withdrawn
-          ? await this.withdraw(next)
-          : await this.process(next);
+      if (!this.estateServes()) {
+        // No ladder: nothing here would change by asking again. The answer of `/api/version` that
+        // says so starts the next pass (`publishQueue.svelte.ts`).
+        for (const p of workable) this.setView(p, { phase: 'waiting' });
+        return;
+      }
+      const outcome: Outcome = next.withdrawn
+        ? await this.withdraw(next)
+        : await this.process(next);
       if (outcome === 'halt') return;
       if (outcome === 'wait') {
         const ms =
@@ -461,8 +465,10 @@ export class PublishQueue {
   }
 
   /**
-   * Whether the estate serves the queue's routes; when not, said once per rung and the post waits.
-   * Nothing is sent to an estate that would drop the client id or answer the withdrawal `404`.
+   * Whether the estate serves the queue's routes; when not, the pass ENDS and the rows wait for the
+   * `/api/version` answer that says so - never a rung of the ladder, which would only re-read the same
+   * local value. Nothing is sent to an estate that would drop the client id or answer the withdrawal
+   * `404`.
    */
   private estateServes(): boolean {
     if (this.deps.serverReady() === true) return true;

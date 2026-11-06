@@ -996,7 +996,7 @@
   "publish_queue_retry": "Retry",
   "publish_queue_delete": "Delete",
   "publish_queue_delete_confirm": "Delete this post? It will not be published, and its media will be removed from this device.",
-  "publish_queue_published": "Your post is live",
+  "publish_queue_published": "Post published",
   "publish_queue_enqueue_error": "The post could not be saved on this device. It is still in the editor.",
   "publish_queue_enqueue_storage_full": "No room left on this device to keep the post while it is sent. Free some space and try again.",
   "post_create_error_dismiss_label": "Got it",

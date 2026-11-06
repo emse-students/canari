@@ -103,30 +103,31 @@
           jusqu'à ce qu'elle soit publiée ou que vous la supprimiez ; une simple déconnexion la
           conserve, la suppression de votre compte l'efface. Quand une publication est supprimée, le
           serveur garde son identifiant et la date de suppression, sans auteur ni contenu, pour
-          qu'un envoi encore en route ne la fasse pas réapparaître. Une association, une liste ou
-          une institution peut vous demander de relayer une de vos publications personnelles : la
-          demande (l'association, la liste ou l'institution, le membre qui l'a faite, la
-          publication, le nombre de personnes qui la verraient pour la première fois et, pour une
-          institution, son public possible) vous est adressée, et rien n'est montré à son public
-          tant que vous n'avez pas accepté. Si vous acceptez la demande d'une institution, votre
-          publication est vue de son public, y compris de ses membres qui font partie du personnel ;
-          si ce public a changé depuis que vous l'avez lu, votre acceptation est refusée et le
-          nouveau public vous est montré. Une fois le relais accepté, ceux qui voient votre
-          publication suivent le public et les membres ACTUELS de l'association, de la liste ou de
-          l'institution (un membre qui part ne la voit plus, un nouveau la voit) ; une entité
-          archivée ne la montre plus à personne, et quelqu'un qui ne la voit que grâce à ce relais
-          ne peut pas la republier à ses propres abonnés. Vous pouvez retirer ce relais à tout
-          moment, c'est le recours si ce public change ; la demande est effacée avec la publication
-          ou avec votre compte. Une notification sur une publication n'est affichée que tant que son
-          destinataire peut encore la voir, mais une notification déjà reçue sur un appareil ne peut
-          pas être rappelée. Une mention, dans une publication ou un commentaire, ne prévient que la
-          personne mentionnée qui peut voir la publication, et seulement une fois celle-ci publiée.
-          Vous pouvez publier ou commenter de façon anonyme, ou au nom d'une association dont vous
-          avez le droit de parler : les autres membres ne voient alors pas votre compte, mais la
-          modération et les administrateurs de la plateforme peuvent l'identifier (pour traiter un
-          signalement, par exemple), et votre compte reste responsable de ce que vous écrivez. Un
-          commentaire écrit au nom d'une association lui appartient : il reste si vous supprimez
-          votre compte, détaché de celui-ci.
+          qu'un envoi encore en route ne la fasse pas réapparaître ; cet identifiant ne désigne plus
+          personne et il est conservé sans limite de durée, même après la suppression de votre
+          compte. Une association, une liste ou une institution peut vous demander de relayer une de
+          vos publications personnelles : la demande (l'association, la liste ou l'institution, le
+          membre qui l'a faite, la publication, le nombre de personnes qui la verraient pour la
+          première fois et, pour une institution, son public possible) vous est adressée, et rien
+          n'est montré à son public tant que vous n'avez pas accepté. Si vous acceptez la demande
+          d'une institution, votre publication est vue de son public, y compris de ses membres qui
+          font partie du personnel ; si ce public a changé depuis que vous l'avez lu, votre
+          acceptation est refusée et le nouveau public vous est montré. Une fois le relais accepté,
+          ceux qui voient votre publication suivent le public et les membres ACTUELS de
+          l'association, de la liste ou de l'institution (un membre qui part ne la voit plus, un
+          nouveau la voit) ; une entité archivée ne la montre plus à personne, et quelqu'un qui ne
+          la voit que grâce à ce relais ne peut pas la republier à ses propres abonnés. Vous pouvez
+          retirer ce relais à tout moment, c'est le recours si ce public change ; la demande est
+          effacée avec la publication ou avec votre compte. Une notification sur une publication
+          n'est affichée que tant que son destinataire peut encore la voir, mais une notification
+          déjà reçue sur un appareil ne peut pas être rappelée. Une mention, dans une publication ou
+          un commentaire, ne prévient que la personne mentionnée qui peut voir la publication, et
+          seulement une fois celle-ci publiée. Vous pouvez publier ou commenter de façon anonyme, ou
+          au nom d'une association dont vous avez le droit de parler : les autres membres ne voient
+          alors pas votre compte, mais la modération et les administrateurs de la plateforme peuvent
+          l'identifier (pour traiter un signalement, par exemple), et votre compte reste responsable
+          de ce que vous écrivez. Un commentaire écrit au nom d'une association lui appartient : il
+          reste si vous supprimez votre compte, détaché de celui-ci.
         </dd>
       </div>
       <div>

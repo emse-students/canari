@@ -1,5 +1,6 @@
 import { apiFetch } from '$lib/utils/apiFetch';
-import { refusalFromResponse } from '$lib/utils/apiRefusalError';
+import { ApiRefusalError, refusalFromResponse } from '$lib/utils/apiRefusalError';
+import { responseOrigin } from '$lib/utils/apiJson';
 import { socialUrl } from '$lib/utils/apiUrl';
 import type { MediaRef } from '$lib/media';
 import type { FormItem } from '$lib/forms/api';
@@ -452,6 +453,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!res.ok) {
     // A typed refusal: a screen reads the status and the code, never this sentence.
     throw await refusalFromResponse(res, `post-service ${path.split('?')[0]}`);
+  }
+  // A 2xx that is not JSON is not the app's answer - a captive portal's page, an edge's: typed here,
+  // at the throw, as the edge's, rather than left to the SyntaxError of `json()`.
+  if (responseOrigin(res) === 'edge') {
+    throw new ApiRefusalError(
+      res.status,
+      null,
+      `post-service ${path.split('?')[0]} answered ${res.status} without JSON (edge)`,
+      { origin: 'edge' }
+    );
   }
   return (await res.json()) as T;
 }

@@ -198,7 +198,8 @@ export class PostMediaRetentionService implements OnModuleInit {
 
   /**
    * THE PUBLISH QUEUE'S DELETE, server side: deletes the media a withdrawn post uploaded, under
-   * `ownerId` as their uploader, EXCEPT any id a live post or comment cites. The client cannot be
+   * `ownerId` as their uploader, EXCEPT any id a live post, comment or salon message (a shared reel,
+   * `channel_messages.reelMediaId`) cites. The client cannot be
    * trusted with that check (an uploader's `archive` objects include the media of posts already
    * published, an association's among them - review of #3061), and media-service cannot make it,
    * so it is made here, where the rows are. Cited ids are left alone and logged.
@@ -227,6 +228,11 @@ export class PostMediaRetentionService implements OnModuleInit {
        WHERE jsonb_typeof(p.comments) = 'array'
          AND jsonb_typeof(c->'media') = 'object'
          AND c->'media'->>'mediaId' = ANY($1::text[])
+      UNION
+      -- A reel shared into a salon cites its file from the message row (migration 122).
+      SELECT cm."reelMediaId"::text AS "mediaId"
+        FROM channel_messages cm
+       WHERE cm."reelMediaId"::text = ANY($1::text[])
       `,
       [ids]
     );

@@ -1028,7 +1028,7 @@
   "publish_queue_retry": "Réessayer",
   "publish_queue_delete": "Supprimer",
   "publish_queue_delete_confirm": "Supprimer cette publication ? Elle ne sera pas publiée et ses médias seront retirés de cet appareil.",
-  "publish_queue_published": "Votre publication est en ligne",
+  "publish_queue_published": "Post publié",
   "publish_queue_enqueue_error": "La publication n'a pas pu être enregistrée sur cet appareil. Elle reste dans l'éditeur.",
   "publish_queue_enqueue_storage_full": "Plus de place sur cet appareil pour garder la publication pendant son envoi. Libérez de l'espace puis réessayez.",
   "post_create_error_dismiss_label": "Compris",

@@ -244,7 +244,7 @@ describe('PostsService.withdrawPost - the author takes back a queued post', () =
       deleted: true,
     });
     // As the author, never as an admin: the flag a global admin carries is not passed on.
-    expect(remove).toHaveBeenCalledWith(ID, 'alice', false);
+    expect(remove).toHaveBeenCalledWith(ID, 'alice', false, { keep: ['m-1', 'm-2'] });
     expect(retention.deleteWithdrawnMedia).toHaveBeenCalledWith('alice', ['m-1', 'm-2']);
     expect(deleted.has(ID)).toBe(true);
   });

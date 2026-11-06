@@ -801,7 +801,8 @@ export class MediaController {
     @Headers('x-internal-secret') internalSecret: string | undefined
   ): Promise<{ results: Record<string, 'deleted' | 'absent' | 'refused'> }> {
     assertInternalSecret(internalSecret);
-    const results: Record<string, 'deleted' | 'absent' | 'refused'> = {};
+    // No prototype: the keys are ids a request named (CodeQL js/remote-property-injection).
+    const results = Object.create(null) as Record<string, 'deleted' | 'absent' | 'refused'>;
     for (const { mediaId, ownerId } of this.purgeItems(body?.items)) {
       results[mediaId] = await this.mediaService.removeOwnArchive(mediaId, ownerId);
     }

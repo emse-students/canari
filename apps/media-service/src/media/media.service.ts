@@ -1888,9 +1888,20 @@ export class MediaService {
       entry.retentionClass !== 'archive' ||
       this.isPublicAssetEntry(entry)
     ) {
-      this.logger.warn(
-        `media ${mediaId}: withdrawal by ${ownerId} refused (owner ${entry.ownerId ? 'another' : 'unrecorded'} or class ${entry.retentionClass ?? 'unclassified'})`
-      );
+      // Name only the conditions that failed: a line that lists both sends its reader after the
+      // wrong one.
+      const why = [
+        !entry.ownerId
+          ? 'no uploader recorded'
+          : entry.ownerId !== ownerId
+            ? 'another uploader'
+            : null,
+        entry.retentionClass !== 'archive'
+          ? `class ${entry.retentionClass ?? 'unclassified'}, not archive`
+          : null,
+        this.isPublicAssetEntry(entry) ? 'a public asset' : null,
+      ].filter((reason): reason is string => reason !== null);
+      this.logger.warn(`media ${mediaId}: withdrawal by ${ownerId} refused (${why.join('; ')})`);
       return 'refused';
     }
     await this.remove(mediaId);

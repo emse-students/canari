@@ -72,6 +72,19 @@ describe('PublishQueueStore', () => {
     expect(await store.mark('nobody', { paused: true })).toBeNull();
   });
 
+  it("drops a SEND failure a runner writes over a post the member deleted, never a withdrawal's", async () => {
+    const store = new PublishQueueStore(user());
+    await store.enqueue(post('deleted', 0), []);
+    const stale = (await store.get('deleted'))!;
+    await store.mark('deleted', { withdrawn: true });
+    stale.failure = { stage: 'createPost', message: 'refused' };
+    await store.update(stale);
+    expect((await store.get('deleted'))!.failure).toBeUndefined();
+    stale.failure = { stage: 'withdraw', message: 'refused' };
+    await store.update(stale);
+    expect((await store.get('deleted'))!.failure?.stage).toBe('withdraw');
+  });
+
   it('replaces the original by the prepared file in the same write as the record', async () => {
     const store = new PublishQueueStore(user());
     const p = post('p');

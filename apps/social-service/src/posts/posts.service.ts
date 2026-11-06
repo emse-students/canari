@@ -1295,7 +1295,10 @@ export class PostsService {
       );
       throw new ConflictException("This post id is another author's");
     }
-    if (row) await this.deletePost(postId, userId, false);
+    // The ids the queue names are NOT released to the idle window first: released, they would no
+    // longer be `archive`, media-service would refuse to delete them, and they would wait out the
+    // sweep. `deleteWithdrawnMedia` deletes them now unless a live row cites them.
+    if (row) await this.deletePost(postId, userId, false, { keep: mediaIds });
     const media = await this.mediaRetention.deleteWithdrawnMedia(userId, mediaIds);
     this.logger.log(
       `[POST-WITHDRAW] post ${postId.slice(0, 8)}: ${row ? 'deleted' : 'no row'}, the id is retired; media ${media.deleted} deleted, ${media.absent} gone, ${media.cited} cited, ${media.refused} refused`
@@ -2311,7 +2314,15 @@ export class PostsService {
   }
 
   /** Permanently deletes a post. See `assertMayManage` for who may. */
-  async deletePost(postId: string, userId: string, isAdmin: boolean) {
+  async deletePost(
+    postId: string,
+    userId: string,
+    isAdmin: boolean,
+    opts: {
+      /** Ids the caller deletes itself (a withdrawal): not released to the idle window here. */
+      keep?: string[];
+    } = {}
+  ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
     const capacity = await this.assertMayManage(post, userId, isAdmin);
@@ -2328,7 +2339,8 @@ export class PostsService {
         capacity === 'moderator' ? 'moderation' : 'author'
       );
     } else {
-      await this.mediaRetention.release(orphanedMedia);
+      const kept = new Set(opts.keep ?? []);
+      await this.mediaRetention.release(orphanedMedia.filter((id) => !kept.has(id)));
     }
     return { ok: true };
   }

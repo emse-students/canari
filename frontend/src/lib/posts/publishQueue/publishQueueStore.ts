@@ -108,6 +108,12 @@ export function runnerWrite(stored: QueuedPost, incoming: QueuedPost): QueuedPos
   delete incoming.paused;
   if (stored.withdrawn) incoming.withdrawn = true;
   if (stored.paused) incoming.paused = true;
+  // A refusal of the SEND that lands as the member deletes the post must not stop the Delete: the
+  // pass leaves out a post with a failure, so it would never be taken back. Only a refused
+  // withdrawal is a withdrawn post's failure.
+  if (stored.withdrawn && incoming.failure && incoming.failure.stage !== 'withdraw') {
+    delete incoming.failure;
+  }
   return incoming;
 }
 

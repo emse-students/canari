@@ -9,8 +9,11 @@
  * then the alphabet's, which nobody chose.
  *
  * THE DUPLICATES ALREADY SHIPPED ARE LISTED BY NAME, and only those: they ran on every estate long
- * ago, and renaming one would make the deploy apply it a second time. A new duplicate fails here,
- * on the second branch's own CI once it is brought up to date with the first.
+ * ago, and renaming one would make the deploy apply it a second time. A new duplicate fails here ON
+ * MAIN'S CI, after the second of the two pull requests merged: the ruleset does not require a branch
+ * to be up to date with main, so both branches are green alone and both merge. The red main is the
+ * report, and the fix is a renumbering pull request before the next release - which the release's
+ * own `CI passed` gate cannot pass without.
  *
  * Usage: bun .github/scripts/tests/migration-numbers.test.mjs   (no arguments, no network)
  */

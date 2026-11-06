@@ -1265,15 +1265,18 @@ retention, a cascade, any later one - with nothing for a writer to remember. The
 and a date and nothing else: no author, no content. A create under a retired id is `410`.
 `POST /api/posts/:id/withdraw {mediaIds}` is the queue's Delete: it writes the tombstone FIRST,
 then deletes the row if one is there (`{ deleted }` says which), then deletes the named media the
-queue uploaded EXCEPT any a live post or comment cites (`PostMediaRetentionService.deleteWithdrawnMedia`,
-one SQL read of `posts.images` and the comments' media, then media-service's
+queue uploaded EXCEPT any a live post, comment or salon message cites
+(`PostMediaRetentionService.deleteWithdrawnMedia`, one SQL read of `posts.images`, the comments'
+media and `channel_messages."reelMediaId"`, then media-service's
 `internal/own-archive-delete` under the caller as uploader). A create racing it re-reads the
 tombstone AFTER its own insert and removes itself, so in every interleaving the post does not exist
 once the withdrawal answered. **Only ever the caller's own post, a platform admin included**: the
 author is checked before the tombstone (`409`, nothing written) and again on the row it would
 delete; another author's row that appeared between the two reads is left, the tombstone this call
 wrote is deleted again, and the answer is `409`. The row is deleted as its author, never with the
-admin flag.
+admin flag, and WITHOUT releasing the ids the queue named (`deletePost`'s `keep`): released to
+`ephemeral` they would no longer be `archive`, media-service would refuse them, and they would wait
+out the idle sweep.
 
 **The existence oracle, accepted.** A create naming an id answers `409` (another author's post holds
 it) or `410` (a deleted post held it), which tells the caller that a post holds or held that id. Low:

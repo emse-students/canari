@@ -350,7 +350,14 @@ deploys, so a new phone build meets the OLD services for days: they drop the cli
 answer then duplicates the post), refuse `single-block` (`400`) and answer the withdrawal `404`.
 core-service's `/api/version` carries the capability `publishQueue: true` (the three services are
 built from one tag and deployed together, as for `presencePost`), read by `serverPublishQueue()`;
-until it is `true` - an older estate, or no answer yet - the pass sends nothing and the rows wait.
+until it is `true` - an older estate, or no answer yet - the pass sends nothing, its rows wait, and
+it ENDS rather than climb the retry ladder (re-reading the same local value is no retry). The
+`/api/version` answer that turns it `true` starts the next pass (an `$effect` on
+`serverPublishQueue()`), so a post never sits out a rung for it.
+
+**A 2xx that is not JSON is an edge answer.** The post API's request helper types it at the throw
+(`ApiRefusalError`, `origin: 'edge'`), so a captive portal's `200` page waits instead of stopping
+the post on the `SyntaxError` of `json()`.
 
 **What stops it, and what starts it again** (`classifyPublishFailure`, by WHO answered):
 
@@ -397,7 +404,9 @@ correctness bound: what makes a resend safe is the recorded session and the clie
 the STORED record (`runnerWrite`) and hands them back to the runner's copy, so the next checkpoint
 sees them. Before the review of #3061, `update` wrote the runner's whole copy, read before the
 member acted: a Delete from another tab during an upload's `persist` was erased, and the post was
-published.
+published. And a SEND failure the runner writes as the member deletes the post is dropped
+(`runnerWrite`: a withdrawn post keeps only a `withdraw` failure) - kept, it would have left the
+post out of the pass and the Delete would never have run.
 
 **Several tabs.** One tab runs the pass (the Web Lock). Every tab draws the rows from the STORE at
 start (`refreshViews`, no lock needed), and the runner broadcasts its rows on a `BroadcastChannel`
@@ -421,6 +430,10 @@ background tab keeps uploading. A native Android foreground service and an iOS b
 unmounted the composer, so the next open brought the published photos back and a second Publish
 posted them again (read on the local estate, 2026-11-06; the test unmounts in `onPostCreated` as the
 parent does).
+
+**"Post publie".** When a queued post lands, a discreet in-app toast says so (owner, 2026-11-06,
+`publish_queue_published`). It exists only while the app runs: a post published by a pass that ran
+after the app came back says so then, and nothing is shown while the app is closed.
 
 **The line** (`PublishQueueBanner.svelte`, in the root layout's banner column under the offline
 banner): one row per queued post, the media being worked on 1-based, its percentage, a progress bar
