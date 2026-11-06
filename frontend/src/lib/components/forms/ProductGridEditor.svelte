@@ -336,7 +336,7 @@
   }
 
   function onRowLabelKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter') e.preventDefault();
+    if (e.key === 'Enter' && !e.isComposing) e.preventDefault();
   }
 
   function onRowLabelInput(row: { label: string }, e: Event) {
