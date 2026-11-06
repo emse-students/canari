@@ -2925,6 +2925,7 @@
   "qtype_matrix_single": "Grille unique",
   "qtype_matrix_multiple": "Grille multiple",
   "qtype_file": "Fichier",
+  "qtype_product_grid": "Grille d'articles",
   "time_just_now": "À l'instant",
   "time_just_now_lower": "à l'instant",
   "time_short_days": "{count} j",

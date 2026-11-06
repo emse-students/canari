@@ -1,4 +1,9 @@
 import { BadRequestException, Logger } from '@nestjs/common';
+import {
+  PRODUCT_GRID_MAX_COLUMNS,
+  PRODUCT_GRID_MAX_ROWS,
+  PRODUCT_GRID_TYPE,
+} from './product-grid-contract';
 
 /**
  * THE BOUNDS OF A FORM AND OF AN ANSWER, AND THE CODES A SUBMIT OR A SAVE IS REFUSED WITH.
@@ -27,6 +32,13 @@ export const ANSWER_MAX_TEXT_LENGTH = 2000;
 export const ANSWER_MAX_SELECTIONS = 50;
 /** The rows one grid may declare, and so the keys one grid answer may carry. */
 export const GRID_MAX_ROWS = 50;
+/**
+ * The cells one PRICED grid (`product_grid`) may have, and so the keys its answer may carry: its
+ * answer is `{ "rowId:colId": quantity }`, one key per ordered cell, not one per row.
+ */
+export const PRODUCT_GRID_MAX_CELLS = PRODUCT_GRID_MAX_ROWS * PRODUCT_GRID_MAX_COLUMNS;
+/** The characters of one priced-grid cell key: two ids of at most 36 and the `:` between them. */
+export const PRODUCT_GRID_CELL_KEY_MAX = 73;
 
 export const FORM_NOT_OPEN_YET = 'FORM_NOT_OPEN_YET';
 export const FORM_CLOSED = 'FORM_CLOSED';
@@ -56,8 +68,16 @@ export function isGridQuestion(item: { type?: string }): boolean {
   return item.type === 'matrix_single' || item.type === 'matrix_multiple';
 }
 
-/** One answer's value as the API accepts it: a text, a number, an id list, or a grid's rows. */
-export type FormAnswerValue = string | string[] | number | Record<string, string | string[]>;
+/**
+ * One answer's value as the API accepts it: a text, a number, an id list, a survey grid's rows, or
+ * a priced grid's cell quantities.
+ */
+export type FormAnswerValue =
+  | string
+  | string[]
+  | number
+  | Record<string, string | string[]>
+  | Record<string, number>;
 
 /** Whether `v` is a string list within the selection and text bounds. */
 function isBoundedStringList(v: unknown): v is string[] {
@@ -70,9 +90,12 @@ function isBoundedStringList(v: unknown): v is string[] {
 
 /**
  * Whether one value of an `answers` record has an accepted SHAPE and size: a bounded string, a
- * bounded string list, a finite number, or a flat object (a grid) of at most {@link GRID_MAX_ROWS}
- * bounded string keys whose values are bounded strings or string lists. What the value MEANS
- * (declared rows, declared options) is judged by `submit`, which has the form.
+ * bounded string list, a finite number, a flat object (a survey grid) of at most
+ * {@link GRID_MAX_ROWS} bounded string keys whose values are bounded strings or string lists, or a
+ * flat object (a priced grid) of at most {@link PRODUCT_GRID_MAX_CELLS} cell keys whose values are
+ * all finite numbers. What the value MEANS (declared rows, declared options, declared cells, whole
+ * quantities within the cap) is judged by `submit`, which has the form (`answer-bounds.ts` for a
+ * survey grid, `product-grid-contract.ts` for a priced one).
  */
 export function isAcceptedAnswerValue(v: unknown): boolean {
   if (typeof v === 'string') return v.length <= ANSWER_MAX_TEXT_LENGTH;
@@ -80,6 +103,15 @@ export function isAcceptedAnswerValue(v: unknown): boolean {
   if (Array.isArray(v)) return isBoundedStringList(v);
   if (typeof v !== 'object' || v === null) return false;
   const entries = Object.entries(v as Record<string, unknown>);
+  // A priced grid's quantities: every value a number. Never mixed with a survey row's strings.
+  if (entries.length > 0 && entries.every(([, cell]) => typeof cell === 'number')) {
+    return (
+      entries.length <= PRODUCT_GRID_MAX_CELLS &&
+      entries.every(
+        ([key, cell]) => key.length <= PRODUCT_GRID_CELL_KEY_MAX && Number.isFinite(cell as number)
+      )
+    );
+  }
   if (entries.length > GRID_MAX_ROWS) return false;
   return entries.every(
     ([key, cell]) =>
@@ -251,7 +283,8 @@ function isRowMap(v: unknown): boolean {
  * here against the form. On a declared question that is not a grid it is the typed
  * {@link FORM_GRID_ANSWER_INVALID} (a page opened before the question stopped being a grid - the
  * refusal says to reload); on a key the form does not declare it is dropped, as a stale page's
- * answer to a since-deleted grid (`{ row: '' }`) must not fail the send. Every other value is
+ * answer to a since-deleted grid (`{ row: '' }`) must not fail the send. A priced grid's
+ * (`product_grid`) answer passes through to its own rule in `submit`. Every other value is
  * returned untouched - its own checks run where they always did.
  */
 export function withNormalisedGridAnswers<T>(
@@ -265,6 +298,12 @@ export function withNormalisedGridAnswers<T>(
     if (item && isGridQuestion(item)) {
       const grid = normaliseGridAnswer(item, value);
       if (grid !== undefined) out.push([key, grid as T]);
+      continue;
+    }
+    // A priced grid's answer is a map too, judged by its own coded rule in `submit`
+    // (`priceProductGridAnswer`): passed through untouched, never refused here as a stray row map.
+    if (item?.type === PRODUCT_GRID_TYPE) {
+      out.push([key, value]);
       continue;
     }
     if (!isRowMap(value)) {

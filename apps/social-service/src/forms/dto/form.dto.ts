@@ -29,12 +29,14 @@ import {
   FORM_MAX_QUESTIONS,
   GRID_MAX_ROWS,
   isAcceptedAnswerValue,
+  PRODUCT_GRID_MAX_CELLS,
   type FormAnswerValue,
 } from '../answer-bounds';
 
 /**
  * Validates that `answers` is a shallow Record of at most {@link FORM_MAX_QUESTIONS} keys whose
- * values are strings, string arrays, numbers, or a grid's flat row map - all within the bounds of
+ * values are strings, string arrays, numbers, a survey grid's flat row map or a priced grid's
+ * cell quantities - all within the bounds of
  * `libs/contracts/form-answers.json` (`isAcceptedAnswerValue`). A grid's rows and columns are judged
  * against the form by `submit`; this checks only the shape and the size.
  */
@@ -53,7 +55,7 @@ export function IsValidAnswers(options?: ValidationOptions) {
           return entries.every(([, v]) => isAcceptedAnswerValue(v));
         },
         defaultMessage() {
-          return `answers must contain at most ${FORM_MAX_QUESTIONS} keys; each value must be a string (max ${ANSWER_MAX_TEXT_LENGTH} chars), an array of strings (max ${ANSWER_MAX_SELECTIONS} items), a number, or a grid of at most ${GRID_MAX_ROWS} rows`;
+          return `answers must contain at most ${FORM_MAX_QUESTIONS} keys; each value must be a string (max ${ANSWER_MAX_TEXT_LENGTH} chars), an array of strings (max ${ANSWER_MAX_SELECTIONS} items), a number, a survey grid of at most ${GRID_MAX_ROWS} rows, or a priced grid of at most ${PRODUCT_GRID_MAX_CELLS} cells`;
         },
       },
     });
@@ -165,6 +167,14 @@ export class FormItemDto {
    */
   @IsOptional()
   showIf?: unknown;
+
+  /**
+   * A priced grid's definition (`type: 'product_grid'`): rows, columns, max per cell, closed cells,
+   * prices. Validated structurally in the service (`normaliseProductGridItems`, the shared rule in
+   * `product-grid-contract.ts`) like `showIf`, and stored normalised; ignored on any other type.
+   */
+  @IsOptional()
+  productGrid?: unknown;
 }
 
 export class CreateFormDto {

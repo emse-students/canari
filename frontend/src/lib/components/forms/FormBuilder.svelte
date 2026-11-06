@@ -22,7 +22,7 @@
     Users,
     X,
   } from '@lucide/svelte';
-  import { QUESTION_TYPES } from '$lib/forms/questionTypes';
+  import { AUTHORABLE_QUESTION_TYPES, QUESTION_TYPES } from '$lib/forms/questionTypes';
   import { duplicateLabels, gridRowLabels } from '$lib/forms/answerBounds';
   import { m } from '$lib/paraglide/messages';
 
@@ -386,7 +386,7 @@
             class="border-cn-border absolute top-full right-0 z-(--z-popover) mt-1 w-64 max-w-[calc(100vw-2rem)] rounded-2xl border-2 bg-(--cn-surface) p-2 shadow-xl"
           >
             <div class="grid grid-cols-2 gap-1">
-              {#each QUESTION_TYPES as qt (qt.value)}
+              {#each AUTHORABLE_QUESTION_TYPES as qt (qt.value)}
                 {@const QIcon = qt.Icon}
                 <button
                   type="button"

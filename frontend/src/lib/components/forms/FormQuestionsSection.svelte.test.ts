@@ -282,3 +282,22 @@ describe('touch and drag targets', () => {
     expect(dup.className).toContain('min-w-11');
   });
 });
+
+describe('the type menus', () => {
+  it('offer only the authorable types: product_grid stays out of both menus', () => {
+    const { target } = render();
+    allButtons(target)
+      .find((b) => b.textContent?.includes(m.form_add_question_button()))!
+      .click();
+    flushSync();
+    expect(target.textContent).toContain(m.qtype_short_text());
+    expect(target.textContent).not.toContain(m.qtype_product_grid());
+    rowButton(target, 1).click();
+    flushSync();
+    allButtons(target)
+      .find((b) => b.getAttribute('aria-haspopup') === 'listbox')!
+      .click();
+    flushSync();
+    expect(target.textContent).not.toContain(m.qtype_product_grid());
+  });
+});
