@@ -56,6 +56,7 @@ describe('FormsService - the price of a form of an entity that may not collect',
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
       {} as any
     );
     jest.spyOn(service as any, 'assertFormManager').mockResolvedValue(form);

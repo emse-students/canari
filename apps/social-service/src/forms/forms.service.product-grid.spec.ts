@@ -135,7 +135,8 @@ function makeService(opts: { form?: Record<string, unknown>; facts?: PricingFact
     pricingFacts,
     { count: jest.fn() } as any,
     {} as any,
-    { enabled: () => false } as any
+    { enabled: () => false } as any,
+    {} as any // FormItemImagesService
   );
   return { service, saved, manager, formRepo, submissionRepo, userTagService };
 }

@@ -1,13 +1,18 @@
 import { OTHERS_BUCKET_ID } from '../pricing/audience';
 import {
   PRODUCT_GRID_ALL_TIER,
+  PRODUCT_GRID_AWAITING_CASH_STATUSES,
   PRODUCT_GRID_OTHERS_TIER,
+  PRODUCT_GRID_RECEIVED_STATUSES,
   parseProductGridAnswer,
   productGridItemRefusal,
   productGridLines,
+  productGridLinesOf,
   productGridTotalCents,
+  productGridTotals,
   productGridView,
   type ProductGrid,
+  type ProductGridLine,
 } from './product-grid-contract';
 
 /**
@@ -254,5 +259,66 @@ describe('product grid contract - the lines', () => {
 
   it('a respondent view carries no price list', () => {
     expect(productGridView(grid()).pricing).toEqual({ mode: 'single' });
+  });
+});
+
+describe('the totals rule - shared by the export and the responses screen', () => {
+  const at = (
+    rowId: string,
+    colId: string,
+    quantity: number,
+    unitCents = 2800
+  ): ProductGridLine => ({
+    itemId: 'q',
+    itemLabel: 'Sweat',
+    rowId,
+    rowLabel: rowId.toUpperCase(),
+    colId,
+    colLabel: colId.toUpperCase(),
+    quantity,
+    unitCents,
+    lineCents: quantity * unitCents,
+    tierId: PRODUCT_GRID_ALL_TIER,
+    tierLabel: null,
+  });
+  const answers = [
+    { paymentStatus: 'paid', lines: [at('vert', 'm', 2), at('noir', 'l', 1)] },
+    { paymentStatus: 'pending_cash', lines: [at('vert', 'm', 1)] },
+    { paymentStatus: 'refunded', lines: [at('vert', 'l', 4)] },
+    { paymentStatus: 'cancelled', lines: [at('vert', 'l', 1)] },
+    { paymentStatus: 'pending', lines: [at('noir', 'm', 1)] },
+    { paymentStatus: 'free', lines: null },
+  ];
+
+  it('counts paid and free answers, and cash apart; never a refunded or cancelled one', () => {
+    expect(productGridLinesOf(answers, PRODUCT_GRID_RECEIVED_STATUSES)).toHaveLength(2);
+    expect(productGridLinesOf(answers, PRODUCT_GRID_AWAITING_CASH_STATUSES)).toEqual([
+      at('vert', 'm', 1),
+    ]);
+    const both = productGridLinesOf(answers, [
+      ...PRODUCT_GRID_RECEIVED_STATUSES,
+      ...PRODUCT_GRID_AWAITING_CASH_STATUSES,
+    ]);
+    expect(both.some((l) => l.colId === 'l' && l.rowId === 'vert')).toBe(false);
+  });
+
+  it('sums per cell, per row, per column and in all, listing a deleted row from its lines', () => {
+    const lines = [
+      ...productGridLinesOf(answers, PRODUCT_GRID_RECEIVED_STATUSES),
+      at('rose', 'm', 1),
+    ];
+    const totals = productGridTotals({ id: 'q', productGrid: grid() }, lines);
+    expect(totals.rows.map((r) => r.id)).toEqual(['vert', 'noir', 'creme', 'rose']);
+    expect(totals.cells['vert:m']).toEqual({ units: 2, cents: 5600 });
+    expect(totals.cells['vert:l']).toBeUndefined();
+    expect(totals.rowTotals.vert).toEqual({ units: 2, cents: 5600 });
+    expect(totals.rowTotals.creme).toEqual({ units: 0, cents: 0 });
+    expect(totals.columnTotals.m).toEqual({ units: 3, cents: 8400 });
+    expect(totals.total).toEqual({ units: 4, cents: 11200 });
+  });
+
+  it('reads only the lines of its own question', () => {
+    const other = { ...at('vert', 'm', 9), itemId: 'other' };
+    expect(productGridTotals({ id: 'q', productGrid: grid() }, [other]).total.units).toBe(0);
   });
 });

@@ -4,6 +4,7 @@
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import { Check, ClipboardList } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { associationLogoSrc } from '$lib/associations/api';
 
   /**
    * THE HEAD OF A FORM BEING FILLED IN: its title, its banner when it has one, and what it says about
@@ -26,7 +27,12 @@
 <div class="border-cn-border mb-5 overflow-hidden rounded-3xl border bg-(--cn-surface) shadow-sm">
   {#if form.imageUrl}
     <div class="relative">
-      <img src={form.imageUrl} alt="" class="max-h-72 w-full object-cover" loading="lazy" />
+      <img
+        src={associationLogoSrc(form.imageUrl) ?? ''}
+        alt=""
+        class="max-h-72 w-full object-cover"
+        loading="lazy"
+      />
       <div
         class="absolute inset-x-0 bottom-0 h-28 bg-linear-to-t from-black/60 to-transparent"
       ></div>

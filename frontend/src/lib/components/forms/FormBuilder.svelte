@@ -5,12 +5,28 @@
   import AudienceConditionEditor from './AudienceConditionEditor.svelte';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
-  import type { MembershipTier } from '$lib/associations/api';
+  import { associationLogoSrc, type MembershipTier } from '$lib/associations/api';
+  import { QUESTION_IMAGE_ACCEPT, questionImageUploadError } from '$lib/forms/questionImage';
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
-  import { Trash2, X, Plus, GripVertical, ImagePlus, GitBranch, ChevronDown } from '@lucide/svelte';
+  import {
+    ArrowDown,
+    ArrowUp,
+    Asterisk,
+    ChevronDown,
+    ChevronUp,
+    Copy,
+    GitBranch,
+    GripVertical,
+    ImagePlus,
+    Plus,
+    Trash2,
+    Users,
+    X,
+  } from '@lucide/svelte';
   import { AUTHORABLE_QUESTION_TYPES, QUESTION_TYPES } from '$lib/forms/questionTypes';
   import { duplicateLabels, gridRowLabels } from '$lib/forms/answerBounds';
   import { m } from '$lib/paraglide/messages';
+  import { Log } from '$lib/utils/Log';
 
   let {
     item = $bindable(),
@@ -27,6 +43,11 @@
     formations = [],
     imageUploadFn = undefined,
     fileHint = undefined,
+    expanded = false,
+    selectTitleOnOpen = false,
+    onExpand,
+    onCollapse,
+    onDuplicate,
   }: {
     item: any;
     onRemove: () => void;
@@ -52,9 +73,65 @@
     imageUploadFn?: (file: File) => Promise<string>;
     /** What the editor says a FILE question does - who reads the file, when it goes. Defaults to a form's. */
     fileHint?: string;
+    /** Only one card is expanded at a time: the list owns which, this card draws it. */
+    expanded?: boolean;
+    /** The copy of a question opens with its title selected, so typing replaces it. */
+    selectTitleOnOpen?: boolean;
+    /** The row was activated (click, Enter, Space). */
+    onExpand?: () => void;
+    /** Escape, or the collapse button. */
+    onCollapse?: () => void;
+    /** The duplicate icon or Ctrl/Cmd+D. */
+    onDuplicate?: () => void;
   } = $props();
 
+  /** Apple platforms use Cmd for shortcuts; read once, a platform does not change. */
+  const IS_APPLE =
+    typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform ?? '');
   let showTypePicker = $state(false);
+  let titleEl = $state<HTMLInputElement | null>(null);
+  let rowButtonEl = $state<HTMLButtonElement | null>(null);
+  /** Set when the card collapses from the keyboard, so focus lands on its row and not on the page. */
+  let restoreRowFocus = false;
+  let wasExpanded = false;
+
+  // Opening a card moves focus to its title; closing it from the keyboard returns focus to its row.
+  $effect(() => {
+    if (expanded && !wasExpanded) {
+      titleEl?.focus();
+      if (selectTitleOnOpen) titleEl?.select();
+    } else if (!expanded && wasExpanded && restoreRowFocus) {
+      rowButtonEl?.focus();
+    }
+    restoreRowFocus = false;
+    wasExpanded = expanded;
+  });
+
+  /** Ctrl/Cmd+D duplicates (the browser's bookmark shortcut is cancelled); Escape collapses. */
+  function onCardKeydown(e: KeyboardEvent) {
+    // Cmd on Apple platforms, Ctrl elsewhere - never both, so Ctrl+D on a Mac stays the OS's.
+    const modifier = IS_APPLE ? e.metaKey : e.ctrlKey;
+    if (modifier && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'd') {
+      // The browser's bookmark shortcut is cancelled even for an auto-repeat, which copies nothing.
+      e.preventDefault();
+      if (!e.repeat) onDuplicate?.();
+    } else if (e.key === 'Escape' && expanded && !e.defaultPrevented) {
+      if (showTypePicker) {
+        showTypePicker = false;
+        e.stopPropagation();
+        return;
+      }
+      restoreRowFocus = true;
+      onCollapse?.();
+    }
+  }
+
+  const currentType = $derived(QUESTION_TYPES.find((t) => t.value === item.type));
+  /** The audience panel is open exactly when the condition is switched on. */
+  const conditionsOn = $derived(item.showIf != null);
+  function toggleConditions() {
+    item.showIf = conditionsOn ? null : {};
+  }
 
   const isMatrix = $derived(['matrix_single', 'matrix_multiple'].includes(item.type));
   // A grid answer is keyed by its row label, so two rows of one label are one answer (D4): marked
@@ -180,16 +257,22 @@
   let uploadingImage = $state(false);
   let imageUploadError = $state('');
 
+  /**
+   * Uploads the picked file as this question's image - a first one or a replacement. The old image
+   * is not deleted here: the server releases it once the SAVE leaves no question citing it.
+   */
   async function handleImageUpload(e: Event) {
     const input = e.target as HTMLInputElement;
     const file = input.files?.[0];
     if (!file || !imageUploadFn) return;
+    Log.d('FORMS', `question image: upload ${file.type} ${file.size} bytes`);
     uploadingImage = true;
     imageUploadError = '';
     try {
       item.imageUrl = await imageUploadFn(file);
-    } catch (err: any) {
-      imageUploadError = err.message || 'Error';
+    } catch (err) {
+      Log.i('FORMS', `question image: upload refused - ${String(err)}`);
+      imageUploadError = questionImageUploadError(err);
     } finally {
       uploadingImage = false;
       input.value = '';
@@ -197,129 +280,118 @@
   }
 </script>
 
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-  class="group bg-cn-surface relative w-full min-w-0 rounded-xl border border-black/5 p-3 shadow-sm transition-all duration-300 sm:rounded-lg sm:p-5 sm:hover:border-amber-500/30 sm:hover:shadow-md md:p-6 dark:border-white/10"
+  class="group bg-cn-surface relative w-full min-w-0 rounded-xl border border-black/5 shadow-sm transition-all duration-150 sm:rounded-lg dark:border-white/10 {expanded
+    ? 'border-cn-yellow/50 p-3 sm:p-4'
+    : 'px-1.5 py-0.5 sm:hover:border-amber-500/30'}"
+  onkeydown={onCardKeydown}
 >
-  <!-- Action bar (mobile: reorder + delete) -->
-  <div class="mb-3 flex items-center justify-between gap-2 sm:mb-4">
-    <div class="flex min-w-0 items-center gap-2">
-      {#if questionIndex != null}
-        <span
-          class="text-2xs shrink-0 rounded-md bg-amber-500/10 px-2 py-0.5 font-bold tracking-wider text-amber-600 uppercase dark:text-amber-400"
-        >
-          Q{questionIndex}
-        </span>
-      {/if}
-      <GripVertical
-        size={16}
-        class="text-text-muted/50 hidden shrink-0 cursor-grab active:cursor-grabbing sm:block"
-        aria-hidden="true"
-      />
-    </div>
-    <div class="flex shrink-0 items-center gap-0.5">
-      {#if onMoveUp && onMoveDown}
-        <button
-          type="button"
-          onclick={onMoveUp}
-          disabled={!canMoveUp}
-          class="text-text-muted hover:text-text-main rounded-lg p-2 transition-colors hover:bg-black/5 disabled:opacity-25 sm:hidden dark:hover:bg-white/10"
-          title={m.form_builder_move_up_title()}
-          aria-label={m.form_builder_move_up_aria()}
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"><path d="m18 15-6-6-6 6" /></svg
-          >
-        </button>
-        <button
-          type="button"
-          onclick={onMoveDown}
-          disabled={!canMoveDown}
-          class="text-text-muted hover:text-text-main rounded-lg p-2 transition-colors hover:bg-black/5 disabled:opacity-25 sm:hidden dark:hover:bg-white/10"
-          title={m.form_builder_move_down_title()}
-          aria-label={m.form_builder_move_down_aria()}
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"><path d="m6 9 6 6 6-6" /></svg
-          >
-        </button>
-      {/if}
-      <button
-        class="ui-icon-button text-text-muted rounded-lg transition-colors outline-none hover:bg-red-500/10 hover:text-red-500 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
-        onclick={onRemove}
-        type="button"
-        title={m.form_builder_delete_title()}
-        aria-label={m.form_builder_delete_aria()}
+  {#if !expanded}
+    <!-- Collapsed: one line. The handle and the duplicate icon are their own controls beside the
+         one button that expands, so no interactive element sits inside another. -->
+    <div class="flex min-w-0 items-center gap-1">
+      <!-- The grip is the drag target of a collapsed row (the row itself is a button, which a press
+           never drags from): a real 44 x 44 px area, marked as the handle. -->
+      <span
+        data-drag-handle
+        class="text-text-muted/50 hidden min-h-11 w-11 shrink-0 cursor-grab items-center justify-center active:cursor-grabbing sm:flex"
+        role="img"
+        aria-label={m.form_builder_drag_handle_aria()}
       >
-        <Trash2 size={18} />
+        <GripVertical size={16} aria-hidden="true" />
+      </span>
+      <button
+        bind:this={rowButtonEl}
+        data-row-button
+        type="button"
+        onclick={onExpand}
+        aria-label={m.form_builder_open_question_aria({
+          n: questionIndex ?? 1,
+          title: item.label || m.form_builder_title_placeholder(),
+        })}
+        class="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-amber-500/60"
+      >
+        <span
+          class="text-text-muted bg-cn-border/50 text-2xs shrink-0 rounded-md px-1.5 py-0.5 font-bold tabular-nums"
+          >{questionIndex}</span
+        >
+        <span
+          class="min-w-0 flex-1 truncate text-sm font-semibold {item.label
+            ? 'text-text-main'
+            : 'text-text-muted/60 italic'}"
+          >{item.label || m.form_builder_title_placeholder()}{#if item.required}<span
+              class="ml-0.5 text-red-500"
+              data-testid="required-mark">*</span
+            >{/if}</span
+        >
+        {#if currentType}
+          {@const CurIcon = currentType.Icon}
+          <CurIcon size={14} class="text-text-muted shrink-0" />
+          <span class="text-text-muted text-2xs hidden shrink-0 font-medium sm:inline"
+            >{currentType.label()}</span
+          >
+        {/if}
+      </button>
+      <button
+        type="button"
+        onclick={onDuplicate}
+        class="ui-icon-button text-text-muted hover:text-text-main min-h-11 min-w-11 shrink-0 rounded-lg transition-colors outline-none hover:bg-black/5 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 dark:hover:bg-white/10"
+        title={m.form_builder_duplicate_title()}
+        aria-label={m.form_builder_duplicate_aria()}
+      >
+        <Copy size={16} />
       </button>
     </div>
-  </div>
-
-  <!-- Label + type -->
-  <div class="mb-4 grid grid-cols-1 gap-3 sm:mb-6 sm:gap-5 md:grid-cols-12">
-    <div class="min-w-0 md:col-span-7">
-      <Input
-        label={m.form_builder_question_label()}
-        bind:value={item.label}
-        placeholder={m.form_builder_question_placeholder()}
-        class="[&_input]:px-3 [&_input]:py-2.5 [&_input]:text-sm sm:[&_input]:px-4 sm:[&_input]:py-3 sm:[&_input]:text-base [&_label]:ml-0"
-      />
-    </div>
-    <div class="min-w-0 md:col-span-5">
-      <label
-        for="type-picker-{item.id}"
-        class="text-text-main mb-1.5 block text-sm font-bold sm:mb-2"
-        >{m.form_builder_type_label()}</label
+  {:else}
+    <!-- Title + type: the title is the main field, the type a compact menu beside it. -->
+    <div class="mb-3 flex items-center gap-2">
+      <span
+        data-drag-handle
+        class="text-text-muted/50 hidden shrink-0 cursor-grab active:cursor-grabbing sm:block"
+        aria-hidden="true"
       >
-      <div class="relative">
-        {#if true}
-          {@const cur = QUESTION_TYPES.find((t) => t.value === item.type)}
-          <button
-            id="type-picker-{item.id}"
-            type="button"
-            aria-label="{m.form_builder_type_label()}: {cur?.label() ?? item.type}"
-            aria-haspopup="listbox"
-            aria-expanded={showTypePicker}
-            onclick={() => (showTypePicker = !showTypePicker)}
-            class="{fieldClass} flex cursor-pointer items-center gap-2 text-left"
-          >
-            {#if cur}
-              {@const CurIcon = cur.Icon}
-              <CurIcon size={15} class="text-text-muted shrink-0" />
-              <span class="flex-1 truncate">{cur.label()}</span>
-            {:else}
-              <span class="flex-1">{item.type}</span>
-            {/if}
-            <ChevronDown size={13} class="text-text-muted/60 shrink-0" />
-          </button>
-        {/if}
+        <GripVertical size={16} />
+      </span>
+      <span
+        class="text-text-muted bg-cn-border/50 text-2xs shrink-0 rounded-md px-1.5 py-0.5 font-bold tabular-nums"
+        >{questionIndex}</span
+      >
+      <input
+        bind:this={titleEl}
+        type="text"
+        bind:value={item.label}
+        aria-label={m.form_builder_question_label()}
+        placeholder={m.form_builder_title_placeholder()}
+        class="border-cn-border text-text-main placeholder:text-text-muted/50 focus:border-cn-yellow min-w-0 flex-1 border-b-2 bg-transparent px-1 py-1.5 text-base font-semibold outline-none sm:text-lg"
+      />
+      <div class="relative shrink-0">
+        <button
+          id="type-picker-{item.id}"
+          type="button"
+          aria-label="{m.form_builder_type_label()}: {currentType?.label() ?? item.type}"
+          aria-haspopup="listbox"
+          aria-expanded={showTypePicker}
+          onclick={() => (showTypePicker = !showTypePicker)}
+          class="border-cn-border text-text-main focus:border-cn-yellow flex cursor-pointer items-center gap-1.5 rounded-xl border-2 bg-(--cn-surface) px-2 py-1.5 text-left text-xs font-medium outline-none"
+        >
+          {#if currentType}
+            {@const CurIcon = currentType.Icon}
+            <CurIcon size={15} class="text-text-muted shrink-0" />
+            <span class="hidden max-w-32 truncate sm:inline">{currentType.label()}</span>
+          {:else}
+            <span>{item.type}</span>
+          {/if}
+          <ChevronDown size={13} class="text-text-muted/60 shrink-0" />
+        </button>
         {#if showTypePicker}
           <div
             role="presentation"
             class="fixed inset-0 z-(--z-popover-scrim)"
             onclick={() => (showTypePicker = false)}
-            onkeydown={(e) => {
-              if (e.key === 'Escape') showTypePicker = false;
-            }}
           ></div>
           <div
-            class="border-cn-border absolute top-full right-0 left-0 z-(--z-popover) mt-1 rounded-2xl border-2 bg-(--cn-surface) p-2 shadow-xl"
+            class="border-cn-border absolute top-full right-0 z-(--z-popover) mt-1 w-64 max-w-[calc(100vw-2rem)] rounded-2xl border-2 bg-(--cn-surface) p-2 shadow-xl"
           >
             <div class="grid grid-cols-2 gap-1">
               {#each AUTHORABLE_QUESTION_TYPES as qt (qt.value)}
@@ -349,415 +421,498 @@
         {/if}
       </div>
     </div>
-  </div>
 
-  <!-- Optional description -->
-  <div class="mb-4 sm:mb-5">
-    {#if item.description !== undefined}
-      <div class="relative">
-        <Textarea
-          bind:value={item.description}
-          rows={2}
-          placeholder={m.form_builder_desc_placeholder()}
-        />
-        <button
-          type="button"
-          onclick={() => {
-            item.description = undefined;
-          }}
-          class="ui-icon-button text-text-muted absolute top-1.5 right-1.5 rounded-lg transition-colors hover:bg-red-500/10 hover:text-red-500"
-          title={m.form_builder_remove_desc_title()}><X size={14} /></button
-        >
-      </div>
-    {:else}
-      <button
-        type="button"
-        onclick={() => {
-          item.description = '';
-        }}
-        class="text-text-muted hover:text-text-main flex items-center gap-1 text-xs font-semibold transition-colors"
-      >
-        <Plus size={12} />
-        {m.form_builder_add_desc()}
-      </button>
-    {/if}
-  </div>
-
-  <!-- Optional image -->
-  {#if imageUploadFn !== undefined}
-    <div class="mb-4 sm:mb-5">
-      {#if item.imageUrl}
-        <div class="border-cn-border relative overflow-hidden rounded-xl border">
-          <img
-            src={item.imageUrl}
-            alt="Question"
-            class="max-h-40 w-full object-cover"
-            loading="lazy"
+    <!-- Optional description and image: one row of affordances, each opening its own field -->
+    <div class="mb-3 space-y-3">
+      {#if item.description !== undefined}
+        <div class="relative">
+          <Textarea
+            bind:value={item.description}
+            rows={2}
+            placeholder={m.form_builder_desc_placeholder()}
           />
           <button
             type="button"
             onclick={() => {
-              item.imageUrl = undefined;
+              item.description = undefined;
             }}
-            class="ui-icon-button absolute top-1.5 right-1.5 rounded-full bg-black/60 text-white hover:bg-black/80"
-            title={m.form_builder_remove_image_title()}><X size={14} /></button
+            class="ui-icon-button text-text-muted absolute top-1.5 right-1.5 rounded-lg transition-colors hover:bg-red-500/10 hover:text-red-500"
+            title={m.form_builder_remove_desc_title()}
+            aria-label={m.form_builder_remove_desc_title()}><X size={14} /></button
           >
         </div>
-      {:else}
-        {#if imageUploadError}
-          <p class="mb-1.5 text-xs text-red-500">{imageUploadError}</p>
-        {/if}
-        <label
-          class="border-cn-border text-text-muted hover:border-cn-yellow/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-3 py-2.5 text-xs font-semibold transition-colors {uploadingImage
-            ? 'pointer-events-none opacity-50'
-            : ''}"
-        >
-          <ImagePlus size={15} class="shrink-0" />
-          {uploadingImage ? m.form_builder_image_uploading() : m.form_builder_add_image()}
-          <input
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            class="sr-only"
-            disabled={uploadingImage}
-            onchange={handleImageUpload}
+      {/if}
+
+      {#if item.imageUrl}
+        <div class="flex items-start gap-3">
+          <img
+            src={associationLogoSrc(item.imageUrl) ?? ''}
+            alt={m.form_builder_image_preview_alt()}
+            class="border-cn-border h-20 w-28 shrink-0 rounded-lg border object-cover"
+            loading="lazy"
           />
-        </label>
-      {/if}
-    </div>
-  {/if}
-
-  <!-- Required toggle -->
-  <div class="mb-4 flex justify-start sm:mb-6 sm:justify-end">
-    <label class="group/toggle flex cursor-pointer items-center gap-2.5 select-none sm:gap-3">
-      <span
-        class="text-text-muted group-hover/toggle:text-text-main text-xs font-semibold transition-colors sm:text-sm"
-      >
-        {m.form_builder_required_label()}
-      </span>
-      <div class="relative flex shrink-0 items-center">
-        <input type="checkbox" bind:checked={item.required} class="peer sr-only" />
-        <div
-          class="h-6 w-11 rounded-full bg-black/10 shadow-inner transition-colors duration-300 peer-checked:bg-amber-500 sm:h-6 sm:w-12 dark:bg-white/10"
-        ></div>
-        <div
-          class="absolute left-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-300 peer-checked:translate-x-5 sm:peer-checked:translate-x-6"
-        ></div>
-      </div>
-    </label>
-  </div>
-
-  <div class="mb-4 h-px w-full bg-black/5 sm:mb-6 dark:bg-white/5"></div>
-
-  {#if ['short_text', 'long_text', 'file'].includes(item.type)}
-    <div
-      class="text-text-muted/80 rounded-xl border border-dashed border-black/10 bg-black/5 p-3 text-center text-xs italic sm:rounded-2xl sm:p-5 sm:text-sm dark:border-white/20 dark:bg-white/5"
-    >
-      {item.type === 'short_text'
-        ? m.form_builder_short_text_hint()
-        : item.type === 'file'
-          ? (fileHint ?? m.form_builder_file_hint())
-          : m.form_builder_long_text_hint()}
-    </div>
-  {:else if item.type === 'linear_scale'}
-    <div
-      class="space-y-4 rounded-xl border border-black/5 bg-white/30 p-3 sm:space-y-5 sm:rounded-2xl sm:p-5 dark:border-white/10 dark:bg-black/20"
-    >
-      <div class="flex flex-wrap items-center gap-2 sm:gap-4">
-        <span class="text-text-main w-full text-sm font-bold sm:w-auto"
-          >{m.form_builder_scale_prefix()}</span
-        >
-        <Picker
-          label={m.form_builder_scale_min_picker()}
-          value={String(item.scale.min)}
-          options={SCALE_MIN_OPTIONS}
-          onValueChange={(v) => (item.scale.min = Number(v))}
-          triggerClass={scaleTriggerClass}
-        />
-        <span class="text-text-muted text-xs font-bold uppercase">{m.form_builder_scale_to()}</span>
-        <Picker
-          label={m.form_builder_scale_max_picker()}
-          value={String(item.scale.max)}
-          options={SCALE_MAX_OPTIONS}
-          onValueChange={(v) => (item.scale.max = Number(v))}
-          triggerClass={scaleTriggerClass}
-        />
-      </div>
-      <div class="grid grid-cols-1 gap-3 pt-1 sm:grid-cols-2 sm:gap-5 sm:pt-2">
-        <Input
-          label={m.form_builder_scale_min_label({ min: item.scale.min })}
-          bind:value={item.scale.minLabel}
-          placeholder={m.form_builder_scale_min_placeholder()}
-          class="[&_input]:px-3 [&_input]:py-2.5 [&_input]:text-sm [&_label]:ml-0"
-        />
-        <Input
-          label={m.form_builder_scale_max_label({ max: item.scale.max })}
-          bind:value={item.scale.maxLabel}
-          placeholder={m.form_builder_scale_max_placeholder()}
-          class="[&_input]:px-3 [&_input]:py-2.5 [&_input]:text-sm [&_label]:ml-0"
-        />
-      </div>
-    </div>
-  {:else if hasOptions}
-    <div class="space-y-3 sm:space-y-4">
-      <div class="flex flex-col gap-0.5 sm:flex-row sm:items-end sm:justify-between">
-        <h4 class="text-text-main text-xs font-bold tracking-widest uppercase opacity-80">
-          {isMatrix ? m.form_builder_columns_header() : m.form_builder_options_header()}
-        </h4>
-        {#if !isMatrix && showPriceModifier && !pricedByGrid}
-          <div class="text-text-muted text-2xs flex gap-2 font-semibold sm:text-xs">
-            <span class="w-20 text-right">{m.form_builder_price_public_header()}</span>
-          </div>
-        {/if}
-      </div>
-
-      {#if !isMatrix && pricedByGrid}
-        <p
-          class="border-cn-yellow/40 bg-cn-yellow/5 text-text-muted rounded-xl border px-3 py-2 text-xs"
-        >
-          {m.form_builder_priced_by_grid()}
-        </p>
-      {/if}
-
-      <div class="space-y-2 sm:space-y-2.5">
-        {#each item.options as opt, idx (opt.id)}
-          <div
-            class="rounded-xl border border-black/5 bg-black/[0.02] p-2.5 sm:rounded-none sm:border-0 sm:bg-transparent sm:p-0 dark:border-white/10 dark:bg-white/[0.02]"
-          >
-            <div class="mb-2 flex items-center justify-between gap-2 sm:hidden">
-              <span class="text-text-muted text-2xs font-bold tracking-wide uppercase">
-                {isMatrix
-                  ? m.form_builder_column_mobile_label()
-                  : m.form_builder_option_mobile_label()}
-                {idx + 1}
-              </span>
-              <button
-                class="ui-icon-button text-text-muted rounded-lg transition-colors hover:bg-red-500/10 hover:text-red-500"
-                onclick={() => removeOption(idx)}
-                type="button"
-                title={m.common_delete_button()}
-                aria-label={m.form_builder_option_remove_aria()}
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <!-- Desktop: horizontal row -->
-            <div class="group/opt hidden items-center gap-2 sm:flex">
-              <span class="text-text-muted w-5 shrink-0 text-center font-mono text-xs opacity-60">
-                {idx + 1}.
-              </span>
-              <div class="min-w-0 flex-1">
-                <Input
-                  placeholder={isMatrix
-                    ? m.form_builder_column_placeholder()
-                    : m.form_builder_option_placeholder()}
-                  bind:value={opt.label}
-                />
-              </div>
-              {#if !isMatrix && showPriceModifier && !pricedByGrid}
-                <div class="w-20 shrink-0">
-                  <Input
-                    type="number"
-                    placeholder="0.00"
-                    bind:value={opt.priceModifier}
-                    step="0.01"
-                    min="0"
-                  />
-                </div>
-              {/if}
-              <button
-                class="ui-icon-button text-text-muted rounded-xl transition-colors hover:bg-red-500/10 hover:text-red-500"
-                onclick={() => removeOption(idx)}
-                type="button"
-                title={m.form_builder_option_remove_aria()}
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <!-- Mobile: full-width field -->
-            <div class="space-y-2 sm:hidden">
-              <input
-                type="text"
-                bind:value={opt.label}
-                placeholder={isMatrix
-                  ? m.form_builder_column_placeholder()
-                  : m.form_builder_option_placeholder()}
-                class={fieldClass}
-              />
-              {#if !isMatrix && showPriceModifier && !pricedByGrid}
-                <div>
-                  <label
-                    for="opt-price-{opt.id}"
-                    class="text-text-muted text-2xs mb-1 block font-bold"
-                    >{m.form_builder_price_public_mobile()}</label
-                  >
-                  <input
-                    id="opt-price-{opt.id}"
-                    type="number"
-                    bind:value={opt.priceModifier}
-                    step="0.01"
-                    min="0"
-                    placeholder="0.00"
-                    class={fieldClass}
-                  />
-                </div>
-              {/if}
-            </div>
-            {#if duplicateColumns.has(opt.label)}
-              <p class="text-red-err mt-1 text-xs font-semibold sm:pl-7" role="alert">
-                {m.form_builder_grid_duplicate_inline()}
-              </p>
-            {/if}
-          </div>
-        {/each}
-      </div>
-
-      <button
-        class="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-amber-500/30 px-3 py-2.5 text-sm font-bold text-amber-600 transition-colors hover:bg-amber-500/10 hover:text-amber-500 sm:w-auto sm:justify-start sm:border-0 sm:py-2 dark:text-amber-500 dark:hover:text-amber-400"
-        onclick={addOption}
-        type="button"
-      >
-        <Plus size={18} strokeWidth={2.5} />
-        {isMatrix ? m.form_builder_add_column() : m.form_builder_add_option()}
-      </button>
-
-      {#if isMatrix}
-        <div
-          class="mt-5 space-y-3 border-t border-dashed border-black/10 pt-4 sm:mt-8 sm:space-y-4 sm:pt-6 dark:border-white/10"
-        >
-          <h4 class="text-text-main text-xs font-bold tracking-widest uppercase opacity-80">
-            {m.form_builder_rows_header()}
-          </h4>
-
-          <div class="space-y-2 sm:space-y-2.5">
-            {#each item.rows as row, idx (row.id)}
-              <div
-                class="rounded-xl border border-black/5 bg-black/[0.02] p-2.5 sm:border-0 sm:bg-transparent sm:p-0 dark:border-white/10 dark:bg-white/[0.02]"
-              >
-                <div class="mb-2 flex items-center justify-between gap-2 sm:hidden">
-                  <span class="text-text-muted text-2xs font-bold tracking-wide uppercase">
-                    {m.form_builder_row_mobile_label({ idx: idx + 1 })}
-                  </span>
-                  <button
-                    class="ui-icon-button text-text-muted rounded-lg transition-colors hover:bg-red-500/10 hover:text-red-500"
-                    onclick={() => removeRow(idx)}
-                    type="button"
-                    title={m.common_delete_button()}
-                    aria-label={m.form_builder_row_remove_aria()}
-                  >
-                    <X size={16} />
-                  </button>
-                </div>
-                <div class="hidden items-center gap-2 sm:flex">
-                  <span
-                    class="text-text-muted w-5 shrink-0 text-center font-mono text-xs opacity-60"
-                  >
-                    {idx + 1}.
-                  </span>
-                  <div class="min-w-0 flex-1">
-                    <Input placeholder={m.form_builder_row_placeholder()} bind:value={row.value} />
-                  </div>
-                  <button
-                    class="ui-icon-button text-text-muted rounded-xl transition-colors hover:bg-red-500/10 hover:text-red-500"
-                    onclick={() => removeRow(idx)}
-                    type="button"
-                    title={m.form_builder_row_remove_aria()}
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-                <input
-                  type="text"
-                  bind:value={row.value}
-                  placeholder={m.form_builder_row_placeholder()}
-                  class="{fieldClass} sm:hidden"
-                />
-                {#if duplicateRows.has(row.value)}
-                  <p class="text-red-err mt-1 text-xs font-semibold sm:pl-7" role="alert">
-                    {m.form_builder_grid_duplicate_inline()}
-                  </p>
-                {/if}
-              </div>
-            {/each}
-          </div>
-
-          <button
-            class="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-amber-500/30 px-3 py-2.5 text-sm font-bold text-amber-600 transition-colors hover:bg-amber-500/10 sm:w-auto sm:justify-start sm:border-0 sm:py-2 dark:text-amber-500"
-            onclick={addRow}
-            type="button"
-          >
-            <Plus size={18} strokeWidth={2.5} />
-            {m.form_builder_add_row()}
-          </button>
-
-          {#if item.required}
-            <!-- D5: a required grid wants one answered row, unless every row is asked for. -->
-            <Toggle
-              label={m.form_builder_require_every_row()}
-              bind:checked={
-                () => item.requireEveryRow === true,
-                (on) => {
-                  item.requireEveryRow = on;
-                }
-              }
+          <div class="flex min-w-0 flex-1 flex-col gap-2">
+            <Input
+              bind:value={item.imageAlt}
+              maxlength={300}
+              placeholder={m.form_builder_image_alt_placeholder()}
+              aria-label={m.form_builder_image_alt_placeholder()}
             />
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+              {#if imageUploadFn !== undefined}
+                <label
+                  class="text-text-muted hover:text-text-main flex cursor-pointer items-center gap-1 text-xs font-semibold whitespace-nowrap transition-colors {uploadingImage
+                    ? 'pointer-events-none opacity-50'
+                    : ''}"
+                >
+                  <ImagePlus size={12} />
+                  {uploadingImage
+                    ? m.form_builder_image_uploading()
+                    : m.form_builder_replace_image()}
+                  <input
+                    type="file"
+                    accept={QUESTION_IMAGE_ACCEPT}
+                    class="sr-only"
+                    disabled={uploadingImage}
+                    onchange={handleImageUpload}
+                  />
+                </label>
+              {/if}
+              <button
+                type="button"
+                onclick={() => {
+                  item.imageUrl = undefined;
+                  item.imageAlt = undefined;
+                }}
+                class="text-text-muted flex items-center gap-1 text-xs font-semibold whitespace-nowrap transition-colors hover:text-red-500"
+              >
+                <X size={12} />
+                {m.form_builder_remove_image_title()}
+              </button>
+            </div>
+          </div>
+        </div>
+      {/if}
+
+      {#if item.description === undefined || (!item.imageUrl && imageUploadFn !== undefined)}
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+          {#if item.description === undefined}
+            <button
+              type="button"
+              onclick={() => {
+                item.description = '';
+              }}
+              class="text-text-muted hover:text-text-main flex items-center gap-1 text-xs font-semibold transition-colors"
+            >
+              <Plus size={12} />
+              {m.form_builder_add_desc()}
+            </button>
+          {/if}
+          {#if !item.imageUrl && imageUploadFn !== undefined}
+            <label
+              class="text-text-muted hover:text-text-main flex cursor-pointer items-center gap-1 text-xs font-semibold transition-colors {uploadingImage
+                ? 'pointer-events-none opacity-50'
+                : ''}"
+            >
+              <Plus size={12} />
+              {uploadingImage ? m.form_builder_image_uploading() : m.form_builder_add_image()}
+              <input
+                type="file"
+                accept={QUESTION_IMAGE_ACCEPT}
+                class="sr-only"
+                disabled={uploadingImage}
+                onchange={handleImageUpload}
+              />
+            </label>
           {/if}
         </div>
       {/if}
+      {#if imageUploadError}
+        <p class="text-xs text-red-500" role="alert">{imageUploadError}</p>
+      {/if}
     </div>
-  {/if}
 
-  <!-- Conditional logic -->
-  {#if eligibleConditionSources.length > 0}
-    <div class="mt-4 border-t border-black/5 pt-4 dark:border-white/5">
-      <div class="mb-2 flex items-center gap-1.5">
-        <GitBranch size={13} class="text-text-muted/70 shrink-0" />
-        <span class="text-text-muted text-2xs font-bold tracking-wider uppercase"
-          >{m.form_builder_conditional_label()}</span
-        >
-      </div>
-      <div class="flex flex-wrap items-center gap-2">
-        <Picker
-          label={m.form_builder_conditional_label()}
-          value={item.dependsOn ?? ''}
-          options={conditionSourceOptions}
-          onValueChange={(v) => {
-            item.dependsOn = v;
-            item.dependsValue = '';
-          }}
-          triggerClass={conditionTriggerClass}
-        />
-        {#if item.dependsOn}
-          <span class="text-text-muted shrink-0 text-xs">=</span>
+    {#if item.type === 'file'}
+      <!-- A file question has no options to edit: the line says who reads the file and when it goes. -->
+      <p class="text-text-muted text-xs leading-relaxed">
+        {fileHint ?? m.form_builder_file_hint()}
+      </p>
+    {:else if item.type === 'linear_scale'}
+      <div
+        class="space-y-4 rounded-xl border border-black/5 bg-white/30 p-3 sm:space-y-5 sm:rounded-2xl sm:p-5 dark:border-white/10 dark:bg-black/20"
+      >
+        <div class="flex flex-wrap items-center gap-2 sm:gap-4">
+          <span class="text-text-main w-full text-sm font-bold sm:w-auto"
+            >{m.form_builder_scale_prefix()}</span
+          >
           <Picker
-            label={m.form_builder_conditional_label()}
-            value={item.dependsValue ?? ''}
-            options={conditionValueOptions}
-            onValueChange={(v) => (item.dependsValue = v)}
-            triggerClass={conditionTriggerClass}
+            label={m.form_builder_scale_min_picker()}
+            value={String(item.scale.min)}
+            options={SCALE_MIN_OPTIONS}
+            onValueChange={(v) => (item.scale.min = Number(v))}
+            triggerClass={scaleTriggerClass}
           />
+          <span class="text-text-muted text-xs font-bold uppercase"
+            >{m.form_builder_scale_to()}</span
+          >
+          <Picker
+            label={m.form_builder_scale_max_picker()}
+            value={String(item.scale.max)}
+            options={SCALE_MAX_OPTIONS}
+            onValueChange={(v) => (item.scale.max = Number(v))}
+            triggerClass={scaleTriggerClass}
+          />
+        </div>
+        <div class="grid grid-cols-1 gap-3 pt-1 sm:grid-cols-2 sm:gap-5 sm:pt-2">
+          <Input
+            label={m.form_builder_scale_min_label({ min: item.scale.min })}
+            bind:value={item.scale.minLabel}
+            placeholder={m.form_builder_scale_min_placeholder()}
+            class="[&_input]:px-3 [&_input]:py-2.5 [&_input]:text-sm [&_label]:ml-0"
+          />
+          <Input
+            label={m.form_builder_scale_max_label({ max: item.scale.max })}
+            bind:value={item.scale.maxLabel}
+            placeholder={m.form_builder_scale_max_placeholder()}
+            class="[&_input]:px-3 [&_input]:py-2.5 [&_input]:text-sm [&_label]:ml-0"
+          />
+        </div>
+      </div>
+    {:else if hasOptions}
+      <div class="space-y-3 sm:space-y-4">
+        <div class="flex flex-col gap-0.5 sm:flex-row sm:items-end sm:justify-between">
+          <h4 class="text-text-main text-xs font-bold tracking-widest uppercase opacity-80">
+            {isMatrix ? m.form_builder_columns_header() : m.form_builder_options_header()}
+          </h4>
+          {#if !isMatrix && showPriceModifier && !pricedByGrid}
+            <div class="text-text-muted text-2xs flex gap-2 font-semibold sm:text-xs">
+              <span class="w-20 text-right">{m.form_builder_price_public_header()}</span>
+            </div>
+          {/if}
+        </div>
+
+        {#if !isMatrix && pricedByGrid}
+          <p
+            class="border-cn-yellow/40 bg-cn-yellow/5 text-text-muted rounded-xl border px-3 py-2 text-xs"
+          >
+            {m.form_builder_priced_by_grid()}
+          </p>
+        {/if}
+
+        <div class="space-y-2 sm:space-y-2.5">
+          {#each item.options as opt, idx (opt.id)}
+            <div
+              class="rounded-xl border border-black/5 bg-black/[0.02] p-2.5 sm:rounded-none sm:border-0 sm:bg-transparent sm:p-0 dark:border-white/10 dark:bg-white/[0.02]"
+            >
+              <div class="mb-2 flex items-center justify-between gap-2 sm:hidden">
+                <span class="text-text-muted text-2xs font-bold tracking-wide uppercase">
+                  {isMatrix
+                    ? m.form_builder_column_mobile_label()
+                    : m.form_builder_option_mobile_label()}
+                  {idx + 1}
+                </span>
+                <button
+                  class="ui-icon-button text-text-muted rounded-lg transition-colors hover:bg-red-500/10 hover:text-red-500"
+                  onclick={() => removeOption(idx)}
+                  type="button"
+                  title={m.common_delete_button()}
+                  aria-label={m.form_builder_option_remove_aria()}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <!-- Desktop: horizontal row -->
+              <div class="group/opt hidden items-center gap-2 sm:flex">
+                <span class="text-text-muted w-5 shrink-0 text-center font-mono text-xs opacity-60">
+                  {idx + 1}.
+                </span>
+                <div class="min-w-0 flex-1">
+                  <Input
+                    placeholder={isMatrix
+                      ? m.form_builder_column_placeholder()
+                      : m.form_builder_option_placeholder()}
+                    bind:value={opt.label}
+                  />
+                </div>
+                {#if !isMatrix && showPriceModifier && !pricedByGrid}
+                  <div class="w-20 shrink-0">
+                    <Input
+                      type="number"
+                      placeholder="0.00"
+                      bind:value={opt.priceModifier}
+                      step="0.01"
+                      min="0"
+                    />
+                  </div>
+                {/if}
+                <button
+                  class="ui-icon-button text-text-muted rounded-xl transition-colors hover:bg-red-500/10 hover:text-red-500"
+                  onclick={() => removeOption(idx)}
+                  type="button"
+                  title={m.form_builder_option_remove_aria()}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <!-- Mobile: full-width field -->
+              <div class="space-y-2 sm:hidden">
+                <input
+                  type="text"
+                  bind:value={opt.label}
+                  placeholder={isMatrix
+                    ? m.form_builder_column_placeholder()
+                    : m.form_builder_option_placeholder()}
+                  class={fieldClass}
+                />
+                {#if !isMatrix && showPriceModifier && !pricedByGrid}
+                  <div>
+                    <label
+                      for="opt-price-{opt.id}"
+                      class="text-text-muted text-2xs mb-1 block font-bold"
+                      >{m.form_builder_price_public_mobile()}</label
+                    >
+                    <input
+                      id="opt-price-{opt.id}"
+                      type="number"
+                      bind:value={opt.priceModifier}
+                      step="0.01"
+                      min="0"
+                      placeholder="0.00"
+                      class={fieldClass}
+                    />
+                  </div>
+                {/if}
+              </div>
+              {#if duplicateColumns.has(opt.label)}
+                <p class="text-red-err mt-1 text-xs font-semibold sm:pl-7" role="alert">
+                  {m.form_builder_grid_duplicate_inline()}
+                </p>
+              {/if}
+            </div>
+          {/each}
+        </div>
+
+        <button
+          class="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-amber-500/30 px-3 py-2.5 text-sm font-bold text-amber-600 transition-colors hover:bg-amber-500/10 hover:text-amber-500 sm:w-auto sm:justify-start sm:border-0 sm:py-2 dark:text-amber-500 dark:hover:text-amber-400"
+          onclick={addOption}
+          type="button"
+        >
+          <Plus size={18} strokeWidth={2.5} />
+          {isMatrix ? m.form_builder_add_column() : m.form_builder_add_option()}
+        </button>
+
+        {#if isMatrix}
+          <div
+            class="mt-5 space-y-3 border-t border-dashed border-black/10 pt-4 sm:mt-8 sm:space-y-4 sm:pt-6 dark:border-white/10"
+          >
+            <h4 class="text-text-main text-xs font-bold tracking-widest uppercase opacity-80">
+              {m.form_builder_rows_header()}
+            </h4>
+
+            <div class="space-y-2 sm:space-y-2.5">
+              {#each item.rows as row, idx (row.id)}
+                <div
+                  class="rounded-xl border border-black/5 bg-black/[0.02] p-2.5 sm:border-0 sm:bg-transparent sm:p-0 dark:border-white/10 dark:bg-white/[0.02]"
+                >
+                  <div class="mb-2 flex items-center justify-between gap-2 sm:hidden">
+                    <span class="text-text-muted text-2xs font-bold tracking-wide uppercase">
+                      {m.form_builder_row_mobile_label({ idx: idx + 1 })}
+                    </span>
+                    <button
+                      class="ui-icon-button text-text-muted rounded-lg transition-colors hover:bg-red-500/10 hover:text-red-500"
+                      onclick={() => removeRow(idx)}
+                      type="button"
+                      title={m.common_delete_button()}
+                      aria-label={m.form_builder_row_remove_aria()}
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                  <div class="hidden items-center gap-2 sm:flex">
+                    <span
+                      class="text-text-muted w-5 shrink-0 text-center font-mono text-xs opacity-60"
+                    >
+                      {idx + 1}.
+                    </span>
+                    <div class="min-w-0 flex-1">
+                      <Input
+                        placeholder={m.form_builder_row_placeholder()}
+                        bind:value={row.value}
+                      />
+                    </div>
+                    <button
+                      class="ui-icon-button text-text-muted rounded-xl transition-colors hover:bg-red-500/10 hover:text-red-500"
+                      onclick={() => removeRow(idx)}
+                      type="button"
+                      title={m.form_builder_row_remove_aria()}
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    bind:value={row.value}
+                    placeholder={m.form_builder_row_placeholder()}
+                    class="{fieldClass} sm:hidden"
+                  />
+                  {#if duplicateRows.has(row.value)}
+                    <p class="text-red-err mt-1 text-xs font-semibold sm:pl-7" role="alert">
+                      {m.form_builder_grid_duplicate_inline()}
+                    </p>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+
+            <button
+              class="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-amber-500/30 px-3 py-2.5 text-sm font-bold text-amber-600 transition-colors hover:bg-amber-500/10 sm:w-auto sm:justify-start sm:border-0 sm:py-2 dark:text-amber-500"
+              onclick={addRow}
+              type="button"
+            >
+              <Plus size={18} strokeWidth={2.5} />
+              {m.form_builder_add_row()}
+            </button>
+
+            {#if item.required}
+              <!-- D5: a required grid wants one answered row, unless every row is asked for. -->
+              <Toggle
+                label={m.form_builder_require_every_row()}
+                bind:checked={
+                  () => item.requireEveryRow === true,
+                  (on) => {
+                    item.requireEveryRow = on;
+                  }
+                }
+              />
+            {/if}
+          </div>
         {/if}
       </div>
-    </div>
-  {/if}
+    {/if}
 
-  <!-- Audience condition: shown to some people only. -->
-  <div class="mt-4 border-t border-black/5 pt-4 dark:border-white/5">
-    <Toggle
-      label={m.form_show_if_toggle()}
-      hint={m.form_show_if_hint()}
-      bind:checked={
-        () => item.showIf != null,
-        (on) => {
-          item.showIf = on ? {} : null;
-        }
-      }
-    />
-    {#if item.showIf != null}
-      <div class="mt-3">
+    <!-- Conditional logic -->
+    {#if eligibleConditionSources.length > 0}
+      <div class="mt-4 border-t border-black/5 pt-4 dark:border-white/5">
+        <div class="mb-2 flex items-center gap-1.5">
+          <GitBranch size={13} class="text-text-muted/70 shrink-0" />
+          <span class="text-text-muted text-2xs font-bold tracking-wider uppercase"
+            >{m.form_builder_conditional_label()}</span
+          >
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <Picker
+            label={m.form_builder_conditional_label()}
+            value={item.dependsOn ?? ''}
+            options={conditionSourceOptions}
+            onValueChange={(v) => {
+              item.dependsOn = v;
+              item.dependsValue = '';
+            }}
+            triggerClass={conditionTriggerClass}
+          />
+          {#if item.dependsOn}
+            <span class="text-text-muted shrink-0 text-xs">=</span>
+            <Picker
+              label={m.form_builder_conditional_label()}
+              value={item.dependsValue ?? ''}
+              options={conditionValueOptions}
+              onValueChange={(v) => (item.dependsValue = v)}
+              triggerClass={conditionTriggerClass}
+            />
+          {/if}
+        </div>
+      </div>
+    {/if}
+
+    <!-- The settings row: required, conditions, duplicate, delete (and reorder on touch). -->
+    <div
+      class="mt-3 flex items-center gap-0.5 border-t border-black/5 pt-2 dark:border-white/5"
+      role="toolbar"
+      aria-label={m.form_builder_settings_row_aria()}
+    >
+      <button
+        type="button"
+        onclick={() => (item.required = !item.required)}
+        aria-pressed={!!item.required}
+        aria-label={m.form_builder_required_label()}
+        title={m.form_builder_required_label()}
+        class="ui-icon-button rounded-lg transition-colors {item.required
+          ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+          : 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
+      >
+        <Asterisk size={18} />
+      </button>
+      <button
+        type="button"
+        onclick={toggleConditions}
+        aria-pressed={conditionsOn}
+        aria-label={m.form_builder_conditions_aria()}
+        title="{m.form_show_if_toggle()} - {m.form_show_if_hint()}"
+        class="ui-icon-button rounded-lg transition-colors {conditionsOn
+          ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+          : 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
+      >
+        <Users size={18} />
+      </button>
+      <button
+        type="button"
+        onclick={onDuplicate}
+        aria-label={m.form_builder_duplicate_aria()}
+        title={m.form_builder_duplicate_title()}
+        class="ui-icon-button text-text-muted hover:text-text-main rounded-lg transition-colors hover:bg-black/5 dark:hover:bg-white/10"
+      >
+        <Copy size={18} />
+      </button>
+      <button
+        type="button"
+        onclick={onRemove}
+        aria-label={m.form_builder_delete_aria()}
+        title={m.form_builder_delete_title()}
+        class="ui-icon-button text-text-muted rounded-lg transition-colors hover:bg-red-500/10 hover:text-red-500"
+      >
+        <Trash2 size={18} />
+      </button>
+      {#if onMoveUp && onMoveDown}
+        <!-- Touch has no drag handle: reordering is two arrows. -->
+        <button
+          type="button"
+          onclick={onMoveUp}
+          disabled={!canMoveUp}
+          class="ui-icon-button text-text-muted hover:text-text-main rounded-lg transition-colors hover:bg-black/5 disabled:opacity-25 sm:hidden dark:hover:bg-white/10"
+          title={m.form_builder_move_up_title()}
+          aria-label={m.form_builder_move_up_aria()}
+        >
+          <ArrowUp size={18} />
+        </button>
+        <button
+          type="button"
+          onclick={onMoveDown}
+          disabled={!canMoveDown}
+          class="ui-icon-button text-text-muted hover:text-text-main rounded-lg transition-colors hover:bg-black/5 disabled:opacity-25 sm:hidden dark:hover:bg-white/10"
+          title={m.form_builder_move_down_title()}
+          aria-label={m.form_builder_move_down_aria()}
+        >
+          <ArrowDown size={18} />
+        </button>
+      {/if}
+      <button
+        type="button"
+        onclick={onCollapse}
+        aria-label={m.form_builder_collapse_aria()}
+        title={m.form_builder_collapse_aria()}
+        class="ui-icon-button text-text-muted hover:text-text-main ml-auto rounded-lg transition-colors hover:bg-black/5 dark:hover:bg-white/10"
+      >
+        <ChevronUp size={18} />
+      </button>
+    </div>
+
+    <!-- Audience condition: shown to some people only, and only when switched on. -->
+    {#if conditionsOn}
+      <div class="mt-3" data-testid="audience-panel">
         <AudienceConditionEditor bind:condition={item.showIf} {tiers} {formations} />
       </div>
     {/if}
-  </div>
+  {/if}
 </div>

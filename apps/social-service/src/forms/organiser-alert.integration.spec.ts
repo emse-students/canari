@@ -116,7 +116,8 @@ maybe('the organiser alert against PostgreSQL (migration 102)', () => {
       none,
       none,
       none,
-      alert
+      alert,
+      {} as any
     );
   });
 

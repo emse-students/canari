@@ -2068,13 +2068,25 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(await ds.getRepository(BookingResource).countBy({ spaceId: space.id })).toBe(0);
     });
 
-    it('refuses duplicate question ids, a zoneless opening, an entity that does not exist', async () => {
+    it('refuses duplicate question ids, a question image, a zoneless opening, an entity that does not exist', async () => {
       const { id } = await organiser.create({ name: 'x' }, as(ALICE));
       const patch = (dto: object) => organiser.update(id, dto as never, as(ALICE), NOW);
       const q1 = { id: 'q', label: 'Nom', required: false, type: 'text' };
       expect(await refusal(patch({ items: [q1, { ...q1, label: 'Autre' }] }))).toEqual({
         code: 'item-id',
       });
+      const pictured = { ...q1, imageUrl: `/api/media/public/${randomUUID()}` };
+      expect(await refusal(patch({ items: [pictured] }))).toEqual({ code: 'item-image' });
+      await expect(patch({ items: [{ ...q1, imageUrl: '' }] })).resolves.toEqual({ ok: true });
+      // An image a space ALREADY holds (stored before the refusal existed) is kept: its rename,
+      // sending the questions back unchanged, still saves; a second, new image is still refused.
+      await q(`UPDATE booking_spaces SET items = $2 WHERE id = $1`, [
+        id,
+        JSON.stringify([pictured]),
+      ]);
+      await expect(patch({ name: 'renamed', items: [pictured] })).resolves.toEqual({ ok: true });
+      const second = { ...q1, id: 'q2', imageUrl: `/api/media/public/${randomUUID()}` };
+      expect(await refusal(patch({ items: [pictured, second] }))).toEqual({ code: 'item-image' });
       expect(await refusal(patch({ opensAt: '2026-11-02T10:00:00' }))).toEqual({
         code: 'opens-at',
       });

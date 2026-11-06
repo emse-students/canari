@@ -117,7 +117,8 @@ function makeService(saved: Record<string, unknown>[]) {
     pricingFacts,
     {} as any,
     {} as any,
-    { enabled: () => false } as any
+    { enabled: () => false } as any,
+    {} as any // FormItemImagesService
   );
 }
 

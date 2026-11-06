@@ -215,6 +215,20 @@ Section order, top to bottom: **General** (title, description, poster), **Paymen
 **Advanced settings** (collapsed). The two pages carry the SAME sections in the SAME order: a
 setting reachable only once a form exists is a setting a manager cannot plan for.
 
+### The question editor is one line per question (owner, 2026-11-06)
+
+The owner: *"on peut carrément compresser l'interface d'édition des formulaires, là c'est beaucoup trop d'espace et de choses inutiles."* Four decisions, all answered, plus one added the same day.
+
+1. **Collapsed questions, one line each** (like Google Forms): number, handle, title, type icon and name, an asterisk when required. Clicking the line (or Enter / Space on it) expands it; **only one question is expanded at a time**, the list (`FormQuestionsSection`) owning which. Escape collapses and returns focus to the row. A question just added or just duplicated is created expanded, and expanding moves focus to its title. A form loaded for editing starts fully collapsed.
+2. **The grey preview box is deleted** ("L'utilisateur verra un champ court..."): the type's icon and name say it. Choice lists, scale and matrix editors stay, they are the content. A FILE question's explanation (who reads the file, when it goes - `fileHint`, which a booking space overrides, else `form_builder_file_hint`) is a visible muted line under the open card: a tooltip is invisible on touch.
+3. **One icon row at the bottom of the open card**, in this order: Obligatoire (asterisk toggle), Conditions (opens the "show only to certain people" panel, `AudienceConditionEditor`, only while switched on; the long explanation is the tooltip), Dupliquer, Supprimer; on touch, where there is no drag handle, two reorder arrows follow, and a collapse chevron ends the row. Every icon has an accessible name. The "show if another answer" picker pair (`dependsOn`) is unchanged and sits above the row.
+4. **No visible field labels.** The title is the main field, larger, placeholder "Question sans titre"; the type is a compact menu beside it (icon only below `sm`). The labels remain as `aria-label`s.
+5. **Duplicate, easy** (added the same day): the icon on the collapsed row (hover or focus on desktop, always visible on touch), the icon row, and **Cmd+D on Apple platforms, Ctrl+D elsewhere** on a focused question (the browser's bookmark shortcut is cancelled; Shift, Alt and auto-repeat copy nothing). The copy is inserted right AFTER the original, opens expanded with its title selected. It copies everything (`questionDuplicate.ts`) under a NEW question id and new option and row ids. The original keeps its id, so conditions in OTHER questions keep pointing at the original. The copy's own answer condition stays valid because its source is before the original; one that is not (a stale reference to itself or a later question) is dropped and logged. A copy is an ordinary added question: the server rules for a form that already has submissions apply exactly as for any new question.
+
+**A save refused because of a question opens that question.** A folded card hides its own error, so the pages hand the id to the section through `reveal`, a fresh object each time (`questionFault.ts`): the first question with an empty audience condition, and the first grid `formItemsProblem` refuses (a duplicated row or column, too many rows), so its "En double" mark is visible. A form-level refusal (the file rule on a public or anonymous form) has no question to blame: the page scrolls its error banner into view instead of opening a card. After a delete, focus goes to the row that took the place, else the previous row, else the "add a question" button. The form-level option toggles (public, anonymous, tiered pricing) live outside the question cards and are untouched. The drag rule of #3081 applies (a press on a button, field or label never starts a drag), so a collapsed row, whose body is a button, drags from its grip: a 44 x 44 px `data-drag-handle` shown from `sm`; touch reorders with the arrows of the open card. The collapsed row, the grip and the duplicate icon are at least 44 px.
+
+Tests: `FormQuestionsSection.svelte.test.ts` (collapsed / expanded, one at a time, asterisk, conditions panel, reveal, Escape, duplicate by icon and Ctrl+D), `questionDuplicate.test.ts` (the copy's contents, ids, position, references).
+
 ### Four sections, because six of them buried the common case
 
 The screen carried six top-level cards on 2026-08-26, and a manager writing a plain free form -
@@ -808,6 +822,50 @@ id sits in an answer. One log per deleted file and per failure (`[FORM_FILE_GC]`
 **For reuse (bookings):** `purgeExpiredFiles` in `apps/social-service/src/forms/file-retention-purge.ts`
 takes each candidate's START date as data (`{ fileId, ownerId, start, retentionDays }`), so a caller
 whose clock starts somewhere else - a booking slot's end - passes that instead of `attachedAt`.
+
+## A question's image (2026-11-06)
+
+The owner asked for it on 2026-11-06: *"pouvoir joindre une image a une question, au meme titre
+qu'une description"*. Half of it already existed and nobody saw it: an upload route
+(`POST /api/forms/:id/items/image`), `items[].imageUrl` and its render in `FormQuestion` - but only
+on the EDIT page (the create page had no form id to upload against), as a dashed box below the
+description, stored at the 256 px logo bound and cropped to 192 px high. The URL field took any
+string, and nothing ever deleted a replaced or removed image.
+
+| Piece | What holds |
+|---|---|
+| Media path | a PUBLIC asset (`POST media/upload/public`, `size=content`): no session reads it, so a guest on `/f/:id` sees it. Not the encrypted post path - a guest holds no key - and not the avatar route, whose URLs are signed per viewer since phase 1 ([backlog](../../backlog.d/p2-avatar-urls-refuse-unsigned-requests.md)); `/api/media/public/` is unsigned and stays so. Re-encoded to WebP by the media service, EXIF and GPS dropped |
+| Size | the device resizes with the post preset (`IMAGE_COMPRESS_PRESETS.post`, 1600 px / 0.85, `questionImage.ts`) and the media service stores it inside 1600 px (`PUBLIC_IMAGE_BOUNDS.content`); a result still over the public route's 2 MiB is refused on the device with its own sentence |
+| Stored as | `items[].imageUrl` = `/api/media/public/<uuid>`, the ONLY shape the DTO accepts (`@Matches`, empty string = none), and an optional `items[].imageAlt` (300 characters) |
+| Who may cite it | `form_item_images` (migration 136), one row per image: uploaded on an existing form, the row names it; uploaded from the create page (`POST /api/forms/items/image`), the row is UNBOUND and only its uploader's next save may cite it, which binds it. A save citing any other id is a 400 `QUESTION_IMAGE_NOT_YOURS` (`claimForSave`, inside the save's transaction). An id is not a secret: without this a manager could cite another form's image and then have it deleted by removing it |
+| Release | when no form cites it any more: the blob through `media/internal/public-asset-delete` (public assets only), then the row - each id in its own transaction under its advisory lock, the citation re-read there (`items @> [{"imageUrl": ...}]`). Called after an edit drops an image and after a form's delete; an ARCHIVED form still cites its images and keeps them |
+| Reconciliation | hourly at :19, every row older than 24 h that no form cites: an upload never saved, a form removed with its association, a release that failed |
+| Respondent | `FormQuestion` draws it under the label and the help, WHOLE (`object-contain`, at most 384 px high), lazy, its src through the public media base (`associationLogoSrc`, so a native shell reaches the API); alt = `imageAlt`, else "Illustration de la question « label »" - never empty, since the picture is usually what the question is about |
+| Editor | "+ Ajouter une image" beside "+ Ajouter une description" on BOTH pages; then a thumbnail, the alt field, "Remplacer l'image" and "Supprimer l'image". The old image is not deleted by the editor: the server releases it when the SAVE leaves no question citing it |
+
+**A duplicated question cites the same image** (same id, same form): it is claimed once, and the
+release keeps it while either copy does - asserted in `form-item-images.integration.spec.ts`.
+
+**A booking space's question carries no image**: its questions reuse `FormItemDto`, so they would
+take the same URL shape, and a space citing a form's image would lose it with that form - the
+citation check reads `forms` only. `assertSettingsValid` refuses an image the edit INTRODUCES (400
+`item-image`); one the stored space already holds is kept and logged at WARN, so an older space
+still saves its rename. No booking screen uploads one.
+
+**Nor does an association's logo**: `logoUrl` takes our own `/api/media/public/<id>` reference by
+hand, so a logo naming a question image would vanish with that form's question. A NEW value whose id
+is a row of `form_item_images` - relative or absolute, any host - is a 400
+`ASSOCIATION_IMAGE_IS_QUESTION_IMAGE` (`assertNotQuestionImage`, `association-image-url.ts`); a
+stored value is kept. No lock is needed: the row is written before the upload's URL is returned.
+No client sends a typed `logoUrl`, so no sentence is mapped.
+
+**No backfill**: before 136 `imageUrl` took any string, so a stored value of the public shape may
+name an association logo or a form banner pasted into a question. A row is a licence to delete, so
+136 writes none; such a form is refused on its next save until the image is removed and uploaded
+again (production, read 2026-11-06: no form cites one). Asserted in
+`form-item-images.integration.spec.ts`.
+
+**Submissions and exports are unchanged**: an image is part of the question, never of an answer.
 
 ## A form's association is chosen once, at creation
 
@@ -1434,3 +1492,54 @@ the total bound, the real `ValidationPipe`), `product-grid-export.spec.ts` (the 
 back), `answer-text.spec.ts`, and against PostgreSQL `product-grid.integration.spec.ts` (migration
 137 twice, lines through jsonb, the reused row rewritten, the seat held then freed) and
 `refunds.integration.spec.ts` (a total refund of a grid order).
+
+### The responses screen (client half of WP-G4, 2026-11-06)
+
+The `/forms` accordion is now `FormResponsesPanel.svelte`, the owner-approved mockup reproduced with
+the app's tokens. Everything is derived from `getSubmissions` (no new read); the rules are pure
+functions in `lib/forms/responsesView.ts`.
+
+- **Summary cards**: answers (and how many are a guest's), and on a paid form paid, unpaid cash
+  (with the amount still to collect), amount collected (`paid` + `paid_over_capacity`, the money
+  that landed) and refunded. **A partial refund leaves its answer `paid` with `totalPaid` whole**
+  (only a refund of the whole payment writes `refunded`), so the amount it gave back is read from
+  the payment's refund standing (`RefundStanding.refundedCents`) and moved from collected to
+  refunded; a manager the refunds list refuses (403) cannot read it, and the card says the amount
+  is gross of partial refunds rather than show a net it does not know.
+- **"Réponses"**: a search over the name, a guest's reference and every answer's text (case and
+  accents folded), and four filter chips - *Toutes*, *Payées* (`paid`, `paid_over_capacity`), *Non
+  payées* (`pending_cash`: the unpaid state a manager acts on; an online `pending` is the payer's to
+  finish and reads under *Toutes* only), *Remboursées* (`refunded`). The table is
+  `FormSubmissionsTable`, which now marks a guest's answer **Invité** (no account on a non-anonymous
+  form; its name is the reference it was given), says how a paid answer paid (*Payé · Lydia* /
+  *Payé · espèces*), strikes a refunded amount, and draws two row actions: **Marquer payé** on a
+  `pending_cash` answer (the existing `validate-cash`) and **Rembourser** on a paid answer of an
+  association form, which opens the association's own `RefundDialog` on the payment that paid that
+  answer. The purchases list now carries `submissionId` for that; a manager without
+  `MANAGE_PRODUCTS` + `MANAGE_PAYOUT_ACCOUNT` gets a 403 there and simply sees no refund control.
+- **"Totaux"** (a form with a priced grid): one row x column table per grid with row, column and
+  grid totals, a grand total in pieces, and the switch **Compter les réponses non payées** (on by
+  default). **The counting rule is ONE implementation**: `PRODUCT_GRID_RECEIVED_STATUSES` (`paid`,
+  `free`), `PRODUCT_GRID_AWAITING_CASH_STATUSES` (`pending_cash`), `productGridLinesOf` and
+  `productGridTotals` moved into `product-grid-contract.ts` (copied byte for byte), and the export's
+  "Totaux" sheet calls the same functions. A refunded, cancelled, expired or still-pending answer is
+  in neither list, so it never counts (owner).
+- **"Résumé"**: a bar per option of every single choice, multiple choice and dropdown question
+  (refunded, cancelled and expired answers left out; a multiple choice counts once per ticked
+  option), plus pieces per product on a grid form. **Managers only** (owner): the whole screen is
+  - `getSubmissions` answers a form manager and nobody else - and the tab says so.
+- **Exporter**: the row's export control is now a menu (`FormExportMenu.svelte`): *Excel* (the
+  workbook), and on a grid form *CSV · Articles* and *CSV · Totaux*. A CSV is written by the server
+  from the SAME sheet the workbook carries (`GET /forms/:id/export?format=articles-csv|totals-csv`,
+  `sheetAsCsv`: `;`-separated with a byte-order mark, which a French spreadsheet opens as columns,
+  and every text cell starting with `=`, `+`, `-`, `@`, a tab or a carriage return prefixed with
+  `'` - a buyer's name or a row label is typed by someone else, and a CSV cell has no type to stop
+  a spreadsheet running it as a formula);
+  a CSV of a form without a grid is refused `EXPORT_FORMAT_NEEDS_PRODUCT_GRID`, an unknown format
+  `EXPORT_FORMAT_UNKNOWN`. `exportLabels()` now sends `productGrid` (16 Paraglide strings) on every
+  export, and `refunded` joined `PAYMENT_STATUSES`, so the file names that status in words too.
+
+Tests: `FormResponsesPanel.svelte.test.ts` (filters, search, the guest badge, the cards, the totals
+with and without unpaid cash, a closed cell, the bars, the refund control),
+`FormExportMenu.svelte.test.ts`, `product-grid-contract.spec.ts` (the counting rule) and
+`product-grid-export.spec.ts` (both CSVs read back, both refusals).
