@@ -42,7 +42,7 @@ Stale against `store/whats-new.txt` (v1.1.2) and `CHANGELOG`:
 
 1. **"Stripe" is false, and so is any payment promise (2026-10-22).** Stripe was removed (#1589)
    and Lydia, the only provider left, was NOT live in production when this was written; it is live
-   since 2026-11-06 ([backlog WP-LYDIA-1](backlog.md#wp-lydia-1---lydia-live-in-production-confirmed-2026-11-06-owed-the-observed-payment-reads-and-the-re-onboarding)). The "name no provider"
+   since 2026-11-06 ([backlog WP-LYDIA-1](backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end)). The "name no provider"
    rule still holds (a store text never names a processor), and the payment promise stays out until
    the lead decides it is true for users. A listing may therefore name no provider AND promise no
    payment, shop or ticketing flow that rests on one: `FORBIDDEN` in `tools/store-listings/listings.mjs`
