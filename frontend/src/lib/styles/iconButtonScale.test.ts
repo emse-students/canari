@@ -61,6 +61,10 @@ const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
     count: 2,
     why: 'crosses overlaying a 64px media thumbnail',
   },
+  'lib/components/pricing/CriterionEditor.svelte': {
+    count: 2,
+    why: 'the cross inside a value chip and the dashed "+" that closes the chip row, drawn at chip height so a group stays one line; the touch hit area is widened by `tap-target` instead',
+  },
   'lib/components/posts/MediaThumbRemoveButton.svelte': {
     count: 1,
     why: 'a cross overlaying a 7rem composer thumbnail - a 44px box covered half the photo on the Mi 9T, so the hit area is widened by a ::before instead',
