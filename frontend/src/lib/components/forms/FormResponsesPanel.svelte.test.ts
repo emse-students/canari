@@ -214,6 +214,8 @@ describe('the "Réponses" tab', () => {
     await tick();
     const text = target.textContent!.replace(/\s+/g, ' ');
     expect(text).toContain(m.form_responses_card_guests({ count: 1 }));
+    // A plural, not "dont 1 d'invités": one guest reads in the singular.
+    expect(text).toMatch(/dont 1 invité(?!s)|including 1 guest(?!s)/);
     expect(text).toMatch(/28,00\s?€ à encaisser|€28.00 to collect/);
     expect(text).toMatch(/112,00\s?€ remboursés|€112.00 refunded/);
   });

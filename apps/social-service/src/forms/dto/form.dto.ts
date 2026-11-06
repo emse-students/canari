@@ -23,43 +23,22 @@ import {
   FORM_ITEM_ID_MAX_LENGTH,
 } from '../form-files.service';
 import { SUPPORTED_QUESTION_TYPES } from './question-types';
-import { PRODUCT_GRID_MAX_COLUMNS, PRODUCT_GRID_MAX_ROWS } from '../product-grid-contract';
-
-/** Max keys per answers record - prevents oversized payloads. */
-const ANSWERS_MAX_KEYS = 50;
-/** Max character length per string answer. */
-const ANSWERS_MAX_STRING_LEN = 2000;
-/** Max number of selected options per multi-select answer. */
-const ANSWERS_MAX_ARRAY_LEN = 50;
-/**
- * Max keys of ONE object answer: a priced grid's cells (`rowId:colId` -> quantity) at the largest
- * grid a save accepts. A survey grid (`{ row: value }`) has far fewer rows.
- */
-const ANSWERS_MAX_OBJECT_KEYS = PRODUCT_GRID_MAX_ROWS * PRODUCT_GRID_MAX_COLUMNS;
-/** Max length of one key of an object answer: two 36-character ids and `:`, or a survey row label. */
-const ANSWERS_MAX_OBJECT_KEY_LEN = 200;
-
-/** One scalar answer value: a string, a list of strings, or a number. */
-type AnswerScalar = string | string[] | number;
-/** One answer: a scalar, or ONE level of object of scalars (a grid's answer). */
-export type AnswerValue = AnswerScalar | Record<string, AnswerScalar>;
-
-/** Whether a value is a scalar answer within bounds. */
-function isValidScalar(v: unknown): boolean {
-  if (typeof v === 'string') return v.length <= ANSWERS_MAX_STRING_LEN;
-  if (Array.isArray(v)) {
-    return (
-      v.length <= ANSWERS_MAX_ARRAY_LEN &&
-      v.every((item) => typeof item === 'string' && item.length <= ANSWERS_MAX_STRING_LEN)
-    );
-  }
-  return typeof v === 'number';
-}
+import {
+  ANSWER_MAX_SELECTIONS,
+  ANSWER_MAX_TEXT_LENGTH,
+  FORM_MAX_QUESTIONS,
+  GRID_MAX_ROWS,
+  isAcceptedAnswerValue,
+  PRODUCT_GRID_MAX_CELLS,
+  type FormAnswerValue,
+} from '../answer-bounds';
 
 /**
- * Validates that `answers` is a Record whose values are strings, string arrays, numbers, or ONE
- * level of object of those (a grid's answer: a priced grid's `{ "rowId:colId": quantity }`), all
- * within accepted size bounds. What each question's value MEANS is judged by `submit`.
+ * Validates that `answers` is a shallow Record of at most {@link FORM_MAX_QUESTIONS} keys whose
+ * values are strings, string arrays, numbers, a survey grid's flat row map or a priced grid's
+ * cell quantities - all within the bounds of
+ * `libs/contracts/form-answers.json` (`isAcceptedAnswerValue`). A grid's rows and columns are judged
+ * against the form by `submit`; this checks only the shape and the size.
  */
 export function IsValidAnswers(options?: ValidationOptions) {
   return function (object: object, propertyName: string) {
@@ -72,23 +51,11 @@ export function IsValidAnswers(options?: ValidationOptions) {
         validate(value: unknown): boolean {
           if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
           const entries = Object.entries(value as Record<string, unknown>);
-          if (entries.length > ANSWERS_MAX_KEYS) return false;
-          for (const [, v] of entries) {
-            if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
-              const inner = Object.entries(v as Record<string, unknown>);
-              if (inner.length > ANSWERS_MAX_OBJECT_KEYS) return false;
-              if (
-                inner.some(([k, x]) => k.length > ANSWERS_MAX_OBJECT_KEY_LEN || !isValidScalar(x))
-              )
-                return false;
-            } else if (!isValidScalar(v)) {
-              return false;
-            }
-          }
-          return true;
+          if (entries.length > FORM_MAX_QUESTIONS) return false;
+          return entries.every(([, v]) => isAcceptedAnswerValue(v));
         },
         defaultMessage() {
-          return `answers must contain at most ${ANSWERS_MAX_KEYS} keys; each value must be a string (max ${ANSWERS_MAX_STRING_LEN} chars), an array of strings (max ${ANSWERS_MAX_ARRAY_LEN} items), a number, or an object of those (max ${ANSWERS_MAX_OBJECT_KEYS} keys)`;
+          return `answers must contain at most ${FORM_MAX_QUESTIONS} keys; each value must be a string (max ${ANSWER_MAX_TEXT_LENGTH} chars), an array of strings (max ${ANSWER_MAX_SELECTIONS} items), a number, a survey grid of at most ${GRID_MAX_ROWS} rows, or a priced grid of at most ${PRODUCT_GRID_MAX_CELLS} cells`;
         },
       },
     });
@@ -139,6 +106,14 @@ export class FormItemDto {
   @IsString({ each: true })
   @IsOptional()
   rows?: string[];
+
+  /**
+   * A REQUIRED grid demands an answer in every row when this is on; off (the default) one answered
+   * row is enough (decided 2026-11-06, D5). Read only for `matrix_single` / `matrix_multiple`.
+   */
+  @IsBoolean()
+  @IsOptional()
+  requireEveryRow?: boolean;
 
   @IsOptional()
   scale?: {
@@ -334,7 +309,7 @@ export class UpdateFormDto extends CreateFormDto {}
  */
 export class GuestSubmitFormDto {
   @IsValidAnswers()
-  answers: Record<string, AnswerValue>;
+  answers: Record<string, FormAnswerValue>;
 
   /** Where Lydia sends the payment request. Forwarded to core-service, never persisted (PP2). */
   @IsEmail()
@@ -383,7 +358,7 @@ export class SubmitFormDto {
   payerEmail?: string;
 
   @IsValidAnswers()
-  answers: Record<string, AnswerValue>;
+  answers: Record<string, FormAnswerValue>;
 
   @IsString()
   @IsOptional()
