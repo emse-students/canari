@@ -188,4 +188,25 @@ describe('ProductGridQuestion', () => {
     );
     expect(target.querySelector('[data-product-grid]')?.className).toContain('border-red-err');
   });
+
+  it('keeps keyboard focus on the cell when a control is replaced at 0', async () => {
+    // The "+" of an empty cell becomes a stepper, and a stepper at 1 goes back to a "+": the button
+    // pressed leaves the DOM, so focus must follow to its replacement in the SAME drawing.
+    const { target } = render(grid());
+    const name = 'Sweat Noir M';
+    for (const root of [desktop(target), phone(target)]) {
+      const add = button(root, m.form_grid_add_cell({ name }))!;
+      add.focus();
+      add.click();
+      flushSync();
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(document.activeElement).toBe(button(root, m.form_grid_add_one({ name })));
+
+      button(root, m.form_grid_remove_one({ name }))!.click();
+      flushSync();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(document.activeElement).toBe(button(root, m.form_grid_add_cell({ name })));
+    }
+  });
 });

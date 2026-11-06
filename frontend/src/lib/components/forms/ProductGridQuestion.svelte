@@ -8,11 +8,13 @@
     lowestUnitCents,
     withCellQuantity,
   } from '$lib/forms/productGridFill';
-  import type {
-    ProductGridAxisEntry,
-    ProductGridView,
-    ProductGridViewerPrices,
+  import {
+    productGridCellKey,
+    type ProductGridAxisEntry,
+    type ProductGridView,
+    type ProductGridViewerPrices,
   } from '$lib/forms/productGridContract';
+  import { tick } from 'svelte';
   import { CircleAlert, Minus, Plus } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
@@ -91,10 +93,30 @@
     return [item.label, multiRow ? row.label : null, col.label].filter(Boolean).join(' ');
   }
 
-  function setQuantity(row: ProductGridAxisEntry, col: ProductGridAxisEntry, quantity: number) {
+  /**
+   * Sets one cell. `event` is the click that asked: when the cell crosses 0 the control pressed is
+   * replaced (a "+" becomes a stepper, a stepper at 1 goes back to a "+"), so keyboard focus follows
+   * to the replacement's entry control (`data-cell-entry`) in the same drawing rather than falling
+   * to the page body.
+   */
+  async function setQuantity(
+    row: ProductGridAxisEntry,
+    col: ProductGridAxisEntry,
+    quantity: number,
+    event?: Event
+  ) {
     if (disabled || isCellClosed(grid, row.id, col.id)) return;
     Log.d('ProductGridQuestion', `${item.id} ${row.id}:${col.id} -> ${quantity}`);
+    const pressed = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    const drawing = pressed?.closest('[data-grid-desktop], [data-grid-phone]');
     value = withCellQuantity(value, grid, row.id, col.id, quantity);
+    if (!pressed || !drawing) return;
+    await tick();
+    if (pressed.isConnected) return;
+    const key = productGridCellKey(row.id, col.id);
+    const entry = drawing.querySelector<HTMLElement>(`[data-cell-entry="${key}"]`);
+    Log.d('ProductGridQuestion', `${item.id} ${key}: focus follows (${entry ? 'found' : 'none'})`);
+    entry?.focus();
   }
 </script>
 
@@ -106,6 +128,7 @@
   {#if isCellClosed(grid, row.id, col.id)}
     <span
       data-cell-closed
+      role="img"
       aria-label={m.form_grid_cell_closed_aria({ name })}
       class="border-text-muted/60 bg-cn-border/30 text-text-muted text-2xs mx-auto flex h-8 w-11 items-center justify-center rounded-lg border border-dashed line-through"
       >{col.label}</span
@@ -127,8 +150,9 @@
       data-cell-add
       class="ui-icon-button border-cn-border text-text-main hover:bg-cn-border/40 mx-auto rounded-full border bg-(--cn-surface) transition-colors disabled:opacity-50"
       aria-label={m.form_grid_add_cell({ name })}
+      data-cell-entry={productGridCellKey(row.id, col.id)}
       {disabled}
-      onclick={() => setQuantity(row, col, 1)}
+      onclick={(event) => setQuantity(row, col, 1, event)}
     >
       <Plus size={16} strokeWidth={2.5} />
     </button>
@@ -144,7 +168,7 @@
         class="flex h-11 w-8 items-center justify-center disabled:opacity-50"
         aria-label={m.form_grid_remove_one({ name })}
         {disabled}
-        onclick={() => setQuantity(row, col, qty - 1)}
+        onclick={(event) => setQuantity(row, col, qty - 1, event)}
       >
         <Minus size={14} strokeWidth={2.5} />
       </button>
@@ -153,8 +177,9 @@
         type="button"
         class="flex h-11 w-8 items-center justify-center disabled:opacity-35"
         aria-label={m.form_grid_add_one({ name })}
+        data-cell-entry={productGridCellKey(row.id, col.id)}
         disabled={disabled || qty >= grid.maxPerCell}
-        onclick={() => setQuantity(row, col, qty + 1)}
+        onclick={(event) => setQuantity(row, col, qty + 1, event)}
       >
         <Plus size={14} strokeWidth={2.5} />
       </button>
@@ -170,6 +195,7 @@
   {#if isCellClosed(grid, row.id, col.id)}
     <span
       data-cell-closed
+      role="img"
       aria-label={m.form_grid_cell_closed_aria({ name })}
       class="border-text-muted/60 text-text-muted flex h-11 min-w-12 items-center justify-center rounded-full border border-dashed px-3 text-xs line-through"
       >{col.label}</span
@@ -184,8 +210,9 @@
         : 'border-cn-border text-text-main bg-(--cn-surface)'}"
       aria-label={checkbox ? name : m.form_grid_add_cell({ name })}
       aria-pressed={checkbox ? qty > 0 : undefined}
+      data-cell-entry={productGridCellKey(row.id, col.id)}
       {disabled}
-      onclick={() => setQuantity(row, col, checkbox && qty > 0 ? 0 : 1)}
+      onclick={(event) => setQuantity(row, col, checkbox && qty > 0 ? 0 : 1, event)}
     >
       {col.label}
       {#if price}<span class="text-text-muted text-2xs font-semibold">{price}</span>{/if}
@@ -199,10 +226,10 @@
     >
       <button
         type="button"
-        class="flex h-full w-10 items-center justify-center disabled:opacity-50"
+        class="flex h-full w-11 items-center justify-center disabled:opacity-50"
         aria-label={m.form_grid_remove_one({ name })}
         {disabled}
-        onclick={() => setQuantity(row, col, qty - 1)}
+        onclick={(event) => setQuantity(row, col, qty - 1, event)}
       >
         <Minus size={14} strokeWidth={2.5} />
       </button>
@@ -211,10 +238,11 @@
       >
       <button
         type="button"
-        class="flex h-full w-10 items-center justify-center disabled:opacity-35"
+        class="flex h-full w-11 items-center justify-center disabled:opacity-35"
         aria-label={m.form_grid_add_one({ name })}
+        data-cell-entry={productGridCellKey(row.id, col.id)}
         disabled={disabled || qty >= grid.maxPerCell}
-        onclick={() => setQuantity(row, col, qty + 1)}
+        onclick={(event) => setQuantity(row, col, qty + 1, event)}
       >
         <Plus size={14} strokeWidth={2.5} />
       </button>
