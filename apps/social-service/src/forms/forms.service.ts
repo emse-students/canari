@@ -212,7 +212,7 @@ const FORM_CONFLICT_MESSAGE: Record<FormConfigConflict, string> = {
   FORM_ANONYMOUS_PAYMENT:
     'An anonymous form must be free: a payment or a cotisation grant identifies the submitter.',
   FORM_ANONYMOUS_COTISATION_GRANT:
-    'An anonymous form must be free: a payment or a cotisation grant identifies the submitter.',
+    'An anonymous form cannot grant a cotisation: a cotisation is granted to an account.',
   FORM_ANONYMOUS_FILE:
     'An anonymous form cannot ask for a file: a file is tied to the account that uploads it.',
   FORM_PUBLIC_AUDIENCE:

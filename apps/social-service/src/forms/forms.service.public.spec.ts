@@ -598,6 +598,59 @@ describe('FormsService - public forms', () => {
         expect(formRepo.save).toHaveBeenCalled();
       });
 
+      // A grid by promo AND by menu: a guest is "everyone else" on the promo, and on the menu either
+      // names an option or is "everyone else" there too (the true fallback).
+      describe('on a grid by promo and by menu', () => {
+        const both = (cells: Record<string, number | null>) => ({
+          dimensions: [
+            {
+              id: 'dp',
+              kind: 'promo',
+              buckets: [{ id: 'p1', label: '1A', values: [2026] }],
+            },
+            {
+              id: 'd1',
+              kind: 'answer',
+              questionId: 'q_menu',
+              buckets: [{ id: 'b1', label: 'Menu', values: ['opt_a', 'opt_b'] }],
+            },
+          ],
+          cells: {
+            'p1|b1': 1000,
+            'p1|_others': 1000,
+            '_others|b1': 1200,
+            '_others|_others': 1200,
+            ...cells,
+          },
+        });
+
+        it('accepts a NAMED option priced 0: a free choice, not a default', async () => {
+          const { service, formRepo } = makeService();
+          await service.create(
+            input({
+              requiresPayment: true,
+              items: [menu({ required: false })],
+              priceMatrix: both({ '_others|b1': 0 }),
+            })
+          );
+          expect(formRepo.save).toHaveBeenCalled();
+        });
+
+        it('refuses the true fallback at 0: "everyone else" on every criterion', async () => {
+          const { service, formRepo } = makeService();
+          await expect(
+            service.create(
+              input({
+                requiresPayment: true,
+                items: [menu({ required: false })],
+                priceMatrix: both({ '_others|_others': 0 }),
+              })
+            )
+          ).rejects.toThrow(/"everyone else" price at 0/);
+          expect(formRepo.save).not.toHaveBeenCalled();
+        });
+      });
+
       // Two questions with one id: one reader judged the first, another the last, so a required,
       // shown-to-all copy hid a skippable one. Ids are unique at create, and on an edit whose
       // questions' ids differ from the stored ones; a duplicate ALREADY STORED never blocks an edit

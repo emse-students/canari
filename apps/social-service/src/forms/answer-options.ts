@@ -151,7 +151,8 @@ function othersReachable(dimension: Dimension, items: readonly PricedItem[]): bo
 
 /**
  * The cells of a CHARGING grid a GUEST can reach through an "everyone else" group and that price at
- * 0 - the free seat a public form must not offer by default (decision PP1, WP-P1). A guest lands in
+ * 0 - the free seat a public form must not offer by default (decision PP1, WP-P1): only the cell
+ * where EVERY criterion is "everyone else", never a named option priced 0. A guest lands in
  * "everyone else" on every criterion about who the person is (`isGuestCell`), so a cell priced for
  * a promo, a formation or a cotisation is a member's and is not judged here: a member is counted
  * once like on any form. A grid that charges nobody is a free form and returns none. The manager
@@ -166,8 +167,8 @@ export function freeFallbackCells(
   const reachable = matrix.dimensions.map((d) => othersReachable(d, items));
   return allCellKeys(matrix.dimensions).filter((key) => {
     if (matrix.cells[key] !== 0 || !isGuestCell(matrix, key)) return false;
-    const parts = key.split('|');
-    const viaOthers = parts.some((p) => p === OTHERS_BUCKET_ID);
-    return viaOthers && parts.every((p, i) => p !== OTHERS_BUCKET_ID || reachable[i]);
+    // The TRUE fallback: "everyone else" on EVERY criterion, each of them reachable. A cell naming
+    // an option ("Sans repas: 0") is a free choice the manager made, not a default.
+    return key.split('|').every((p, i) => p === OTHERS_BUCKET_ID && reachable[i]);
   });
 }

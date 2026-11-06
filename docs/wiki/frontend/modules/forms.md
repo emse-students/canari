@@ -550,8 +550,9 @@ every profile criterion, and `submit` prices the cell from those facts
 (`forms.service.seat-hold.spec.ts`, "charges a guest the everyone else tier"). The "everyone else"
 group always EXISTS - a grid is complete at save (`assertMatrixValid`) - so a guest always has a
 cell; what a manager can do is close it, which is why the closed case is refused rather than a rule
-"an others tier must exist". A guest cell at **0** is refused by `freeFallbackCells`, which now
-judges only cells a guest can land in (`isGuestCell`): a member tier at 0 is the manager's business.
+"an others tier must exist". A guest cell at **0** is refused by `freeFallbackCells` only when it is the TRUE fallback, "everyone
+else" on EVERY criterion with each reachable; a cell naming an option ("Sans repas : 0") is a free
+choice and is accepted, and so is a member tier at 0 (the manager's business).
 The editor says it under a public form's grid by promo, formation or cotisation: "Les invités paient
 le tarif « autres »".
 
@@ -706,7 +707,8 @@ the price is only as good as the answer it is computed from:
 - **The stored answer is the priced one.** The answer to a question the submitter did not see
   (`visibleItemIds`) is neither charged nor required, and it is no longer stored either, nor is its
   file attached.
-- **A public form that charges cannot leave a reachable "everyone else" cell at 0**
+- **A public form that charges cannot leave the reachable "everyone else" cell at 0** (the one where
+  every criterion is "everyone else"; a named option at 0 is accepted)
   (`freeFallbackCells`, checked at publication and on every edit of a public form). That cell is
   reached when a priced question can be skipped (not required), hidden (it has a condition), or
   answered with an option no group holds. The manager prices that cell or marks it unavailable; a
