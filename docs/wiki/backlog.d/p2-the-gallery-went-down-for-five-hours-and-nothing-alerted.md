@@ -10,13 +10,14 @@ connector. The gallery runs on its own host, outside this estate. The effect, re
 
 Nothing told anyone. The owner heard it from users.
 
-**Owed:**
+**Built 2026-11-06:** the report. The `upstream` job of `scheduled.yml` asks the gallery's health route from
+outside and opens one issue per outage, naming the class, the status and since when
+([upstream-reachability](../infrastructure/upstream-reachability.md)). It also covers the tunnel entry
+([tunnel](p2-the-tunnel-connector-lost-every-connection-for-25-minutes.md)).
 
-1. **A report.** It names the gallery as unreachable from the first failure, with its status and since
-   when. This is the same gap as the canari box's tunnel loss
-   ([tunnel](p2-the-tunnel-connector-lost-every-connection-for-25-minutes.md)), so build ONE
-   upstream-reachability report covering both.
-2. **No asking of a dependency already known to be down.** Today every avatar request goes to the gallery
+**Owed (this entry closes when both are shipped):**
+
+1. **No asking of a dependency already known to be down.** Today every avatar request goes to the gallery
    and logs again. The fix is not a timeout. The fix is durable state that says the gallery is down,
    written by the failure that proves it and cleared by the first success:
    - while that state is set, one probe at a time asks the gallery, and every other request answers
@@ -25,3 +26,5 @@ Nothing told anyone. The owner heard it from users.
      avatar.
 
    Le Cercle's `[MIGALLERY]` fetch needs the same treatment, in its own repository.
+2. **One reading of the report on a real failure**, or the drill the wiki page describes, to see an issue open
+   and close.
