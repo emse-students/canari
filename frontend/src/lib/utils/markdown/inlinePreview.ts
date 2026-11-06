@@ -2,11 +2,18 @@
  * Inline markdown preview segments for composer contenteditable.
  * Delimiters are shown muted; closed spans render formatted. `\` escapes the next character.
  *
- * Text styles (italic, bold, underline, strike) combine. Inline code does not combine with
+ * THE PUBLISHED POST DECIDES (`docs/wiki/frontend/markdown-coherence.md`): this hand parser exists
+ * only because a contenteditable cannot host the renderer, so it must pair exactly what marked pairs
+ * (`markdownParity.test.ts` renders one corpus through both). Hence `__x__` is BOLD, not an
+ * underline the post never shows, and a single `*` / `_` follows CommonMark flanking. The one
+ * deliberate tolerance, shared with the renderer through `emphasisTolerance.ts`, is whitespace just
+ * inside a double marker (`**x **`).
+ *
+ * Text styles (italic, bold, strike) combine. Inline code does not combine with
  * other styles; delimiters inside a code span are not parsed.
  */
 
-export type InlineMarkdownStyle = 'italic' | 'bold' | 'underline' | 'strike';
+export type InlineMarkdownStyle = 'italic' | 'bold' | 'strike';
 
 export type InlinePreviewSegment =
   | { kind: 'text'; value: string }
@@ -25,7 +32,7 @@ export type ParsedHeadingLine = {
   content: string;
 };
 
-type DelimiterKind = 'italic' | 'underline' | 'bold' | 'boldItalic' | 'strike' | 'code';
+type DelimiterKind = 'italic' | 'bold' | 'boldItalic' | 'strike' | 'code';
 
 type DelimiterSpec = {
   marker: string;
@@ -35,7 +42,7 @@ type DelimiterSpec = {
 const DELIMITERS: DelimiterSpec[] = [
   { marker: '***', kind: 'boldItalic' },
   { marker: '**', kind: 'bold' },
-  { marker: '__', kind: 'underline' },
+  { marker: '__', kind: 'bold' },
   { marker: '~~', kind: 'strike' },
   { marker: '`', kind: 'code' },
   { marker: '*', kind: 'italic' },
@@ -46,7 +53,6 @@ const STYLES_BY_KIND: Record<Exclude<DelimiterKind, 'code'>, InlineMarkdownStyle
   italic: ['italic'],
   bold: ['bold'],
   boldItalic: ['bold', 'italic'],
-  underline: ['underline'],
   strike: ['strike'],
 };
 
@@ -59,12 +65,35 @@ export function isEscapedAt(text: string, index: number): boolean {
   return backslashes % 2 === 1;
 }
 
+const isWordChar = (ch: string | undefined): boolean => !!ch && /[\p{L}\p{N}]/u.test(ch);
+const isSpace = (ch: string | undefined): boolean => !ch || /\s/.test(ch);
+
+/**
+ * Finds the closing marker. A single `*` / `_` closes only on a lone character that is
+ * right-flanking (not after whitespace) and, for `_`, not inside a word - CommonMark's rule, so
+ * `2 * 3 * 4` and `snake_case_name` stay text as they do in the post. A double marker closes on
+ * the first unescaped occurrence.
+ */
 function findUnescapedMarker(text: string, marker: string, from: number): number {
+  const single = marker.length === 1;
   for (let i = from; i <= text.length - marker.length; i++) {
     if (isEscapedAt(text, i)) continue;
-    if (text.startsWith(marker, i)) return i;
+    if (!text.startsWith(marker, i)) continue;
+    if (single) {
+      if (text[i + 1] === marker || text[i - 1] === marker) continue;
+      if (isSpace(text[i - 1])) continue;
+      if (marker === '_' && isWordChar(text[i + 1])) continue;
+    }
+    return i;
   }
   return -1;
+}
+
+/** A single `*` / `_` opens only left-flanking (not before whitespace), `_` not after a word char. */
+function singleMarkerMayOpen(text: string, start: number, marker: string): boolean {
+  if (text[start + 1] === marker || text[start - 1] === marker) return false;
+  if (isSpace(text[start + 1])) return false;
+  return !(marker === '_' && isWordChar(text[start - 1]));
 }
 
 function stylesForKind(kind: Exclude<DelimiterKind, 'code'>): InlineMarkdownStyle[] {
@@ -80,13 +109,20 @@ function tryDelimiter(
   for (const spec of DELIMITERS) {
     if (!text.startsWith(spec.marker, start) || isEscapedAt(text, start)) continue;
 
+    if (
+      spec.marker.length === 1 &&
+      spec.kind !== 'code' &&
+      !singleMarkerMayOpen(text, start, spec.marker)
+    ) {
+      continue;
+    }
     const contentStart = start + spec.marker.length;
     const closeIdx = findUnescapedMarker(text, spec.marker, contentStart);
 
     if (closeIdx === -1) continue;
 
     const content = text.slice(contentStart, closeIdx);
-    if (content.length === 0) continue;
+    if (content.trim().length === 0) continue;
     if (spec.kind === 'code' && content.includes('\n')) continue;
 
     if (spec.kind === 'code') {

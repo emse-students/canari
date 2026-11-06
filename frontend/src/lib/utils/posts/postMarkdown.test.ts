@@ -60,4 +60,8 @@ describe('preprocessPostMarkdown', () => {
     const md = 'voir https://canari-emse.fr/chat stp';
     expect(preprocessPostMarkdown(md)).toBe(md);
   });
+
+  it('moves the whitespace inside a double marker out, so a published `**x **` renders bold', () => {
+    expect(preprocessPostMarkdown('**TOP 5 MINIMOYS **')).toBe('**TOP 5 MINIMOYS** ');
+  });
 });
