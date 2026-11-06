@@ -45,6 +45,10 @@ const cssPath = join(src, 'app.css');
  * button is added or removed - which is exactly when someone should be asked to justify it again.
  */
 const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
+  'lib/components/forms/ProductGridEditor.svelte': {
+    count: 2,
+    why: "the grip and the x inside a priced grid's column chip, sized by the chip so fifteen columns still fit a table row",
+  },
   'lib/components/forms/ProductGridQuestion.svelte': {
     count: 4,
     why: 'the - and + halves of a priced-grid stepper pill, each the full 44px height of the pill and a third of its width, so the pill reads as one control',

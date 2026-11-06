@@ -1,4 +1,5 @@
 import { Log } from '$lib/utils/Log';
+import { withFreshProductGridIds, type EditorProductGrid } from './productGridEditor';
 
 /** The part of a question the editor copies; everything else on it is carried over untouched. */
 interface DuplicableQuestion {
@@ -7,13 +8,16 @@ interface DuplicableQuestion {
   rows?: unknown[];
   dependsOn?: string;
   dependsValue?: string;
+  productGrid?: EditorProductGrid;
 }
 
 /**
  * Inserts a copy of `items[index]` right after it, and returns the new list and the copy's id.
  *
  * The copy is a deep clone (type, description, options with their prices, required, answer
- * condition, audience condition) under a NEW question id and new option and row ids. The original
+ * condition, audience condition) under a NEW question id and new option and row ids - a priced
+ * grid's rows and columns included, its closed cells and price keys following them (two questions
+ * sharing a row id would read as one article in the export's totals). The original
  * keeps its id, so every condition in another question that points at it keeps pointing at it.
  *
  * The copy's own answer condition stays valid because its source sits before the original, hence
@@ -37,6 +41,7 @@ export function duplicateQuestion<T extends DuplicableQuestion>(
       typeof row === 'object' && row !== null ? { ...row, id: crypto.randomUUID() } : row
     );
   }
+  if (copy.productGrid) copy.productGrid = withFreshProductGridIds(copy.productGrid);
   if (copy.dependsOn) {
     const sourceIndex = items.findIndex((q) => q.id === copy.dependsOn);
     if (sourceIndex < 0 || sourceIndex >= index) {

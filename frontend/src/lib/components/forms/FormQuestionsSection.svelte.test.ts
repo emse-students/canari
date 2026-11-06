@@ -284,12 +284,29 @@ describe('touch and drag targets', () => {
 });
 
 describe('the type menus', () => {
-  it('offer only the authorable types: product_grid stays out of both menus', () => {
-    const { target } = render();
+  const openAddMenu = (target: HTMLElement) => {
     allButtons(target)
       .find((b) => b.textContent?.includes(m.form_add_question_button()))!
       .click();
     flushSync();
+  };
+
+  it('offer the priced grid in both menus of a form', () => {
+    const { target } = render();
+    openAddMenu(target);
+    expect(target.textContent).toContain(m.qtype_product_grid());
+    rowButton(target, 1).click();
+    flushSync();
+    allButtons(target)
+      .find((b) => b.getAttribute('aria-haspopup') === 'listbox')!
+      .click();
+    flushSync();
+    expect(target.textContent).toContain(m.qtype_product_grid());
+  });
+
+  it('leave the priced grid out of a builder that never takes payment (a booking space)', () => {
+    const { target } = render(three(), { offerPricedGrid: false });
+    openAddMenu(target);
     expect(target.textContent).toContain(m.qtype_short_text());
     expect(target.textContent).not.toContain(m.qtype_product_grid());
     rowButton(target, 1).click();
@@ -299,5 +316,49 @@ describe('the type menus', () => {
       .click();
     flushSync();
     expect(target.textContent).not.toContain(m.qtype_product_grid());
+  });
+
+  it('add a priced grid required, with its definition, opened, and tell the page', () => {
+    let told = 0;
+    const { target, state } = render(three(), { onPricedGridAdded: () => (told += 1) });
+    openAddMenu(target);
+    allButtons(target)
+      .find((b) => b.textContent?.trim() === m.qtype_product_grid())!
+      .click();
+    flushSync();
+    const added = state.items[3];
+    expect(added.type).toBe('product_grid');
+    expect(added.required).toBe(true);
+    expect(added.productGrid.rows).toHaveLength(1);
+    expect(added.productGrid.maxPerCell).toBe(5);
+    expect(told).toBe(1);
+    expect(target.querySelector('[data-testid="product-grid-editor"]')).not.toBeNull();
+    // The asterisk is not a choice on a grid: it stays on and cannot be switched off.
+    const required = byLabel(target, m.form_builder_required_label());
+    expect(required.disabled).toBe(true);
+    expect(required.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('draw a refused save under the grid it is about', () => {
+    const grid = {
+      id: 'g',
+      type: 'product_grid',
+      label: 'Sweat',
+      required: true,
+      productGrid: {
+        rows: [{ id: 'r1', label: 'Vert' }],
+        columns: [{ id: 'c1', label: 'M' }],
+        maxPerCell: 5,
+        closedCells: [],
+        pricing: { mode: 'single', tiers: null, prices: { _all: { '*': null } } },
+      },
+    };
+    const { target } = render([grid], {
+      reveal: { id: 'g' },
+      gridFault: { itemId: 'g', message: 'Il manque un prix' },
+    });
+    expect(target.querySelector('[data-testid="grid-problem"]')?.textContent).toContain(
+      'Il manque un prix'
+    );
   });
 });

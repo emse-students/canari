@@ -60,6 +60,7 @@
   import { firstEmptyCondition } from '$lib/forms/audience';
   import { firstEmptyConditionQuestion, firstItemsFaultQuestion } from '$lib/forms/questionFault';
   import { toFormItemsPayload } from '$lib/forms/itemsPayload';
+  import { firstProductGridProblem, profileTierCriterion } from '$lib/forms/productGridEditor';
   import {
     FILE_RETENTION_DEFAULT_DAYS,
     fileQuestionProblem,
@@ -203,6 +204,10 @@
 
   /** A save refused on a question opens that question: a folded card hides its own error. */
   let reveal = $state<{ id: string } | null>(null);
+  /** The priced grid a refused save is about, and its sentence, drawn under that grid. */
+  let gridFault = $state<{ itemId: string; message: string } | null>(null);
+  /** A priced grid may copy the registration price grid's categories in one click. */
+  const formTiers = $derived(profileTierCriterion(priceMatrix, requiresPayment));
   function revealQuestion(id: string | null) {
     if (id) reveal = { id };
   }
@@ -226,6 +231,13 @@
     if (itemsProblem) {
       error = itemsProblem;
       revealQuestion(firstItemsFaultQuestion(items));
+      return;
+    }
+    // A priced grid is judged by the contract the server judges it by, on the payload it will send.
+    gridFault = firstProductGridProblem(items, { isPublic, requiresPayment });
+    if (gridFault) {
+      error = gridFault.message;
+      revealQuestion(gridFault.itemId);
       return;
     }
     const fileProblem = fileQuestionProblem({
@@ -386,6 +398,10 @@
       {gridQuestionIds}
       {tiers}
       {formations}
+      {formTiers}
+      {isPublic}
+      {gridFault}
+      onPricedGridAdded={() => (allowMultipleSubmissions = true)}
       {reveal}
       imageUploadFn={async (file) => (await uploadFormItemImage(null, file)).imageUrl}
     />

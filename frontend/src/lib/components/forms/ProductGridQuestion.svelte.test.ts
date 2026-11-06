@@ -142,6 +142,35 @@ describe('ProductGridQuestion', () => {
     expect(state.value).toEqual({ 'noir:m': 2, 'vert:l': 1 });
   });
 
+  it('picks its drawing by the width, or shows the one a preview forces', () => {
+    const auto = render(grid()).target;
+    expect(desktop(auto).classList).toContain('sm:block');
+    expect(phone(auto).classList).toContain('sm:hidden');
+    const asPhone = render(grid(), {}, { layout: 'phone' }).target;
+    expect(desktop(asPhone).classList).toContain('hidden');
+    expect(phone(asPhone).classList).toContain('flex');
+    expect(phone(asPhone).classList).not.toContain('sm:hidden');
+    const asDesktop = render(grid(), {}, { layout: 'desktop' }).target;
+    expect(desktop(asDesktop).classList).toContain('block');
+    expect(desktop(asDesktop).classList).not.toContain('hidden');
+    expect(phone(asDesktop).classList).toContain('hidden');
+  });
+
+  it("sizes a phone stepper's - and + at 44px themselves, never h-full inside the bordered pill", () => {
+    const { target } = render(grid());
+    const cards = phone(target);
+    click(cards, m.form_grid_add_cell({ name: 'Sweat Noir M' }));
+    const stepper = cards.querySelector<HTMLElement>('[data-cell-stepper]');
+    const buttons = [...(stepper?.querySelectorAll<HTMLButtonElement>('button') ?? [])];
+    expect(buttons).toHaveLength(2);
+    for (const button of buttons) {
+      // jsdom draws no box: the class is the size. h-full there is 42px (the pill's border eats 2).
+      expect(button.classList).toContain('h-11');
+      expect(button.classList).toContain('w-11');
+      expect(button.classList).not.toContain('h-full');
+    }
+  });
+
   it('gives a one-row grid no row label, and keys its answer by that row', () => {
     const { target, state } = render(
       grid({ rows: [{ id: 'taille', label: 'Taille' }], closedCells: [] })

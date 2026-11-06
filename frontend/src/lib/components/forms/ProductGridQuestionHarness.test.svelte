@@ -12,9 +12,10 @@
     onChange: (value: unknown) => void;
     gridPrices?: ProductGridViewerPrices;
     error?: string | null;
+    layout?: 'responsive' | 'desktop' | 'phone';
   }
 
-  let { item, grid, initial, onChange, gridPrices, error }: Props = $props();
+  let { item, grid, initial, onChange, gridPrices, error, layout }: Props = $props();
 
   // A deep `$state`, as `selections` is on the page. The props are a SEED read once.
   let selections = $state<Record<string, any>>(
@@ -33,4 +34,5 @@
   disabled={false}
   prices={gridPrices}
   {error}
+  {layout}
 />

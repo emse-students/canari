@@ -17,6 +17,7 @@
   import {
     FormNotFoundError,
     getForm,
+    getSubmissions,
     updateForm,
     uploadFormImage,
     uploadFormItemImage,
@@ -60,6 +61,12 @@
   import { firstEmptyCondition } from '$lib/forms/audience';
   import { firstEmptyConditionQuestion, firstItemsFaultQuestion } from '$lib/forms/questionFault';
   import { fromFormItems, toFormItemsPayload } from '$lib/forms/itemsPayload';
+  import {
+    firstProductGridProblem,
+    profileTierCriterion,
+    orderedProductGridCells,
+  } from '$lib/forms/productGridEditor';
+  import { PRODUCT_GRID_TYPE } from '$lib/forms/productGridContract';
   import {
     FILE_RETENTION_DEFAULT_DAYS,
     fileQuestionProblem,
@@ -113,6 +120,22 @@
   let imageError = $state('');
 
   let items = $state<any[]>([]);
+  /** Per priced grid, the cells some answer ordered: removing their row or column warns first. */
+  let orderedCells = $state<Record<string, string[]>>({});
+
+  /**
+   * Reads which grid cells were ordered, when the form holds a priced grid that has answers. A
+   * failed read is logged and leaves the editor without warnings - it never blocks editing.
+   */
+  async function loadOrderedCells(id: string, f: Form) {
+    const gridIds = (f.items ?? []).filter((i) => i.type === PRODUCT_GRID_TYPE).map((i) => i.id);
+    if (gridIds.length === 0 || !f.submissionCount) return;
+    try {
+      orderedCells = orderedProductGridCells(await getSubmissions(id), gridIds);
+    } catch (e) {
+      console.warn('[forms] the ordered grid cells could not be read; removals will not warn:', e);
+    }
+  }
   let isSubmitting = $state(false);
   let error = $state('');
 
@@ -186,6 +209,7 @@
       fileRetentionDays = f.fileRetentionDays ?? FILE_RETENTION_DEFAULT_DAYS;
       imageUrl = f.imageUrl ?? null;
       items = fromFormItems(f.items ?? [], requiresPayment);
+      void loadOrderedCells(id, f);
       try {
         formations = await fetchFormations();
       } catch {
@@ -219,6 +243,10 @@
 
   /** A save refused on a question opens that question: a folded card hides its own error. */
   let reveal = $state<{ id: string } | null>(null);
+  /** The priced grid a refused save is about, and its sentence, drawn under that grid. */
+  let gridFault = $state<{ itemId: string; message: string } | null>(null);
+  /** A priced grid may copy the registration price grid's categories in one click. */
+  const formTiers = $derived(profileTierCriterion(priceMatrix, requiresPayment));
   function revealQuestion(id: string | null) {
     if (id) reveal = { id };
   }
@@ -242,6 +270,13 @@
     if (itemsProblem) {
       error = itemsProblem;
       revealQuestion(firstItemsFaultQuestion(items));
+      return;
+    }
+    // A priced grid is judged by the contract the server judges it by, on the payload it will send.
+    gridFault = firstProductGridProblem(items, { isPublic, requiresPayment });
+    if (gridFault) {
+      error = gridFault.message;
+      revealQuestion(gridFault.itemId);
       return;
     }
     const fileProblem = fileQuestionProblem({
@@ -475,6 +510,11 @@
       {gridQuestionIds}
       {tiers}
       {formations}
+      {formTiers}
+      {isPublic}
+      {gridFault}
+      {orderedCells}
+      onPricedGridAdded={() => (allowMultipleSubmissions = true)}
       imageUploadFn={async (file) => {
         const r = await uploadFormItemImage(formId, file);
         return r.imageUrl;

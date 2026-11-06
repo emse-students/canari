@@ -160,6 +160,8 @@ export interface Form extends CreateFormPayload {
   associationName?: string | null;
   /** Banner/header image URL (public, served via media-service). */
   imageUrl?: string | null;
+  /** Answers holding a place (`GET /forms/:id` only): the editor warns before removing an ordered row. */
+  submissionCount?: number;
 }
 
 import { apiFetch } from '$lib/utils/apiFetch';
