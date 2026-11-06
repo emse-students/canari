@@ -99,6 +99,8 @@ set_stub https://b.test/h '404|nope'
 run 0 'an unexpected status'
 expect_class b unexpected
 
+# The pattern is a literal `$UA` in the script under test, not an expansion here.
+# shellcheck disable=SC2016
 if grep -q 'canari-upstream-monitor' "$SCRIPT" && grep -qE -- '-A "\$UA"' "$SCRIPT"; then ok 'the probe sends a recognisable User-Agent'; else fail 'no User-Agent'; fi
 if grep -qE 'probe_one .* &$' "$SCRIPT" && grep -q '^wait$' "$SCRIPT"; then ok 'targets are probed in parallel'; else fail 'targets are probed in sequence'; fi
 
