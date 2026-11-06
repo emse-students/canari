@@ -4,7 +4,11 @@ import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import type { DatedKeyPackage } from './keyPackages';
 import type { SkippedDevice } from './skippedKeyPackage';
 import type { DeviceEvent, DevicePin, KeyPackageVerdict } from './deviceTrust';
-import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
+import type {
+  DeviceKeyPackageAnswer,
+  DeviceSignatureKeys,
+  UserDeviceEntry,
+} from './deviceKeyPackage';
 import type { FrameDelivery } from './frameDelivery';
 import type { IncomingDeliveryMeta } from './incomingDelivery';
 import type { MlsDecryptSession } from './mlsDecryptSession';
@@ -1117,7 +1121,18 @@ export interface IMlsService {
   markInboundReady(): Promise<void>;
   /** True when the live gateway WebSocket is open (used for reconnect watchdog). */
   isWsOpen(): boolean;
-  /** Fetches all registered devices (with KeyPackages) for the given user. Throws on transport/HTTP failure; `[]` only when the user genuinely has no active device. */
+  /**
+   * The roster of the given user's active devices, CLAIMING NOTHING: for a caller that needs the
+   * ids, a count or the names. Throws on transport/HTTP failure; `[]` only when the user genuinely
+   * has no active device. Simultaneous askers share one request.
+   */
+  listUserDevices(userId: string): Promise<UserDeviceEntry[]>;
+  /**
+   * CLAIMS one KeyPackage from every active device of the given user, for an adder about to add
+   * every one of them - a caller that only reads the roster asks {@link listUserDevices}. Never
+   * shared between callers: two adders on one package would build two Welcomes on it. Throws on
+   * transport/HTTP failure; `[]` only when the user genuinely has no active device.
+   */
   fetchUserDevices(userId: string): Promise<
     Array<{
       keyPackage: Uint8Array;

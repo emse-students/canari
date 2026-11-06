@@ -128,4 +128,36 @@ describe('DevicesController - the static KeyPackage row once the pool is empty',
     await controller.getDeviceKeyPackage('u1', 'd1', 'yes');
     expect(emptyPool.transaction).toHaveBeenCalledTimes(1);
   });
+
+  describe('the account list', () => {
+    const rows = [
+      { userId: 'u1', deviceId: 'd1', keyPackage: 'STATIC-1', createdAt: new Date() },
+      { userId: 'u1', deviceId: 'd2', keyPackage: 'STATIC-2', createdAt: new Date() },
+      { userId: 'u1', deviceId: 'd3', keyPackage: 'STATIC-3', createdAt: new Date() },
+    ];
+    beforeEach(() => {
+      keyPackageRepo.find.mockResolvedValue(rows);
+      keyPackageRepo.findOne.mockImplementation(
+        async ({ where }: { where: { deviceId: string } }) =>
+          rows.find((r) => r.deviceId === where.deviceId) ?? null
+      );
+    });
+
+    // Production 2026-11-06: an adder's list read claimed one package from EACH of four devices to
+    // use one, and the settings poll and the device panel read the same list for a count and names.
+    it('a peek lists every device on its static row and claims nothing from any pool', async () => {
+      const listed = await controller.getUserDevices('u1', '1');
+
+      expect(listed.map((d) => d.deviceId)).toEqual(['d1', 'd2', 'd3']);
+      expect(listed.map((d) => d.keyPackage)).toEqual(['STATIC-1', 'STATIC-2', 'STATIC-3']);
+      expect(emptyPool.transaction).not.toHaveBeenCalled();
+      expect(emptyPool.delete).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('without the query it still claims one package per device, for the adder that uses them', async () => {
+      await controller.getUserDevices('u1');
+      expect(emptyPool.transaction).toHaveBeenCalledTimes(3);
+    });
+  });
 });
