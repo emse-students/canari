@@ -23,6 +23,9 @@ function render() {
   const c = mount(FormQuestionsSection, { target, props: { items, requiresPayment: false } });
   mounted.push(() => unmount(c));
   flushSync();
+  // Questions start collapsed: the fields a drag must not start from exist once one is open.
+  target.querySelector<HTMLButtonElement>('[data-row-button]')!.click();
+  flushSync();
   return target;
 }
 
