@@ -79,9 +79,14 @@ describe('the iOS copy of push_context.json', () => {
       expect(fnBody(pushRs, name)).not.toContain('std::fs::write(');
     }
     const strip = fnBody(registration, 'keep_device_context_only');
-    expect(strip).toContain('crate::commands::push::write_push_context_file(');
-    expect(strip).toContain('crate::commands::push::follow_push_context_in_extension(data_dir)');
+    expect(strip).toContain('crate::commands::push::write_push_context_file_then(');
+    // The extension's copy follows the strip inside the same hold of the lock (review of #3075).
+    expect(strip).toContain('crate::commands::push::sync_push_context_copy(dir, group)');
     expect(strip).not.toContain('std::fs::write(');
+    // ...and nothing after the lock touches that copy: a sign-in landing there keeps its own.
+    expect(fnBody(registration, 'end_push_registration_files_then')).not.toContain(
+      'PUSH_CONTEXT_FILE'
+    );
     expect(fnBody(pushRs, 'write_push_context_file')).toContain(
       'write_push_context_file_then(data_dir, json, follow_push_context_in_extension)'
     );

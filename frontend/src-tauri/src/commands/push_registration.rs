@@ -66,6 +66,17 @@ pub(crate) fn end_push_registration_files(
     data_dir: &std::path::Path,
     extension_dir: Option<&std::path::Path>,
 ) -> Result<(), String> {
+    end_push_registration_files_then(data_dir, extension_dir, || {})
+}
+
+/// [`end_push_registration_files`], with `after_strip` run once the context has been stripped and
+/// [`PUSH_CONTEXT_LOCK`](crate::commands::push::push_context_guard) released: the window a sign-in
+/// can land in, which a test fills with one.
+fn end_push_registration_files_then(
+    data_dir: &std::path::Path,
+    extension_dir: Option<&std::path::Path>,
+    after_strip: impl FnOnce(),
+) -> Result<(), String> {
     log::info!("[PushEnd] ending this device's push registration");
     let mut first_error: Option<String> = None;
     let mut note = |what: &str, e: String| {
@@ -81,20 +92,24 @@ pub(crate) fn end_push_registration_files(
             note(&format!("{mark} not written"), e.to_string());
         }
     }
-    if let Err(e) = keep_device_context_only(data_dir) {
+    if let Err(e) = keep_device_context_only(data_dir, extension_dir) {
         note("push context not stripped", e);
     }
+    after_strip();
     let mut removed = 0usize;
     let mut failures = 0usize;
     for name in [PENDING_PUSH_SECRET_FILE, FCM_TOKEN_FILE, VOIP_TOKEN_FILE] {
         crate::commands::storage::remove_entry(&data_dir.join(name), &mut removed, &mut failures);
     }
     if let Some(dir) = extension_dir {
-        // The extension's copies: its secret, and the context it decrypts with - the stripped
-        // context the strip above copied there goes too, the extension needing none signed out.
-        for name in [EXTENSION_PUSH_SECRET_FILE, PUSH_CONTEXT_FILE] {
-            crate::commands::storage::remove_entry(&dir.join(name), &mut removed, &mut failures);
-        }
+        // The extension's secret. NOT its context: the strip above made that copy the stripped
+        // file, inside the context lock - removing it here, after the lock, deleted the copy of a
+        // sign-in landing in between (review of #3075).
+        crate::commands::storage::remove_entry(
+            &dir.join(EXTENSION_PUSH_SECRET_FILE),
+            &mut removed,
+            &mut failures,
+        );
     }
     if failures > 0 {
         note(
@@ -111,14 +126,32 @@ pub(crate) fn end_push_registration_files(
 
 /// Rewrites `push_context.json` with [`DEVICE_CONTEXT_KEYS`] only, under the context lock. An absent
 /// file is nothing to strip; an unreadable one is removed, since nothing proves which keys it holds.
+///
+/// The extension's copy in `extension_dir` (the iOS App Group, `None` elsewhere) follows in the SAME
+/// hold of the lock - the stripped context, or no copy - so no step after the lock touches it, and a
+/// sign-in storing its context once the lock is released keeps its copy. The stripped copy carries
+/// no `baseUrl`, which every background reader requires: the extension finds no session in it.
 #[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
-fn keep_device_context_only(data_dir: &std::path::Path) -> Result<(), String> {
+fn keep_device_context_only(
+    data_dir: &std::path::Path,
+    extension_dir: Option<&std::path::Path>,
+) -> Result<(), String> {
     let path = data_dir.join(PUSH_CONTEXT_FILE);
     let _guard = push_context_guard();
+    let follow = |dir: &std::path::Path| {
+        if let Some(group) = extension_dir {
+            if let Err(e) = crate::commands::push::sync_push_context_copy(dir, group) {
+                log::error!(
+                    "[PushEnd] the extension's push context does not follow the strip: {e}"
+                );
+            }
+        }
+    };
     let bytes = match std::fs::read(&path) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             log::debug!("[PushEnd] no {PUSH_CONTEXT_FILE} - nothing to strip");
+            follow(data_dir);
             return Ok(());
         }
         Err(e) => return Err(format!("{PUSH_CONTEXT_FILE} unreadable: {e}")),
@@ -127,16 +160,17 @@ fn keep_device_context_only(data_dir: &std::path::Path) -> Result<(), String> {
     else {
         log::error!("[PushEnd] {PUSH_CONTEXT_FILE} is not a JSON object - removed whole");
         std::fs::remove_file(&path).map_err(|e| e.to_string())?;
-        crate::commands::push::follow_push_context_in_extension(data_dir);
+        follow(data_dir);
         return Ok(());
     };
     let kept: serde_json::Map<String, serde_json::Value> = ctx
         .into_iter()
         .filter(|(k, _)| DEVICE_CONTEXT_KEYS.contains(&k.as_str()))
         .collect();
-    crate::commands::push::write_push_context_file(
+    crate::commands::push::write_push_context_file_then(
         data_dir,
         &serde_json::Value::Object(kept).to_string(),
+        follow,
     )
 }
 
@@ -321,8 +355,8 @@ fn completed(done: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        clear_signed_out_mark, end_push_registration_files, DELETION_OWED_FILE, FCM_TOKEN_FILE,
-        SIGNED_OUT_FILE, VOIP_TOKEN_FILE,
+        clear_signed_out_mark, end_push_registration_files, end_push_registration_files_then,
+        DELETION_OWED_FILE, FCM_TOKEN_FILE, SIGNED_OUT_FILE, VOIP_TOKEN_FILE,
     };
     use crate::commands::push::{
         EXTENSION_PUSH_SECRET_FILE, PENDING_PUSH_SECRET_FILE, PUSH_CONTEXT_FILE,
@@ -340,8 +374,8 @@ mod tests {
     }
 
     /// The whole sign-out on disk: both marks, the session's keys gone from the context while the
-    /// device's stay, the secret hand-off and the token mirror removed, and the extension's copies
-    /// removed with them.
+    /// device's stay, the secret hand-off and the token mirror removed, the extension's secret
+    /// removed and its context the stripped one - no session left in it.
     #[test]
     fn a_sign_out_keeps_the_device_and_drops_the_session() {
         let app = dir("app");
@@ -369,6 +403,49 @@ mod tests {
         assert!(!app.join(FCM_TOKEN_FILE).exists());
         assert!(!app.join(VOIP_TOKEN_FILE).exists());
         assert!(!group.join(EXTENSION_PUSH_SECRET_FILE).exists());
+        assert_eq!(context(&group), context(&app));
+    }
+
+    /// A sign-in landing once the strip has released the context lock keeps the extension's copy
+    /// of its context: nothing after the strip touches that copy. Failed while the sign-out removed
+    /// the copy after the lock (review of #3075).
+    #[test]
+    fn a_context_stored_after_the_strip_keeps_its_extension_copy() {
+        let app = dir("signin-after-strip");
+        let group = dir("signin-after-strip-group");
+        std::fs::write(
+            app.join(PUSH_CONTEXT_FILE),
+            r#"{"userId":"u-1","deviceId":"d-1","baseUrl":"https://x","pushToken":"old"}"#,
+        )
+        .unwrap();
+        let fresh = r#"{"userId":"u-2","deviceId":"d-1","baseUrl":"https://x","pushToken":"new"}"#;
+        end_push_registration_files_then(&app, Some(&group), || {
+            // The sign-in's own edit: the one writer, its copy following it.
+            let _guard = crate::commands::push::push_context_guard();
+            crate::commands::push::write_push_context_file_then(&app, fresh, |d| {
+                crate::commands::push::sync_push_context_copy(d, &group).unwrap()
+            })
+            .unwrap();
+        })
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(group.join(PUSH_CONTEXT_FILE)).unwrap(),
+            fresh
+        );
+        assert_eq!(
+            std::fs::read_to_string(app.join(PUSH_CONTEXT_FILE)).unwrap(),
+            fresh
+        );
+    }
+
+    /// A context removed whole by the strip leaves the extension no copy either.
+    #[test]
+    fn an_unparsable_context_takes_the_extension_copy_with_it() {
+        let app = dir("garbage-group");
+        let group = dir("garbage-group-ext");
+        std::fs::write(app.join(PUSH_CONTEXT_FILE), "not json").unwrap();
+        std::fs::write(group.join(PUSH_CONTEXT_FILE), r#"{"userId":"u-1"}"#).unwrap();
+        end_push_registration_files(&app, Some(&group)).unwrap();
         assert!(!group.join(PUSH_CONTEXT_FILE).exists());
     }
 

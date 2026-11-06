@@ -2053,8 +2053,9 @@ pub(crate) fn write_push_context_file(
 }
 
 /// [`write_push_context_file`] with the follower handed in - the App Group exists only on a device,
-/// so a test hands a directory of its own. The follower runs only once the file is written.
-fn write_push_context_file_then(
+/// so a test hands a directory of its own, and the sign-out strip hands the container it was given.
+/// The follower runs only once the file is written.
+pub(crate) fn write_push_context_file_then(
     data_dir: &std::path::Path,
     json: &str,
     follow: impl FnOnce(&std::path::Path),
@@ -2087,7 +2088,6 @@ pub(crate) fn follow_push_context_in_extension(data_dir: &std::path::Path) {
 
 /// `data_dir`'s `push_context.json` copied into `group` atomically (tmp + rename: the extension reads
 /// it from another process), or `group`'s copy removed when `data_dir` holds none.
-#[cfg(any(target_os = "ios", test))]
 pub(crate) fn sync_push_context_copy(
     data_dir: &std::path::Path,
     group: &std::path::Path,
