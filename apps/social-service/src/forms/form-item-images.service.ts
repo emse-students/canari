@@ -216,7 +216,7 @@ export class FormItemImagesService {
     }
     if (released + kept > 0) {
       this.logger.log(
-        `[FORM_IMAGE] (${why}): ${released} released, ${kept} kept - another question still cites them`
+        `[FORM_IMAGE] (${why}): ${released} released, ${kept} kept (still cited by a question)`
       );
     }
   }

@@ -379,10 +379,10 @@
             placeholder={m.form_builder_image_alt_placeholder()}
             aria-label={m.form_builder_image_alt_placeholder()}
           />
-          <div class="flex items-center gap-3">
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
             {#if imageUploadFn !== undefined}
               <label
-                class="text-text-muted hover:text-text-main flex cursor-pointer items-center gap-1 text-xs font-semibold transition-colors {uploadingImage
+                class="text-text-muted hover:text-text-main flex cursor-pointer items-center gap-1 text-xs font-semibold whitespace-nowrap transition-colors {uploadingImage
                   ? 'pointer-events-none opacity-50'
                   : ''}"
               >
@@ -403,7 +403,7 @@
                 item.imageUrl = undefined;
                 item.imageAlt = undefined;
               }}
-              class="text-text-muted flex items-center gap-1 text-xs font-semibold transition-colors hover:text-red-500"
+              class="text-text-muted flex items-center gap-1 text-xs font-semibold whitespace-nowrap transition-colors hover:text-red-500"
             >
               <X size={12} />
               {m.form_builder_remove_image_title()}
