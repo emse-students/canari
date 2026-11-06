@@ -13,6 +13,8 @@
  * other styles; delimiters inside a code span are not parsed.
  */
 
+import { isWordChar, looseSpanAccepted, URL_AT_RE } from './emphasisTolerance';
+
 export type InlineMarkdownStyle = 'italic' | 'bold' | 'strike';
 
 export type InlinePreviewSegment =
@@ -44,6 +46,7 @@ const DELIMITERS: DelimiterSpec[] = [
   { marker: '**', kind: 'bold' },
   { marker: '__', kind: 'bold' },
   { marker: '~~', kind: 'strike' },
+  { marker: '~', kind: 'strike' },
   { marker: '`', kind: 'code' },
   { marker: '*', kind: 'italic' },
   { marker: '_', kind: 'italic' },
@@ -65,7 +68,6 @@ export function isEscapedAt(text: string, index: number): boolean {
   return backslashes % 2 === 1;
 }
 
-const isWordChar = (ch: string | undefined): boolean => !!ch && /[\p{L}\p{N}]/u.test(ch);
 const isSpace = (ch: string | undefined): boolean => !ch || /\s/.test(ch);
 
 /**
@@ -76,6 +78,7 @@ const isSpace = (ch: string | undefined): boolean => !ch || /\s/.test(ch);
  */
 function findUnescapedMarker(text: string, marker: string, from: number): number {
   const single = marker.length === 1;
+  const underscore = marker.startsWith('_');
   for (let i = from; i <= text.length - marker.length; i++) {
     if (isEscapedAt(text, i)) continue;
     if (!text.startsWith(marker, i)) continue;
@@ -83,8 +86,30 @@ function findUnescapedMarker(text: string, marker: string, from: number): number
       if (text[i + 1] === marker || text[i - 1] === marker) continue;
       if (isSpace(text[i - 1])) continue;
       if (marker === '_' && isWordChar(text[i + 1])) continue;
+    } else if (underscore && isWordChar(text[i + 2])) {
+      continue; // `__` never closes inside a word, as in the post
     }
     return i;
+  }
+  return -1;
+}
+
+/**
+ * The closer of a DOUBLE marker, pairing as marked does. An opener followed by text takes the first
+ * closer that is not after whitespace (CommonMark), and may take one that IS after whitespace only
+ * when `looseSpanAccepted` says it is no stray (`**TOP 5 **`). An opener followed by whitespace
+ * (`** x**`) can only be the tolerated case: the first closer or nothing.
+ */
+function findDoubleCloser(text: string, marker: string, openIdx: number): number {
+  const contentStart = openIdx + marker.length;
+  const looseOpen = isSpace(text[contentStart]);
+  for (let i = contentStart; i <= text.length - marker.length; i++) {
+    if (isEscapedAt(text, i) || !text.startsWith(marker, i)) continue;
+    if (marker.startsWith('_') && isWordChar(text[i + marker.length])) continue;
+    if (text.slice(contentStart, i).trim() === '') continue;
+    const loose = looseOpen || isSpace(text[i - 1]);
+    if (!loose || looseSpanAccepted(text, openIdx, i, marker)) return i;
+    if (looseOpen) return -1;
   }
   return -1;
 }
@@ -100,6 +125,40 @@ function stylesForKind(kind: Exclude<DelimiterKind, 'code'>): InlineMarkdownStyl
   return STYLES_BY_KIND[kind];
 }
 
+/** An inline code span: closes on a run of backticks of EXACTLY the opening length. */
+function tryCodeSpan(
+  text: string,
+  start: number
+): { end: number; segments: InlinePreviewSegment[] } | null {
+  if (text[start - 1] === '`') return null;
+  let run = 1;
+  while (text[start + run] === '`') run++;
+  const marker = '`'.repeat(run);
+  let j = start + run;
+  while (j < text.length) {
+    if (text[j] !== '`') {
+      j++;
+      continue;
+    }
+    let r = 1;
+    while (text[j + r] === '`') r++;
+    if (r === run) {
+      const content = text.slice(start + run, j);
+      if (content.length === 0 || content.includes('\n')) return null;
+      return {
+        end: j + r,
+        segments: [
+          { kind: 'delimiter', marker },
+          { kind: 'code', marker, content },
+          { kind: 'delimiter', marker },
+        ],
+      };
+    }
+    j += r;
+  }
+  return null;
+}
+
 function tryDelimiter(
   text: string,
   start: number,
@@ -109,32 +168,25 @@ function tryDelimiter(
   for (const spec of DELIMITERS) {
     if (!text.startsWith(spec.marker, start) || isEscapedAt(text, start)) continue;
 
-    if (
-      spec.marker.length === 1 &&
-      spec.kind !== 'code' &&
-      !singleMarkerMayOpen(text, start, spec.marker)
-    ) {
+    if (spec.kind === 'code') {
+      const code = tryCodeSpan(text, start);
+      if (code) return code;
       continue;
     }
+    if (spec.marker.length === 1 && !singleMarkerMayOpen(text, start, spec.marker)) {
+      continue;
+    }
+    if (spec.marker.startsWith('_') && isWordChar(text[start - 1])) continue;
     const contentStart = start + spec.marker.length;
-    const closeIdx = findUnescapedMarker(text, spec.marker, contentStart);
+    const closeIdx =
+      spec.marker.length > 1
+        ? findDoubleCloser(text, spec.marker, start)
+        : findUnescapedMarker(text, spec.marker, contentStart);
 
     if (closeIdx === -1) continue;
 
     const content = text.slice(contentStart, closeIdx);
     if (content.trim().length === 0) continue;
-    if (spec.kind === 'code' && content.includes('\n')) continue;
-
-    if (spec.kind === 'code') {
-      return {
-        end: closeIdx + spec.marker.length,
-        segments: [
-          { kind: 'delimiter', marker: spec.marker },
-          { kind: 'code', marker: spec.marker, content },
-          { kind: 'delimiter', marker: spec.marker },
-        ],
-      };
-    }
 
     const added = stylesForKind(spec.kind);
     const inner = parseInlineMarkdownPreview(
@@ -188,6 +240,16 @@ export function parseInlineMarkdownPreview(
       segments.push({ kind: 'escape', char: text[i + 1] });
       i += 2;
       continue;
+    }
+
+    // An autolinked URL is text: a `**` inside the address is not emphasis in the post.
+    if ((i === 0 || /[\s(]/.test(text[i - 1])) && (text[i] === 'h' || text[i] === 'w')) {
+      const url = URL_AT_RE.exec(text.slice(i));
+      if (url) {
+        textBuf += url[0];
+        i += url[0].length;
+        continue;
+      }
     }
 
     const del = tryDelimiter(text, i, inheritedStyles, inheritedMarkers);

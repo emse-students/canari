@@ -35,16 +35,37 @@ export function catalogPlaceholders(): FormatPlaceholders {
   };
 }
 
-/** A block marker at the start of a line: heading, quote, bullet or ordered item. */
-const ANY_BLOCK_RE = /^(#{1,6}[ \t]+|>[ \t]?|(?:[-*+]|\d+\.)[ \t]+)/;
-const BLOCK_RE = {
-  heading: /^#{1,6}[ \t]+/,
-  quote: /^>[ \t]?/,
-  list: /^(?:[-*+]|\d+\.)[ \t]+/,
-} as const;
+/**
+ * What a line carries before its text: indentation, quote levels (`> > `), then ONE block marker -
+ * a heading (`## `), a bullet or an ordered item (`1.` / `1)`), with its task box (`[ ]`). A nested
+ * item (`  - sub`) and a quoted one (`> - item`) are therefore recognised, and never wrapped.
+ */
+const LINE_PREFIX_RE =
+  /^([ \t]*)((?:>[ \t]?)*)(#{1,6}[ \t]+|(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?)?/;
+const HEADING_MARKER_RE = /^#/;
+const LIST_MARKER_RE = /^(?:[-*+]|\d)/;
+
+interface ParsedLine {
+  indent: string;
+  quotes: string;
+  marker: string;
+  rest: string;
+}
+
+function parseLine(text: string): ParsedLine {
+  const m = LINE_PREFIX_RE.exec(text) as RegExpExecArray;
+  const prefixLength = m[0].length;
+  return { indent: m[1], quotes: m[2], marker: m[3] ?? '', rest: text.slice(prefixLength) };
+}
+
+/** Length of everything before the text of the line - the part an inline marker must never wrap. */
+function prefixLength(text: string): number {
+  return text.length - parseLine(text).rest.length;
+}
+
 const BLOCK_PREFIX = { heading: '## ', quote: '> ', list: '- ' } as const;
 
-type BlockKind = keyof typeof BLOCK_RE;
+type BlockKind = keyof typeof BLOCK_PREFIX;
 type InlineKind = 'bold' | 'italic' | 'strikethrough' | 'code';
 
 /** `char` is the marker's character, `len` how many of it make ONE application. */
@@ -87,6 +108,8 @@ interface Segment {
   end: number;
   /** How the span is wrapped today: `inside` the span, `outside` it, or not at all. */
   wrapped: { where: 'inside' | 'outside' } | null;
+  /** Starts and ends with the marker but holds several spans (`**a** b **c**`): merge, not toggle. */
+  merge: boolean;
 }
 
 /**
@@ -100,7 +123,7 @@ function wrappingOf(
   start: number,
   end: number,
   kind: InlineKind
-): Segment['wrapped'] {
+): { where: 'inside' | 'outside'; conflict: boolean } | null {
   const { char, len } = INLINE[kind];
   const s = text.slice(start, end);
   const lead = runLength(s, char, false);
@@ -115,7 +138,42 @@ function wrappingOf(
     );
   }
   const on = kind === 'italic' ? count % 2 === 1 : count >= len;
-  return on ? { where } : null;
+  if (!on) return null;
+  // `**Prix** : 5 **ce soir**` selected whole STARTS and ENDS with the marker without being one
+  // span: a marker run of the same kind inside means two spans, so there is nothing to unwrap.
+  const inner = where === 'inside' ? s.slice(count, s.length - count) : s;
+  return { where, conflict: hasMarkerRun(inner, kind) };
+}
+
+/** Drops the runs of the marker that are exactly one application long (`**` for bold). */
+function removeExactRuns(s: string, kind: InlineKind): string {
+  const { char, len } = INLINE[kind];
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] !== char || s[i - 1] === '\\') {
+      out += s[i];
+      continue;
+    }
+    let run = 1;
+    while (s[i + run] === char) run++;
+    if (run !== len) out += char.repeat(run);
+    i += run - 1;
+  }
+  return out;
+}
+
+/** An unescaped run of the kind's marker inside `s` that would close or open a span of its own. */
+function hasMarkerRun(s: string, kind: InlineKind): boolean {
+  const { char, len } = INLINE[kind];
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] !== char) continue;
+    let run = 1;
+    while (s[i + run] === char) run++;
+    const escaped = s[i - 1] === '\\';
+    if (!escaped && (kind === 'italic' ? run % 2 === 1 : run >= len)) return true;
+    i += run - 1;
+  }
+  return false;
 }
 
 /**
@@ -142,19 +200,26 @@ function formatInline(
 
   if (selEnd > selStart) {
     for (const line of linesCovering(text, selStart, selEnd)) {
-      const prefix = ANY_BLOCK_RE.exec(line.text)?.[0].length ?? 0;
+      const prefix = prefixLength(line.text);
       let start = Math.max(selStart, line.start + prefix);
       let end = Math.min(selEnd, line.end);
       while (start < end && /\s/.test(text[start])) start++;
       while (end > start && /\s/.test(text[end - 1])) end--;
-      if (end > start) segments.push({ start, end, wrapped: wrappingOf(text, start, end, kind) });
+      if (end <= start) continue;
+      const state = wrappingOf(text, start, end, kind);
+      segments.push({
+        start,
+        end,
+        wrapped: state && !state.conflict ? { where: state.where } : null,
+        merge: !!state && state.conflict && state.where === 'inside',
+      });
     }
   }
 
   if (segments.length === 0) {
     // Nothing but whitespace, or nothing: a placeholder at the caret, past the line's block marker.
     const line = linesCovering(text, selStart, selStart)[0];
-    const prefix = ANY_BLOCK_RE.exec(line.text)?.[0].length ?? 0;
+    const prefix = prefixLength(line.text);
     const at = Math.max(selEnd, line.start + prefix);
     const start = at + marker.length;
     return {
@@ -193,7 +258,7 @@ function formatInline(
     } else {
       out += text.slice(cursor, seg.start) + marker;
       first = first === -1 ? out.length : first;
-      out += body;
+      out += seg.merge ? removeExactRuns(body, kind) : body;
       last = out.length;
       out += marker;
       cursor = seg.end;
@@ -228,29 +293,46 @@ function formatBlock(
     };
   }
 
-  const off = eligible.every((l) => BLOCK_RE[kind].test(l.text));
+  const has = (p: ParsedLine): boolean =>
+    kind === 'quote'
+      ? p.quotes !== ''
+      : kind === 'heading'
+        ? HEADING_MARKER_RE.test(p.marker)
+        : LIST_MARKER_RE.test(p.marker);
+  /** The new line, and where its text starts. Quotes and nesting survive; one marker per line. */
+  const rewrite = (p: ParsedLine, off: boolean): string => {
+    if (kind === 'quote') {
+      const quotes = off ? p.quotes.replace(/^>[ \t]?/, '') : '> ' + p.quotes;
+      return p.indent + quotes + p.marker + p.rest;
+    }
+    // A heading is not nested, so its indentation goes (4 spaces would make it code).
+    const indent = kind === 'heading' ? '' : p.indent;
+    return indent + p.quotes + (off ? '' : prefix) + p.rest;
+  };
+
+  const off = eligible.every((l) => has(parseLine(l.text)));
   let out = '';
   let cursor = 0;
   let first = -1;
   let last = 0;
-  let caretDelta = 0;
+  let caret = selStart;
   for (const line of eligible) {
-    const existing = ANY_BLOCK_RE.exec(line.text)?.[0] ?? '';
-    const body = line.text.slice(existing.length);
-    const next = off ? body : prefix + body;
+    const parsed = parseLine(line.text);
+    const next = rewrite(parsed, off);
     out += text.slice(cursor, line.start);
-    if (first === -1) first = out.length + (off ? 0 : prefix.length);
+    const textStart = out.length + next.length - parsed.rest.length;
+    if (first === -1) first = textStart;
+    if (line === eligible[0]) {
+      const column = Math.max(0, selStart - line.start - (line.text.length - parsed.rest.length));
+      caret = textStart + Math.min(column, parsed.rest.length);
+    }
     out += next;
     last = out.length;
     cursor = line.end;
-    if (line === eligible[0]) caretDelta = next.length - line.text.length;
   }
   out += text.slice(cursor);
 
-  if (selEnd === selStart) {
-    const caret = Math.max(first, selStart + caretDelta);
-    return { text: out, selStart: caret, selEnd: caret };
-  }
+  if (selEnd === selStart) return { text: out, selStart: caret, selEnd: caret };
   return { text: out, selStart: first, selEnd: last };
 }
 

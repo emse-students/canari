@@ -62,6 +62,6 @@ describe('preprocessPostMarkdown', () => {
   });
 
   it('moves the whitespace inside a double marker out, so a published `**x **` renders bold', () => {
-    expect(preprocessPostMarkdown('**TOP 5 MINIMOYS **')).toBe('**TOP 5 MINIMOYS** ');
+    expect(preprocessPostMarkdown('**TOP 5 MINIMOYS **')).toBe('**TOP 5 MINIMOYS**');
   });
 });
