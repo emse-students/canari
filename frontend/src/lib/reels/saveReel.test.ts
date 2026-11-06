@@ -44,6 +44,18 @@ describe('saveReel', () => {
     expect(d.release).toHaveBeenCalledWith(video);
   });
 
+  it('reads the video from `images` when the row carries no `media` (an older server)', async () => {
+    const d = deps(true);
+    const legacy: SaveableReel = { id: reel.id, createdAt: reel.createdAt, images: [video] };
+    expect(await saveReel(legacy, d)).toBe('saved');
+    expect(d.acquire).toHaveBeenCalledWith(video, 'https://media.test');
+  });
+
+  it('refuses a row with no video at all, as a GalleryError and not a TypeError', async () => {
+    const none: SaveableReel = { id: reel.id, createdAt: reel.createdAt };
+    await expect(saveReel(none, deps(true))).rejects.toThrow(/carries no video/);
+  });
+
   it('downloads it everywhere else', async () => {
     const d = deps(false);
     expect(await saveReel(reel, d)).toBe('downloaded');
