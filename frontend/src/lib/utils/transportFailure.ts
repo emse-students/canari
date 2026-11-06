@@ -58,26 +58,65 @@ export function isTransportFailure(error: unknown): boolean {
 }
 
 /**
- * A server or an EDGE ANSWERED, and the answer is not a verdict on the question asked: a 5xx, or a
- * 401/403 that came from the edge (a WAF ban page, a portal) rather than from the app. Typed at the
- * throw so the session boot reads it like a transport failure - the credential is untouched, so
- * "you are signed out" would be a lie - without anyone reading a sentence. The status travels as a field.
+ * The refresh endpoint ANSWERED, and the answer was not a token.
+ *
+ * THE MIRROR OF `SessionExpiredError` (`stores/auth.ts`), and the pair is the whole point: only the
+ * APP's own 401/403 proves the refresh cookie dead, because a 502 while the backend restarts during a
+ * deploy is a hiccup and logging the user out for it costs a full OIDC round trip. That care was
+ * spent at the throw and then lost one frame later - the other half arrived as a bare
+ * `new Error('Token refresh failed (HTTP 502)')`, and every caller that wanted to know which of the
+ * two it held had to read the sentence and find the digits in it. So the status travels as a FIELD.
+ *
+ * THE BASE, NOT THE VERDICT. Thrown as itself only for an APP-origin 4xx other than 401/403/408/429
+ * (a 404 or a 410 in Nest's envelope: the endpoint refuses the request outright and no retry changes
+ * that - the boot sends such a user to login, as before). Every answer that is NOT a verdict is the
+ * subclass {@link TransientAnswerError}. The callers with a retry ladder (`useChannelWorkspaces`,
+ * `mlsDeliveryApi`) test this base. It lives here, beside its subclass, so the boot's predicate
+ * ({@link isSessionQuestionOpen}) reads a type without importing the auth store, which re-exports it.
  */
-export class TransientAnswerError extends Error {
+export class RefreshFailedError extends Error {
   constructor(
-    /** The HTTP status that answered. */
+    /** The HTTP status the refresh endpoint answered with. Never an app 401 or 403 - those are the sibling. */
     readonly status: number,
-    message = `answered ${status}, not a verdict`
+    message = `Token refresh failed (HTTP ${status})`
   ) {
     super(message);
+    this.name = 'RefreshFailedError';
+  }
+}
+
+/**
+ * The refresh endpoint got an answer that is NOT A VERDICT on the session, classified at the throw
+ * (`refresh` in `stores/auth.ts`) from the status and from WHO answered (`refusalOrigin`), never from
+ * a sentence. Exactly this population:
+ * - a 5xx, whoever wrote it (a backend restarting, the edge's 502, core-service's 503 `MAINTENANCE`);
+ * - a 408 or a 429 (a proxy timed the request out, or it was rate-limited: ask again later);
+ * - any other status written by the EDGE rather than the app (a WAF ban page or a portal's HTML 403,
+ *   a JSON block page that is none of our envelopes).
+ *
+ * None of these touches the credential, so the boot reads them like a transport failure: "you are
+ * signed out" would be a lie. `status` and `code` travel as FIELDS so the boot screen can say which
+ * one it is (the network path, the server, a maintenance) without reading a sentence.
+ */
+export class TransientAnswerError extends RefreshFailedError {
+  constructor(
+    status: number,
+    /**
+     * The `code` of a JSON-typed body (`{ code, message }`: core-service's 503 `MAINTENANCE`), else
+     * null. Read for WORDING only, so the content type is proof enough (`responseOrigin`).
+     */
+    readonly code: string | null = null
+  ) {
+    super(status, `Token refresh answered ${status}${code ? ` (${code})` : ''} - not a verdict`);
     this.name = 'TransientAnswerError';
   }
 }
 
 /**
  * True when the session question stays OPEN after `error`: nobody answered
- * ({@link isTransportFailure}) or the answer was not a verdict ({@link TransientAnswerError}).
- * Only a 401/403 from the app itself may end a session.
+ * ({@link isTransportFailure}) or the answer was not a verdict ({@link TransientAnswerError}). The
+ * app's own 401/403 (`SessionExpiredError`) and an app-origin 4xx ({@link RefreshFailedError} itself)
+ * close it.
  */
 export function isSessionQuestionOpen(error: unknown): boolean {
   return isTransportFailure(error) || error instanceof TransientAnswerError;

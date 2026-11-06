@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { CloudOff, Loader2 } from '@lucide/svelte';
+  import { CloudOff, Loader2, ServerCrash, Wrench } from '@lucide/svelte';
   import { page } from '$app/state';
   import {
     bootSessionBlocks,
     bootSessionPhase,
+    bootUnreachableCause,
     noteSessionKnownElsewhere,
     retryBootSession,
   } from '$lib/stores/bootSession.svelte';
@@ -14,8 +15,10 @@
 
   /**
    * What the screen says while the session question is open (`bootSession`): a boot state, then -
-   * only if the question got NO answer - an explicit statement that Canari cannot be reached from
-   * this network. It covers the shell; the layout does not mount the page underneath and makes the
+   * only if the question got no VERDICT - an explicit statement of WHO failed, from the cause the store
+   * typed (`bootUnreachableCause`): this network (nobody answered, or the edge refused the path), the
+   * server (a 5xx, 408, 429), or a maintenance (core-service's 503 `MAINTENANCE`, worded like the
+   * platform gate). It covers the shell; the layout does not mount the page underneath and makes the
    * shell `inert`, so Tab cannot reach what the screen hides.
    *
    * ONLY THE ONE-LINE STATE IS A LIVE REGION: a heading and a button inside `aria-live` are
@@ -24,6 +27,28 @@
    */
   const blocked = $derived(bootSessionBlocks(page.url.pathname));
   const unreachable = $derived(bootSessionPhase() === 'unreachable');
+  const copy = $derived.by(() => {
+    switch (bootUnreachableCause()) {
+      case 'maintenance':
+        return {
+          icon: Wrench,
+          title: m.platform_gate_maintenance_title(),
+          hint: m.platform_gate_maintenance_default_msg(),
+        };
+      case 'server':
+        return {
+          icon: ServerCrash,
+          title: m.boot_server_error_title(),
+          hint: m.boot_server_error_hint(),
+        };
+      case 'network':
+        return {
+          icon: CloudOff,
+          title: m.boot_unreachable_title(),
+          hint: m.boot_unreachable_hint(),
+        };
+    }
+  });
   let retryButton = $state<HTMLButtonElement | null>(null);
 
   // A session known by another road (another caller's refresh answered, the unlock completed) ends
@@ -51,16 +76,16 @@
   dismissible={false}
   layer="critical"
   scrim={false}
-  label={unreachable ? m.boot_unreachable_title() : m.boot_connecting()}
+  label={unreachable ? copy.title : m.boot_connecting()}
   panelClass="bg-cn-bg text-text-main fixed inset-0 flex flex-col items-center justify-center gap-4 p-6 text-center"
 >
   <div class="contents" data-testid="boot-gate">
     {#if unreachable}
-      <CloudOff size={40} class="text-text-muted" aria-hidden="true" />
+      <copy.icon size={40} class="text-text-muted" aria-hidden="true" />
       <p class="text-lg font-bold" role="status" aria-live="polite">
-        {m.boot_unreachable_title()}
+        {copy.title}
       </p>
-      <p class="text-text-muted max-w-sm text-sm">{m.boot_unreachable_hint()}</p>
+      <p class="text-text-muted max-w-sm text-sm">{copy.hint}</p>
       <button
         bind:this={retryButton}
         type="button"

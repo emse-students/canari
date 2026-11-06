@@ -1,5 +1,11 @@
 // @vitest-environment happy-dom
-import { TransientAnswerError } from '$lib/utils/transportFailure';
+import { NotFromApiError } from '$lib/utils/apiJson';
+import {
+  isSessionQuestionOpen,
+  isTransportFailure,
+  RefreshFailedError,
+  TransientAnswerError,
+} from '$lib/utils/transportFailure';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -90,7 +96,64 @@ describe('the session-expired announcement', () => {
     setSessionExpiredHandler(handler);
     fetchMock.mockResolvedValue(answer(503));
 
-    await expect(refresh()).rejects.toThrow();
+    // TYPED AT THE THROW: a 503 is no verdict, so the boot keeps the session question open.
+    const outcome = await refresh().catch((e: unknown) => e);
+    expect(outcome).toBeInstanceOf(TransientAnswerError);
+    expect((outcome as TransientAnswerError).status).toBe(503);
+    expect((outcome as TransientAnswerError).code).toBeNull();
+    expect(isSessionQuestionOpen(outcome)).toBe(true);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("carries core-service's 503 MAINTENANCE code as a field, so the boot names a maintenance", async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    fetchMock.mockResolvedValue(
+      Response.json({ code: 'MAINTENANCE', message: 'Back soon' }, { status: 503 })
+    );
+
+    const outcome = await refresh().catch((e: unknown) => e);
+    expect(outcome).toBeInstanceOf(TransientAnswerError);
+    expect((outcome as TransientAnswerError).code).toBe('MAINTENANCE');
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it.each([408, 429])('reads a %i as no verdict', async (status) => {
+    fetchMock.mockResolvedValue(answer(status));
+
+    const outcome = await refresh().catch((e: unknown) => e);
+    expect(outcome).toBeInstanceOf(TransientAnswerError);
+  });
+
+  it.each([404, 410])(
+    "reads the app's own %i (Nest's envelope) as a verdict on the request: the base type, question closed",
+    async (status) => {
+      const handler = vi.fn();
+      setSessionExpiredHandler(handler);
+      fetchMock.mockResolvedValue(answer(status));
+
+      const outcome = await refresh().catch((e: unknown) => e);
+      expect(outcome).toBeInstanceOf(RefreshFailedError);
+      expect(outcome).not.toBeInstanceOf(TransientAnswerError);
+      expect(outcome).not.toBeInstanceOf(SessionExpiredError);
+      expect(isSessionQuestionOpen(outcome)).toBe(false);
+      expect(handler).not.toHaveBeenCalled();
+    }
+  );
+
+  it("reads a captive portal's 200 text/html as NO answer, never a SyntaxError", async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    fetchMock.mockResolvedValue(
+      new Response('<html>Sign in to the hotel Wi-Fi</html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      })
+    );
+
+    const outcome = await refresh().catch((e: unknown) => e);
+    expect(outcome).toBeInstanceOf(NotFromApiError);
+    expect(isTransportFailure(outcome)).toBe(true);
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -253,7 +316,10 @@ describe('a token for another account than the local identity', () => {
   /** A refresh answer whose token names `sub`. */
   function answerFor(sub: string): Response {
     const claims = btoa(JSON.stringify({ sub, exp: Math.floor(Date.now() / 1000) + 3600 }));
-    return new Response(JSON.stringify({ access_token: `h.${claims}.s` }), { status: 200 });
+    return new Response(JSON.stringify({ access_token: `h.${claims}.s` }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
   }
 
   it('throws IdentitySplitError, publishes nothing and keeps the MLS state', async () => {
@@ -297,7 +363,7 @@ describe('a refresh superseded by a sign-in as another account', () => {
     fetchMock.mockImplementation(async () => {
       // The sign-in saves the new identity while the request is out.
       currentUserId.mockReturnValue('new-user');
-      return new Response(JSON.stringify({ access_token: claims('old-user') }), { status: 200 });
+      return Response.json({ access_token: claims('old-user') });
     });
 
     await expect(refresh()).resolves.toBe(claims('new-user'));
