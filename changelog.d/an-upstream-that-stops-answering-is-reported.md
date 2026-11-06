@@ -1,3 +1,3 @@
-### Added - a public name whose tunnel has no connector is reported within 15 minutes
+### Added - a public name that stops answering opens an issue, once
 
-The gallery's five-hour outage and the dev connector's 25 minutes of 2026-11-05 reported nothing; the `upstream` job of `scheduled.yml` now asks the gallery, dev, the legacy name and production every 15 minutes, classes each failure and goes red ([upstream-reachability](docs/wiki/infrastructure/upstream-reachability.md)).
+The gallery's five-hour outage and a tunnel connector's 25 minutes of 2026-11-05 reported nothing; the `upstream` job of `scheduled.yml` now probes the gallery, dev, the legacy name and production, suspects a first failure, opens one issue on the second consecutive one and closes it with the downtime ([upstream-reachability](docs/wiki/infrastructure/upstream-reachability.md)).

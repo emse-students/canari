@@ -10,8 +10,8 @@ connector. The gallery runs on its own host, outside this estate. The effect, re
 
 Nothing told anyone. The owner heard it from users.
 
-**Built 2026-11-06:** the report. The `upstream` job of `scheduled.yml` asks the gallery's health route every
-15 minutes from outside and goes red naming the class and status
+**Built 2026-11-06:** the report. The `upstream` job of `scheduled.yml` asks the gallery's health route from
+outside and opens one issue per outage, naming the class, the status and since when
 ([upstream-reachability](../infrastructure/upstream-reachability.md)). It also covers the tunnel entry
 ([tunnel](p2-the-tunnel-connector-lost-every-connection-for-25-minutes.md)).
 
@@ -26,5 +26,5 @@ Nothing told anyone. The owner heard it from users.
      avatar.
 
    Le Cercle's `[MIGALLERY]` fetch needs the same treatment, in its own repository.
-2. **One reading of the report on a real failure** (or a dispatch of job `upstream` against a stubbed target),
-   to see the red run and its annotation.
+2. **One reading of the report on a real failure**, or the drill the wiki page describes, to see an issue open
+   and close.

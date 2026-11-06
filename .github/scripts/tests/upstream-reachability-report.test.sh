@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 #
-# Does the upstream report name every unreachable public name, class it by cause, and never read a
-# transport failure as health? Run against a `curl` stub (no network).
+# Does the upstream reachability report class every reading by cause and never read a transport
+# failure as health? Run against a `curl` stub (no network).
 #
-#  - 200 passes; 530 with Cloudflare 1033 fails as tunnel-down; 502 as origin-failing;
-#  - a connection with no HTTP answer fails as unreachable, never as up;
-#  - one bad attempt followed by a good one passes (a blink is not a reading);
-#  - one failing target among healthy ones fails the run and names only that target.
+#  - 200 is up; 530 with Cloudflare 1033 is tunnel-down; a 530 without it is "unclassified-530";
+#    502 is origin-failing; no HTTP answer is unreachable, never up;
+#  - one bad attempt followed by a good one is up (a blink is not a reading);
+#  - a finding exits 0 (data, not a fault); only an empty target list exits 2;
+#  - the probe sends a recognisable User-Agent and probes the targets in parallel.
 #
 # Run by `make test-ci-scripts`.
 set -uo pipefail
@@ -56,43 +57,53 @@ set_stub() {
 }
 run() {
   local want="$1" label="$2" got
-  OUT="$(CURL="$TMP/curl" STUB_DIR="$TMP" UPSTREAM_SPACING=0 UPSTREAM_TARGETS="$TARGETS" bash "$SCRIPT" 2>&1)"
+  OUT="$(CURL="$TMP/curl" STUB_DIR="$TMP" UPSTREAM_SPACING=0 UPSTREAM_RESULTS="$TMP/results.tsv" UPSTREAM_TARGETS="$TARGETS" bash "$SCRIPT" 2>&1)"
   got=$?
   if [ "$got" = "$want" ]; then ok "$label"; else fail "$label (exit $got, wanted $want): $OUT"; fi
 }
-has() {
-  if printf '%s' "$OUT" | grep -qF "$1"; then ok "output has: $1"; else fail "output lacks: $1 ($OUT)"; fi
+class_of() { awk -F'\t' -v n="$1" '$1 == n {print $2}' "$TMP/results.tsv"; }
+expect_class() {
+  if [ "$(class_of "$1")" = "$2" ]; then ok "$1 is read as $2"; else fail "$1 read as '$(class_of "$1")', wanted $2"; fi
 }
 
 TARGETS='a|https://a.test/h
 b|https://b.test/h'
 set_stub https://a.test/h '200|ok'
 set_stub https://b.test/h '200|ok'
-run 0 'all up passes'
+run 0 'all up exits 0'
+expect_class a up
+expect_class b up
 
 set_stub https://b.test/h '530|error code: 1033'
-run 1 'a tunnel without connector fails'
-has 'upstream b is tunnel-down (HTTP 530'
-if printf '%s' "$OUT" | grep -q 'upstream a '; then fail 'the healthy target was named'; else ok 'the healthy target is not named'; fi
+run 0 'a down target is a reading, not a fault of the script'
+expect_class b tunnel-down
+expect_class a up
 
 set_stub https://b.test/h '530|some other body'
-run 1 'a 530 that is not a 1033 is not called a tunnel'
-has 'origin-failing'
+run 0 'a 530 without 1033'
+expect_class b unclassified-530
 
 set_stub https://b.test/h '502|bad'
-run 1 'a 502 fails'
-has 'origin-failing'
+run 0 'a 502'
+expect_class b origin-failing
 
 set_stub https://b.test/h 'fail|'
-run 1 'no HTTP answer fails'
-has 'unreachable'
+run 0 'no HTTP answer'
+expect_class b unreachable
 
 set_stub https://b.test/h 'fail|' '200|ok'
-run 0 'one blink followed by an answer passes'
+run 0 'one blink followed by an answer'
+expect_class b up
 
 set_stub https://b.test/h '404|nope'
-run 1 'an unexpected status fails'
-has 'unexpected'
+run 0 'an unexpected status'
+expect_class b unexpected
+
+if grep -q 'canari-upstream-monitor' "$SCRIPT" && grep -qE -- '-A "\$UA"' "$SCRIPT"; then ok 'the probe sends a recognisable User-Agent'; else fail 'no User-Agent'; fi
+if grep -qE 'probe_one .* &$' "$SCRIPT" && grep -q '^wait$' "$SCRIPT"; then ok 'targets are probed in parallel'; else fail 'targets are probed in sequence'; fi
+
+TARGETS=''
+run 2 'no target at all is a fault of the script'
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
