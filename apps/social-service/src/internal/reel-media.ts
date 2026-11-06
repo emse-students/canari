@@ -91,6 +91,18 @@ export async function purgeChatReelMedia(
   return postPurgeBatches(http, 'media/internal/chat-reel-purge', items, {});
 }
 
+/**
+ * Deletes a withdrawn queued post's uploaded media, each under its uploader, that the caller has
+ * checked NO live post or comment cites (`PostMediaRetentionService.deleteWithdrawnMedia`). The media
+ * service deletes only its owner's `archive` object. Outcomes and throwing as {@link purgeReelMedia}.
+ */
+export async function deleteNeverCitedMedia(
+  http: HttpService,
+  items: Array<{ mediaId: string; ownerId: string }>
+): Promise<Record<string, ReelPurgeOutcome>> {
+  return postPurgeBatches(http, 'media/internal/own-archive-delete', items, {});
+}
+
 /** One POST per batch of {@link BATCH_SIZE}, the outcomes merged worst-first. */
 async function postPurgeBatches(
   http: HttpService,

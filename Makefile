@@ -330,6 +330,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/deploy-env.test.sh
 	@bash .github/scripts/tests/env-from-prod.test.sh
 	@bash .github/scripts/tests/deploy-migrations.test.sh
+	@bun .github/scripts/tests/migration-numbers.test.mjs
 	@bash .github/scripts/tests/deploy-registry-retry.test.sh
 	@bash .github/scripts/tests/deploy-replace.test.sh
 	@bash .github/scripts/tests/deploy-rolling.test.sh

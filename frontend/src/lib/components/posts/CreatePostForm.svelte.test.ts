@@ -10,6 +10,7 @@ import { flushSync, mount, tick, unmount } from 'svelte';
 import CreatePostForm from './CreatePostForm.svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import { m } from '$lib/paraglide/messages';
+import { setCurrentUserId } from '$lib/stores/userState.svelte';
 import {
   ANONYMOUS_POST_IDENTITY,
   forgetPostComposerMedia,
@@ -28,6 +29,9 @@ vi.mock('$lib/stores/toast.svelte', async (orig) => ({
 }));
 vi.mock('$lib/moderation/muteCheck', () => ({ assertNotMuted: () => Promise.resolve() }));
 vi.mock('$lib/forms/api', () => ({ getForms: () => Promise.resolve([]) }));
+// The composer hands the post to the background publish queue; what it hands over is the assertion.
+const enqueuePost = vi.hoisted(() => vi.fn((..._args: unknown[]) => Promise.resolve()));
+vi.mock('$lib/posts/publishQueue/publishQueue.svelte', () => ({ enqueuePost }));
 vi.mock('$lib/associations/api', async (orig) => ({
   ...(await orig<typeof import('$lib/associations/api')>()),
   listLinkableValidatedCalendarEvents: () => Promise.resolve([]),
@@ -60,6 +64,8 @@ const revoked: string[] = [];
 
 beforeEach(() => {
   localStorage.setItem('canari_saved_user', 'user-a');
+  setCurrentUserId('user-a');
+  enqueuePost.mockClear();
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.stubGlobal(
     'URL',
@@ -289,5 +295,23 @@ describe('CreatePostForm - where a post lands', () => {
     publish.click();
     for (let i = 0; i < 6; i++) await tick();
     expect(onPostCreated).toHaveBeenCalledWith('all');
+  });
+});
+
+describe('CreatePostForm - a published post takes its media with it', () => {
+  it('the media handed to the publish queue are not offered again at the next open', async () => {
+    const first = await open();
+    // The parent unmounts the composer the moment it is told the post is created, before any
+    // effect of the composer flushes again.
+    first.onPostCreated.mockImplementation(() => unmount(mounted.pop()!));
+    pick(first.target, new File(['photo'], 'p.jpg', { type: 'image/jpeg' }));
+    const publish = [...first.target.querySelectorAll<HTMLButtonElement>('button')].find(
+      (b) => b.textContent?.trim() === m.post_create_publish_button_label()
+    )!;
+    publish.click();
+    for (let i = 0; i < 6; i++) await tick();
+    expect(enqueuePost).toHaveBeenCalledTimes(1);
+    expect(first.onPostCreated).toHaveBeenCalledTimes(1);
+    expect(heldPostComposerMedia()).toEqual([]);
   });
 });

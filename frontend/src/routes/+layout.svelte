@@ -55,6 +55,8 @@
   import { startDeletedAccountGuards } from '$lib/utils/deletedAccountGuards';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
   import OfflineBanner from '$lib/components/shared/OfflineBanner.svelte';
+  import PublishQueueBanner from '$lib/components/posts/PublishQueueBanner.svelte';
+  import { startPublishQueue, stopPublishQueue } from '$lib/posts/publishQueue/publishQueue.svelte';
   import SlowLinkAnnouncer from '$lib/components/shared/SlowLinkAnnouncer.svelte';
   import OpenInAppBanner from '$lib/components/shared/OpenInAppBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
@@ -269,6 +271,15 @@
 
       return () => clearTimeout(timer);
     }
+  });
+
+  // -- The background publish queue: the signed-in account's queued posts go on being sent -----
+  // Started once the session is up (its requests need the token), stopped at sign-out; what it holds
+  // stays on the device, so the account's next sign-in resumes it (`posts/publishQueue`).
+  $effect(() => {
+    const userId = globalSession.isLoggedIn ? globalSession.userId : null;
+    if (userId) startPublishQueue(userId);
+    else stopPublishQueue();
   });
 
   // -- The banner column's height, published so the floating cards can follow it ------------
@@ -741,6 +752,8 @@
          transient. -->
     <TabFollowerBanner />
     <OfflineBanner />
+    <!-- A post being sent in the background (owner, 2026-11-06): one discreet row per queued post. -->
+    <PublishQueueBanner />
     <SlowLinkAnnouncer />
     <!-- Only inside the browser built into Messenger, Facebook or Instagram; it decides itself. -->
     <OpenInAppBanner />

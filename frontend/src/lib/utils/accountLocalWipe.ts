@@ -1,6 +1,7 @@
 import { closeCachedStore, closeOpenIndexedDbStores } from '$lib/db';
 import { closeOutboxBlobStores } from '$lib/db/outboxBlob';
 import { closeMlsDb } from '$lib/utils/hex';
+import { publishQueueDbName } from '$lib/posts/publishQueue/publishQueueStore';
 import { clearDeviceKey } from '$lib/utils/deviceKeyVault';
 import { deleteIndexedDbByName } from '$lib/utils/indexedDbDelete';
 import { dropUploadReleaseMarksOf } from '$lib/utils/chat/uploadReleaseMarks';
@@ -31,7 +32,14 @@ export {
 
 /** The IndexedDB databases keyed by an account id, all of which die with that account. */
 export function accountIndexedDbNames(userId: string): string[] {
-  return [`CanariDB_${userId}`, `CanariDBOutbox_${userId}`, `CanariDBMls_${userId}`];
+  return [
+    `CanariDB_${userId}`,
+    `CanariDBOutbox_${userId}`,
+    `CanariDBMls_${userId}`,
+    // The posts waiting to be published, and their media in the clear: a deleted or revoked
+    // account's photos must not outlive it on the device.
+    publishQueueDbName(userId),
+  ];
 }
 
 /**

@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { publishQueueDbName } from '$lib/posts/publishQueue/publishQueueStore';
 import { loadDeviceKey, saveDeviceKey } from './deviceKeyVault';
 import {
   accountIndexedDbNames,
@@ -110,6 +111,11 @@ describe('wipeDeletedAccountLocalData', () => {
     // Never the in-app log or another account's database.
     expect(order.join(' ')).not.toContain('user-b');
     expect(order.join(' ')).not.toContain('CanariDBLog');
+  });
+
+  it("deletes that account's publish queue: its media wait there in the clear", () => {
+    expect(accountIndexedDbNames('user-a')).toContain(publishQueueDbName('user-a'));
+    expect(publishQueueDbName('user-a')).toBe('CanariDBPublish_user-a');
   });
 
   it("a revoked device's account wipe does not mark the account deleted - it may sign in here again", async () => {

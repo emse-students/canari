@@ -1855,6 +1855,60 @@ export class MediaService {
     await this.persistMetadata();
   }
 
+  /**
+   * THE UPLOADER TAKES BACK A POST MEDIA THAT NO POST WILL CITE: the app's publish queue, when the
+   * member deletes a queued post whose files were already uploaded (frontend
+   * `posts/publishQueue/`). An `archive` object is exempt from the idle sweep, so without this it
+   * would stay for ever, cited by nothing.
+   *
+   * Narrow on purpose: the entry's recorded uploader is `ownerId` (none recorded: refused, never on
+   * trust) and its class is `archive` (a post's media - never a reel, a chat file, a form file, a
+   * poster or a public asset). Owner and class do NOT prove the object is uncited - an uploader's
+   * `archive` objects include the media of posts already published, an association's among them,
+   * which a former admin would otherwise strip. So it is reached only through
+   * `internal/own-archive-delete`, from social-service's withdrawal, which checked that no live
+   * post or comment cites the id (review of #3061).
+   *
+   * @returns `deleted`, `absent` (unknown or already purged: the same end state, so idempotent), or
+   *          `refused` (not theirs, or not a post's media).
+   */
+  async removeOwnArchive(
+    mediaId: string,
+    ownerId: string
+  ): Promise<'deleted' | 'absent' | 'refused'> {
+    if (!UUID_REGEX.test(mediaId)) throw new BadRequestException('Invalid mediaId');
+    const entry = this.meta.items[mediaId];
+    if (!entry || entry.purgedAt) {
+      this.logger.log(`media ${mediaId}: withdrawal by its uploader - already gone`);
+      return 'absent';
+    }
+    if (
+      !entry.ownerId ||
+      entry.ownerId !== ownerId ||
+      entry.retentionClass !== 'archive' ||
+      this.isPublicAssetEntry(entry)
+    ) {
+      // Name only the conditions that failed: a line that lists both sends its reader after the
+      // wrong one.
+      const why = [
+        !entry.ownerId
+          ? 'no uploader recorded'
+          : entry.ownerId !== ownerId
+            ? 'another uploader'
+            : null,
+        entry.retentionClass !== 'archive'
+          ? `class ${entry.retentionClass ?? 'unclassified'}, not archive`
+          : null,
+        this.isPublicAssetEntry(entry) ? 'a public asset' : null,
+      ].filter((reason): reason is string => reason !== null);
+      this.logger.warn(`media ${mediaId}: withdrawal by ${ownerId} refused (${why.join('; ')})`);
+      return 'refused';
+    }
+    await this.remove(mediaId);
+    this.logger.log(`media ${mediaId}: withdrawn by its uploader, its post was never published`);
+    return 'deleted';
+  }
+
   async remove(mediaId: string): Promise<void> {
     // Validate mediaId is a UUID to prevent prototype pollution via property key injection.
     if (!UUID_REGEX.test(mediaId)) {

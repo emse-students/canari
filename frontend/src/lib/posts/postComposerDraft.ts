@@ -1,3 +1,4 @@
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { getSavedUserId } from '$lib/stores/user';
 import { emptyPollOptions, newPollOption, type PollDraftOption } from './pollDraft';
 
@@ -49,11 +50,10 @@ export interface PostComposerDraft {
 const UNOWNED_DRAFT_KEY = 'canari_post_composer_draft';
 /** Legacy markdown-only key, also unowned: dropped with the other one. */
 const LEGACY_MARKDOWN_DRAFT_KEY = 'canari_post_draft';
-const POST_COMPOSER_DRAFT_KEY_PREFIX = 'canari_post_composer_draft:';
 
 /** The storage key of ONE account's draft: the draft is owned by the user id, not by the device. */
 export function postComposerDraftKey(userId: string): string {
-  return `${POST_COMPOSER_DRAFT_KEY_PREFIX}${userId}`;
+  return ACCOUNT_KEY.postComposerDraft(userId);
 }
 
 /**
