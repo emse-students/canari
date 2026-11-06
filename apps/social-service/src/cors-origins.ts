@@ -89,7 +89,11 @@ const logger = new Logger('Cors');
  */
 export const EDGE_OWNED_CORS_PREFIXES = ['/api/public/'] as const;
 
-/** True when the edge nginx, not this service, decides the CORS answer for `url`. */
+/**
+ * True when the edge nginx, not this service, decides the CORS answer for `url`. A path nginx would
+ * normalise to a public one (`//api/public/x`, `/api/%70ublic/x`) is NOT recognised here and still
+ * logs a denial: the safe direction, since a missed skip is noise and a wrong skip hides a refusal.
+ */
 export function isEdgeOwnedCorsPath(url: string | undefined): boolean {
   if (!url) return false;
   // nginx normalises `..` and percent-encoded dots and slashes before choosing a location, so a
@@ -164,8 +168,10 @@ export function corsOriginDelegate(
 export const CORS_PREFLIGHT_MAX_AGE_S = 7200;
 
 /**
- * The options every service hands `app.enableCors`: the allowlist, credentials, the preflight cache,
- * and the response headers THIS service's clients read beyond the safelisted ones.
+ * The per-request options DELEGATE every service hands `app.enableCors`: for each request it answers
+ * the allowlist, credentials, the preflight cache and the response headers THIS service's clients read
+ * beyond the safelisted ones. It is a delegate (not a plain object) because the denial log depends on
+ * the request path, see {@link isEdgeOwnedCorsPath}.
  *
  * `allowedHeaders` IS ABSENT ON PURPOSE: the `cors` package then names back exactly the headers the
  * preflight asked for. A `*` would NOT cover `Authorization` (Fetch standard), and every phone read
