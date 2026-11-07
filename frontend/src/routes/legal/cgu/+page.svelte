@@ -249,8 +249,10 @@
         <dt>Vos outils</dt>
         <dd>
           Vous pouvez retirer un spectateur de votre direct et masquer un message du chat. Vous et
-          les spectateurs voyez combien de personnes regardent, jamais qui. Un blocage, dans un sens
-          ou dans l'autre, empêche de voir le direct de l'autre.
+          les spectateurs voyez combien de personnes regardent ; à l'arrivée de chacun, une ligne «
+          X a rejoint » s'affiche dans le chat (trois noms au plus à la fois, le reste est compté),
+          sauf pour les comptes liés par un blocage. Un blocage, dans un sens ou dans l'autre,
+          empêche de voir le direct de l'autre.
         </dd>
       </div>
       <div>

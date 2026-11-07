@@ -426,8 +426,10 @@ the first public live** (not a change: a question).
 and so does its broadcaster.** The number is EXACT, not rounded - confirmed by the owner
 2026-10-21 ([below](#exact-not-rounded---confirmed-by-the-owner-2026-10-21)). Before it, nobody saw a number and the broadcaster had no list
 either: no route answers viewer ids (the broadcaster learns an account id only from a chat line's
-author, which is how a removal names one). That stays true - **a COUNT, never an identity and never a
-list, to anybody: the broadcaster, a viewer, staff.**
+author, which is how a removal names one). ~~That stays true - **a COUNT, never an identity and never a
+list, to anybody: the broadcaster, a viewer, staff.**~~ **REVERSED ON 2026-11-07 for ARRIVALS, by the
+owner** ([below](#arrival-lines-owner-2026-11-07)): the count itself is still a count, and no route
+lists who is watching at a given moment, but an arrival is now named in the chat.
 
 **A viewer is a SEAT** - an account holding one on this live (above): taken by the key read, renewed
 by every manifest poll, gone on `DELETE .../seat`, a removal, the live's end, or 30 s without a poll.
@@ -477,6 +479,54 @@ makes the number useless as "how many are here", and it only moves the tell to t
 count carries no identity, the chat already shows its writers' names to the same audience, and an
 arrival is otherwise invisible. So "like Instagram" was taken literally: the exact number, to the
 broadcaster and the viewers alike, with no asymmetry between them.
+
+## Arrival lines (owner, 2026-11-07)
+
+**The decision, and the rule it reverses.** The owner decided on 2026-11-07 that "X a rejoint" lines are
+VISIBLE TO EVERY VIEWER, rate-limited (decision 12 of the owner's list of that day,
+`docs/wiki/backlog.d/owner-decisions-of-2026-11-07.md`), answering knowing it shows everyone who
+joined. It deliberately reverses "a count, never an identity" for ARRIVALS ([above](#the-viewer-count-2026-10-21)),
+and the reasoning of [exact, not rounded](#exact-not-rounded---confirmed-by-the-owner-2026-10-21) ("an
+arrival is otherwise invisible") no longer holds: an arrival is now the one thing shown. What stays:
+no route answers the list of who watches NOW, and the count is unchanged.
+
+**What is recorded, where.** Redis, no table, no migration: per live, a set of who arrived
+(`live:arrived:<id>`, the dedupe), a counter and a log of the newest 100 (`live:arrivalseq:<id>`,
+`live:arrivals:<id>`). `NOTE_ARRIVAL_LUA` is ONE script: `SADD` is the dedupe, so a seat that lapsed
+and was taken again, or a flapping network, announces nobody twice; the counter orders the log.
+Every key expires 6 h after its last write and `purgeEnded` deletes them with the live (an account
+erasure leaves an id in them only for the live's life - the register, C19).
+
+**Who is announced, and to whom.** The note is written by `LivesService.takeSeat`, the one place a seat
+is taken, AFTER the watch rule - so a removed, blocked or hidden-from viewer never reaches it:
+- a reader the chat is WITHHELD from (a named reader, owner 2026-11-04) is NEVER noted, and is served no
+  arrival fields on their own poll either - they take no part in the chat, so nobody is told they are
+  here and they are shown none;
+- the BROADCASTER takes no seat and is never announced; a reader is never shown their own arrival;
+- at READ (`LivesService.readArrivals`, per reader): an account blocked in EITHER direction
+  (`blockedUserIdsFor`) is dropped, and so is a viewer the broadcaster removed (`live_removed_viewers`),
+  whenever the removal came - a removal after the arrival hides the line from later polls.
+
+**The rate rule is a count, never a clock.** A poll names at most `LIVE_ARRIVALS_PER_POLL` (3) arrivals
+and folds the rest of what it read into `arrivalsMore` (the client's "et N autres ont rejoint"); the
+cursor (`arrivalsAfter` / `arrivalsCursor`) passes EVERYTHING read, filtered or folded, so nothing is
+served twice. One poll reads at most 50 (above the viewer cap). A first poll (no cursor) reads only the
+log's top: **a joiner is told no history.**
+
+**How it rides.** The manifest poll's `chat` block, next to the messages, behind the same `chat=1`:
+`arrivals: [{ userId, seq }]`, `arrivalsMore`, `arrivalsCursor`. NOT SEALED, unlike a chat line: the
+message is sealed by the author's client because the server cannot read what a client wrote, but an
+arrival is observed by the server itself, which holds the live key anyway; sealing it would hide it
+from nobody. The client resolves each name as it does a chat author's (`resolveUserDisplayName`), so
+the server carries an id and no display name. If Redis does not answer, the fields are OMITTED (logged
+`[LIVE_ARRIVAL]`, an error) and the client keeps its cursor: an outage costs lines, never the poll; a
+failed note never fails the seat.
+
+**Tests.** `live-seats.spec.ts` (the scripts against a real Redis: once per viewer, order, a first poll,
+trimming, expiry, per-live), `lives.integration.spec.ts` "the arrival lines" (once, never the
+broadcaster or oneself, the 3 + N rule, a block either way, a removal, an outage, the purge, a withheld
+reader), `lives.controller.spec.ts` (the fields ride the block and never reach a withheld reader).
+Client: [live](../frontend/modules/live.md#the-chat-readable-over-the-video-and-the-host-mark-2026-11-07).
 
 ## The key (Q4): served like a post CEK, removal enforced by the server
 

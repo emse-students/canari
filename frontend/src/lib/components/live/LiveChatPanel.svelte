@@ -378,6 +378,11 @@
       0 0.0625rem 0.125rem color-mix(in srgb, var(--color-cn-scrim) 90%, transparent),
       0 0 0.5rem color-mix(in srgb, var(--color-cn-scrim) 70%, transparent);
   }
+  /* An arrival is quieter than a message: smaller (`text-xs` in markup) and a little dimmer. */
+  .live-chat-arrival {
+    color: color-mix(in srgb, white 80%, transparent);
+    font-weight: 400;
+  }
   /* The broadcaster's lines are marked: a small amber pill after the name. */
   .live-chat-host {
     display: inline-block;
