@@ -64,22 +64,43 @@ Context it must respect, and which nothing here changes:
 8. **Suggested posts in the feed**: popular posts already visible in the viewer's space, marked
    "Suggestion", with Suivre in the header. Nothing the viewer could not already see.
 
+### Third batch (owner, 2026-11-07)
+
+9. **Friends' activity (5b).** It has a setting to hide your own activity. The setting is ON by
+   default (activity visible), and each person can turn it off in Settings.
+10. **The bell's default.** Following an account sets it to "posts and lives". The bell is how you
+    reduce what you get. A no-row state therefore means posts and lives, so check that L3 matches.
+11. **The daily cap.** It applies ONLY to the new engagement notifications: friends' activity, campus
+    trends, suggestions and suggested content. It never applies to shotgun openings or association
+    posts, and nothing that exists today changes. Messages, mentions, replies, calls and comments or
+    reactions on your own content are never capped either (L5 stands).
+12. **"X a rejoint" in a live's chat** is visible to every viewer, rate-limited. This is for the
+    live-chat work, so just record it here as a decision.
+13. **Shipping.** Each engagement WP ships to production on its own after an adversarial review, a
+    pass on dev and a phone reading, without waiting for the owner.
+14. **Production reads.** The owner explicitly authorized the lead to run read-only SELECT and
+    EXPLAIN on production for the readings: the trend threshold and the cap check. The exact
+    queries are [on this page](#the-production-readings---the-exact-queries).
+
+Decision 12 belongs to the live chat ([lives](services/lives.md#live-chat-and-floating-reactions-wp-l6))
+and is recorded here only; no package on this page builds it.
+
 ## Decisions the lead took (reversible, written here as the rule asks)
 
 | # | Decision | Why, and how it is reversed |
 | --- | --- | --- |
 | L1 | An association live keeps excluding either side of a block with the broadcasting MEMBER and a viewer the broadcaster removed, though an entity post's announcement excludes neither. | The live audience is "exactly who `assertMayWatch` lets in", and the watch path refuses both; a push to a live that answers 404 is the defect L10 was built to avoid. |
 | L2 | The `[LIVE_ANNOUNCE] ... followers=<n>` log field keeps its name although an association's count is now its whole audience. | `tools/cross-client-harness/srvlog.mjs` matches the line; renaming is a two-file change for no reader's gain. A comment at the log call says it. |
-| L3 | The bell has FOUR states, not three: no row (the default, today's rule), `all`, `lives`, `none`. | "posts, lives, or nothing" are the three a reader picks; the absent row is what every account has until they pick, so it needs no migration and today's behaviour is the default. |
-| L4 | A bell set to `all` is NOT counted by the daily cap. | It is the reader's explicit ask for that account; capping it would make the bell lie. Reversed by one predicate in the cap statement. |
+| L3 | The bell has THREE states, and only the two reductions are stored: no row = "posts and lives" (decision 10, today's behaviour), `lives`, `none`. A new follow (an accepted `user_follows` row, or an `association_follows` row) DELETES the reader's row for that account, so following sets the bell to "posts and lives" as decision 10 says; choosing "posts and lives" again deletes the row too. | The absent row is what every account has, so it needs no backfill; a stored `all` would be a second spelling of the default. Re-checked against decision 10 (2026-11-07): it matches. |
+| L4 | The bell and the daily cap never meet: the cap counts only the NEW kinds of decision 11 (friends' activity, trends, suggestions, suggested content), none of which is a post or a live OF the account whose bell it is. | Rewritten after decision 11: the first version exempted a bell set to `all` from a cap that covered posts and lives; decision 11 takes those out of the cap altogether, so there is nothing left to exempt. |
 | L5 | Comments on and reactions to the reader's OWN content are not capped, like replies and mentions. | They are about the reader's own words, not discovery; the cap targets what the reader did not write. |
 | L6 | The cap's day is the Paris calendar date read from the DATABASE (`(now() AT TIME ZONE 'Europe/Paris')::date`), first come first served within it. | A date key is durable state, not a timer: no job resets anything, a new day is a new row. No priority between sources - priorities would be a ranking nobody can explain from the bell. |
 | L7 | The bell is offered on a person the viewer follows (accepted) and on any entity the viewer can see; a person not followed shows Suivre instead. | Instagram's shape; a bell on a person whose posts the reader is not announced would be a second, silent follow. |
-| L8 | `association_push_mutes` is folded into the bell table (a mute is level `none` on an entity); the old table is read by nothing once WP-4 ships, and dropped later by a HELD migration. | Two stores for one fact diverge; the copy is an `INSERT ... SELECT` (plain), the drop is the destructive half and waits for its approval. |
+| L8 | `association_push_mutes` is folded into the bell table (a mute is level `none` on an entity); the old table is read by nothing once WP-3 ships, and dropped later by a HELD migration. | Two stores for one fact diverge; the copy is an `INSERT ... SELECT` (plain), the drop is the destructive half and waits for its approval. |
 | L9 | The opening reminders of forms, booking spaces and events share ONE table (`opening_reminders`, kind + target), replacing `form_reminders`. | One unique key `(kind, targetId, userId)` is what makes "one notification, never two" a constraint instead of a convention. |
 | L10 | Suggestion score = `4 * min(mutual, 10) + 3 * min(sharedAssociations, 3) + tier` (tier 3 same promo and formation, 2 same formation, 1 same campus), ties broken by id. | Deterministic and explainable from the card ("N en commun" carries the dominant term). The weights are one constant each. |
 | L11 | A suggestion card shows NO reason line besides "N en commun" and the faces. | A line "Promo 2027" or "Membre du BDE" would disclose a profile fact or a membership to someone who may not see it elsewhere; the count and the faces are what decision 4 chose to show. |
-| L12 | "Almost nobody" (decision 7) is fewer than 5 follows in total (accepted person follows plus entity follows). | The same number as the cap; one constant, measured against the production distribution in WP-7's proof. |
+| L12 | "Almost nobody" (decision 7) is fewer than 5 follows in total (accepted person follows plus entity follows). | One constant, measured against the production distribution in WP-6's proof. |
 | L13 | A suggested post (decision 8) is at most one in every 8 feed items, never two in a row, and only in the space tab. | Instagram's density order of magnitude; a constant. |
 | L14 | Friend activity (5b) and trends (5c) tell a reader about a given post AT MOST ONCE, whichever comes first, and never when the reader was already told about that post by its announcement. | One told-once ledger `(postId, recipientId)`; see [no double notification](#no-double-notification). |
 
@@ -184,7 +205,7 @@ aggregate in 600 kB). It grows with (follows of the viewer) x (follows of each f
 the bound that matters is the follow count, which the follow limits already cap
 (`FOLLOW_PENDING_LIMIT`, `FOLLOW_DAILY_LIMIT`). **The query is computed on request, not stored**: at
 these costs a cache would be a second truth to invalidate on every follow, block and dismissal.
-WP-6's proof re-reads the plan on dev with the real tables.
+WP-5's proof re-reads the plan on dev with the real tables.
 
 ### The dismissal store - a new table, NOT held
 
@@ -234,7 +255,7 @@ CREATE TABLE IF NOT EXISTS account_bells (
   "userId"     varchar(255) NOT NULL,                    -- the reader
   "targetKind" varchar(16)  NOT NULL CHECK ("targetKind" IN ('user', 'association')),
   "targetId"   varchar(255) NOT NULL,
-  level        varchar(8)   NOT NULL CHECK (level IN ('all', 'lives', 'none')),
+  level        varchar(8)   NOT NULL CHECK (level IN ('lives', 'none')),   -- no row = posts and lives
   "updatedAt"  timestamptz  NOT NULL DEFAULT now(),
   PRIMARY KEY ("userId", "targetKind", "targetId")
 );
@@ -244,12 +265,13 @@ SELECT "userId", 'association', "associationId"::text, 'none' FROM association_p
 ON CONFLICT DO NOTHING;
 ```
 
-| Level | Posts of that account | Its lives | Counted by the cap |
-| --- | --- | --- | --- |
-| no row (default) | pushed as today (followed person, or an entity whose audience reaches the reader) | pushed as today | yes |
-| `all` | pushed | pushed | **no** (L4) |
-| `lives` | bell row only, no push | pushed | yes |
-| `none` | bell row only, no push | no push | - |
+| Level | Posts of that account | Its lives |
+| --- | --- | --- |
+| no row: "posts and lives" (the default, set by following - decision 10) | pushed as today (followed person, or an entity whose audience reaches the reader) | pushed as today |
+| `lives` | bell row only, no push | pushed |
+| `none` | bell row only, no push | no push |
+
+None of these is counted by the daily cap (decision 11, L4): posts and lives are what exists today.
 
 **The order of the decision, per recipient, and where each step lives - ONE place each:**
 
@@ -262,10 +284,11 @@ ON CONFLICT DO NOTHING;
 3. **The bell level** filters the PUSH, in `PostNotificationsService.fanOutPush`, where
    `association_push_mutes` is read today (`MUTABLE_PUSH_TYPES`) - the same seam, now reading
    `account_bells` for both kinds of account, fail-closed as the mute lookup is.
-4. **The daily cap** filters the push of what is left ([below](#the-noise-budget---a-daily-cap-from-a-counter-row)).
+4. **The daily cap** filters the push of the NEW kinds only ([below](#the-noise-budget---a-daily-cap-from-a-counter-row));
+   a post or a live of an account never reaches it.
 5. **The category** (`posts`, `forms`, `events`, `bookings`) is applied by chat-delivery from the
-   push's `contentKey`, last. A category switched off wins over a bell set to `all`: the switch is the
-   broader statement and is what the settings screen promises.
+   push's `contentKey`, last. A category switched off wins over a bell left on "posts and lives": the
+   switch is the broader statement and is what the settings screen promises.
 
 **The followed account never learns the bell level**, as on Instagram; no endpoint returns another
 user's row.
@@ -295,13 +318,20 @@ concurrent paths are ordered by the primary key, not by a clock. It is the same 
 
 ### (a) the bell
 
-Nothing new to send: (a) is the `all` level above, which lifts the cap for that account.
+Nothing new to send: (a) is the default level above, "posts and lives", which every follow sets
+(decision 10); the bell only ever REDUCES it.
 
 ### (b) friends' activity - the disclosure rule
 
 "X a aimé votre ... / X a commenté un post" sent to R when X reacts to or comments on post P. R is
-told ONLY when ALL of these hold, each a predicate that already exists:
+told ONLY when ALL of these hold, each a predicate that already exists except rule 0:
 
+0. **X shares their activity** (decision 9): X has not turned the setting off. Stored as
+   `user_activity_settings("userId" PK, "shareActivity" boolean NOT NULL DEFAULT true, "updatedAt")`,
+   **no row = ON**, the `user_repost_settings` pattern (WP-F6): a row exists only once the person
+   chose, so the default needs no backfill. Read in the same statement as the other rules, at the
+   write; turning it off stops every notice not yet sent and retracts none already sent. The switch
+   lives in Settings, its strings in Paraglide (`settings_share_activity`, `settings_share_activity_hint`).
 1. **R follows X, accepted** - X accepted R as an audience for X's own activity. A pending request,
    or an entity, never carries activity.
 2. **R sees P** - `postVisibleToUserSql(P, R)` with the PLAIN options (no read-grant door), so the
@@ -328,7 +358,8 @@ statement for all of X's followers, then counted by the cap like any engagement 
 ### (c) campus trends - "takes off", defined without a clock heuristic
 
 **A post takes off when the number of DISTINCT accounts that reacted to or commented on it reaches
-`TREND_THRESHOLD` while the post is younger than 24 hours**, read at the reaction's or comment's own
+`TREND_THRESHOLD` within 24 hours of its `publishedAt`** (the instant it became visible - not
+`createdAt`, which is earlier for a scheduled post), read at the reaction's or comment's own
 write, under the post row's lock, against the database's `now()`:
 
 - **Deterministic**: the count is a property of the row (the keys of `posts.reactions` plus the
@@ -341,13 +372,11 @@ write, under the post row's lock, against the database's `now()`:
   `postReachesSpaceSql` - and `postVisibleToUserSql` holds), minus P's author, minus blocks with the
   author, minus the ledger and `post_notifications` (L14). Never through a follower door or a read
   grant: decision 5(c) says "from your space".
-- **`TREND_THRESHOLD` is a MEASUREMENT owed before WP-10 merges**, not a guess. The reactions map
-  carries no timestamps, so the measurement is on totals, which bound the 24-hour count from above:
-  one `GROUP BY` on production over the posts of the last 90 days, per campus, of
-  the count of `jsonb_object_keys(reactions)` plus the distinct comment authors; `TREND_THRESHOLD` is the smallest
-  integer at which **at most one post per campus per day** would have crossed. That target rate is
-  the explanation the rule carries: a trend is rare by construction, and the number is re-derived
-  from the same query if the population changes. Until it is measured, WP-10 does not merge.
+- **`TREND_THRESHOLD` is a MEASUREMENT owed before WP-10 merges**, not a guess: the smallest integer
+  at which **at most one post per campus per day** would have crossed, over the last 90 days. That
+  target rate is the explanation the rule carries: a trend is rare by construction, and the number
+  is re-derived from the same query if the population changes. The query is
+  [R1 below](#r1---the-trend-threshold). Until it is read, WP-10 does not merge.
 
 ### (d) openings for followers - one notice, never two
 
@@ -357,7 +386,7 @@ person.
 
 - **One table, one unique key** (L9): `opening_reminders(kind, "targetId", "userId", "opensAt",
   origin, "notified5min", "notifiedOnOpen")`, `kind` in (`form`, `booking`, `event`), `origin` in
-  (`asked`, `followed`), unique `(kind, "targetId", "userId")`. WP-5 copies `form_reminders` into it
+  (`asked`, `followed`), unique `(kind, "targetId", "userId")`. WP-4 copies `form_reminders` into it
   (`origin = 'asked'`, additive) and points `FormReminderScheduler` at it; dropping `form_reminders`
   is a later HELD migration.
 - **At publication** (or when `opensAt` is set or moved), the entity's `association_follows` rows
@@ -373,8 +402,8 @@ person.
 - An event's shotgun is its registration form when it has one (the form's row is the one used); an
   event without a form "opens" when it is published to the agenda.
 - Categories: `form_open` stays `forms`, a booking opening files under `bookings`, an event opening
-  under `events`. Counted by the cap when `origin = 'followed'`; an `asked` row is the reader's own
-  request and is never capped.
+  under `events`. **Never capped**, whatever the row's origin (decision 11: shotgun openings are
+  outside the cap).
 
 ## The noise budget - a daily cap from a counter row
 
@@ -404,24 +433,115 @@ UPDATE` orders two concurrent fan-outs on one reader, so the cap is exact, not a
 is a new row: nothing resets anything. The daily GC that already prunes notifications
 (`FormReminderScheduler`) deletes rows older than 7 days.
 
-- **Capped types** (`ENGAGEMENT_PUSH_TYPES`, one exported set beside `MUTABLE_PUSH_TYPES`):
-  `association_post`, `followed_post`, `association_repost`, `member_repost`, `live_started`, friend
-  activity, trend, a `followed` opening, a suggested post's notice if one is ever added.
-- **Never capped**: messages and channel messages, mentions, replies and comments, reactions to the
-  reader's own content (L5), calls, follow requests and acceptances, bookings the reader is in,
-  moderation notices, `asked` opening reminders, and any account whose bell is `all` (L4).
-- **A capped live** has no bell row (a live is deleted at its end): the reader finds it through the
-  LIVE card of the feed while it lasts. Said, not hidden.
-- **Why 5 to start.** Every new source on this page ADDS pushes to the same people: an association's
-  live now reaches its whole audience, followers get openings, friends' activity and trends are new.
-  A student of the main campus already sees the posts of every association reaching their space, so
-  an active day can reach double figures before the new sources. A push is the scarce resource - the
-  one that, wasted, ends with the category switched off or the app's notifications refused, and then
-  even messages are lost. Five is roughly one per waking slot (morning, midday, afternoon, evening,
-  night) and above what a quiet day sends, so it binds only on busy days, and only the excess moves to
-  the bell. **The number is a constant to re-read**: WP-3's proof carries the production distribution
-  of capped pushes per reader per day (p50, p90, p99, from `post_notifications` grouped by recipient
-  and day) and the share of readers the cap would have bound; the constant moves with that reading.
+- **Capped types - ONLY the new kinds** (decision 11; `ENGAGEMENT_PUSH_TYPES`, one exported set
+  beside `MUTABLE_PUSH_TYPES`): friends' activity (5b), campus trends (5c), and a push about a
+  suggestion or a suggested post if one is ever added (the design adds none: suggestions and
+  suggested posts live in the feed, not in a push).
+- **Never capped** - everything that exists today, unchanged: association posts and reposts,
+  followed posts, member reposts, lives, shotgun openings of every origin (5d), messages and channel
+  messages, mentions, replies and comments, reactions to the reader's own content (L5), calls,
+  follow requests and acceptances, bookings, events, forms and money notices, moderation notices.
+- **Why 5 to start.** The cap now guards only what is new and what the reader did not ask for: an
+  account's activity on someone else's post, and a post that took off. Trends are at most one per
+  campus per day by construction (R1), so friends' activity is what can grow: it scales with
+  (accounts followed) x (their reactions and comments), and the most social readers - the ones a
+  burst would reach - are also the ones most likely to switch the category off, after which every
+  post of the people they follow is silenced too. Five is roughly one per waking slot (morning,
+  midday, afternoon, evening, night), above a quiet day, so it binds only on busy days, and the excess
+  stays in the bell. **The number is a constant to re-read**: [R2](#r2---the-cap-check) gives the
+  production distribution of what friends' activity WOULD have pushed per reader per day; the
+  constant moves with that reading, before WP-9 merges.
+
+## The production readings - the exact queries
+
+Decision 14: the lead runs them, read-only, on production. Each runs inside a read-only transaction
+with a timeout, `EXPLAIN` first, and reports counts per campus and percentiles only - never an id
+([durable-rules](durable-rules.md#a-measurement-taken-from-production-names-roles-and-counts-never-people---this-repository-is-public)).
+
+```sql
+BEGIN TRANSACTION READ ONLY;
+SET LOCAL statement_timeout = '60s';
+-- EXPLAIN <the query>;  then the query itself
+ROLLBACK;
+```
+
+### R1 - the trend threshold
+
+Per campus (the author's `users.campus`; an association post counts on its publishing member's
+campus, an approximation stated here), for each candidate threshold `t`, how many posts of the last
+90 days reached `t` distinct engaged accounts. Reactions carry no timestamps, so the reaction half is
+the post's TOTAL - an upper bound of its 24-hour count, which makes the threshold read conservative
+(it can only come out too high, never too low). The comment half is cut at 24 hours, which comments
+allow (`createdAt` per element).
+
+```sql
+WITH engaged AS (
+  SELECT p.id, u.campus,
+         (SELECT count(DISTINCT x) FROM (
+             SELECT jsonb_object_keys(p.reactions) AS x
+             UNION
+             SELECT c->>'userId' FROM jsonb_array_elements(p.comments) c
+              WHERE (c->>'createdAt')::timestamptz < p."publishedAt" + interval '24 hours'
+           ) s
+          WHERE x IS NOT NULL AND x <> p."authorId") AS n
+  FROM posts p JOIN users u ON u.id = p."authorId"
+  WHERE p."publishedAt" > now() - interval '90 days'
+    AND NOT p."hiddenByModeration" AND u.campus IS NOT NULL
+)
+SELECT campus, t AS threshold,
+       count(*) FILTER (WHERE n >= t) AS posts_crossing,
+       round(count(*) FILTER (WHERE n >= t) / 90.0, 2) AS per_day
+FROM engaged CROSS JOIN generate_series(3, 60) t
+GROUP BY campus, t ORDER BY campus, t;
+```
+
+**Reading it:** per campus, the smallest `t` whose `per_day` is at most `1.00`; `TREND_THRESHOLD` is
+the LARGEST of those per-campus values (one constant, so no campus exceeds the rate). Written back
+here with the date, the row counts and the distribution's tail.
+
+### R2 - the cap check
+
+What friends' activity (5b) WOULD have pushed per reader per day over the last 30 days: one notice
+per (reader, post) - the told-once ledger - dated by the first act of an account the reader follows
+(accepted). An UPPER BOUND: it applies neither the visibility rules nor the activity setting (no one
+has turned it off yet), and it counts a post the reader was already announced. Reactions are dated by
+the post's `publishedAt` (they carry no time), comments by their own `createdAt`; days are Paris dates
+as the cap's are (L6).
+
+```sql
+WITH acts AS (
+  SELECT p.id AS post, p."authorId" AS author, k AS actor,
+         (p."publishedAt" AT TIME ZONE 'Europe/Paris')::date AS day
+    FROM posts p, jsonb_object_keys(p.reactions) k
+   WHERE p."publishedAt" > now() - interval '30 days'
+  UNION
+  SELECT p.id, p."authorId", c->>'userId',
+         ((c->>'createdAt')::timestamptz AT TIME ZONE 'Europe/Paris')::date
+    FROM posts p, jsonb_array_elements(p.comments) c
+   WHERE p."publishedAt" > now() - interval '30 days' AND c->>'userId' IS NOT NULL
+), told AS (
+  SELECT f."followerUserId" AS reader, a.post, min(a.day) AS day
+    FROM acts a
+    JOIN user_follows f ON f."followedUserId" = a.actor AND f.status = 'accepted'
+   WHERE a.actor <> a.author AND f."followerUserId" <> a.author
+   GROUP BY 1, 2
+), per_day AS (
+  SELECT reader, day, count(*) AS n FROM told GROUP BY 1, 2
+)
+SELECT percentile_disc(ARRAY[0.5, 0.9, 0.99]) WITHIN GROUP (ORDER BY n) AS p50_p90_p99,
+       max(n) AS max_per_day,
+       count(*) AS reader_days,
+       count(DISTINCT reader) AS readers,
+       round(100.0 * count(*) FILTER (WHERE n > 5) / count(*), 1) AS pct_reader_days_over_5,
+       round(100.0 * count(DISTINCT reader) FILTER (WHERE n > 5)
+             / NULLIF(count(DISTINCT reader), 0), 1) AS pct_readers_ever_over_5
+FROM per_day;
+```
+
+**Reading it:** the percentiles are over reader-DAYS with at least one candidate notice (a silent day
+is not a row). If p90 is already above 5, the cap binds for most active readers and the constant is
+re-read; if p99 is below 5, the cap never binds and stays only as the guard. Either way the reading is
+written back here before WP-9 merges.
 
 ## What each surface reveals, and to whom
 
@@ -435,7 +555,7 @@ is a new row: nothing resets anything. The daily GC that already prunes notifica
 | Entity suggestion | the entity and its follower count order | viewers its audience rules reach | an entity's page is already visible to them |
 | Dismissal | nothing | - | never shown to the dismissed account |
 | Bell | nothing | - | the followed account never sees the level |
-| Friend activity (5b) | that X reacted or commented on P | R, an accepted follower of X who sees P and would see the act on P | the [disclosure rule](#b-friends-activity---the-disclosure-rule) |
+| Friend activity (5b) | that X reacted or commented on P | R, an accepted follower of X who sees P and would see the act on P - and only while X shares their activity (decision 9) | the [disclosure rule](#b-friends-activity---the-disclosure-rule) |
 | Trend (5c) | that P is popular | readers whose SPACE P already reaches | they can open P from the feed already |
 | Opening for followers (5d) | that a form, booking or event opened | followers who can see it | the same audience as the target itself |
 | Suggested post (8) | P, marked "Suggestion" | readers who already see P by the space rule | decision 8: nothing they could not see |
@@ -443,24 +563,30 @@ is a new row: nothing resets anything. The daily GC that already prunes notifica
 
 ## The work packages, in order - one small pull request each
 
-The order puts the cheapest win and the guard on noise first. The first guess handed with the decisions (the follow
-button, the association live audience and the bell before the suggestion graph) holds, with ONE
-change: **the daily cap ships before any package that adds pushes** (the bell's `all` level, the
-openings, friend activity, trends), because it is the only thing standing between those and a reader
-who switches every notification off - and it is small.
+**How each one ships** (decision 13): on its own, to production, after an adversarial review, a pass
+on dev through a pre-release, and a phone reading - without waiting for the owner. A package with a
+held migration (only the two drops below) still needs its approval line under the
+[held-migration rule](cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01).
+
+**The order, and why.** Cheapest win first. The first guess handed with the decisions (the follow
+button, the association live audience and the bell before the suggestion graph) holds as it was
+given. The first version of this page put the daily cap third, ahead of every package that added
+pushes; decision 11 then took every existing push and the shotgun openings OUT of the cap, so the cap
+now guards only friends' activity and trends, and ships IMMEDIATELY BEFORE the first of them (WP-8,
+then WP-9). Shipping it earlier would guard nothing.
 
 | WP | What | Starting point | Proof |
 | --- | --- | --- | --- |
-| **WP-1** (BUILT, this page's PR) | An association's live reaches everyone who can see it | `lives/live-announcer.ts` | `lives.integration.spec.ts` on PostgreSQL ([above](#wp-1---an-associations-live-reaches-everyone-who-can-see-it-built)) |
+| **WP-1** (BUILT, #3119) | An association's live reaches everyone who can see it | `lives/live-announcer.ts` | `lives.integration.spec.ts` on PostgreSQL ([above](#wp-1---an-associations-live-reaches-everyone-who-can-see-it-built)) |
 | **WP-2** | Suivre everywhere a person or entity is named: post headers of an account the viewer does not follow, search results, association cards (today only the profile and the association page carry it) | `frontend/src/lib/follows/api.ts` | component tests per surface; a phone reading of a follow request from a post header |
-| **WP-3** | The daily cap (decision 6): `engagement_push_days`, `ENGAGEMENT_PUSH_TYPES`, the statement in `fanOutPush` | `posts/post-notifications.service.ts` | integration spec: the 6th capped push of a day is a bell row with no push, two concurrent fan-outs never exceed 5, a mention is never capped; the production distribution read |
-| **WP-4** | The bell (decisions 3d and 5a): `account_bells`, the copy of `association_push_mutes`, the seam in `fanOutPush`, the profile control, the association mute UI moved onto it | `follows/association-push-mutes.service.ts` | integration spec of the level table above; the existing mute specs still green against the new store |
-| **WP-5** | Openings for followers (5d): `opening_reminders`, the copy of `form_reminders`, follower rows at publication, "Me prévenir" upsert, booking and event openings | `forms/forms-reminder.scheduler.ts` | integration spec: a follower who also asked gets ONE push, a follower gets the opening and no heads-up, a non-follower who asked gets both |
-| **WP-6** | The suggestion query, its faces, entities, `follow_suggestion_dismissals`, `GET /api/suggestions`, `POST /api/suggestions/dismiss`, the erasure | `follows/` | integration spec of every exclusion of decision 2 and every face rule of decision 4; EXPLAIN on dev |
-| **WP-7** | The surfaces (decisions 3 and 7): the carousel in the feed, "Suivez aussi...", the empty Suivis feed, the onboarding banner | the feed route | component tests; phone readings on both bench phones |
-| **WP-8** | Suggested posts (decision 8) | the feed query | integration spec: a suggested post is visible by the space rule to the viewer, never through a grant or a follower door |
-| **WP-9** | Friends' activity (5b) with the ledger `post_engagement_notices` | `posts/comment-write.ts`, the reaction write | integration spec, one case per rule of the disclosure list |
-| **WP-10** | Campus trends (5c) | the reaction write | the production measurement of `TREND_THRESHOLD` FIRST; integration spec: exactly one stamp at the crossing write, none after 24 hours, the space-only audience |
+| **WP-3** | The bell (decisions 3d, 5a, 10): `account_bells` (`lives` and `none` only, L3), the copy of `association_push_mutes`, a follow deleting the row, the seam in `fanOutPush`, the profile control, the association mute UI moved onto it | `follows/association-push-mutes.service.ts` | integration spec of the level table above, and of a follow resetting a reduced bell; the existing mute specs still green against the new store |
+| **WP-4** | Openings for followers (5d): `opening_reminders`, the copy of `form_reminders`, follower rows at publication, "Me prévenir" upsert, booking and event openings; never capped | `forms/forms-reminder.scheduler.ts` | integration spec: a follower who also asked gets ONE push, a follower gets the opening and no heads-up, a non-follower who asked gets both |
+| **WP-5** | The suggestion query, its faces, entities, `follow_suggestion_dismissals`, `GET /api/suggestions`, `POST /api/suggestions/dismiss`, the erasure | `follows/` | integration spec of every exclusion of decision 2 and every face rule of decision 4; EXPLAIN on dev |
+| **WP-6** | The surfaces (decisions 3 and 7): the carousel in the feed, "Suivez aussi...", the empty Suivis feed, the onboarding banner | the feed route | component tests; phone readings on both bench phones |
+| **WP-7** | Suggested posts (decision 8) | the feed query | integration spec: a suggested post is visible by the space rule to the viewer, never through a grant or a follower door |
+| **WP-8** | The daily cap (decisions 6 and 11): `engagement_push_days`, `ENGAGEMENT_PUSH_TYPES` holding ONLY the new kinds, the statement in `fanOutPush` | `posts/post-notifications.service.ts` | [R2](#r2---the-cap-check) read and written back; integration spec: the 6th capped push of a day is a bell row with no push, two concurrent fan-outs never exceed 5, and an association post, a live, an opening and a mention on the same day are never counted |
+| **WP-9** | Friends' activity (5b) with the ledger `post_engagement_notices` and the activity setting (decision 9: `user_activity_settings`, no row = ON, the Settings switch) | `posts/comment-write.ts`, the reaction write | integration spec, one case per rule of the disclosure list, rule 0 included |
+| **WP-10** | Campus trends (5c) | the reaction write | [R1](#r1---the-trend-threshold) read FIRST and written back; integration spec: exactly one stamp at the crossing write, none after 24 hours, the space-only audience |
 
 Each new table is a plain migration (not held); the two drops (L8 and L9's old tables) are held
 migrations of their own, after the copy has served one stable.
