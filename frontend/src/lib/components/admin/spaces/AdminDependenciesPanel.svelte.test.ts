@@ -47,6 +47,15 @@ const AXIS: DependencyEntity[] = [
     displayParentAssociationId: 'bds',
     mismatches: ['reaches_outside_parent'],
   }),
+  e({ id: 'old', name: 'Vieille Asso', parentAssociationId: 'bde', archived: true }),
+  e({
+    id: 'list2',
+    name: 'Liste Bleue',
+    type: 'list',
+    parentAssociationId: 'bde',
+    mismatches: ['reaches_outside_parent'],
+  }),
+  e({ id: 'fine', name: 'Asso Fine', parentAssociationId: 'bde' }),
   e({ id: 'school', name: 'Ecole', type: 'institution', governs: true }),
 ];
 
@@ -128,4 +137,55 @@ it('words a refusal by its code', async () => {
       m.dependency_err_parent_not_a_bde()
     )
   );
+});
+
+it('shows the audience warning as a labelled icon per row, never as a repeated sentence', async () => {
+  const target = await render();
+  const row = target.querySelector('[data-dependency-row="list"]')!;
+  const icon = row.querySelector('[data-mismatch="reaches_outside_parent"]')!;
+  expect(icon.getAttribute('aria-label')).toBe(m.dependency_mismatch_reaches_outside_parent());
+  expect(icon.getAttribute('title')).toBe(m.dependency_mismatch_reaches_outside_parent());
+  expect(row.textContent).not.toContain(m.dependency_mismatch_reaches_outside_parent());
+});
+
+it('summarises the warnings per BDE and filters the list to them', async () => {
+  const target = await render();
+  const family = target.querySelector('[data-family="bde"]')!;
+  expect(family.querySelector('[data-mismatch-summary]')!.textContent).toContain(
+    m.admin_dependencies_mismatch_summary_other({ count: 2 })
+  );
+  expect(target.querySelector('[data-mismatch-summary="fsss"]')).toBeNull();
+  expect(family.querySelectorAll('[data-dependency-row]')).toHaveLength(4);
+
+  family.querySelector<HTMLButtonElement>('[data-mismatch-filter]')!.click();
+  flushSync();
+  const ids = Array.from(family.querySelectorAll('[data-dependency-row]')).map((r) =>
+    r.getAttribute('data-dependency-row')
+  );
+  expect(ids.sort()).toEqual(['list', 'list2']);
+
+  family.querySelector<HTMLButtonElement>('[data-mismatch-filter]')!.click();
+  flushSync();
+  expect(family.querySelectorAll('[data-dependency-row]')).toHaveLength(4);
+});
+
+it('splits a BDE family into associations and lists, with a type chip per row', async () => {
+  const target = await render();
+  const family = target.querySelector('[data-family="bde"]')!;
+  const lists = family.querySelector('[data-subgroup="list"]')!;
+  const assos = family.querySelector('[data-subgroup="association"]')!;
+  expect(lists.querySelectorAll('[data-dependency-row]')).toHaveLength(2);
+  expect(assos.querySelectorAll('[data-dependency-row]')).toHaveLength(2);
+  expect(lists.querySelector('[data-kind="list"]')!.textContent!.trim()).toBe(
+    m.admin_dependencies_kind_list()
+  );
+});
+
+it('says why a name is greyed: the entity is archived', async () => {
+  const target = await render();
+  const old = target.querySelector('[data-dependency-row="old"]')!;
+  expect(old.querySelector('[data-archived-hint]')!.textContent!.trim()).toBe(
+    m.admin_dependencies_archived()
+  );
+  expect(target.querySelector('[data-dependency-row="fine"] [data-archived-hint]')).toBeNull();
 });
