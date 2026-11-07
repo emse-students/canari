@@ -51,16 +51,19 @@ export interface ReadMarkDebounce {
 /** Creates the holder, with `windowMs` between a delivery and the next one it may make. */
 export function createReadMarkDebounce(windowMs: number): ReadMarkDebounce {
   let pendingAt = 0;
+  /** The highest mark handed on in the current chain of windows: a re-note of it owes nothing. */
+  let delivered = 0;
   let deliverFn: DeliverReadMark | null = null;
   let owner: string | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   /** Ends the window and returns what it still owed. */
-  function take(): { at: number; deliver: DeliverReadMark | null } {
-    const taken = { at: pendingAt, deliver: deliverFn };
+  function take(): { at: number; delivered: number; deliver: DeliverReadMark | null } {
+    const taken = { at: pendingAt, delivered, deliver: deliverFn };
     if (timer) clearTimeout(timer);
     timer = null;
     pendingAt = 0;
+    delivered = 0;
     deliverFn = null;
     owner = null;
     return taken;
@@ -72,11 +75,12 @@ export function createReadMarkDebounce(windowMs: number): ReadMarkDebounce {
       timer = null;
       const at = pendingAt;
       const deliver = deliverFn;
-      if (at <= 0 || !deliver) {
+      if (at <= delivered || !deliver) {
         take();
         return;
       }
       pendingAt = 0;
+      delivered = at;
       appendLog(`[READ] trailing mark ${at} delivered at the end of its window`);
       deliver(at);
       // A delivery opens the next window: the rate stays one per window however long the burst.
@@ -85,8 +89,8 @@ export function createReadMarkDebounce(windowMs: number): ReadMarkDebounce {
   }
 
   function end(early: boolean): void {
-    const { at, deliver } = take();
-    if (at <= 0 || !deliver) return;
+    const { at, delivered: done, deliver } = take();
+    if (at <= done || !deliver) return;
     if (early) appendLog(`[READ] mark ${at} delivered before its window ended: the reading ended`);
     deliver(at);
   }
@@ -94,11 +98,12 @@ export function createReadMarkDebounce(windowMs: number): ReadMarkDebounce {
   return {
     note(at, deliver, conversation) {
       if (timer) {
-        pendingAt = Math.max(pendingAt, at);
+        if (at > delivered) pendingAt = Math.max(pendingAt, at);
         return;
       }
       deliverFn = deliver;
       owner = conversation;
+      delivered = at;
       appendLog(`[READ] mark ${at} delivered at once: the leading edge of its window`);
       arm();
       deliver(at);

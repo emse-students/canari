@@ -42,6 +42,31 @@ describe('createReadMarkDebounce', () => {
     expect(delivered).toEqual([100, 300]);
   });
 
+  it('does not re-deliver a mark the leading edge already delivered when it is noted again', () => {
+    const debounce = createReadMarkDebounce(2000);
+    const delivered: number[] = [];
+    const deliver = (at: number) => delivered.push(at);
+    debounce.note(100, deliver, 'A');
+    // The receipt effect re-runs inside the window and notes the same mark.
+    debounce.note(100, deliver, 'A');
+    expect(debounce.pending).toBe(0);
+    vi.advanceTimersByTime(2000);
+    expect(delivered).toEqual([100]);
+  });
+
+  it('delivers a higher mark noted inside the window trailing, and not the one before it again', () => {
+    const debounce = createReadMarkDebounce(2000);
+    const delivered: number[] = [];
+    const deliver = (at: number) => delivered.push(at);
+    debounce.note(100, deliver, 'A');
+    debounce.note(100, deliver, 'A');
+    debounce.note(200, deliver, 'A');
+    vi.advanceTimersByTime(2000);
+    expect(delivered).toEqual([100, 200]);
+    vi.advanceTimersByTime(10000);
+    expect(delivered).toEqual([100, 200]);
+  });
+
   it('opens a fresh leading edge once a quiet window has ended', () => {
     const debounce = createReadMarkDebounce(2000);
     const delivered: number[] = [];
