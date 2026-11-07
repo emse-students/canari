@@ -43,3 +43,11 @@ apps/social-service/src/migrations/128_move_global_pin_to_spaces.sql 888e4370644
 apps/social-service/src/migrations/129_dependencies_schema.sql 4d112c09116509833f8cb594ad08ff9800fd0019852e2309a6f35d48dde77ad3
 apps/social-service/src/migrations/130_dependency_parents.sql 8aadee6313cca95e35472ab94ba2d0745bd7649ea59b278c96815915d94ad2ab
 apps/social-service/src/migrations/131_dependency_triggers.sql 9e6eb4f7d8006f6390073662ebe08aba12c1c41656d64bd10484160102cdf061
+
+# 134: `posts.pinned` dropped, the retired global pin (#3024) - one release after #3023 unmapped it,
+# so no image a deploy or a rollback may reach still names the column in an INSERT (rollback floor
+# `v1.6.4-alpha.3` on dev, `v1.6.5` on production). Approved by the lead under the owner's 2026-11-03
+# delegation (docs/wiki/backlog.d/owner-decisions-of-2026-11-03-evening.md), as the owner's 2026-11-04
+# decision asked once production carried `1.6.5`; adversarial review passed 2026-11-07. Any edit to
+# the file holds it again.
+apps/social-service/src/migrations/134_drop_posts_pinned.sql d571439f26c22c40b33f70dfca9eb90ff3782bc8718a88ebc987ee52026d79a8
