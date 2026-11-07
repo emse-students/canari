@@ -46,6 +46,7 @@
     type NewMessageResponse,
   } from '$lib/utils/chat/threadAnchor';
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
+  import { trackTouchHold, type TouchHold } from '$lib/utils/chat/touchHold';
   import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
   import { countUnreadBelow, readPointFor, seenByAnchors } from '$lib/utils/chat/readState';
   import {
@@ -451,6 +452,8 @@
    * (measured on the salon-mount bench, 2026-11-07: 60 rows at the reveal, never 20).
    */
   let entryWidening = $state(false);
+  /** The touches on the thread, read by the widen so no step writes `scrollTop` under a finger. */
+  let threadTouch: TouchHold | null = null;
 
   function scrollToBottom(smooth = true) {
     if (!chatContainer) return;
@@ -513,8 +516,12 @@
     }
     if (epoch !== entryEpoch) return;
     scrollToBottomSettled(() => {
+      // A RETIRED ENTRY REVEALS NOTHING. The conversation may have been switched during this frame:
+      // dropping `entering` here would reveal the NEW one before its own fill, with both flags
+      // false - its floor at 60, so the 40 rows mounted in one flush.
+      if (epoch !== entryEpoch) return;
       // In the SAME flush as the reveal, so the floor never rises between the two.
-      if (epoch === entryEpoch) entryWidening = true;
+      entryWidening = true;
       entering = false;
       void widenEntryWindow(epoch);
     });
@@ -538,10 +545,20 @@
         INITIAL_RENDER_GROUPS
       );
       if (target === null) return;
+      // `target` IS COMPUTED ONCE: a message arriving during the widen moves the list's end, so the
+      // window ends a few groups wider than 60. Harmless - the window only ever grows - and cheaper
+      // than re-deriving the target at every step.
       // ONE STEP PER TASK: the rows come ENTRY_WIDEN_STEP at a time with a yield between, so no
       // task of the widen is longer than that many rows whatever the thread holds.
       for (;;) {
         if (epoch !== entryEpoch || !chatContainer) return;
+        // A FINGER ON THE PANE OWNS ITS SCROLL: the step's `scrollTop` write would fight the drag
+        // (on iOS WebKit it can cancel it), so the step waits for the release - an event, not a clock.
+        if (threadTouch?.held) {
+          Log.d('chat.entry', 'widen waits for the touch on the thread to end');
+          await threadTouch.whenReleased();
+          continue;
+        }
         const next = widenStepStart(renderWindow.start, target, ENTRY_WIDEN_STEP);
         if (next === null) return;
         const prevHeight = chatContainer.scrollHeight;
@@ -1258,6 +1275,17 @@
    * `loadOlderGroups`, the sticky date walk and the toolbar's clipping maths - five mechanisms
    * rewritten to fix one, with no measurement saying the defect needed it.
    */
+  $effect(() => {
+    const el = chatContainer;
+    if (!el) return;
+    const hold = trackTouchHold(el);
+    threadTouch = hold;
+    return () => {
+      hold.dispose();
+      if (threadTouch === hold) threadTouch = null;
+    };
+  });
+
   $effect(() => {
     const el = chatContainer;
     if (!el) return;

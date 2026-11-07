@@ -1,5 +1,6 @@
 /**
  * The salon open, measured in a real Chrome on a production build of the components.
+ * NOT GATED BY CI: a hand-run instrument whose numbers are a SHAPE, never a phone's number.
  *
  *   bun bench/salon-mount/run.mjs [--scene pane|hub] [--runs 7] [--rows 200] [--shape own|mixed]
  *                                 [--cpu 4] [--profile <dir>] [--no-build] [--compare <dir>]

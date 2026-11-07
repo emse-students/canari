@@ -795,6 +795,16 @@ hands it a fresh listing. Each row's box "moved" to 0 x 0, and `flip` divides by
   The reveal now paints 20 rows; the other 40 follow in steps of 10, one task each, after the paint.
   Pinned by `ChatArea.entryWindow.svelte.test.ts` ("reveals the entry frame alone"), which reads the
   rows at the reveal and FAILS on the previous `ChatArea` (60, not 20).
+- Review of #3117: a RETIRED entry's reveal callback now returns at once. It used to drop `entering`
+  even after a switch during its frame, revealing the NEW conversation before its own fill with
+  both flags false (60 rows in one flush) - pinned by "a switch during the reveal frame", which fails
+  on the first version. A switch after the first widen step reaches 60 rows on the new conversation
+  (no stuck `entryWidening`). The widen's target is computed once: a message arriving meanwhile
+  widens the window a few groups past 60, harmlessly.
+- The widen takes no step while a finger is on the thread (`$lib/utils/chat/touchHold.ts`: the
+  touches themselves, released by the last `touchend`/`touchcancel`, no timer), since each step
+  writes `scrollTop` and a write under a drag fights it. It does NOT cover a fling's momentum AFTER
+  the finger lifts: iOS WebKit may cancel momentum on that write.
 - `Sidebar`: `animate:flipShown` (`$lib/utils/flipShown.ts`): `flip` when the row is drawn before and
   after, NO animation (`duration: 0`, which Svelte answers without touching the element) when either
   box is empty. A row that appears or disappears has no path to slide along. The drag reorder keeps
@@ -823,7 +833,10 @@ JIT, GPU and WebView differ, and the first open on the phone also pays for code 
 that process, which the bench's `first` only partly reproduces. **Owed on the Mi 9T, with the next
 pre-release:** `community-open.mjs` cold and warm at 1x on the `BancOuverture-1` seed, reading
 `salon>msgs`, `reopen>msgs`, the salon-open long tasks (the first should lose the ~175 ms of 40 rows,
-the reopen fall from ~330 ms), and the console: zero `Invalid keyframe` lines.
+the reopen fall from ~330 ms), and the console: zero `Invalid keyframe` lines. **And on the iPhone 12
+(WebKit):** open a 200-message salon and fling upward IMMEDIATELY after the reveal, within the
+~200 ms of the widen; the fling must keep its momentum (a `scrollTop` write of a widen step can
+cancel it). If it stops dead, the step must also wait for the scroll to settle.
 
 **Next, by the profile of the reveal-first open** (`--scene pane --profile`, readable build): the
 mount itself, ~145 ms at x4 for a same-page reopen, is the template pass (~80 ms, of which the 20
