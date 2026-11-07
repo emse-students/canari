@@ -378,7 +378,18 @@ The owner answered section 9 the same day. What each one changed in the code:
   ([the class the tripwire keeps](#the-security-trade-off-honestly)).
 - **D3 - history follows rule 2** of [history-answer-addressing](history-answer-addressing.md) for a
   further device. `historyWithheld.ts` and `withholdHistoryFrom` stay, narrowed to the key-changed
-  class above.
+  class above. **What an older build decided stays as it decided, on both counts:**
+  - a device a member's app withheld history from before D3 (a record in `historyWithheld`) STAYS
+    withheld after the upgrade. A record keeps the conversation, the identity and the key
+    fingerprint, never the trust class it was decided on, so this build cannot tell a further device
+    under its known key (no longer withheld) from a known id under a new key (still withheld), and it
+    fails closed. The record is lifted the ordinary way - a member's Add of that device - or dropped
+    with the conversation. The cost: that one member's device answers that device no history, while
+    every other member's still does;
+  - an entry an older build left OWED as `unvouched-device` (its conversation row not loaded yet) is
+    re-decided under today's predicate and DROPPED with one info line when it is no longer an entry no
+    member made - never written up as a `new-person` accusation of a member
+    (`decideUninvitedEntry`, `deviceNotices.svelte.test.ts`).
 - **D4 - a link ask nobody answers stays blocked** and expires after 14 days. Nothing changed; the
   no-holder facts are never served to an `awaitingAdmission` seat.
 - **D5 - a stale or absent base with no holder stays terminal**, with no server-side resurrection. The
@@ -407,11 +418,35 @@ The stored frame, the relayed frame and the frame a withdrawal `LREM`s are built
 pushed (pinned by `messaging.no-holder-facts.spec.ts`, store then withdraw).
 
 A constant, not an environment switch: the condition is a fact about the shipped clients, the same on
-every estate, and the commit that flips it is its record. **Lifted by a one-line pull request once
-`minClientVersion` is at least the first release carrying D2/D3** (`1.6.7` at the earliest; read
-`gh release list` and the merge commit, never this line) - the row in
-[legacy-compatibility](../legacy-compatibility.md) carries it. Until then a further device in a
-conversation with no member online waits, as before this page.
+every estate, and the commit that flips it is its record. A spec
+(`messaging.no-holder-facts.spec.ts`, "THE GATE IS SHUT IN THIS BUILD") pins it `false`, so a flip
+cannot slip into an unrelated change; the lifting pull request deletes that case on purpose.
+
+**The gate is advisory, and that widens nothing.** It shuts the door an honest client takes; the
+commit gate (`assertCommitterMayCommit`) never reads it, so a MODIFIED client could still make the D1
+entry by its own external commit. That is not a new door: a member's device already adds any device
+of a member's account without asking anyone (`automaticAdmission` gates on the user, never on the
+device), and D2 announces both entries the same way.
+
+**Two conditions lift it, in this order** - the row in
+[legacy-compatibility](../legacy-compatibility.md) carries both:
+
+1. **The self-join and a member's Add of the same device are made EXCLUSIVE on the server**
+   ([backlog](../backlog.d/p2-the-further-device-self-join-and-a-members-add-are-not-exclusive.md),
+   review of #2832). Withdrawing the stored ask clears only the Redis copy: the device's `pending`
+   `dm_device_group_memberships` row is still served by `GET mls/invitations/pending`
+   (`getPendingInvitations`), so a member's `processPendingInvitations` can build an Add of the
+   device while the device builds its own external commit - both on epoch E, settled by the epoch
+   gate, the loser rebuilding. `further_device_door.rs` proves that convergence, and that is exactly
+   a race that heals, which the rules call a defect. Not reachable while the door is shut (no device
+   self-joins); owed before it opens.
+2. **`minClientVersion` is at least the first release carrying D2/D3** (`1.6.7` at the earliest; read
+   `gh release list` and the merge commit, never this line).
+
+Then the constant flips in a one-line pull request. Until then a further device in a conversation
+with no member online waits, as before this page. **D1 is countable once open**: the commit gate's
+ACCEPT line of an external commit into a conversation by a user who already holds another `active`
+device there carries `kind=further_device_self_join` (`validateCommit`).
 
 ### D5: the banner, and what decides it
 

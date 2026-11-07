@@ -18,6 +18,7 @@ import {
   LessThanOrEqual,
   EntityManager,
   IsNull,
+  Not,
 } from 'typeorm';
 import * as crypto from 'crypto';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
@@ -2658,6 +2659,18 @@ export class MessagingService {
         !isUnresolvedIdentity(deviceId);
       /** Whether this commit writes its committer's seat - decided, then done, in the transaction. */
       let committerSeat = false;
+      // D1 IS COUNTABLE (review of #2832): an external commit into a CONVERSATION by a device whose
+      // user already holds another `active` device there is a further device that let itself in -
+      // the door of docs/wiki/protocols/mls-availability-no-holder.md, D1. Read before the advance,
+      // only for an external commit, and said as a tag on the ACCEPT line rather than a line of its
+      // own. A key group is entered this way by every device by design and is not counted.
+      const furtherDeviceSelfJoin =
+        frame.external &&
+        committerNeedsSeat &&
+        distributionScopeOf(group) === null &&
+        (await this.deviceGroupRepo.count({
+          where: { groupId, userId: committer, status: 'active' as const, deviceId: Not(deviceId) },
+        })) > 0;
       // THE ADVANCE, THE BASE AND THE REPLAYABLE COMMIT LAND TOGETHER OR NOT AT ALL.
       //
       // The log row used to be written AFTER this transaction, best-effort, on the reasoning that
@@ -3165,7 +3178,8 @@ export class MessagingService {
       const refusedAdmits = [...admitRefusals, ...admitRefusalsInTx];
       this.logger.log(
         `[COMMIT][${traceId}] ACCEPT group=${groupId} newEpoch=${group.activeEpoch}` +
-          (refusedAdmits.length > 0 ? ` refusedAdmits=${refusedAdmits.length}` : '')
+          (refusedAdmits.length > 0 ? ` refusedAdmits=${refusedAdmits.length}` : '') +
+          (furtherDeviceSelfJoin ? ' kind=further_device_self_join' : '')
       );
 
       return {
@@ -3848,9 +3862,10 @@ export class MessagingService {
     try {
       // THE SAME DOOR AS THE BASE ITSELF: only a seated user not awaiting a member's admission is
       // told anything about the group (`assertMayReadExternalBase`). A link ask waits for a member
-      // (D4), and is never a no-holder case.
+      // (D4), and is never a no-holder case. The SAME question the base asks
+      // (`seatAwaitsAdmission`): a flag with an active device under it is a member.
       const roster = await this.rosterSeat(groupId, userId);
-      if (!roster || roster.awaitingAdmission === true) return undefined;
+      if (!roster || (await this.seatAwaitsAdmission(groupId, userId, roster))) return undefined;
       const base = await this.readGroupInfo(groupId);
       const seat = await this.seatOf(groupId, userId, deviceId);
       const liveHolderDevices = await this.liveHolderDevices(groupId, userId, deviceId);

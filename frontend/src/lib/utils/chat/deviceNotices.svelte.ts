@@ -795,6 +795,16 @@ async function noteUninvitedEntries(
   for (const event of [...retried, ...fresh]) {
     try {
       const decided = await decideUninvitedEntry(event, ctx);
+      if (decided === 'not-self-admitted') {
+        // AN ENTRY OWED BY AN EARLIER BUILD that this one no longer reads as nobody's: a further
+        // device's own-commit entry under a known key, owed as `unvouched-device` before D2/D3
+        // (owner, 2026-10-31). It is an added device now, announced by its own notice, so it is
+        // dropped here - never re-decided down to a `new-person` accusation of a member.
+        console.info(
+          `[DEVICE_NOTICE] owed entry of ${event.identity} in ${event.groupId.slice(0, 8)}... (epoch ${event.epoch}) is no longer an entry no member made - dropped`
+        );
+        continue;
+      }
       if (decided === 'not-a-conversation') {
         console.debug(
           `[DEVICE_NOTICE] self-admitted entry in ${event.groupId.slice(0, 8)}... - not a conversation, nothing to say`
@@ -847,13 +857,23 @@ type NoticeConversation =
  *
  * A departure read that fails throws: the entry stays owed to the next delivery rather than being
  * guessed either way.
+ *
+ * `not-self-admitted`: the event is no longer an entry no member made ({@link isSelfAdmittedEntry}).
+ * The predicate is enforced HERE, where the decision is acted on, because an entry retried from the
+ * durable owed list was selected by an EARLIER build's predicate - under `1.6.6` a further device's
+ * own-commit entry, which D2/D3 make an ordinary added device and which would otherwise fall through
+ * to `new-person`.
  */
 async function decideUninvitedEntry(
   event: DeviceEvent,
   ctx: DeviceNoticeContext
 ): Promise<
-  'owed' | 'not-a-conversation' | { kind: UninvitedEntryKind; convo: NoticeConversation }
+  | 'owed'
+  | 'not-a-conversation'
+  | 'not-self-admitted'
+  | { kind: UninvitedEntryKind; convo: NoticeConversation }
 > {
+  if (!isSelfAdmittedEntry(event)) return 'not-self-admitted';
   // A key group, when this session already knows it as one: every member enters it this way.
   if (ctx.isDistributionGroup(event.groupId)) return 'not-a-conversation';
   const convo = ctx.conversations.get(event.groupId);

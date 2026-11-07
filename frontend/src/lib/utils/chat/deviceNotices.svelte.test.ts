@@ -672,6 +672,42 @@ describe('deliverDeviceEvents - a member device that entered by itself', () => {
     error.mockRestore();
   });
 
+  it('drops an entry an earlier build left owed that is no longer one no member made - no line, no report', async () => {
+    // Under 1.6.6 a further device's own-commit entry under a first-sight key was `unvouched-device`
+    // and could be stored owed (its row not loaded yet). After the upgrade it is an added device
+    // (D2/D3): retried, it must never fall through to a `new-person` accusation of a member.
+    const owed = selfEntry({ trust: 'first-sight', keyFingerprint: '00ff' });
+    const stored = JSON.parse(localStorage.getItem(ACCOUNT_KEY.deviceNotices('alice')) ?? '{}');
+    localStorage.setItem(
+      ACCOUNT_KEY.deviceNotices('alice'),
+      JSON.stringify({ ...stored, owedUninvited: [owed] })
+    );
+    forgetDeviceNotices();
+    loadDeviceNotices('alice');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { ctx, addMessageToChat } = makeCtx();
+
+    await deliverDeviceEvents([], ctx);
+
+    const lines = addMessageToChat.mock.calls.filter(([, , , o]) =>
+      String((o as { messageId?: string } | undefined)?.messageId).startsWith('uninvited-entry:')
+    );
+    expect(lines).toEqual([]);
+    expect(reporter).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('no longer an entry no member made'));
+    expect(
+      (
+        JSON.parse(localStorage.getItem(ACCOUNT_KEY.deviceNotices('alice')) ?? '{}') as {
+          owedUninvited?: unknown[];
+        }
+      ).owedUninvited ?? []
+    ).toEqual([]);
+    error.mockRestore();
+    info.mockRestore();
+  });
+
   it("withholds history from it until a member's Add of it vouches for it", async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

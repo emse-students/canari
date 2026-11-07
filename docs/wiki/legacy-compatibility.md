@@ -533,8 +533,11 @@ open D1's door: its `no_peer_online` answer says `selfJoin: false` (the client w
 Add), the conversation base is served without the asking device's seat (a join reads
 `seat_unreadable`), and a `selfJoinIfNobody` ask is stored and woken as any other
 ([the gate](protocols/mls-availability-no-holder.md#the-gate-d1-waits-for-d2-and-d3-on-every-member-client)).
-**Removal condition:** a CLIENT FLOOR - `minClientVersion` at least the first release carrying
-D2/D3 (`1.6.7` at the earliest; read it from `gh release list` and the merge commit). Then the constant flips to `true` in its own one-line pull request, and once a later floor is
+**Removal condition, two parts, in order:** (1) the self-join and a member's Add of the same device
+made exclusive on the server - today a `pending` row withdrawn from Redis is still served by
+`getPendingInvitations` ([backlog](backlog.d/p2-the-further-device-self-join-and-a-members-add-are-not-exclusive.md));
+(2) a CLIENT FLOOR - `minClientVersion` at least the first release carrying D2/D3 (`1.6.7` at the
+earliest; read it from `gh release list` and the merge commit). Then the constant flips to `true` in its own one-line pull request, and once a later floor is
 reached the constant and its two reads go.
 
 ### No date yet - a bare `userId` MLS credential, written by builds before 2026-07-24

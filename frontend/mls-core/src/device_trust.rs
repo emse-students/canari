@@ -1098,7 +1098,7 @@ mod tests {
     }
 
     #[test]
-    fn a_device_pinned_in_another_group_entering_this_one_by_itself_is_unvouched_here() {
+    fn a_device_pinned_in_another_group_entering_this_one_by_itself_is_announced_never_withheld() {
         // The pin store is ONE store: a tree of group A writes the pin, and it must vouch for
         // nothing in group B, where the device was never a leaf (review of #2594, 2026-10-27).
         let mut t = DeviceTrust::default();

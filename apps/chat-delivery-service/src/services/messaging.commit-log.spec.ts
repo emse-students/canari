@@ -473,6 +473,49 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       expect(redis.xrange).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ['another active device of the same user is there', 1, true],
+      ['the user holds no other active device there', 0, false],
+    ])(
+      'tags the ACCEPT of an external join kind=further_device_self_join only when %s (D1 is countable)',
+      async (_label, otherActive, tagged) => {
+        groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 1 });
+        deviceGroupRepo.findOne.mockResolvedValue(null);
+        groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'user-2' });
+        // The further-device read names the committer's OTHER devices (`deviceId: Not(...)`);
+        // any other count (a seat awaiting admission) stays at its default.
+        deviceGroupRepo.count.mockImplementation(
+          async ({ where }: { where: { deviceId?: unknown } }) =>
+            where.deviceId === undefined ? 0 : otherActive
+        );
+        jest
+          .spyOn(service, 'sendMessage')
+          .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
+        const log = jest.spyOn(
+          (service as unknown as { logger: { log: (m: string) => void } }).logger,
+          'log'
+        );
+
+        const res = await service.validateCommit(
+          {
+            groupId: 'group-1',
+            deviceId: 'device-new',
+            baseEpoch: 1,
+            proto: externalCommitFrame('group-1', 1n, 'user-2:device-new'),
+            senderId: 'user-2',
+            excludeDeviceIds: ['user-2:device-new'],
+          },
+          'user-2'
+        );
+
+        expect(res.accepted).toBe(true);
+        const accept = log.mock.calls.map(([l]) => String(l)).find((l) => l.includes('] ACCEPT '));
+        expect(accept).toBeDefined();
+        expect(accept!.includes('kind=further_device_self_join')).toBe(tagged);
+        deviceGroupRepo.count.mockReset().mockResolvedValue(0);
+      }
+    );
+
     it('does not re-promote a device that is already an active member', async () => {
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
       deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });

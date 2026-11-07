@@ -13,6 +13,7 @@ import { PushToken } from '../entities/push-token.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { FURTHER_DEVICE_SELF_JOIN_OPEN } from '../utils/device-seat';
 
 /** A group id the routes accept: they refuse an id that is not a uuid before any query. */
 const G1 = '11111111-1111-4111-8111-111111111111';
@@ -77,6 +78,7 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
     save: jest.fn().mockImplementation(async (e: unknown) => e),
     delete: jest.fn().mockResolvedValue({ affected: 0 }),
     create: jest.fn().mockImplementation((e: unknown) => e),
+    count: jest.fn().mockResolvedValue(0),
   });
   let groupMemberRepo: ReturnType<typeof repo>;
   let groupRepo: ReturnType<typeof repo>;
@@ -190,6 +192,24 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
     const res = await service.notifyWelcomeRequest('requ', body);
 
     expect(res.facts?.seat).toEqual({ status: 'pending', welcomeQueued: false });
+  });
+
+  it('THE GATE IS SHUT IN THIS BUILD - removed only by the pull request that lifts it', () => {
+    // `FURTHER_DEVICE_SELF_JOIN_OPEN` opens D1 for every member client, and its lift condition is a
+    // client floor (`docs/wiki/legacy-compatibility.md`). A flip that slips into an unrelated change
+    // fails here; the lifting pull request deletes this case on purpose.
+    expect(FURTHER_DEVICE_SELF_JOIN_OPEN).toBe(false);
+  });
+
+  it('reads a flagged seat with an active device under it as admitted, as the base does', async () => {
+    // `seatAwaitsAdmission`: the flag alone is not the answer - a Welcome that reached a device past
+    // the lift makes the person a member, and the base is served to them, so the facts are too.
+    groupMemberRepo.findOne.mockResolvedValue({ id: 'seat-1', awaitingAdmission: true });
+    deviceGroupRepo.count.mockResolvedValue(1);
+    const logger = (service as unknown as { logger: Record<string, (m: string) => void> }).logger;
+    jest.spyOn(logger, 'error').mockImplementation(() => {});
+    const res = await service.notifyWelcomeRequest('requ', body);
+    expect(res.facts).toBeDefined();
   });
 
   it('tells a link ask nothing about the group (D4)', async () => {
