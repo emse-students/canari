@@ -489,8 +489,10 @@
           <tr>
             <td>Directs, chat et réactions</td>
             <td
-              >Diffuser un direct aux membres autorisés et prévenir vos abonnés ; conserver votre
-              acceptation des règles du direct, condition pour en lancer un</td
+              >Diffuser un direct aux membres autorisés et prévenir son public : pour le direct
+              d'une association, chaque membre que ses règles ou son adhésion atteignent ; pour le
+              direct d'un membre, ses abonnés acceptés ; conserver votre acceptation des règles du
+              direct, condition pour en lancer un</td
             >
             <td>Exécution du service (6.1.b)</td>
           </tr>
@@ -575,11 +577,11 @@
           le jeton et le titre affiché (nom de l'expéditeur ou du groupe). Pour une activité sur le fil
           (commentaire, mention, événement), la notification contient aussi en clair le nom de l'auteur
           et le début du texte, 60 caractères au plus. Ce choix technique permet d'afficher une notification
-          lisible ; le contenu des messages privés n'y figure jamais en clair. Quand une personne ou une
-          association que vous suivez lance un direct, la notification contient en clair son nom et des
-          identifiants techniques (le direct, l'association, l'image affichée), et le titre du direct
-          s'il en a un, sans autre texte ; un avis de coupure, de suspension ou de retrait du droit de
-          diffuser est une phrase fixe, sans nom.
+          lisible ; le contenu des messages privés n'y figure jamais en clair. Quand une personne que
+          vous suivez, ou une association dont le public vous comprend, lance un direct, la notification
+          contient en clair son nom, des identifiants techniques (le direct, l'association, l'image affichée)
+          et le titre du direct s'il en a un, sans autre texte ; un avis de coupure, de suspension ou
+          de retrait du droit de diffuser est une phrase fixe, sans nom.
         </p>
       </li>
       <li>

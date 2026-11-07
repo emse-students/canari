@@ -139,6 +139,11 @@ describe('LiveBroadcast - preview and start', () => {
     ).toBe('association-forbidden');
     expect(
       startProblemOf(
+        new LiveRefusalError(403, 'LIVE_ASSOCIATION_ARCHIVED', '', 'refused', null, null, null)
+      )
+    ).toBe('association-archived');
+    expect(
+      startProblemOf(
         new LiveRefusalError(429, 'LIVE_START_RATE', '', 'rate-limited', null, null, null)
       )
     ).toBe('rate-limited');

@@ -1385,7 +1385,7 @@
   "asso_edit_dependents_error": "Impossible de lire les entités rattachées.",
   "asso_edit_dependents_manage": "Gérer dans Espaces & audiences",
   "admin_dependencies_title": "Dépendances",
-  "admin_dependencies_legend": "Chaque BDE et les entités qui en dépendent. Une liste peut être affichée sous une autre association (le BDS, le BDA) sans en dépendre. Les incohérences avec l'audience sont signalées, jamais corrigées d'office.",
+  "admin_dependencies_legend": "Chaque BDE et ses entités rattachées. Une liste peut être affichée sous une autre association sans en dépendre. Les écarts avec l'audience sont signalés, jamais corrigés d'office.",
   "admin_dependencies_loading": "Chargement des dépendances…",
   "admin_dependencies_load_error": "Impossible de charger les dépendances.",
   "admin_dependencies_save_error": "Impossible d'enregistrer la dépendance.",
@@ -1397,6 +1397,21 @@
   "admin_dependencies_kind_association": "Association",
   "admin_dependencies_kind_list": "Liste",
   "admin_dependencies_kind_institution": "Institution",
+  "admin_dependencies_archived": "archivée",
+  "admin_dependencies_group_associations": "Associations",
+  "admin_dependencies_group_lists": "Listes",
+  "admin_dependencies_mismatch_summary": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} entité a une audience qui dépasse les espaces du BDE",
+        "countPlural=other": "{count} entités ont une audience qui dépasse les espaces du BDE"
+      }
+    }
+  ],
+  "admin_dependencies_mismatch_show_only": "Les afficher",
+  "admin_dependencies_mismatch_show_all": "Tout afficher",
   "admin_dependencies_shown_under": "affichée sous {name}",
   "admin_dependencies_change": "Modifier",
   "admin_dependencies_parent_label": "BDE de rattachement",
@@ -5338,6 +5353,7 @@
   "live_start_muted": "Votre compte ne peut ni publier ni diffuser pour le moment.",
   "live_start_already_open": "Un live précédent est encore ouvert ; il se ferme de lui-même dans la minute. Réessayez ensuite.",
   "live_start_association_forbidden": "Vous ne pouvez pas diffuser au nom de cette association.",
+  "live_start_association_archived": "Cette association est archivée : elle ne peut plus lancer de live.",
   "live_start_rate_limited": "Trop de lives démarrés cette heure-ci. Réessayez plus tard.",
   "live_start_offline": "Pas de connexion : le live n'a pas démarré.",
   "live_start_failed": "Le live n'a pas pu démarrer.",

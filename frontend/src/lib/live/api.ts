@@ -249,7 +249,7 @@ export async function fetchLiveRules(): Promise<LiveRulesStatus> {
  * @param acceptedRulesVersion The rules version the member accepted on THIS screen, sent only then:
  *   the server records it with the start. Omitted when the account accepted it before.
  * Refusals: `LIVE_KEY_INVALID`, `LIVE_ASSOCIATION_INVALID`, `LIVE_MUTED`, `LIVE_RULES_NOT_ACCEPTED`,
- * `LIVE_ASSOCIATION_FORBIDDEN`, `LIVE_ALREADY_OPEN` (all `refused`), `LIVE_START_RATE` (`rate-limited`),
+ * `LIVE_ASSOCIATION_FORBIDDEN`, `LIVE_ASSOCIATION_ARCHIVED`, `LIVE_ALREADY_OPEN` (all `refused`), `LIVE_START_RATE` (`rate-limited`),
  * `LIVE_KEY_SEALING_UNAVAILABLE` (`unavailable`: the server cannot seal the key, nothing was written).
  */
 export async function startLive(

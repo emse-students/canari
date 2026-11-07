@@ -263,6 +263,7 @@
     withdrawn: m.live_start_withdrawn,
     'already-open': m.live_start_already_open,
     'association-forbidden': m.live_start_association_forbidden,
+    'association-archived': m.live_start_association_archived,
     'rate-limited': m.live_start_rate_limited,
     disabled: m.live_limits_disabled,
     offline: m.live_start_offline,

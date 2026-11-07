@@ -510,6 +510,21 @@ this change, raised once BOTH stores serve it) retires the empty bubble; the ent
 Measure before: the `[MODERATION] reply|like refused: comment ... is a tombstone` warns of social-service count the
 older builds still tapping a tombstone.
 
+### No date yet - an association mute set by a build older than the bell (designed 2026-11-07)
+
+**DESIGNED, NOT BUILT - it lands with WP-3 of [engagement](engagement.md) (L8).**
+**Site:** the association push-mute endpoints (`follows/association-push-mutes.service.ts`). WP-3
+moves an association mute into `account_bells` (level `none`) by a held copy, and the bell control
+replaces the mute toggle on the client.
+**What an older build does.** It still calls the mute and unmute endpoints. Without a shim, a mute it
+set after the copy would land in `association_push_mutes`, which nothing reads any more: lost.
+**The shim.** The old endpoints stay and write `account_bells` (mute = level `none`, unmute = delete
+the row); their reads answer from `account_bells` too. Each site carries a comment pointing here.
+**Removal condition:** the floor (`minClientVersion`) at or above the first stable carrying the bell
+control, raised once BOTH stores serve it. Then the old endpoints go, and the held drop of
+`association_push_mutes` follows. Measure before: the endpoints' own debug lines counted per week
+name how many older builds still mute that way.
+
 ### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
 
 **Site:** `parseKey` and `sendRatchetDebt` in `frontend/src/lib/mls-client/sendRatchetLedger.ts`.

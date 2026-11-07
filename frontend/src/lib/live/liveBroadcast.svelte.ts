@@ -88,6 +88,7 @@ export type LiveStartProblem =
   | 'withdrawn'
   | 'already-open'
   | 'association-forbidden'
+  | 'association-archived'
   | 'rate-limited'
   | 'disabled'
   | 'offline'
@@ -211,6 +212,7 @@ export function startProblemOf(error: unknown): LiveStartProblem {
     if (error.kind === 'withdrawn') return 'withdrawn';
     if (error.code === 'LIVE_ALREADY_OPEN') return 'already-open';
     if (error.code === 'LIVE_ASSOCIATION_FORBIDDEN') return 'association-forbidden';
+    if (error.code === 'LIVE_ASSOCIATION_ARCHIVED') return 'association-archived';
     if (error.kind === 'rate-limited') return 'rate-limited';
     if (error.kind === 'disabled') return 'disabled';
     return 'failed';
