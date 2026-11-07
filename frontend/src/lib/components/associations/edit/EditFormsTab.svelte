@@ -17,7 +17,7 @@
   import { editSectionHref } from '$lib/associations/editSections';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
-  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+  import { submitterName } from '$lib/forms/submissionTable';
 
   interface Props {
     asso: Association;
@@ -27,9 +27,16 @@
     canManagePayoutAccount: boolean;
     /** Switches the parent to the Paiements tab. */
     onGoToPayments: () => void;
+    /**
+     * Set for a LIST, which has no Lydia account of its own and collects only through an accepted
+     * payment delegation (owner, 2026-11-02): the not-ready banner then points at its delegation
+     * section instead of a payout account it can never hold.
+     */
+    delegationHref?: string;
   }
 
-  let { asso, onlinePaymentsReady, canManagePayoutAccount, onGoToPayments }: Props = $props();
+  let { asso, onlinePaymentsReady, canManagePayoutAccount, onGoToPayments, delegationHref }: Props =
+    $props();
 
   let forms = $state<AssociationForm[]>([]);
   let formsLoading = $state(false);
@@ -154,7 +161,12 @@
     >
       <TriangleAlert size={15} class="mt-0.5 shrink-0" />
       <span>
-        {#if canManagePayoutAccount}
+        {#if delegationHref}
+          {m.list_delegate_required_banner()}
+          <a href={delegationHref} class="font-semibold underline hover:no-underline"
+            >{m.list_delegate_required_link()}</a
+          >
+        {:else if canManagePayoutAccount}
           {m.asso_forms_payments_missing_can_manage_prefix()}<strong
             >{m.asso_forms_payments_missing_strong()}</strong
           >{m.asso_forms_payments_missing_suffix()}<button
@@ -248,7 +260,7 @@
                   >
                     <div class="min-w-0 flex-1">
                       <p class="text-text-main truncate text-xs font-semibold">
-                        {getUserDisplayNameSync(sub.userId)}
+                        {submitterName(sub)}
                       </p>
                       <p class="text-text-muted text-xs">
                         {(sub.totalPaid / 100).toFixed(2)} € · {new Date(

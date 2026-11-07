@@ -50,8 +50,7 @@
     type LiveChatSendFailure,
   } from '$lib/live/liveChat';
   import { currentUserId } from '$lib/stores/userState.svelte';
-  import { isContentModerator, isGlobalAdmin } from '$lib/stores/user';
-  import { ensureContentModerator } from '$lib/associations/api';
+  import { isGlobalAdmin } from '$lib/stores/user';
   import { formatLiveElapsed } from '$lib/live/openLives';
   import { isTerminalLiveState, type LiveViewerState } from '$lib/live/liveViewerState';
   import type { LiveListItem } from '$lib/live/types';
@@ -66,18 +65,9 @@
     chatDeps?: Partial<LiveChatDeps>;
     /** Replaces the limits fetch - for tests. */
     fetchLimits?: typeof fetchLiveLimits;
-    /** Replaces the content-moderator probe - for tests. */
-    probeModerator?: typeof ensureContentModerator;
   }
 
-  let {
-    live,
-    onClose,
-    deps,
-    chatDeps,
-    fetchLimits = fetchLiveLimits,
-    probeModerator = ensureContentModerator,
-  }: Props = $props();
+  let { live, onClose, deps, chatDeps, fetchLimits = fetchLiveLimits }: Props = $props();
 
   let video = $state<HTMLVideoElement | null>(null);
   /** The final screen's one button (retry or back), focused when that screen appears. */
@@ -98,12 +88,19 @@
   // The key from the player, and the account READ REACTIVELY: an account that loads after the viewer
   // opened enables the composer then, not never.
   let chatKeyed = $state(false);
-  const chatCanWrite = $derived(chatKeyed && currentUserId() !== null);
+  /**
+   * The server withholds the chat from this named reader (owner, 2026-11-04): the session says. The
+   * comments rule exactly (lead, 2026-11-04): no chat area, no toggle, no line explaining it.
+   */
+  let chatWithheld = $state(false);
+  const chatCanWrite = $derived(chatKeyed && !chatWithheld && currentUserId() !== null);
   let chatOpen = $state(true);
-  // STAFF HIDE (C14): the server opens the hide route to the broadcaster and to the content
-  // moderators; a viewer screen shows the button to the same tier the moderation page opens to (a
-  // platform admin, or `ensureContentModerator`), read reactively - the probe answers after mount.
-  const chatCanModerate = $derived(isGlobalAdmin() || isContentModerator());
+  // STAFF HIDE (C14): the server opens the hide route to the broadcaster and to the moderators of
+  // THIS live - a platform admin, read reactively, or a BDE whose spaces hold it.
+  // A BDE moderator is SCOPED (2026-11-02): the server says per live whether its governed spaces hold
+  // it (`viewerModerates`, on the list AND on `GET /lives/:id`). Absent means no button: falling back
+  // to the door would draw a control the server refuses.
+  const chatCanModerate = $derived(isGlobalAdmin() || live.viewerModerates === true);
   let reactions = $state<LiveReactionsLayer | null>(null);
 
   const overlay = bindHistoryOverlay(
@@ -181,15 +178,14 @@
         chatLines = lines;
       },
       onFloat: (kind, count) => reactions?.add(kind, count),
+      onWithheld: (withheld) => {
+        chatWithheld = withheld;
+      },
       // A write answered "the live is over" shows the screen the player's own poll would have shown.
       onLiveOver: (verdict) => player?.refusedElsewhere(verdict),
       deps: chatDeps,
     });
     chat = session;
-    probeModerator().catch((e: unknown) => {
-      // No answer: no hide button for staff here; the moderation page still reaches the message.
-      console.warn(`[LIVE_CHAT] the moderator probe failed (${String(e)})`);
-    });
     fetchLimits().then(
       (limits) => {
         session.setLimits(limits);
@@ -213,8 +209,8 @@
         viewers = count;
       },
       chat: {
-        onKey: (key) => {
-          session.onKey(key);
+        onKey: (key, opened) => {
+          session.onKey(key, opened);
           chatKeyed = session.keyed;
         },
         query: () => session.query(),
@@ -343,21 +339,24 @@
           <Volume2 size={22} />
         {/if}
       </button>
-      <button
-        type="button"
-        class="ui-icon-button bg-cn-scrim/40 hover:bg-cn-scrim/60 focus-visible:ring-cn-yellow rounded-full outline-none focus-visible:ring-2"
-        aria-label={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
-        title={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
-        aria-pressed={chatOpen}
-        onclick={() => (chatOpen = !chatOpen)}
-        data-live-chat-toggle
-      >
-        {#if chatOpen}
-          <MessageCircle size={22} />
-        {:else}
-          <MessageCircleOff size={22} />
-        {/if}
-      </button>
+      <!-- Withheld: no toggle either - a button that shows and hides nothing is a dead control. -->
+      {#if !chatWithheld}
+        <button
+          type="button"
+          class="ui-icon-button bg-cn-scrim/40 hover:bg-cn-scrim/60 focus-visible:ring-cn-yellow rounded-full outline-none focus-visible:ring-2"
+          aria-label={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
+          title={chatOpen ? m.live_chat_toggle_hide() : m.live_chat_toggle_show()}
+          aria-pressed={chatOpen}
+          onclick={() => (chatOpen = !chatOpen)}
+          data-live-chat-toggle
+        >
+          {#if chatOpen}
+            <MessageCircle size={22} />
+          {:else}
+            <MessageCircleOff size={22} />
+          {/if}
+        </button>
+      {/if}
       {#if !terminal}
         <button
           type="button"
@@ -396,7 +395,7 @@
         class="from-cn-scrim/60 pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-2 bg-linear-to-t to-transparent p-3 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)]"
       >
         <div class="min-w-0 flex-1">
-          {#if chatOpen}
+          {#if chatOpen && !chatWithheld}
             <LiveChatPanel
               lines={chatLines}
               canWrite={chatCanWrite}

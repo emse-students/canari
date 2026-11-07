@@ -52,6 +52,7 @@
             broadcasterId: view.broadcasterId,
             associationId: view.associationId,
             startedAt: view.startedAt,
+            viewerModerates: view.viewerModerates === true,
           },
         };
       },

@@ -104,8 +104,16 @@ never drifts from `deriveCotisationTag`. `ProductsService.update` drops `granted
 `tagExpiresAt` for a membership product the same way, and `resolveGrantTag` derives NOTHING for a
 membership product whose association has no `cotisationMode`: a stored tag string is never granted as
 typed, so every tag a membership purchase issues is a derived tier tag. **What is recorded then:**
-with cotisations disabled, the checkout opening and the cash sale of such a product are refused
-`409 COTISATION_DISABLED` before any payment is requested or recorded; a payment that lands anyway
+with cotisations disabled the checkout opening and the cash sale of such a product are refused
+`409 COTISATION_DISABLED`, and a legacy product storing no `grantedTagName` is refused
+`409 MEMBERSHIP_PRODUCT_UNGRANTABLE` (logged at ERROR: a manager must re-provision it; the client words
+both with one buyer sentence), before any payment is requested or recorded. ONE check decides,
+`cotisationGrantRefusal` in `product-checkout.ts`; the shop listing flags `cotisationDisabled` from it
+too (no buy button the checkout refuses), and a paid form that grants a cotisation asks it as well: its
+submit is refused `COTISATION_DISABLED` and `FormsService.get` answers `cotisationDisabled`. A grant
+meeting a disabled mode at settlement is decided UNDER the buyer's tier lock - `grantCotisantIfARise`
+answers the typed `{ refused: 'COTISATION_NOT_ENABLED' }`, final, recorded `paid_not_granted`, never
+retried (an unlocked pre-read would race the switch). An association that does not exist reads as no mode. a payment that lands anyway
 (an attempt opened before the switch) is recorded `paid_not_granted` with an ERROR line, like any
 paid tier not granted, so the hourly report and the purchases tab see it. Creating a membership product
 requires cotisation to already be enabled (`cotisationMode` set), since the tag can't be derived
@@ -154,8 +162,8 @@ text. From this editor only `MEMBER_PRICE_TAG_NOT_A_TIER` can still arrive (the 
 tier): a derived key is never year-shaped and the edit form sends no key, so `TIER_KEY_YEAR_SHAPED`
 answers only a client that still types one.
 
-What this removed: the "changing the identifier transfers the cotisants" field - recorded in
-[backlog](backlog.md#p3---no-screen-turns-the-base-tier-into-a-named-one-2026-10-26).
+What this removed: the "changing the identifier transfers the cotisants" field. No screen turns the
+base tier into a named one.
 
 ### A new tier's key is derived from its label (server, 2026-10-26)
 
@@ -323,7 +331,7 @@ cotisation tier**. Not `answer`: a product has no questions, and the empty `Crit
 a product is validated against is what refuses one.
 
 **A grid REPLACES the fixed pricing outright.** While `priceMatrix` is set, `amountCents`,
-`amountCentsMember` and `memberPriceTag` decide nothing - `resolvePurchase` and `grantProductPurchase`
+`amountCentsMember` and `memberPriceTag` decide nothing - `decidePurchase` and `grantProductPurchase`
 branch on the matrix before they ever look at `amountCents`, and both editors hide the fields it
 replaces rather than leaving figures on screen that nothing charges. That is the whole reason there
 is no priority rule between the two mechanisms: only one of them is ever live.
@@ -367,7 +375,7 @@ alcohol tier (full price 30 EUR, 15 EUR for holders of the other tier). A rise t
 set is charged in FULL; setting it is the admin's job, and making that visible is the admin
 screen's. An automatic `target - held` was designed and dropped the same day: it would have
 duplicated or contradicted the admin's setting. `tier-pricing.ts` `fixedPriceFor` is the ONE
-function that picks the amount, called by the checkout (`resolvePurchase`) and the listings alike.
+function that picks the amount, called by the checkout (`decidePurchase`) and the listings alike.
 **The complement price freezes when the checkout opens**: the attempt row stores the amount asked,
 and settlement records the row's amount, never a re-read of the product - an admin who edits the
 preferential price while the buyer is paying changes the next checkout, not this one.
@@ -557,7 +565,7 @@ other.
 | Tier retag (`update` changing a `variantKey`) | association EXCLUSIVE only |
 | Tier delete (`delete` of a `membership` product: the holder count, then the delete) | association EXCLUSIVE only |
 
-**The retag is ONE transaction under the exclusive lock**: it re-reads the product, checks the key,
+**The retag is ONE transaction under the exclusive lock** (it also moves every form that grants the OLD key to the new one, in the same commit - owner, 2026-11-01): it re-reads the product, checks the key,
 saves the renamed tier, re-points the sibling `memberPriceTag` links it reads INSIDE, and renames
 every holder's tag. A per-buyer path that derived the OLD tag before the rename and wrote it after
 would leave a tag the rename never saw; the shared lock makes it wait for the rename's commit. The
@@ -752,7 +760,37 @@ Any boutique product (not just membership) can gate or discount on cotisant stat
   criterion is where a gridded product says what a cotisant pays.
 
 All three are enforced server-side in `products.service.ts` (`isBuyerCotisant`, `hasAnyActiveTag` +
-`assertCanPurchase`); the client only mirrors the *display*.
+`assertCanPurchase`); the client only mirrors the *display*. **`membersOnly` means a COTISANT, never a
+member row**: `assertCanPurchase` is handed `isCotisant` from `tierFactsOf` (an active tag of one of
+the association's tiers), and an association with no `cotisationMode` has no cotisant at all. Its
+refusal is a 403 with the code `PRODUCT_COTISANTS_ONLY` (2026-10-31), which the shop maps to its own
+sentence (`paymentRefusal.ts`); a `requiredTags` refusal still carries no code. **So `membersOnly` is
+refused at SAVE when the association has no `cotisationMode`** (400
+`MEMBERS_ONLY_WITHOUT_COTISATION`, `assertMembersOnlyGateable`, 2026-11-01): the product would be on
+sale to nobody. Asked on create, and on an update only on a TRANSITION into the gated state
+(`membersOnly` ticked and no `requiredTags`; clearing the tags of a ticked product is one), because
+every editor sends `membersOnly` on every save: a product already gated by a since-cleared mode can
+still be renamed, withdrawn - or put back on sale, where every buyer is refused. A product gated by
+`requiredTags` is not asked, since they take precedence. **A partnership card follows the same rule**
+(on create, and on an update that changes the box from unticked to ticked) - ONE implementation,
+`members-only-gate.ts`. Both product editors
+(`EditBoutiqueTab.svelte`, `/admin/cercle`) and the card editor (`PartnershipEditor.svelte`) word it
+from the code (`membersOnlySaveRefusalMessage`). The reverse order - a mode cleared while such rows
+exist - is NOT covered and is owed a decision
+([backlog](backlog.d/members-only-rows-outlive-a-cleared-cotisation-mode.md)).
+
+**An ARCHIVED association sells nothing** (409 `ASSOCIATION_ARCHIVED`, `assertNotArchived`,
+2026-11-01): buying by the page's link is open, and an archived page stays reachable with whatever
+products it left active, so the purchase refuses it - in `preparePurchase` (before the provider is
+even asked) and again under the lock in `decidePurchase` - before any payment request; the shop words
+it (`paymentRefusal.ts`). **The archive and a checkout are ORDERED on the association ROW**:
+`decidePurchase` reads it `FOR SHARE` inside the checkout's transaction (under the buyer's tier
+lock), and `AssociationsService.update` writes `archived` inside a transaction that first reads the
+row `FOR UPDATE`. So a checkout that read the row first commits its attempt before the archive
+lands - it was decided while the association still sold, and sending its payment request after that
+commit is correct - and a checkout that comes after the archive reads `archived` committed and is
+refused. SHARE, not UPDATE, so buyers of one association never queue behind each other; the archive
+takes no advisory lock, so it cannot form a cycle with the tier locks.
 
 ### Form pricing fields
 
@@ -1111,6 +1149,16 @@ Cercle (external service) tracks a per-user cash **balance**; Canari tracks **co
 Each service is the source of truth for its own half, and neither caches the other's data.
 
 ### Outbound: Canari -> Cercle (`balance_topup` webhook)
+
+**The top-up may be reserved to cotisants (owner, 2026-10-31).** `/admin/cercle` carries a
+"Reserve aux cotisants" box, UNTICKED by default, written to the product's existing `membersOnly`
+(no migration). Ticked, a buyer holding no active tier of the association is refused at checkout with
+`PRODUCT_COTISANTS_ONLY` before any payment request is issued, and the shop card greys its button from
+`viewerIsCotisant` as for any members-only product. Proven in `products.service.spec.ts` ("the Cercle
+top-up reserved to cotisants"). Like every product, the top-up is LISTED on /shop only to the buyers
+its association is visible to, and stays payable by anyone holding the association page's link
+([profiles-and-access](profiles-and-access.md#the-shop-the-partnerships-and-the-bookings-follow-the-campus-owner-2026-10-31)) -
+so the cotisant box, not the campus, is what reserves it.
 
 When a `balance_topup` product (created at `/admin/cercle`, global admin only) is purchased via
 Stripe, `ProductsService.dispatchCercleWebhook` (`products.service.ts`) POSTs the recharge to the

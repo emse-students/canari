@@ -29,6 +29,7 @@ export type PushContentKey =
   | 'social_association_post'
   | 'social_followed_post'
   | 'social_association_repost'
+  | 'social_member_repost'
   | 'social_repost_proposed'
   | 'social_repost_personal_requested'
   | 'social_coorganise_proposed'
@@ -42,18 +43,24 @@ export type PushContentKey =
   | 'social_booking_withdrawn'
   | 'social_booking_added'
   | 'social_booking_reminder'
+  | 'social_booking_changed'
+  | 'social_booking_removed'
   | 'form_opening_soon'
   | 'form_open'
   | 'form_paid_over_capacity'
   | 'lydia_payments_active'
   | 'lydia_payments_paused'
   | 'lydia_refund_issued'
+  | 'delegation_revoked'
+  | 'delegation_receiver_not_ready'
+  | 'delegation_resumed'
   | 'event_proposed'
   | 'event_validated'
   | 'event_rejected'
   | 'event_updated'
   | 'event_deleted'
-  | 'event_pending';
+  | 'event_pending'
+  | 'event_pending_coorganiser';
 
 /**
  * WHERE THE NOTIFICATION'S PICTURE COMES FROM - never a URL, always an id.
@@ -421,6 +428,43 @@ export function lydiaPaymentsPausedContent(associationName: string): PushContent
 }
 
 /**
+ * An entity collecting through a payment delegation (a list) stopped collecting or collects again,
+ * told to its shop managers (owner review of #2967). The entity's name is the only datum; the
+ * reason is the key, so each is its own sentence.
+ */
+export function delegationNoticeContent(
+  notice: 'revoked' | 'receiver-not-ready' | 'resumed',
+  associationName: string
+): PushContent {
+  switch (notice) {
+    case 'revoked':
+      return {
+        key: 'delegation_revoked',
+        actorName: '',
+        arg: associationName,
+        legacyTitle: 'Paiements en pause',
+        legacyBody: `L'association qui recevait les paiements de ${associationName} a mis fin à la délégation : ses paiements sont en pause.`,
+      };
+    case 'receiver-not-ready':
+      return {
+        key: 'delegation_receiver_not_ready',
+        actorName: '',
+        arg: associationName,
+        legacyTitle: 'Paiements en pause',
+        legacyBody: `L'association qui reçoit les paiements de ${associationName} ne peut plus les encaisser : ses paiements sont en pause.`,
+      };
+    case 'resumed':
+      return {
+        key: 'delegation_resumed',
+        actorName: '',
+        arg: associationName,
+        legacyTitle: 'Paiements rétablis',
+        legacyBody: `Les paiements de ${associationName} reprennent.`,
+      };
+  }
+}
+
+/**
  * A payer was REFUNDED through Canari (lot 4): the association's name is the one datum, the amount
  * stays in the app (the payer opens the notifications list).
  */
@@ -528,6 +572,21 @@ export function eventPendingContent(actorName: string, eventTitle: string): Push
 }
 
 /**
+ * The same return to the queue for the OTHER reason (WP-Q2, F7): a partner association accepted to
+ * co-organise a validated event, which widens its reach with no validation behind the new part. Its
+ * own key, so the reason is the sentence - never a sentence parsed out of a title.
+ */
+export function eventPendingCoorganiserContent(actorName: string, eventTitle: string): PushContent {
+  return {
+    key: 'event_pending_coorganiser',
+    actorName,
+    arg: eventTitle,
+    legacyTitle: 'Événement à revalider',
+    legacyBody: `« ${eventTitle} » doit être revalidé : une association a accepté de co-organiser`,
+  };
+}
+
+/**
  * An association published, and everyone with the feed is told.
  *
  * TWO KEYS AND NOT ONE WITH A FLAG, for the reason the four calendar answers are four keys: the
@@ -585,6 +644,25 @@ export function associationRepostContent(
     actorName: associationName,
     arg: preview,
     legacyTitle: `${associationName} a relayé une publication`,
+    legacyBody: preview || 'Nouvelle publication',
+  };
+}
+
+/**
+ * A person the recipient follows reposted a post the recipient could not see until then (WP-F6).
+ * `actorName` is the REPOSTER; `arg` the post's opening.
+ */
+export function memberRepostContent(
+  reposterName: string,
+  preview: string,
+  icon?: PushIcon
+): PushContent {
+  return {
+    key: 'social_member_repost',
+    icon,
+    actorName: reposterName,
+    arg: preview,
+    legacyTitle: `${reposterName} a republié une publication`,
     legacyBody: preview || 'Nouvelle publication',
   };
 }
@@ -778,6 +856,34 @@ export function bookingAddedContent(actorName: string, place: string): PushConte
     arg: place,
     legacyTitle: `${actorName} vous a inscrit à une réservation`,
     legacyBody: place || 'Retrouvez-la dans Réservations',
+  };
+}
+
+/**
+ * A booking the recipient STAYS on was moved by someone else (owner, 2026-11-02): its holder or its
+ * organiser. `arg` is the place; the client's bell row names the new time from `meta`.
+ */
+export function bookingChangedContent(actorName: string, place: string): PushContent {
+  return {
+    key: 'social_booking_changed',
+    actorName,
+    arg: place,
+    legacyTitle: `${actorName} a modifié votre réservation`,
+    legacyBody: place || 'Retrouvez le nouvel horaire dans Réservations',
+  };
+}
+
+/**
+ * The recipient was REMOVED from a booking by someone else (owner, 2026-11-02): its holder or its
+ * organiser took them off the people of a booking that still takes place.
+ */
+export function bookingRemovedContent(actorName: string, place: string): PushContent {
+  return {
+    key: 'social_booking_removed',
+    actorName,
+    arg: place,
+    legacyTitle: `${actorName} vous a retiré d'une réservation`,
+    legacyBody: place || "Vous n'en faites plus partie",
   };
 }
 

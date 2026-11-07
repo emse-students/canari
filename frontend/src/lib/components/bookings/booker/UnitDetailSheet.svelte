@@ -1,7 +1,7 @@
 <script lang="ts">
   import Modal from '$lib/components/shared/Modal.svelte';
   import AddEventToCalendarButton from '$lib/components/calendar/AddEventToCalendarButton.svelte';
-  import { Download } from '@lucide/svelte';
+  import { Download, Pencil } from '@lucide/svelte';
   import {
     downloadBookingAnswerFile,
     type BookerResource,
@@ -18,6 +18,7 @@
   } from '$lib/bookings/bookingActions';
   import { formatBookingRange } from '$lib/bookings/grid';
   import { bookingPlace } from '$lib/bookings/columns';
+  import { bookingOthers, othersNames } from '$lib/bookings/others';
   import { answerText } from '$lib/forms/answerText';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { m } from '$lib/paraglide/messages';
@@ -30,7 +31,9 @@
    * WHAT A TAKEN UNIT IS, AND WHAT THE READER MAY DO WITH IT. A booking: its people as the space's
    * visibility allows (D9), its private texts to its people (D32), its answers to the organiser,
    * and cancel (holder, organiser), leave (participant) or "Add to my calendar" (D13). A block: its
-   * reason when shown, and lifting it for whoever may. Nothing here edits a booking (D36).
+   * reason when shown, and lifting it for whoever may. "Modifier" (owner, 2026-11-02, superseding
+   * D36) is offered to exactly who may cancel, and only when the parent could build the edit's
+   * choices from the week it holds (`onEdit`).
    */
   interface Props {
     space: BookerSpace;
@@ -40,11 +43,17 @@
     mine: MyBooking | undefined;
     nowMs: number;
     onClose: (changed: boolean) => void;
+    /** Opens the booking sheet in edit mode; absent when the edit cannot be offered. */
+    onEdit?: () => void;
   }
 
-  let { space, resource, unit, mine, nowMs, onClose }: Props = $props();
+  let { space, resource, unit, mine, nowMs, onClose, onEdit }: Props = $props();
 
   const booking = $derived(unit.state === 'booked' ? unit.booking : null);
+  /** The holder has their own line above, and the viewer is never listed as one of "the others". */
+  const invitees = $derived(
+    booking ? bookingOthers(booking).filter((p) => p.id !== booking.holderId) : []
+  );
   const coming = $derived(booking ? Date.parse(booking.startsAt) > nowMs : false);
   const isHolder = $derived(mine?.holder ?? false);
   const isParticipant = $derived(!!booking?.mine && !isHolder);
@@ -134,10 +143,10 @@
             <dt class="text-text-muted text-xs font-semibold">{m.bookings_detail_holder()}</dt>
             <dd class="text-text-main">{booking.holderName}</dd>
           </div>
-          {#if booking.participantNames?.length}
+          {#if invitees.length}
             <div>
               <dt class="text-text-muted text-xs font-semibold">{m.bookings_detail_people()}</dt>
-              <dd class="text-text-main">{booking.participantNames.join(', ')}</dd>
+              <dd class="text-text-main">{othersNames(invitees)}</dd>
             </div>
           {/if}
         </dl>
@@ -212,6 +221,16 @@
           class="border-cn-border text-text-main hover:border-red-err/40 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors"
         >
           {m.bookings_withdraw_action()}
+        </button>
+      {/if}
+      {#if mayCancel && onEdit}
+        <button
+          type="button"
+          onclick={onEdit}
+          class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors"
+        >
+          <Pencil size={16} aria-hidden="true" />
+          {m.bookings_edit_action()}
         </button>
       {/if}
       {#if mayCancel}

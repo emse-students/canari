@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Plus, X, Search, Shield } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
 
   interface Props {
     /** Which sidebar tab is currently active. */
@@ -46,6 +47,7 @@
     </div>
 
     <button
+      use:guideAnchor={'chat.new'}
       onclick={onOpenNewChat}
       class="ui-icon-button text-text-main bg-cn-surface rounded-full border border-white/45 transition-colors hover:bg-black/5 dark:border-white/10 dark:hover:bg-black/40"
       title={activeSidebarTab === 'channels'

@@ -10,7 +10,7 @@ import {
   detectRuntimeDeviceOs,
   SavedStateUnopenedError,
   SavedStateOfAnotherAccountError,
-  noPinOpensState,
+  recoveryOfStateLoadFailure,
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
   isMlsManagerAbsent,
@@ -18,7 +18,6 @@ import {
   type MlsInitOptions,
 } from '$lib/mls-client';
 import { reportMlsSessionLost } from '$lib/mls-client/mlsSessionLoss';
-import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import {
   mapNativeBatchDecryptResults,
   type BatchDecryptRow,
@@ -40,7 +39,7 @@ import {
 } from '$lib/mls-client/commitSubmission';
 import type { DeviceEvent, DevicePin, KeyPackageVerdict } from '$lib/mls-client/deviceTrust';
 import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
-import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { liveMlsFrameMessage } from '$lib/mls-client/liveFrame';
 import { gatewaySocketUrl } from '$lib/mls-client/frameDelivery';
 import {
   GatewayOpenAbandonedError,
@@ -48,15 +47,45 @@ import {
 } from '$lib/mls-client/gatewaySocketOpen';
 import { getToken } from '$lib/stores/auth';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
-import { fromBase64, toBase64, toHex } from '$lib/utils/hex';
+import { toBase64, toHex } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { getLocale } from '$lib/i18n';
+import {
+  MlsSlotMoveUnfinishedError,
+  MlsSlotOwnerUnrecordedError,
+  MlsResetUnsettledError,
+  mlsStateLoadErrorOf,
+} from '$lib/mls-client/mlsStateLoadError';
 import { BaseMlsService } from './BaseMlsService';
 import { beginBootSpan, endBootSpan, timeBootSpan } from '$lib/mls-client/bootBenchmark';
 import { keystoreUnlockPrompt } from './biometric';
 import { DELETE_DEVICE_KEY_COMMAND } from './keystoreCommands';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { conformPluginFetch } from '$lib/utils/transportFailure';
+
+/**
+ * The tail of the ONE queue every `initialiser_mls` of this page runs on - module-level, so two
+ * service instances share it.
+ *
+ * **TWO SIGN-INS OF ONE PAGE NEVER OVERLAP IN THE NATIVE SESSION** (round 3 of the review of #2919):
+ * the native side keeps one manager slot and one session generation per process. Queued here, each
+ * attempt selects, loads, and installs or is refused before the next one starts. A page that RELOADS
+ * gets a new queue while its previous page's attempt may still be loading natively; that one is
+ * covered on the native side, where every step of an attempt is checked against the session it
+ * claimed and an attempt whose session ended writes nothing (round 4). The SERVICE ends no session
+ * after a failed attempt; the LOGIN does, once it has failed - see `mlsHolder` (`client reset`).
+ */
+let nativeInitQueue: Promise<unknown> = Promise.resolve();
+
+/**
+ * Runs `attempt` once every earlier native init of this page has settled, whatever its outcome.
+ * Exported for the test that proves two calls do not overlap.
+ */
+export function queueNativeInit<T>(attempt: () => Promise<T>): Promise<T> {
+  const run = nativeInitQueue.then(attempt, attempt);
+  nativeInitQueue = run.catch(() => undefined);
+  return run;
+}
 import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
 import { connectNativeSocket, NATIVE_CONNECT_TIMEOUT_MS } from './nativeSocketConnect';
 import { nextPageRingHolder, reportPageGatewaySocket } from './pageGatewaySocket';
@@ -403,6 +432,7 @@ export class TauriMlsService extends BaseMlsService {
       throw new GatewayOpenAbandonedError('paused during the native connect');
     }
     this.ws = socket;
+    this.noteSocketOpened();
     console.log(`[WS] Connected to Chat Gateway - device=${sanitizeForLog(deviceId)}`);
 
     this.wsUnlisten = this.ws.addListener((msg: WsMessage) => {
@@ -539,29 +569,8 @@ export class TauriMlsService extends BaseMlsService {
       return;
     }
     if (parsed.proto && this.messageCallback) {
-      const ciphertext = fromBase64(parsed.proto as string);
-      const ratchetTreeBytes =
-        typeof parsed.ratchetTree === 'string' && (parsed.ratchetTree as string).length > 0
-          ? fromBase64(parsed.ratchetTree as string)
-          : undefined;
-      if (ciphertext.length > 0) {
-        this.enqueueMessage(
-          {
-            senderId: (parsed.senderId as string) || 'unknown',
-            senderDeviceId: (parsed.senderDeviceId as string) || undefined,
-            ciphertext,
-            groupId: (parsed.groupId as string) || undefined,
-            isWelcome: !!parsed.isWelcome,
-            isCommit: !!parsed.isCommit,
-            ratchetTreeBytes,
-            queuedMessageId: (parsed.queuedMessageId as string) || undefined,
-            queuedCreatedAt: parseServerTimestampMs(parsed.createdAt),
-            // Forwarded by the gateway since step A (history-answer-addressing, rule 4).
-            addressed: parsed.addressed === true,
-          },
-          'live'
-        );
-      }
+      const queued = liveMlsFrameMessage(parsed);
+      if (queued) this.enqueueMessage(queued, 'live');
     } else if (parsed.proto && !this.messageCallback) {
       console.warn(
         `[WS RCV] a frame carried a proto but no messageCallback is registered - the frame is DROPPED`
@@ -751,14 +760,27 @@ export class TauriMlsService extends BaseMlsService {
       // this one is a decrypt that failed and handed the rest of its time to a recovery, and a
       // report that merged them would show a fresh-start boot as a slow load.
       endBootSpan('mls-load-state', { recovered: true });
-      // If init fails AND a saved state existed, the state is to blame
-      // (credential mismatch, partial corruption, invalid key…).
-      // → systematic fresh-start to avoid blocking the user indefinitely.
-      // If state == null and error → real crash (no state to blame) → rethrow.
+      // AN UNFINISHED MOVE BETWEEN TWO ACCOUNTS' STATES IS NO VERDICT ON ANY STATE: nothing was opened,
+      // so nothing below - a re-seal, a rotation, a reset offered by the gate - may answer it. The
+      // move is retried at the next sign-in (`mls_account_state.rs`).
+      // Nor is an unsettled PIN reset: the state is set apart until the server answers.
+      if (
+        e instanceof MlsSlotMoveUnfinishedError ||
+        e instanceof MlsSlotOwnerUnrecordedError ||
+        e instanceof MlsResetUnsettledError
+      ) {
+        throw e;
+      }
+      // A failed load is answered by WHAT IS KNOWN about the state (`recoveryOfStateLoadFailure`):
+      // rotated away only when no PIN can open it, or when it may be a PIN rotated elsewhere and
+      // the caller did not ask to pause; never for a cause that proves nothing about the bytes.
+      // With no state there is nothing to blame, and the failure propagates as itself.
       let cause = this.classifyStateLoadFailure(e);
 
-      // `mls.bin` IS ONE FILE PER INSTALL, AND A RECORD BESIDE IT SAYS WHOSE IT IS. When that record
-      // names another account, this account's key was never going to open it - and every branch
+      // THE SLOT `mls.bin` HOLDS ONE ACCOUNT'S STATE, AND A RECORD BESIDE IT SAYS WHOSE IT IS. Since
+      // 2026-11-02 `initialiser_mls` parks the previous account's state before it reads the slot
+      // (`mls_account_state.rs`), so a record naming another account here means that switch was
+      // refused - and this account's key was never going to open the state. Every branch
       // below either writes (the re-seal, the rotation) or hands the gate a reset that deletes it. So
       // it is refused first, whatever the cause, and NOTHING is written. Only a record naming someone
       // else proves it: no record is absence of proof (`mls_state_owner`).
@@ -785,17 +807,12 @@ export class TauriMlsService extends BaseMlsService {
         throw new VaultOwnerUnprovenError(refusal);
       }
 
-      // No key in the keystore (a cancelled or refused sheet, a wiped entry) says nothing about
-      // the saved state and is recoverable - the user just needs to enter their PIN. Do NOT
-      // destroy the device identity: let the error propagate to the PIN modal.
-      const isKeystoreEmpty = cause === 'keystore_unavailable';
-
       // A snapshot written before v0.11.0 sits in the Argon2id envelope and cannot decrypt with
       // the device key, which is indistinguishable here from a key rotated on another device.
       // Retry once letting Rust try that envelope: on success it re-seals and persists mls.bin.
       // Must not `return` on success - the push-context write below this block still has to run.
       let migrated = false;
-      if (cause === 'undecryptable' && savedStateExists && opts?.legacyPin && !isKeystoreEmpty) {
+      if (cause === 'undecryptable' && savedStateExists && opts?.legacyPin) {
         try {
           await this.invokeInit(deviceKeyB64, state, opts.legacyPin, opts.stateOnDisk);
           migrated = true;
@@ -813,24 +830,24 @@ export class TauriMlsService extends BaseMlsService {
         }
       }
 
-      if (migrated) {
+      // ONE DECISION FOR BOTH PLATFORMS (`recoveryOfStateLoadFailure`): anything no PIN can open
+      // is rotated; a PIN rotated elsewhere pauses under `noFreshStart`; and a cause that proves
+      // nothing about the bytes - `unknown`, or an empty keystore (a cancelled or refused sheet, a
+      // wiped entry: the PIN modal is the answer) - NEVER rotates, whatever the caller passed.
+      const recovery = migrated
+        ? 'recovered'
+        : recoveryOfStateLoadFailure(cause, savedStateExists, opts?.noFreshStart === true);
+      if (recovery === 'recovered') {
         // State recovered in place: keep the device identity and fall through to the normal
         // post-init steps.
-      } else if ((noPinOpensState(cause) || savedStateExists) && !isKeystoreEmpty) {
-        // ANYTHING NO PIN CAN OPEN IS ROTATED, EVERYTHING ELSE IS WORTH PAUSING FOR, and the test
-        // is written that way round deliberately. A `mismatch` decrypted fine and names another
-        // device; an `altered` state's header names THIS key and its tag fails (DE7, CORRUPT-2) -
-        // honouring noFreshStart for either strands the user on a gate asking for a PIN that cannot
-        // exist. Everything else - a PIN rotated elsewhere, a legacy blob that says nothing, a
-        // failure this classifier has never been taught about - is a reason to STOP rather than to
-        // rotate an identity and lose what the blob still holds. Never widened past the fingerprint:
-        // a rotation on every failed decrypt destroys the history of every real PIN rotation.
-        if (opts?.noFreshStart && !noPinOpensState(cause)) {
-          throw new SavedStateUnopenedError(
-            cause === 'rotated' || cause === 'undecryptable' ? cause : 'unknown',
-            e
-          );
-        }
+      } else if (recovery === 'pause') {
+        throw new SavedStateUnopenedError(
+          cause === 'rotated' || cause === 'undecryptable' || cause === 'unreadable_now'
+            ? cause
+            : 'unknown',
+          e
+        );
+      } else if (recovery === 'rotate') {
         if (cause === 'altered') {
           console.error(
             `[MLS] The saved state was ALTERED under the key its header names - no PIN opens it; rotating the device identity: ${String(e).slice(0, 200)}`
@@ -1119,10 +1136,10 @@ export class TauriMlsService extends BaseMlsService {
   /**
    * The account `mls.bin` was last opened for, `null` when none is recorded (`mls_state_owner`).
    *
-   * Asked only once a load has FAILED, so a sign-in that opens its state pays nothing for it. The
-   * command never rejects for a missing or unreadable record (it answers `null` and logs natively);
-   * a rejection here is the bridge itself failing, and it propagates - read as "no owner", it would
-   * hand the gate a reset that may delete another account's state.
+   * Asked only once a load has FAILED, so a sign-in that opens its state pays nothing for it. A
+   * missing record answers `null`; a record that exists and could not be READ rejects (round 5 of the
+   * review of #2919), and so does the bridge failing - either propagates, because read as "no owner"
+   * it would hand the gate a reset that may delete another account's state.
    */
   private async savedStateOwner(): Promise<string | null> {
     return (await invoke<string | null>('mls_state_owner')) ?? null;
@@ -1137,6 +1154,15 @@ export class TauriMlsService extends BaseMlsService {
   ): Promise<void> {
     this._groupsListed = false;
     await this.invokeInit(deviceKeyB64, state, undefined, stateOnDisk, unattendedKeyRead);
+  }
+
+  /**
+   * See {@link BaseMlsService.loadFreshStateReplacingUnopened}: the native fresh start says it
+   * replaces the slot's state, the one fresh start `initialiser_mls` lets over a saved state.
+   */
+  protected override async loadFreshStateReplacingUnopened(deviceKeyB64: string): Promise<void> {
+    this._groupsListed = false;
+    await this.invokeInit(deviceKeyB64, undefined, undefined, false, undefined, true);
   }
 
   /**
@@ -1158,8 +1184,31 @@ export class TauriMlsService extends BaseMlsService {
     state?: Uint8Array,
     legacyPin?: string,
     stateOnDisk?: boolean,
-    unattendedKeyRead?: boolean
+    unattendedKeyRead?: boolean,
+    replacesUnopenedState?: boolean
   ): Promise<void> {
+    return queueNativeInit(() =>
+      this.invokeInitQueued(
+        deviceKeyB64,
+        state,
+        legacyPin,
+        stateOnDisk,
+        unattendedKeyRead,
+        replacesUnopenedState
+      )
+    );
+  }
+
+  /** {@link invokeInit}'s body, run on {@link queueNativeInit}. */
+  private async invokeInitQueued(
+    deviceKeyB64: string,
+    state?: Uint8Array,
+    legacyPin?: string,
+    stateOnDisk?: boolean,
+    unattendedKeyRead?: boolean,
+    replacesUnopenedState?: boolean
+  ): Promise<void> {
+    console.debug('[MLS][Tauri] initialiser_mls: queued turn reached');
     this._deviceKeyB64 = deviceKeyB64;
     // `Array.from` ON A MULTI-MEGABYTE BLOB IS THE THING TO AVOID HERE, and `stateOnDisk` is how
     // the login path avoids it: Rust reads `mls.bin` itself and nothing is serialised. What is left
@@ -1177,20 +1226,23 @@ export class TauriMlsService extends BaseMlsService {
           biometricPrompt: keystoreUnlockPrompt(),
           stateOnDisk: stateOnDisk === true,
           unattendedKeyRead: unattendedKeyRead === true,
+          replacesUnopenedState: replacesUnopenedState === true,
         },
       });
     } catch (e) {
-      // A FAILED INSTALL LEAVES NO SESSION BEHIND. The native install guard already emptied the slot
-      // (by construction, on every exit that did not install); this is the same end through the one
-      // helper every path uses, so the previous account's manager and key cannot be left installed
-      // whatever the native side did. The install's own error is the one that propagates.
-      await endNativeMlsSession('failed initialiser_mls', { sweepState: false }).catch(
-        (teardown: unknown) =>
-          console.error(
-            `[MLS][Tauri] ending the native session after a failed initialiser_mls failed: ${String(teardown)}`
-          )
-      );
-      throw e;
+      // A FAILED INSTALL LEAVES NO SESSION BEHIND: the native install guard ends exactly the
+      // session ITS selection claimed, on every exit that did not install - and nothing when it was
+      // refused before claiming one. THIS SERVICE ends nothing more here (round 4 of the review of
+      // #2919): an unclaimed end at this point ran inside every failed attempt, the legacy-migration
+      // retry's included. The LOGIN, once it has failed as a whole, still ends the process session
+      // unclaimed (`mlsHolder` `client reset`) - deliberately: that is what clears a manager an
+      // orphaned sign-in of a reloaded page installed, and an attempt whose session that end
+      // supersedes writes nothing into the slot (round 5). The install's own error propagates, typed
+      // HERE at the invoke boundary: the
+      // command rejects with `{ code, message }` (`StateLoadRefusal`), so `classifyStateLoadFailure`
+      // and the login read a TYPE, never the message. No older string shape is understood: the app
+      // embeds this frontend, so the native half that answers is always the one built with it.
+      throw mlsStateLoadErrorOf(e);
     }
   }
 
@@ -1406,12 +1458,12 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /**
-   * `mls_state_absent`: `true` only when `mls.bin` does not exist or is empty. An unreadable data
-   * directory is an `Err`, which `reenrolLostState` reads as "not proven" - unlike `mls_state_size`,
-   * which answers 0 for it.
+   * `mls_state_absent`: `true` only when THIS ACCOUNT's `mls.bin` does not exist or is empty. An
+   * unreadable data directory is an `Err`, which `reenrolLostState` reads as "not proven" - and
+   * `mls_state_size` rejects on it too since round 4 of the review of #2919.
    */
   protected async savedStateProvenAbsent(): Promise<boolean> {
-    return invoke<boolean>('mls_state_absent');
+    return invoke<boolean>('mls_state_absent', { userId: this.userId });
   }
 
   /** Tauri-native `invoke` wrapper - `verifier_key_package`, the Rust verdict on binding and pin. */

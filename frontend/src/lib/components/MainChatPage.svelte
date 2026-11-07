@@ -16,11 +16,15 @@
   import { m } from '$lib/paraglide/messages';
   import { showToast } from '$lib/stores/toast.svelte';
   import { flushOwedDmReadMarks } from '$lib/utils/chat/messaging';
+  import { getOutbox } from '$lib/utils/chat/outbox';
+  import { holdWhileLeaving } from '$lib/utils/backgroundFlush';
   import { recordUnsentSalonText } from '$lib/utils/chat/salonUnsent';
   import { restoreFailedDraft } from '$lib/utils/chat/draftRestore';
   import { createHeldSendQueue } from '$lib/utils/chat/heldSends';
-  import { isAppInForeground, onAppScreenChange } from '$lib/utils/appForeground';
+  import { onAppScreenChange } from '$lib/utils/appForeground';
+  import { createResumeReadGate } from '$lib/utils/chat/resumeOpening.svelte';
   import { readMarkTarget, watermarkFor, withOwnReadAdvanced } from '$lib/utils/chat/readState';
+  import { serverTimeSeen } from '$lib/utils/chat/serverClock';
   import { createReadMarkDebounce } from '$lib/utils/chat/readMarkDebounce';
   import { publishConversationRead } from '$lib/mls-client/tabMessageSync';
   import { forceSyncReset } from '$lib/utils/chat/actions';
@@ -95,6 +99,7 @@
     MessageBatchOrigin,
   } from '$lib/types';
   import type { BulkIngestPhase } from '$lib/mls-client';
+  import { buildMentionRoster } from '$lib/utils/users/mentionRoster';
 
   interface Props {
     /** Controls whether the sidebar shows private chat conversations or community channels. */
@@ -278,13 +283,16 @@
   /** The conversation the panels describe: a channel's own id, or the selected group's. */
   const selectedConversationId = $derived(activeConversation?.id ?? '');
 
-  /** User IDs allowed in @mention suggestions for the active chat/channel, or undefined for unrestricted (e.g. posts). */
-  const composerAllowedUserIds = $derived(
-    isSelectedChannel
-      ? selectedChannelMemberIds
-      : convs.groupMembers.length > 0
-        ? convs.groupMembers
-        : undefined
+  /**
+   * The active group's or salon's members for the @mention picker, each stamped with when they last
+   * spoke here. Empty while the list loads, which makes the picker fall back to the server search.
+   */
+  // O(messages) per message change: one pass over an in-memory array, left as is on purpose.
+  const composerMentionRoster = $derived(
+    buildMentionRoster(
+      isSelectedChannel ? selectedChannelMemberIds : convs.groupMembers,
+      activeConversation?.messages ?? []
+    )
   );
 
   // Deep-link landing (notification tap, invite card, invite link) is owned by
@@ -300,6 +308,19 @@
   let forwardingMessage = $state<ChatMessage | null>(null);
   let isWindowFocused = $state(true);
   let isTabVisible = $state(true);
+  /**
+   * The Android foreground, as state the receipt effect FOLLOWS: read as the bare global it stopped
+   * the effect while the app was in the background and nothing ran it again on the way back
+   * (`appForegroundState.svelte.ts`).
+   */
+  // A resume that opens a notification for another conversation does not read the one left open:
+  // decided in the dispatch that announces the foreground, before this effect can see it (owner,
+  // 2026-11-02, `resumeOpening.svelte.ts`).
+  const appForeground = createResumeReadGate(
+    () => convs.selectedContact,
+    (id) => resolveConversationKey(convs.conversations, id)
+  );
+  onDestroy(() => appForeground.destroy());
 
   /**
    * The frame the log panel's scroll is already scheduled for, or `null`.
@@ -394,8 +415,6 @@
       storage: session.storage,
       log,
       saveConversation: (name: string) => convs.saveConversation(name, convCtx()),
-      verifyCurrentUserMembership: (name: string) =>
-        convs.verifyCurrentUserMembership(name, convCtx()),
       playNotificationTone: notifs.playNotificationTone,
       playSendTone: notifs.playSendTone,
       playReceiveTone: notifs.playReceiveTone,
@@ -723,18 +742,36 @@
     // are both permanently true in a backgrounded Tauri WebView (measured on device 2026-09-05:
     // a backgrounded app reports `visible` / `hasFocus: true`, byte for byte its foreground
     // answer), so on Android these two said "the user is reading this" about a phone in a pocket -
-    // and the sender was told their message had been read. `isAppInForeground` reads the fact the
+    // and the sender was told their message had been read. `appForeground` reads the fact the
     // Android activity states for itself, and is `true` everywhere that has a working visibility
-    // API, so the two terms above keep deciding web and desktop exactly as before.
-    if (!isWindowFocused || !isTabVisible || !isAppInForeground()) return;
+    // API, so the two terms above keep deciding web and desktop exactly as before. It is STATE, so
+    // the app coming back to the foreground on an open conversation runs this effect again and marks
+    // what landed while it was away - read as a bare global, nothing re-ran it (owner, 2026-11-02).
+    if (!isWindowFocused || !isTabVisible || !appForeground.current) return;
+    // The app came back to open something else (a tapped notification): what it shows until the
+    // landing selects that is not being read (`resumeOpening.svelte.ts`).
+    if (appForeground.holds(convs.selectedContact)) return;
     const convo = convs.conversations.get(convs.selectedContact);
     if (!convo || convo.lifecycle !== 'active') return;
 
     const meNorm = session.userId.toLowerCase();
-    const held = watermarkFor(convo.readWatermarks, meNorm);
+    // A DM OR GROUP MARK IS TAKEN ON THE SERVER'S CLOCK (`serverReadWatermarks`, readState.ts), the
+    // key its rows are sorted by; a salon's lives in the stamped map, where its rows' stamp IS the
+    // server's time.
+    const clock = isSelectedChannel ? 'stamped' : 'server';
+    const held = watermarkFor(
+      isSelectedChannel ? convo.readWatermarks : convo.serverReadWatermarks,
+      meNorm
+    );
     // A DM or group mark moves over FOREIGN messages only: one moved over this reader's own send
     // told nobody anything and cost every member a decrypt and a checkpoint (`readMarkTarget`).
-    const target = readMarkTarget(convo.messages, held, isSelectedChannel);
+    // Bounded by what the server itself said this session (`serverMarkCeiling`).
+    const target = readMarkTarget(
+      convo.messages,
+      held,
+      isSelectedChannel,
+      serverTimeSeen(session.userId)
+    );
     if (target <= held) return;
 
     const currentContact = convs.selectedContact;
@@ -753,10 +790,10 @@
         // The count moves with the watermark (the open conversation is read, so it falls to 0),
         // and the OTHER TABS of this account are told: a leader tab that counted the arrival while
         // this tab had the conversation open would otherwise keep its `(N)` for good.
-        const next = withOwnReadAdvanced(fresh, meNorm, target);
+        const next = withOwnReadAdvanced(fresh, meNorm, target, clock);
         if (next === fresh) return;
         convs.conversations.set(currentContact, next);
-        publishConversationRead(currentContact, next.lastMessageAt ?? 0);
+        publishConversationRead(currentContact, next.lastMessageAt ?? 0, { at: target, clock });
         void convs.saveConversation(currentContact, convCtx());
       }, 0);
     });
@@ -900,7 +937,20 @@
     // The app leaving the screen ends the reading: the pending read mark is delivered now rather
     // than at a window expiry the OS may never let run (a backgrounded phone suspends timers).
     const offScreenChange = onAppScreenChange((onScreen) => {
-      if (!onScreen) readMarks.flush();
+      if (onScreen) return;
+      // ON iOS THE PROCESS IS HELD WHILE IT GOES (`holdWhileLeaving`): the mark handed on here is
+      // then SENT before the app is suspended, not at its next open. The delivery hands it to the
+      // outbox (a DM) or the owed queue (a salon); what is awaited is both drains and the outbox's
+      // flush, so the hold ends when the frame has left - or failed, or iOS's own deadline came.
+      const reader = session.userId;
+      void holdWhileLeaving('read mark on leaving the screen', async () => {
+        readMarks.flush();
+        if (!reader) return;
+        await Promise.all([
+          flushOwedSalonMarks(reader),
+          flushOwedDmReadMarks(reader).then(() => getOutbox()?.flush()),
+        ]);
+      });
     });
     return () => {
       offScreenChange();
@@ -1603,7 +1653,7 @@
           isCatchupAnnounced={messaging.isCatchupOverlayVisible}
           groupMembers={convs.groupMembers}
           pendingInvites={convs.pendingGroupInvites}
-          allowedUserIds={composerAllowedUserIds}
+          mentionRoster={composerMentionRoster}
           canWrite={canWriteToSelectedChannel}
           sendError={convs.sendError}
           onGroupRename={(name) => void convs.handleRenameGroup(name, convCtx())}
@@ -1655,6 +1705,7 @@
                 )
             : (msgId, text) => void messaging.handleEditMessage(msgId, text, msgCtx())}
           onTogglePin={handleTogglePinMessage}
+          onReelPurged={(msgId, at) => void messaging.recordReelPurged(msgId, at, msgCtx())}
           onCancelReply={() => messaging.cancelReply(convs.selectedContact ?? '')}
           authToken={session.authToken}
           onFilesSelected={handleFilesSelected}
@@ -1663,7 +1714,6 @@
           onRemovePendingFile={(index) =>
             messaging.removePendingMediaFile(convs.selectedContact, index)}
           videoPreparation={messaging.videoPreparation}
-          isUploading={messaging.isUploadingMedia}
           onStartAudioCall={callsAvailable(serverCallsMode()) && selectedIsDirect
             ? () => {
                 void startCallForCurrentConversation(false);

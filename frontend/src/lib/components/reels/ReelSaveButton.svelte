@@ -9,7 +9,7 @@
    * names a remedy the screen does not offer leaves the member to find it alone.
    */
   import { Download, LoaderCircle, Settings } from '@lucide/svelte';
-  import { saveReel, type SaveableReel } from '$lib/reels/saveReel';
+  import { canSaveVideo, saveReel, type SaveableReel } from '$lib/reels/saveReel';
   import { openAppSettings } from '$lib/reels/gallery';
   import { showToast } from '$lib/stores/toast.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -50,7 +50,10 @@
   }
 </script>
 
-{#if denied}
+<!-- Photos on iOS reads no WebM: no save is offered for such a video (`canSaveVideo`). -->
+{#if !canSaveVideo(reel)}
+  <!-- nothing -->
+{:else if denied}
   <button
     type="button"
     class={rail

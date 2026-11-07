@@ -7,7 +7,7 @@ import { clearConversationControlRefusals } from './controlRefusals.svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
-import type { IStorage, ConversationMeta, StoredMessage } from '$lib/db';
+import type { IStorage, ConversationMeta } from '$lib/db';
 import {
   mapStoredMessagesToChatMessages,
   readHistoryStreamCursor,
@@ -27,7 +27,7 @@ import { getUserDisplayNameSync, peekUserDisplayName } from '$lib/utils/users/di
 import { foldForSearch } from '$lib/utils/textFold';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { mergeMessagePage } from './messageMerge';
-import { isUnreadForUser, watermarkFor } from './readState';
+import { isUnreadForUser, readPointFor } from './readState';
 import { isNoticeRow, messageTime } from './messageOrder';
 import { isChannelConversationId } from './channelCrypto';
 import { logBestEffortGroupDeleteFailure } from './pendingGroupExits';
@@ -102,6 +102,7 @@ export function toConversationMeta(
     // the one local-clock value here), else `startedAt`, else 0.
     updatedAt: conversationRecency(convo),
     readWatermarks: convo.readWatermarks,
+    serverReadWatermarks: convo.serverReadWatermarks,
     historyFloor: convo.historyFloor,
     startedAt: convo.startedAt,
     imageMediaId: convo.imageMediaId ?? null,
@@ -189,6 +190,27 @@ export function findConversationKeyByGroupId(
   if (conversations.has(groupId)) return groupId;
   for (const [key, convo] of conversations) {
     if (convo.id === groupId) return key;
+  }
+  return undefined;
+}
+
+/**
+ * The key and row of the DIRECT conversation with `peerId`, or `undefined`.
+ *
+ * THE ONE PREDICATE A DUPLICATE-GROUP MERGE RE-KEYS ON (`setupMessageHandler`, the Welcome of a DM
+ * whose peer already has a row): the row is moved to the key of the group just joined. A send made
+ * under the old key follows it by asking the same question (`handleSendChat`), so the two cannot
+ * disagree about which row a DM is.
+ */
+export function findDirectConversationByPeer(
+  conversations: Map<string, Conversation>,
+  peerId: string
+): [string, Conversation] | undefined {
+  const peer = peerId.toLowerCase();
+  for (const entry of conversations) {
+    const convo = entry[1];
+    if ((convo.conversationType ?? 'group') !== 'direct') continue;
+    if ((convo.directPeerId ?? convo.contactName).toLowerCase() === peer) return entry;
   }
   return undefined;
 }
@@ -441,6 +463,7 @@ export interface ConversationRowSpec {
   imageMediaId?: string | null;
   lastMessageAt?: number;
   readWatermarks?: Conversation['readWatermarks'];
+  serverReadWatermarks?: Conversation['serverReadWatermarks'];
   historyFloor?: Conversation['historyFloor'];
   startedAt?: Conversation['startedAt'];
   /** See {@link Conversation.awaitingAdmission}; absent keeps what `existing` holds. */
@@ -481,6 +504,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
   const imageMediaId = spec.imageMediaId !== undefined ? spec.imageMediaId : existing?.imageMediaId;
   const lastMessageAt = spec.lastMessageAt ?? existing?.lastMessageAt;
   const readWatermarks = spec.readWatermarks ?? existing?.readWatermarks;
+  const serverReadWatermarks = spec.serverReadWatermarks ?? existing?.serverReadWatermarks;
   const historyFloor = spec.historyFloor ?? existing?.historyFloor;
   const startedAt = spec.startedAt ?? existing?.startedAt;
   const awaitingAdmission = spec.awaitingAdmission ?? existing?.awaitingAdmission;
@@ -499,6 +523,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
     ...(imageMediaId !== undefined ? { imageMediaId } : {}),
     ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
     ...(readWatermarks !== undefined ? { readWatermarks } : {}),
+    ...(serverReadWatermarks !== undefined ? { serverReadWatermarks } : {}),
     ...(historyFloor !== undefined ? { historyFloor } : {}),
     ...(startedAt !== undefined ? { startedAt } : {}),
     ...(awaitingAdmission === true ? { awaitingAdmission } : {}),
@@ -701,13 +726,24 @@ export async function mergeDirectConversationDuplicates(
     try {
       const canonicalMessages = await storage.getMessages(canonical.id, deviceKeyB64);
       const duplicateMessages = await storage.getMessages(duplicate.id, deviceKeyB64);
-      const byId = new Map<string, StoredMessage>();
-      for (const m of canonicalMessages) byId.set(m.id, { ...m, conversationId: canonical.id });
-      for (const m of duplicateMessages) {
-        if (!byId.has(m.id)) byId.set(m.id, { ...m, conversationId: canonical.id });
-      }
-      const merged = Array.from(byId.values()).sort((a, b) => a.timestamp - b.timestamp);
-      if (merged.length > 0) await storage.saveMessages(merged, deviceKeyB64);
+      const inCanonical = new Set(canonicalMessages.map((m) => m.id));
+      // A MOVE, AND THE ONE WHOLE-ROW WRITE THIS MERGE MAKES. Only the duplicate's own rows are
+      // written - the canonical's stand as they are, never rewritten from this read. A move changes
+      // a row's conversation, which the scoped compare-and-set (`mergeMessages`) refuses by design,
+      // so each moved row is the STORED row just read - every field, proofs and reactions included -
+      // under its new conversation.
+      //
+      // THE WINDOW IT LEAVES, STATED AS IT IS: from the read above to `deleteConversation` below, a
+      // deletion (or edit) of one of the duplicate's messages handled by its group is NOT carried.
+      // Landing before the move, its tombstone is written over by the body read here; landing after
+      // it, the handler finds no row in the duplicate, keeps the mutation under the duplicate, and
+      // `deleteConversation` removes that entry - either way the body stands under the canonical
+      // conversation. Closing it needs the move as one store operation that the handlers serialise
+      // against; this boot-time merge runs once per duplicate, before its conversation is shown.
+      const moved = duplicateMessages
+        .filter((m) => !inCanonical.has(m.id))
+        .map((m) => ({ ...m, conversationId: canonical.id }));
+      if (moved.length > 0) await storage.saveMessages(moved, deviceKeyB64);
       await storage.deleteConversation(duplicate.id);
       // Delete the orphan group server-side so it does not reappear at the next login
       // via discoverMissingGroups.
@@ -841,6 +877,7 @@ export function restoredConversationRow(
     // succeeds and the value is silently absent for the rest of the session - the unread recount
     // below would then count messages this user has already read on another device.
     readWatermarks: meta.readWatermarks,
+    serverReadWatermarks: meta.serverReadWatermarks,
     historyFloor: meta.historyFloor,
     startedAt: meta.startedAt,
     awaitingAdmission: meta.awaitingAdmission,
@@ -958,12 +995,14 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
       if (live) {
         const lastMessageAt = live.lastMessageAt ?? meta.updatedAt;
         const readWatermarks = live.readWatermarks ?? meta.readWatermarks;
+        const serverReadWatermarks = live.serverReadWatermarks ?? meta.serverReadWatermarks;
         const historyFloor = live.historyFloor ?? meta.historyFloor;
         const startedAt = live.startedAt ?? meta.startedAt;
         ctx.conversations.set(meta.id, {
           ...live,
           ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
           ...(readWatermarks !== undefined ? { readWatermarks } : {}),
+          ...(serverReadWatermarks !== undefined ? { serverReadWatermarks } : {}),
           ...(historyFloor !== undefined ? { historyFloor } : {}),
           ...(startedAt !== undefined ? { startedAt } : {}),
         });
@@ -1202,10 +1241,10 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
             // a message delivered live while the replay ran is not in it, so counting the page alone
             // both dropped that message from the display and then wrote a badge that did not include
             // it - the same stale read, once as a loss and once as an undercount.
-            const myWatermark = watermarkFor(current.readWatermarks, ctx.userId.toLowerCase());
+            const mine = readPointFor(current, ctx.userId.toLowerCase());
             const messages = mergeMessagePage(current.messages, refreshedMsgs);
             const newUnreadCount = messages.filter(
-              (m) => !preReplayMsgIds.has(m.id) && isUnreadForUser(m, myWatermark)
+              (m) => !preReplayMsgIds.has(m.id) && isUnreadForUser(m, mine.stamped, mine.server)
             ).length;
             ctx.conversations.set(meta.id, { ...current, messages, unreadCount: newUnreadCount });
             for (const m of refreshedMsgs) {

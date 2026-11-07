@@ -29,6 +29,8 @@
 "notif.social.followed_post.body" = "Nouvelle publication";
 "notif.social.association_repost.title" = "%@ a relayé une publication";
 "notif.social.association_repost.body" = "Nouvelle publication";
+"notif.social.member_repost.title" = "%@ a republié une publication";
+"notif.social.member_repost.body" = "Nouvelle publication";
 "notif.social.repost_proposed.title" = "%@ propose de relayer une publication";
 "notif.social.repost_proposed.body" = "Publication à relayer";
 "notif.social.repost_personal_requested.title" = "%@ demande à relayer votre publication";
@@ -39,6 +41,9 @@
 "notif.social.live_started.body" = "Appuyez pour regarder";
 "notif.social.follow_request.title" = "%@ demande à vous suivre";
 "notif.social.follow_request.body" = "Appuyez pour répondre";
+"notif.social.join_ask.title" = "%@ veut rejoindre";
+"notif.social.join_ask.body" = "cette conversation";
+"notif.social.join_ask_anon.title" = "Quelqu'un veut rejoindre";
 "notif.social.follow_accepted.title" = "%@ a accepté votre demande";
 "notif.social.follow_accepted.body" = "Votre demande a été acceptée";
 "notif.social.live_cut.title" = "Votre live a été interrompu";
@@ -53,6 +58,10 @@
 "notif.social.booking_withdrawn.body" = "Votre réservation est maintenue";
 "notif.social.booking_added.title" = "%@ vous a inscrit à une réservation";
 "notif.social.booking_added.body" = "Retrouvez-la dans Réservations";
+"notif.social.booking_changed.title" = "%@ a modifié votre réservation";
+"notif.social.booking_changed.body" = "Retrouvez le nouvel horaire dans Réservations";
+"notif.social.booking_removed.title" = "%@ vous a retiré d'une réservation";
+"notif.social.booking_removed.body" = "Vous n'en faites plus partie";
 "notif.social.booking_reminder.title" = "Rappel de réservation";
 "notif.social.booking_reminder.body" = "Votre réservation commence bientôt";
 "notif.form.opening_soon.title" = "Formulaire bientôt ouvert";
@@ -67,6 +76,12 @@
 "notif.lydia_payments_paused.body" = "Les paiements Lydia de %1$@ sont suspendus : Lydia a refusé une demande de paiement.";
 "notif.lydia_refund_issued.title" = "Remboursement";
 "notif.lydia_refund_issued.body" = "%1$@ vous a remboursé un paiement.";
+"notif.delegation_revoked.title" = "Paiements en pause";
+"notif.delegation_revoked.body" = "L'association qui recevait les paiements de %1$@ a mis fin à la délégation : ses paiements sont en pause.";
+"notif.delegation_receiver_not_ready.title" = "Paiements en pause";
+"notif.delegation_receiver_not_ready.body" = "L'association qui reçoit les paiements de %1$@ ne peut plus les encaisser : ses paiements sont en pause.";
+"notif.delegation_resumed.title" = "Paiements rétablis";
+"notif.delegation_resumed.body" = "Les paiements de %1$@ reprennent.";
 
 /* The agenda's five, added 2026-09-09 with the notifications themselves. */
 "notif.event.proposed.title" = "Événement à valider";
@@ -81,8 +96,15 @@
 "notif.event.deleted.body" = "« %1$@ » a été supprimé par le BDE";
 "notif.event.pending.title" = "Événement à revalider";
 "notif.event.pending.body" = "« %1$@ » doit être revalidé : ses dates ont changé";
+"notif.event.pending_coorganiser.title" = "Événement à revalider";
+"notif.event.pending_coorganiser.body" = "« %1$@ » doit être revalidé : une association a accepté de co-organiser";
 
 /* A device was added to the user's own account, read from a signed MLS commit the extension
    merged in memory (2026-10-22). */
 "notif.device.added.title" = "Nouvel appareil";
 "notif.device.added.body" = "Un nouvel appareil a été ajouté à votre compte. Si ce n'est pas vous, ouvrez Canari.";
+
+/* A content-free wake-up push whose message could not be fetched from the server, and one whose
+   message the app had already received (push_mode = wake, 2026-11-02). */
+"notif.wake.unavailable" = "Un message n'a pas pu être chargé. Ouvrez Canari pour le lire.";
+"notif.wake.gone" = "Message déjà reçu dans Canari.";

@@ -63,6 +63,11 @@
     submitLabel: string;
     savingLabel: string;
     onSubmit: (values: EventFormValues) => Promise<void>;
+    /**
+     * A PARTNER's way out (E2): withdraw from the event, which stays with its organiser. Offered
+     * only when the server said the viewer writes from the partner side.
+     */
+    onWithdraw?: (() => Promise<void>) | null;
     onClose: () => void;
   }
 
@@ -79,6 +84,7 @@
     submitLabel,
     savingLabel,
     onSubmit,
+    onWithdraw = null,
     onClose,
   }: Props = $props();
 
@@ -112,6 +118,19 @@
     } catch (e) {
       // The three date refusals arrive as CODES, so the reader is told which rule they broke rather
       // than shown the server's English or a flat "something went wrong". One mapper, both surfaces.
+      error = calendarErrorMessage(e, m.common_save_error);
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function withdraw() {
+    if (!onWithdraw) return;
+    saving = true;
+    error = '';
+    try {
+      await onWithdraw();
+    } catch (e) {
       error = calendarErrorMessage(e, m.common_save_error);
     } finally {
       saving = false;
@@ -223,30 +242,37 @@
           </div>
         {/if}
 
-        <div class="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label class="text-text-main mb-1 ml-1 block text-sm font-bold" for="event-form-start"
-              >{m.asso_calendar_event_start_label()}</label
-            >
-            <DateTimeField
-              id="event-form-start"
-              value={values.start}
-              onValueChange={(v) => (values.start = v)}
-              label={m.asso_calendar_event_start_label()}
-            />
+        <!--
+          E2: the date is the ORGANISER's. It is drawn only once the server has said the viewer
+          writes from that side, so a partner (or a viewer whose answer never arrived) is never
+          offered a field the write would refuse - and `toUpdatePayload` leaves it unsent.
+        -->
+        {#if values.writeSide === 'organiser'}
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label class="text-text-main mb-1 ml-1 block text-sm font-bold" for="event-form-start"
+                >{m.asso_calendar_event_start_label()}</label
+              >
+              <DateTimeField
+                id="event-form-start"
+                value={values.start}
+                onValueChange={(v) => (values.start = v)}
+                label={m.asso_calendar_event_start_label()}
+              />
+            </div>
+            <div>
+              <label class="text-text-main mb-1 ml-1 block text-sm font-bold" for="event-form-end"
+                >{m.asso_calendar_event_end_label()}</label
+              >
+              <DateTimeField
+                id="event-form-end"
+                value={values.end}
+                onValueChange={(v) => (values.end = v)}
+                label={m.asso_calendar_event_end_label()}
+              />
+            </div>
           </div>
-          <div>
-            <label class="text-text-main mb-1 ml-1 block text-sm font-bold" for="event-form-end"
-              >{m.asso_calendar_event_end_label()}</label
-            >
-            <DateTimeField
-              id="event-form-end"
-              value={values.end}
-              onValueChange={(v) => (values.end = v)}
-              label={m.asso_calendar_event_end_label()}
-            />
-          </div>
-        </div>
+        {/if}
 
         <div>
           <p class="text-text-main mb-1 ml-1 block text-sm font-bold">
@@ -317,7 +343,23 @@
           payload names only the accepted ones, and saving a list built from it would withdraw every
           pending proposal. Until then (or if they never arrive) the list is shown as unchanged.
         -->
-        {#if values.coOwnersLoad === 'ready'}
+        {#if values.writeSide === 'partner'}
+          <div class="border-cn-border/70 bg-cn-bg/30 space-y-2 rounded-xl border p-3">
+            <p class="text-text-muted text-xs" data-write-side="partner">
+              {m.asso_calendar_partner_note()}
+            </p>
+            {#if onWithdraw}
+              <button
+                type="button"
+                onclick={withdraw}
+                disabled={saving}
+                class="border-red-err/30 text-red-err hover:bg-red-err/10 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors disabled:opacity-50"
+              >
+                {m.asso_calendar_partner_withdraw_button()}
+              </button>
+            {/if}
+          </div>
+        {:else if values.coOwnersLoad === 'ready'}
           <CoOwnerPicker
             bind:selectedIds={values.coOwnerIds}
             excludeId={values.targetAssociationId}

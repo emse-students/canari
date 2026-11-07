@@ -8,8 +8,6 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import {
-    exportLabels,
-    exportSubmissions,
     getForms,
     getSubmissions,
     deleteForm,
@@ -17,24 +15,15 @@
     type Form,
     type Submission,
   } from '$lib/forms/api';
-  import {
-    Plus,
-    Download,
-    FileText,
-    Pencil,
-    Link,
-    QrCode,
-    Trash2,
-    ChevronUp,
-    Users,
-  } from '@lucide/svelte';
+  import { Plus, FileText, Pencil, Link, QrCode, Trash2, ChevronUp, Users } from '@lucide/svelte';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { publicAppUrl } from '$lib/utils/publicAppUrl';
   import QrCodeModal from '$lib/components/shared/QrCodeModal.svelte';
-  import { downloadDecryptedFile } from '$lib/utils/fileDownload';
   import { m } from '$lib/paraglide/messages';
   import { submitterName } from '$lib/forms/submissionTable';
-  import FormSubmissionsTable from '$lib/components/forms/FormSubmissionsTable.svelte';
+  import FormResponsesPanel from '$lib/components/forms/FormResponsesPanel.svelte';
+  import FormExportMenu from '$lib/components/forms/FormExportMenu.svelte';
+  import { productGridQuestions } from '$lib/forms/responsesView';
 
   /** The form whose QR code is open, or null. Both share controls point at the same path. */
   let qrForm = $state<Form | null>(null);
@@ -87,14 +76,16 @@
     }
   }
 
-  async function handleExport(id: string) {
+  /**
+   * Re-reads one form's answers after a payment action (cash marked paid, a refund), so the cards,
+   * the filters and the totals follow. A failure keeps the answers already shown.
+   */
+  async function reloadResponses(formId: string) {
     try {
-      await downloadDecryptedFile(
-        await exportSubmissions(id, exportLabels()),
-        `submissions_${id}.xlsx`
-      );
-    } catch {
-      showToast(m.form_list_error_export());
+      submissionsData = { ...submissionsData, [formId]: await getSubmissions(formId) };
+    } catch (e) {
+      console.error(`[FORMS] re-reading the answers of form ${formId.slice(0, 8)} failed:`, e);
+      showToast(m.form_list_responses_error());
     }
   }
 
@@ -279,13 +270,11 @@
               >
                 <QrCode size={16} />
               </button>
-              <button
-                onclick={() => handleExport(form.id)}
-                class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
-                title={m.form_list_export_button()}
-              >
-                <Download size={16} />
-              </button>
+              <FormExportMenu
+                formId={form.id}
+                title={form.title}
+                hasProductGrid={productGridQuestions(form.items ?? []).length > 0}
+              />
               <button
                 onclick={() => toggleResponses(form.id)}
                 class="ui-icon-button rounded-xl border-2 bg-(--cn-surface) transition-colors {expandedForms[
@@ -331,14 +320,12 @@
                 </p>
               {:else if Array.isArray(submissionsData[form.id])}
                 {@const subs = submissionsData[form.id] as Submission[]}
-                <FormSubmissionsTable
-                  formId={form.id}
-                  items={form.items ?? []}
-                  requiresPayment={form.requiresPayment ?? false}
-                  anonymous={form.anonymous ?? false}
+                <FormResponsesPanel
+                  {form}
                   submissions={subs}
                   deletingId={deletingSubmissionId}
                   onDelete={(sub) => void handleDeleteSubmission(form.id, sub)}
+                  onReload={() => reloadResponses(form.id)}
                 />
               {/if}
             </div>

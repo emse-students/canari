@@ -85,7 +85,7 @@ describe('unregisterDeviceNotices - sign-out', () => {
     const setDeviceEventConsumer = vi.fn();
     const mls = {
       setDeviceEventConsumer,
-      fetchUserDevices: vi.fn(async () => []),
+      listUserDevices: vi.fn(async () => []),
       fetchDeviceSignatureKeys: vi.fn(async () => ({ kind: 'unanswered', detail: 'x' })),
     } as unknown as IMlsService;
     registerDeviceNotices(mls, {

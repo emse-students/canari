@@ -5,27 +5,26 @@
    * publish the reel, or keep the video as a post with the step's caption and identity.
    */
   import { cameraOverlayStub } from './cameraOverlayStub.test-helper';
+  import { EMPTY_COMPOSER_REEL_STATE, type ComposerReelState } from '$lib/posts/composerReelState';
 
   let {
     destination,
-    composerCaption,
-    composerIdentity,
+    composerStart,
     oncapture,
     onpublished,
     onkept,
     onclose,
   }: {
     destination: string;
-    composerCaption?: string;
-    composerIdentity?: string;
+    composerStart?: ComposerReelState;
     oncapture: (file: File) => void;
     onpublished?: (identity: string) => void;
-    onkept?: (caption: string, identity: string) => void;
+    onkept?: (kept: ComposerReelState) => void;
     onclose: () => void;
   } = $props();
 
   $effect(() => {
-    cameraOverlayStub.last = { destination, composerCaption, composerIdentity };
+    cameraOverlayStub.last = { destination, composerStart };
   });
 </script>
 
@@ -33,7 +32,7 @@
   type="button"
   data-camera-overlay-stub-publish
   onclick={() => {
-    onpublished?.(composerIdentity ?? '');
+    onpublished?.(composerStart?.identity ?? '');
     onclose();
   }}>publish</button
 >
@@ -41,11 +40,7 @@
   type="button"
   data-camera-overlay-stub-keep
   onclick={() => {
-    const { caption, identity } = cameraOverlayStub.keepWith ?? {
-      caption: composerCaption ?? '',
-      identity: composerIdentity ?? '',
-    };
-    onkept?.(caption, identity);
+    onkept?.(cameraOverlayStub.keepWith ?? composerStart ?? EMPTY_COMPOSER_REEL_STATE);
     oncapture(new File(['take'], 'canari-video-1.webm', { type: 'video/webm' }));
     onclose();
   }}>keep</button

@@ -1,4 +1,6 @@
 import { writable, get } from 'svelte/store';
+import type { EventTime } from '$lib/utils/chat/visibleNotices';
+import type { CallEndTime } from '$lib/utils/chat/callSystemMessages';
 import { resolveServiceUrl } from '$lib/utils/apiUrl';
 import type { IMlsService } from '$lib/mls-client';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
@@ -64,6 +66,7 @@ import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion'
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { nextPageRingHolder, reportPageRingingCall } from './pageGatewaySocket';
 import { reportCallSoundPhase, retireCallSoundHolder } from '$lib/utils/callSoundGate';
+import { captureUserMedia } from '$lib/utils/audioSession';
 import {
   callVideoConstraints,
   canHoldVideoToVp8,
@@ -71,6 +74,14 @@ import {
   type CameraFacing,
 } from '$lib/utils/callVideo';
 import { CallVideoQualityLoop } from '$lib/utils/callVideoQuality';
+import {
+  buildCallMicPipeline,
+  CALL_NOISE_SUPPRESSION_DEFAULT,
+  CallMicSwitch,
+  initialNoiseSuppressionView,
+  type NoiseSuppressionView,
+} from '$lib/utils/callNoiseSuppression';
+import { callMicPipelineDeps } from '$lib/utils/callNoiseSuppressionAssets';
 import {
   describeE2eReport,
   e2eBypassedSides,
@@ -108,7 +119,8 @@ interface FetchedIceServers {
 
 /** Optional hook to mirror call lifecycle events into the chat timeline. */
 export interface CallChatNotifier {
-  onCallStarted: (groupId: string, callId: string) => void | Promise<void>;
+  /** `at`: the invite this device sent - its `sentAt` and the server's acceptance of it. */
+  onCallStarted: (groupId: string, callId: string, at: EventTime) => void | Promise<void>;
   /**
    * A call this device ended (or lost) LOCALLY. `outcome` is the typed reason it ended unanswered,
    * absent for an answered call; `starterId` is the caller, absent when it is this account. The
@@ -117,8 +129,16 @@ export interface CallChatNotifier {
   onCallEnded: (
     groupId: string,
     callId: string,
+    /** The instant this device ended the call - the one its hangup frame carries as `sentAt`. */
+    at: CallEndTime,
     outcome?: CallEndReason,
     starterId?: string
+  ) => void | Promise<void>;
+  /** The server accepted this device's hangup at `serverTimestamp`: patched onto the record. */
+  onCallEndAnswered?: (
+    groupId: string,
+    callId: string,
+    serverTimestamp: number
   ) => void | Promise<void>;
 }
 
@@ -406,6 +426,11 @@ export class CallService {
    */
   private signalQueue: Promise<void> = Promise.resolve();
   private localStream: MediaStream | null = null;
+  /**
+   * The microphone sender's track, raw or through RNNoise (`utils/callNoiseSuppression.ts`), and
+   * the user's per-call switch. One per call: built with the microphone, closed by `cleanup`.
+   */
+  private micSwitch: CallMicSwitch | null = null;
   private encryptionWorker: Worker | null = null;
   private workerKeyReady: Promise<void> | null = null;
   /**
@@ -565,6 +590,12 @@ export class CallService {
   public remoteStreams = writable<RemoteStreams>(new Map());
   public localStreamStore = writable<MediaStream | null>(null);
   public isMuted = writable<boolean>(false);
+  /**
+   * The microphone's noise suppression for THIS call: the user's switch (OFF at every call, owner
+   * 2026-11-01, `CALL_NOISE_SUPPRESSION_DEFAULT`) and what the sender carries - `unavailable` when
+   * the pipeline could not be built on this engine, and the call screen then offers no switch.
+   */
+  public noiseSuppression = writable<NoiseSuppressionView>(initialNoiseSuppressionView());
   /**
    * THIS device's operating system holds the microphone: the capture track is `muted`, which no
    * button here set (that is {@link isMuted}). The other party hears nothing meanwhile. Measured on
@@ -1092,11 +1123,16 @@ export class CallService {
         return;
       }
       const deviceId = this.mlsService.getDeviceId();
-      await this.sendMlsNotification(groupId, mkCallInvite(roomId, video, deviceId, ringTimeoutMs));
+      const invite = await this.sendMlsNotification(
+        groupId,
+        mkCallInvite(roomId, video, deviceId, ringTimeoutMs)
+      );
       if (!this.stillCalling(roomId, 'after the invite')) return;
       // The caller's timer starts after the window opened, so it never gives up before the server.
       this.armRingTimer(roomId, ringTimeoutMs, 'calling');
-      void this.chatNotifier?.onCallStarted(groupId, roomId);
+      // Dated by the invite just sent - the frame every member's record is dated by - and ordered by
+      // the server's acceptance of it, as an own text row is (`patchServerTimestamp`).
+      void this.chatNotifier?.onCallStarted(groupId, roomId, invite);
       this.syncCallPresence(true);
     } catch (e) {
       // The call already ended (and was cleaned up, or is showing its summary): nothing to undo,
@@ -1315,11 +1351,25 @@ export class CallService {
     // The ended summary is not a reconnection, and a resume must not be attempted behind it.
     this.clearResumeTimer();
     this.reconnecting.set(false);
+    // ONE ACT, ONE INSTANT: this device ending the call is the event, so its clock HERE is the
+    // event's time - taken once, and carried by both the hangup frame every member dates the record
+    // by and this device's own record, so the two cannot disagree.
+    const endedAt = Date.now();
+    // The record is written AT THE ACT, never held for the send (a catch-up gate or an epoch barrier
+    // can hold it for minutes, and a kill meanwhile would leave the row unfinalised); the server's
+    // acceptance is patched in once the send answers (`onCallEndAnswered`).
+    let hangup: Promise<EventTime | null> = Promise.resolve(null);
     if (notify && groupId && callId) {
-      this.sendMlsNotification(
+      hangup = this.sendMlsNotification(
         groupId,
-        mkCallHangup(callId, this.mlsService.getDeviceId(), outcome)
-      ).catch(console.error);
+        mkCallHangup(callId, this.mlsService.getDeviceId(), outcome),
+        endedAt
+      ).catch((e: unknown) => {
+        console.error(
+          `[Call] hangup of ${callId} not sent - its record carries no server time: ${String(e)}`
+        );
+        return null;
+      });
       // WP-XP-5: stop the system-surface rings on every device (cancelled before pickup,
       // or a late ring after the call ended).
       void this.endServerRing(
@@ -1331,12 +1381,23 @@ export class CallService {
     if (groupId && callId && !remoteOrigin) {
       // The one record writer, told WHY the call ended. A call that failed before its invite
       // (initiate refused, no ICE servers, no microphone) rang nobody: no outcome, no record.
-      void this.chatNotifier?.onCallEnded(
-        groupId,
-        callId,
-        outcome,
-        state === 'incoming' ? (this.incomingCallerId ?? undefined) : undefined
+      const starterId = state === 'incoming' ? (this.incomingCallerId ?? undefined) : undefined;
+      const notifier = this.chatNotifier;
+      const recorded = Promise.resolve(
+        notifier?.onCallEnded(
+          groupId,
+          callId,
+          { timestamp: new Date(endedAt), ownAct: true },
+          outcome,
+          starterId
+        )
       );
+      // After the row exists: a patch that ran first would find nothing to patch.
+      void Promise.all([recorded, hangup]).then(([, sent]) => {
+        if (sent?.serverTimestamp !== undefined) {
+          return notifier?.onCallEndAnswered?.(groupId, callId, sent.serverTimestamp);
+        }
+      });
     }
 
     // The call is over from here: a microphone the system gives back during the summary is no
@@ -1490,6 +1551,10 @@ export class CallService {
     this.isVideoOff.set(true);
 
     this.stopWatchingMicrophone();
+    // Before the capture stops: its end-of-call cost line, then the pipeline and its context.
+    this.micSwitch?.close();
+    this.micSwitch = null;
+    this.noiseSuppression.set(initialNoiseSuppressionView());
     if (this.localStream) {
       this.localStream.getTracks().forEach((t) => t.stop());
       this.localStream = null;
@@ -1943,8 +2008,13 @@ export class CallService {
 
       ws.onerror = () => {
         clearTimers();
-        appendLog('[Call] signalling WebSocket error');
         fail(new Error('call signalling WebSocket connection failed'));
+        // cleanup() closes the socket and then nulls `signaledWs`, in one synchronous run; the
+        // `error` event is dispatched asynchronously, so by the time it fires a socket that is no
+        // longer ours is one WE closed (a hang-up): WebKit still raises `error` for it, and that is
+        // the close arriving, not a failure. Decided by state, never by the event's (empty) message.
+        if (this.signaledWs !== ws) return;
+        appendLog('[Call] signalling WebSocket error');
       };
 
       ws.onclose = (ev) => {
@@ -2656,6 +2726,8 @@ export class CallService {
     this.pc.close();
     this.pc = null;
     this.pcAwaitingPeer = false;
+    // Its microphone sender died with it: the switch must not `replaceTrack` on a closed sender.
+    this.micSwitch?.detachSender();
   }
 
   /**
@@ -2826,13 +2898,18 @@ export class CallService {
         // in the worker since `setupEncryption`. Both ends add an audio track before negotiating,
         // and the polite side's answer reuses this transceiver, so the remote audio always lands on
         // a receiver that already decrypts.
-        const sender = pc.addTrack(track, this.localStream);
+        // The microphone goes out raw or through RNNoise (`CallMicSwitch`); the transform belongs
+        // to the SENDER, so a later `replaceTrack` between the two keeps it in the path.
+        const micSwitch = track.kind === 'audio' ? this.micSwitch : null;
+        const sender = pc.addTrack(micSwitch ? micSwitch.trackToSend() : track, this.localStream);
         this.attachSenderTransform(sender);
         // A track muted by the OS (or not producing yet) starts sending with no negotiation.
         track.onunmute = () => this.recheckE2eOnMediaStart(`after the local ${track.kind} unmuted`);
         const transceiver = pc.getTransceivers().find((t) => t.sender === sender);
         if (!transceiver) throw new Error(`no transceiver for the ${track.kind} sender just added`);
         this.attachReceiverTransform(transceiver.receiver, track.kind);
+        // After both transforms, in this task: it only QUEUES a `replaceTrack` for later.
+        micSwitch?.attachSender(sender);
         if (track.kind === 'video') {
           if (!preferVp8(transceiver, appendLog)) {
             this.refuseCameraSender(pc, sender, track);
@@ -3090,6 +3167,8 @@ export class CallService {
       ringMs: this.ringMs,
       connectMs: this.connectMs,
       engine: currentEngine(),
+      ns: this.micSwitch?.reportState() ?? null,
+      nsFallbacks: this.micSwitch?.fallbackCount() ?? null,
     };
   }
 
@@ -3159,6 +3238,8 @@ export class CallService {
         this.armCallReport(pc);
         return;
       }
+      // Before the line is stamped, so its `ns=` already says a worklet caught not processing.
+      this.micSwitch?.checkProgress();
       const inFlight = {
         pc,
         snapshot: this.logCallReport(
@@ -3644,10 +3725,13 @@ export class CallService {
    * the camera off, which the user can retry from the call screen.
    */
   private async setupMedia(video: boolean, seq: number) {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: buildCallAudioConstraints(),
-      video: false,
-    });
+    // The microphone is held from before the ask: an ANSWER opens it while the phase is still
+    // `incoming`, whose session type (`ambient`) WebKit would refuse a capture under.
+    const stream = await captureUserMedia(
+      navigator.mediaDevices,
+      { audio: buildCallAudioConstraints(), video: false },
+      'call'
+    );
     try {
       this.assertSetupLive(seq, 'after the microphone prompt');
     } catch (e) {
@@ -3662,7 +3746,10 @@ export class CallService {
     this.isMuted.set(false);
     this.isVideoOff.set(true);
     const mic = this.localStream.getAudioTracks()[0];
-    if (mic) this.watchSystemMicrophone(mic);
+    if (mic) {
+      this.watchSystemMicrophone(mic);
+      this.startNoiseSuppression(mic);
+    }
     if (video) {
       // `cameraOn` stops a capture that resolves after its call (`sameCameraCall`).
       await this.cameraOn();
@@ -3742,10 +3829,19 @@ export class CallService {
     }
   }
 
-  private async sendMlsNotification(groupId: string, appMsgPartial: canari.IAppMessage) {
+  /**
+   * Sends one call signal and returns WHEN it happened: its `sentAt` (this device's act, `sentAt`
+   * when the caller took the instant itself) and the server's acceptance of it, absent when the
+   * server answered none - logged, since the record is then ordered by its `sentAt` alone.
+   */
+  private async sendMlsNotification(
+    groupId: string,
+    appMsgPartial: canari.IAppMessage,
+    sentAt: number = Date.now()
+  ): Promise<EventTime> {
     const appMsg = {
       messageId: crypto.randomUUID(),
-      sentAt: Date.now(),
+      sentAt,
       ...appMsgPartial,
     };
     const buffer = encodeAppMessage(appMsg);
@@ -3754,7 +3850,55 @@ export class CallService {
     // protos must never surface as "new message" pushes (they used to, as generic fallbacks).
     // Ephemeral too: signalling is only meaningful while the call is live, so replaying it out of
     // the shared log would ring a device about a call that ended.
-    await this.mlsService.sendMessage(groupId, buffer, undefined, DELIVERY.transport);
+    const sent = await this.mlsService.sendMessage(groupId, buffer, undefined, DELIVERY.transport);
+    if (sent.receivedAt === null) {
+      console.error(
+        `[Call] signal sent in ${groupId.slice(0, 8)}... but the server answered no receive time - its record is ordered by sentAt alone`
+      );
+    }
+    return {
+      timestamp: new Date(sentAt),
+      ...(sent.receivedAt !== null ? { serverTimestamp: sent.receivedAt } : {}),
+    };
+  }
+
+  /**
+   * Starts this call's noise-suppression switch on the capture `mic` (owner decisions D-B,
+   * 2026-10-31, and OFF by default, 2026-11-01): the pipeline is built only once the switch is ON,
+   * and the call does NOT wait for it - the sender carries the raw track until the RNNoise
+   * pipeline proves it runs, then switches by `replaceTrack` (`CallMicSwitch`). A pipeline that
+   * cannot be built is logged at WARN with its cause and counted; the call goes on raw.
+   */
+  private startNoiseSuppression(mic: MediaStreamTrack): void {
+    this.micSwitch?.close();
+    const micSwitch = new CallMicSwitch(mic, CALL_NOISE_SUPPRESSION_DEFAULT, appendLog, (view) =>
+      this.noiseSuppression.set(view)
+    );
+    this.micSwitch = micSwitch;
+    this.ensureMicPipeline(micSwitch);
+  }
+
+  /** The switch's one build, from this call's capture, when (and only when) it is ON. */
+  private ensureMicPipeline(micSwitch: CallMicSwitch): void {
+    micSwitch.ensurePipeline((signal) =>
+      buildCallMicPipeline(micSwitch.raw, callMicPipelineDeps(appendLog), signal)
+    );
+  }
+
+  /**
+   * The call screen's noise-suppression switch, for THIS call: OFF sends the raw capture (music),
+   * ON the RNNoise output - on the same sender, no renegotiation, the E2E transform untouched.
+   */
+  public toggleNoiseSuppression(): void {
+    const micSwitch = this.micSwitch;
+    if (!micSwitch) {
+      appendLog('[Call] noise suppression switch tapped with no microphone open - ignored');
+      return;
+    }
+    micSwitch.setEnabled(!micSwitch.isEnabled());
+    // The first ON of the call builds the pipeline - inside the tap, so the engine lets its
+    // AudioContext run.
+    this.ensureMicPipeline(micSwitch);
   }
 
   /** Toggles microphone mute on the local audio track. */

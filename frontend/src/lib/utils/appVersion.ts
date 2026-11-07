@@ -77,6 +77,8 @@ export type ServerVersionInfo = {
   oidcPkce: boolean;
   /** Whether this estate's gateway takes presence ids in a POST body - see {@link AppVersionCheckResult}. */
   presencePost: boolean;
+  /** Whether this estate serves the background publish queue - see {@link AppVersionCheckResult}. */
+  publishQueue: boolean;
 };
 
 export type AppVersionCheckResult = {
@@ -105,6 +107,14 @@ export type AppVersionCheckResult = {
    * every server older than the field.
    */
   presencePost: boolean;
+  /**
+   * A CAPABILITY of the estate, not a switch: social-service keeps a post's client id and serves its
+   * withdrawal, media-service opens `single-block` sessions. The publish queue sends nothing until
+   * this is true, because an older estate would duplicate a post whose answer was lost and answer the
+   * withdrawal `404` - and a store build reaches phones before production deploys. `false` for every
+   * server older than the field.
+   */
+  publishQueue: boolean;
 };
 
 const DEFAULT_MAINTENANCE: PlatformMaintenanceInfo = { enabled: false, message: null };
@@ -149,6 +159,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     lives?: unknown;
     oidcPkce?: unknown;
     presencePost?: unknown;
+    publishQueue?: unknown;
   };
   const version = typeof obj.version === 'string' ? obj.version.trim() : '';
   if (!version) return null;
@@ -161,6 +172,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     livesMode: normalizeLivesMode(obj.lives),
     oidcPkce: obj.oidcPkce === true,
     presencePost: obj.presencePost === true,
+    publishQueue: obj.publishQueue === true,
   };
 }
 
@@ -178,6 +190,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   lives: { mode: LivesMode };
   oidcPkce: boolean;
   presencePost: boolean;
+  publishQueue: boolean;
 } {
   return {
     version: info.version,
@@ -187,6 +200,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     lives: { mode: info.livesMode },
     oidcPkce: info.oidcPkce,
     presencePost: info.presencePost,
+    publishQueue: info.publishQueue,
   };
 }
 /**
@@ -353,6 +367,7 @@ export function buildAppVersionCheckResult(
     livesMode: serverInfo?.livesMode ?? 'off',
     oidcPkce: serverInfo?.oidcPkce ?? false,
     presencePost: serverInfo?.presencePost ?? false,
+    publishQueue: serverInfo?.publishQueue ?? false,
   };
 }
 
@@ -413,6 +428,15 @@ export function getReleasePageUrl(version: string | null): string {
 function nativePlatform(): string | null {
   if (!isTauriRuntime()) return null;
   return platform();
+}
+
+/**
+ * The platform this build runs on, as the gateway's anonymous census counts it: `web` in a browser,
+ * else the native shell's own name (`android`, `ios`, `macos`, `windows`, `linux`). Sent on the
+ * socket URL beside {@link getClientAppVersion}, and attached to no identity.
+ */
+export function clientPlatform(): string {
+  return nativePlatform() ?? 'web';
 }
 
 /** True on Tauri Android builds (universal APK update flow). Phones and tablets alike. */

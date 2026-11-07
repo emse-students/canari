@@ -1,6 +1,8 @@
 mod addressing;
 mod audience;
+mod census;
 mod handlers;
+mod log_repeat;
 mod models;
 mod presence;
 mod state;
@@ -19,7 +21,9 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::audience::PresenceAudience;
 use crate::handlers::ws_handler;
-use crate::presence::{get_admin_presence, get_presence, post_presence};
+use crate::presence::{
+    get_admin_presence, get_admin_presence_history, get_presence, post_presence,
+};
 use crate::state::AppState;
 
 /// Liveness probe endpoint - returns `200 OK` with body `"OK"`.
@@ -188,6 +192,9 @@ async fn main() {
         app_state.session_caps.clone(),
     );
 
+    // ── Anonymous census: one sample a minute, idempotent across replicas ─
+    census::spawn_sampler(app_state.clone());
+
     // ── CORS configuration ────────────────────────────────────────────────
     // An UNSET variable means someone is running the binary by hand, and the wildcard keeps that
     // working. Every compose file names the variable, so reaching this branch under compose means
@@ -211,6 +218,10 @@ async fn main() {
         // (docs/wiki/legacy-compatibility.md, "the presence ids in a URL").
         .route("/api/presence", get(get_presence).post(post_presence))
         .route("/api/admin/presence", get(get_admin_presence))
+        .route(
+            "/api/admin/presence/history",
+            get(get_admin_presence_history),
+        )
         .layer(cors)
         .with_state(app_state);
 

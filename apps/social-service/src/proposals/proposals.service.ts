@@ -31,6 +31,14 @@ function firstReturned(result: unknown): Proposal | null {
  */
 export const PROPOSAL_SENDER_GONE = 'PROPOSAL_SENDER_GONE';
 
+/**
+ * What a PERSON's acceptance carries of what they were shown (D38b): the fingerprint of an
+ * institution's audience (`audienceFingerprint`). Absent for an association's acceptance.
+ */
+export interface AcceptConsent {
+  audienceFingerprint?: string | null;
+}
+
 /** Work owed once the decision has COMMITTED - a notification, a cache sweep. Never inside it. */
 export type AfterCommit = () => Promise<void>;
 
@@ -116,7 +124,11 @@ export interface ProposalKindHandler {
    * The sending association for this subject, after refusing (with a typed HTTP error) a subject
    * that may not be proposed to `toAssociationId` at all.
    */
-  resolveSender(subjectId: string, toAssociationId: string): Promise<string>;
+  resolveSender(
+    subjectId: string,
+    toAssociationId: string,
+    manager?: EntityManager
+  ): Promise<string>;
   /**
    * Row-locks the SUBJECT before the decision locks the proposal, when `apply` locks the subject:
    * every other writer (a moderation hide, a delete) takes the subject first and the proposals
@@ -134,8 +146,12 @@ export interface ProposalKindHandler {
   ): Promise<AfterCommit>;
   /** Tells the receiving association's acceptors a proposal is waiting. Best effort. */
   announce(proposal: AssociationProposal, acceptorIds: string[]): Promise<void>;
-  /** A short description of each subject, for the queue. A missing id is a subject gone. */
-  describe(subjectIds: string[]): Promise<Map<string, Record<string, unknown>>>;
+  /**
+   * A short description of each subject, for the queue, as `viewerId` may read it (a repost of an
+   * "Entre étudiants" post withholds its text from an officer the gate refuses). A missing id is a
+   * subject gone.
+   */
+  describe(subjectIds: string[], viewerId: string): Promise<Map<string, Record<string, unknown>>>;
 }
 
 /**
@@ -175,6 +191,16 @@ export interface UserProposalKindHandler {
    * longer speaks is neither shown, nor counted, nor applied.
    */
   senderSpeaksSql(alias: string): string;
+  /**
+   * Refuses (with a typed HTTP error) an acceptance whose consent no longer matches the state it
+   * was given on - for D38b, the institution's audience the person was shown. Inside the
+   * acceptance's transaction, after its locks and before the decision, so a refusal decides nothing.
+   */
+  assertConsentCurrent(
+    manager: EntityManager,
+    proposal: UserProposal,
+    consent: AcceptConsent
+  ): Promise<void>;
   /** As `ProposalKindHandler.apply`: inside the acceptance's transaction. */
   apply(manager: EntityManager, proposal: UserProposal, actorId: string): Promise<AfterCommit>;
   /**
@@ -294,10 +320,59 @@ export class ProposalsService {
       );
       throw new ForbiddenException('You may not propose in this association name');
     }
+    const saved = await this.storePending(
+      this.repo,
+      kind,
+      subjectId,
+      fromAssociationId,
+      toAssociationId,
+      actorId
+    );
+    await this.announceProposal(handler, saved);
+    return saved;
+  }
+
+  /**
+   * `propose` INSIDE the caller's transaction, for a subject whose write path already holds its
+   * locks and must commit as ONE unit (an event edit that proposes co-organisers: a failure of the
+   * k-th proposal leaves no earlier one behind). The sender right is always the caller's to vouch
+   * for, the same `senderVouched` as above. Nothing is announced here: the returned `announce`
+   * runs AFTER the caller's commit, and a rolled-back transaction never calls it.
+   */
+  async proposeWithin(
+    manager: EntityManager,
+    kind: ProposalKind,
+    subjectId: string,
+    toAssociationId: string,
+    actorId: string
+  ): Promise<{ proposal: Proposal; announce: AfterCommit }> {
+    const handler = this.associationHandler(kind);
+    const fromAssociationId = await handler.resolveSender(subjectId, toAssociationId, manager);
+    this.logger.debug(`[PROPOSAL] ${kind} by ${actorId.slice(0, 8)}: sender right vouched`);
+    const saved = await this.storePending(
+      manager.getRepository(Proposal),
+      kind,
+      subjectId,
+      fromAssociationId,
+      toAssociationId,
+      actorId
+    );
+    return { proposal: saved, announce: () => this.announceProposal(handler, saved) };
+  }
+
+  /** Stores a pending association-addressed proposal on `repo`; the unique pair is a 409. */
+  private async storePending(
+    repo: Repository<Proposal>,
+    kind: ProposalKind,
+    subjectId: string,
+    fromAssociationId: string,
+    toAssociationId: string,
+    actorId: string
+  ): Promise<Proposal> {
     let saved: Proposal;
     try {
-      saved = await this.repo.save(
-        this.repo.create({
+      saved = await repo.save(
+        repo.create({
           kind,
           subjectId,
           fromAssociationId,
@@ -321,15 +396,22 @@ export class ProposalsService {
     this.logger.log(
       `[PROPOSAL] ${kind} ${saved.id.slice(0, 8)}: ${fromAssociationId.slice(0, 8)} -> ${toAssociationId.slice(0, 8)} by ${actorId.slice(0, 8)}`
     );
+    return saved;
+  }
+
+  /** Tells the receiving association's acceptors a stored proposal waits. Best effort, logged. */
+  private async announceProposal(handler: ProposalKindHandler, saved: Proposal): Promise<void> {
     try {
-      const acceptorIds = await this.holdersOf(toAssociationId, handler.acceptorFlag);
+      const acceptorIds = await this.holdersOf(
+        saved.toAssociationId as string,
+        handler.acceptorFlag
+      );
       await handler.announce(saved as AssociationProposal, acceptorIds);
     } catch (e: unknown) {
       // The proposal is stored and sits in the queue whatever happens here; what a failure loses is
       // the notification, and this line is all that loss leaves.
       this.logger.warn(`[PROPOSAL] ${saved.id} stored but its acceptors were not told`, e);
     }
-    return saved;
   }
 
   /**
@@ -415,9 +497,15 @@ export class ProposalsService {
 
   /**
    * Accepts a pending proposal: the acceptor flag in the RECEIVING association - or, for a user
-   * kind, being the person it was addressed to, and nobody else.
+   * kind, being the person it was addressed to, and nobody else. A person's `consent` is what they
+   * were shown (`AcceptConsent`), checked by the handler before anything is decided.
    */
-  async accept(proposalId: string, actorId: string, isGlobalAdmin: boolean): Promise<Proposal> {
+  async accept(
+    proposalId: string,
+    actorId: string,
+    isGlobalAdmin: boolean,
+    consent: AcceptConsent = {}
+  ): Promise<Proposal> {
     const proposal = await this.load(proposalId);
     const handler = this.handler(proposal.kind);
     let after: AfterCommit = () => Promise.resolve();
@@ -436,6 +524,7 @@ export class ProposalsService {
           await handler.withdrawn(manager, voided);
           return { voided };
         }
+        await handler.assertConsentCurrent(manager, asked, consent);
         const row = await this.decide(manager, asked.id, 'accepted', actorId);
         after = await handler.apply(manager, row as UserProposal, actorId);
         return { decided: row as UserProposal };
@@ -586,11 +675,10 @@ export class ProposalsService {
     for (const kind of new Set(rows.map((r) => r.kind))) {
       const handler = this.handler(kind);
       const ids = rows.filter((r) => r.kind === kind).map((r) => r.subjectId);
-      // A person-addressed kind describes only what THIS caller may see (D38b): an officer who
-      // cannot see the post learns neither its text nor whose it is.
-      const described = isUserHandler(handler)
-        ? await handler.describe(ids, actorId)
-        : await handler.describe(ids);
+      // Every kind describes only what THIS caller may see: a person-addressed one (D38b) withholds
+      // the text and its author from an officer who cannot see the post, a repost the text of an
+      // "Entre étudiants" post from an officer its gate refuses.
+      const described = await handler.describe(ids, actorId);
       for (const [id, subject] of described) subjects.set(`${kind}:${id}`, subject);
     }
     // The person asked is named only beside a subject the caller was allowed to see.

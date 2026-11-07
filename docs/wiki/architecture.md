@@ -30,7 +30,7 @@ Nginx is the sole HTTP entry point. It authenticates every protected request via
 |---|---|---|---|
 | `/api/ws` | `chat-gateway:3000` | yes | WebSocket upgrade, token cookie |
 | `/api/presence` | `chat-gateway:3000` | yes | Online presence (Redis) |
-| `/api/admin/presence` | `chat-gateway:3000` | yes | Admin presence view |
+| `/api/admin/presence` (and `/history`) | `chat-gateway:3000` | yes | Admin monitoring: anonymous counts by platform and version |
 | `/api/mls/*` | `chat-delivery-service:3010` | yes | MLS API (messages, groups, sync, push); Redis history at `/api/mls/history/*` |
 | `/api/chat-delivery-health` | `chat-delivery-service:3010` | no | Liveness probe only |
 | `/api/media/*` | `media-service:3011` | yes | Encrypted blobs (Garage) |
@@ -156,9 +156,11 @@ and volume, and this system asked for none of the three.
 
 | Frame | Fields | Action |
 |---|---|---|
-| `welcome_request` | `groupId`, `payload`, `targetUserId`, `targetDeviceId` | Forward Welcome to a peer |
-| `reinvite_request` | same | Re-invite after stale epoch |
-| `read` | `messageId` | Read receipt (no-op at gateway level) |
+| `typing` | `groupId`, `state` (`start`/`stop`) | Relayed to the group's other online devices, only when the sender holds a seat in `group:members:{groupId}` |
+| `disconnect` | - | Retires this connection's session |
+
+Every other frame is ignored. `welcome_request` was RETIRED on 2026-11-01 (ignored and logged; the
+ask is `POST mls/welcome-request`) - see [chat-gateway](services/chat-gateway.md#inbound-frames-typing-is-seat-checked-welcome_request-is-retired-2026-11-01).
 
 ### Gateway -> client
 

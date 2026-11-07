@@ -5,6 +5,7 @@ import {
   Delete,
   ForbiddenException,
   Get,
+  Logger,
   Headers,
   Param,
   ParseUUIDPipe,
@@ -19,10 +20,13 @@ import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { PostsService } from './posts.service';
 import { assertCreateKindShape } from './reel-rules';
 import { reelLimits } from './reel.constants';
+import { resolveListFeed } from './list-feed';
 import { PostInteractionsService } from './post-interactions.service';
-import { PostNotificationsService } from './post-notifications.service';
+import { PostNotificationsService, bellPageLimit } from './post-notifications.service';
 import { AssociationsService } from '../associations/associations.service';
+import { withOneEventIcsSig } from '../associations/agenda-signature';
 import { ModerationService } from '../moderation/moderation.service';
+import { MODERATOR_REQUIRED } from '../spaces/bde-moderation';
 import {
   CreatePostDto,
   ListPostsQueryDto,
@@ -32,11 +36,14 @@ import {
   AddReactionDto,
   EditCommentDto,
   UpdatePostDto,
+  WithdrawPostDto,
 } from './dto/post.dto';
 
 /** Manages post resources including reactions, comments, polls, and notifications. */
 @Controller('posts')
 export class PostsController {
+  private readonly logger = new Logger(PostsController.name);
+
   constructor(
     private readonly service: PostsService,
     private readonly interactions: PostInteractionsService,
@@ -62,7 +69,7 @@ export class PostsController {
   @UseGuards(NginxAuthGuard)
   @Get('notifications')
   getNotifications(@Headers('x-user-id') xUserId: string, @Query('limit') limit?: string) {
-    return this.notifications.getNotifications(xUserId, Number(limit ?? 30));
+    return this.notifications.getNotifications(xUserId, bellPageLimit(limit));
   }
 
   /** Marks all notifications as read for the calling user. */
@@ -126,7 +133,8 @@ export class PostsController {
     @Headers('x-global-admin') xGlobalAdmin: string | undefined
   ) {
     await this.assertContentModerator(xUserId, xGlobalAdmin);
-    return this.service.getHiddenPosts();
+    // The door is "moderates somewhere"; the list is narrowed to the caller's scope (2026-11-02).
+    return this.service.getHiddenPosts({ userId: xUserId, isGlobalAdmin: xGlobalAdmin === 'true' });
   }
 
   /** Returns posts matching the given search query. */
@@ -155,7 +163,14 @@ export class PostsController {
     @Headers('x-user-id') xUserId?: string,
     @Headers('x-global-admin') xGlobalAdmin?: string
   ) {
-    const feed = query.feed ?? 'all';
+    // LEGACY SHIM (docs/wiki/legacy-compatibility.md): `kind=reel` on `all` IS the CanaReels viewer
+    // (`list-feed.ts`). At `log` level: its count is what the removal is read on.
+    const { feed, legacyViewerShape } = resolveListFeed(query.feed, query.kind);
+    if (legacyViewerShape) {
+      this.logger.log(
+        '[LEGACY] list: kind=reel on feed=all read as feed=reels (an installed client)'
+      );
+    }
     if (feed === 'followed' && !xUserId) {
       throw new UnauthorizedException('Authentication required for followed feed');
     }
@@ -169,6 +184,9 @@ export class PostsController {
       formation: query.formation?.trim() || undefined,
       kind: query.kind,
       singlePhotos: query.singlePhotos === true,
+      singleMedia: query.singleMedia === true,
+      multiMedia: query.multiMedia === true,
+      withLinks: query.withLinks === true,
     });
   }
 
@@ -211,7 +229,8 @@ export class PostsController {
     // The event of a post the reader may not see is that post's content: same 404 as the post.
     await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
     const linkedEvent = await this.associationsService.findCalendarEventByLinkedPost(postId);
-    return { linkedEvent };
+    // The detail modal opened from a post offers "add to my calendar" like the agenda's: same `icsSig`.
+    return { linkedEvent: withOneEventIcsSig(linkedEvent) };
   }
 
   /** The reverse of the above: the post (if any) linking to this calendar event. */
@@ -248,7 +267,10 @@ export class PostsController {
     });
   }
 
-  /** Updates a post's content. Author, a POST_AS_ASSO holder of its association, or a global admin. */
+  /**
+   * Updates a post's content: its author alone (a POST_AS_ASSO holder for an association's post),
+   * never a moderator nor the global admin (owner, 2026-11-02; `PostsService.assertMayEdit`).
+   */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId')
   updatePost(
@@ -258,6 +280,21 @@ export class PostsController {
     @Body() body: UpdatePostDto
   ) {
     return this.service.updatePost(postId, xUserId, body, ga === 'true');
+  }
+
+  /**
+   * The author takes back a post the app queued under a client id, whether or not its create landed:
+   * the id is retired (410 on a later create), the row, if any, deleted, and the uploaded media no
+   * live row cites deleted (`withdrawPost`). Only ever the caller's own post, admin or not.
+   */
+  @UseGuards(NginxAuthGuard)
+  @HttpPost(':postId/withdraw')
+  withdrawPost(
+    @Headers('x-user-id') xUserId: string,
+    @Param('postId', ParseUUIDPipe) postId: string,
+    @Body() body: WithdrawPostDto
+  ) {
+    return this.service.withdrawPost(postId, xUserId, body?.mediaIds ?? []);
   }
 
   /** Deletes a post; global admins may delete any post. */
@@ -307,18 +344,23 @@ export class PostsController {
     @Body() body: AddReactionDto
   ) {
     await this.assertNotMuted(xUserId);
-    await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
-    return this.interactions.addReaction(postId, xUserId, body.reactionType);
+    const { post } = await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
+    const answer = await this.interactions.addReaction(postId, xUserId, body.reactionType, post);
+    // The stored map names who reacted: served per reader, like every other read of it.
+    return this.service.serveReactionsTo(postId, xUserId, answer);
   }
 
   /** Removes the calling user's reaction from a post. */
   @UseGuards(NginxAuthGuard)
   @Delete(':postId/reactions')
-  removeReaction(
+  async removeReaction(
     @Headers('x-user-id') xUserId: string,
     @Param('postId', ParseUUIDPipe) postId: string
   ) {
-    return this.interactions.removeReaction(postId, xUserId);
+    const answer = await this.interactions.removeReaction(postId, xUserId);
+    // Not gated (it adds nothing), so its answer is what must not list the reactors to whoever
+    // holds an id: `serveReactionsTo` hands an outsider their own entry only.
+    return this.service.serveReactionsTo(postId, xUserId, answer);
   }
 
   /** One page of comments as whole threads: `?cursor=<position>&limit=20&order=recent|oldest`. */
@@ -347,7 +389,7 @@ export class PostsController {
   ) {
     // The mute is the real account's, whatever the comment will say it is.
     await this.assertNotMuted(xUserId);
-    await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
+    await this.service.assertVisible(postId, xUserId, 'COMMENT');
     const isGlobalAdmin = xGlobalAdmin === 'true';
     // Speaking for an association is the right posts need, asked BEFORE anything is written: an
     // older server would have ignored the field and published under the person's own name.
@@ -371,20 +413,27 @@ export class PostsController {
     @Param('postId', ParseUUIDPipe) postId: string,
     @Param('commentId') commentId: string
   ) {
-    await this.service.assertVisible(postId, xUserId, 'READ_OR_REACT');
+    await this.service.assertVisible(postId, xUserId, 'COMMENT');
     return this.interactions.likeComment(postId, commentId, xUserId, xGlobalAdmin === 'true');
   }
 
-  /** Updates the text of a comment the caller may edit (`commentRights`). */
+  /**
+   * Updates the text of a comment the caller may edit (`commentRights`). Behind the `'COMMENT'` read:
+   * the answer serves the comment (who liked it included) to a reader the comments may be withheld
+   * from - a named reader's own comment, written while their switch was on. Deleting it stays open.
+   */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId/comments/:commentId')
-  editComment(
+  async editComment(
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string,
     @Param('commentId') commentId: string,
     @Body() body: EditCommentDto
   ) {
+    await this.service.assertVisible(postId, xUserId, 'COMMENT', {
+      allowHidden: xGlobalAdmin === 'true',
+    });
     return this.interactions.editComment(
       postId,
       commentId,
@@ -406,33 +455,6 @@ export class PostsController {
     return this.interactions.deleteComment(postId, commentId, xUserId, xGlobalAdmin === 'true');
   }
 
-  /**
-   * Pins a post to the top of the feed. Content moderators - a platform admin, or a BDE member
-   * holding MODERATE - which is the same tier the `canPin` field on the post is drawn from.
-   */
-  @UseGuards(NginxAuthGuard)
-  @Patch(':postId/pin')
-  async pinPost(
-    @Headers('x-user-id') xUserId: string,
-    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId', ParseUUIDPipe) postId: string
-  ) {
-    await this.assertContentModerator(xUserId, xGlobalAdmin);
-    return this.service.setPinned(postId, true);
-  }
-
-  /** Unpins a post. Same tier as pinning. */
-  @UseGuards(NginxAuthGuard)
-  @Patch(':postId/unpin')
-  async unpinPost(
-    @Headers('x-user-id') xUserId: string,
-    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
-    @Param('postId', ParseUUIDPipe) postId: string
-  ) {
-    await this.assertContentModerator(xUserId, xGlobalAdmin);
-    return this.service.setPinned(postId, false);
-  }
-
   /** Clears the anonymous flag on a post, revealing its author again. Content moderators. */
   @UseGuards(NginxAuthGuard)
   @Patch(':postId/unmask')
@@ -441,11 +463,11 @@ export class PostsController {
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string
   ) {
-    await this.assertContentModerator(xUserId, xGlobalAdmin);
+    await this.assertModeratesPost(xUserId, xGlobalAdmin, postId);
     return this.service.clearAnonymousFlag(postId);
   }
 
-  /** Refuses the caller unless they may moderate content anywhere on the platform. */
+  /** Refuses the caller unless they moderate SOMEWHERE - the door of the moderation lists. */
   private async assertContentModerator(
     userId: string,
     globalAdminHeader: string | undefined
@@ -453,7 +475,28 @@ export class PostsController {
     const mayModerate = await this.associationsService.isContentModerator(userId, {
       isGlobalAdmin: globalAdminHeader === 'true',
     });
-    if (!mayModerate) throw new UnauthorizedException('Content moderator required');
+    if (!mayModerate) {
+      throw new ForbiddenException({
+        code: MODERATOR_REQUIRED,
+        message: 'Content moderator required',
+      });
+    }
+  }
+
+  /**
+   * Refuses the caller unless they moderate THIS post (owner, 2026-11-02): a platform admin, or a
+   * BDE `MODERATE` holder whose governed spaces hold it. A BDE moderator outside its scope is a 403
+   * `MODERATION_OUT_OF_SCOPE`, a caller who moderates nowhere a 403 `MODERATOR_REQUIRED` - never a
+   * 401, which may log a user out.
+   */
+  private async assertModeratesPost(
+    userId: string,
+    globalAdminHeader: string | undefined,
+    postId: string
+  ): Promise<void> {
+    const isGlobalAdmin = globalAdminHeader === 'true';
+    if (await this.associationsService.mayModeratePost(userId, postId, { isGlobalAdmin })) return;
+    await this.associationsService.refuseModeration(userId, { kind: 'post', id: postId });
   }
 
   /** Hides a post from public feeds (moderation). Content moderators. */
@@ -464,7 +507,7 @@ export class PostsController {
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string
   ) {
-    await this.assertContentModerator(xUserId, xGlobalAdmin);
+    await this.assertModeratesPost(xUserId, xGlobalAdmin, postId);
     return this.service.hidePostByModeration(postId);
   }
 
@@ -476,7 +519,7 @@ export class PostsController {
     @Headers('x-global-admin') xGlobalAdmin: string | undefined,
     @Param('postId', ParseUUIDPipe) postId: string
   ) {
-    await this.assertContentModerator(xUserId, xGlobalAdmin);
+    await this.assertModeratesPost(xUserId, xGlobalAdmin, postId);
     return this.service.unhidePost(postId);
   }
 }

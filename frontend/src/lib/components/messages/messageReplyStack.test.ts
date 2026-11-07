@@ -64,12 +64,11 @@ describe('the quoted message is a bubble, not a strip inside one', () => {
     expect(/class="flex w-full flex-col[^"]*\bgap-/.test(src)).toBe(false);
   });
 
-  it('names only who answered, through Paraglide, never as a literal', () => {
-    const src = read(QUOTE);
-    expect(src).toContain('m.msg_reply_caption_you');
-    expect(src).toContain('m.msg_reply_caption_other');
-    // The quoted bubble below already shows whose message is answered.
-    expect(src).not.toMatch(/caption_(you|other)_to/);
+  it('words the caption through replyCaption (Paraglide), never as a literal', () => {
+    expect(read(QUOTE)).toContain('replyCaption(');
+    const util = read('src/lib/utils/chat/replyCaption.ts');
+    expect(util).toContain('m.msg_reply_caption_shown_other');
+    expect(util).toContain('m.msg_reply_caption_you_to_other');
   });
 });
 
@@ -105,5 +104,16 @@ describe('stackedQuotePosition puts the tail on the corner the quote faces', () 
     expect(flat(BUBBLE)).toContain(
       'effectiveReplyTo ? stackedQuotePosition(groupPosition) : groupPosition'
     );
+  });
+});
+
+describe('the sender header and the reply caption never both name the replier', () => {
+  const GROUPS = 'src/lib/components/chat/ChatMessageGroups.svelte';
+
+  it('hands the bubble the same flag that draws the header (group yes, DM no)', () => {
+    const src = flat(GROUPS);
+    expect(src).toContain('senderHeaderShown={showSender}');
+    // The flag is false in a direct conversation, so a 1:1 caption stays self-contained.
+    expect(src).toMatch(/showSender = !msg\.isOwn && !isDirect/);
   });
 });

@@ -72,6 +72,23 @@ RUN printf 'add_header Content-Security-Policy "frame-ancestors '"'"'none'"'"'" 
 # since a block that sets any header loses the inherited ones.
 RUN printf 'default_type application/json;\nadd_header Access-Control-Allow-Origin $api_error_cors_origin always;\nadd_header Access-Control-Allow-Credentials "true" always;\nadd_header Vary "Origin" always;\nadd_header Cache-Control "no-store" always;\ninclude /etc/nginx/snippets/csp.conf;\nadd_header X-Content-Type-Options "nosniff" always;\nadd_header X-Frame-Options "DENY" always;\n' > /etc/nginx/snippets/api-error-headers.conf
 
+# WHERE THIS nginx SENDS EACH SERVICE A RELEASE REPLACES WITH OVERLAP: one `$target_<service>` per
+# service, read by every `proxy_pass http://$target_<service>` below (2026-11-02,
+# docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to). On a deployed estate this
+# directory is a READ-ONLY MOUNT of the list `infrastructure/lib/rolling.sh` writes: while a service is
+# replaced, its target is the new replica's container name, so the old one is out - by a reload the
+# pairing check holds - before it is stopped. A replica told to stop while still chosen resets the
+# connections queued on it, a 502 on a POST nginx may not replay. The file below is the list's
+# RESTING FORM, byte for byte what the deploy writes between replacements (and what a rollback relies
+# on), and what an estate WITHOUT that deploy reads (a workstation, the e2e stack): each service by its
+# DNS name, resolved per request by the server's `resolver`. A VARIABLE, NOT AN `upstream` BLOCK: a
+# reload that renamed a `resolve` server started its worker with no peer at all until DNS answered
+# (`no live upstreams`, a 502), and a variable target has no peer list to start empty - rolling.sh,
+# rotation_block. THIS IMAGE NAMES NO `rotation` DIRECTORY ANYWHERE in what `nginx -T` prints: the
+# deploy library of 1.6.2, run by a rollback, takes an image that does for one reading its `upstream`
+# lists, and refuses it (deploy-rolling.test.sh runs that library against this image).
+RUN mkdir -p /etc/nginx/targets && printf 'map "" $target_chat_gateway { default chat-gateway:3000; }\nmap "" $target_chat_delivery_service { default chat-delivery-service:3010; }\nmap "" $target_core_service { default core-service:3012; }\nmap "" $target_social_service { default social-service:3014; }\nmap "" $target_frontend_ssr { default frontend-ssr:3000; }\n' > /etc/nginx/targets/frontend.conf
+
 # SPA fallback + reverse proxy WebSocket/API vers les services Docker
 RUN printf '# THE ACCESS LOG NEVER RECORDS A BEARER TOKEN (prod 2026-10-06: every `GET /api/ws` line carried the\n\
 # full `token=<JWT>` query, a live credential for its remaining hour, readable by anyone who can read\n\
@@ -94,7 +111,8 @@ RUN printf '# THE ACCESS LOG NEVER RECORDS A BEARER TOKEN (prod 2026-10-06: ever
 # the clients still calling the GET is dropped here (docs/wiki/legacy-compatibility.md).\n\
 # A URL THAT CARRIES A CAPABILITY IS NOT LOGGED WHOLE EITHER (2026-10-28): the link previews and the\n\
 # link check keep their path and drop their query (the URL a reader opened), the OIDC callback drops\n\
-# its query (with or without a trailing slash), and an invite keeps its route with its token replaced -\n\
+# its query (with or without a trailing slash), a user's avatar drops its query (the viewer's avatar\n\
+# token), and an invite keeps its route with its token replaced -\n\
 # the two join pages (their whole path segment, whatever its alphabet, and their query if any) and the\n\
 # two API routes that read an invite.\n\
 # TWO MAPS, CHAINED: a map applies ONE rule, so the route rules run first and the query rules then\n\
@@ -112,6 +130,7 @@ map $request_uri $route_redacted_request_uri {\n\
     "~^(?<receipt_path>/f/[^/?]+/receipt)[?]" "${receipt_path}?query-redacted";\n\
     "~^(?<link_path>/api/mls/link-(?:preview|preview/image|safety))[?]" "${link_path}?query-redacted";\n\
     "~^(?<callback_path>/auth/callback/?)[?]" "${callback_path}?query-redacted";\n\
+    "~^(?<avatar_path>/api/users/[^/?]+/avatar)[?]" "${avatar_path}?query-redacted";\n\
     "~^(?<invite_head>/api/(?:channels/invites|mls/group-invites)/)[^/?]+(?<invite_tail>.*)$" "${invite_head}redacted${invite_tail}";\n\
     "~^(?<join_page>/[cg]/join/)[^/?]+(?<join_page_tail>(?:/[^?]*)?)[?]" "${join_page}redacted${join_page_tail}?query-redacted";\n\
     "~^(?<join_page_bare>/[cg]/join/)[^/?]+(?<join_page_bare_tail>(?:/[^?]*)?)$" "${join_page_bare}redacted${join_page_bare_tail}";\n\
@@ -133,7 +152,7 @@ map $route_redacted_request_uri $logged_request_uri {\n\
 # THE REFERER OF A CAPABILITY PAGE KEEPS ITS ORIGIN ONLY. Those pages send none or only their origin\n\
 # (the policy below), but a client that ignores the policy, or a page reached before it applied, would\n\
 # write the same URL into the referer field. A referer naming a join token (plain, percent-encoded or\n\
-# encoded twice), a receipt or callback query, or any token key is logged as its origin; every other\n\
+# encoded twice), a receipt, callback or avatar query, or any token key is logged as its origin; every other\n\
 # referer is unchanged. A request with none keeps the stock "-": nginx\n\
 # writes "-" for an absent header, but a map hands it an EMPTY value, which it writes as "" (measured).\n\
 # The origin group ends at a delimiter (the lookahead), so a long host cannot be re-split against the\n\
@@ -141,7 +160,7 @@ map $route_redacted_request_uri $logged_request_uri {\n\
 map $http_referer $logged_http_referer {\n\
     "" "-";\n\
     "~*^(?:(?<ref_join_origin>[a-z][a-z0-9+.-]*://[^/?#]*)(?=[/?#]|$))?.*?(?:/|%%2f|%%252f)[cg](?:/|%%2f|%%252f)join(?:/|%%2f|%%252f)(?:[a-z0-9_.~-]|%%[0-9a-f]{2})" "${ref_join_origin}/redacted";\n\
-    "~*^(?:(?<ref_page_origin>[a-z][a-z0-9+.-]*://[^/?#]*)(?=[/?#]|$))?/(?:f/[^/?#]+/receipt|auth/callback/?)[?]" "${ref_page_origin}/redacted";\n\
+    "~*^(?:(?<ref_page_origin>[a-z][a-z0-9+.-]*://[^/?#]*)(?=[/?#]|$))?/(?:f/[^/?#]+/receipt|auth/callback/?|api/users/[^/?#]+/avatar)[?]" "${ref_page_origin}/redacted";\n\
     "~*^(?:(?<ref_query_origin>[a-z][a-z0-9+.-]*://[^/?#]*)(?=[/?#]|$))?[^?#]*[?](?:.*&)?(?:t|%%[57]4)(?:o|%%[46]f)(?:k|%%[46]b)(?:e|%%[46]5)(?:n|%%[46]e)(?:=|[[]|%%5b)" "${ref_query_origin}/redacted";\n\
     default $http_referer;\n\
 }\n\
@@ -257,6 +276,8 @@ map $request_method $lydia_callback_key {\n\
 }\n\
 limit_req_zone $lydia_callback_key zone=lydia_callback:1m rate=5r/s;\n\
 \n\
+include /etc/nginx/targets/frontend.conf;\n\
+\n\
 server {\n\
     listen 80;\n\
     # SERVER LEVEL ON PURPOSE: the base image's nginx.conf declares `access_log ... main` at http level,\n\
@@ -291,16 +312,17 @@ server {\n\
     # Utilise le resolver DNS interne de Docker pour la résolution des upstreams\n\
     # Cela évite que nginx refuse de démarrer si un upstream est temporairement absent\n\
     #\n\
-    # A RELEASE REPLACES A SERVICE WITHOUT A GAP, AND THESE THREE LINES ARE WHAT LET IT (2026-10-17,\n\
-    # docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to). The new replica starts beside\n\
-    # the old one, so a name resolves to BOTH for a while; the old one then stops listening and finishes\n\
-    # what it holds. `valid=2s` is how long an address is kept - the deploy waits that long (it reads\n\
-    # the same number, asserted by deploy-replace.test.sh) before retiring the old replica, so every\n\
-    # request after it already knows the new one. A connect REFUSED by the old replica is handed to the\n\
-    # next address with no byte sent, POSTs included; `proxy_connect_timeout 2s` bounds the one case that\n\
-    # is not a refusal - an address whose container has just gone, still cached for at most 2 s - where\n\
-    # the default would hold a member for 60 s. A connect on this bridge takes well under a millisecond.\n\
+    # A RELEASE REPLACES A SERVICE WITHOUT A GAP, AND THESE FOUR LINES ARE PART OF IT (2026-10-17,\n\
+    # docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to). The services a release\n\
+    # overlaps are reached through the targets included above, which the deploy changes by a reload\n\
+    # and proves before it stops a replica. The resolver answers a target at rest (a DNS name, looked\n\
+    # up for the request, which waits for it) and the services still addressed by name (media, calls,\n\
+    # adminer); `resolver_timeout 2s` bounds a DNS that does not answer, which every routed request\n\
+    # now waits on, where the default would hold it for 30 s. A connect REFUSED is handed to the next\n\
+    # replica with no byte sent, POSTs included; `proxy_connect_timeout 2s` bounds a connect that is not answered at all, where the default would\n\
+    # hold a member for 60 s. A connect on this bridge takes well under a millisecond.\n\
     resolver 127.0.0.11 valid=2s ipv6=off;\n\
+    resolver_timeout 2s;\n\
     proxy_connect_timeout 2s;\n\
     proxy_next_upstream error timeout;\n\
     # EVERY VISITOR ARRIVES FROM THE DOCKER GATEWAY, SO $remote_addr NAMED NOBODY.\n\
@@ -313,7 +335,7 @@ server {\n\
     set_real_ip_from 10.0.0.0/8;\n\
     real_ip_header X-Real-IP;\n\
     # A CLIENT MAY SEND ANY HEADER IT LIKES, AND nginx FORWARDS THE ONES NOBODY OVERRODE.\n\
-    # These five names are what the services READ to decide who is calling, so they are\n\
+    # The identity names below are what the services READ to decide who is calling, so they are\n\
     # emptied here and re-set from the auth sub-request in each guarded location. The list\n\
     # must be the app-facing spelling, not the sub-request's: `auth_request_set` reads\n\
     # `X-Logged-In` off /internal/auth/verify and forwards it as `X-User-Logged-In`, and\n\
@@ -321,15 +343,20 @@ server {\n\
     # while leaving the latter untouched. `X-Internal-Token` was not here at all.\n\
     #\n\
     # NOTHING WAS EXPLOITABLE, AND THE REASON IS NOT THIS BLOCK. nginx inherits a\n\
-    # proxy_set_header set only into a location that declares NONE of its own, and all 24\n\
-    # proxying locations declare theirs - so these lines currently reach nothing. They are\n\
+    # proxy_set_header set only into a location that declares NONE of its own, and every\n\
+    # proxying location declares its own - so these lines currently reach nothing. They are\n\
     # the net for the NEXT location somebody adds, which is exactly when a half-empty net\n\
-    # is discovered. `auth-request-coverage.test.mjs` asserts the five names are all here.\n\
+    # is discovered. `auth-request-coverage.test.mjs` asserts every identity name is here.\n\
+    # THE EDGE NEVER FORWARDS THE INTERNAL CREDENTIAL EITHER (2026-11-03): X-Internal-Secret is\n\
+    # spoken only between services, on the Docker network, so it is emptied here AND in the\n\
+    # header set every proxy_pass uses - its own location's, or the enclosing one's it inherits.\n\
+    # The same test asserts both, inheritance modelled.\n\
     proxy_set_header X-User-Id "";\n\
     proxy_set_header X-User-Logged-In "false";\n\
     proxy_set_header X-Global-Admin "false";\n\
     proxy_set_header X-Internal-Token "";\n\
     proxy_set_header X-Session-Id "";\n\
+    proxy_set_header X-Internal-Secret "";\n\
     \n\
     include /etc/nginx/snippets/csp.conf;\n\
     add_header X-Content-Type-Options "nosniff" always;\n\
@@ -374,8 +401,8 @@ server {\n\
     \n\
     location = /internal/auth/verify {\n\
     internal;\n\
-    set $upstream_auth core-service:3012;\n\
-    proxy_pass http://$upstream_auth/api/auth/verify;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_core_service/api/auth/verify;\n\
     proxy_pass_request_body off;\n\
     proxy_set_header Content-Length "";\n\
     proxy_set_header X-Original-URI $request_uri;\n\
@@ -394,8 +421,8 @@ server {\n\
     # docs/wiki/infrastructure/databases.md; .github/scripts/tests/adminer-route.test.mjs holds the shape.\n\
     location = /internal/auth/adminer {\n\
     internal;\n\
-    set $upstream_auth core-service:3012;\n\
-    proxy_pass http://$upstream_auth/api/auth/adminer-verify;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_core_service/api/auth/adminer-verify;\n\
     proxy_pass_request_body off;\n\
     proxy_set_header Content-Length "";\n\
     proxy_set_header Cookie $http_cookie;\n\
@@ -421,6 +448,7 @@ server {\n\
     # itself, so there is no proxy_redirect: one written for absolute paths would be a guess.\n\
     set $upstream_adminer adminer:8080;\n\
     rewrite ^/adminer/(.*)$ /$1 break;\n\
+    proxy_set_header X-Internal-Secret "";\n\
     proxy_pass http://$upstream_adminer;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
@@ -540,8 +568,8 @@ server {\n\
     # per-page Open Graph tags into the shell. A failure here falls through to\n\
     # @app_shell rather than 502-ing the whole site.\n\
     location @ssr {\n\
-    set $upstream_ssr frontend-ssr:3000;\n\
-    proxy_pass http://$upstream_ssr;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_frontend_ssr;\n\
     proxy_http_version 1.1;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
@@ -638,8 +666,8 @@ server {\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     proxy_set_header X-Session-Id $session_id;\n\
-    set $upstream_gateway chat-gateway:3000;\n\
-    proxy_pass http://$upstream_gateway;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_chat_gateway;\n\
     proxy_http_version 1.1;\n\
     proxy_set_header Upgrade $http_upgrade;\n\
     proxy_set_header Connection "upgrade";\n\
@@ -664,8 +692,8 @@ server {\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     proxy_set_header X-Session-Id $session_id;\n\
-    set $upstream_gateway chat-gateway:3000;\n\
-    proxy_pass http://$upstream_gateway;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_chat_gateway;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -687,8 +715,8 @@ server {\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     proxy_set_header X-Session-Id $session_id;\n\
-    set $upstream_gateway chat-gateway:3000;\n\
-    proxy_pass http://$upstream_gateway;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_chat_gateway;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -696,8 +724,8 @@ server {\n\
     }\n\
     \n\
     location = /api/chat-delivery-health {\n\
-    set $upstream_delivery_health chat-delivery-service:3010;\n\
-    proxy_pass http://$upstream_delivery_health/api/health;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_chat_delivery_service/api/health;\n\
     proxy_http_version 1.1;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
@@ -706,8 +734,8 @@ server {\n\
     }\n\
     \n\
     location = /api/version {\n\
-    set $upstream_version core-service:3012;\n\
-    proxy_pass http://$upstream_version/api/version;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_core_service/api/version;\n\
     proxy_http_version 1.1;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
@@ -727,8 +755,8 @@ server {\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     proxy_set_header X-Session-Id $session_id;\n\
-    set $upstream_calls chat-delivery-service:3010;\n\
-    proxy_pass http://$upstream_calls;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_chat_delivery_service;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -749,6 +777,7 @@ server {\n\
     proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_call call-service:3004;\n\
     rewrite ^/api/call(.*) /ws$1 break;\n\
+    proxy_set_header X-Internal-Secret "";\n\
     proxy_pass http://$upstream_call;\n\
     proxy_http_version 1.1;\n\
     proxy_set_header Upgrade $http_upgrade;\n\
@@ -774,8 +803,8 @@ server {\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     proxy_set_header X-Session-Id $session_id;\n\
-    set $upstream_delivery chat-delivery-service:3010;\n\
-    proxy_pass http://$upstream_delivery;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_chat_delivery_service;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -807,8 +836,8 @@ server {\n\
     proxy_set_header X-Global-Admin "false";\n\
     proxy_set_header X-Internal-Token "";\n\
     proxy_set_header X-Session-Id "";\n\
-    set $upstream_public social-service:3014;\n\
-    proxy_pass http://$upstream_public;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_social_service;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -822,6 +851,7 @@ server {\n\
     proxy_set_header X-Internal-Token "";\n\
     proxy_set_header X-Session-Id "";\n\
     set $upstream_media_public media-service:3011;\n\
+    proxy_set_header X-Internal-Secret "";\n\
     proxy_pass http://$upstream_media_public;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
@@ -894,6 +924,7 @@ server {\n\
     proxy_set_header Range "";\n\
     proxy_set_header If-Range "";\n\
     set $upstream_media_live media-service:3011;\n\
+    proxy_set_header X-Internal-Secret "";\n\
     proxy_pass http://$upstream_media_live$uri;\n\
     proxy_http_version 1.1;\n\
     proxy_set_header Host $host;\n\
@@ -925,6 +956,7 @@ server {\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     proxy_set_header X-Session-Id $session_id;\n\
     set $upstream_media media-service:3011;\n\
+    proxy_set_header X-Internal-Secret "";\n\
     proxy_pass http://$upstream_media;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
@@ -944,8 +976,8 @@ server {\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     proxy_set_header X-Session-Id $session_id;\n\
-    set $upstream_post social-service:3014;\n\
-    proxy_pass http://$upstream_post;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_social_service;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -968,8 +1000,8 @@ server {\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     proxy_set_header X-Session-Id $session_id;\n\
-    set $upstream_payment core-service:3012;\n\
-    proxy_pass http://$upstream_payment;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_core_service;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -992,8 +1024,8 @@ server {\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     proxy_set_header X-Session-Id $session_id;\n\
-    set $upstream_payment core-service:3012;\n\
-    proxy_pass http://$upstream_payment;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_core_service;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -1012,8 +1044,8 @@ server {\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     proxy_set_header X-Session-Id $session_id;\n\
-    set $upstream_payment core-service:3012;\n\
-    proxy_pass http://$upstream_payment;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_core_service;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -1032,8 +1064,8 @@ server {\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     proxy_set_header X-Session-Id $session_id;\n\
-    set $upstream_form social-service:3014;\n\
-    proxy_pass http://$upstream_form;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_social_service;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -1052,8 +1084,8 @@ server {\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     proxy_set_header X-Session-Id $session_id;\n\
-    set $upstream_booking social-service:3014;\n\
-    proxy_pass http://$upstream_booking;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_social_service;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -1076,8 +1108,8 @@ server {\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     proxy_set_header X-Session-Id $session_id;\n\
-    set $upstream_live social-service:3014;\n\
-    proxy_pass http://$upstream_live;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_social_service;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -1091,8 +1123,8 @@ server {\n\
     proxy_set_header X-Global-Admin "false";\n\
     proxy_set_header X-Internal-Token "";\n\
     proxy_set_header X-Session-Id "";\n\
-    set $upstream_asso social-service:3014;\n\
-    proxy_pass http://$upstream_asso;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_social_service;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -1111,8 +1143,8 @@ server {\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     proxy_set_header X-Session-Id $session_id;\n\
-    set $upstream_asso social-service:3014;\n\
-    proxy_pass http://$upstream_asso;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_social_service;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -1131,8 +1163,8 @@ server {\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     proxy_set_header X-Session-Id $session_id;\n\
-    set $upstream_moderation social-service:3014;\n\
-    proxy_pass http://$upstream_moderation;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_social_service;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -1146,8 +1178,8 @@ server {\n\
     proxy_set_header X-Global-Admin "false";\n\
     proxy_set_header X-Internal-Token "";\n\
     proxy_set_header X-Session-Id "";\n\
-    set $upstream_auth core-service:3012;\n\
-    proxy_pass http://$upstream_auth;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_core_service;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -1162,8 +1194,8 @@ server {\n\
     proxy_set_header X-Global-Admin "false";\n\
     proxy_set_header X-Internal-Token "";\n\
     proxy_set_header X-Session-Id "";\n\
-    set $upstream_external core-service:3012;\n\
-    proxy_pass http://$upstream_external;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_core_service;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -1182,8 +1214,8 @@ server {\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     proxy_set_header X-Session-Id $session_id;\n\
-    set $upstream_channel social-service:3014;\n\
-    proxy_pass http://$upstream_channel;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_social_service;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -1203,8 +1235,8 @@ server {\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     proxy_set_header X-Session-Id $session_id;\n\
-    set $upstream_minesweeper social-service:3014;\n\
-    proxy_pass http://$upstream_minesweeper;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_social_service;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
@@ -1224,8 +1256,8 @@ server {\n\
     proxy_set_header X-Global-Admin $global_admin;\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     proxy_set_header X-Session-Id $session_id;\n\
-    set $upstream_user core-service:3012;\n\
-    proxy_pass http://$upstream_user;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$target_core_service;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\

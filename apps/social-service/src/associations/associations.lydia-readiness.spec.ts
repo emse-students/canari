@@ -1,7 +1,6 @@
 import { Logger, NotFoundException } from '@nestjs/common';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { In } from 'typeorm';
 import { SECRET_BOX_ENV, openSecret, sealSecret } from '../common/secret-box';
 import * as delegation from './payment-delegation.util';
 import {
@@ -13,7 +12,6 @@ import {
   LYDIA_RESPONSABLE_IN_FLIGHT,
   LYDIA_RESPONSABLE_PHONE_LOCKED,
 } from './associations.service';
-import { AssociationProduct } from './entities/association-product.entity';
 import {
   LYDIA_ENROLMENT_IN_FLIGHT,
   LYDIA_ENROLMENT_PENDING,
@@ -48,10 +46,18 @@ type Holder = { id: string; ready: boolean; cause: string | null; holders?: numb
 /** The statements of `setLydiaReadiness`, answered from one in-memory row (and the global admins). */
 function makeReadiness(
   row: Holder | null,
-  notifier = { enabled: () => true, tell: jest.fn(async () => 1) },
-  world: { pendingTokens?: string[]; admins?: string[] } = {}
+  notifier: {
+    enabled: () => boolean;
+    tell: jest.Mock;
+    tellDelegation?: jest.Mock;
+  } = { enabled: () => true, tell: jest.fn(async () => 1) },
+  world: { pendingTokens?: string[]; admins?: string[]; withheld?: string[] } = {}
 ) {
-  const update = jest.fn(async () => ({ affected: 3 }));
+  notifier.tellDelegation ??= jest.fn(async () => 1);
+  // The product writes, by kind and ids (`withholdOnSaleProductsOf` / `releaseWithheldProductsOf`).
+  const update = jest.fn((_kind: 'withhold' | 'release', _ids: string[]) => undefined);
+  // What is withheld now: the approved delegate's product, unless the test says otherwise.
+  const withheld = new Set(world.withheld ?? [CLUB]);
   const find = jest.fn(async () => [{ id: CLUB }]);
   const saved: Array<Record<string, unknown>> = [];
   const manager = {
@@ -84,6 +90,21 @@ function makeReadiness(
       if (sql.includes('FROM users WHERE admin = true')) {
         return (world.admins ?? ['admin-1']).map((id) => ({ id }));
       }
+      if (sql.includes('UPDATE association_products')) {
+        const ids = params[0] as string[];
+        if (sql.includes('"isActive" = false')) {
+          update('withhold', ids);
+          // Two on-sale products of the holder, one of its delegate.
+          ids.forEach((id) => withheld.add(id));
+          const rows = ids.flatMap((id) =>
+            id === HOLDER ? [{ associationId: id }, { associationId: id }] : [{ associationId: id }]
+          );
+          return [rows, rows.length];
+        }
+        update('release', ids);
+        const rows = ids.filter((id) => withheld.delete(id)).map((id) => ({ associationId: id }));
+        return [rows, rows.length];
+      }
       throw new Error(`unexpected SQL: ${sql}`);
     }),
     update,
@@ -96,6 +117,11 @@ function makeReadiness(
   };
   const assoRepo = {
     manager: { transaction: async (fn: (m: typeof manager) => unknown) => fn(manager), find },
+    // The approved delegates' names, for their managers' notice (`tellDelegates`).
+    findOne: jest.fn(async ({ where: { id } }: { where: { id: string } }) => ({
+      id,
+      name: 'List',
+    })),
   };
   const listFlagHolders = jest.fn(async () => ['manager-1', 'manager-2']);
   const service = Object.assign(Object.create(AssociationsService.prototype) as object, {
@@ -129,13 +155,21 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
   it('marks ready ONCE: a transition is a WARN and a notice, a replay a debug line and no notice', async () => {
     const logs = captureLogs();
     const row: Holder = { id: HOLDER, ready: false, cause: null };
-    const { service, notifier } = makeReadiness(row);
+    const { service, notifier, update } = makeReadiness(row);
     const first = await service.setLydiaReadiness(VENDOR, true, 'webhook-validated', {
       path: 'webhook',
     });
     expect(first).toMatchObject({ kind: 'transitioned', associationId: HOLDER });
+    // The holder's payout managers (the Lydia notice), and its approved delegate's shop managers
+    // with their OWN notice, because the readiness transaction released its product.
     expect(notifier.tell).toHaveBeenCalledTimes(1);
     expect(notifier.tell).toHaveBeenCalledWith({ id: HOLDER, name: 'BDE' }, 'active', [
+      'manager-1',
+      'manager-2',
+    ]);
+    expect(update).toHaveBeenCalledWith('release', [HOLDER, CLUB]);
+    expect(notifier.tellDelegation).toHaveBeenCalledTimes(1);
+    expect(notifier.tellDelegation).toHaveBeenCalledWith({ id: CLUB, name: 'List' }, 'resumed', [
       'manager-1',
       'manager-2',
     ]);
@@ -150,7 +184,9 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
       });
       expect(again.kind).toBe('replay');
     }
+    // A replay releases again in its transaction - nothing left - and tells nobody.
     expect(notifier.tell).toHaveBeenCalledTimes(1);
+    expect(notifier.tellDelegation).toHaveBeenCalledTimes(1);
     expect(logs.warn).toHaveLength(0);
     expect(logs.error).toHaveLength(0);
     expect(logs.debug.join('|')).toContain('replay');
@@ -170,11 +206,7 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
       previousCause: 'webhook-validated',
     });
     expect(predicate).toHaveBeenCalledWith(manager, HOLDER);
-    expect(update).toHaveBeenCalledWith(
-      AssociationProduct,
-      { associationId: In([HOLDER, CLUB]), isActive: true },
-      { isActive: false, activationWithheld: true }
-    );
+    expect(update).toHaveBeenCalledWith('withhold', [HOLDER, CLUB]);
     const error = logs.error.join('|');
     expect(error).toContain(
       `holder ${HOLDER} reverted: request/do answered error 5 (shop checkout-1)`
@@ -183,6 +215,12 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
     expect(error).toContain('3 on-sale product(s) withheld');
     expect(error).toContain('1 global admin(s) told');
     expect(notifier.tell).toHaveBeenCalledWith(expect.anything(), 'paused', expect.anything());
+    // The delegate (a list paid through this holder) is told by its OWN notice, its shop managers.
+    expect(notifier.tellDelegation).toHaveBeenCalledWith(
+      { id: CLUB, name: 'List' },
+      'receiver-not-ready',
+      ['manager-1', 'manager-2']
+    );
   });
 
   it('a revert writes a bell row to EVERY global admin in its own transaction, whatever the switch', async () => {
@@ -293,17 +331,24 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
     expect(logs.warn.join('|')).toContain('no association holds the vendor token');
   });
 
-  it('with the switch OFF, a transition writes no notification row and says so', async () => {
+  it('with the switch OFF, a transition writes no Lydia notice and says so; the delegate is still told', async () => {
     const logs = captureLogs();
     const notifications = { createNotifications: jest.fn() };
     const push = { notifyContent: jest.fn() };
     const real = new LydiaPaymentsNotifier(notifications as never, push as never);
     expect(real.enabled()).toBe(false);
-    const { service } = makeReadiness({ id: HOLDER, ready: false, cause: null }, real as never);
+    const { service } = makeReadiness({ id: HOLDER, ready: false, cause: null }, real as never, {
+      withheld: [],
+    });
     await service.setLydiaReadiness(VENDOR, true, 'admin', { path: 'admin', id: HOLDER });
-    expect(notifications.createNotifications).not.toHaveBeenCalled();
-    expect(push.notifyContent).not.toHaveBeenCalled();
+    // No Lydia notice for the holder's payout managers...
+    const types = notifications.createNotifications.mock.calls.map(([n]) => n.type);
+    expect(types.filter((t: string) => t.startsWith('lydia_'))).toEqual([]);
     expect(logs.warn.join('|')).toContain('LYDIA_PAYMENTS_NOTIFICATIONS_ENABLED is off');
+    // ...but the delegate collects again, products or none: its OWN notice is not behind the
+    // switch (owner review of #2967).
+    expect(types).toEqual(['delegation_resumed']);
+    expect(push.notifyContent).toHaveBeenCalled();
   });
 
   it('a notice that cannot be written leaves the committed state and is an ERROR, not a throw', async () => {
@@ -335,45 +380,28 @@ describe('AssociationsService.setLydiaReadiness - one writer, the UPDATE decides
   });
 });
 
-describe('the release and the withhold read ONE delegate predicate', () => {
-  it('ProductsService.releaseWithheldForAssociationAndDelegates calls approvedDelegateIds too', async () => {
-    const predicate = jest.spyOn(delegation, 'approvedDelegateIds').mockResolvedValue([CLUB]);
-    const assoManager = { find: jest.fn() };
-    const products = Object.assign(Object.create(ProductsService.prototype) as object, {
-      assoRepo: { manager: assoManager },
-      logger: new Logger('ProductsService'),
-    }) as unknown as ProductsService;
-    const release = jest
-      .spyOn(
-        products as never as { releaseWithheldProducts: (id: string) => Promise<number> },
-        'releaseWithheldProducts'
-      )
-      .mockResolvedValue(1);
-    await expect(products.releaseWithheldForAssociationAndDelegates(HOLDER)).resolves.toBe(2);
-    expect(predicate).toHaveBeenCalledWith(assoManager, HOLDER);
-    expect(release.mock.calls.map(([id]) => id)).toEqual([HOLDER, CLUB]);
-  });
-
-  it('markLydiaReady releases on EVERY ready call, replays included, never when nothing is ready', async () => {
+describe('markLydiaReady owes no release after the commit', () => {
+  // Owner review of #2967 (2026-11-03): the release runs INSIDE `setLydiaReadiness`'s transaction,
+  // replays included, so the products path only forwards the outcome.
+  it('forwards every outcome and releases nothing itself', async () => {
     const set = jest
       .fn()
       .mockResolvedValueOnce({ kind: 'transitioned', associationId: HOLDER })
-      .mockResolvedValueOnce({ kind: 'replay', associationId: HOLDER })
-      .mockResolvedValueOnce({ kind: 'no-holder' })
-      .mockResolvedValueOnce({ kind: 'held-by-lydia', associationId: HOLDER })
-      .mockResolvedValueOnce({ kind: 'no-holder-enrolment-in-flight' });
+      .mockResolvedValueOnce({ kind: 'replay', associationId: HOLDER });
     const products = Object.assign(Object.create(ProductsService.prototype) as object, {
       associationsService: { setLydiaReadiness: set },
       logger: new Logger('ProductsService'),
     }) as unknown as ProductsService;
     jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
-    const release = jest
-      .spyOn(products, 'releaseWithheldForAssociationAndDelegates')
-      .mockResolvedValue(0);
-    for (let i = 0; i < 5; i++)
-      await products.markLydiaReady(VENDOR, 'webhook-validated', { path: 'webhook' });
+    const release = jest.spyOn(products, 'releaseWithheldProducts');
+    await expect(
+      products.markLydiaReady(VENDOR, 'webhook-validated', { path: 'webhook' })
+    ).resolves.toMatchObject({ kind: 'transitioned' });
+    await expect(
+      products.markLydiaReady(VENDOR, 'admin', { path: 'admin' })
+    ).resolves.toMatchObject({ kind: 'replay' });
     expect(set).toHaveBeenCalledWith(VENDOR, true, 'webhook-validated', { path: 'webhook' });
-    expect(release).toHaveBeenCalledTimes(2);
+    expect(release).not.toHaveBeenCalled();
   });
 });
 
@@ -1066,7 +1094,19 @@ describe('AssociationsService - the payer`s refusal and the unlink', () => {
   it('the unlink closes the cashier rows of that Business and clears their phone', async () => {
     captureLogs();
     const query = jest.fn(async (_sql: string, _params: unknown[]) => []);
-    const service = makeBare({ assoRepo: { update: jest.fn(async () => ({})), query } });
+    const manager = {
+      findOne: jest.fn(async () => ({ id: HOLDER })),
+      update: jest.fn(async () => ({ affected: 0 })),
+      find: jest.fn(async () => []),
+      query: jest.fn(async () => [[], 0]),
+    };
+    const service = makeBare({
+      assoRepo: {
+        update: jest.fn(async () => ({})),
+        query,
+        manager: { transaction: async (fn: (m: typeof manager) => unknown) => fn(manager) },
+      },
+    });
     await service.clearLydiaAccount(HOLDER);
     const closing = query.mock.calls.find(([sql]) => String(sql).includes('lydia_cashiers'));
     expect(closing?.[0]).toContain('"removedAt" = now(), "phoneSealed" = NULL, "phoneEnd" = NULL');

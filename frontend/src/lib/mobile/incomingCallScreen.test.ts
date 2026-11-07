@@ -102,20 +102,22 @@ describe('the call screen never outlives its ring', () => {
     const body = between(
       push,
       'fun cancelAllMessageNotifications(context: Context)',
-      'activeCallRings.clear()',
+      'CallRingAnswer.forgetAll(context)',
       'cancelAllMessageNotifications'
     );
+    expect(body).toContain('CallRingPlayer.rings.clearNative {');
     expect(body).toContain('IncomingCallActivity.finishFor(ringing,');
   });
 
   it('the end of a ring closes its screen', () => {
-    const cancel = between(
+    // Every end closes the call (`RingSequencer.close`), which takes the native ring down here.
+    const takeDown = between(
       push,
-      'internal fun cancelIncomingCallNotification(',
-      'Log.d(TAG, "cancelIncomingCallNotification',
-      'cancelIncomingCallNotification'
+      'internal fun takeDownRingNotification(',
+      'Log.d(TAG, "takeDownRingNotification',
+      'takeDownRingNotification'
     );
-    expect(cancel).toContain('IncomingCallActivity.finishFor(callId,');
+    expect(takeDown).toContain('IncomingCallActivity.finishFor(callId,');
   });
 });
 
@@ -177,7 +179,7 @@ describe('an app in front rings natively unless its page holds the socket (Mi 9T
     const ring = between(
       push,
       'internal fun showIncomingCallNotification(',
-      'if (!activeCallRings.add(callId))',
+      'CallRingPlayer.rings.claimNative(callId',
       'showIncomingCallNotification'
     );
     expect(ring).toMatch(/if \(foregroundPageRings\(\)\) \{[\s\S]*?return\s*\}/);
@@ -206,7 +208,11 @@ describe('an app in front rings natively unless its page holds the socket (Mi 9T
 
   it('the page states it at its socket setter, and a new document voids it', () => {
     expect(libRs).toContain('page_ring::set_page_gateway_socket,');
-    expect(libRs).toMatch(/PageLoadEvent::Started \{\s*page_ring::forget_on_page_load\(\);/);
+    // A new document voids it by CLAIMING its generation (`page_ring_document`, its first native
+    // call), never on the page-load event, which on Android can run after that call (round 10 of
+    // the review of #2919).
+    expect(libRs).toContain('page_ring::page_ring_document,');
+    expect(libRs).not.toContain('forget_on_page_load');
     // A dead WKWebView content process: cleared, then reloaded (Tauri's default reload, kept).
     const terminate = between(
       libRs,
@@ -318,7 +324,7 @@ describe('the native answer is a private intent carrying every fact the join nee
     const cancel = between(
       push,
       'internal fun cancelIncomingCallNotification(',
-      'Log.d(TAG, "cancelIncomingCallNotification',
+      'CallRingPlayer.rings.close(',
       'cancelIncomingCallNotification'
     );
     expect(cancel).toContain('CallRingAnswer.forget(context, callId)');
@@ -332,7 +338,7 @@ describe('the native answer is a private intent carrying every fact the join nee
       'performAnswerCallAction'
     );
     expect(answerMm).toContain('@"callerId" : callerId,');
-    expect(answerMm).toContain('@"fr.emse.canari://chat/%@", groupId');
+    expect(answerMm).toContain('CanariChatLink(groupId, @"")');
     expect(pushMm).not.toContain('acceptCall');
     // Both rings record the caller for it.
     expect([...pushMm.matchAll(/@"callerId" : callerId \?: @"",/g)]).toHaveLength(2);

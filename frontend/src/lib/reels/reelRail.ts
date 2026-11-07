@@ -41,9 +41,17 @@ export function pickedReactionToggle(
   return { type, wasReacted: reactions[userId] === type };
 }
 
-/** Every reaction on the post: the heart's number. */
-export function reactionTotal(reactions: Record<string, string> | undefined): number {
-  return Object.keys(reactions ?? {}).length;
+/**
+ * Every reaction on the post: the heart's number. With `otherReactionCounts` (a named reader whose
+ * comments are withheld, owner 2026-11-04) the map holds the reader's own only, and the rest is
+ * that tally.
+ */
+export function reactionTotal(
+  reactions: Record<string, string> | undefined,
+  otherReactionCounts?: Record<string, number>
+): number {
+  const others = Object.values(otherReactionCounts ?? {}).reduce((sum, n) => sum + n, 0);
+  return Object.keys(reactions ?? {}).length + others;
 }
 
 /**

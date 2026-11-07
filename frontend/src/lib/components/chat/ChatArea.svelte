@@ -30,8 +30,12 @@
   import {
     entryWindowStart,
     resolveRenderWindow,
+    fillStart,
+    ENTRY_OVERFLOW_PX,
+    OLDER_TRIGGER_PX,
     stepWindowOlder,
     widenedEntryStart,
+    widenStepStart,
   } from '$lib/utils/chat/renderWindow';
   import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
   import {
@@ -43,7 +47,13 @@
   } from '$lib/utils/chat/threadAnchor';
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
   import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
-  import { countUnreadForUser, seenByAnchors, watermarkFor } from '$lib/utils/chat/readState';
+  import { countUnreadBelow, readPointFor, seenByAnchors } from '$lib/utils/chat/readState';
+  import {
+    lastRowAbove,
+    resolveAnchor,
+    viewportBottom,
+    type VisibleAnchor,
+  } from '$lib/utils/chat/visibleRow';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
@@ -60,6 +70,7 @@
   import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
+  import type { MentionRosterMember } from '$lib/utils/users/mentionRoster';
   import { scrollMessageIntoList } from '$lib/utils/chat/scrollToMessage';
   import { openSalonPolls, salonPolls } from '$lib/utils/chat/activePolls';
   import { getPollMeta } from '$lib/stores/pollStore.svelte';
@@ -123,6 +134,12 @@
     onSearchAll?: (conversationId: string, query: string) => Promise<string[] | null>;
     /** Callback to toggle a message's pinned state. */
     onTogglePin?: (messageId: string) => void;
+    /**
+     * A conversation reel's viewer met its `410` at `atMs`: record it on the message's local row,
+     * so its tile reads the tombstone across reloads (RC-6). Omit: the tile still draws it for
+     * this mount.
+     */
+    onReelPurged?: (messageId: string, atMs: number) => void;
     /** Callback to invite one or more members by user ID. */
     onInviteMembers: (ids: string[]) => void;
     /** Callback to navigate back to the conversation list on mobile. */
@@ -195,7 +212,7 @@
     /** Called when the user clicks the "Rejoindre la communauté" button on a channel invitation card. */
     onJoinChannel?: (channelId: string) => void;
     /** When set, only users whose IDs are in this list appear in @mention suggestions. */
-    allowedUserIds?: string[];
+    mentionRoster?: MentionRosterMember[];
     /**
      * Whether the viewer may POST in the open channel, per its `writePolicy` and the viewer's roles.
      *
@@ -214,8 +231,6 @@
     onRemovePendingFile?: (index: number) => void;
     /** A picked video being re-encoded before it is staged - handed to the composer. */
     videoPreparation?: VideoPreparationState;
-    /** Whether a file upload is currently in progress. */
-    isUploading?: boolean;
     /** Callback to start an audio-only call. */
     onStartAudioCall?: () => void;
     /** Callback to start a video call. */
@@ -273,6 +288,7 @@
     onOpenMedia,
     onSearchAll,
     onTogglePin,
+    onReelPurged,
     onInviteMembers,
     onBack,
     onOpenConversations: _onOpenConversations,
@@ -280,7 +296,7 @@
     isHidden = false,
     groupMembers = [],
     pendingInvites = [],
-    allowedUserIds,
+    mentionRoster,
     canWrite = true,
     sendError = '',
     onGroupRename,
@@ -311,7 +327,6 @@
     pendingFiles = [],
     onRemovePendingFile,
     videoPreparation,
-    isUploading = false,
     onStartAudioCall,
     onStartVideoCall,
     imageMediaId = null,
@@ -341,6 +356,9 @@
   const unopenableHere = $derived(
     waitingToBeAdded && !!conversation && isUnopenableHere(conversation.id)
   );
+  // THE JOINER'S OWN ASK, opened: nothing in the thread was ever readable here, so say what it waits
+  // for rather than leave an empty thread and a live composer with no explanation.
+  const waitingForAMember = $derived(!!conversation && isNeverAdmitted(conversation));
   // Initial render window when opening a conversation, intentionally capped at ~one screen:
   // rendering hundreds of bubbles in a single synchronous pass delays layout, and the
   // scroll-to-bottom fires while the height is still growing -> we overshoot and see a
@@ -354,6 +372,10 @@
    * paint is not one long task over a whole page of rows (339-635 ms for 56-200 rows on a Mi 9T).
    */
   const ENTRY_FIRST_FRAME_GROUPS = 20;
+  /** Least number of groups one fill pass adds when the first frame left the pane short. */
+  const ENTRY_MIN_FILL_STEP = 4;
+  /** Groups the post-reveal widen adds per task (about 45 ms of mount on the Mi 9T). */
+  const ENTRY_WIDEN_STEP = 10;
   /**
    * How much history to open ABOVE a message the reader jumped to, so it lands with context rather
    * than glued to the top of the pane. It used to be a cap on rendered nodes, back when the window
@@ -375,9 +397,17 @@
    * observers, the unread pill.
    */
   let isNearBottom = $state(true);
+  /**
+   * The last message row at least partly in view (id + display index), written by `measureScroll` with the flag
+   * above. The unread pill counts the unread rows AFTER it (`countUnreadBelow`), so it is a statement
+   * about what lies below the reader and not about the conversation as a whole.
+   */
+  let lastVisibleAnchor = $state<VisibleAnchor | null>(null);
   let _isMobile = $state(false);
   let _composerFocused = $state(false);
   let lastConversationKey = $state('');
+  /** Counts entries (fill passes): only the latest entry's fill and widen may go on. */
+  let entryEpoch = 0;
   let lastMessageCount = $state(0);
   /** First index (inclusive) of the sliding render window inside messageGroups. */
   let windowStart = $state(0);
@@ -452,21 +482,45 @@
    * network), then pin to the latest message.
    */
   async function fillViewportThenPin() {
+    // ONE ENTRY AT A TIME: a repin or an A -> B -> A inside one await starts a second pass, and the
+    // first must not go on alongside it (nor start its own widen).
+    const epoch = ++entryEpoch;
     for (let i = 0; i < 4 && chatContainer && renderWindow.start > 0; i++) {
-      if (chatContainer.scrollHeight > chatContainer.clientHeight + 40) break;
-      // THE FIRST FILL STEP REACHES THE FULL ENTRY SIZE, NOT A PAGE (140) ABOVE THE FIRST FRAME: a
-      // thread of one-line rows would otherwise mount 160 rows before its first paint where it
-      // used to mount 60. Only a still-short viewport after that steps by a page.
+      // THE FIRST FRAME'S OWN MEASURE SAYS HOW MANY ROWS ARE MISSING (`fillStart`), not a jump to the
+      // full entry size: a thread of one-line rows fills the pane with the 20 of the first frame, and
+      // mounting 60 hidden rows was ONE 260 ms task on the Mi 9T (2026-11-02 profile).
+      // `widenEntryWindow` brings the rest AFTER the reveal. The overflow aimed for clears the
+      // pagination trigger (`OLDER_TRIGGER_PX`), so the reveal's scroll does not paginate. The last
+      // pass keeps the full-entry jump so the loop converges whatever the measure says.
       const fullEntryStart = entryWindowStart(messageGroups.length, INITIAL_RENDER_GROUPS);
+      const rows = chatContainer.querySelectorAll<HTMLElement>('[id^="msg-"]');
+      const first = rows.item(0)?.getBoundingClientRect();
+      const last = rows.item(rows.length - 1)?.getBoundingClientRect();
+      const style = getComputedStyle(chatContainer);
+      const measured = fillStart(
+        renderWindow.start,
+        rows.length,
+        first && last ? last.bottom - first.top : 0,
+        (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0),
+        chatContainer.clientHeight,
+        ENTRY_OVERFLOW_PX,
+        ENTRY_MIN_FILL_STEP,
+        fullEntryStart
+      );
+      if (measured === null) break;
       windowStart =
-        renderWindow.start > fullEntryStart
-          ? fullEntryStart
-          : Math.max(0, renderWindow.start - RENDER_GROUPS_STEP);
+        i === 3
+          ? renderWindow.start > fullEntryStart
+            ? fullEntryStart
+            : Math.max(0, renderWindow.start - RENDER_GROUPS_STEP)
+          : measured;
       await tick();
+      if (epoch !== entryEpoch) return;
     }
+    if (epoch !== entryEpoch) return;
     scrollToBottomSettled(() => {
       entering = false;
-      void widenEntryWindow();
+      void widenEntryWindow(epoch);
     });
   }
 
@@ -478,23 +532,30 @@
    * add (the same compensation `loadOlderGroups` makes) and the reader sees nothing move. It only
    * lowers the start: a reader who has paginated further up keeps their wider window.
    */
-  async function widenEntryWindow() {
-    const key = lastConversationKey;
+  async function widenEntryWindow(epoch: number) {
     await yieldToMainThread();
-    if (key !== lastConversationKey || !chatContainer) return;
-    const widened = widenedEntryStart(
+    if (epoch !== entryEpoch) return;
+    const target = widenedEntryStart(
       renderWindow.start,
       messageGroups.length,
       INITIAL_RENDER_GROUPS
     );
-    if (widened === null) return;
-    const prevHeight = chatContainer.scrollHeight;
-    const prevTop = chatContainer.scrollTop;
-    Log.d('chat.entry', `widening window ${renderWindow.start} -> ${widened}`);
-    windowStart = widened;
-    await tick();
-    if (key !== lastConversationKey || !chatContainer) return;
-    chatContainer.scrollTop = prevTop + (chatContainer.scrollHeight - prevHeight);
+    if (target === null) return;
+    // ONE STEP PER TASK: the rows come ENTRY_WIDEN_STEP at a time with a yield between, so no task
+    // of the widen is longer than that many rows whatever the thread holds.
+    for (;;) {
+      if (epoch !== entryEpoch || !chatContainer) return;
+      const next = widenStepStart(renderWindow.start, target, ENTRY_WIDEN_STEP);
+      if (next === null) return;
+      const prevHeight = chatContainer.scrollHeight;
+      const prevTop = chatContainer.scrollTop;
+      Log.d('chat.entry', `widening window ${renderWindow.start} -> ${next} (target ${target})`);
+      windowStart = next;
+      await tick();
+      if (epoch !== entryEpoch || !chatContainer) return;
+      chatContainer.scrollTop = prevTop + (chatContainer.scrollHeight - prevHeight);
+      await yieldToMainThread();
+    }
   }
 
   /**
@@ -548,10 +609,40 @@
     // THE ONLY WRITER of the thread's stick-to-bottom flag. A scroll is the only thing that can
     // express the reader's intent to leave the live end, so it is the only thing that revises it.
     isNearBottom = isPinnedToBottom(chatContainer);
+    lastVisibleAnchor = measureLastVisibleAnchor();
     updateStickyDateIndicator();
-    if (chatContainer.scrollTop < 80) {
+    if (chatContainer.scrollTop < OLDER_TRIGGER_PX) {
       void loadOlderGroups();
     }
+  }
+
+  /**
+   * The last message row whose top edge is above the bottom of what the reader sees - the scroller's
+   * bottom MINUS its padding, which is the floating composer's height - or `null`. Rows are in DOM
+   * order, so it is a binary search over `messageRows` (O(log n) rects); a row above the drawn window
+   * is above by definition, one below it or not mounted yet is below.
+   */
+  function measureLastVisibleAnchor(): VisibleAnchor | null {
+    if (!chatContainer || messageRows.length === 0) return null;
+    const drawn = visibleMessageGroups.filter(isMessageGroupRow);
+    if (drawn.length === 0) return null;
+    const drawnStart = messageRows.findIndex((msg) => msg.id === drawn[0].message.id);
+    if (drawnStart < 0) return null;
+    const limit = viewportBottom(
+      chatContainer.getBoundingClientRect().bottom,
+      parseFloat(getComputedStyle(chatContainer).paddingBottom)
+    );
+    const index = lastRowAbove(
+      messageRows.length,
+      (i) => {
+        if (i < drawnStart) return -Infinity;
+        const row = drawn[i - drawnStart];
+        const el = row ? document.getElementById(`msg-${row.message.id}`) : null;
+        return el ? el.getBoundingClientRect().top : Infinity;
+      },
+      limit
+    );
+    return index < 0 ? null : { id: messageRows[index].id, index };
   }
 
   function clearStickyDateTimer() {
@@ -735,12 +826,15 @@
    * 2026-10-02). Computed over every group, sorted, never the render window: a window ending above
    * a reader's true anchor would pin the head to its last row. A DM keeps its own receipt shape.
    */
+  /** Every message row in DISPLAY order, derived once: the seen heads and the unread pill read it. */
+  let messageRows = $derived(messageGroups.filter(isMessageGroupRow).map((g) => g.message));
   let seenBy = $derived(
     chatView && !chatView.isDirect
       ? seenByAnchors(
-          messageGroups.filter(isMessageGroupRow).map((g) => g.message),
+          messageRows,
           chatView.conversation.readWatermarks,
-          currentUserId
+          currentUserId,
+          chatView.conversation.serverReadWatermarks
         )
       : undefined
   );
@@ -758,12 +852,12 @@
    * dressed up as a fact about the conversation.
    */
   let unreadBelowCount = $derived.by(() => {
+    // The pill is only drawn away from the live end: nothing to count while pinned.
+    if (isNearBottom) return 0;
     const convo = chatView?.conversation;
     if (!convo) return 0;
-    return countUnreadForUser(
-      convo.messages,
-      watermarkFor(convo.readWatermarks, currentUserId.trim().toLowerCase())
-    );
+    const mine = readPointFor(convo, currentUserId.trim().toLowerCase());
+    return countUnreadBelow(messageRows, lastVisibleAnchor, mine.stamped, mine.server);
   });
   /**
    * Show the loading skeleton ONLY when there is genuinely nothing to render yet (cold
@@ -979,6 +1073,40 @@
     void conversationId;
     untrack(() => editSession.reset());
   });
+  // THE READER'S POSITION IS RE-MEASURED WHEN THE THREAD CHANGES, NOT ONLY ON SCROLL: a row deleted,
+  // a list reloaded or a local id swapped for the server's moves rows under a reader who never
+  // scrolled, and a conversation switch must not carry the last thread's anchor into the next.
+  let anchorConversationId: string | null = null;
+  let anchorLoggedMissing = false;
+  $effect(() => {
+    void messageRows;
+    void visibleMessageGroups;
+    const switched = conversationId !== anchorConversationId;
+    untrack(() => {
+      if (switched) {
+        anchorConversationId = conversationId;
+        anchorLoggedMissing = false;
+        lastVisibleAnchor = null;
+      }
+      if (isNearBottom) return;
+      void tick().then(() =>
+        requestAnimationFrame(() => (lastVisibleAnchor = measureLastVisibleAnchor()))
+      );
+    });
+  });
+  // A vanished anchor is resolved to the nearest row, which is right but means the re-measure above
+  // has not landed yet; if it ever does not land, say so once instead of counting from a guess.
+  $effect(() => {
+    const resolved = resolveAnchor(
+      messageRows.map((msg) => msg.id),
+      lastVisibleAnchor
+    );
+    if (resolved.exact || anchorLoggedMissing) return;
+    anchorLoggedMissing = true;
+    console.warn(
+      `[ChatArea] unread-pill anchor ${lastVisibleAnchor?.id.slice(0, 8)} left the thread - counting from row ${resolved.index}`
+    );
+  });
   // The page holding this composer unmounts on any route change (/chat <-> /communities, a profile
   // link, a notification's landing) while the drafts outlive it in `useMessaging`: an edit left open
   // then would leave the edited message's text as the draft, with no banner, for Send to post twice
@@ -1017,6 +1145,8 @@
         // Hold the list invisible until fillViewportThenPin() lands it at the bottom, so the
         // entry never flashes the top of the conversation before teleporting down.
         entering = true;
+        // A new entry retires the previous one's fill and widen at once, not a tick later.
+        entryEpoch++;
         tick().then(() => fillViewportThenPin());
         isNearBottom = true;
       } else if (hasNewMessage) {
@@ -1575,6 +1705,7 @@
             {messageReactions}
             {currentUserId}
             readWatermarks={conversation?.readWatermarks}
+            serverReadWatermarks={conversation?.serverReadWatermarks}
             {seenBy}
             searchQuery={searchQuery.trim()}
             {onReply}
@@ -1591,6 +1722,7 @@
             {canModerate}
             onBeginEdit={onEdit ? editSession.begin : undefined}
             {onTogglePin}
+            {onReelPurged}
             {pinStanding}
             {pinnedIds}
             {switchTime}
@@ -1731,6 +1863,11 @@
             <LoaderCircle size={16} class="shrink-0 animate-spin" />
             <span>{m.chat_waiting_own_device()}</span>
           </div>
+        {:else if waitingForAMember}
+          <div class="chat-send-notice is-pending" role="status" data-awaiting-admission-notice>
+            <LoaderCircle size={16} class="shrink-0 animate-spin" />
+            <span>{m.chat_awaiting_admission_notice()}</span>
+          </div>
         {/if}
       {/snippet}
       <div bind:this={composerBand} class="pointer-events-none absolute inset-x-0 bottom-0 z-20">
@@ -1745,7 +1882,7 @@
              reconciliation probes on a server carrying no other traffic. -->
         <ChatComposer
           {messageText}
-          {allowedUserIds}
+          {mentionRoster}
           {onMessageChange}
           {onTyping}
           {onSendGif}
@@ -1763,8 +1900,9 @@
           {pendingFiles}
           {onRemovePendingFile}
           {videoPreparation}
-          {isUploading}
-          notice={sendError || heldNotice || waitingToBeAdded ? sendNotice : undefined}
+          notice={sendError || heldNotice || waitingToBeAdded || waitingForAMember
+            ? sendNotice
+            : undefined}
         />
       </div>
     {/if}

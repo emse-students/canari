@@ -10,10 +10,14 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, unmount, tick } from 'svelte';
 import { writable } from 'svelte/store';
+import {
+  initialNoiseSuppressionView,
+  type NoiseSuppressionView,
+} from '$lib/utils/callNoiseSuppression';
 
 vi.mock('$lib/utils/userAvatarCache', () => ({
-  resolveUserAvatarDisplayUrl: async () => ({ kind: 'none' as const }),
-  releaseUserAvatarDisplayUrl: () => {},
+  resolveUserAvatarDisplay: async () => ({ kind: 'none' as const }),
+  releaseUserAvatarDisplay: () => {},
 }));
 vi.mock('$lib/utils/apiFetch', () => ({
   apiFetch: vi.fn(() => Promise.resolve(new Response('[]', { status: 200 }))),
@@ -86,6 +90,8 @@ function fakeService(state: CallState, hasVideo: boolean) {
     localMicSuspended: writable(false),
     peerMicSuspended: writable(false),
     videoSendReduced: writable(false),
+    noiseSuppression: writable<NoiseSuppressionView>(initialNoiseSuppressionView()),
+    toggleNoiseSuppression: vi.fn(),
     ringingOut: writable(false),
     currentGroupId: 'g',
     currentCallId: 'c',
@@ -117,6 +123,11 @@ beforeEach(() => {
     update: record,
     stop: () => {},
     pageLoaded: () => {},
+    ringStart: () => {},
+    ringStop: () => {},
+    isDndRegrantOwed: () => false,
+    dndRegrantAnswered: () => {},
+    openCallChannelSettings: () => {},
   };
 });
 

@@ -1,4 +1,5 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index } from 'typeorm';
+import { KEY_PACKAGE_LIFETIME_DAYS } from './key-package.entity';
 
 /**
  * One-time prekey pool for a device.
@@ -44,4 +45,19 @@ export class OneTimeKeyPackage {
   @Index()
   @Column({ type: 'timestamptz', nullable: true })
   notAfter: Date | null;
+}
+
+/**
+ * The SQL predicate a one-time row must meet to be a package at all: its own `notAfter`, or one
+ * lifetime past its `createdAt` when no client dated it. ONE spelling, read by the claim, the peek
+ * and the pool count (`DevicesController`) and, negated, by the reclaim (`reclaimExpiredKeyPackages`),
+ * so "usable" cannot mean two things. Why the undated arm is sound is written at the claim
+ * (`resolveKeyPackagePayloadForDevice`).
+ *
+ * @param alias The query builder's alias for the table, or none for a statement that has none (a
+ *   TypeORM DELETE names the bare table).
+ */
+export function usableOneTimePackage(alias?: string): string {
+  const col = (name: string) => (alias ? `${alias}."${name}"` : `"${name}"`);
+  return `COALESCE(${col('notAfter')}, (${col('createdAt')} AT TIME ZONE 'UTC') + interval '${KEY_PACKAGE_LIFETIME_DAYS} days') > now()`;
 }

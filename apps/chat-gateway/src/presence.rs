@@ -369,128 +369,136 @@ async fn answer_presence(
 
 // ── GET /api/admin/presence ───────────────────────────────────────────────
 
-/// Return a JSON list of every known device with its WebSocket and Redis presence status.
-///
-/// Requires the `X-Global-Admin: true` header (injected by Nginx after auth verification).
-/// Merges data from two sources:
-/// - In-memory `connected_users` map (live WebSocket connections).
-/// - Redis `user:online:*` keys (presence TTL state).
-///
-/// NOTE: Uses `KEYS user:online:*` which blocks Redis briefly; acceptable for a
-/// low-traffic admin debugging endpoint.
-pub async fn get_admin_presence(
-    headers: HeaderMap,
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    let is_admin = headers
+/// `true` when nginx vouched for a global admin (`X-Global-Admin`, injected after auth verification
+/// and never to be accepted from an untrusted client).
+fn is_global_admin(headers: &HeaderMap) -> bool {
+    headers
         .get("x-global-admin")
         .and_then(|v| v.to_str().ok())
         .map(|v| v == "true")
-        .unwrap_or(false);
+        .unwrap_or(false)
+}
 
-    if !is_admin {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({"error": "Forbidden"})),
-        )
-            .into_response();
-    }
-
-    // In-memory WS connections: conn_key -> tab count
-    let ws_map: std::collections::HashMap<String, usize> = {
-        let map = state.connected_users.lock().unwrap();
-        map.iter().map(|(k, v)| (k.clone(), v.len())).collect()
-    };
-
-    // Redis: scan all user:online:*:* keys with their TTL using SCAN to avoid blocking.
-    let mut redis_entries: Vec<(String, String, i64)> = Vec::new();
-    if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
-        let mut cursor: u64 = 0;
-        loop {
-            match redis::cmd("SCAN")
-                .arg(cursor)
-                .arg("MATCH")
-                .arg("user:online:*:*")
-                .arg("COUNT")
-                .arg(100u64)
-                .query_async::<(u64, Vec<String>)>(&mut con)
-                .await
-            {
-                Ok((next_cursor, keys)) => {
-                    for key in &keys {
-                        // format: user:online:{userId}:{deviceId}
-                        // splitn(4) so deviceIds containing ":" are preserved
-                        let parts: Vec<&str> = key.splitn(4, ':').collect();
-                        if parts.len() == 4 {
-                            let ttl: i64 = redis::cmd("TTL")
-                                .arg(key)
-                                .query_async(&mut con)
-                                .await
-                                .unwrap_or(-1);
-                            redis_entries.push((parts[2].to_string(), parts[3].to_string(), ttl));
-                        }
-                    }
-                    cursor = next_cursor;
-                    if cursor == 0 {
-                        break;
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("[admin/presence] SCAN failed: {}", e);
-                    break;
-                }
-            }
-        }
-    }
-
-    // Merge WS + Redis into one unified list
-    let mut all_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for k in ws_map.keys() {
-        all_keys.insert(k.clone());
-    }
-    for (user_id, device_id, _) in &redis_entries {
-        all_keys.insert(format!("{}:{}", user_id, device_id));
-    }
-
-    let mut devices: Vec<serde_json::Value> = all_keys
-        .iter()
-        .filter_map(|conn_key| {
-            let (user_id, device_id) = conn_key.split_once(':')?;
-            let ws_tabs = ws_map.get(conn_key).copied().unwrap_or(0);
-            let redis_entry = redis_entries
-                .iter()
-                .find(|(u, d, _)| u == user_id && d == device_id);
-            let (redis_online, redis_ttl) = match redis_entry {
-                Some((_, _, ttl)) => (true, *ttl),
-                None => (false, -1i64),
-            };
-            Some(serde_json::json!({
-                "userId": user_id,
-                "deviceId": device_id,
-                "wsConnected": ws_tabs > 0,
-                "wsTabs": ws_tabs,
-                "redisOnline": redis_online,
-                "redisTtl": redis_ttl,
-            }))
-        })
-        .collect();
-
-    devices.sort_by(|a, b| {
-        let ua = a["userId"].as_str().unwrap_or("");
-        let ub = b["userId"].as_str().unwrap_or("");
-        ua.cmp(ub).then_with(|| {
-            let da = a["deviceId"].as_str().unwrap_or("");
-            let db = b["deviceId"].as_str().unwrap_or("");
-            da.cmp(db)
-        })
-    });
-
-    let total = devices.len();
+/// A 403 for a caller that is not a global admin.
+fn forbidden() -> axum::response::Response {
     (
-        StatusCode::OK,
-        Json(serde_json::json!({ "devices": devices, "total": total })),
+        StatusCode::FORBIDDEN,
+        Json(serde_json::json!({"error": "Forbidden"})),
     )
         .into_response()
+}
+
+/// `GET /api/admin/presence`: how many people and devices are connected RIGHT NOW, by platform and
+/// app version, and NOTHING ELSE - no user id, no device id, no per-person field
+/// ([`crate::census`]). Counted from the shared presence keys, so a device held by two gateway
+/// processes during a rolling deploy is one. Requires `X-Global-Admin: true`.
+///
+/// Answers 503 when the presence store cannot be read: an empty census would read as "nobody is
+/// online", which is a claim.
+pub async fn get_admin_presence(
+    headers: HeaderMap,
+    State(state): State<Arc<AppState>>,
+) -> axum::response::Response {
+    if !is_global_admin(&headers) {
+        return forbidden();
+    }
+    let mut con = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(con) => con,
+        Err(e) => {
+            tracing::warn!("[admin/presence] Redis unreachable - answering 503: {}", e);
+            return unavailable("Presence store unavailable");
+        }
+    };
+    match crate::census::read_census(&mut con).await {
+        Ok(census) => (StatusCode::OK, Json(census)).into_response(),
+        Err(e) => {
+            tracing::warn!(
+                "[admin/presence] the census read failed - answering 503: {}",
+                e
+            );
+            unavailable("Presence store unavailable")
+        }
+    }
+}
+
+/// Query of `GET /api/admin/presence/history`.
+#[derive(serde::Deserialize)]
+pub struct HistoryQuery {
+    /// `24h` (the default), `7d` or `30d`; anything else is a 400 ([`crate::census::Window`]).
+    window: Option<String>,
+}
+
+/// `GET /api/admin/presence/history?window=24h|7d|30d`: the census over the window, oldest first,
+/// and the two numbers the chart needs to draw a period nobody sampled as a gap (`intervalSecs`, the
+/// spacing of the points the window is served at, and `windowSecs`). 24 h is one sample per minute;
+/// 7 d is the 5-minute series (the peak of each 5 minutes); 30 d is that series rolled up to 30
+/// minutes (the peak of each half hour). The window is a CLOSED set: an unknown value is a 400, so a
+/// request cannot ask for an unbounded read. Requires `X-Global-Admin: true`; 503 when the series
+/// cannot be read.
+pub async fn get_admin_presence_history(
+    headers: HeaderMap,
+    Query(query): Query<HistoryQuery>,
+    State(state): State<Arc<AppState>>,
+) -> axum::response::Response {
+    if !is_global_admin(&headers) {
+        return forbidden();
+    }
+    let window = match query.window.as_deref() {
+        None => crate::census::Window::Day,
+        Some(raw) => match crate::census::Window::parse(raw) {
+            Some(window) => window,
+            None => {
+                tracing::debug!("[admin/presence/history] refused window {:?} - 400", raw);
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": "window must be 24h, 7d or 30d"})),
+                )
+                    .into_response();
+            }
+        },
+    };
+    let mut con = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(con) => con,
+        Err(e) => {
+            tracing::warn!(
+                "[admin/presence/history] Redis unreachable - answering 503: {}",
+                e
+            );
+            return unavailable("Presence store unavailable");
+        }
+    };
+    // REDIS's clock, the one the series is written against: nothing scored in the future is served.
+    let result = match crate::census::redis_now(&mut con).await {
+        Ok(now) => crate::census::read_window(
+            &mut con,
+            &state.census_key,
+            &state.census_coarse_key,
+            now,
+            window,
+        )
+        .await
+        .map(|samples| (now, samples)),
+        Err(e) => Err(e),
+    };
+    match result {
+        Ok((now, samples)) => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "now": now,
+                "intervalSecs": window.interval_secs(),
+                "windowSecs": window.secs(),
+                "samples": samples,
+            })),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::warn!(
+                "[admin/presence/history] the series read failed - answering 503: {}",
+                e
+            );
+            unavailable("Presence store unavailable")
+        }
+    }
 }
 
 #[cfg(test)]
@@ -887,5 +895,167 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn admin_history_refuses_a_non_admin() {
+        let client = redis::Client::open("redis://127.0.0.1:1/").expect("client construction");
+        let audience = PresenceAudience::new(String::new(), String::new(), String::new());
+        let state = Arc::new(AppState::new(client, "test-secret".to_string(), audience));
+        let app = Router::new()
+            .route(
+                "/api/admin/presence/history",
+                get(get_admin_presence_history),
+            )
+            .with_state(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/admin/presence/history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn an_unknown_history_window_is_a_400() {
+        let client = redis::Client::open("redis://127.0.0.1:1/").expect("client construction");
+        let audience = PresenceAudience::new(String::new(), String::new(), String::new());
+        let state = Arc::new(AppState::new(client, "test-secret".to_string(), audience));
+        let app = Router::new()
+            .route(
+                "/api/admin/presence/history",
+                get(get_admin_presence_history),
+            )
+            .with_state(state);
+        for window in ["1y", "", "9999d", "24h%20"] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(format!("/api/admin/presence/history?window={window}"))
+                        .header("x-global-admin", "true")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{window:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_store_is_a_503_never_an_empty_census() {
+        let client = redis::Client::open("redis://127.0.0.1:1/").expect("client construction");
+        let audience = PresenceAudience::new(String::new(), String::new(), String::new());
+        let state = Arc::new(AppState::new(client, "test-secret".to_string(), audience));
+        let app = Router::new()
+            .route("/api/admin/presence", get(get_admin_presence))
+            .with_state(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/admin/presence")
+                    .header("x-global-admin", "true")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// THE PRIVACY PIN, end to end against a real Redis (gated like `addressing::redis_it`): a
+    /// connected device whose user and device ids are known to the test answers counts, and neither
+    /// id - nor any per-person field name - appears in either admin route's body.
+    #[tokio::test]
+    async fn the_admin_routes_return_counts_and_never_an_id() {
+        let Ok(url) = std::env::var("GATEWAY_IT_REDIS_URL") else {
+            assert!(
+                std::env::var("CI").is_err(),
+                "GATEWAY_IT_REDIS_URL is unset under CI - the counts-only route would go untested"
+            );
+            return;
+        };
+        let client = redis::Client::open(url).expect("GATEWAY_IT_REDIS_URL");
+        let mut con = client.get_multiplexed_async_connection().await.unwrap();
+        let user = format!("it-secret-user-{}", uuid::Uuid::new_v4());
+        let device = format!("it-secret-device-{}", uuid::Uuid::new_v4());
+        let conn_key = format!("{user}:{device}");
+        redis::cmd("SET")
+            .arg(format!("user:online:{conn_key}"))
+            .arg("sessions-1")
+            .arg("EX")
+            .arg(60)
+            .query_async::<()>(&mut con)
+            .await
+            .unwrap();
+        let kind = crate::census::ClientKind::from_query(Some("ios"), Some("9.9.9"));
+        crate::census::note_client(&mut con, &conn_key, &kind, 60)
+            .await
+            .unwrap();
+        // The history route reads the state's series key, a key of THIS test's own - never the one
+        // production reads. A device of one person is on the wire, so its version can be looked for.
+        let census = crate::census::read_census(&mut con).await.unwrap();
+        let now = crate::census::redis_now(&mut con).await.unwrap();
+        let census_key = format!("it:monitor:{}", uuid::Uuid::new_v4());
+        crate::census::record_sample(&mut con, &census_key, now - now % 60, &census)
+            .await
+            .unwrap();
+
+        let coarse_key = format!("it:monitor:coarse:{}", uuid::Uuid::new_v4());
+        crate::census::record_coarse(&mut con, &coarse_key, now, &census)
+            .await
+            .unwrap();
+
+        let audience = PresenceAudience::new(String::new(), String::new(), String::new());
+        let mut state = AppState::new(client, "test-secret".to_string(), audience);
+        state.census_key = census_key;
+        state.census_coarse_key = coarse_key;
+        let state = Arc::new(state);
+        let app = Router::new()
+            .route("/api/admin/presence", get(get_admin_presence))
+            .route(
+                "/api/admin/presence/history",
+                get(get_admin_presence_history),
+            )
+            .with_state(state);
+        for path in [
+            "/api/admin/presence",
+            "/api/admin/presence/history",
+            "/api/admin/presence/history?window=7d",
+            "/api/admin/presence/history?window=30d",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header("x-global-admin", "true")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let body = String::from_utf8(bytes.to_vec()).unwrap();
+            assert!(!body.contains("it-secret"), "{path} leaked an id: {body}");
+            for field in ["userId", "deviceId", "ip"] {
+                assert!(
+                    !body.contains(&format!("\"{field}\"")),
+                    "{path} names a per-person field {field}"
+                );
+            }
+            assert!(
+                body.contains("9.9.9"),
+                "{path} did not count the device: {body}"
+            );
+        }
     }
 }

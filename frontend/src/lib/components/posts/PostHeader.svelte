@@ -3,6 +3,7 @@
   import type { PostEntity } from '$lib/posts/api';
   import PostAuthorAvatar from './PostAuthorAvatar.svelte';
   import RevealedAuthorLine from './RevealedAuthorLine.svelte';
+  import StudentsOnlyChip from './StudentsOnlyChip.svelte';
   import { Clock, Repeat2, Send } from '@lucide/svelte';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
@@ -35,9 +36,12 @@
 
   /**
    * "Republie par X, Y +N" (D38): one card per post, however many associations carry it - on the
-   * time's line, "2 h . Republie par BDE" (user, 2026-10-24), not a line of its own.
+   * time's line, "2 h . Republie par BDE" (user, 2026-10-24), not a line of its own. The reader
+   * who reposted it reads "vous" first - "Republie par vous et Marie" (WP-F6, owner 2026-11-02).
    */
-  const republished = $derived(republishedByText(post.republishedBy));
+  const republished = $derived(
+    republishedByText(post.republishedBy, post.repostedBy, post.repostedByMe === true)
+  );
 
   /**
    * "Demande envoyee au nom de X" (D38b): what the reader's associations asked the author of this
@@ -93,15 +97,20 @@
       />
     {/if}
     <div
-      class="text-text-muted text-2xs mt-0.5 flex min-w-0 items-center gap-1.5 font-medium opacity-80"
+      class="text-text-muted text-2xs mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 font-medium opacity-80"
       data-post-time-line
     >
       <Clock size={12} strokeWidth={2.5} class="shrink-0" />
       <span class="shrink-0" title={exactDate(post.publishedAt)}>{timeAgo(post.publishedAt)}</span>
+      {#if post.studentsOnly}
+        <StudentsOnlyChip />
+      {/if}
       {#if republished}
-        <span class="shrink-0" aria-hidden="true">&middot;</span>
-        <Repeat2 size={12} strokeWidth={2.5} class="shrink-0" aria-hidden="true" />
-        <span class="truncate" data-post-republished-by><EmojiText text={republished} /></span>
+        <!-- One wrapping unit: beside the time and the "Entre etudiants" chip it was squeezed to "Republie par Cl..." on a phone, so it drops to its own line when the three do not fit. -->
+        <span class="flex max-w-full min-w-0 items-center gap-1.5" data-post-republished-unit>
+          <Repeat2 size={12} strokeWidth={2.5} class="shrink-0" aria-hidden="true" />
+          <span class="truncate" data-post-republished-by><EmojiText text={republished} /></span>
+        </span>
       {/if}
     </div>
     {#if requested.length > 0}

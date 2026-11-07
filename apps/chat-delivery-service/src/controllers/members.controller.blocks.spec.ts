@@ -94,7 +94,7 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
     blockQuery.mockResolvedValue([{ '?column?': 1 }]);
 
     const err = await controller
-      .addGroupMember(GROUP, { userId: TARGET }, CALLER, undefined)
+      .addGroupMember(GROUP, { userId: TARGET }, CALLER)
       .catch((e: unknown) => e);
 
     expect(err).toBeInstanceOf(ForbiddenException);
@@ -108,7 +108,7 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
     blockQuery.mockResolvedValue([{ '?column?': 1 }]);
 
     const err = (await controller
-      .addGroupMember(GROUP, { userId: TARGET }, CALLER, undefined)
+      .addGroupMember(GROUP, { userId: TARGET }, CALLER)
       .catch((e: unknown) => e)) as ForbiddenException;
 
     const message = JSON.stringify(err.getResponse());
@@ -120,9 +120,7 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
   it('asks in BOTH directions, so the blocker cannot add the person they blocked either', async () => {
     blockQuery.mockResolvedValue([{ '?column?': 1 }]);
 
-    await controller
-      .addGroupMember(GROUP, { userId: TARGET }, CALLER, undefined)
-      .catch(() => undefined);
+    await controller.addGroupMember(GROUP, { userId: TARGET }, CALLER).catch(() => undefined);
 
     const sql = String(blockQuery.mock.calls[0][0]);
     expect(sql).toContain('"blockerId" = $1 AND "blockedId" = $2');
@@ -132,9 +130,9 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
   it('lets the add through when no block stands between the two', async () => {
     // Through to the admitted-person path: device seats written, nobody enrolled (ADM-3).
     jest.mocked(writePendingSeats).mockResolvedValue('written');
-    await expect(
-      controller.addGroupMember(GROUP, { userId: TARGET }, CALLER, undefined)
-    ).resolves.toEqual({ status: 'added' });
+    await expect(controller.addGroupMember(GROUP, { userId: TARGET }, CALLER)).resolves.toEqual({
+      status: 'added',
+    });
     expect(writePendingSeats).toHaveBeenCalledWith(expect.anything(), GROUP, TARGET, [], false, {
       requireAdmitted: true,
     });
@@ -146,9 +144,9 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
     // empty group cannot be refused by a block row that could not exist in the first place.
     groupMemberRepo.count.mockResolvedValue(0);
     jest.mocked(writePendingSeats).mockResolvedValue('written');
-    await expect(
-      controller.addGroupMember(GROUP, { userId: CALLER }, CALLER, undefined)
-    ).resolves.toEqual({ status: 'added' });
+    await expect(controller.addGroupMember(GROUP, { userId: CALLER }, CALLER)).resolves.toEqual({
+      status: 'added',
+    });
     expect(blockQuery).not.toHaveBeenCalled();
     // The one enrolment this route still writes: the creator, into its empty roster - through the
     // one pending-seat writer, under the seat lock and beside each device's key package.
@@ -161,7 +159,7 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
     jest.mocked(writePendingSeats).mockResolvedValue('group_gone');
 
     await expect(
-      controller.addGroupMember(GROUP, { userId: CALLER }, CALLER, undefined)
+      controller.addGroupMember(GROUP, { userId: CALLER }, CALLER)
     ).rejects.toMatchObject({ response: { error: 'group_deleted' } });
     expect(transaction).not.toHaveBeenCalled();
   });
@@ -172,9 +170,9 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
     groupRepo.findOne.mockResolvedValue({ id: GROUP, createdBy: CALLER });
     jest.mocked(writePendingSeats).mockResolvedValue('written');
 
-    await expect(
-      controller.addGroupMember(GROUP, { userId: 'ALICE' }, 'ALICE', undefined)
-    ).resolves.toEqual({ status: 'added' });
+    await expect(controller.addGroupMember(GROUP, { userId: 'ALICE' }, 'ALICE')).resolves.toEqual({
+      status: 'added',
+    });
   });
 
   it.each([
@@ -189,7 +187,7 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
       groupRepo.findOne.mockResolvedValue(group);
 
       const err = await controller
-        .addGroupMember(GROUP, { userId: CALLER }, CALLER, undefined)
+        .addGroupMember(GROUP, { userId: CALLER }, CALLER)
         .catch((e: unknown) => e);
 
       expect(err).toBeInstanceOf(ForbiddenException);
@@ -213,7 +211,7 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
       groupRepo.findOne.mockResolvedValue({ id: GROUP, ...flag });
 
       const err = await controller
-        .addGroupMember(GROUP, { userId: CALLER }, CALLER, undefined)
+        .addGroupMember(GROUP, { userId: CALLER }, CALLER)
         .catch((e: unknown) => e);
 
       expect(err).toBeInstanceOf(ForbiddenException);
@@ -255,7 +253,7 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
       async (_case, caller, target) => {
         groupRepo.findOne.mockResolvedValue({ id: GROUP, createdBy: caller });
         const err = await controller
-          .addGroupMember(GROUP, { userId: target }, caller, undefined)
+          .addGroupMember(GROUP, { userId: target }, caller)
           .catch((e: unknown) => e);
 
         expect(err).toBeInstanceOf(ForbiddenException);
@@ -271,7 +269,7 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
     it('refuses an add on one side into a group already holding the other side', async () => {
       groupCrosses = true;
       const err = await controller
-        .addGroupMember(GROUP, { userId: TARGET }, CALLER, undefined)
+        .addGroupMember(GROUP, { userId: TARGET }, CALLER)
         .catch((e: unknown) => e);
 
       expect((err as ForbiddenException).getResponse()).toMatchObject({
@@ -282,13 +280,13 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
 
     it('lets two members, and two review accounts, add each other', async () => {
       jest.mocked(writePendingSeats).mockResolvedValue('written');
-      await expect(
-        controller.addGroupMember(GROUP, { userId: TARGET }, CALLER, undefined)
-      ).resolves.toEqual({ status: 'added' });
+      await expect(controller.addGroupMember(GROUP, { userId: TARGET }, CALLER)).resolves.toEqual({
+        status: 'added',
+      });
       process.env.SERVICE_ACCOUNT_USER_ID = `${CALLER},${TARGET}`;
-      await expect(
-        controller.addGroupMember(GROUP, { userId: TARGET }, CALLER, undefined)
-      ).resolves.toEqual({ status: 'added' });
+      await expect(controller.addGroupMember(GROUP, { userId: TARGET }, CALLER)).resolves.toEqual({
+        status: 'added',
+      });
     });
   });
 });

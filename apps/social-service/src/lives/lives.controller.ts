@@ -97,6 +97,7 @@ export class LivesController {
     @Body() body: { reason?: unknown; details?: unknown }
   ) {
     const caller = await this.assertStaff(userId, globalAdmin, 'LIVE_WITHDRAWAL_FORBIDDEN');
+    await this.assertModeratesBroadcaster(caller, globalAdmin, target);
     return this.lives.withdraw(caller, target, body ?? {});
   }
 
@@ -109,6 +110,7 @@ export class LivesController {
     @Headers('x-global-admin') globalAdmin: string | undefined
   ) {
     const caller = await this.assertStaff(userId, globalAdmin, 'LIVE_WITHDRAWAL_FORBIDDEN');
+    await this.assertModeratesBroadcaster(caller, globalAdmin, target);
     return this.lives.liftWithdrawal(caller, target);
   }
 
@@ -128,6 +130,21 @@ export class LivesController {
     });
     if (!mayModerate) throw new ForbiddenException({ code });
     return caller;
+  }
+
+  /**
+   * After `assertStaff` (the door): the SCOPE of a person-directed act (owner, 2026-11-02) - a BDE
+   * moderator withdraws or restores the broadcast right of a person of its own spaces only, else
+   * 403 `MODERATION_OUT_OF_SCOPE`. A platform admin is not asked.
+   */
+  private async assertModeratesBroadcaster(
+    caller: string,
+    globalAdmin: string | undefined,
+    target: string
+  ): Promise<void> {
+    const isGlobalAdmin = globalAdmin === 'true';
+    if (await this.associations.mayModerateUser(caller, target, { isGlobalAdmin })) return;
+    await this.associations.refuseModeration(caller, { kind: 'broadcaster', id: target });
   }
 
   /** The open lives the caller may watch, newest first. */
@@ -187,15 +204,20 @@ export class LivesController {
               reactionsAfter === undefined ? undefined : seqOf(reactionsAfter, 'REACTIONS_AFTER'),
           }
         : null;
-    const manifest = await this.lives.manifest(
+    const { chatWithheld, ...manifest } = await this.lives.manifest(
       caller,
       id,
       from === undefined ? undefined : indexOf(from, 'FROM')
     );
     if (!cursors) return manifest;
     // THE CHAT RIDES THE POLL THE VIEWER ALREADY MAKES (WP-L6, C3): one request a tick, read after
-    // the manifest let this viewer watch.
-    return { ...manifest, chat: await this.chat.read(caller, id, cursors) };
+    // the manifest let this viewer watch. Whether it is WITHHELD from them (a named reader, owner
+    // 2026-11-04) was decided by that same watch statement, so it is asked again on every poll and a
+    // switch flipped in the read-access grid holds from the next one, without a reconnect.
+    return {
+      ...manifest,
+      chat: await this.chat.read(caller, id, cursors, { withheld: chatWithheld }),
+    };
   }
 
   /**
@@ -245,7 +267,8 @@ export class LivesController {
   /**
    * STAFF CUT a live (WP-L8): `{ reason: 'spam'|'harassment'|'inappropriate'|'other', details? }`.
    * Who may: `isContentModerator` - a platform admin or a BDE member holding `MODERATE`, the ONE
-   * predicate of the posts' moderation controls and of `/api/moderation`. Anyone else is 403
+   * predicate of the posts' moderation controls and of `/api/moderation` - and, for a BDE, only a
+   * live of its governed spaces (`mayModerateLive`, 403 `MODERATION_OUT_OF_SCOPE`). Anyone else is 403
    * `LIVE_CUT_FORBIDDEN`, asked BEFORE the live is looked up, so the refusal says nothing about
    * whether the live exists. Idempotent: a repeat answers the first cut with `newlyCut: false`.
    */
@@ -258,6 +281,13 @@ export class LivesController {
     @Body() body: { reason?: unknown; details?: unknown }
   ) {
     const caller = await this.assertStaff(userId, globalAdmin, 'LIVE_CUT_FORBIDDEN');
-    return this.lives.cut(caller, id.toLowerCase(), body ?? {});
+    // The scope (owner, 2026-11-02): a BDE cuts the lives of its governed spaces only. Asked after
+    // the door, so a non-moderator still learns nothing of whether the live exists.
+    const liveId = id.toLowerCase();
+    const isGlobalAdmin = globalAdmin === 'true';
+    if (!(await this.associations.mayModerateLive(caller, liveId, { isGlobalAdmin }))) {
+      await this.associations.refuseModeration(caller, { kind: 'live', id: liveId });
+    }
+    return this.lives.cut(caller, liveId, body ?? {});
   }
 }

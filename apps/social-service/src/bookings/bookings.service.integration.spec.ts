@@ -27,6 +27,8 @@ import { DataSource } from 'typeorm';
 import { Client } from 'pg';
 import { BOOKING_ENTITIES } from './bookings.module';
 import { BookingsService, NEAR_NOW_MS, type Actor } from './bookings.service';
+import { bookingRevision } from './booking-views';
+import { sameCampusAsViewerSql } from '../spaces/reader-spaces';
 import {
   BOOKINGS_ERASURE_STATEMENTS,
   runErasureStatements,
@@ -137,6 +139,16 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
   /** core-service's profile call fails while set (`listedSpaces`). */
   let profileDown = false;
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
+  /**
+   * An association that reaches EVERY space (one `(NULL, NULL)` rule), as `[{ id }]` like the
+   * INSERT it replaces: the campus border is drawn only by the tests that narrow its rules.
+   */
+  const newAssociation = (): Promise<{ id: string }[]> =>
+    q(
+      `WITH a AS (INSERT INTO associations (id) VALUES (gen_random_uuid()) RETURNING id),
+         r AS (INSERT INTO association_audiences ("associationId") SELECT id FROM a)
+       SELECT id FROM a`
+    );
 
   beforeAll(async () => {
     admin = new Client({ connectionString: URL });
@@ -155,7 +167,22 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       `CREATE TABLE associations (id uuid PRIMARY KEY, name varchar, archived boolean NOT NULL DEFAULT false,
          "logoUrl" varchar, "logoMediaId" uuid)`
     );
-    await q(`CREATE TABLE users (id varchar PRIMARY KEY, "firstName" varchar, "lastName" varchar)`);
+    // The profile columns the campus predicate reads (`reader-spaces.ts`). Every account of this
+    // file is an ICM Saint-Etienne student unless a test says otherwise, and every association
+    // reaches every space (`newAssociation`) - so only the tests about the campus see a border.
+    await q(
+      `CREATE TABLE users (id varchar PRIMARY KEY, "firstName" varchar, "lastName" varchar,
+         admin boolean NOT NULL DEFAULT false, campus varchar DEFAULT 'saint-etienne',
+         cursus jsonb NOT NULL DEFAULT '[{"formation": "ICM"}]')`
+    );
+    await q(`CREATE TABLE spaces (formation varchar NOT NULL, campus varchar NOT NULL)`);
+    await q(`INSERT INTO spaces VALUES ('ICM', 'saint-etienne'), ('ISMIN', 'gardanne')`);
+    await q(
+      `CREATE TABLE association_audiences ("associationId" uuid NOT NULL, formation varchar, campus varchar)`
+    );
+    await q(
+      `CREATE TABLE association_members ("associationId" uuid NOT NULL, "userId" varchar NOT NULL)`
+    );
     await q(
       `CREATE TABLE user_blocks ("blockerId" varchar NOT NULL, "blockedId" varchar NOT NULL)`
     );
@@ -336,9 +363,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
    * ORGA, who holds MANAGE_BOOKINGS on it - unless `managed` is false.
    */
   async function setup(settings: Partial<BookingSpace> = {}, resources = 1, managed = true) {
-    const association = (
-      await q(`INSERT INTO associations (id) VALUES (gen_random_uuid()) RETURNING id`)
-    )[0].id as string;
+    const association = (await newAssociation())[0].id as string;
     if (managed) grants.add(`${ORGA}:${association}`);
     const space = await ds.getRepository(BookingSpace).save({
       ownerId: CREATOR,
@@ -1168,6 +1193,245 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
     });
   });
 
+  /**
+   * THE CAMPUS (owner, 2026-10-31): an ASSOCIATION space is open to those its association is
+   * visible to - a member of it (D21), or its rules reach one of their spaces - and a PERSONAL space
+   * to those on its owner's campus (the campus, never a formation: staff keep theirs). Outside it, the space is not listed and answers 404
+   * `space-not-found` by its id, exactly like a space that does not exist. Its manager is never
+   * refused.
+   */
+  describe('the campus (owner, 2026-10-31)', () => {
+    /** An ISMIN Gardanne student. */
+    const GARDANNE = 'g'.repeat(64);
+    /** An ISMIN Gardanne student who is a MEMBER of the Saint-Etienne association (D21). */
+    const GARDANNE_MEMBER = 'h'.repeat(64);
+    /** A campus and no cursus: staff, who have no space at all. */
+    const STAFF = 's'.repeat(64);
+
+    beforeAll(async () => {
+      for (const id of [GARDANNE, GARDANNE_MEMBER]) {
+        await q(
+          `INSERT INTO users (id, "firstName", "lastName", campus, cursus)
+           VALUES ($1, 'Ga', 'X', 'gardanne', '[{"formation": "ISMIN"}]')`,
+          [id]
+        );
+      }
+      await q(
+        `INSERT INTO users (id, "firstName", "lastName", campus, cursus)
+         VALUES ($1, 'Staff', 'X', 'saint-etienne', '[]')`,
+        [STAFF]
+      );
+    });
+
+    const listedTo = async (viewer: string, spaceId: string) =>
+      (await service.listedSpaces(as(viewer))).some((s) => s.id === spaceId);
+
+    it('an association space of Saint-Etienne: listed and bookable there, 404 from Gardanne, open to a member', async () => {
+      const { space, resourceIds } = await setup({ name: 'campus asso' });
+      await q(
+        `UPDATE association_audiences SET campus = 'saint-etienne' WHERE "associationId" = $1`,
+        [space.associationId]
+      );
+
+      expect(await listedTo(ALICE, space.id)).toBe(true);
+      expect(await listedTo(GARDANNE, space.id)).toBe(false);
+      expect(await refusal(service.getSpace(space.id, as(GARDANNE)))).toEqual({
+        code: 'space-not-found',
+      });
+      expect(await refusal(book(space.id, resourceIds[0], '10:00', '10:30', GARDANNE))).toEqual({
+        code: 'space-not-found',
+      });
+      expect(
+        await refusal(service.spaceSlots(space.id, '2026-11-02', '2026-11-02', as(GARDANNE)))
+      ).toEqual({
+        code: 'space-not-found',
+      });
+
+      // CONTROL: the same campus books it.
+      await expect(book(space.id, resourceIds[0], '10:00', '10:30', ALICE)).resolves.toBeDefined();
+
+      // D21: joining the association opens it, whatever the campus.
+      expect(await listedTo(GARDANNE_MEMBER, space.id)).toBe(false);
+      await q(`INSERT INTO association_members ("associationId", "userId") VALUES ($1, $2)`, [
+        space.associationId,
+        GARDANNE_MEMBER,
+      ]);
+      expect(await listedTo(GARDANNE_MEMBER, space.id)).toBe(true);
+      await expect(
+        book(space.id, resourceIds[0], '11:00', '11:30', GARDANNE_MEMBER)
+      ).resolves.toBeDefined();
+
+      // Its manager is never refused, nor kept out of the list.
+      expect(await listedTo(ORGA, space.id)).toBe(true);
+      await expect(service.getSpace(space.id, as(ORGA))).resolves.toBeDefined();
+    });
+
+    /**
+     * THE ACCOUNT LINKED TO A RESOURCE (D10) IS NAMED BY THE SPACE ITSELF, so the campus never
+     * stands between it and its own column: an alumnus holding a column of an association space it
+     * is not a member of, a colleague of another campus on a personal space. Review of #2828.
+     */
+    /**
+     * The D10 exception is a READ: a linked account outside the campus is refused a booking - of its
+     * own column and of column B - and a file upload, as any reader outside the space is.
+     */
+    async function linkedWritesRefused(spaceId: string, resourceIds: string[]) {
+      for (const resourceId of resourceIds) {
+        expect(await refusal(book(spaceId, resourceId, '10:00', '10:30', GARDANNE))).toEqual({
+          code: 'space-not-found',
+        });
+      }
+      const pdf = Buffer.from('%PDF-1.4');
+      expect(
+        await refusal(
+          service.uploadFile(spaceId, 'cv', { buffer: pdf, size: pdf.length }, as(GARDANNE))
+        )
+      ).toEqual({ code: 'space-not-found' });
+      expect(
+        (
+          await q(
+            `SELECT count(*)::int AS n FROM bookings b
+               JOIN booking_resources r ON r.id = b."resourceId" WHERE r."spaceId" = $1`,
+            [spaceId]
+          )
+        )[0].n
+      ).toBe(0);
+    }
+
+    it('an association space: the account linked to one of its resources reads it from another campus', async () => {
+      const { space, resourceIds } = await setup({ name: 'campus asso linked' }, 2);
+      await q(
+        `UPDATE association_audiences SET campus = 'saint-etienne' WHERE "associationId" = $1`,
+        [space.associationId]
+      );
+      // CONTROL: before the link, GARDANNE is outside the space.
+      expect(await refusal(service.getSpace(space.id, as(GARDANNE)))).toEqual({
+        code: 'space-not-found',
+      });
+      await q(`UPDATE booking_resources SET "linkedUserId" = $1 WHERE id = $2`, [
+        GARDANNE,
+        resourceIds[0],
+      ]);
+      const read = await service.getSpace(space.id, as(GARDANNE));
+      expect(read.resources.find((r) => r.id === resourceIds[0])?.linkedToMe).toBe(true);
+      await expect(
+        service.spaceSlots(space.id, '2026-11-02', '2026-11-02', as(GARDANNE))
+      ).resolves.toBeDefined();
+      // Being linked opens the space it names, and only that: still not listed (not a member).
+      expect(await listedTo(GARDANNE, space.id)).toBe(false);
+      // A READ only: from another campus it books no column, its own or B, and uploads nothing.
+      await linkedWritesRefused(space.id, resourceIds);
+    });
+
+    it('a personal space: the account linked to one of its resources reads it from another campus', async () => {
+      const { space, resourceIds } = await setup(
+        {
+          name: 'campus personal linked',
+          associationId: null,
+          ownerId: BOB,
+          discoverability: 'link',
+        },
+        2
+      );
+      expect(await refusal(service.getSpace(space.id, as(GARDANNE)))).toEqual({
+        code: 'space-not-found',
+      });
+      await q(`UPDATE booking_resources SET "linkedUserId" = $1 WHERE id = $2`, [
+        GARDANNE,
+        resourceIds[0],
+      ]);
+      await expect(service.getSpace(space.id, as(GARDANNE))).resolves.toBeDefined();
+      await expect(
+        service.spaceSlots(space.id, '2026-11-02', '2026-11-02', as(GARDANNE))
+      ).resolves.toBeDefined();
+      // Another account of that campus, linked to nothing, is still outside.
+      expect(await refusal(service.getSpace(space.id, as(GARDANNE_MEMBER)))).toEqual({
+        code: 'space-not-found',
+      });
+      await linkedWritesRefused(space.id, resourceIds);
+    });
+
+    it("a personal space: open to its owner's CAMPUS, 404 to another campus, the owner always", async () => {
+      const { space, resourceIds } = await setup({
+        name: 'campus personal',
+        associationId: null,
+        ownerId: BOB,
+        discoverability: 'link',
+      });
+
+      // ALICE (an ICM student) and STAFF (no cursus) are on BOB's campus: the campus decides, never
+      // a formation (owner, 2026-10-31).
+      for (const [reader, slot] of [
+        [ALICE, '10:00'],
+        [STAFF, '11:00'],
+      ] as const) {
+        await expect(service.getSpace(space.id, as(reader))).resolves.toBeDefined();
+        await expect(
+          book(space.id, resourceIds[0], slot, slot.replace(':00', ':30'), reader)
+        ).resolves.toBeDefined();
+      }
+
+      expect(await refusal(service.getSpace(space.id, as(GARDANNE)))).toEqual({
+        code: 'space-not-found',
+      });
+      expect(await refusal(book(space.id, resourceIds[0], '12:00', '12:30', GARDANNE))).toEqual({
+        code: 'space-not-found',
+      });
+
+      // The owner manages it, so the border never stands in their way.
+      await expect(service.getSpace(space.id, as(BOB))).resolves.toBeDefined();
+    });
+
+    it('a personal space of STAFF (a campus, an empty cursus): a student of that campus books it, another campus is refused', async () => {
+      const { space, resourceIds } = await setup({
+        name: 'campus staff personal',
+        associationId: null,
+        ownerId: STAFF,
+        discoverability: 'link',
+      });
+      await expect(book(space.id, resourceIds[0], '10:00', '10:30', ALICE)).resolves.toBeDefined();
+      expect(await refusal(book(space.id, resourceIds[0], '11:00', '11:30', GARDANNE))).toEqual({
+        code: 'space-not-found',
+      });
+      await expect(service.getSpace(space.id, as(STAFF))).resolves.toBeDefined();
+    });
+
+    it('CONTROL: an owner with no campus opens their personal space to nobody else', async () => {
+      const NOWHERE = 'n'.repeat(64);
+      await q(
+        `INSERT INTO users (id, "firstName", "lastName", campus, cursus) VALUES ($1, 'No', 'X', NULL, '[]')`,
+        [NOWHERE]
+      );
+      const { space, resourceIds } = await setup({
+        name: 'campus nowhere personal',
+        associationId: null,
+        ownerId: NOWHERE,
+        discoverability: 'link',
+      });
+      expect(await refusal(book(space.id, resourceIds[0], '10:00', '10:30', ALICE))).toEqual({
+        code: 'space-not-found',
+      });
+    });
+
+    it('keeps the review cohort apart: the same campus is no bridge across it, either way', async () => {
+      const previous = process.env.SERVICE_ACCOUNT_USER_ID;
+      process.env.SERVICE_ACCOUNT_USER_ID = DAN;
+      try {
+        // DAN (a review account) and ALICE carry the same campus in this fixture.
+        const sameCampus = async (owner: string, viewer: string) =>
+          (await q(`SELECT ${sameCampusAsViewerSql('$1', '$2')} AS v`, [owner, viewer]))[0].v;
+        expect(await sameCampus(DAN, ALICE)).toBe(false);
+        expect(await sameCampus(ALICE, DAN)).toBe(false);
+        expect(await sameCampus(DAN, DAN)).toBe(true);
+        // CONTROL: outside the cohort, the same campus matches.
+        expect(await sameCampus(BOB, ALICE)).toBe(true);
+      } finally {
+        if (previous === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+        else process.env.SERVICE_ACCOUNT_USER_ID = previous;
+      }
+    });
+  });
+
   describe("the booker's page and the calendar link (WP-B5)", () => {
     const KEY = 'k'.repeat(48);
     let previousKey: string | undefined;
@@ -1231,6 +1495,12 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       try {
         const school = await setup({ name: '0008 school' });
         const reviewer = await setup({ name: '0009 reviewer', ownerId: DAN });
+        // The cohort's own association, as in production: the review account is its member, and a
+        // review account has no real space, so membership is what makes it visible (D21).
+        await q(`INSERT INTO association_members ("associationId", "userId") VALUES ($1, $2)`, [
+          reviewer.space.associationId,
+          DAN,
+        ]);
         const personal = await setup({ name: '0010 own', associationId: null, ownerId: DAN });
         const mine = [school.space.id, reviewer.space.id, personal.space.id];
         expect(await listedAmong(DAN, mine)).toEqual([reviewer.space.id, personal.space.id]);
@@ -1549,9 +1819,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       ({ lines, exceptions }) as never;
 
     it('creates a personal space for anyone, an entity space for its organiser alone', async () => {
-      const association = (
-        await q(`INSERT INTO associations (id) VALUES (gen_random_uuid()) RETURNING id`)
-      )[0].id as string;
+      const association = (await newAssociation())[0].id as string;
       grants.add(`${ORGA}:${association}`);
       const { id: personal } = await organiser.create({ name: 'Psy' }, as(ALICE));
       expect(
@@ -1800,13 +2068,25 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(await ds.getRepository(BookingResource).countBy({ spaceId: space.id })).toBe(0);
     });
 
-    it('refuses duplicate question ids, a zoneless opening, an entity that does not exist', async () => {
+    it('refuses duplicate question ids, a question image, a zoneless opening, an entity that does not exist', async () => {
       const { id } = await organiser.create({ name: 'x' }, as(ALICE));
       const patch = (dto: object) => organiser.update(id, dto as never, as(ALICE), NOW);
       const q1 = { id: 'q', label: 'Nom', required: false, type: 'text' };
       expect(await refusal(patch({ items: [q1, { ...q1, label: 'Autre' }] }))).toEqual({
         code: 'item-id',
       });
+      const pictured = { ...q1, imageUrl: `/api/media/public/${randomUUID()}` };
+      expect(await refusal(patch({ items: [pictured] }))).toEqual({ code: 'item-image' });
+      await expect(patch({ items: [{ ...q1, imageUrl: '' }] })).resolves.toEqual({ ok: true });
+      // An image a space ALREADY holds (stored before the refusal existed) is kept: its rename,
+      // sending the questions back unchanged, still saves; a second, new image is still refused.
+      await q(`UPDATE booking_spaces SET items = $2 WHERE id = $1`, [
+        id,
+        JSON.stringify([pictured]),
+      ]);
+      await expect(patch({ name: 'renamed', items: [pictured] })).resolves.toEqual({ ok: true });
+      const second = { ...q1, id: 'q2', imageUrl: `/api/media/public/${randomUUID()}` };
+      expect(await refusal(patch({ items: [pictured, second] }))).toEqual({ code: 'item-image' });
       expect(await refusal(patch({ opensAt: '2026-11-02T10:00:00' }))).toEqual({
         code: 'opens-at',
       });
@@ -2341,6 +2621,504 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
             AND connamespace = to_regnamespace(current_schema())::oid`
       )) as { n: number }[];
       expect(n).toBe(3);
+    });
+  });
+
+  describe('editing a booking (owner, 2026-11-02)', () => {
+    beforeEach(async () => {
+      // As for the notices above: earlier cases' people are marked reminded, so each case here
+      // reads only the reminders of its own bookings.
+      await q(`UPDATE bookings SET "reminderSentAt" = now() WHERE "reminderSentAt" IS NULL`);
+      await q(
+        `UPDATE booking_participants SET "reminderSentAt" = now() WHERE "reminderSentAt" IS NULL`
+      );
+      told.length = 0;
+      notices.enabled = true;
+    });
+    afterEach(() => {
+      notices.enabled = false;
+    });
+
+    /** The revision a sheet opened NOW would carry: the booking's range and live people. */
+    const revisionOf = async (id: string) => {
+      const [b] = (await q(`SELECT "startsAt", "endsAt" FROM bookings WHERE id = $1`, [id])) as {
+        startsAt: Date;
+        endsAt: Date;
+      }[];
+      const live = (await q(
+        `SELECT "userId" FROM booking_participants WHERE "bookingId" = $1 AND "withdrawnAt" IS NULL`,
+        [id]
+      )) as { userId: string }[];
+      return bookingRevision(
+        b.startsAt,
+        b.endsAt,
+        live.map((p) => p.userId)
+      );
+    };
+    /** An edit from a sheet opened just before it - or on `revision`, a sheet opened earlier. */
+    const edit = async (
+      id: string,
+      from: string,
+      to: string,
+      participantIds: string[] = [],
+      actor = ALICE,
+      nowMs = NOW,
+      revision?: string
+    ) =>
+      service.edit(
+        id,
+        {
+          startsAt: on(from),
+          endsAt: on(to),
+          participantIds,
+          revision: revision ?? (await revisionOf(id)),
+        },
+        as(actor),
+        nowMs
+      );
+    const rangeOf = async (id: string) => {
+      const [row] = (await q(`SELECT "startsAt", "endsAt" FROM bookings WHERE id = $1`, [id])) as {
+        startsAt: Date;
+        endsAt: Date;
+      }[];
+      return [row.startsAt.toISOString(), row.endsAt.toISOString()];
+    };
+    const peopleOf = async (id: string) =>
+      (
+        (await q(
+          `SELECT "userId" FROM booking_participants WHERE "bookingId" = $1 AND "withdrawnAt" IS NULL`,
+          [id]
+        )) as { userId: string }[]
+      )
+        .map((r) => r.userId)
+        .sort();
+    const tos = (type: string) =>
+      told
+        .filter((t) => t.type === type)
+        .map((t) => t.to)
+        .sort();
+
+    it('shortens a booking in place, freeing only the part it gave up', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '11:00', ALICE, {
+        participantIds: [BOB],
+      });
+      expect(await edit(id, '10:30', '11:00', [BOB])).toEqual({ ok: true, changed: true });
+      expect(await rangeOf(id)).toEqual([on('10:30'), on('11:00')]);
+      await expect(book(space.id, resourceIds[0], '10:00', '10:30', CAROL)).resolves.toHaveProperty(
+        'id'
+      );
+      // The people who stay are told of the new time; the one who edited is not.
+      expect(tos('booking_changed')).toEqual([BOB]);
+      expect(told.find((t) => t.type === 'booking_changed')?.meta?.startsAt).toBe(
+        new Date(on('10:30')).toISOString()
+      );
+    });
+
+    it('lengthens a booking over free units, and the same request again changes nothing', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+      await edit(id, '10:00', '11:30');
+      expect(await rangeOf(id)).toEqual([on('10:00'), on('11:30')]);
+      told.length = 0;
+      expect(await edit(id, '10:00', '11:30')).toEqual({ ok: true, changed: false });
+      expect(told).toEqual([]);
+    });
+
+    it('refuses a range another booking holds, the original left whole and still held', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+      await book(space.id, resourceIds[0], '11:00', '11:30', CAROL);
+      expect(await refusal(edit(id, '10:30', '11:30'))).toEqual({
+        code: 'BOOKING_EDIT_CONFLICT',
+        reason: 'slot-taken',
+      });
+      expect(await rangeOf(id)).toEqual([on('10:00'), on('10:30')]);
+      // Never released in between: the original slot is still taken.
+      expect(await refusal(book(space.id, resourceIds[0], '10:00', '10:30', DAN))).toEqual({
+        code: 'slot-taken',
+      });
+      expect(told).toEqual([]);
+    });
+
+    it('refuses a range under a block, outside the openings, too long, or on another day', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+      await service.addBlock(
+        resourceIds[0],
+        { startsAt: on('12:00'), endsAt: on('13:00') },
+        as(ORGA),
+        NOW
+      );
+      expect(await refusal(edit(id, '12:00', '12:30'))).toEqual({
+        code: 'BOOKING_EDIT_CONFLICT',
+        reason: 'blocked',
+      });
+      expect(await refusal(edit(id, '21:30', '22:30'))).toEqual({
+        code: 'BOOKING_EDIT_OUTSIDE_RULES',
+        reason: 'outside-availability',
+      });
+      expect(await refusal(edit(id, '10:00', '12:30'))).toEqual({
+        code: 'BOOKING_EDIT_OUTSIDE_RULES',
+        reason: 'too-many-steps',
+      });
+      const nextDay = {
+        startsAt: on('10:00', '2026-11-03'),
+        endsAt: on('10:30', '2026-11-03'),
+        participantIds: [],
+        revision: await revisionOf(id),
+      };
+      expect(await refusal(service.edit(id, nextDay, as(ALICE), NOW))).toEqual({
+        code: 'BOOKING_EDIT_OUTSIDE_RULES',
+        reason: 'other-day',
+      });
+      expect(await rangeOf(id)).toEqual([on('10:00'), on('10:30')]);
+    });
+
+    it('refuses a start the window refuses, and leaves a started or cancelled booking alone', async () => {
+      const { space, resourceIds } = await setup({ minNoticeMinutes: 60 });
+      const { id } = await book(space.id, resourceIds[0], '11:00', '11:30', ALICE);
+      // At 09:15 the 60-minute notice refuses any start before 10:15: moving the start out of the
+      // old range, earlier, is refused.
+      const at = Date.parse(on('09:15'));
+      expect(await refusal(edit(id, '10:00', '11:30', [], ALICE, at))).toEqual({
+        code: 'BOOKING_EDIT_OUTSIDE_RULES',
+        reason: 'notice',
+      });
+      expect(await rangeOf(id)).toEqual([on('11:00'), on('11:30')]);
+      // The END alone moves: the window reads the start, which did not (review of #2945).
+      await expect(edit(id, '11:00', '12:00', [], ALICE, at)).resolves.toEqual({
+        ok: true,
+        changed: true,
+      });
+      expect(await refusal(edit(id, '12:00', '12:30', [], ALICE, Date.parse(on('11:05'))))).toEqual(
+        { code: 'history-frozen' }
+      );
+      const other = await book(space.id, resourceIds[0], '15:00', '15:30', ALICE);
+      await service.cancel(other.id, as(ALICE), NOW);
+      expect(await refusal(edit(other.id, '16:00', '16:30'))).toEqual({
+        code: 'already-cancelled',
+      });
+    });
+
+    it('lets a booking be shortened inside the notice period, its start moved later included', async () => {
+      const { space, resourceIds } = await setup({ minNoticeMinutes: 60 });
+      const { id } = await book(space.id, resourceIds[0], '09:30', '11:00', ALICE);
+      // At 09:15 the notice covers every start before 10:15 - yet giving back is never refused:
+      // a later start inside the old range is further from now, not closer.
+      const at = Date.parse(on('09:15'));
+      await expect(edit(id, '10:00', '11:00', [], ALICE, at)).resolves.toEqual({
+        ok: true,
+        changed: true,
+      });
+      await expect(edit(id, '10:00', '10:30', [], ALICE, at)).resolves.toEqual({
+        ok: true,
+        changed: true,
+      });
+      expect(await rangeOf(id)).toEqual([on('10:00'), on('10:30')]);
+    });
+
+    it('a concurrent edit and booking of the same units: exactly one wins, the loser is told why', async () => {
+      for (let round = 0; round < 5; round++) {
+        const { space, resourceIds } = await setup();
+        const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+        const [edited, booked] = await Promise.allSettled([
+          edit(id, '10:00', '11:00'),
+          book(space.id, resourceIds[0], '10:30', '11:00', BOB),
+        ]);
+        // Exactly one of the two outcomes, each whole: the winner's range, the loser's typed code.
+        const loser = [edited, booked].flatMap((o) =>
+          o.status === 'rejected' ? [(o.reason as HttpException).getResponse()] : []
+        );
+        expect([
+          {
+            editWon: true,
+            bookWon: false,
+            loser: [{ code: 'slot-taken' }],
+            range: [on('10:00'), on('11:00')],
+          },
+          {
+            editWon: false,
+            bookWon: true,
+            loser: [{ code: 'BOOKING_EDIT_CONFLICT', reason: 'slot-taken' }],
+            range: [on('10:00'), on('10:30')],
+          },
+        ]).toContainEqual({
+          editWon: edited.status === 'fulfilled',
+          bookWon: booked.status === 'fulfilled',
+          loser,
+          range: await rangeOf(id),
+        });
+      }
+    });
+
+    it('counts the edited booking as REPLACED in the quotas, never as one more', async () => {
+      const { space, resourceIds } = await setup({
+        maxActiveBookings: 1,
+        maxMinutesPerPeriod: 60,
+        quotaPeriod: 'day',
+      });
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+      // One active booking allowed, and this is it: moving it is not a second one.
+      await expect(edit(id, '14:00', '15:00')).resolves.toEqual({ ok: true, changed: true });
+      // 60 minutes a day: the replaced 60 are not counted on top of the new 90 - 90 alone is over.
+      expect(await refusal(edit(id, '14:00', '15:30'))).toEqual({
+        code: 'BOOKING_EDIT_QUOTA',
+        reason: 'minutes-per-period',
+        holder: true,
+      });
+      expect(await rangeOf(id)).toEqual([on('14:00'), on('15:00')]);
+      // A person ADDED counts against their own quota.
+      await book(space.id, resourceIds[0], '18:00', '18:30', BOB);
+      expect(await refusal(edit(id, '14:00', '15:00', [BOB]))).toEqual({
+        code: 'BOOKING_EDIT_QUOTA',
+        reason: 'active-bookings',
+        holder: false,
+      });
+      expect(await peopleOf(id)).toEqual([]);
+      // An organiser editing someone else's booking is exempt, as when booking on their behalf.
+      await expect(edit(id, '14:00', '15:30', [BOB], ORGA)).resolves.toEqual({
+        ok: true,
+        changed: true,
+      });
+    });
+
+    it('adds and removes people, and tells each of them', async () => {
+      // Two racers rather than P2 and P3, whom earlier cases leave blocking ALICE and BOB.
+      const [P2, P3] = [RACERS[2], RACERS[3]];
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB, P2],
+      });
+      told.length = 0;
+      await edit(id, '10:00', '10:30', [P2, P3]);
+      expect(await peopleOf(id)).toEqual([P2, P3].sort());
+      expect(tos('booking_added')).toEqual([P3]);
+      expect(tos('booking_removed')).toEqual([BOB]);
+      // The time did not change: nobody who stayed is told anything.
+      expect(tos('booking_changed')).toEqual([]);
+      // The one removed is no longer one of its people: the history row stays, marked, and
+      // their calendar link is refused.
+      expect((await service.mine(as(BOB))).find((b) => b.id === id)?.withdrawn).toBe(true);
+      expect(await refusal(service.calendarLink(id, as(BOB)))).toEqual({ code: 'not-yours' });
+      // Brought back: their old row is live again, not a second one.
+      told.length = 0;
+      await edit(id, '11:00', '11:30', [BOB, P2, P3], ORGA);
+      expect(await peopleOf(id)).toEqual([BOB, P2, P3].sort());
+      const [{ n }] = (await q(
+        `SELECT count(*)::int AS n FROM booking_participants WHERE "bookingId" = $1`,
+        [id]
+      )) as { n: number }[];
+      expect(n).toBe(3);
+      expect(tos('booking_added')).toEqual([BOB]);
+      // The organiser moved it: the holder and those who stayed are told, with the new start.
+      expect(tos('booking_changed')).toEqual([ALICE, P2, P3].sort());
+      expect(told.every((t) => t.meta?.startsAt === new Date(on('11:00')).toISOString())).toBe(
+        true
+      );
+    });
+
+    it('refuses a person who blocked the one who adds them, and the holder as a participant', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+      await q(`INSERT INTO user_blocks VALUES ($1, $2)`, [DAN, ALICE]);
+      try {
+        expect(await refusal(edit(id, '10:00', '10:30', [DAN]))).toEqual({
+          code: 'participant-blocked',
+        });
+      } finally {
+        await q(`DELETE FROM user_blocks WHERE "blockerId" = $1 AND "blockedId" = $2`, [
+          DAN,
+          ALICE,
+        ]);
+      }
+      expect(await refusal(edit(id, '10:00', '10:30', [ALICE]))).toEqual({
+        code: 'holder-is-participant',
+      });
+    });
+
+    it('only who may cancel may edit: the holder or the organiser, never a participant or a stranger', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      for (const who of [BOB, STRANGER]) {
+        expect(await refusal(edit(id, '11:00', '11:30', [BOB], who))).toEqual({
+          code: 'BOOKING_EDIT_FORBIDDEN',
+          reason: 'not-yours',
+        });
+      }
+      expect(await rangeOf(id)).toEqual([on('10:00'), on('10:30')]);
+      await expect(edit(id, '11:00', '11:30', [BOB], ORGA)).resolves.toEqual({
+        ok: true,
+        changed: true,
+      });
+    });
+
+    it("every person's reminder follows the new time", async () => {
+      const { space, resourceIds } = await setup({ reminderMinutes: 30 });
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      await reminders.remindOnce(new Date(on('09:35')));
+      expect(tos('booking_reminder')).toEqual([ALICE, BOB].sort());
+      told.length = 0;
+      // Moved at 09:40 to 11:00: the reminder for the new time is owed again, to both.
+      await edit(id, '11:00', '11:30', [BOB], ALICE, Date.parse(on('09:40')));
+      told.length = 0;
+      await reminders.remindOnce(new Date(on('10:00')));
+      expect(tos('booking_reminder')).toEqual([]);
+      await reminders.remindOnce(new Date(on('10:35')));
+      expect(tos('booking_reminder')).toEqual([ALICE, BOB].sort());
+    });
+    it('an end-only edit re-arms nothing: a reminder due and not yet claimed is still sent', async () => {
+      const { space, resourceIds } = await setup({ reminderMinutes: 30 });
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      // At 09:40 both reminders are due (since 09:30) and nobody has claimed them yet. The control:
+      // re-armed at 09:40 (`reminderSetAt` = now), the scheduler would have dropped them both.
+      await edit(id, '10:00', '11:00', [BOB], ALICE, Date.parse(on('09:40')));
+      told.length = 0;
+      await reminders.remindOnce(new Date(on('09:41')));
+      expect(tos('booking_reminder')).toEqual([ALICE, BOB].sort());
+    });
+
+    it('a holder the space no longer admits may cancel, never edit; the organiser still may', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+      // The audience narrowed after the booking: ALICE's facts no longer match it.
+      await ds
+        .getRepository(BookingSpace)
+        .update(space.id, { audience: { promo: { values: [2024] } } });
+      expect(await refusal(edit(id, '11:00', '11:30'))).toEqual({ code: 'audience' });
+      expect(await rangeOf(id)).toEqual([on('10:00'), on('10:30')]);
+      await expect(edit(id, '11:00', '11:30', [], ORGA)).resolves.toEqual({
+        ok: true,
+        changed: true,
+      });
+      await expect(service.cancel(id, as(ALICE), NOW)).resolves.toEqual({ ok: true });
+    });
+
+    it('an edit that only gives back is never refused by settings tightened since', async () => {
+      const [P2, P3] = [RACERS[2], RACERS[3]];
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '11:00', ALICE, {
+        participantIds: [P2, P3],
+      });
+      // Tightened after the booking: two people at most, and 15 minutes a day - which this
+      // booking, three people over 60 minutes, already exceeds on both counts.
+      await ds.getRepository(BookingSpace).update(space.id, {
+        maxPeople: 2,
+        maxMinutesPerPeriod: 15,
+        quotaPeriod: 'day',
+      });
+      // One person removed, nobody added: still over the ceiling, yet less than before.
+      await expect(edit(id, '10:00', '11:00', [P2])).resolves.toEqual({ ok: true, changed: true });
+      // Shortened inside the old range: still over the quota, yet less than before.
+      await expect(edit(id, '10:00', '10:30', [P2])).resolves.toEqual({ ok: true, changed: true });
+      expect(await rangeOf(id)).toEqual([on('10:00'), on('10:30')]);
+      // The control: an edit that asks for MORE is judged on the settings as they are now.
+      expect(await refusal(edit(id, '14:00', '14:30', [P2]))).toEqual({
+        code: 'BOOKING_EDIT_QUOTA',
+        reason: 'minutes-per-period',
+        holder: true,
+      });
+      expect(await refusal(edit(id, '10:00', '10:30', [P2, P3]))).toEqual({
+        code: 'BOOKING_EDIT_OUTSIDE_RULES',
+        reason: 'too-many-people',
+        maxPeople: 2,
+      });
+      expect(await peopleOf(id)).toEqual([P2]);
+    });
+
+    it('an edit racing the cancellation of its booking: one serial order, never a torn row', async () => {
+      for (let round = 0; round < 5; round++) {
+        const { space, resourceIds } = await setup();
+        const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+        const [edited, cancelled] = await Promise.allSettled([
+          edit(id, '11:00', '11:30'),
+          service.cancel(id, as(ORGA), NOW),
+        ]);
+        const [row] = (await q(`SELECT "cancelledAt" FROM bookings WHERE id = $1`, [id])) as {
+          cancelledAt: Date | null;
+        }[];
+        // The cancellation always lands; the edit lands only when it went first.
+        expect([
+          { edit: 'fulfilled', cancel: 'fulfilled', range: [on('11:00'), on('11:30')] },
+          {
+            edit: { code: 'already-cancelled' },
+            cancel: 'fulfilled',
+            range: [on('10:00'), on('10:30')],
+          },
+        ]).toContainEqual({
+          edit:
+            edited.status === 'fulfilled'
+              ? 'fulfilled'
+              : (edited.reason as HttpException).getResponse(),
+          cancel: cancelled.status,
+          range: await rangeOf(id),
+        });
+        expect(row.cancelledAt).not.toBeNull();
+      }
+    });
+
+    it('an edit racing a participant withdrawing: one serial order, never a person put back', async () => {
+      for (let round = 0; round < 5; round++) {
+        const { space, resourceIds } = await setup();
+        const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+          participantIds: [BOB],
+        });
+        // The holder's sheet was opened with BOB on it; she moves it and keeps him, while he
+        // leaves on his own.
+        const seen = await revisionOf(id);
+        told.length = 0;
+        const [edited, withdrawn] = await Promise.allSettled([
+          edit(id, '11:00', '11:30', [BOB], ALICE, NOW, seen),
+          service.withdraw(id, as(BOB), NOW),
+        ]);
+        const answer = (o: PromiseSettledResult<unknown>) =>
+          o.status === 'fulfilled' ? 'fulfilled' : (o.reason as HttpException).getResponse();
+        // Withdrawal first: the edit was built on a set he is no longer in - refused whole, he
+        // stays off. Edit first: he is on the moved booking, then leaves it. Never put back.
+        expect([
+          {
+            edit: { code: 'BOOKING_EDIT_CONFLICT', reason: 'stale' },
+            withdraw: 'fulfilled',
+            range: [on('10:00'), on('10:30')],
+          },
+          { edit: 'fulfilled', withdraw: 'fulfilled', range: [on('11:00'), on('11:30')] },
+        ]).toContainEqual({
+          edit: answer(edited),
+          withdraw: answer(withdrawn),
+          range: await rangeOf(id),
+        });
+        expect(await peopleOf(id)).toEqual([]);
+        expect(tos('booking_added')).toEqual([]);
+      }
+    });
+
+    it('refuses an edit built before a withdrawal; one built after it is applied', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      // The revision the reader's own view carries is the one the edit is judged on.
+      const view = (await service.mine(as(ALICE))).find((b) => b.id === id);
+      const seen = await revisionOf(id);
+      expect(view?.revision).toBe(seen);
+      await service.withdraw(id, as(BOB), NOW);
+      told.length = 0;
+      expect(await refusal(edit(id, '11:00', '11:30', [BOB], ALICE, NOW, seen))).toEqual({
+        code: 'BOOKING_EDIT_CONFLICT',
+        reason: 'stale',
+      });
+      expect(await peopleOf(id)).toEqual([]);
+      expect(await rangeOf(id)).toEqual([on('10:00'), on('10:30')]);
+      expect(tos('booking_added')).toEqual([]);
+      // Reloaded: the sheet now reads BOB gone, and the same move is applied.
+      await expect(edit(id, '11:00', '11:30', [])).resolves.toEqual({ ok: true, changed: true });
+      expect(await rangeOf(id)).toEqual([on('11:00'), on('11:30')]);
     });
   });
 });

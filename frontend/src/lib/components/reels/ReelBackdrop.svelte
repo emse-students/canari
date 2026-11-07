@@ -46,9 +46,19 @@
     host: HTMLElement | null;
     /** The backdrop is visible: the frame leaves some of the stage uncovered. */
     active: boolean;
+    /**
+     * Which media is on show, for a frame holding several (a carousel page, owner 2026-11-06): a
+     * change repaints from the media now on show. The media out of view sit under
+     * `[data-backdrop-ignore]` and are never read - a neighbour's picture loading last would
+     * otherwise paint the backdrop of the one being looked at.
+     */
+    sourceKey?: unknown;
   }
 
-  let { host, active }: Props = $props();
+  let { host, active, sourceKey }: Props = $props();
+
+  /** A media of the frame the backdrop may read: not under `[data-backdrop-ignore]`. */
+  const onShow = (el: Element) => el.closest('[data-backdrop-ignore]') === null;
   let canvas = $state<HTMLCanvasElement | null>(null);
 
   let warned = false;
@@ -197,19 +207,22 @@
 
   $effect(() => {
     if (!active || !host || !canvas) return;
+    void sourceKey;
     // `load`, `loadeddata` and `playing` do not bubble: capture them on the host. `loadeddata`
     // covers a video that stays PAUSED on its first frame (review, editor): that frame is
     // presented once, so the frame callback fires for it too.
     const onVideo = (e: Event) => {
-      if (e.target instanceof HTMLVideoElement) paintOnPresentedFrame(e.target);
+      if (e.target instanceof HTMLVideoElement && onShow(e.target)) paintOnPresentedFrame(e.target);
     };
     const onLoad = (e: Event) => {
-      if (e.target instanceof HTMLImageElement) paint(e.target);
+      if (e.target instanceof HTMLImageElement && onShow(e.target)) paint(e.target);
     };
     host.addEventListener('playing', onVideo, true);
     host.addEventListener('loadeddata', onVideo, true);
     host.addEventListener('load', onLoad, true);
-    const media = host.querySelector<HTMLVideoElement | HTMLImageElement>('video, img');
+    const media = [
+      ...host.querySelectorAll<HTMLVideoElement | HTMLImageElement>('video, img'),
+    ].find(onShow);
     if (media instanceof HTMLVideoElement && media.paused && media.readyState >= 2) {
       // Paused on a frame already on screen: no new frame will be presented, so it is read now.
       paint(media);

@@ -25,6 +25,8 @@
 "notif.social.followed_post.body" = "New post";
 "notif.social.association_repost.title" = "%@ shared a post";
 "notif.social.association_repost.body" = "New post";
+"notif.social.member_repost.title" = "%@ reposted a post";
+"notif.social.member_repost.body" = "New post";
 "notif.social.repost_proposed.title" = "%@ proposes a post to share";
 "notif.social.repost_proposed.body" = "A post to share";
 "notif.social.repost_personal_requested.title" = "%@ asks to share your post";
@@ -35,6 +37,9 @@
 "notif.social.live_started.body" = "Tap to watch";
 "notif.social.follow_request.title" = "%@ asks to follow you";
 "notif.social.follow_request.body" = "Tap to answer";
+"notif.social.join_ask.title" = "%@ wants to join";
+"notif.social.join_ask.body" = "this conversation";
+"notif.social.join_ask_anon.title" = "Someone wants to join";
 "notif.social.follow_accepted.title" = "%@ accepted your request";
 "notif.social.follow_accepted.body" = "Your request was accepted";
 "notif.social.live_cut.title" = "Your live was stopped";
@@ -49,6 +54,10 @@
 "notif.social.booking_withdrawn.body" = "Your booking still stands";
 "notif.social.booking_added.title" = "%@ added you to a booking";
 "notif.social.booking_added.body" = "Find it in Bookings";
+"notif.social.booking_changed.title" = "%@ changed your booking";
+"notif.social.booking_changed.body" = "Find the new time in Bookings";
+"notif.social.booking_removed.title" = "%@ removed you from a booking";
+"notif.social.booking_removed.body" = "You are no longer part of it";
 "notif.social.booking_reminder.title" = "Booking reminder";
 "notif.social.booking_reminder.body" = "Your booking starts soon";
 "notif.form.opening_soon.title" = "Form opening soon";
@@ -63,6 +72,12 @@
 "notif.lydia_payments_paused.body" = "Lydia payments for %1$@ are paused: Lydia refused a payment request.";
 "notif.lydia_refund_issued.title" = "Refund";
 "notif.lydia_refund_issued.body" = "%1$@ refunded one of your payments.";
+"notif.delegation_revoked.title" = "Payments paused";
+"notif.delegation_revoked.body" = "The association receiving %1$@'s payments ended the delegation: its payments are paused.";
+"notif.delegation_receiver_not_ready.title" = "Payments paused";
+"notif.delegation_receiver_not_ready.body" = "The association receiving %1$@'s payments can no longer collect them: its payments are paused.";
+"notif.delegation_resumed.title" = "Payments back on";
+"notif.delegation_resumed.body" = "%1$@'s payments are back on.";
 
 /* The agenda's five. See the note in fr.lproj. */
 "notif.event.proposed.title" = "Event to review";
@@ -77,6 +92,13 @@
 "notif.event.deleted.body" = "“%1$@” was removed by the BDE";
 "notif.event.pending.title" = "Event needs approval again";
 "notif.event.pending.body" = "“%1$@” needs approval again: its dates changed";
+"notif.event.pending_coorganiser.title" = "Event needs approval again";
+"notif.event.pending_coorganiser.body" = "“%1$@” needs approval again: an association accepted to co-organise";
 
 "notif.device.added.title" = "New device";
 "notif.device.added.body" = "A new device was added to your account. If it was not you, open Canari.";
+
+/* A content-free wake-up push whose message could not be fetched from the server, and one whose
+   message the app had already received (push_mode = wake, 2026-11-02). */
+"notif.wake.unavailable" = "A message could not be loaded. Open Canari to read it.";
+"notif.wake.gone" = "Message already received in Canari.";

@@ -1,6 +1,6 @@
 [package]
 name = "canari"
-version = "1.5.3-alpha.3"
+version = "1.6.6-alpha.4"
 description = "Le réseau des marteaux"
 authors = ["Léon Muselli / Jolan Boudin"]
 edition = "2021"
@@ -19,6 +19,11 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2.12", features = ["tray-icon", "image-png"] }
+# EXACT, and PATCHED (`[patch.crates-io]` below). Not used by name: Tauri pulls wry in, and this pin
+# exists only to hold the vendored fork in place - without it a newer registry release out-resolves
+# the path patch and the app builds without the CANARI PATCH hunks, silently. Watched by
+# `.github/scripts/vendored-upstream-report.sh`.
+wry = "=0.57.1"
 tauri-plugin-localhost = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-opener = "2.7"
@@ -66,8 +71,9 @@ tauri-plugin-keystore = { path = "patches/tauri-plugin-keystore" }
 # only change colour through the bar's `tintColor`, which on iOS 26 tints the glass too (user,
 # 2026-09-30: yellow when selected, black when not, the bar not tinted). The local patch adds a tab
 # item's `selectedImage`, and REMOVES the plugin's keyboard guard, which resized the WebView after
-# every keyboard dismissal alongside `CanariApplyKeyboardLayout` - the `CANARI PATCH` hunks in
-# `ios/Sources`; everything else is the published crate, unchanged.
+# every keyboard dismissal alongside `CanariApplyKeyboardLayout`, and ADDS `set_tab_bar_interactive`
+# (the bar takes no touch under the guided tour's backdrop) - the `CANARI PATCH` hunks in
+# `ios/Sources` and `src/`; everything else is the published crate, unchanged.
 tauri-plugin-system-components = { path = "patches/tauri-plugin-system-components" }
 # tauri-plugin-websocket 2.5.0 connects through `tokio-tungstenite`'s `TcpStream::connect`, which
 # tries the resolved addresses IN TURN: on a network handing out an IPv6 that routes nowhere, the
@@ -78,6 +84,14 @@ tauri-plugin-system-components = { path = "patches/tauri-plugin-system-component
 # `disconnect()` right after the id cannot miss it) - the `CANARI PATCH` hunks in `src/lib.rs`;
 # everything else is the published crate. A vendored fork: an upstream release is rebased by hand.
 tauri-plugin-websocket = { path = "patches/tauri-plugin-websocket" }
+# wry 0.57.1's Android main pipe (the channel every WebView call crosses to the main thread) can
+# DEADLOCK the main thread - a bounded channel the main thread both sends into (`onWebviewDestroy`)
+# and alone drains (Play ANR f51255a5...) - and ABORT the process on a message for a destroyed
+# activity (Play crash e3697bc4...). The local patch makes the channel unbounded, its wake pipe's
+# write non-blocking, `get_webview` answer `None` for a gone activity, and a failed message log
+# instead of unregistering the drain - the `CANARI PATCH` hunks in `src/android/`;
+# everything else is the published crate. Why: docs/wiki/frontend/mobile.md#wry-main-pipe-patch.
+wry = { path = "patches/wry" }
 
 # The native iOS tab bar - Liquid Glass on iOS 26 (docs/wiki/frontend/mobile.md#the-native-ios-tab-bar).
 # iOS ONLY, and EXACT: a 0.1.x from one author, whose Swift ships inside the app - PATCHED, see

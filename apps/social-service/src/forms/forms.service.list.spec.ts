@@ -53,7 +53,8 @@ describe('FormsService.list', () => {
       {} as any,
       {} as any,
       // FormOrganiserAlertService: switched off, as it ships.
-      { enabled: () => false } as any
+      { enabled: () => false } as any,
+      {} as any
     );
     return { service, associationsService };
   }

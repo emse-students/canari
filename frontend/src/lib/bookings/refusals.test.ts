@@ -4,6 +4,7 @@ import { BookingsApiError } from './api';
 import {
   BOOKER_REFUSAL_CODES,
   describeBookingRefusal,
+  EDIT_REFUSAL_CODES,
   ORGANISER_REFUSAL_CODES,
   outcomeUnknown,
 } from './refusals';
@@ -32,6 +33,50 @@ describe('describeBookingRefusal', () => {
       expect(text, code).not.toBe(m.common_generic_error_label());
       expect(text, code).not.toContain('dev text');
     }
+  });
+
+  it("words a form's grid refusal on a space's questions, never with the generic line", () => {
+    for (const code of [
+      'FORM_GRID_DUPLICATE_LABEL',
+      'FORM_GRID_TOO_MANY_ROWS',
+      'FORM_TOO_MANY_QUESTIONS',
+      'FORM_GRID_ANSWER_INVALID',
+    ]) {
+      const text = describeBookingRefusal(refused(code), 'Enregistrer');
+      expect(text, code).not.toBe(m.common_generic_error_label());
+      expect(text, code).not.toContain('dev text');
+    }
+  });
+
+  it('words every edit refusal by its family, and says the booking has not changed', () => {
+    for (const code of EDIT_REFUSAL_CODES) {
+      const text = describeBookingRefusal(refused(code, 409), 'Save');
+      expect(text, code).not.toBe(m.common_generic_error_label());
+      expect(text, code).not.toContain('dev text');
+    }
+    const edit = (code: string, reason: string) =>
+      describeBookingRefusal(new BookingsApiError('dev text', code, 409, [], null, reason), 'Save');
+    const unchanged = m.bookings_edit_refusal_unchanged();
+    // The rule's own sentence when it says more than the family's.
+    expect(edit('BOOKING_EDIT_QUOTA', 'active-bookings')).toBe(
+      `${m.bookings_refusal_active_bookings()} ${unchanged}`
+    );
+    expect(edit('BOOKING_EDIT_OUTSIDE_RULES', 'other-day')).toBe(
+      `${m.bookings_edit_refusal_other_day()} ${unchanged}`
+    );
+    expect(edit('BOOKING_EDIT_CONFLICT', 'blocked')).toBe(
+      `${m.bookings_refusal_blocked()} ${unchanged}`
+    );
+    // `slot-taken`, or a rule this build does not know: the family's sentence.
+    expect(edit('BOOKING_EDIT_CONFLICT', 'slot-taken')).toBe(
+      `${m.bookings_edit_refusal_conflict()} ${unchanged}`
+    );
+    expect(edit('BOOKING_EDIT_OUTSIDE_RULES', 'brand-new')).toBe(
+      `${m.bookings_edit_refusal_outside_rules()} ${unchanged}`
+    );
+    expect(edit('BOOKING_EDIT_FORBIDDEN', 'not-yours')).toBe(m.bookings_edit_refusal_forbidden());
+    // Changed since the sheet opened: said alone - the sheet reopens on the booking as it is.
+    expect(edit('BOOKING_EDIT_CONFLICT', 'stale')).toBe(m.bookings_edit_refusal_stale());
   });
 
   it('says how many coming bookings stand in the way (D29)', () => {

@@ -151,7 +151,7 @@ gather() {
   read -r disk_pct disk_used_kb disk_size_kb <<<"$(df -P -k / 2>/dev/null | awk 'NR == 2 { sub("%", "", $5); print $5, $3, $2 }')"
 
   local backups_dir backups_kb=""
-  backups_dir="$(crontab -l 2>/dev/null | sed -n 's/^BACKUP_DIR=//p' | head -1)"
+  backups_dir="$(crontab -l 2>/dev/null | sed -n 's/^BACKUP_DIR=//p' | sed -n 1p)"
   [ -n "$backups_dir" ] && backups_kb="$(du -sk "$backups_dir" 2>/dev/null | cut -f1)"
 
   local docker_df=""

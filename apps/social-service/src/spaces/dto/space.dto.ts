@@ -37,3 +37,19 @@ export class SetAudiencesDto {
   @Type(() => AudienceRuleDto)
   rules!: AudienceRuleDto[];
 }
+
+/**
+ * Payload setting the governing parent of an association or a list (WP-D1, reform 2.7; platform
+ * admin only): `parentAssociationId` a BDE or `null` (none); `displayParentAssociationId` the G3
+ * label, `null` to clear it, absent to leave it.
+ */
+export class SetDependencyDto {
+  @ValidateIf((_, v) => v !== null)
+  @IsUUID()
+  parentAssociationId!: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsUUID()
+  displayParentAssociationId?: string | null;
+}

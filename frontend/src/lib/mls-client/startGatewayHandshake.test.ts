@@ -70,6 +70,7 @@ const makeDeps = (connect: ReturnType<typeof vi.fn>) => {
     gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
     socketFence: () => 0,
     onDisconnect: vi.fn(),
+    isDestroyed: () => false,
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
     sendDisconnect: vi.fn(),
   } as unknown as IMlsService;

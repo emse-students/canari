@@ -14,13 +14,15 @@ const plugin = vi.hoisted(() => ({
   configureTabBar: vi.fn(),
   onTabSelected: vi.fn(),
   getTabBarInsets: vi.fn(),
-  showTabBar: vi.fn(),
-  hideTabBar: vi.fn(),
   selectTab: vi.fn(),
   setBadge: vi.fn(),
   removeTabBar: vi.fn(),
 }));
 vi.mock('@sosweetham/tauri-plugin-system-components-api', () => plugin);
+
+// The Canari-patched commands go through `invoke` by name (`systemComponentsCommands.ts`).
+const core = vi.hoisted(() => ({ invoke: vi.fn(), addPluginListener: vi.fn() }));
+vi.mock('@tauri-apps/api/core', () => core);
 
 const route = vi.hoisted(() => ({ page: { url: new URL('https://canari.emse.fr/posts') } }));
 vi.mock('$app/state', () => route);
@@ -44,8 +46,24 @@ import NativeTabBar, { nativeTabBar } from './NativeTabBar.svelte';
 import { MOBILE_NAV_PLACES } from '$lib/navigation/places';
 import { PLACE_ICONS } from '$lib/navigation/placeIcons';
 import { themeStore } from '$lib/stores/themeStore.svelte';
+import { modalWebLayer } from '$lib/navigation/nativeTabBarState.svelte';
 
 const mounted: (() => void)[] = [];
+const INTERACTIVE = 'plugin:system-components|set_tab_bar_interactive';
+const SHOW = 'plugin:system-components|show_tab_bar';
+const HIDE = 'plugin:system-components|hide_tab_bar';
+
+/** The `invoke` calls made for ONE patched command, as `[command, args]` pairs. */
+const callsOf = (command: string) => core.invoke.mock.calls.filter(([c]) => c === command);
+
+/** Lets the plugin's answers and the effects they trigger settle. */
+async function settle() {
+  for (let i = 0; i < 6; i++) {
+    await tick();
+    await Promise.resolve();
+  }
+  flushSync();
+}
 let selectTabHandler: ((e: { id: string }) => void) | null = null;
 const originalMatchMedia = window.matchMedia;
 
@@ -57,13 +75,7 @@ beforeEach(() => {
     return { unregister: vi.fn().mockResolvedValue(undefined) };
   });
   plugin.getTabBarInsets.mockResolvedValue({ bottom: 83 });
-  for (const f of [
-    plugin.showTabBar,
-    plugin.hideTabBar,
-    plugin.selectTab,
-    plugin.setBadge,
-    plugin.removeTabBar,
-  ]) {
+  for (const f of [plugin.selectTab, plugin.setBadge, plugin.removeTabBar]) {
     f.mockResolvedValue(undefined);
   }
   nav.goto.mockReset();
@@ -77,6 +89,11 @@ beforeEach(() => {
   themeStore.setPreference('light');
   badges.placeBadge.mockReset().mockReturnValue(0);
   nativeTabBar.status = 'pending';
+  core.invoke.mockReset().mockResolvedValue(undefined);
+  core.addPluginListener
+    .mockReset()
+    .mockResolvedValue({ unregister: vi.fn().mockResolvedValue(undefined) });
+  modalWebLayer.covering = false;
   window.matchMedia = ((query: string) => ({
     matches: false,
     media: query,
@@ -185,6 +202,52 @@ describe('NativeTabBar', () => {
     expect(nav.goto).toHaveBeenCalledWith('/chat');
   });
 
+  it('a re-tap of the open place scrolls the page to the top instead of navigating', async () => {
+    const scroller = document.createElement('div');
+    scroller.className = 'page-scroll-wrap';
+    scroller.scrollTop = 700;
+    const scrollTo = vi.fn();
+    scroller.scrollTo = scrollTo as unknown as typeof scroller.scrollTo;
+    document.body.appendChild(scroller);
+    try {
+      await mountBar({ visible: true });
+      selectTabHandler!({ id: 'posts' });
+      expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
+      expect(nav.goto).not.toHaveBeenCalled();
+    } finally {
+      scroller.remove();
+    }
+  });
+
+  it('a tap from deeper in the place navigates back to it', async () => {
+    route.page.url = new URL('https://canari.emse.fr/posts/abc');
+    try {
+      await mountBar({ visible: true });
+      selectTabHandler!({ id: 'posts' });
+      expect(nav.goto).toHaveBeenCalledWith('/posts');
+    } finally {
+      route.page.url = new URL('https://canari.emse.fr/posts');
+    }
+  });
+
+  it('a status bar tap runs the same scroll-to-top', async () => {
+    const scroller = document.createElement('div');
+    scroller.className = 'page-scroll-wrap';
+    scroller.scrollTop = 300;
+    const scrollTo = vi.fn();
+    scroller.scrollTo = scrollTo as unknown as typeof scroller.scrollTo;
+    document.body.appendChild(scroller);
+    try {
+      await mountBar({ visible: true });
+      const call = core.addPluginListener.mock.calls.find(([, event]) => event === 'statusBarTap');
+      expect(call?.[0]).toBe('system-components');
+      call![2]();
+      expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' });
+    } finally {
+      scroller.remove();
+    }
+  });
+
   it('reserves the space the plugin measures, not the web bar’s 4rem', async () => {
     await mountBar({ visible: true });
     expect(document.documentElement.style.getPropertyValue('--bottom-nav-reserve')).toBe('83px');
@@ -192,11 +255,14 @@ describe('NativeTabBar', () => {
 
   it('hides with the layout rule, and shows again', async () => {
     const state = await mountBar({ visible: false });
-    expect(plugin.hideTabBar).toHaveBeenCalled();
+    expect(callsOf(HIDE)).toHaveLength(1);
 
     state.visible = true;
     for (let i = 0; i < 4; i++) await tick();
-    expect(plugin.showTabBar).toHaveBeenCalled();
+    expect(callsOf(SHOW)).toHaveLength(1);
+    // Both stamped from the one rising sequence Swift orders them by: the show is the newer call.
+    const seqOf = ([, args]: unknown[]) => (args as { options: { seq: number } }).options.seq;
+    expect(seqOf(callsOf(SHOW)[0])).toBeGreaterThan(seqOf(callsOf(HIDE)[0]));
   });
 
   it('draws the unread dot as an empty badge, and sends nothing that did not change', async () => {
@@ -217,5 +283,67 @@ describe('NativeTabBar', () => {
     expect(nativeTabBar.status).toBe('failed');
     expect(error.mock.calls.flat().join(' ')).toContain('web bar');
     error.mockRestore();
+  });
+
+  it('takes no touch while a modal web layer covers the page, and takes them again after', async () => {
+    // iPhone 12, `1.6.3-alpha.7`: a tab tapped under the tour's backdrop left the tour.
+    await mountBar({ visible: true });
+    // Sent once the bar is configured, whatever it was: the overlay outlives a WebView reload.
+    expect(callsOf(INTERACTIVE)).toEqual([
+      [INTERACTIVE, { options: { interactive: true, seq: expect.any(Number) } }],
+    ]);
+
+    modalWebLayer.covering = true;
+    await settle();
+    expect(callsOf(INTERACTIVE).at(-1)).toEqual([
+      INTERACTIVE,
+      { options: { interactive: false, seq: expect.any(Number) } },
+    ]);
+
+    modalWebLayer.covering = false;
+    await settle();
+    expect(callsOf(INTERACTIVE).at(-1)).toEqual([
+      INTERACTIVE,
+      { options: { interactive: true, seq: expect.any(Number) } },
+    ]);
+    expect(callsOf(INTERACTIVE)).toHaveLength(3);
+    // Every call carries a rising sequence, which Swift orders the async calls by.
+    const seqs = core.invoke.mock.calls.map(
+      (c) => (c[1] as { options: { seq: number } }).options.seq
+    );
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+    expect(new Set(seqs).size).toBe(seqs.length);
+    // Still drawn throughout: the tour's steps point at its band.
+    expect(callsOf(HIDE)).toHaveLength(0);
+  });
+
+  it('blocks a bar that comes up under a modal layer already on screen', async () => {
+    modalWebLayer.covering = true;
+    await mountBar({ visible: true });
+    expect(callsOf(INTERACTIVE)).toEqual([
+      [INTERACTIVE, { options: { interactive: false, seq: expect.any(Number) } }],
+    ]);
+  });
+
+  it('retries a block the plugin refused on the next change', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await mountBar({ visible: true });
+    core.invoke.mockRejectedValueOnce(new Error('tab bar is not configured'));
+    modalWebLayer.covering = true;
+    await settle();
+    expect(warn).toHaveBeenCalled();
+    core.invoke.mockClear();
+
+    // The refused block was never recorded as sent: the plugin still holds `interactive: true`, so
+    // the layer going away asks nothing, and the next one sends the block again.
+    modalWebLayer.covering = false;
+    await settle();
+    expect(callsOf(INTERACTIVE)).toHaveLength(0);
+    modalWebLayer.covering = true;
+    await settle();
+    expect(callsOf(INTERACTIVE)).toEqual([
+      [INTERACTIVE, { options: { interactive: false, seq: expect.any(Number) } }],
+    ]);
+    warn.mockRestore();
   });
 });

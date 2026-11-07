@@ -21,7 +21,18 @@
  *
  * Every request body is one part, {@link REEL_UPLOAD_PART_BYTES} (1 MiB): under the host WAF's 10 MiB
  * drop and the 8 MiB budget, and the most a cut on a weak link can cost.
+ *
+ * TWO BLOB FORMATS, ONE PROTOCOL (2026-11-06, the background publish queue). What `writesSegmented`
+ * names - a video, while the segmented writer is on - is `segmented-v1`, sealed range by range.
+ * EVERYTHING ELSE is `single-block` - ONE AES-GCM block - because the link preview
+ * (`post-preview.service.ts`) and every reader before the segmented one read it that way: a photo,
+ * and a video too while the writer is off. The whole ciphertext is sealed once per call and held in
+ * memory while its parts are sent, so its size is bounded only by the upload ceiling the file was
+ * prepared under (`uploadLimits`) - a photo after `compressImage` is a few hundred KB, a video with
+ * the writer off can reach that ceiling. The same nonce argument holds: the same key, IV and
+ * plaintext give the same block, and the digest guard keeps the plaintext the same.
  */
+import type { ReleaseAnswer } from '$lib/utils/chat/uploadReleaseMarks';
 import {
   SEGMENTED_MEDIA_ENCODING,
   SEGMENTED_MEDIA_HEADER_BYTES,
@@ -69,9 +80,17 @@ export interface ResumableUploadPort {
   ): Promise<Response>;
 }
 
+/** The blob format of a session: {@link SEGMENTED_MEDIA_ENCODING}, or ONE AES-GCM block. */
+export type ResumableBlobEncoding = typeof SEGMENTED_MEDIA_ENCODING | 'single-block';
+
 export interface ResumableUploadOptions {
-  /** The plaintext to upload (the prepared video). */
+  /** The plaintext to upload (the prepared video, or the compressed photo). */
   plaintext: Uint8Array;
+  /**
+   * How the blob is sealed; `segmented-v1` when absent (every caller before the publish queue). A
+   * state opened under the other encoding is never resumed: its parts are other bytes.
+   */
+  encoding?: ResumableBlobEncoding;
   retentionClass: MediaRetentionClass;
   /** What a previous attempt persisted, if any. */
   state?: ResumableUploadState;
@@ -97,7 +116,8 @@ export interface ResumableUploadResult {
   mediaId: string;
   keyHex: string;
   ivHex: string;
-  encoding: typeof SEGMENTED_MEDIA_ENCODING;
+  /** The ref's `encoding`: absent for a single-block blob, which is how every reader knows it. */
+  encoding?: typeof SEGMENTED_MEDIA_ENCODING;
 }
 
 /** The server's answer to `GET /session/:id`. */
@@ -173,22 +193,30 @@ export async function sealBlobRange(
 
 /**
  * Gives an open session (its staged parts, its slot among the owner's open sessions, its budget)
- * back to the server: `DELETE /session/:id`. Best effort and logged either way - the server's sweep
- * (24 h) is what holds when it cannot be reached. Never throws.
+ * back to the server: `DELETE /session/:id`. Never throws, and SAYS WHETHER THE SERVER ANSWERED:
+ * `answered` for a 2xx, or media-service's own 403/404/409 (not this owner's, already gone,
+ * completed - nothing a retry would change); `unanswered` for a transport failure, an edge page, a
+ * 5xx or a refused token, which the durable release mark (`uploadReleaseMarks.ts`) retries.
  */
 export async function releaseUploadSession(
   port: ResumableUploadPort,
   uploadId: string,
   why: string,
   log: (line: string) => void
-): Promise<void> {
+): Promise<ReleaseAnswer> {
   try {
     const res = await port.request('DELETE', `/${uploadId}`, null);
-    log(`[UPLOAD-RESUME] session ${uploadId} released (${why}): HTTP ${res.status}`);
-  } catch (e) {
+    if (res.ok || sessionAnswered(res, 403, 404, 409)) {
+      log(`[UPLOAD-RESUME] session ${uploadId} released (${why}): HTTP ${res.status}`);
+      return 'answered';
+    }
     log(
-      `[UPLOAD-RESUME] session ${uploadId} NOT released (${why}), the server's sweep holds it: ${String(e)}`
+      `[UPLOAD-RESUME] session ${uploadId} NOT released (${why}): HTTP ${res.status}, still owed`
     );
+    return 'unanswered';
+  } catch (e) {
+    log(`[UPLOAD-RESUME] session ${uploadId} NOT released (${why}), still owed: ${String(e)}`);
+    return 'unanswered';
   }
 }
 
@@ -216,8 +244,16 @@ export async function uploadResumable(
   opts: ResumableUploadOptions
 ): Promise<ResumableUploadResult> {
   const { plaintext, port, log, transport, retentionClass } = opts;
+  const encoding: ResumableBlobEncoding = opts.encoding ?? SEGMENTED_MEDIA_ENCODING;
+  const singleBlock = encoding === 'single-block';
   const digest = await sha256Hex(plaintext);
   let state = opts.state;
+  if (state && (state.encoding ?? SEGMENTED_MEDIA_ENCODING) !== encoding) {
+    log(
+      `[UPLOAD-RESUME] the saved session was opened as ${state.encoding ?? SEGMENTED_MEDIA_ENCODING}, this upload is ${encoding} - discarded, a new key and session`
+    );
+    state = undefined;
+  }
   if (
     state &&
     (state.plaintextSha256 !== digest || state.plaintextBytes !== plaintext.byteLength)
@@ -232,12 +268,37 @@ export async function uploadResumable(
   if (!state) {
     const { keyHex } = await generateMediaCek();
     const { ivHex } = generateMediaIv();
-    state = { keyHex, ivHex, plaintextSha256: digest, plaintextBytes: plaintext.byteLength };
+    state = {
+      keyHex,
+      ivHex,
+      plaintextSha256: digest,
+      plaintextBytes: plaintext.byteLength,
+      ...(singleBlock ? { encoding } : {}),
+    };
   }
   const key = await importSealingKey(state.keyHex);
   const iv = hexDecode(state.ivHex);
-  const totalBytes = segmentedCiphertextLength(plaintext.byteLength);
-  const header = encodeSegmentedHeader(SEGMENTED_MEDIA_SEGMENT_BYTES, plaintext.byteLength);
+  const totalBytes = singleBlock
+    ? plaintext.byteLength + SEGMENT_TAG_BYTES
+    : segmentedCiphertextLength(plaintext.byteLength);
+  const header = singleBlock
+    ? null
+    : encodeSegmentedHeader(SEGMENTED_MEDIA_SEGMENT_BYTES, plaintext.byteLength);
+  const resultEncoding = singleBlock ? {} : { encoding: SEGMENTED_MEDIA_ENCODING };
+
+  /** The single block, sealed once on the first part this call sends (never when nothing is owed). */
+  let block: Uint8Array | null = null;
+  const sealRange = async (start: number, end: number): Promise<Uint8Array<ArrayBuffer>> => {
+    if (!singleBlock) return sealBlobRange(plaintext, key, iv, start, end);
+    block ??= new Uint8Array(
+      await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: iv as BufferSource },
+        key,
+        plaintext as BufferSource
+      )
+    );
+    return block.slice(start, end);
+  };
 
   const answer = async (res: Response, what: string, sessionLost = false) => {
     throw await uploadRefusalFrom(res, what, { sessionLost });
@@ -252,7 +313,7 @@ export async function uploadResumable(
         retentionClass,
         totalBytes,
         partBytes: opts.partBytes ?? REEL_UPLOAD_PART_BYTES,
-        header: hexEncode(header),
+        ...(header ? { header: hexEncode(header) } : { encoding }),
       }),
       transport && { signal: transport.signal }
     );
@@ -296,7 +357,7 @@ export async function uploadResumable(
             mediaId: fact.mediaId,
             keyHex: state.keyHex,
             ivHex: state.ivHex,
-            encoding: SEGMENTED_MEDIA_ENCODING,
+            ...resultEncoding,
           };
         }
         if (!fact || fact.totalBytes !== totalBytes || fact.partBytes !== state.partBytes) {
@@ -329,7 +390,7 @@ export async function uploadResumable(
         if (received.has(i)) continue;
         const start = i * partBytes;
         const end = Math.min(totalBytes, start + partBytes);
-        const body = await sealBlobRange(plaintext, key, iv, start, end);
+        const body = await sealRange(start, end);
         const base = held;
         const res = await port.request(
           'PUT',
@@ -367,7 +428,7 @@ export async function uploadResumable(
             mediaId,
             keyHex: state.keyHex,
             ivHex: state.ivHex,
-            encoding: SEGMENTED_MEDIA_ENCODING,
+            ...resultEncoding,
           };
         }
         if (!sessionAnswered(res, 404, 409)) await answer(res, 'upload session complete failed');

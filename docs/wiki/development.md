@@ -543,6 +543,13 @@ toujours bun"* (2026-09-04), which covers the `.mjs` tooling as well.
 - **Formatting and linting are `oxfmt` + `oxlint`, never prettier.** A bare `npx prettier --write`
   finds no config here, silently applies its own defaults and rewrites whole files - it did, and
   shipped. Use each package's own `format` / `lint` script.
+- **`import/namespace` is OFF in the frontend (2026-11-07).** On the Paraglide barrel
+  (`$lib/paraglide/messages`, about 3000 generated modules re-exported from one `_index.js`) it
+  warned `"<key>" not found in imported namespace` for a DIFFERENT key on every run, every one of
+  them present: a resolution race in the rule, not a missing message. A warning that names a new
+  innocent each time is noise a reader learns to skip. Nothing is lost by turning it off:
+  `bun run check` (TypeScript) already refuses any `m.<key>` the namespace does not export, and
+  so does every other namespace import.
 
 ## shellcheck
 

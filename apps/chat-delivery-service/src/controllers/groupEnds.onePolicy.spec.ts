@@ -15,6 +15,7 @@ import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { SeatEviction } from '../entities/seat-eviction.entity';
+import { JoinAskPush } from '../entities/join-ask-push.entity';
 import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { PushToken } from '../entities/push-token.entity';
@@ -43,7 +44,7 @@ import { MessagingService } from '../services/messaging.service';
  */
 
 const SECRET = 'internal-secret-for-tests';
-const GROUP_ID = 'g-1';
+const GROUP_ID = '00000000-0000-4000-8000-00000000c0a2';
 
 /** The six tables a SOFT delete sweeps. `UserDismissedGroup` is deliberately not among them. */
 const SWEPT = [
@@ -56,6 +57,7 @@ const SWEPT = [
   GroupInvite,
   GroupMembershipInterval,
   SeatEviction,
+  JoinAskPush,
   RevokedDeviceGroup,
 ];
 

@@ -59,6 +59,12 @@ export type NativeMessageNotification = {
    */
   sentAt: number;
   /**
+   * The SERVER's acceptance of the same message in ms, 0 when the frame carried none. Handed to the
+   * shade's "mark as read" and quick reply, so the read mark they send lands on the clock the
+   * conversation is ordered by (readState.ts, owner 2026-10-31).
+   */
+  serverAt: number;
+  /**
    * HOW MANY INBOUND MESSAGES THIS ONE BANNER STANDS FOR: 1 for a live frame, N for a catch-up
    * flush, which raises a single banner for the last of N messages.
    *
@@ -67,6 +73,14 @@ export type NativeMessageNotification = {
    * answer up to N pushes, not one (Mi 9T, 2026-10-06: `messages=5`, three pushes, one answered).
    */
   covers: number;
+  /**
+   * WHETHER THE OPEN PROVED THE AUTHOR - a salon row under a Graine v2 session
+   * (`openChannelMessageProving`); false for anything else, and the native builder reads it for a
+   * salon only. The push trigger decides a salon banner's speaker from the same fact (its native
+   * open's `authorProven`), so both triggers of one message name the same speaker, or nobody,
+   * whichever arrives first (`ChannelBannerAuthor`, 2026-11-01).
+   */
+  authorProven: boolean;
 };
 
 /**
@@ -92,7 +106,9 @@ export async function postNativeMessageNotification(
       body: notification.body,
       mentionsMe: notification.mentionsMe,
       sentAt: notification.sentAt,
+      serverAt: notification.serverAt,
       covers: notification.covers,
+      authorProven: notification.authorProven,
     });
   } catch (e) {
     // NOT a fallback to the plain builder: reaching here means the one path failed, and the fix
@@ -108,9 +124,10 @@ export async function postNativeMessageNotification(
  * The conversation title a notification should carry, from the row the client already holds.
  *
  * EMPTY for a direct message, which is the server's own contract for `groupName` in a push - see
- * `push-payload.ts`. A CHANNEL is titled like a group here, where the push titles it in the banner
- * instead: its payload names no human sender, and this path does. The two converge on one
- * notification whichever arrives second, so the difference is a wording, not a duplicate.
+ * `push-payload.ts`. A CHANNEL is titled with the salon's name alone, where the push titles it
+ * `<Communaute> - #<salon>` (`buildChannelPushTitle`): the salon row carries no community name. The
+ * two converge on one notification whichever arrives second, its line and speaker one answer
+ * (`ChannelBannerAuthor`), so the difference is the title's wording, not a duplicate.
  *
  * `contactName` and `name` do NOT carry the same thing for every type: for a plain group they
  * agree, but every channel row builder (`useChannelWorkspaces.svelte.ts`) deliberately keeps

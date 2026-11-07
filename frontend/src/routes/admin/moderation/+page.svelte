@@ -22,6 +22,7 @@
   import ModerationChatLineBlock from '$lib/components/moderation/ModerationChatLineBlock.svelte';
   import type { LiveCutResult, LiveWithdrawalResult } from '$lib/live/types';
   import { liveStateLabels } from '$lib/moderation/liveState';
+  import { describeModerationRefusal } from '$lib/moderation/moderationRefusal';
   import { createLatestOnly } from '$lib/utils/latestOnly';
   import {
     listReports,
@@ -246,7 +247,7 @@
       if (tab === 'hidden') void loadHidden();
     } catch (e) {
       Log.d('admin.moderation.handleHidePost failed', e);
-      error = m.moderation_hide_error();
+      error = describeModerationRefusal(e) ?? m.moderation_hide_error();
       processingId = null;
     }
   }
@@ -268,7 +269,7 @@
       hiddenPosts = hiddenPosts.filter((p) => p.id !== report.contentId);
     } catch (e) {
       Log.d('admin.moderation.handleDeletePost failed', e);
-      error = m.moderation_delete_error();
+      error = describeModerationRefusal(e) ?? m.moderation_delete_error();
       processingId = null;
     }
   }
@@ -289,7 +290,7 @@
       await handleReview(report.id, 'reviewed');
     } catch (e) {
       Log.d('admin.moderation.handleDeleteComment failed', e);
-      error = m.moderation_delete_comment_error();
+      error = describeModerationRefusal(e) ?? m.moderation_delete_comment_error();
       processingId = null;
     }
   }
@@ -314,7 +315,7 @@
       hiddenPosts = hiddenPosts.filter((p) => p.id !== postId);
     } catch (e) {
       Log.d('admin.moderation.handleRestore failed', e);
-      error = m.moderation_restore_error();
+      error = describeModerationRefusal(e) ?? m.moderation_restore_error();
     } finally {
       processingId = null;
     }
@@ -327,7 +328,7 @@
       hiddenPosts = hiddenPosts.filter((p) => p.id !== postId);
     } catch (e) {
       Log.d('admin.moderation.handleDeleteHidden failed', e);
-      error = m.moderation_delete_error();
+      error = describeModerationRefusal(e) ?? m.moderation_delete_error();
     } finally {
       processingId = null;
     }
@@ -540,6 +541,7 @@
                 onCut={handleLiveCut}
                 onWithdrawn={handleLiveWithdrawn}
                 onStale={() => void loadReports()}
+                mayActOnBroadcaster={report.canMuteReportedUser === true}
               />
             {/if}
 
@@ -643,18 +645,25 @@
                 </button>
               </div>
               <div class="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onclick={() =>
-                    openMuteDialog(report.reporterId, displayNameFor(report.reporterId), report.id)}
-                  disabled={processingId === report.id}
-                  class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-orange-400 hover:text-orange-600 disabled:opacity-40"
-                  title={m.moderation_mute_reporter_hint()}
-                >
-                  <UserX size={13} />
-                  {m.moderation_muter_signaleur()}
-                </button>
-                {#if report.reportedUserId}
+                <!-- A BDE moderator mutes the people of its own spaces only (2026-11-02). -->
+                {#if report.canMuteReporter === true}
+                  <button
+                    type="button"
+                    onclick={() =>
+                      openMuteDialog(
+                        report.reporterId,
+                        displayNameFor(report.reporterId),
+                        report.id
+                      )}
+                    disabled={processingId === report.id}
+                    class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-orange-400 hover:text-orange-600 disabled:opacity-40"
+                    title={m.moderation_mute_reporter_hint()}
+                  >
+                    <UserX size={13} />
+                    {m.moderation_muter_signaleur()}
+                  </button>
+                {/if}
+                {#if report.reportedUserId && report.canMuteReportedUser === true}
                   <button
                     type="button"
                     onclick={() =>

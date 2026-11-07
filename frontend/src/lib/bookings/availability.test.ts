@@ -8,6 +8,8 @@ import {
   timeChoices,
   toStoredLines,
   type EditorLine,
+  displayTime,
+  timeOptions,
 } from './availability';
 
 const weekly = (weekday: number, start: string, end: string): EditorLine =>
@@ -99,6 +101,21 @@ describe('problems', () => {
 
   it('counts dates across a leap day', () => {
     expect(nextDate('2028-02-28')).toBe('2028-02-29');
+  });
+});
+
+describe('the reading of a stored time', () => {
+  it('reads the stored end of a day as 00:00', () => {
+    expect(displayTime('24:00')).toBe('00:00');
+    expect(displayTime('22:30')).toBe('22:30');
+  });
+
+  it('labels the end-of-day option apart from a start, and keeps its stored value', () => {
+    const end = timeOptions(720, true, '');
+    expect(end.map((o) => o.value)).toEqual(['00:00', '12:00', '24:00']);
+    expect(end[2].label).toContain('00:00');
+    expect(end[2].label).not.toBe(end[0].label);
+    expect(timeOptions(720, false, '').every((o) => o.label === o.value)).toBe(true);
   });
 });
 

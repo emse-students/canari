@@ -22,6 +22,7 @@ const confirmAnswer = vi.hoisted(() => ({ value: true, asked: [] as string[] }))
 vi.mock('$lib/minesweeper/api', () => ({
   fetchMinesweeperLeaderboard: api.leaderboard,
   fetchMinesweeperBans: api.bans,
+  fetchMinesweeperStats: vi.fn(),
   removeMinesweeperScore: api.remove,
   banMinesweeperUser: api.ban,
   unbanMinesweeperUser: api.unban,
@@ -51,7 +52,7 @@ const ENTRIES = [
     displayName: 'Alice',
     durationMs: 41000,
     moveCount: 90,
-    verifiedAt: '',
+    verifiedAt: '2026-10-01T10:00:00Z',
   },
   {
     scoreId: 's2',
@@ -60,7 +61,7 @@ const ENTRIES = [
     displayName: 'Bob',
     durationMs: 52000,
     moveCount: 95,
-    verifiedAt: '',
+    verifiedAt: '2026-10-01T10:00:00Z',
   },
 ];
 const BANS = [
@@ -77,7 +78,7 @@ beforeEach(() => {
   admin.value = true;
   confirmAnswer.value = true;
   confirmAnswer.asked = [];
-  api.leaderboard.mockResolvedValue(ENTRIES);
+  api.leaderboard.mockResolvedValue({ entries: ENTRIES, total: ENTRIES.length });
   api.bans.mockResolvedValue(BANS);
   for (const fn of [api.remove, api.ban, api.unban]) fn.mockReset().mockResolvedValue(undefined);
   vi.spyOn(console, 'warn').mockImplementation(() => {});

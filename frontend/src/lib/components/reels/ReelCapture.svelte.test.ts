@@ -23,6 +23,14 @@ import { toastStore } from '$lib/stores/toast.svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import { giveMediaStreamGetTracks } from '$lib/reels/mediaStreamTracks.test-helper';
 
+// The microphone hold (`audioSession.ts`, pinned by `audioSession.test.ts`) is passed through: this
+// file's fake streams pin what is ASKED, not the session type.
+vi.mock('$lib/utils/audioSession', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/audioSession')>()),
+  captureUserMedia: (devices: MediaDevices, constraints: MediaStreamConstraints) =>
+    devices.getUserMedia(constraints),
+}));
+
 giveMediaStreamGetTracks();
 
 // The publish step fades in, and a test closes it mid-fade.
@@ -116,6 +124,7 @@ beforeEach(() => {
   vi.mocked(pushHistoryOverlay).mockClear();
   getReelLimits.mockResolvedValue({
     maxDurationMs: 90_000,
+    chatMaxDurationMs: 60_000,
     retentionDays: 30,
     warningWindowDays: 7,
   });
@@ -182,7 +191,12 @@ describe('ReelCapture', () => {
     getReelLimits.mockReturnValue(new Promise((r) => (answer = r)));
     const { shutter } = await render();
     expect(shutter().disabled).toBe(true);
-    answer({ maxDurationMs: 90_000, retentionDays: 30, warningWindowDays: 7 });
+    answer({
+      maxDurationMs: 90_000,
+      chatMaxDurationMs: 60_000,
+      retentionDays: 30,
+      warningWindowDays: 7,
+    });
     await settle();
     expect(shutter().disabled).toBe(false);
   });
@@ -748,6 +762,50 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
     expect(framed.photo).not.toHaveBeenCalled();
   });
 
+  for (const [where, extra, capMs] of [
+    [
+      'a chat',
+      { destination: 'chat', chatFilms: true, oncapture: vi.fn(), onclose: vi.fn() },
+      60_000,
+    ],
+    ['the feed', {}, 90_000],
+  ] as const) {
+    it(`arms the take's limit at ${capMs / 1000} s in ${where} (the server's cap for it)`, async () => {
+      const { pointer } = await render(extra);
+      pointer('pointerdown', 1000);
+      vi.advanceTimersByTime(SHUTTER_HOLD_THRESHOLD_MS);
+      await settle();
+      const recorder = Recorder.instances[0];
+      expect(recorder.state).toBe('recording');
+      vi.advanceTimersByTime(capMs - 1);
+      await settle();
+      expect(recorder.stop).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      await settle();
+      expect(recorder.stop).toHaveBeenCalledTimes(1);
+    });
+  }
+
+  it('a chat camera that may film does NOT film when the server serves no chat cap: said, never the 90 s cap', async () => {
+    getReelLimits.mockResolvedValue({
+      maxDurationMs: 90_000,
+      retentionDays: 30,
+      warningWindowDays: 7,
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { target, hold } = await render({
+      destination: 'chat',
+      chatFilms: true,
+      oncapture: vi.fn(),
+      onclose: vi.fn(),
+    });
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('no chat cap'));
+    expect(target.querySelector('[data-reel-limits-fault="refused"]')).not.toBeNull();
+    await hold();
+    expect(Recorder.instances).toHaveLength(0);
+    error.mockRestore();
+  });
+
   it('a film in a chat that may film is offered as "Send" - the gesture that queues it at once (RC-5)', async () => {
     const oncapture = vi.fn();
     const { target, hold } = await render({
@@ -795,7 +853,9 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
     expect(vi.mocked(pushHistoryOverlay)).toHaveBeenCalledTimes(1);
     const takeClose = vi.mocked(pushHistoryOverlay).mock.calls[0][0];
 
-    // Back #1 asks; Back #2 closes the camera (its owner unmounts it) while the question is up.
+    // Back #1 asks. The question holds its own history entry (ConfirmDialog -> ModalOverlay), so
+    // Back #2 closes the QUESTION and never reaches the camera; here the camera is unmounted while
+    // the question is up (its owner closes it, the X, a navigation), the shape this pins.
     takeClose('back');
     await settle();
     unmount(mounted.pop()!);
@@ -987,8 +1047,7 @@ describe('one camera, one behaviour (user, 2026-10-19): a video filmed from the 
       oncapture,
       onpublished,
       onclose,
-      composerCaption: 'hello',
-      composerIdentity: '',
+      composerStart: { caption: 'hello', identity: '', studentsOnly: false },
     });
 
     expect(tab.sheet).not.toBeNull();

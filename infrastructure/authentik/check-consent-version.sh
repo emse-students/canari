@@ -19,7 +19,7 @@ test_file="$here/test-consent-flow.py"
 
 policy="$(grep -oE 'get\("cgu_version"\) != "[0-9]{4}-[0-9]{2}-[0-9]{2}"' "$blueprint" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)"
 prompt="$(awk '/name: "miconnect-consent-prompt-version"/ {found=1} found && /initial_value:/ {gsub(/[" ]/, "", $2); print $2; exit}' "$blueprint")"
-updated="$(grep -oE 'updated="[0-9]{2}/[0-9]{2}/[0-9]{4}"' "$page" | head -1 | grep -oE '[0-9/]{10}' || true)"
+updated="$(grep -oE 'updated="[0-9]{2}/[0-9]{2}/[0-9]{4}"' "$page" | sed -n 1p | grep -oE '[0-9/]{10}' || true)"
 expected="$(grep -oE '^VERSION = "[0-9-]+"' "$test_file" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)"
 
 if [ -z "$policy" ] || [ -z "$prompt" ] || [ -z "$updated" ] || [ -z "$expected" ]; then

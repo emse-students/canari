@@ -295,7 +295,7 @@ describe('the generic ring alert of an iPhone with no VoIP token is filed, not o
     );
     expect(body).not.toMatch(/content\.(title|body|subtitle) =/);
     expect(body).toContain('content.threadIdentifier = groupId');
-    expect(body).toContain('"fr.emse.canari://chat/\\(groupId)"');
+    expect(body).toContain('Self.chatLink(groupId)');
     expect(body).not.toContain('acceptCall');
     expect(body).toContain('.timeSensitive');
     expect(body).toContain('content.userInfo["canariCallId"] = callId');
@@ -314,7 +314,7 @@ describe('the generic ring alert of an iPhone with no VoIP token is filed, not o
 
   it('app activation clears the banner too: its deep link is the chat prefix the sweep matches', () => {
     expect(pushMm).toContain('[deepLink hasPrefix:@"fr.emse.canari://chat"]');
-    expect(nse).toContain('content.userInfo["deepLink"] = "fr.emse.canari://chat/');
+    expect(nse).toContain('"fr.emse.canari://chat/\\(prefix)\\(id)"');
   });
 });
 
@@ -356,7 +356,9 @@ describe('what the calls switches must never take with them', () => {
   });
 
   it('keeps the ring channels declared, so a revival needs no notification-settings migration', () => {
-    expect(pushService).toMatch(/CHANNEL_CALLS\s*=\s*"canari_calls"/);
+    expect(pushService).toMatch(
+      /CHANNEL_CALLS\s*=\s*fr\.emse\.canari\.call\.IncomingRing\.CHANNEL_ID/
+    );
     expect(pushService).toMatch(/CHANNEL_MENTIONS\s*=\s*"canari_mentions_v2"/);
   });
 
@@ -366,5 +368,15 @@ describe('what the calls switches must never take with them', () => {
     expect(pushService).toContain('showIncomingCallNotification: calls disabled');
     expect(pushMm).toContain('calls disabled - not reporting incoming call');
     expect(pushMm).toMatch(/if \(kCanariCallsEnabled\) \{\s*CanariCallKitSetup\(\);/);
+  });
+});
+
+describe('B2: the native ring announces what the build can carry', () => {
+  it('a build with the native ring carries video, so a video ring is never answered as audio', () => {
+    // The VoIP push and the FCM `call_ring` carry the call's media kind (`hasVideo`) to CallKit and
+    // the Android notification. A build that rings with no video would announce a call it then
+    // answers without a camera: the ring compiled implies `CALLS_VIDEO_ENABLED`. (The server's
+    // `calls_mode` refusal of a video ring is a second guard, not this one.)
+    if (RING) expect(VIDEO).toBe(true);
   });
 });

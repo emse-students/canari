@@ -3,7 +3,39 @@
  * announcement that carries a like given in the reel viewer to the cards on screen.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { onPostReactions, publishPostReactions, toggledReactions } from './postReaction';
+import {
+  onPostReactions,
+  publishPostReactions,
+  sendPostReaction,
+  toggledReactions,
+} from './postReaction';
+import { addReaction, removeReaction } from '$lib/posts/api';
+
+vi.mock('$lib/posts/api', () => ({ addReaction: vi.fn(), removeReaction: vi.fn() }));
+vi.mock('$lib/moderation/muteCheck', () => ({
+  assertNotMuted: vi.fn(() => Promise.resolve()),
+  cachedMuteStatus: vi.fn(() => null),
+}));
+
+describe('sendPostReaction', () => {
+  it("hands back the server's tally with its map, so no caller keeps a stale one", async () => {
+    vi.mocked(addReaction).mockResolvedValue({
+      ok: true,
+      reactions: { reader: "J'aime" },
+      otherReactionCounts: { "J'aime": 4 },
+    });
+    expect(await sendPostReaction('p1', "J'aime", false)).toEqual({
+      reactions: { reader: "J'aime" },
+      otherReactionCounts: { "J'aime": 4 },
+    });
+    // Taken back: the answer's tally - or its absence, for a reader nothing is withheld from.
+    vi.mocked(removeReaction).mockResolvedValue({ ok: true, reactions: {} });
+    expect(await sendPostReaction('p1', "J'aime", true)).toEqual({
+      reactions: {},
+      otherReactionCounts: undefined,
+    });
+  });
+});
 
 describe('toggledReactions', () => {
   it('adds a reaction, replaces another, and takes the same one back', () => {
@@ -35,12 +67,15 @@ describe('publishPostReactions', () => {
     const stop = onPostReactions('p1', mine);
     onPostReactions('p2', other);
 
-    publishPostReactions('p1', { a: "J'aime" });
-    expect(mine).toHaveBeenCalledWith({ a: "J'aime" });
+    publishPostReactions('p1', { reactions: { a: "J'aime" }, otherReactionCounts: { Bravo: 2 } });
+    expect(mine).toHaveBeenCalledWith({
+      reactions: { a: "J'aime" },
+      otherReactionCounts: { Bravo: 2 },
+    });
     expect(other).not.toHaveBeenCalled();
 
     stop();
-    publishPostReactions('p1', {});
+    publishPostReactions('p1', { reactions: {} });
     expect(mine).toHaveBeenCalledTimes(1);
   });
 
@@ -52,7 +87,7 @@ describe('publishPostReactions', () => {
     });
     const b = onPostReactions('p3', after);
 
-    publishPostReactions('p3', { a: "J'aime" });
+    publishPostReactions('p3', { reactions: { a: "J'aime" } });
 
     expect(after).toHaveBeenCalledTimes(1);
     expect(error).toHaveBeenCalledTimes(1);

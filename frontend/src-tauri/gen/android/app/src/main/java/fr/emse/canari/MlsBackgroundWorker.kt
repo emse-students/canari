@@ -15,9 +15,9 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
     companion object {
         const val TAG = "CanariWorker"
         /** ID of the foreground notification shown when the worker runs in expedited mode. */
-        private const val FOREGROUND_NOTIF_ID = 9998
+        private const val FOREGROUND_NOTIF_ID = fr.emse.canari.push.FixedNotifIds.PENDING_SYNC
         /** ID of the "open the app" notification shown after 3 consecutive failures. */
-        private const val FAILURE_NOTIF_ID = 9997
+        private const val FAILURE_NOTIF_ID = fr.emse.canari.push.FixedNotifIds.BACKGROUND_FAILURE
 
         const val PREFS_WORKER = "canari_worker_prefs"
         const val KEY_FAILED   = "mls_bg_failed"

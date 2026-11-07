@@ -24,7 +24,7 @@ import {
 import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { createPkcePair } from '$lib/utils/pkce';
 import { getAppVersionCheck } from '$lib/stores/appVersionCheck.svelte';
-import { invoke, isTauri } from '@tauri-apps/api/core';
+import { isTauri } from '@tauri-apps/api/core';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
@@ -38,7 +38,7 @@ import { eraseAccountShortcuts } from '$lib/sharing/shareTargetsNative';
 import { eraseIncomingShare } from '$lib/mobile/incomingShareSignOut';
 import { endPushRegistration } from '$lib/services/PushNotificationService';
 import { getClientAppVersion, isMobileTauriRuntime } from '$lib/utils/appVersion';
-import { customTabsCommand } from '$lib/services/customTabsCommands';
+import { openCustomTab, type CustomTabOutcome } from '$lib/services/customTabsCommands';
 import {
   clearRestoreKey,
   forgetRestoreKeyRegistrations,
@@ -47,13 +47,19 @@ import {
 import { clearPersistedPendingAcks } from '$lib/mls-client/ackRetry';
 import { forgetPinSaltAhead } from '$lib/composables/session/pinSaltAhead';
 import { connectivity } from '$lib/stores/connectivity.svelte';
-import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
+import {
+  isTransportFailure,
+  RefreshFailedError,
+  TransientAnswerError,
+  TransportFailureError,
+} from '$lib/utils/transportFailure';
 import { DEADLINE_MS, RequestDeadlineError } from '$lib/utils/requestDeadline';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { flushAndroidCookies } from '$lib/utils/androidCookies';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
-import { refusalOrigin } from '$lib/utils/apiJson';
+import { readApiJson, refusalOrigin, responseOrigin } from '$lib/utils/apiJson';
 import { revokedDeviceOfRefusal, type RevokedDeviceIdentity } from '$lib/utils/refusalCodes';
+import { setAvatarToken } from '$lib/utils/avatarUrl';
 import {
   REFRESH_HEADER,
   clearNativeRefreshToken,
@@ -236,6 +242,22 @@ async function readRefusalBody(res: Response): Promise<unknown> {
 }
 
 /**
+ * The `code` of a coded refusal body (`{ code, message }`, core-service's `MAINTENANCE`) and, for a
+ * maintenance, the operator's own text (`maintenanceMessage`, null when none was set). Read as
+ * FIELDS, so the boot screen names a maintenance without matching the message's words.
+ */
+function codedRefusalOf(body: unknown): { code: string | null; maintenanceMessage: string | null } {
+  if (!body || typeof body !== 'object') return { code: null, maintenanceMessage: null };
+  const { code, maintenanceMessage } = body as { code?: unknown; maintenanceMessage?: unknown };
+  const named = typeof code === 'string' && code ? code : null;
+  const operatorText =
+    named === 'MAINTENANCE' && typeof maintenanceMessage === 'string' && maintenanceMessage.trim()
+      ? maintenanceMessage
+      : null;
+  return { code: named, maintenanceMessage: operatorText };
+}
+
+/**
  * Thrown when the HttpOnly refresh cookie has expired or been revoked (HTTP 401).
  * Callers must distinguish this from transient network errors to avoid retrying
  * a definitively dead session.
@@ -291,27 +313,12 @@ export class SignOutInProgressError extends Error {
 }
 
 /**
- * The refresh endpoint ANSWERED, and the answer was not a verdict on the session.
- *
- * THE MIRROR OF {@link SessionExpiredError}, and the pair is the whole point: `_doRefresh` is
- * careful that only 401/403 prove the cookie dead, because a 502 while the backend restarts during
- * a deploy is a hiccup and logging the user out for it costs a full OIDC round trip. That care was
- * spent at the throw and then lost one frame later - the other half arrived as a bare
- * `new Error('Token refresh failed (HTTP 502)')`, and every caller that wanted to know which of
- * the two it held had to read the sentence and find the digits in it.
- *
- * So the status travels as a FIELD. Reaching this variant at all means the server is there and
- * unhappy, which makes it transient by construction - a caller with a retry ladder should climb it.
+ * The refresh endpoint ANSWERED with no token: {@link RefreshFailedError} (an app-origin 4xx, a
+ * verdict on the request) and its subclass {@link TransientAnswerError} (a 5xx, 408, 429 or an edge's
+ * answer - no verdict). Defined in `transportFailure.ts` so the boot reads them without this store;
+ * re-exported here, where every caller has always imported them.
  */
-export class RefreshFailedError extends Error {
-  constructor(
-    /** The HTTP status the refresh endpoint answered with. Never 401 or 403 - those are the sibling. */
-    readonly status: number
-  ) {
-    super(`Token refresh failed (HTTP ${status})`);
-    this.name = 'RefreshFailedError';
-  }
-}
+export { RefreshFailedError, TransientAnswerError };
 
 const alog = (msg: string) => console.log('[A] ' + msg);
 const awarn = (msg: string) => console.warn('[A] ' + msg);
@@ -508,14 +515,25 @@ export type OidcLoginOptions = {
 };
 
 /**
+ * How a started sign-in left the page: `navigating` (web and desktop - the document is on its way
+ * to MiConnect), or the in-app browser's own outcome on a phone ({@link CustomTabOutcome}). Only
+ * `cancelled` hands the form back: every other value is followed by a navigation, a deep link or
+ * the app's foreground edge.
+ */
+export type OidcLoginStart = 'navigating' | CustomTabOutcome;
+
+/**
  * Redirect the user to Authentik's authorize endpoint.
  * After login, Authentik will redirect back to `/auth/callback`.
  * When `flowSlug` is set, the user is sent through `/if/flow/{slug}/` first.
+ *
+ * On a phone it resolves when the in-app browser ENDS (iOS: when its sheet goes away), so the
+ * caller learns of a sheet the user closed - see {@link OidcLoginStart}.
  */
 export async function startOidcLogin(
   returnTo = '/chat',
   options?: OidcLoginOptions
-): Promise<void> {
+): Promise<OidcLoginStart> {
   const baseUrl = authentikUrl();
   const clientId = authentikClientId();
   if (!baseUrl || !clientId) {
@@ -580,11 +598,16 @@ export async function startOidcLogin(
   // through the same deep link. A plain system-browser launch (openUrl), used before this
   // plugin existed, left the tab/window open afterward with nothing able to dismiss it from
   // either side, which read as "the login failed".
+  //
+  // THE ANSWER IS THE BROWSER'S END, NOT ITS OPENING (2026-11-04): on iOS a sheet the user closed
+  // raises no visibility, focus or foreground edge, so the page can only learn it from here.
   if (isMobileTauriRuntime()) {
-    await invoke(customTabsCommand('openCustomTab'), { url: authUrl });
-  } else {
-    window.location.href = authUrl;
+    const outcome = await openCustomTab(authUrl);
+    alog(`login: in-app browser ended (${outcome})`);
+    return outcome;
   }
+  window.location.href = authUrl;
+  return 'navigating';
 }
 
 /**
@@ -763,6 +786,8 @@ async function handleOidcCallbackUnderway(
 export interface SignedInSession {
   access_token: string;
   refresh_token?: string;
+  /** The viewer-bound token every avatar URL carries as `?t=` (`avatarUrl.ts`). */
+  avatar_token?: string;
   /** MiConnect's id_token, kept for ONE use: the `id_token_hint` of the sign-out. */
   id_token?: string;
   user: {
@@ -798,6 +823,8 @@ async function adoptSignedInSession(
   // identity is about somebody who is no longer here.
   clearIdentitySplit();
   _accessToken = data.access_token;
+  // The avatar token of the session just minted (`avatarUrl.ts`); absent on an estate minting none.
+  setAvatarToken(data.avatar_token);
   // The first credential of this session. On a cookie platform it arrived as a `Set-Cookie` and
   // there is nothing to do; where the cookie cannot live, this response body is the ONLY copy that
   // will ever exist, so losing it here costs the user a fresh login at the next launch.
@@ -970,14 +997,16 @@ export async function leaveSignedOut(): Promise<void> {
     window.location.href = plan.url;
     return;
   } else {
-    try {
-      await invoke(customTabsCommand('openCustomTab'), { url: plan.url });
-      alog('signout→MiConnect end-session (in-app browser)');
-    } catch (e) {
-      awarn(
-        `signout: MiConnect end-session could not open (${String(e)}) - its session is NOT ended`
-      );
-    }
+    // NOT awaited: the plugin answers when the sheet goes away (iOS), and the app goes to /login
+    // behind it at once, as it always did - the outcome is only logged.
+    alog('signout→MiConnect end-session (in-app browser)');
+    void openCustomTab(plan.url).then(
+      (outcome) => alog(`signout: MiConnect end-session browser ended (${outcome})`),
+      (e: unknown) =>
+        awarn(
+          `signout: MiConnect end-session could not open (${String(e)}) - its session is NOT ended`
+        )
+    );
   }
   await goto(loginPath, { replace: true });
 }
@@ -1178,28 +1207,60 @@ async function _doRefresh(fetchImpl: typeof fetch, why?: string): Promise<string
     _accessToken = null;
     clearWsSessionCookie();
     awarn(`refresh✗${res.status} ${Date.now() - t0}ms`);
-    // Only 401/403 prove the refresh cookie is dead. Any other status (e.g. 502/503
-    // while the backend restarts during a deploy) is transient: throwing
+    // Only 401/403 prove the refresh cookie is dead. No other status does (a 502/503
+    // while the backend restarts during a deploy is transient): throwing
     // SessionExpiredError there would force a logout + cookie revocation for a hiccup.
     // ...and only when core-service SAID it: an edge's HTML 403 (a WAF ban page, a portal) is a
     // verdict on the network path, never on the credential, so it is transient like a 5xx. Read
     // from Nest's error envelope, not the header alone: an edge can answer in JSON too.
-    if ((res.status === 401 || res.status === 403) && (await refusalOrigin(res)) === 'gateway') {
+    const origin = await refusalOrigin(res);
+    if ((res.status === 401 || res.status === 403) && origin === 'gateway') {
       // The proof, latched: only a new credential can change this answer. WHY it is dead is latched
       // with it, from the refusal's CODE and the device it NAMES - the one cause a device answers
       // with a full reset, and only when the device named is itself.
       const revoked = revokedDeviceOfRefusal(await readRefusalBody(res));
       _refreshCredentialProvenDead = true;
       _sessionEndedByDeviceRevocation = revoked;
+      // The session is PROVEN gone, so the server refuses its avatar token too - drop it. A transport
+      // failure above keeps it: the session may well be alive, and its token with it.
+      setAvatarToken(null);
       noteSessionAnswered(null);
       // AFTER both latches: the reaction reads the cause from them.
       notifySessionExpired();
       throw revoked ? new SessionEndedByDeviceRevocationError(revoked) : new SessionExpiredError();
     }
+    // NOT A VERDICT, typed at the throw (`TransientAnswerError`): a 5xx (core-service's 503
+    // `MAINTENANCE` among them, its code carried), a 408 or 429, or any answer the edge wrote. An
+    // app-origin 4xx left is a verdict on the REQUEST (a 404 or 410 in Nest's envelope) that no retry
+    // changes: the plain base, which closes the boot's session question.
+    if (res.status >= 500 || res.status === 408 || res.status === 429 || origin === 'edge') {
+      // The code is read for the boot screen's WORDING only, so the JSON content type suffices: the
+      // 503 `MAINTENANCE` body (`{ code, message }`) is outside the shared contract, and
+      // `refusalOrigin` - built for destructive readings - calls it the edge's.
+      const coded =
+        responseOrigin(res) === 'gateway'
+          ? codedRefusalOf(await readRefusalBody(res))
+          : { code: null, maintenanceMessage: null };
+      throw new TransientAnswerError(res.status, coded.code, coded.maintenanceMessage);
+    }
+    awarn(
+      `refresh✗${res.status} is the app's own refusal of the request - a verdict, not on the session`
+    );
     throw new RefreshFailedError(res.status);
   }
 
-  const data = (await res.json()) as { access_token: string; refresh_token?: string };
+  // A 2xx that is not the API's JSON (a captive portal's `200 text/html`) is NO ANSWER: typed at the
+  // throw as `NotFromApiError`, a transport failure, so the boot says "cannot reach" instead of
+  // sending the user to login on a `SyntaxError`.
+  let data: { access_token: string; refresh_token?: string; avatar_token?: string };
+  try {
+    data = (await readApiJson(res, 'POST /api/auth/refresh')) as typeof data;
+  } catch (e) {
+    _accessToken = null;
+    clearWsSessionCookie();
+    awarn(`refresh✗not the API ${Date.now() - t0}ms: ${String(e)}`);
+    throw e;
+  }
   // The body is read across an await too.
   const droppedBody = supersededBySignOut('answer');
   if (droppedBody) throw droppedBody;
@@ -1218,9 +1279,12 @@ async function _doRefresh(fetchImpl: typeof fetch, why?: string): Promise<string
   if (identityOk) {
     _accessToken = data.access_token;
     setWsSessionCookie(data.access_token);
+    // The avatar token rides with the access token, minted for the same session (`avatarUrl.ts`).
+    setAvatarToken(data.avatar_token);
   } else {
     _accessToken = null;
     clearWsSessionCookie();
+    setAvatarToken(null);
   }
   // The credential ROTATED. Where we carry it ourselves, the new value must be on disk before this
   // function returns: the server will refuse the old one from now on, and 60 s later will read it as
@@ -1388,6 +1452,7 @@ async function clearAuthUnderway(options: { revokeServerSession: boolean }): Pro
   // by `_signOutGeneration` above: no refresh is sent now, and none in flight applies its answer.
   clearUserLocally();
   _accessToken = null;
+  setAvatarToken(null);
   noteSessionAnswered(null);
   clearWsSessionCookie();
   clearIdentitySplit();

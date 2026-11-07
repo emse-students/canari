@@ -35,6 +35,7 @@ import {
   MlsStateVerdictError,
   sealMlsStateBlobV2,
 } from './mlsStateSeal';
+import { MlsStateLoadUntypedError } from './mlsStateLoadError';
 
 function wasmMagicResponse(): Response {
   const buf = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
@@ -262,6 +263,44 @@ describe('loadAndInitWasm', () => {
     await expect(loadAndInitWasm('u', 'd', undefined, 'p', true)).rejects.toThrow(
       /signature incorrecte/
     );
+  });
+
+  // `mls-core` rejects the construction with `{ code, message }` (`StateLoadRefusal`), and the
+  // loader types it AT THE BOUNDARY - for legacy and v1 blobs this is the only verdict path.
+  it.each([
+    'STATE_ALTERED',
+    'STATE_KEY_MISMATCH',
+    'STATE_UNDECRYPTABLE',
+    'IDENTITY_MISMATCH',
+  ] as const)(
+    'types a construction refused with the code %s as MlsStateVerdictError',
+    async (code) => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
+      WasmMlsClient.mockImplementationOnce(function refused() {
+        // The real shape: the code is the field, the message its detail alone (`StateLoadRefusal`).
+        throw { code, message: 'from mls-core' };
+      });
+      const error = await loadAndInitWasm('u', 'd', new Uint8Array([1, 2, 3]), 'k', true).catch(
+        (e: unknown) => e
+      );
+      expect(error).toBeInstanceOf(MlsStateVerdictError);
+      expect((error as MlsStateVerdictError).code).toBe(code);
+      expect((error as Error).message).toBe(`${code}: from mls-core`);
+    }
+  );
+
+  it('a construction refused WITHOUT a code is untyped, even when its message names one', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
+    WasmMlsClient.mockImplementationOnce(function refused() {
+      throw { code: null, message: 'STATE_ALTERED appears in this text and proves nothing' };
+    });
+    const error = await loadAndInitWasm('u', 'd', new Uint8Array([1, 2, 3]), 'k', true).catch(
+      (e: unknown) => e
+    );
+    expect(error).toBeInstanceOf(MlsStateLoadUntypedError);
+    expect(error).not.toBeInstanceOf(MlsStateVerdictError);
+    // Typed from the contract's own null code, not caught as a malformed rejection.
+    expect((error as Error).message).toBe('STATE_ALTERED appears in this text and proves nothing');
   });
 });
 

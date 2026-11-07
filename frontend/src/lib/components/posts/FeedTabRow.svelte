@@ -9,9 +9,13 @@
    * full view (`centredTabScrollLeft`); the icon never wraps, shrinks
    * or leaves the row. The scroller's vertical padding keeps the pills' 44 px touch target inside
    * it, since a horizontal scroller clips both axes. What a tab tap does is the feed page's.
+   *
+   * What each tab shows is explained by the first-use hint `hint-feed-tabs` (it replaced the (i)
+   * button of #2857, owner 2026-11-03): every tab marks itself `posts.tab.<feed>` for it.
    */
   import { untrack } from 'svelte';
   import { scrollFades } from '$lib/actions/scrollFades';
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import ReelsEntryButton from './ReelsEntryButton.svelte';
   import type { PostFeed } from '$lib/posts/api';
   import { centredTabScrollLeft } from '$lib/posts/feedTabScroll';
@@ -84,7 +88,7 @@
 
   // THE SELECTED TAB IS IN VIEW, on arrival, on every selection, and whenever the row's layout
   // changes under it - a resize, or the web font arriving after the first layout was measured with
-  // the fallback's widths: at 2x text the row overflows and "Tout" sat under the faded edge by the
+  // the fallback's widths: at 2x text the row overflows and the tab then called "Tout" sat under the faded edge by the
   // CanaReels icon (`centredTabScrollLeft`).
   $effect(() => {
     const selected = feed;
@@ -159,6 +163,7 @@
         <button
           type="button"
           data-feed-tab={tab.feed}
+          use:guideAnchor={`posts.tab.${tab.feed}`}
           onclick={() => onFeed(tab.feed)}
           aria-pressed={feed === tab.feed}
           class="tap-target relative flex-1 shrink-0 rounded-full px-3.5 text-sm whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:outline-none {feed ===

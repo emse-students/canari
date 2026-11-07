@@ -66,6 +66,12 @@ export interface ReelClip {
    * tile (Mi 9T, v1.2.9-alpha.1). `null` when the still could not be taken (logged).
    */
   poster?: Blob | null;
+  /**
+   * The take's length in ms when it is KNOWN: the clock of a filmed take, the container's of a gallery
+   * pick (absent when the engine cannot say). "Envoyer a..." reads it to refuse a chat send over the
+   * chat cap before anything is queued; absent means unknown, and the outbox still refuses a long one.
+   */
+  durationMs?: number;
 }
 
 /** Where a capture stands. */

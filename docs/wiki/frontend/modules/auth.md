@@ -103,8 +103,8 @@ bundle that wires its handler, and there is no interval in which it is visible b
 | Phase | What it does |
 |---|---|
 | `setup_handler` | registers the inbound pipeline, so nothing can arrive unhandled |
-| `open_gateway` | `openGatewayConnection` ADOPTS a socket that has been opening since before `setup_handler` |
-| `load_conversations` | the archive replay out of the local store, one conversation at a time |
+| `open_gateway` | `openGatewayConnection` ADOPTS a socket that has been opening since before `setup_handler`; its pull waits for the rows ([below](#and-since-2026-11-06-nothing-is-handled-before-the-conversation-rows-exist)) |
+| `load_conversations` | seeds every conversation row (which issues the boot pull and replays the held frames), then the archive replay out of the local store, one conversation at a time |
 | `fcm_cache` | merges what a background notification decrypted while the app was dead |
 | `initialize_connection` | `syncConnectionAfterWsOpen` - KeyPackages, the group sweep, reconciliation |
 
@@ -156,6 +156,52 @@ The gate lives on the base class, so both sockets pass it, and the per-frame rou
 to `routeFrame` on each platform so that a held frame and a live one take literally the same path.
 Behaviour is in `BaseMlsService.inboundGate.test.ts` and `startGatewayHandshake.test.ts`; the boot
 ORDER, which no behavioural test can see, is in six source guards in `offlineUnlock.test.ts`.
+
+### And since 2026-11-06 nothing is handled before the conversation rows exist
+
+**MLS ready is not the last precondition of a frame at a cold start: its ROW is.** A frame of a group
+this device holds is refused `absent-conversation` (`setupMessageHandler.ts`, `handleKnownGroup`)
+while the conversation map has no row for it, and every row is written by the restore's first phase
+(`loadExistingConversations`, `[RESTORE] N conversation row(s) seeded`). Until this date the login
+opened the inbound gate at `markInboundReady` and `open_gateway` pulled the whole mailbox, both
+BEFORE `load_conversations`. Measured on the Mi 9T (`1.6.5-alpha.1`, 2026-11-05): six frames of three
+DMs refused 200 ms before the seeding, a `[PENDING] 6 frame(s) left unacknowledged` WARN, then the
+seeding's re-fetch applied them. Nothing was lost, at every cold start - a race that heals, which is a
+defect (`CLAUDE.md`).
+
+**The fix is an ORDER, carried by one event, the seeding** (`BaseMlsService`, so web and Tauri alike):
+
+- The login arms `holdInboundUntilRowsSeeded()` BEFORE the handshake starts. While armed, the gate
+  holds every socket frame even once MLS is ready (`markInboundReady` then only records readiness),
+  and EVERY `fetchPendingMessages()` asked meanwhile joins ONE owed whole-mailbox pull, the boot
+  pull (a superset of any group ask) - the login's catch-up, an outbox flush's barrier (an owed DM
+  read mark queued at `registerOutbox`), a reconnect, a visibility change alike.
+- `notifyConversationRowsSeeded()` - the restore's first phase, for any number of rows - releases
+  it: it issues the boot pull FIRST and synchronously, so `pendingPullInFlight` is announced before
+  the second phase reaches its first archive-replay barrier, then replays the held frames in arrival
+  order. A held socket frame is also listed by the pull; `enqueueMessage` keeps the first by queue id.
+- `openGatewayConnection` takes a third argument, the login's: the catch-up (the boot pull, then
+  `onCaughtUp`) is handed back STARTED, never awaited there - awaiting it would wait for the seeding
+  of a restore that runs after the function returns. The login awaits it right after the restore,
+  so everything below (`reconcileOutboxSent`, `consumeFcmCache`, the restore verdict, the
+  post-connect sync) still reads a drained mailbox, exactly as when the pull ran first.
+- **Termination is a proof, not the seeding alone**: the login calls `endRowSeedingHold()` in a
+  `finally` around the restore. Silent when the seeding released the hold; otherwise (a restore that
+  threw before seeding, or ran on another client) it releases everything at `warn`. `destroy`
+  releases the owed boot pull with nothing listed, and its catch-up is not reported as caught up
+  (`openGatewayConnection` reads `isDestroyed()`).
+- **The boot mailbox's acked inbound state stays unsaved until the restore's second phase ends**: the
+  boot drain now overlaps phase 2, whose bulk-ingest window encloses its own, and `mlsStatePersister`'s
+  `onBulkIngestEnd` checkpoints only when the outermost window closes - a kill before then is
+  recovered by replay, as any inbound state is.
+
+**No deadlock**: the restore's first phase reads only the store and awaits no barrier, and nothing
+the login awaits before it waits on a routed frame or on a pull (`settleUnresolvedCommits`,
+`adoptOrphanedMirrorEntries`, the landing preview and phase 1 were each read for it). A reconnect
+outside the login's window pulls at once, because the hold is no longer armed. A reconnect INSIDE the window waits for the seeding like every other pull, so `isReconnecting` stays true until then, and a second drop in that window is picked up by the 60 s connection watchdog rather than by a new rung - accepted for now. Behaviour (with the real restore
+doing the seeding, and the old order reproduced as a case) is in
+`BaseMlsService.bootDrainAfterSeeding.test.ts`; the login's half of the order is three more source
+guards in `offlineUnlock.test.ts`.
 
 #### The device id is not final when the handshake starts (fixed 2026-10-25)
 
@@ -828,6 +874,388 @@ load whose record names another account is `device_holds_other_account` on the k
 (`applyPinFailure` -> `noteOtherAccountState`): the reset is withheld. An install whose state
 predates the record is covered only after its owner signs in once on the new build
 ([mls-protocol](../../protocols/mls-protocol.md#the-state-blobs-framing---read-first-write-later)).
+
+### One MLS state per account on a native install (owner decision, 2026-11-02)
+
+`mls.bin` is now THE SLOT - the signed-in account's state, the one path every engine reads (the
+foreground manager, the Android push and background engines, the iOS mirror the notification
+extension decrypts with) - and every other account's state is PARKED whole under
+`{app_data_dir}/mls_accounts/<sha256(user id)>/`, with the same file names, its owner record and the
+ledgers built from it included (`mls_state_file_names` in `storage.rs`, the one list the reset uses
+too). `initialiser_mls` gives the slot to the signing-in account BEFORE it reads or seals anything, on
+every path (`select_account_state`, `commands/mls_account_state.rs`): the slot's state is parked under
+the account its `mls.owner` names, and the signing-in account's parked state comes back. **Files are
+renamed, never read or rewritten** - no MLS byte and no key is touched by a switch.
+
+- **Ownership is the owner record, never a guess.** `mls.owner` is written only after `load_or_create`
+  opened the state for that account, so it names the account that created or last opened it. That is
+  the whole migration: an existing `mls.bin` stays in the slot for the account its record names and is
+  parked under that name at the first sign-in of another account. A state with NO record is never
+  moved and never attributed: it stays in the slot, accused at ERROR (`[MLS_ACCOUNT]`), and only the
+  load's credential check says whose it is - as before.
+- **A move cut part-way is finished from a journal, not a clock.** A park creates `<hash>.parking/`
+  first, an unpark renames `<hash>/` to `<hash>.unparking/` first; the next process completes either
+  before any state is located.
+- **A clash never deletes** (re-review of #2919). Where both ends of a move hold one file, the copy
+  already at the destination is set aside as `<hash>.residue-<n>` (accused at ERROR) and the moving
+  one takes its place: in a park both are the account's and the slot's is the later; in an unpark the
+  slot's copy is proven to be nobody's (a ledger the Android push service recreated) and the parked one
+  wins. For `mls.bin` an EMPTY copy is the one set aside, and two non-empty ones are refused before any
+  file moves - choosing between them is choosing a ratchet. A file no list names is set aside too.
+- **Every writer of a parked file takes the state lock** (`mls_bin_write_lock`): `mls.bin`, the JSON
+  ledgers, the key-group join's ledger and stage (`key_group_join.rs`, the take's stage deletion
+  included), and the iOS activation mirror of `mls.bin` (`canari_ios_mirror_mls_bin_to_app_group`) -
+  no write lands between a park and its unpark, and the mirror can no longer write the previous
+  account's bytes over the copy a switch just refreshed.
+- **A join's writes are bound to the push's account.** No compare-and-swap covers the key-group join's
+  ledger and stage, so claim, settle, stage, finish and abandon each check, under that lock, that the
+  slot's owner record names the push's account (`slot_is_accounts_held`), and write nothing otherwise
+  (`not-the-accounts-slot`, `slot-not-the-account`): a join in flight across a switch never settles
+  `lost` into the next account's ledger, and a push for an account deleted since recreates nothing.
+- **An unfinished move stops every sign-in, never a query.** A move that cannot be finished refuses
+  that account's queries and every sign-in, a park's or an UNPARK's: `finish_unpark` moves `mls.bin`
+  before the owner record, so a cut unpark can leave that account's state UNOWNED in the slot, where an
+  admitted account would fail its load on it and reach the reset that deletes it. Other accounts'
+  queries still answer, and none is offered that unowned state. What is left unfinished is narrow: two
+  non-empty `mls.bin`, or a filesystem refusing a rename. A parked directory already present (checked
+  BEFORE a park moves anything) or a second parked state beside the slot's owner is set aside, never a
+  refusal that would lock the install for ever. The refusal is TYPED (`SLOT_MOVE_UNFINISHED`,
+  `MlsSlotMoveUnfinishedError`): nothing is opened, re-sealed or rotated on it, and the gate says
+  `local_state_move_unfinished` - nothing deleted, a restart resumes the move - with no reset offered.
+- **The selection marks the process warm in its own hold** and returns a `SessionClaim`, so a second
+  sign-in interleaved before the first one's load is refused instead of writing one account's owner
+  beside the other's state. **A failed sign-in ends only the session it claimed** (`InstallGuard`,
+  `end_native_session_claimed`): a sign-in refused BY that warm mark holds no claim and ends nothing,
+  and a claim a later selection superseded ends nothing either. Before, the refused attempt's guard
+  cleared the other sign-in's mark while its manager loaded.
+- **Every step after the selection runs only inside the session it claimed** (round 3 of the review of
+  #2919). Every end of a session (`end_native_session`, a sign-out included) moves the session
+  generation on, under `mls_bin_write_lock`, and the read of `mls.bin`, the warm mark and the install
+  each check the claim in that same hold (`while_claim_current`, `SessionSuperseded`). A sign-in whose
+  session a sign-out or another attempt's failure ended while it loaded is REFUSED and its manager
+  dropped: installed, it would be a live manager over a cleared warm mark. **Every write the sign-in
+  makes into the slot is inside that check** (round 4): the legacy re-seal of a pre-v0.11.0 `mls.bin`,
+  and - in the install's own hold - the owner record and the report that clears the background-stage
+  ledger (`sign_in`, `InstallGuard::install`). Outside it, a sign-in ended while it loaded (a page
+  reload, then another account's sign-in) wrote its owner over the next account's slot and cleared
+  that account's ledger. The owner record is load-bearing (the switch parks by it, a push join and
+  `save_mls_state` are bound by it), so a failure to write it fails the install with ITS OWN code
+  (round 5: `SLOT_OWNER_UNRECORDED`, `MlsSlotOwnerUnrecordedError`, gate
+  `local_state_owner_unrecorded` - the device's storage, not "unknown" on every retry). In that same
+  hold the install is refused when the record names ANOTHER account, and a FRESH start (no state was
+  read) is refused when the slot now holds one - a backup restored into the empty slot while the fresh
+  sign-in loaded is neither re-owned nor sealed over (round 5).
+- **One page never runs two `initialiser_mls` at once, and the SERVICE ends no session after one
+  fails.** `TauriMlsService` queues every attempt (`queueNativeInit`); the native install guard ends
+  the session its selection claimed. The service's own unclaimed `terminer_session_mls` after a failed
+  attempt is gone (round 4). **The LOGIN still ends the process session once it has failed** -
+  `mlsHolder` `client reset`, unclaimed - and that is DELIBERATE (round 5, option (a)): it is the one
+  thing that clears a manager an orphaned sign-in of a reloaded page installed, so the next attempt can
+  take the slot; a sign-in it ends while loading writes nothing (the claim checks above). Pinned at the
+  login level by `composables/session/signOutDuringLogin.test.ts`.
+- **A frontend write of `mls.bin` names its account.** `save_mls_state` takes the `userId` and writes
+  only when the slot's owner record names it or the slot holds no state (`write_account_mls_state`,
+  `AccountStateWriteRefused::NotThisAccountsSlot`), the check and the write in one hold of the state
+  lock: a late checkpoint or a restore from the previous account can no longer seal over the next
+  one's state. It first FINISHES any move a previous process cut, as a sign-in does, and refuses while
+  one stands (`MoveUnfinished`) - a backup restored after a crash mid-park no longer lands beside part
+  of another account's state. A write into an empty slot records its account as the owner, so the
+  restore's own next checkpoint is not refused.
+- **"Does the slot hold a state" has three answers**: yes, no, and could not be examined
+  (`slot_holds_state` is `state_file_absent` negated, a `Result`). The third REFUSES - the write, the
+  fresh start, the move - never reads as "no". `mls_state_size` locates and measures in one hold of the
+  state lock and rejects when it cannot answer (`mlsStateSize` propagates it) instead of answering 0.
+  Its rejection is TYPED like the sign-in's (round 5): an unfinished move of the account's own state is
+  `SLOT_MOVE_UNFINISHED`, so the login's state lookup reaches `local_state_move_unfinished` too.
+- **"Whose is the slot" has three answers as well** (round 5): `read_mls_state_owner` is a
+  `Result<Option<String>>` - an owner record that exists but cannot be read is an ERROR, never "no
+  owner", and every caller refuses on it (the selection, the frontend write, a join's
+  `slot_is_accounts_held`). A directory entry of `mls_accounts/` that cannot be read is accused at
+  ERROR and counted as an unfinished move, never skipped.
+- **Refused, with nothing moved:** a switch under a live foreground manager (its checkpoint would write
+  into the slot just handed over), and a fresh start over a slot holding a state, WHATEVER the selection (round 4; the caller decided "no
+  state" on an answer that did not see it). The one fresh start that means to replace the state - the
+  device identity rotation, after a cause no PIN repairs - says so (`replacesUnopenedState`,
+  `loadFreshStateReplacingUnopened`), and is honoured ONLY when the slot already held this account's
+  state (`Selection::AlreadyInSlot`, round 5): never over a state an unpark just brought back, nor over
+  an unproven one left in the slot.
+- **A state of unproven owner is set aside, never refused over and never deleted** (round 6). A slot
+  holding a state NO owner record names - every install upgrading from before the record - is moved
+  whole into `mls_accounts/unproven.residue-<n>` when something must take the slot: an account with a
+  parked state signing in (it used to be refused, for as long as the state stood) or a "forgot PIN"
+  reset (below). The stem is not a hash, so no account's allowlist (`is_residue_of`) can ever match it
+  and no account-scoped removal can delete it. **It goes back to its owner**: an account with no
+  state of its own (no parked directory, the slot empty or parked) is OFFERED the earliest such
+  residue - moved into the slot at its sign-in (`Selection::UnprovenLeftInSlot`), and located there by
+  `account_state_file` so the login expects it - and its load under the account's own key, the
+  credential check, decides whose it is; the owner's load records it. An account that reset its PIN is
+  listed in `mls_accounts/unproven.declined` and never offered one again.
+- **A state of unproven owner is offered ONLY to an account a state has OPENED for on this install**
+  (rounds 7 and 8): `mls_opened/<hash>`, one empty file per account, written by `initialiser_mls` in
+  its claimed hold right after the owner record (`record_account_opened_held`), and removed with the
+  account's state (a reset's commit, `remove_account_state`). It is decided NATIVELY, by one
+  predicate (`account_known_here_held`) that the size query, `load_mls_state`, `mls_state_absent` and
+  the selection all read, so they never disagree; anyone else sets an unproven slot aside and starts
+  fresh beside it - and a kept device id whose state is gone now proves the state absent, so the
+  device re-enrols. Round 6 offered the state to a brand-new account, which met "sealed under your old
+  PIN" a minute after choosing its first PIN. **Round 7 asked the WebView's device id, and that was
+  wrong**: `resolveDeviceId` writes `mls_device_id_<userId>` - and its native copy in
+  `push_context.json` - at the PIN check and the revocation check, BEFORE any state opens, so a new
+  account that mistyped its PIN once was "known" at its retry and met the same symptom. **Why not a
+  probe-open**: opening needs the account's key, which exists only inside the sign-in's load, after
+  the size query has already decided whether a state is expected. **The one install the marker cannot
+  be written for** - one upgraded from a build before the owner record, whose state no sign-in of this
+  build has opened - is SEEDED once, at start-up before the WebView can resolve an identity
+  (`seed_opened_markers`, `lib.rs` setup): the account `push_context.json` names then, the account the
+  previous build last resolved, is marked. Eligibility, never attribution: its load decides. ONLY the
+  start-up seed reads the push context (round 9): a seed that failed there is accused at ERROR, and the
+  directory created later is created UNSEEDED, said at ERROR - by then a sign-in may have rewritten the
+  push context. **AN ACCEPTED RESIDUE, pre-1.3.0 installs only**: when the previous build last resolved
+  another account than the state's owner (two accounts on one install, the last one never having
+  written a state), the seed marks the wrong account. That account is offered the state once, its key
+  does not open it, and it meets the old-PIN refusal; the state is never attributed, rewritten or lost,
+  and its owner still recovers it. Accepted because nothing older than the owner record says whose the
+  state is, and the alternative - seeding nobody - sets EVERY upgraded install's own user's state aside.
+- **An account whose own state turns out empty or cut is no longer "known"** (round 9): when the state
+  the size query or the selection locates for it (its slot, its parked one) holds no bytes, its marker
+  is removed (`forget_opened_if_own_state_empty_held`) - it would otherwise go on being offered a state
+  of unproven owner, another account's, on the strength of a state it no longer has.
+- **Residues are offered in turn, under names never reused** (rounds 7 and 8):
+  `mls_accounts/unproven.counter` only grows and never goes below a name on disk, a cut `.parking`
+  included; EVERY name under the unproven stem comes from it - a set-aside, a leftover of a state going
+  back into the slot, a file at both ends of such a move (`next_residue_dir`). An empty or malformed
+  counter is no refusal: the next name is taken above the names on disk, said at WARN.
+- **`IDENTITY_MISMATCH` compares `user:device`, and which half differs is decided by the KEY that
+  opened the state** (round 8), never by the message: under the account's OWN key (the device key
+  derives from the account id, the PIN and the salt; the hardware-held one is the account's keystore
+  entry) the state is this account's with an older device id, so its owner is RECORDED and the identity
+  rotation the frontend answers with replaces it as its own (`fresh_start_refusal` allows that over
+  `Selection::AlreadyInSlot`) - never stranded aside. Under a legacy envelope, which the PIN alone
+  opens, it may be another account's: it goes back aside under the NEXT name
+  (`return_unproven_aside_held`), so the next offer is the next residue. A state sealed under another
+  key (`STATE_KEY_MISMATCH`, a legacy `STATE_UNDECRYPTABLE`) stays in the slot: it may be this
+  account's under its old PIN, whose recovery reads it there; the "forgot PIN" reset sets it aside and
+  declines.
+- **No move of an unproven state can be split by a crash** (round 8): it is set aside as a park
+  (`unproven.residue-<n>.parking`) and brought back as an unpark (`unproven.unparking`), each finished
+  by the next look - `mls.bin` never on one side and its ledgers on the other. **Durable writes, and
+  only these** (`write_durably`: a flushed `.tmp` renamed into place, then the directory flushed on
+  Unix): the reset journal, `unproven.counter`, `unproven.declined` and the opened markers. The moves
+  themselves are renames, made crash-safe by their `.parking`/`.unparking`/`.resetting` journals, not
+  by a flush; `mls.bin` and the owner record keep their own atomic writes (`storage.rs`).
+- **A legacy (pre-v0.11.0) state is re-sealed in memory and written only once it LOADED as this
+  account** (round 7, `load_state_with_key` -> `load_resealed_legacy_state`). A legacy blob opens under
+  any account's PIN that matches, so an unproven state offered to the wrong account used to be
+  REWRITTEN under that account's key before its load refused it - lost to its owner for good.
+- **The "forgot PIN" reset is THE ACCOUNT'S, and runs in two steps around the server** (rounds 5 and
+  6). It used to end the native session WITH A SWEEP, which removes the slot whoever it belongs to:
+  B's reset, from B's PIN gate with A in the slot, deleted A's state. Now (`runPinReset`,
+  `composables/session/pinReset.ts`):
+  0. **The server's salt first** (round 10): its fingerprint is the basis the stage journals. No
+     answer: nothing moves. **No PIN on the server**: there is nothing to reset there, so the local
+     state is reset alone - staged under the fingerprint of an empty salt (`noServerPinBasis`, which
+     no minted salt has) and committed at once, logged. Round 9 refused it, a dead end.
+  1. **Stage**, once a signed-out session's final checkpoint has landed (`stageDeviceResetImpl`): the
+     native session ends WITHOUT a sweep, then `stage_user_mls_reset` - in ONE hold of the state lock,
+     so no write lands between the check and the move - parks B's slot when its record names B, sets
+     an unproven slot aside (above), renames B's parked state to `<hash>.resetting`, and declines B.
+     Refused only while B's own move stands unfinished or a manager is loaded: then the server is not
+     asked. Round 5 refused over an unproven slot, with "clear the app's data" as the only way out -
+     that dead end (`auth_pin_reset_blocked_unproven_state`) is gone.
+  2. **Ask the server.** A DEFINITE refusal - a 4xx (`PinResetRefusedError`): `rollback_user_mls_reset`
+     puts everything back - B's state into the slot when it came from there, the unproven state
+     likewise, B off the declined list - so the old PIN still opens it. **Anything else is NO ANSWER,
+     never a refusal** (round 10): a transport failure or a 5xx may follow a reset the server did. It is
+     decided as a page that is gone is - the salt asked again: the same one rolls back, none or another
+     commits; a salt the server will not say either HANDS THE RESET OVER (`adopt_unsettled_user_mls_reset`
+     with `handOver`) to the settle every sign-in attempt runs.
+     **The server's commit point is the salt** (`security.controller.ts` `resetPin`, round 10): it
+     deletes the `PinVerifier` (and the revocations) FIRST, then purges each device's footprint,
+     every purge in its own `try`; a failed purge answers a 5xx, which the page reads as no answer -
+     and the salt, already gone, says the PIN was reset. Round 9 purged first, so "same salt" did not
+     prove nothing was purged. **The revocations go only AFTER the verifier** (round 11): deleted
+     together, a failed verifier delete beside a committed revocations delete un-revoked a stolen
+     device while the PIN stayed; a revocations delete that fails after it keeps the devices revoked
+     and is accused like a failed purge.
+     **"Same salt" proves only that nothing was done YET** (round 11): a proxy that answers 504 while
+     the upstream still runs, or a request still queued, can reset the PIN AFTER the page read the
+     salt and rolled back. The page then holds its old state under a PIN the server no longer has:
+     the unlock fails as a rotated PIN, and a second "forgot PIN" - which now meets no PIN on the
+     server, so it resets the local state alone (step 0) - recovers it. Accepted: the window is one
+     request long, and the way out is the one the gate already offers.
+     **The local commit point is one atomic rename** (round 11): `commit_user_mls_reset` renames
+     `<hash>.resetting` to `<hash>.committed` before removing anything, and forgets the registry entry
+     only once its step succeeded. Removed in place, a cut `remove_dir_all` could take `reset.journal`
+     before `mls.bin`, and the next look undid the half-removed reset as one "the server was never
+     asked" - the old-PIN state unparked under a PIN the server had reset (`STATE_KEY_MISMATCH`). A
+     `.committed` is removed by whatever finds it, never undone, never counted as a state - and only
+     of the EXACT shape `<64 lowercase hex>.committed` (`is_committed_tombstone`, round 12, an
+     allowlist): anything else ending the same way is logged and left untouched.
+  3. **First setup**, the moment the server has reset the PIN and before anything else can fail: the
+     old PIN opens nothing any more, so the next PIN typed is a NEW one, never an unlock misread as a
+     PIN rotated elsewhere.
+  4. **Commit** (`resetDeviceAsFresh` -> `commit_user_mls_reset`): `<hash>.resetting` and B's residue
+     are removed; the unproven residue stays for its owner.
+  **The stage is journalled, so undoing it needs no memory** (round 7): `<hash>.resetting` always
+  exists while a reset does (empty when B had no state here) and holds `reset.journal` - whether B's
+  state came from the slot, whether the stage added B to the declined list, and the name of the
+  unproven residue it set aside, written BEFORE each of those is done. ONE undo (`undo_reset_held`)
+  serves the rollback and crash recovery, and it undoes the journal's own steps (the unproven state,
+  the declined entry) BEFORE removing the journal and moving B's state back, so an undo cut anywhere is
+  finished by the next one.
+  **A reset is the PAGE's, stamped with its document** (rounds 8 to 10): the commit or rollback lives
+  in the WebView, so `RESETS_IN_FLIGHT` holds `(account, document, Staged | Adopted)` - the document
+  generation the page MINTS with its first native call (`page_ring_document`, as `pageGatewaySocket.ts`
+  loads: it moves the generation on and returns it), also moved on at a web content death
+  (`current_document` reads it, never claims it) - and "in flight" means "held by the CURRENT
+  document". Round 9 moved it on the page-load event, which on Android can run after the new page's
+  first JavaBridge call: the page could keep a stale generation and every step of its reset be
+  refused. Owed: a reload read on the Mi 9T. The stage, the commit and the
+  rollback each name their page's document (`thisDocumentGeneration`, `pageGatewaySocket.ts`) and are
+  REFUSED AS A TYPE (`ResetRefusal`: `RESET_NOT_STAGED_BY_THIS_PAGE`, `RESET_NOTHING_SET_APART`) when it
+  is not that page's reset, the page is gone, or nothing is set apart - never logged and answered Ok.
+  Round 8 cleared the registry on a page load instead: a stage still running across the navigation
+  registered after the clear and escaped it, and an old page's late commit after the undo removed B's
+  residues and marker over a restored state.
+  **A reset whose page is gone is settled from the SERVER'S ANSWER, never guessed** (round 9). The
+  stage journals the server's basis - the SHA-256 of B's PIN salt before the ask (`server_basis`) - and
+  answers the page only once its journal is down. A `<hash>.resetting` of a page that is gone:
+  - with a basis, the server MAY have been asked: it waits, and B's sign-in is refused meanwhile (it
+    would start fresh over B's state). The next sign-in flow adopts it before any unlock
+    (`settleUnsettledPinReset` in `startLoginFlow`, `adopt_unsettled_user_mls_reset`) and asks the
+    server (`serverPinSaltFingerprint`: `pin-status` first, since `GET pin-salt` writes for a user with
+    no salt). No PIN: the server reset it - COMMIT, and the gate opens at once in first setup. Another
+    salt: a new PIN was chosen since, elsewhere - COMMIT, and the gate opens at once to UNLOCK it
+    (round 10, as the live commit ends). The same salt: it did not - ROLL BACK. No answer: nothing is
+    guessed; the reset stays ADOPTED, and an adopted entry answers its basis to the next adopt, so the
+    next attempt - of this same page too - asks again (round 10). Meanwhile B's sign-in is refused as
+    its OWN type (`SelectionRefused::ResetUnsettled` -> `RESET_UNSETTLED` -> `MlsResetUnsettledError`
+    -> `LoginFailure('pin_reset_unsettled')`, "your PIN reset needs the server's answer: go online and
+    retry"), and the gate's failure handler runs the settle again (`applyPinFailure`). A settle met by
+    `RESET_NOT_STAGED_BY_THIS_PAGE` is a newer page's, read from the CODE, and left to it. The page runs ONE settle per account at a time (`oneSettlePerAccount`, round 11): the sign-in's
+    settle and the gate's retry join rather than race their commit and rollback. Old-PIN recovery
+    reads the bytes through `load_mls_state`, which now refuses with the same TYPES (round 11) - an
+    unsettled reset shows its own message there too and is settled again, never "no local state to
+    recover". The expected refusal is logged at INFO with its reason (`SelectionRefused::log`), never
+    as an accusation. Round 8 undid every such reset, so a reload AFTER the server's reset sent B back to an old
+    PIN that opens nothing - the loop the reset exists to leave;
+  - with no journal, the server was never asked: the next look UNDOES it - B's state parked (no journal
+    says it came from the slot; B's next sign-in unparks it), nothing else was done yet.
+  Round 6 put back only B's state: B stayed declined and the unproven state aside, its owner stranded.
+  Removing the account (`remove_account_state`) mid-reset removes `<hash>.resetting`, cancels the
+  reset (a late commit or rollback is refused) and prunes B's declined entry; the unproven residue
+  stays. The sweep (`sweepState: true`) now has ONE caller, the factory
+  wipe (`deviceReset.ts`).
+- **A revoked device another account still uses loses only the revoked account** (round 6). Account
+  B removing "this phone" from another device ran the factory wipe, which took A's parked state,
+  vault slot and keys with it. `runRevokedDeviceWipe` now reads `revokedWipeScope` first: the whole
+  install only when no other account lives on it - no other account's device id recorded, and
+  `mls_other_accounts_present` false (another account's parked or set-aside state, a state of
+  unproven owner, or a slot another record names all say "present"; an answer the native side cannot
+  give is read as "present", accused). Otherwise `wipeAccountOfRevokedDevice`: the session ended
+  without a sweep, then the deleted account's per-account wipe (`wipeDeletedAccountLocalData`, with
+  `accountStillExists` so this process does not hold B as deleted for its whole life).
+
+  **The scope is read FIRST, and decides what the session end erases** (round 7):
+  `endAccountSessionLocally(..., { eraseAccountRecords: scope === 'install' })`. For one account it
+  ends the session in memory only and leaves B's device id, database and at-rest marker to the wipe,
+  which needs them: erased first, the wipe found neither half of the keystore alias, logged "no
+  keystore entry can be named, none removed", and B's key stayed in the platform keystore.
+
+  **The wipe is owed from durable state** (round 7): `wipeAccountOfRevokedDevice` writes the
+  deleted-account pending marker (`markDeletedAccountWipePending`) before its first step and accuses
+  each step that fails at ERROR; the marker stays until a wipe finishes with nothing failed, and the
+  next start resumes it (`resumePendingDeletedAccountWipes`). Until then an offline unlock of B is
+  refused (`isDeletedAccountHere`, the `account_deleted` gate); an online sign-in of B drops the marker
+  (`forgetDeletedAccountOnSignIn`), its data then being a new session's. The marker carries its
+  REASON (`canari_account_wipe_pending_reason:v1`, round 8): every line of a revoked account's wipe
+  and its resume is tagged `[REVOKED-LOCAL]`, its login refusal says this device was removed from the
+  account (`auth_device_revoked_here`), and its online sign-in says so - never the deleted-account
+  wording, which named an account that still exists.
+
+  The factory wipe's items, scoped:
+
+  | Factory wipe clears | The account's wipe |
+  | --- | --- |
+  | every store connection | closed (all of this realm's, after `clearAuth`) |
+  | `mls.bin`, `mls_accounts/` | B's slot (record naming B), B's parked state and residue |
+  | the native message databases | B's (`delete_user_database`) |
+  | push files, `push_context.json`, device notices, names copy | B's, when `push_context.json` names B; B's names and quick replies |
+  | the WebView databases | the three named by B |
+  | every keystore entry | B's alias `<userId>_<deviceId>`, named by B's device id and B's at-rest marker - both left in place by the session end for exactly this (round 7) |
+  | `localStorage` / `sessionStorage` | B's per-account keys, B's vault slot, B's upload marks and session metadata |
+  | the in-app log, the HTTP cache, notification avatars, `fcm_token.txt`, `keystore_aliases.xml`, the Share Extension's share | LEFT: nothing in them names an account, and A reads them |
+  | `graine_seeds.json`, `channel_keys.json` (sealed at rest) | LEFT - **decided** (round 7 review): sealed under the install's native cache key, unlabelled, shared with A's communities; labelling each entry with the account that wrote it is owed ([backlog](../../backlog.d/p3-label-push-caches-by-account.md)) |
+
+  **Nothing on the revoked path can refuse any more**: it used to begin with the PIN reset's
+  `removeMlsState`, which round 5 made refusable, and a refusal threw past `clearAuth` and the wipe -
+  the phone stayed signed in, the reset was never recorded, and every PIN check ran it again. A
+  `device_revoked` frame arriving while the wipe runs joins it without asking the server (the wipe
+  only starts on a confirmed revocation).
+- **Every query takes its account**: `mls_state_size`, `mls_state_absent` and `load_mls_state` answer
+  for `userId` (`account_state_file`), never for whichever account used the install last.
+- The `device_holds_other_account` gate above stays: it is what a REFUSED switch meets.
+- A deleted account's states go with its wipe (`delete_user_mls_state`): the parked one, the slot
+  when its record names that account and no session is loaded, and every `<hash>.residue-<n>` of THAT
+  account (an exact-match allowlist, `is_residue_of`). The factory wipe takes `mls_accounts/` with
+  everything else.
+- **The iOS extension's App Group copy follows the slot**: rewritten at a switch, removed when the
+  slot is empty - by ONE Rust implementation (`sync_extension_copy`) at the switch, the deletion and
+  the activation mirror, which `CanariMirrorPushStateToAppGroup` now calls for `mls.bin` instead of
+  copying it itself (pinned by `mobile/iosMlsMirror.test.ts`). The mirror runs on the main thread and
+  takes the state lock, so it logs how long it waited for the lock and held it (`activation mirror:
+  waited N ms ... held it M ms`), read on the bench (device-verification AS).
+
+Tests: `commands/mls_account_state.rs` (A -> B -> A -> B with each account's bytes back unchanged,
+the migration by record, the unrecorded state left in place, the live-manager refusal, two
+interleaved sign-ins, both cut moves finished, a ledger at both ends of a cut move set aside, an empty
+slot `mls.bin` never costing the parked one, two states refused with nothing moved, an unfinished
+unpark refusing another sign-in, an unfinishable move stopping sign-ins but not queries, a stray file
+set aside, a second parked state and a taken park name set aside, the deletion of the slot, the parked
+state and its residue, the fresh-start guard, the extension copy, the activation mirror waiting for a
+switch); `commands/mls.rs` (a sign-in refused by a loading one does not end it, through the guard AND
+through the command's own sequence `sign_in`; a superseded claim ends nothing, in both orders; a
+sign-out during a load refuses the install; a sign-in ended while it loaded writes neither its owner
+nor the stage report into the next account's slot; an unfinished move refuses with its typed code;
+a fresh start is not installed over a state written while it loaded; an owner record that cannot be
+written fails with its own code); the PIN reset (`mls_account_state.rs`: only its own account's state
+removed; a server refusal rolled back byte for byte; a reset cut before it settled put back; an
+unproven state set aside by B's reset going back to A end to end, out of reach of every allowlist;
+another account's state seen wherever it lies; the size query types an unfinished move; an unproven
+state offered only to an account a state opened for; a device identity written before a state opens
+never offering it, the property of round 8; an upgraded install seeded from its push context; residues
+offered in turn under names never reused; a damaged counter falling back to the disk; a leftover taking
+the counter's next name; an unproven move cut half-way finished whole; a reset cut between its stage and
+the server, before its journal, before its declined entry (B declined before, and not) or in the middle
+of its undo, undone whole; a reset whose page reloaded after the server's reset committed and staged
+again; a page that is gone settling nothing - its late commit, its rollback, its stage across a
+navigation - and a commit with nothing set apart refused as a type; an account whose own state is empty
+no longer known; the page-load and start-up seed wiring in `lib.rs`; removing an account mid-reset
+removes and cancels the reset); `composables/session/pinReset.test.ts` (an unsettled reset committed on
+no PIN or another salt, rolled back on the same salt, untouched when the server does not answer; the
+salt never asked of a user with no PIN); `commands/mls.rs` (a legacy state of another identity is never rewritten, and the account's own
+still migrates; only an installed state makes an account known; an unproven state under the account's
+older device id recognised as its own);
+`commands/storage.rs` (`save_mls_state` writes only its own account's slot, records the owner of an
+empty one, finishes a cut park first, and refuses on an unreadable owner record); `mobile/key_group_join.rs` (a join writes nothing into a
+slot that is not its account's); `services/TauriMlsService.initQueue.test.ts` (a second sign-in starts
+only after the first has failed, no session is ended from the page, a reloaded page's refused sign-in
+ends nothing, and only the rotation asks to replace a state); `services/TauriMlsService.stateOwner.test.ts`
+(an unfinished move and an unrecorded owner are answered with nothing); `mls-client/mlsStateLoadError.test.ts` (both codes are typed);
+`utils/hex.mlsStateSize.test.ts` (the size query's typed rejection, and no WebView fact about whether the account is known; the stage, commit and rollback
+never sweep and name their account); `composables/session/pinReset.test.ts` (the order; a refused
+stage asks no server; a server failure rolls back; a failed commit leaves first setup);
+`composables/session/revokedDeviceReset.test.ts` (a refusing `removeMlsState` cannot stop the revoked
+wipe; the account-only and whole-install branches; the live session stopped before the first erasure,
+observed); `utils/deviceReset.revokedScope.test.ts` (the scope, both branches); `utils/accountLocalWipe.test.ts`
+(a revoked account's wipe does not hold it as deleted in this process); `composables/session/revokedAccountKeystore.test.ts`
+(the REAL revoked wipe of one account removes its keystore entry and no other, and a failed step leaves
+the wipe owed); `composables/session/signOutDuringLogin.test.ts` (a refused sign-in's login ends
+the process session, the one end that clears an orphan). **Native, verified by
+compiling and host tests only**: the A -> B -> A -> B reading on the iPhone 12 bench phone,
+[device-verification AS](../../device-verification.md#as-two-accounts-on-one-iphone-install-a---b---a---b---owed-on-the-iphone-12-before-the-stable),
+is owed after a pre-release and before a stable
+([backlog](../../backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable)).
 
 Tests: `utils/deviceKeyVault.test.ts` (slots, binding, the unlabelled offer),
 `services/TauriMlsService.vaultOwner.test.ts` and `services/WebMlsService.vaultOwner.test.ts` (a
@@ -1758,7 +2186,7 @@ A sign-out keeps the local state on purpose; a deletion is the one exit after wh
 - **TWO IDS THAT DIFFER ONLY BY CASE SHARE STORAGE, SO THE WIPE REFUSES THEM.** Three keys lower-case the id (archived conversations, salon unsent, salon read marks) and `canari_<id>.db` lives on a case-INSENSITIVE filesystem on Windows and macOS: wiping `Abc` would take `abc`'s unsent texts and database. `caseCollidingAccountIdsIn` reads the id-naming keys back, and when another stored id case-folds to the deleted one the wipe is refused at ERROR, naming the twins, once per start, and stays owed - never a guess at whose rows are whose.
 - **A LOST 204 WIPES NOTHING, AND THAT IS ACCEPTED, NOT DETECTED.** When the server committed the deletion but the answer never arrived, `deleteMyAccount()` throws (a transport failure, or a deadline), the error is shown, no marker is written and the session continues until its next refresh answers 401 - the ordinary expired-session path. Detecting it would mean reading "this account was deleted" out of a 401 that also means "this session expired", a distinction the server does not carry; guessing it from the refusal is the learning-by-failing the rules forbid. The cost: that account's rows stay under its device key, unreadable without its PIN, until the next device reset - and a retry of the deletion (a 401 or 404 then) does not wipe either. Owed only if a server signal ever separates the two.
 - **THE ID GUARANTEE.** The user id is the MiConnect `sub`, a `varchar(255)` copied as it comes: a UUID, a hash, a username or an email. Both sides accept exactly `[A-Za-z0-9_.@-]{1,255}` (`isWipeableAccountId`, `is_wipeable_account_id`) and REFUSE anything else, loudly, rather than normalise it: the stores were created under the raw id, so a normalised one names another file, and an id holding `:` would let the prefix keys `history_*:<id>:` reach another account's.
-- LEFT ALONE, deliberately: every other account's database, slot and keys, the in-app log, the preferences, and `mls.bin` (one file per install that may hold another account's state: [backlog](../../backlog.md), the shared `mls.bin` P3).
+- LEFT ALONE, deliberately: every other account's database, slot and keys, the in-app log, the preferences, and the `mls.bin` slot (the signed-in account's state). The deleted account's PARKED MLS state goes (`delete_user_mls_state`, [one state per account](#one-mls-state-per-account-on-a-native-install-owner-decision-2026-11-02)).
 - Tests: `accountLocalWipe.test.ts` (the resume against a sign-in landing before and during it, the case collision, the whole key list), `accountLocalKeys.guard.test.ts`, `auth.deletedAccount.test.ts` (`clearAuthLocally` sends no logout; `accountLiveness`; scenario A - the callback drops the marker and a tokenless resume then wipes nothing; `isDeletedAccountHere` holds after the LIVE wipe finished, and a resumed wipe leaves no flag), `pinFirstSetupRefuted.test.ts` (`account_deleted` asks no salt and no recovery), `ConversationsMiniPanel.deleted.svelte.test.ts`, `offlineUnlock.test.ts` (scenario B - the refusal precedes every store opener and `getToken`), `deletedAccountGuards.test.ts`, `user.deleteMyAccount.test.ts`, `apiFetch.test.ts` (`onAuthorization`), three Rust tests in `commands/storage.rs`, eight in `commands/push.rs` (`delete_user_push_files_tests`, App Group container included, `push_context_lock_tests`). **What only a device proves:** the SQLite file and the keystore entry are really gone on Android and iOS (where `app_config_dir()` was never read on hardware), and a second WebView tab is not a thing a phone has.
 
 ### One sign-out sent two logouts, and the vault logged the user back in during it - FIXED 2026-10-17

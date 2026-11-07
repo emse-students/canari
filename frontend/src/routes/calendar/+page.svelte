@@ -26,6 +26,7 @@
     ensureAssociationSuperAdmin,
     getMyBdeReach,
     listEventCoOrganisers,
+    getEventWriteSide,
   } from '$lib/associations/api';
   import { isGlobalAdmin, isAssociationSuperAdmin, fetchMyProfile } from '$lib/stores/user';
   import AgendaSelectionFields from '$lib/components/calendar/AgendaSelectionFields.svelte';
@@ -47,6 +48,7 @@
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import { associationPickerOptions } from '$lib/associations/selectGroups';
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import EventFormModal from '$lib/components/calendar/EventFormModal.svelte';
   import {
     blankEventFormValues,
@@ -403,7 +405,10 @@
   const capabilities = $derived({
     canTargetAnotherAssociation: depositableAssociations.length > 1,
     canSetKind: mayValidateFor(depositValues.targetAssociationId),
-    canLinkForm: mayLinkFormOn(depositValues.targetAssociationId),
+    // The form link is the organiser's (D39, E2): an unknown or partner side offers no picker, whose
+    // change `toUpdatePayload` would silently drop.
+    canLinkForm:
+      mayLinkFormOn(depositValues.targetAssociationId) && depositValues.writeSide === 'organiser',
   });
 
   /** Whether the viewer may list - and therefore link - the forms of `associationId`. */
@@ -474,8 +479,10 @@
     depositModalOpen = true;
     // D39: the co-organisers' states arrive after the form opens; the list stays unsent until they
     // do. Through the owning association - the route `submitEvent` saves through.
-    const fields = await loadCoOrganiserFields(depositValues, () =>
-      listEventCoOrganisers(ev.associationId, ev.id)
+    const fields = await loadCoOrganiserFields(
+      depositValues,
+      () => listEventCoOrganisers(ev.associationId, ev.id),
+      () => getEventWriteSide(ev.associationId, ev.id)
     );
     if (editingEventId === ev.id) depositValues = { ...depositValues, ...fields };
   }
@@ -542,6 +549,7 @@
         <button
           type="button"
           onclick={openDeposit}
+          use:guideAnchor={'calendar.deposit'}
           class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex max-w-full min-w-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-center text-sm font-bold shadow-sm transition-colors"
         >
           <CalendarPlus size={18} />

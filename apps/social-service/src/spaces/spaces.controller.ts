@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
-import { SetAudiencesDto, SetSpaceBdeDto } from './dto/space.dto';
+import { SetAudiencesDto, SetDependencyDto, SetSpaceBdeDto } from './dto/space.dto';
 import { SpacesService } from './spaces.service';
 
 /**
@@ -30,17 +30,53 @@ export class SpacesController {
     return this.service.list();
   }
 
-  /** The audience rules of every association, for the admin grid. */
+  /**
+   * The audience rules of every association, for the admin grid of OLDER builds: the current one
+   * reads each page's rules with `GET associations/admin/catalogue`. A shim, retired with the floor
+   * (docs/wiki/legacy-compatibility.md).
+   */
   @Get('audiences')
   listAudiences() {
     return this.service.listAudiences();
   }
 
-  /** Designates, or clears with `null`, the BDE of a space (D22). */
+  /**
+   * Designates, or clears with `null`, the governor of a space (D22): a BDE or an institution
+   * (reform 2.3), journaled with the admin who did it (2.7).
+   */
   @Put(':id/bde')
   @HttpCode(204)
-  async setBde(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SetSpaceBdeDto) {
-    await this.service.setBde(id, dto.associationId);
+  async setBde(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') userId: string,
+    @Body() dto: SetSpaceBdeDto
+  ) {
+    await this.service.setBde(id, dto.associationId, { userId });
+  }
+
+  /** Every entity with its governing parent, its label and its mismatches (the Dependencies panel). */
+  @Get('dependencies')
+  dependencies() {
+    return this.service.listDependencies();
+  }
+
+  /**
+   * Sets the governing parent (and optionally the G3 label) of an association or a list (reform
+   * 2.7): platform admin only, journaled. A refusal is a typed 409 (`spaces/dependency-rules.ts`).
+   */
+  @Put('dependencies/:associationId')
+  @HttpCode(204)
+  async setDependency(
+    @Param('associationId', ParseUUIDPipe) associationId: string,
+    @Headers('x-user-id') userId: string,
+    @Body() dto: SetDependencyDto
+  ) {
+    await this.service.setParent(
+      associationId,
+      dto.parentAssociationId,
+      { userId },
+      dto.displayParentAssociationId
+    );
   }
 }
 

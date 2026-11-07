@@ -203,6 +203,12 @@ if (routeMap && tokenMap && refererMap) {
       ['/auth/callbacks?code=keep', '/auth/callbacks?code=keep'],
       ['/auth/callback//?code=keep', '/auth/callback//?code=keep'],
       ['/auth/login?code=keep', '/auth/login?code=keep'],
+      // A user's avatar carries the viewer's avatar token in `t` (2026-11-03): the query goes.
+      ['/api/users/u-1/avatar?t=SID.20000.MACSECRET', '/api/users/u-1/avatar?query-redacted'],
+      ['/api/users/u-1/avatar?x=1&t=SECRET', '/api/users/u-1/avatar?query-redacted'],
+      ['/api/users/u-1/avatar', '/api/users/u-1/avatar'],
+      ['/api/users/u-1/avatars?t=keep', '/api/users/u-1/avatars?t=keep'],
+      ['/api/users/u-1/avatar/x?t=keep', '/api/users/u-1/avatar/x?t=keep'],
       // An invite token in a path - its whole segment, whatever its alphabet (base64url today, a
       // percent-encoded byte tomorrow) - and quoted in a login returnTo, which loses its whole query
       // so a second invite in it cannot survive the first (2026-10-28).
@@ -263,6 +269,12 @@ if (routeMap && tokenMap && refererMap) {
     ['https://canari.emse.fr/f/abc/receipt?receipt=SECRET', 'https://canari.emse.fr/redacted'],
     ['https://canari.emse.fr/auth/callback?code=SECRET', 'https://canari.emse.fr/redacted'],
     ['https://canari.emse.fr/auth/callback/?code=SECRET', 'https://canari.emse.fr/redacted'],
+    ['https://canari.emse.fr/api/users/u-1/avatar?t=SECRET', 'https://canari.emse.fr/redacted'],
+    ['/api/users/u-1/avatar?t=SECRET', '/redacted'],
+    [
+      'https://canari.emse.fr/api/users/u-1/avatar',
+      'https://canari.emse.fr/api/users/u-1/avatar',
+    ],
     ['https://canari.emse.fr/c/join/%41SECRET', 'https://canari.emse.fr/redacted'],
     [
       'https://canari.emse.fr/login?returnTo=%252Fc%252Fjoin%252FTWICE-SECRET',
@@ -366,6 +378,6 @@ if (failures.length > 0) {
 }
 console.log(
   'access-log-redaction: the access log cannot record a token, a GIF search, a guest receipt, ' +
-    'presence ids, a link a reader opened, an OIDC code nor an invite, in the request line or ' +
+    'presence ids, a link a reader opened, an OIDC code, an avatar token nor an invite, in the request line or ' +
     'the referer'
 );

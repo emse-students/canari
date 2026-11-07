@@ -364,8 +364,10 @@ describe('the native WebView policy (tauri.conf.json, 2026-10-22)', () => {
       ),
     ].map((m) => Number(m[1]));
     expect(targets.length).toBeGreaterThan(0);
-    // The app and the project at 16; the notification extension's own 18.2 is higher, never lower.
-    expect(Math.min(...targets)).toBe(16);
+    // EVERY target at 16, the extensions included. An extension whose minimum is above the phone's
+    // iOS is simply not run there - no error anywhere - so the notification extension's old 18.2 left
+    // every iPhone on 16.0-18.1 with the server's generic banner (P1 of 2026-11-01).
+    expect(new Set(targets)).toEqual(new Set([16]));
   });
 
   it('gives no remote origin access to the IPC: no capability declares `remote`', () => {

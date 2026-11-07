@@ -19,7 +19,8 @@
   import { LoaderCircle } from '@lucide/svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import Button from '$lib/components/ui/Button.svelte';
-  import { CAMPUS_SCOPES, cellKey } from '$lib/admin/readAccess';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
+  import { CAMPUS_SCOPES, cellKey, commentsKey } from '$lib/admin/readAccess';
   import {
     CAMPUSES,
     campusLabel,
@@ -38,6 +39,13 @@
     /** Keys of the cells being written right now. */
     saving: ReadonlySet<string>;
     onToggle: (campus: Campus, formation: Formation | null) => void;
+    /**
+     * This person's switch "voit les commentaires" (owner, 2026-11-04): OFF, the default, hides the
+     * comments - and who reacted or voted - of every post only their grant shows them.
+     */
+    seesComments: boolean;
+    /** Sets the switch; saved at once, like a box (its key in `saving` is `commentsKey`). */
+    onToggleComments: (seesComments: boolean) => void;
     onClose: () => void;
     /** A failed save or refresh, shown inside the sheet. */
     error?: string | null;
@@ -51,6 +59,8 @@
     held,
     saving,
     onToggle,
+    seesComments,
+    onToggleComments,
     onClose,
     error = null,
     lastChange = null,
@@ -126,6 +136,16 @@
       </fieldset>
     {/each}
     <p class="text-text-muted text-xs">{m.readaccess_istp_note()}</p>
+    <div class="border-cn-border border-t pt-4" data-testid="read-grant-comments">
+      <!-- One switch per PERSON, not per cell: it says what they see wherever their cells reach.
+           The line under it says what they will and will not see in its current state. -->
+      <Toggle
+        bind:checked={() => seesComments, (on) => onToggleComments(on)}
+        busy={saving.has(commentsKey(userId))}
+        label={m.readaccess_comments_label()}
+        hint={seesComments ? m.readaccess_comments_hint_on() : m.readaccess_comments_hint_off()}
+      />
+    </div>
   </div>
 
   {#snippet footer()}

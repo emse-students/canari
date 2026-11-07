@@ -4,11 +4,14 @@ import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Color
 import android.graphics.Rect
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -41,6 +44,21 @@ class MainActivity : TauriActivity() {
      * yet, and a crash there would be a worse outcome than a page that keeps its last value.
      */
     private var liveWebView: WebView? = null
+
+    /**
+     * How many overlays the page says a Back can still close (`BackBridge`). Lowered by
+     * `onBackPressed` at the moment it hands a Back over, so two fast Backs close one overlay each.
+     */
+    private val overlayDepth = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** One atomic step: the decision (a Back is available) and the decrement it implies. */
+    private fun takeOverlayBack(): Boolean {
+        while (true) {
+            val depth = overlayDepth.get()
+            if (depth <= 0) return false
+            if (overlayDepth.compareAndSet(depth, depth - 1)) return true
+        }
+    }
 
     /**
      * THE HARDWARE BACK PRESS STEPS THE WEBVIEW'S HISTORY, AND WITHOUT THIS LINE NOTHING DECIDED
@@ -95,6 +113,9 @@ class MainActivity : TauriActivity() {
             }
         super.onCreate(savedInstanceState)
         applyKeyboardInsets()
+        // While the in-app ring plays the screen stays on: a screen that timed out mid-ring would
+        // read, at `onStop`, as the power button - which silences the call (CallRingPlayer).
+        CallRingPlayer.screenHold = ringScreenHold
         // Before any capture, and once per process: no page is alive yet, so nothing is staging.
         IncomingShare.sweepOrphansOnce(this)
         // A relaunch after a configuration change, or from the recents list, re-delivers the intent
@@ -194,6 +215,8 @@ class MainActivity : TauriActivity() {
         pushForeground(isInForeground)
         webView.addJavascriptInterface(ThemeBridge(), "canariTheme")
         webView.addJavascriptInterface(GestureBridge(), "canariGestures")
+        webView.addJavascriptInterface(BackBridge(), "canariBack")
+        webView.addJavascriptInterface(AudioBridge(), "canariAudio")
         // The ongoing-call service (WP-C-BG-A) is declared in the main manifest since the calls flip;
         // the page reads an absent `canariCall` as a build that lost the declaration.
         CallBridge.attach(webView)
@@ -202,6 +225,37 @@ class MainActivity : TauriActivity() {
             Log.d("MainActivity", "canariCall bridge registered (the call service is in this build)")
         }
         webView.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyEdgeExclusions() }
+    }
+
+    /**
+     * `window.canariBack`: the page's overlay depth for the Back (see `overlayDepth`). Registered like the
+     * other bridges, on the app's own WebView, which loads only the app's own origin.
+     */
+    private inner class BackBridge {
+        /** The page's count of overlays a Back can close, pushed whenever it changes. */
+        @JavascriptInterface
+        fun setOverlayDepth(depth: Int) {
+            overlayDepth.set(depth.coerceAtLeast(0))
+        }
+    }
+
+    /**
+     * `window.canariAudio`: the phone's ringer mode, read by the page before each of its own tones
+     * (`frontend/src/lib/mobile/androidRinger.ts`). The WebView plays those tones on the MEDIA stream,
+     * which ignores the ringer, so the page asks: silent and vibrate silence them, as
+     * [fr.emse.canari.call.IncomingRing.plan] silences the in-app ring. Read at each tone, never
+     * cached - the user flips the ringer at any moment. A read that fails answers -1
+     * (`RINGER_MODE_UNREADABLE` on the page, which plays the tone and says it once) and is logged
+     * here with its cause.
+     */
+    private inner class AudioBridge {
+        @JavascriptInterface
+        fun ringerMode(): Int = try {
+            (getSystemService(AUDIO_SERVICE) as AudioManager).ringerMode
+        } catch (e: Exception) {
+            Log.e("MainActivity", "canariAudio: reading the ringer mode failed", e)
+            -1
+        }
     }
 
     /**
@@ -325,10 +379,14 @@ class MainActivity : TauriActivity() {
      * both lifecycle callbacks below are on it. If the WebView is not up yet, `onWebViewCreate`
      * pushes the current value the moment it is.
      */
-    private fun pushForeground(foreground: Boolean) {
+    private fun pushForeground(foreground: Boolean, opening: String? = null) {
         val webView = liveWebView ?: return
+        // `opening`: the link THIS resume opens (a tapped notification), so the page knows it in the
+        // same dispatch as the edge and does not read the conversation left on screen
+        // (`resumeOpening.svelte.ts`). JSON-quoted: it is page data, never code.
+        val openingJs = if (opening != null) org.json.JSONObject.quote(opening) else "null"
         val js = "window.__canariForeground=$foreground;" +
-            "window.dispatchEvent(new CustomEvent('canari:foreground',{detail:{foreground:$foreground}}));"
+            "window.dispatchEvent(new CustomEvent('canari:foreground',{detail:{foreground:$foreground,opening:$openingJs}}));"
         try {
             webView.evaluateJavascript(js, null)
         } catch (e: Exception) {
@@ -349,6 +407,18 @@ class MainActivity : TauriActivity() {
      */
     @Deprecated("Called by WryActivity's back callback; the dispatcher has no other hook for the root case")
     override fun onBackPressed() {
+        // A BACK THE PAGE CAN TAKE IS TAKEN BY THE PAGE. Wry calls this only after `canGoBack()` said
+        // no, and Chromium says no for an entry the page pushed with no user activation behind it -
+        // the discard question after a first Back on a take (Mi 9T, 2026-11-02): the second Back
+        // finished the app with a take pending. The page publishes how many overlays a Back can still
+        // close (`BackBridge`, `historyOverlayStack.ts`), so this reads a fact instead of asking a
+        // question: above zero the depth falls HERE and the page steps its own history; zero leaves.
+        val web = liveWebView
+        if (web != null && takeOverlayBack()) {
+            Log.i("MainActivity", "Back handed to the page: an overlay is open")
+            web.evaluateJavascript("window.__canariBackFromNative&&window.__canariBackFromNative()", null)
+            return
+        }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && CallForegroundService.running) {
             Log.i("MainActivity", "Back at the root during a call on API ${Build.VERSION.SDK_INT} - moving the task back")
             moveTaskToBack(true)
@@ -358,10 +428,17 @@ class MainActivity : TauriActivity() {
         super.onBackPressed()
     }
 
+    /** The link the next `onResume` opens, set by `onNewIntent` and taken by that resume. */
+    private var resumeOpening: String? = null
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         // Keep getIntent()/deep-link getCurrent() aligned with the notification tap intent.
         setIntent(intent)
+        // A link opened into a running app (a notification tap) is the resume's purpose: it rides
+        // the foreground edge `onResume` sends next - onNewIntent always precedes onResume, so the
+        // page learns it before it can read the conversation left on screen (owner, 2026-11-02).
+        resumeOpening = if (intent.action == Intent.ACTION_VIEW) intent.dataString else null
         if (IncomingShare.isShare(intent)) {
             IncomingShare.capture(this, intent) { runOnUiThread { pushIncomingShare() } }
         }
@@ -415,7 +492,10 @@ class MainActivity : TauriActivity() {
         CanariFirebaseMessagingService.cancelAllMessageNotifications(this)
         // The notification plugin's empty "Default" channel, created at its load (see the helper).
         CanariApplication.removePluginDefaultChannel(this)
-        pushForeground(true)
+        val opening = resumeOpening
+        resumeOpening = null
+        Log.d("MainActivity", "onResume: opens a link=${opening != null}")
+        pushForeground(true, opening)
         // A call service start refused while the activity was not resumed may be asked again now.
         // AFTER `isInForeground = true` above: the OffScreenGate's contract (call/OngoingCall.kt).
         CallBridge.onActivityResumed()
@@ -443,7 +523,21 @@ class MainActivity : TauriActivity() {
 
     override fun onStop() {
         super.onStop()
+        // The in-app ring is the on-screen app's. Off screen the call rings on as the native CallStyle
+        // ring, and the page starts the player again when it is back (`utils/callRing.ts`) - unless
+        // the SCREEN went off: the power button silences a ring, as it does the system's own, and
+        // the call stays answerable on the page. The screen is held on while it rings, so only the
+        // user turns it off.
+        val screenOff = !(getSystemService(POWER_SERVICE) as PowerManager).isInteractive
+        CallRingPlayer.leftScreen(screenOff)
         CookieManager.getInstance().flush()
+    }
+
+    /** Keeps this window on while the in-app ring plays ([CallRingPlayer.screenHold]). */
+    private val ringScreenHold: (Boolean) -> Unit = { on ->
+        if (on) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        Log.i("MainActivity", "screen held on for the ring: $on")
     }
 
     /**
@@ -473,6 +567,7 @@ class MainActivity : TauriActivity() {
      */
     override fun onDestroy() {
         super.onDestroy()
+        if (CallRingPlayer.screenHold === ringScreenHold) CallRingPlayer.screenHold = null
         val webView = liveWebView ?: run {
             Log.d("MainActivity", "onDestroy: no WebView was ever created, nothing to destroy")
             return

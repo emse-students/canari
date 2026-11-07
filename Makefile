@@ -193,7 +193,7 @@ install-rust:
 		echo "${GREEN}✅ Rust already installed: $$(rustc --version)${RESET}"; \
 		echo "${GREEN}✅ cargo already installed: $$(cargo --version)${RESET}"; \
 		rust_version=$$(rustc --version | sed -E 's/rustc ([0-9]+\.[0-9]+\.[0-9]+).*/\1/'); \
-		if [ "$$(printf '%s\n%s\n' '1.97.0' "$$rust_version" | sort -V | head -n1)" != "1.97.0" ]; then \
+		if [ "$$(printf '%s\n%s\n' '1.97.0' "$$rust_version" | sort -V | sed -n 1p)" != "1.97.0" ]; then \
 			echo "${YELLOW}⚠ Rust >= 1.97.0 required (oxvelte). Run: rustup update stable${RESET}"; \
 		fi; \
 	else \
@@ -311,7 +311,7 @@ test-frontend:
 # binary is absent, never silently: a lint that quietly does not run is worse than no lint.
 lint-ci-scripts:
 	@echo "${BLUE}🧹 shellcheck (the same file set as ci.yml)…${RESET}"
-	@if command -v shellcheck >/dev/null 2>&1; then 		shellcheck -x 			.github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh 			infrastructure/dev/*.sh infrastructure/deploy/*.sh 			infrastructure/local/*.sh infrastructure/backup/*.sh 			infrastructure/lib/*.sh infrastructure/egress-probe/*.sh infrastructure/authentik/*.sh 			scripts/*.sh; 	else 		echo "${YELLOW}⚠️  shellcheck absent - CI WILL still run it, at the version in .shellcheck-version ($$(tr -d '[:space:]' < .shellcheck-version)). winget install koalaman.shellcheck${RESET}"; 	fi
+	@if command -v shellcheck >/dev/null 2>&1; then 		shellcheck -x 			.github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh .github/scripts/tests/rolling-fixture/*.sh 			infrastructure/dev/*.sh infrastructure/deploy/*.sh 			infrastructure/local/*.sh infrastructure/backup/*.sh 			infrastructure/lib/*.sh infrastructure/egress-probe/*.sh infrastructure/authentik/*.sh 			scripts/*.sh; 	else 		echo "${YELLOW}⚠️  shellcheck absent - CI WILL still run it, at the version in .shellcheck-version ($$(tr -d '[:space:]' < .shellcheck-version)). winget install koalaman.shellcheck${RESET}"; 	fi
 
 test-ci-scripts: lint-ci-scripts
 	@echo "${BLUE}🧪 CI script self-tests…${RESET}"
@@ -319,13 +319,18 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/compose-wiring.test.sh
 	@bash .github/scripts/tests/compose-logging.test.sh
 	@bash .github/scripts/tests/log-retention.test.sh
+	@bash .github/scripts/tests/resolver-report.test.sh
+	@bash .github/scripts/tests/upstream-reachability-report.test.sh
+	@bash .github/scripts/tests/upstream-issues.test.sh
 	@bash .github/scripts/tests/local-copy-guards.test.sh
 	@bash .github/scripts/tests/dev-reset-guards.test.sh
 	@bun test ./tools/dev-seed/
+	@bun test ./tools/play-vitals/
 	@bash .github/scripts/tests/dev-gap.test.sh
 	@bash .github/scripts/tests/deploy-env.test.sh
 	@bash .github/scripts/tests/env-from-prod.test.sh
 	@bash .github/scripts/tests/deploy-migrations.test.sh
+	@bun .github/scripts/tests/migration-numbers.test.mjs
 	@bash .github/scripts/tests/deploy-registry-retry.test.sh
 	@bash .github/scripts/tests/deploy-replace.test.sh
 	@bash .github/scripts/tests/deploy-rolling.test.sh
@@ -357,11 +362,13 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/backup-report.test.sh
 	@bash .github/scripts/tests/backup-retention.test.sh
 	@bun .github/scripts/tests/no-nul-in-source.test.mjs
+	@bun .github/scripts/tests/wry-main-pipe-patch.test.mjs
 	@bun .github/scripts/tests/docs-merge-artefacts.test.mjs
 	@bun .github/scripts/tests/line-endings.test.mjs
 	@bun .github/scripts/tests/assert-frontend-build.test.mjs
 	@bun .github/scripts/tests/wiki-links.test.mjs
 	@bun .github/scripts/tests/docs-private-guard.test.mjs
+	@bun .github/scripts/tests/pipefail-early-reader.test.mjs
 	@bun .github/scripts/tests/backlog-closed.test.mjs
 	@bun .github/scripts/tests/backlog-fragments.test.mjs
 	@bun .github/scripts/tests/static-headers.test.mjs
@@ -387,6 +394,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/held-blueprints.test.sh
 	@bash .github/scripts/tests/bench-observables.test.sh
 	@bash .github/scripts/tests/ios-extensions.test.sh
+	@bun .github/scripts/tests/ios-compile-job.test.mjs
 	@bash .github/scripts/swift-syntax.sh
 	@bash .github/scripts/tests/swift-syntax.test.sh
 	@bun tools/app-store/submit.test.mjs
@@ -395,6 +403,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun tools/test-inventory/lib.test.mjs
 	@bun test tools/store-listings
 	@bun test tools/call-audio-fidelity
+	@bun test tools/video-av-sync
 
 # THE 158 SCRIPTS THAT PRODUCE EVERY CAMPAIGN VERDICT ARE LINTED HERE, and were linted by nothing at
 # all until 2026-09-07. `bun run lint` is scoped to `frontend/`; this recipe ran the self-tests and
@@ -481,6 +490,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/phone-ios-selftest.mjs
 	@bun tools/cross-client-harness/archive/webkit-input-selftest.mjs
 	@bun tools/cross-client-harness/archive/ios-observables-selftest.mjs
+	@bun tools/cross-client-harness/archive/ios-device-selftest.mjs
 	@bun tools/cross-client-harness/archive/sendtrace-selftest.mjs
 	@bun tools/cross-client-harness/archive/deploy-selftest.mjs
 	@bun tools/cross-client-harness/archive/fault-selftest.mjs

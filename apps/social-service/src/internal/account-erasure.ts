@@ -16,6 +16,8 @@
  *
  * The reasoning per decision is on docs/wiki/account-erasure.md.
  */
+import type { StoredComment as RemovableComment } from '../posts/comment-identity';
+import { pruneEmptyTombstones } from '../posts/comment-removal';
 
 /** The account id written in place of an erased one. Read as "a deleted account" by every client. */
 export const DELETED_ACCOUNT = '[deleted]';
@@ -57,6 +59,12 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'user_follows.followerUserId': { action: 'delete' },
   'user_follows.followedUserId': { action: 'delete' },
   'user_follow_notices.followerUserId': { action: 'delete' },
+  // WP-F6: the account's reposts go with it; reposts OF its personal posts go with those posts
+  // (the foreign key); its consent setting is its own.
+  'member_reposts.reposterId': { action: 'delete' },
+  'user_repost_settings.userId': { action: 'delete' },
+  // ...and the record that they were told about someone's repost (migration 123).
+  'member_repost_notices.recipientId': { action: 'delete' },
   'user_follow_notices.followedUserId': { action: 'delete' },
   'association_follows.followerUserId': { action: 'delete' },
   'association_push_mutes.userId': { action: 'delete' },
@@ -68,6 +76,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // part of the erasure deletes the blob (class `form-file`, owned by the uploader).
   'form_files.uploaderId': { action: 'delete' },
   'form_files.fileName': { action: 'delete', via: 'uploaderId' },
+  // A form question's image (migration 136) belongs to its form, not to whoever uploaded it: the row
+  // is the licence of its release, so it stays and only the uploader becomes `[deleted]`. An unbound
+  // one (never saved) is then citable by nobody and goes with the hourly reconciliation.
+  'form_item_images.uploaderId': { action: 'anonymise' },
   // A republication request addressed to the account (D38b): it is about the account's own post,
   // which goes with it, so the request goes too.
   'proposals.toUserId': { action: 'delete' },
@@ -82,6 +94,8 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'minesweeper_bans.userId': { action: 'delete' },
   'document_reviewer_grants.userId': { action: 'delete' },
   'read_grants.user_id': { action: 'delete' },
+  // The named reader's switch "voit les commentaires" (migration 132): theirs, gone with them.
+  'read_grant_readers.user_id': { action: 'delete' },
   // The claim already turned the legacy row into a `user_tags` row (deleted above); what is left is
   // the name it was matched on, which is the last nominative trace.
   'legacy_cotisations.claimedByUserId': { action: 'delete' },
@@ -127,8 +141,13 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'content_reports.reviewedBy': { action: 'anonymise' },
   'content_reports.reportedUserId': { action: 'anonymise' },
   'read_grants.granted_by': { action: 'anonymise' },
+  'read_grant_readers.updated_by': { action: 'anonymise' },
+  // WP-PIN (migration 127): a pin is the space's promotion, not the pinner's - it stays, unsigned.
+  'post_space_pins.pinned_by': { action: 'anonymise' },
   'read_grant_journal.user_id': { action: 'anonymise' },
   'read_grant_journal.actor': { action: 'anonymise' },
+  // The dependency journal (migration 129) keeps WHAT changed; WHO did it is anonymised.
+  'dependency_journal.actor': { action: 'anonymise' },
   'association_calendar_events.createdBy': { action: 'anonymise' },
   'association_calendar_events.validatedBy': { action: 'anonymise' },
   'association_calendar_events.rejectedBy': { action: 'anonymise' },
@@ -152,6 +171,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // accounting record kept as long as the payment it refunds, its authors anonymised.
   'lydia_refunds.requestedByUserId': { action: 'anonymise' },
   'lydia_refunds.resolvedByUserId': { action: 'anonymise' },
+  // Who accepted a payment delegation on the receiver's behalf (migration 125): the delegation's
+  // accounting trail, kept, its author anonymised.
+  'payment_delegation_acceptances.acceptedByUserId': { action: 'anonymise' },
   'user_moderation.mutedBy': { action: 'anonymise' },
   'document_reviewer_grants.grantedBy': { action: 'anonymise' },
   'minesweeper_bans.bannedBy': { action: 'anonymise' },
@@ -179,6 +201,23 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'channel_roles.permissions': NO_ACCOUNT('the permission names of a role'),
   'channel_members.roleIds': NO_ACCOUNT('role ids of one member'),
   'forms.items': NO_ACCOUNT('the questions of a form'),
+  'submissions.lines': NO_ACCOUNT(
+    'the priced lines of one submission (migration 137): product id, cell, quantity, unit price'
+  ),
+  'forms.guestFields': NO_ACCOUNT(
+    'the names of the fields a public form asks a guest (migration 138): lastName, firstName, email'
+  ),
+  // A GUEST'S e-mail belongs to no account: it is written only on a guest's answer (`userId` NULL,
+  // `guest-identity.ts` refuses it from a member), so no account's erasure can reach it - there is
+  // no id to find it by, and the row already names nobody this erasure knows. It lives as long as
+  // the answer (register C8); a guest's own request is answered by hand: found by "guestEmail" or the
+  // two name columns with "userId" IS NULL, and the row anonymised, never deleted (it may be a
+  // payment record) - docs/wiki/compliance/data-subject-requests.md, "A guest with no account".
+  'submissions.guestEmail': {
+    action: 'kept',
+    reason:
+      "a guest's e-mail on a public form's answer (migration 138): written only on rows with no account, so no account's erasure reaches it",
+  },
 
   'association_products.priceMatrix': NO_ACCOUNT('prices by tag of a product'),
   'association_products.requiredTags': NO_ACCOUNT('tag names a buyer must hold'),
@@ -472,6 +511,12 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     label: 'user_follows',
     sql: `DELETE FROM user_follows WHERE "followerUserId" = $1 OR "followedUserId" = $1`,
   },
+  { label: 'member_reposts', sql: `DELETE FROM member_reposts WHERE "reposterId" = $1` },
+  { label: 'user_repost_settings', sql: `DELETE FROM user_repost_settings WHERE "userId" = $1` },
+  {
+    label: 'member_repost_notices',
+    sql: `DELETE FROM member_repost_notices WHERE "recipientId" = $1`,
+  },
   {
     label: 'user_follow_notices',
     sql: `DELETE FROM user_follow_notices WHERE "followerUserId" = $1 OR "followedUserId" = $1`,
@@ -517,6 +562,7 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   },
   { label: 'reviewer_grants', sql: `DELETE FROM document_reviewer_grants WHERE "userId" = $1` },
   { label: 'read_grants', sql: `DELETE FROM read_grants WHERE user_id = $1` },
+  { label: 'read_grant_readers', sql: `DELETE FROM read_grant_readers WHERE user_id = $1` },
   {
     label: 'legacy_cotisations',
     sql: `DELETE FROM legacy_cotisations WHERE "claimedByUserId" = $1`,
@@ -562,6 +608,10 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     sql: `UPDATE submissions SET "paymentSettledBy" = $2 WHERE "paymentSettledBy" = $1`,
   },
   { label: 'forms', sql: `UPDATE forms SET "ownerId" = $2 WHERE "ownerId" = $1` },
+  {
+    label: 'form_item_images',
+    sql: `UPDATE form_item_images SET "uploaderId" = $2 WHERE "uploaderId" = $1`,
+  },
   // Unique per row: `idx_partnership_codes_card_claimant` is UNIQUE (cardId, claimedByUserId) WHERE
   // claimedByUserId IS NOT NULL, so two erased accounts on one card would collide on a constant -
   // and the transaction, the job and the person's sign-in with it, would fail for ever.
@@ -583,12 +633,24 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   },
   { label: 'read_grants_by', sql: `UPDATE read_grants SET granted_by = $2 WHERE granted_by = $1` },
   {
+    label: 'read_grant_readers_by',
+    sql: `UPDATE read_grant_readers SET updated_by = $2 WHERE updated_by = $1`,
+  },
+  {
+    label: 'space_pins_by',
+    sql: `UPDATE post_space_pins SET pinned_by = $2 WHERE pinned_by = $1`,
+  },
+  {
     label: 'read_grant_journal',
     sql: `UPDATE read_grant_journal SET user_id = $2 WHERE user_id = $1`,
   },
   {
     label: 'read_grant_journal_actor',
     sql: `UPDATE read_grant_journal SET actor = $2 WHERE actor = $1`,
+  },
+  {
+    label: 'dependency_journal_actor',
+    sql: `UPDATE dependency_journal SET actor = $2 WHERE actor = $1`,
   },
   {
     label: 'calendar_created',
@@ -631,6 +693,10 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'lydia_refunds_resolved_by',
     sql: `UPDATE lydia_refunds SET "resolvedByUserId" = $2 WHERE "resolvedByUserId" = $1`,
+  },
+  {
+    label: 'payment_delegation_acceptances_accepted_by',
+    sql: `UPDATE payment_delegation_acceptances SET "acceptedByUserId" = $2 WHERE "acceptedByUserId" = $1`,
   },
   {
     label: 'moderation_muted',
@@ -745,6 +811,12 @@ export const ERASURE_PROPOSAL_STATEMENTS: readonly ErasureStatement[] = [
  * lock `UPDATE associations SET "createdBy"` takes later anyway (no upgrade), and it does NOT
  * conflict with a proposal decision's `KEY SHARE`, so a decision is not serialised behind an
  * erasure. Ordered by id, so two erasures sharing associations take them in one order too.
+ *
+ * It also serialises the erasure with the LAST-MANAGER GUARD of a member write
+ * (`AssociationsService.underMemberLock`, `FOR UPDATE` of one association before any member row):
+ * the guard's count never races the `association_members` delete below. The erasure is not refused
+ * by that guard - erasing the last manager leaves none, recovered by a super-admin or the platform
+ * admin (association-permissions.md).
  */
 export const ERASURE_ASSOCIATION_LOCK_SQL = `SELECT a.id FROM associations a
   WHERE a.id::text IN (
@@ -910,7 +982,11 @@ export function scrubComments(
       }
       return next;
     });
-  return { comments: kept, changed };
+  // A moderation tombstone is kept only for the replies under it: one whose last reply was the
+  // account's goes too, as on any delete that empties it (`pruneEmptyTombstones`).
+  const { comments: pruned, pruned: gone } = pruneEmptyTombstones(kept as RemovableComment[]);
+  if (gone.length > 0) changed = true;
+  return { comments: pruned, changed };
 }
 
 /**

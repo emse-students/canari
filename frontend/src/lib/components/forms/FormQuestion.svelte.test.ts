@@ -12,6 +12,7 @@ import { flushSync, mount, tick, unmount } from 'svelte';
 import { uploadFormAnswerFile, type FormItem } from '$lib/forms/api';
 import { UploadAbortedError, type XhrUploadOptions } from '$lib/utils/uploadXhr';
 import { m } from '$lib/paraglide/messages';
+import { ANSWER_MAX_TEXT_LENGTH } from '$lib/forms/answerBounds';
 import FormQuestionHarness from './FormQuestionHarness.test.svelte';
 
 vi.mock('$lib/forms/api', async (importOriginal) => ({
@@ -61,6 +62,28 @@ describe('FormQuestion', () => {
     input.dispatchEvent(new Event('input'));
     flushSync();
     expect(state.value).toBe('Ada');
+  });
+
+  // D2: the server's bound is the textarea's, and the reader sees how much is left.
+  it('bounds a long answer at the server limit and counts it', () => {
+    const { target } = render(
+      { id: 'q', label: 'Lettre', required: false, type: 'long_text' },
+      'abc'
+    );
+    expect(target.querySelector('textarea')!.maxLength).toBe(ANSWER_MAX_TEXT_LENGTH);
+    expect(target.textContent).toContain(
+      m.form_answer_char_count({ count: 3, max: ANSWER_MAX_TEXT_LENGTH })
+    );
+  });
+
+  // A type added after this build (the coming product_grid) is never an empty card.
+  it('asks to update the app for a type it does not know', () => {
+    const { target } = render(
+      { id: 'q', label: 'Sweat', required: true, type: 'product_grid' },
+      ''
+    );
+    expect(target.textContent).toContain(m.form_view_update_app_to_answer());
+    expect(target.querySelector('input, textarea')).toBeNull();
   });
 
   it('hands a single choice back', () => {
@@ -176,5 +199,48 @@ describe('FormQuestion - a file on its way', () => {
     flushSync();
     expect(target.querySelector('[role=alert]')?.textContent).toBe(m.form_file_error_heic());
     expect(uploadFormAnswerFile).not.toHaveBeenCalled();
+  });
+
+  it("draws a question's image whole, under its help, with the alt its author wrote", () => {
+    const { target } = render(
+      {
+        id: 'q',
+        label: 'Ton plat',
+        description: 'Regarde le menu',
+        required: false,
+        type: 'short_text',
+        imageUrl: '/api/media/public/11111111-1111-4111-8111-111111111111',
+        imageAlt: 'Le menu du gala',
+      },
+      ''
+    );
+    const img = target.querySelector('figure img') as HTMLImageElement;
+    expect(img.getAttribute('src')).toMatch(
+      /\/api\/media\/public\/11111111-1111-4111-8111-111111111111$/
+    );
+    expect(img.getAttribute('alt')).toBe('Le menu du gala');
+    expect(img.getAttribute('loading')).toBe('lazy');
+    expect(img.className).toContain('object-contain');
+    // Under the help text, not above it.
+    const help = target.querySelector('p')!;
+    expect(help.compareDocumentPosition(img) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('names the question in the alt when its author wrote none, and draws nothing without an image', () => {
+    const withImage = render(
+      {
+        id: 'q',
+        label: 'Ton plat',
+        required: false,
+        type: 'short_text',
+        imageUrl: '/api/media/public/11111111-1111-4111-8111-111111111111',
+      },
+      ''
+    );
+    expect(withImage.target.querySelector('img')!.getAttribute('alt')).toBe(
+      m.form_question_image_alt({ label: 'Ton plat' })
+    );
+    const without = render({ id: 'q2', label: 'Nom', required: false, type: 'short_text' }, '');
+    expect(without.target.querySelector('img')).toBeNull();
   });
 });

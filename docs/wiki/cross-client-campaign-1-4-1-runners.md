@@ -174,7 +174,7 @@ person at a device, not the lead driving the bench. Cost is the plan's, five run
   (Q2; the shared-payload writer OFF), so `bun rows.mjs` shows a decision rather than a gap.
 - **DEV-5 is attached to CORRUPT-8** (lead, 2026-10-25) and is not played on this build.
 - **The I1 rows (FLOOR-3, BIG-1..3) need no person** (Q4 settled): the rig unlocks the iPhone with
-  `tools/ios-device/ios.mjs unlock` and types the PIN from stdin, from the private notes. If WDA ever
+  `tools/ios-device/ios.mjs unlock` and types the PIN from stdin with `type - --keys` (raw key events: the passcode keypad has no field to read back), from the private notes. If WDA ever
   stops answering, the lead asks for the unlock, runs the row unchanged, and the row carries the
   fact (the iPhone was unlocked by hand) in its detail.
 - **CC-5 and OFF-4 are BLOCKED-ON-ACCOUNT**: they need a fifth campaign account, which the lead asks

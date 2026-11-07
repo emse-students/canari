@@ -138,6 +138,8 @@ kick gets. The current device has no delete button at all.
 | POST | `/api/mls/messages/ack` | Acknowledge messages |
 | POST | `/api/mls/commit` | Submit a commit: validate epoch + store in the commit-log + fan out (one atomic call) |
 | GET | `/api/mls/commits/:groupId?sinceEpoch=N` | Rung-1 replay: ordered commits `baseEpoch >= N` to catch up a lagging device |
+| GET | `/api/mls/commits/:groupId/accepted-at?baseEpoch=N` | Members only, never before the requester's admitting commit: when the commit built on epoch N was accepted (its log row `createdAt`), the date of a device notice |
+| GET | `/api/mls/groups/:groupId/own-removal` | When the requester's own seat was removed, read of their own rows - the date of a removal notice |
 | GET | `/api/mls/group-info/:groupId` | Latest GroupInfo (external-join base) - membership-gated, returns `{ groupInfo, baseEpoch }` or null |
 | POST | `/api/mls/group-info/:groupId` | Holder repair of a stale stored GroupInfo - membership-gated, monotonic write-if-newer. Commits do NOT use it: they carry their base in `POST /api/mls/commit` (see [below](#the-base-travels-inside-every-commit-submission-comm-22)) |
 
@@ -151,8 +153,8 @@ kick gets. The current device has no delete button at all.
 | DELETE | `/api/mls/device-memberships/:userId/:deviceId/:groupId` | Delete one membership |
 | DELETE | `/api/mls/device-memberships/:userId/:deviceId` | Delete all memberships |
 | POST | `/api/mls/kick-stale-device` | Kick stale leaf from group |
-| POST | `/api/mls/welcome-request` | Broadcast welcome_request signal |
-| POST | `/api/mls/history-request` | Ask one RANDOM online member to resend the history bundle (after a fresh join); `no_peer_online` if none |
+| POST | `/api/mls/welcome-request` | Broadcast welcome_request signal; any roster seat, a waiting one included, never a key-distribution group ([chat-delivery](../services/chat-delivery.md#the-relay-routes-ask-the-group-2026-11-01)) |
+| POST | `/api/mls/history-request` | Ask one RANDOM online member to resend the history bundle (after a fresh join); `no_peer_online` if none. Admitted member only ([chat-delivery](../services/chat-delivery.md#the-relay-routes-ask-the-group-2026-11-01)) |
 | POST | `/api/mls/add-lock` | Acquire distributed add-lock |
 | DELETE | `/api/mls/add-lock` | Release add-lock |
 
@@ -738,6 +740,30 @@ took the group to 5, W1's return logged `refused - cleared`, healed, and W5 neve
   `previous-commit-unresolved`. A re-plan that does not complete is a toast naming the conversation
   (`reportLostInvitation`); only an ending a new invitation could lift says "invite them again" - a
   gate refusal and a retired conversation have their own sentences.
+- **A request with no answer BEFORE the commit left is `unreachable`, not `failed`** (NET-3). Typed
+  at the throw: a `TransportFailureError` that is not a `CommitOutcomeUnknownError` (the subclass is
+  caught first) means no stage was ever sent - the inviter's own registration, the device reads, the
+  key packages. Nothing is staged or kept, so the gesture is a WARNING ("try again once back
+  online"), and a re-plan meeting it WAITS (`waiting: connection`) rather than telling the member to
+  invite again. A device list nobody answered is "not known", never "no device": `no-devices` only
+  when the server SAID so for everyone left. The same holds for an add-lock request with no answer
+  (`add-lock-unanswered`, a warning that waits on the connection) and for block checks of which none
+  answered (`unreachable`/`failed`; `nobody-reachable` only when a block was actually found).
+- **An invitee the Add could not reach is named, never dropped silently.** With several invitees, a
+  block check that threw (`unchecked`), a device read nothing answered (`unchecked`), an answered
+  empty device list (`no-device`) or a commit that skipped every device of theirs for its KeyPackage
+  (`no-key-package`: expired, absent or untrusted, `everyDeviceSkipped`) leaves that person out
+  while the others are added - and
+  `BulkAdditionOutcome.leftOut` carries them, so the member is told by display name
+  (`reportBulkAdditionOutcome`; for a re-plan, `chat_invite_resumed_left_out`). A BLOCKED invitee is
+  the one deliberate silent skip.
+- **One outcome, one line** (TOK-2: a failed Add was said three times in 3 ms). `processBulkAddition`
+  logs its outcome ONCE (`narrateBulkAddition`), for every caller - gesture, join answer, re-plan
+  (marked `the invitation lost at epoch N, re-planned`): `[GROUP] an invitation added nobody
+  (<reason>) in <g>...[: <cause>]`, at `info` when it is the designed end of a lost race (a refused
+  admission dated by the seat generation the Add carried), at `warn`, or at `error` with the error
+  itself only when the cause is nothing this code typed (`ApiRefusalError`, `CommitRefusedError`, a transport failure). The
+  reporters only toast.
 
 Not covered, in [backlog](../backlog.md): a 1:1 creation and a group's own devices carry no
 invitation; a kept commit is settled only by a connection, while the toast promises "once it is
@@ -1089,13 +1115,33 @@ that consumes them next.
   is closed learns of the device at the next message push or when the app opens). Each push-decrypt
   answer carries `ownDeviceAdded` (`mobile/device_notice.rs`); the keys are claimed in a ledger of
   one marker file per key (`create_new`, atomic across the app and the extension), in the app data
-  directory on Android and the App Group on iOS. The app claims the keys it showed
+  directory on Android and the App Group on iOS. **A marker is named by the SHA-256 of its key, in
+  hex (64 characters), since 1.6.1.** From 1.4.1-alpha.2 to 1.6.0 it was named by the whole key in
+  hex: a production key (`userId:deviceId|fingerprint`, ~160 bytes) gave a ~320-byte name, over the
+  255-byte limit, so every claim failed with `File name too long (os error 36)`, logged at ERROR
+  five times a start on the Mi 9T, and NO background engine ever posted the alert. A marker an older
+  build did write (a key of at most 127 bytes) is still read as "already announced"
+  ([legacy-compatibility](../legacy-compatibility.md)). A marker that cannot be written is an ERROR
+  naming its path, and its key is NOT announced, since nothing would then stop a second post. The
+  app claims the keys it showed
   (`claim_device_notices`), so a later push replaying the commit notifies nothing. In the
   foreground neither engine posts: Android reads `MainActivity.isInForeground`, the iOS extension
   the `app_in_foreground` file the app keeps in the App Group (`CanariSetAppGroupForegroundFlag`).
   The engines have no key ages, so at registration the app PRE-CLAIMS every key of the account's
   other listed devices that `isNewToItsOwner` calls old - an old device a heal brings back is then
-  never posted. The ledger is swept with the account's push files on deletion.
+  never posted. **That pre-claim is a precondition the engines check, not one they assume (1.6.1):**
+  `preclaim_device_notices` records the old keys and THEN writes the account's `preclaimed` marker
+  (never pruned) - but only when the pass read the key ages of EVERY listed device (`complete`): one
+  unanswered device may be old, so its pass records the keys it knows and withholds the marker. The
+  engines' door (`engine_claim_device_notices_json`, behind the JNI and C-FFI) posts and claims
+  nothing for an account without the marker, and answers `{"claimed": [...], "held": n}` so the
+  Android and iOS log lines say which reason left nothing to post (this crate's log reaches no
+  logger in a killed app). A store update runs the new build in the engines BEFORE the app's next
+  launch, and every pre-claim of 1.4.1-alpha.2 to 1.6.0 had failed, so without the gate a heal commit
+  pushed before the first open would post a false "new device" for an old laptop. **The ledger holds
+  one directory per account** (`device_notices/<sha256(userId)>/`: a marker per key, and
+  `preclaimed`); legacy markers sit in its root. An account's deletion removes its own directory and
+  its own legacy markers (`remove_device_notices_of`), never another account's on the install.
 - **A background Add the server refused** (Android `processWelcomeRequestBackground`) admitted
   nobody, and announces nothing. Its events exist only in the STAGED post-add state
   (`prepare_welcome_background_with_key`), which is installed into `mls.bin` only on the server's
@@ -1107,8 +1153,12 @@ that consumes them next.
 processes the commit itself and so shows the in-app alert only, with no local notification; and a
 device first seen inside a tree this device JOINED (its leaf pinned silently) is never announced.
 The pre-claim reads the device list, which omits devices idle for 30 days, so a background engine
-can still post for such a device when a heal brings it back; the app does not announce it. A
-contact's new device this device learns of more than 7 days late gets no line. Keys recorded when
+can still post for such a device when a heal brings it back; the app does not announce it. **After
+an update, until the app's first registration on it has pre-claimed the account, the engines post
+nothing at all: an account that never opens the app after the update gets NO background "new device"
+alert, even for a real attacker's device, until that first open.** The in-app alert still comes
+then, once the app drains the commit - a late notification, never a false one. A pass with an
+unanswered device extends that window to the next complete one. A contact's new device this device learns of more than 7 days late gets no line. Keys recorded when
 the history began carry that date, not their device's enrolment.
 
 ### Who admits a new person (2026-10-23)
@@ -1189,13 +1239,71 @@ winner's outcome without a refresh.
 
 **The joiner's own row says what it is.** A joiner whose ask is unanswered holds a `pending` row for a
 conversation it was never in, which used to read "Canal E2E établi.". The server's groups list carries,
-for this device's seat, `deviceMembership.awaitingAdmission`; discovery stores it on the row
+for the ACCOUNT's seat, `awaitingAdmission` on each row - said whether or not this device holds a
+device row there, never while ANY device of the person is `active` in the group - the commit gate's
+own predicate, `seatStillAwaits` (`utils/group-membership.ts`), read for the flagged groups only. The
+per-device `deviceMembership.awaitingAdmission` stays: an older client reads it, and a client facing
+an older server falls back to it with a WARN ([legacy-compatibility](../legacy-compatibility.md)). The ask is the person's, not the
+device's (review of #2442): a joiner's second device, which holds no device row yet, read its row as
+an ordinary `pending` conversation and its recovery fell through to an external join the base refused
+with a 409; it now reads "waiting for a member" like the first device, and `requestReAdd` reads the
+same flag off the list (`[READD] ... the account's seat awaits a member's admission`) and asks a member
+instead. Discovery stores it on the row
 (`Conversation.awaitingAdmission`, IndexedDB and SQLite schema v15, `syncAdmissionFlags`), and a
 `pending` row that carries it (`isNeverAdmitted`, `admissionState.ts`) reads "En attente qu'un membre
 vous ajoute." (`chat_awaiting_admission_preview`). When the list stops naming such a row - declined,
 or expired - discovery removes it with no status read: there is no past and no exclusion to keep.
 Only on a list that may be believed (`absenceIsEvidence`); a row that was ever `active` is not
 never-admitted, and both demotions out of `active` clear the flag.
+
+**The admission card and its edges, friction pass (2026-11-01).** Four defects of the same flow, none
+of them touching the rule:
+
+- *The card names the person.* `JoinRequestRow` resolved the name with `getUserDisplayNameSync`, which
+  reads a cache that notifies nobody - and a person who came by link is exactly the one no cache
+  holds, so the card read "Utilisateur inconnu" for good. The card now resolves each person once
+  when their ask (or decline line) appears (`resolveUserDisplayName`) and holds the answer in a
+  reactive map; the name is a link to `/profile/<id>`.
+- *The list says an ask exists.* `ConversationTile` shows a small count (`data-join-asks`) of the
+  asks of its conversation, derived from `pendingJoinRequests()` and gated by `canAnswerJoinRequests()`
+  like the card, so it leaves with the ask. Client-only; the preview stays the last message.
+- *The joiner is told.* A never-admitted row opened in `ChatArea` shows `chat_awaiting_admission_notice`
+  in the composer's notice band (the device-key line stays for a member's own further device). When
+  discovery purges that row - declined, or expired - it says once, as a toast
+  (`chat_admission_ended_toast`), at the one site that removes it. `chat_send_held` no longer says
+  "session".
+- *The loser of a tap race is not told it failed.* A refusal of the member's own Add carries a typed
+  `JoinRefusalKind` (`joinAnswers.ts`, from `BulkAdditionRefusal`: `add-lock-busy` is `busy`,
+  `removed-meanwhile` is `raced`, never read from the `reason` text). `busy` is only an ANSWERED
+  refusal: `acquireAddLockAnswer` tells the server's "held" from a transport error or a non-2xx, which
+  is `add-lock-unanswered` and a plain failure. `commit-race-lost` and the other aborts prove nobody
+  answered this ask, so they are failures too. `answerJoinRequestOutcome` returns the kind and
+  `answerJoinRequestOrToast` says "someone is adding people, try again in a moment" or "another member
+  already answered"; the ask stays until the server's settlement frame clears it. Any other refusal is
+  still "try again".
+
+**One push per ask, to the members already admitted (owner, 2026-11-01).** A member who has the app
+closed learned of an ask only at the next open. The invitation-link acceptance now sends ONE ordinary,
+user-visible push per `askId` ("X veut rejoindre", the conversation's name as the body), composed on
+the device from `contentKey = chat_join_ask` (`composeServerNotification` on Android, the NSE on iOS;
+category `messages`, so the account's messages switch and a conversation muted to `none` silence it).
+It is NOT the background-add wake, which an awaiting seat still suppresses (`notifyWelcomeRequest`):
+that wake lets a phone answer by itself and no push answers an ask.
+
+**One push per member Decline, never per seat.** The claim is a row keyed `(groupId, userId)`
+(`dm_join_ask_pushes`, migration 043), NOT the seat: a self-withdrawal (`members.controller.ts`)
+deletes the seat and a re-follow writes a new one, so a claim on the seat let the joiner push every
+member again and again with no member acting. `pushJoinAsk` inserts the row with `gen` = the person's
+`dm_seat_evictions."declinedAtSeatGeneration"` (0 when none) `ON CONFLICT DO UPDATE ... WHERE old gen
+< new gen RETURNING 1`: only a MEMBER's Decline moves that counter, so accept / withdraw / accept sends
+once, a Decline then a new ask sends again, and an expiry re-arms nothing. Two replicas race on the one
+statement and only one gets a row back. Never to the joiner, to a seat that itself awaits a member,
+or to a member for whom a block stands between them and the asker (either direction, `isBlockedBetween`,
+logged). With no resolvable name the actor is empty and every device says "Someone wants to join" -
+the lock screen never shows an id (the failed lookup is a WARN). At-most-once: a send failing after
+the claim is logged per recipient (summary `sent / failed / muted / blocked`), not retried. **The push
+is not withdrawn when the ask ends**: an ordinary push cannot be recalled, and the card in the
+conversation says the ask is over. Migration 043 is purely additive (a new table).
 
 **A declined ask ends the joiner's recovery too, read and never learnt by failing (ADM-2,
 2026-10-25).** While it waits, the joiner's `requestReAdd` marks the group not-ready, and that marker -
@@ -1333,8 +1441,8 @@ and the server holds the person outside until a member answers:
 - **"Holds a leaf" is not "is a member" (review of #2358, P2-2).** A removal deletes the roster row
   BEFORE the member's Remove commit lands; if that commit never lands, the removed person keeps a
   leaf. Following a link later, they are re-added automatically: `automaticAdmission` reads their
-  user in the tree as `member-device`, and the commit's `admits` lifts the flag. Open in
-  [backlog](../backlog.md#p2---a-removed-member-whose-leaf-survived-is-re-added-automatically-by-a-link-review-of-2358).
+  user in the tree as `member-device`, and the commit's `admits` lifts the flag. Closed by ADM-3:
+  the commit is the one writer ([below](#the-commit-is-the-one-writer-of-a-new-person-adm-3-2026-10-25)).
 - **"Only through a member's decision" holds from a client floor**, not from this build:
   a member client older than the rule still auto-Adds a link joiner, and that Add legitimately lifts
   the flag. It holds once `minClientVersion` floors at this build, with migration 038 deployed with
@@ -1489,6 +1597,14 @@ boundary - [the trade-off](mls-availability-no-holder.md#the-security-trade-off-
 **History follows rule 2 for a further device (D3).** What it receives is decided by the
 history-answer rules ([history-answer-addressing](history-answer-addressing.md)); nothing is withheld
 from it because of the door it took. Only the key-changed class above is withheld.
+
+**A community's key group is the same door by design, and its line says so** (2026-11-05). A key
+group is entered by external commit (the app classifies it `open`, `crate::admission`), so a member's
+new browser entering every key group of every community is the ordinary path. The device observer
+(`device_trust.rs`) records the event exactly as in a conversation and says it at info, naming the
+key group's door; a further device's D1 entry into a conversation is said at info too, naming D1. A
+Mi 9T reading of `1.6.5-alpha.1` logged 70 ERROR lines for 7 web sign-ins, every one in a key group,
+before the line was named by the door. Only the key-changed class above stays an ERROR.
 
 **The Android background answer adds a member's device too** (owner, 2026-10-31: *"aussi en
 arriere-plan"*). `prepare_welcome_background_with_key` (`background.rs`) applies the same
@@ -1919,9 +2035,18 @@ anyway - a 500, then `Add error ... Could not send the secure invitation` - and 
 invitation of that device asked the server again and was told `revoked`, six 404s for one fact. The
 accept now carries **`refusedAdmits`** (`{ userId, deviceId, reason }`, every admit the gate dropped,
 before or inside its transaction). `undeliverableAdmits` (`BaseMlsService.ts`) says each once and returns
-those whose Welcome cannot be delivered - an ALLOWLIST, `no_key_package` alone
-(`admitRefusalMakesWelcomeUndeliverable`; NOT `not_enrolled`, which the sender's own
-`registerMember` enrols before a Welcome that then lands). `mergeAccepted` owes them nothing,
+those whose Welcome cannot be delivered - an ALLOWLIST (`whyWelcomeUndeliverable`, read off the
+Welcome gate's own refusals): `no_key_package` and `unresolved_identity` (no KeyPackage row to
+resolve the target by, `WELCOME_TARGET_UNKNOWN`), `not_entitled` and `departure_in_progress` (a key
+group's member gate refusing the person, which the Welcome is held to as well - `403
+WELCOME_TARGET_NOT_MEMBER`, met on RM-5 2026-10-26). NOT `not_enrolled`, which the sender's own
+`registerMember` enrols before a Welcome that then lands, nor `already_active` (a re-Add, whose
+Welcome lands); an unknown reason is inert. For the two key-group reasons nothing re-sends that
+Welcome, and a member's next Add does not help either: the refused leaf is still in the tree, and an
+admission skips a device that already holds one. A person granted access later, or whose departure
+is decided cancelled, comes back through the device's OWN external join once its seat claim holds
+again, and that commit removes the stale leaf. The pending sweep only ever sees conversation rows,
+so it never meets those two reasons. `mergeAccepted` owes them nothing,
 `addMember` / `replaceMember` hand out no Welcome and name the refusal (`notAdmitted`), and
 `addMembersBulk` leaves them out of `addedDeviceIds`, the list every caller welcomes. The pending
 sweep registers nobody, sends no Welcome or history, retires the invitation, and answers every other
@@ -2586,9 +2711,28 @@ equality (`storage_values` is an unordered `HashMap`; the CBOR is not determinis
 
 ## Failing to load a saved state
 
-`loadStateWithKey` rejects with a TYPED `mls-core` error, and `BaseMlsService.classifyStateLoadFailure`
-reads the type, never a sentence (table below). One case is checked first because it looks exactly
-like `undecryptable` and has a completely different answer.
+`loadStateWithKey` rejects with a TYPED error, and `BaseMlsService.classifyStateLoadFailure` reads
+the type with `instanceof` alone - never a sentence, and since 2026-10-27 not even a code found inside
+one (table below). One case is checked first because it looks exactly like `undecryptable` and has a
+completely different answer.
+
+**The code crosses every boundary as a FIELD and is typed where it crosses.** `mls-core` decides it on
+the variant (`MlsError::state_load_code`: the four verdicts about the bytes plus
+`KEYSTORE_KEY_UNAVAILABLE`, `None` otherwise) and hands it out as `StateLoadRefusal { code, message }`:
+
+| Boundary | Rejects with | Typed by |
+| --- | --- | --- |
+| Tauri `initialiser_mls` | the serialized `StateLoadRefusal` | `TauriMlsService.invokeInit` -> `mlsStateLoadErrorOf` |
+| WASM `WasmMlsClient` constructor (legacy and v1 blobs, and a v2 blob WebCrypto opened) | the same two fields, as a JS object | `loadAndInitWasm` -> `mlsStateLoadErrorOf` |
+| the web's v2 opener (`openMlsStateBlobV2`) | `MlsStateVerdictError` itself, decided from the header | at the throw |
+| `state_blob_verdict` (after a WebCrypto refusal) | a code string, `OPENED` or a verdict | `loadAndInitWasm` |
+
+`mlsStateLoadErrorOf` (`mls-client/mlsStateLoadError.ts`) builds `MlsStateVerdictError` for a verdict,
+`KeystoreKeyUnavailableError` for an empty keystore, and `MlsStateLoadUntypedError` for a `null` code -
+which the classifier calls `unknown`, whatever its message names. A rejection outside the
+`{ code, message }` shape, or a code outside the closed set, is accused at `console.error` (a bindings
+mismatch, never a verdict). No older string shape is understood, deliberately: the native app embeds
+its frontend and the WASM ships in the same bundle, so the code and its reader come from one build.
 
 ### An envelope older than v0.11.0
 
@@ -2625,21 +2769,31 @@ migration's own failure and applied by the normal path below. Doing this from in
 
 ### The `classifyStateLoadFailure` verdicts
 
-| Verdict | Thrown as | Meaning | Recovery |
+| Verdict | Typed as (code) | Meaning | Recovery |
 |---|---|---|---|
-| `undecryptable` | `STATE_UNDECRYPTABLE:` | The AEAD tag did not verify. An OBSERVATION with two causes the legacy blob cannot separate: sealed under another device key (a PIN rotated elsewhere) or ALTERED (corruption, an interrupted flush). | Honour `MlsInitOptions.noFreshStart`: throw `SavedStateUnopenedError('undecryptable')`; the gate (`auth_local_state_unopenable`) names BOTH causes, offers the old PIN and names the reset. |
-| `rotated` | `STATE_KEY_MISMATCH:` | A FRAMED blob's header names a key other than the one in hand - checked before the cipher. | `SavedStateUnopenedError('rotated')`; the gate (`auth_local_state_old_pin`) states it as a fact. The pre-v0.11.0 Argon2id retry must NOT fire. |
-| `altered` | `STATE_ALTERED:` | A FRAMED blob's header names THE KEY IN HAND and the tag fails: the bytes were altered. | Rotate, like `mismatch`: no PIN ever opens it, so `noFreshStart` does NOT apply (DE7). |
-| `mismatch` | `IDENTITY_MISMATCH:` | The blob decrypted; its credential names another device (localStorage cleared, reinstall, or an interrupted fresh start). | Fresh start. `noFreshStart` does NOT apply - no PIN can repair an identity, so pausing would strand the user. |
-| `keystore_unavailable` | `KEYSTORE_KEY_UNAVAILABLE` | The native keystore holds no key (a refused fingerprint). | The PIN modal. |
-| `unknown` | anything else | Not typed by `mls-core`. | WARNs, and pauses rather than rotating: the blocking test is `!noPinOpensState(cause)`. |
+| `undecryptable` | `MlsStateVerdictError` (`STATE_UNDECRYPTABLE`) | The AEAD tag did not verify. An OBSERVATION with two causes the legacy blob cannot separate: sealed under another device key (a PIN rotated elsewhere) or ALTERED (corruption, an interrupted flush). | Honour `MlsInitOptions.noFreshStart`: throw `SavedStateUnopenedError('undecryptable')`; the gate (`auth_local_state_unopenable`) names BOTH causes, offers the old PIN and names the reset. |
+| `rotated` | `MlsStateVerdictError` (`STATE_KEY_MISMATCH`) | A FRAMED blob's header names a key other than the one in hand - checked before the cipher. | `SavedStateUnopenedError('rotated')`; the gate (`auth_local_state_old_pin`) states it as a fact. The pre-v0.11.0 Argon2id retry must NOT fire. The native install guard records it as `SealedUnderAnotherKey`, read from the code, and logs it at debug: an expected outcome. |
+| `altered` | `MlsStateVerdictError` (`STATE_ALTERED`) | A FRAMED blob's header names THE KEY IN HAND and the tag fails: the bytes were altered. | Rotate, like `mismatch`: no PIN ever opens it, so `noFreshStart` does NOT apply (DE7). |
+| `mismatch` | `MlsStateVerdictError` (`IDENTITY_MISMATCH`) | The blob decrypted; its credential names another device (localStorage cleared, reinstall, or an interrupted fresh start). | Fresh start. `noFreshStart` does NOT apply - no PIN can repair an identity, so pausing would strand the user. |
+| `keystore_unavailable` | `KeystoreKeyUnavailableError` (`KEYSTORE_KEY_UNAVAILABLE`) | The native keystore holds no key (a refused fingerprint). | The PIN modal, nothing rotated on either platform, with or without `noFreshStart`. The native install guard records the outcome as `NoKeystoreKey` (a typed `InstallOutcome`) and logs it at debug: a cancelled sheet is expected, not a failed install. |
+| `unknown` | anything else, `MlsStateLoadUntypedError` included - even when its message names a code | Not typed by `mls-core`. | Accused once, at its boundary, and pauses as `SavedStateUnopenedError('unknown')` - NEVER rotated, whatever the caller passes. |
+
+**ONE DECISION FOR BOTH PLATFORMS: `recoveryOfStateLoadFailure`** (`IMlsService.ts`) turns the
+verdict, whether a state exists and `noFreshStart` into `rotate`, `pause` or `rethrow`. A destructive
+repair is gated on KNOWING the state is broken: `mismatch` and `altered` rotate always; `rotated` and
+`undecryptable` rotate only without `noFreshStart`; `unknown`, `unreadable_now` and
+`keystore_unavailable` never rotate. Until 2026-11-01 an `unknown` cause still rotated when the caller
+had not set `noFreshStart`, and the web rotated a keystore refusal with a state present.
 
 **It used to branch on prose, with a default arm of `sealed`** - so every unrecognised failure,
 corruption included, told the user *"your PIN was changed on another device"*. Measured by CORRUPT-2
 and CORRUPT-1 on 2026-09-08 (one flipped byte; the state cut to half its length): the message sent
 the user after an old PIN that never existed, and the correct PIN left the gate `LOCKED+overlay` five
 passes running. Typed in `v0.18.18`; `state_load_failure_is_typed.rs` and the classifier tests
-assert that the OLD PROSE no longer classifies. **Since step 2 (PK1, 2026-10-17) a damaged FRAMED
+assert that the OLD PROSE no longer classifies. **Until 2026-10-27 the codes were still found by
+`includes` in the message**, so any text naming one bought its recovery - `altered`'s irreversible
+rotation included; the classifier tests now assert that a message naming each code, without the
+type, is `unknown`. **Since step 2 (PK1, 2026-10-17) a damaged FRAMED
 state exits by itself** (`altered` rotates); a damaged LEGACY blob still exits only through
 `onForgotPinReset` until its first rewrite, since its bytes cannot say it was altered.
 
@@ -2743,11 +2897,12 @@ FAILED `initialiser_mls` of B left them in place. The guarantee now:
   sign-out during it cancels its network waits, retires the client on its END, and the recovery stops
   (`LoginStoppedBySignOutError`) before its next step on the state - so its `initialiser_mls` can no
   longer land after the native session was ended.
-- **Why `MLS_MANAGER_ABSENT` is a code in a string.** Tauri could carry a serialised error object, but
-  every native command returns `Result<_, String>` and every code (`KEYSTORE_KEY_UNAVAILABLE`, the
-  `STATE_*` load codes, this one) crosses as the string's leading token. One code alone as an object
-  would give the boundary two conventions; the token is read in `isMlsManagerAbsent` alone and turned
-  into a type at each throw. Moving the whole boundary is a [backlog](../backlog.md) item.
+- **Why `MLS_MANAGER_ABSENT` is a code in a string.** Tauri could carry a serialised error object. The
+  `STATE_*` load codes and `KEYSTORE_KEY_UNAVAILABLE` do (step 1, #2596); this code and the rest
+  (`EVICTED:`, `ALREADY_MEMBER:`, `GAP_QUEUED:`, `GAP_DB_INSERT_FAILED:`, `UNRECOVERABLE:`) still cross
+  as the string's leading token, so the boundary has TWO conventions until the separately reviewed
+  step 2 is merged. The token is read in `isMlsManagerAbsent` alone and turned into a type at each
+  throw. Step 2 and its decode-order risk are a [backlog](../backlog.md) item.
 - **One exit, one INFO line.** A teardown that found nothing (the second and third of a revoked
   device's exit) logs at DEBUG.
 - **Open: the slot has no session generation** - a command of a destroyed client landing after the
@@ -2800,8 +2955,11 @@ has the before/after table).
   `OPENED`, or one of `STATE_ALTERED`, `STATE_KEY_MISMATCH`, `STATE_UNDECRYPTABLE`,
   `IDENTITY_MISMATCH`, which returns as the typed `MlsStateVerdictError` that
   `classifyStateLoadFailure` reads by type - so `altered` is only ever its proof and the old-PIN
-  recovery stays reachable. Each code is also the `Display` prefix the Tauri commands surface, so
-  both boundaries use the same word (pinned in `state_load_failure_is_typed.rs`). A REJECTION from
+  recovery stays reachable. The Tauri command and the WASM constructor carry the same code as a
+  field (`StateLoadRefusal`), and it is also each variant's `Display` prefix, for the logs (pinned in
+  `state_load_failure_is_typed.rs`). A coded refusal's `message` is the variant's detail WITHOUT that
+  prefix, because the typed TypeScript error leads with the code itself - carried in both, a log line
+  read `STATE_ALTERED: STATE_ALTERED: ...`. A REJECTION from
   `state_blob_verdict` is by contract no verdict, whatever its text. If the reader OPENS the bytes,
   the engine fault is proven; what it loaded is dropped inside the call, never installed (a witness,
   not a second load path), and a re-read of the same bytes does not ask again; a rejection (a trap)

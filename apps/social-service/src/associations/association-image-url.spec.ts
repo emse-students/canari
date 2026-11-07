@@ -1,8 +1,10 @@
 import { BadRequestException } from '@nestjs/common';
 import {
+  ASSOCIATION_IMAGE_QUESTION_IMAGE_CODE,
   ASSOCIATION_IMAGE_URL_CODE,
   assertAssociationImageUrl,
   isAllowedAssociationImageUrl,
+  publicMediaIdOf,
 } from './association-image-url';
 import { AssociationsService } from './associations.service';
 import type { Association } from './entities/association.entity';
@@ -67,9 +69,16 @@ describe('assertAssociationImageUrl', () => {
   });
 });
 
+/** A media id `form_item_images` holds: a form question's image. */
+const QUESTION_IMAGE = '0b6f3c1e-4a2d-4e8b-9c7a-1d2e3f405162';
+
 function makeService(seed: Partial<Association>) {
   const row = { id: ID, name: 'a', slug: 'a', updatedAt: new Date(0), ...seed } as Association;
   const assoRepo = {
+    // `form_item_images`, read by `assertNotQuestionImage`: one row, QUESTION_IMAGE.
+    query: jest.fn((_sql: string, params: unknown[]) =>
+      Promise.resolve(params[0] === QUESTION_IMAGE ? [{ '?column?': 1 }] : [])
+    ),
     findOne: jest.fn(() => Promise.resolve(null)),
     create: jest.fn(),
     update: jest.fn((_id: string, patch: Partial<Association>) => {
@@ -133,5 +142,50 @@ describe('AssociationsService writes of logoUrl', () => {
     ).rejects.toMatchObject({ response: { code: ASSOCIATION_IMAGE_URL_CODE } });
     expect(assoRepo.findOne).not.toHaveBeenCalled();
     expect(assoRepo.create).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    `/api/media/public/${QUESTION_IMAGE}?v=12`,
+    `https://canari.emse.fr/api/media/public/${QUESTION_IMAGE}`,
+  ])(
+    "update refuses a logo naming a form question's image (%s) and writes nothing",
+    async (logoUrl) => {
+      const { service, row, assoRepo } = makeService({ logoUrl: '/api/media/public/m?v=1' });
+      await expect(service.update(ID, { logoUrl })).rejects.toMatchObject({
+        response: { code: ASSOCIATION_IMAGE_QUESTION_IMAGE_CODE },
+      });
+      expect(assoRepo.update).not.toHaveBeenCalled();
+      expect(row.logoUrl).toBe('/api/media/public/m?v=1');
+    }
+  );
+
+  it('update keeps a logo already stored, even one naming a question image', async () => {
+    const stored = `/api/media/public/${QUESTION_IMAGE}?v=3`;
+    const { service, row } = makeService({ logoUrl: stored });
+    await service.update(ID, { logoUrl: stored, description: 'x' });
+    expect(row.logoUrl).toBe(stored);
+  });
+
+  it("create refuses a logo naming a form question's image before writing anything", async () => {
+    const { service, assoRepo } = makeService({});
+    await expect(
+      service.create(
+        { name: 'A', slug: 'aa', logoUrl: `/api/media/public/${QUESTION_IMAGE}` },
+        'u1',
+        true
+      )
+    ).rejects.toMatchObject({ response: { code: ASSOCIATION_IMAGE_QUESTION_IMAGE_CODE } });
+    expect(assoRepo.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('publicMediaIdOf', () => {
+  it.each([
+    [`/api/media/public/${QUESTION_IMAGE}?v=1`, QUESTION_IMAGE],
+    [`https://any.example/api/media/public/${QUESTION_IMAGE.toUpperCase()}`, QUESTION_IMAGE],
+    ['/api/media/public/m?v=1', null],
+    ['https://example.org/logo.png', null],
+  ])('%s -> %s', (value, id) => {
+    expect(publicMediaIdOf(value)).toBe(id);
   });
 });

@@ -353,7 +353,9 @@ The owner answered section 9 the same day. What each one changed in the code:
   in `apps/chat-delivery-service/src/utils/device-seat.ts`, read AFTER the base), so a queued Welcome
   or an Add in flight answers `welcome_owed` and is waited for. No timer was added: the trigger is the
   server's answer, the cadence the existing `RECOVERY_TIMEOUT_MS` throttle. The seat gate and the
-  `awaitingAdmission` 409 are untouched.
+  `awaitingAdmission` 409 are untouched: a `refused` answer (the typed `DeliveryRefusal` - no seat,
+  or, for a base refresh, a seat still awaiting admission) opens no door and carries no facts, so the banner reads unknown
+  (`recovery.test.ts`, the D1 block).
   **One door per answer (review of #2832).** A `stored` answer used to put the ask in Redis AND wake
   members' Android phones, whose background Add then raced the self-join it had just licensed. The
   further device's ask now carries its intent (`selfJoinIfNobody: true`): with no member online and a
@@ -368,7 +370,10 @@ The owner answered section 9 the same day. What each one changed in the code:
 - **D2 - announced as an ordinary added device.** `DeviceEvent::announces_new_device` is the one event
   for both doors: "X a ajoute un appareil" to members, "Nouvel appareil connecte" with "Ce n'est pas
   moi" on the owner's other devices. A further device - a new id, or one pinned by another group -
-  entering by its own commit writes no accusing line and no `unvouched-device` report. A NEW PERSON's
+  entering by its own commit writes no accusing line and no `unvouched-device` report. The Rust
+  observer (`device_trust.rs`) says it at info in every group, naming the door: a key group's own
+  (`open`, since 2026-11-05) or D1's (a conversation) - an ERROR there would accuse, on every member
+  device, the path this decision opens. A NEW PERSON's
   self-entry is still said and reported (`entersUninvited`), and so is a KNOWN id under a new key
   ([the class the tripwire keeps](#the-security-trade-off-honestly)).
 - **D3 - history follows rule 2** of [history-answer-addressing](history-answer-addressing.md) for a
@@ -383,8 +388,9 @@ The owner answered section 9 the same day. What each one changed in the code:
 
 ### The gate: D1 waits for D2 and D3 on every member client
 
-A `1.5.1`-`1.5.4` member reads a further device that let itself in as an accusation and withholds
-history from it - the tripwire D2/D3 narrowed. So the self-join must not open while such a client may
+Every member client up to `1.6.6` (the latest release when this was re-read, 2026-11-07: the pull
+request waited unmerged while `1.5.5`-`1.6.6` shipped) reads a further device that let itself in as an
+accusation and withholds history from it - the tripwire D2/D3 narrowed. So the self-join must not open while such a client may
 still be a member. **The server holds the door shut** with one constant,
 `FURTHER_DEVICE_SELF_JOIN_OPEN = false` (`apps/chat-delivery-service/src/utils/device-seat.ts`):
 
@@ -402,7 +408,8 @@ pushed (pinned by `messaging.no-holder-facts.spec.ts`, store then withdraw).
 
 A constant, not an environment switch: the condition is a fact about the shipped clients, the same on
 every estate, and the commit that flips it is its record. **Lifted by a one-line pull request once
-`minClientVersion` is at least `1.5.5`**, the release carrying D2/D3 - the row in
+`minClientVersion` is at least the first release carrying D2/D3** (`1.6.7` at the earliest; read
+`gh release list` and the merge commit, never this line) - the row in
 [legacy-compatibility](../legacy-compatibility.md) carries it. Until then a further device in a
 conversation with no member online waits, as before this page.
 

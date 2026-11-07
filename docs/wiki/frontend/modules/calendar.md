@@ -169,7 +169,9 @@ offered Google's template URL (no use without a Google account; Etar users had n
 
 **Now:** `feed.ics` takes `eventId`, keeping that one event of the window (same builder, same
 `UID@canari` as the subscription, so import + subscribe never doubles it).
-`eventIcsAbsoluteUrl` builds the link (one day either side of the start); a phone opens it in the
+`eventIcsAbsoluteUrl` builds the link (one day either side of the start) and, since 2026-11-02,
+carries the event's own signature `icsSig`, served with each validated event - no signature, no link
+([D40 closed](../../profiles-and-access.md#d40-closed---no-event-is-published-to-an-anonymous-reader-2026-11-02)); a phone opens it in the
 SYSTEM BROWSER - iOS Safari answers a text/calendar response with "Add to Calendar", Android downloads
 it and the calendar app owning `.ics` takes it (Etar's `ImportActivity` resolves
 `VIEW text/calendar` on the Mi 9T, measured). iOS goes straight there; Android and desktop keep the
@@ -210,6 +212,8 @@ asks it, and it reaches nothing - this list, its rights, its readers' agenda - u
 accept. The form reads the states from `GET .../events/:eventId/co-organisers` after it opens and
 sends `coOwnerIds` only once they arrived (`coOwnersLoad`), because the event's own `coOwners` names
 only the accepted ones ([profiles-and-access](../../profiles-and-access.md#d39-co-organisation-as-built-2026-10-05)).
+
+**Partner side (E2, 2026-11-03).** The form reads `GET .../events/:eventId/write-side` with the states; for a `partner` the date and the co-organiser list are neither drawn nor sent, and a "withdraw" button replaces the list ([profiles-and-access](../../profiles-and-access.md#e2-partner-rights-on-a-co-organised-event-wp-q1-2026-11-03)).
 
 **The detail modal and the picker (2026-10-10).** The modal lists every organiser as a pill chip
 (logo, name, link to its page) and, to whoever may edit the event, one quiet "n pending" line read

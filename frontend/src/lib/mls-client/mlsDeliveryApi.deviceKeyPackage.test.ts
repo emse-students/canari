@@ -41,6 +41,19 @@ describe('asking for one device KeyPackage', () => {
     expect(answer.device.deviceName).toBe('Pixel');
   });
 
+  it('a peek asks the server not to claim a package, and a plain read still claims', async () => {
+    const fetchFn = vi
+      .fn()
+      .mockImplementation(async () => json({ deviceId: 'd1', keyPackage: 'AQID' }, 200));
+    const client = api(fetchFn);
+
+    await client.fetchDeviceKeyPackage('u1', 'd1', { peek: true });
+    await client.fetchDeviceKeyPackage('u1', 'd1');
+
+    expect(String(fetchFn.mock.calls[0][0])).toMatch(/\/u1\/d1\/key-package\?peek=1$/);
+    expect(String(fetchFn.mock.calls[1][0])).toMatch(/\/u1\/d1\/key-package$/);
+  });
+
   it.each(['revoked', 'unregistered', 'expired'] as const)(
     'carries the server’s `%s` out of the 404 body',
     async (reason) => {

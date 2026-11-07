@@ -14,6 +14,9 @@ import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 
+/** A group id the routes accept: they refuse an id that is not a uuid before any query. */
+const G1 = '11111111-1111-4111-8111-111111111111';
+
 /**
  * THE NO-HOLDER FACTS TRAVEL IN THE SAME ANSWER AS THE VERDICT (D5 of
  * docs/wiki/protocols/mls-availability-no-holder.md).
@@ -90,7 +93,7 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
     ((service as unknown as { furtherDeviceSelfJoinOpen: boolean }).furtherDeviceSelfJoinOpen =
       true);
 
-  const body = { groupId: 'g1', requesterUserId: 'requ', requesterDeviceId: 'reqd' };
+  const body = { groupId: G1, requesterUserId: 'requ', requesterDeviceId: 'reqd' };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -113,7 +116,7 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
     redis.exists.mockResolvedValue(0);
     redis.mget.mockResolvedValue([null]);
     groupMemberRepo.findOne.mockResolvedValue({ id: 'seat-1', awaitingAdmission: false });
-    groupRepo.findOne.mockResolvedValue({ id: 'g1', activeEpoch: 7 });
+    groupRepo.findOne.mockResolvedValue({ id: G1, activeEpoch: 7 });
     deviceGroupRepo.find.mockImplementation(
       async ({ where }: { where: { userId?: string; status?: string } }) =>
         deviceRows.filter(
@@ -152,7 +155,7 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
   });
 
   it('answers a welcome request nobody can take with the base epochs and the seat', async () => {
-    groupInfoRepo.findOne.mockResolvedValue({ groupId: 'g1', groupInfo: 'AAA', baseEpoch: 5 });
+    groupInfoRepo.findOne.mockResolvedValue({ groupId: G1, groupInfo: 'AAA', baseEpoch: 5 });
 
     const res = await service.notifyWelcomeRequest('requ', body);
 
@@ -173,7 +176,7 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
   });
 
   it('carries a queued Welcome and an Add in flight, so the requester keeps waiting', async () => {
-    queuedMessageRepo.find.mockResolvedValue([{ groupId: 'g1' }]);
+    queuedMessageRepo.find.mockResolvedValue([{ groupId: G1 }]);
     redis.mget.mockResolvedValue(['held']);
 
     const res = await service.notifyWelcomeRequest('requ', body);
@@ -195,14 +198,20 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
     expect(res.facts).toBeUndefined();
   });
 
-  it('tells a caller with no seat nothing about the group', async () => {
+  it('tells a caller with no seat nothing about the group: the route refuses it first', async () => {
+    // Since the membership gate of the base-refresh route, a caller with no seat is the 403
+    // `NOT_A_MEMBER` before any election - no facts, no "nobody", nothing about the group.
     groupMemberRepo.findOne.mockResolvedValue(null);
-    const res = await service.notifyBaseRefreshRequest('requ', body);
-    expect(res).toEqual({ status: 'no_peer_online' });
+    await expect(service.notifyBaseRefreshRequest('requ', body)).rejects.toThrow(
+      'Caller is not a member of this group'
+    );
+    await expect(service.notifyWelcomeRequest('requ', body)).rejects.toThrow(
+      'Caller is not a member of this group'
+    );
   });
 
   it('answers a base refresh nobody can take with the same facts', async () => {
-    groupInfoRepo.findOne.mockResolvedValue({ groupId: 'g1', groupInfo: 'AAA', baseEpoch: 6 });
+    groupInfoRepo.findOne.mockResolvedValue({ groupId: G1, groupInfo: 'AAA', baseEpoch: 6 });
 
     const res = await service.notifyBaseRefreshRequest('requ', body);
 
@@ -253,7 +262,7 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
 
   describe('the further-device door is gated on D2/D3 having reached every member client', () => {
     it('serves no seat while the door is shut, so the client reads seat_unreadable', async () => {
-      groupInfoRepo.findOne.mockResolvedValue({ groupId: 'g1', groupInfo: 'AAA', baseEpoch: 7 });
+      groupInfoRepo.findOne.mockResolvedValue({ groupId: G1, groupInfo: 'AAA', baseEpoch: 7 });
       jest
         .spyOn(
           service as unknown as { assertMayReadExternalBase: () => Promise<void> },
@@ -261,7 +270,7 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
         )
         .mockResolvedValue(undefined);
 
-      const res = await service.getGroupInfo('g1', 'requ', 'reqd');
+      const res = await service.getGroupInfo(G1, 'requ', 'reqd');
 
       expect(res).not.toHaveProperty('seat');
     });
@@ -281,11 +290,11 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
   describe('one door per answer (D1): a further device that joins by itself', () => {
     beforeEach(() => {
       openTheDoor();
-      groupInfoRepo.findOne.mockResolvedValue({ groupId: 'g1', groupInfo: 'AAA', baseEpoch: 7 });
+      groupInfoRepo.findOne.mockResolvedValue({ groupId: G1, groupInfo: 'AAA', baseEpoch: 7 });
     });
 
     it('keeps the stored ask as the one door when the base is stale - the device cannot join on it', async () => {
-      groupInfoRepo.findOne.mockResolvedValue({ groupId: 'g1', groupInfo: 'AAA', baseEpoch: 5 });
+      groupInfoRepo.findOne.mockResolvedValue({ groupId: G1, groupInfo: 'AAA', baseEpoch: 5 });
 
       const res = await service.notifyWelcomeRequest('requ', { ...body, selfJoinIfNobody: true });
 
@@ -305,7 +314,7 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
       expect(pipelineCalls.filter((c) => c.op === 'sadd' || c.op === 'rpush')).toEqual([]);
       expect(pipelineCalls).toContainEqual({
         op: 'srem',
-        args: ['pending_welcome:g1', 'requ:reqd'],
+        args: [`pending_welcome:${G1}`, 'requ:reqd'],
       });
       expect(pipelineCalls).toContainEqual({
         op: 'lrem',
@@ -314,7 +323,7 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
           0,
           JSON.stringify({
             type: 'welcome_request',
-            groupId: 'g1',
+            groupId: G1,
             requesterUserId: 'requ',
             requesterDeviceId: 'reqd',
           }),
@@ -324,12 +333,12 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
 
     it('withdraws exactly the bytes the store path pushed: an earlier stored ask leaves nothing behind', async () => {
       await service.notifyWelcomeRequest('requ', body);
-      expect(sets.get('pending_welcome:g1')?.has('requ:reqd')).toBe(true);
+      expect(sets.get(`pending_welcome:${G1}`)?.has('requ:reqd')).toBe(true);
       expect(lists.get('pending_welcome_notify:ua')).toHaveLength(1);
 
       await service.notifyWelcomeRequest('requ', { ...body, selfJoinIfNobody: true });
 
-      expect(sets.get('pending_welcome:g1')?.has('requ:reqd')).toBe(false);
+      expect(sets.get(`pending_welcome:${G1}`)?.has('requ:reqd')).toBe(false);
       expect(lists.get('pending_welcome_notify:ua')).toEqual([]);
     });
 
@@ -355,7 +364,7 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
 
   it("serves a conversation's base with the asking device's seat, read after it", async () => {
     openTheDoor();
-    groupInfoRepo.findOne.mockResolvedValue({ groupId: 'g1', groupInfo: 'AAA', baseEpoch: 7 });
+    groupInfoRepo.findOne.mockResolvedValue({ groupId: G1, groupInfo: 'AAA', baseEpoch: 7 });
     jest
       .spyOn(
         service as unknown as { assertMayReadExternalBase: () => Promise<void> },
@@ -363,8 +372,8 @@ describe('MessagingService - the facts a no-holder answer carries', () => {
       )
       .mockResolvedValue(undefined);
 
-    const withSeat = await service.getGroupInfo('g1', 'requ', 'reqd');
-    const without = await service.getGroupInfo('g1', 'requ');
+    const withSeat = await service.getGroupInfo(G1, 'requ', 'reqd');
+    const without = await service.getGroupInfo(G1, 'requ');
 
     expect(withSeat?.seat).toEqual({ status: 'pending', welcomeQueued: false, addInFlight: false });
     expect(without).not.toHaveProperty('seat');

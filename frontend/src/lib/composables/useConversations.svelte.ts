@@ -78,6 +78,7 @@ import {
   type ConversationOutcome,
 } from '$lib/utils/chat/groupCreation';
 import type { OwedInvitationReplanner } from '$lib/mls-client/owedInvitations';
+import { drainOwedRemovalNotices, forgetRemovalNotices } from '$lib/utils/chat/removalNotice';
 import {
   makeLostInvitationReplanner,
   makeUnrecordedInvitationTeller,
@@ -95,17 +96,19 @@ import {
 } from '$lib/utils/chat/conversations';
 import { readLandingPreview } from '$lib/utils/chat/landingPreview';
 import {
-  reportBulkAdditionRefusal,
+  reportBulkAdditionOutcome,
   reportFollowerTabRefusal,
   reportLostInvitation,
   reportMemberRemovalFailure,
 } from '$lib/utils/chat/conversationRefusalMessage';
 import { MemberRemovalNotCommittedError } from '$lib/utils/chat/memberRemovalError';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
+import { comparePageKeys, oldestPageKey } from '$lib/db/messagePayload';
 import { parseReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeMessagePage } from '$lib/utils/chat/messageMerge';
 import { nextEchoMessages } from '$lib/utils/chat/salonEcho';
 import { clearUnsentSalonTexts } from '$lib/utils/chat/salonUnsent';
+import { conversationBeingRead } from '$lib/utils/chat/arrivalRuntime';
 import { noteSalonOpened, reconcileSalonUnreadFromServer } from '$lib/utils/chat/salonUnread';
 import {
   flushSalonReadMarks,
@@ -204,6 +207,8 @@ export function useConversations() {
     isMobileOverlayLayout() ? null : 'members'
   );
   let groupMembers = $state<string[]>([]);
+  /** The conversation `groupMembers` belongs to, so a switch can drop the previous one's list. */
+  let groupMembersFor = '';
   // Optimistic invite feedback: user IDs with an add-member operation in flight,
   // keyed by group so a mid-invite conversation switch never leaks pending rows.
   let pendingInvites = $state<{ groupId: string; ids: string[] } | null>(null);
@@ -346,7 +351,8 @@ export function useConversations() {
     const { channelService } = await import('$lib/services/ChannelService');
     await reconcileSalonUnreadFromServer({
       conversations,
-      selectedId: selectedContact,
+      // The salon being READ, not the bare selection (`conversationBeingRead`).
+      selectedId: conversationBeingRead(selectedContact),
       userId: ctx.userId,
       fetchCounts: () => channelService.listUnreadCounts(),
       settleOwedMarks: () =>
@@ -746,7 +752,13 @@ export function useConversations() {
       ...(m.editedAt ? { editedAt: m.editedAt.getTime() } : {}),
       ...(m.isDeleted ? { isDeleted: true } : {}),
     }));
+    // THE PARENT ROW FIRST: `messages.conversation_id` is a foreign key onto `conversations`, and the
+    // salon listing builds a salon's conversation in MEMORY only (`useChannelWorkspaces`), so the row
+    // of a salon this device meets for the first time is not on disk yet when its first page lands
+    // (measured on the iPhone 12, 2026-10-30: `FOREIGN KEY constraint failed` right after a new
+    // device's placeholder).
     try {
+      await saveConversation(channelConversationId, ctx);
       await ctx.storage.deleteMessagesForConversation(channelConversationId);
       if (rows.length > 0) await ctx.storage.saveMessages(rows, ctx.deviceKeyB64);
     } catch (e) {
@@ -1258,6 +1270,8 @@ export function useConversations() {
     // entries stay in the leaving account's own record.
     replannerMls?.setOwedInvitationReplanner(null);
     replannerMls = null;
+    // An answered removal ("no instant") is this account's, this session's: the next asks afresh.
+    forgetRemovalNotices();
     // The map is cleared beside this call, so it is no longer "restored": the flag is the NEXT
     // session's to set, and a reader asking before then (the share-sheet suggestions, a deep-link
     // landing) must wait for that session's restore rather than trust the one that left.
@@ -1378,6 +1392,20 @@ export function useConversations() {
             makeUnrecordedInvitationTeller({ conversations, report: reportLostInvitation })
           );
           replannerMls = mlsService;
+          // A removal line owed by an earlier session (its instant unanswered then): the retired row
+          // receives no further evidence, so the restore is what asks again.
+          const owedOf = mlsService;
+          void drainOwedRemovalNotices({
+            ownerId: ctx.userId,
+            conversations,
+            askRemovedAt: (groupId) => owedOf.ownRemovalAt(groupId),
+            addMessageToChat: ctx.addMessageToChat,
+            log: ctx.log,
+            // A late answer must not land in the next account's map: the sign-out retires `gen`.
+            isCurrent: () => !gen.retired,
+          }).catch((e: unknown) =>
+            console.error(`[EVICT] the owed removal notices could not be drained: ${String(e)}`)
+          );
         }
       }
     }
@@ -1528,20 +1556,20 @@ export function useConversations() {
     const convo = conversations.get(contactName);
     if (!convo) return false;
 
-    const timestamps = convo.messages.map((m) =>
-      m.timestamp instanceof Date
-        ? m.timestamp.getTime()
-        : new SvelteDate(m.timestamp as any).getTime()
-    );
-    const beforeTimestamp = timestamps.length > 0 ? Math.min(...timestamps) : undefined;
+    // The cursor is WHERE THE STORE'S PAGES STOP: the lowest `(orderAt, id)` among the rows a store
+    // page handed back (`oldestPageKey`), the pair the store pages on. Never the oldest row in
+    // memory: a row that reached it another way (live, from a bundle, an own pending send) may sit
+    // far below the last stored page, and paging below it skipped every stored row in between - as
+    // did a cursor on the key alone, which dropped the rows tied with the boundary (review of #2824,
+    // P2-4). No row from the store yet: the store's newest page, which the merge below deduplicates.
+    const before = oldestPageKey(convo.messages);
 
     const older = await ctx.storage.getMessagesPage(
       convo.id,
       ctx.deviceKeyB64,
       OLDER_MESSAGES_PAGE,
-      beforeTimestamp
+      before
     );
-    if (older.length === 0) return false;
 
     const mapped = await retroactivelyResolveHexIds(
       mapStoredMessagesToChatMessages(older, ctx.userId),
@@ -1553,13 +1581,25 @@ export function useConversations() {
     const current = conversations.get(contactName);
     if (!current) return false;
 
-    const existingIds = new SvelteSet(current.messages.map((m) => m.id));
-    const merged = [...mapped.filter((m) => !existingIds.has(m.id)), ...current.messages].sort(
-      compareMessageOrder
-    );
+    // A held row the store handed back again takes its fresh position. Below a PROVISIONAL boundary
+    // the store re-read everything at or above it, once keyed for real: a held store row it did not
+    // hand back has no position left to vouch for, and keeping its old one would make every later
+    // page re-read the window again.
+    const fresh = new SvelteMap(mapped.map((m) => [m.id, m]));
+    const held = current.messages.map((m) => {
+      const again = fresh.get(m.id)?.pageKey;
+      if (again) return { ...m, pageKey: again };
+      if (before?.provisional && m.pageKey) return { ...m, pageKey: undefined };
+      return m;
+    });
+    const heldIds = new SvelteSet(held.map((m) => m.id));
+    const merged = [...mapped.filter((m) => !heldIds.has(m.id)), ...held].sort(compareMessageOrder);
 
     conversations.set(contactName, { ...current, messages: merged });
-    return older.length === OLDER_MESSAGES_PAGE;
+    const below = before
+      ? older.filter((m) => m.pageKey && comparePageKeys(m.pageKey, before) < 0).length
+      : older.length;
+    return below === OLDER_MESSAGES_PAGE;
   }
 
   /**
@@ -1636,6 +1676,13 @@ export function useConversations() {
     } catch (e) {
       ctx.log(`[HISTORY_RANGE] could not reach the service: ${String(e).slice(0, 120)}`);
       return 'no-peer';
+    }
+    if (outcome?.refused) {
+      // Refused on membership: nobody was elected, so no range request is sent to nobody.
+      ctx.log(
+        `[HISTORY_RANGE] the service refused the ask for ${convo.id.slice(0, 8)}… (${outcome.refused})`
+      );
+      return 'unavailable';
     }
     if (outcome?.noPeerOnline) return 'no-peer';
 
@@ -1819,6 +1866,10 @@ export function useConversations() {
       ctx.log(`[VERIFY] Roster of ${id.slice(0, 8)}… not requested - conversation retired`);
       return;
     }
+    // Another conversation's members are never shown while this one's are fetched: the @mention
+    // picker would offer group A's people in group B. The same group's refresh keeps its list.
+    if (groupMembersFor !== id) groupMembers = [];
+    groupMembersFor = id;
     try {
       groupMembers = await fetchGroupRoster(ctx.ensureMls(), id, opts);
     } catch (e) {
@@ -1861,6 +1912,8 @@ export function useConversations() {
       conversations,
       groupId: convo.id,
       evidence,
+      askRemovedAt: () => ctx.ensureMls().ownRemovalAt(convo.id),
+      ownerId: ctx.userId,
       saveConversation: (key) => saveConversation(key, ctx),
       addMessageToChat: ctx.addMessageToChat,
       log: ctx.log,
@@ -2199,8 +2252,13 @@ export function useConversations() {
         addMessageToChat: ctx.addMessageToChat,
         log: ctx.log,
       });
-      // NEVER A SILENT REFUSAL: the member is the only one who can retry an invitation.
-      if (outcome.kind === 'not-added') reportBulkAdditionRefusal(outcome.reason);
+      // NEVER A SILENT REFUSAL, NOR A SILENT PARTIAL ADD: the member is the only one who can retry an
+      // invitation, for everybody or for the people it left out.
+      void reportBulkAdditionOutcome(outcome).catch((e: unknown) =>
+        console.warn(
+          `[GROUP] the outcome of an invitation could not be told: ${String(e).slice(0, 120)}`
+        )
+      );
       // FRESH: a roster read begun before the commit's write must not be joined (pre-Add roster).
       await loadGroupMembers(convo.id, ctx, { fresh: true });
     } catch (e) {

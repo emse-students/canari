@@ -1,0 +1,5 @@
+{
+  "description": "The most attachments one post may carry, images, videos and documents together (owner, 2026-11-02: a post of several PDFs was a column the length of the feed). social-service refuses a write past it with the typed 400 `code` below (apps/social-service/src/posts/post-attachment-cap.ts) and the composers stop adding at it (frontend/src/lib/posts/attachmentCap.ts). Each side's spec asserts its constants equal these, so the two cannot drift apart. The cap binds WRITES only: a post stored with more still loads and renders.",
+  "max": 10,
+  "code": "POST_ATTACHMENTS_TOO_MANY"
+}

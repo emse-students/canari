@@ -19,7 +19,7 @@ afterAll(adoptTransitionAnimations());
 
 const goto = vi.fn();
 const postAs = vi.hoisted(() => ({
-  list: [] as { id: string; name: string; logoUrl: string | null }[],
+  list: [] as { id: string; name: string; logoUrl: string | null; type?: string }[],
 }));
 vi.mock('$app/navigation', () => ({ goto: (...a: unknown[]) => goto(...a) }));
 vi.mock('$lib/posts/postIdentity', async (orig) => ({
@@ -76,7 +76,12 @@ async function render(d: PublishReelDeps, onclose = vi.fn(), extra: Record<strin
       target,
       props: {
         clip: { blob: new Blob(['x'], { type: 'video/webm' }), source: 'camera' },
-        limits: { maxDurationMs: 90_000, retentionDays: 30, warningWindowDays: 7 },
+        limits: {
+          maxDurationMs: 90_000,
+          chatMaxDurationMs: 60_000,
+          retentionDays: 30,
+          warningWindowDays: 7,
+        },
         onclose,
         deps: d,
         ...extra,
@@ -217,7 +222,11 @@ describe('ReelPublishSheet', () => {
 
 describe('ReelPublishSheet reached from the new-post composer (one camera, one behaviour, 2026-10-19)', () => {
   function composer() {
-    return { caption: 'from the composer', identity: '', onkeep: vi.fn(), onpublished: vi.fn() };
+    return {
+      start: { caption: 'from the composer', identity: '', studentsOnly: false },
+      onkeep: vi.fn(),
+      onpublished: vi.fn(),
+    };
   }
 
   it('says BEFORE publishing that the CanaReel is deleted after its days, and starts from the text', async () => {
@@ -309,19 +318,31 @@ describe('ReelPublishSheet - review of #2124', () => {
   it('"Garder comme post" hands back the caption and identity AS EDITED in the step', async () => {
     const onkeep = vi.fn();
     const { target } = await render(deps(), vi.fn(), {
-      composer: { caption: 'start', identity: '', onkeep, onpublished: vi.fn() },
+      composer: {
+        start: { caption: 'start', identity: '', studentsOnly: false },
+        onkeep,
+        onpublished: vi.fn(),
+      },
     });
     const caption = target.querySelector<HTMLTextAreaElement>('[data-reel-caption]')!;
     caption.value = 'edited here';
     caption.dispatchEvent(new Event('input', { bubbles: true }));
     flushSync();
     target.querySelector<HTMLButtonElement>('[data-reel-keep-as-post]')!.click();
-    expect(onkeep).toHaveBeenCalledWith('edited here', '');
+    expect(onkeep).toHaveBeenCalledWith({
+      caption: 'edited here',
+      identity: '',
+      studentsOnly: false,
+    });
   });
 
   it('from the composer the deletion notice is a note and takes the focus as the step opens', async () => {
     const { target } = await render(deps(), vi.fn(), {
-      composer: { caption: '', identity: '', onkeep: vi.fn(), onpublished: vi.fn() },
+      composer: {
+        start: { caption: '', identity: '', studentsOnly: false },
+        onkeep: vi.fn(),
+        onpublished: vi.fn(),
+      },
     });
     const notice = target.querySelector<HTMLElement>('[data-reel-publish-composer-notice]')!;
     expect(notice.getAttribute('role')).toBe('note');
@@ -339,8 +360,34 @@ describe('ReelPublishSheet - review of #2124', () => {
   it("the composer's association is the step's starting identity", async () => {
     postAs.list = [{ id: 'asso-1', name: 'BDE Test', logoUrl: null }];
     const { target } = await render(deps(), vi.fn(), {
-      composer: { caption: '', identity: 'asso-1', onkeep: vi.fn(), onpublished: vi.fn() },
+      composer: {
+        start: { caption: '', identity: 'asso-1', studentsOnly: false },
+        onkeep: vi.fn(),
+        onpublished: vi.fn(),
+      },
     });
     expect(target.textContent).toContain('BDE Test');
+  });
+});
+
+describe('ReelPublishSheet - "Entre étudiants" both ways with the composer (review of #3010)', () => {
+  it('starts from the composer switch, and "Garder comme post" hands it back as edited here', async () => {
+    postAs.list = [{ id: 'list-1', name: 'Liste Kraken', logoUrl: null, type: 'list' }];
+    const onkeep = vi.fn();
+    const { target } = await render(deps(), vi.fn(), {
+      composer: {
+        start: { caption: 'x', identity: 'list-1', studentsOnly: true },
+        onkeep,
+        onpublished: vi.fn(),
+      },
+    });
+    const toggle = target.querySelector<HTMLInputElement>(
+      '[data-students-only-switch] input[type="checkbox"]'
+    )!;
+    expect(toggle.checked).toBe(true);
+    toggle.click();
+    flushSync();
+    target.querySelector<HTMLButtonElement>('[data-reel-keep-as-post]')!.click();
+    expect(onkeep).toHaveBeenCalledWith({ caption: 'x', identity: 'list-1', studentsOnly: false });
   });
 });

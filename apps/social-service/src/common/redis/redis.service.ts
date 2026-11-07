@@ -110,6 +110,30 @@ export class RedisService implements OnModuleDestroy {
     return this.client.get(key);
   }
 
+  /** The values at `keys`, in order, null for a missing key - one round trip (`MGET`). */
+  async mget(...keys: string[]): Promise<(string | null)[]> {
+    if (keys.length === 0) return [];
+    return this.client.mget(...keys);
+  }
+
+  /** Increments the integer at `key` (0 when absent) and returns the new value (`INCR`). */
+  async incr(key: string): Promise<number> {
+    return this.client.incr(key);
+  }
+
+  /**
+   * `INCR` on each of `keys`, in one round trip (a pipeline). Throws when any of them failed: the
+   * caller relies on every counter having moved.
+   */
+  async incrEach(keys: readonly string[]): Promise<void> {
+    if (keys.length === 0) return;
+    const pipeline = this.client.pipeline();
+    for (const key of keys) pipeline.incr(key);
+    const results = (await pipeline.exec()) ?? [];
+    const failed = results.find(([err]) => err);
+    if (failed) throw failed[0];
+  }
+
   /** Stores a string value with an expiry (TTL in seconds). */
   async setex(key: string, ttlSeconds: number, value: string): Promise<void> {
     await this.client.setex(key, ttlSeconds, value);
@@ -142,6 +166,25 @@ export class RedisService implements OnModuleDestroy {
       cursor = next;
       if (keys.length > 0) {
         deleted += await this.client.del(...keys);
+      }
+    } while (cursor !== '0');
+    return deleted;
+  }
+
+  /**
+   * SCAN `match`, then DEL only the keys `select` keeps - one pass over the keyspace, for a cache
+   * whose key carries a field the glob cannot single out (the feed cache's viewer, which sits between
+   * fields that vary). Same cost as {@link deleteByPattern}; it spares every entry not selected.
+   */
+  async deleteMatching(match: string, select: (key: string) => boolean): Promise<number> {
+    let deleted = 0;
+    let cursor = '0';
+    do {
+      const [next, keys] = await this.client.scan(cursor, 'MATCH', match, 'COUNT', 200);
+      cursor = next;
+      const chosen = keys.filter(select);
+      if (chosen.length > 0) {
+        deleted += await this.client.del(...chosen);
       }
     } while (cursor !== '0');
     return deleted;

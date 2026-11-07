@@ -71,12 +71,22 @@ impl<R: Runtime> SystemComponents<R> {
         ios_command!(self, "removeTabBar", ())
     }
 
-    pub fn show_tab_bar(&self) -> crate::Result<()> {
-        ios_command!(self, "showTabBar", ())
+    /// CANARI PATCH: see `TabBarVisibilityOptions`.
+    pub fn show_tab_bar(&self, options: TabBarVisibilityOptions) -> crate::Result<()> {
+        ios_command!(self, "showTabBar", options)
     }
 
-    pub fn hide_tab_bar(&self) -> crate::Result<()> {
-        ios_command!(self, "hideTabBar", ())
+    /// CANARI PATCH: see `TabBarVisibilityOptions`.
+    pub fn hide_tab_bar(&self, options: TabBarVisibilityOptions) -> crate::Result<()> {
+        ios_command!(self, "hideTabBar", options)
+    }
+
+    /// CANARI PATCH: see `SetTabBarInteractiveOptions`.
+    pub fn set_tab_bar_interactive(
+        &self,
+        options: SetTabBarInteractiveOptions,
+    ) -> crate::Result<()> {
+        ios_command!(self, "setTabBarInteractive", options)
     }
 
     pub fn select_tab(&self, options: SelectTabOptions) -> crate::Result<()> {

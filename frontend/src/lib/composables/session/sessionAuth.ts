@@ -5,6 +5,7 @@
  * Each function receives `ctx: SessionContext` instead of the closure,
  * and `cb: ChatSessionCallbacks` to interact with conversations / UI.
  */
+import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { internalPath, loginReturningTo } from '$lib/utils/internalPath';
@@ -69,6 +70,11 @@ import {
 } from '$lib/mls-client';
 import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 import {
+  MlsResetUnsettledError,
+  MlsSlotMoveUnfinishedError,
+  MlsSlotOwnerUnrecordedError,
+} from '$lib/mls-client/mlsStateLoadError';
+import {
   getToken,
   clearAuth,
   SessionExpiredError,
@@ -89,13 +95,24 @@ import { connectivity } from '$lib/stores/connectivity.svelte';
 import { noteUnlockUnattended } from '$lib/stores/unlockPath.svelte';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { resetAnnouncementState } from '$lib/stores/announcement.svelte';
+import { resetSeenHelps } from '$lib/guidance/seenHelps.svelte';
+import { guideEngine } from '$lib/guidance/guidance.svelte';
 import { registerOfflinePromotion, unregisterOfflinePromotion } from './promoteOfflineSession';
 import {
   flushPendingGroupExits,
   registerPendingGroupExitDrain,
   unregisterPendingGroupExitDrain,
 } from '$lib/utils/chat/pendingGroupExits';
+import {
+  flushUploadReleaseMarks,
+  registerUploadReleaseDrain,
+  releaseUploadDurably,
+  unregisterUploadReleaseDrain,
+  ownerBoundToken,
+  type SessionReleaser,
+} from '$lib/utils/chat/uploadReleaseMarks';
 import { m } from '$lib/paraglide/messages';
+import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
 import {
   forgetProvenDeadEnds,
@@ -164,12 +181,20 @@ import {
 } from '$lib/utils/deviceKeyVault';
 import { askPinSaltAhead, forgetPinSaltAhead, takePinSaltAhead } from './pinSaltAhead';
 import { unlockWithPin, type PinCheckAnswer } from './pinUnlock';
-import { wipeDeviceToFactory } from '$lib/utils/deviceReset';
+import {
+  revokedWipeScope,
+  wipeAccountOfRevokedDevice,
+  wipeDeviceToFactory,
+} from '$lib/utils/deviceReset';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
 import { consumeFcmCache } from '$lib/utils/chat/fcmCache';
 import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
 import { consumeNativeReadWatermarks } from '$lib/utils/chat/readWatermarkCache';
-import { adoptOrphanedMirrorEntries, reconcileOutboxSent } from '$lib/utils/chat/outboxMirror';
+import {
+  adoptOrphanedMirrorEntries,
+  dateBackgroundSentRow,
+  reconcileOutboxSent,
+} from '$lib/utils/chat/outboxMirror';
 import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
 import { appendLog } from '$lib/utils/sessionLog';
 import { Log } from '$lib/utils/Log';
@@ -209,15 +234,16 @@ import {
   flushOutbox,
   resumeOutboxGroup,
   applyOutboxPendingStatuses,
-  OutboxPrepareRefusedError,
-  type PreparedOutboxMedia,
 } from '$lib/utils/chat/outbox';
+import { prepareQueuedChatReel } from '$lib/utils/chat/prepareQueuedChatReel';
 import {
   getCallSystemMessageContext,
   handleCallSignalForChat,
+  patchCallRecordServerTime,
   recordCallEnded,
   recordCallStarted,
   setCallSystemMessageContext,
+  type CallEndTime,
 } from '$lib/utils/chat/callSystemMessages';
 import { resetSiblingCallWarning } from '$lib/utils/callPresence';
 import { ChannelService } from '$lib/services/ChannelService';
@@ -235,9 +261,11 @@ import {
 } from './sessionConnection';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
 import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
+import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
+import { drainNativePushLog } from '$lib/mobile/nativePushLog';
 import { uploadClassFor } from '$lib/reels/chatReelWriter';
 import { ACCOUNT_KEY, SESSION_META_STORE } from '$lib/utils/accountLocalKeys';
-import { isDeletedAccountHere } from '$lib/utils/deletedAccountMarker';
+import { isDeletedAccountHere, wipeReasonOf } from '$lib/utils/deletedAccountMarker';
 import { registerDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
 
 /**
@@ -390,6 +418,12 @@ export function makeConnectionDeps(ctx: SessionContext, cb: ChatSessionCallbacks
  * the eventual re-encode happen at the right epoch.
  */
 export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
+  // THE OWNER IS BOUND HERE, ONCE: these deps serve one session's outbox, whose rows are that
+  // account's. Read at call time, an account switch in the middle of a drive would hold, release or
+  // give back the first account's files under the second's identity (owner-bound, so refused - and
+  // the release owed to the first account would then be lost with its outbox).
+  const ownerId = ctx.getUserId();
+  const ownerToken = ownerTokenOf(ownerId);
   return {
     mlsService: ctx.ensureMls(),
     storage: ctx.getStorage(),
@@ -451,67 +485,40 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
       );
     },
     prepareMedia: prepareQueuedChatReel,
+    // THE RELEASE IS OWED IN DURABLE STATE: marked before its DELETE, unmarked on the server's answer,
+    // and released again at the next start or reconnect when the DELETE got none (an offline cancel).
     releaseUpload: async (uploadId: string, why: string) => {
+      await releaseUploadDurably(ownerId, uploadId, why, releaserFor(ownerId), cb.log);
+    },
+    // A CHAT-REEL TAKE'S FILE (RC-13), under the same owner-bound token: the hold on an adopted feed
+    // upload, and its release once no message cites it. Both owed in the take row, not here.
+    holdChatReel: async (mediaId: string) => {
       const { MediaService } = await import('$lib/media');
-      await new MediaService().releaseResumableUpload(uploadId, getToken, why);
+      return new MediaService().holdChatReel(mediaId, ownerToken);
+    },
+    releaseChatReel: async (mediaId: string) => {
+      const { MediaService } = await import('$lib/media');
+      return new MediaService().releaseChatReel(mediaId, ownerToken);
     },
   };
 }
 
+/** A token that is `ownerId`'s and nobody else's (`ownerBoundToken`): another account's is refused. */
+function ownerTokenOf(ownerId: string): () => Promise<string> {
+  return ownerBoundToken(ownerId, getToken, (t) => decodeTokenClaims(t)?.sub ?? null);
+}
+
 /**
- * Prepares a queued RAW chat-reel take for the outbox (RC-5) with the encoder the composer used for
- * it before (`prepareVideoForUpload`, the server's plaintext ceiling as its budget). A cancel is
- * re-thrown as the outbox's `UploadAbortedError`, so it is read as the member's act and never as a
- * failure of the take.
+ * The releaser of `ownerId`'s resumable sessions: one media-service `DELETE` each, under a token that
+ * is `ownerId`'s and nobody else's (`ownerBoundToken`). Another account signed in meanwhile gets
+ * nothing sent under its token - the release is `unanswered` and the mark stays for its owner.
  */
-async function prepareQueuedChatReel(
-  media: NonNullable<import('$lib/db').OutboxEntry['media']>,
-  opts: { signal: AbortSignal; onProgress: (fraction: number) => void }
-): Promise<PreparedOutboxMedia> {
-  const [
-    { MediaService },
-    { prepareVideoForUpload, isVideoPrepareError },
-    { UploadAbortedError },
-    { videoPrepareFailureMessage, isUnpreparableFault },
-  ] = await Promise.all([
-    import('$lib/media'),
-    import('$lib/video/prepareVideoForUpload'),
-    import('$lib/utils/uploadXhr'),
-    import('$lib/video/videoPrepareMessages'),
-  ]);
-  const raw = media.fileBytes ?? new Uint8Array(0);
-  const source = new File([raw.buffer as ArrayBuffer], media.fileName ?? 'take', {
-    type: media.mimeType,
-  });
-  const limits = await new MediaService().uploadLimits();
-  try {
-    const prepared = await prepareVideoForUpload(source, {
-      maxBytes: limits?.maxPlaintextBytes,
-      signal: opts.signal,
-      onProgress: opts.onProgress,
-    });
-    return {
-      bytes: new Uint8Array(await prepared.file.arrayBuffer()),
-      mimeType: prepared.file.type,
-      fileName: prepared.file.name,
-      width: prepared.width,
-      height: prepared.height,
-      durationMs: Math.max(1, Math.round(prepared.durationSeconds * 1000)),
-    };
-  } catch (e) {
-    if (isVideoPrepareError(e) && e.fault === 'aborted') {
-      throw new UploadAbortedError(opts.signal.reason);
-    }
-    // A FACT OF THE TAKE OR THE ENGINE, classified here at the throw by its typed fault: failed for
-    // good with the composer's own sentence for it, never a retry that is refused the same way.
-    if (isVideoPrepareError(e) && isUnpreparableFault(e.fault)) {
-      throw new OutboxPrepareRefusedError(
-        videoPrepareFailureMessage(e) ?? m.video_prepare_failed(),
-        e
-      );
-    }
-    throw e;
-  }
+function releaserFor(ownerId: string): SessionReleaser {
+  const token = ownerTokenOf(ownerId);
+  return async (uploadId, why) => {
+    const { MediaService } = await import('$lib/media');
+    return new MediaService().releaseResumableUpload(uploadId, token, why);
+  };
 }
 
 /**
@@ -588,7 +595,9 @@ function vaultRefusedFailure(refusal: VaultRefusal): LoginFailure {
 }
 
 /**
- * The login failure for a saved state that `init` refused to open or replace (`noFreshStart`).
+ * The login failure for a saved state that `init` refused to open or replace - under `noFreshStart`,
+ * or for a cause that proves nothing about the bytes, which is never replaced
+ * (`recoveryOfStateLoadFailure`).
  *
  * READ FROM THE TYPE, NEVER FROM `reason.message`: it used to compare the message against one
  * shared marker, which collapsed every cause into one screen. Three answers now, each with the
@@ -596,7 +605,9 @@ function vaultRefusedFailure(refusal: VaultRefusal): LoginFailure {
  * `device_holds_other_account`, the gate withholding the reset. A framed state whose header names
  * another key (`rotated`) is a fact - the old PIN opens it - and says so without the "otherwise
  * damaged" branch, which the fingerprint has ruled out. A legacy blob or an untyped failure is
- * still only the observation, and keeps the sentence naming both remedies.
+ * still only the observation, and keeps the sentence naming both remedies. An `unknown` cause proves
+ * nothing and gets a retry-first sentence with no reset. `keystore_unavailable` never reaches here
+ * (`recoveryOfStateLoadFailure` rethrows it to the PIN modal).
  */
 export function savedStateFailure(
   reason: SavedStateUnopenedError | SavedStateOfAnotherAccountError | MlsStateWriteRefusedError
@@ -615,6 +626,11 @@ export function savedStateFailure(
   }
   if (reason.reason === 'unreadable_now') {
     return new LoginFailure('local_state_unreadable_now', m.auth_local_state_unreadable_now());
+  }
+  // An untyped cause (IPC fault, disk read, panic, install lock) proves nothing about the bytes: it
+  // never earns the "damaged, only a reset helps" sentence, which pushes towards a destructive act.
+  if (reason.reason === 'unknown') {
+    return new LoginFailure('local_state_unknown', m.auth_local_state_unknown());
   }
   return new LoginFailure('local_state_unopenable', m.auth_local_state_unopenable());
 }
@@ -648,21 +664,141 @@ export async function forgetAtRestMarkerOnceDataIsGone(
 }
 
 /**
- * Wipes all local MLS state, device ID, and stored DB for the given user.
- * Called when the server signals that this device has been revoked.
+ * The gate's answer to a refusal of the native per-account slot - typed by the native side, never
+ * read from a message - or `null` for anything else. Neither is a verdict on a state, so neither
+ * offers anything destructive: an unfinished move is resumed by a restart, an owner record that could
+ * not be written is the device's storage.
+ */
+function loginFailureOfSlotRefusal(reason: unknown): LoginFailure | null {
+  if (reason instanceof MlsSlotMoveUnfinishedError) {
+    return new LoginFailure('local_state_move_unfinished', m.auth_local_state_move_unfinished());
+  }
+  if (reason instanceof MlsSlotOwnerUnrecordedError) {
+    return new LoginFailure('local_state_owner_unrecorded', m.auth_local_state_owner_unrecorded());
+  }
+  if (reason instanceof MlsResetUnsettledError) {
+    return new LoginFailure('pin_reset_unsettled', m.auth_pin_reset_unsettled());
+  }
+  return null;
+}
+
+/**
+ * STEP ONE OF THE "FORGOT PIN" RESET, run BEFORE the server resets the PIN (round 6 of the review of
+ * #2919): once a signed-out session's final checkpoint has landed, the account's local MLS state is
+ * SET APART (`stageMlsStateReset`) - in the same native hold as the check of whether it may be, so
+ * no write lands between the two. A rejection means nothing moved and the server must not be asked.
+ */
+export async function stageDeviceResetImpl(
+  ctx: SessionContext,
+  userIdToReset: string,
+  serverBasis: string
+): Promise<void> {
+  // A SIGNED-OUT SESSION'S FINAL CHECKPOINT LANDS BEFORE THE STAGE, not after it: the reset runs from
+  // the PIN gate of the next sign-in, and a write still in flight from the sign-out (48 s measured on
+  // a Mi 9T) would put back the state under the OLD key - so the new PIN would meet an unopenable
+  // state. Settles at once when nothing is retiring.
+  await ctx.whenMlsRetired();
+  const { stageMlsStateReset } = await import('$lib/utils/hex');
+  await stageMlsStateReset(userIdToReset, serverBasis);
+}
+
+/** Undoes {@link stageDeviceResetImpl} when the server did NOT reset the PIN. */
+export async function rollbackDeviceResetImpl(userIdToReset: string): Promise<void> {
+  const { rollbackMlsStateReset } = await import('$lib/utils/hex');
+  await rollbackMlsStateReset(userIdToReset);
+}
+
+/**
+ * Adopts a "forgot PIN" reset a page that is gone left unsettled (`adoptUnsettledMlsReset`, round 9
+ * of the review of #2919): its server basis, or `null` when there is none.
+ */
+export async function adoptUnsettledDeviceResetImpl(
+  userId: string,
+  handOver = false
+): Promise<string | null> {
+  const { adoptUnsettledMlsReset } = await import('$lib/utils/hex');
+  return adoptUnsettledMlsReset(userId, { handOver });
+}
+
+/**
+ * STEP TWO OF THE "FORGOT PIN" RESET, once the server has reset the PIN: commits the removal of the
+ * account's MLS state {@link stageDeviceResetImpl} set apart, then ends the account's session on this
+ * device ({@link endAccountSessionLocally}). A commit that fails does not stop the rest - the
+ * account's keys and database go regardless - and is rethrown at the end, so the caller says so.
  */
 export async function resetDeviceAsFreshImpl(
   ctx: SessionContext,
   userIdToReset: string,
   cb: ChatSessionCallbacks
 ): Promise<void> {
-  // A SIGNED-OUT SESSION'S FINAL CHECKPOINT LANDS BEFORE THE DELETE, not after it: the "forgot PIN"
-  // reset runs from the PIN gate of the next sign-in, and a write still in flight from the sign-out
-  // (48 s measured on a Mi 9T) would put back the state under the OLD key that this deletes - so the
-  // new PIN would meet an unopenable state. Settles at once when nothing is retiring.
+  // Settled by the stage already; asked again because a session cannot have started since and this
+  // costs nothing then.
   await ctx.whenMlsRetired();
   const { removeMlsState } = await import('$lib/utils/hex');
-  await removeMlsState(userIdToReset);
+  let commitFailure: unknown = null;
+  try {
+    await removeMlsState(userIdToReset);
+  } catch (e) {
+    commitFailure = e;
+    console.error('[SECURITY] the PIN reset could not remove the local MLS state:', e);
+  }
+  await endAccountSessionLocally(ctx, userIdToReset, cb, { eraseAccountRecords: true });
+  if (commitFailure !== null) throw commitFailure;
+}
+
+/**
+ * Removes the account's device id, its local database rows and its at-rest marker, and ends its
+ * session in this realm - everything of a reset BUT the MLS state, which each caller removes its own
+ * way: the PIN reset through its staged commit, the revoked device through its wipe (round 6 of the
+ * review of #2919: the revoked path used to run the PIN reset's refusable removal first, and a
+ * refusal skipped `clearAuth` and the wipe).
+ *
+ * **`eraseAccountRecords: false` ENDS THE SESSION AND ERASES NOTHING** (round 7 of the review of
+ * #2919): the revoked wipe of ONE account ({@link runRevokedDeviceWipe}) leaves the device id, the
+ * database and the at-rest marker to `wipeAccountOfRevokedDevice`, which needs them. Erased here first,
+ * the wipe found no device id and no marker, named no keystore entry, and left the revoked account's
+ * key in the platform keystore - the very thing a revocation is for.
+ */
+async function endAccountSessionLocally(
+  ctx: SessionContext,
+  userIdToReset: string,
+  cb: ChatSessionCallbacks,
+  { eraseAccountRecords }: { eraseAccountRecords: boolean }
+): Promise<void> {
+  if (eraseAccountRecords) {
+    await eraseAccountRecordsLocally(userIdToReset, cb);
+  } else {
+    cb.log('[SECURITY] the account session ends here; its records are left to the account wipe');
+  }
+
+  // The session's OWN handle. `getStorage` shares one open store per user, so when the wipe targets
+  // the signed-in user this IS the handle closed by the erase and `close()` is idempotent - the call
+  // stays because the two are not the same fact: a wipe can target another user's store, and
+  // dropping a reference never closes a connection, which is what defers a later delete.
+  try {
+    await ctx.getStorage()?.close();
+  } catch (e) {
+    console.warn('[SECURITY] could not close the session database:', e);
+  }
+
+  ctx.resetMls();
+  ctx.setStorage(null);
+  ctx.setMyDeviceId('');
+  ctx.setIsLoggedIn(false);
+  ctx.setIsWsConnected(false);
+  clearDeviceKeyAndWrapKey();
+  clearUserLocally();
+  cb.log('[SECURITY] Revoked device detected: local state purged, reconnection required.');
+}
+
+/**
+ * The account's records a session end erases when nothing else will: its device id, its
+ * sync-guide and device-name keys, its database rows, and - once those are gone - its at-rest marker.
+ */
+async function eraseAccountRecordsLocally(
+  userIdToReset: string,
+  cb: ChatSessionCallbacks
+): Promise<void> {
   localStorage.removeItem(ACCOUNT_KEY.deviceId(userIdToReset));
   localStorage.removeItem(ACCOUNT_KEY.syncGuideSeen(userIdToReset));
 
@@ -698,25 +834,6 @@ export async function resetDeviceAsFreshImpl(
       cb.log
     );
   }
-
-  // The session's OWN handle. `getStorage` shares one open store per user, so when the wipe targets
-  // the signed-in user this IS the handle closed just above and `close()` is idempotent - the call
-  // stays because the two are not the same fact: a wipe can target another user's store, and
-  // dropping a reference never closes a connection, which is what defers a later delete.
-  try {
-    await ctx.getStorage()?.close();
-  } catch (e) {
-    console.warn('[SECURITY] could not close the session database:', e);
-  }
-
-  ctx.resetMls();
-  ctx.setStorage(null);
-  ctx.setMyDeviceId('');
-  ctx.setIsLoggedIn(false);
-  ctx.setIsWsConnected(false);
-  clearDeviceKeyAndWrapKey();
-  clearUserLocally();
-  cb.log('[SECURITY] Revoked device detected: local state purged, reconnection required.');
 }
 
 /**
@@ -848,9 +965,26 @@ async function runRevokedDeviceWipe(ctx: SessionContext, cb: ChatSessionCallback
   try {
     void tearDownLiveSession(ctx, cb, 'revoked');
     ctx.resetMls();
-    await resetDeviceAsFreshImpl(ctx, ctx.getUserId(), cb);
+    const userId = ctx.getUserId();
+    await ctx.whenMlsRetired();
+    // NOTHING HERE CAN REFUSE (round 6 of the review of #2919). This used to start with the "forgot
+    // PIN" reset's `removeMlsState`, which became account-scoped and refusable - and a refusal threw
+    // past `clearAuth` and the wipe: the revoked phone stayed signed in, its reset was never recorded,
+    // and every PIN check ran it again. The MLS state goes with the wipe below, whichever it is.
+    //
+    // THE SCOPE IS READ FIRST, while every record the answer reads is still in place - and it decides
+    // what the session end erases (round 7): the ONE-account wipe needs the device id and the at-rest
+    // marker to name the account's keystore entry, so the session end leaves them to it.
+    const scope = await revokedWipeScope(userId);
+    await endAccountSessionLocally(ctx, userId, cb, { eraseAccountRecords: scope === 'install' });
     await clearAuth();
-    await wipeDeviceToFactory();
+    if (scope === 'install') {
+      await wipeDeviceToFactory();
+    } else {
+      // ANOTHER ACCOUNT LIVES ON THIS INSTALL: its parked state, its vault slot and its keys are not
+      // the revoked account's to erase - B removing "this phone" from another device must not cost A.
+      await wipeAccountOfRevokedDevice(userId);
+    }
     ctx.setPin('');
   } finally {
     ctx.setWipingRevokedDevice(false);
@@ -878,13 +1012,22 @@ export async function answerDeviceRevokedFrame(
   // dead credential: the refresh refusal then SAYS it died by this revocation, which is the
   // answer `true` - and the session-expired reaction has already begun the same wipe, which
   // the call below joins (DEV-2, 2026-10-25).
-  const deviceId = await mlsService.resolveDeviceId(ctx.getUserId());
-  const revoked = await mlsService.isDeviceRevoked(ctx.getUserId(), deviceId);
-  if (!revoked) {
-    cb.log('[SECURITY] device_revoked frame received but the server disagrees - ignored.');
-    return;
+  //
+  // A WIPE ALREADY UNDER WAY IS THAT FACT, KNOWN HERE (round 6 of the review of #2919): it only ever
+  // starts on a confirmed revocation, so the frame joins it without asking. Asked anyway, the check
+  // could meet a credential the wipe's `clearAuth` had already dropped, read "not revoked", and log a
+  // disagreement that was not one - how early `clearAuth` runs in the wipe decided the line.
+  if (revokedDeviceWipe === null) {
+    const deviceId = await mlsService.resolveDeviceId(ctx.getUserId());
+    const revoked = await mlsService.isDeviceRevoked(ctx.getUserId(), deviceId);
+    if (!revoked && revokedDeviceWipe === null) {
+      cb.log('[SECURITY] device_revoked frame received but the server disagrees - ignored.');
+      return;
+    }
+    if (revoked) {
+      cb.log('[SECURITY] This device was revoked by its owner - signing out and resetting.');
+    }
   }
-  cb.log('[SECURITY] This device was revoked by its owner - signing out and resetting.');
   await wipeRevokedDevice(ctx, cb);
   // A REVOCATION IS NOT A FAILED LOGIN ATTEMPT, AND THE SEAM DECIDES WHAT THE USER SEES.
   // `onLoginFailed` means "the credential you just offered was refused, stay in the modal and
@@ -1261,11 +1404,23 @@ export async function loginImpl(
     // line: the vault and keystore unlocks of a saved user, the PIN gate, a reloaded follower tab.
     // Lifted only by an online sign-in of that subject, which the server allows once the erasure
     // completed (`forgetDeletedAccountOnSignIn`).
-    if (isDeletedAccountHere(ctx.getUserId()) || isDeletedAccountHere(userId.trim())) {
+    // THE ID THE GUARD MATCHED is the one whose reason is read (round 9 of the review of #2919): the
+    // session's id and the typed one may differ, and reading the reason of the other one named a
+    // revoked device "deleted", or the reverse.
+    const wipedHere = [ctx.getUserId(), userId.trim()].find((id) => isDeletedAccountHere(id));
+    if (wipedHere !== undefined) {
+      // THE SAME REFUSAL FOR A REVOKED DEVICE whose wipe is still owed, told as what it is - by its
+      // own code, so no reader of the code says "deleted" either: the account exists, this device
+      // was removed from it.
+      const revoked = wipeReasonOf(wipedHere) === 'revoked';
       cb.log(
-        `[LOGIN] ${ctx.getUserId().slice(0, 8)} was deleted from this device - refused, an online sign-in is required`
+        revoked
+          ? `[LOGIN] this device was revoked for ${wipedHere.slice(0, 8)} and its wipe is still owed - refused, an online sign-in is required`
+          : `[LOGIN] ${wipedHere.slice(0, 8)} was deleted from this device - refused, an online sign-in is required`
       );
-      throw new LoginFailure('account_deleted', m.auth_account_deleted_here());
+      throw revoked
+        ? new LoginFailure('revoked_device_wipe_owed', m.auth_device_revoked_here())
+        : new LoginFailure('account_deleted', m.auth_account_deleted_here());
     }
     const mlsService = ctx.ensureMls();
     loginClient = mlsService;
@@ -1327,13 +1482,21 @@ export async function loginImpl(
       { bytes?: Uint8Array; source: 'native' | 'indexeddb' } | undefined
     > => {
       if (isTauriRuntime()) {
-        const size = await mlsStateSize();
+        // THE SIZE IS ASKED FIRST, so the per-account slot's typed refusals (an unfinished move of
+        // this account's own state) are met HERE before the sign-in can meet them - and must reach
+        // the same gate (round 5 of the review of #2919).
+        const size = await mlsStateSize(ctx.getUserId()).catch((e: unknown) => {
+          throw loginFailureOfSlotRefusal(e) ?? e;
+        });
         return size > 0 ? { source: 'native' } : undefined;
       }
       const loaded = await loadMlsState(ctx.getUserId());
       if (!loaded) return undefined;
       return { bytes: loaded, source: 'indexeddb' };
     })();
+    // Awaited further down, after the token: a rejection before then must not surface as an
+    // unhandled one. The `await` below still throws it.
+    mlsStatePromise.catch(() => undefined);
 
     let accessToken: string;
     try {
@@ -1603,6 +1766,13 @@ export async function loginImpl(
     // this socket before MLS is ready is HELD by `BaseMlsService`, in arrival order, and replayed by
     // the `markInboundReady` below - which is the precondition of this line and must stay paired
     // with it. An offline session opens nothing: there is no token to carry and no server to reach.
+    //
+    // AND NOTHING IS PROCESSED BEFORE THE ROWS IT LANDS IN EXIST EITHER: a frame of a group this
+    // device holds, handled before the restore below has seeded its conversation row, is refused
+    // `absent-conversation` and fetched again - at every cold start (Mi 9T, 2026-11-05). So the hold
+    // is armed BEFORE the socket can deliver a byte, and the restore's seeding releases it - the
+    // held frames and the boot pull alike (`notifyConversationRowsSeeded`).
+    mlsService.holdInboundUntilRowsSeeded();
     if (!offlineSession) markBoot('gateway-handshake-started');
     const startedHandshake = offlineSession
       ? null
@@ -1673,6 +1843,8 @@ export async function loginImpl(
       const reason = mlsInitSettled.reason;
       // The init changed nothing (`MlsInitOptions.vaultOwnerUnproven`): the PIN gate, typed.
       if (reason instanceof VaultOwnerUnprovenError) throw vaultRefusedFailure(reason.refusal);
+      const slotRefusal = loginFailureOfSlotRefusal(reason);
+      if (slotRefusal) throw slotRefusal;
       if (
         reason instanceof SavedStateUnopenedError ||
         reason instanceof SavedStateOfAnotherAccountError ||
@@ -1739,6 +1911,12 @@ export async function loginImpl(
     // Info level: one line per ledger entry at start, each a decision a device reading must name.
     await takeKeyGroupPushJoins(mlsService, (line) => Log.i('LOGIN', line));
     stopIfSignedOut('distribution-groups');
+    // What the iOS notification extension did while the app was shut: decrypted, fell back, timed
+    // out or killed - one `[NSE_OUTCOME]` line each (`nseOutcomes.ts`). Not awaited: nothing below
+    // depends on it, and a log line must never hold a login.
+    void drainNseOutcomes(appendLog);
+    // And the Android push service's warnings and errors while away (`nativePushLog.ts`).
+    void drainNativePushLog(appendLog);
 
     // Notify only on genuine private browsing (blocked / ephemeral storage).
     void isLikelyPrivateBrowsing()
@@ -1923,6 +2101,12 @@ export async function loginImpl(
     // Group exits this device decided and the server never answered. Same lifecycle and the same
     // seam as the one above: a delete or a leave that met no server is owed until one answers, and
     // the answer cannot be waited for with a timer (see `pendingGroupExits`).
+    // Upload sessions a withdrawal could not give back (made offline): owed until one answers.
+    // The owner is FIXED here: a pass started for this account never sends under the next one's token.
+    {
+      const ownerId = ctx.getUserId();
+      registerUploadReleaseDrain({ ownerId, release: releaserFor(ownerId), log: cb.log });
+    }
     registerPendingGroupExitDrain({
       getStorage: () => ctx.getStorage(),
       ensureMls: () => ctx.ensureMls(),
@@ -1994,16 +2178,25 @@ export async function loginImpl(
     };
     setCallSystemMessageContext(callSystemCtx);
     ctx.getCallService()?.setChatNotifier({
-      onCallStarted: (groupId: string, callId: string) =>
-        recordCallStarted(getCallSystemMessageContext(), groupId, callId, ctx.getUserId()),
-      onCallEnded: (groupId: string, callId: string, outcome?: CallEndReason, starterId?: string) =>
+      onCallStarted: (groupId: string, callId: string, at: EventTime) =>
+        recordCallStarted(getCallSystemMessageContext(), groupId, callId, ctx.getUserId(), at),
+      onCallEnded: (
+        groupId: string,
+        callId: string,
+        at: CallEndTime,
+        outcome?: CallEndReason,
+        starterId?: string
+      ) =>
         recordCallEnded(
           getCallSystemMessageContext(),
           groupId,
           callId,
+          at,
           outcome,
           starterId ?? ctx.getUserId()
         ),
+      onCallEndAnswered: (groupId: string, callId: string, serverTimestamp: number) =>
+        patchCallRecordServerTime(getCallSystemMessageContext(), groupId, callId, serverTimestamp),
     });
 
     setupMessageHandler({
@@ -2052,13 +2245,14 @@ export async function loginImpl(
       },
       onJoinAskSettled: settleJoinRequest,
       onReadStateAdvanced: cb.onReadStateAdvanced,
-      onCallSignal: (senderId: string, groupId: string, callMsg) => {
+      onCallSignal: (senderId: string, groupId: string, callMsg, at) => {
         void handleCallSignalForChat(
           getCallSystemMessageContext(),
           senderId,
           groupId,
           callMsg as ICallMsg,
-          ctx.getUserId()
+          ctx.getUserId(),
+          at
         );
         void ctx
           .getCallService()
@@ -2142,7 +2336,9 @@ export async function loginImpl(
      * Since 2026-09-16 the handshake no longer STARTS here either - it was started before the MLS
      * state load, 182 ms further up, and what remains on this path is the gate and the await. The
      * concurrency that buys is paid for by the hold queue and by nothing else: frames are held, not
-     * dropped, and they are replayed by the call below before a single line past it runs.
+     * dropped. AND SINCE 2026-11-06 THEY ARE NOT REPLAYED HERE: the hold armed before the handshake
+     * keeps them until the restore below has seeded the conversation rows they land in, and the
+     * seeding replays them (`notifyConversationRowsSeeded`). This call only says MLS is ready.
      *
      * Only the SOCKET moved, twice. `syncConnectionAfterWsOpen` - KeyPackage publication, the group
      * sweep, reconciliation - stays where it was, below the restore, because it reasons about the
@@ -2155,13 +2351,23 @@ export async function loginImpl(
     // degrade correctly on its own, but the attempt costs a timeout on a launch that already knows
     // there is no network, and it logs "[WS] Gateway connection failed" for a device that never had one.
     let gatewayIsOpen = false;
+    /**
+     * The boot catch-up (the pull, then `onCaughtUp`), STARTED by the connection and released by the
+     * restore's seeding - so it is awaited only once the restore below has returned, never before
+     * it: the restore is what issues its pull. `null` when no socket opened.
+     */
+    let bootCatchUp: Promise<void> | null = null;
     if (offlineSession) {
       cb.log('[INIT] Offline session - gateway connection deferred until the network returns.');
     } else {
       beginStartupCatchupPhase('open_gateway');
       // The handshake this awaits was started before the MLS state load, not here - see
       // `startGatewayHandshake` above. Everything after the socket opens is unchanged.
-      gatewayIsOpen = await openGatewayConnection(makeConnectionDeps(ctx, cb), startedHandshake);
+      gatewayIsOpen = await openGatewayConnection(
+        makeConnectionDeps(ctx, cb),
+        startedHandshake,
+        (caughtUp) => (bootCatchUp = caughtUp)
+      );
       endStartupCatchupPhase();
       stopIfSignedOut('open-gateway');
     }
@@ -2192,8 +2398,20 @@ export async function loginImpl(
       // Load conversations first: consumeFcmCache can access
       // the conversations Map via addMessageToChat once it is populated.
       beginStartupCatchupPhase('load_conversations');
-      await cb.loadAndRestoreConversations();
+      try {
+        await cb.loadAndRestoreConversations();
+      } finally {
+        // THE HOLD ARMED ABOVE ENDS HERE AT THE LATEST, so it terminates on a proof - this line -
+        // and not on the seeding alone: a restore that threw before seeding would otherwise leave
+        // every socket frame held, and the boot pull unissued, for the whole session.
+        mlsService.endRowSeedingHold();
+      }
       stopIfSignedOut('load-conversations');
+      // THE MAILBOX IS DRAINED BEFORE ANYTHING BELOW, as it was when the pull ran ahead of the
+      // restore: the outbox reconcile, the push cache merge and the restore verdict all read the
+      // conversations as the queue left them. Started by the seeding, so it never waits on itself.
+      if (bootCatchUp) await bootCatchUp;
+      stopIfSignedOut('boot-catch-up');
       {
         const stats = summarizeConversationStats(cb.conversations);
         endStartupCatchupPhase({
@@ -2204,9 +2422,11 @@ export async function loginImpl(
       // Reconcile background sends (killed app) first: remove from the outbox any
       // messages already delivered by the native service, BEFORE re-deriving "pending"
       // statuses (otherwise an already-sent message would be shown as pending again).
-      await reconcileOutboxSent(ctx.getStorage()!).catch((e) =>
-        cb.log(`[OUTBOX_MIRROR] Login reconcile failed: ${String(e)}`)
-      );
+      await reconcileOutboxSent(ctx.getStorage()!, {
+        deviceKeyB64: ctx.getDeviceKey(),
+        userId: ctx.getUserId(),
+        onDated: (id, receivedAt) => dateBackgroundSentRow(cb.conversations, id, receivedAt),
+      }).catch((e) => cb.log(`[OUTBOX_MIRROR] Login reconcile failed: ${String(e)}`));
       stopIfSignedOut('outbox-reconcile');
       // Re-mark "pending" messages still in the outbox queue (derived status, not persisted).
       await applyOutboxPendingStatuses();
@@ -2480,6 +2700,8 @@ export async function loginImpl(
       // Same moment, and NOT covered by the reconnect listener: an app killed while offline comes
       // back with the link already up, so no `online` edge ever fires for the exit it still owes.
       void flushPendingGroupExits();
+      // Same reason for an upload session a withdrawal made offline could not give back.
+      void flushUploadReleaseMarks();
     }
 
     const STALE_SESSION_MS = 90 * 24 * 60 * 60 * 1_000;
@@ -3120,7 +3342,11 @@ async function recoverPinSteps(
   await ctx.whenMlsRetired();
   stillWanted('reading the stored state');
   const { loadMlsState } = await import('$lib/utils/hex');
-  const state = await loadMlsState(userId);
+  // A typed refusal of the slot (an unsettled reset, an unfinished move) is its own gate, never
+  // "no local state to recover" (round 11 of the review of #2919).
+  const state = await loadMlsState(userId).catch((e: unknown) => {
+    throw loginFailureOfSlotRefusal(e) ?? e;
+  });
   if (!state) {
     throw new LocalizedError(m.auth_no_local_state_recover());
   }
@@ -3300,6 +3526,8 @@ export function tearDownLiveSession(
   // Same reason: an exit owed by the user who just signed out must not be replayed with the next
   // one's token. The row survives in storage, and that user's next login replays it.
   unregisterPendingGroupExitDrain();
+  // And a session release owed by that user: their marks stay, for their next sign-in.
+  unregisterUploadReleaseDrain();
   resetHistoryReconciliation();
   // A Welcome this session sent says nothing about the next user's requests.
   resetWelcomeSent();
@@ -3464,6 +3692,10 @@ export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): v
   // this the next account signing in in the same tab was never asked on its own behalf (the store's
   // `checked` latch stayed set) and could be shown the previous account's.
   resetAnnouncementState();
+  // The first-time helps the leaving account has seen, and its tour on screen or suspended: the next
+  // account is read on its own behalf, and never handed the previous one's half-walked run.
+  resetSeenHelps();
+  guideEngine.reset();
   ctx.setStorage(null);
   ctx.setAuthToken('');
   cb.log('[LOGOUT] Live session stopped.');

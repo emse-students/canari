@@ -45,9 +45,33 @@ describe('notificationHref', () => {
   });
 
   it('sends the proposer to the agenda, where the answer is already applied', () => {
-    for (const type of ['event_validated', 'event_rejected', 'event_updated', 'event_deleted']) {
+    for (const type of [
+      'event_validated',
+      'event_rejected',
+      'event_updated',
+      'event_deleted',
+      'event_pending',
+      'event_pending_coorganiser',
+    ]) {
       expect(notificationHref({ type, postId: 'assoc-1' }), type).toBe('/calendar');
     }
+  });
+
+  it('sends the validators of a co-organisation acceptance to the validation queue, like a proposal', () => {
+    const validators = {
+      type: 'event_pending_coorganiser',
+      postId: 'assoc-1',
+      meta: { reason: 'coorganiser_joined', audience: 'validators' },
+    };
+    expect(notificationHref(validators)).toBe('/admin/agenda');
+    // The organiser and the partners (no audience) keep the agenda.
+    expect(
+      notificationHref({
+        type: 'event_pending_coorganiser',
+        postId: 'assoc-1',
+        meta: { reason: 'coorganiser_joined' },
+      })
+    ).toBe('/calendar');
   });
 
   it('sends the answer to a profile correction request to the profile, never to a post of that id', () => {
@@ -59,7 +83,7 @@ describe('notificationHref', () => {
 
   it('gives every known type a destination, bar the two resolved by slug', () => {
     // Compared with a hand-written count so a type removed from the set cannot pass silently.
-    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(35);
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(42);
     // The live moderation notices go nowhere: a cut live is deleted when it ends, and a suspension
     // or a withdrawal has no page.
     const liveModeration = ['live_cut', 'live_suspended', 'live_withdrawn'];
@@ -69,17 +93,33 @@ describe('notificationHref', () => {
         type === 'coorganise_proposed' ||
         type === 'lydia_payments_active' ||
         type === 'lydia_payments_paused' ||
+        type.startsWith('delegation_') ||
         liveModeration.includes(type);
       expect(notificationHref({ type, postId: 'x1' }) === null, type).toBe(noHref);
     }
   });
 
-  it.each(['booking_cancelled', 'booking_withdrawn', 'booking_added', 'booking_reminder'])(
-    '%s opens Reservations: its postId is a booking, which has no page (WP-N)',
-    (type) => {
-      expect(notificationHref({ type, postId: 'booking-1' })).toBe('/bookings');
+  // Owner review of #2967: a delegate (a list) paused or resumed opens its DELEGATION section,
+  // where it picks a receiver - reached by slug like the Lydia notices.
+  it.each(['delegation_revoked', 'delegation_receiver_not_ready', 'delegation_resumed'])(
+    '%s opens the entity delegation section',
+    async (type) => {
+      await expect(
+        resolveNotificationHref({ type, postId: 'list-1' }, async () => 'liste-2027')
+      ).resolves.toBe('/associations/liste-2027/edit/delegation');
     }
   );
+
+  it.each([
+    'booking_cancelled',
+    'booking_withdrawn',
+    'booking_added',
+    'booking_reminder',
+    'booking_changed',
+    'booking_removed',
+  ])('%s opens Reservations: its postId is a booking, which has no page (WP-N)', (type) => {
+    expect(notificationHref({ type, postId: 'booking-1' })).toBe('/bookings');
+  });
 
   it('sends a follow request to the inbox and an acceptance to the person who said yes (WP-F4)', () => {
     // `postId` is the ASKER for the first and the accepter for the second - never a post.

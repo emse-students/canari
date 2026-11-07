@@ -70,6 +70,13 @@ export type MediaType = 'image' | 'video' | 'audio' | 'file';
  * social-service may store one (`POST /media/internal/form-file`), and every client route refuses
  * the class with a 400. A client never names it ([media-service](docs/wiki/services/media-service.md)).
  */
+/**
+ * How media-service answered a chat hold on an adopted upload (RC-13, {@link MediaService.holdChatReel}):
+ * held, refused for good (the take uploads its own), over today's chat-reel budget (a verdict: the
+ * take's sends fail for good), or no answer (asked again).
+ */
+export type ChatReelHoldAnswer = 'held' | 'refused' | 'over-budget' | 'unanswered';
+
 export type MediaRetentionClass =
   | 'ephemeral'
   | 'archive'
@@ -166,18 +173,14 @@ export interface PendingMediaFile {
   placeholder?: string;
   /** Set only by the voice recorder's own send path - see {@link MediaRef.voiceNote}. */
   voiceNote?: boolean;
-  /**
-   * The file is the chat camera's RAW take (a CanaReel, `chatReelWriter.ts`), queued at once and
-   * prepared by the outbox inside its upload task (reels-in-chat RC-5) - its length is known only
-   * once prepared. The send declares the intent and the expiry from it.
-   */
-  prepareRaw?: 'chat-reel';
 }
 
 /** Per-context presets - higher quality, less aggressive resize. */
 export const IMAGE_COMPRESS_PRESETS = {
   chat: { maxWidth: 2560, maxHeight: 2560, quality: 0.92 },
-  post: { maxWidth: 2048, maxHeight: 2048, quality: 0.92 },
+  // 1600 px at 0.85 since 2026-11-06 (owner): a post photo at 2048 px / 0.92 measured 436 KB, about
+  // 10 s on slow 3G. The new size is read again on the next pre-release.
+  post: { maxWidth: 1600, maxHeight: 1600, quality: 0.85 },
   comment: { maxWidth: 1280, maxHeight: 1280, quality: 0.9 },
 } as const;
 
@@ -198,7 +201,9 @@ import {
 } from '$lib/mediaSegmented';
 import { getToken, refresh, SessionExpiredError } from '$lib/stores/auth';
 import { sendRenewingOn401 } from '$lib/utils/renewOn401';
-import { uploadRefusalFrom } from '$lib/utils/mediaErrors';
+import { isOverBudgetBody, uploadRefusalFrom } from '$lib/utils/mediaErrors';
+import { responseOrigin } from '$lib/utils/apiRefusal';
+import type { ReleaseAnswer } from '$lib/utils/chat/uploadReleaseMarks';
 import { readApiJson } from '$lib/utils/apiJson';
 import {
   assertWithinRequestBudget,
@@ -218,13 +223,23 @@ import {
 } from '$lib/utils/uploadXhr';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { fetchWithAnswerDeadline } from '$lib/utils/uploadDeadline';
+import { trackRequestOutcome } from '$lib/utils/trackedFetch';
 import {
   releaseUploadSession,
   uploadResumable,
+  type ResumableBlobEncoding,
   type ResumableUploadPort,
   type ResumableUploadState,
 } from '$lib/utils/resumableUpload';
 import { appendLog } from '$lib/utils/sessionLog';
+
+/** The ref's `type`, from the MIME type the file was uploaded under. */
+export function mediaTypeOf(mimeType: string): MediaType {
+  if (mimeType.startsWith('video/')) return 'video';
+  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType.startsWith('audio/')) return 'audio';
+  return 'file';
+}
 
 /** How many times `complete` is asked for ONE uploadId when its answer is lost. */
 const COMPLETE_ATTEMPTS = 3;
@@ -302,17 +317,21 @@ export async function fetchUpload(
         `[media] refusing to send ${bytes} body bytes to ${where}: over the ${GATEWAY_MAX_BODY_BYTES}-byte gateway limit`
       );
     }
-    return transport
-      ? xhrUpload(
-          url,
-          {
-            method: init.method,
-            headers: init.headers as Record<string, string> | undefined,
-            body: init.body as FormData | Blob | string | null | undefined,
-          },
-          transport
-        )
-      : fetchWithAnswerDeadline(url, init);
+    // COUNTED BY THE CONNECTIVITY STORE like every other request (`trackRequestOutcome`): a link
+    // lost mid-upload marks the server unreachable, so what is owed to the reconnect is owed.
+    return trackRequestOutcome(init.method ?? 'POST', url, bytes, () =>
+      transport
+        ? xhrUpload(
+            url,
+            {
+              method: init.method,
+              headers: init.headers as Record<string, string> | undefined,
+              body: init.body as FormData | Blob | string | null | undefined,
+            },
+            transport
+          )
+        : fetchWithAnswerDeadline(url, init)
+    );
   };
   return sendRenewingOn401(send, authToken, {
     tokenNow: () => getToken(),
@@ -729,7 +748,8 @@ export class MediaService {
         // below like any other lost answer (the server's complete is idempotent).
         const { mediaId } = (await readApiJson(
           res,
-          `POST /api/media/upload/chunk/${uploadId}/complete`
+          `POST /api/media/upload/chunk/${uploadId}/complete`,
+          transport?.signal
         )) as { mediaId: string };
         return mediaId;
       } catch (err) {
@@ -906,13 +926,7 @@ export class MediaService {
     }
 
     // 4. Return the reference - the key is only here, never on the server
-    const type = file.type.startsWith('video/')
-      ? 'video'
-      : file.type.startsWith('image/')
-        ? 'image'
-        : file.type.startsWith('audio/')
-          ? 'audio'
-          : 'file';
+    const type = mediaTypeOf(file.type);
 
     const width =
       dimensions?.width && dimensions.width > 0 ? Math.round(dimensions.width) : undefined;
@@ -953,6 +967,8 @@ export class MediaService {
     resume: {
       state?: ResumableUploadState;
       persist: (state: ResumableUploadState) => Promise<void>;
+      /** `single-block` for a photo (see `resumableUpload.ts`); `segmented-v1` when absent. */
+      encoding?: ResumableBlobEncoding;
     },
     transport?: XhrUploadOptions
   ): Promise<MediaRef> {
@@ -964,6 +980,7 @@ export class MediaService {
       retentionClass,
       state: resume.state,
       persist: resume.persist,
+      encoding: resume.encoding,
       port: this.uploadSessionPort(token),
       transport,
       log: appendLog,
@@ -973,7 +990,7 @@ export class MediaService {
     const height =
       dimensions?.height && dimensions.height > 0 ? Math.round(dimensions.height) : undefined;
     return {
-      type: file.mimeType.startsWith('video/') ? 'video' : 'file',
+      type: mediaTypeOf(file.mimeType),
       mediaId: done.mediaId,
       key: done.keyHex,
       iv: done.ivHex,
@@ -981,17 +998,89 @@ export class MediaService {
       size: plaintext.byteLength,
       fileName: file.fileName,
       ...(width && height ? { width, height } : {}),
-      encoding: done.encoding,
+      ...(done.encoding ? { encoding: done.encoding } : {}),
     };
   }
 
   /**
    * Releases a resumable session the member withdrew (`DELETE /api/media/upload/session/:id`), so
    * its staged parts and its slot among the owner's open sessions are not held for the server's
-   * 24 h sweep. Best effort, logged, never throws ({@link releaseUploadSession}).
+   * 24 h sweep. Best effort, logged, never throws, and says whether the server answered
+   * ({@link releaseUploadSession}): the durable release mark retries an unanswered one.
    */
   releaseResumableUpload(uploadId: string, token: () => Promise<string>, why: string) {
     return releaseUploadSession(this.uploadSessionPort(token), uploadId, why, appendLog);
+  }
+
+  /**
+   * Places the CHAT HOLD on a file a chat-reel take adopted from the CanaReels publish step
+   * (`POST /api/media/chat-reel/:id/hold`, reels-in-chat 15.5 / RC-14): the post's `reel-pending`
+   * upload is then kept for the chats however the post ends. Never throws:
+   * - `held`: the server holds it for the chats;
+   * - `refused`: media-service's own answer that this file cannot be held (absent, swept past its
+   *   24 h, not this owner's) - the take uploads its own, and no retry would change the answer;
+   * - `over-budget`: media-service's own 429 naming the daily budget (`code`, never the message) -
+   *   a verdict for today, so the take's sends fail for good rather than asking all day;
+   * - `unanswered`: a transport failure, an edge page, a 5xx or any other 429 - asked again later.
+   */
+  async holdChatReel(mediaId: string, token: () => Promise<string>): Promise<ChatReelHoldAnswer> {
+    const res = await this.chatReelRequest('POST', `/${mediaId}/hold`, token);
+    if (res === null) return 'unanswered';
+    if (res.ok) {
+      appendLog(`[media] chat hold placed on ${mediaId}: HTTP ${res.status}`);
+      return 'held';
+    }
+    if ([403, 404, 410].includes(res.status) && responseOrigin(res) === 'gateway') {
+      appendLog(`[media] chat hold on ${mediaId} REFUSED: HTTP ${res.status}`);
+      return 'refused';
+    }
+    if (res.status === 429 && responseOrigin(res) === 'gateway') {
+      const body = await res.text().catch((e: unknown) => {
+        appendLog(`[media] chat hold on ${mediaId}: its 429 body unreadable: ${String(e)}`);
+        return '';
+      });
+      if (isOverBudgetBody(body)) {
+        appendLog(`[media] chat hold on ${mediaId} REFUSED: over today's chat-reel budget`);
+        return 'over-budget';
+      }
+    }
+    appendLog(`[media] chat hold on ${mediaId} unanswered: HTTP ${res.status}, asked again later`);
+    return 'unanswered';
+  }
+
+  /**
+   * Gives back the chat hold of a take's file (`DELETE /api/media/chat-reel/:id`, RC-14): no
+   * conversation will cite it any more. Never throws, and says whether the SERVER answered - a 2xx,
+   * or media-service's own 403/404 (not this owner's, already gone: nothing a retry would change);
+   * anything else is `unanswered`, and the take row that owes it asks again.
+   */
+  async releaseChatReel(mediaId: string, token: () => Promise<string>): Promise<ReleaseAnswer> {
+    const res = await this.chatReelRequest('DELETE', `/${mediaId}`, token);
+    if (res === null) return 'unanswered';
+    if (res.ok || ([403, 404].includes(res.status) && responseOrigin(res) === 'gateway')) {
+      appendLog(`[media] chat reel ${mediaId} released: HTTP ${res.status}`);
+      return 'answered';
+    }
+    appendLog(`[media] chat reel ${mediaId} NOT released: HTTP ${res.status}, still owed`);
+    return 'unanswered';
+  }
+
+  /** One request to media-service's chat-reel routes, or `null` when it got no answer (logged). */
+  private async chatReelRequest(
+    method: 'POST' | 'DELETE',
+    path: string,
+    token: () => Promise<string>
+  ): Promise<Response | null> {
+    try {
+      return await fetchUpload(
+        `${this.baseUrl}/api/media/chat-reel${path}`,
+        (t) => ({ method, headers: { Authorization: `Bearer ${t}` } }),
+        await token()
+      );
+    } catch (e) {
+      appendLog(`[media] chat-reel ${method} ${path} got no answer: ${String(e).slice(0, 120)}`);
+      return null;
+    }
   }
 
   /** How a resumable session's requests reach media-service: one `fetchUpload` per request. */

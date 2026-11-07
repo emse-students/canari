@@ -13,6 +13,8 @@ import {
   FCM_DATA_LIMIT,
   IOS_NOTIFICATION_SOUND,
   PushMessageInput,
+  buildWakeApnsRequest,
+  buildWakeDataFields,
 } from './push-payload';
 
 const baseInput: PushMessageInput = {
@@ -573,5 +575,53 @@ describe('the inline-proto budget', () => {
     const apnsBytes = measureApnsPayload(buildApnsRequest(filled, fields).payload);
     expect(dataBytes).toBeLessThan(FCM_DATA_LIMIT);
     expect(dataBytes + apnsBytes).toBeGreaterThan(FCM_DATA_LIMIT);
+  });
+});
+
+describe('buildWakeApnsRequest', () => {
+  it('keeps a mentions frame passive and soundless, and names nothing', () => {
+    const request = buildWakeApnsRequest('q-1', false, true, 'en');
+    expect(request.payload).toEqual({
+      aps: {
+        'mutable-content': 1,
+        alert: { title: 'Canari', body: 'New message' },
+        'interruption-level': 'passive',
+      },
+      type: 'wake',
+      queuedMessageId: 'q-1',
+      silent: 'false',
+      notifLevel: 'mentions',
+    });
+    expect(request.pushType).toBe('alert');
+  });
+
+  it('plays the message trill on an ordinary frame', () => {
+    const aps = buildWakeApnsRequest('q-1', false, false, 'fr').payload.aps;
+    expect(aps.sound).toBe(IOS_NOTIFICATION_SOUND.message);
+    expect(aps['interruption-level']).toBeUndefined();
+  });
+});
+
+describe('buildWakeDataFields', () => {
+  it('says mentions for a visible frame of a mentions-only conversation, and nothing else', () => {
+    expect(buildWakeDataFields('q-1', false, true)).toEqual({
+      type: 'wake',
+      queuedMessageId: 'q-1',
+      silent: 'false',
+      notifLevel: 'mentions',
+    });
+    expect(buildWakeDataFields('q-1', false, false)).toEqual({
+      type: 'wake',
+      queuedMessageId: 'q-1',
+      silent: 'false',
+    });
+  });
+
+  it('drops the level from a silent frame, as the full map does', () => {
+    expect(buildWakeDataFields('q-1', true, true)).toEqual({
+      type: 'wake',
+      queuedMessageId: 'q-1',
+      silent: 'true',
+    });
   });
 });

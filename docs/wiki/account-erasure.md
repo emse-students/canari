@@ -200,7 +200,9 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
   (`scrubComments`; the candidate filter also matches the token). The frontend does not parse
   `@[deleted]` as a mention (it is not an id), so it shows as that literal text. A QUOTE of the
   account's words inside another author's free text is not found and stays. Poll question/option
-  text is not scanned for tokens.
+  text is not scanned for tokens. A moderation tombstone carries no account, so erasure never finds
+  one; when it removes the LAST reply under one, `scrubComments` prunes the empty tombstone too
+  (`pruneEmptyTombstones`, [moderation-and-blocking](moderation-and-blocking.md#decisions-taken-2026-11-04-the-lead-reversible)).
 - **The MiConnect (authentik) identity is not deleted**: it is the school's identity provider, not
   Canari's data. Signing in after the erasure creates a new, empty Canari account.
 - **Logs** keep the first eight characters of the subject on the erasure lines, for their retention.
@@ -298,7 +300,7 @@ every `MATCH`, so a prefix never matches another account. Keys and frames are ma
 which holds because a minted id is in practice a lowercase 64-hex subject written identically
 everywhere ([backlog](backlog.md#p3---the-erasure-sweep-matches-a-frames-requester-exact-case-review-of-2585-2026-10-27)).
 Two facts stay outside the sweep, each bounded: a parting VALUE naming the account as remover, and
-the gateway's TTL-bound `addressing:left:` key ([backlog](backlog.md#p3---two-redis-facts-naming-an-erased-account-are-outside-its-erasures-trace-sweep-review-of-2585-2026-10-27)).
+the gateway's TTL-bound `addressing:left:` key.
 **The same holds for every Redis key of such a DM**, its `history:` stream included: before the
 tombstone, the DMs are named in a per-account Redis set (`erasure:dms:<userId>`), the one fact still
 naming them once the tombstone deleted their rows; every run ends by deleting the keys of every DM

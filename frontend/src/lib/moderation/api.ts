@@ -1,4 +1,5 @@
 import { apiFetch } from '$lib/utils/apiFetch';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { socialUrl } from '$lib/utils/apiUrl';
 import type { LiveStanding } from '$lib/live/types';
 
@@ -9,15 +10,20 @@ import type { LiveStanding } from '$lib/live/types';
  * failure was done with `message.includes('already')` until 2026-08-27 - a distinction carried in
  * prose, which the server was free to reword at any time. The server now answers 409 with
  * `code: 'ALREADY_REPORTED'`, and that is what call sites branch on.
+ *
+ * AN `ApiRefusalError`, so the ONE reader of a refusal's code (`refusalCode`, and through it
+ * `describeModerationRefusal`) reads it too: the reports queue's acts (delete a reported comment,
+ * review, mute) are refused with the same typed codes as the post card's, and were worded as a bare
+ * failure while this class stood apart (lead's review of #2999, 2026-11-04).
  */
-export class ModerationApiError extends Error {
+export class ModerationApiError extends ApiRefusalError {
   constructor(
-    readonly status: number,
+    status: number,
     /** The server's `code` field when it sent one, e.g. `ALREADY_REPORTED`. Null otherwise. */
-    readonly code: string | null,
+    code: string | null,
     message: string
   ) {
-    super(message);
+    super(status, code, message);
     this.name = 'ModerationApiError';
   }
 
@@ -44,6 +50,15 @@ export class ModerationApiError extends Error {
   /** True when the reported live is gone or was never visible to the reporter (`404 LIVE_NOT_FOUND`). */
   get isLiveNotFound(): boolean {
     return this.code === 'LIVE_NOT_FOUND';
+  }
+
+  /**
+   * `404 CONTENT_NOT_FOUND`: the reported post or comment is one the reporter may no longer open
+   * (deleted, hidden by moderation, a block, out of their audience) - the server says which to
+   * nobody, so neither does the client: the content is gone, nothing was filed.
+   */
+  get isContentNotFound(): boolean {
+    return this.code === 'CONTENT_NOT_FOUND';
   }
 }
 
@@ -138,6 +153,13 @@ export interface ContentReport {
   postId: string | null;
   /** For live reports: the live's state. Absent on every other type. */
   live?: ReportedLive | null;
+  /**
+   * Whether the caller may mute the reporter / the reported person: a BDE moderator mutes the people
+   * of its own spaces only (2026-11-02). The server serves both on every report; only `true`
+   * draws the control.
+   */
+  canMuteReporter: boolean;
+  canMuteReportedUser: boolean;
   /** For live chat line reports: the kept line, null once erased. Absent on every other type. */
   liveChat?: ReportedLiveChatLine | null;
 }
@@ -247,8 +269,8 @@ export async function getMyMuteStatus(): Promise<UserMuteStatus> {
 }
 
 /** Deletes a reported comment by id (moderator). */
-export async function deleteReportedComment(commentId: string): Promise<{ postId: string }> {
-  return request<{ postId: string }>(`/api/moderation/comments/${commentId}/delete`, {
-    method: 'POST',
-  });
+export async function deleteReportedComment(
+  commentId: string
+): Promise<{ postId: string; removedIds: string[]; tombstoneIds: string[] }> {
+  return request(`/api/moderation/comments/${commentId}/delete`, { method: 'POST' });
 }

@@ -10,10 +10,14 @@
 import { describe, it, expect, afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, unmount, tick } from 'svelte';
 import { writable } from 'svelte/store';
+import {
+  initialNoiseSuppressionView,
+  type NoiseSuppressionView,
+} from '$lib/utils/callNoiseSuppression';
 
 vi.mock('$lib/utils/userAvatarCache', () => ({
-  resolveUserAvatarDisplayUrl: async () => ({ kind: 'none' as const }),
-  releaseUserAvatarDisplayUrl: () => {},
+  resolveUserAvatarDisplay: async () => ({ kind: 'none' as const }),
+  releaseUserAvatarDisplay: () => {},
 }));
 vi.mock('$lib/utils/apiFetch', () => ({
   apiFetch: vi.fn(() => Promise.resolve(new Response('[]', { status: 200 }))),
@@ -89,6 +93,8 @@ function fakeService(state: CallState) {
     localMicSuspended: writable(false),
     peerMicSuspended: writable(false),
     videoSendReduced: writable(false),
+    noiseSuppression: writable<NoiseSuppressionView>(initialNoiseSuppressionView()),
+    toggleNoiseSuppression: vi.fn(),
     ringingOut: writable(false),
     currentGroupId: 'g',
     currentCallId: 'c',
@@ -120,13 +126,13 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-async function render(service: ReturnType<typeof fakeService>) {
+async function render(
+  service: ReturnType<typeof fakeService>,
+  participants = [{ userId: 'bob', displayName: 'Bob' }]
+) {
   const c = mount(CallOverlay, {
     target: document.body,
-    props: {
-      callService: service as unknown as CallService,
-      participants: [{ userId: 'bob', displayName: 'Bob' }],
-    },
+    props: { callService: service as unknown as CallService, participants },
   });
   mounted.push(c);
   flushSync();
@@ -149,13 +155,77 @@ describe('the ring', () => {
   });
 });
 
+describe('the incoming-call screen (owner, 2026-11-01)', () => {
+  const kind = () =>
+    document.querySelector('[data-testid="call-ring-kind"]')?.textContent?.trim() ?? null;
+  const accept = () => document.querySelector<HTMLButtonElement>('[data-testid="call-accept"]')!;
+  const decline = () => document.querySelector<HTMLButtonElement>('[data-testid="call-decline"]')!;
+
+  it('says "Audio call" with a phone, and Accept carries a phone', async () => {
+    await render(fakeService('incoming'));
+    expect(kind()).toBe(m.call_audio_only_label());
+    const subtitle = document.querySelector('[data-testid="call-ring-kind"]')!;
+    expect(subtitle.querySelector('svg.lucide-phone')).not.toBeNull();
+    expect(accept().querySelector('svg.lucide-phone')).not.toBeNull();
+    expect(accept().querySelector('svg.lucide-video')).toBeNull();
+  });
+
+  it('says "Video call" with a camera, and Accept carries a camera', async () => {
+    const service = fakeService('incoming');
+    service.incomingHasVideo = true;
+    await render(service);
+    expect(kind()).toBe(m.chat_video_call_label());
+    const subtitle = document.querySelector('[data-testid="call-ring-kind"]')!;
+    expect(subtitle.querySelector('svg.lucide-video')).not.toBeNull();
+    expect(accept().querySelector('svg.lucide-video')).not.toBeNull();
+  });
+
+  it("names the caller under the photo, and the photo falls back to the caller's initials", async () => {
+    await render(fakeService('incoming'), [{ userId: 'zoe', displayName: 'Zoé Martin' }]);
+    const avatar = document.querySelector('[data-testid="call-avatar"]')!;
+    expect(avatar.textContent).toContain('ZM');
+    // The name follows the photo in the reading order, as on every phone's ring.
+    const name = [...screen()!.querySelectorAll('*')].find(
+      (el) => el.children.length === 0 && el.textContent?.trim() === 'Zoé Martin'
+    );
+    expect(name).toBeDefined();
+    expect(avatar.compareDocumentPosition(name!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('breathes a halo and a brand glow while ringing, and neither once answered', async () => {
+    await render(fakeService('incoming'));
+    expect(document.querySelector('[data-testid="call-halo"]')?.className).toContain(
+      'motion-safe:animate-call-halo'
+    );
+    expect(document.querySelector('[data-testid="call-ring-glow"]')).not.toBeNull();
+    while (mounted.length) unmount(mounted.pop()!);
+    document.body.innerHTML = '';
+    await render(fakeService('incall'));
+    expect(document.querySelector('[data-testid="call-halo"]')).toBeNull();
+    expect(document.querySelector('[data-testid="call-ring-glow"]')).toBeNull();
+    expect(document.querySelector('[data-testid="call-ring-kind"]')).toBeNull();
+  });
+
+  it('answers on Accept and declines on Decline', async () => {
+    const service = fakeService('incoming');
+    await render(service);
+    accept().click();
+    expect(service.acceptCall).toHaveBeenCalledWith('g', 'c');
+    expect(service.endCall).not.toHaveBeenCalled();
+    decline().click();
+    expect(service.endCall).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('the screen every platform shows (call-screen parity)', () => {
   const text = (id: string) => document.querySelector(`[data-testid="${id}"]`)?.textContent?.trim();
 
   it('shows the peer name, a photo backdrop and a status on a ring, with decline BEFORE accept', async () => {
     await render(fakeService('incoming'));
     expect(screen()?.textContent).toContain('Bob');
-    expect(text('call-status')).toBe(m.call_incoming_label());
+    // The ring's status is WHICH call rings (its own subtitle); the running status is not drawn.
+    expect(text('call-ring-kind')).toBe(m.call_audio_only_label());
+    expect(document.querySelector('[data-testid="call-status"]')).toBeNull();
     const backdrop = document.querySelector('[data-testid="call-backdrop"]');
     expect(backdrop?.getAttribute('aria-hidden')).toBe('true');
     // Decline left, accept right: the order of Android's CallStyle ring and CallKit.
@@ -301,6 +371,37 @@ describe('the reduced-picture notice (quality ladder, 2026-10-21)', () => {
     service.videoSendReduced.set(false);
     flushSync();
     expect(notice()).toBeNull();
+  });
+});
+
+describe('the noise-suppression switch (owner decision D-B, 2026-10-31)', () => {
+  const button = () =>
+    document.querySelector<HTMLButtonElement>('[data-testid="call-noise-suppression"]');
+
+  it('starts unpressed (OFF by default), a tap asks the service to switch it, and ON is pressed', async () => {
+    const service = fakeService('incall');
+    await render(service);
+    expect(button()?.getAttribute('aria-pressed')).toBe('false');
+    expect(button()?.getAttribute('aria-label')).toBe(m.call_noise_suppression_enable_label());
+
+    button()!.click();
+    expect(service.toggleNoiseSuppression).toHaveBeenCalledTimes(1);
+
+    service.noiseSuppression.set({ enabled: true, state: 'on' });
+    flushSync();
+    expect(button()?.getAttribute('aria-pressed')).toBe('true');
+    expect(button()?.getAttribute('aria-label')).toBe(m.call_noise_suppression_disable_label());
+  });
+
+  it('is not offered where the engine could not build the pipeline, nor on the ring', async () => {
+    const service = fakeService('incall');
+    service.noiseSuppression.set({ enabled: true, state: 'unavailable' });
+    await render(service);
+    expect(button()).toBeNull();
+    unmount(mounted.pop()!);
+
+    await render(fakeService('incoming'));
+    expect(button()).toBeNull();
   });
 });
 
@@ -500,8 +601,8 @@ describe('a video call (lot 2)', () => {
     const service = fakeService('incoming');
     service.incomingHasVideo = true;
     await render(service);
-    expect(document.querySelector('[data-testid="call-status"]')?.textContent?.trim()).toBe(
-      m.call_incoming_video_label()
+    expect(document.querySelector('[data-testid="call-ring-kind"]')?.textContent?.trim()).toBe(
+      m.chat_video_call_label()
     );
   });
 

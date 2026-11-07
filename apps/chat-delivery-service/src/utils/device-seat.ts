@@ -65,15 +65,16 @@ export async function readDeviceSeat(
 
 /**
  * THE FURTHER-DEVICE SELF-JOIN IS SHUT UNTIL EVERY MEMBER CLIENT READS IT AS AN ORDINARY ADDED DEVICE
- * (D1 gated on D2/D3, review of #2832). A `1.5.1`-`1.5.4` member writes a member's further device
+ * (D1 gated on D2/D3, review of #2832). A member on any release up to `1.6.6` writes a further device
  * entering by its own commit as an accusation and withholds history from it, so while such clients
  * may still be members, the server does not open the door: the conversation base is served WITHOUT
  * the asking device's seat (the client then reads `seat_unreadable` and does not join), and a
  * further device's `selfJoinIfNobody` ask is stored, queued and woken exactly as any other.
  *
  * LIFTED BY ONE LINE, in its own pull request, once `minClientVersion` is at least the release
- * carrying D2/D3 (`1.5.5`) - `docs/wiki/legacy-compatibility.md` carries the condition. A constant
- * rather than an environment switch: the condition is a fact about the shipped clients, the same on
+ * carrying D2/D3 (`1.6.7` at the earliest) - `docs/wiki/legacy-compatibility.md` carries the
+ * condition. A constant rather than an environment switch: the condition is a fact about the shipped
+ * clients, the same on
  * every estate, and a reviewed commit is its record.
  */
 export const FURTHER_DEVICE_SELF_JOIN_OPEN = false;

@@ -1,15 +1,21 @@
 <script lang="ts">
   import { needsThumbIcon } from '$lib/utils/mediaLayout';
   import { Log } from '$lib/utils/Log';
+  import { showToast } from '$lib/stores/toast.svelte';
+  import {
+    POST_ATTACHMENTS_MAX,
+    admitAttachments,
+    attachmentCapNotice,
+  } from '$lib/posts/attachmentCap';
   import { FileText, Film, Music, CalendarCheck, CircleAlert } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
   import { onDestroy, onMount } from 'svelte';
-  import { MediaService, preparePostMedia } from '$lib/media';
-  import { getToken } from '$lib/stores/auth';
-  import { createPost, type CreatePostPayload, type PostFeed } from '$lib/posts/api';
+  import type { CreatePostPayload, PostFeed } from '$lib/posts/api';
   import { landingFeedFor } from '$lib/posts/landingFeed';
-  import { assertNotMuted } from '$lib/moderation/muteCheck';
   import { publishFailureMessage, type PublishStage } from '$lib/posts/publishFailure';
+  import { enqueuePost } from '$lib/posts/publishQueue/publishQueue.svelte';
+  import { isQuotaError } from '$lib/db/outboxBlob';
+  import { currentUserId } from '$lib/stores/userState.svelte';
   import { hasContent, localPublishBlocker } from '$lib/posts/composerReadiness';
   import {
     emptyPollOptions,
@@ -48,6 +54,9 @@
   } from '$lib/posts/postIdentity';
   import Picker from '$lib/components/ui/Picker.svelte';
   import PostIdentityPicker from './PostIdentityPicker.svelte';
+  import StudentsOnlySwitch from './StudentsOnlySwitch.svelte';
+  import { studentsOnlyOffered } from '$lib/posts/studentsOnly';
+  import type { ComposerReelState } from '$lib/posts/composerReelState';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import PostComposerBar from './PostComposerBar.svelte';
   import MediaThumbRemoveButton from './MediaThumbRemoveButton.svelte';
@@ -61,9 +70,6 @@
   import Button from '$lib/components/ui/Button.svelte';
   import { m } from '$lib/paraglide/messages';
   import { linkableEventPickerOptions } from '$lib/utils/time';
-  import { isVideoPrepareError } from '$lib/video/prepareVideoForUpload';
-  import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
-  import VideoPreparationProgress from '$lib/components/shared/VideoPreparationProgress.svelte';
   import { livesAvailable } from '$lib/utils/livesAvailability';
   import { serverLivesMode } from '$lib/stores/appVersionCheck.svelte';
 
@@ -101,7 +107,14 @@
    * The media this composer held when it was last closed (`holdPostComposerMedia`), read before
    * anything else runs so the hold below never sees an empty list first and forgets them.
    */
-  const restoredMedia = heldPostComposerMedia();
+  // A held list over the cap (a composer from before it) is trimmed here, through the same rule as
+  // every other way in, and says so once the composer is mounted.
+  const restoredAdmission = admitAttachments(0, heldPostComposerMedia());
+  const restoredMedia = restoredAdmission.accepted;
+  const restoredCapNotice = attachmentCapNotice(restoredAdmission);
+  onMount(() => {
+    if (restoredCapNotice) showToast(restoredCapNotice);
+  });
   if (restoredMedia.length > 0) {
     Log.d('POST_COMPOSER', `${restoredMedia.length} media kept from the last close - restored`);
   }
@@ -178,6 +191,16 @@
   );
 
   /**
+   * "Entre étudiants" (owner, 2026-11-04): OFF by default, offered only while the identity chosen is
+   * an association or a list the member may post as - the same entity read as `liveAssociation`, so
+   * a restored draft naming an association no longer listed offers nothing and sends nothing.
+   */
+  let studentsOnly = $state(false);
+  const studentsOnlyAssociation = $derived(
+    liveAssociation && studentsOnlyOffered(liveAssociation.type) ? liveAssociation : null
+  );
+
+  /**
    * Hands over to the broadcaster's screen. The composer is about to unmount, and the debounced
    * auto-save below dies with it, so the draft is saved NOW (text, poll, form; the media are held
    * in memory by `holdPostComposerMedia`): the next open of the composer brings it back, and
@@ -208,7 +231,6 @@
   let publishing = $state(false);
   let errorMessage = $state('');
   /** A picked video being re-encoded on the device during publish (decision C3). */
-  const videoPreparation = new VideoPreparationState();
   // --- Draft auto-save (full composer state; media are held in memory only) ---
   let draftRestored = $state(restoredMedia.length > 0);
   /** The restored draft brought media back (`holdPostComposerMedia`): the banner says so. */
@@ -232,6 +254,7 @@
       scheduledAt,
       selectedAssociationId,
       selectedLinkedCalendarEventId,
+      ...(studentsOnly ? { studentsOnly: true } : {}),
     };
   }
 
@@ -252,6 +275,7 @@
     scheduledAt = draft.scheduledAt;
     selectedAssociationId = draft.selectedAssociationId;
     selectedLinkedCalendarEventId = draft.selectedLinkedCalendarEventId;
+    studentsOnly = draft.studentsOnly === true;
   }
 
   function persistComposerDraft() {
@@ -314,17 +338,18 @@
    * "Garder comme post" from the reel publish step: the video comes back through `onFiles`, and
    * what the member changed in that step comes with it. The caption REPLACES this text only when
    * it differs from it (it started as this text, so an untouched caption changes nothing); the
-   * identity chosen there is the post's.
+   * identity and the "Entre étudiants" switch chosen there are the post's.
    */
-  function onReelKept(caption: string, identity: string) {
-    if (caption !== markdown) {
+  function onReelKept(kept: ComposerReelState) {
+    if (kept.caption !== markdown) {
       Log.d(
         'POST_COMPOSER',
         'kept as a post: the caption edited in the reel step replaces the text'
       );
-      markdown = caption;
+      markdown = kept.caption;
     }
-    selectedAssociationId = identity;
+    selectedAssociationId = kept.identity;
+    studentsOnly = kept.studentsOnly;
   }
 
   function onReelPublished(identity: string) {
@@ -372,8 +397,6 @@
       });
   });
 
-  const mediaService = new MediaService();
-
   onMount(async () => {
     const saved = loadPostComposerDraft();
     if (saved) {
@@ -418,7 +441,13 @@
    * indistinguishable from a picked one, which is what was asked (user, 2026-09-18: *"Que glisser
    * deposer ajoute le media au post (comme si on cliquait sur Medias -> Envoi du fichier)"*).
    */
-  function addFiles(files: File[]) {
+  function addFiles(incoming: File[]) {
+    if (incoming.length === 0) return;
+    // At most ten attachments a post: as many as fit are taken, the rest are said out loud.
+    const admitted = admitAttachments(selectedFiles.length, incoming);
+    const notice = attachmentCapNotice(admitted);
+    if (notice) showToast(notice);
+    const files = admitted.accepted;
     if (files.length === 0) return;
     selectedFiles = [...selectedFiles, ...files];
     filePreviews = [
@@ -448,20 +477,20 @@
   }
 
   /**
-   * Upload images, assemble the payload, call createPost, then reset the form.
+   * Hands the post to the BACKGROUND PUBLISH QUEUE and closes (owner, 2026-11-06: the composer
+   * closes at once, the send goes on with a discreet progress line, like Facebook). The media are
+   * prepared, uploaded one at a time in resumable parts, and the post created by the queue
+   * (`posts/publishQueue/publishQueue.ts`), which keeps it on the device until the server holds it.
    *
-   * EVERY REFUSAL BELOW SAYS WHICH ONE IT IS, and none of them did until 2026-09-21. Five throws
-   * already carried their own translated sentence and one `catch` replaced all five with "could not
-   * publish the post" - which is the whole of what a member on a phone was able to report. Nothing
-   * on the server could add to it: no `POST /api/posts` reached nginx in the hour, and
-   * `social-service` logged nothing, because the failure never left the device.
+   * EVERY REFUSAL THIS COMPOSER CAN ANSWER OUT OF ITS OWN STATE IS ANSWERED HERE, before anything is
+   * queued, and says which one it is (`composerReadiness.ts`, `publishFailure.ts`): an empty post, a
+   * poll with no options, a form not chosen, too many attachments. What only the server or the
+   * device can answer - moderation, a video that cannot be prepared, a refused upload - is the
+   * queue's, and its line says it with a Retry.
    *
-   * So the sentences are typed at the throw (`LocalizedError`, `MutedError`) and `stage` records
-   * how far this got, for the console. See `posts/publishFailure.ts`.
-   *
-   * AND NOTHING LOCAL IS LEARNED BY FAILING ANY MORE. The three preconditions this composer can
-   * answer out of its own `$state` are settled FIRST, before `assertNotMuted()` puts a round trip
-   * in front of them - see `posts/composerReadiness.ts` for the report that named it.
+   * THE COMPOSER CLOSES ONLY ONCE THE POST IS ON THE DEVICE: `enqueuePost` resolves after the post
+   * and every file are written in one transaction. A write that fails (a full disk) keeps the
+   * composer and everything in it, and says why.
    */
   async function publishPost() {
     Log.d('POST_COMPOSER', 'publishPost');
@@ -469,9 +498,7 @@
     errorMessage = '';
     markdown = trimComposerText(markdown);
 
-    // Reassigned in front of each step rather than derived afterwards: `catch` cannot see where it
-    // came from, and the two causes that keep the declared fallback are exactly the two the reader
-    // cannot tell apart without it.
+    // Reassigned in front of each step, so the console line names where a refusal came from.
     let stage: PublishStage = 'content';
     try {
       // Everything answerable here, answered here: the refusal is instant and costs no request.
@@ -486,36 +513,16 @@
         stage = blocker.stage;
         throw new LocalizedError(blocker.message);
       }
-
-      stage = 'moderation';
-      await assertNotMuted();
-      // Compress images, re-encode videos on the device, upload the rest as-is; collect the refs.
-      const media = [];
-      const limits = selectedFiles.length > 0 ? await mediaService.uploadLimits() : null;
-      for (let i = 0; i < selectedFiles.length; i++) {
-        stage = 'mediaPrepare';
-        const { file, dims } = await preparePostMedia(
-          selectedFiles[i],
-          videoPreparation.optionsFor(limits?.maxPlaintextBytes)
-        );
-        videoPreparation.finish();
-        stage = 'mediaToken';
-        // Read at upload time: a copy taken earlier is past its 15 min life by now.
-        let uploadToken: string;
-        try {
-          uploadToken = await getToken();
-        } catch {
-          throw new LocalizedError(m.post_create_image_token_error());
-        }
-        stage = 'mediaUpload';
-        const ref = await mediaService.encryptAndUpload(file, uploadToken, dims, 'archive');
-        const caption = mediaCaptions[i]?.trim();
-        media.push({ ...ref, ...(caption ? { caption } : {}) });
+      // The server would refuse a post over the cap after every blob was sent. The composer stops
+      // adding at the cap, so this is a net, never a path.
+      if (selectedFiles.length > POST_ATTACHMENTS_MAX) {
+        throw new LocalizedError(m.post_attachments_too_many({ max: POST_ATTACHMENTS_MAX }));
       }
+      const userId = currentUserId();
+      if (!userId) throw new LocalizedError(m.post_create_publish_error());
 
-      const payload: CreatePostPayload = {
+      const payload: Omit<CreatePostPayload, 'media' | 'images'> = {
         markdown,
-        media,
         ...(scheduledAt ? { scheduledAt: new Date(scheduledAt).toISOString() } : {}),
       };
 
@@ -541,18 +548,39 @@
       if (includeForm) payload.attachedFormId = selectedFormId;
 
       Object.assign(payload, postIdentityFields(selectedAssociationId));
+      // Sent only where it is offered: a switch left on before the identity changed is not a choice.
+      if (studentsOnly && studentsOnlyAssociation) payload.studentsOnly = true;
+      if (studentsOnlyAssociation) {
+        Log.d('STUDENTS_ONLY', `publishing with the switch ${payload.studentsOnly ? 'ON' : 'off'}`);
+      }
       if (selectedLinkedCalendarEventId.trim()) {
         payload.linkedCalendarEventId = selectedLinkedCalendarEventId.trim();
       }
-      stage = 'createPost';
       // Read BEFORE the reset below: the form forgets who it posted as.
       const landing = landingFeedFor({
         asAssociation: isAssociationIdentity(selectedAssociationId),
         scheduled: !!scheduledAt,
       });
-      await createPost(payload);
 
-      // Reset all state after successful creation
+      stage = 'mediaUpload';
+      // The post's id is minted HERE: the server stores the post under it, so a resend of a create
+      // whose answer was lost is the same post (`post-client-id.ts` in social-service).
+      await enqueuePost(
+        userId,
+        {
+          id: crypto.randomUUID(),
+          queuedAt: Date.now(),
+          payload,
+          media: selectedFiles.map((f, i) => {
+            const caption = mediaCaptions[i]?.trim();
+            return { name: f.name, type: f.type, size: f.size, ...(caption ? { caption } : {}) };
+          }),
+          landing,
+        },
+        selectedFiles
+      );
+
+      // Reset all state once the post is safely queued
       clearPostComposerDraft();
       draftRestored = false;
       draftRestoredMedia = false;
@@ -573,20 +601,21 @@
       scheduledAt = '';
       selectedAssociationId = '';
       selectedLinkedCalendarEventId = '';
+      studentsOnly = false;
+      // The hold effect would forget the media only on its next flush, and `onPostCreated` unmounts
+      // this composer before that: the next open brought the PUBLISHED media back. Said here, now.
+      holdPostComposerMedia([]);
       onPostCreated(landing);
     } catch (err) {
-      if (isVideoPrepareError(err) && err.fault === 'aborted') {
-        // The member pressed the cross on the progress line: the composer stays as it was.
-        Log.d('POST_COMPOSER', 'publish stopped: video preparation cancelled');
-        return;
-      }
-      // ACCUSED IN THE CONSOLE, EXPLAINED ON SCREEN. This was `Log.d` - debug level - in a file
-      // that already logged `console.error` for a dropdown that would not load, so the one failure
-      // a reader reports was the quietest line in it.
+      // ACCUSED IN THE CONSOLE, EXPLAINED ON SCREEN: the one failure a reader reports.
       console.error(`[POST_COMPOSER] publish failed at ${stage}`, err);
-      errorMessage = publishFailureMessage(err, m.post_create_publish_error());
+      errorMessage =
+        stage === 'mediaUpload'
+          ? isQuotaError(err)
+            ? m.publish_queue_enqueue_storage_full()
+            : m.publish_queue_enqueue_error()
+          : publishFailureMessage(err, m.post_create_publish_error());
     } finally {
-      videoPreparation.finish();
       publishing = false;
     }
   }
@@ -628,6 +657,15 @@
           label={m.post_create_link_event_label()}
           disabled={loadingLinkableEvents}
           variant="field"
+        />
+      </div>
+    {/if}
+
+    {#if studentsOnlyAssociation}
+      <div class="mt-3" transition:fade={{ duration: 200 }}>
+        <StudentsOnlySwitch
+          bind:checked={studentsOnly}
+          associationName={studentsOnlyAssociation.name}
         />
       </div>
     {/if}
@@ -784,15 +822,9 @@
       </div>
     {/if}
 
-    {#if videoPreparation.fraction !== null}
-      <VideoPreparationProgress
-        fraction={videoPreparation.fraction}
-        oncancel={() => videoPreparation.cancel()}
-      />
-    {/if}
-
     <PostComposerBar
       onFiles={addFiles}
+      attachmentCount={selectedFiles.length}
       onFormat={(type) => editorField?.format(type)}
       pollActive={includePoll}
       onTogglePoll={() => (includePoll = !includePoll)}
@@ -807,8 +839,7 @@
         : undefined}
       reel={reelAllowed
         ? {
-            caption: markdown,
-            identity: selectedAssociationId,
+            start: { caption: markdown, identity: selectedAssociationId, studentsOnly },
             onpublished: onReelPublished,
             onkept: onReelKept,
           }

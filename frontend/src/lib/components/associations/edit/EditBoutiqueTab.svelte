@@ -32,6 +32,7 @@
   import { productFallbackIcon } from '$lib/utils/cardIcons';
   import { associationAccent } from '$lib/associations/accent';
   import { m } from '$lib/paraglide/messages';
+  import { membersOnlySaveRefusalMessage } from '$lib/associations/paymentRefusal';
   import { wordingFor } from '$lib/associations/kindWording';
 
   interface Props {
@@ -40,9 +41,15 @@
     onlinePaymentsReady: boolean;
     /** Whether the caller can configure the payment account (tweaks the warning copy). */
     canManagePayoutAccount: boolean;
+    /**
+     * Set for a LIST, which has no Lydia account of its own and collects only through an accepted
+     * payment delegation (owner, 2026-11-02): the not-ready banner then points at its delegation
+     * section instead of a payout account it can never hold.
+     */
+    delegationHref?: string;
   }
 
-  let { asso, onlinePaymentsReady, canManagePayoutAccount }: Props = $props();
+  let { asso, onlinePaymentsReady, canManagePayoutAccount, delegationHref }: Props = $props();
 
   /** Card accent color - the association's own, or a deterministic fallback when unset. */
   const cardAccentColor = $derived(associationAccent(asso));
@@ -142,7 +149,7 @@
       resetProductForm();
       await loadProducts();
     } catch (e) {
-      productsError = m.common_load_error();
+      productsError = membersOnlySaveRefusalMessage(e) ?? m.common_load_error();
     } finally {
       savingProduct = false;
     }
@@ -244,7 +251,7 @@
       expandedProductSettingsId = null;
       editingMatrix = null;
     } catch (e) {
-      productsError = m.common_save_error();
+      productsError = membersOnlySaveRefusalMessage(e) ?? m.common_save_error();
     } finally {
       savingProductSettings = null;
     }
@@ -308,10 +315,17 @@
     <div
       class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn rounded-xl border px-4 py-3 text-sm"
     >
-      {m.asso_boutique_payments_not_configured()}
-      {#if canManagePayoutAccount}
-        <span class="ml-1">{m.asso_boutique_payments_see_above()}</span>
+      {#if delegationHref}
+        {m.list_delegate_required_banner()}
+        <a href={delegationHref} class="ml-1 font-semibold underline hover:no-underline"
+          >{m.list_delegate_required_link()}</a
+        >
       {:else}
+        {m.asso_boutique_payments_not_configured()}
+      {/if}
+      {#if !delegationHref && canManagePayoutAccount}
+        <span class="ml-1">{m.asso_boutique_payments_see_above()}</span>
+      {:else if !delegationHref}
         <span class="ml-1">{m.asso_boutique_payments_ask_manager()}</span>
       {/if}
     </div>

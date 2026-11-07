@@ -2,6 +2,8 @@ import { m } from '$lib/paraglide/messages';
 import { statusLabels } from './paymentStatus';
 import type { AnswerWords } from './answerText';
 import type { PaymentRequestState } from './paymentReturn';
+import type { ProductGridLine, ProductGridPrices, ProductGridView } from './productGridContract';
+import type { GuestIdentityField } from './guestIdentity';
 
 export interface FormOption {
   label: string;
@@ -25,14 +27,21 @@ export interface FormItem {
   type: string;
   options?: FormOption[];
   rows?: string[];
+  /**
+   * A REQUIRED grid wants every row answered only when this is on; otherwise one answered row is
+   * enough (decided 2026-11-06, D5). Read only for `matrix_single` / `matrix_multiple`.
+   */
+  requireEveryRow?: boolean;
   scale?: {
     min: number;
     max: number;
     minLabel?: string;
     maxLabel?: string;
   };
-  /** Optional image URL displayed above the input field. */
+  /** Optional image shown under the label and help: `/api/media/public/<id>`, from `uploadFormItemImage`. */
   imageUrl?: string;
+  /** The image's text alternative; absent: `questionImageAlt` names the question. */
+  imageAlt?: string;
   /** ID of the question this question depends on (branching logic). */
   dependsOn?: string;
   /** Option id that must be selected in the dependsOn question to show this one. */
@@ -43,6 +52,13 @@ export interface FormItem {
    * criteria shape the pricing grid is built from.
    */
   showIf?: AudienceCondition | null;
+  /**
+   * A `product_grid` question's definition: its rows, columns, cap per cell, closed cells and price
+   * MODE - what every reader may rely on. A manager's read also carries the price lists
+   * (`ProductGrid`); a fill page never reads them from here - the viewer's own prices come resolved
+   * as `productGridPrices` (`productGridContract.ts`).
+   */
+  productGrid?: ProductGridView;
 }
 
 /** Cotisation tiers of the beneficiary association; `null` is the base tier. */
@@ -96,8 +112,19 @@ export interface CreateFormPayload {
    * audience criterion that takes several answers - a guest has no identity for any of those.
    */
   isPublic?: boolean;
+  /**
+   * What a public form asks a guest about who they are (`guestIdentity.ts`): any of `lastName`,
+   * `firstName`, `email`, each required once asked. Null or absent asks nothing, the default.
+   */
+  guestFields?: GuestIdentityField[] | null;
   /** Whether cash (physical) payment is accepted as an alternative to the online payment. */
   allowCashPayment?: boolean;
+  /**
+   * True when the form charges and its organiser cannot collect right now - a list whose delegation
+   * was revoked, or whose receiver lost its Lydia (owner, 2026-11-02). DERIVED by the server on every
+   * read, never stored: it resumes by itself on a new accepted delegation.
+   */
+  paymentsPaused?: boolean;
   /** Days after submission before an unvalidated cash payment expires (null = never). */
   cashPaymentExpiryDays?: number;
   /**
@@ -139,6 +166,8 @@ export interface Form extends CreateFormPayload {
   associationName?: string | null;
   /** Banner/header image URL (public, served via media-service). */
   imageUrl?: string | null;
+  /** Answers holding a place (`GET /forms/:id` only): the editor warns before removing an ordered row. */
+  submissionCount?: number;
 }
 
 import { apiFetch } from '$lib/utils/apiFetch';
@@ -149,6 +178,7 @@ import type { XhrUploadOptions } from '$lib/utils/uploadXhr';
 import { amountBoundsOf, SocialApiError } from '$lib/associations/api';
 import { Log } from '$lib/utils/Log';
 import { assertWithinRequestBudget } from '$lib/utils/mediaRequestLimits';
+import { prepareQuestionImage } from './questionImage';
 
 /**
  * A refused call, typed at the THROW: the status always, the server's stable `code` when the body
@@ -165,12 +195,18 @@ async function refusal(res: Response, fallback: string): Promise<SocialApiError>
   const body = await res.json().catch(() => ({}));
   const message = Array.isArray(body.message) ? body.message.join(' ') : body.message;
   const code = typeof body.code === 'string' ? body.code : null;
-  Log.i('FORMS', `${fallback}: refused status=${res.status} code=${code ?? 'none'}`);
+  const itemId = typeof body.itemId === 'string' ? body.itemId : null;
+  Log.i(
+    'FORMS',
+    `${fallback}: refused status=${res.status} code=${code ?? 'none'} item=${itemId ?? 'none'}`
+  );
   return new SocialApiError(
     message || `${fallback} (${res.status})`,
     code,
     res.status,
-    amountBoundsOf(body)
+    amountBoundsOf(body),
+    null,
+    itemId
   );
 }
 
@@ -238,18 +274,25 @@ export async function uploadFormImage(id: string, file: File): Promise<Form> {
   return (await res.json()) as Form;
 }
 
-/** Uploads a public image for use in a form question. Returns `{ imageUrl }`. */
+/**
+ * Uploads the image of a form question, resized with the post preset first
+ * (`prepareQuestionImage`). `formId` null: the form is not created yet (the create page) - the
+ * server records the image as the caller's, and the form's first save binds it. Returns
+ * `{ imageUrl }`, the one value the question may store.
+ */
 export async function uploadFormItemImage(
-  formId: string,
+  formId: string | null,
   file: File
 ): Promise<{ imageUrl: string }> {
+  const prepared = await prepareQuestionImage(file);
   const token = await getToken().catch(() => '');
   const fd = new FormData();
-  fd.append('file', file);
+  fd.append('file', prepared);
   assertWithinRequestBudget(fd);
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch(`${socialUrl()}/api/forms/${formId}/items/image`, {
+  const route = formId === null ? 'items/image' : `${formId}/items/image`;
+  const res = await fetch(`${socialUrl()}/api/forms/${route}`, {
     method: 'POST',
     headers,
     body: fd,
@@ -329,6 +372,11 @@ export async function checkSubmission(formId: string): Promise<{
    * or null. Absent from a server older than it, which reads as null.
    */
   refusalCode?: string | null;
+  /**
+   * Question id -> this member's prices on that priced grid, the category resolved by the server.
+   * Absent from a server older than the priced grid, which holds none.
+   */
+  productGridPrices?: ProductGridPrices;
 }> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${formId}/check`);
   if (!res.ok) throw await refusal(res, 'Failed to check submission status');
@@ -347,9 +395,17 @@ export interface Submission {
   answers: Record<string, unknown>;
   totalPaid: number;
   paymentStatus: string;
+  /** How the answer pays - online (Lydia) or cash; null on a free answer. */
+  paymentMethod?: 'online' | 'cash' | null;
+  /** What each ordered cell of a priced grid was CHARGED (migration 137); null without a grid. */
+  lines?: ProductGridLine[] | null;
   createdAt: string;
   /** The reference a PAYING GUEST was given ("1A2B-3C4D"); null on every other row. */
   reference?: string | null;
+  /** What a guest typed when the public form asked for it (migration 138); null otherwise. */
+  guestLastName?: string | null;
+  guestFirstName?: string | null;
+  guestEmail?: string | null;
   /** The file answers of this submission whose file the retention purge has deleted. */
   deletedFileIds?: string[];
   /** The live files of this submission, by id: the name a manager's download is saved under. */
@@ -440,6 +496,36 @@ export interface ExportLabels {
   file: string;
   /** The same cell once the retention purge has deleted the file. */
   fileDeleted: string;
+  /** Header of a guest's e-mail column, written when the form asks guests for it. */
+  email: string;
+  /** Header of the guest marker column (each guest row's reference), written when a row has no account. */
+  guest: string;
+  /**
+   * The words of a priced grid's "Articles" and "Totaux" sheets (`product-grid-export.ts`). Sent
+   * with every export: the server refuses a grid form's export without them
+   * (`EXPORT_LABELS_PRODUCT_GRID_MISSING`), and checks them, unused, on any other form.
+   */
+  productGrid: ProductGridExportLabels;
+}
+
+/** The words of the priced grid's two sheets, mirrored by `export-labels.ts`. */
+export interface ProductGridExportLabels {
+  articlesSheet: string;
+  totalsSheet: string;
+  buyer: string;
+  guest: string;
+  question: string;
+  row: string;
+  column: string;
+  category: string;
+  othersCategory: string;
+  quantity: string;
+  unitPrice: string;
+  lineTotal: string;
+  total: string;
+  amount: string;
+  received: string;
+  awaitingCash: string;
 }
 
 /** The labels this client would write an export in, resolved through Paraglide. */
@@ -453,6 +539,26 @@ export function exportLabels(): ExportLabels {
     statuses: statusLabels(),
     file: m.form_answer_file(),
     fileDeleted: m.form_answer_file_deleted(),
+    email: m.form_guest_identity_email(),
+    guest: m.form_submitter_guest(),
+    productGrid: {
+      articlesSheet: m.form_export_grid_articles_sheet(),
+      totalsSheet: m.form_export_grid_totals_sheet(),
+      buyer: m.form_export_grid_buyer(),
+      guest: m.form_submitter_guest(),
+      question: m.form_export_grid_question(),
+      row: m.form_export_grid_row(),
+      column: m.form_export_grid_column(),
+      category: m.form_export_grid_category(),
+      othersCategory: m.form_export_grid_others_category(),
+      quantity: m.form_export_grid_quantity(),
+      unitPrice: m.form_export_grid_unit_price(),
+      lineTotal: m.form_export_grid_line_total(),
+      total: m.form_export_grid_total(),
+      amount: m.form_export_grid_amount(),
+      received: m.form_export_grid_received(),
+      awaitingCash: m.form_export_grid_awaiting_cash(),
+    },
   };
 }
 
@@ -512,9 +618,22 @@ export async function downloadFormAnswerFile(formId: string, fileId: string): Pr
   return res.blob();
 }
 
-export async function exportSubmissions(id: string, labels: ExportLabels): Promise<Blob> {
+/**
+ * What an export writes: the workbook (one row per answer, and a priced grid's "Articles" and
+ * "Totaux" sheets), or ONE of those two grid sheets as CSV. Mirrors `SUBMISSIONS_EXPORT_FORMATS`.
+ */
+export type SubmissionsExportFormat = 'xlsx' | 'articles-csv' | 'totals-csv';
+
+/** Downloads a form's answers in `format`; a CSV format is refused on a form without a grid. */
+export async function exportSubmissions(
+  id: string,
+  labels: ExportLabels,
+  format: SubmissionsExportFormat = 'xlsx'
+): Promise<Blob> {
   const query = encodeURIComponent(JSON.stringify(labels));
-  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/export?labels=${query}`);
+  const res = await apiFetch(
+    `${socialUrl()}/api/forms/${id}/export?labels=${query}&format=${format}`
+  );
   if (!res.ok) throw await refusal(res, 'Failed to export submissions');
   return res.blob();
 }
@@ -522,8 +641,15 @@ export async function exportSubmissions(id: string, labels: ExportLabels): Promi
 export interface PendingCashSubmission {
   id: string;
   formId: string;
-  userId: string;
+  /** Null on a GUEST's answer, from a public form's link: there is no account to name. */
+  userId: string | null;
   email: string | null;
+  /** The reference a paying guest was given; null on a member's row. */
+  reference?: string | null;
+  /** What a guest typed when the public form asked for it (migration 138); null otherwise. */
+  guestLastName?: string | null;
+  guestFirstName?: string | null;
+  guestEmail?: string | null;
   answers: Record<string, unknown>;
   totalPaid: number;
   paymentStatus: string;
@@ -616,10 +742,15 @@ export type PublicForm = Pick<
   | 'basePrice'
   | 'currency'
   | 'allowCashPayment'
+  | 'paymentsPaused'
 > & {
   closedAt?: string | null;
+  /** What the page asks a guest about who they are; [] asks nothing (`guestIdentity.ts`). */
+  guestFields: GuestIdentityField[];
   formFull: boolean;
   pricing: PricingView | null;
+  /** Question id -> a guest's prices on that priced grid ("everyone else", or the one list). */
+  productGridPrices?: ProductGridPrices;
 };
 
 /**
@@ -686,7 +817,8 @@ export async function getPublicForm(id: string): Promise<PublicForm> {
 /**
  * Sends one guest answer. `website` is the honeypot the page hides from people; the server drops
  * any answer that fills it. A paid answer carries the address Lydia sends the request to
- * (`payerEmail`, never stored) and the method. A refusal is thrown through the one builder, so a
+ * (`payerEmail`, never stored) and the method - or, when the form asks the guest's e-mail, that
+ * e-mail (`guestEmail`, stored with the answer) is the address, typed once. A refusal is thrown through the one builder, so a
  * payment refusal (`code`, the amount bounds) is worded by `providerRefusalMessage`.
  */
 export async function submitPublicForm(
@@ -696,6 +828,10 @@ export async function submitPublicForm(
     website: string;
     payerEmail?: string;
     paymentMethod?: 'online' | 'cash';
+    /** Only the fields the form asks (`guestIdentityPayload`); the server refuses any other. */
+    guestLastName?: string;
+    guestFirstName?: string;
+    guestEmail?: string;
   }
 ): Promise<PublicSubmitReply> {
   const res = await fetch(`${socialUrl()}/api/public/forms/${encodeURIComponent(id)}/submit`, {

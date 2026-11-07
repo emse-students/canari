@@ -15,7 +15,11 @@
  *   DELETE /media/:id   - Remove a blob (server-to-server only: valid JWT + X-Internal-Secret)
  *   POST /media/internal/retention-class - set an object's retention class (X-Internal-Secret)
  *   POST /media/internal/reel-claim - claim a CanaReel's blob for its author (X-Internal-Secret)
- *   POST /media/internal/reel-purge - delete expired reels' blobs, per owner (X-Internal-Secret)
+ *   POST /media/internal/reel-purge - end reels' blobs, per owner, with the reason (X-Internal-Secret)
+ *   POST /media/internal/chat-reel-purge - a salon moderator's purge of a sent reel (X-Internal-Secret)
+ *   POST /media/chat-reel/:id/hold - the sender's chat hold on a reel file (JWT, owner only)
+ *   POST /media/internal/own-archive-delete - a withdrawn queued post's never-cited media, per
+ *                         uploader (X-Internal-Secret; social-service checked no row cites them)
  *   POST /media/internal/form-file - store a form answer's file, plaintext, class form-file
  *   POST /media/internal/form-file-purge - delete form files, per uploader (X-Internal-Secret)
  *   GET  /media/internal/form-file/:id - read a form file, and nothing else (X-Internal-Secret)
@@ -76,7 +80,9 @@ import {
   SERVER_READ_ONLY_CLASS,
   type FormFilePurgeOutcome,
   type MediaStorageStats,
+  REEL_PURGE_REASONS,
   type ReelPurgeOutcome,
+  type ReelPurgeReason,
   type RetentionClass,
 } from './media.service';
 import { UploadSessionService } from './upload-session.service';
@@ -110,6 +116,24 @@ const PUBLIC_LOGO_MAX_BYTES = 2 * 1024 * 1024;
 /** Browser cache for versioned logo URLs (`?v=` busts on re-upload); server retention is indefinite. */
 const PUBLIC_ASSET_CACHE_MAX_AGE_SEC = 365 * 24 * 60 * 60;
 const ALLOWED_PUBLIC_LOGO_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+/**
+ * The two bounds a public image is stored at. `logo` (the default, every caller before 2026-11-06)
+ * is a 256 px badge; `content` is an image READ at the width of a card - a form question's picture -
+ * so it keeps the client's own post preset (1600 px, `IMAGE_COMPRESS_PRESETS.post`) and is
+ * re-encoded only to drop its metadata. Anything else the body names is the default: an old caller
+ * sends nothing, and refusing over it would break a logo upload.
+ */
+export const PUBLIC_IMAGE_BOUNDS = {
+  logo: { side: 256, quality: 90 },
+  content: { side: 1600, quality: 85 },
+} as const;
+export type PublicImageSize = keyof typeof PUBLIC_IMAGE_BOUNDS;
+
+/** The bound a request names, or `logo`. */
+export function publicImageSize(value: unknown): PublicImageSize {
+  return value === 'content' ? 'content' : 'logo';
+}
 
 /** Upper bound on a single POST /media/touch batch; the client batches well below this. */
 const TOUCH_MAX_IDS = 500;
@@ -311,9 +335,12 @@ export class MediaController {
   )
   async uploadPublic(
     @UploadedFile() file: unknown,
-    @Req() req: Request
+    @Req() req: Request,
+    @Body() body?: { size?: unknown }
   ): Promise<{ mediaId: string }> {
     this.verifyToken(req);
+    const size = publicImageSize(body?.size);
+    const bound = PUBLIC_IMAGE_BOUNDS[size];
 
     let upload: ReturnType<typeof requireUploadedFile>;
     try {
@@ -328,14 +355,16 @@ export class MediaController {
       throw new BadRequestException('Logo must be JPEG, PNG, or WebP');
     }
 
-    // Resize to max 256x256, convert to WebP 90% - logos and avatars are public/unencrypted. The
+    // Resize inside the bound the caller named (256 px for a logo, 1600 px for a content image) and
+    // convert to WebP - public, unencrypted, and re-encoded so no EXIF or GPS block survives. The
     // decode is bounded (`boundedSharp`): a small file declaring huge dimensions is a 422, not an
     // allocation of gigabytes in the process that carries every chat medium.
     let compressed: Buffer;
     try {
       compressed = await boundedSharp(upload.buffer)
-        .resize(256, 256, { fit: 'inside', withoutEnlargement: true })
-        .webp({ quality: 90 })
+        .rotate()
+        .resize(bound.side, bound.side, { fit: 'inside', withoutEnlargement: true })
+        .webp({ quality: bound.quality })
         .toBuffer();
     } catch (err) {
       this.logger.warn(
@@ -346,7 +375,7 @@ export class MediaController {
 
     const mediaId = await this.mediaService.uploadPublicAsset(compressed, 'image/webp');
     this.logger.log(
-      `Stored public asset: ${mediaId} (${upload.size} → ${compressed.length} bytes, webp)`
+      `Stored public asset: ${mediaId} (${upload.size} → ${compressed.length} bytes, webp, size=${size})`
     );
     return { mediaId };
   }
@@ -442,7 +471,13 @@ export class MediaController {
   async initUploadSession(
     @Body()
     body:
-      | { retentionClass?: unknown; totalBytes?: unknown; partBytes?: unknown; header?: unknown }
+      | {
+          retentionClass?: unknown;
+          totalBytes?: unknown;
+          partBytes?: unknown;
+          header?: unknown;
+          encoding?: unknown;
+        }
       | undefined,
     @Req() req: Request
   ) {
@@ -455,6 +490,7 @@ export class MediaController {
         totalBytes: body?.totalBytes,
         partBytes: body?.partBytes,
         header: body?.header,
+        encoding: body?.encoding,
       },
       MAX_BYTES
     );
@@ -644,6 +680,29 @@ export class MediaController {
   }
 
   // ---------------------------------------------------------------------------
+  // POST /media/internal/public-asset-delete - public images a service no longer cites
+  // ---------------------------------------------------------------------------
+  /**
+   * Deletes the named PUBLIC assets and nothing else ({@link MediaService.removePublicAssets}).
+   * Sole consumer: social-service's form question images, released once no form cites them
+   * (`form-item-images.service.ts`). Secret-gated with no user JWT, because the hourly
+   * reconciliation that calls it acts for nobody.
+   */
+  @Post('internal/public-asset-delete')
+  async removePublicAssets(
+    @Body() body: { mediaIds?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ deleted: string[]; refused: string[] }> {
+    assertInternalSecret(internalSecret);
+    const ids = this.boundedIds(body?.mediaIds, 'mediaIds');
+    const result = await this.mediaService.removePublicAssets(ids);
+    this.logger.log(
+      `Public assets deleted: ${result.deleted.length}, refused: ${result.refused.length}`
+    );
+    return result;
+  }
+
+  // ---------------------------------------------------------------------------
   // POST /media/internal/reel-claim - a reel's blob is claimed for its author
   // ---------------------------------------------------------------------------
   /**
@@ -724,39 +783,111 @@ export class MediaController {
   // POST /media/internal/reel-purge - delete the blobs of expired or deleted reels
   // ---------------------------------------------------------------------------
   /**
-   * Deletes blobs on their owner's say-so and answers one outcome per id. Sole consumer:
-   * social-service's `ReelRetentionScheduler` and the delete of a reel. The allowlist (ownership,
-   * never a class) and the meaning of each outcome are on {@link MediaService.purgeReels}.
+   * Ends reels' blobs on their owner's say-so, for the REASON named, and answers one outcome per id.
+   * Sole consumer: social-service's `ReelRetentionScheduler` (`retention`) and the delete of a reel
+   * (`author` or `moderation`). `moderation` purges every hold, the other two release the post's alone
+   * (reels-in-chat 15.4). An UNKNOWN reason is a 400; an ABSENT one is an older social-service, which
+   * every deploy runs beside this build for a while, and gets the old behaviour for a file no chat
+   * holds (legacy-compatibility). The allowlist (ownership, never a class) and each outcome are on
+   * {@link MediaService.purgeReels}.
    */
   @Post('internal/reel-purge')
   async purgeReels(
+    @Body() body: { items?: unknown; reason?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ results: Record<string, ReelPurgeOutcome> }> {
+    assertInternalSecret(internalSecret);
+    const raw = body?.reason;
+    if (raw !== undefined && (typeof raw !== 'string' || !REEL_PURGE_REASONS.has(raw))) {
+      this.logger.warn(
+        `Reel purge refused: reason ${JSON.stringify(raw)} is not one of moderation, author, retention`
+      );
+      throw new BadRequestException("reason must be 'moderation', 'author' or 'retention'");
+    }
+    const reason = raw as ReelPurgeReason | undefined;
+    const items = this.purgeItems(body.items);
+    const results = await this.mediaService.purgeReels(items, reason);
+    this.logPurgeCounts(`Reel purge (${reason ?? 'no reason'})`, results);
+    return { results };
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /media/internal/chat-reel-purge - a salon moderator's purge of a reel sent there
+  // ---------------------------------------------------------------------------
+  /**
+   * Deletes reel files a moderated salon message names, each for the row's proven author. Sole
+   * consumer: social-service's moderator delete of a salon message (reels-in-chat 15.4), which has
+   * checked the moderator's permission in THAT salon and that the row declares the id. This side
+   * checks the owner and the chat hold: {@link MediaService.purgeChatReels}.
+   */
+  @Post('internal/chat-reel-purge')
+  async purgeChatReels(
     @Body() body: { items?: unknown },
     @Headers('x-internal-secret') internalSecret: string | undefined
   ): Promise<{ results: Record<string, ReelPurgeOutcome> }> {
     assertInternalSecret(internalSecret);
-    const raw = body?.items;
+    const results = await this.mediaService.purgeChatReels(this.purgeItems(body?.items));
+    this.logPurgeCounts('Chat-reel purge', results);
+    return { results };
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /media/internal/own-archive-delete - a withdrawn queued post's never-cited media
+  // ---------------------------------------------------------------------------
+  /**
+   * Deletes the named `archive` objects of their uploader. Sole consumer: social-service's
+   * `POST /posts/:id/withdraw`, the publish queue's Delete, which has checked that NO live post or
+   * comment cites them - the one fact this service cannot see, and the reason this is not a user
+   * route (review of #3061: an uploader's own `archive` objects include the media of posts already
+   * published, an association's among them). Each outcome is on {@link MediaService.removeOwnArchive}.
+   */
+  @Post('internal/own-archive-delete')
+  async removeOwnArchives(
+    @Body() body: { items?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ results: Record<string, 'deleted' | 'absent' | 'refused'> }> {
+    assertInternalSecret(internalSecret);
+    // A Map, not an object: `mediaId` is caller-supplied, so it must never be a property name - the
+    // same shape as `purgeReels` (CodeQL js/remote-property-injection).
+    const results = new Map<string, 'deleted' | 'absent' | 'refused'>();
+    for (const { mediaId, ownerId } of this.purgeItems(body?.items)) {
+      results.set(mediaId, await this.mediaService.removeOwnArchive(mediaId, ownerId));
+    }
+    return { results: Object.fromEntries(results) };
+  }
+
+  /** The `{items: [{mediaId, ownerId}]}` body the purges take, bounded and typed - or a 400. */
+  private purgeItems(raw: unknown): Array<{ mediaId: string; ownerId: string }> {
     if (!Array.isArray(raw)) {
       throw new BadRequestException('items must be an array');
     }
     if (raw.length > RETENTION_CLASS_MAX_IDS) {
       throw new BadRequestException(`items must hold at most ${RETENTION_CLASS_MAX_IDS} entries`);
     }
-    const items = raw.map((item) => {
+    return raw.map((item) => {
       const { mediaId, ownerId } = (item ?? {}) as { mediaId?: unknown; ownerId?: unknown };
       if (typeof mediaId !== 'string' || typeof ownerId !== 'string') {
         throw new BadRequestException('each item needs a string mediaId and ownerId');
       }
       return { mediaId, ownerId };
     });
-    const results = await this.mediaService.purgeReels(items);
-    const counts = { deleted: 0, absent: 0, refused: 0, failed: 0 };
+  }
+
+  /** One summary line per purge that did anything; a run of `absent` only is a retry and silent. */
+  private logPurgeCounts(label: string, results: Record<string, ReelPurgeOutcome>): void {
+    const counts: Record<ReelPurgeOutcome, number> = {
+      deleted: 0,
+      released: 0,
+      absent: 0,
+      refused: 0,
+      failed: 0,
+    };
     for (const outcome of Object.values(results)) counts[outcome] += 1;
-    if (counts.deleted + counts.refused + counts.failed > 0) {
+    if (counts.deleted + counts.released + counts.refused + counts.failed > 0) {
       this.logger.log(
-        `Reel purge: ${counts.deleted} deleted, ${counts.absent} absent, ${counts.refused} refused, ${counts.failed} failed`
+        `${label}: ${counts.deleted} deleted, ${counts.released} released, ${counts.absent} absent, ${counts.refused} refused, ${counts.failed} failed`
       );
     }
-    return { results };
   }
 
   // ---------------------------------------------------------------------------
@@ -1130,6 +1261,8 @@ export class MediaController {
     @Headers('x-internal-secret') internalSecret?: string
   ): Promise<{ ok: boolean; deleted: number; failed: number }> {
     assertInternalSecret(internalSecret);
+    // The open upload sessions first: no device of an erased account can release them any more.
+    await this.uploadSessions.cancelAllOwnedBy(userId);
     const { deleted, failed } = await this.mediaService.removeAllOwnedBy(userId);
     if (failed > 0) {
       // A 2xx would tell the erasure queue this half is done. It is not: the objects that failed
@@ -1140,12 +1273,36 @@ export class MediaController {
   }
 
   // ---------------------------------------------------------------------------
-  // DELETE /media/chat-reel/:id - the SENDER takes back a reel sent in a conversation
+  // POST /media/chat-reel/:id/hold - the take's chat hold on its file, before its first send
+  //
+  // A user route (JWT), OWNER-ONLY and IDEMPOTENT (`holdForChat`): a repeat answers the hold that
+  // exists. `dueAt` is when the chat hold lapses - never earlier than the hint the take's messages
+  // carry, which is computed from the press (reels-in-chat 15.3).
+  // ---------------------------------------------------------------------------
+  @Post('chat-reel/:id/hold')
+  async holdForChat(@Param('id') id: string, @Req() req: Request): Promise<{ dueAt: number }> {
+    const ownerId = this.verifyToken(req);
+    const outcome = await this.mediaService.holdForChat(id, ownerId);
+    switch (outcome.status) {
+      case 'held':
+        return { dueAt: outcome.dueAt };
+      case 'absent':
+        throw new NotFoundException('No such reel');
+      case 'gone':
+        throw new GoneException('This reel is no longer stored');
+      case 'refused':
+        throw new ForbiddenException('Not a reel you uploaded');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // DELETE /media/chat-reel/:id - the SENDER takes back a reel sent in conversations
   //
   // A user route (JWT, no internal secret), unlike `DELETE /media/:id`: it is safe to expose because
-  // the service allows exactly one thing - the caller's OWN object of class `chat-reel`
-  // (`removeChatReel`). A reel message cannot be forwarded, so no other conversation can cite the
-  // blob. Two segments, so it never collides with the catch-all `@Delete(':id')` below.
+  // the service allows exactly one thing - releasing the caller's OWN chat hold (`removeChatReel`),
+  // which deletes the file when no post holds it. No other PERSON's message cites the file: a reel
+  // message cannot be forwarded, and a take sent to several conversations is the sender's own
+  // fan-out (reels-in-chat 15.7). Two segments, so it never collides with `@Delete(':id')` below.
   // ---------------------------------------------------------------------------
   @Delete('chat-reel/:id')
   async removeChatReel(@Param('id') id: string, @Req() req: Request): Promise<{ ok: boolean }> {

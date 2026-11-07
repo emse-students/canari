@@ -13,6 +13,8 @@
 import { currentUpdatePlatform, getClientAppVersion } from './appVersion';
 import { readAppLog, type AppLogSnapshot } from './appLog';
 import { downloadDecryptedFile } from './fileDownload';
+import { appendLog } from './sessionLog';
+import { drainNativePushLog } from '$lib/mobile/nativePushLog';
 
 /** Which build this is, in the words a reader of the file needs - never the device model. */
 function platformLabel(): string {
@@ -59,6 +61,9 @@ export function appLogFileName(version: string, now: Date): string {
 
 /** Reads the log and offers it as a file. Failures are reported by the download wrapper. */
 export async function exportAppLog(): Promise<void> {
+  // The Android push service's lines since the last resume, taken INTO the log first so the file
+  // carries them - redacted on the way in, like every line (`nativePushLog.ts`).
+  await drainNativePushLog(appendLog);
   const snapshot = await readAppLog();
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- read once, never stored
   const now = new Date();

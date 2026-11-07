@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, LessThan, QueryFailedError, Repository } from 'typeorm';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -47,8 +47,59 @@ export type RegisterResult =
    * starts racing): the unique session constraint refused the second. Nothing was changed by it.
    */
   | { status: 'conflict' }
-  /** The response did not verify (challenge, origin, RP id, signature, format). */
+  /**
+   * The key was created by a BUILD this estate does not vouch for: its signing certificate is not
+   * one `ANDROID_APP_LINK_SHA256` names (a sideloaded APK signed by the upload key on an estate that
+   * names only the Play app-signing key). A verdict on the build, not on this request - the same
+   * install is refused identically at every start - so it has its own status, told apart at the
+   * throw rather than read back out of the verifier's message.
+   */
+  | { status: 'origin-refused'; origin: string }
+  /** The response did not verify (challenge, RP id, signature, format). */
   | { status: 'invalid'; reason: string };
+
+/**
+ * The origin a registration response's `clientDataJSON` names, or null when it names none readably -
+ * which leaves the verdict to the verifier. Read here because the one refusal that is a verdict on
+ * the BUILD (not the request) must be told apart where it is known.
+ */
+export function registrationOrigin(response: RegistrationResponseJSON | undefined): string | null {
+  const encoded = response?.response?.clientDataJSON;
+  if (typeof encoded !== 'string') return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as {
+      origin?: unknown;
+    };
+    return typeof parsed.origin === 'string' ? parsed.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The longest origin a log line carries: an `android:apk-key-hash:` origin is 64 characters. */
+const LOGGED_ORIGIN_MAX = 100;
+
+/**
+ * An origin as a log line may carry it: CLIENT-SUPPLIED, so quoted and escaped (no newline or
+ * control character can forge a line) and bounded.
+ */
+export function loggableOrigin(origin: string): string {
+  const quoted = JSON.stringify(origin);
+  return quoted.length > LOGGED_ORIGIN_MAX ? `${quoted.slice(0, LOGGED_ORIGIN_MAX)}...` : quoted;
+}
+
+/**
+ * A digest of the origins an estate accepts - ORDER-FREE, so the same set always reads the same.
+ * The client keeps it beside a `RESTORE_ORIGIN_NOT_ALLOWED` it was given: the refusal is a verdict
+ * on the PAIR (this build's signer, these origins), and a changed set is the event that lifts it.
+ * Not a secret: the same fingerprints are published in `/.well-known/assetlinks.json`.
+ */
+export function originsDigest(origins: readonly string[]): string {
+  return createHash('sha256')
+    .update([...new Set(origins)].sort().join(' '))
+    .digest('hex')
+    .slice(0, 16);
+}
 
 /** Outcome of {@link RestoreCredentialsService.verifyAssertion}: a verdict, and NOTHING written. */
 export type VerifyAssertionResult =
@@ -151,6 +202,11 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
     return this.config.available;
   }
 
+  /** The {@link originsDigest} of the origins this estate accepts now. */
+  allowedOriginsDigest(): string {
+    return originsDigest(this.requireConfig().origins);
+  }
+
   private requireConfig(): { rpId: string; origins: string[] } {
     if (!this.config.available) throw new Error(`restore unavailable: ${this.config.reason}`);
     return this.config;
@@ -241,6 +297,13 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
     if (!(await this.isLiveSessionOf(userId, sessionId, now, tokenId))) {
       this.logger.warn(`[RESTORE] registration refused: no live session sid=${sessionId}`);
       return { status: 'no-session' };
+    }
+    const origin = registrationOrigin(response);
+    if (origin !== null && !origins.includes(origin)) {
+      this.logger.warn(
+        `[RESTORE] registration refused sid=${sessionId}: origin ${loggableOrigin(origin)} is not a build this estate vouches for (ANDROID_APP_LINK_SHA256)`
+      );
+      return { status: 'origin-refused', origin };
     }
     let verification: Awaited<ReturnType<typeof verifyRegistrationResponse>>;
     try {

@@ -64,6 +64,40 @@ Check the column names against the entity before running: the entity files are u
 `apps/*/src/**/entities/`, and an unnamed `@Entity()` takes the snake_case of its class
 (`push_token`, `key_package`).
 
+#### A guest with no account (a public form's answer, register C8)
+
+A guest has no `users` row, so nothing above finds them, and no account's erasure reaches their
+answer. They are found only by what the form asked them (migration 138, [forms](../frontend/modules/forms.md#a-guests-name-and-e-mail-when-the-form-asks-2026-11-06)) -
+always with `"userId" IS NULL`, which is what makes the row a guest's:
+
+```sql
+SELECT id, "formId", "createdAt", "paymentStatus", "totalPaid",
+       "guestLastName", "guestFirstName", "guestEmail", answers
+  FROM submissions
+ WHERE "userId" IS NULL
+   AND ("guestEmail" ILIKE :'email'
+        OR ("guestLastName" ILIKE :'last' AND "guestFirstName" ILIKE :'first'));
+```
+
+A form that asked nothing holds no identity column: such a guest is found only by what they
+wrote in the answers (a reference they quote, `guestReference` = the first eight hex digits of
+`id`), and the requester proves the answer is theirs - say so in the reply rather than guess.
+
+**Erasure is an ANONYMISATION of the row, never its deletion** - the same choice the account
+erasure makes for a member's answer (`submissions`: `"userId"`, `email` NULL, `answers = '{}'`):
+
+```sql
+UPDATE submissions
+   SET "guestLastName" = NULL, "guestFirstName" = NULL, "guestEmail" = NULL, answers = '{}'::jsonb
+ WHERE id = ANY(:'ids'::uuid[]) AND "userId" IS NULL;
+```
+
+Why not `DELETE`: a paid row is the association's accounting record (amount, status, Lydia request
+ids, `lines`; basis 6.1.c in C8), its `purchase_records` row points at it, and a waiting row holds
+a seat - deleting it would erase a payment and free a seat that was sold. Anonymised, the row
+keeps what accounting needs and names nobody. The `AND "userId" IS NULL` guard keeps the statement
+off any member's row. Like every production write, it waits for the owner's yes.
+
 ### MiConnect (Authentik)
 
 The admin interface (`/if/admin/`, Directory > Users) shows the user's attributes (formation,
@@ -74,9 +108,21 @@ the admin interface - the person then cannot sign in to any service.
 ### MiGallery (SQLite `data/migallery.db`, controller MiTV)
 
 `users` (`id_user`), `user_favorites` (`user_id`), `photo_access_permissions` (`owner_id`,
-`authorized_id`), `album_permissions`, `sessions` (`id_user`), `logs` (`actor`). The face link is
-`users.photos_id`; the face data itself is in Immich (person, faces) - access and erasure there go
-through the Immich admin, see [dpia-migallery-faces](dpia-migallery-faces.md#6-open-measures).
+`authorized_id`), `album_permissions`, `sessions` (`id_user`), `logs` (`actor`). Option C is
+deployed (MiGallery `v2.18.0`, seeded 2026-11-01, matching rules refined up to `v2.22.0`; the A8
+cutover ran on 2026-11-01, so Immich holds no face, person or embedding any more and
+`users.photos_id` points at nothing). A member's face data is `face_references`, `face_negatives`,
+the ledger tables, `face_matches` and `face_consents` (`user_id`), plus their crops under
+`data/cache/faces/members/`; withdrawal in the settings, or the account's deletion, erases all of it
+(a withdrawal keeps the closed consent row, which goes with the account). The face store
+(`data/faces.db`) holds one template per face of every
+photograph and names no one: it goes with its photograph (a photograph in Immich's trash keeps its
+templates until the trash is emptied). An encrypted copy of what lot A8 deleted from Immich is kept
+until 2026-12-01 and Immich's dumps from before it
+rotate out by 2026-11-15: a request touching that old data goes to the owner. Mechanism:
+[MiGallery
+face-matching-option-c](https://github.com/emse-students/MiGallery/blob/main/docs/wiki/face-matching-option-c.md),
+[dpia-migallery-faces](dpia-migallery-faces.md#6-open-measures).
 
 ### Sky (SQLite)
 

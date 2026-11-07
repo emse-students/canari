@@ -141,10 +141,13 @@ describe('reel purge: ownership is the allowlist', () => {
     };
     const { service, deleted } = serviceWith(items);
 
-    const results = await service.purgeReels([
-      { mediaId: REEL, ownerId: ALICE },
-      { mediaId: COMMENT_MEDIA, ownerId: BOB },
-    ]);
+    const results = await service.purgeReels(
+      [
+        { mediaId: REEL, ownerId: ALICE },
+        { mediaId: COMMENT_MEDIA, ownerId: BOB },
+      ],
+      'retention'
+    );
 
     expect(results).toEqual({ [REEL]: 'deleted', [COMMENT_MEDIA]: 'deleted' });
     expect(deleted).toEqual([REEL, COMMENT_MEDIA]);
@@ -161,15 +164,18 @@ describe('reel purge: ownership is the allowlist', () => {
     };
     const { service, deleted } = serviceWith(items);
 
-    const results = await service.purgeReels([
-      // Alice's reel row cites Bob's chat photo, an old unowned blob, a vault document, a logo.
-      { mediaId: BOBS_CHAT, ownerId: ALICE },
-      { mediaId: UNOWNED, ownerId: ALICE },
-      { mediaId: VAULT, ownerId: ALICE },
-      { mediaId: LOGO, ownerId: ALICE },
-      // And an empty owner is not "anybody".
-      { mediaId: BOBS_CHAT, ownerId: '' },
-    ]);
+    const results = await service.purgeReels(
+      [
+        // Alice's reel row cites Bob's chat photo, an old unowned blob, a vault document, a logo.
+        { mediaId: BOBS_CHAT, ownerId: ALICE },
+        { mediaId: UNOWNED, ownerId: ALICE },
+        { mediaId: VAULT, ownerId: ALICE },
+        { mediaId: LOGO, ownerId: ALICE },
+        // And an empty owner is not "anybody".
+        { mediaId: BOBS_CHAT, ownerId: '' },
+      ],
+      'moderation'
+    );
 
     expect(Object.values(results).every((r) => r === 'refused')).toBe(true);
     expect(deleted).toEqual([]);
@@ -184,10 +190,13 @@ describe('reel purge: ownership is the allowlist', () => {
     };
     const { service, deleted } = serviceWith(items);
 
-    const results = await service.purgeReels([
-      { mediaId: GONE, ownerId: ALICE },
-      { mediaId: '99999999-9999-4999-8999-999999999999', ownerId: ALICE },
-    ]);
+    const results = await service.purgeReels(
+      [
+        { mediaId: GONE, ownerId: ALICE },
+        { mediaId: '99999999-9999-4999-8999-999999999999', ownerId: ALICE },
+      ],
+      'author'
+    );
 
     expect(Object.values(results)).toEqual(['absent', 'absent']);
     expect(deleted).toEqual([]);
@@ -202,8 +211,8 @@ describe('reel purge: ownership is the allowlist', () => {
     const { service, deleted } = serviceWith(items);
     const batch = [{ mediaId: REEL, ownerId: ALICE }];
 
-    expect(await service.purgeReels(batch)).toEqual({ [REEL]: 'deleted' });
-    expect(await service.purgeReels(batch)).toEqual({ [REEL]: 'absent' });
+    expect(await service.purgeReels(batch, 'retention')).toEqual({ [REEL]: 'deleted' });
+    expect(await service.purgeReels(batch, 'retention')).toEqual({ [REEL]: 'absent' });
     expect(deleted).toEqual([REEL]);
   });
 
@@ -214,10 +223,13 @@ describe('reel purge: ownership is the allowlist', () => {
     };
     const { service, deleted } = serviceWith(items, [STUCK]);
 
-    const results = await service.purgeReels([
-      { mediaId: STUCK, ownerId: ALICE },
-      { mediaId: REEL, ownerId: ALICE },
-    ]);
+    const results = await service.purgeReels(
+      [
+        { mediaId: STUCK, ownerId: ALICE },
+        { mediaId: REEL, ownerId: ALICE },
+      ],
+      'author'
+    );
 
     expect(results).toEqual({ [STUCK]: 'failed', [REEL]: 'deleted' });
     expect(deleted).toEqual([REEL]);

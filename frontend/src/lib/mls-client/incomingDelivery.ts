@@ -11,6 +11,20 @@
  */
 export type DeliveryChannel = 'live' | 'pull';
 
+/**
+ * A copy's arrival as the deduplicating seam reads it: the channel and, for a pull, the serial of
+ * the ack flush that pull waited for (`BaseMlsService.fetchPendingMessages`). A pull is ordered after
+ * every ack up to that serial and after none issued later. Read for one case only: a pull listing a
+ * row the SOCKET took in before that row's ack was sent (`pull:crossed-live-ack`).
+ */
+export type DeliveryArrival =
+  | { channel: 'live' }
+  | {
+      channel: 'pull';
+      /** Every ack with a serial up to this one settled before the pull's request was sent. */
+      listedAfterAck: number;
+    };
+
 /** Metadata for an MLS payload delivered via the offline queue (not live WebSocket). */
 export type IncomingDeliveryMeta = {
   /** Server `queued_message.createdAt` in ms - when the message was enqueued for this device. */
@@ -35,6 +49,12 @@ export type IncomingDeliveryMeta = {
    * bounded history answer - see `historyAddressing.ts`. Absent means a group broadcast.
    */
   addressed?: boolean;
+  /**
+   * A LIVE copy that arrived before a pull had listed the whole mailbox on this link
+   * (`MlsQueuedMessage.aheadOfMailbox`): frames queued before it on the server may still be behind
+   * it in this device's queue. Read by `routeDistributionFrame`, which steps no commit for it.
+   */
+  aheadOfMailbox?: boolean;
 };
 
 /**
@@ -48,9 +68,11 @@ export function deliveryMetaOf(msg: {
   senderDeviceId?: string;
   channel?: DeliveryChannel;
   addressed?: boolean;
+  aheadOfMailbox?: boolean;
 }): IncomingDeliveryMeta | undefined {
   const meta: IncomingDeliveryMeta = {
     ...(msg.channel ? { channel: msg.channel } : {}),
+    ...(msg.aheadOfMailbox === true ? { aheadOfMailbox: true } : {}),
     ...(msg.addressed === true ? { addressed: true } : {}),
     ...(msg.queuedCreatedAt !== undefined ? { queuedCreatedAt: msg.queuedCreatedAt } : {}),
     ...(msg.queuedMessageId ? { queuedMessageId: msg.queuedMessageId } : {}),
@@ -83,5 +105,11 @@ export const parseQueuedCreatedAt = parseServerTimestampMs;
  * prevent, and `live:done` is the only one no crossing explains - the socket publishes once, at
  * send, and never replays the queue on connect. Keeping them apart as a type is what lets the
  * counters be per shape, which is what makes their rate mean anything.
+ *
+ * `pull:crossed-live-ack` is the fifth, split out of `pull:done`: the pull listed a row the socket
+ * took in before this device had sent that row's ack. A `pull:done` whose first copy came from a
+ * pull is never that, because pulls are single-flight behind the drain's ack.
  */
-export type DeliveryRepeatShape = `${DeliveryChannel}:${'queued' | 'done'}`;
+export type DeliveryRepeatShape =
+  | `${DeliveryChannel}:${'queued' | 'done'}`
+  | 'pull:crossed-live-ack';

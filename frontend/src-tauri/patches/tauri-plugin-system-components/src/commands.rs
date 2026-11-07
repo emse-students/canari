@@ -17,14 +17,31 @@ pub(crate) async fn remove_tab_bar<R: Runtime>(app: AppHandle<R>) -> Result<()> 
     app.system_components().remove_tab_bar()
 }
 
+/// CANARI PATCH: show and hide carry a `seq` - see `TabBarVisibilityOptions`.
 #[command]
-pub(crate) async fn show_tab_bar<R: Runtime>(app: AppHandle<R>) -> Result<()> {
-    app.system_components().show_tab_bar()
+pub(crate) async fn show_tab_bar<R: Runtime>(
+    app: AppHandle<R>,
+    options: TabBarVisibilityOptions,
+) -> Result<()> {
+    app.system_components().show_tab_bar(options)
 }
 
+/// CANARI PATCH: see `show_tab_bar`.
 #[command]
-pub(crate) async fn hide_tab_bar<R: Runtime>(app: AppHandle<R>) -> Result<()> {
-    app.system_components().hide_tab_bar()
+pub(crate) async fn hide_tab_bar<R: Runtime>(
+    app: AppHandle<R>,
+    options: TabBarVisibilityOptions,
+) -> Result<()> {
+    app.system_components().hide_tab_bar(options)
+}
+
+/// CANARI PATCH: see `SetTabBarInteractiveOptions`.
+#[command]
+pub(crate) async fn set_tab_bar_interactive<R: Runtime>(
+    app: AppHandle<R>,
+    options: SetTabBarInteractiveOptions,
+) -> Result<()> {
+    app.system_components().set_tab_bar_interactive(options)
 }
 
 #[command]

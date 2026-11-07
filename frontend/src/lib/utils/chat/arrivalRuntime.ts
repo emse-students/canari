@@ -1,6 +1,7 @@
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { isAppInForeground } from '$lib/utils/appForeground';
 import { isNarrowChatLayout } from '$lib/utils/viewport';
+import { resumeOpeningHolds } from './resumeOpening.svelte';
 import {
   readerCanSeeArrival,
   readerIsReadingConversation,
@@ -54,5 +55,22 @@ export function isReadingConversationNow(
   selectedConversationKey: string | null | undefined
 ): boolean {
   if (typeof document === 'undefined') return false;
+  // A conversation shown only because the app came back to open another one is not being read
+  // (`resumeOpening.svelte.ts`): an arrival in it stays unread, as the receipt effect leaves it.
+  if (resumeOpeningHolds(conversationKey)) return false;
   return readerIsReadingConversation(arrivalContextNow(conversationKey, selectedConversationKey));
+}
+
+/**
+ * `selected` when this device is READING it now ({@link isReadingConversationNow}), otherwise `null`.
+ *
+ * What a server count must leave alone is the conversation whose count the receipt effect owns - the
+ * one being read - and not the bare selection: a salon left selected while the reader is on another
+ * page, in a hidden tab or with the app in the background is read by nobody, so nothing but the
+ * server's count can correct it. Skipping it on the selection kept the badge of a salon read on
+ * another device until the reader came back to it (owner, 2026-11-02).
+ */
+export function conversationBeingRead(selected: string | null | undefined): string | null {
+  if (!selected) return null;
+  return isReadingConversationNow(selected, selected) ? selected : null;
 }

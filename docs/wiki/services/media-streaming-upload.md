@@ -83,6 +83,20 @@ from a `File`/`Blob`, and sealing segment `i` needs only the CEK, the IV, the he
 | `GET /api/media/upload/session/:id` | `{totalBytes, partBytes, received: [indexes]}` - the server's fact, never the client's guess. Survives a media-service restart (sidecar on the same volume as the staging file) |
 | `POST .../:id/complete` | Requires every part present and the file size equal to `totalBytes` EXACTLY; re-reads the first 20 bytes and checks them against the header declared at init; `fPutObject` from the staged file; remembers `uploadId -> mediaId` for 24 h so a repeated `complete` (lost answer) returns the same id |
 | `DELETE .../:id` | Cancel: removes the staging file and RELEASES the reservation now rather than at the 24 h sweep |
+| `DELETE /api/media/internal/users/:userId` (the account erasure fan-out) | Ends every open session of the erased owner FIRST (`UploadSessionService.cancelAllOwnedBy`, under the `complete` lock; a completed session is left to the media erasure), then removes the owned objects. No device of a deleted account holds a token to release its sessions, so the erasure is the only party that can (2026-11-01) |
+
+**A `single-block` session (2026-11-06).** `init` may say `{encoding: 'single-block'}` instead of a
+`header`: the blob is one AES-GCM block (plaintext + 16 bytes of tag), there is no public header to
+check at `complete`, and `totalBytes` must exceed 16. A body carrying both, or an unknown encoding,
+is a `400` (`declaredBlobShape`, `upload-session.ts`). The sidecar records `{encoding}` in place of
+`headerHex`, and records written before keep reading as segmented. It exists for the background
+publish queue ([posts](../frontend/modules/posts.md#the-background-publish-queue)), which needs every
+file resumable: everything `writesSegmented` does not name - every photo, and a video while the
+segmented writer is off - is single-block, the format the post link preview and every older reader
+decrypt. The client seals the whole block once and slices it per part (`resumableUpload.ts`,
+`encoding: 'single-block'`), so the block sits in memory for the whole upload: a compressed photo
+is a few hundred KB, but a video with the writer off is bounded only by the upload ceiling it was
+prepared under.
 
 Class, ownership and budget reuse the machinery of the `chat-reel` section: declared at `init`, a part past
 the declared total is refused, completion by another member is `403`. New: a **cap of open sessions per

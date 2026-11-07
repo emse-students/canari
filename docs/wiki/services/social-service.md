@@ -154,8 +154,9 @@ The numbers and what they imply are in
 | DELETE | `/api/posts/:postId` | Delete post (author or admin) |
 | POST | `/api/posts/:postId/reactions` | Add/toggle emoji reaction |
 | POST | `/api/posts/:postId/comments` | Add comment |
-| PATCH | `/api/posts/:postId/pin` | Pin post (admin only) |
-| PATCH | `/api/posts/:postId/unpin` | Unpin post (admin only) |
+| PATCH | `/api/posts/:postId/pin` | Pin the post in ONE space, body `{ spaceId }` (WP-PIN, `SpacePinsService`): the platform admin, or `MODERATE` in that space's BDE; at most 3 shown per space ([spaces-and-audiences-reform](../spaces-and-audiences-reform.md#11-wp-pin---a-pin-is-a-promotion-per-space-not-a-global-flag-decided-2026-11-03)) |
+| PATCH | `/api/posts/:postId/unpin` | Unpin the post from ONE space, body `{ spaceId }` |
+| GET | `/api/posts/space-pins/:spaceId` | The governor's pins of a space, `shown` then `pending` ("en attente") |
 | POST | `/api/posts/:postId/republication-requests` | Ask the AUTHOR of a personal post to let an association carry it (D38b; `POST_AS_ASSO` held, typed `REPOST_PERSONAL_*` refusals, [profiles-and-access](../profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)) |
 | GET | `/api/posts/me/republication-requests` | The caller's inbox of requests to answer (D38b); answered through `POST /api/associations/proposals/:id/accept` or `/refuse` (409 `PROPOSAL_SENDER_GONE` when the asker no longer speaks for the association) |
 | GET | `/api/posts/me/republication-requests/count` | `{ pending }`, the count alone, for `/notifications` (D38b); like the inbox, it leaves out a request whose asker no longer speaks for the association |
@@ -616,7 +617,7 @@ skew made the reader's own device re-POST the identical mark at every load, sinc
 server's, `createdAt`) never reached the row's `sentAt` key. Pinned by `salonRowClock.test.ts` (heads
 under the last message: 2 before the reload, 2 after; 0 before the fix).
 
-**"Mark as read" from a salon NOTIFICATION, app shut (Android, 2026-10-10).** A shut phone has no session, so the two public calls above are out of reach. Its action calls chat-delivery's `POST /api/mls/push/channel-read` `{ userId, deviceId, channelId, at }` under `Authorization: PushSecret` (which proves the caller is a device of `userId`); chat-delivery forwards it with `x-internal-secret` to `POST /api/internal/channels/:channelId/read` (`InternalChannelReadController`, never exposed by the edge), which runs `advanceChannelReadMark` (membership still checked here, `at` bounded by the newest message) and then `markChannelRead` so the user's other devices clear their banner. `at` is the notification's own `createdAt`, never the phone's clock. A refused or failed call is logged on both sides (`[CHANNEL_READ_PUSH]`) and never retried: the banner is already gone locally and the receipt rises the next time the salon is opened. Reply is NOT offered on a salon: see [mobile](../frontend/mobile.md#a-salon-mark-as-read-only-and-why-reply-is-not-offered-decided-2026-10-10-android).
+**"Mark as read" from a salon NOTIFICATION, app shut (Android, 2026-10-10).** A shut phone has no session, so the two public calls above are out of reach. Its action calls chat-delivery's `POST /api/mls/push/channel-read` `{ userId, deviceId, channelId, at }` under `Authorization: PushSecret` (which proves the caller is a device of `userId`); chat-delivery forwards it with `x-internal-secret` to `POST /api/internal/channels/:channelId/read` (`InternalChannelReadController`, never exposed by the edge), which runs `advanceChannelReadMark` (membership still checked here, `at` bounded by the newest message) and then `markChannelRead` so the user's other devices clear their banner. `at` is the notification's own `createdAt`, never the phone's clock. A refused or failed call is logged on both sides (`[CHANNEL_READ_PUSH]`) and never retried: the banner is already gone locally and the receipt rises the next time the salon is opened. The same controller answers chat-delivery's second salon question, `POST /api/internal/channels/:channelId/reader` `{ userId }` -> `{ reader }` (`ChannelService.isReaderOfChannel`: a public salon's community member, a private salon's reader), which gates a salon reaction's push to its author - a "no" is logged `[SALON_READER] ... is not a reader` once per user and salon, then at each power of ten (`common/log-repeat.ts`) ([chat-delivery](chat-delivery.md#the-relay-routes-ask-the-group-2026-11-01)). Reply is NOT offered on a salon: see [mobile](../frontend/mobile.md#a-salon-mark-as-read-only-and-why-reply-is-not-offered-decided-2026-10-10-android).
 
 **Clearing a community without reading it (2026-10-13).** `POST /api/channels/workspaces/:workspaceId/unread/clear` `{ upTo }` (`clearWorkspaceUnread`) raises `channel_members."clearedMarks"` (migration 082) for every salon the caller may read, in one statement, to `LEAST(upTo, the salon's newest createdAt)` and never lower; `listUnreadCounts` counts from the later of `readMarks` and `clearedMarks`. It never touches `readMarks` and never publishes `channel.read`: only `channel.unread.cleared` to the caller, and one silent `channel_read` push per salon that moved. The column is on the TypeORM entity with `select`/`insert`/`update: false` (raw SQL only): off the entity, `synchronize` DROPPED it at every local boot; as a plain column it would be in every membership `SELECT` during the deploy's window before migrations run. A salon with no message gets no mark (`LEAST` ignores a NULL, so it is filtered first; measured on Postgres). Why: [chat](../frontend/modules/chat.md#mark-a-whole-community-as-read-2026-10-13).
 
@@ -676,7 +677,7 @@ Live broadcasts, behind `LIVE_ENABLED`; every route, its rights and its refusal 
 | GET | `/api/associations` | List all associations |
 | GET | `/api/associations/:id` | Get association detail |
 | POST | `/api/associations` | Create association (global admin or BDE `MANAGE_ASSO` flag) |
-| PATCH | `/api/associations/:id` | Update association (admin with `MANAGE_MEMBERS`) |
+| PATCH | `/api/associations/:id` | Update details: each field asks its own right (`UPDATE_FIELD_RIGHTS`: profile `EDIT_PROFILE`, `archived` `MANAGE_MEMBERS`, cotisation `MANAGE_PRODUCTS`, quota and a list's parent the platform admin) - [the field table](../association-permissions.md#edit_profile-bit-12-the-profile-is-not-the-roster-and-patch-id-is-not-one-flag-owner-2026-11-02) |
 | GET/PUT/DELETE | `/api/associations/:id/push-mute` | The caller's push mute of one association; `GET /api/associations/me/push-mutes` lists them |
 | POST | `/api/associations/:id/members` | Add member to association |
 | POST | `/api/associations/:id/events` | Create calendar event |
@@ -1177,6 +1178,8 @@ having at least been visible before. The association's own admins get
 `notifyAssocAdminsOfEventAction(..., 'pending')`, which is the sixth key in `PushContentKey`
 (`event_pending`) and therefore owes a string in all six native tables
 ([mobile](../frontend/mobile.md)).
+
+**One announcement, whatever the cause (WP-Q2, 2026-11-03).** The demotion's two notifications now live in `announceEventReopened(event, reason, actorId)`: the validators as for a proposal, and the organiser plus every accepted partner with the reason (`event_pending` for a moved date, `event_pending_coorganiser` when a partner accepted a validated event - [profiles-and-access](../profiles-and-access.md#wp-q2-an-acceptance-on-a-validated-event-reopens-it-2026-11-03)). Both are best effort and run after the write committed.
 ### A school-wide break is not an association's to declare
 
 `kind` was a free field. `event` renders as a card on the owning association's row; `break` renders
@@ -1239,6 +1242,46 @@ fallback each line already declared was the right answer. With those gone `/cale
 `lib/components/calendar` have none, so both join `TREES` in
 `frontend/src/lib/associations/serverProse.test.ts`, the guard that owns this rule. That is what
 stops the next one: the guard is extended by a tree, never by an allowlist entry.
+
+## A post created twice is the same post (2026-11-06)
+
+`POST /api/posts` takes an optional `id` (a UUID minted by the client, `CreatePostDto.id`). The
+post's PRIMARY KEY is the idempotency key, so no column and no migration were added. `createPost`
+looks the id up first (`replayClientId`): absent, the post is INSERTED under it (`insert`, never
+`save`, which would update a row); present and the caller's, the stored post is returned as if just
+created (`[POST-CREATE] post <id> sent again`); present and another author's, `409`
+(`clientIdVerdict`, `post-client-id.ts`). Two concurrent creates with one id meet at the primary
+key: the loser's `23505` is read through `violatesUniqueColumns(e, ['id'])` and answered as a
+replay (and the reel claim it made is NOT handed back - it is the winning row's). A request without
+`id` keeps the server-generated one. The id must be a random UUID v4 (`@IsUUID('4')`: the nil UUID
+and other versions are refused). The client that sends it is the background publish queue
+([posts](../frontend/modules/posts.md#the-background-publish-queue)): a create whose answer was lost
+is sent again with the same id.
+
+**A deleted post is never created again** (decided 2026-11-06, review of #3061). Migration 135
+(additive) adds `deleted_post_ids (id, "deletedAt")` and an `AFTER DELETE ON posts` trigger that
+writes it, so EVERY hard delete path writes it - the service's delete, the account erasure, the reel
+retention, a cascade, any later one - with nothing for a writer to remember. The table holds the id
+and a date and nothing else: no author, no content. A create under a retired id is `410`.
+`POST /api/posts/:id/withdraw {mediaIds}` is the queue's Delete: it writes the tombstone FIRST,
+then deletes the row if one is there (`{ deleted }` says which), then deletes the named media the
+queue uploaded EXCEPT any a live post, comment or salon message cites
+(`PostMediaRetentionService.deleteWithdrawnMedia`, one SQL read of `posts.images`, the comments'
+media and `channel_messages."reelMediaId"`, then media-service's
+`internal/own-archive-delete` under the caller as uploader). A create racing it re-reads the
+tombstone AFTER its own insert and removes itself, so in every interleaving the post does not exist
+once the withdrawal answered. **Only ever the caller's own post, a platform admin included**: the
+author is checked before the tombstone (`409`, nothing written) and again on the row it would
+delete; another author's row that appeared between the two reads is left, the tombstone this call
+wrote is deleted again, and the answer is `409`. The row is deleted as its author, never with the
+admin flag, and WITHOUT releasing the ids the queue named (`deletePost`'s `keep`): released to
+`ephemeral` they would no longer be `archive`, media-service would refuse them, and they would wait
+out the idle sweep.
+
+**The existence oracle, accepted.** A create naming an id answers `409` (another author's post holds
+it) or `410` (a deleted post held it), which tells the caller that a post holds or held that id. Low:
+the ids are random v4 UUIDs (122 bits) nobody guesses, and a live post's id is shown to everyone who
+can read the post anyway. Tests: `post-client-id.spec.ts`, `posts.service.client-id.spec.ts`.
 
 ## Redis events published
 

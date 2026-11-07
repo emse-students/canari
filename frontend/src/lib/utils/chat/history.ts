@@ -24,16 +24,17 @@ import {
   appMsgToEnvelope,
   isOwnMessage,
   isSystemSender,
+  mapStoredMessagesToChatMessages,
   resolveMessageTimestamp,
 } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { noteServerTime } from '$lib/utils/chat/serverClock';
 import { frameFingerprint, noteFrameProcessed } from '$lib/mls-client/inboundFrameLedger';
 import { checkVerifiedSender } from '$lib/mls-client/verifiedSender';
 import { isFrameFromThisDevice } from '$lib/mls-client/ownDeviceFrame';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
 import { markEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { escalateReconciliation } from '$lib/utils/chat/historyReconcile';
-import { readStoredTimestampMs, toValidDate } from '$lib/utils/dates';
 import { normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions';
@@ -43,6 +44,35 @@ import { holdsGroupState } from './groupUsability';
 import { boundSeenEntries, noteLedgerWritten } from './seenLedgerBounds';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { editSupersedes } from './editPrecedence';
+import {
+  settlePendingFor,
+  settleWalkedMutations,
+  type DeferredMutation,
+  type PendingMutationDeps,
+} from './pendingMutationStore';
+
+/**
+ * The newest time THE SERVER stamped on a page of its history log (`timestamp` is the `receivedAt`
+ * the delivery service wrote when it accepted the frame), or `undefined` for a page that states none.
+ *
+ * WHY THE REPLAY NOTES IT (third review of #2824, 1). A device that joined every group by external
+ * commit and restored everything from this replay receives no live frame until the next message, so
+ * `serverClock` knew nothing and the server read mark could not move (`serverMarkCeiling`): a
+ * conversation read in that window showed its badge again after a restart. These rows ARE the
+ * server's word, the same value that dates each replayed row - and ONLY they are read here: nothing
+ * a frame's plaintext carries (a relayed bundle row's `serverTimestamp`, a read mark's `at`) reaches
+ * the clock, so a replay can never raise it past what the server sent.
+ */
+export function newestServerRowTime(
+  rows: ReadonlyArray<{ timestamp?: unknown }>
+): number | undefined {
+  let newest: number | undefined;
+  for (const row of rows) {
+    const at = parseServerTimestampMs(row.timestamp);
+    if (at !== undefined && (newest === undefined || at > newest)) newest = at;
+  }
+  return newest;
+}
 
 /** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
 function seenHistoryKey(userId: string, groupId: string): string {
@@ -550,6 +580,63 @@ function at8(id: string): string {
 }
 
 /**
+ * What the archive replay's post-save pass writes onto ONE stored row, from the row as it stands
+ * now - `null` when nothing changes. Pure, so a compare-and-set may call it again on a fresher row:
+ *
+ * - first what a replayed bundle was allowed to change (`bundleVetting.ts`);
+ * - then the reactions, MERGED pair by pair (`mergeReactions`, last write wins) - never the replay's
+ *   array written over one a live frame extended meanwhile;
+ * - then the author's deletion, or else the author's edit - which a tombstone refuses (it is final)
+ *   and so does a later edit the row already carries (`editSupersedes`), the rules the live path
+ *   applies. The stored row is the first place the author is known for a mutation whose message
+ *   was not in memory when its event was replayed, so the claim is checked HERE too.
+ */
+export function replayedMutationsOnto(
+  current: StoredMessage,
+  replayed: {
+    patch?: StoredMessagePatch;
+    reactions?: MessageReaction[];
+    deletion?: { by: string; proof?: RecordedAuthorship };
+    edit?: { by: string; content: string; editedAt: Date; proof?: RecordedAuthorship };
+  }
+): StoredMessage | null {
+  let next = replayed.patch ? mergeStoredMessage(current, replayed.patch) : current;
+  if (replayed.reactions) {
+    const merged = mergeReactions(next.reactions ?? [], replayed.reactions);
+    if (merged) next = { ...next, reactions: merged };
+  }
+  const { deletion, edit } = replayed;
+  if (deletion && replayMutationIsAuthorised(next, deletion.by, 'delete')) {
+    next = {
+      ...next,
+      isDeleted: true,
+      content: chat_system_message_deleted(),
+      // The original bytes go with the message; the author's signed tombstone stays.
+      authorship: null,
+      editProof: null,
+      ...(deletion.proof ? { deleteProof: deletion.proof } : {}),
+    };
+  } else if (
+    edit &&
+    !next.isDeleted &&
+    editSupersedes({ editedAt: edit.editedAt.getTime(), content: edit.content }, next) &&
+    replayMutationIsAuthorised(next, edit.by, 'edit')
+  ) {
+    next = {
+      ...next,
+      isEdited: true,
+      // The author's signed edit, so a bundle this device writes proves the edited body.
+      ...(edit.proof ? { editProof: edit.proof } : {}),
+      // The accumulator holds the replacement TEXT; the body it replaces is this row's, and only
+      // here is it known - see `applyEditToBody`.
+      content: applyEditToBody(next.content, edit.content),
+      editedAt: edit.editedAt.getTime(),
+    };
+  }
+  return next === current ? null : next;
+}
+
+/**
  * The stored row a replay page writes for one queued message, given the row this device already
  * stores under its id (`prev`, read before the batch write). A replay re-reads what earlier runs
  * wrote, so the stored row is evidence:
@@ -604,6 +691,9 @@ export function replayedStoredRow(
     ...(editProof && edited && !deleted ? { editProof } : {}),
     ...(deleteProof && deleted ? { deleteProof } : {}),
     ...(pm.restoredUnverified ? { restoredUnverified: true } : {}),
+    // THIS DEVICE's record of a reel's 410 (RC-6): a local fact no bundle carries, so it is read
+    // from `prev` - even when `base` drops a marked copy - or a replay would revert the tombstone.
+    ...(prev?.mediaPurgedAt ? { mediaPurgedAt: prev.mediaPurgedAt } : {}),
   };
 }
 
@@ -647,34 +737,9 @@ export function provenRowsIntoMemory(
   return next;
 }
 
-/**
- * Converts raw StoredMessage rows (from IndexedDB, or out of a peer's history bundle) to ChatMessage
- * objects, deriving BOTH sender-relative flags - `isOwn` and `isSystem` - from `senderId`.
- *
- * `isSystem` is derived here and not read, because there is nothing to read: `StoredMessage` has no
- * such column and neither does the encrypted payload. A group notice is recognised by its sentinel
- * sender and by nothing else, so a read path that waited to be told would render every restored
- * notice as an ordinary bubble from an unresolvable author.
- */
-export function mapStoredMessagesToChatMessages(storedMessages: StoredMessage[], userId: string) {
-  return storedMessages.map((m) => {
-    return {
-      id: m.id,
-      senderId: m.senderId,
-      content: m.content,
-      timestamp: toValidDate(readStoredTimestampMs(m.timestamp)),
-      isOwn: isOwnMessage(m.senderId, userId),
-      isSystem: isSystemSender(m.senderId),
-      reactions: m.reactions,
-      serverTimestamp: m.serverTimestamp,
-      ...(m.isDeleted ? { isDeleted: true } : {}),
-      ...(m.isEdited ? { isEdited: true } : {}),
-      ...(m.editedAt ? { editedAt: toValidDate(m.editedAt) } : {}),
-      ...(m.isFcmPreview ? { isFcmPreview: true } : {}),
-      ...(m.restoredUnverified ? { restoredUnverified: true } : {}),
-    } satisfies ChatMessage;
-  });
-}
+// Lives with the other message helpers so the outbox can map a stored row without this module;
+// re-exported so every existing import keeps one name.
+export { mapStoredMessagesToChatMessages };
 
 /**
  * Makes a replay's durable progress markers (Redis stream cursor + retry counters) persistent -
@@ -870,6 +935,23 @@ export async function replayConversationHistory(params: {
      */
     let evictedFramesSkipped = 0;
     const myDeviceId = mlsService.getDeviceId();
+    // The store of mutations that came before their message, reached through this replay's own
+    // accessors: the conversation is filed under `contactName` in memory and under `id` at rest.
+    const pendingDeps: PendingMutationDeps = {
+      storage,
+      deviceKey,
+      conversations: {
+        get: () => getConversation(contactName),
+        set: (_key, next) => setConversation(contactName, next),
+      },
+      messageReactions,
+      log,
+    };
+    // The mutations of a target this walk does not show - stored, buffered in this walk, or not here
+    // yet. Held IN MEMORY until the walk's bodies are written (unbounded, like the walk's own
+    // buffers), then settled in one batch: only a target the store still lacks reaches the BOUNDED
+    // pending store, so a fresh sign-in's thousands of reactions never evict each other there.
+    const walked: DeferredMutation[] = [];
 
     // Collect reaction mutations so we can persist them to DB in one pass after
     // the main message batch write (reactions reference messages from previous
@@ -893,6 +975,7 @@ export async function replayConversationHistory(params: {
     // affected by the batch save below at all - which is exactly what made the per-message version
     // fragile enough to need a repair pass of its own.
     const readWatermarkUpdates: ReadWatermarks = {};
+    const serverReadWatermarkUpdates: ReadWatermarks = {};
     // The shared history floor the page carried, merged the same way and applied in the same write.
     // A box rather than a number, because the handler that fills it cannot reassign a local.
     const historyFloorUpdate = { at: 0 };
@@ -1016,6 +1099,7 @@ export async function replayConversationHistory(params: {
         break;
       }
       fetchedAnyPage = true;
+      noteServerTime(userId, newestServerRowTime(history));
 
       const pageLastId = history[history.length - 1]?.id;
       // Reaching the head IS the end of the walk - no request is spent discovering an empty page.
@@ -1188,6 +1272,26 @@ export async function replayConversationHistory(params: {
             const senderNorm = canonicalUserId(msg.sender_id);
             const reactions = messageReactions.get(messageId) || [];
             const emoji = parsed.reaction.emoji ?? '';
+            const shown = getConversation(contactName)?.messages.some((m) => m.id === messageId);
+            if (messageId && emoji && !shown) {
+              // Not shown: stored, buffered in this page, or not here yet - settled after the walk
+              // (`walked`), and a reaction on a message this replay never writes is not lost.
+              walked.push({
+                entry: {
+                  conversationId: id,
+                  messageId,
+                  sender: senderNorm,
+                  kind: 'reaction',
+                  slot: emoji,
+                  rank: Number(parsed.reaction.at ?? 0),
+                  ...(parsed.reaction.removed === true ? { removed: true } : {}),
+                  ...(authorship ? { proof: authorship } : {}),
+                },
+                frameAt: parseServerTimestampMs(msg.timestamp),
+              });
+              mlsUpdated = true;
+              continue;
+            }
             // Replay applies both legs: the frame carries `removed`, and the merge is ordered by
             // `at` rather than by the position the entry happens to hold in the stream.
             const updated = applyReaction(
@@ -1221,8 +1325,11 @@ export async function replayConversationHistory(params: {
               deletedMessages,
               editedMessages,
               readWatermarkUpdates,
+              serverReadWatermarkUpdates,
               historyFloorUpdate,
               pushPendingMessage,
+              keepPending: (entry) =>
+                walked.push({ entry, frameAt: parseServerTimestampMs(msg.timestamp) }),
               dropOwnExcluded: (messages) =>
                 dropOwnExcludedMessages(id, userId, messages, { mlsService, log }),
             });
@@ -1410,32 +1517,50 @@ export async function replayConversationHistory(params: {
 
     // Flush all decoded messages in a single batch DB write.
     if (pendingMessages.length > 0 && storage) {
-      // Load existing DB state before the upsert so we can preserve isDeleted / isEdited
-      // flags that were set by events already in seenCipherHashes (and therefore not
-      // re-processed in this replay run).  Without this, saveMessages(store.put) would
-      // overwrite a backup-imported deleted row with the original non-deleted content.
-      const existingById = new Map<string, StoredMessage>();
+      // What the store holds under the batch's ids - scoped to this conversation, by primary key,
+      // its cost the batch's - decides which rows are NEW (written only where none stands) and
+      // which are KNOWN. A known row is never written from this read: it is rewritten by a
+      // compare-and-set (`mergeMessages`) from the row as it stands AT THE WRITE, so a deletion,
+      // an edit or a reaction the live drain stored meanwhile is what the merge starts from.
+      const ids = pendingMessages.map(
+        (pm) => normalizeMessageId(pm.messageId) ?? crypto.randomUUID()
+      );
+      const at = (msgId: string) => ({ id: msgId, conversationId: id, userId });
+      let stored: Map<string, StoredMessage> = new Map();
       try {
-        for (const m of await storage.getMessages(id, deviceKey())) {
-          existingById.set(m.id, m);
-        }
+        stored = (await storage.getMessagesByIds(id, ids, deviceKey())).rows;
       } catch (err) {
         console.warn(
           `[HISTORY] Could not read the stored rows for ${id.slice(0, 8)} before the batch write - ` +
-            `an isDeleted or isEdited flag set by an event already seen may be overwritten with the ` +
-            `original content: ${String(err)}`
+            `every replayed row is written only where none stands: ${String(err)}`
         );
       }
-
-      const toStore: StoredMessage[] = pendingMessages.map((pm) => {
-        const msgId = normalizeMessageId(pm.messageId) ?? crypto.randomUUID();
-        return replayedStoredRow(pm, existingById.get(msgId), {
-          id: msgId,
-          conversationId: id,
-          userId,
-        });
-      });
-      await storage.saveMessages(toStore, deviceKey());
+      const replayedById = new Map(pendingMessages.map((pm, i) => [ids[i], pm]));
+      const toStore: StoredMessage[] = [...replayedById].map(([msgId, pm]) =>
+        replayedStoredRow(pm, stored.get(msgId), at(msgId))
+      );
+      const known = toStore.filter((row) => stored.has(row.id)).map((row) => row.id);
+      if (known.length > 0) {
+        await storage.mergeMessages(
+          id,
+          known,
+          (current) => {
+            const pm = replayedById.get(current.id);
+            return pm ? replayedStoredRow(pm, current, at(current.id)) : null;
+          },
+          deviceKey()
+        );
+      }
+      await storage.saveMessagesIfAbsent(
+        toStore.filter((row) => !stored.has(row.id)),
+        deviceKey()
+      );
+      // What reached this device before these messages lands with them now.
+      await settlePendingFor(
+        pendingDeps,
+        id,
+        toStore.map((row) => row.id)
+      );
       // Memory takes what storage now holds for a row it shows unverified, in the same pass.
       const convoForProven = getConversation(contactName);
       const provenMessages =
@@ -1455,20 +1580,26 @@ export async function replayConversationHistory(params: {
         convoForRead.readWatermarks,
         readWatermarkUpdates
       );
+      const mergedServerWatermarks = mergeReadWatermarks(
+        convoForRead.serverReadWatermarks,
+        serverReadWatermarkUpdates
+      );
       const mergedFloor = mergeHistoryFloor(convoForRead.historyFloor, historyFloorUpdate.at);
-      if (mergedWatermarks || mergedFloor !== null) {
+      if (mergedWatermarks || mergedServerWatermarks || mergedFloor !== null) {
         setConversation(contactName, {
           ...convoForRead,
           ...(mergedWatermarks ? { readWatermarks: mergedWatermarks } : {}),
+          ...(mergedServerWatermarks ? { serverReadWatermarks: mergedServerWatermarks } : {}),
           ...(mergedFloor !== null ? { historyFloor: mergedFloor } : {}),
         });
         await saveConversation?.(contactName).catch(() => {});
       }
     }
 
-    // Single post-save read: apply reaction and delete/edit mutations in one pass.
-    // All of them need the post-batch-save DB state and touch independent fields,
-    // so they can be merged and written back in a single saveMessages call.
+    // One post-save pass: what a replayed bundle may change, then reactions, deletions and edits,
+    // folded onto each row AS IT STANDS AT THE WRITE (`mergeMessages`, a compare-and-set) - never
+    // a read of the conversation, an await, and whole rows written back from that read, which put a
+    // body back over a tombstone the live drain stored in between.
     const needsPostUpdate =
       storage &&
       (reactionUpdates.size > 0 ||
@@ -1476,56 +1607,27 @@ export async function replayConversationHistory(params: {
         deletedMessages.size > 0 ||
         editedMessages.size > 0);
     if (needsPostUpdate) {
+      const touched = [
+        ...new Set([
+          ...rowPatches.keys(),
+          ...reactionUpdates.keys(),
+          ...deletedMessages.keys(),
+          ...editedMessages.keys(),
+        ]),
+      ];
       try {
-        const allMessages = await storage!.getMessages(id, deviceKey());
-        // Collect all mutations keyed by message ID, merging updates for the same message.
-        const updatesById = new Map<string, StoredMessage>();
-
-        for (const m of allMessages) {
-          // First, what a replayed bundle was allowed to change (bundleVetting.ts): the mutations
-          // below then apply on top of it.
-          const patch = rowPatches.get(m.id);
-          if (patch) updatesById.set(m.id, mergeStoredMessage(m, patch));
-          if (reactionUpdates.has(m.id)) {
-            updatesById.set(m.id, {
-              ...(updatesById.get(m.id) ?? m),
-              reactions: reactionUpdates.get(m.id),
-            });
-          }
-          // The stored row is the first place the author is known for a mutation whose message was
-          // not in memory when the event was replayed, so the claim is checked HERE too - not only
-          // in `applyReplaySystemEvent`.
-          const deletion = deletedMessages.get(m.id);
-          const edit = editedMessages.get(m.id);
-          if (deletion && replayMutationIsAuthorised(m, deletion.by, 'delete')) {
-            updatesById.set(m.id, {
-              ...(updatesById.get(m.id) ?? m),
-              isDeleted: true,
-              content: chat_system_message_deleted(),
-              // The original bytes go with the message; the author's signed tombstone stays.
-              authorship: null,
-              editProof: null,
-              ...(deletion.proof ? { deleteProof: deletion.proof } : {}),
-            });
-          } else if (edit && replayMutationIsAuthorised(m, edit.by, 'edit')) {
-            updatesById.set(m.id, {
-              ...(updatesById.get(m.id) ?? m),
-              isEdited: true,
-              // The author's signed edit, so a bundle this device writes proves the edited body.
-              ...(edit.proof ? { editProof: edit.proof } : {}),
-              // The accumulator holds the replacement TEXT; the body it replaces is this row's,
-              // and only here is it known. Writing the text itself dropped the reply reference the
-              // body carries - see `applyEditToBody`.
-              content: applyEditToBody((updatesById.get(m.id) ?? m).content, edit.content),
-              editedAt: edit.editedAt.getTime(),
-            });
-          }
-        }
-
-        const toUpdate = [...updatesById.values()];
-        if (toUpdate.length > 0) {
-          await storage!.saveMessages(toUpdate, deviceKey());
-        }
+        await storage!.mergeMessages(
+          id,
+          touched,
+          (current) =>
+            replayedMutationsOnto(current, {
+              patch: rowPatches.get(current.id),
+              reactions: reactionUpdates.get(current.id),
+              deletion: deletedMessages.get(current.id),
+              edit: editedMessages.get(current.id),
+            }),
+          deviceKey()
+        );
       } catch (err) {
         console.warn(
           `[HISTORY] The post-save mutation pass failed for ${id.slice(0, 8)} - ` +
@@ -1534,6 +1636,10 @@ export async function replayConversationHistory(params: {
         );
       }
     }
+
+    // After the bodies and the post-save pass: each deferred mutation onto the row the store now
+    // holds (one batched read), and only those whose target is still absent are parked.
+    await settleWalkedMutations(pendingDeps, id, walked);
 
     if (mlsUpdated) {
       log(
@@ -1651,29 +1757,36 @@ export async function retroactivelyResolveHexIds(
   });
 
   if (storage) {
-    const toSave: StoredMessage[] = updated
-      .filter((m, i) => m !== messages[i])
-      .map((m) => ({
-        id: m.id,
-        conversationId,
-        senderId: 'system',
-        content: m.content,
-        timestamp: m.timestamp instanceof Date ? m.timestamp.getTime() : Number(m.timestamp),
-        reactions: m.reactions,
-        ...(m.isDeleted ? { isDeleted: true } : {}),
-        ...(m.isEdited ? { isEdited: true } : {}),
-      }));
-    if (toSave.length > 0) {
+    // Each resolved line, keyed by the text it was resolved FROM: the write is a compare-and-set
+    // that rewrites a row only while it still holds that text, so a deletion, an edit or a reaction
+    // stored since the read is never written over by the whole row this read built.
+    const resolved = new Map<string, { from: string; to: string }>();
+    updated.forEach((m, i) => {
+      if (m !== messages[i]) resolved.set(m.id, { from: messages[i].content, to: m.content });
+    });
+    if (resolved.size > 0) {
       // A best-effort write, and a log is all a loss leaves here: failing means these names are
       // re-resolved on every later load of this conversation, which is a cost nobody can see and
       // nobody can attribute while the branch is silent.
-      storage.saveMessages(toSave, deviceKeyB64).catch((e: unknown) => {
-        console.warn(
-          `[History] could not persist ${toSave.length} message(s) whose hex ids were resolved ` +
-            `(group ${conversationId.slice(0, 8)}…): ${String(e)} - ` +
-            `they will be resolved again on the next load`
-        );
-      });
+      storage
+        .mergeMessages(
+          conversationId,
+          [...resolved.keys()],
+          (current) => {
+            const line = resolved.get(current.id);
+            return line && current.content === line.from
+              ? mergeStoredMessage(current, { content: line.to })
+              : null;
+          },
+          deviceKeyB64
+        )
+        .catch((e: unknown) => {
+          console.warn(
+            `[History] could not persist ${resolved.size} message(s) whose hex ids were resolved ` +
+              `(group ${conversationId.slice(0, 8)}…): ${String(e)} - ` +
+              `they will be resolved again on the next load`
+          );
+        });
     }
   }
 

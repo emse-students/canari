@@ -4,7 +4,12 @@ import { TransportFailureError } from '$lib/utils/transportFailure';
 import { SvelteMap } from 'svelte/reactivity';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import { ChannelApiError } from '$lib/services/ChannelService';
-import { RefreshFailedError, SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
+import {
+  RefreshFailedError,
+  SessionExpiredError,
+  SignOutInProgressError,
+  TransientAnswerError,
+} from '$lib/stores/auth';
 import { GraineNotReadyError } from '$lib/utils/graine/runtime';
 import { GraineUnknownChannelError } from '$lib/utils/graine/channelSeal';
 import { showToast } from '$lib/stores/toast.svelte';
@@ -467,7 +472,7 @@ describe('useChannelWorkspaces - loadChannelWorkspacesFromBackend', () => {
    */
   it('retries a refresh that failed for a transient reason', async () => {
     listUserWorkspaces
-      .mockRejectedValueOnce(new RefreshFailedError(502))
+      .mockRejectedValueOnce(new TransientAnswerError(502))
       .mockResolvedValueOnce([makeWorkspaceDto('ws1', 'Community', 'community')]);
     listChannels.mockResolvedValue([makeChannelDto('ch1', 'general')]);
 
@@ -480,6 +485,20 @@ describe('useChannelWorkspaces - loadChannelWorkspacesFromBackend', () => {
 
     expect(store.workspacesLoadError).toBeNull();
     expect(listUserWorkspaces).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not ask again after the app's own 4xx refusal of the refresh - a verdict", async () => {
+    listUserWorkspaces.mockRejectedValue(new RefreshFailedError(404));
+
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+    const promise = store.loadChannelWorkspacesFromBackend(ctx);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await tick();
+    await promise;
+
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+    expect(store.workspacesLoadError).not.toBeNull();
   });
 
   it('gives up at once on a dead session and reports it as one', async () => {

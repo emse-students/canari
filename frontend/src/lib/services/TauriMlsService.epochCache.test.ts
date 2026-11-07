@@ -127,8 +127,7 @@ interface Internals {
   ): Promise<void>;
   verifyDistributionEpoch(groupId: string, activeEpoch: number): Promise<string>;
   onDistributionGapVerdict(listener: ((g: string, v: string) => void) | null): void;
-  initialDrain: Promise<void>;
-  waitForGroupQueueIdle: () => Promise<void>;
+  whenGroupDrained: (groupId: string) => Promise<void>;
   delivery: { fetchCommitsSince: ReturnType<typeof vi.fn> };
 }
 
@@ -200,8 +199,8 @@ describe('TauriMlsService - the epoch cache says what the native manager says', 
     nativeManager({ 'kg-1': 56 });
     const svc = makeService();
     await svc.reloadStateFromDisk();
-    svc.initialDrain = Promise.resolve();
-    svc.waitForGroupQueueIdle = vi.fn().mockResolvedValue(undefined);
+    // This link's drain has settled (the check waits for it, never for the boot's).
+    svc.whenGroupDrained = vi.fn().mockResolvedValue(undefined);
     svc.delivery.fetchCommitsSince = vi.fn().mockResolvedValue({
       commits: [{ baseEpoch: 0, proto: 'AA==' }],
       activeEpoch: 56,

@@ -6,6 +6,7 @@ import {
   BadGatewayException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   GatewayTimeoutException,
   Logger,
   ServiceUnavailableException,
@@ -426,6 +427,20 @@ describe('PaymentController - every money route is guarded', () => {
   it('completeLydiaAccount is for a global admin, behind NginxAuthGuard', () => {
     expect(guardsOn('completeLydiaAccount')).toEqual([NginxAuthGuard, GlobalAdminGuard]);
   });
+
+  it('disconnectLydiaAccount is for a global admin only, behind NginxAuthGuard', () => {
+    expect(guardsOn('disconnectLydiaAccount')).toEqual([NginxAuthGuard, GlobalAdminGuard]);
+  });
+
+  it('the guard on disconnectLydiaAccount answers 403 to a manager who is not a global admin', () => {
+    const contextFor = (headers: Record<string, string>) =>
+      ({ switchToHttp: () => ({ getRequest: () => ({ headers }) }) }) as never;
+    const guard = new GlobalAdminGuard();
+    expect(() => guard.canActivate(contextFor({ 'x-user-id': 'manager' }))).toThrow(
+      ForbiddenException
+    );
+    expect(guard.canActivate(contextFor({ 'x-global-admin': 'true' }))).toBe(true);
+  });
 });
 
 describe('PaymentController.createOnboarding - the check is not conditional on the field', () => {
@@ -679,6 +694,23 @@ describe('PaymentController.createOnboarding - one Business per association, its
       );
       expect(paymentService.createConnectOnboarding).not.toHaveBeenCalled();
     }
+  });
+
+  // G5 (owner, 2026-11-02): a list holds no Lydia account of its own. social-service refuses the
+  // permission with a typed code, and the 403 carries it - no Business is ever created for a list.
+  it("a list's refusal carries its typed code and never reaches business/create", async () => {
+    socialAnswers(claimed);
+    mockedAxios.get.mockImplementation(async () => ({
+      status: 200,
+      data: { ok: false, code: 'LIST_NO_OWN_LYDIA_ACCOUNT' },
+    }));
+    const { controller, paymentService } = makeController();
+    await errorsDuring(() =>
+      expect(
+        controller.createOnboarding({ associationId: id, legalProfile }, req)
+      ).rejects.toMatchObject({ status: 403, response: { code: 'LIST_NO_OWN_LYDIA_ACCOUNT' } })
+    );
+    expect(paymentService.createConnectOnboarding).not.toHaveBeenCalled();
   });
 
   it('an unknown association is a 404 and never reaches business/create', async () => {

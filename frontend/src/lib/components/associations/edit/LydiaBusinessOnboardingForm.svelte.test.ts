@@ -131,6 +131,11 @@ describe('LydiaBusinessOnboardingForm - the steps come from the server read', ()
     expect(target.textContent).not.toContain('tableau de bord');
   });
 
+  it('a manager who is not a global admin never sees the unlink button', async () => {
+    const target = await mountWith({ ...linked, lydiaOnboardingComplete: true });
+    expect(target.textContent).not.toContain(m.asso_lydia_disconnect_button());
+  });
+
   it('a ready Business without a Responsable folds to "active" and offers the record prompt', async () => {
     const target = await mountWith({ ...linked, lydiaOnboardingComplete: true });
     expect(target.textContent).toContain(m.asso_lydia_active_title());

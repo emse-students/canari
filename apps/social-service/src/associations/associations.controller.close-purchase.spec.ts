@@ -94,6 +94,7 @@ describe('AssociationsController.closePaidNotGranted - one association closes on
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
       {} as never
     );
 

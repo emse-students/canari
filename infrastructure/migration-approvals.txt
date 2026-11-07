@@ -1,0 +1,45 @@
+# The owner's approvals of held migrations - read by `migration_gate_verdict`
+# (infrastructure/lib/migration-hold.sh) on every deploy, every dev reset and every release preflight.
+#
+# A migration is HELD when it carries a line `-- canari:hold-for-owner`, or contains a statement that
+# is not plainly additive (any DROP but CONSTRAINT/INDEX/TRIGGER/DEFAULT/NOT NULL, RENAME, TRUNCATE,
+# DELETE FROM, a column TYPE change, dynamic EXECUTE). A held migration refuses the release tag and the
+# deploy - nothing is applied - until a line here names it AND the sha256 of its current content:
+#
+#   apps/<service>/src/migrations/<NNN>_<name>.sql <sha256sum of the file>
+#
+# Only the OWNER adds a line, and merges it BY HAND: a pull request touching this file is never armed
+# for auto-merge. Then a NEW pre-release tag is cut (a rerun re-reads the old commit). The deploy dumps
+# the database right before applying an approved migration (owner, 2026-11-01: additive or its loss
+# accepted, reviewed, a backup just before). An edit to the file after its approval changes the
+# checksum, and the migration is held again.
+# Mechanism: docs/wiki/cicd.md ("A migration the owner must approve is held").
+
+# 044: the commit-time floor read from the admission the commit gate records, and the backfill of every
+# existing seat. The migration was approved by the owner on 2026-11-02 ("Oui, dans la file"); this line
+# is for its FINAL SQL (backfill rules 1-3 in the file), written by the author, and it awaits the owner's
+# confirmation of those rules - his merge of it by hand is that confirmation.
+apps/chat-delivery-service/src/migrations/044_device_admission_base_epoch.sql 7686835c26486db8913403e66f3a4fecf691917e2dea7df35f0ff9c6643c2ce7
+
+# 124: EDIT_PROFILE (bit 12) ORed into every association_members row holding MANAGE_MEMBERS (bit 2),
+# so moving `PATCH /associations/:id` and the logo routes onto the new flag takes the profile from
+# nobody. Approved in principle by the owner on 2026-11-02; this line is written by the author for the
+# file's final SQL, and the owner's merge of the pull request by hand is the approval.
+apps/social-service/src/migrations/124_edit_profile.sql d1fc5f6dc5055e9ff03565a109badab7c8d48d75a421a2c0751c7a91ded36843
+
+# 128: the one global pin moved into per-space pins (WP-PIN, #2984) - every governed space where the
+# post is visible and that has room, a NOTICE for every pin it does not carry. The owner authorised the
+# lead on 2026-11-03 to merge #2984 with this migration once fixed, verified and green; this line is
+# written by the author for the file's FINAL SQL, and any edit to the file holds it again.
+apps/social-service/src/migrations/128_move_global_pin_to_spaces.sql 888e4370644b21ebd3cad0b97262efbd99b7c519cb5a83cf1acb6cdc25e83bbd
+
+# 129-131: WP-D1 of the spaces-and-audiences reform (docs/wiki/spaces-and-audiences-reform.md 2.8).
+# 129 adds the G3 label column and the dependency journal; 130 applies the parents list the owner
+# validated on 2026-11-03 "as is" (by slug, all or nothing, journaled; the FSSS BDE renamed, MINITEL
+# governing the five gardanne spaces); 131 installs the two-level triggers behind a guard that
+# refuses while any row breaks them. The schema, the triggers and the list were decided to need the
+# owner's yes; these lines are written by the author for the files' final SQL, and the owner's merge
+# of the pull request by hand is the approval.
+apps/social-service/src/migrations/129_dependencies_schema.sql 4d112c09116509833f8cb594ad08ff9800fd0019852e2309a6f35d48dde77ad3
+apps/social-service/src/migrations/130_dependency_parents.sql 8aadee6313cca95e35472ab94ba2d0745bd7649ea59b278c96815915d94ad2ab
+apps/social-service/src/migrations/131_dependency_triggers.sql 9e6eb4f7d8006f6390073662ebe08aba12c1c41656d64bd10484160102cdf061

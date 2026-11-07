@@ -54,7 +54,7 @@ for **server deployment**:
 
 | Category | Secrets |
 |---|---|
-| Core | `JWT_SECRET`, `INTERNAL_SECRET`, `INTERNAL_SHARED_SECRET`, `CHANNELS_ENCRYPTION_SECRET`, `CALL_ROOM_SECRET`, `AGENDA_SIGNING_KEY` (social-service; signs the calendar subscription URLs, 32+ characters, `openssl rand -hex 32`, REQUIRED with no default in both estates, dev's is the GitHub secret `DEV_AGENDA_SIGNING_KEY`; **rotating it ends every saved subscription URL**, which is the revocation - [profiles-and-access D40](../docs/wiki/profiles-and-access.md#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05)), `LIVE_REPORT_SIGNING_KEY` (social-service; signs a reported live chat line kept for staff, 32+ characters, `openssl rand -hex 32`, REQUIRED with no default in both estates, dev's is the GitHub secret `DEV_LIVE_REPORT_SIGNING_KEY`; unset, every chat-line report answers 503; rotating it makes the lines already kept read `key-rotated`, so rotate it when no chat-line report is pending - [lives](../docs/wiki/services/lives.md)), `LIVE_KEY_ENCRYPTION_SECRET` (social-service; seals each live's key at rest, migration 110, so a database copy alone opens no live chat or segment; 32+ characters, `openssl rand -hex 32`, REQUIRED with no default in both estates, each estate its OWN value, dev's is the GitHub secret `DEV_LIVE_KEY_ENCRYPTION_SECRET`; the render refuses a deploy without it or under 32 characters, so create both secrets BEFORE the deploy that carries migration 110; unset at runtime, every live start answers 503; rotated in place, every open live answers 503 until it ends, so rotate with no live on air - [lives](../docs/wiki/services/lives.md#the-live-key-at-rest)) |
+| Core | `JWT_SECRET`, `INTERNAL_SECRET`, `INTERNAL_SHARED_SECRET`, `CHANNELS_ENCRYPTION_SECRET`, `CALL_ROOM_SECRET`, `AGENDA_SIGNING_KEY` (social-service; signs the calendar subscription URLs AND, since 2026-11-02, each validated event's single-event `.ics` link, served with every agenda read - so without it EVERY agenda read answers 503; 32+ characters, `openssl rand -hex 32`, REQUIRED with no default in both estates, dev's is the GitHub secret `DEV_AGENDA_SIGNING_KEY`; the local compose carries a local-only default, which the render refuses on both estates, and `env-from-prod.sh` regenerates one; **rotating it ends every saved subscription URL and single-event link**, which is the revocation - [profiles-and-access D40](../docs/wiki/profiles-and-access.md#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05)), `LIVE_REPORT_SIGNING_KEY` (social-service; signs a reported live chat line kept for staff, 32+ characters, `openssl rand -hex 32`, REQUIRED with no default in both estates, dev's is the GitHub secret `DEV_LIVE_REPORT_SIGNING_KEY`; unset, every chat-line report answers 503; rotating it makes the lines already kept read `key-rotated`, so rotate it when no chat-line report is pending - [lives](../docs/wiki/services/lives.md)), `LIVE_KEY_ENCRYPTION_SECRET` (social-service; seals each live's key at rest, migration 110, so a database copy alone opens no live chat or segment; 32+ characters, `openssl rand -hex 32`, REQUIRED with no default in both estates, each estate its OWN value, dev's is the GitHub secret `DEV_LIVE_KEY_ENCRYPTION_SECRET`; the render refuses a deploy without it or under 32 characters, so create both secrets BEFORE the deploy that carries migration 110; unset at runtime, every live start answers 503; rotated in place, every open live answers 503 until it ends, so rotate with no live on air - [lives](../docs/wiki/services/lives.md#the-live-key-at-rest)), `AVATAR_TOKEN_SECRET` (core-service; signs the viewer-bound avatar token every avatar URL carries as `?t=`, 32+ characters, `openssl rand -hex 32`, REQUIRED with no default in both estates, each estate its OWN value, dev's is the GitHub secret `DEV_AVATAR_TOKEN_SECRET`; the render refuses a deploy without it or under 32 characters, so create both secrets BEFORE the first release carrying signed avatar URLs; rotating it is harmless - every client is handed a new token at its next refresh, within the hour - [sessions](../docs/wiki/sessions.md#the-avatar-token)) |
 | Database | `POSTGRES_USER`, `POSTGRES_PASSWORD` |
 | Admin routes (not a secret) | `ADMINER_ENABLED=true` on core-service, production's compose only, opens the gated `/adminer/` route and needs `INTERNAL_SHARED_SECRET` of 32+ characters - [databases](../docs/wiki/infrastructure/databases.md#the-adminer-route---the-database-in-a-browser-for-global-admins-2026-10-02) |
 | Media storage (Garage, formerly MinIO) | `GARAGE_RPC_SECRET`, `GARAGE_ADMIN_TOKEN`, `GARAGE_ACCESS_KEY_ID` (>= 8 chars), `GARAGE_SECRET_ACCESS_KEY` (>= 16 chars) - Garage's own minimums, which is why this is a dedicated key rather than reusing `MINIO_ROOT_USER`/`PASSWORD` |
@@ -220,7 +220,14 @@ Test: `sudo -u canari ssh <backup-user>@<offsite-host> 'echo ok'`.
 the first bootstrap of a production box wants a stable one. The run will:
 
 1. generate `infrastructure/.env` from secrets (regenerated from the template);
-2. deploy the Canari stack (`docker compose -f infrastructure/docker-compose.prod.yml up -d`);
+2. write the proxies' replica lists, `infrastructure/edge/targets/{frontend,edge}.conf` (each
+   service by its DNS name), BEFORE any container starts - then deploy the Canari stack through
+   `infrastructure/deploy/deploy-environment.sh`, one service at a time
+   ([cicd](../docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)). The frontend and
+   the edge include their list unconditionally, so on a fresh checkout **a hand-run
+   `docker compose -f infrastructure/docker-compose.prod.yml up -d` before the first deploy leaves
+   both unable to start** (`open() ".../targets/frontend.conf" failed`): let the release run it, and
+   if the directory is ever lost, the next deploy writes the lists again;
 3. apply MiConnect's configuration (`infrastructure/authentik/blueprints/`) to the running MiConnect -
    the `miconnect` stack itself is deployed BY HAND, its `.env` included (see [authentik/](authentik/));
 4. apply SQL migrations (see below) and verify service health.
@@ -230,7 +237,13 @@ the first bootstrap of a production box wants a stable one. The run will:
 Production runs TypeORM with `synchronize: false`, so **an entity change without a matching SQL file
 never reaches production**. The CD step "Run database migrations" collects
 `apps/*/src/migrations/*.sql`, sorts by path, and applies every file not yet listed in the
-`schema_migrations` ledger (`filename`, `checksum`, `applied_at`) with `ON_ERROR_STOP=1`.
+`schema_migrations` ledger (`filename`, `checksum`, `applied_at`) with `ON_ERROR_STOP=1`. A file
+carrying `-- canari:hold-for-owner`, or a statement that is not plainly additive, is REFUSED - the
+release preflight refuses the tag, and the deploy fails before applying anything - until
+`infrastructure/migration-approvals.txt` names it with its sha256 (a line the owner merges by hand);
+the deploy then dumps the database into `<backup dir>/pre-migration/` right before applying it, the
+directory read from the `BACKUP_DIR=` line of the DEPLOY ACCOUNT's crontab, with no default (section 7)
+([cicd](../docs/wiki/cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)).
 
 Writing one: idempotent statements only (`IF NOT EXISTS` / `IF EXISTS`, or a `DO $$ ... $$` guard),
 camelCase columns double-quoted, a fresh number in that service's directory, and no edits to a file
@@ -271,6 +284,12 @@ BACKUP_SSH_HOST=<backup-user>@<offsite-host>
 ```
 
 (Alternative via root: systemd timer, see [backup/README.md](backup/README.md).)
+
+**THE CRONTAB MUST BE THE DEPLOY ACCOUNT'S, AND IT MUST SET `BACKUP_DIR=`** (an absolute directory
+that account can write). The deploy reads that line, and only that line, to place the dump it takes
+right before a migration the owner approved; without it such a migration is refused with an
+`::error::`, never dumped somewhere guessed ([cicd](../docs/wiki/cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01),
+[backup](../docs/wiki/infrastructure/backup.md#retention)).
 
 The egress probe is a MEASUREMENT, not a backup: it answers whether outbound stalls arrive together
 or independently, which no one-shot probe can. It writes timings only - the repository is public -

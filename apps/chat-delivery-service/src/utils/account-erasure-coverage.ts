@@ -55,6 +55,7 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   },
   'RevokedDevice.userId': { action: 'delete' },
   'SeatEviction.userId': { action: 'delete' },
+  'JoinAskPush.userId': { action: 'delete' },
   'RevokedDeviceGroup.userId': { action: 'delete' },
   'UserDismissedGroup.userId': { action: 'delete' },
 };

@@ -230,6 +230,7 @@ function ctx(
     'settleEach',
     'replanOwedInvitationsIn',
     'acquireAddLock',
+    'acquireAddLockAnswer',
     'releaseAddLock',
     'wakeAtAddLockExpiry',
     'cancelAddLockExpiryWakes',
@@ -247,7 +248,7 @@ function ctx(
         g: string
       ) => Promise<
         | { acquired: true; token: string | undefined }
-        | { acquired: false; retryAfterMs: number | undefined }
+        | { acquired: false; retryAfterMs: number | undefined; answered?: boolean }
       >;
       releaseAddLock: (g: string, token: string | undefined) => Promise<boolean>;
     };
@@ -1573,6 +1574,23 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
     return replanner;
   }
 
+  it('tells an ANSWERED refusal (`held`) from a lock request that got no answer (`unanswered`)', async () => {
+    const c = ctx(raceLost(), { state: keptInvite() });
+    fakeLockServer(c);
+    const lock = c as unknown as {
+      acquireAddLockAnswer(g: string): Promise<'taken' | 'held' | 'unanswered'>;
+    };
+    c.delivery.acquireAddLock = vi
+      .fn()
+      .mockResolvedValueOnce({ acquired: false, retryAfterMs: 5_000, answered: true })
+      .mockResolvedValueOnce({ acquired: false, retryAfterMs: undefined, answered: false })
+      .mockResolvedValueOnce({ acquired: true, token: 'mine' });
+
+    expect(await lock.acquireAddLockAnswer(G)).toBe('held');
+    expect(await lock.acquireAddLockAnswer(G)).toBe('unanswered');
+    expect(await lock.acquireAddLockAnswer(G)).toBe('taken');
+  });
+
   it('a DESTROYED client keeps no wake: the server-stated moment comes and nothing re-plans', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
@@ -1739,27 +1757,32 @@ describe("runCommitTransaction - an accepted Add's Welcome is owed in the state,
   /**
    * DEV-3 (2026-10-25): a device its owner revoked while this Add was in flight. The gate accepts the
    * commit, drops the admit (`no_key_package`) and SAYS SO in its answer; the Welcome used to be sent
-   * anyway, answered 500, and stay owed for every later connection.
+   * anyway, answered 500, and stay owed for every later connection. RM-5 (2026-10-26) met the same
+   * with a key group refusing the person (`not_entitled`): sent anyway, answered 403
+   * WELCOME_TARGET_NOT_MEMBER, logged as an error.
    */
-  it('a device the gate did not admit for want of a key package is owed NO Welcome, and the transaction says so', async () => {
-    const refused = { userId: 'u-b', deviceId: 'd-b', reason: 'no_key_package' };
-    const c = ctx(submitting({ accepted: true, refusedAdmits: [refused] }));
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  it.each(['no_key_package', 'unresolved_identity', 'not_entitled', 'departure_in_progress'])(
+    'a device the gate did not admit for %s is owed NO Welcome, and the transaction says so',
+    async (reason) => {
+      const refused = { userId: 'u-b', deviceId: 'd-b', reason };
+      const c = ctx(submitting({ accepted: true, refusedAdmits: [refused] }));
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-    const result = (await addOf(c)) as { notAdmitted: RefusedAdmit[] };
+      const result = (await addOf(c)) as { notAdmitted: RefusedAdmit[] };
 
-    expect(result.notAdmitted).toEqual([refused]);
-    // Merged - the commit landed - but owing nothing.
-    expect(c.mergePendingCommitOwingWelcome).not.toHaveBeenCalled();
-    expect(c.mergePendingCommit).toHaveBeenCalledExactlyOnceWith(G);
-    expect(c.owed.size).toBe(0);
-    expect(log.mock.calls.flat().join('\n')).toContain('NOT admitted by the gate (no_key_package');
-    log.mockRestore();
-    // And no later connection sends it either.
-    const after = reloaded(c);
-    await after.settleUnresolvedCommits();
-    expect(after.delivery.sendWelcome).not.toHaveBeenCalled();
-  });
+      expect(result.notAdmitted).toEqual([refused]);
+      // Merged - the commit landed - but owing nothing.
+      expect(c.mergePendingCommitOwingWelcome).not.toHaveBeenCalled();
+      expect(c.mergePendingCommit).toHaveBeenCalledExactlyOnceWith(G);
+      expect(c.owed.size).toBe(0);
+      expect(log.mock.calls.flat().join('\n')).toContain(`NOT admitted by the gate (${reason}: `);
+      log.mockRestore();
+      // And no later connection sends it either.
+      const after = reloaded(c);
+      await after.settleUnresolvedCommits();
+      expect(after.delivery.sendWelcome).not.toHaveBeenCalled();
+    }
+  );
 
   it('a refusal a Welcome is not barred by (`already_active`) still owes it, said once at debug', async () => {
     const c = ctx(

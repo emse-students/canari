@@ -1,6 +1,8 @@
 import { onAppScreenChange } from '$lib/utils/appForeground';
-import { callHoldsAppSound } from '$lib/utils/callSoundGate';
+import { callHoldsAppSound, noteToneSilenced } from '$lib/utils/callSoundGate';
 import { Log } from '$lib/utils/Log';
+import { armAudioSession } from '$lib/utils/audioSession';
+import { ringerSilencesAppTones } from '$lib/mobile/androidRinger';
 
 /**
  * THE APP'S ONE SOUND OUTPUT FOR SYNTHESISED TONES, AND THE RULE IT EXISTS FOR: THE APP HOLDS NO
@@ -34,10 +36,12 @@ import { Log } from '$lib/utils/Log';
  */
 
 /**
- * Schedules one tone on `ctx`, starting at `startAt`, and returns every oscillator it started.
- * The oscillators must be `start`ed AND `stop`ped: their `ended` is what releases the output.
+ * Schedules one tone on `ctx`, starting at `startAt`, and returns every source it started - the
+ * palette's oscillators, or the incoming ring's looping buffer. Each must be `start`ed AND end: an
+ * oscillator by its scheduled `stop`, a looping source by the `stop()` its owner calls - their
+ * `ended` is what releases the output.
  */
-export type ToneScore = (ctx: AudioContext, startAt: number) => OscillatorNode[];
+export type ToneScore = (ctx: AudioContext, startAt: number) => AudioScheduledSourceNode[];
 
 let context: AudioContext | null = null;
 let inFlight = 0;
@@ -62,8 +66,8 @@ function armScreenWatch(): void {
   });
 }
 
-/** One oscillator of `ctx` has ended: the last one in flight suspends the output. */
-function voiceEnded(ctx: AudioContext, osc: OscillatorNode): void {
+/** One source of `ctx` has ended: the last one in flight suspends the output. */
+function voiceEnded(ctx: AudioContext, osc: AudioScheduledSourceNode): void {
   osc.disconnect();
   // A context closed since this voice started: its count is gone with it.
   if (ctx !== context) return;
@@ -93,16 +97,35 @@ function suspendIfIdle(ctx: AudioContext, reason: string): void {
  * not played at all - no output is opened for it - and the skip is logged. Only the call's own ring
  * passes `call`.
  *
+ * THE PHONE'S SILENCE HOLDS IT TOO (2026-11-04): on Android an `app` tone is refused unless the
+ * ringer is normal (`androidRinger.ts`); on an iPhone the tone plays under the page's `ambient`
+ * audio session (`audioSession.ts`), which the silent switch mutes.
+ *
  * @param name What the tone is, for the log line.
  * @param score Builds and schedules the tone's oscillators.
  * @param purpose `app` for every app sound (message, send, read); `call` for the call's own ring.
+ * @returns the sources started - empty when nothing was played. A looping source is stopped by its
+ *   caller (`stop()`), which ends it and so releases the output.
  */
-export function playTone(name: string, score: ToneScore, purpose: 'app' | 'call' = 'app'): void {
-  if (typeof window === 'undefined' || typeof AudioContext === 'undefined') return;
+export function playTone(
+  name: string,
+  score: ToneScore,
+  purpose: 'app' | 'call' = 'app'
+): readonly AudioScheduledSourceNode[] {
+  if (typeof window === 'undefined' || typeof AudioContext === 'undefined') return [];
   if (purpose === 'app' && callHoldsAppSound()) {
+    // `Log.d`, one per tone = one per message: the COUNT reaches the in-app log on the gate's release.
+    noteToneSilenced();
     Log.d('AUDIO', `${name} tone silenced - a call holds the app's sound`);
-    return;
+    return [];
   }
+  if (purpose === 'app' && ringerSilencesAppTones()) {
+    // `Log.i`: the in-app log keeps it, and a tone is a user event (a message, a send), not a loop.
+    Log.i('AUDIO', `${name} tone silenced - the phone's ringer is silent or vibrate`);
+    return [];
+  }
+  // The category is the page's before any output opens: `ambient`, which obeys the iPhone's switch.
+  armAudioSession();
   armScreenWatch();
   if (!context) {
     Log.d('AUDIO', `opening the tone output for ${name}`);
@@ -112,7 +135,7 @@ export function playTone(name: string, score: ToneScore, purpose: 'app' | 'call'
       // The platform refused an output (a hardware limit, a sandboxed WebView): no tone, said once
       // per attempt, and nothing held.
       console.warn(`[AUDIO] no tone output could be opened for ${name}:`, e);
-      return;
+      return [];
     }
   }
   const ctx = context;
@@ -121,17 +144,18 @@ export function playTone(name: string, score: ToneScore, purpose: 'app' | 'call'
       .resume()
       .catch((e: unknown) => Log.d('AUDIO', `the browser kept the tone output suspended: ${e}`));
   }
-  let voices: OscillatorNode[];
+  let voices: AudioScheduledSourceNode[];
   try {
     voices = score(ctx, ctx.currentTime + 0.01);
   } catch (e) {
     console.warn(`[AUDIO] the ${name} tone could not be scheduled:`, e);
     suspendIfIdle(ctx, `the ${name} tone failed`);
-    return;
+    return [];
   }
   inFlight += voices.length;
   for (const osc of voices) osc.addEventListener('ended', () => voiceEnded(ctx, osc));
   if (voices.length === 0) suspendIfIdle(ctx, `the ${name} tone scheduled nothing`);
+  return voices;
 }
 
 /** Test seam: forgets the shared context and its count, as a fresh page load would. */

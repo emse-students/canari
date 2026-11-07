@@ -19,6 +19,7 @@
   import { Wallet, TriangleAlert, RefreshCw, CircleCheck, Trash2 } from '@lucide/svelte';
   import PayoutFeeHint from '$lib/components/payments/PayoutFeeHint.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { membersOnlySaveRefusalMessage } from '$lib/associations/paymentRefusal';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import { associationPickerOptions } from '$lib/associations/selectGroups';
@@ -48,6 +49,12 @@
   let maxEuros = $state<number | ''>('');
   let webhookUrl = $state('');
   let webhookSecret = $state('');
+  /**
+   * "Reserve aux cotisants" (owner, 2026-10-31): the product's `membersOnly`, which the server reads
+   * as holding an ACTIVE TIER of the association (`assertCanPurchase`), never as a mere member row.
+   * Unticked by default, as a recharge has always been open to everyone signed in.
+   */
+  let membersOnly = $state(false);
   let saving = $state(false);
   let saved = $state(false);
 
@@ -117,6 +124,7 @@
     maxEuros = product?.customAmountMaxCents != null ? product.customAmountMaxCents / 100 : '';
     webhookUrl = product?.webhookUrl ?? '';
     webhookSecret = '';
+    membersOnly = product?.membersOnly ?? false;
   }
 
   /**
@@ -133,15 +141,18 @@
       allowCustomAmount: true,
       customAmountMinCents: minEuros !== '' ? Math.round(Number(minEuros) * 100) : null,
       customAmountMaxCents: maxEuros !== '' ? Math.round(Number(maxEuros) * 100) : null,
+      membersOnly,
       ...(webhookUrl.trim() ? { webhookUrl: webhookUrl.trim() } : {}),
       ...(webhookSecret.trim() ? { webhookSecret: webhookSecret.trim() } : {}),
     };
     try {
       if (product) {
-        console.log(`[ADMIN][CERCLE] updating top-up product=${product.id}`);
+        console.log(
+          `[ADMIN][CERCLE] updating top-up product=${product.id} membersOnly=${membersOnly}`
+        );
         product = await updateProduct(asso.id, product.id, { ...payload, amountCents: null });
       } else {
-        console.log('[ADMIN][CERCLE] creating the top-up product');
+        console.log(`[ADMIN][CERCLE] creating the top-up product membersOnly=${membersOnly}`);
         product = await createProduct(asso.id, {
           name: m.admin_cercle_product_name(),
           type: 'balance_topup',
@@ -154,7 +165,7 @@
       saved = true;
     } catch (e) {
       console.error('[ADMIN][CERCLE] failed to save the top-up product', e);
-      error = m.admin_cercle_generic_error();
+      error = membersOnlySaveRefusalMessage(e) ?? m.admin_cercle_generic_error();
     } finally {
       saving = false;
     }
@@ -360,6 +371,21 @@
           <!-- A 5 EUR recharge credits the member 5 EUR but pays the association less: the Cercle's
                treasury has to know the gap before setting the bounds. -->
           <PayoutFeeHint grossEuros="" {minEuros} {maxEuros} />
+
+          <div class="space-y-1">
+            <label
+              class="text-text-main flex cursor-pointer items-center gap-2 text-sm font-semibold"
+            >
+              <input
+                id="cercle-members-only"
+                type="checkbox"
+                bind:checked={membersOnly}
+                class="rounded"
+              />
+              {m.admin_cercle_members_only_label()}
+            </label>
+            <p class="text-text-muted text-xs">{m.admin_cercle_members_only_hint()}</p>
+          </div>
 
           <div class="space-y-1">
             <label for="cercle-webhook-url" class="text-text-muted text-xs font-semibold"

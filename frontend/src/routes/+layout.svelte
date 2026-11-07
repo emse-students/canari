@@ -5,6 +5,7 @@
   import { afterNavigate, beforeNavigate, goto, onNavigate, preloadData } from '$app/navigation';
   import { preloadRouteCodeOnce } from '$lib/navigation/routeCodePreload';
   import { onMount, tick } from 'svelte';
+  import { markRouterReady } from '$lib/navigation/routerReady';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
   import CallBanner from '$lib/components/layout/CallBanner.svelte';
@@ -17,7 +18,12 @@
   import NativeTabBar, { nativeTabBar } from '$lib/components/navigation/NativeTabBar.svelte';
   import { screenCover } from '$lib/actions/coversScreen.svelte';
   import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
-  import { releaseCallServiceOfPreviousPage } from '$lib/mobile/androidCallService';
+  import {
+    askCallChannelDndIfOwed,
+    DND_REGRANT_TOAST_MS,
+    releaseCallServiceOfPreviousPage,
+  } from '$lib/mobile/androidCallService';
+  import { showToast } from '$lib/stores/toast.svelte';
   import { releaseIosProximityOfPreviousPage } from '$lib/mobile/iosCallProximity';
   import {
     clearEdgeExclusionsForNewDocument,
@@ -27,6 +33,7 @@
   import ToastContainer from '$lib/components/ui/ToastContainer.svelte';
   import ConfirmDialog from '$lib/components/shared/ConfirmDialog.svelte';
   import AnnouncementModal from '$lib/components/shared/AnnouncementModal.svelte';
+  import GuideOverlay from '$lib/components/guidance/GuideOverlay.svelte';
   import { page } from '$app/state';
   import {
     initHistoryOverlayStack,
@@ -37,6 +44,8 @@
     getAppVersionCheck,
     isBelowMinClientVersion,
   } from '$lib/stores/appVersionCheck.svelte';
+  import BootGate from '$lib/components/layout/BootGate.svelte';
+  import { bootSessionBlocks } from '$lib/stores/bootSession.svelte';
   import PlatformGateOverlay from '$lib/components/shared/PlatformGateOverlay.svelte';
   import IdentitySplitOverlay from '$lib/components/shared/IdentitySplitOverlay.svelte';
   import EnvironmentBanner from '$lib/components/shared/EnvironmentBanner.svelte';
@@ -46,6 +55,8 @@
   import { startDeletedAccountGuards } from '$lib/utils/deletedAccountGuards';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
   import OfflineBanner from '$lib/components/shared/OfflineBanner.svelte';
+  import PublishQueueBanner from '$lib/components/posts/PublishQueueBanner.svelte';
+  import { startPublishQueue, stopPublishQueue } from '$lib/posts/publishQueue/publishQueue.svelte';
   import SlowLinkAnnouncer from '$lib/components/shared/SlowLinkAnnouncer.svelte';
   import OpenInAppBanner from '$lib/components/shared/OpenInAppBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
@@ -92,6 +103,9 @@
   const isLoginPage = $derived(
     pathname === '/login' || pathname.startsWith('/legal') || pathname.startsWith('/f/')
   );
+
+  /** The session question is open: no page is mounted (it would fetch with no token), `BootGate` speaks. */
+  const bootBlocked = $derived(bootSessionBlocks(pathname));
 
   const showMaintenanceAdminBanner = $derived.by(() => {
     const info = getAppVersionCheck();
@@ -142,11 +156,15 @@
   });
 
   onMount(() => {
+    // The router exists from here: inputs consumed once (the iOS notification tap) wait for this.
+    markRouterReady();
     // A click goes to the component the press began on, never to what a layout change put under it.
     const disposePressedClickGuard = installPressedClickGuard();
     // A page that has just loaded holds no call: an ongoing-call service still up is the orphan of
     // the page before it (a reload mid-call). Once per page load (WP-C-BG-A).
-    if (isAndroidTauriRuntime()) releaseCallServiceOfPreviousPage(window);
+    if (isAndroidTauriRuntime()) {
+      releaseCallServiceOfPreviousPage(window);
+    }
     // Its iOS twin: the proximity sensor a reloaded page may have left armed.
     if (isIosTauriRuntime()) releaseIosProximityOfPreviousPage();
     themeStore.init();
@@ -223,6 +241,17 @@
     );
   });
 
+  // ── The calls channel's Do Not Disturb ask (Android, Canari's ring, 2026-11-01) ──────
+  // Once the user is IN - logged in and past the PIN - never on the login screen, once per page load.
+  let dndAskDone = false;
+  $effect(() => {
+    if (dndAskDone || !isAndroidTauriRuntime() || !globalSession.isLoggedIn) return;
+    dndAskDone = true;
+    askCallChannelDndIfOwed(window, (message, action, onClose) =>
+      showToast(message, 'warning', DND_REGRANT_TOAST_MS, action, onClose)
+    );
+  });
+
   // ── Push notification init ───────────────────────────────────────────────────
   $effect(() => {
     // Wait until the session is fully established (logged in + user info + token present).
@@ -242,6 +271,15 @@
 
       return () => clearTimeout(timer);
     }
+  });
+
+  // -- The background publish queue: the signed-in account's queued posts go on being sent -----
+  // Started once the session is up (its requests need the token), stopped at sign-out; what it holds
+  // stays on the device, so the account's next sign-in resumes it (`posts/publishQueue`).
+  $effect(() => {
+    const userId = globalSession.isLoggedIn ? globalSession.userId : null;
+    if (userId) startPublishQueue(userId);
+    else stopPublishQueue();
   });
 
   // -- The banner column's height, published so the floating cards can follow it ------------
@@ -687,7 +725,11 @@
        included; at 390px it was 84px tall and hid the whole 56px mobile header, so the phone showed
        no top bar at all. A row in the shell's own column cannot overlap it, at any width and for any
        number of banners, with nothing measured and no variable to keep in step. -->
-  <div bind:this={bannerColumn} class="app-banner-column z-(--z-banner) flex shrink-0 flex-col">
+  <div
+    bind:this={bannerColumn}
+    class="app-banner-column z-(--z-banner) flex shrink-0 flex-col"
+    inert={bootBlocked}
+  >
     <!-- FIRST, and it decides for itself whether to render. The others come and go; this one is a
          property of the whole deployment, so a transient notice must not push it off screen. -->
     <EnvironmentBanner />
@@ -710,6 +752,8 @@
          transient. -->
     <TabFollowerBanner />
     <OfflineBanner />
+    <!-- A post being sent in the background (owner, 2026-11-06): one discreet row per queued post. -->
+    <PublishQueueBanner />
     <SlowLinkAnnouncer />
     <!-- Only inside the browser built into Messenger, Facebook or Instagram; it decides itself. -->
     <OpenInAppBanner />
@@ -720,7 +764,7 @@
        the wrapper above owns `h-(--app-viewport-height,100dvh)` and its padding, and this only ever
        divides what is left. `min-h-0` because a flex child's default `min-height:auto` refuses to
        shrink below its content, which is what turns an overflowing chat list into a page scroll. -->
-  <div class="flex min-h-0 w-full flex-1">
+  <div class="flex min-h-0 w-full flex-1" inert={bootBlocked}>
     <svelte:boundary onerror={(e) => console.error('[ChatBackgroundService] crash recovered:', e)}>
       <ChatBackgroundService />
     </svelte:boundary>
@@ -754,7 +798,9 @@
           <!-- NO BOUNDARY HERE: SvelteKit 3 wraps every route node in its own, closer to the page,
                armed with `+error.svelte` and reported through `handleClientError` - one held here
                could never catch anything (docs/wiki/frontend/architecture.md#a-page-that-crashes). -->
-          {@render children?.()}
+          {#if !bootBlocked}
+            {@render children?.()}
+          {/if}
         </div>
       </main>
 
@@ -769,7 +815,11 @@
              the WebView, so no modal can paint over it the way it paints over the web bar. -->
         {#if !isLoginPage}
           <NativeTabBar
-            visible={!isKeyboardOpen && !isMobileConvoOpen && !isFullScreen && !screenCover.covered}
+            visible={!isKeyboardOpen &&
+              !isMobileConvoOpen &&
+              !isFullScreen &&
+              !screenCover.covered &&
+              !bootBlocked}
           />
         {/if}
       {:else if !isKeyboardOpen && !isLoginPage && !isMobileConvoOpen && !isFullScreen}
@@ -778,7 +828,10 @@
     </div>
   </div>
 
+  <BootGate />
   <ToastContainer />
   <ConfirmDialog />
   <AnnouncementModal />
+  <!-- The guided tours and first-time hints: it decides itself when the app is quiet enough. -->
+  <GuideOverlay chromeless={isLoginPage} />
 </div>

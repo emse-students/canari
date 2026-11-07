@@ -161,6 +161,20 @@ describe('replayedStoredRow', () => {
     expect(row.editedAt).toBeUndefined();
     expect(row.authorship).toEqual(PROOF('msg'));
   });
+
+  it("keeps THIS device's record of a reel's 410: a replay never reverts the tombstone (RC-6)", () => {
+    const replay = { senderId: 'alice', content: 'hello' };
+    expect(replayedStoredRow(replay, stored({ mediaPurgedAt: 42 }), at).mediaPurgedAt).toBe(42);
+    // Even under a proven copy replacing a MARKED row, the local fact survives.
+    const marked = stored({ restoredUnverified: true, mediaPurgedAt: 42 });
+    expect(
+      replayedStoredRow({ ...replay, authorship: PROOF('msg') }, marked, at).mediaPurgedAt
+    ).toBe(42);
+    // And a bundle can never set it: it is not a field the replay reads from the incoming copy.
+    expect(
+      replayedStoredRow({ ...replay, mediaPurgedAt: 7 } as never, undefined, at).mediaPurgedAt
+    ).toBeUndefined();
+  });
 });
 
 /**

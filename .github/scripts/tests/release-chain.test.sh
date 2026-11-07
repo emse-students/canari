@@ -478,10 +478,16 @@ fi
 # PR etc, je ne veux plus recevoir les mails"*). CODEOWNERS requested a review from two humans on
 # every pull request, in a repository whose written model is that no approval is required - a
 # mention per pull request, per push, for a queue nobody was ever meant to drain.
-if [ -e "$HERE/../../CODEOWNERS" ]; then
-  fail 'CODEOWNERS is back - it requests a review from a human on every pull request, and this repository requires no approval, so every one of those is a notification about a decision nobody makes'
+# GitHub reads the file from THREE places - `.github/`, the root and `docs/` - so all three are
+# checked (final review of #2873): a ban on one name is a ban the other two walk past.
+codeowners_found=""
+for codeowners in "$HERE/../../CODEOWNERS" "$HERE/../../../CODEOWNERS" "$HERE/../../../docs/CODEOWNERS"; do
+  [ -e "$codeowners" ] && codeowners_found="$codeowners_found $codeowners"
+done
+if [ -n "$codeowners_found" ]; then
+  fail "CODEOWNERS is back ($codeowners_found) - it requests a review from a human on every pull request, and this repository requires no approval, so every one of those is a notification about a decision nobody makes"
 else
-  pass 'no CODEOWNERS - nobody is assigned to a pull request that merges itself'
+  pass 'no CODEOWNERS in any of the three places GitHub reads one - nobody is assigned to a pull request that merges itself'
 fi
 
 printf '\nthe release package tells a pre-release from a stable by the EVENT, and refuses a mismatch\n'
@@ -657,12 +663,12 @@ done
 # the refusal's cause is ever explained, and the two are separate: the cause is still unmeasured.
 for f in ios android; do
   block="$(sed -n '/^      - name: Upload to Release$/,/^      - name:/p' "$WF/$f.yml")"
-  if printf '%s' "$block" | grep -qE '^ +uses:'; then
+  if grep -qE '^ +uses:' <<<"$block"; then
     fail "$f.yml attaches the release asset through an ACTION again - if it updates the release, it re-adds the capability that was refused on 0.16.0"
   else
     pass "$f.yml attaches the asset with no action, so it asks for no release update"
   fi
-  if printf '%s' "$block" | grep -q 'gh release upload'; then
+  if grep -q 'gh release upload' <<<"$block"; then
     pass "$f.yml uses the one call the job actually needs"
   else
     fail "$f.yml no longer attaches the asset with 'gh release upload' - name what replaced it and why it needs no PATCH"
@@ -960,7 +966,7 @@ else
   pass 'no release step pushes HEAD:main'
 fi
 LAND_JOB="$(sed -n '/^  land:/,/^  [a-z][a-z-]*:$/p' "$WF/release.yml")"
-if printf '%s\n' "$LAND_JOB" | grep -qE '^    if:'; then
+if grep -qE '^    if:' <<<"$LAND_JOB"; then
   fail 'the land job is conditional - a pre-release version would never reach main'
 else
   pass 'the land job runs for every release, pre-releases included'

@@ -95,7 +95,9 @@ describe('a failure that proves a local state exists refutes "first setup"', () 
     // account that exists nowhere) and `evaluateRecoverable`. Both are skipped, as the salt already
     // was for `device_revoked`, by a branch that returns BEFORE either call.
     const body = applyPinFailureBody()!;
-    const branch = body.indexOf("if (code === 'account_deleted')");
+    const branch = body.indexOf(
+      "if (code === 'account_deleted' || code === 'revoked_device_wipe_owed')"
+    );
     expect(branch).toBeGreaterThan(-1);
     const end = body.indexOf('return;', branch);
     expect(end).toBeGreaterThan(branch);

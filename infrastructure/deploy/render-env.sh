@@ -202,6 +202,20 @@ min_length() {
   # Seals each live's key at rest (migration 110); shorter, social-service refuses every live start
   # with 503 LIVE_KEY_SEALING_UNAVAILABLE.
   LIVE_KEY_ENCRYPTION_SECRET) printf '32' ;;
+  # Signs the viewer-bound avatar token (core-service, avatar-token.ts); shorter, core-service mints
+  # none and every avatar URL goes unsigned.
+  AVATAR_TOKEN_SECRET) printf '32' ;;
+  esac
+}
+
+# ── Public values ─────────────────────────────────────────────────────────────
+# A value that is long enough and still no secret: the local stack's default, written in a PUBLIC
+# repository (infrastructure/local/docker-compose.yml). An estate holding it signs every agenda link
+# with a key anybody can read, so it is refused here, naming the secret. deploy-env.test.sh reads the
+# literal back from the compose file, so the two cannot drift. Prints the value, or nothing.
+public_default() {
+  case "$1" in
+  AGENDA_SIGNING_KEY) printf 'dev-agenda-signing-key-change-me-0123456789abcdef' ;;
   esac
 }
 
@@ -297,6 +311,14 @@ while IFS=$'\t' read -r key prod dev source note; do
   if [ -n "$minimum" ] && [ "${#value}" -lt "$minimum" ] && [ "$disposition" = "required" ]; then
     printf '::error::%s is set for the %s environment but is only %s characters, %s needs at least %s - %s
 '       "$key" "$ENVIRONMENT" "${#value}" "$key" "$minimum" "$note" >&2
+    MISSING=1
+    continue
+  fi
+
+  public="$(public_default "$key")"
+  if [ -n "$public" ] && [ "$value" = "$public" ]; then
+    printf '::error::%s is set for the %s environment to the local stack'"'"'s PUBLIC default (infrastructure/local/docker-compose.yml) - generate one with openssl rand -hex 32 - %s
+'       "$key" "$ENVIRONMENT" "$note" >&2
     MISSING=1
     continue
   fi

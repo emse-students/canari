@@ -314,6 +314,30 @@ export async function openChannelMessage(
   channelId: string,
   row: OpenableChannelMessage
 ): Promise<Uint8Array> {
+  return (await openChannelMessageProving(channelId, row)).bytes;
+}
+
+/** A live row's plaintext, and whether the open PROVED who wrote it. */
+export interface ProvenChannelOpening {
+  bytes: Uint8Array;
+  /**
+   * True only under a Graine v2 session, whose open checked the minter the server named and the
+   * session's signature (channel-encryption section 21). A v1 row opens for whoever the server
+   * names, so its `senderId` is only the server's word. The SAME fact the native push reader hands
+   * its banner as `authorProven` (`background.rs` `open_graine_push`): the WebSocket trigger of a
+   * salon banner carries it to the native builder, so both triggers name one speaker.
+   */
+  authorProven: boolean;
+}
+
+/**
+ * {@link openChannelMessage}, keeping the one fact the open learns about the AUTHOR: whether it was
+ * proven. Same checks, same typed throws.
+ */
+export async function openChannelMessageProving(
+  channelId: string,
+  row: OpenableChannelMessage
+): Promise<ProvenChannelOpening> {
   const prepared = await prepareChannelMessage(channelId, row);
   const verdict =
     prepared.kind === 'v2'
@@ -323,7 +347,10 @@ export async function openChannelMessage(
           prepared.open.check.signature
         )
       : undefined;
-  return finishChannelMessage(prepared, verdict);
+  return {
+    bytes: await finishChannelMessage(prepared, verdict),
+    authorProven: prepared.kind === 'v2',
+  };
 }
 
 /** What one row of a page came to: its plaintext, or the typed reason it cannot be shown. */

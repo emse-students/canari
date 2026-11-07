@@ -13,13 +13,19 @@
  *   bun tools/call-audio-fidelity/rig.mjs --seconds 40 --out <dir> --keep
  *   bun tools/call-audio-fidelity/rig.mjs --reanalyze <dir>  # re-score a run's recordings, no browser
  */
-import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { analyze } from './analyze.mjs';
-import { RATE, buildReference, encodeWav, quantised } from './signal.mjs';
+import { RATE, buildReference, encodeWav, quantised, withBackground } from './signal.mjs';
 import { MATRIX, THRESHOLDS, verdict } from './matrix.mjs';
+import {
+  closeChrome,
+  defaultChrome,
+  killTree,
+  launchChrome,
+  serveDirectory,
+} from '../headless-chrome/chrome.mjs';
 
 const HERE = import.meta.dir;
 const args = process.argv.slice(2);
@@ -27,7 +33,7 @@ const opt = (name, dflt) => {
   const i = args.indexOf(`--${name}`);
   return i >= 0 ? args[i + 1] : dflt;
 };
-const CHROME = opt('chrome', 'C:/Program Files/Google/Chrome/Application/chrome.exe');
+const CHROME = opt('chrome', defaultChrome());
 const SECONDS = Number(opt('seconds', '32'));
 const OUT = resolve(opt('out', join(tmpdir(), `canari-call-audio-${process.pid}`)));
 const ONLY = opt('only', '').split(',').filter(Boolean);
@@ -48,11 +54,7 @@ const live = new Set();
 function onSignal(signal) {
   say(`${signal}: killing ${live.size} Chrome(s) and removing their profiles`);
   for (const side of live) {
-    if (process.platform === 'win32') {
-      spawnSync('taskkill', ['/PID', String(side.proc.pid), '/T', '/F'], { stdio: 'ignore' });
-    } else {
-      side.proc.kill('SIGKILL');
-    }
+    killTree(side, { sync: true });
     if (KEEP) continue;
     try {
       rmSync(side.profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
@@ -71,6 +73,8 @@ async function buildPage(www) {
   for (const [entry, name] of [
     ['page/page.ts', 'page.js'],
     ['page/impair.worker.ts', 'impair.worker.js'],
+    // The app's own noise-suppression worklet, and below the wasm the app bundles (no copy).
+    ['../../frontend/src/lib/workers/rnnoise.worklet.ts', 'rnnoise.worklet.js'],
   ]) {
     const res = await Bun.build({
       entrypoints: [join(HERE, entry)],
@@ -81,185 +85,36 @@ async function buildPage(www) {
     writeFileSync(join(www, name), await res.outputs[0].text());
   }
   writeFileSync(
+    join(www, 'rnnoise.wasm'),
+    readFileSync(join(HERE, '../../frontend/node_modules/simple-rnnoise-wasm/dist/rnnoise.wasm'))
+  );
+  writeFileSync(
     join(www, 'index.html'),
     '<!doctype html><meta charset="utf-8"><title>rig</title><script type="module" src="/page.js"></script>'
   );
 }
 
-function serve(www) {
-  return Bun.serve({
-    port: 0,
-    hostname: '127.0.0.1',
-    fetch(req) {
-      const path = new URL(req.url).pathname;
-      const file = join(www, path === '/' ? 'index.html' : path.slice(1));
-      if (!existsSync(file)) return new Response('not found', { status: 404 });
-      const type = file.endsWith('.js') ? 'text/javascript' : 'text/html';
-      return new Response(readFileSync(file), { headers: { 'content-type': type } });
-    },
-  });
-}
-
 /** How long one page call may take: the longest (`finish`) reads the stats and asks the worker twice. */
 const EVAL_ANSWER_MS = 60_000;
 
-/** A minimal CDP session over one page target. */
-class Cdp {
-  constructor(ws) {
-    this.ws = ws;
-    this.id = 0;
-    this.pending = new Map();
-    ws.addEventListener('message', (e) => {
-      const msg = JSON.parse(e.data);
-      const p = this.pending.get(msg.id);
-      if (!p) return;
-      this.pending.delete(msg.id);
-      if (msg.error) p.reject(new Error(JSON.stringify(msg.error)));
-      else p.resolve(msg.result);
-    });
-  }
-
-  static async open(url) {
-    const ws = new WebSocket(url);
-    await new Promise((res, rej) => {
-      ws.addEventListener('open', res, { once: true });
-      ws.addEventListener('error', rej, { once: true });
-    });
-    return new Cdp(ws);
-  }
-
-  send(method, params = {}) {
-    const id = ++this.id;
-    this.ws.send(JSON.stringify({ id, method, params }));
-    return new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }));
-  }
-
-  /**
-   * Evaluates `expr` in the page, awaiting a promise; throws the page's exception text. A page that
-   * does not answer within `EVAL_ANSWER_MS` fails the row, named, rather than hanging the run.
-   */
-  async eval(expr) {
-    let timer = 0;
-    const silent = new Promise((_, reject) => {
-      timer = setTimeout(
-        () =>
-          reject(
-            new Error(`the page did not answer ${expr.slice(0, 40)} in ${EVAL_ANSWER_MS / 1000} s`)
-          ),
-        EVAL_ANSWER_MS
-      );
-    });
-    const r = await Promise.race([
-      this.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }),
-      silent,
-    ]).finally(() => clearTimeout(timer));
-    if (r.exceptionDetails) {
-      throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
-    }
-    return r.result.value;
-  }
-}
-
-async function until(fn, what, ms = 20_000) {
-  const t0 = Date.now();
-  for (;;) {
-    const v = await fn();
-    if (v) return v;
-    if (Date.now() - t0 > ms) throw new Error(`timed out waiting for ${what}`);
-    await Bun.sleep(100);
-  }
-}
-
 /** Launches one headless Chrome whose fake microphone plays `wav`; returns its page session. */
-async function launch(name, wav, url, row) {
-  const profile = join(OUT, `profile-${row}-${name}`);
-  rmSync(profile, { recursive: true, force: true });
-  mkdirSync(profile, { recursive: true });
-  const proc = spawn(
-    CHROME,
-    [
-      '--headless=new',
-      '--remote-debugging-port=0',
-      `--user-data-dir=${profile}`,
-      // 30 fps: the app's camera constraint (the fake device's default is 20).
-      '--use-fake-device-for-media-stream=fps=30',
-      '--use-fake-ui-for-media-stream',
-      `--use-file-for-fake-audio-capture=${wav}`,
-      '--mute-audio',
-      '--autoplay-policy=no-user-gesture-required',
-      '--no-first-run',
-      '--disable-breakpad',
-      '--disable-crash-reporter',
-      '--no-default-browser-check',
-      'about:blank',
-    ],
-    { stdio: 'ignore' }
-  );
-  const exited = new Promise((res) => proc.once('exit', res));
-  const side = { name, proc, exited, port: 0, cdp: null, profile };
-  live.add(side);
-  try {
-    const portFile = join(profile, 'DevToolsActivePort');
-    side.port = await until(
-      () => existsSync(portFile) && readFileSync(portFile, 'utf8').split('\n')[0],
-      `${name} DevTools port`
-    );
-    const targets = await until(async () => {
-      const list = await (await fetch(`http://127.0.0.1:${side.port}/json/list`)).json();
-      return list.find((t) => t.type === 'page');
-    }, `${name} page target`);
-    side.cdp = await Cdp.open(targets.webSocketDebuggerUrl);
-    await side.cdp.send('Page.navigate', { url });
-    await until(
-      async () => (await side.cdp.eval('document.title').catch(() => '')) === 'rig-ready',
-      `${name} page`
-    );
-    return side;
-  } catch (e) {
-    // A Chrome that never became usable is still a running Chrome: take it down before the throw.
-    say(`WARN ${name}: launch failed (${String(e)}), killing the tree`);
-    await close(side);
-    throw e;
-  }
+function launch(name, wav, url, row) {
+  return launchChrome({
+    chrome: CHROME,
+    name,
+    profile: join(OUT, `profile-${row}-${name}`),
+    url,
+    readyTitle: 'rig-ready',
+    wav,
+    live,
+    keep: KEEP,
+    log: say,
+    answerMs: EVAL_ANSWER_MS,
+  });
 }
 
-/** Kills the whole process tree: on Windows, killing the browser process leaves its children. */
-function killTree(side) {
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/PID', String(side.proc.pid), '/T', '/F'], { stdio: 'ignore' });
-  } else {
-    side.proc.kill('SIGKILL');
-  }
-}
-
-async function close(side) {
-  live.delete(side);
-  try {
-    if (!side.port) throw new Error('no DevTools port yet');
-    const v = await (await fetch(`http://127.0.0.1:${side.port}/json/version`)).json();
-    const b = await Cdp.open(v.webSocketDebuggerUrl);
-    void b.send('Browser.close').catch(() => {});
-  } catch (e) {
-    say(`WARN ${side.name}: Browser.close failed (${String(e)}), killing the tree`);
-    killTree(side);
-  }
-  const done = await Promise.race([
-    side.exited.then(() => true),
-    Bun.sleep(10_000).then(() => false),
-  ]);
-  if (!done) {
-    say(`WARN ${side.name}: still running 10 s after Browser.close, killing the tree`);
-    killTree(side);
-    await side.exited;
-  }
-  if (KEEP) return;
-  // Windows releases a dead process's file handles a little after it exits; a profile that is
-  // still locked is named here and swept again at the end of the run.
-  try {
-    rmSync(side.profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
-  } catch (e) {
-    say(`WARN ${side.name}: profile not removed yet (${e.code}), retried at the end of the run`);
-  }
+function close(side) {
+  return closeChrome(side, { live, keep: KEEP, log: say });
 }
 
 /**
@@ -428,15 +283,22 @@ async function runRow(row, wavs, url) {
   let caller = null;
   let callee = null;
   try {
-    caller = await launch('caller', down ? wavs.silence : wavs.caller, url, row.name);
+    caller = await launch(
+      'caller',
+      down ? wavs.silence : row.noisy ? wavs.noisy : wavs.caller,
+      url,
+      row.name
+    );
     callee = await launch(
       'callee',
       down ? wavs.caller : row.farTalk ? wavs.far : wavs.silence,
       url,
       row.name
     );
-    const setupCaller = await caller.cdp.eval(`rig.setup(${JSON.stringify(row.caller)})`);
-    await callee.cdp.eval(`rig.setup(${JSON.stringify(row.callee)})`);
+    const setupCaller = await caller.cdp.eval(
+      `rig.setup(${JSON.stringify({ ...row.caller, role: 'caller' })})`
+    );
+    await callee.cdp.eval(`rig.setup(${JSON.stringify({ ...row.callee, role: 'callee' })})`);
     const offer = await caller.cdp.eval('rig.offer()');
     const answer = await callee.cdp.eval(`rig.answer(${JSON.stringify(offer)})`);
     await caller.cdp.eval(`rig.accept(${JSON.stringify(answer)})`);
@@ -448,6 +310,9 @@ async function runRow(row, wavs, url) {
       await Bun.sleep(1000);
     }
     const videoOps = await runVideoOps(row, caller, callee, down);
+    // A noise-suppression row measures the processed track: the sender must carry it first (or the
+    // pipeline have failed, which the row's `ns-on` check then names).
+    await (down ? callee : caller).cdp.eval('rig.nsSettled()');
     await (down ? caller : callee).cdp.eval('rig.record()');
     await Promise.all([callee.cdp.eval('rig.startStats()'), caller.cdp.eval('rig.startStats()')]);
     await Bun.sleep(SECONDS * 1000);
@@ -487,6 +352,9 @@ async function runRow(row, wavs, url) {
         receiverFrames: rx.report?.framesIn?.receiver ?? 0,
       },
       engine: rx.engine,
+      // The SENDER's noise suppression: what it sent, and the worklet's cost per 10 ms frame.
+      ns: tx.ns ?? undefined,
+      noisy: !!row.noisy,
       videoPath: row.video ? summariseVideo(tx, rx, videoOps) : undefined,
       txTargetBitrate: txStats.out_targetBitrate,
       ...summarise(rx.stats),
@@ -523,7 +391,24 @@ function table(results) {
     const be = (x) => (x ? `${x.identical}/${x.decoded}` : '-');
     return `| ${r.row} | ${f(r.metrics.matchCoef, 2)} | ${be(r.bitExact.measured)} / ${be(r.bitExact.reverse)} | ${f(sp.snrDb)} | ${f(sp.lsdDb, 2)} | ${f(sp.hfLossDb)} | ${r.metrics.bandwidthHz} | ${r.metrics.dropouts.events} (${r.metrics.dropouts.ms}) | ${r.concealedPct} | ${r.insertedPct}/${r.removedPct} | ${r.rxKbps} | ${r.lostPkts}${r.impairDropped ? ` (+${r.impairDropped} injected)` : ''} | ${f(sp.gainDb)} | ${f(r.metrics.silenceFloorDbfs)} | ${verdictText(r.verdict)} |`;
   });
-  return [head, sep, ...lines, videoTable(results)].join('\n');
+  return [head, sep, ...lines, videoTable(results), nsTable(results)].join('\n');
+}
+
+/** The sender's noise suppression in one phrase: what it sent, and the worklet's cost. */
+function nsText(ns) {
+  const s = ns.stats;
+  const cost = s?.frames
+    ? `${(s.busyMs / s.frames).toFixed(3)} ms per 10 ms frame (${((s.busyMs / s.frames) * 10).toFixed(1)} % of real time, max quantum ${s.maxQuantumMs.toFixed(2)} ms, ${s.frames} frames, clock ${s.clock})`
+    : 'no worklet stats';
+  return `ns=${ns.state} sends ${ns.sendsProcessed ? 'PROCESSED' : 'raw'} track, fallbacks=${ns.fallbacks}, ${cost}`;
+}
+
+/** The noise-suppression rows' own table; empty when no row ran it. */
+function nsTable(results) {
+  const rows = results.filter((r) => r.ns);
+  if (!rows.length) return '';
+  const lines = rows.map((r) => `| ${r.row} | ${r.noisy ? 'noisy' : 'clean'} | ${nsText(r.ns)} |`);
+  return `\n\nNoise suppression (the measured sender):\n\n| row | reference | sender |\n|---|---|---|\n${lines.join('\n')}`;
 }
 
 /** The video rows' own table (rows without video are left out); empty when there are none. */
@@ -551,17 +436,20 @@ async function main() {
   const far = buildReference({ seed: 2, gain: 0.5, talkOnly: true });
   const wavs = {
     caller: join(OUT, 'ref.wav'),
+    noisy: join(OUT, 'noisy.wav'),
     far: join(OUT, 'far.wav'),
     silence: join(OUT, 'silence.wav'),
     refSamples: quantised(ref),
     farSamples: quantised(far),
   };
   writeFileSync(wavs.caller, encodeWav(ref));
+  // The noisy rows' microphone: the reference under a steady background; scored against the CLEAN one.
+  writeFileSync(wavs.noisy, encodeWav(withBackground(ref)));
   writeFileSync(wavs.far, encodeWav(far));
   writeFileSync(wavs.silence, encodeWav(new Float64Array(ref.length)));
   const www = join(OUT, 'www');
   await buildPage(www);
-  const server = serve(www);
+  const server = serveDirectory(www);
   const url = `http://127.0.0.1:${server.port}/`;
   const rows = MATRIX.filter((r) => !ONLY.length || ONLY.includes(r.name));
   const results = [];
@@ -585,6 +473,7 @@ ${e?.stack ?? ''}`);
           `  ${r.row} video: ${v.codec} ${v.size} ${v.fps} fps, ${v.freezes} freeze(s), sent ${v.sendSize} ${v.sendKbps} kbps, encode ${v.encodeMsPerFrame} ms/frame (${v.encodeCorePct} % of a core), ladder ${v.ladder?.rung ?? '-'}, worker video frames tx=${v.senderFrames} rx=${v.receiverFrames}, decrypted ${v.decrypted} (failed ${v.decryptFailed})`
         );
       }
+      if (r.ns) say(`  ${r.row} noise suppression: ${nsText(r.ns)}`);
       say(
         `  ${r.row} [${/Chrome\/[\d.]+/.exec(r.engine?.ua ?? '')?.[0] ?? '?'}, transform frames tx=${r.transformPath.senderFrames} rx=${r.transformPath.receiverFrames}]: speech SNR ${r.metrics.segments.speech.snrDb.toFixed(1)} dB, LSD ${r.metrics.segments.speech.lsdDb.toFixed(2)} dB, bw ${r.metrics.bandwidthHz} Hz, ${verdictText(r.verdict)}`
       );

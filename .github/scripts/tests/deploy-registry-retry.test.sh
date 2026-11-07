@@ -55,7 +55,7 @@ run() {
 
 out="$(run 0 2>&1)"
 code=$?
-if [ "$code" = "0" ] && [ "$(cat "$TMP/count")" = "1" ] && printf '%s' "$out" | grep -q continued; then
+if [ "$code" = "0" ] && [ "$(cat "$TMP/count")" = "1" ] && grep -q continued <<<"$out"; then
   ok "a pull that succeeds is run once and the deploy continues"
 else
   fail "a first-time success must not retry (exit $code, $(cat "$TMP/count") attempts)"
@@ -63,7 +63,7 @@ fi
 
 out="$(run 2 2>&1)"
 code=$?
-if [ "$code" = "0" ] && [ "$(cat "$TMP/count")" = "3" ] && printf '%s' "$out" | grep -q continued; then
+if [ "$code" = "0" ] && [ "$(cat "$TMP/count")" = "3" ] && grep -q continued <<<"$out"; then
   ok "a registry hiccup is re-attempted and the deploy continues"
 else
   fail "two transient failures must be absorbed (exit $code, $(cat "$TMP/count") attempts)"

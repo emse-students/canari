@@ -10,6 +10,52 @@ fn base64_decode_to_string(input: &str) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
+/// The flat JSON a live MLS frame reaches the WebSocket client as, built from the `chat:messages`
+/// payload chat-delivery published - no proto decode needed.
+///
+/// `createdAt` IS THE SERVER'S ACCEPTANCE OF THE FRAME (`queued_message.createdAt`), and the client
+/// reads it as `queuedCreatedAt` - the bound a received `read_watermark` is checked against, the
+/// `serverTimestamp` a live message is ordered by, the server clock a mark may not pass. It was not
+/// forwarded, so only a PULLED frame carried it: every live read mark on the server's clock was
+/// refused ("the frame carries no server time to bound it") and a DM read between two online
+/// devices never showed (docs/wiki/frontend/modules/chat.md, "Conversations are ordered by the
+/// server's clock"). Forwarded as published when it is a string (chat-delivery's ISO instant) or a
+/// number (epoch ms) - the two shapes the client's `parseServerTimestampMs` reads. Absent upstream,
+/// it is absent here - never invented; present with any other type, it is dropped and said, since a
+/// producer writing it that way breaks every live read mark again.
+fn live_mls_frame(json: &serde_json::Value, proto_b64: &str) -> serde_json::Value {
+    let mut frame = serde_json::json!({
+        "senderId": json.get("senderId").and_then(|v| v.as_str()).unwrap_or(""),
+        "senderDeviceId": json.get("senderDeviceId").and_then(|v| v.as_str()).unwrap_or(""),
+        "groupId": json.get("groupId").and_then(|v| v.as_str()).unwrap_or(""),
+        "isWelcome": json.get("isWelcome").and_then(|v| v.as_bool()).unwrap_or(false),
+        "isCommit": json.get("isCommit").and_then(|v| v.as_bool()).unwrap_or(false),
+        "ratchetTree": json.get("ratchetTree").cloned().unwrap_or(serde_json::Value::Null),
+        "proto": proto_b64,
+        "queuedMessageId": json.get("queuedMessageId").and_then(|v| v.as_str()).unwrap_or(""),
+        // The routing fact the receiver needs to refuse an addressed conversation frame that is not
+        // a solicited history answer (history-answer-addressing, rules 4-5). Dropping it here would
+        // make every live addressed frame look like a broadcast.
+        "addressed": json.get("addressed").and_then(|v| v.as_bool()).unwrap_or(false)
+    });
+    match json.get("createdAt") {
+        None => {}
+        Some(created_at) if created_at.is_string() || created_at.is_number() => {
+            frame["createdAt"] = created_at.clone();
+        }
+        Some(_) => {
+            tracing::warn!(
+                "[PubSub] createdAt of an unexpected type DROPPED from a live frame (group={} queuedId={}) - the receiver gets no server time and refuses its read marks",
+                json.get("groupId").and_then(|v| v.as_str()).unwrap_or(""),
+                json.get("queuedMessageId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+            );
+        }
+    }
+    frame
+}
+
 /// Alias for the per-connection outbound channel sender.
 /// Each live WebSocket connection owns one of these; the pub/sub loop clones
 /// and stores senders here so it can push frames without holding the lock.
@@ -142,23 +188,7 @@ pub fn spawn_redis_subscriber(
                                     }
                                 };
 
-                                // Forward flat JSON to the WS client - no proto decode needed.
-                                serde_json::json!({
-                                "senderId": json.get("senderId").and_then(|v| v.as_str()).unwrap_or(""),
-                                "senderDeviceId": json.get("senderDeviceId").and_then(|v| v.as_str()).unwrap_or(""),
-                                "groupId": json.get("groupId").and_then(|v| v.as_str()).unwrap_or(""),
-                                "isWelcome": json.get("isWelcome").and_then(|v| v.as_bool()).unwrap_or(false),
-                                "isCommit": json.get("isCommit").and_then(|v| v.as_bool()).unwrap_or(false),
-                                "ratchetTree": json.get("ratchetTree").cloned().unwrap_or(serde_json::Value::Null),
-                                "proto": proto_b64,
-                                "queuedMessageId": json.get("queuedMessageId").and_then(|v| v.as_str()).unwrap_or(""),
-                                // The routing fact the receiver needs to refuse an addressed
-                                // conversation frame that is not a solicited history answer
-                                // (history-answer-addressing, rules 4-5). Dropping it here would
-                                // make every live addressed frame look like a broadcast.
-                                "addressed": json.get("addressed").and_then(|v| v.as_bool()).unwrap_or(false)
-                            })
-                            .to_string()
+                                live_mls_frame(&json, proto_b64).to_string()
                             };
 
                             let key = format!("{}:{}", recipient_id, device_id);
@@ -396,4 +426,55 @@ pub fn spawn_redis_subscriber(
             tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::live_mls_frame;
+
+    #[test]
+    fn a_live_frame_carries_the_server_acceptance_time() {
+        let published = serde_json::json!({
+            "recipientId": "r",
+            "deviceId": "d",
+            "senderId": "s",
+            "groupId": "g",
+            "proto": "AAAA",
+            "queuedMessageId": "q",
+            "createdAt": "2026-11-03T21:28:44.123Z"
+        });
+        let frame = live_mls_frame(&published, "AAAA");
+        assert_eq!(frame["createdAt"], "2026-11-03T21:28:44.123Z");
+        assert_eq!(frame["queuedMessageId"], "q");
+        assert_eq!(frame["addressed"], false);
+    }
+
+    #[test]
+    fn an_epoch_ms_created_at_is_forwarded_as_a_number() {
+        let published =
+            serde_json::json!({ "groupId": "g", "proto": "AAAA", "createdAt": 1793741324123u64 });
+        let frame = live_mls_frame(&published, "AAAA");
+        assert_eq!(frame["createdAt"], 1793741324123u64);
+    }
+
+    #[test]
+    fn a_created_at_of_another_type_is_dropped_and_none_invented() {
+        for odd in [
+            serde_json::json!(true),
+            serde_json::json!({ "at": 1 }),
+            serde_json::Value::Null,
+        ] {
+            let published =
+                serde_json::json!({ "groupId": "g", "proto": "AAAA", "createdAt": odd });
+            let frame = live_mls_frame(&published, "AAAA");
+            assert!(frame.get("createdAt").is_none(), "forwarded {odd}");
+        }
+    }
+
+    #[test]
+    fn a_frame_published_without_one_gets_none_invented() {
+        let published = serde_json::json!({ "senderId": "s", "groupId": "g", "proto": "AAAA" });
+        let frame = live_mls_frame(&published, "AAAA");
+        assert!(frame.get("createdAt").is_none());
+    }
 }

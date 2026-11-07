@@ -1,9 +1,14 @@
 package fr.emse.canari
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
 import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -11,6 +16,7 @@ import androidx.core.content.ContextCompat
 import fr.emse.canari.call.CallServiceCommand
 import fr.emse.canari.call.OffScreenGate
 import fr.emse.canari.call.OngoingCallSpec
+import fr.emse.canari.call.RingFacts
 import fr.emse.canari.call.SpecResult
 import fr.emse.canari.call.StartRefusal
 import org.json.JSONException
@@ -21,7 +27,9 @@ import org.json.JSONObject
  * (WP-C-BG-A).
  *
  * Down: `MainActivity` registers [JsInterface] as `window.canariCall` - `start(json)`, `update(json)`,
- * `stop(callId, reason)`, `pageLoaded()` - ONLY in a build whose manifest declares the service (the
+ * `stop(callId, reason)`, `pageLoaded()`, the in-app ring's `ringStart(json)` / `ringStop(callId,
+ * reason)` ([CallRingPlayer]) and the calls channel's one-time Do Not Disturb ask
+ * (`isDndRegrantOwed()`, `dndRegrantAnswered(how)`, `openCallChannelSettings()`) - ONLY in a build whose manifest declares the service (the
  * main manifest, since the calls flip of 2026-10-22; a build that lost the declaration registers no bridge). The page reads the absence of `canariCall` as
  * "this build cannot keep a call alive in the background" and says so at error level when it is
  * placing calls (`frontend/src/lib/mobile/androidCallService.ts`). `start` and `update` carry the
@@ -127,6 +135,8 @@ object CallBridge {
      * reports through [emit].
      */
     class JsInterface(private val context: Context) {
+        private val mainHandler = Handler(Looper.getMainLooper())
+
         @JavascriptInterface
         fun start(json: String) {
             val described = parse(json, "start") ?: return
@@ -180,6 +190,77 @@ object CallBridge {
         }
 
         /**
+         * The page shows an incoming call: ring it natively, on the RINGTONE stream, with Canari's
+         * ring ([CallRingPlayer]). [json] is `{callId, groupId, callerId, hasVideo, appSounds}` - the
+         * facts the native CallStyle ring needs when the app leaves the screen while it rings.
+         */
+        @JavascriptInterface
+        fun ringStart(json: String) {
+            val ring = try {
+                val o = JSONObject(json)
+                RingFacts(
+                    callId = o.optString("callId", ""),
+                    groupId = o.optString("groupId", ""),
+                    callerId = o.optString("callerId", ""),
+                    hasVideo = o.optBoolean("hasVideo", false),
+                    appSounds = o.optBoolean("appSounds", true),
+                )
+            } catch (e: JSONException) {
+                Log.e(TAG, "ringStart refused: not a ring description: ${e.message}")
+                return
+            }
+            if (ring.callId.isBlank() || ring.groupId.isBlank()) {
+                // The page always names its call and its conversation; a blank one is a defect there.
+                Log.e(TAG, "ringStart refused: no call id or no conversation (call=${ring.callId.isNotBlank()} group=${ring.groupId.isNotBlank()})")
+                return
+            }
+            mainHandler.post { CallRingPlayer.start(ring) }
+        }
+
+        /**
+         * The incoming call left the ringing state (answered, declined, ended): stop its ring - the
+         * player, and the native ring it may have been handed over to off screen.
+         */
+        @JavascriptInterface
+        fun ringStop(callId: String, reason: String) {
+            if (callId.isBlank()) {
+                Log.e(TAG, "ringStop refused: no call id (reason: $reason)")
+                return
+            }
+            val why = reason.ifBlank { "unspecified" }
+            // The call ended for this phone: neither ring may ring it again (RingClosed.ENDED).
+            mainHandler.post {
+                CanariFirebaseMessagingService.cancelIncomingCallNotification(context, callId, "the page: $why")
+            }
+        }
+
+        /**
+         * Whether the user must still be asked to grant Do Not Disturb to the new calls channel again
+         * (the old `canari_calls` had it, and no app can grant it). True until [dndRegrantAnswered].
+         */
+        @JavascriptInterface
+        fun isDndRegrantOwed(): Boolean = CanariApplication.isDndRegrantOwed(context)
+
+        /** The user answered the ask ([how]: `settings` or `dismissed`): it is not asked again. */
+        @JavascriptInterface
+        fun dndRegrantAnswered(how: String) = CanariApplication.dndRegrantAnswered(context, how.ifBlank { "unspecified" })
+
+        /** Opens the calls channel's system settings, where "override Do Not Disturb" is granted. */
+        @JavascriptInterface
+        fun openCallChannelSettings() {
+            val intent = Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                .putExtra(Settings.EXTRA_CHANNEL_ID, CanariFirebaseMessagingService.CHANNEL_CALLS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            try {
+                context.startActivity(intent)
+                Log.i(TAG, "openCallChannelSettings: the calls channel settings opened")
+            } catch (e: ActivityNotFoundException) {
+                Log.e(TAG, "openCallChannelSettings: no settings screen answered: ${e.message}")
+            }
+        }
+
+        /**
          * A page has just loaded (a reload mid-call, a renderer that crashed and came back): no call
          * exists in it, so a service still in the foreground is an ORPHAN of the page before - its
          * notification, wake lock, mode and route would outlive the call they were for. Called once
@@ -187,6 +268,10 @@ object CallBridge {
          */
         @JavascriptInterface
         fun pageLoaded() {
+            // A ring of the page before rings for a call no page shows any more.
+            mainHandler.post {
+                CallRingPlayer.pageLoaded()
+            }
             if (!CallForegroundService.running) return
             Log.w(TAG, "a page loaded while the call service ran - the call of the previous page is gone")
             deliver(CallServiceCommand.Stop(null, "a new page loaded - the call of the previous page is gone"), "stop")

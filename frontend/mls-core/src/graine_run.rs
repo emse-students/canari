@@ -444,6 +444,7 @@ impl MlsManager {
         } else if before.is_some() {
             // Only a commit that WAS pending is one we signed: a merge with nothing pending
             // proves nothing, so it reaffirms no pin, ours included.
+            let door = self.admission.get(group_id).copied();
             self.device_trust.observe_merged_commit(
                 group_id,
                 epoch,
@@ -451,6 +452,7 @@ impl MlsManager {
                 &leaves_after,
                 Some(&own_identity),
                 (&own_identity, &own_key),
+                door,
             );
         }
         let summary = match before {

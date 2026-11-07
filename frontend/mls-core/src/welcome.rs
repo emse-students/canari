@@ -33,8 +33,9 @@ impl MlsManager {
     /// member added (`DeviceEvent::announces_new_device`, owner 2026-10-31). The further-device door
     /// asks a member first, and joins by its own commit only when the server says no member device
     /// is online. A device whose own leaf is in the tree replaces it (the observer sees the identity
-    /// in `before`), and a user with no leaf there enters as a person, which is the link's ask. Read off the unverified tree: the commit built on it is
-    /// verified by OpenMLS, and a tree that lies would only make this device ask instead of join.
+    /// in `before`), and a user with no leaf there enters as a person, which is the link's ask. Read
+    /// off the unverified tree: the commit built on it is verified by OpenMLS, and a tree that lies
+    /// would only make this device ask instead of join.
     ///
     /// Decided again on every attempt, since every retry fetches a fresh GroupInfo.
     pub fn external_join_is_a_further_device(

@@ -34,7 +34,6 @@ export const MENTION_CHIP_SELECTOR = `[data-mention-id].${MENTION_CHIP_CLASS}`;
 
 export const MD_MUTED_CLASS = 'md-composer-muted';
 export const MD_ITALIC_CLASS = 'md-composer-italic';
-export const MD_UNDERLINE_CLASS = 'md-composer-underline';
 export const MD_BOLD_CLASS = 'md-composer-bold';
 export const MD_BOLD_ITALIC_CLASS = 'md-composer-bold-italic';
 export const MD_STRIKE_CLASS = 'md-composer-strike';
@@ -225,7 +224,6 @@ function appendMutedSpan(parent: HTMLElement, text: string): void {
 const MD_STYLE_CLASS: Record<InlineMarkdownStyle, string> = {
   italic: MD_ITALIC_CLASS,
   bold: MD_BOLD_CLASS,
-  underline: MD_UNDERLINE_CLASS,
   strike: MD_STRIKE_CLASS,
 };
 
@@ -236,7 +234,7 @@ function appendFormattedSpan(parent: HTMLElement, className: string, text: strin
   parent.appendChild(span);
 }
 
-/** Nests style spans so underline + strike (etc.) all apply without CSS overrides. */
+/** Nests style spans so bold + strike (etc.) all apply without CSS overrides. */
 function appendCombinedFormattedSpan(
   parent: HTMLElement,
   styles: readonly InlineMarkdownStyle[],

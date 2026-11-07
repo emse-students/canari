@@ -1,4 +1,4 @@
-import { writable, type Readable } from 'svelte/store';
+import { get, writable, type Readable } from 'svelte/store';
 import { Log } from '$lib/utils/Log';
 
 /**
@@ -30,6 +30,32 @@ const holders = new Map<string, string>();
 const held = writable(false);
 
 /**
+ * The strongest call phase any holder is in: `none` when no call holds the sound. The audio
+ * session (`audioSession.ts`) reads it, because the phases do not want the same category - a call
+ * the user placed or answered (`calling`, `incall`) has its microphone open, a ring coming in
+ * (`incoming`) does not.
+ */
+export type CallSoundPhase = 'none' | 'incoming' | 'calling' | 'incall';
+
+/** Ranks the phases: a call in progress outranks one ringing out, which outranks one ringing in. */
+const PHASE_RANK: Record<CallSoundPhase, number> = { none: 0, incoming: 1, calling: 2, incall: 3 };
+
+const phaseStore = writable<CallSoundPhase>('none');
+
+/** The strongest phase among the holders - see {@link CallSoundPhase}. */
+export const callSoundPhase: Readable<CallSoundPhase> = { subscribe: phaseStore.subscribe };
+
+/** The strongest phase among the holders; only {@link HOLDING} phases are ever held. */
+function strongestPhase(): CallSoundPhase {
+  let best: CallSoundPhase = 'none';
+  for (const holding of holders.values()) {
+    const candidate = holding as CallSoundPhase;
+    if (PHASE_RANK[candidate] > PHASE_RANK[best]) best = candidate;
+  }
+  return best;
+}
+
+/**
  * Whether a call holds the app's sound right now. Subscribe to react to its start (the arbiter
  * pauses what plays); read {@link callHoldsAppSound} to decide one sound.
  */
@@ -40,6 +66,14 @@ export function callHoldsAppSound(): boolean {
   return holders.size > 0;
 }
 
+/** App tones refused while the gate was held, since it was last taken. */
+let silencedTones = 0;
+
+/** Counts one app tone refused because a call holds the sound (told on the gate's release line). */
+export function noteToneSilenced(): void {
+  silencedTones++;
+}
+
 /**
  * States the call phase of `holder` (a `CallService` instance). Logs only a CHANGE of the gate, with
  * the phase that caused it, so a reading shows exactly when the app went quiet and when it came back.
@@ -48,14 +82,25 @@ export function reportCallSoundPhase(holder: string, phase: string): void {
   const before = holders.size > 0;
   if (HOLDING.has(phase)) holders.set(holder, phase);
   else holders.delete(holder);
+  const strongest = strongestPhase();
+  if (get(phaseStore) !== strongest) phaseStore.set(strongest);
   const after = holders.size > 0;
   if (before === after) return;
-  Log.d(
-    'AUDIO',
-    after
-      ? `a call holds the app's sound (${holder} is ${phase}) - tones, media and notification sounds are silenced`
-      : `the call released the app's sound (${holder} is ${phase})`
-  );
+  // `Log.i`, NOT `Log.d`: the in-app log records no debug, so this line was unreadable on a device
+  // (iPhone 12, 2026-10-30). One line per CHANGE of the gate, which is what `Log.i` is for; the
+  // tones silenced meanwhile are COUNTED (one line per tone would be one per message) and told here.
+  if (after) {
+    silencedTones = 0;
+    Log.i(
+      'AUDIO',
+      `a call holds the app's sound (${holder} is ${phase}) - tones, media and notification sounds are silenced`
+    );
+  } else {
+    Log.i(
+      'AUDIO',
+      `the call released the app's sound (${holder} is ${phase}) - ${silencedTones} tone(s) silenced during the call`
+    );
+  }
   held.set(after);
 }
 
@@ -67,5 +112,7 @@ export function retireCallSoundHolder(holder: string): void {
 /** Test seam: forgets every holder, as a fresh page load would. */
 export function resetCallSoundGateForTest(): void {
   holders.clear();
+  silencedTones = 0;
   held.set(false);
+  phaseStore.set('none');
 }

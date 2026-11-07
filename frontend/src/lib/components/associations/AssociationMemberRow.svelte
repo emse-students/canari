@@ -25,6 +25,12 @@
      * stored stays as it was until the next save of that member, and opens nothing meanwhile.
      */
     kind?: Association['type'];
+    /**
+     * The flags the viewer may grant or revoke (`grantableFlags`). Any other box is drawn as it
+     * stands but disabled: the server refuses a write that changes it either way
+     * (`MEMBER_FLAGS_BEYOND_GRANTER`). Defaults to none, so a caller that forgets it offers nothing.
+     */
+    grantable?: number;
     /** `permissions` is omitted for a role-only rename, which leaves the bitmask untouched. */
     onRoleChange?: (userId: string, role: string, permissions?: number) => void | Promise<void>;
     onRemove?: (userId: string) => void | Promise<void>;
@@ -36,6 +42,7 @@
     manage = false,
     isBDE = false,
     kind = 'association',
+    grantable = 0,
     onRoleChange,
     onRemove,
   }: Props = $props();
@@ -52,6 +59,7 @@
       { flag: AssociationPermissionFlag.POST_AS_ASSO, label: m.asso_flag_post_as() },
       { flag: AssociationPermissionFlag.PROPOSE_EVENT, label: m.asso_flag_propose_event() },
       { flag: AssociationPermissionFlag.MANAGE_MEMBERS, label: m.asso_flag_manage_members() },
+      { flag: AssociationPermissionFlag.EDIT_PROFILE, label: m.asso_flag_edit_profile() },
       { flag: AssociationPermissionFlag.MANAGE_DOCUMENTS, label: m.asso_flag_manage_documents() },
       { flag: AssociationPermissionFlag.MANAGE_FORMS, label: m.asso_flag_manage_forms() },
       { flag: AssociationPermissionFlag.MANAGE_PRODUCTS, label: m.asso_flag_manage_products() },
@@ -109,7 +117,7 @@
   let showPermissions = $state(false);
 
   function toggleFlag(flag: AssociationPermissionFlag): void {
-    if (permissions === undefined) return;
+    if (permissions === undefined || !hasPermissionFlag(grantable, flag)) return;
     const next = hasPermissionFlag(permissions, flag) ? permissions & ~flag : permissions | flag;
     onRoleChange?.(member.userId, member.role, next);
   }
@@ -187,12 +195,21 @@
       class="border-cn-border/40 grid grid-cols-1 gap-x-4 gap-y-2.5 border-t pt-3 sm:grid-cols-2 lg:grid-cols-3"
     >
       {#each FLAG_LABELS as { flag, label } (flag)}
-        <label class="group flex cursor-pointer items-center gap-2">
+        {@const mayToggle = hasPermissionFlag(grantable, flag)}
+        <label
+          class="group flex items-center gap-2 {mayToggle
+            ? 'cursor-pointer'
+            : 'cursor-not-allowed opacity-50'}"
+          title={mayToggle ? undefined : m.asso_member_flag_not_grantable()}
+        >
           <input
             type="checkbox"
             checked={hasPermissionFlag(permissions ?? 0, flag)}
+            disabled={!mayToggle}
             onchange={() => toggleFlag(flag)}
-            class="border-cn-border accent-cn-yellow h-4 w-4 cursor-pointer rounded"
+            class="border-cn-border accent-cn-yellow h-4 w-4 rounded {mayToggle
+              ? 'cursor-pointer'
+              : 'cursor-not-allowed'}"
           />
           <span class="text-text-main group-hover:text-cn-dark text-sm transition-colors"
             >{label}</span

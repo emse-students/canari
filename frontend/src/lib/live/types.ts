@@ -28,6 +28,17 @@ export interface LiveView {
   lastSegmentAt: string | null;
   nextIndex: number;
   key: string;
+  /**
+   * On `GET /api/lives/:id` only: the reader moderates this live as a BDE (2026-11-02), as on the
+   * list. Absent (the broadcaster's own view, an older server) reads as false.
+   */
+  viewerModerates?: boolean;
+  /**
+   * On `GET /api/lives/:id` only: the chat is withheld from this reader - a named reader watching an
+   * association's live through a read grant alone, "voit les commentaires" off (owner, 2026-11-04).
+   * Absent (an older server) reads as false; every poll's chat block then says it again.
+   */
+  chatWithheld?: boolean;
 }
 
 /** One open live in `GET /api/lives` (newest first, at most 50) - no key; the key is read by opening it. */
@@ -36,6 +47,11 @@ export interface LiveListItem {
   broadcasterId: string;
   associationId: string | null;
   startedAt: string;
+  /**
+   * The reader moderates this live as a BDE (its governed spaces hold it, 2026-11-02): draws the
+   * staff hide button. Absent from an older server, read as false.
+   */
+  viewerModerates?: boolean;
 }
 
 /**
@@ -104,6 +120,11 @@ export interface LiveChatBlock {
   messagesCursor: number;
   reactions: LiveReactionWindow[];
   reactionsCursor: number;
+  /**
+   * `true` when the chat is withheld from this reader (owner, 2026-11-04): `messages` is empty and
+   * the message cursor is not the reader's to keep; the reactions are served as to anyone.
+   */
+  withheld?: true;
 }
 
 /** What a poll asks of the chat: absent cursors on the first poll (the newest 50, no reaction backlog). */

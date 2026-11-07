@@ -25,6 +25,11 @@ import {
   CALL_VIDEO_LADDER,
   CallVideoQualityLoop,
 } from '../../../frontend/src/lib/utils/callVideoQuality';
+import {
+  buildCallMicPipeline,
+  CallMicSwitch,
+  type NoiseSuppressionView,
+} from '../../../frontend/src/lib/utils/callNoiseSuppression';
 
 interface Impair {
   loss?: number;
@@ -34,8 +39,10 @@ interface Impair {
 }
 
 interface RigConfig {
+  /** Which end this page is: it picks the direction keys (`setKeys`), set by the driver. */
+  role?: 'caller' | 'callee';
   /** `app` = the app's constraints; `off` = every browser voice processing step disabled. */
-  processing: 'app' | 'off';
+  processing: 'app' | 'app-no-ns' | 'off';
   /** The app's E2E transform on both directions. */
   e2e: boolean;
   /** Extra Opus fmtp parameters forced on the SDP this side sends (an experiment, not the app). */
@@ -87,10 +94,22 @@ interface RigConfig {
    * running the app's quality ladder - the encode cost of each rung, measured apart.
    */
   videoRung?: number;
+  /**
+   * The app's RNNoise noise suppression (`callNoiseSuppression.ts`, IMPORTED, with the app's own
+   * worklet and wasm): the sender starts on the raw track and moves to the processed one by
+   * `replaceTrack` once the worklet proved it runs - `CallService`'s order.
+   */
+  noiseSuppression?: boolean;
 }
 
-const KEY = Uint8Array.from({ length: 32 }, (_, i) => i * 7 + 3);
-const OTHER_KEY = Uint8Array.from({ length: 32 }, (_, i) => i * 11 + 5);
+/**
+ * The call's two media keys, one per direction (`utils/callKeys.ts`, since #2176): the caller
+ * sends with `caller` and receives with `callee`, the callee the other way round. `OTHER` is a
+ * different MLS epoch's pair (the wrong-key fault): both directions differ.
+ */
+const testKey = (a: number, b: number) => Uint8Array.from({ length: 32 }, (_, i) => i * a + b);
+const KEYS = { caller: testKey(7, 3), callee: testKey(13, 1) };
+const OTHER_KEYS = { caller: testKey(11, 5), callee: testKey(17, 9) };
 
 let pc: RTCPeerConnection;
 let cfg: RigConfig;
@@ -113,6 +132,10 @@ let impairCounts = { dropped: 0, passed: 0 };
  * runs (sample, step, apply), so the rig measures the app's loop and not a copy of it.
  */
 let ladder: CallVideoQualityLoop | null = null;
+/** The app's microphone switch, on a `noiseSuppression` row. */
+let micSwitch: CallMicSwitch | null = null;
+let nsView: NoiseSuppressionView | null = null;
+const nsWaiters: (() => void)[] = [];
 
 function note(msg: string) {
   log.push(`${(performance.now() / 1000).toFixed(2)} ${msg}`);
@@ -120,6 +143,10 @@ function note(msg: string) {
 
 function constraints(): MediaTrackConstraints {
   if (cfg.processing === 'app') return buildCallAudioConstraints();
+  // EXPERIMENT: the app's chain with the BROWSER's noise suppressor off (AEC and AGC kept) - what
+  // RNNoise does when it is the only suppressor.
+  if (cfg.processing === 'app-no-ns')
+    return { ...buildCallAudioConstraints(), noiseSuppression: false, googNoiseSuppression: false };
   return {
     echoCancellation: false,
     noiseSuppression: false,
@@ -136,8 +163,12 @@ async function keyWorker(): Promise<Worker> {
       if (e.data?.type === 'keyReady') resolve();
       if (e.data?.type === 'keyError') reject(new Error(e.data.detail));
     });
-    const copy = (cfg.wrongKey ? OTHER_KEY : KEY).slice();
-    w.postMessage({ type: 'setKey', payload: copy.buffer }, [copy.buffer]);
+    // As `CallService.ensureWorkerKeyReady`: the two keys, copied and transferred.
+    const keys = cfg.wrongKey ? OTHER_KEYS : KEYS;
+    const role = cfg.role ?? 'caller';
+    const send = keys[role].slice().buffer;
+    const receive = keys[role === 'caller' ? 'callee' : 'caller'].slice().buffer;
+    w.postMessage({ type: 'setKeys', send, receive }, [send, receive]);
   });
   w.addEventListener('message', (e: MessageEvent<{ type: string; detail?: string }>) => {
     const t = e.data?.type;
@@ -232,8 +263,10 @@ async function setup(config: RigConfig) {
   pc.onconnectionstatechange = () => note(`connectionState=${pc.connectionState}`);
   if (needsTransform()) worker = await keyWorker();
   localStream = stream;
+  if (cfg.noiseSuppression) startNoiseSuppression(stream.getAudioTracks()[0]);
   for (const track of cfg.lateTrack ? stream.getVideoTracks() : stream.getTracks()) {
-    const sender = pc.addTrack(track, stream);
+    const sw = track.kind === 'audio' ? micSwitch : null;
+    const sender = pc.addTrack(sw ? sw.trackToSend() : track, stream);
     if (worker && cfg.transformOneTaskLate) await new Promise((r) => setTimeout(r, 0));
     const t = pc.getTransceivers().find((x) => x.sender === sender)!;
     const kind = track.kind as 'audio' | 'video';
@@ -245,6 +278,8 @@ async function setup(config: RigConfig) {
           transformOptions('receiver', kind)
         );
     }
+    // As CallService.initPeerConnection: after both transforms, in this task (it only queues).
+    sw?.attachSender(sender);
     if (kind === 'video') {
       cameraTransceiver = t;
       requireVideoCodec(t);
@@ -264,6 +299,35 @@ async function setup(config: RigConfig) {
   }
   await configureCallAudioSenders(pc, false, note);
   return { settings, constraints: constraints() };
+}
+
+/**
+ * As `CallService.startNoiseSuppression`: the app's switch, ON, and the app's pipeline built beside
+ * the call (never awaited by it), with the worklet and wasm the rig serves from the app's sources.
+ */
+function startNoiseSuppression(mic: MediaStreamTrack) {
+  micSwitch = new CallMicSwitch(mic, true, note, (view) => {
+    nsView = view;
+    if (view.state === 'on' || view.state === 'unavailable') nsWaiters.splice(0).forEach((w) => w());
+  });
+  const sw = micSwitch;
+  void buildCallMicPipeline(mic, {
+    createContext: () => new AudioContext({ sampleRate: 48_000, latencyHint: 'interactive' }),
+    workletUrl: '/rnnoise.worklet.js',
+    loadWasm: async () => (await fetch('/rnnoise.wasm')).arrayBuffer(),
+    log: note,
+  }).then((result) => sw.adopt(result));
+}
+
+/**
+ * Settles once the microphone switch says the sender carries the processed track (`on`) or the
+ * pipeline failed (`unavailable`): the measurement starts on what the row claims to measure.
+ */
+function nsSettled(): Promise<NoiseSuppressionView | null> {
+  if (!micSwitch) return Promise.resolve(null);
+  const done = () => nsView?.state === 'on' || nsView?.state === 'unavailable';
+  if (done()) return Promise.resolve(nsView);
+  return new Promise((resolve) => nsWaiters.push(() => resolve(nsView)));
 }
 
 /**
@@ -682,6 +746,17 @@ async function finish() {
       : null;
   ladder?.stop();
   ladder = null;
+  // Read BEFORE the switch closes: what the sender carried for the whole measurement, and the
+  // worklet's cost (its last 5 s `stats`).
+  const ns = micSwitch
+    ? {
+        state: micSwitch.reportState(),
+        sendsProcessed: micSwitch.sendsProcessed(),
+        fallbacks: micSwitch.fallbackCount(),
+        stats: micSwitch.stats(),
+      }
+    : null;
+  micSwitch?.close();
   await sampleStats();
   const senderParams = pc
     .getSenders()
@@ -733,6 +808,7 @@ async function finish() {
     engine,
     remoteVideo,
     ladder: ladderOut,
+    ns,
   };
 }
 
@@ -755,6 +831,7 @@ Object.assign(window, {
     startStats,
     finish,
     outgoing,
+    nsSettled,
   },
 });
 document.title = 'rig-ready';

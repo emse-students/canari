@@ -42,6 +42,7 @@ const ASSOCIATION_FIELDS = [
   'type',
   'promo',
   'parentAssociationId',
+  'displayParentAssociationId',
   'name2',
   'logoMediaId2',
   'archived',
@@ -56,9 +57,18 @@ const ASSOCIATION_FIELDS = [
 
 /**
  * The fields the service DERIVES and attaches to a row: the member count and the parent's name
- * (`list`, `findById`, `findBySlug`), and the caller's own membership (`listByUser`).
+ * (`list`, `findById`, `findBySlug`), the caller's own membership (`listByUser`), and
+ * `paymentsReady` (`withPaymentsReady`): whether its payments can be taken, through its own Lydia
+ * account or an approved delegate's - the one field every client readiness check draws from.
  */
-const DERIVED_FIELDS = ['memberCount', 'parentName', 'role', 'permissions', 'isAdmin'] as const;
+const DERIVED_FIELDS = [
+  'memberCount',
+  'parentName',
+  'role',
+  'permissions',
+  'isAdmin',
+  'paymentsReady',
+] as const;
 
 const VIEW_FIELDS: readonly string[] = [...ASSOCIATION_FIELDS, ...DERIVED_FIELDS];
 

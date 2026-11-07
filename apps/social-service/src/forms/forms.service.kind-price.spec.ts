@@ -3,10 +3,11 @@ import { FormsService } from './forms.service';
 import { decidesPrice, isChoiceQuestion } from './answer-options';
 
 /**
- * A FORM OF A LIST OR AN INSTITUTION IS NEVER GIVEN A PRICE (owner, 2026-10-31) - and a form that
- * already carries one is left readable and editable, never rewritten.
+ * A FORM IS GIVEN A PRICE ONLY BY AN ENTITY THAT MAY COLLECT NOW (owner, 2026-11-02): never by an
+ * institution, by a list only through an APPROVED payment delegation - and a form that already
+ * carries one is left readable and editable, never rewritten.
  */
-describe('FormsService - the price of a form of a kind that sells nothing', () => {
+describe('FormsService - the price of a form of an entity that may not collect', () => {
   const stored = (over: Record<string, unknown> = {}) => ({
     id: 'f1',
     ownerId: 'u1',
@@ -21,7 +22,11 @@ describe('FormsService - the price of a form of a kind that sells nothing', () =
     ...over,
   });
 
-  function makeService(kind: 'association' | 'list' | 'institution', form = stored()) {
+  function makeService(
+    kind: 'association' | 'list' | 'institution',
+    form = stored(),
+    delegation: 'approved' | 'pending' | null = null
+  ) {
     const formRepo: any = {
       findOne: jest.fn(() => Promise.resolve(form)),
       save: jest.fn((x: unknown) => Promise.resolve(x)),
@@ -29,7 +34,14 @@ describe('FormsService - the price of a form of a kind that sells nothing', () =
     };
     const associations: any = {
       isMember: jest.fn(() => Promise.resolve(true)),
-      kindOf: jest.fn(() => Promise.resolve(kind)),
+      collectionSubjectOf: jest.fn(() =>
+        Promise.resolve({
+          id: 'a1',
+          type: kind,
+          paymentDelegationStatus: delegation,
+          paymentParentAssociationId: delegation ? 'receiver' : null,
+        })
+      ),
       assertPaymentsReady: jest.fn(() => Promise.resolve()),
       mayAct: jest.fn(() => Promise.resolve(true)),
     };
@@ -39,6 +51,7 @@ describe('FormsService - the price of a form of a kind that sells nothing', () =
       {} as any,
       { get: jest.fn() } as any,
       associations,
+      {} as any,
       {} as any,
       {} as any,
       {} as any,
@@ -62,18 +75,32 @@ describe('FormsService - the price of a form of a kind that sells nothing', () =
       ...over,
     }) as any;
 
-  it.each(['list', 'institution'] as const)(
-    'refuses a priced form created for a %s, typed 403, nothing saved',
-    async (kind) => {
+  it.each([
+    ['list', 'LIST_DELEGATE_REQUIRED'],
+    ['institution', 'ASSOCIATION_KIND_DOES_NOT_SELL'],
+  ] as const)(
+    'refuses a priced form created for a %s with no approved delegate, typed %s, nothing saved',
+    async (kind, code) => {
       const { service, formRepo } = makeService(kind);
       const attempt = service.create(dto({ basePrice: 500 }), false);
       await expect(attempt).rejects.toBeInstanceOf(ForbiddenException);
-      await expect(attempt).rejects.toMatchObject({
-        response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' },
-      });
+      await expect(attempt).rejects.toMatchObject({ response: { code } });
       expect(formRepo.save).not.toHaveBeenCalled();
     }
   );
+
+  it('refuses a list whose delegation is only PENDING', async () => {
+    const { service } = makeService('list', stored(), 'pending');
+    await expect(service.create(dto({ basePrice: 500 }), false)).rejects.toMatchObject({
+      response: { code: 'LIST_DELEGATE_REQUIRED' },
+    });
+  });
+
+  it('lets a list with an APPROVED delegate price its forms', async () => {
+    const { service, formRepo } = makeService('list', stored(), 'approved');
+    await service.create(dto({ basePrice: 500 }), false);
+    expect(formRepo.save).toHaveBeenCalledTimes(1);
+  });
 
   it('refuses a price grid and a payment switch on a list just the same', async () => {
     const { service } = makeService('list');
@@ -141,7 +168,7 @@ describe('FormsService - the price of a form of a kind that sells nothing', () =
       },
     ];
     await expect(service.update('f1', dto({ items }), 'u1', false)).rejects.toMatchObject({
-      response: { code: 'ASSOCIATION_KIND_DOES_NOT_SELL' },
+      response: { code: 'LIST_DELEGATE_REQUIRED' },
     });
     expect(formRepo.save).not.toHaveBeenCalled();
   });

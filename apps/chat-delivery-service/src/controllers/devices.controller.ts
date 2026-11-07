@@ -26,7 +26,7 @@ import {
   KEY_PACKAGE_LIFETIME_DAYS,
   lastResortDeadline,
 } from '../entities/key-package.entity';
-import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
+import { OneTimeKeyPackage, usableOneTimePackage } from '../entities/one-time-key-package.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
@@ -188,10 +188,21 @@ export class DevicesController {
    * re-added at once on a Mi 9T produced one join and nineteen `NoMatchingKeyPackage` refusals,
    * and the device re-asked for a Welcome for ever. See
    * `frontend/mls-core/tests/last_resort_key_package.rs`.
+   *
+   * **`peek` READS, IT NEVER CLAIMS** (2026-11-06). A caller that only asks whether the device is
+   * published - the device itself, before each external join - used to pop one of its own one-time
+   * packages per question and throw it away: a device retrying a handful of unjoinable groups on the
+   * recovery cadence drained its whole pool, and every peer was then served the static row
+   * (`docs/wiki/protocols/key-package-pool.md`). A peek claims no one-time row and refuses exactly
+   * when a claim would: `revoked`, `unregistered`, and `expired` only when the static row elapsed
+   * AND no usable one-time package is left (it COUNTS them, it never takes one). Its package is the
+   * static row, a presence answer - elapsed in that one case, so no caller may build a Welcome on
+   * it; an adder claims.
    */
   private async resolveKeyPackagePayloadForDevice(
     userId: string,
-    deviceId: string
+    deviceId: string,
+    mode: 'claim' | 'peek' = 'claim'
   ): Promise<KeyPackageResolution> {
     const revoked = await this.revokedDeviceRepo.findOne({
       where: activeRevocationWhere({ userId, deviceId }),
@@ -202,6 +213,22 @@ export class DevicesController {
       where: { userId, deviceId },
     });
     if (!device) return { refusal: 'unregistered' };
+
+    if (mode === 'peek') {
+      // JUDGED AS THE CLAIM JUDGES IT, or the roster disagrees with the adder: a device whose static
+      // row elapsed while it still holds a usable one-time package is served one by a claim, so a
+      // peek must list it too - left out, the device panel could neither show nor revoke it, and the
+      // client's pre-claim marker was written without it. Only the elapsed case pays the count.
+      const deadline = lastResortDeadline(device);
+      const usable = deadline ? await this.countUsableOneTimePackages(userId, deviceId) : 0;
+      const published = !deadline || usable > 0;
+      this.logger.debug(
+        `[KP] peek ${userId}/${deviceId} - ${
+          deadline ? `static row elapsed, ${usable} usable one-time package(s)` : 'published'
+        }, none claimed`
+      );
+      return published ? { keyPackage: device.keyPackage } : { refusal: 'expired' };
+    }
 
     const otkp = await this.dataSource.transaction(async (manager) => {
       const found = await manager
@@ -221,9 +248,7 @@ export class DevicesController {
         // refused since `minClientVersion` 1.2.7; the NULLs they wrote remain). The bound below is
         // the same arithmetic the backfill proved exact for THIS table, whose rows are inserted once
         // and never updated, so every row now answers the question whether or not a client spoke.
-        .andWhere(
-          `COALESCE(otkp."notAfter", (otkp."createdAt" AT TIME ZONE 'UTC') + interval '${KEY_PACKAGE_LIFETIME_DAYS} days') > now()`
-        )
+        .andWhere(usableOneTimePackage('otkp'))
         // NEAREST TO EXPIRY FIRST, which is only correct now that the line above excludes the
         // elapsed ones: of the packages that can still be used, spending the shortest-lived first
         // is what stops it elapsing unused. `createdAt ASC` said the same thing by proxy and said it
@@ -296,8 +321,7 @@ export class DevicesController {
       deviceOs?: string;
       deviceAppVersion?: string;
     },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     // IDENTITIES, not query values: this path creates a KeyPackage and a `pending` membership in
     // every group the user is in, so a placeholder accepted here becomes addressable and can then
@@ -306,13 +330,10 @@ export class DevicesController {
     const deviceId = sanitizeIdentityValue(body.deviceId, 'deviceId');
     // A device may only register under its own account (audit S2): binding to the HMAC-bound
     // x-user-id prevents an attacker from registering a device under a victim's userId, which
-    // would auto-provision pending memberships for the victim's groups and phish Welcomes.
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      userId,
-      'Cannot register a device for another user'
-    );
+    // would auto-provision pending memberships for the victim's groups and phish Welcomes. NO
+    // PLATFORM-ADMIN EXEMPTION (owner, 2026-11-02): a device registered under somebody else is
+    // routed into every one of their conversations.
+    assertCallerOwnsUserId(headerUserId, userId, 'Cannot register a device for another user');
     // A deleted device is denylisted for good, and `resolveDeviceId` deliberately restores the
     // SAME id after a reinstall - so without this check the row is written, 200 is returned, and
     // the device is then filtered out of getUserDevices and resolves to a null KeyPackage
@@ -463,18 +484,13 @@ export class DevicesController {
   /** Bulk-uploads one-time prekeys for the current device. */
   async registerDevicePrekeys(
     @Body() body: { userId: string; deviceId: string; keyPackages: unknown },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const userId = sanitizeQueryValue(body.userId, 'userId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
-    // Prekeys may only be uploaded for the caller's own account (audit S2).
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      userId,
-      'Cannot upload prekeys for another user'
-    );
+    // Prekeys may only be uploaded for the caller's own account (audit S2), a global admin included
+    // (owner, 2026-11-02): a package published under somebody else is the key their next Add uses.
+    assertCallerOwnsUserId(headerUserId, userId, 'Cannot upload prekeys for another user');
 
     // THE SAME REFUSAL AS `register-device`, for the same id: a banned device publishing a pool of
     // one-time packages would hand peers packages for a device no Welcome may reach.
@@ -546,20 +562,14 @@ export class DevicesController {
     @Param('deviceId') deviceId: string,
     @Body()
     body: { deviceName?: string; deviceOs?: string; deviceAppVersion?: string },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     // A device's metadata may only be edited by its owner (audit S4): the userId is a path
     // param, so without this binding any authenticated user could rewrite another user's
-    // device name/OS. Admins exempt; legacy no-op when x-user-id absent.
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      safeUserId,
-      'Cannot update another user device metadata'
-    );
+    // device name/OS. No admin exemption (owner, 2026-11-02).
+    assertCallerOwnsUserId(headerUserId, safeUserId, 'Cannot update another user device metadata');
     const deviceName = sanitizeOptionalDeviceName(body.deviceName);
     const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
     const deviceAppVersion = sanitizeOptionalDeviceAppVersion(body.deviceAppVersion);
@@ -600,11 +610,25 @@ export class DevicesController {
   /**
    * Returns one consumable KeyPackage for a specific device (invite / welcome flows).
    * Unlike the user device list, there is no 30-day cutoff - only revoked / missing devices 404.
+   *
+   * `?peek=1` asks whether the device is published WITHOUT claiming a package (see
+   * `resolveKeyPackagePayloadForDevice`): same body, the static row as the package, and the same
+   * refusals a claim would answer - `expired` only once no usable one-time package is left either.
+   * A server without it ignores the query and claims, which is what every client did before - so
+   * the client needs no floor and nothing falls back.
    */
-  async getDeviceKeyPackage(@Param('userId') userId: string, @Param('deviceId') deviceId: string) {
+  async getDeviceKeyPackage(
+    @Param('userId') userId: string,
+    @Param('deviceId') deviceId: string,
+    @Query('peek') peek?: string
+  ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
-    const resolved = await this.resolveKeyPackagePayloadForDevice(safeUserId, safeDeviceId);
+    const resolved = await this.resolveKeyPackagePayloadForDevice(
+      safeUserId,
+      safeDeviceId,
+      peek === '1' ? 'peek' : 'claim'
+    );
     if ('refusal' in resolved) {
       // The resolver refuses in exactly three cases and the docblock above names all of them. None
       // is a malformed request - see the sibling refusal in `updateDeviceMetadata` for why "absent"
@@ -667,8 +691,19 @@ export class DevicesController {
 
   @UseGuards(HeaderAuthGuard)
   @Get('mls/devices/:userId')
-  /** Lists all registered devices for a user, including their key packages (within the retention window). */
-  async getUserDevices(@Param('userId') userId: string) {
+  /**
+   * Lists all registered devices for a user, including their key packages (within the retention window).
+   *
+   * **WITHOUT `?peek=1` THIS CLAIMS ONE ONE-TIME PACKAGE FROM EVERY DEVICE IT LISTS** - the answer of
+   * an adder that is about to add every one of them. A caller that only needs the roster (a settings
+   * count, the device panel, a device's name) asks `?peek=1`: each device is judged as the
+   * single-device peek judges it (`resolveKeyPackagePayloadForDevice`), its static row is the package,
+   * and no one-time row is touched. Production 2026-11-06: roster reads drained every pool of one
+   * account (`docs/wiki/protocols/key-package-pool.md`). A server without it ignores the query and
+   * claims, as before, so the client needs no floor.
+   */
+  async getUserDevices(@Param('userId') userId: string, @Query('peek') peek?: string) {
+    const mode = peek === '1' ? 'peek' : 'claim';
     // Only return devices seen within the retention window. Aligned with the
     // staleness / key-package retention so a still-recoverable device stays a valid
     // invite target (a device reset to stale only past the same window is otherwise
@@ -692,7 +727,8 @@ export class DevicesController {
       activeDevices.map(async (device) => {
         const resolved = await this.resolveKeyPackagePayloadForDevice(
           device.userId,
-          device.deviceId
+          device.deviceId,
+          mode
         );
         // A DEVICE WITH NOTHING USABLE IS NOT AN INVITE TARGET, and dropping it here is what makes
         // the refusal reach a person: the client throws "no active device found" rather than
@@ -721,17 +757,11 @@ export class DevicesController {
   async isDeviceRevoked(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      safeUserId,
-      'Cannot read another user devices'
-    );
+    assertCallerOwnsUserId(headerUserId, safeUserId, 'Cannot read another user devices');
     const revoked = await this.revokedDeviceRepo.findOne({
       where: activeRevocationWhere({ userId: safeUserId, deviceId: safeDeviceId }),
     });
@@ -749,17 +779,17 @@ export class DevicesController {
     // up with a pool of fifty that every peer is refused. Expired rows are left to the reclaim
     // rather than deleted here: a read endpoint that deletes is a surprise, and the sweep says how
     // many it took.
-    const count = await this.oneTimeKeyPackageRepo
-      .createQueryBuilder('otkp')
-      .where('otkp.userId = :userId AND otkp.deviceId = :deviceId', {
-        userId: safeUserId,
-        deviceId: safeDeviceId,
-      })
-      .andWhere(
-        `COALESCE(otkp."notAfter", (otkp."createdAt" AT TIME ZONE 'UTC') + interval '${KEY_PACKAGE_LIFETIME_DAYS} days') > now()`
-      )
-      .getCount();
+    const count = await this.countUsableOneTimePackages(safeUserId, safeDeviceId);
     return { count };
+  }
+
+  /** How many of a device's one-time packages are still usable ({@link usableOneTimePackage}). Reads, never claims. */
+  private countUsableOneTimePackages(userId: string, deviceId: string): Promise<number> {
+    return this.oneTimeKeyPackageRepo
+      .createQueryBuilder('otkp')
+      .where('otkp.userId = :userId AND otkp.deviceId = :deviceId', { userId, deviceId })
+      .andWhere(usableOneTimePackage('otkp'))
+      .getCount();
   }
 
   @UseGuards(HeaderAuthGuard)
@@ -793,19 +823,13 @@ export class DevicesController {
   async purgeDevicePrekeys(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ): Promise<{ status: string; deleted: number; keyPackages: string[] }> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     // Prekeys may only be purged for the caller's own device (audit S4): purging a victim's
-    // one-time KeyPackages would degrade their invite availability. Admins exempt.
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      safeUserId,
-      'Cannot purge another user device prekeys'
-    );
+    // one-time KeyPackages would degrade their invite availability. No admin exemption (owner, 2026-11-02).
+    assertCallerOwnsUserId(headerUserId, safeUserId, 'Cannot purge another user device prekeys');
     const result = await this.oneTimeKeyPackageRepo
       .createQueryBuilder()
       .delete()
@@ -868,18 +892,12 @@ export class DevicesController {
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
     @Body() body: { ids: unknown },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ): Promise<{ status: string; deleted: number }> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
-    // Prekeys may only be pruned for the caller's own device (audit S4). Admins exempt.
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      safeUserId,
-      'Cannot prune another user device prekeys'
-    );
+    // Prekeys may only be pruned for the caller's own device (audit S4). No admin exemption (owner, 2026-11-02).
+    assertCallerOwnsUserId(headerUserId, safeUserId, 'Cannot prune another user device prekeys');
     if (!Array.isArray(body.ids) || body.ids.length === 0) {
       throw new BadRequestException('ids must be a non-empty array');
     }
@@ -910,7 +928,6 @@ export class DevicesController {
     @Param('deviceId') deviceId: string,
     @Query('reason') reasonRaw?: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string,
     @Headers('x-session-id') headerSessionId?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
@@ -929,13 +946,8 @@ export class DevicesController {
     // A device may only be deleted by its owner (audit S4): this route purges the full
     // per-device footprint (memberships, KeyPackages, queued messages, push token) and
     // denylists re-registration, so without this binding any user could eject a victim from
-    // every conversation. Admins exempt; legacy no-op when x-user-id absent.
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      safeUserId,
-      'Cannot delete another user device'
-    );
+    // every conversation. No admin exemption (owner, 2026-11-02).
+    assertCallerOwnsUserId(headerUserId, safeUserId, 'Cannot delete another user device');
 
     // 1. Purge the full per-device footprint (shared helper with the stale-device GC), recording the
     //    key groups the device held: its rows were the binding the revoked-leaves question reads.

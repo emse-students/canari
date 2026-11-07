@@ -234,6 +234,10 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     sql: "lives_mode IN ('off', 'on')",
     holds: oneOf('lives_mode', ['off', 'on']),
   },
+  CHK_platform_config_push_mode: {
+    sql: "push_mode IN ('full', 'wake')",
+    holds: oneOf('push_mode', ['full', 'wake']),
+  },
   CHK_spaces_campus: {
     sql: "campus IN ('saint-etienne', 'gardanne')",
     holds: oneOf('campus', CAMPUSES),
@@ -250,6 +254,11 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
   CHK_user_follows_accepted_at: {
     sql: `status <> 'accepted' OR "acceptedAt" IS NOT NULL`,
     holds: (r) => (r.status ?? 'pending') !== 'accepted' || given(r.acceptedAt),
+  },
+  // `studentsOnly` defaults to false since migration 133.
+  CHK_posts_students_only_entity: {
+    sql: `NOT "studentsOnly" OR "associationId" IS NOT NULL`,
+    holds: (r) => r.studentsOnly !== true || given(r.associationId),
   },
   // `kind` defaults to 'post'.
   posts_kind_shape: {

@@ -9,7 +9,6 @@
     X,
     FileText,
     CloudUpload,
-    LoaderCircle,
     ChartColumn,
     SmilePlus,
     Images,
@@ -18,11 +17,7 @@
     Plus,
     Check,
     Camera,
-    Clapperboard,
   } from '@lucide/svelte';
-  import { goto } from '$app/navigation';
-  import { resolve } from '$app/paths';
-  import { CAMERA_PLACE } from '$lib/navigation/places';
   import CameraOverlay from '$lib/components/reels/CameraOverlay.svelte';
   import { chatReelAllowed } from '$lib/reels/chatReelWriter';
   import GlassMenuButton, {
@@ -80,6 +75,7 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import VoiceMessagePlayer from '$lib/components/messages/VoiceMessagePlayer.svelte';
   import { isNarrowChatLayout, NARROW_CHAT_QUERY, onViewportChange } from '$lib/utils/viewport';
+  import type { MentionRosterMember } from '$lib/utils/users/mentionRoster';
 
   interface ReplyTo {
     id: string;
@@ -125,7 +121,7 @@
     onFilesSelected?: (files: File[]) => void;
     /**
      * The conversation takes a CanaReel filmed here (a DM or a group - never a salon). Only effective
-     * while the writer switch is on (`CHAT_REEL_WRITER_ENABLED`, off until RC-5 and RC-7).
+     * while the writer switch is on (`CHAT_REEL_WRITER_ENABLED`: a dev build only).
      */
     reelMessages?: boolean;
     /**
@@ -143,10 +139,8 @@
     onRemovePendingFile?: (index: number) => void;
     /** A picked video being re-encoded before it joins `pendingFiles` - drawn with its cancel. */
     videoPreparation?: VideoPreparationState;
-    /** Whether an upload is currently in progress (disables the send button). */
-    isUploading?: boolean;
-    /** When set, only users whose IDs are in this list appear in @mention suggestions. */
-    allowedUserIds?: string[];
+    /** The conversation's members, suggested locally by the @mention picker. */
+    mentionRoster?: MentionRosterMember[];
     /**
      * A line ABOUT the send (its refusal, or what it waits for), drawn at the top of the composer
      * stack. Inside the footer on purpose: the footer's measured height is the thread's
@@ -175,8 +169,7 @@
     pendingFiles = [],
     onRemovePendingFile,
     videoPreparation,
-    isUploading = false,
-    allowedUserIds,
+    mentionRoster,
     notice,
   }: Props = $props();
 
@@ -390,19 +383,8 @@
 
   const addMenuItems = $derived.by((): GlassMenuItem[] => {
     const items: GlassMenuItem[] = [...attachMenuItems];
-    // The CanaReels camera is a PLACE, not a picker: the tab is otherwise reached only by a swipe
-    // right of the leftmost tab, which nothing says (user, 2026-10-18, WP-REELS-MENU). A draft left
-    // in this composer is kept by the composer's own draft store, so leaving loses nothing.
-    items.push({
-      id: 'canareels',
-      label: m.chat_attach_menu_canareels(),
-      icon: Clapperboard,
-      onSelect: () => {
-        Log.d('ChatComposer', 'menu: CanaReels camera tab');
-        dispatchSurface({ type: 'pick', target: 'away' });
-        void goto(resolve(CAMERA_PLACE.href));
-      },
-    });
+    // ONE camera entry (owner, 2026-11-01): the CanaReels TAB entry of WP-REELS-MENU is gone from this
+    // list; the tab stays in the navigation, and "Ouvrir la camera" above is the conversation's way in.
     if (onSendGif) {
       items.push({
         id: 'gif',
@@ -540,7 +522,7 @@
   const isSendDisabled = $derived(
     isEditing
       ? !messageText.trim() || messageText.trim() === (editingText ?? '').trim()
-      : (!messageText.trim() && pendingFiles.length === 0) || isUploading
+      : !messageText.trim() && pendingFiles.length === 0
   );
 
   // ── Typing signal (throttled) ──────────────────────────────────────────────
@@ -1181,39 +1163,25 @@
 
       <!-- The phone apps' "+": every action, growing out of one glass button (see `addMenuItems`). -->
       {#if appChrome && !actionsHidden}
-        {#if isUploading}
-          <div class="shrink-0">
-            <button
-              type="button"
-              disabled
-              aria-label={m.chat_attach_file_label()}
-              class="glass-chrome ui-icon-button rounded-full"
-            >
-              <LoaderCircle class="h-5 w-5 animate-spin text-amber-500" strokeWidth={2.5} />
-            </button>
-          </div>
-        {:else}
-          <!-- On iOS a native glass "+" is drawn at this box (`nativeGlassPiece`); the spinner
-               above stays web, since an upload is short and cannot be picked from. -->
-          <span
-            class="inline-flex shrink-0"
-            use:nativeGlassPiece={{
-              id: 'chat-add',
-              label: m.chat_composer_add_label(),
-              icon: Plus,
-              items: addMenuItems,
-            }}
-          >
-            <GlassMenuButton
-              icon={Plus}
-              label={m.chat_composer_add_label()}
-              items={addMenuItems}
-              open={surface === 'menu'}
-              onOpenChange={onMenuOpenChange}
-              keepsFocus={menuPressKeepsFocus(keyboardOpen)}
-            />
-          </span>
-        {/if}
+        <!-- On iOS a native glass "+" is drawn at this box (`nativeGlassPiece`). -->
+        <span
+          class="inline-flex shrink-0"
+          use:nativeGlassPiece={{
+            id: 'chat-add',
+            label: m.chat_composer_add_label(),
+            icon: Plus,
+            items: addMenuItems,
+          }}
+        >
+          <GlassMenuButton
+            icon={Plus}
+            label={m.chat_composer_add_label()}
+            items={addMenuItems}
+            open={surface === 'menu'}
+            onOpenChange={onMenuOpenChange}
+            keepsFocus={menuPressKeepsFocus(keyboardOpen)}
+          />
+        </span>
       {/if}
 
       <!-- The website's paperclip. An Android browser gets Canari's menu (`attachMenuItems`); an iOS
@@ -1250,16 +1218,11 @@
         <div class="shrink-0">
           <button
             onclick={() => openSource('files')}
-            disabled={isUploading}
             title={m.chat_attach_file_title()}
             aria-label={m.chat_attach_file_label()}
             class="ui-icon-button chat-composer-icon-button"
           >
-            {#if isUploading}
-              <LoaderCircle class="h-5 w-5 animate-spin text-amber-500" strokeWidth={2.5} />
-            {:else}
-              <Paperclip size={20} strokeWidth={2} />
-            {/if}
+            <Paperclip size={20} strokeWidth={2} />
           </button>
         </div>
       {/if}
@@ -1332,7 +1295,7 @@
         <MentionComposerInput
           bind:this={mentionComposer}
           value={messageText}
-          {allowedUserIds}
+          {mentionRoster}
           onchange={handleMessageChange}
           class="min-w-0 flex-1"
           editorClass="chat-composer-textarea"

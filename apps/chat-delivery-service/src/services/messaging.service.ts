@@ -29,7 +29,7 @@ import {
   publishIfAddressable,
 } from './addressing';
 import { getApps } from 'firebase-admin/app';
-import { getMessaging } from 'firebase-admin/messaging';
+import { getMessaging, type Message } from 'firebase-admin/messaging';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { GroupMember, isGroupUuid } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
@@ -51,6 +51,7 @@ import {
   mlsFrameEpoch,
   isPublicMlsFrame,
   readCommitFrame,
+  sealedBeforeAdmission,
 } from '../utils/mls-frame-epoch';
 import { groupInfoLeafIdentity } from '../utils/mls-group-info';
 import {
@@ -59,10 +60,13 @@ import {
   type DistributionScope,
   distributionScopeOf,
   isEntitledToDistributionGroup,
+  isSalonReader,
+  salonIdOf,
 } from '../internal/distribution-entitlement';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import {
   ADMITTED_SEAT,
+  seatStillAwaits,
   awaitingAdmissionRefusal,
   callerSeatStandings,
   endDeviceMemberships,
@@ -70,6 +74,9 @@ import {
   refuseAwaitingSeat,
   standingOnGroupOfKind,
   assertCallerActsOnGroup,
+  assertCallerHoldsSeat,
+  callerSeatStanding,
+  refuseNotAMember,
   dateArrivalAtAdmission,
   exclusionWindows,
   openMissingIntervals,
@@ -89,6 +96,7 @@ import {
   type NoHolderFacts,
 } from '../utils/device-seat';
 import { isBlockedBetween } from '../utils/user-blocks';
+import { readPushMode } from '../utils/push-mode';
 import { sameSideOfReviewCohort } from '../review-cohort';
 import {
   SHARED_PAYLOAD_WRITES_ENV,
@@ -120,6 +128,8 @@ import {
 import {
   buildPushDataFields,
   buildApnsRequest,
+  buildWakeApnsRequest,
+  buildWakeDataFields,
   LONGEST_FALLBACK_LOCALE,
   buildInternalAndroidHalf,
   buildInternalApnsHalf,
@@ -140,6 +150,7 @@ import {
   isUnresolvedIdentity,
   canonicalDeviceKey,
   canonicalLeafIdentity,
+  canonicalUserId,
 } from '../utils/sanitize';
 import {
   HISTORY_STREAM_MAXLEN,
@@ -882,8 +893,17 @@ export function capLoggedDevices(ids: readonly string[]): string[] {
  */
 interface FanOutTally {
   pushed: number;
+  /** Of `pushed`, how many left as a content-free wake-up (`push_mode = 'wake'`). */
+  woken: number;
   pushes: Promise<unknown>[];
 }
+
+/**
+ * Why `getCommitAcceptedAt` answered no instant - carried to the client so its line can be logged at
+ * the level the cause deserves: `pruned` is the retention working, `not-yet` a client ahead of the
+ * group, `hole` a commit path that advanced without logging.
+ */
+export type MissingCommitReason = 'pruned' | 'not-yet' | 'hole';
 
 @Injectable()
 export class MessagingService {
@@ -1129,39 +1149,66 @@ export class MessagingService {
   }
 
   /**
-   * Send a data-only FCM push to every token registered for a given queued
-   * message's recipient.  Data-only means onMessageReceived() fires even when
-   * the app is in the background, letting the Android service decrypt and
-   * display the notification locally.
+   * The FCM message of a content-free wake-up push for one token: the Android data map, or the APNs
+   * request in the device's language - nothing else (`buildWakeDataFields`, `buildWakeApnsRequest`).
+   * Android keeps the full push's priority and TTL: a wake that arrives late is fetched late, and the
+   * row it names is still queued.
+   *
+   * @param pt - The destination token, whose platform and locale decide the shape.
+   * @param input - The frame's description, read for its id, `silent` and `mentionsOnly` only.
    */
-  private async sendFcmForQueued(
+  private buildWakeMessage(pt: PushToken, input: PushMessageInput): Message {
+    if (pt.platform === 'ios') {
+      const request = buildWakeApnsRequest(
+        input.queuedMessageId,
+        input.silent,
+        !!input.mentionsOnly,
+        pt.locale
+      );
+      return {
+        token: pt.token,
+        apns: {
+          payload: request.payload,
+          headers: {
+            'apns-push-type': request.pushType,
+            'apns-priority': String(request.priority),
+          },
+        },
+      };
+    }
+    return {
+      token: pt.token,
+      data: buildWakeDataFields(input.queuedMessageId, input.silent, !!input.mentionsOnly),
+      android: { priority: 'high', ttl: 86_400_000 },
+    };
+  }
+
+  /**
+   * Everything a push says about one queued frame, decided ONCE for both carriers: the full push
+   * (`sendFcmForQueued`) and the wake-up fetch (`GET /mls/push/wake`, which a device calls instead
+   * of reading the push when `push_mode = 'wake'`). Two copies of these decisions would be two
+   * answers to "does this frame draw, and under which names" for one frame.
+   *
+   * `proto` is left empty: how the ciphertext travels is the carrier's question.
+   *
+   * @param queued - The queued row (its recipient decides the switches and the level).
+   * @param groupId - The conversation the frame belongs to.
+   * @param senderId - Its author.
+   * @param silent - The sender's own "draw nothing" (receipts, own-device copies, control frames).
+   * @param traceId - The send's trace, for the decision lines.
+   * @param stage - `send` logs the decisions; `fetch` (the wake-up fetch of a frame whose push
+   *   already left) repeats none of them - they were said once, when the push was sent. Only what can
+   *   differ at fetch time (the group read failing, the row gone) is said again.
+   */
+  async describeQueuedFrame(
     queued: QueuedMessage,
-    traceId: string,
     groupId: string,
     senderId: string,
-    silent = false,
-    batch?: FanOutTally
-  ): Promise<void> {
-    if (getApps().length === 0) return;
-
-    const pushTokens = await this.pushTokenRepo.find({
-      where: { userId: queued.recipientId, deviceId: queued.deviceId },
-    });
-
-    if (pushTokens.length === 0) {
-      // A RATE, NOT AN EVENT: every desktop and web device has no token for ever, so this fired
-      // once per addressee per send. Said once per device, then at its 10th, 100th... send; the
-      // population is `tools/cross-client-harness/devices.mjs --unpushable`, not this line.
-      const nth = this.noPushTokenRepeats.hit(`${queued.recipientId}:${queued.deviceId}`);
-      if (nth !== null) {
-        this.logger.log(
-          `[PUSH_SEND][${traceId}] No push token for user=${cutUserId(queued.recipientId)} device=${cutDeviceId(queued.deviceId)}` +
-            (nth === 1 ? ' (repeats are counted, printed at 10, 100...)' : ` - send #${nth} to it`)
-        );
-      }
-      return;
-    }
-
+    silent: boolean,
+    traceId: string,
+    stage: 'send' | 'fetch' = 'send'
+  ): Promise<PushMessageInput> {
+    const announce = stage === 'send';
     // THE RECIPIENT'S "MESSAGES" SWITCH. The frame must still REACH the device - an MLS ciphertext is
     // state the account needs to stay decryptable, so it cannot be dropped like a social push - but it
     // may be told to draw nothing: the same `silent` the own-device copies and receipts already use,
@@ -1176,15 +1223,17 @@ export class MessagingService {
       const disabled = await readDisabledCategories(this.groupRepo.manager, queued.recipientId);
       if (disabled.has('messages')) {
         drawNothing = true;
-        this.logger.log(
-          `[PUSH_SEND][${traceId}] category=messages disabled by user=${cutUserId(queued.recipientId)} - sent silent`
-        );
+        if (announce)
+          this.logger.log(
+            `[PUSH_SEND][${traceId}] category=messages disabled by user=${cutUserId(queued.recipientId)} - sent silent`
+          );
       } else if (!isGroupUuid(groupId)) {
         // Every MLS conversation is a uuid row; a queued frame naming anything else is a defect
         // upstream, and the level it cannot have is not invented here.
-        this.logger.warn(
-          `[PUSH_SEND][${traceId}] group=${groupId} is not a uuid - no conversation level applies`
-        );
+        if (announce)
+          this.logger.warn(
+            `[PUSH_SEND][${traceId}] group=${groupId} is not a uuid - no conversation level applies`
+          );
       } else {
         const level = await readGroupNotificationLevel(
           this.groupRepo.manager,
@@ -1193,14 +1242,16 @@ export class MessagingService {
         );
         if (level === 'none') {
           drawNothing = true;
-          this.logger.log(
-            `[PUSH_SEND][${traceId}] level=none for user=${cutUserId(queued.recipientId)} group=${groupId} - sent silent`
-          );
+          if (announce)
+            this.logger.log(
+              `[PUSH_SEND][${traceId}] level=none for user=${cutUserId(queued.recipientId)} group=${groupId} - sent silent`
+            );
         } else if (level === 'mentions') {
           mentionsOnly = true;
-          this.logger.log(
-            `[PUSH_SEND][${traceId}] level=mentions for user=${cutUserId(queued.recipientId)} group=${groupId} - the device decides`
-          );
+          if (announce)
+            this.logger.log(
+              `[PUSH_SEND][${traceId}] level=mentions for user=${cutUserId(queued.recipientId)} group=${groupId} - the device decides`
+            );
         }
       }
     }
@@ -1251,17 +1302,9 @@ export class MessagingService {
     // when decryption fails in the background (SQLite lock / MLS state absent).
     const senderName = await resolveUserDisplayName(this.groupRepo.manager, senderId);
 
-    // Inline ciphertext eliminates the extra HTTP round-trip in the Kotlin
-    // service and avoids auth issues when the app is cold-started. FCM caps the
-    // DATA MAP at 4 KB, keys included - so what the ciphertext may occupy is
-    // whatever the other nine fields leave, computed from the fields themselves
-    // (`inlineProtoBudget`). A constant chosen ahead of them bounded the wrong
-    // quantity and let a long sender or group name push the map past the limit.
-    const protoB64 = queued.proto ?? queued.content ?? '';
-
     // Shared, transport-agnostic description consumed by both the FCM data
     // payload and the APNs custom keys (see push-payload.ts).
-    const messageInput: PushMessageInput = {
+    return {
       groupId,
       queuedMessageId: queued.id,
       senderId,
@@ -1269,7 +1312,7 @@ export class MessagingService {
       groupName,
       isGroup,
       isKeyDistribution,
-      // Filled in below once the budget the other fields leave is known.
+      // Filled in by the carrier: the full push once the budget is known, the wake fetch whole.
       proto: '',
       // Own-device copies, read receipts and welcome packets are not shown.
       silent: drawNothing,
@@ -1277,6 +1320,54 @@ export class MessagingService {
       isWelcome: !!queued.isWelcome,
       createdAt: queued.createdAt.toISOString(),
     };
+  }
+
+  /**
+   * Send a data-only FCM push to every token registered for a given queued
+   * message's recipient.  Data-only means onMessageReceived() fires even when
+   * the app is in the background, letting the Android service decrypt and
+   * display the notification locally.
+   */
+  private async sendFcmForQueued(
+    queued: QueuedMessage,
+    traceId: string,
+    groupId: string,
+    senderId: string,
+    silent = false,
+    batch?: FanOutTally
+  ): Promise<void> {
+    if (getApps().length === 0) return;
+
+    const pushTokens = await this.pushTokenRepo.find({
+      where: { userId: queued.recipientId, deviceId: queued.deviceId },
+    });
+
+    if (pushTokens.length === 0) {
+      // A RATE, NOT AN EVENT: every desktop and web device has no token for ever, so this fired
+      // once per addressee per send. Said once per device, then at its 10th, 100th... send; the
+      // population is `tools/cross-client-harness/devices.mjs --unpushable`, not this line.
+      const nth = this.noPushTokenRepeats.hit(`${queued.recipientId}:${queued.deviceId}`);
+      if (nth !== null) {
+        this.logger.log(
+          `[PUSH_SEND][${traceId}] No push token for user=${cutUserId(queued.recipientId)} device=${cutDeviceId(queued.deviceId)}` +
+            (nth === 1 ? ' (repeats are counted, printed at 10, 100...)' : ` - send #${nth} to it`)
+        );
+      }
+      return;
+    }
+
+    // ONE DESCRIPTION OF THE FRAME, shared with `GET /mls/push/wake`: a wake-up push leaves it here
+    // and the device fetches the same map the full push would have carried.
+    const messageInput = await this.describeQueuedFrame(queued, groupId, senderId, silent, traceId);
+    const { senderName, groupName } = messageInput;
+
+    // Inline ciphertext eliminates the extra HTTP round-trip in the Kotlin
+    // service and avoids auth issues when the app is cold-started. FCM caps the
+    // DATA MAP at 4 KB, keys included - so what the ciphertext may occupy is
+    // whatever the other nine fields leave, computed from the fields themselves
+    // (`inlineProtoBudget`). A constant chosen ahead of them bounded the wrong
+    // quantity and let a long sender or group name push the map past the limit.
+    const protoB64 = queued.proto ?? queued.content ?? '';
 
     const carriage = decideProtoCarriage(messageInput, protoB64);
     const inlineProto = carriage.proto;
@@ -1325,39 +1416,54 @@ export class MessagingService {
     // ten pushes in one run, twice over (2026-08-29 and 2026-08-30). FCM ignores the apns block
     // for an Android token and the data map is redundant for an iOS one - the APNs payload is
     // self-contained by design - so each token now carries exactly the half it reads.
+    //
+    // THE WAKE-UP PUSH (owner, 2026-11-02): two locks, ANDed - the estate's `push_mode` and the
+    // token's own `wakeCapable` (its binary declared it understands one). The switch is read only
+    // when some destination could take a wake, and never cached; an unreadable switch throws, and
+    // this device's push is not sent (the fan-out logs it; the frame stays queued).
+    const pushMode = pushTokens.some((pt) => pt.wakeCapable)
+      ? await readPushMode(this.groupRepo.manager, this.logger)
+      : 'full';
     for (const pt of pushTokens) {
+      const wake = pushMode === 'wake' && pt.wakeCapable;
       try {
         await getMessaging().send(
-          pt.platform === 'ios'
-            ? {
-                token: pt.token,
-                apns: {
-                  // Built HERE and not once above: the fallback body is the one sentence this
-                  // server still composes, and only the token says which language to compose it
-                  // in. Everything else in the payload is identical across devices.
-                  payload: buildApnsRequest(messageInput, dataFields, pt.locale).payload,
-                  headers: {
-                    'apns-push-type': apnsPushType,
-                    'apns-priority': String(apnsPriority),
+          wake
+            ? this.buildWakeMessage(pt, messageInput)
+            : pt.platform === 'ios'
+              ? {
+                  token: pt.token,
+                  apns: {
+                    // Built HERE and not once above: the fallback body is the one sentence this
+                    // server still composes, and only the token says which language to compose it
+                    // in. Everything else in the payload is identical across devices.
+                    payload: buildApnsRequest(messageInput, dataFields, pt.locale).payload,
+                    headers: {
+                      'apns-push-type': apnsPushType,
+                      'apns-priority': String(apnsPriority),
+                    },
                   },
-                },
-              }
-            : {
-                token: pt.token,
-                data: dataFields,
-                android: {
-                  priority: 'high',
-                  ttl: 86_400_000,
-                },
-              }
+                }
+              : {
+                  token: pt.token,
+                  data: dataFields,
+                  android: {
+                    priority: 'high',
+                    ttl: 86_400_000,
+                  },
+                }
         );
         if (batch) {
           // ONE LINE PER FAN-OUT, NOT PER DEVICE: a frame queued to ~100 offline seats wrote ~100
           // of these and rolled the production log over in ~20 minutes. The caller prints the sum.
           batch.pushed++;
+          if (wake) batch.woken++;
         } else {
           this.logger.log(
-            `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId} platform=${pt.platform} inlineProto=${!!inlineProto} bytes=${pt.platform === 'ios' ? apnsBytes : dataBytes}`
+            `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId} platform=${pt.platform} ` +
+              (wake
+                ? `mode=wake`
+                : `mode=full inlineProto=${!!inlineProto} bytes=${pt.platform === 'ios' ? apnsBytes : dataBytes}`)
           );
         }
       } catch (e) {
@@ -1826,12 +1932,37 @@ export class MessagingService {
             appVersion: senderVersion ?? 'unknown',
           };
         }
-        const members = recipients.filter(
+        const reachable = recipients.filter(
           (m) =>
             !isSender(m) &&
             !excludeSet.has(`${m.userId}:${m.deviceId}`) &&
             liveDeviceIds.has(`${m.userId}:${m.deviceId}`)
         );
+        // AN APPLICATION FRAME SEALED BEFORE A SEAT'S ADMISSION IS NOT ITS TO RECEIVE: its device
+        // joined at a later epoch and holds no secret of this one, so a row would be acknowledged as
+        // a loss on arrival and drive a seed request it was never owed (`sealedBeforeAdmission`).
+        // The same rule `admittedAtEpoch` applies to a pending seat above, applied to the seat's
+        // recorded admission so it holds for an active one too. Said in one line, as a count: it is
+        // the ordinary race of a send crossing a join, not a fault.
+        const beforeAdmission =
+          !isHandshake && frameEpoch !== null
+            ? reachable.filter((m) => sealedBeforeAdmission(frameEpoch, m))
+            : [];
+        if (beforeAdmission.length > 0) {
+          this.logger.log(
+            `[SEND][${traceId}] SEALED_BEFORE_ADMISSION group=${groupId} frameEpoch=${frameEpoch} ` +
+              `withheld=${beforeAdmission.length} devices=${beforeAdmission
+                .map(
+                  (m) =>
+                    `${cutUserId(m.userId)}:${cutDeviceId(m.deviceId)}@${m.admittedByBaseEpoch}`
+                )
+                .join(',')}`
+          );
+        }
+        const members =
+          beforeAdmission.length > 0
+            ? reachable.filter((m) => !beforeAdmission.includes(m))
+            : reachable;
         // AN ADDRESSED FRAME NARROWS THE SET RESOLVED ABOVE AND NEVER ADDS TO IT: a key that names no
         // live member of this group addresses nobody, so a client cannot use it to reach a device
         // outside the group. Measured on production 2026-10-12, an answer to one seed request was
@@ -2164,7 +2295,7 @@ export class MessagingService {
     // unreachable anyway, because the filter above kept only online recipients. Passing it rather
     // than relying on that keeps the two facts independent.
     const silent = body.isCommit || body.isWelcome ? true : (body.silent ?? false);
-    const tally: FanOutTally = { pushed: 0, pushes: [] };
+    const tally: FanOutTally = { pushed: 0, woken: 0, pushes: [] };
     for (const queued of queuedRows) {
       // Reuses the presence answer taken above rather than asking Redis a second time. A device
       // that went offline in between is covered the same way it always was: the row survives and
@@ -2185,7 +2316,7 @@ export class MessagingService {
       const attempted = tally.pushes.length;
       void Promise.all(tally.pushes).then(() =>
         this.logger.log(
-          `[PUSH_SEND][${traceId}] FCM sent batch pushed=${tally.pushed} of ${attempted} offline device(s)`
+          `[PUSH_SEND][${traceId}] FCM sent batch pushed=${tally.pushed} of ${attempted} offline device(s) mode=wake:${tally.woken}`
         )
       );
     }
@@ -2790,6 +2921,12 @@ export class MessagingService {
               );
             }
             committerSeat = unwritten === null;
+            // AN EXTERNAL JOIN IS ITS OWN ADMISSION: its leaf enters with this advance, so this
+            // commit is the floor of the commit times the device is answered (`commitFloorOf`). A
+            // pending member's commit adds no leaf - its Add recorded the admission already.
+            if (committerSeat && frame.external) {
+              await this.recordAdmission(m, committer, deviceId, groupId, baseEpoch, traceId);
+            }
           }
           // THE NEWCOMERS THIS COMMIT ADMITS, written before the fan-out below makes the new epoch
           // reachable by anyone (see `ValidateCommitBody.admits`). The insert only guarantees the
@@ -2819,6 +2956,12 @@ export class MessagingService {
                 { userId: a.userId, deviceId: a.deviceId, groupId, status: 'pending' as const },
                 { admittedAtEpoch: baseEpoch + 1, kickedAt: null }
               );
+            // ITS ADMISSION, guarded on `pending` like `admittedAtEpoch`: a kicked seat is pending, so
+            // its re-add moves the floor past the commits made while it was out; an `active` seat a
+            // commit merely declares cannot have its floor raised by that declaration.
+            await this.recordAdmission(m, a.userId, a.deviceId, groupId, baseEpoch, traceId, {
+              pendingOnly: true,
+            });
           }
           // THE WELCOME LANDS WITH THE ADVANCE OR NEITHER DOES (`ValidateCommitBody.welcome`). Its
           // seat is guaranteed as `sendWelcome` guarantees it - inserted, never overwriting a row -
@@ -2840,6 +2983,17 @@ export class MessagingService {
                 })
                 .orIgnore()
                 .execute();
+              // The Welcome this commit carries admits its target with this advance, declared or not -
+              // a pending seat only, as for `admits`.
+              await this.recordAdmission(
+                m,
+                target.userId,
+                target.deviceId,
+                groupId,
+                baseEpoch,
+                traceId,
+                { pendingOnly: true }
+              );
             }
             const repo = m.getRepository(QueuedMessage);
             queuedWelcome = await repo.save(
@@ -3249,6 +3403,276 @@ export class MessagingService {
       belowFloor,
       ...(gapAt !== undefined ? { gapAt } : {}),
     };
+  }
+
+  /**
+   * When the server ACCEPTED the commit of `groupId` built on `baseEpoch` - the commit log row's
+   * `createdAt`, written once by the commit gate and the same answer for every device - or `null`
+   * when the log holds no such row (pruned below the retained floor, or never recorded).
+   *
+   * WHY IT EXISTS. A device learns of a commit when it MERGES it, which may be hours later (a phone
+   * opened after a day), and a line it derives from that commit - "X added a device", "a device
+   * entered by itself" - is about the commit, not about the merge. This row is the one durable,
+   * shared statement of when the commit happened. Membership-gated exactly as the replay is
+   * (`memberOfGroupKind`): the instant of a commit is ordering metadata of the group.
+   */
+  async getCommitAcceptedAt(
+    groupId: string,
+    baseEpoch: number,
+    requesterUserId: string,
+    requesterDeviceId?: string
+  ): Promise<{ acceptedAt: string | null; reason?: MissingCommitReason }> {
+    const group = await this.groupRepo.findOne({ where: { id: groupId } });
+    const { isMember, isKeyDistribution } = await this.memberOfGroupKind(
+      group,
+      groupId,
+      requesterUserId
+    );
+    if (!isMember) {
+      this.logger.warn(
+        `[COMMIT_AT] refused group=${groupId} user=${requesterUserId.slice(0, 8)} keyDistribution=${isKeyDistribution}`
+      );
+      throw new ForbiddenException(`User ${requesterUserId} is not a member of group ${groupId}`);
+    }
+    // A MEMBER IS NOT HANDED THE PAST (user, 2026-10-21): the time of a commit made before they
+    // arrived is the group's history, so the floor is the commit that ADMITTED the requesting
+    // device - recorded by the commit gate on its seat - and anything older is refused.
+    const floor = await this.commitFloorOf(
+      groupId,
+      requesterUserId,
+      requesterDeviceId,
+      group?.activeEpoch ?? null
+    );
+    if (baseEpoch < floor.baseEpoch) {
+      // An INFERRED floor refuses by design every commit before it (044's backfill, a repair), so
+      // its refusals are expected and said at `log`; one before a RECORDED admission is a client
+      // asking about its own past, said at WARN.
+      if (floor.inferred) {
+        this.logger.log(
+          `[COMMIT_AT] refused group=${groupId} user=${requesterUserId.slice(0, 8)} baseEpoch=${baseEpoch} - ` +
+            `before the floor INFERRED for this seat (base ${floor.baseEpoch}: the group's epoch when its admission was found unrecorded - migration 044's backfill or a repair - not its admission)`
+        );
+      } else {
+        this.logger.warn(
+          `[COMMIT_AT] refused group=${groupId} user=${requesterUserId.slice(0, 8)} baseEpoch=${baseEpoch} - ` +
+            `before the commit that admitted this device (base ${floor.baseEpoch})`
+        );
+      }
+      throw new ForbiddenException(
+        `Commit ${baseEpoch} of ${groupId} precedes the requester's arrival`
+      );
+    }
+    const row = await this.commitLogRepo.findOne({ where: { groupId, baseEpoch } });
+    if (!row) {
+      const reason = await this.reportMissingCommitRow(
+        groupId,
+        baseEpoch,
+        group?.activeEpoch ?? null
+      );
+      return { acceptedAt: null, reason };
+    }
+    return { acceptedAt: row.createdAt.toISOString() };
+  }
+
+  /**
+   * The base epoch of the commit that ADMITTED the requesting device into `groupId` - the oldest
+   * commit whose acceptance time it may be handed - and whether that floor is the admission itself
+   * or one INFERRED where none was recorded. Read off its seat
+   * (`DeviceGroupMembership.admittedByBaseEpoch`), which the commit gate writes with the advance on
+   * every admission: a member's Add, the Welcome it carries, an external join, the group's creation
+   * (`0`). Both kinds of group are floored per DEVICE, the unit an admission is made of.
+   *
+   * WHY NOT A CLOCK (review of #2890, LOW-D; owner, 2026-11-02). The floor was "the last commit
+   * accepted at or before the arrival", and every arrival record could be written before the
+   * admission: a group conversation's stretch `joinedAt` is written by the enrolment, before the Add,
+   * so the floor landed one commit early; a key-group device kicked and re-added keeps its row and its
+   * `createdAt`, so it was answered the commits made while it was out. Only acceptance times leaked,
+   * never content. The gate knows the admitting commit exactly - it is the one it accepts - so no
+   * timestamp is compared any more, and a re-add moves the floor past the commits it was out for.
+   *
+   * AN ACTIVE SEAT WITH NO RECORDED ADMISSION IS FLOORED AT THE GROUP'S CURRENT EPOCH AND THAT IS
+   * WRITTEN, ONCE (`admissionInferred`) - the rule migration 044's backfill applies, here for the
+   * seats it could not reach: one admitted by a replica still running the old code during a rollout,
+   * an aborted rollout or a rollback, and a seat the stale-device cron demoted and a report later
+   * re-activated with no commit. Refusing those for ever would leave every line they derive undated
+   * with nothing to repair it; the current epoch refuses every commit already accepted (refuse
+   * rather than leak) and answers every later one. The write is conditional on the seat still being
+   * active, unkicked and floorless, so a concurrent kick or admission wins, and the line is said once,
+   * at ERROR (a path admitted the seat without recording it).
+   *
+   * A PENDING SEAT IS NEVER INFERRED (2026-11-02): it is enrolled and not yet admitted, or kicked,
+   * and an inferred floor would hand it every commit time until its Add - the past a newcomer is not
+   * handed. Floored only by the admission the gate wrote while it waits (`admittedAtEpoch - 1`).
+   *
+   * REFUSED, QUIETLY (`log`), where nothing can be floored:
+   * - a PENDING seat with no admission: enrolled and not yet admitted, or KICKED (`kickedAt` set, its
+   *   admission cleared by the kick) and out of the tree until the Add that answers it - expected;
+   * - a member whose device holds no seat: a pending seat the 14-day cleanup purged while its owner
+   *   stayed on the roster, or a device never enrolled. No row means no admission to read and none
+   *   to write; such a device never processed a Welcome, so it has no commit of its own to ask about.
+   * And a request with no `x-canari-device` is a 400: the floor is per device, so the question is
+   * malformed without one (the client always sends it).
+   */
+  private async commitFloorOf(
+    groupId: string,
+    userId: string,
+    deviceId: string | undefined,
+    activeEpoch: number | null
+  ): Promise<{ baseEpoch: number; inferred: boolean }> {
+    const who = `group=${groupId} user=${userId.slice(0, 8)}`;
+    if (!deviceId) {
+      this.logger.warn(`[COMMIT_AT] refused ${who} - asked with no device header`);
+      throw new BadRequestException('x-canari-device is required to read a commit time');
+    }
+    const where = { groupId, userId, deviceId };
+    const seat = await this.deviceGroupRepo.findOne({
+      where,
+      select: {
+        id: true,
+        status: true,
+        kickedAt: true,
+        admittedAtEpoch: true,
+        admittedByBaseEpoch: true,
+        admissionInferred: true,
+      },
+    });
+    if (!seat) {
+      this.logger.log(
+        `[COMMIT_AT] refused ${who} device=${cutDeviceId(deviceId)} - this device holds no seat (purged while pending, or never enrolled): no admission, nothing answered`
+      );
+      throw new ForbiddenException(`No admission of the requester in ${groupId}`);
+    }
+    if (seat.admittedByBaseEpoch !== null && seat.admittedByBaseEpoch !== undefined) {
+      return { baseEpoch: seat.admittedByBaseEpoch, inferred: seat.admissionInferred === true };
+    }
+    // A PENDING seat is not in the tree by anything this server can prove - enrolled and not yet
+    // admitted, or kicked - so nothing is inferred for it (user, 2026-10-21: a newcomer is not handed
+    // the past, and an inferred floor would hand it every commit until its Add). Only the admission
+    // the gate wrote while it waits (`admittedAtEpoch`, the epoch its Add created) floors it.
+    if (seat.status !== 'active') {
+      if (!seat.kickedAt && seat.admittedAtEpoch !== null && seat.admittedAtEpoch !== undefined) {
+        return { baseEpoch: seat.admittedAtEpoch - 1, inferred: false };
+      }
+      this.logger.log(
+        `[COMMIT_AT] refused ${who} device=${cutDeviceId(deviceId)} status=${seat.status} - ` +
+          (seat.kickedAt
+            ? `kicked, its re-add not yet accepted: no admission, nothing answered`
+            : `pending and admitted by no commit: no admission, nothing answered`)
+      );
+      throw new ForbiddenException(`No admission of the requester in ${groupId}`);
+    }
+    if (activeEpoch === null) {
+      this.logger.log(
+        `[COMMIT_AT] refused ${who} device=${cutDeviceId(deviceId)} - no group epoch to floor it at: nothing answered`
+      );
+      throw new ForbiddenException(`No admission of the requester in ${groupId}`);
+    }
+    // Conditional on the seat being exactly what was read - active, unkicked, with no floor - so a
+    // kick or an admission landing mid-ask wins, and the re-read below handles the no-match.
+    const repaired = await this.deviceGroupRepo.update(
+      {
+        ...where,
+        status: 'active' as const,
+        kickedAt: IsNull(),
+        admittedByBaseEpoch: IsNull(),
+      },
+      { admittedByBaseEpoch: activeEpoch, admissionInferred: true }
+    );
+    if ((repaired.affected ?? 0) > 0) {
+      this.logger.error(
+        `[COMMIT_AT] ${who} device=${cutDeviceId(deviceId)} - an ACTIVE seat with no admission ` +
+          `recorded (the path that admitted it did not record it): floored at the group's current ` +
+          `epoch ${activeEpoch}, written once (every commit before it refused, every later one answered)`
+      );
+      return { baseEpoch: activeEpoch, inferred: true };
+    }
+    // A concurrent writer recorded one first (an admission, or another repair): its value holds.
+    const now = await this.deviceGroupRepo.findOne({
+      where,
+      select: { id: true, admittedByBaseEpoch: true, admissionInferred: true },
+    });
+    if (now?.admittedByBaseEpoch === null || now?.admittedByBaseEpoch === undefined) {
+      this.logger.log(
+        `[COMMIT_AT] refused ${who} device=${cutDeviceId(deviceId)} - the seat changed under the repair (kicked or purged): nothing answered`
+      );
+      throw new ForbiddenException(`No admission of the requester in ${groupId}`);
+    }
+    return { baseEpoch: now.admittedByBaseEpoch, inferred: now.admissionInferred === true };
+  }
+
+  /**
+   * Says why the log holds no row for a commit a member asked the time of - and at the level the
+   * cause deserves. PRUNED (older than the oldest retained row) is the retention working, so `log`.
+   * A commit not made yet (at or past the active epoch) is a client asking about the future, `warn`.
+   * Anything else is a HOLE: the gate writes the row in the same transaction as the epoch advance,
+   * so an epoch inside the retained range with no row is a commit path that advanced without
+   * logging - a fault, which production has had (a hole at epoch 121), so `error`.
+   */
+  private async reportMissingCommitRow(
+    groupId: string,
+    baseEpoch: number,
+    activeEpoch: number | null
+  ): Promise<MissingCommitReason> {
+    if (activeEpoch !== null && baseEpoch >= activeEpoch) {
+      this.logger.warn(
+        `[COMMIT_AT] group=${groupId} baseEpoch=${baseEpoch} - no such commit yet (active epoch ${activeEpoch})`
+      );
+      return 'not-yet';
+    }
+    const oldest = await this.commitLogRepo.findOne({
+      where: { groupId },
+      order: { baseEpoch: 'ASC' },
+    });
+    if (!oldest || oldest.baseEpoch > baseEpoch) {
+      this.logger.log(
+        `[COMMIT_AT] group=${groupId} baseEpoch=${baseEpoch} - pruned below the retained floor`
+      );
+      return 'pruned';
+    }
+    this.logger.error(
+      `[COMMIT_AT] group=${groupId} baseEpoch=${baseEpoch} - HOLE in the commit log: retained from base ${oldest.baseEpoch}, active ${activeEpoch ?? '?'}, and this commit was never logged`
+    );
+    return 'hole';
+  }
+
+  /**
+   * WHEN THE REQUESTER'S OWN SEAT IN `groupId` WAS REMOVED, or `null` when nothing removed it.
+   *
+   * The date of the "you were removed" line a device writes when it learns of its removal by any
+   * evidence that carries no time of its own (a membership check, a later frame, a refused send).
+   * Asked of the requester's OWN rows only, so it needs - and checks - no membership: a removed
+   * device is exactly who asks, and a stranger reads nothing but `null`.
+   *
+   * The person's last closed stretch (`leftAt`) when they hold no open one - the removal of the
+   * person; otherwise the requesting device's `kickedAt` - the removal of this device's leaf while
+   * its owner stays a member. Both written by the server when the removal happened.
+   */
+  async getOwnRemovalAt(
+    groupId: string,
+    userId: string,
+    deviceId: string | undefined
+  ): Promise<{ removedAt: string | null }> {
+    const stretches = await this.groupRepo.manager.find(GroupMembershipInterval, {
+      where: { groupId, userId },
+    });
+    const open = stretches.some((s) => s.leftAt === null);
+    if (!open) {
+      const left = stretches
+        .map((s) => s.leftAt)
+        .filter((d): d is Date => d instanceof Date)
+        .sort((a, b) => b.getTime() - a.getTime())[0];
+      if (left) return { removedAt: left.toISOString() };
+    }
+    if (deviceId) {
+      const device = await this.deviceGroupRepo.findOne({
+        where: { groupId, userId, deviceId },
+      });
+      if (device?.kickedAt) return { removedAt: device.kickedAt.toISOString() };
+    }
+    this.logger.log(
+      `[OWN_REMOVAL] group=${groupId} user=${userId.slice(0, 8)} - no removal recorded (open=${open})`
+    );
+    return { removedAt: null };
   }
 
   /**
@@ -4131,6 +4555,27 @@ export class MessagingService {
   }
 
   /**
+   * Refuses unless `userId` is a member of the conversation a reaction was placed in - the gate of
+   * `mls/notify-reaction`, which pushes to another person on its caller's word.
+   *
+   * Two kinds of conversation reach it, and each is asked of the party that holds its roster: a
+   * DM or group (a uuid) goes through {@link assertCallerActsOnGroup} like every route keyed by a
+   * group id; a SALON (`channel_<id>`, {@link salonIdOf}) is no group of this service, so its reader
+   * question goes to social-service ({@link isSalonReader}), and a refusal there is the same 403
+   * `NOT_A_MEMBER`. Social-service unreachable is the retryable 503, never a refusal.
+   */
+  async assertCallerReactsIn(groupId: string, userId: string): Promise<void> {
+    const salon = salonIdOf(groupId);
+    if (salon === null) {
+      // Any other id - a uuid or not - is the shared gate's: it refuses a non-uuid before any query.
+      await this.assertCallerActsOnGroup('NOTIFY_REACTION', groupId, userId);
+      return;
+    }
+    if (await isSalonReader(salon, userId, this.makeTraceId('reaction'))) return;
+    throw refuseNotAMember(this.logger, 'NOTIFY_REACTION', groupId, userId, ' salon=true');
+  }
+
+  /**
    * Whether `userId` is a member of `groupId`, asked of the table that records membership for that
    * kind of group (see `memberOfGroupKind`). An unknown group has no members.
    */
@@ -4165,7 +4610,7 @@ export class MessagingService {
     const active = await this.deviceGroupRepo.count({
       where: { groupId, userId, status: 'active' as const },
     });
-    if (active === 0) return true;
+    if (seatStillAwaits(true, active)) return true;
     this.logger.error(
       `[ADMISSION] group=${groupId} user=${sanitizeLogValue(userId)} holds ${active} active device(s) ` +
         `under a seat still flagged awaitingAdmission - a Welcome reached them past the lift; read as admitted`
@@ -5230,9 +5675,25 @@ export class MessagingService {
       tag = 'MEMBERSHIP_ACTIVE',
       authority,
       claim,
+      admittedByBaseEpoch,
+      admissionInferred = false,
     }: {
       tag?: string;
       authority: ActivationAuthority;
+      /**
+       * The admission this seat holds when no commit recorded one - the group's creation (`0`) or
+       * the base leading to the epoch a key group's publisher holds - written only on a seat that has
+       * none ({@link recordAdmission}, `keepRecorded`), so it never lowers the floor an accepted
+       * commit set.
+       */
+      admittedByBaseEpoch?: number;
+      /**
+       * Write {@link admittedByBaseEpoch} as a floor INFERRED rather than an admission: a key group's
+       * publisher past the creation may have been in the tree long before this publish, so the
+       * value is not when it arrived - it floors the commit times it is answered, and never
+       * withholds a frame from it (`sealedBeforeAdmission`).
+       */
+      admissionInferred?: boolean;
       /**
        * The claim this seat is written against ({@link claimSeat}), taken by the caller BEFORE the
        * check that decided the activation. REQUIRED of the two authorities whose check is made
@@ -5281,7 +5742,15 @@ export class MessagingService {
     // package ({@link writeClaimedSeat}): created while its account is erased, it gets no seat.
     if (authority === 'group_creator') {
       const refused = await withSeatLock(this.groupRepo.manager, groupId, (m) =>
-        this.writeClaimedSeat(m, userId, deviceId, groupId, tag)
+        this.writeClaimedSeat(
+          m,
+          userId,
+          deviceId,
+          groupId,
+          tag,
+          admittedByBaseEpoch,
+          admissionInferred
+        )
       );
       if (refused !== null) return { ok: false, reason: refused };
       await this.routeActiveSeat(userId, deviceId, groupId, tag);
@@ -5305,7 +5774,15 @@ export class MessagingService {
         );
         return { ok: false, reason: 'departed' } as const;
       }
-      const refused = await this.writeClaimedSeat(m, userId, deviceId, groupId, tag);
+      const refused = await this.writeClaimedSeat(
+        m,
+        userId,
+        deviceId,
+        groupId,
+        tag,
+        admittedByBaseEpoch,
+        admissionInferred
+      );
       return refused === null ? ({ ok: true } as const) : ({ ok: false, reason: refused } as const);
     });
     if (outcome.ok) await this.routeActiveSeat(userId, deviceId, groupId, tag);
@@ -5322,6 +5799,9 @@ export class MessagingService {
    * The revocation denylist is read here too (WP-GHOST-1): a commit writes its committer's seat
    * through this alone, with no {@link deviceAddressability} before it.
    *
+   * `admittedByBaseEpoch`, when given, is recorded on the seat only if no admission is recorded yet
+   * (see {@link activateDeviceMembership}).
+   *
    * @returns null when the seat was written; otherwise why not (logged).
    */
   private async writeClaimedSeat(
@@ -5329,7 +5809,9 @@ export class MessagingService {
     userId: string,
     deviceId: string,
     groupId: string,
-    tag: string
+    tag: string,
+    admittedByBaseEpoch?: number,
+    admissionInferred = false
   ): Promise<null | 'revoked' | 'no_key_package'> {
     const revoked = await m.getRepository(RevokedDevice).findOne({
       where: activeRevocationWhere({ userId, deviceId }),
@@ -5354,7 +5836,61 @@ export class MessagingService {
       groupId,
       tag
     );
+    if (admittedByBaseEpoch !== undefined) {
+      await this.recordAdmission(m, userId, deviceId, groupId, admittedByBaseEpoch, tag, {
+        keepRecorded: true,
+        inferred: admissionInferred,
+      });
+    }
     return null;
+  }
+
+  /**
+   * Records `baseEpoch` as the commit that ADMITTED the device's seat
+   * (`DeviceGroupMembership.admittedByBaseEpoch`), the floor of the commit times it is answered
+   * ({@link commitFloorOf}), in the transaction `m` that admits it.
+   *
+   * Written by the commit gate on EVERY admission - an Add's `admits` and the Welcome it carries, an
+   * external join - and overwrites what was there: a re-add after a kick is a new admission, and the
+   * commits made while the device was out are not its to date. It is an admission, never an
+   * inference, so it clears `admissionInferred`.
+   *
+   * `pendingOnly` writes only a `pending` seat: what a commit merely DECLARES (`admits`, a Welcome
+   * target) proves no new leaf for a seat already `active` - routed, in the tree - so it must not
+   * raise that seat's floor (the guard `admittedAtEpoch` has always had). A kicked seat is pending,
+   * so its re-add is written. An external join proves its leaf by its own frame, so it is not
+   * guarded. `keepRecorded` writes only a seat that has none: the creation and a key group's
+   * publisher, which no commit admitted, must never lower a floor an accepted commit set.
+   * `inferred` writes the value as a floor INFERRED, not an admission - a key group's publisher past
+   * the creation, which may have been in the tree long before ({@link activateDeviceMembership}).
+   */
+  private async recordAdmission(
+    m: EntityManager,
+    userId: string,
+    deviceId: string,
+    groupId: string,
+    baseEpoch: number,
+    tag: string,
+    {
+      keepRecorded = false,
+      pendingOnly = false,
+      inferred = false,
+    }: { keepRecorded?: boolean; pendingOnly?: boolean; inferred?: boolean } = {}
+  ): Promise<void> {
+    const result = await m.getRepository(DeviceGroupMembership).update(
+      {
+        userId,
+        deviceId,
+        groupId,
+        ...(keepRecorded ? { admittedByBaseEpoch: IsNull() } : {}),
+        ...(pendingOnly ? { status: 'pending' as const } : {}),
+      },
+      { admittedByBaseEpoch: baseEpoch, admissionInferred: inferred }
+    );
+    this.logger.debug(
+      `[${tag}] admission group=${groupId} device=${cutUserId(userId)}:${cutDeviceId(deviceId)} ` +
+        `baseEpoch=${baseEpoch} inferred=${inferred} keepRecorded=${keepRecorded} pendingOnly=${pendingOnly} written=${result.affected ?? '?'}`
+    );
   }
 
   /**
@@ -5526,7 +6062,12 @@ export class MessagingService {
         // A demoted device needs a NEW Welcome before it can read anything, so no earlier
         // admission may keep it a recipient (see `DeviceGroupMembership.admittedAtEpoch`).
         admittedAtEpoch: null,
-        ...(removedFromTreeAt ? { kickedAt: removedFromTreeAt } : {}),
+        // A KICK ends the admission too: the leaf is out of the tree, so the device is answered no
+        // commit time until the Add that answers the kick records a new one (`commitFloorOf`). A
+        // demotion with no kick (the cron, a self-report) leaves the leaf - and the floor - alone.
+        ...(removedFromTreeAt
+          ? { kickedAt: removedFromTreeAt, admittedByBaseEpoch: null, admissionInferred: false }
+          : {}),
       }
     );
 
@@ -5649,6 +6190,7 @@ export class MessagingService {
     const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
     const requesterDeviceId = sanitizeQueryValue(body.requesterDeviceId, 'requesterDeviceId');
     this.assertRequesterMatchesCaller(authUserIdRaw, requesterUserId, traceId, 'HISTORY_REQ');
+    await this.assertCallerActsOnGroup('HISTORY_REQ', groupId, canonicalUserId(requesterUserId));
 
     // Members this requester has already heard from. Compared case-insensitively because the client
     // builds the key from its MLS identity (`digestIdentity`, which lower-cases the user) while the
@@ -5835,6 +6377,7 @@ export class MessagingService {
     const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
     const requesterDeviceId = sanitizeQueryValue(body.requesterDeviceId, 'requesterDeviceId');
     this.assertRequesterMatchesCaller(authUserIdRaw, requesterUserId, traceId, 'BASE_REFRESH');
+    await this.assertCallerActsOnGroup('BASE_REFRESH', groupId, canonicalUserId(requesterUserId));
 
     const members = await this.routableMembers(groupId, traceId, 'BASE_REFRESH');
     const senderKey = `${requesterUserId}:${requesterDeviceId}`;
@@ -5908,6 +6451,16 @@ export class MessagingService {
     const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
     const requesterDeviceId = sanitizeQueryValue(body.requesterDeviceId, 'requesterDeviceId');
     this.assertRequesterMatchesCaller(authUserIdRaw, requesterUserId, traceId, 'WELCOME_REQ');
+    // ANY SEAT MAY ASK - an admitted member's new device, and above all a seat awaiting a member's
+    // admission, whose ask this route IS - and nobody else: a caller with no seat learned which
+    // member devices were online and had its ask stored and replayed (re-review of #2358).
+    const standing = await assertCallerHoldsSeat(
+      { groups: this.groupRepo, seats: this.groupMemberRepo },
+      this.logger,
+      'WELCOME_REQ',
+      groupId,
+      canonicalUserId(requesterUserId)
+    );
 
     // Atomically pick one online group member that is not the requester.
     // Using a single server-side selection avoids the multi-connection race that
@@ -5921,8 +6474,7 @@ export class MessagingService {
     // AN ASK OF A SEAT AWAITING A MEMBER is relayed exactly as before, and said only at its 1st,
     // 10th, 100th... repeat for this device ({@link awaitingAskRepeats}): every line below is the
     // same sentence on every cadence of a wait that may last the 14 days of the ask.
-    const awaitingAsk =
-      (await this.rosterSeat(groupId, requesterUserId))?.awaitingAdmission === true;
+    const awaitingAsk = standing === 'awaiting';
     const nth = awaitingAsk ? this.awaitingAskRepeats.hit(`ask|${groupId}|${senderKey}`) : 1;
     const say = (line: string) => {
       if (nth !== null) this.logger.log(line);
@@ -5971,10 +6523,23 @@ export class MessagingService {
         const pendingSetKey = `pending_welcome:${groupId}`;
         const stored: string[] = await this.redis.smembers(pendingSetKey);
         let drained = 0;
+        let unseated = 0;
         for (const storedKey of stored) {
           if (storedKey === senderKey) continue; // already forwarded above
           const [storedUserId, storedDeviceId] = storedKey.split(':');
           if (!storedUserId || !storedDeviceId) continue;
+          // RE-ASKED AT THE DRAIN, NOT TRUSTED FROM THE STORE: an entry may predate the gate above,
+          // or its person may have lost the seat since it was stored. Only a seat is replayed.
+          if (
+            (await callerSeatStanding(
+              this.groupMemberRepo,
+              groupId,
+              canonicalUserId(storedUserId)
+            )) === null
+          ) {
+            unseated++;
+            continue;
+          }
           await this.redis.publish(
             'chat:messages',
             JSON.stringify({
@@ -5995,6 +6560,12 @@ export class MessagingService {
           await this.redis.del(pendingSetKey);
           say(
             `[WELCOME_REQ][${traceId}] Drained ${drained} stored welcome_request(s) for group=${groupId}`
+          );
+        }
+        if (unseated > 0) {
+          // Always said, never folded into the repeat count: each is a stored ask this drain dropped.
+          this.logger.warn(
+            `[WELCOME_REQ][${traceId}] DROPPED ${unseated} stored welcome_request(s) for group=${groupId} - their requester holds no seat in it any more`
           );
         }
 
@@ -6636,12 +7207,13 @@ export class MessagingService {
 
   /**
    * Returns group IDs the caller may read. Orphans are purged once per batch;
-   * non-members are omitted (batch) or rejected (single-group).
+   * non-members are omitted (batch) or rejected (single-group). A platform global admin reads only
+   * the groups it is a member of, like anyone (owner, 2026-11-02: no platform-admin bypass on
+   * conversation data).
    */
   private async authorizeHistoryGroups(
     groupIds: string[],
     headerUserId: string | undefined,
-    headerGlobalAdmin: string | undefined,
     rejectForbidden: boolean
   ): Promise<Set<string>> {
     if (groupIds.length === 0) return new Set();
@@ -6653,10 +7225,6 @@ export class MessagingService {
     // not evidence of anything, unlike a queued frame (see fetchMessages).
     const { deliverable: deliverableIds } = await this.purgeOrphanGroups(groupIds);
     const deliverable = groupIds.filter((id) => deliverableIds.has(id));
-
-    if (headerGlobalAdmin === 'true') {
-      return new Set(deliverable);
-    }
 
     const authUserId = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     if (!authUserId) {
@@ -6698,13 +7266,12 @@ export class MessagingService {
   /**
    * Returns the Redis stream history for a group, with optional cursor-based
    * pagination via an afterStreamId parameter.
-   * Enforces group membership for non-admin callers.
+   * Enforces group membership for every caller, a global admin included.
    */
   async getHistory(
     groupIdRaw: string,
     afterRaw: string | undefined,
     headerUserId: string | undefined,
-    headerGlobalAdmin: string | undefined,
     limitRaw?: number,
     untilRaw?: string,
     headerDeviceId?: string
@@ -6715,12 +7282,7 @@ export class MessagingService {
     const until = this.sanitizeStreamId(untilRaw);
     const limit = this.resolveHistoryLimit(after, limitRaw);
 
-    const authorized = await this.authorizeHistoryGroups(
-      [groupId],
-      headerUserId,
-      headerGlobalAdmin,
-      true
-    );
+    const authorized = await this.authorizeHistoryGroups([groupId], headerUserId, true);
     if (!authorized.has(groupId)) {
       // NOT A WARNING, AND NOT "ORPHANED" EITHER, which is what this used to say. Two different
       // things land here and only one of them is a defect: a group with no row (already purged and
@@ -6735,11 +7297,7 @@ export class MessagingService {
     }
 
     try {
-      const windows = await this.ownWithheldWindows(
-        headerUserId,
-        groupId,
-        headerGlobalAdmin === 'true'
-      );
+      const windows = await this.ownWithheldWindows(headerUserId, groupId);
       const page = await this.readHistoryStreamPage(
         groupId,
         after,
@@ -6781,20 +7339,15 @@ export class MessagingService {
    * `GET .../exclusions` runs (`openMissingIntervals`), with the same ERROR line; it costs a roster
    * read only when no interval is open, so a consistent member pays nothing extra.
    *
-   * **A GLOBAL ADMIN IS NAMED BY ITS HEADER, NEVER INFERRED FROM A MISSING INTERVAL** (review of
-   * #2800). An admin holding no interval reads a group it is not in, and this filter has never
-   * narrowed that read. Anyone else reached here through the roster (`authorizeHistoryGroups`), so a
-   * caller holding NO interval at all is a member the enrolment failed to record - repaired like the
-   * one with no open interval, above. Should the repair open nothing (the roster row went
-   * meanwhile), the read FAILS CLOSED: one window over everything, said at ERROR - an absent record
-   * never reads as "withhold nothing".
-   *
-   * @param globalAdmin the caller's `x-global-admin` header said `true`.
+   * **EVERY CALLER REACHED HERE THROUGH THE ROSTER** (`authorizeHistoryGroups`, which since
+   * 2026-11-02 exempts no global admin), so a caller holding NO interval at all is a member the
+   * enrolment failed to record - repaired like the one with no open interval, above. Should the
+   * repair open nothing (the roster row went meanwhile), the read FAILS CLOSED: one window over
+   * everything, said at ERROR - an absent record never reads as "withhold nothing".
    */
   private async ownWithheldWindows(
     headerUserId: string | undefined,
-    groupId: string,
-    globalAdmin: boolean
+    groupId: string
   ): Promise<ExclusionWindow[]> {
     const userId = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     if (!userId) return [];
@@ -6804,10 +7357,9 @@ export class MessagingService {
         select: { groupId: true, joinedAt: true, leftAt: true, admittedAt: true },
       });
     let intervals = await read();
-    // An admin's read of a group it never joined has nothing to repair; every other caller is on the
-    // roster, and a member outside every open interval - none at all included - is a record to repair.
-    const unrecorded = intervals.length === 0 && !globalAdmin;
-    if ((intervals.length > 0 || unrecorded) && !intervals.some((r) => r.leftAt === null)) {
+    // Every caller is on the roster, so a member outside every open interval - none at all included -
+    // is a record to repair.
+    if (!intervals.some((r) => r.leftAt === null)) {
       // The roster is read under a lock inside the helper - a person removed meanwhile gets nothing.
       const opened = await openMissingIntervals(this.groupRepo.manager, groupId, [userId]);
       if (opened.length > 0) {
@@ -6820,7 +7372,6 @@ export class MessagingService {
       intervals = await read();
     }
     if (intervals.length === 0) {
-      if (globalAdmin) return [];
       this.logger.error(
         `[HISTORY] group=${groupId.slice(0, 8)} user=${userId.slice(0, 8)} holds no membership interval and none could be opened - the stream is withheld whole rather than served unfiltered`
       );
@@ -6860,7 +7411,6 @@ export class MessagingService {
   async getHistoryBatch(
     items: HistoryBatchRequestItem[],
     headerUserId: string | undefined,
-    headerGlobalAdmin: string | undefined,
     headerDeviceId?: string
   ): Promise<HistoryBatchResponse> {
     const requester = this.historyRequester(headerUserId, headerDeviceId);
@@ -6884,12 +7434,7 @@ export class MessagingService {
     });
 
     const groupIds = [...new Set(normalized.map((i) => i.groupId))];
-    const authorized = await this.authorizeHistoryGroups(
-      groupIds,
-      headerUserId,
-      headerGlobalAdmin,
-      false
-    );
+    const authorized = await this.authorizeHistoryGroups(groupIds, headerUserId, false);
 
     const histories: Record<string, Record<string, unknown>[]> = {};
     const heads: Record<string, string> = {};
@@ -6904,11 +7449,7 @@ export class MessagingService {
           // Read per group and inside its `try`: a failed read answers THIS group empty - never its
           // stream unfiltered, which is what this read exists to prevent - and the rest of the batch
           // is served.
-          const windows = await this.ownWithheldWindows(
-            headerUserId,
-            groupId,
-            headerGlobalAdmin === 'true'
-          );
+          const windows = await this.ownWithheldWindows(headerUserId, groupId);
           const page = await this.readHistoryStreamPage(
             groupId,
             after,
@@ -6947,7 +7488,6 @@ export class MessagingService {
     userId: string,
     deviceId: string,
     headerUserId: string | undefined,
-    headerGlobalAdmin: string | undefined,
     limit = 500,
     after?: string,
     caps?: string
@@ -6960,12 +7500,7 @@ export class MessagingService {
     const readsAddressed = declaresAddressedHistory(caps);
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
-    assertCallerOwnsUserId(
-      headerUserId,
-      headerGlobalAdmin,
-      safeUserId,
-      'Cannot fetch messages for another user'
-    );
+    assertCallerOwnsUserId(headerUserId, safeUserId, 'Cannot fetch messages for another user');
 
     const safeLimit = Math.min(Math.max(limit, 1), 1000);
 
@@ -7126,8 +7661,7 @@ export class MessagingService {
    */
   async acknowledgeMessages(
     body: AckMessagesBody,
-    headerUserId: string | undefined,
-    headerGlobalAdmin: string | undefined
+    headerUserId: string | undefined
   ): Promise<{ status: string; count: number }> {
     const traceId = this.makeTraceId('ack');
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
@@ -7135,7 +7669,6 @@ export class MessagingService {
     const safeMessageIds = sanitizeStringIdList(body.messageIds);
     assertCallerOwnsUserId(
       headerUserId,
-      headerGlobalAdmin,
       safeUserId,
       'Cannot acknowledge messages for another user'
     );

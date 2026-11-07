@@ -39,8 +39,8 @@ vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm: showConfirmMock }));
 // fetches it, printing one `GET .../avatar 404` per member into every test run. Stubbed as in
 // `NotificationRow.svelte.test.ts`.
 vi.mock('$lib/utils/userAvatarCache', () => ({
-  resolveUserAvatarDisplayUrl: async () => ({ kind: 'none' as const }),
-  releaseUserAvatarDisplayUrl: () => {},
+  resolveUserAvatarDisplay: async () => ({ kind: 'none' as const }),
+  releaseUserAvatarDisplay: () => {},
 }));
 vi.mock('$lib/utils/apiFetch', () => ({
   apiFetch: vi.fn(() =>

@@ -1,5 +1,10 @@
 // @vitest-environment happy-dom
-import { sendFullHistoryBundle, sendHistoryBundleForIds } from './groupActions';
+import {
+  HISTORY_TOMBSTONES_PER_ANSWER,
+  sendFullHistoryBundle,
+  sendHistoryBundleForIds,
+} from './groupActions';
+import { isWithinHistoryRange } from './historyWindow';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { decodeAppMessage } from '$lib/proto/codec';
 import type { IStorage, StoredMessage } from '$lib/db';
@@ -10,12 +15,14 @@ const GROUP = 'g1';
 const REQUESTER = 'user-b:device-b';
 
 function storageWith(messages: StoredMessage[] | Error): IStorage {
+  const read = (since: number) =>
+    messages instanceof Error
+      ? Promise.reject(messages)
+      : Promise.resolve(messages.filter((m) => isWithinHistoryRange(Number(m.timestamp), since)));
   return {
-    getMessages: vi
-      .fn()
-      .mockImplementation(() =>
-        messages instanceof Error ? Promise.reject(messages) : Promise.resolve(messages)
-      ),
+    getMessages: vi.fn().mockImplementation(() => read(0)),
+    // The window read: what the conversation-and-time index returns from `since` on.
+    getMessagesSince: vi.fn().mockImplementation((_id: string, since: number) => read(since)),
   } as unknown as IStorage;
 }
 
@@ -367,5 +374,102 @@ describe('history is withheld from an unverified device', () => {
 
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
     vi.restoreAllMocks();
+  });
+});
+
+describe('sendHistoryBundleForIds - the tombstones a digest answer carries', () => {
+  // The digest names ids, the state key that asked for it counts deletions: a deletion the asker
+  // missed on a message it HOLDS is invisible to the id diff, so the answer carries every tombstone.
+  it('sends the tombstones in the window with what the asker lacks, and nothing else', async () => {
+    const mlsService = createMlsServiceStub();
+    await sendHistoryBundleForIds(
+      GROUP,
+      ['lacked'],
+      {
+        storage: storageWith([
+          storedMessage('lacked'),
+          storedMessage('shared'),
+          { ...storedMessage('deleted'), isDeleted: true, content: 'deleted' },
+        ]),
+        deviceKeyB64: 'k',
+        mlsService,
+        log: vi.fn(),
+      },
+      { to: REQUESTER, since: 0, requestId: 'req-0001', withTombstones: true }
+    );
+
+    const ids = (sentBundle(mlsService).data.messages as Array<{ id: string }>).map((r) => r.id);
+    expect(ids.sort()).toEqual(['deleted', 'lacked']);
+  });
+
+  it('answers with the tombstones alone when the asker lacks no id', async () => {
+    const mlsService = createMlsServiceStub();
+    await sendHistoryBundleForIds(
+      GROUP,
+      [],
+      {
+        storage: storageWith([{ ...storedMessage('deleted'), isDeleted: true, content: 'x' }]),
+        deviceKeyB64: 'k',
+        mlsService,
+        log: vi.fn(),
+      },
+      { to: REQUESTER, since: 0, requestId: 'req-0001', withTombstones: true }
+    );
+
+    expect(sentBundle(mlsService).data.messages).toHaveLength(1);
+  });
+});
+
+describe('sendHistoryBundleForIds - what one answer reads and carries is bounded', () => {
+  it('reads the store from the asked window on, never the whole of it', async () => {
+    const mlsService = createMlsServiceStub();
+    const storage = storageWith([storedMessage('m1', 2_000)]);
+    await sendHistoryBundleForIds(
+      GROUP,
+      ['m1'],
+      { storage, deviceKeyB64: 'k', mlsService, log: vi.fn() },
+      { to: REQUESTER, since: 1_000, requestId: 'req-0001' }
+    );
+
+    expect(storage.getMessagesSince).toHaveBeenCalledWith(GROUP, 1_000, 'k');
+    expect(storage.getMessages).not.toHaveBeenCalled();
+  });
+
+  it('carries the NEWEST tombstones up to the ceiling, every lacked id, and says what it cut', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const mlsService = createMlsServiceStub();
+    const tombstones = Array.from({ length: HISTORY_TOMBSTONES_PER_ANSWER + 2 }, (_, i) => ({
+      ...storedMessage(`t${i}`, 1_000 + i),
+      isDeleted: true,
+      content: 'x',
+    }));
+    await sendHistoryBundleForIds(
+      GROUP,
+      ['lacked'],
+      {
+        storage: storageWith([storedMessage('lacked', 10), ...tombstones]),
+        deviceKeyB64: 'k',
+        mlsService,
+        log: vi.fn(),
+      },
+      { to: REQUESTER, since: 0, requestId: 'req-0001', withTombstones: true }
+    );
+
+    const sent = vi
+      .mocked(mlsService.sendMessage)
+      .mock.calls.flatMap(
+        (call) =>
+          JSON.parse(decodeAppMessage(call[1] as Uint8Array)?.system?.data || '{}')
+            .messages as Array<{
+            id: string;
+          }>
+      )
+      .map((r) => r.id);
+    expect(sent).toHaveLength(HISTORY_TOMBSTONES_PER_ANSWER + 1);
+    expect(sent).toContain('lacked');
+    expect(sent).not.toContain('t0');
+    expect(sent).not.toContain('t1');
+    expect(sent).toContain(`t${HISTORY_TOMBSTONES_PER_ANSWER + 1}`);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('2 older not'));
   });
 });

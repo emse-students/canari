@@ -4,9 +4,35 @@
  * failure or a kill at any one statement. Shared by the blob-store suite and the RC-5 outbox suite.
  */
 import type { SqliteStorage } from '$lib/db/sqlite';
+import { OUTBOX_COLUMNS } from '$lib/db/sqliteBatch';
 
 /** A row as the `outbox` table holds it. */
 export type FakeOutboxRow = Record<string, any>;
+
+/** One row from its twelve parameters, in `outboxInsertSql`'s column order. */
+function rowOf(params: unknown[]): FakeOutboxRow {
+  const [id, conv, sent, kind, status, attempts, last, next, serverErrors, created, iv, cipher] =
+    params;
+  return {
+    id,
+    conversation_id: conv,
+    sent_at: sent,
+    kind,
+    status,
+    attempts,
+    last_attempt_at: last,
+    next_attempt_at: next,
+    server_errors: serverErrors,
+    created_at: created,
+    iv,
+    cipher_text: cipher,
+  };
+}
+
+/** Rows in the queue's order: `sent_at`, then id. */
+function sorted(list: FakeOutboxRow[]): FakeOutboxRow[] {
+  return list.sort((a, b) => a.sent_at - b.sent_at || String(a.id).localeCompare(String(b.id)));
+}
 
 /** The fake database, its rows, and every statement it was handed (for byte budgets). */
 export function fakeOutboxSql() {
@@ -15,35 +41,20 @@ export function fakeOutboxSql() {
   const db = {
     async execute(sql: string, params: any[] = []) {
       executed.push({ sql, params });
+      if (sql.includes('UPDATE outbox SET conversation_id')) {
+        // The merge's whole-row rewrite (`OUTBOX_UPDATE_ROW_SQL`): only a row still there.
+        const row = rows.get(params[0]);
+        if (!row) return { rowsAffected: 0 };
+        rows.set(params[0], { ...rowOf(params), id: params[0] });
+        return { rowsAffected: 1 };
+      }
       if (sql.includes('INSERT OR REPLACE INTO outbox')) {
-        const [
-          id,
-          conv,
-          sent,
-          kind,
-          status,
-          attempts,
-          last,
-          next,
-          serverErrors,
-          created,
-          iv,
-          cipher,
-        ] = params;
-        rows.set(id, {
-          id,
-          conversation_id: conv,
-          sent_at: sent,
-          kind,
-          status,
-          attempts,
-          last_attempt_at: last,
-          next_attempt_at: next,
-          server_errors: serverErrors,
-          created_at: created,
-          iv,
-          cipher_text: cipher,
-        });
+        // ONE STATEMENT, ONE OR SEVERAL ROWS (a chat-reel take and its sends, `outboxInsertSql`):
+        // the parameters come in groups of the twelve columns, all applied or none.
+        for (let at = 0; at < params.length; at += OUTBOX_COLUMNS) {
+          const row = rowOf(params.slice(at, at + OUTBOX_COLUMNS));
+          rows.set(row.id, row);
+        }
       } else if (sql.includes('DELETE FROM outbox WHERE id')) {
         rows.delete(params[0]);
       } else if (sql.includes('UPDATE outbox SET')) {
@@ -72,11 +83,16 @@ export function fakeOutboxSql() {
         const r = rows.get(params[0]);
         return r ? [r] : [];
       }
-      if (sql.includes('FROM outbox ORDER BY sent_at')) {
-        // The light queue read: a media row's ciphertext is not selected.
-        return [...rows.values()]
-          .sort((a, b) => a.sent_at - b.sent_at || String(a.id).localeCompare(String(b.id)))
-          .map((r) => (r.kind === 'media' ? { ...r, iv: null, cipher_text: null } : { ...r }));
+      if (sql.includes('FROM outbox WHERE conversation_id <> $1 ORDER BY sent_at')) {
+        // The light queue read: a media row's ciphertext is not selected, a record not at all.
+        return sorted([...rows.values()].filter((r) => r.conversation_id !== params[0])).map((r) =>
+          r.kind === 'media' ? { ...r, iv: null, cipher_text: null } : { ...r }
+        );
+      }
+      if (sql.includes('SELECT * FROM outbox WHERE conversation_id = $1')) {
+        return sorted([...rows.values()].filter((r) => r.conversation_id === params[0])).map(
+          (r) => ({ ...r })
+        );
       }
       throw new Error(`unexpected select: ${sql}`);
     },

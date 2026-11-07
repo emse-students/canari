@@ -12,6 +12,7 @@
 
 import Foundation
 import Tauri
+import os
 import UIKit
 import WebKit
 
@@ -52,6 +53,53 @@ class ConfigureTabBarArgs: Decodable {
 
 class SelectTabArgs: Decodable {
     let id: String
+}
+
+/// CANARI PATCH: see `setTabBarInteractive`.
+class SetTabBarInteractiveArgs: Decodable {
+    let interactive: Bool
+    /// Rises with every call the page makes. The command is async on the Rust side, so two quick
+    /// toggles may reach the main queue out of order; an older one arriving last is dropped.
+    let seq: Int
+}
+
+/// CANARI PATCH: `showTabBar` / `hideTabBar`'s argument - the same rising `seq` as
+/// `SetTabBarInteractiveArgs`, ordered by the same `CommandSequence`. Upstream takes no argument.
+class TabBarVisibilityArgs: Decodable {
+    let seq: Int
+}
+
+/// CANARI PATCH: THE ONE ORDERING the sequenced tab-bar commands share. Each command is async on
+/// the Rust side (a sync one would block the main thread waiting for Swift, which answers from the
+/// main queue - a deadlock), so two quick calls may reach the main queue out of order. The page
+/// stamps every call with a rising `seq` (`systemComponentsCommands.ts`); a call older than the
+/// last one applied is dropped here. -1 since the last configuration: a reloaded page counts from 1
+/// again. Main queue only.
+struct CommandSequence {
+    let command: String
+    private(set) var applied = -1
+
+    init(_ command: String) {
+        self.command = command
+    }
+
+    /// Whether `seq` is newer than every call applied so far - and if so, records it as applied.
+    mutating func admits(_ seq: Int) -> Bool {
+        guard seq > applied else {
+            // Copied out first: a `Logger` interpolation is an escaping autoclosure, which may not
+            // capture the `self` of a mutating method.
+            let (name, last) = (command, applied)
+            PendiNav.log.notice(
+                "[pendi-nav][native] \(name, privacy: .public) seq=\(seq) dropped: \(last) already applied")
+            return false
+        }
+        applied = seq
+        return true
+    }
+
+    mutating func reset() {
+        applied = -1
+    }
 }
 
 class SetBadgeArgs: Decodable {
@@ -100,6 +148,10 @@ class SystemComponentsPlugin: Plugin {
     private var componentsOverlay: ComponentsOverlayController?
     private var webView: WKWebView?
     private var sheets: [String: SheetController] = [:]
+    /// CANARI PATCH: the order of `setTabBarInteractive`, and of `showTabBar` / `hideTabBar` (one
+    /// sequence for both: they set one state). See `CommandSequence`.
+    private var interactiveOrder = CommandSequence("setTabBarInteractive")
+    private var visibilityOrder = CommandSequence("showTabBar/hideTabBar")
     // CANARI PATCH: no KeyboardViewportGuard. Upstream installs one at load, with no switch, and it
     // resizes the WebView by 0.5 pt and back 100 ms after every keyboard dismissal. Canari already
     // owns that frame (`CanariApplyKeyboardLayout`, canari_ios.mm, on every keyboard frame change),
@@ -123,6 +175,13 @@ class SystemComponentsPlugin: Plugin {
             }
             // Idempotent: reconfiguring updates the mounted bar in place.
             let overlay = self.overlay ?? self.mount(on: host)
+            // CANARI PATCH: a configuration starts INTERACTIVE. The overlay outlives a WebView
+            // reload, so a page reloaded under the tour's backdrop would otherwise inherit a bar
+            // that takes no touch with nothing left to turn it back on. The page configures the bar
+            // first and then sends its own state (`NativeTabBar.svelte`), from sequence 1 again.
+            overlay.view.isUserInteractionEnabled = true
+            self.interactiveOrder.reset()
+            self.visibilityOrder.reset()
             overlay.apply(items: args.items, selectedId: args.selectedId)
             overlay.applyTint(args.tint.flatMap(ColorUtil.from(hex:)))
             if let acc = args.accessory {
@@ -150,12 +209,38 @@ class SystemComponentsPlugin: Plugin {
         }
     }
 
-    @objc public func showTabBar(_ invoke: Invoke) {
-        setHidden(false, invoke)
+    /// CANARI PATCH: show and hide carry a `seq` (`TabBarVisibilityArgs`).
+    @objc public func showTabBar(_ invoke: Invoke) throws {
+        setHidden(false, seq: try invoke.parseArgs(TabBarVisibilityArgs.self).seq, invoke)
     }
 
-    @objc public func hideTabBar(_ invoke: Invoke) {
-        setHidden(true, invoke)
+    @objc public func hideTabBar(_ invoke: Invoke) throws {
+        setHidden(true, seq: try invoke.parseArgs(TabBarVisibilityArgs.self).seq, invoke)
+    }
+
+    /// CANARI PATCH: whether the bar (and its accessory) takes touches. The app turns it off while
+    /// a MODAL web layer covers the page - the guided tour's backdrop: the bar is drawn ABOVE the
+    /// WebView, so the backdrop cannot cover it, and a tap on a tab left the tour and navigated
+    /// (iPhone 12, `1.6.3-alpha.7`). With the overlay's root view not interactive, UIKit's hit test
+    /// skips the whole overlay and the touch reaches the WebView, where the backdrop takes it. The
+    /// bar stays DRAWN: the tour's steps point at its band.
+    @objc public func setTabBarInteractive(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(SetTabBarInteractiveArgs.self)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let overlay = self.overlay else {
+                PendiNav.log.notice("[pendi-nav][native] setTabBarInteractive refused: tab bar is not configured")
+                invoke.reject("tab bar is not configured")
+                return
+            }
+            guard self.interactiveOrder.admits(args.seq) else {
+                invoke.resolve()
+                return
+            }
+            overlay.view.isUserInteractionEnabled = args.interactive
+            PendiNav.log.notice(
+                "[pendi-nav][native] setTabBarInteractive interactive=\(args.interactive ? "yes" : "no", privacy: .public)")
+            invoke.resolve()
+        }
     }
 
     @objc public func selectTab(_ invoke: Invoke) throws {
@@ -372,10 +457,15 @@ class SystemComponentsPlugin: Plugin {
         }
     }
 
-    private func setHidden(_ hidden: Bool, _ invoke: Invoke) {
+    private func setHidden(_ hidden: Bool, seq: Int, _ invoke: Invoke) {
         DispatchQueue.main.async { [weak self] in
-            guard let overlay = self?.overlay else {
+            guard let self, let overlay = self.overlay else {
                 invoke.reject("tab bar is not configured")
+                return
+            }
+            // CANARI PATCH: an older show or hide arriving last is dropped (`CommandSequence`).
+            guard self.visibilityOrder.admits(seq) else {
+                invoke.resolve()
                 return
             }
             UIView.transition(
@@ -395,6 +485,13 @@ class SystemComponentsPlugin: Plugin {
         overlay.onSelect = { [weak self] id in
             self?.trigger("tabSelected", data: ["id": id])
         }
+        // CANARI PATCH: the status bar tap goes to the page, which scrolls its own box. The web
+        // view's scroll view has no range (the document never scrolls) and is switched off so the
+        // catcher is the one candidate UIKit can find (`StatusBarTapCatcher`).
+        overlay.statusBarTapCatcher.onTap = { [weak self] in
+            self?.trigger("statusBarTap", data: [:])
+        }
+        webView?.scrollView.scrollsToTop = false
         host.addChild(overlay)
         overlay.view.translatesAutoresizingMaskIntoConstraints = false
         host.view.addSubview(overlay.view)

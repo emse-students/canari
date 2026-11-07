@@ -4,6 +4,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { Log } from '$lib/utils/Log';
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import { goto } from '$app/navigation';
   import {
     getAssociationBySlug,
@@ -16,6 +17,7 @@
     unmuteAssociationPush,
     hasPermissionFlag,
     getMyBdeReach,
+    leaveAssociation,
     type BdeReach,
     AssociationPermissionFlag,
     listAssociationProducts,
@@ -46,7 +48,11 @@
     Handshake,
     Download,
     Mail,
+    LogOut,
   } from '@lucide/svelte';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { showToast } from '$lib/stores/toast.svelte';
+  import { leaveRefusalMessage } from '$lib/associations/leaveRefusal';
   import Breadcrumb from '$lib/components/navigation/Breadcrumb.svelte';
   import SectionHub from '$lib/components/navigation/SectionHub.svelte';
   import type { HubIcon, HubRow } from '$lib/components/navigation/breadcrumb';
@@ -198,6 +204,19 @@
     })
   );
 
+  /**
+   * The first-time helps' anchors on the hub rows (docs/wiki/frontend/guided-help.md, batch 3), each
+   * set only for a reader the help is FOR, from the facts this page already draws by: the shop row
+   * whenever it is drawn (the hub lists it only when the association sells something); the agenda row
+   * only for a manager who may propose events (the agenda section's own edit right). An unset row
+   * registers nothing, so its step is left out.
+   */
+  function hubAnchor(section: PublicSection): string | undefined {
+    if (section === 'shop') return 'asso.shop';
+    if (section === 'calendar') return canManage && canProposeEvent ? 'asso.agenda' : undefined;
+    return undefined;
+  }
+
   /** One hub row per section that exists; a count only where the roster already has it. */
   const hubRows = $derived(
     visiblePublicSections(content).map((section): HubRow => ({
@@ -205,6 +224,7 @@
       href: publicSectionHref(base, slug, section),
       label: sectionLabel(section),
       icon: SECTION_ICONS[section],
+      guideAnchor: hubAnchor(section),
       summary:
         section === 'members'
           ? kind === 'list'
@@ -328,6 +348,30 @@
       error = m.common_generic_error_label();
     } finally {
       followLoading = false;
+    }
+  }
+
+  let leaving = $state(false);
+
+  /**
+   * THE "QUITTER" BUTTON (owner, 2026-11-03): any member leaves from here without asking anyone,
+   * except the last holder of MANAGE_MEMBERS, whom the server refuses with a typed code.
+   */
+  async function leave() {
+    if (!asso || !myMembership || leaving) return;
+    const name = asso.name;
+    if (!(await showConfirm(m.asso_leave_confirm({ name }), { danger: true }))) return;
+    leaving = true;
+    try {
+      await leaveAssociation(asso.id);
+      Log.d('AssociationDetailView.leave done', { association: asso.id });
+      members = members.filter((member) => member.userId !== userId);
+      showToast(m.asso_leave_done({ name }), 'info');
+    } catch (err) {
+      Log.d('AssociationDetailView.leave failed', err);
+      showToast(leaveRefusalMessage(err) ?? m.common_generic_error_label());
+    } finally {
+      leaving = false;
     }
   }
 
@@ -482,9 +526,22 @@
                 {/if}
               </button>
             {/if}
+            {#if myMembership}
+              <button
+                type="button"
+                onclick={() => leave()}
+                disabled={leaving}
+                data-testid="asso-leave"
+                class="border-cn-border text-text-main flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition-colors hover:bg-(--cn-surface) disabled:opacity-50"
+              >
+                <LogOut size={16} />
+                {m.asso_leave_button()}
+              </button>
+            {/if}
             {#if canManage}
               <a
                 href="{base}/{encodeURIComponent(slug)}/edit"
+                use:guideAnchor={'asso.manage'}
                 class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-sm font-bold transition-colors"
               >
                 <Settings size={16} />

@@ -8,7 +8,27 @@ import {
   PayloadTooLargeException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { assertKindMaySell, writablePermissions } from './selling-kinds';
+import {
+  assertMayCollect,
+  assertMayHoldOwnAccount,
+  assertMayRequestDelegation,
+  ASSOCIATION_KIND_DOES_NOT_SELL,
+  LIST_NO_OWN_LYDIA_ACCOUNT,
+  type CollectionSubject,
+  collectionModeOf,
+  mayCollect,
+  writablePermissions,
+} from './collection-policy';
+import { LEGACY_ADMIN_PRESETS, withLegacyEditProfile } from './legacy-admin-presets';
+import {
+  assertInstitutionMemberWrite,
+  assertWithinGrantCeiling,
+  grantCeiling,
+  LAST_MEMBER_MANAGER,
+  logSuperAdminExcludedGrant,
+  type GranterStanding,
+  type MemberGranter,
+} from './member-flag-ceiling';
 import { describeHttpError } from '../common/http-error-log';
 import {
   SecretBoxUnavailableError,
@@ -40,7 +60,11 @@ import {
   assertRosterStaysOnOneSide,
 } from './review-cohort-reach';
 import { isInReviewCohort } from '../review-cohort';
-import { assertCotisationStemFree, isCotisationStemCollision } from './cotisation-namespace';
+import {
+  assertCotisationStemFree,
+  isCotisationStemCollision,
+  stemCollidesElsewhere,
+} from './cotisation-namespace';
 import type { AssociationPayoutAccount } from './association.projection';
 import { listLydiaCashiers } from './lydia-cashiers-list';
 import {
@@ -59,16 +83,26 @@ import {
   paymentsNotReady,
   type LydiaReadinessCause,
 } from './lydia-readiness';
-import { approvedDelegateIds } from './payment-delegation.util';
 import {
+  approvedDelegateIds,
+  collectsThrough,
+  holdsOwnAccount,
+  purchaseIdsTakenBy,
+  releaseWithheldProductsOf,
+  withholdOnSaleProductsOf,
+} from './payment-delegation.util';
+import {
+  type DelegationNotice,
   LYDIA_PAYMENTS_PAUSED_TYPE,
   LydiaPaymentsNotifier,
 } from './lydia-payments-notifier.service';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import {
+  ANY_TYPE_EXCLUDED_FLAGS,
   AssociationMember,
   AssociationPermissionFlag,
   SUPER_ADMIN_EXCLUDED_FLAGS,
+  typeExcludedFlags,
 } from './entities/association-member.entity';
 import { AssociationDocument } from './entities/association-document.entity';
 import { DocumentReviewerGrant } from './entities/document-reviewer-grant.entity';
@@ -112,13 +146,21 @@ import {
   UpdateAssociationCalendarEventDto,
 } from './dto/association.dto';
 import { RedisService } from '../common/redis/redis.service';
-import { PostNotificationsService, SYSTEM_ACTOR_NAME } from '../posts/post-notifications.service';
+import {
+  NotificationPushFailedError,
+  PostNotificationsService,
+  SYSTEM_ACTOR_NAME,
+} from '../posts/post-notifications.service';
 import { invalidatePostListCache } from '../posts/post-list-cache';
 import {
+  ASSOCIATIONS_UNDER_BDE_AGENDA_RIGHT_SQL,
   ASSOCIATIONS_UNDER_BDE_FLAG_SQL,
-  BDE_FLAG_HOLDERS_OVER_SQL,
+  BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,
+  PLATFORM_ADMINS_SQL,
+  TARGETS_AN_UNGOVERNED_SPACE_SQL,
+  HOLDS_BDE_AGENDA_RIGHT_OVER_SQL,
   HOLDS_BDE_FLAG_OVER_SQL,
-  holdsBdeFlagOverSql,
+  holdsBdeAgendaRightOverSql,
   isBdeAssociationSql,
 } from '../spaces/bde';
 import {
@@ -132,16 +174,76 @@ import {
   type SpacePair,
 } from '../spaces/reader-spaces';
 import { AssociationAudience } from '../spaces/association-audience.entity';
-import { assertCreatorCampusGoverned, defaultCampusRules } from '../spaces/audience-policy';
-import { BDE_GOVERNED_CAMPUSES_SQL } from '../spaces/bde';
+import { assertAudienceAllowedForType, defaultCampusRules } from '../spaces/audience-policy';
+import { normaliseRules, smallestRules } from '../spaces/spaces.service';
+import { writeDependencyJournal } from '../spaces/dependency-journal';
+import {
+  DEPENDENCY_INSTITUTION,
+  DEPENDENCY_PARENT_CHOICE_REQUIRED,
+  DEPENDENCY_PARENT_NOT_A_BDE,
+  DEPENDENCY_PARENT_NOT_YOURS,
+  DEPENDENCY_DELETE_ADMIN_ONLY,
+  dependencyConflict,
+  withDependencyRefusals,
+} from '../spaces/dependency-rules';
+import type { AudienceRuleDto } from '../spaces/dto/space.dto';
+import type { FirstAdminDto } from './dto/admin-association.dto';
+import { SEARCH_FOLD_PARAMS, foldSql } from './search-fold';
+import {
+  ADMIN_ASSOCIATION_ERROR,
+  ADMIN_CATALOGUE_DEFAULT_LIMIT,
+  decodeCatalogueCursor,
+  encodeCatalogueCursor,
+  platformAdminOnly,
+} from './admin-catalogue';
+import { BDES_WHERE_USER_HOLDS_SQL } from '../spaces/bde';
+import {
+  BDE_MODERATED_ASSOCIATION_IDS_SQL,
+  BDE_MODERATED_POST_IDS_SQL,
+  BDE_MODERATED_USER_IDS_SQL,
+  BDE_MODERATES_COMMENT_SQL,
+  BDE_MODERATES_LIVE_SQL,
+  BDE_MODERATES_REPORT_SQL,
+  MODERATION_OUT_OF_SCOPE,
+  MODERATION_RESERVED_SQL,
+  MODERATION_RESERVED_TO_PLATFORM_ADMIN,
+  MODERATOR_REQUIRED,
+  type ModerationTarget,
+} from '../spaces/bde-moderation';
+import { Space } from '../spaces/space.entity';
 import type { SpaceCampus, SpaceFormation } from '../spaces/space.entity';
 import { assertWithinCoOrganiserCap } from './co-organiser-cap';
-import { assertAssociationImageUrl } from './association-image-url';
-import type { CoOrganiserPort } from './co-organisers.port';
+import { assertAssociationImageUrl, assertNotQuestionImage } from './association-image-url';
+import type {
+  CoOrganiserAfterCommit,
+  CoOrganiserPort,
+  CoOrganiserSyncRequest,
+} from './co-organisers.port';
+import {
+  eventWriteSide,
+  partnerOrganiserOnlyRefusal,
+  type EventWriteSide,
+} from './event-write-side';
+import {
+  EVENT_REOPEN_NOTIFICATION_TYPE,
+  type EventReopenReason,
+  type ReopenedEvent,
+} from './event-reopen';
 import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
+import { type PublicMember, publicMemberAvatarUrl } from '../public/public-member';
 
 const LOGO_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Where a new entity is put by the platform admin's create form (`POST associations/admin`): the
+ * spaces it reaches - EXPLICIT, possibly none, replacing the creator-campus default - and an
+ * optional first admin. Absent, `create` keeps its default placement.
+ */
+export interface AssociationPlacement {
+  audiences: AudienceRuleDto[];
+  firstAdmin?: FirstAdminDto;
+}
 const ALLOWED_LOGO_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 /**
@@ -385,6 +487,46 @@ function lydiaBusinessKeyContext(associationId: string, vendorToken: string): st
   return `${associationId}:${vendorToken}`;
 }
 
+/**
+ * The typed 403 refusing a payment-delegation acceptance by anyone but the receiver's own shop
+ * managers or the platform administrator - a BDE governing the receiver included (owner, 2026-11-02).
+ */
+export const DELEGATION_ACCEPT_RECEIVER_ONLY = 'DELEGATION_ACCEPT_RECEIVER_ONLY';
+
+/**
+ * The typed 403 refusing a payment-delegation REJECT or REVOKE on the receiver's side by anyone but
+ * its own shop managers or the platform administrator - the same rule as acceptance (owner review
+ * of #2967, 2026-11-03). The list itself still cancels its own delegation through its own managers.
+ */
+export const DELEGATION_REVOKE_RECEIVER_ONLY = 'DELEGATION_REVOKE_RECEIVER_ONLY';
+
+/**
+ * The typed 409 refusing a payment-delegation ACCEPTANCE that would make a chain (review of #2967,
+ * 2026-11-03): the receiver itself delegates its payments, or the requester already receives
+ * approved delegations of its own. The request checks the same two rules, but before any lock, so
+ * two crossed requests (A asks B while B asks C) both pass; the acceptance is where the chain would
+ * be written, so it is checked again there, under its locks.
+ */
+export const DELEGATION_CHAIN_REFUSED = 'DELEGATION_CHAIN_REFUSED';
+
+/** In which capacity a delegation was accepted - the `acceptedAs` of migration 125. */
+export type DelegationAcceptor = 'member' | 'platform-admin';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The association whose NAME is printed above a list (`parentName`): its G3 label when it has one
+ * ("liste pour le BDS"), else its governing parent. Lists only - since WP-D1 an association has a
+ * governing parent too, and the tiles and the detail page (which print `parentName` whatever the
+ * type, on older builds as well) must not start printing "BDE" above every club.
+ */
+export function shownParentId(
+  a: Pick<Association, 'type' | 'parentAssociationId' | 'displayParentAssociationId'>
+): string | null {
+  if (a.type !== 'list') return null;
+  return a.displayParentAssociationId ?? a.parentAssociationId;
+}
+
 @Injectable()
 export class AssociationsService {
   private readonly logger = new Logger(AssociationsService.name);
@@ -462,11 +604,30 @@ export class AssociationsService {
    * the grid at `/admin/spaces` reads it back as a ticked campus. A creator with no campus is
    * REFUSED with the typed `AUDIENCE_CREATOR_CAMPUS_REQUIRED` (decision 5) and nothing is written -
    * the campus is never guessed. An institution keeps its own rule: no default, the creating global
-   * admin ticks its audience afterwards. A NON-admin creator (a BDE star) is further refused
-   * `403 AUDIENCE_OUTSIDE_BDE_CAMPUS` when that default campus is not one its BDE governs: it could
-   * not edit what it made (decision 7).
+   * admin ticks its audience afterwards. WITH A GOVERNING PARENT (WP-D1, reform 2.5: every
+   * non-admin creator's entity has one, `resolveCreateDependency`) the default is instead the spaces
+   * that parent governs - so a BDE star always creates an audience it may edit (decision 7), and an
+   * entity of a campus two BDEs share never starts out reaching both (closes P4).
+   *
+   * A PLACEMENT (the platform admin's form on `/admin/spaces`, owner 2026-11-02) replaces that
+   * default with the spaces the admin chose - possibly none - and may add ONE first admin, in the
+   * same transaction as the row. Without a first admin the entity has no member at all: the
+   * creating admin never becomes one. Only a platform admin may pass one.
    */
-  async create(dto: CreateAssociationDto, userId: string, isGlobalAdmin: boolean) {
+  async create(
+    dto: CreateAssociationDto,
+    userId: string,
+    isGlobalAdmin: boolean,
+    placement?: AssociationPlacement
+  ) {
+    if (placement && !isGlobalAdmin) {
+      this.logger.warn(`[create] placement refused: ${userId.slice(0, 8)} is not a platform admin`);
+      throw platformAdminOnly();
+    }
+    if (placement) {
+      // Refused before any write: an association or a list addresses a campus, never everyone.
+      assertAudienceAllowedForType(dto.type ?? 'association', normaliseRules(placement.audiences));
+    }
     const explicitSlug = dto.slug?.trim() ? dto.slug : null;
     if (explicitSlug !== null && !SLUG_PATTERN.test(explicitSlug)) {
       throw new BadRequestException(
@@ -478,7 +639,10 @@ export class AssociationsService {
     }
     // The logo is normally set by the upload path; a value sent here is held to the same allowlist.
     const logoUrl = dto.logoUrl?.trim() ? dto.logoUrl.trim() : null;
-    if (logoUrl !== null) assertAssociationImageUrl(logoUrl);
+    if (logoUrl !== null) {
+      assertAssociationImageUrl(logoUrl);
+      await assertNotQuestionImage(this.assoRepo, logoUrl);
+    }
 
     if (explicitSlug !== null) {
       // An old client's own slug: refused when taken, as before. The unique index still arbitrates
@@ -488,7 +652,14 @@ export class AssociationsService {
         throw new BadRequestException('An association with this slug already exists');
       }
       try {
-        return await this.insertAssociation(dto, explicitSlug, logoUrl, userId, isGlobalAdmin);
+        return await this.insertAssociation(
+          dto,
+          explicitSlug,
+          logoUrl,
+          userId,
+          isGlobalAdmin,
+          placement
+        );
       } catch (err) {
         if (!(await isSlugUniqueViolation(err, this.catalogQuery))) throw err;
         this.logger.warn(`[slug] explicit slug ${explicitSlug} was taken between check and insert`);
@@ -501,7 +672,14 @@ export class AssociationsService {
     // `-2` and `-3` instead of a check-then-insert that both pass.
     for (const candidate of slugCandidates(dto.name)) {
       try {
-        const saved = await this.insertAssociation(dto, candidate, logoUrl, userId, isGlobalAdmin);
+        const saved = await this.insertAssociation(
+          dto,
+          candidate,
+          logoUrl,
+          userId,
+          isGlobalAdmin,
+          placement
+        );
         this.logger.log(`[slug] derived ${candidate} from the name`);
         return saved;
       } catch (err) {
@@ -525,6 +703,91 @@ export class AssociationsService {
   }
 
   /**
+   * The slug a create of `name` would take NOW: the first of the SAME `slugCandidates` that is
+   * neither taken nor a cotisation-stem collision (`assertCotisationStemFree`, the check the create
+   * transaction runs). A PREVIEW for the admin form - the create stays the authority, and a
+   * concurrent create may still move it one suffix on. `null` when every candidate is taken.
+   */
+  async previewDerivedSlug(name: string): Promise<string | null> {
+    // ONE read of every stem (a slug is its own base stem, so a taken slug collides too), then the
+    // same predicate the create's `assertCotisationStemFree` applies - asked, never learned by
+    // catching its refusal, so a preview typed letter by letter logs no collision it did not make.
+    const collides = await stemCollidesElsewhere(this.assoRepo.manager, null);
+    const slug = slugCandidates(name).find((candidate) => !collides(candidate)) ?? null;
+    if (slug === null) this.logger.debug(`[slug] preview: no free candidate`);
+    return slug;
+  }
+
+  /**
+   * One page of the platform admin's catalogue (`/admin/spaces`): every entity of one kind, member
+   * or not, ordered by `(name, id)` and paged by KEYSET so a page costs the same at any depth and
+   * a row created meanwhile never shifts the next one. `q` keeps the names or slugs containing it,
+   * ignoring case and accents (`foldSql`; `strpos`, so `%` and `_` are plain characters). Each row carries its
+   * member count and its audience rules, so the grid needs no second whole-table read.
+   */
+  async adminCatalogue(query: {
+    type: 'association' | 'list' | 'institution';
+    q?: string;
+    after?: string;
+    limit?: number;
+  }) {
+    const limit = query.limit ?? ADMIN_CATALOGUE_DEFAULT_LIMIT;
+    const qb = this.assoRepo
+      .createQueryBuilder('a')
+      .where('a.type = :catalogueType', { catalogueType: query.type })
+      .orderBy('a.name', 'ASC')
+      .addOrderBy('a.id', 'ASC')
+      .take(limit + 1);
+    const search = query.q?.trim();
+    if (search) {
+      // Accent- and case-insensitive on both sides: "ecole" finds "Ecole" written with its accent.
+      const needle = foldSql(':catalogueQ');
+      qb.andWhere(
+        `(strpos(${foldSql('a.name')}, ${needle}) > 0 OR strpos(${foldSql('a.slug')}, ${needle}) > 0)`,
+        { catalogueQ: search, ...SEARCH_FOLD_PARAMS }
+      );
+    }
+    if (query.after) {
+      const position = decodeCatalogueCursor(query.after);
+      qb.andWhere('(a.name, a.id) > (:afterName, :afterId::uuid)', {
+        afterName: position.name,
+        afterId: position.id,
+      });
+    }
+    const fetched = await qb.getMany();
+    const rows = fetched.slice(0, limit);
+    const next =
+      fetched.length > limit
+        ? encodeCatalogueCursor({ name: rows[rows.length - 1].name, id: rows[rows.length - 1].id })
+        : null;
+    const ids = rows.map((a) => a.id);
+    const [counts, rules] = ids.length
+      ? await Promise.all([
+          this.assoRepo.query(
+            `SELECT "associationId", COUNT(*)::int AS n FROM association_members
+              WHERE "associationId" = ANY($1::uuid[]) GROUP BY "associationId"`,
+            [ids]
+          ) as Promise<{ associationId: string; n: number }[]>,
+          this.assoRepo.manager.find(AssociationAudience, { where: { associationId: In(ids) } }),
+        ])
+      : [[], []];
+    const countOf = new Map(counts.map((c) => [c.associationId, c.n]));
+    this.logger.debug(
+      `[ADMIN_CATALOGUE] ${query.type} q=${search ? 'yes' : 'no'} after=${query.after ? 'yes' : 'no'}: ${rows.length} row(s), more=${next !== null}`
+    );
+    return {
+      rows: rows.map((a) => ({
+        ...a,
+        memberCount: countOf.get(a.id) ?? 0,
+        audiences: rules
+          .filter((r) => r.associationId === a.id)
+          .map((r) => ({ formation: r.formation, campus: r.campus })),
+      })),
+      next,
+    };
+  }
+
+  /**
    * Reads the catalog OUTSIDE the create transaction a violation has just aborted - what tells a
    * slug collision from any other unique violation (`isSlugUniqueViolation`).
    */
@@ -537,7 +800,8 @@ export class AssociationsService {
     slug: string,
     logoUrl: string | null,
     userId: string,
-    isGlobalAdmin: boolean
+    isGlobalAdmin: boolean,
+    placement?: AssociationPlacement
   ) {
     const asso = this.assoRepo.create({
       ...dto,
@@ -546,10 +810,44 @@ export class AssociationsService {
       contactEmail: dto.contactEmail?.trim() ? dto.contactEmail.trim() : null,
       createdBy: userId,
     });
+    // A parent the trigger refuses (a race with the check below, or a placement naming a parented
+    // governor) reaches the client as the same typed 409 as every other dependency door (F6).
+    return withDependencyRefusals(this.logger, `the creation of ${slug}`, () =>
+      this.insertAssociationTx(asso, dto, userId, isGlobalAdmin, placement)
+    );
+  }
+
+  /** The transaction of {@link insertAssociation}: the row, its parent, its default audience. */
+  private insertAssociationTx(
+    asso: Association,
+    dto: CreateAssociationDto,
+    userId: string,
+    isGlobalAdmin: boolean,
+    placement?: AssociationPlacement
+  ) {
     return this.assoRepo.manager.transaction(async (manager) => {
       // Its base cotisation tag must never coincide with another association's tag names.
-      await assertCotisationStemFree(manager, null, slug);
+      await assertCotisationStemFree(manager, null, asso.slug);
+      const dependency = await this.resolveCreateDependency(manager, dto, userId, isGlobalAdmin);
+      asso.parentAssociationId = dependency.parentId;
+      asso.displayParentAssociationId = dependency.labelId;
       const saved = await manager.save(asso);
+      if (dependency.parentId !== null) {
+        await writeDependencyJournal(
+          manager,
+          'entity',
+          saved.id,
+          null,
+          dependency.parentId,
+          userId,
+          'create'
+        );
+      }
+      if (placement) {
+        // Only a platform admin reaches a placement (refused above otherwise).
+        await this.placeNewAssociation(manager, saved, placement, { userId, isGlobalAdmin });
+        return saved;
+      }
       if (dto.type === 'institution') {
         // The type decides the default (D33's one mechanism): an institution addresses nobody until
         // an admin ticks the /admin/spaces grid - a global admin's own spaces are rarely the School's.
@@ -558,22 +856,35 @@ export class AssociationsService {
         );
         return saved;
       }
+      if (dependency.parentId !== null) {
+        // The default audience derives from the parent (reform 2.5, closes P4): the spaces it
+        // governs, in the grid's smallest form - never a whole campus another BDE shares.
+        const governed = await manager.find(Space, {
+          where: { bdeAssociationId: dependency.parentId },
+        });
+        const fromParent = smallestRules(governed);
+        this.logger.log(
+          `[spaces] ${saved.id} reaches its parent's spaces: ${fromParent.map((r) => `${r.formation ?? '*'}|${r.campus ?? '*'}`).join(', ')}`
+        );
+        await manager.insert(
+          AssociationAudience,
+          fromParent.map((r) => ({
+            associationId: saved.id,
+            formation: r.formation,
+            campus: r.campus,
+          }))
+        );
+        return saved;
+      }
       const [profile] = (await manager.query(READER_PROFILE_SQL, [userId])) as {
         campus: string | null;
       }[];
-      // Thrown inside the transaction: the row saved above is rolled back with it.
+      // Only a platform admin creates with no parent (`resolveCreateDependency` gives every
+      // non-admin creator one of its BDEs). Thrown inside the transaction: the row saved above is
+      // rolled back with it.
       const rules = defaultCampusRules(profile?.campus ?? null);
-      if (!isGlobalAdmin) {
-        const governed = (
-          (await manager.query(BDE_GOVERNED_CAMPUSES_SQL, [
-            userId,
-            AssociationPermissionFlag.MANAGE_ASSO,
-          ])) as { campus: string }[]
-        ).map((r) => r.campus);
-        assertCreatorCampusGoverned(governed, rules);
-      }
       this.logger.log(
-        `[spaces] ${saved.id} reaches its creator's campus: ${rules[0].campus} (every formation)`
+        `[spaces] ${saved.id} reaches its creator's spaces: ${rules.map((r) => `${r.formation ?? '*'}|${r.campus}`).join(', ')}`
       );
       await manager.insert(
         AssociationAudience,
@@ -581,6 +892,166 @@ export class AssociationsService {
       );
       return saved;
     });
+  }
+
+  /**
+   * THE PARENT A NEW ENTITY IS CREATED UNDER (reform 2.5, B1; WP-D1), and its G3 label.
+   *
+   * - an institution has none; naming one is `DEPENDENCY_INSTITUTION`;
+   * - a named parent that is NOT a BDE (a list made "for the BDS", as an older client still sends)
+   *   becomes the display-only LABEL (G3), and the governing parent falls back to the default below;
+   * - a platform admin's parent is the BDE it names, or none;
+   * - a non-admin creator's parent is the BDE it names among those where it holds MANAGE_ASSO
+   *   (`DEPENDENCY_PARENT_NOT_YOURS` otherwise), else its only such BDE; holding it in several and
+   *   naming none is `DEPENDENCY_PARENT_CHOICE_REQUIRED`.
+   * Asked inside the create transaction; migration 131's trigger judges the same row at the insert.
+   */
+  private async resolveCreateDependency(
+    manager: EntityManager,
+    dto: CreateAssociationDto,
+    userId: string,
+    isGlobalAdmin: boolean
+  ): Promise<{ parentId: string | null; labelId: string | null }> {
+    const named = dto.parentAssociationId ?? null;
+    this.logger.debug(
+      `[DEPENDENCY] create ${dto.type ?? 'association'} by ${userId.slice(0, 8)}: parent named ${named ?? 'none'}`
+    );
+    if (dto.type === 'institution') {
+      if (named !== null) {
+        this.logger.warn(`[DEPENDENCY] create refused: an institution given parent ${named}`);
+        throw dependencyConflict(DEPENDENCY_INSTITUTION, 'An institution depends on nobody');
+      }
+      return { parentId: null, labelId: null };
+    }
+    let parentId: string | null = null;
+    let labelId: string | null = null;
+    if (named !== null) {
+      const parent = await manager.findOne(Association, { where: { id: named } });
+      if (!parent) throw new NotFoundException('Parent association not found');
+      const governs = (await manager.count(Space, { where: { bdeAssociationId: named } })) > 0;
+      if (parent.type === 'association' && governs) {
+        parentId = named;
+      } else if (parent.type === 'institution') {
+        this.logger.warn(`[DEPENDENCY] create refused: institution ${named} named as parent`);
+        throw dependencyConflict(DEPENDENCY_PARENT_NOT_A_BDE, "An institution is nobody's parent");
+      } else {
+        labelId = named;
+        this.logger.log(`[DEPENDENCY] create: ${named} governs no space, kept as the label (G3)`);
+      }
+    }
+    if (isGlobalAdmin) return { parentId, labelId };
+    const mine = (
+      (await manager.query(BDES_WHERE_USER_HOLDS_SQL, [
+        userId,
+        AssociationPermissionFlag.MANAGE_ASSO,
+      ])) as { id: string }[]
+    ).map((r) => r.id);
+    if (parentId !== null) {
+      if (!mine.includes(parentId)) {
+        this.logger.warn(
+          `[DEPENDENCY] create refused: ${userId.slice(0, 8)} holds no MANAGE_ASSO in ${parentId}`
+        );
+        throw dependencyConflict(
+          DEPENDENCY_PARENT_NOT_YOURS,
+          'Choose a BDE in which you hold the association management right'
+        );
+      }
+      return { parentId, labelId };
+    }
+    if (mine.length === 0) {
+      // The create route admits a non-admin only through MANAGE_ASSO in a BDE (the same predicate),
+      // so this is a defect or a hand-made call - accused, and refused.
+      this.logger.error(
+        `[DEPENDENCY] create by ${userId.slice(0, 8)}: a non-admin creator holding MANAGE_ASSO in no BDE`
+      );
+      throw dependencyConflict(
+        DEPENDENCY_PARENT_NOT_YOURS,
+        'Only a BDE manager or a platform admin creates an association'
+      );
+    }
+    if (mine.length > 1) {
+      this.logger.warn(
+        `[DEPENDENCY] create refused: ${userId.slice(0, 8)} manages ${mine.length} BDEs and named none`
+      );
+      throw dependencyConflict(
+        DEPENDENCY_PARENT_CHOICE_REQUIRED,
+        'Choose which of your BDEs the new entity depends on'
+      );
+    }
+    return { parentId: mine[0], labelId };
+  }
+
+  /**
+   * Writes a placement inside the create transaction: the chosen rules (none is allowed - it then
+   * reaches nobody), then the first admin when one was picked. A first admin naming no account is a
+   * typed 400 and rolls the row back with it, so a half-placed entity never exists.
+   */
+  private async placeNewAssociation(
+    manager: EntityManager,
+    saved: Association,
+    placement: AssociationPlacement,
+    granter: MemberGranter
+  ): Promise<void> {
+    const rules = normaliseRules(placement.audiences);
+    if (rules.length > 0) {
+      await manager.insert(
+        AssociationAudience,
+        rules.map((r) => ({ associationId: saved.id, formation: r.formation, campus: r.campus }))
+      );
+    }
+    this.logger.log(`[spaces] ${saved.id} placed by a platform admin: ${rules.length} rule(s)`);
+    const firstAdmin = placement.firstAdmin;
+    if (!firstAdmin) {
+      this.logger.log(`[create] ${saved.id} has no member: none was asked for`);
+      return;
+    }
+    const known = (await manager.query(`SELECT 1 FROM users WHERE id::text = $1 LIMIT 1`, [
+      firstAdmin.userId,
+    ])) as unknown[];
+    if (known.length === 0) {
+      this.logger.warn(`[create] first admin ${firstAdmin.userId.slice(0, 8)} names no account`);
+      throw new BadRequestException({
+        code: ADMIN_ASSOCIATION_ERROR.FIRST_ADMIN_UNKNOWN,
+        message: 'The first admin picked names no account.',
+      });
+    }
+    await this.insertMembership(manager, saved, firstAdmin, 0, granter, 'create.firstAdmin');
+    this.logger.log(`[create] ${saved.id} first admin ${firstAdmin.userId.slice(0, 8)}`);
+  }
+
+  /**
+   * Inserts ONE membership row: the ONE place a member is written, whether by `addMember` or by a
+   * placement's first admin. The bitmask is narrowed to what the kind may hold; the GRANTER is judged
+   * here, so no caller can skip it - the institution rule (`assertInstitutionMemberWrite`) and the
+   * grant ceiling (`member-flag-ceiling.ts`), then the audit line of a super-admin's excluded grant.
+   * The placement passes its platform admin, whose ceiling is every flag but who is still held to
+   * the institution rule. The roster never crosses the review cohort's boundary.
+   */
+  private async insertMembership(
+    manager: EntityManager,
+    association: Pick<Association, 'id' | 'type'>,
+    member: { userId: string; permissions: number; role?: string },
+    sortOrder: number,
+    granter: MemberGranter,
+    what: string
+  ): Promise<AssociationMember> {
+    const permissions = writablePermissions(association.type, member.permissions);
+    const ctx = { associationId: association.id, what };
+    assertInstitutionMemberWrite(this.logger, association.type, granter, 0, permissions, ctx);
+    const standing = await this.judgeMemberFlags(granter, association.id, 0, permissions, what);
+    await assertRosterStaysOnOneSide(manager, association.id, member.userId);
+    const saved = await manager.save(
+      manager.create(AssociationMember, {
+        associationId: association.id,
+        userId: member.userId,
+        // No role given: the column's default, never a label this code types.
+        ...(member.role === undefined ? {} : { role: member.role }),
+        permissions,
+        sortOrder,
+      })
+    );
+    logSuperAdminExcludedGrant(this.logger, standing, 0, permissions, ctx);
+    return saved;
   }
 
   /**
@@ -641,13 +1112,16 @@ export class AssociationsService {
       ])
     );
 
-    const parents = await this.parentNameMap(associations.map((a) => a.parentAssociationId));
+    const parents = await this.parentNameMap(associations.map(shownParentId));
 
-    return associations.map((a) => ({
-      ...a,
-      memberCount: countMap.get(a.id) ?? 0,
-      parentName: a.parentAssociationId ? (parents.get(a.parentAssociationId) ?? null) : null,
-    }));
+    return associations.map((a) => {
+      const shown = shownParentId(a);
+      return {
+        ...a,
+        memberCount: countMap.get(a.id) ?? 0,
+        parentName: shown ? (parents.get(shown) ?? null) : null,
+      };
+    });
   }
 
   /**
@@ -664,7 +1138,7 @@ export class AssociationsService {
     return new Map(rows.map((r) => [r.id, r.name]));
   }
 
-  /** Display name of a list's parent association, or null when it has none. */
+  /** Display name of the parent `shownParentId` picked, or null when there is none. */
   private async parentName(parentId: string | null): Promise<string | null> {
     if (!parentId) return null;
     const parent = await this.assoRepo.findOne({
@@ -686,7 +1160,7 @@ export class AssociationsService {
     const memberCount = await this.memberRepo.count({
       where: { associationId: id },
     });
-    return { ...asso, memberCount, parentName: await this.parentName(asso.parentAssociationId) };
+    return { ...asso, memberCount, parentName: await this.parentName(shownParentId(asso)) };
   }
 
   /** Loads one association by its URL slug and appends a memberCount. */
@@ -696,16 +1170,17 @@ export class AssociationsService {
     const memberCount = await this.memberRepo.count({
       where: { associationId: asso.id },
     });
-    return { ...asso, memberCount, parentName: await this.parentName(asso.parentAssociationId) };
+    return { ...asso, memberCount, parentName: await this.parentName(shownParentId(asso)) };
   }
 
   /** Partially updates an association (blank text fields normalised to null) and invalidates post-list caches. */
   async update(id: string, dto: UpdateAssociationDto) {
     const asso = await this.findById(id);
-    // Enabling a cotisation creates a product: a list or an institution sells nothing. Disabling
-    // one (or editing a stored mode) stays open.
+    // Enabling a cotisation creates a product: only an entity that may collect now (an
+    // association, or a list through an approved delegate). Disabling one (or editing a stored
+    // mode) stays open.
     if (dto.cotisationEnabled === true) {
-      assertKindMaySell(this.logger, id, asso.type, 'cotisation enable');
+      assertMayCollect(this.logger, asso, 'cotisation enable');
     }
     const patch = { ...dto } as unknown as Partial<Association>;
     // Blank clears the logo URL; anything else is held to the image URL allowlist before any write.
@@ -715,6 +1190,8 @@ export class AssociationsService {
         patch.logoUrl = null;
       } else {
         assertAssociationImageUrl(logoUrl);
+        // A logo already stored is kept as it is: only a CHANGE is held to the question-image rule.
+        if (logoUrl !== asso.logoUrl) await assertNotQuestionImage(this.assoRepo, logoUrl);
         patch.logoUrl = logoUrl;
       }
     }
@@ -756,9 +1233,93 @@ export class AssociationsService {
       patch.cotisationExpiresAt =
         dto.cotisationMode === 'dated' ? deriveCotisationTag(asso.slug, 'dated').expiresAt : null;
     }
-    await this.assoRepo.update(id, patch);
+    if (dto.archived !== undefined) {
+      // Archiving is ordered against a purchase on the association ROW: `decidePurchase` reads it
+      // FOR SHARE under the buyer's lock, so this write waits for a checkout already deciding, and a
+      // checkout deciding after it reads `archived` committed (docs/wiki/cotisations.md).
+      await this.assoRepo.manager.transaction(async (manager) => {
+        await manager.findOne(Association, {
+          where: { id },
+          lock: { mode: 'pessimistic_write' },
+        });
+        await manager.update(Association, id, patch);
+      });
+      this.logger.log(`[ASSO] association=${id.slice(0, 8)} archived=${dto.archived}`);
+    } else {
+      await this.assoRepo.update(id, patch);
+    }
     await this.invalidatePostListCaches();
     return this.findById(id);
+  }
+
+  /**
+   * Inside a delete's transaction: nothing may keep naming the association being deleted on the
+   * dependency axis (WP-D1, reform 2.7). Its children lose their governing parent and the spaces it
+   * governed lose their governor, and a G3 label naming it is cleared - each change journaled with
+   * the admin who deleted it. The columns carry no foreign key, so without this a dangling id would
+   * survive the row.
+   */
+  private async releaseDependents(
+    manager: EntityManager,
+    id: string,
+    actorUserId: string
+  ): Promise<void> {
+    // node-postgres answers an UPDATE ... RETURNING through TypeORM as [rows, count].
+    const [children] = (await manager.query(
+      `UPDATE associations SET "parentAssociationId" = NULL WHERE "parentAssociationId" = $1 RETURNING id`,
+      [id]
+    )) as [{ id: string }[], number];
+    for (const child of children) {
+      await writeDependencyJournal(manager, 'entity', child.id, id, null, actorUserId, 'admin');
+    }
+    const [spaces] = (await manager.query(
+      `UPDATE spaces SET "bdeAssociationId" = NULL WHERE "bdeAssociationId" = $1 RETURNING id`,
+      [id]
+    )) as [{ id: string }[], number];
+    for (const space of spaces) {
+      await writeDependencyJournal(manager, 'space', space.id, id, null, actorUserId, 'admin');
+    }
+    const [labelled] = (await manager.query(
+      `UPDATE associations SET "displayParentAssociationId" = NULL WHERE "displayParentAssociationId" = $1 RETURNING id`,
+      [id]
+    )) as [{ id: string }[], number];
+    for (const entity of labelled) {
+      await writeDependencyJournal(manager, 'label', entity.id, id, null, actorUserId, 'admin');
+    }
+    if (children.length > 0 || spaces.length > 0 || labelled.length > 0) {
+      this.logger.warn(
+        `[DEPENDENCY] DELETE ${id}: ${children.length} child(ren) left without a parent, ${spaces.length} space(s) without a governor, ${labelled.length} label(s) cleared`
+      );
+    }
+  }
+
+  /**
+   * A delete CHANGES dependencies when the association governs a space or has children, and only
+   * the platform admin changes a dependency (owner A4): anybody else - a BDE's MANAGE_ASSO holder,
+   * whom the route admits for an ordinary association - is refused with the typed 403
+   * `DEPENDENCY_DELETE_ADMIN_ONLY`. Asked inside the delete's transaction, after the row lock.
+   */
+  private async assertMayReleaseDependents(
+    manager: EntityManager,
+    id: string,
+    isGlobalAdmin: boolean
+  ): Promise<void> {
+    if (isGlobalAdmin) return;
+    const [{ governs, children }] = (await manager.query(
+      `SELECT (SELECT count(*) FROM spaces WHERE "bdeAssociationId" = $1)::int AS governs,
+              (SELECT count(*) FROM associations WHERE "parentAssociationId" = $1)::int AS children`,
+      [id]
+    )) as { governs: number; children: number }[];
+    if (governs > 0 || children > 0) {
+      this.logger.warn(
+        `[DEPENDENCY] DELETE ${id} refused to a non-admin: governs ${governs} space(s), ${children} child(ren)`
+      );
+      throw new ForbiddenException({
+        code: DEPENDENCY_DELETE_ADMIN_ONLY,
+        message:
+          'Only the platform admin deletes an association that governs a space or has children',
+      });
+    }
   }
 
   /** Permanently deletes an association and all its member records, then invalidates post-list caches. */
@@ -775,8 +1336,10 @@ export class AssociationsService {
    * "0 members" cannot tell an empty association from a failed cascade.
    *
    * @param actorUserId The caller, from `x-user-id`. Required: the point of the line is the name.
+   * @param isGlobalAdmin The platform admin: the only caller who may delete an association that
+   *   governs a space or has children (`assertMayReleaseDependents`).
    */
-  async remove(id: string, actorUserId: string) {
+  async remove(id: string, actorUserId: string, isGlobalAdmin: boolean) {
     const [memberCount, eventCount, formCount] = await Promise.all([
       this.memberRepo.count({ where: { associationId: id } }),
       this.calendarRepo.count({ where: { associationId: id } }),
@@ -809,6 +1372,7 @@ export class AssociationsService {
       // its associations first too (`ERASURE_ASSOCIATION_LOCK_SQL`), so the two never cross.
       await manager.query(`SELECT 1 FROM associations WHERE id = $1 FOR UPDATE`, [id]);
       this.logger.debug(`[ASSO] DELETE ${id}: association locked`);
+      await this.assertMayReleaseDependents(manager, id, isGlobalAdmin);
       // Its Lydia cashier rows go with it (ON DELETE CASCADE). A LIVE one is a cashier Lydia still
       // lists on that Business, which nothing in Canari tracks afterwards: said at ERROR, never the
       // phone.
@@ -825,6 +1389,7 @@ export class AssociationsService {
       await manager.delete(AssociationCalendarEvent, { associationId: id });
       await retireForms(manager, { associationId: id });
       await manager.delete(AssociationMember, { associationId: id });
+      await this.releaseDependents(manager, id, actorUserId);
       await manager.delete(Association, id);
     });
     // Released only where no surviving space cites them, the one release rule of every poster.
@@ -851,21 +1416,28 @@ export class AssociationsService {
   /** POSTs any image file to the media-service public upload endpoint and returns the assigned mediaId. */
   async uploadPublicImage(
     file: { buffer: Buffer; mimetype: string },
-    authorization: string
+    authorization: string,
+    size: 'logo' | 'content' = 'logo'
   ): Promise<string> {
-    return this.uploadLogoToMedia(file, authorization);
+    return this.uploadLogoToMedia(file, authorization, size);
   }
 
-  /** POSTs a logo file to the media-service public upload endpoint and returns the assigned mediaId. */
+  /**
+   * POSTs an image to the media-service public upload endpoint and returns the assigned mediaId.
+   * `size` is the bound it is stored at: `logo` (256 px) or `content` (1600 px, a form question's
+   * image) - media-service's `PUBLIC_IMAGE_BOUNDS`.
+   */
   private async uploadLogoToMedia(
     file: { buffer: Buffer; mimetype: string },
-    authorization: string
+    authorization: string,
+    size: 'logo' | 'content' = 'logo'
   ): Promise<string> {
     const fd = new FormData();
     fd.append('file', file.buffer, {
       filename: 'logo',
       contentType: file.mimetype,
     });
+    if (size !== 'logo') fd.append('size', size);
     const url = mediaUrl('media/upload/public');
     try {
       const { data } = await firstValueFrom(
@@ -1125,11 +1697,16 @@ export class AssociationsService {
 
   /**
    * Public members list for the read-only showcase (portail-etu vitrine).
-   * Never exposes the raw permission bitmask - only a coarse `isAdmin` flag -
-   * and joins the users mirror for display name and promo. Ordered like the
-   * public members grid (sortOrder, then createdAt).
+   *
+   * WHAT THE SHOWCASE DRAWS (owner, 2026-11-02): the name, the role, the promo, whether they sit
+   * on the board, and the photo as a URL reached through the roster row (`avatarUrl`,
+   * {@link publicMemberAvatarUrl}) rather than through the account. `id` is the roster row's own
+   * random id, the showcase's list key. `userId` and `createdAt` are still served while the
+   * showcase moves its photos onto `avatarUrl` (`PublicMember`). Never the raw permission bitmask.
+   * Ordered like the public members grid (sortOrder, then createdAt). See
+   * docs/wiki/anonymous-surface.md.
    */
-  async listMembersPublic(associationId: string) {
+  async listMembersPublic(associationId: string): Promise<PublicMember[]> {
     const rows = await this.memberRepo
       .createQueryBuilder('m')
       .select(['m.id', 'm.userId', 'm.role', 'm.permissions', 'm.createdAt'])
@@ -1158,21 +1735,64 @@ export class AssociationsService {
         lastName: r.lastName || null,
         promo: r.promo ?? null,
         createdAt: r.m_createdAt,
+        avatarUrl: publicMemberAvatarUrl(r.m_id),
       }));
   }
 
-  /** Adds a user to an association with the given role and permission bitmask. Throws if they are already a member. */
-  async addMember(dto: AddMemberDto & { associationId: string }) {
-    const { associationId, userId, role } = dto;
+  /**
+   * The account behind one row of a PUBLIC roster, for the showcase's photo
+   * (`GET /api/public/members/:memberId/avatar`), or `null` when the id names no row or names a
+   * review account (which has no public face, review-cohort.ts). A malformed id is a miss, never a
+   * 500: the id comes from the URL.
+   */
+  async publicMemberUserId(memberId: string): Promise<string | null> {
+    if (!isUUID(memberId)) return null;
+    const row = await this.memberRepo.findOne({
+      where: { id: memberId },
+      select: { userId: true },
+    });
+    if (!row || isInReviewCohort(row.userId)) {
+      this.logger.debug(`[PUBLIC_AVATAR] no public roster row ${memberId.slice(0, 8)}`);
+      return null;
+    }
+    return row.userId;
+  }
+
+  /**
+   * The photo URL of each card of the published carte, keyed `assoId:userId`, for the cards that
+   * are still on that association's roster - the same address the public roster hands out, so the
+   * showcase reaches a carte face and a roster face the same way. A card whose person left the
+   * association gets none: they are no longer on a public roster.
+   */
+  async publicAvatarUrlsFor(
+    pairs: { associationId: string; userId: string }[]
+  ): Promise<Map<string, string>> {
+    const wanted = pairs.filter((p) => isUUID(p.associationId) && p.userId);
+    if (wanted.length === 0) return new Map();
+    const rows = await this.memberRepo.find({
+      where: wanted.map((p) => ({ associationId: p.associationId, userId: p.userId })),
+      select: { id: true, associationId: true, userId: true },
+    });
+    return new Map(
+      rows
+        .filter((r) => !isInReviewCohort(r.userId))
+        .map((r) => [`${r.associationId}:${r.userId}`, publicMemberAvatarUrl(r.id)])
+    );
+  }
+
+  /**
+   * Adds a user to an association with the given role and permission bitmask. Throws if they are
+   * already a member; the rights a granter may hand out and the institution rule are judged in
+   * `insertMembership`, the one writer.
+   */
+  async addMember(dto: AddMemberDto & { associationId: string }, granter: MemberGranter) {
+    const { associationId, userId } = dto;
     const target = await this.findById(associationId);
-    const permissions = writablePermissions(target.type, dto.permissions);
 
     const existing = await this.memberRepo.findOne({ where: { associationId, userId } });
     if (existing) {
       throw new BadRequestException('User is already a member');
     }
-    // Never across the review cohort's boundary (review-cohort-reach.ts).
-    await assertRosterStaysOnOneSide(this.memberRepo.manager, associationId, userId);
 
     // Append new members at the END of the ordered list (not the top): take the current
     // max sortOrder + 1. `listMembers` orders by sortOrder ASC, so without this a new
@@ -1184,14 +1804,14 @@ export class AssociationsService {
       .getRawOne<{ max: number | null }>();
     const sortOrder = (maxRow?.max ?? -1) + 1;
 
-    const membership = this.memberRepo.create({
-      associationId,
-      userId,
-      role,
-      permissions,
+    const saved = await this.insertMembership(
+      this.memberRepo.manager,
+      target,
+      { ...dto, permissions: await this.legacyAddMask(dto.permissions, granter, associationId) },
       sortOrder,
-    });
-    const saved = await this.memberRepo.save(membership);
+      granter,
+      'addMember'
+    );
     // A member sees the association's posts whatever their spaces (D21), so a membership is a fact
     // every cached feed page of that reader depends on.
     await this.invalidatePostListCaches();
@@ -1209,13 +1829,18 @@ export class AssociationsService {
     this.logger.debug(`reorderMembers: ${userIds.length} members reordered in ${associationId}`);
   }
 
-  /** Updates a member's role label and/or permission bitmask. Blocks removal of all flags from the last admin, unless bypassLastAdmin is true (global admin or BDE). */
+  /**
+   * Updates a member's role label and/or permission bitmask. Blocks removal of all flags from the
+   * last admin, unless bypassLastAdmin is true (global admin or BDE). Refuses an institution's
+   * member to anyone but the platform admin, and a bitmask that changes a flag `granter` does not
+   * hold - granted OR revoked (`member-flag-ceiling.ts` says why both).
+   */
   async updateMemberRole(
     associationId: string,
     targetUserId: string,
-    role?: string,
-    permissions?: number,
-    opts?: { bypassLastAdmin?: boolean }
+    role: string | undefined,
+    permissions: number | undefined,
+    opts: { granter: MemberGranter; bypassLastAdmin?: boolean }
   ) {
     const membership = await this.memberRepo.findOne({
       where: { associationId, userId: targetUserId },
@@ -1223,9 +1848,29 @@ export class AssociationsService {
     if (!membership) {
       throw new NotFoundException('Member not found');
     }
+    const kind = await this.kindOf(associationId);
+    // Judged against the stored bitmask seen through the same kind filter, so a right the SERVER
+    // strips from a kind that sells nothing is never counted as the granter's change.
+    const before = kind
+      ? writablePermissions(kind, membership.permissions)
+      : membership.permissions;
+    if (permissions !== undefined && kind) permissions = writablePermissions(kind, permissions);
+    assertInstitutionMemberWrite(this.logger, kind, opts.granter, before, permissions ?? before, {
+      associationId,
+      what: 'updateMemberRole',
+    });
+    let flagWrite: { before: number; standing: GranterStanding } | null = null;
     if (permissions !== undefined) {
-      const kind = await this.kindOf(associationId);
-      if (kind) permissions = writablePermissions(kind, permissions);
+      flagWrite = {
+        before,
+        standing: await this.judgeMemberFlags(
+          opts.granter,
+          associationId,
+          before,
+          permissions,
+          'updateMemberRole'
+        ),
+      };
     }
     // Guard: block demoting a member who holds MANAGE_MEMBERS if they are the last one.
     // We check specifically for MANAGE_MEMBERS loss, not just permissions===0, because a partial
@@ -1235,9 +1880,12 @@ export class AssociationsService {
       (membership.permissions & AssociationPermissionFlag.MANAGE_MEMBERS) !== 0;
     const willLoseManageMembers =
       permissions !== undefined && (permissions & AssociationPermissionFlag.MANAGE_MEMBERS) === 0;
-    if (hadManageMembers && willLoseManageMembers && !opts?.bypassLastAdmin) {
-      await this.assertNotLastAdminDemotion(associationId);
-    }
+    // A member demoting ITSELF never takes the bypass, the same rule as a leaver in `removeMember`:
+    // the bypass is a BDE or the platform admin acting on someone else's row, and the last holder
+    // of a club it also validates as a BDE would otherwise strip its own right and leave nobody.
+    const selfDemotion = opts.granter.userId === targetUserId;
+    const guarded =
+      hadManageMembers && willLoseManageMembers && (selfDemotion || !opts.bypassLastAdmin);
     // ONE column update of the row judged above, never a save of it: a member write must never
     // insert a row, and a save of a stale entity re-inserts a deleted one and reverts what a
     // concurrent writer changed. CONDITIONED on the permissions the guard above judged, so 0 rows
@@ -1246,9 +1894,15 @@ export class AssociationsService {
     if (role !== undefined) changes.role = role;
     if (permissions !== undefined) changes.permissions = permissions;
     if (Object.keys(changes).length === 0) return membership;
-    const updated = await this.memberRepo.update(
-      { id: membership.id, permissions: membership.permissions },
-      changes
+    // The last-manager guard and the write it protects are ONE step under the association's lock:
+    // two managers demoting each other at once would otherwise both count two and leave none.
+    const updated = await this.underMemberLock(
+      associationId,
+      'updateMemberRole',
+      async (members) => {
+        if (guarded) await this.assertNotLastManagerLost(members, associationId, 'demotion');
+        return members.update({ id: membership.id, permissions: membership.permissions }, changes);
+      }
     );
     if (updated.affected !== 1) {
       this.logger.warn(
@@ -1262,14 +1916,29 @@ export class AssociationsService {
     this.logger.debug(
       `updateMemberRole: association=${associationId} target=${targetUserId.slice(0, 8)} fields=${Object.keys(changes).join(',')}`
     );
+    if (flagWrite && permissions !== undefined) {
+      logSuperAdminExcludedGrant(this.logger, flagWrite.standing, flagWrite.before, permissions, {
+        associationId,
+        what: 'updateMemberRole',
+      });
+    }
     return { ...membership, ...changes };
   }
 
-  /** Removes a member from the association. Blocks removal of the last admin, unless bypassLastAdmin is true (global admin or BDE). */
+  /**
+   * Removes a member from the association. Blocks removal of the last admin, unless bypassLastAdmin
+   * is true (global admin or BDE), and an institution's member to anyone but the platform admin or
+   * the member itself. HELD TO THE GRANT CEILING like a revocation: removing a member takes away
+   * every flag it holds, and a remover that could part with a member above its own rights could
+   * re-add them with 0 and strip what it may not revoke. So a target holding a flag beyond the
+   * remover's ceiling needs a super-admin or the platform admin. Leaving (removing oneself, which
+   * `leaveAssociation` is) is judged by neither the institution rule nor the ceiling, an
+   * institution included; only the last-member-manager guard applies.
+   */
   async removeMember(
     associationId: string,
     targetUserId: string,
-    opts?: { bypassLastAdmin?: boolean }
+    opts: { granter: MemberGranter; bypassLastAdmin?: boolean }
   ) {
     const membership = await this.memberRepo.findOne({
       where: { associationId, userId: targetUserId },
@@ -1277,17 +1946,120 @@ export class AssociationsService {
     if (!membership) {
       throw new NotFoundException('Member not found');
     }
-    // Only protect removal when the member holds MANAGE_MEMBERS - the critical flag.
+    // LEAVING (the "Quitter" button, `leaveAssociation`), an institution included: the institution
+    // rule and the ceiling judge a write on SOMEONE ELSE; removing oneself writes no right onto
+    // anyone. Only the last-member-manager guard below can refuse it.
+    const leaving = opts.granter.userId === targetUserId;
+    if (!leaving) {
+      assertInstitutionMemberWrite(
+        this.logger,
+        await this.kindOf(associationId),
+        opts.granter,
+        membership.permissions,
+        0,
+        { associationId, what: 'removeMember' }
+      );
+      await this.judgeMemberFlags(
+        opts.granter,
+        associationId,
+        membership.permissions,
+        0,
+        'removeMember'
+      );
+    }
+    // Only protect removal when the member holds MANAGE_MEMBERS - the critical flag. A LEAVER never
+    // bypasses it, whatever it is elsewhere: the bypass is a BDE or the platform admin acting on
+    // SOMEONE ELSE's association, and the last manager walking out through `DELETE
+    // :id/members/<own id>` would otherwise leave nobody, exactly what the "Quitter" route refuses.
     const holdsManageMembers =
       (membership.permissions & AssociationPermissionFlag.MANAGE_MEMBERS) !== 0;
-    if (holdsManageMembers && !opts?.bypassLastAdmin) {
-      await this.assertNotLastAdminRemoval(associationId);
-    }
+    const guarded = holdsManageMembers && (leaving || !opts.bypassLastAdmin);
 
-    await this.memberRepo.delete(membership.id);
+    // CONDITIONED on the permissions judged above, as `updateMemberRole` is: a row granted more
+    // since its read is not the one the ceiling judged. The guard and the delete are ONE step under
+    // the association's lock: two managers leaving at once would otherwise both count two.
+    const deleted = await this.underMemberLock(associationId, 'removeMember', async (members) => {
+      if (guarded) await this.assertNotLastManagerLost(members, associationId, 'removal');
+      return members.delete({ id: membership.id, permissions: membership.permissions });
+    });
+    if (deleted.affected !== 1) {
+      this.logger.warn(
+        `removeMember: membership changed or gone since its read association=${associationId} affected=${deleted.affected ?? 'unknown'}`
+      );
+      throw new ConflictException({
+        code: MEMBER_CHANGED_MEANWHILE,
+        message: 'This member changed meanwhile, retry.',
+      });
+    }
     // The reverse of `addMember`'s sweep: the posts the membership opened (D21) must leave the feed.
     await this.invalidatePostListCaches();
     return { ok: true };
+  }
+
+  /**
+   * THE "QUITTER" BUTTON (owner, 2026-11-03): every member may leave an association from its page
+   * without asking anyone, except its last holder of `MANAGE_MEMBERS` (`LAST_MEMBER_MANAGER`). It
+   * acts on the caller's OWN row only - the target is the vouched identity, never a parameter - so
+   * it is `removeMember` with the caller as both remover and removed: no ceiling, no institution
+   * rule, and no BDE bypass of the last-manager guard (a leaver speaks for itself, not as a BDE).
+   */
+  async leaveAssociation(associationId: string, userId: string) {
+    this.logger.debug(`leaveAssociation: association=${associationId} user=${userId.slice(0, 8)}`);
+    return this.removeMember(associationId, userId, {
+      granter: { userId, isGlobalAdmin: false },
+    });
+  }
+
+  /** The three facts a granter's ceiling is computed from (`grantCeiling`). */
+  private async granterStanding(
+    granter: MemberGranter,
+    associationId: string
+  ): Promise<GranterStanding> {
+    if (granter.isGlobalAdmin) {
+      return { isGlobalAdmin: true, isSuperAdminOf: false, ownPermissions: 0 };
+    }
+    const [own, isSuperAdminOf] = await Promise.all([
+      this.memberRepo.findOne({ where: { associationId, userId: granter.userId } }),
+      this.isAssociationSuperAdminOf(granter.userId, associationId),
+    ]);
+    return { isGlobalAdmin: false, isSuperAdminOf, ownPermissions: own?.permissions ?? 0 };
+  }
+
+  /**
+   * LEGACY SHIM until 2027-05-03 (`legacy-admin-presets.ts`): a member ADD posting exactly a
+   * pre-`EDIT_PROFILE` admin preset gets the bit, when the granter's ceiling covers it. The
+   * standing is read only for such a mask; the write itself is judged by `insertMembership`.
+   */
+  private async legacyAddMask(
+    permissions: number,
+    granter: MemberGranter,
+    associationId: string
+  ): Promise<number> {
+    if (!LEGACY_ADMIN_PRESETS.has(permissions)) return permissions;
+    const ceiling = grantCeiling(await this.granterStanding(granter, associationId));
+    return withLegacyEditProfile(this.logger, permissions, ceiling, 'addMember');
+  }
+
+  /**
+   * Judges a member bitmask write from `before` to `after` against `granter`'s ceiling
+   * (`grantCeiling`) and returns the standing it read, so the caller can write the audit line once
+   * the write has landed. The platform admin asks nothing; anyone else is read from their own row
+   * and the super-admin tier.
+   */
+  private async judgeMemberFlags(
+    granter: MemberGranter,
+    associationId: string,
+    before: number,
+    after: number,
+    what: string
+  ): Promise<GranterStanding> {
+    const standing = await this.granterStanding(granter, associationId);
+    const ceiling = grantCeiling(standing);
+    this.logger.debug(
+      `[MEMBER-CEILING] ${what} association=${associationId.slice(0, 8)} admin=${standing.isGlobalAdmin} superAdmin=${standing.isSuperAdminOf} ceiling=${ceiling}`
+    );
+    assertWithinGrantCeiling(this.logger, ceiling, before, after, { associationId, what });
+    return standing;
   }
 
   /**
@@ -1296,8 +2068,11 @@ export class AssociationsService {
    * Using `permissions > 0` was insufficient: a member with only MANAGE_PAYOUT_ACCOUNT
    * counts as non-zero but cannot unblock the association.
    */
-  private async manageMembersCount(associationId: string): Promise<number> {
-    return this.memberRepo
+  private async manageMembersCount(
+    members: Repository<AssociationMember>,
+    associationId: string
+  ): Promise<number> {
+    return members
       .createQueryBuilder('m')
       .where('m.associationId = :associationId', { associationId })
       .andWhere('(m.permissions & :flag) <> 0', {
@@ -1306,22 +2081,46 @@ export class AssociationsService {
       .getCount();
   }
 
-  /** Block removing the only member with MANAGE_MEMBERS. */
-  private async assertNotLastAdminRemoval(associationId: string): Promise<void> {
-    const n = await this.manageMembersCount(associationId);
-    if (n <= 1) {
-      throw new BadRequestException(
-        'Impossible de retirer le dernier administrateur de cette association'
-      );
-    }
+  /**
+   * Refuses a write that would leave the association with nobody holding MANAGE_MEMBERS - removing
+   * or demoting its last holder, by someone else or by leaving. Typed (`LAST_MEMBER_MANAGER`) on
+   * every path, so the "Quitter" button and the roster editor say why. Logged at INFO: it is an
+   * ordinary answer to an ordinary user, not a defect. MUST run inside `underMemberLock`, on the
+   * repository it hands out, or the count races the write it guards.
+   */
+  private async assertNotLastManagerLost(
+    members: Repository<AssociationMember>,
+    associationId: string,
+    what: 'removal' | 'demotion'
+  ): Promise<void> {
+    const n = await this.manageMembersCount(members, associationId);
+    if (n > 1) return;
+    this.logger.log(
+      `[MEMBER-CEILING] ${what} refused: association=${associationId} would lose its last member manager`
+    );
+    throw new BadRequestException({
+      code: LAST_MEMBER_MANAGER,
+      message: 'Impossible de retirer le dernier administrateur de cette association',
+    });
   }
 
-  /** Block demoting the only MANAGE_MEMBERS admin to a bitmask that loses that flag. */
-  private async assertNotLastAdminDemotion(associationId: string): Promise<void> {
-    const n = await this.manageMembersCount(associationId);
-    if (n <= 1) {
-      throw new BadRequestException('Cannot demote the last administrator of this association.');
-    }
+  /**
+   * Runs one member write in a transaction that first takes the association `FOR UPDATE` - the
+   * global lock order (`remove` takes it first too, see there) - so every guard that COUNTS the
+   * roster and the write it protects are serialised per association. Without it, the last-manager
+   * guard was a count and a delete apart: two managers leaving at once both saw two holders, and
+   * the association was left with none.
+   */
+  private async underMemberLock<T>(
+    associationId: string,
+    what: string,
+    write: (members: Repository<AssociationMember>) => Promise<T>
+  ): Promise<T> {
+    return this.memberRepo.manager.transaction(async (manager) => {
+      await manager.query(`SELECT 1 FROM associations WHERE id = $1 FOR UPDATE`, [associationId]);
+      this.logger.debug(`[MEMBER-LOCK] ${what}: association ${associationId} locked`);
+      return write(manager.getRepository(AssociationMember));
+    });
   }
 
   /** Returns all associations a user belongs to, with their role and permissions bitmask attached to each item. */
@@ -1361,6 +2160,64 @@ export class AssociationsService {
   }
 
   /**
+   * `FOR KEY SHARE` on the associations an event write names, in id order - the FIRST statement of
+   * every event write transaction (the global lock order). `eventOfOrganiser` adds the organiser of
+   * an existing event, read from its row; a creation names its organiser in `associationIds`.
+   */
+  private async keyShareAssociations(
+    manager: EntityManager,
+    associationIds: readonly string[],
+    eventOfOrganiser?: string
+  ): Promise<void> {
+    const named = associationIds.filter((id) => UUID_RE.test(id));
+    await manager.query(
+      `SELECT a.id FROM associations a
+        WHERE a.id = ANY($1::uuid[])
+           OR a.id = (SELECT e."associationId" FROM association_calendar_events e WHERE e.id = $2)
+        ORDER BY a.id FOR KEY SHARE OF a`,
+      [named, eventOfOrganiser ?? null]
+    );
+  }
+
+  /**
+   * Runs `work` in ONE transaction that starts by locking the event, so every read-check-write
+   * an event goes through here (an edit with its partner list and its form link, a validation, a
+   * rejection) is serialised: the second one starts from what the first committed, never from the
+   * snapshot it took before waiting. Without it an edit and a validation both load the row, both
+   * save, and the later save writes back the other's stale status columns. A co-organisation
+   * ACCEPTANCE is serialised with it too: it is a proposals transaction, whose handler
+   * (`CoorganisationService.lockSubject`) takes this same event lock in the same order.
+   *
+   * THE LOCK ORDER IS THE GLOBAL ONE - associations first, then the subject (`ProposalsService
+   * .lockInOrder`; `AssociationsService.remove` takes its association `FOR UPDATE` before it
+   * deletes the events): the event's organiser and every association the edit names as a partner
+   * (`associationIds`), `FOR KEY SHARE` in id order, then the event row `FOR NO KEY UPDATE`.
+   * The reverse (event first) let an edit hold the event while its proposal insert waited on an
+   * association a delete held, the delete waiting on the event.
+   *
+   * `NO KEY UPDATE`, not `UPDATE`: it blocks every other writer of the row but not the
+   * `KEY SHARE` an insert into a table referencing the event takes through its foreign key.
+   *
+   * `work` gets the transaction's repository AND manager: EVERYTHING it reads or writes goes
+   * through them (never a second pool connection, which would starve the pool of ten under a few
+   * concurrent edits and hide a lock cycle from Postgres, durable-rules).
+   */
+  async withEventLock<T>(
+    eventId: string,
+    work: (repo: Repository<AssociationCalendarEvent>, manager: EntityManager) => Promise<T>,
+    associationIds: readonly string[] = []
+  ): Promise<T> {
+    return this.calendarRepo.manager.transaction(async (manager) => {
+      await this.keyShareAssociations(manager, associationIds, eventId);
+      await manager.query(
+        'SELECT id FROM association_calendar_events WHERE id = $1 FOR NO KEY UPDATE',
+        [eventId]
+      );
+      return work(manager.getRepository(AssociationCalendarEvent), manager);
+    });
+  }
+
+  /**
    * Returns the event if the caller's association is the primary owner OR an ACCEPTED co-organiser
    * (D39: a co-owner row exists only once its `coorganise` proposal was accepted, so a pending one
    * reaches nothing here). Pass `canCrossAsso = true` for BDE / global-admin callers.
@@ -1368,12 +2225,13 @@ export class AssociationsService {
   async findCalendarEventForAssociation(
     eventId: string,
     associationId: string,
-    canCrossAsso: boolean
+    canCrossAsso: boolean,
+    repo: Repository<AssociationCalendarEvent> = this.calendarRepo
   ): Promise<AssociationCalendarEvent | null> {
     if (canCrossAsso) {
-      return this.calendarRepo.findOne({ where: { id: eventId } });
+      return repo.findOne({ where: { id: eventId } });
     }
-    return this.calendarRepo
+    return repo
       .createQueryBuilder('e')
       .where('e.id = :eventId', { eventId })
       .andWhere(
@@ -1538,15 +2396,33 @@ export class AssociationsService {
     return { ...base, associationSlug: asso?.slug ?? '' };
   }
 
-  async findCalendarEventByLinkedForm(formId: string) {
-    const ev = await this.calendarRepo.findOne({
-      where: { linkedFormId: formId, status: AssociationCalendarEventStatus.Validated },
-    });
-    return ev ? this.serializeCalendarEvent(ev) : null;
+  /**
+   * The validated event a form links to, AS THE SIGNED-IN READER MAY SEE IT: the event is kept only
+   * when `eventVisibleToViewerSql` admits it (its organiser or an accepted co-organiser reaches one
+   * of the reader's spaces, or the reader is a member), exactly as the reader's agenda decides; a
+   * global admin reads it whole. An event outside the reader's audience answers `null`, the same
+   * answer as no link at all. The route is guarded, so a reader always has an id.
+   */
+  async findCalendarEventByLinkedForm(formId: string, viewer: CalendarViewer) {
+    const qb = this.calendarRepo
+      .createQueryBuilder('e')
+      .where('e."linkedFormId" = :formId', { formId })
+      .andWhere('e.status = :validated', { validated: AssociationCalendarEventStatus.Validated });
+    if (!viewer.isGlobalAdmin) this.restrictToViewerSpaces(qb, viewer);
+    const ev = await qb.getOne();
+    if (!ev) {
+      this.logger.debug(`[AGENDA] form ${formId.slice(0, 8)} links no event this reader sees`);
+      return null;
+    }
+    return this.serializeCalendarEvent(ev);
   }
 
-  private async assertFormBelongsToAssociation(formId: string, associationId: string) {
-    const f = await this.formRepo.findOne({
+  private async assertFormBelongsToAssociation(
+    formId: string,
+    associationId: string,
+    manager?: EntityManager
+  ) {
+    const f = await (manager ? manager.getRepository(Form) : this.formRepo).findOne({
       where: { id: formId },
       select: { id: true, associationId: true },
     });
@@ -1557,19 +2433,22 @@ export class AssociationsService {
   }
 
   /** Ensures at most one calendar row references a given form. */
-  private async detachCalendarLinksExcept(opts: { formId?: string | null; exceptEventId: string }) {
+  private async detachCalendarLinksExcept(
+    opts: { formId?: string | null; exceptEventId: string },
+    repo: Repository<AssociationCalendarEvent> = this.calendarRepo
+  ) {
     const { formId, exceptEventId } = opts;
     if (formId) {
-      await this.calendarRepo.update(
-        { linkedFormId: formId, id: Not(exceptEventId) },
-        { linkedFormId: null }
-      );
+      await repo.update({ linkedFormId: formId, id: Not(exceptEventId) }, { linkedFormId: null });
     }
   }
 
-  private async detachLinksBeforeCreate(formId?: string | null) {
+  private async detachLinksBeforeCreate(
+    formId?: string | null,
+    repo: Repository<AssociationCalendarEvent> = this.calendarRepo
+  ) {
     if (formId) {
-      await this.calendarRepo.update({ linkedFormId: formId }, { linkedFormId: null });
+      await repo.update({ linkedFormId: formId }, { linkedFormId: null });
     }
   }
 
@@ -1585,6 +2464,7 @@ export class AssociationsService {
     opts?: { includePending?: boolean; includeRejected?: boolean; viewer?: CalendarViewer }
   ) {
     await this.findById(associationId);
+    if (this.isAnonymousAgendaRead(associationId, opts?.viewer)) return [];
     const promoCutoff = await promoCutoffFor(
       this.calendarRepo.manager,
       opts?.viewer?.userId,
@@ -1659,7 +2539,8 @@ export class AssociationsService {
    * spaces, or the reader is a member (D21) - `eventVisibleToViewerSql`, the one predicate for an
    * event. An anonymous read (the public agenda and its `.ics`, D30) passes no viewer and is left
    * whole, exactly as the promo cutoff leaves it: like that cutoff, this is relevance and not
-   * confidentiality.
+   * confidentiality. ONE association's agenda read anonymously answers nothing at all
+   * (`isAnonymousAgendaRead`, 2026-11-02): that feed's selection is signed, this route is not.
    */
   private restrictToViewerSpaces(
     qb: SelectQueryBuilder<AssociationCalendarEvent>,
@@ -1671,6 +2552,22 @@ export class AssociationsService {
     qb.andWhere(eventVisibleToViewerSql('e', ':agendaViewerId'), {
       agendaViewerId: viewerId,
     });
+  }
+
+  /**
+   * WITHOUT A SESSION, ONE ASSOCIATION'S AGENDA IS EMPTY (owner, 2026-11-02): only what the student
+   * portal publishes is public, and it publishes no event - whatever the association's audience,
+   * an institution addressing everyone included. The answer is an EMPTY list, never a 401: the
+   * public association page draws "no event", as it does for every other gated block. A signed
+   * agenda link (`/calendar/feed` with a signed selection) is the one anonymous way in.
+   */
+  private isAnonymousAgendaRead(
+    associationId: string,
+    viewer: CalendarViewer | undefined
+  ): boolean {
+    if (viewer?.userId?.trim() || viewer?.isGlobalAdmin) return false;
+    this.logger.debug(`[AGENDA] anonymous read of ${associationId.slice(0, 8)}: answers nothing`);
+    return true;
   }
 
   /**
@@ -1811,9 +2708,23 @@ export class AssociationsService {
   }
 
   /**
+   * The ids of every association whose events `userId` holds the BDE agenda right over
+   * (`holdsBdeAgendaRightOverSql`) - an institution's included, unlike `associationsUnderBdeFlag`.
+   */
+  async associationsUnderBdeAgendaRight(userId: string): Promise<string[]> {
+    if (!userId) return [];
+    const rows: { id: string }[] = await this.memberRepo.query(
+      ASSOCIATIONS_UNDER_BDE_AGENDA_RIGHT_SQL,
+      [userId]
+    );
+    return rows.map((r) => r.id);
+  }
+
+  /**
    * May `userId` validate (and, through it, write, reject, deposit on, declare a break for) the
    * events of association `associationId`? A global admin always; otherwise VALIDATE_EVENTS in the
-   * BDE of a space that association reaches (user, 2026-10-04, D23).
+   * BDE of a space those events target (user, 2026-10-04, D23) - THE AGENDA RULE, which reaches an
+   * institution's events although no BDE manages the institution (owner, 2026-11-03).
    */
   async mayValidateEventsOf(
     userId: string,
@@ -1821,7 +2732,16 @@ export class AssociationsService {
     opts?: { isGlobalAdmin?: boolean }
   ): Promise<boolean> {
     if (opts?.isGlobalAdmin) return true;
-    return this.holdsBdeFlagOver(userId, associationId, AssociationPermissionFlag.VALIDATE_EVENTS);
+    if (!userId || !associationId) return false;
+    const rows: { holds: boolean }[] = await this.memberRepo.query(
+      HOLDS_BDE_AGENDA_RIGHT_OVER_SQL,
+      [userId, associationId]
+    );
+    const holds = rows[0]?.holds === true;
+    this.logger.debug(
+      `[PERM] bde agenda scope assoc=${sanitizeLog(associationId.slice(0, 8))} -> ${holds}`
+    );
+    return holds;
   }
 
   /**
@@ -1851,14 +2771,16 @@ export class AssociationsService {
    * a global admin, VALIDATE_EVENTS in the BDE governing the EVENT's association (read from the row),
    * or PROPOSE_EVENT in `associationId` through `mayAct`. Which events that last tier reaches is
    * `findCalendarEventForAssociation`'s: the organiser's, or an ACCEPTED co-organiser's (D39).
-   * Returns the tier, which the cross-association paths need.
+   * Returns the tier, which the cross-association paths need, and the SIDE the caller writes from
+   * (`eventWriteSide`, E2): a partner's text and poster are open, its date, partner list and delete
+   * are not. A platform admin and a governing validator write from the organiser side, unchanged.
    */
   async assertMayWriteEvent(
     userId: string,
     isGlobalAdmin: boolean,
     associationId: string,
     eventId: string
-  ): Promise<{ isGlobalAdmin: boolean; isBde: boolean }> {
+  ): Promise<{ isGlobalAdmin: boolean; isBde: boolean; side: EventWriteSide }> {
     const isBde = isGlobalAdmin ? false : await this.mayValidateEvent(userId, eventId);
     if (!isGlobalAdmin && !isBde) {
       // Through `mayAct`, so a cross-association super-admin may act on an event in an association
@@ -1876,7 +2798,29 @@ export class AssociationsService {
         throw new ForbiddenException('PROPOSE_EVENT flag or BDE admin required');
       }
     }
-    return { isGlobalAdmin, isBde };
+    const side = await this.writeSideOf(eventId, associationId, isGlobalAdmin || isBde);
+    this.logger.debug(
+      `[PERM] event write allowed: ${sanitizeLog(userId.slice(0, 8))} on ${sanitizeLog(eventId.slice(0, 8))} from the ${side} side`
+    );
+    return { isGlobalAdmin, isBde, side };
+  }
+
+  /**
+   * The side of event `eventId` a write through `viaAssociationId` comes from, the organiser read
+   * from the ROW. A missing event is the organiser side: the route that loads it answers 404 itself,
+   * and a refusal here would hide that.
+   */
+  private async writeSideOf(
+    eventId: string,
+    viaAssociationId: string,
+    crossTier: boolean
+  ): Promise<EventWriteSide> {
+    if (crossTier) return 'organiser';
+    const ev = await this.calendarRepo.findOne({
+      where: { id: eventId },
+      select: { id: true, associationId: true },
+    });
+    return ev ? eventWriteSide(ev.associationId, viaAssociationId, false) : 'organiser';
   }
 
   /**
@@ -1935,16 +2879,20 @@ export class AssociationsService {
     return m !== null;
   }
 
-  /** Returns true if userId holds `flag` in ANY BDE association. */
+  /**
+   * Returns true if userId holds `flag` in ANY BDE association. For `MANAGE_ASSO` - management - an
+   * institution governing a space does not count: it answers for that space's agenda and people,
+   * and manages nothing (reform 2.3, `governorIsAnAssociationSql`).
+   */
   async callerHasAnyBdeFlag(userId: string, flag: AssociationPermissionFlag): Promise<boolean> {
-    const n = await this.memberRepo
+    const qb = this.memberRepo
       .createQueryBuilder('m')
       .innerJoin(Association, 'a', 'a.id = m.associationId')
       .where('m.userId = :userId', { userId })
       .andWhere(isBdeAssociationSql('a'))
-      .andWhere('(m.permissions & :flag) <> 0', { flag })
-      .getCount();
-    return n > 0;
+      .andWhere('(m.permissions & :flag) <> 0', { flag });
+    if (flag === AssociationPermissionFlag.MANAGE_ASSO) qb.andWhere(`a.type = 'association'`);
+    return (await qb.getCount()) > 0;
   }
 
   /**
@@ -1968,19 +2916,216 @@ export class AssociationsService {
   }
 
   /**
-   * May `userId` moderate CONTENT anywhere on the platform - a platform administrator, or a BDE
-   * member holding `MODERATE`?
+   * Does `userId` moderate SOMEWHERE - a platform administrator, or a member holding `MODERATE` in
+   * the BDE of at least one space?
    *
-   * Not association-scoped, so `mayAct` cannot express it: the question is "does the BDE curate the
-   * whole feed", the same shape as `isUserBdeAdmin` for the calendar. It is here rather than inside
-   * one controller because two surfaces ask it - the moderation endpoints, and the edit / delete /
-   * pin controls on a post - and the second was previously written as `isGlobalAdmin` alone, which
-   * is how a BDE holding `MODERATE` ended up unable to touch a post it was entitled to moderate.
+   * THE DOOR, NOT THE REACH (owner, 2026-11-02): since `MODERATE` is scoped (`spaces/bde-moderation.ts`)
+   * this answers only who may open the moderation surfaces at all - the queue, the lists - and
+   * classifies a refusal (out of scope vs not a moderator). Acting on ONE target asks the scoped
+   * predicate of its kind: `mayModeratePost`, `mayModerateComment`, `mayModerateLive`,
+   * `mayModerateReport`, `mayModerateUser` - each a composition of the ONE predicate of
+   * `spaces/bde-moderation.ts`.
    */
   async isContentModerator(userId: string, opts?: { isGlobalAdmin?: boolean }): Promise<boolean> {
     if (opts?.isGlobalAdmin) return true;
     if (!userId) return false;
     return this.callerHasAnyBdeFlag(userId, AssociationPermissionFlag.MODERATE);
+  }
+
+  /**
+   * Of `postIds`, those `userId` may moderate (hide, delete, pin, unmask, read the anonymous author):
+   * every one for a platform admin; for a BDE `MODERATE` holder, those in the spaces it governs
+   * (`BDE_MODERATED_POST_IDS_SQL`, owner 2026-11-02). ONE query for a page. Never EDIT: rewriting
+   * another person's words is no moderator's power (`PostsService.assertMayManage`).
+   */
+  async moderatedPostIds(
+    userId: string | undefined,
+    postIds: string[],
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<Set<string>> {
+    // Postgres answers a uuid in lowercase, so the asked ids are lowercased once: an id spelled in
+    // uppercase by a client is the same post, and must not miss its own `.has()`.
+    const unique = [...new Set(postIds.map((id) => id.toLowerCase()))];
+    if (opts?.isGlobalAdmin) return new Set(unique);
+    if (!userId || unique.length === 0) return new Set();
+    const rows: { id: string }[] = await this.memberRepo.query(BDE_MODERATED_POST_IDS_SQL, [
+      userId,
+      unique,
+    ]);
+    this.logger.debug(
+      `[MODERATION] scope user=${sanitizeLog(userId.slice(0, 8))} posts=${unique.length} moderated=${rows.length}`
+    );
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /** `moderatedPostIds` asked of one post, whatever the case its id is spelled in. */
+  async mayModeratePost(
+    userId: string | undefined,
+    postId: string,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<boolean> {
+    const id = postId.toLowerCase();
+    return (await this.moderatedPostIds(userId, [id], opts)).has(id);
+  }
+
+  /**
+   * May `userId` moderate live `liveId` (cut it, hide a line of its chat)? A platform admin always;
+   * a BDE `MODERATE` holder when the live is in its governed spaces - read from the live, or from its
+   * cut once the row is purged (`BDE_MODERATES_LIVE_SQL`).
+   */
+  async mayModerateLive(
+    userId: string | undefined,
+    liveId: string,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<boolean> {
+    if (opts?.isGlobalAdmin) return true;
+    if (!userId) return false;
+    const rows: { moderates: boolean }[] = await this.memberRepo.query(BDE_MODERATES_LIVE_SQL, [
+      userId,
+      liveId,
+    ]);
+    const moderates = rows[0]?.moderates === true;
+    this.logger.debug(
+      `[MODERATION] scope user=${sanitizeLog(userId.slice(0, 8))} live=${sanitizeLog(liveId.slice(0, 8))} -> ${moderates}`
+    );
+    return moderates;
+  }
+
+  /**
+   * May `userId` act on report `reportId` (review it)? A platform admin always; a BDE `MODERATE`
+   * holder when the report is about something in its governed spaces (`reportInBdeScopeSql`).
+   */
+  async mayModerateReport(
+    userId: string | undefined,
+    reportId: string,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<boolean> {
+    if (opts?.isGlobalAdmin) return true;
+    if (!userId) return false;
+    const rows: { moderates: boolean }[] = await this.memberRepo.query(BDE_MODERATES_REPORT_SQL, [
+      userId,
+      reportId,
+    ]);
+    return rows[0]?.moderates === true;
+  }
+
+  /**
+   * Of `userIds`, the people `userId` may moderate as people (mute, withdraw a broadcast right): all
+   * for a platform admin; for a BDE `MODERATE` holder, those belonging to one of its spaces.
+   */
+  async moderatedUserIds(
+    userId: string | undefined,
+    userIds: string[],
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<Set<string>> {
+    const unique = [...new Set(userIds.filter(Boolean))];
+    if (opts?.isGlobalAdmin) return new Set(unique);
+    if (!userId || unique.length === 0) return new Set();
+    const rows: { id: string }[] = await this.memberRepo.query(BDE_MODERATED_USER_IDS_SQL, [
+      userId,
+      unique,
+    ]);
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /** `moderatedUserIds` asked of one person. */
+  async mayModerateUser(
+    userId: string | undefined,
+    targetUserId: string,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<boolean> {
+    return (await this.moderatedUserIds(userId, [targetUserId], opts)).has(targetUserId);
+  }
+
+  /**
+   * May `userId` moderate (delete) comment `commentId` under post `postId`? A platform admin always; a
+   * BDE `MODERATE` holder when the post is in its scope AND the comment itself is published by a
+   * person or an association it moderates (`bdeModeratesCommentSql`) - never a comment in an
+   * institution's or another BDE's name (owner, 2026-11-03). Its replies are not asked: each is judged
+   * on its own when the delete meets it, and one the holder does not moderate stays under a
+   * moderation tombstone (`posts/comment-removal.ts`, lead 2026-11-04).
+   */
+  async mayModerateComment(
+    userId: string | undefined,
+    postId: string,
+    commentId: string,
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<boolean> {
+    if (opts?.isGlobalAdmin) return true;
+    if (!userId) return false;
+    const rows: { moderates: boolean }[] = await this.memberRepo.query(BDE_MODERATES_COMMENT_SQL, [
+      userId,
+      postId,
+      commentId,
+    ]);
+    const moderates = rows[0]?.moderates === true;
+    this.logger.debug(
+      `[MODERATION] scope user=${sanitizeLog(userId.slice(0, 8))} comment=${sanitizeLog(commentId.slice(0, 12))} -> ${moderates}`
+    );
+    return moderates;
+  }
+
+  /**
+   * Of `associationIds`, those whose PUBLISHED content `userId` moderates (`bdeModeratesPublisherSql`):
+   * every one for a platform admin; for a BDE `MODERATE` holder, the associations its governed spaces
+   * reach - never an institution, never another BDE. What `commentRights` reads for a comment in an
+   * association's name; empty for an unknown caller.
+   */
+  async moderatedAssociationIds(
+    userId: string | undefined,
+    associationIds: string[],
+    opts?: { isGlobalAdmin?: boolean }
+  ): Promise<Set<string>> {
+    const unique = [...new Set(associationIds.filter(Boolean).map((id) => id.toLowerCase()))];
+    if (opts?.isGlobalAdmin) return new Set(unique);
+    if (!userId || unique.length === 0) return new Set();
+    const rows: { id: string }[] = await this.memberRepo.query(BDE_MODERATED_ASSOCIATION_IDS_SQL, [
+      userId,
+      unique,
+    ]);
+    this.logger.debug(
+      `[MODERATION] publishers user=${sanitizeLog(userId.slice(0, 8))} asked=${unique.length} moderated=${rows.length}`
+    );
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /**
+   * THE TYPED REFUSAL of a moderation act, classified at the throw: 403 `MODERATOR_REQUIRED` when the
+   * caller moderates nowhere; 403 `MODERATION_RESERVED_TO_PLATFORM_ADMIN` when the target is published
+   * in an institution's or a BDE's name (owner, 2026-11-03: only the platform admin moderates those);
+   * 403 `MODERATION_OUT_OF_SCOPE` otherwise - outside the spaces the caller's BDE governs. Logged with
+   * the target's kind, never its content.
+   */
+  async refuseModeration(userId: string | undefined, target: ModerationTarget): Promise<never> {
+    const somewhere = !!userId && (await this.isContentModerator(userId));
+    const reserved = somewhere && (await this.isReservedToPlatformAdmin(target));
+    const code = !somewhere
+      ? MODERATOR_REQUIRED
+      : reserved
+        ? MODERATION_RESERVED_TO_PLATFORM_ADMIN
+        : MODERATION_OUT_OF_SCOPE;
+    this.logger.log(
+      `[MODERATION] refused user=${sanitizeLog((userId ?? '').slice(0, 8))} target=${target.kind}:${sanitizeLog(target.id)} code=${code}`
+    );
+    throw new ForbiddenException({
+      code,
+      message: !somewhere
+        ? 'BDE MODERATE permission or global admin required'
+        : reserved
+          ? "Content in an institution's or a BDE's name is moderated by the platform admin only"
+          : 'Outside the spaces your BDE governs',
+    });
+  }
+
+  /** Is `target` published in an institution's or a BDE's name (`MODERATION_RESERVED_SQL`)? */
+  private async isReservedToPlatformAdmin(target: ModerationTarget): Promise<boolean> {
+    if (target.kind === 'user' || target.kind === 'broadcaster') return false;
+    const rows: { reserved: boolean }[] = await this.memberRepo.query(MODERATION_RESERVED_SQL, [
+      target.kind,
+      target.id,
+      target.postId ?? null,
+    ]);
+    return rows[0]?.reserved === true;
   }
 
   /**
@@ -2000,15 +3145,34 @@ export class AssociationsService {
    *
    * It answers RIGHTS, not existence: a caller acting on an association that does not exist is a
    * 404 from whoever loads it, not a 403 from here. `canPostAs` is the exception and says why.
+   *
+   * ABOVE the three tiers sits the entity's KIND: a flag in `TYPE_EXCLUDED_FLAGS` for that kind
+   * (a list's payout account, an institution's shop and payout account) is held by NOBODY, the
+   * platform administrator included - so every route that flag guards refuses with no check of its
+   * own. The kind is read only for a flag some kind excludes.
+   *
+   * `withoutGoverningBde` drops the middle tier for the ONE act that must be the entity's own
+   * people's or the platform administrator's: accepting a payment delegation on its behalf (owner,
+   * 2026-11-02) - a BDE governing the receiver does not commit its Lydia account for it.
    */
   async mayAct(
     userId: string,
     associationId: string,
     flag: AssociationPermissionFlag,
-    opts?: { isGlobalAdmin?: boolean }
+    opts?: { isGlobalAdmin?: boolean; withoutGoverningBde?: boolean }
   ): Promise<boolean> {
+    if ((flag & ANY_TYPE_EXCLUDED_FLAGS) !== 0) {
+      const kind = await this.kindOf(associationId);
+      if (kind && (typeExcludedFlags(kind) & flag) !== 0) {
+        this.logger.debug(
+          `[PERM] flag=${flag} held by nobody on a ${kind} (assoc=${associationId.slice(0, 8)})`
+        );
+        return false;
+      }
+    }
     if (opts?.isGlobalAdmin) return true;
     if (
+      !opts?.withoutGoverningBde &&
       (flag & SUPER_ADMIN_EXCLUDED_FLAGS) === 0 &&
       (await this.isAssociationSuperAdminOf(userId, associationId))
     ) {
@@ -2038,8 +3202,25 @@ export class AssociationsService {
     flag: AssociationPermissionFlag,
     opts?: { isGlobalAdmin?: boolean }
   ): Promise<Set<string>> {
-    const unique = [...new Set(associationIds.filter(Boolean))];
+    let unique = [...new Set(associationIds.filter(Boolean))];
     if (unique.length === 0) return new Set();
+    if ((flag & ANY_TYPE_EXCLUDED_FLAGS) !== 0) {
+      // The kind's exclusion, as in `mayAct`: nobody holds the flag on a kind that excludes it.
+      const kinds = await this.assoRepo.find({
+        where: { id: In(unique) },
+        select: { id: true, type: true },
+      });
+      const excluded = new Set(
+        kinds.filter((k) => (typeExcludedFlags(k.type) & flag) !== 0).map((k) => k.id)
+      );
+      if (excluded.size > 0) {
+        this.logger.debug(
+          `[PERM] flag=${flag} held by nobody on ${excluded.size}/${unique.length} assocs (kind)`
+        );
+        unique = unique.filter((id) => !excluded.has(id));
+        if (unique.length === 0) return new Set();
+      }
+    }
     if (opts?.isGlobalAdmin) return new Set(unique);
     if (!userId) return new Set();
 
@@ -2089,7 +3270,7 @@ export class AssociationsService {
       .where('e.status = :pending', { pending: AssociationCalendarEventStatus.Pending })
       .orderBy('e.startsAt', 'ASC');
 
-    const governs = holdsBdeFlagOverSql(':pendingViewer', 'e."associationId"', ':validateFlag');
+    const governs = holdsBdeAgendaRightOverSql(':pendingViewer', 'e."associationId"');
     if (!opts?.isGlobalAdmin) {
       const myMemberships = await this.memberRepo.find({
         where: { userId },
@@ -2098,10 +3279,7 @@ export class AssociationsService {
       const adminAssoIds = myMemberships
         .filter((m) => m.permissions > 0)
         .map((m) => m.associationId);
-      qb.setParameters({
-        pendingViewer: userId,
-        validateFlag: AssociationPermissionFlag.VALIDATE_EVENTS,
-      });
+      qb.setParameters({ pendingViewer: userId });
       qb.andWhere(
         adminAssoIds.length > 0 ? `(e.associationId IN (:...adminAssoIds) OR ${governs})` : governs,
         { adminAssoIds }
@@ -2349,7 +3527,35 @@ export class AssociationsService {
     associationId: string,
     actorId: string,
     eventTitle: string,
-    action: 'validated' | 'updated' | 'deleted' | 'rejected' | 'pending',
+    action: 'validated' | 'updated' | 'deleted' | 'rejected',
+    rejectionReason?: string
+  ): Promise<void> {
+    // NEVER REJECTS: every caller fires it with `void` after the write it reports has committed, and
+    // a rejection nobody awaits is an unhandled one - which ends the process under bun. A failure is
+    // caught here and logged at WARN with its stack and the association: the contract
+    // `notifyEventValidatorsOfProposal` gives the validators' notice.
+    try {
+      await this.notifyAssocAdminsOfEventActionOrThrow(
+        associationId,
+        actorId,
+        eventTitle,
+        action,
+        rejectionReason
+      );
+    } catch (err) {
+      this.logger.warn(
+        `[notify] the proposers of asso ${sanitizeLog(associationId)} were not told an event was ${action}`,
+        err instanceof Error ? err.stack : String(err)
+      );
+    }
+  }
+
+  /** The body of `notifyAssocAdminsOfEventAction`, which may reject; only that wrapper calls it. */
+  private async notifyAssocAdminsOfEventActionOrThrow(
+    associationId: string,
+    actorId: string,
+    eventTitle: string,
+    action: 'validated' | 'updated' | 'deleted' | 'rejected',
     rejectionReason?: string
   ): Promise<void> {
     const members = await this.memberRepo.find({
@@ -2378,6 +3584,116 @@ ${rejectionReason}`
   }
 
   /**
+   * THE ONE ANNOUNCEMENT OF AN EVENT RETURNING TO THE QUEUE (F7, WP-Q2) - whatever the cause.
+   *
+   * Two audiences, one rule: the validators concerned are told as for a proposal
+   * (`notifyEventValidatorsOfProposal`), and the organiser and every accepted partner are told WITH
+   * THE REASON (`notifyEventReopenedParties`). Every path that sets a validated event back to
+   * `pending` calls this and nothing else, so a new path cannot forget one of the two. Best effort,
+   * and always run AFTER the write has committed: a failure here is logged and loses a message, never
+   * the event's state.
+   */
+  async announceEventReopened(
+    ev: ReopenedEvent,
+    reason: EventReopenReason,
+    actorId: string
+  ): Promise<void> {
+    // NEVER REJECTS: every caller is fire-and-forget or runs after a commit that must stay a success
+    // (a rejection would turn a committed acceptance into a 500, or be an unhandled rejection).
+    let current: { status: AssociationCalendarEventStatus } | null;
+    try {
+      // RE-READ, never trusted from the write: between the commit and this notice a validator may
+      // have said yes again, and "waiting for validation" would then be false.
+      current = await this.calendarRepo.findOne({
+        where: { id: ev.id },
+        select: { id: true, status: true },
+      });
+    } catch (err) {
+      this.logger.warn(
+        `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): the status could not be re-read, not announced`,
+        err instanceof Error ? err.stack : String(err)
+      );
+      return;
+    }
+    if (current?.status !== AssociationCalendarEventStatus.Pending) {
+      this.logger.log(
+        `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): no longer pending (${current?.status ?? 'gone'}), not announced`
+      );
+      return;
+    }
+    this.logger.log(
+      `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} back to pending: ${reason} (by ${sanitizeLog(actorId.slice(0, 8))})`
+    );
+    // Validators FIRST, and the parties exclude them: somebody who is both a validator and a party
+    // gets ONE notice, the validator's - the one that is actionable. A push that fails AFTER the
+    // rows were saved still counts as told (typed, NotificationPushFailedError). DEGRADED CASE: when
+    // the validators' notice wrote NOTHING (logged inside, the function never rejects), it returns
+    // nobody, so nobody is excluded and that person is told once as a party instead - a notice with
+    // the reason, but not the actionable one.
+    const validatorIds: string[] = await (async () => {
+      // An ACCEPTANCE is not a proposal: the acceptor must not be shown as proposing, so it has its
+      // own typed notice; a date move keeps the proposal's.
+      return reason === 'coorganiser_joined'
+        ? this.notifyEventValidatorsOfProposal(ev.associationId, actorId, ev.title, {
+            type: EVENT_REOPEN_NOTIFICATION_TYPE[reason],
+            meta: { reason, audience: 'validators' },
+            // 'proposed' IS THE QUEUE TARGET of the push deep link (socialDeepLink): a validator lands
+            // on the validation queue, as for a proposal, never on the plain agenda.
+            pushData: { associationId: ev.associationId, action: 'proposed', reason },
+          })
+        : this.notifyEventValidatorsOfProposal(ev.associationId, actorId, ev.title);
+    })();
+    try {
+      await this.notifyEventReopenedParties(ev, reason, actorId, new Set(validatorIds));
+    } catch (err) {
+      this.logger.warn(
+        `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): the parties were not told`,
+        err instanceof Error ? err.stack : String(err)
+      );
+    }
+  }
+
+  /**
+   * Tells the people an event belongs to why it left the public agenda: the `PROPOSE_EVENT` holders
+   * of the organiser AND of each ACCEPTED partner (they co-own it, and the one who moved the dates or
+   * accepted is rarely the only person counting on it). The notification type carries the reason
+   * (`EVENT_REOPEN_NOTIFICATION_TYPE`) and so does `meta.reason`, for a client that draws its own
+   * sentence. `createNotifications` drops the actor, and writes one row per person.
+   */
+  private async notifyEventReopenedParties(
+    ev: ReopenedEvent,
+    reason: EventReopenReason,
+    actorId: string,
+    alreadyTold: ReadonlySet<string>
+  ): Promise<void> {
+    const coOwners = await this.coOwnerRepo.find({ where: { eventId: ev.id } });
+    const associationIds = [ev.associationId, ...coOwners.map((c) => c.associationId)];
+    const members = await this.memberRepo.find({
+      where: { associationId: In(associationIds) },
+      select: { userId: true, permissions: true },
+    });
+    const recipientIds = [
+      ...new Set(
+        members
+          .filter((m) => (m.permissions & AssociationPermissionFlag.PROPOSE_EVENT) !== 0)
+          .map((m) => m.userId)
+      ),
+    ].filter((id) => !alreadyTold.has(id));
+    const written = await this.notifications.createNotifications({
+      recipientIds,
+      type: EVENT_REOPEN_NOTIFICATION_TYPE[reason],
+      postId: ev.associationId,
+      actorId,
+      text: ev.title,
+      meta: { reason },
+      pushData: { associationId: ev.associationId, action: 'pending', reason },
+    });
+    this.logger.debug(
+      `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): ${written} organiser/partner notice(s) written`
+    );
+  }
+
+  /**
    * Tells the calendar managers that an event is waiting for them.
    *
    * THE HALF THAT DID NOT EXIST. Every other transition on this seam notified somebody - validating,
@@ -2387,37 +3703,94 @@ ${rejectionReason}`
    * 2026-09-09; testing it found it absent.
    *
    * Recipients are the holders of `VALIDATE_EVENTS` in the BDE of a space the event association
-   * reaches - the same predicate (`holdsBdeFlagOverSql`) `mayValidateEvent` uses to decide who MAY
-   * validate it, so the people told are exactly the people who can act on it (WP6c step 2). A BDE
-   * of another space is not told: telling it would be noise about something it cannot touch. An
-   * association reaching no space has no BDE validator, and the warning below says so.
+   * targets - the same predicate (`holdsBdeAgendaRightOverSql`) `mayValidateEvent` uses to decide
+   * who MAY validate it, so the people told are exactly the people who can act on it (WP6c step 2),
+   * an institution's event included (owner, 2026-11-03). A BDE of another space is not told.
+   *
+   * AND THE PLATFORM ADMINS, when a targeted space has no BDE - or the association targets no space
+   * at all (`TARGETS_AN_UNGOVERNED_SPACE_SQL`): for that slice of the audience they are the only
+   * validators, and a proposal they are not told of waits on a page nobody opens. The warning stays
+   * for the one case where nobody at all could be told.
    */
   private async notifyEventValidatorsOfProposal(
     associationId: string,
     actorId: string,
-    eventTitle: string
-  ): Promise<void> {
+    eventTitle: string,
+    notice?: { type: string; meta: Record<string, unknown>; pushData: Record<string, string> }
+  ): Promise<string[]> {
+    // NEVER REJECTS, and that is the contract of this function - not of its callers: it runs after a
+    // commit and is mostly fire-and-forget (`void`), where a rejection is an unhandled rejection
+    // (social-service has no handler) and a notice's failure must never fail a committed write.
+    // Every failure is logged at WARN with its stack; it then told NOBODY, and returns no ids.
+    try {
+      return await this.notifyEventValidatorsOfProposalOrThrow(
+        associationId,
+        actorId,
+        eventTitle,
+        notice
+      );
+    } catch (err) {
+      this.logger.warn(
+        `[notify] the validators of asso ${sanitizeLog(associationId)} were not told about an event waiting for validation`,
+        err instanceof Error ? err.stack : String(err)
+      );
+      return [];
+    }
+  }
+
+  /** The body of `notifyEventValidatorsOfProposal`: may throw, and is only called through it. */
+  private async notifyEventValidatorsOfProposalOrThrow(
+    associationId: string,
+    actorId: string,
+    eventTitle: string,
+    notice?: { type: string; meta: Record<string, unknown>; pushData: Record<string, string> }
+  ): Promise<string[]> {
     const validators: { userId: string }[] = await this.memberRepo.query(
-      BDE_FLAG_HOLDERS_OVER_SQL,
-      [associationId, AssociationPermissionFlag.VALIDATE_EVENTS]
+      BDE_AGENDA_RIGHT_HOLDERS_OVER_SQL,
+      [associationId]
+    );
+    const [target] = (await this.memberRepo.query(TARGETS_AN_UNGOVERNED_SPACE_SQL, [
+      associationId,
+    ])) as { ungoverned: boolean }[];
+    const admins: { userId: string }[] =
+      target?.ungoverned === true ? await this.memberRepo.query(PLATFORM_ADMINS_SQL) : [];
+    const recipientIds = [...new Set([...validators, ...admins].map((r) => r.userId))];
+    this.logger.debug(
+      `[notify] event proposed for asso ${sanitizeLog(associationId)}: ${validators.length} BDE validator(s), ${admins.length} platform admin(s) for an ungoverned space`
     );
 
-    const written = await this.notifications.createNotifications({
-      recipientIds: validators.map((v) => v.userId),
-      type: 'event_proposed',
-      postId: associationId,
-      actorId,
-      text: eventTitle,
-      pushData: { associationId, action: 'proposed' },
-    });
-    if (written === 0) {
-      // Not an error - a space can legitimately have no BDE yet, and an association may reach no
-      // space - but a proposal that told nobody is the exact shape of the defect this method was
-      // written for, so it says so: only a global admin can validate it now.
+    let written: number;
+    try {
+      written = await this.notifications.createNotifications({
+        recipientIds,
+        type: notice?.type ?? 'event_proposed',
+        postId: associationId,
+        actorId,
+        text: eventTitle,
+        ...(notice ? { meta: notice.meta } : {}),
+        pushData: notice?.pushData ?? { associationId, action: 'proposed' },
+      });
+    } catch (err) {
+      // The rows are saved and only the push failed: the validators HAVE their notice in the bell,
+      // so they are still returned (a validator who is also a party must not get a second row).
+      // Anything else wrote nothing and propagates, and then nobody is excluded.
+      if (!(err instanceof NotificationPushFailedError)) throw err;
       this.logger.warn(
-        `[notify] event proposed for asso ${sanitizeLog(associationId)} and no VALIDATE_EVENTS holder in a BDE governing it was told`
+        `[notify] event waiting for validation (asso ${sanitizeLog(associationId)}): the validators' rows are saved, their push failed`,
+        err.stack
+      );
+      written = err.recipientIds.length;
+    }
+    if (written === 0) {
+      // Nobody at all could be told: no BDE governs a targeted space AND no platform admin exists,
+      // or the only one is the proposer. The exact shape of the defect this method was written for.
+      this.logger.warn(
+        `[notify] event proposed for asso ${sanitizeLog(associationId)} and nobody who may validate it was told`
       );
     }
+    // EVERY id told, the platform admins of an ungoverned space included: the caller's dedupe set
+    // (`announceEventReopened`) must hold them, or an admin who is also a party is told twice.
+    return recipientIds;
   }
 
   /**
@@ -2464,48 +3837,61 @@ ${rejectionReason}`
 
     const kind = dto.kind ?? AssociationCalendarEventKind.Event;
     assertMayDecideKind(kind, AssociationCalendarEventKind.Event, isValidator);
-    // The cap is checked BEFORE the event is saved: `sync` runs after the save, and a refusal there
-    // would leave an event the caller was told failed.
+    // The cap is checked BEFORE the transaction opens: a refusal costs no connection and no lock.
     assertWithinCoOrganiserCap(
       new Set((dto.coOwnerIds ?? []).filter((id) => id !== targetId)).size
     );
 
     const linkedFormId = dto.linkedFormId ?? null;
-    if (linkedFormId) await this.assertFormBelongsToAssociation(linkedFormId, targetId);
-    await this.detachLinksBeforeCreate(linkedFormId);
-
-    const row = this.calendarRepo.create({
-      associationId: targetId,
-      title: dto.title.trim(),
-      description: dto.description?.trim() ? dto.description.trim() : null,
-      startsAt,
-      endsAt,
-      createdBy: userId,
-      kind,
-      linkedFormId,
-      // The three validation columns are written in ONE place, and this is not it. Spelling
-      // `null` here rather than leaving them to the entity default is deliberate: a default is
-      // what happens when nobody said, and this row says.
-      status: AssociationCalendarEventStatus.Pending,
-      validatedAt: null,
-      validatedBy: null,
-    });
-    const saved = await this.calendarRepo.save(row);
     // D39: every co-organiser named here is ASKED, so a new event has no co-owner row yet - its
     // reach and its rights stay the organiser's until one accepts. The creator writes as the
     // organiser (the guard, or the BDE / global admin tier for a deposit).
     const askedCount = new Set((dto.coOwnerIds ?? []).filter((id) => id !== targetId)).size;
-    if (askedCount > 0) {
-      await this.coOrganiserPort().sync({
-        eventId: saved.id,
-        organiserId: targetId,
-        desiredIds: dto.coOwnerIds ?? [],
-        actorId: userId,
-        isGlobalAdmin: callerOpts?.isGlobalAdmin === true,
-        organiserSide: true,
-        viaAssociationId: associationId,
+    // ONE TRANSACTION, ONE CONNECTION: the form-link detach, the event insert and the partners'
+    // proposals commit together or not at all. The event used to be saved BEFORE the sync, so a
+    // failing k-th proposal left an event with no proposals behind a 500, and the caller's retry
+    // created it twice. The announcements run after the commit.
+    const { saved, afterCommit } = await this.calendarRepo.manager.transaction(async (manager) => {
+      await this.keyShareAssociations(manager, [targetId, ...(dto.coOwnerIds ?? [])]);
+      if (linkedFormId) await this.assertFormBelongsToAssociation(linkedFormId, targetId, manager);
+      const repo = manager.getRepository(AssociationCalendarEvent);
+      await this.detachLinksBeforeCreate(linkedFormId, repo);
+
+      const row = repo.create({
+        associationId: targetId,
+        title: dto.title.trim(),
+        description: dto.description?.trim() ? dto.description.trim() : null,
+        startsAt,
+        endsAt,
+        createdBy: userId,
+        kind,
+        linkedFormId,
+        // The three validation columns are written in ONE place, and this is not it. Spelling
+        // `null` here rather than leaving them to the entity default is deliberate: a default is
+        // what happens when nobody said, and this row says.
+        status: AssociationCalendarEventStatus.Pending,
+        validatedAt: null,
+        validatedBy: null,
       });
-    }
+      const saved = await repo.save(row);
+      const afterCommit: CoOrganiserAfterCommit =
+        askedCount > 0
+          ? await this.coOrganiserPort().sync(
+              {
+                eventId: saved.id,
+                organiserId: targetId,
+                desiredIds: dto.coOwnerIds ?? [],
+                actorId: userId,
+                isGlobalAdmin: callerOpts?.isGlobalAdmin === true,
+                organiserSide: true,
+                viaAssociationId: associationId,
+              },
+              manager
+            )
+          : () => Promise.resolve();
+      return { saved, afterCommit };
+    });
+    await afterCommit();
     const coOwners: AssociationCalendarEventCoOwner[] = [];
     this.logger.debug(
       `Event created: ${sanitizeLog(saved.id)} for asso ${sanitizeLog(targetId)} by ${sanitizeLog(userId)} (status=${sanitizeLog(saved.status)}, co-organisers asked=${askedCount})`
@@ -2534,9 +3920,67 @@ ${rejectionReason}`
     dto: UpdateAssociationCalendarEventDto,
     callerOpts?: { isGlobalAdmin?: boolean; isBde?: boolean; callerUserId?: string }
   ) {
-    const canCrossAsso = callerOpts?.isGlobalAdmin || callerOpts?.isBde;
     await this.findById(associationId);
-    const ev = await this.findCalendarEventForAssociation(eventId, associationId, canCrossAsso);
+    // EVERY CHECK AND EVERY WRITE UNDER THE EVENT'S LOCK: the event is read AFTER the lock is
+    // taken, so a validation or an acceptance that committed first is what this edit starts from.
+    const { saved, demoted, afterCommit } = await this.withEventLock(
+      eventId,
+      (repo, manager) =>
+        this.applyCalendarEventUpdate(repo, manager, associationId, eventId, dto, callerOpts),
+      dto.coOwnerIds
+    );
+    // The partners' proposals are announced once they are COMMITTED, with the other notices.
+    await afterCommit();
+    const canCrossAsso = callerOpts?.isGlobalAdmin || callerOpts?.isBde;
+    const coOwners = await this.batchLoadCoOwners([saved.id]).then((m) => m.get(saved.id) ?? []);
+    this.logger.debug(
+      `Event updated: ${sanitizeLog(saved.id)} by ${sanitizeLog(callerOpts?.callerUserId)} (coOwners=${coOwners.length})`
+    );
+    // Notifications run AFTER the commit: a notice for a write that rolled back would be a lie.
+    if (demoted) {
+      this.logger.debug(
+        `Event returned to pending after a date change: ${sanitizeLog(saved.id)} by ${sanitizeLog(callerOpts?.callerUserId)}`
+      );
+      // The same route a fresh proposal takes, because that is what this now is: the validators,
+      // and the organiser and the partners with the reason (F7).
+      void this.announceEventReopened(
+        saved,
+        'date_moved',
+        callerOpts?.callerUserId ?? saved.createdBy
+      );
+    }
+    // Notify asso admins when BDE modifies an event from another asso
+    if (canCrossAsso && saved.associationId !== associationId && callerOpts?.callerUserId) {
+      void this.notifyAssocAdminsOfEventAction(
+        saved.associationId,
+        callerOpts.callerUserId,
+        saved.title,
+        'updated'
+      );
+    }
+    return this.serializeCalendarEvent(saved, coOwners);
+  }
+
+  /** The checks and writes of `updateCalendarEvent`, run by it inside the event's lock. */
+  private async applyCalendarEventUpdate(
+    repo: Repository<AssociationCalendarEvent>,
+    manager: EntityManager,
+    associationId: string,
+    eventId: string,
+    dto: UpdateAssociationCalendarEventDto,
+    callerOpts?: { isGlobalAdmin?: boolean; isBde?: boolean; callerUserId?: string }
+  ): Promise<{
+    saved: AssociationCalendarEvent;
+    demoted: boolean;
+    afterCommit: CoOrganiserAfterCommit;
+  }> {
+    const canCrossAsso = callerOpts?.isGlobalAdmin || callerOpts?.isBde;
+    const ev = await this.findCalendarEventForAssociation(
+      eventId,
+      associationId,
+      canCrossAsso === true,
+      repo
+    );
     if (!ev) throw new NotFoundException('Event not found');
 
     // Before any mutation: a refusal must leave the entity as it was found.
@@ -2605,6 +4049,28 @@ ${rejectionReason}`
      */
     const datesMoved =
       toMillis(ev.startsAt) !== previousStartsAt || toMillis(ev.endsAt) !== previousEndsAt;
+    // E2: a partner (an accepted co-organiser writing through its own association) edits the text
+    // and the poster, never the date. Refused before ANY write below, and only when the date really
+    // moved: both modals resubmit every field they render, so an unchanged date is not a change.
+    const side = eventWriteSide(ev.associationId, associationId, canCrossAsso === true);
+    if (side === 'partner' && datesMoved) {
+      this.logger.debug(
+        `[PERM] partner ${sanitizeLog(associationId.slice(0, 8))} refused a date change on ${sanitizeLog(ev.id.slice(0, 8))}`
+      );
+      throw partnerOrganiserOnlyRefusal('date');
+    }
+    // The form link is the organiser's too (decided with E2, D39): a CHANGE from the partner side
+    // is refused; resending the value it already has is not a change.
+    if (
+      side === 'partner' &&
+      dto.linkedFormId !== undefined &&
+      (dto.linkedFormId || null) !== (ev.linkedFormId ?? null)
+    ) {
+      this.logger.debug(
+        `[PERM] partner ${sanitizeLog(associationId.slice(0, 8))} refused a form link change on ${sanitizeLog(ev.id.slice(0, 8))}`
+      );
+      throw partnerOrganiserOnlyRefusal('linkedForm');
+    }
     const demoted = wasValidated && datesMoved;
     if (demoted) {
       ev.status = AssociationCalendarEventStatus.Pending;
@@ -2612,26 +4078,15 @@ ${rejectionReason}`
       ev.validatedBy = null;
     }
 
-    if (dto.linkedFormId !== undefined) {
-      if (dto.linkedFormId === null || dto.linkedFormId === '') {
-        ev.linkedFormId = null;
-      } else {
-        await this.assertFormBelongsToAssociation(dto.linkedFormId, associationId);
-        await this.detachCalendarLinksExcept({
-          formId: dto.linkedFormId,
-          exceptEventId: ev.id,
-        });
-        ev.linkedFormId = dto.linkedFormId;
-      }
-    }
-
-    // D39: the list is turned into proposals BEFORE the event is saved, so a refusal (a co-organiser
-    // trying to change anything but its own presence, 403) leaves the event as it was found.
+    // EVERY REFUSAL BEFORE ANY WRITE: the partner-list check (a partner changing more than its own
+    // presence, the cap) is read-only and runs here, ahead of the form link's detach below, so a
+    // refused request leaves the event, its form links and its partners exactly as found.
+    let coOrganiserRequest: CoOrganiserSyncRequest | null = null;
     if (dto.coOwnerIds !== undefined) {
       if (!callerOpts?.callerUserId) {
         throw new ForbiddenException('A co-organiser change needs a caller');
       }
-      await this.coOrganiserPort().sync({
+      coOrganiserRequest = {
         eventId: ev.id,
         organiserId: ev.associationId,
         desiredIds: dto.coOwnerIds,
@@ -2639,61 +4094,60 @@ ${rejectionReason}`
         isGlobalAdmin: callerOpts.isGlobalAdmin === true,
         organiserSide: canCrossAsso === true || ev.associationId === associationId,
         viaAssociationId: associationId,
-      });
+      };
+      await this.coOrganiserPort().check(coOrganiserRequest, manager);
     }
-    const saved = await this.calendarRepo.save(ev);
-    const coOwners = await this.batchLoadCoOwners([saved.id]).then((m) => m.get(saved.id) ?? []);
-    this.logger.debug(
-      `Event updated: ${sanitizeLog(saved.id)} by ${sanitizeLog(callerOpts?.callerUserId)} (coOwners=${coOwners.length})`
-    );
-    if (demoted) {
-      this.logger.debug(
-        `Event returned to pending after a date change: ${sanitizeLog(saved.id)} by ${sanitizeLog(callerOpts?.callerUserId)}`
-      );
-      // The same route a fresh proposal takes, because that is what this now is. Without it the
-      // event leaves the public agenda and lands in a queue nobody is told about - which is worse
-      // than the defect it replaces, the event having at least been VISIBLE before.
-      void this.notifyEventValidatorsOfProposal(
-        saved.associationId,
-        callerOpts?.callerUserId ?? saved.createdBy,
-        saved.title
-      );
-      // And the association's own proposers, because the one who moved the dates is rarely the
-      // only person counting on the event being on the agenda.
-      void this.notifyAssocAdminsOfEventAction(
-        saved.associationId,
-        callerOpts?.callerUserId ?? saved.createdBy,
-        saved.title,
-        'pending'
-      );
+
+    // Only an actual CHANGE of the link is a write (and is checked against the form's owner): a
+    // modal resending the value it loaded changes nothing, whichever side it writes from.
+    if (
+      dto.linkedFormId !== undefined &&
+      (dto.linkedFormId || null) !== (ev.linkedFormId ?? null)
+    ) {
+      if (dto.linkedFormId === null || dto.linkedFormId === '') {
+        ev.linkedFormId = null;
+      } else {
+        await this.assertFormBelongsToAssociation(dto.linkedFormId, associationId, manager);
+        await this.detachCalendarLinksExcept(
+          {
+            formId: dto.linkedFormId,
+            exceptEventId: ev.id,
+          },
+          repo
+        );
+        ev.linkedFormId = dto.linkedFormId;
+      }
     }
-    // Notify asso admins when BDE modifies an event from another asso
-    if (canCrossAsso && ev.associationId !== associationId && callerOpts?.callerUserId) {
-      void this.notifyAssocAdminsOfEventAction(
-        ev.associationId,
-        callerOpts.callerUserId,
-        saved.title,
-        'updated'
-      );
-    }
-    return this.serializeCalendarEvent(saved, coOwners);
+
+    // D39: the list is turned into proposals BEFORE the event is saved, so a refusal (a co-organiser
+    // trying to change anything but its own presence, 403) leaves the event as it was found.
+    const afterCommit: CoOrganiserAfterCommit = coOrganiserRequest
+      ? await this.coOrganiserPort().sync(coOrganiserRequest, manager)
+      : () => Promise.resolve();
+    const saved = await repo.save(ev);
+    return { saved, demoted, afterCommit };
   }
 
   /** Marks a pending calendar event as validated (visible on public agenda and feeds). */
   async validateCalendarEvent(associationId: string, eventId: string, userId: string) {
     await this.findById(associationId);
-    const ev = await this.findCalendarEventForAssociation(eventId, associationId, false);
-    if (!ev) throw new NotFoundException('Event not found');
-    if (ev.status === AssociationCalendarEventStatus.Validated) {
-      return this.serializeCalendarEvent(ev);
-    }
-    ev.status = AssociationCalendarEventStatus.Validated;
-    ev.validatedAt = new Date();
-    ev.validatedBy = userId;
-    const saved = await this.calendarRepo.save(ev);
+    // Under the event's lock, so a validation never overwrites an edit or an acceptance it did not see.
+    const outcome = await this.withEventLock(eventId, async (repo) => {
+      const ev = await this.findCalendarEventForAssociation(eventId, associationId, false, repo);
+      if (!ev) throw new NotFoundException('Event not found');
+      if (ev.status === AssociationCalendarEventStatus.Validated) {
+        return { ev, changed: false };
+      }
+      ev.status = AssociationCalendarEventStatus.Validated;
+      ev.validatedAt = new Date();
+      ev.validatedBy = userId;
+      return { ev: await repo.save(ev), changed: true };
+    });
+    if (!outcome.changed) return this.serializeCalendarEvent(outcome.ev);
+    const saved = outcome.ev;
     this.logger.debug(`Event validated: ${saved.id} by ${userId}`);
     // Notify asso admins that their event has been validated
-    void this.notifyAssocAdminsOfEventAction(ev.associationId, userId, ev.title, 'validated');
+    void this.notifyAssocAdminsOfEventAction(saved.associationId, userId, saved.title, 'validated');
     return this.serializeCalendarEvent(saved);
   }
 
@@ -2705,21 +4159,25 @@ ${rejectionReason}`
     reason?: string
   ) {
     await this.findById(associationId);
-    const ev = await this.findCalendarEventForAssociation(eventId, associationId, false);
-    if (!ev) throw new NotFoundException('Event not found');
-    if (ev.status === AssociationCalendarEventStatus.Rejected) {
-      return this.serializeCalendarEvent(ev);
-    }
-    ev.status = AssociationCalendarEventStatus.Rejected;
-    ev.rejectedAt = new Date();
-    ev.rejectedBy = userId;
-    ev.rejectionReason = reason ?? null;
-    const saved = await this.calendarRepo.save(ev);
+    const outcome = await this.withEventLock(eventId, async (repo) => {
+      const ev = await this.findCalendarEventForAssociation(eventId, associationId, false, repo);
+      if (!ev) throw new NotFoundException('Event not found');
+      if (ev.status === AssociationCalendarEventStatus.Rejected) {
+        return { ev, changed: false };
+      }
+      ev.status = AssociationCalendarEventStatus.Rejected;
+      ev.rejectedAt = new Date();
+      ev.rejectedBy = userId;
+      ev.rejectionReason = reason ?? null;
+      return { ev: await repo.save(ev), changed: true };
+    });
+    if (!outcome.changed) return this.serializeCalendarEvent(outcome.ev);
+    const saved = outcome.ev;
     this.logger.debug(`Event rejected: ${saved.id} by ${userId}`);
     void this.notifyAssocAdminsOfEventAction(
-      ev.associationId,
+      saved.associationId,
       userId,
-      ev.title,
+      saved.title,
       'rejected',
       reason
     );
@@ -2759,6 +4217,13 @@ ${rejectionReason}`
     } else {
       const ev = await this.findCalendarEventForAssociation(eventId, associationId, false);
       if (!ev) throw new NotFoundException('Event not found');
+      // E2: only the organiser deletes; a partner withdraws instead (`coOwnerIds` without itself).
+      if (eventWriteSide(ev.associationId, associationId, false) === 'partner') {
+        this.logger.debug(
+          `[PERM] partner ${sanitizeLog(associationId.slice(0, 8))} refused deleting ${sanitizeLog(eventId.slice(0, 8))}`
+        );
+        throw partnerOrganiserOnlyRefusal('delete');
+      }
       await this.calendarRepo.delete({ id: eventId });
       this.logger.debug(
         `Event deleted: ${sanitizeLog(eventId)} by ${sanitizeLog(callerOpts?.callerUserId)}`
@@ -3189,9 +4654,10 @@ ${rejectionReason}`
       );
       throw new ServiceUnavailableException('Business key storage is not configured');
     }
-    // A list or an institution collects nothing. An absent row is left to the UPDATE below (404).
+    // Only an association holds a Business of its own: a list collects through a delegate, an
+    // institution not at all. An absent row is left to the UPDATE below (404).
     const target = await this.assoRepo.findOne({ where: { id }, select: { id: true, type: true } });
-    if (target) assertKindMaySell(this.logger, id, target.type, 'Lydia account link');
+    if (target) assertMayHoldOwnAccount(this.logger, id, target.type, 'Lydia account link');
     const sealed = sealSecret(
       LYDIA_BUSINESS_KEY_PURPOSE,
       lydiaBusinessKeyContext(id, vendorToken),
@@ -3321,7 +4787,9 @@ ${rejectionReason}`
    * An UNSIGNED `webhook-validated` never clears a holder Lydia itself reported (`request-refused`,
    * `request-blocked`): that is the global admin's `admin` call alone (`held-by-lydia`, a WARN).
    *
-   * Going to true, releasing is the CALLER's (`ProductsService.markLydiaReady`). Only a transition
+   * Going to true, the SAME transaction releases the withheld products of the holder (when it
+   * collects on its own account) and of its approved delegates (`releaseWithheldProductsOf`), a
+   * replay included, so a commit never leaves one withheld. Only a transition
    * logs loudly and notifies the payout managers; a replay is a debug line. No holder, or two
    * (refused, never guessed), writes nothing; no holder for the token a pending `business/create` answered (`lydiaEnrolmentVendorToken`) is
    * `no-holder-enrolment-in-flight`, which the webhook route answers 503 so Lydia retries.
@@ -3342,6 +4810,9 @@ ${rejectionReason}`
       ready: boolean;
       cause: LydiaReadinessCause | null;
       at: Date | string | null;
+      type: Association['type'];
+      paymentDelegationStatus: Association['paymentDelegationStatus'];
+      paymentParentAssociationId: string | null;
     };
     type Step =
       | { kind: 'none'; inFlight: boolean }
@@ -3353,11 +4824,17 @@ ${rejectionReason}`
           causeRefreshed: boolean;
           withheld: number;
           admins: number;
+          /** The approved delegates, read share-locked in the readiness transaction. */
+          delegates: string[];
+          /** Per approved delegate, what was withheld (going not ready) or released (ready). */
+          delegatesWithheld: Map<string, number>;
+          delegatesReleased: Map<string, number>;
         };
     const step: Step = await this.assoRepo.manager.transaction(async (manager): Promise<Step> => {
       const holders: Holder[] = await manager.query(
         `SELECT id, name, "lydiaOnboardingComplete" AS ready, "lydiaReadinessCause" AS cause,
-                "lydiaReadinessAt" AS at
+                "lydiaReadinessAt" AS at, type, "paymentDelegationStatus",
+                "paymentParentAssociationId"
            FROM associations WHERE "lydiaAccountId" = $1 FOR UPDATE`,
         [vendorToken]
       );
@@ -3413,17 +4890,44 @@ ${rejectionReason}`
       }
       let withheld = 0;
       let admins = 0;
+      let delegatesWithheld = new Map<string, number>();
+      let delegatesReleased = new Map<string, number>();
+      const delegateIds = await approvedDelegateIds(manager, holder.id);
       if (transitioned && !ready) {
-        const ids = [holder.id, ...(await approvedDelegateIds(manager, holder.id))];
-        const res = await manager.update(
-          AssociationProduct,
-          { associationId: In(ids), isActive: true },
-          { isActive: false, activationWithheld: true }
-        );
-        withheld = res.affected ?? 0;
+        const byId = await withholdOnSaleProductsOf(manager, [holder.id, ...delegateIds]);
+        withheld = [...byId.values()].reduce((sum, n) => sum + n, 0);
+        delegatesWithheld = new Map([...byId].filter(([id]) => id !== holder.id));
         admins = await this.reportRevertToGlobalAdmins(manager, holder, cause, where);
       }
-      return { kind: 'done', holder, transitioned, causeRefreshed, withheld, admins };
+      if (ready) {
+        // The release is the SAME transaction as the readiness (owner review of #2967): a commit
+        // never leaves a product withheld. The holder's own products only when it collects on its
+        // own account (it does not itself delegate); every approved delegate's, which route here.
+        const selfRouted = holdsOwnAccount(holder.type) && !isDelegating(holder);
+        const byId = await releaseWithheldProductsOf(manager, [
+          ...(selfRouted ? [holder.id] : []),
+          ...delegateIds,
+        ]);
+        delegatesReleased = new Map([...byId].filter(([id]) => id !== holder.id));
+        const released = [...byId.values()].reduce((sum, n) => sum + n, 0);
+        if (released > 0) {
+          this.logger.log(
+            `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)} ready: ${released} ` +
+              `withheld product(s) released with it (${delegatesReleased.size} delegate(s))`
+          );
+        }
+      }
+      return {
+        kind: 'done',
+        holder,
+        transitioned,
+        causeRefreshed,
+        withheld,
+        admins,
+        delegates: delegateIds,
+        delegatesWithheld,
+        delegatesReleased,
+      };
     });
     if (step.kind === 'none') {
       return { kind: step.inFlight ? 'no-holder-enrolment-in-flight' : 'no-holder' };
@@ -3439,7 +4943,21 @@ ${rejectionReason}`
       );
       return { kind: 'held-by-lydia', ...previous };
     }
-    const { transitioned, causeRefreshed, withheld, admins } = step;
+    const {
+      transitioned,
+      causeRefreshed,
+      withheld,
+      admins,
+      delegates,
+      delegatesWithheld,
+      delegatesReleased,
+    } = step;
+    // Those who collect THROUGH this holder (a list paid by delegation) collect again exactly when
+    // the holder TRANSITIONS to ready - they route through it - whatever products they have (a
+    // forms-only list included). A replay changes nobody's collecting, so it tells nobody.
+    if (transitioned && ready) {
+      await this.tellDelegates(delegates, 'resumed', 'receiver ready', delegatesReleased);
+    }
     if (!transitioned) {
       this.logger.debug(
         `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)} already ready=${ready} - replay ` +
@@ -3480,6 +4998,16 @@ ${rejectionReason}`
       this.logger.error(
         `${LYDIA_READINESS_LOG_TAG} holder ${sanitizeLog(holder.id)}: the managers' notice could not ` +
           `be written: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+    // Those who collect THROUGH this holder stop collecting with it (owner, 2026-11-02), products
+    // or none - their paid forms pause too.
+    if (!ready) {
+      await this.tellDelegates(
+        delegates,
+        'receiver-not-ready',
+        'receiver readiness reverted',
+        delegatesWithheld
       );
     }
     return { kind: 'transitioned', ...previous };
@@ -4113,11 +5641,33 @@ ${rejectionReason}`
    * onboarding from scratch. Local unlink only - the Lydia Business itself is left untouched.
    */
   async clearLydiaAccount(id: string) {
-    await this.assoRepo.update(id, {
-      lydiaAccountId: null,
-      lydiaOnboardingComplete: false,
-      lydiaDashboardUrl: null,
-    });
+    // The unlink and the pause commit together: the holder's own on-sale products and its approved
+    // delegates' (a list paid through it among them) are withheld exactly as a readiness revert
+    // withholds them (`setLydiaReadiness`), and the same release puts them back once a Business is
+    // linked and validated again - or, for a delegate, once another receiver accepts it.
+    const { delegates, withheld, byId, wasReady } = await this.assoRepo.manager.transaction(
+      async (manager) => {
+        const holder = await this.lockAssociation(manager, id);
+        await manager.update(Association, id, {
+          lydiaAccountId: null,
+          lydiaOnboardingComplete: false,
+          lydiaDashboardUrl: null,
+        });
+        const delegateIds = await approvedDelegateIds(manager, id);
+        const counts = await withholdOnSaleProductsOf(manager, [id, ...delegateIds]);
+        return {
+          delegates: delegateIds,
+          withheld: [...counts.values()].reduce((sum, n) => sum + n, 0),
+          byId: counts,
+          // Its delegates collected through it only while its Business was validated.
+          wasReady: Boolean(holder.lydiaOnboardingComplete && holder.lydiaAccountId),
+        };
+      }
+    );
+    this.logger.warn(
+      `[AUDIT] Lydia Business unlinked from association ${sanitizeLog(id)}: ${withheld} on-sale ` +
+        `product(s) of it and its ${delegates.length} approved delegate(s) withheld`
+    );
     // The Business key belongs to the Business being unlinked: it goes with it. (Bound to the old
     // vendor token, it could not open for the next Business anyway - this is hygiene, not safety.)
     await this.assoRepo.query(
@@ -4140,6 +5690,14 @@ ${rejectionReason}`
       [id]
     );
     await this.invalidatePostListCaches();
+    if (wasReady) {
+      await this.tellDelegates(delegates, 'receiver-not-ready', 'receiver Lydia unlinked', byId);
+    } else {
+      this.logger.debug(
+        `[DELEGATION] receiver ${sanitizeLog(id)} unlinked while not ready: its delegates had ` +
+          `already stopped collecting, no notice`
+      );
+    }
   }
 
   /** Whether a Business key is stored - the ONLY thing the panel ever learns about it. */
@@ -4204,21 +5762,6 @@ ${rejectionReason}`
   }
 
   /**
-   * The Lydia vendor token an association's payments are PAID INTO - its own, or its approved
-   * parent's - whatever provider is active right now: a payment in flight is still checked after
-   * an admin disables payments. Used to refuse a verified callback whose Business is not the one
-   * the row's money goes to (`FormsService.confirmPaymentFromCallback`).
-   */
-  async getLydiaPayeeAccountId(id: string): Promise<string | null> {
-    const asso = await this.assoRepo.findOne({ where: { id } });
-    if (!asso) return null;
-    const parent = isDelegating(asso)
-      ? await this.assoRepo.findOne({ where: { id: asso.paymentParentAssociationId } })
-      : null;
-    return resolvePaymentTarget(asso, parent, 'lydia').connectAccountId;
-  }
-
-  /**
    * Reads the platform's currently active payment provider from core-service. Exposed for callers
    * (e.g. FormsService) that need it outside of resolvePaymentTarget - such as deciding whether to
    * pass Lydia's order_ref-shaped idempotency key on a form with no associated club.
@@ -4245,6 +5788,63 @@ ${rejectionReason}`
   }
 
   /**
+   * Whether `associationId` may collect online NOW: it may collect at all (`mayCollect` - a list
+   * only through an approved delegate) AND the account its payments route to is ready
+   * (`withPaymentsReady`). False for an absent row. What a paid form's PAUSE is read from: a form
+   * of an entity that cannot collect now is served `paymentsPaused` - derived on every read, so it
+   * pauses the moment a delegation is revoked or a receiver loses its Lydia account, and resumes
+   * the moment a new delegation is accepted, with no state of its own to drift.
+   */
+  async collectsNow(associationId: string): Promise<boolean> {
+    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+    if (!asso) return false;
+    if (!mayCollect(asso)) {
+      this.logger.debug(
+        `[COLLECT] ${associationId.slice(0, 8)} may not collect now (${asso.type})`
+      );
+      return false;
+    }
+    const [row] = await this.withPaymentsReady([asso]);
+    return row.paymentsReady;
+  }
+
+  /**
+   * Attaches `paymentsReady` to each row: whether its payments can be taken NOW, through its own
+   * Lydia account or the account of the association it delegates to (APPROVED), judged on the
+   * accounts alone - `resolvePaymentTarget` with the provider the accounts belong to. Whether the
+   * platform has payments switched off is the client's other read (`payments/provider`), so a
+   * member read never waits on core-service. The delegation receivers are loaded in ONE query for
+   * the whole page (G4: the client used to read the row's OWN `lydiaOnboardingComplete`, so a
+   * delegating association or list was told "payments not configured" while the server accepted).
+   */
+  async withPaymentsReady<T extends Association>(
+    rows: T[]
+  ): Promise<Array<T & { paymentsReady: boolean }>> {
+    const parentIds = [
+      ...new Set(rows.filter((r) => isDelegating(r)).map((r) => r.paymentParentAssociationId)),
+    ];
+    const parents = parentIds.length
+      ? await this.assoRepo.find({
+          where: { id: In(parentIds) },
+          select: {
+            id: true,
+            lydiaAccountId: true,
+            lydiaOnboardingComplete: true,
+            lydiaReadinessCause: true,
+          },
+        })
+      : [];
+    const byId = new Map(parents.map((p) => [p.id, p]));
+    return rows.map((row) => {
+      const parent = isDelegating(row) ? (byId.get(row.paymentParentAssociationId) ?? null) : null;
+      return {
+        ...row,
+        paymentsReady: resolvePaymentTarget(row, parent as Association | null, 'lydia').ready,
+      };
+    });
+  }
+
+  /**
    * Returns the connect-style account id (Lydia's `vendor_token`) an association's
    * payments route to, or null if none. Follows an approved parent delegation to the parent's account.
    */
@@ -4255,11 +5855,22 @@ ${rejectionReason}`
   }
 
   /**
-   * Ensures payments can be taken (own account onboarded, or an approved parent's account ready)
-   * before accepting paid forms/purchases.
-   * @throws BadRequestException when neither the association nor its approved parent can receive payments
+   * What `mayCollect` reads of an association - its kind and its delegation - or `null` when it does
+   * not exist: the forms' price guard.
    */
-  /** The kind of an association (`null` when it does not exist) - what the forms' price guard reads. */
+  async collectionSubjectOf(associationId: string): Promise<CollectionSubject | null> {
+    return this.assoRepo.findOne({
+      where: { id: associationId },
+      select: {
+        id: true,
+        type: true,
+        paymentDelegationStatus: true,
+        paymentParentAssociationId: true,
+      },
+    });
+  }
+
+  /** The kind of an association (`null` when it does not exist) - what the kind-excluded flags read. */
   async kindOf(associationId: string): Promise<Association['type'] | null> {
     const row = await this.assoRepo.findOne({
       where: { id: associationId },
@@ -4268,6 +5879,11 @@ ${rejectionReason}`
     return row?.type ?? null;
   }
 
+  /**
+   * Ensures payments can be taken (own account onboarded, or an approved parent's account ready)
+   * before accepting paid forms/purchases.
+   * @throws BadRequestException when neither the association nor its approved parent can receive payments
+   */
   async assertPaymentsReady(associationId: string): Promise<void> {
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!asso) {
@@ -4318,6 +5934,13 @@ ${rejectionReason}`
    * `pending` until the parent approves. Rejects self-delegation, unknown parents, delegation
    * chains (a parent that itself delegates), and requesters that are themselves a parent to
    * other associations.
+   *
+   * Open to an association and to a LIST - for a list it is the only way to collect
+   * (`collection-policy.ts`); refused to an institution. The receiver must be a kind that holds a
+   * Lydia account of its own (an association): any association that accepts, not necessarily the
+   * list's BDE (owner, 2026-11-02). A new request over an APPROVED one moves the link back to
+   * `pending`, so the child stops collecting until the new receiver accepts: its on-sale products
+   * are withheld in the same transaction when its own account cannot take over.
    */
   async requestPaymentDelegation(associationId: string, parentAssociationId: string) {
     this.logger.debug(
@@ -4332,7 +5955,13 @@ ${rejectionReason}`
     ]);
     if (!asso) throw new NotFoundException('Association not found');
     if (!parent) throw new NotFoundException('Parent association not found');
-    assertKindMaySell(this.logger, associationId, asso.type, 'payment delegation request');
+    assertMayRequestDelegation(this.logger, associationId, asso.type);
+    assertMayHoldOwnAccount(
+      this.logger,
+      parentAssociationId,
+      parent.type,
+      'payment delegation request (receiver)'
+    );
 
     // No chains: the parent must not itself route its payments to a further association.
     if (parent.paymentParentAssociationId) {
@@ -4350,23 +5979,38 @@ ${rejectionReason}`
       );
     }
 
-    await this.assoRepo.update(associationId, {
-      paymentParentAssociationId: parentAssociationId,
-      paymentDelegationStatus: 'pending',
+    const withheld = await this.assoRepo.manager.transaction(async (manager) => {
+      const child = await this.lockAssociation(manager, associationId);
+      const wasApproved = isDelegating(child);
+      await manager.update(Association, associationId, {
+        paymentParentAssociationId: parentAssociationId,
+        paymentDelegationStatus: 'pending',
+      });
+      return wasApproved ? this.withholdIfStranded(manager, child, 'delegation re-requested') : 0;
     });
+    if (withheld > 0) await this.invalidatePostListCaches();
     return this.getPaymentDelegation(associationId);
   }
 
-  /** Clears this association's payment delegation (the association cancels a pending/approved link). */
+  /**
+   * Clears this association's payment delegation (the association cancels a pending/approved
+   * link). Cancelling an APPROVED one stops its collecting: its on-sale products are withheld in the
+   * same transaction when its own account cannot take over. No notice - its own managers did it.
+   */
   async cancelPaymentDelegation(associationId: string) {
-    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
-    if (!asso) throw new NotFoundException('Association not found');
-    await this.assoRepo.update(associationId, {
-      paymentParentAssociationId: null,
-      paymentDelegationStatus: null,
+    const withheld = await this.assoRepo.manager.transaction(async (manager) => {
+      const child = await this.lockAssociation(manager, associationId);
+      const wasApproved = isDelegating(child);
+      await manager.update(Association, associationId, {
+        paymentParentAssociationId: null,
+        paymentDelegationStatus: null,
+      });
+      return wasApproved ? this.withholdIfStranded(manager, child, 'delegation cancelled') : 0;
     });
     await this.invalidatePostListCaches();
-    this.logger.log(`[DELEGATION] cancelled assoc=${associationId.slice(0, 8)}`);
+    this.logger.log(
+      `[DELEGATION] cancelled assoc=${associationId.slice(0, 8)}, ${withheld} product(s) withheld`
+    );
     return { status: null, parentAssociationId: null, parentName: null, parentReady: false };
   }
 
@@ -4398,68 +6042,375 @@ ${rejectionReason}`
   /**
    * Approves a pending delegation request from `childId` to `parentAssociationId`. Requires the
    * parent to have completed its own payment account onboarding, since it becomes the receiver.
+   *
+   * WHO MAY ACCEPT (owner, 2026-11-02): the receiver's OWN `MANAGE_PRODUCTS` holders and the
+   * platform administrator - never a BDE governing the receiver, whose Lydia account it is not
+   * (`mayAct(..., { withoutGoverningBde: true })`); anyone else is `DELEGATION_ACCEPT_RECEIVER_ONLY`.
+   * The acceptance is RECORDED in the same transaction that writes `approved`
+   * (`payment_delegation_acceptances`, migration 125): who, in which capacity, when - and whether
+   * the accepter governed the receiver as a BDE super-admin at that moment
+   * (`accepterGoverningSuperAdmin`): a super-admin may grant itself `MANAGE_PRODUCTS` on the
+   * receiver and accept as a `member`, and the member row keeps no provenance of that grant, so the
+   * record carries the standing instead (owner review of #2967, 2026-11-03).
+   *
+   * The child's withheld products go back on sale in the SAME transaction
+   * (`releaseWithheldProductsOf`): the receiver is proven ready under its lock, so a commit never
+   * leaves them withheld; its shop managers are told when something was released.
+   *
+   * The receiver row is share-locked while its readiness is read, so a Lydia revert
+   * (`setLydiaReadiness`, which locks it FOR UPDATE) either precedes the read - and the approval is
+   * refused - or follows the commit, and then withholds this new delegate too.
+   *
+   * NO CHAIN IS EVER APPROVED (`DELEGATION_CHAIN_REFUSED`, review of #2967): under the same locks,
+   * the receiver must not itself delegate, and the requester must hold no approved delegate of its
+   * own. The request's checks run before any lock, so crossed requests both pass them; these do
+   * not. Two crossed acceptances (A->B and B->C) meet on B's row - the first takes it FOR SHARE as
+   * the receiver, the second FOR UPDATE as the requester - so the later one reads what the earlier
+   * committed and refuses.
    */
-  async approvePaymentDelegation(parentAssociationId: string, childId: string) {
-    const [parent, child] = await Promise.all([
-      this.assoRepo.findOne({ where: { id: parentAssociationId } }),
-      this.assoRepo.findOne({ where: { id: childId } }),
-    ]);
-    if (!parent) throw new NotFoundException('Parent association not found');
-    if (!child) throw new NotFoundException('Association not found');
-    assertKindMaySell(this.logger, parentAssociationId, parent.type, 'payment delegation approval');
-    assertKindMaySell(this.logger, childId, child.type, 'payment delegation approval');
-    if (
-      child.paymentParentAssociationId !== parentAssociationId ||
-      child.paymentDelegationStatus !== 'pending'
-    ) {
-      throw new BadRequestException('No pending delegation request from this association');
+  async approvePaymentDelegation(
+    parentAssociationId: string,
+    childId: string,
+    actor: { userId: string; isGlobalAdmin: boolean }
+  ) {
+    const acceptedAs = await this.receiverActorRole(actor, parentAssociationId);
+    if (!acceptedAs) {
+      this.logger.warn(
+        `[DELEGATION] acceptance refused: user ${actor.userId.slice(0, 8)} is neither a shop manager ` +
+          `of receiver ${parentAssociationId.slice(0, 8)} nor the platform administrator`
+      );
+      throw new ForbiddenException({
+        code: DELEGATION_ACCEPT_RECEIVER_ONLY,
+        message: "Only the receiving association's own managers may accept a payment delegation",
+      });
     }
-    if (!parent.lydiaOnboardingComplete || !parent.lydiaAccountId) {
-      throw new BadRequestException(
-        'Complete your payment account onboarding before accepting delegated payments'
+    const governing = await this.isAssociationSuperAdminOf(actor.userId, parentAssociationId);
+    if (governing && acceptedAs === 'member') {
+      this.logger.warn(
+        `[DELEGATION] acceptance by ${actor.userId.slice(0, 8)} as a member of receiver ` +
+          `${parentAssociationId.slice(0, 8)} who ALSO governs it as a BDE super-admin - recorded`
       );
     }
-    await this.assoRepo.update(childId, { paymentDelegationStatus: 'approved' });
-    await this.invalidatePostListCaches();
-    this.logger.log(
-      `[DELEGATION] approved parent=${parentAssociationId.slice(0, 8)} child=${childId.slice(0, 8)}`
-    );
-    return { associationId: childId, status: 'approved' as const };
-  }
-
-  /** Rejects a pending request or revokes an approved delegation from `childId`, clearing its link. */
-  async rejectPaymentDelegation(parentAssociationId: string, childId: string) {
-    const child = await this.assoRepo.findOne({ where: { id: childId } });
-    if (!child) throw new NotFoundException('Association not found');
-    if (child.paymentParentAssociationId !== parentAssociationId) {
-      throw new BadRequestException('This association does not delegate payments to you');
-    }
-    await this.assoRepo.update(childId, {
-      paymentParentAssociationId: null,
-      paymentDelegationStatus: null,
+    const { released, resumed } = await this.assoRepo.manager.transaction(async (manager) => {
+      const parent = await manager.findOne(Association, {
+        where: { id: parentAssociationId },
+        lock: { mode: 'pessimistic_read' },
+      });
+      if (!parent) throw new NotFoundException('Parent association not found');
+      const child = await this.lockAssociation(manager, childId);
+      assertMayHoldOwnAccount(
+        this.logger,
+        parentAssociationId,
+        parent.type,
+        'payment delegation approval (receiver)'
+      );
+      assertMayRequestDelegation(this.logger, childId, child.type);
+      if (
+        child.paymentParentAssociationId !== parentAssociationId ||
+        child.paymentDelegationStatus !== 'pending'
+      ) {
+        this.logger.debug(
+          `[DELEGATION] approval refused: no pending request from ${childId.slice(0, 8)} to ` +
+            `${parentAssociationId.slice(0, 8)} (status=${child.paymentDelegationStatus ?? 'none'})`
+        );
+        throw new BadRequestException('No pending delegation request from this association');
+      }
+      await this.assertNoDelegationChain(manager, parent, childId);
+      if (!parent.lydiaOnboardingComplete || !parent.lydiaAccountId) {
+        this.logger.debug(
+          `[DELEGATION] approval refused: receiver ${parentAssociationId.slice(0, 8)} is not ready`
+        );
+        throw new BadRequestException(
+          'Complete your payment account onboarding before accepting delegated payments'
+        );
+      }
+      // A pending child collects only on an account of its own (never a list); approved, it
+      // collects through the receiver, proven ready above.
+      const collectedBefore = collectsThrough(child, null);
+      await manager.update(Association, childId, { paymentDelegationStatus: 'approved' });
+      await manager.query(
+        `INSERT INTO payment_delegation_acceptances
+           ("childAssociationId", "parentAssociationId", "acceptedByUserId", "acceptedAs",
+            "accepterGoverningSuperAdmin")
+         VALUES ($1, $2, $3, $4, $5)`,
+        [childId, parentAssociationId, actor.userId, acceptedAs, governing]
+      );
+      return {
+        released: (await releaseWithheldProductsOf(manager, [childId])).get(childId) ?? 0,
+        resumed:
+          !collectedBefore &&
+          collectsThrough({ ...child, paymentDelegationStatus: 'approved' }, parent),
+      };
     });
     await this.invalidatePostListCaches();
     this.logger.log(
-      `[DELEGATION] rejected parent=${parentAssociationId.slice(0, 8)} child=${childId.slice(0, 8)}`
+      `[AUDIT] payment delegation ACCEPTED: receiver=${parentAssociationId.slice(0, 8)} ` +
+        `child=${childId.slice(0, 8)} by user ${actor.userId.slice(0, 8)} as ${acceptedAs}` +
+        `${governing ? ' (governing super-admin)' : ''}; ${released} withheld product(s) released`
     );
+    if (resumed) {
+      await this.tellDelegates(
+        [childId],
+        'resumed',
+        'delegation accepted',
+        new Map([[childId, released]])
+      );
+    }
+    return { associationId: childId, status: 'approved' as const, released };
+  }
+
+  /**
+   * Rejects a pending request or revokes an approved delegation from `childId`, clearing its link.
+   *
+   * Revoking an APPROVED one PAUSES the child's collecting (owner, 2026-11-02): its on-sale
+   * products are withheld in the same transaction (`activationWithheld`, the flag the release reads
+   * back) when its own account cannot take over - always for a list - and its shop managers are
+   * told (`tellDelegates`) when something was actually withheld. A new accepted delegation
+   * releases them.
+   *
+   * WHO MAY (owner review of #2967, 2026-11-03): the same as acceptance - the receiver's OWN shop
+   * managers and the platform administrator, never a BDE governing the receiver; anyone else is
+   * `DELEGATION_REVOKE_RECEIVER_ONLY`. The child cancels its own link through
+   * `cancelPaymentDelegation`, behind its own managers.
+   */
+  async rejectPaymentDelegation(
+    parentAssociationId: string,
+    childId: string,
+    actor: { userId: string; isGlobalAdmin: boolean }
+  ) {
+    const role = await this.receiverActorRole(actor, parentAssociationId);
+    if (!role) {
+      this.logger.warn(
+        `[DELEGATION] reject/revoke refused: user ${actor.userId.slice(0, 8)} is neither a shop ` +
+          `manager of receiver ${parentAssociationId.slice(0, 8)} nor the platform administrator`
+      );
+      throw new ForbiddenException({
+        code: DELEGATION_REVOKE_RECEIVER_ONLY,
+        message: "Only the receiving association's own managers may refuse or end a delegation",
+      });
+    }
+    const { wasApproved, withheld, stopped } = await this.assoRepo.manager.transaction(
+      async (manager) => {
+        const child = await this.lockAssociation(manager, childId);
+        if (child.paymentParentAssociationId !== parentAssociationId) {
+          throw new BadRequestException('This association does not delegate payments to you');
+        }
+        const approved = isDelegating(child);
+        const parent = approved
+          ? await manager.findOne(Association, { where: { id: parentAssociationId } })
+          : null;
+        // Whether it collected before (through the receiver) and still does after (on its own
+        // account only): the notice follows THAT, forms included, never a product count.
+        const collectedBefore = collectsThrough(child, parent);
+        const unlinked = {
+          ...child,
+          paymentParentAssociationId: null,
+          paymentDelegationStatus: null,
+        };
+        await manager.update(Association, childId, {
+          paymentParentAssociationId: null,
+          paymentDelegationStatus: null,
+        });
+        return {
+          wasApproved: approved,
+          withheld: approved
+            ? await this.withholdIfStranded(manager, child, 'delegation revoked')
+            : 0,
+          stopped: collectedBefore && !collectsThrough(unlinked as Association, null),
+        };
+      }
+    );
+    await this.invalidatePostListCaches();
+    this.logger.log(
+      `[DELEGATION] ${wasApproved ? 'revoked' : 'rejected'} parent=${parentAssociationId.slice(0, 8)} ` +
+        `child=${childId.slice(0, 8)} by ${actor.userId.slice(0, 8)} as ${role}, ` +
+        `${withheld} product(s) withheld`
+    );
+    if (stopped) {
+      await this.tellDelegates(
+        [childId],
+        'revoked',
+        'delegation revoked',
+        new Map([[childId, withheld]])
+      );
+    } else {
+      this.logger.debug(
+        `[DELEGATION] ${childId.slice(0, 8)} did not stop collecting (a pending request, its own ` +
+          `account, or a receiver already not ready) - no notice`
+      );
+    }
     return { associationId: childId, status: null };
   }
 
   /**
-   * Ensures `parentId` is the approved payment-delegation parent of `childId`, gating a parent's
-   * read access to a delegated child's accounting. Returns the child association.
-   * @throws ForbiddenException when there is no approved delegation from the child to this parent
+   * In which capacity `actor` acts for the RECEIVER of a delegation: `member` when its OWN bitmask
+   * holds `MANAGE_PRODUCTS` there (the governing BDE's tier dropped), `platform-admin`, or null.
+   * The one rule acceptance, reject and revoke share.
    */
-  async assertIsApprovedParentOf(parentId: string, childId: string): Promise<Association> {
+  private async receiverActorRole(
+    actor: { userId: string; isGlobalAdmin: boolean },
+    receiverId: string
+  ): Promise<DelegationAcceptor | null> {
+    const asMember = await this.mayAct(
+      actor.userId,
+      receiverId,
+      AssociationPermissionFlag.MANAGE_PRODUCTS,
+      { withoutGoverningBde: true }
+    );
+    if (asMember) return 'member';
+    return actor.isGlobalAdmin ? 'platform-admin' : null;
+  }
+
+  /** Loads and locks (FOR UPDATE) one association row inside `manager`'s transaction; 404 when absent. */
+  /**
+   * Refuses an acceptance that would write a delegation chain: `parent` (read under the
+   * acceptance's lock) itself routes its payments elsewhere, pending or approved - the same rule
+   * the request applies - or `childId` (locked FOR UPDATE by the caller) already receives an
+   * APPROVED delegation. A pending request to the child is left alone: approving it later meets the
+   * first rule, since the child's own link is then set.
+   */
+  private async assertNoDelegationChain(
+    manager: EntityManager,
+    parent: Association,
+    childId: string
+  ): Promise<void> {
+    const parentDelegates = !!parent.paymentParentAssociationId;
+    const childReceives = parentDelegates
+      ? 0
+      : await manager.count(Association, {
+          where: { paymentParentAssociationId: childId, paymentDelegationStatus: 'approved' },
+        });
+    if (!parentDelegates && childReceives === 0) return;
+    this.logger.warn(
+      `[DELEGATION] acceptance refused, it would make a chain: receiver ${parent.id.slice(0, 8)} ` +
+        (parentDelegates
+          ? `itself delegates to ${parent.paymentParentAssociationId!.slice(0, 8)} ` +
+            `(${parent.paymentDelegationStatus ?? 'none'})`
+          : `- requester ${childId.slice(0, 8)} already receives ${childReceives} approved delegation(s)`)
+    );
+    throw new ConflictException({
+      code: DELEGATION_CHAIN_REFUSED,
+      message: parentDelegates
+        ? 'The receiving association itself delegates its payments and cannot receive a delegation'
+        : 'The requesting association already receives delegated payments and cannot delegate its own',
+    });
+  }
+
+  private async lockAssociation(manager: EntityManager, id: string): Promise<Association> {
+    const row = await manager.findOne(Association, {
+      where: { id },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!row) throw new NotFoundException('Association not found');
+    return row;
+  }
+
+  /**
+   * Withholds the on-sale products of `child`, which has just lost the delegation it collected
+   * through, unless its OWN Lydia account can take over (an association with a validated Business
+   * of its own; never a list). `isActive=false, activationWithheld=true` - the exact inverse of the
+   * release (`ProductsService.releaseWithheldProducts`), so a product a manager took off sale is
+   * never touched and never released later. Runs in the caller's transaction, the row locked.
+   */
+  private async withholdIfStranded(
+    manager: EntityManager,
+    child: Association,
+    why: string
+  ): Promise<number> {
+    if (holdsOwnAccount(child.type) && child.lydiaOnboardingComplete && child.lydiaAccountId) {
+      this.logger.debug(
+        `[DELEGATION] ${why}: ${child.id.slice(0, 8)} keeps selling on its own Lydia account`
+      );
+      return 0;
+    }
+    const withheld = (await withholdOnSaleProductsOf(manager, [child.id])).get(child.id) ?? 0;
+    this.logger.warn(
+      `[DELEGATION] ${why}: ${child.type} ${child.id.slice(0, 8)} can no longer collect - ` +
+        `${withheld} on-sale product(s) withheld`
+    );
+    return withheld;
+  }
+
+  /**
+   * Tells the shop managers (`MANAGE_PRODUCTS`, their OWN bitmask) of each entity in `ids` that it
+   * STOPPED collecting, or collects again (`LydiaPaymentsNotifier.tellDelegation`, its own types,
+   * not behind the Lydia switch). The caller passes exactly the entities whose collecting changed -
+   * derived from the delegation and the receiver's readiness before and after, so a forms-only list
+   * is told like one with products (owner review of #2967), and an entity whose collecting did not
+   * change (its own account, a replay) is not passed. `products` only feeds the log line. One `try`
+   * per entity: a notice that cannot be written is said at ERROR and never undoes the committed
+   * state.
+   */
+  private async tellDelegates(
+    ids: readonly string[],
+    notice: DelegationNotice,
+    why: string,
+    products: ReadonlyMap<string, number> = new Map()
+  ): Promise<void> {
+    for (const id of ids) {
+      const count = products.get(id) ?? 0;
+      try {
+        const asso = await this.assoRepo.findOne({
+          where: { id },
+          select: { id: true, name: true },
+        });
+        if (!asso) {
+          this.logger.warn(`[DELEGATION] ${why}: ${id.slice(0, 8)} is gone, nobody to tell`);
+          continue;
+        }
+        const recipients = await this.listFlagHolders(
+          id,
+          AssociationPermissionFlag.MANAGE_PRODUCTS
+        );
+        const told = await this.lydiaNotifier.tellDelegation(asso, notice, recipients);
+        this.logger.log(
+          `[DELEGATION] ${why}: ${id.slice(0, 8)} ${notice} (${count} product(s)), ` +
+            `${told}/${recipients.length} manager(s) told`
+        );
+      } catch (err: unknown) {
+        this.logger.error(
+          `[DELEGATION] ${why}: the managers of ${id.slice(0, 8)} could not be told: ` +
+            `${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+  }
+
+  /**
+   * What of `childId`'s accounting `parentId` may read: ALL of it while the delegation to it is
+   * approved (`onlyRecordIds: null`), and after it ended - revoked, cancelled, moved to another
+   * receiver - the payments ITS Business took (`purchaseIdsTakenBy`), which it still holds and
+   * still refunds (owner review of #2967, 2026-11-03). 403 when it holds none of them.
+   */
+  async childAccountingScope(
+    parentId: string,
+    childId: string
+  ): Promise<{ onlyRecordIds: string[] | null }> {
     const child = await this.assoRepo.findOne({ where: { id: childId } });
     if (!child) throw new NotFoundException('Association not found');
-    if (
-      child.paymentParentAssociationId !== parentId ||
-      child.paymentDelegationStatus !== 'approved'
-    ) {
+    if (child.paymentParentAssociationId === parentId && isDelegating(child)) {
+      return { onlyRecordIds: null };
+    }
+    const parent = await this.assoRepo.findOne({
+      where: { id: parentId },
+      select: { id: true, lydiaAccountId: true },
+    });
+    const business = parent?.lydiaAccountId?.trim();
+    const taken = business
+      ? await purchaseIdsTakenBy(this.assoRepo.manager, childId, business)
+      : [];
+    if (taken.length === 0) {
+      this.logger.debug(
+        `[DELEGATION] accounting of ${childId.slice(0, 8)} refused to ${parentId.slice(0, 8)}: ` +
+          'no approved delegation and no payment its Business took'
+      );
       throw new ForbiddenException('This association does not delegate its payments to you');
     }
-    return child;
+    this.logger.debug(
+      `[DELEGATION] accounting of ${childId.slice(0, 8)} read by former receiver ` +
+        `${parentId.slice(0, 8)}: the ${taken.length} payment(s) its Business took`
+    );
+    return { onlyRecordIds: taken };
   }
 
   // ── Post authorship check ─────────────────────────────────────────────────
@@ -4485,6 +6436,26 @@ ${rejectionReason}`
   }
 
   /**
+   * Why NOBODY may manage the payout account of `associationId` because of its kind - a list
+   * (`LIST_NO_OWN_LYDIA_ACCOUNT`: it collects through a delegate) or an institution
+   * (`ASSOCIATION_KIND_DOES_NOT_SELL`) - or null when its kind holds one. What the
+   * `manage-permission` route answers next to `ok: false`, so core-service and the client read a
+   * typed reason instead of a missing right.
+   */
+  async payoutAccountRefusal(associationId: string): Promise<string | null> {
+    const kind = await this.kindOf(associationId);
+    if (!kind) return null;
+    switch (collectionModeOf(kind)) {
+      case 'own-account':
+        return null;
+      case 'delegate-only':
+        return LIST_NO_OWN_LYDIA_ACCOUNT;
+      case 'never':
+        return ASSOCIATION_KIND_DOES_NOT_SELL;
+    }
+  }
+
+  /**
    * Returns true if the user may manage the payout account of the association.
    *
    * `MANAGE_PAYOUT_ACCOUNT` is in `SUPER_ADMIN_EXCLUDED_FLAGS`: it points payouts at a bank
@@ -4492,6 +6463,10 @@ ${rejectionReason}`
    *
    * Existence is checked for the same reason as `canPostAs`: core-service asks this before opening
    * a Connect account against the id, so a yes on an association nobody has must not be returned.
+   *
+   * A LIST (and an institution) holds no Lydia account of its own: `mayAct` answers false for the
+   * flag on that kind for every tier (`TYPE_EXCLUDED_FLAGS`), so no Business is ever created at
+   * Lydia for it (G5); the route says why with `payoutAccountRefusal`.
    */
   async canManagePayoutAccount(
     userId: string,

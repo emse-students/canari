@@ -62,10 +62,37 @@ every width**, a phone's browser included. ONE predicate decides it, `usesGlassC
 `ChatComposer`.
 
 - **The header is three pieces of glass** (`ChatHeader`, `.chat-header-phone`): back, the
-  conversation in a CENTRE PILL (avatar, name - tap opens its settings), and `GlassMenuButton`
+  conversation in a CENTRE PILL (avatar, name - tap opens its settings, **or the peer's profile in a
+  direct conversation**, see below), and `GlassMenuButton`
   ("Plus d'actions") growing into the SAME actions as the classic row, under the same conditions -
   calls when their handlers are given, a channel's members first, media, search, settings.
   `ChatHeader.phoneMenu.svelte.test.ts` holds that parity, and that the website draws none of it.
+### A person in a conversation opens their profile (2026-11-01)
+
+Owner: *"it would be nice to reach the profile page of someone you click on in a conversation, in the
+participants list, or in the header if it's a 1:1"*. Three entry points, all real `<a>` (or a labelled
+button for the glass pill), all built by `profileHref` (`utils/users/profileHref.ts`) and drawn through
+`shared/ProfileLink.svelte` for avatars:
+
+- **A message**: the sender's avatar (received messages, last of a run) and the name above it in a group
+  (`data-profile-link`, `data-sender-profile-link`). Both stop the click, so the bubble's own tap, its
+  long-press and the reactions are untouched. Your own messages carry no avatar and no name, so no link.
+- **Members lists** (`ChatGroupPanel`, `ChannelMembersList`): the avatar joins the name, which already
+  linked. The remove-member control stays. A salon list builds hrefs from ids alone - no profile is
+  fetched for a link.
+- **A direct header**: desktop - the peer's avatar and name are links, the gear stays. Phone glass - the
+  centre pill opens the profile; **settings stay one tap away in the "..." menu** (they already had an
+  entry there, so nothing became unreachable). A group or salon pill still opens its settings.
+- **A deleted or erased account gets no link**, and a pill with no page behind it falls back to settings:
+  `isAbsentUser` (`displayName.ts`) is a reactive set filled when the server answers 404/deleted, so a
+  link drawn before the answer is withdrawn when it lands. `false` means "not known gone". The profile
+  page itself owns visibility (blocks, review cohort), so a link is only a navigation.
+- **Scroll on return is NOT preserved**: the chat route unmounts on navigation and reopens at its entry
+  window; no per-conversation scroll memory exists. Open item, with the mechanism it needs:
+[backlog](../../backlog.d/p3-conversation-scroll-kept-when-returning-from-a-profile.md).
+
+Held by `ChatProfileEntryPoints.svelte.test.ts`.
+
 - **It floats over the thread.** `ChatArea` puts header, search, polls and pinned into one layer,
   `.chat-chrome-slot`, and publishes its height as `--chat-header-height`, the way the composer
   publishes `--chat-composer-height`. In the apps (`.chat-glass-chrome` on the panel) the layer is
@@ -840,6 +867,18 @@ uses and which is case-insensitive on BOTH sides for reasons its own doc comment
 not agree about one input: an EMPTY `allowedUserIds` means "no restriction" here and "offer nobody"
 there, and the array is legitimately empty while a channel's member list is still loading. So it is
 passed only when non-empty, and a test pins that reading rather than leaving it to the helper's
+
+**A conversation with a roster suggests from it, locally (2026-11-06).** `allowedUserIds` filtered
+the server's answer, and that answer is the school's top 10 matches: with one letter a small group's
+members were rarely among them, so "@M" proposed nobody. `MainChatPage` now passes the group's or
+salon's members as `mentionRoster` (ids stamped with when each last spoke here,
+`buildMentionRoster`), and the composable filters them itself (`suggestFromRoster`): a bare `@`
+opens the list, a word of the name must start with the folded query, latest speakers first then
+alphabetical, six rows. No debounce and no search request. Names come from the display-name cache;
+the first open batch-resolves the missing ones and reads the reader's blocks, once per picker. The
+reader and the accounts the reader blocked are never offered (the server hides blocked accounts both
+ways from search; the client only knows its own blocks). An EMPTY roster, a list still loading,
+falls back to the server search, logged. Posts and comments pass no roster and keep the search.
 default.
 
 ### The composer's own emoji picker, and what it shares with the reaction one
@@ -1102,6 +1141,49 @@ Four properties, each of which would be a defect if dropped:
 `BaseMlsService.deliveryIdentity.test.ts` pins all four plus the base case, driving the real drain
 through `enqueueMessage` rather than asserting on the Map.
 
+### One pull at a time, and the one asked meanwhile is owed (2026-11-04)
+
+`done` records that this device DECIDED to acknowledge a row; the ack naming it leaves only when the
+whole drain ends (`onDrainEnd`). Two pulls used to run side by side at boot - the reconnect's, then
+`refetchFramesLeftBehind`'s re-fetch for the conversations the restore had just seeded - and the
+second listed rows the first one's drain had settled but not yet acknowledged. The repeat met `done`
+and was accused as an ack the server forgot: two `[QUEUE] delivery ... arrived twice` lines after each
+launch on the Mi 9T (`1.6.4-alpha.3`, dev).
+
+The overlap is deleted, not classified. `fetchPendingMessages` is SINGLE-FLIGHT WITH ONE OWED RE-RUN:
+
+- asked while a pull is fetching, the queue is draining, or a row a PULL listed is still queued
+  (`hasQueuedFrom('pull')`: held by a commit, or parked behind a Welcome - PENDING, not merely
+  runnable), it starts no request - the pull is OWED (`owePull`), the caller's groups are added to it
+  (an ask naming none makes it `'all'`), and the caller's promise settles when it has run;
+- the owed pull is issued (`issueOwedPull`) in the tick `onDrainEnd` announces the drain's ack (its
+  flush chains behind that ack), or at the end of a fetch or of `processQueue` when no drain runs -
+  never while a pull's row is still queued: a commit-held row's drain starts at the commit's end
+  (`resumeFramesHeldByCommit`), and its `onDrainEnd` issues it;
+- the owed record is consumed when it is issued, so a burst of asks is one pull and nothing is timed;
+  the issue re-checks the gates of an ask (resolved user, leader tab, client not destroyed), and
+  `destroy()` drops the record, releasing its askers with nothing pulled.
+
+It is NOT chained into `pendingPullInFlight` (that held every barrier behind the whole drain).
+`waitForGroupQueueIdle` waits on the owed pull's listing only for a group it was asked for, or for
+every group when an ask named none (a reconnect, a barrier, a re-enrolment: the whole mailbox);
+`mailboxListedOnThisLink` - and so `isGroupDrained` - reads false while a pull is owed. A held live
+key-group frame (`holdLiveKeyGroupFrame`) just asks for its group's pull.
+
+One crossing no pull can be ordered against is left, and it has its own shape: a row the SOCKET handed
+in, listed by a pull whose flush left before that row's ack. Every ack request carries a serial
+(`announceAck`), each delivery remembers the channel that admitted it and the serial of the ack naming
+it, and a pull records the serial of its flush (`listedAfterAck` on `DeliveryArrival`):
+
+| The repeat | Shape | Line |
+| --- | --- | --- |
+| pull lists a row the socket took in, ack not sent before the pull's flush | `pull:crossed-live-ack` | `log`, once; not acknowledged again - that ack covers it |
+| pull lists a `done` row whose ack failed | `pull:done` | `log`: the `[ACK]` failure above |
+| pull lists a `done` row a PULL took in, ack landed before | `pull:done` | `warn`: nothing routine explains it |
+
+`BaseMlsService.singleFlightPull.test.ts` drives both through the real pull, scheduler and drain:
+two asks during a drain give exactly one second pull, after the drain's ack, and no repeat.
+
 ## Outbox (outbound delivery)
 
 `utils/chat/outbox.ts` owns every outbound message. A send is persisted first and transmitted
@@ -1153,6 +1235,7 @@ needs `findMessage` to succeed, so it repairs only a row the receiver already sh
 | `message_added`, `messages_batch` | the **leader** only | it alone receives inbound frames, and it alone can speak for `unreadCount` |
 | `own_message_composed` | a **follower** only | whichever tab composed the message is the only one that knows; the leader's own copy already travels as `message_added` from the same call site |
 | `conversation_read` | **either role** | reading happens in whichever tab is showing the conversation - see below |
+| `read_state`, `unread_counts` | the **leader** only | one moved read mark, or salon counts with the leader's own mark, that it RECEIVED (socket, server answer), which no follower can - [the census](#read-state-between-devices---the-census-2026-11-02) |
 
 The new event carries **no `unreadCount`**, and the receiver leaves that field alone: a follower
 cannot speak for what the leader has read, and has nothing to say about it either, since an own
@@ -1219,23 +1302,24 @@ Two rules about *when* the queue is allowed to try, both learned from the offlin
   because step 1 OPENS that gate without being the moment to send - a token is not a socket. See the
   trigger table below.
 
-### Eight sites raise a flush, and there is ONE flusher (R-D8, refuted 2026-09-13)
+### Nine sites raise a flush, and there is ONE flusher (R-D8, refuted 2026-09-13)
 
 The MLS audit counted the call sites and read them as a duplicate path. They are not one, and the
 count is accurate - which is why the refutation is written down rather than deleted with the row.
-Whoever counts them next should find this before they find eight things to fuse.
+Whoever counts them next should find this before they find nine things to fuse.
 
 Every trigger reaches `runFlush`, and every gate lives there and nowhere else: the tab election, the
 leader gate, `connectivity.isOffline`, `canFlush`, and the per-conversation lane claim (below). There is no
 second flusher. **FIVE sites are internal wake-ups**, each bound to the one condition it is the seam
 for - `connectivity.onReconnect`, `visibilitychange`, a follower tab's `outbox_flush_request`, the
-backoff timer, and `enqueue`. **THREE are external moments nothing inside the module can observe:**
+backoff timer, and `enqueue`. **FOUR are external moments nothing inside the module can observe:**
 
 | Site | The moment, and why the outbox cannot see it |
 |---|---|
 | `promoteOfflineSession` step 4 | a session unlocked offline now has a token AND a socket |
 | `sessionAuth`'s `onGroupReady` (`announceGroupReady` -> `resumeOutboxGroup`) | one GROUP became sendable; the network never changed |
 | `sessionAuth` after `initializeConnection` | login finished, which is not a reconnection |
+| `MainChatPage`'s off-screen handler, under `holdWhileLeaving` (2026-11-02) | the iOS background task must last until the owed read marks' send SETTLES; the enqueue raises a flush but hands nobody its end, and `flush()` coalesces with it, so it adds no send |
 
 **The fusion that looks obvious is a REGRESSION.** `connectivity.onReconnect` binds a flush to
 `isOffline` clearing, so binding one to `canFlush` opening reads as the same move. It would fire at
@@ -1252,7 +1336,7 @@ flush look redundant and the reconnect path look uncovered, which are wrong in o
 
 `outbox.test.ts` drives the five internal triggers plus the two external doors (`flush`,
 `resumeGroup`) over ONE table, asserting for each that the same gate refuses it shut and drains it
-open, and a source check pins the three external sites so a fourth has to be argued for rather than
+open, and a source check pins the four external sites so a fifth has to be argued for rather than
 added.
 
 ### A group becoming ready RESUMES what was held for it, and a re-admission holds (2026-10-31)
@@ -1269,8 +1353,8 @@ Four defects of one seam, found by a read-only review and fixed together:
   branch: `dropGroupState`, `deferred` checkpoint under the commit mutex, THEN
   `markAwaitingReAdmission`), so the row is the ordinary awaiting-Welcome one: a `pending` row over
   a group this device does not hold. A send in the window meets an unsendable group and is HELD
-  (`holdForGroup`) with a re-add asked; a media send is refused with the "session establishing"
-  sentence (the row is re-read after the queue barrier, not taken from the snapshot before it).
+  (`holdForGroup`) with a re-add asked - a file too, since it is queued at the tap like a text
+  ([below](#a-file-is-queued-at-the-tap-like-a-text-2026-11-01)).
 - **And the wait ENDS on an answer, never a clock (review of #2804, F1).** The first version of this
   fix kept the evicted state and held on a local guard (`awaitsReAdmission`). Over a HELD group
   `requestReAdd` stands down ("already in WASM") and the watchdog reads the group healthy, so a
@@ -1339,6 +1423,144 @@ seat ends the row `removed`; a landed join raises `onGroupReady`), `eviction.tes
 `groupReadyAnnouncer.test.ts` (no announcement crosses a session) and `setupMessageHandler.test.ts`
 (`onGroupReady` on both Welcome paths).
 
+### A salon attachment is drawn at the tap, and its row carries its upload (2026-11-02)
+
+**The report (owner, 2026-11-02):** a file sent in a conversation, a heavy one above all, disappeared
+for a long time and came back, with nothing in between. **The cause, in a community salon:** the
+channel branch of `handleSendChat` uploaded the whole file INLINE (`encryptAndUpload`, no progress)
+and drew NO row: the staged file left the composer at the tap and the message existed on screen only
+when the server's `channel.message.created` frame came back - the POST's reply was discarded. The only
+sign of life was a spinner on the attach button (`isUploadingMedia`), which a phone-width web viewport
+does not show at all. Every platform took this path (web, Android, iOS share it).
+
+**Now (`utils/chat/salonAttachmentSend.ts`):**
+
+- **At the tap** the salon ECHO is drawn (the salon text's `awaitingServerId` row, memory only) with
+  the placeholder envelope (`mediaId: ''`, the caption, the ThumbHash), and the send returns.
+- **The upload is the row's.** The module waits for the salon's send gate (the row says `queued`),
+  then uploads with the real transfer's events written into the SAME upload view the DM outbox writes
+  (`uploadProgress.svelte.ts`): one ring, one caption, one `UploadAction` for every attachment. One
+  upload at a time per salon, in tap order, because the server dates a row by its arrival.
+- **Its real envelope is swapped into the echo BEFORE the POST** (`SalonEchoChange` `content`), so
+  whichever answer settles the echo first - the reply or the broadcast frame - leaves a row naming its
+  blob. The sealed message is then handed to the salon text's machinery (`deliverSalonAttachment` ->
+  `deliverSalonSend`): the offline hold, `unconfirmed`, Retry and Discard are the text's.
+- **Until that hand-off the module owns the row's Retry and cancel** (`setUploadOwner`): a salon echo
+  has no delete (no server row), so the bubble's cancel is the owner's (`uploadCancelOf`). A cancel
+  aborts the transfer and withdraws the row; a late progress event of the aborted request is dropped.
+- **A failure is classified at its throw and the row stays:** no answer while offline is `waiting`
+  and owed to the reconnect (`salonOwed.ts`), no answer online is `stalled`, a status is `refused`
+  (the banner says the server's reason), a body DELIVERED with no answer in time
+  (`UploadAnswerTimeoutError`) is `unanswered` - never a stall, the server may hold the file and a
+  Retry uploads a second one - and anything else is a local `error`. Each offers Retry and cancel.
+  `SessionExpiredError` is a session end: the row goes, nothing is sent.
+- **"Offline" is known because the upload is counted.** `fetchUpload` (every media upload: this one,
+  the DM/group outbox's, a form's file) settles its request through `trackRequestOutcome`, the half
+  of `trackedFetch` that feeds the connectivity store. Before, only `trackedFetch` did, so a link lost
+  mid-upload left `isOffline` false and the reconnect retried nothing (review of #2944).
+- **The account that tapped is carried** (`signOutGeneration()`, read at the tap): an attempt checks
+  it before its start, after the gate and after the upload, and a signed-out generation withdraws its
+  row and sends nothing, as the DM branch drops its write.
+- **Not offered:** "put back in the composer" (`takeBackSalonSend` refuses an attachment - it could
+  give back the caption, not the file). **Memory only**, as the salon text in flight: a reload
+  mid-upload loses the row and the file together, never a row naming nothing.
+
+`useMessaging.salonAttachmentVisible.svelte.test.ts` holds the upload open with a promise and asserts
+the row from the tap through each progress event to the re-keyed server row, plus the refusal with
+its Retry, the cancel, and the gate wait; on the code before, the send never returned while the
+upload was held and no row existed.
+
+**The DM / group path left one sub-second window**, out of this change: the file is read
+(`File.arrayBuffer()`, bounded by the 50 MB ceiling) BEFORE its placeholder is drawn, because the
+placeholder and its entry are one write in `addMessageToChat`. Drawing first needs that function to
+adopt a row already drawn, which waits for the rewrite of its storage path (#2936).
+
+### A file is queued at the tap, like a text (2026-11-01)
+
+A DM/group attachment used to wait, in `handleSendChat`, for `waitForMessageQueueIdle('media send')`
+and a `verifyCurrentUserMembership` round trip BEFORE anything was written: 18 s on a stalled link
+(2026-10-31), with no bubble and no clock on screen, and a refusal ("session establishing") for a row
+awaiting re-admission. That barrier answered the questions this queue already asks before every send,
+earlier and slower, and its answer could go stale before the flush ran. It is deleted, with its
+refusal, its sentence (`chat_send_session_establishing`) and `MessagingContext.verifyCurrentUserMembership`.
+
+- **At the tap**: the staged files are claimed before the first await (a second Send finds nothing),
+  each file is READ, then its `mediaId: ''` placeholder and its media entry (`fileBytes` included) are
+  written in ONE write (`saveMessageWithOutboxEntry`, `alreadyDurable`), as a text's echo and entry
+  are. A failed pair write lets the queue write its own row (`MessagePairWriteError`); a refused
+  enqueue (`OutboxEnqueueError`) withdraws the placeholder and re-stages the file; a
+  `MessageWrittenError` (the row is on disk, the live queue refused it) keeps both - the next flush
+  sends it. The one refusal left is the text path's: a `removed` row takes nothing new.
+- **"Pair" is atomic on IndexedDB only.** SQLite through `tauri-plugin-sql` cannot hold a transaction
+  across two statements ([sqliteBatch](../../../../frontend/src/lib/db/sqliteBatch.ts)), so it writes the
+  entry first and a tear after it throws `OutboxEntryWrittenAloneError`; `MessagePairWriteError.entryWritten`
+  carries it to both send paths, which then tell the queue the row is durable instead of writing it
+  a second time (a second blob in its slot) and giving the file back (a duplicate). Review of #2874, M2.
+- **The account is asked before EACH write**, not once at the tap: `enqueueOutboxMessage` reaches the
+  module's ACTIVE controller, so a sign-out inside the read or the pair write would hand the file to
+  the NEXT account's queue, which sends it as itself. On a sign-out since the tap the file is dropped
+  with a log line, nothing is re-staged, and the caption is not sent (review of #2874, M1).
+- **A caption belongs to the first file**: a refused first file given back to the staging takes it
+  back too (the send answers `false`, the composer restores the draft) instead of sending it alone as
+  a text that captions nothing (L3). A file DROPPED because the member moved on (below) still lets its
+  caption go, so the words are not lost with it.
+- **A refusal after the member moved to another conversation drops the file** and says so on the
+  banner of the conversation now on screen (`chat_media_dropped_other_conversation`); re-staging it
+  where the member is not looking was judged worse. Accepted as is (review of #2874, L4).
+- **What the barrier guarded is the flush's**: the queue-idle barrier before any lane (the file is
+  sealed at the current epoch), then per entry `isGroupHealthy` (a re-admission is HELD, its bubble
+  showing `repairing`, and resumed by its Welcome), the deleted-group read and `isGroupActive` (an
+  evicted group retires it) - all before the upload is paid, so a file for a group that cannot take it
+  costs no transfer. **And again for an uploaded file, BEFORE the gates** (`outbox media seal`): the
+  flush's barrier is an upload back, and a lane woken by the upload's end does not pass it again (L1).
+  Its place is the fix, not a re-check: taken after the gates, a Remove it drained (a real eviction,
+  or the Remove half of a re-admission) was invisible to them and the send learnt it by FAILING - the
+  file retired as `evicted-late`, a false "the Remove commit never reached it", a permanent removal
+  notice before the Welcome. Taken first, the gates read the drained state and nothing is awaited
+  between them and `sendMessage`. A re-admission's Remove has its group state DROPPED by
+  `retireIfEvicted` (the `reAddInFlight` branch) before the barrier returns, so `isGroupHealthy`
+  reads false and the file is HELD for the Welcome; a real eviction leaves the state held and
+  `isGroupActive` false, so it retires as `evicted` (evidence `membership-check`) (re-review of #2874).
+  The CEK is still
+  generated on the device, by the upload the flush starts (`encryptAndUpload`); the entry holds the
+  plaintext under the device key until then.
+- **A file the group will never take says why in its bubble.** Retired for `group-deleted`, or for
+  `evicted`/`evicted-late`/`removed`, its bytes go with the row and the bubble read "refused by the
+  server", the file's failure and not this one. `failPermanently` now records an `UnsentReason`
+  (`uploadProgress.svelte.ts`) and the bubble says `upload_unsent_group_deleted` or
+  `upload_unsent_not_a_member` in the place of `upload_failed_label` (M4). **Durable**: the reason is
+  written on the stored message row (`StoredMessage.unsentReason`, inside the encrypted payload)
+  before the entry is deleted, and the bubble of an own attachment absent from the queue reads it
+  (`storedUnsentReasonOf`) before it draws the orphan's "never completed"; a follower tab holding the
+  message is told live (`outbox_entry_retired`). The write is READ BACK: `updateMessage` writes
+  nothing, and says nothing, for an absent or undecryptable row, so every way the reason fails to
+  reach disk is logged. Re-review of #2874.
+- **A send never rides the orphan buffer.** A conversation that left the map since the tap has two
+  answers before the write. A DM RE-KEYED by a duplicate-group merge (the Welcome path of
+  `setupMessageHandler` moves the row to the group just joined) is FOLLOWED: the file goes to the new
+  key, found by `findDirectConversationByPeer`, the one predicate the merge itself uses. A
+  conversation truly GONE (deleted, left) drops the file and TELLS THE MEMBER
+  (`chat_media_conversation_gone` on the send banner); with nothing sent the send answers `false`, so
+  the caption goes back to its draft. And `addMessageToChat`'s orphan buffer strips
+  `outboxEntry`/`onPairWritten` - and an own send's tap-time `pending` - from what it keeps, so a
+  replay (`drainOrphanMessages`) never writes, and so never sends, an entry a second time; the
+  replayed own row then takes its status from the durable queue (`applyOutboxPendingStatuses`), as
+  at a reload. The buffer is cleared by `forgetAccount`, so nothing replays under the next account.
+- **An uploaded file retired unsent stays on the server.** There is no client route that deletes an
+  ordinary chat upload (`DELETE /media/:id` is server-to-server; the user route covers only the
+  sender's own chat reel), so `failPermanently` names its `mediaId` at `console.warn` and in the
+  in-app log, and the object waits for its retention class's sweep (`ephemeral` for a chat upload).
+  Owed if that is ever too slow: a sender's delete route for its own unsent upload (L2).
+- **Order**: every file of one tap is dated by the tap (`tappedAt + index`), so a text typed while a
+  long write runs is dated after all of them; a text sent before the file goes out before it. A text
+  sent AFTER it may still be accepted first while the upload runs (WP-OFF-9, below).
+- Pinned by `useMessaging.mediaEnqueue.svelte.test.ts` (no barrier, tap-then-kill durability, order,
+  the refusals, the sign-out and the caption), `sqlitePairWrite.test.ts` (the torn SQLite pair) and
+  `outbox.test.ts` ("a file queued at the tap": kill and resume, both barriers, a Remove drained by
+  the seal barrier, the held, evicted and deleted group and their persisted reasons, the follower,
+  the orphaned upload, failure then retry), `MessageBubble.orphan.svelte.test.ts` (the reason after a
+  reload) and `messagePayload.test.ts` (its round trip).
+
 ### One lane per conversation, three frames on the wire at most (WP-OFF-5, 2026-10-09)
 
 The flush used to walk the whole queue awaiting one entry at a time, so a send that never answered
@@ -1357,7 +1579,8 @@ drains its own entries oldest first. Rules that came with it:
   50 kbit/s uplink is not cut into slivers that each miss their deadline.
 - **An attachment's UPLOAD runs outside the lane and holds no send slot** (WP-OFF-9, 2026-10-18): the
   lane starts it and moves on, so a text written after a big file is not held by it; only the media
-  message's small MLS send takes the lane once the upload ended. Display order stays `sentAt`; the
+  message's small MLS send takes the lane once the upload ended. Display order is the server's
+  acceptance time ([below](#conversations-are-ordered-by-the-servers-clock-decided-by-the-owner-2026-10-31)); the
   rules and the order semantics are in [offline-and-weak-network 13.8](../offline-and-weak-network.md#138-wp-off-9-built-the-upload-runs-outside-the-lane-2026-10-18).
 - The send POST is under a `write` deadline ([offline-and-weak-network](../offline-and-weak-network.md#11-wp-off-5-shipped-a-deadline-a-slow-state-and-lanes)),
   so a stalled lane ends as `DeliveryUnreachableError` and takes the ordinary backoff.
@@ -1671,6 +1894,61 @@ Pinned by `systemMessageHandler.noticeIdentity.test.ts`, which asserts the conve
 directly: one frame handed to both paths produces one id. Old frames carry none and stay
 duplicate-prone - [legacy-compatibility](../../legacy-compatibility.md).
 
+### A visible notice is dated by its FRAME, never by when this device learnt of it
+
+**The sender's id was half of what the frame owed the row; its date was the other half, and the
+live path dropped it.** `mkVisibleSystem` mints `sentAt` beside `messageId`, and the delivery says
+when the server accepted the frame (`queuedCreatedAt`) - yet every notice branch of
+`handleSystemEvent` wrote `{ isSystem: true, messageId }` and nothing else, so `addMessageToChat`
+(`resolveMessageTimestamp`) dated the row `new Date()`: THIS device's clock at the moment its drain
+reached the frame. The live receiver was the visible defect, but not the only one: the acting device
+(`sendVisibleNotice`) wrote `frame.sentAt` with NO `serverTimestamp`, so its copy was ordered by a
+different key than every member's, and the archive replay wrote no `serverTimestamp` either and fell
+back to `new Date()` on an unreadable history time.
+
+**What that cost (owner, v1.6.0, iPhone, 2026-11-01).** A group created on the PC with two members,
+a conversation in it, and the phone opening the group for the FIRST time: its queue drained the
+`memberAdded` frame hours late, the notice took that instant as its order key, and "X a ajouté A, B
+au groupe" sat BELOW every message that followed the addition. The messages themselves were right,
+because a received text row has always carried its `sentAt` and `serverTimestamp`. The row was
+written once and the replay deduplicates by id, so the wrong date was durable.
+
+**The fix is `receivedNoticeTime(sentAt, queuedCreatedAt)` (`visibleNotices.ts`)**, read through ONE
+writer in `handleSystemEvent` (`writeNotice`) by every notice branch - the five membership notices,
+`groupDeleted`, and both channel invitation cards. It dates the row exactly as a received text row is
+dated: `timestamp` the frame's `sentAt` (the server acceptance for an older frame that carries none),
+`serverTimestamp` the server acceptance, which is the order key (`messageTime`). Both
+`setupMessageHandler` call sites (the live frame and the Welcome buffer) pass `sentAt` in the
+context. **With neither time the row is NOT drawn**, refused at ERROR (`[NOTICE] REFUSED to draw`):
+every delivery route of this build carries the server time, so reaching it means a route lost it, and
+the local clock is never a stand-in for when an event happened.
+
+**Every copy of a frame's notice now carries the same order key.** The acting device's own row takes
+`serverTimestamp` from its send's answer (`SentFrame.receivedAt`), exactly as an own text row gets it
+through `patchServerTimestamp`; an answer with no receive time is reported at ERROR. The archive
+replay (`historySystemEvents.ts`) dates through the same `receivedNoticeTime(sentAt, <history row
+time>)` and is REFUSED at ERROR (`[HISTORY_REPLAY] REFUSED`) when neither time is readable.
+
+**A row this device derives from SOMEONE ELSE's event is dated by that event - each with a named
+authority, and refused at ERROR when it has none. Never the local clock.** (A row recording this
+device's OWN act - an outbox failure line, a channel invitation it sent, the older-messages notice - is
+dated by that act, which is this device's clock by definition; it is out of this rule.)
+
+| Row | Authority | No authority |
+| --- | --- | --- |
+| Device line, uninvited-entry line (`deviceNotices.svelte.ts`) | The commit log row (`mls_commit_log.createdAt`) of the commit that admitted the device: `baseEpoch = event.epoch - 1`, read through `GET /api/mls/commits/:groupId/accepted-at` (members only, and never a commit older than the one that admitted the requester - a newcomer is not handed the past). **The floor is the commit that ADMITTED the requesting device, recorded on its seat by the commit gate** (`dm_device_group_memberships."admittedByBaseEpoch"`, migration 044, owner 2026-11-02): written with the advance on every admission - a member's Add (`admits`, and the target of the Welcome it carries), an external join (the committer's own commit), the group's creation (`0`), and a key group's creating publisher (the published epoch, only on a seat with none) - and never cleared by activation. Both kinds of group are floored per DEVICE. **It replaced a clock**: the floor was "the last commit accepted at or before the arrival" (the open stretch's `admittedAt ?? joinedAt`, a key-group row's `createdAt`), and both arrivals could predate the admission - a group conversation's `joinedAt` is written by the enrolment before the Add, so the floor landed one commit early, and a device kicked and re-added kept its first row, so it was answered the commit times from while it was out (review of #2890, LOW-D; acceptance times only, never content). A re-add now moves the floor past them. **A kick clears the admission** (`deactivateDeviceMembership` with `removedFromTreeAt`), a demotion with no kick (the stale-device cron, a self-report) leaves it, the leaf being still in the tree; a commit's DECLARED admission (`admits`, a Welcome target) is written on a `pending` seat only, so it cannot raise an active seat's floor. **An ACTIVE seat with no recorded admission is floored at its group's CURRENT epoch, and that is written once** (`admissionInferred = true`, refuse rather than leak, never refused for ever): migration 044 did it for every active seat at the deploy - the cost being that a line about a commit accepted before the deploy and merged after it is settled undated - and `commitFloorOf` does it at the first ask for an active seat the backfill could not reach (admitted by a replica still on the old code during a rollout, an aborted rollout, a rollback, or a seat the cron demoted and a report re-activated with no commit), ERROR once; the write is conditional on the seat still being active, unkicked and floorless, so a kick mid-ask wins. **A PENDING seat is never inferred** (owner's review, 2026-11-02): enrolled and not yet admitted, an inferred floor would hand it every commit time until its Add - the past a newcomer is not handed. It is floored only by the admission the gate wrote while it waits (`admittedAtEpoch - 1`, also 044's exact backfill), and otherwise refused quietly (`log`), as is a kicked seat. A refusal before an inferred floor is said at `log` (it refuses by design), before a recorded admission at WARN. Also refused at `log`: a member whose device holds no seat (a pending seat the 14-day cleanup purged while its owner stayed on the roster - it never processed a Welcome, so it has no commit of its own to ask about). **A rollback across 044 is the accepted cost, with a named roll-forward**: the old code neither clears a floor on a kick nor records one on a re-add, so a seat kicked and re-added while it ran keeps a stale LOW floor, and nothing distinguishes it afterwards - rolling forward means setting every floor back to NULL and re-running 044's two UPDATEs, a data change the owner approves then. Asked with no `X-Canari-Device` (either kind) is a 400. The floor is one row read by its unique key; no commit-log walk any more. Chosen over the commit frame's own `queuedCreatedAt` because it is ONE answer on every device and survives a restart, where the delivery time exists only for a device that drained the commit live (a Welcome-joined device never did). **A contact line in a DM or a group is dated by a commit of ANOTHER group** - the one where the device was first seen, often a community's key group - so it sits at the instant the device was admitted anywhere, not at an event of the conversation it is written in. Asked once per commit for the session (`cachedCommitInstants`): a log row never changes | The four answers are typed at the throw (`ServerInstant`, `serverInstant.ts`). No row (`none`): `[DEVICE_NOTICE] line settled UNDATED`, at the level of the server's `reason` - `pruned` at log (the retention working), `not-yet` at warn, `hole` (or no reason, an older server) at error. A 403 (`refused`: left the group, or a commit before the requester's arrival): settled, no warning - asking again could only be refused again. A 404 (`unserved`: this server does not serve the route, a build that shipped before its backend): ONE `[COMMIT_AT]` error for the session, the line PARKED - owed, not asked again. No answer (transport, 5xx): owed to the next delivery. An uninvited entry is reported (`[MLS] UNINVITED ENTRY`) only once its time is answered, so an entry kept owed is not accused at every drain |
+| Eviction notice (`recordEviction`) | The Remove commit's delivery time (`remove-commit` delivered live), or the removal announcement's (`system-event`). Every other evidence - a Remove commit applied through the replay (`commitReplay.ts` carries no delivery time), `inbound-frame`, `membership-check`, `outbound-refusal`, `server-refusal` - asks the server for its OWN seat's removal: `GET /api/mls/groups/:groupId/own-removal`, the person's closed membership stretch (`leftAt`) or this device's kick (`kickedAt`). It reads only the requester's own rows, so a removed device may ask; the members-only commit log could not answer it | The server holds no record (`none`, `refused`): `removal notice REFUSED`, said once per group (only the call that retired the row speaks), settled, and not asked again this session. **No answer - `unserved` (404), a throw, or a write that failed - leaves the line OWED, durably** (`removalNotice.ts`, `ACCOUNT_KEY.owedRemovalNotices`): the retired row receives no further evidence, so the next evidence for the group asks again and, at the latest, `drainOwedRemovalNotices` asks after the next session's restore (dropping a group re-admitted or gone). One write runs at a time per account and group, and **the row is re-read after every await**: the line is written only while the row is still `removed` and holds no line of THIS removal (the lines the thread held when the evidence retired the row are an earlier removal's, and kept in the owed record so the next session tells them apart), so a removal undone during the ask (a Welcome installing, which `retractEvictionNotice` cannot yet see) writes nothing - the 2026-09-22 rule kept across the ask - and two evidences landing together, whose instants differ (the Remove commit's delivery, the announcement's), write one row. The id is `evicted:<groupId>:<removedAt>`. An answered "no instant" is remembered per account and per session (cleared by the sign-out, said when it skips an ask), and the restore drain stops when its session ends; a live evidence whose row leaves the map during the ask (a sign-out clears it) keeps the line owed rather than settling it, and the next drain decides. The eviction itself and its banner never wait on either |
+| Call record (`callSystemMessages.ts`) | A received signal: its frame, `receivedNoticeTime(sentAt, queuedCreatedAt)`. This device's own act (`CallService`): the ONE instant the act is stamped with, shared with the frame's `sentAt`, plus the send's `receivedAt`. **The end record is written AT THE ACT, never held for the hangup's send** (a catch-up gate or an epoch barrier can hold a send for minutes, and a kill meanwhile left the row unfinalised); the server's acceptance is patched in when the send answers (`onCallEndAnswered` -> `patchCallRecordServerTime`, like `patchServerTimestamp`). **The duration is measured on ONE clock** (`callDurationMs`): the server's acceptances of the invite and of the end when both are known; otherwise, only for an end that is this device's own act (`ownAct`), its own two instants - the start row's `startClocks.local` and the act's stamp. Never the clock at finalisation: a remote end drained hours late would measure hours. The hangup's server time is patched only onto a row the END wrote (no started row on this device), never onto a started row whose invite's send answered none. **Known imprecision**: `startClocks.local` is when THIS device wrote its start row, so a callee launched cold by a native ring (iOS) starts its clock at the drain, possibly after the answer - its own-end duration then reads short by the cold launch, whenever the server time is missing on either side. `startedAt` is the inviter's clock, and subtracting this device's end from it measured one phone against another | A received signal with neither time: `[CallRecord] ... REFUSED`, no row. A duration with no single clock (a row with no `startClocks`, [legacy-compatibility](../../legacy-compatibility.md); or a received end with no server time) mixes two clocks and says so at `console.error` |
+
+A row already written with the wrong date by an older build keeps it. Pinned by
+`systemMessageHandler.noticeTime.test.ts` (a group drained six hours late keeps its notice above the
+conversation, in either processing order), `setupMessageHandler.noticeTime.test.ts` (both entry
+points of the pipeline, live and Welcome-buffered, and a call signal), `visibleNotices.test.ts` (the
+own row and the replay), `deviceNotices.svelte.test.ts` (each of the four answers),
+`serverInstant.test.ts` (the classification and the cache), `recordEviction.onePolicy.test.ts` (every
+site dated, and the refusal said once), `callSystemMessages.outcome.test.ts` (two skewed clocks) and
+`removalNotice.test.ts` (an unanswered removal kept owed and written by the next evidence or the next restore, one line for two evidences), and the server's `messaging.commit-log.spec.ts` (the arrival floor failing closed, the reasons, the own removal) and `commit-time.integration.spec.ts` (the floor against PostgreSQL: a key-group admission and a publisher that cannot lower it, a group admission whose enrolment predates the Add, a kick then re-add, and migration 044's backfill of the pre-column rows).
+
 ### A mutation event is authorised on RECEIPT, by the MLS sender
 
 `delete_message` and `edit_message` name a target by `messageId`. `handleSystemEvent` resolves it and
@@ -1788,7 +2066,7 @@ nothing can - the reference is not in any copy this device holds.
 The quote itself also had a left padding and no right one, so its text ran into the bubble's edge;
 `MessageReplyQuote` was padded on both sides. **That component is no longer a strip inside the
 bubble at all since 2026-09-22** - it is a second, receded bubble stacked flush above the reply,
-under a caption row naming who answered whom, measured off the reference in both themes:
+under a caption row naming who answered whom (worded by `utils/chat/replyCaption.ts`: when the sender header is already drawn above, the caption drops the replier and reads "A répondu à <quoted author>" / "A répondu à son message"; without a header it names both; an unknown quoted author gives the name-less form), measured off the reference in both themes:
 [design-reference section 37](../design-reference.md). Nothing above changes: an edit still has to
 preserve the envelope's `replyTo`, and the quote is still drawn from it.
 
@@ -3266,6 +3544,165 @@ the socket was down misses what was posted before the reconnect) and, on the rec
 salon on screen. Every other salon reloads on its next selection. Deletion, kick and repair keep
 their own invalidations. Pinned by `useConversations.channelCache.svelte.test.ts`.
 
+## Conversations are ordered by the server's clock (decided by the owner 2026-10-31)
+
+**A DM or a group is ordered by the time the SERVER accepted each message, as a salon always was**
+([offline-and-weak-network 6.4](../offline-and-weak-network.md#64-salon-graine-v2-replay-rules)).
+The author's `sentAt` decided the order until then, and a message delivered late - an outbox that held
+it for minutes on a stalled link, a sender whose clock runs slow - slotted in ABOVE what everyone had
+already read: silently, and already "read", because the read marks compared against the same
+`sentAt`. Measured on a peer's iPhone log the same day: one message queued at 18:16:31 and sent at
+18:20:36 by the SAME device clock - four minutes of real delay, not skew.
+
+**One key per row** (`messageTime`, [messageOrder.ts](../../../../frontend/src/lib/utils/chat/messageOrder.ts)):
+`serverTimestamp ?? timestamp`. The server time is `queued_message.createdAt` on a recipient's copy and
+the `receivedAt` the send answered on the author's (one `Date` per send, so the same value on every
+device); a row without it - a copy older than the field, a bundle from a source that lacked it - keeps
+its `sentAt`. Everything that says "when" reads this one function: the sort, the bubble's time (no
+"written at" hint, owner's decision), the day and gap separators (`groupMessages`), the arrival
+animation, the conversation's recency, the shared-content panel, and the read marks.
+
+**The order is total and transitive**: `compareMessageOrder` is lexicographic on (tier, key, id). Tier 1
+is the author's own copy the server has not dated YET (`awaitsServerTime`: a salon echo, or an own row
+`pending`/`sending`/`error`/`unconfirmed` with no `serverTimestamp`); it sorts after every dated row,
+by `sentAt` among its kind, and takes its place when the send answers (`patchServerTimestamp`, which
+moves the row with `replaceMessageOrdered`; a follower tab gets the same `receivedAt` in
+`outbox_entry_sent`). An own row with no status and no server time is a copy older than the field and
+keeps its `sentAt` - otherwise every message sent before this change would sink to the bottom for ever.
+`serverTimestamp` and `ingestSequence` are no longer tie-breaks; that mix was the recorded intransitive
+cycle (see the next section).
+
+**The read marks move to the same key in the same change, as a second map** (`readState.ts`). A
+watermark is a number with no unit, and every mark written before 2026-10-31 is on the `sentAt` clock:
+switching the one map's clock would have turned the last-read message of every conversation unread on
+upgrade (its server time is later than its `sentAt` by the delivery latency). So:
+`serverReadWatermarks` is compared against `messageTime` and is what this build writes for a DM or a
+group; `readWatermarks` (stamped) keeps every older mark, an older client's frame and the native
+shade's, and is compared against the row's `timestamp`. **A row is read when either map covers it.**
+Salons keep their marks in the stamped map, where a salon row's stamp IS its server time. The frame
+says `{ at, serverAt }` (the same value); a frame with no `serverAt` lands in the stamped map
+([legacy-compatibility](../../legacy-compatibility.md)). Bundles carry both maps; SQLite schema v16
+adds `server_read_watermarks`. `seenByAnchors` places every reader with two binary searches over
+SUFFIX MINIMA of the two keys plus a last-row-written lookup, built in one pass - neither key is
+monotone in display order (an unsent own row sits below every dated one on its `sentAt`, and stamps
+skew), and the last index whose suffix minimum is under a mark is exactly the last row under it.
+
+**Which server times may become a key or a mark** (review of #2824, P1-1 and P2-6). A row's server time
+is trusted from the server only: the delivery's `createdAt`, the send's `receivedAt`, a salon row's
+`createdAt`. A HISTORY BUNDLE is written by a peer, so a server time it relays is kept only inside
+`[sentAt - 24 h, the bundle frame's own server time]` (`vettedBundleServerTime`, `messageTime.ts`) and
+dropped otherwise (logged `[HISTORY_BUNDLE]`) - and checked a second time once the row's signature is
+verified, against the SIGNED `sentAt` (`boundedByVerifiedSentAt`), since the first check could only
+read the relayer's own unsigned `timestamp`; the bundle's server read marks and a received
+`read_watermark`'s `serverAt` are refused above their frame's own server time
+(`boundedServerMarks`, `receivedReadWatermarkMark`). And the target of this device's own server mark is
+clamped to the newest server time HELD in the conversation, and below the newest one the server
+stated to this account on this device (`serverMarkCeiling`, `serverClock.ts`): a live frame's
+`createdAt`, a send's `receivedAt`, a background send's line, a push cached by the native side, a
+frame the leader tab relays, and the `timestamp` the server stamped on each row of a history-log
+replay (`newestServerRowTime`, `history.ts` - third review of #2824: a device that joined every group
+by external commit and restored everything from the replay received no live frame, so its mark could
+not move and a conversation read in that window showed its badge again after a restart; only the
+rows' own server stamps are read there, never what a frame's plaintext claims). That value is durable (`ACCOUNT_KEY.serverClock`), shared by the tabs of
+one origin, and while it is 0 - nothing stated yet, an offline first boot - the server mark does not
+move at all. No row, however it arrived, can lift the mark past what the server has said. DM marks owed in `localStorage` are kept per clock - the key
+written before the upgrade (`canari.dmReadMarks.*`) is now the STAMPED ledger and goes out as `{ at }`
+alone; the server ledger is `canari.dmServerReadMarks.*` (`salonReadMarkQueue.ts`).
+
+**A live frame had no `createdAt` until 2026-11-03, and every live DM read mark was refused for it.**
+chat-delivery publishes `createdAt` on `chat:messages`, but the gateway rebuilt the WebSocket frame
+from a field list that left it out (`live_mls_frame`, `apps/chat-gateway/src/subscribers.rs`), so only
+a PULLED frame carried a server time. From `v1.6.0` (#2824, marks on the server's clock) every
+`read_watermark` received LIVE logged `[READ] REFUSED ... the frame carries no server time to bound
+it`: a DM read while both devices were online never showed on the sender (one check for good), nor on
+the reader's own other devices. Measured on dev with `1.6.3-alpha.7/8`: iPhone 12 -> Mi 9T and web ->
+Mi 9T, and the reader's own iPhone mark refused on its web device ([device-verification](../../device-verification.md)).
+The gateway now forwards it when the payload has one, and never invents one; its test is in the same file.
+
+**What a late message does now**: it sorts where it arrived, counts as unread and notifies - unless a
+STAMPED mark newer than its `sentAt` covers it, which only an older client, the iOS shade's "mark as
+read" (still `sentAt`-keyed, see below) or a mark from before the change can produce.
+
+**Edge cases, checked**:
+
+- **Edits, reactions, deletions and pins never move a row**: none of them writes `serverTimestamp`
+  (an outbox `control` entry's id names the message it mutates, and `patchServerTimestamp` is skipped
+  for it).
+- **The newcomer cut and the exclusion windows** (#2800, `historyEntitlement.ts`) were already placed
+  on the server's clock (`messageServerTime`), with a widened margin for undated copies - unchanged.
+- **The re-admission replay** (#2804) re-delivers queued rows with their stored `createdAt`, so a
+  replayed message keeps its first server time.
+- **The history manifest is keyed by message ID, not by time** (`historyRangeOf`, see "The unit is a
+  slice of the ID SPACE" below) - no clock enters it, so it needs nothing.
+- **Local pages are cut on the same key** (owner's decision, same day: it must work for conversations
+  of every size). Each stored row carries its order key in the clear beside the ciphertext -
+  `order_at` in SQLite (schema v16, index `idx_messages_conv_order` on `(conversation_id, order_at,
+  id)`, which replaces `idx_messages_conv_time`), `orderAt` in IndexedDB (v12, index
+  `byConversationOrder` on `[conversationId, orderAt, id]`) - written by every save as `storedOrderAt`
+  (= `messageTime`, one function in `messageTime.ts`). A page is cut on the PAIR `(orderAt, id)`, so rows
+  tied with the boundary are neither lost nor read twice, and every row a page returns carries its
+  `pageKey`.
+- **A row the migration cannot key is keyed PROVISIONALLY, and nothing waits for it** (review of
+  #2824, P1-2). The server time is INSIDE the ciphertext, so the v16 step (one `UPDATE`) and the v12
+  upgrade (one cursor, after the v11 repair) key every stored row on its `timestamp` and flag it
+  (`order_pending` / `orderPending`, each with its own index that holds the flagged rows only); a
+  backup import (`importEncryptedRow`) does the same. A page read walks the index as it stands -
+  keyed and provisional rows together, so the first page costs a page whatever the conversation
+  holds - and starts the derivation behind it (`$lib/db/orderKeyDerivation`): 500 rows per chunk, in
+  id order, each chunk WRITTEN before the next is read, one run per conversation; the flag is the
+  durable progress, so a kill loses one chunk and the next run reads only what is still flagged. ONE
+  lane for every conversation: a run starts when the previous one settled, so a first boot does not
+  decrypt in parallel with its own writes - and a run a READER waits for (a load-older below a
+  provisional boundary) starts before every background run still queued, a queued background run of
+  the same conversation being promoted rather than duplicated (third review of #2824); a run in
+  progress is never preempted. A row this key can never read (`PayloadUnreadableError`,
+  thrown by `decryptData` for WebCrypto's `OperationError` and a non-JSON plaintext only) is keyed on
+  its `timestamp` for good; any other failure leaves it flagged - a run that deferred a row ends the
+  waiting, and its conversation's pages read as keyed until a FACT says the failure passed: a backup
+  import (`rearm`), or a page read that decrypted a row still flagged (`readableAgain`), which re-arms
+  the conversation, starts a run behind itself and hands its page back provisional. A row the run can
+  never key does not decrypt in a page read either, so it cannot re-arm the conversation in a loop;
+  the next session's run retries it. Only the store's
+  BOUNDARY was provisional - the screen sorts on the decrypted `messageTime` - so a page's `pageKey`
+  says `provisional`, and a load-older below such a boundary waits for the derivation and re-reads
+  what lies above it too: a row whose real key rose past the boundary is in neither page otherwise.
+- **The scrollback pages below where the STORE's pages stop**: the lowest `pageKey` held
+  (`oldestPageKey`, `loadOlderMessages`), never the oldest row in memory - a row that arrived another
+  way (live, from a bundle, an own send the outbox put back) may sit far below the last stored page,
+  and a cursor taken from it skipped every stored row in between (P2-4). A message delivered many pages
+  late is on the first page after a reload (`messagesPage.test.ts`, "a late message more than a page
+  deep"; `useConversations.loadOlder.svelte.test.ts`). An own row still awaiting its server time is
+  stored under its `sentAt` until the answer re-saves it, and one older than the page held is put back
+  on screen from the store by the outbox (`applyPendingStatuses`, P2-3).
+- **A background send** (a drain while the app was shut) writes `id<TAB>receivedAt` to
+  `outbox_sent.ndjson` on both platforms; `reconcileOutboxSent` dates the stored and the in-memory row.
+  The quick reply's own cache row carries the `receivedAt` its POST answered on both platforms
+  (`writeSentMessageToCache` / `CanariWriteSentMessageToCache`, which `CanariDrainOutboxBackground`
+  hands the receive times it collected; `serverTimestamp` in `fcm_message_cache.ndjson`), and so does
+  an inbound push's (the push's `createdAt`). A reply another drain delivered has none and keeps its
+  `sentAt` until the app dates it, said in the native log.
+
+**Logs**: `[ADD_MSG] ✓ Message added` carries `sentAt=… serverAt=… gap=…ms`, and a batch line the
+largest gap of the batch (`clockGapNote`). A gap of minutes on a positive sign is delay; a negative
+gap, or one constant per sender, is a clock.
+
+**The Android shade states the server clock too**: the push's `createdAt` (and, on the WebSocket
+trigger, the frame's server time, `notifier_message_natif`'s `server_at`) rides the notification as
+`EXTRA_SERVER_AT` beside `EXTRA_SENT_AT`. The banner a shade read already covers is compared on that
+clock when both the message and the mark carry it (`coveredByShadeMark`), on the stamps otherwise. "Mark as read" and the quick reply's mark then send
+`{ at, serverAt }` (`build_read_watermark_app_message(at, server_at)`, the shape the app sends) and
+write `serverAt` into `read_watermarks.ndjson`, which `applyNativeReadWatermarks` merges into the
+server map. A notification without it (an older build's, a push with no readable `createdAt`) sends
+the stamped `{ at }` and says so in logcat.
+
+**Not done, owed**: the iOS shade's "mark as read" and quick reply still announce the banner's
+`sentAt` (`canari_native_build_read_watermark_proto` passes no server time, `CanariAppendReadWatermark`
+writes `at` alone): the push's `createdAt` would have to reach `userInfo` in the Notification Service
+Extension first. Tests: `messageOrder.test.ts`, `readState.test.ts`, `outbox.test.ts` ("takes its
+place by the receivedAt"), `outboxMirror.serverTime.test.ts`, `systemMessageHandler.readState.test.ts`,
+`historySystemEvents.test.ts`, `messagesPage.test.ts`, `readWatermarkCache.test.ts`,
+`proto_fields.rs` (`build_read_watermark_app_message_*`).
+
 ## A catch-up batch is merged with ONE sort (2026-10-12)
 
 `mergeMessagesInInputOrder` (`utils/chat/messageOrder.ts`) merges a batch of received messages into a
@@ -3276,12 +3713,11 @@ conversation. It is now one stable sort of `existing ++ incoming`: 0.1 ms on the
 sort of `sort(A) ++ [x]` orders equal elements exactly as a stable sort of `A ++ [x]`, so the two
 give the same array whenever `compareMessageOrder` is a consistent order - pinned against the old
 loop on deterministic random input full of ties ([test](../../../../frontend/src/lib/utils/chat/messageOrder.test.ts)).
-**One edge has no defined answer either way**: messages with the SAME millisecond and MIXED presence
-of `serverTimestamp` / `ingestSequence` make the comparator intransitive, and the old loop's order
-already depended on arrival order there. That is the PRODUCTION shape, not a corner: held messages
-carry a `serverTimestamp` and no `ingestSequence`, a catch-up batch the reverse, so a held and an
-incoming message in the same millisecond compare by id alone and three of them can form a cycle
-(pinned in the test). Such ties may come out in a different order than on the old loop.
+**The edge that had no defined answer is gone (2026-10-31)**: messages with the SAME millisecond and
+MIXED presence of `serverTimestamp` / `ingestSequence` made the old comparator intransitive - held
+messages carry a `serverTimestamp` and no `ingestSequence`, a catch-up batch the reverse, so three of
+them could form a cycle. The comparator now reads one key per row and the id, which is a total order
+(see the section above; the cycle's former shape is pinned as ordered in the test).
 
 ## The workspace list prunes only what existed when it asked
 
@@ -3428,6 +3864,26 @@ sidebar order kept when they answer in reverse, and no retry while a sibling is 
   row is dated by its server `createdAt` on every path, or the heads under the last message flicker
   with each history load (2026-10-12,
   [social-service](../../services/social-service.md#read-receipts-in-a-salon)).
+  **How a DM or group receipt is computed, end to end.** The reader's receipt effect
+  (`MainChatPage`) takes `readMarkTarget`: the newest `messageTime` among the FOREIGN rows held,
+  bounded by `serverMarkCeiling` (the newest `serverTimestamp` held, and what the server said to this
+  account, `serverClock.ts`); it leaves as `read_watermark {serverAt}`; the author's device merges it
+  into `serverReadWatermarks` and draws the head on its last own row with `serverTimestamp <= mark`
+  (`readersOf`). So the reader's rows and the author's rows must carry the SAME key, the server's
+  acceptance: `queuedCreatedAt` on a received row, the `receivedAt` the send answered on the author's.
+  **The receipt one or two messages late (owner, 2026-11-05, 1.6.5).** `batchAddMessages` - the drain
+  every live arrival goes through - gave the server time to the STORED row only and built the SHOWN
+  row without it, so until a reload every received row was keyed by its author's `sentAt`. Measured on
+  dev with a logpoint on `readMarkTarget` in two bench browsers: the reader's rows held
+  `serverTimestamp: undefined`, its mark was the author's `sentAt` of the last message (author clock,
+  ~0.7 s behind the server, plus the network), and the author compared it with the later server time
+  of its own rows - the head stayed on the message before a quick pair, both of the pair single-checked.
+  The ceiling, with no dated foreign row, held the mark at the reader's own last send, which is why it
+  moved only when the reader acted. A reaction played no part (the same run without one gives the same
+  head); nor did #2937 or #2939: the row never carried the field, and #2824 (`1.6.0`, marks on the server
+  clock) made it load-bearing. Fixed at the row: the shown row carries `serverTimestamp`.
+  `readReceipt.oneLate.svelte.test.ts` (the owner's sequence, reactions both ways, arrivals while open,
+  a second device on each side; all four fail without the fix).
 - **GIFs**: an in-app picker (KLIPY) sends a GIF by URL; on Android the soft keyboard's own
   GIF/sticker button also works via `commitContent` (see below). GIFs skip canvas compression in
   `useMessaging.handleFilesSelected` so their animation is preserved.
@@ -3942,6 +4398,191 @@ reading a leader's arrival for the conversation it has open counts it 0, the liv
 push-side receipt (`markChannelRead` for salons, the native `read_watermark` for DMs); nothing here
 touches them. The stuck count was reproduced as failing tests, not on two live devices.
 
+### Read state between devices - the census (2026-11-02)
+
+**Reported by the owner:** a conversation read on one device still showed as unread on another,
+possibly until that page reloaded, and receipts did not always seem to reach the other devices.
+Every path "read" travels by was mapped and each was given a test in
+`utils/chat/readSync.devices.test.ts`: three conversation stores driven through the REAL handlers
+(`handleSystemEvent`, `handleChannelEvent`, the tab channel), `A` and `B` two devices of one
+account, `P` the other party, `B2` a second tab of `B`'s browser. No clock is read; the server's
+time of a frame is the `queuedCreatedAt` the test hands in. Vitest, not the rig: the local estate
+was not up, and every one of these paths is decided in the client.
+
+| Path | Platform | Before | Why |
+| --- | --- | --- | --- |
+| DM/group read on A -> B, live (`read_watermark`, `withOwnReadAdvanced`) | all | works | the frame reaches every leaf, own devices included; the count follows the mark |
+| same, B offline then catching up (pending pull, frames in order) | all | works | a message newer than the read stays counted |
+| A's read -> P's "Vu" (`withReadMark`, `readersOf`) | all | works | |
+| salon read on A -> B, live (`channel.read`, audience includes the reader) | all | works | count falls whether or not B holds the rows |
+| salon, B reconnects (`unread-counts`) | all | works, **except the salon B has selected** | see below |
+| shade "Marquer comme lu" -> the phone's own badge (`read_watermarks.ndjson`) | Android | works | merged at login AND at resume |
+| **Android resumed on an open conversation** | Android | **FAILED** | the receipt effect read `isAppInForeground()`, a plain global; it returned while the app was in the background and nothing ran it again on the way back. What landed in the background stayed unread on the phone, and the mark never left, so on every other device too, until something else changed the conversation (a send, a new message, a reload) |
+| iOS resumed on an open conversation | iOS | works | WKWebView fires `visibilitychange`, which the effect follows |
+| **a frame arriving in the seconds before iOS suspends the app** | iOS | **FAILED** | `isAppInForeground()` was always `true` on iOS, so the arrival counted as read - fixed by the iOS follow-up ([below](#read-state-between-devices---the-census-2026-11-02)) |
+| **a read made inside the 2 s window before leaving the app** | iOS | **FAILED** (late, never lost) | the delivery was handed to the outbox and nothing held the process; it left at the next open - fixed by the iOS follow-up |
+| **resumed from a notification for Y with X left open** | Android (and iOS) | **FAILED** | the foreground edge re-ran the receipt effect on X before the tap's link selected Y, so X was marked read - a conversation nobody looked at. Owner, 2026-11-02: X must not be marked, the same on both platforms (below) |
+| web tab hidden, then shown / window refocused | web | works | `isTabVisible` / `isWindowFocused` are state |
+| **any read (own other device, or the peer's receipt) -> a FOLLOWER tab** | web, desktop | **FAILED** | a follower opens no socket; the leader relayed messages and counts but no read state, so the follower kept its badge and drew no "Vu" until reloaded |
+| **salon counts re-read by the leader (reconnect, a community cleared elsewhere) -> a follower tab** | web, desktop | **FAILED** | same: only the leader asks, and it relayed nothing |
+| **a read in one tab -> the other tab's thread** (`conversation_read`) | web, desktop | **FAILED (half)** | the badge fell, the watermark did not, so the list said read and the open thread's divider and scroll button still said unread |
+| **salon left selected but not read (another page, hidden tab, app in background), read on another device while this one was offline** | all | **FAILED** | `reconcileSalonUnread` skips the selected salon because the receipt effect owns its count - but it owns it only while the salon is READ. "Selected is not a screen" ([below](#a-selection-is-not-a-screen-2026-10-10)): the server's 0 was thrown away and the badge stayed until the reader came back to the salon |
+
+**The list badge and the open thread** read two things: `unreadCount` (list, nav dot, title,
+favicon) and the reader's own watermark (the thread's divider and scroll-button count). Every path
+above moves both together through `withOwnReadAdvanced`; the half-failure
+was the one that moved only the first.
+
+**What changed.** Each missing event, named and added - no polling, no reload on focus:
+
+- `appForegroundState.svelte.ts`: the Android foreground as STATE, following the
+  `canari:foreground` event the activity already dispatches; the receipt effect reads it, so the
+  transition itself re-runs the effect. Same guard, same door: nothing is marked that is not on
+  screen ([read-receipt-privacy](../../read-receipt-privacy.md), door 1, unchanged).
+- `read_state` on the tab channel (leader-gated): the leader publishes ONE moved mark
+  `{userId, at, clock}` whenever a RECEIVED event moved it (`read_watermark`, `channel.read`, each
+  entry a bundle restated); a follower merges it by `max`, and recounts its badge only when the mark
+  is its own (`withOwnReadAdvanced`) - a peer's moves the receipt and nothing else.
+- `unread_counts` on the tab channel (leader-gated): the salon counts a server answer moved, each
+  with the leader's OWN mark of that salon when it applied it. A follower skips the salon it is
+  reading and any whose own mark is newer than the leader's - it read that salon after the answer
+  was counted. Values that are not counts are refused and said.
+- `conversation_read` carries the reading tab's `mark`; the receiver advances its own watermark with
+  it. A selection still carries none and only zeroes the badge, as before. **For a salon it also
+  stamps the receiver's counts** (`noteSalonOpened`, `noteSalonMarkFromAnotherTab`): a counts request
+  the receiver had on the wire was counted before that read, so its answer neither applies to that
+  salon nor is joined by a later caller - otherwise a leader re-raised a salon a follower had just
+  read and relayed the stale count back (review of #2937; the re-raise is older than the relay).
+- Every conversation event of the tab channel is STAMPED with the publishing tab's account and the
+  receiver drops a mismatch first (`tabEventIsAddressedHere`): the channel and the leader lock are
+  per browser, and a `conversation_read` from a tab of another account would otherwise advance this
+  account's watermark. The lock stays global: an origin holds ONE refresh credential, so two accounts
+  never hold live sessions side by side ([sessions](../../sessions.md#a-token-that-names-another-account-than-the-local-identity-is-refused-2026-10-10)),
+  and the stamp covers the moments between a second sign-in and the first tab learning of it. An
+  UNSTAMPED event (`account` absent: a tab still on the bundle from before the stamp) is ACCEPTED -
+  dropping it cut a mixed-version browser's tabs off from each other; the window it leaves (an old tab
+  of another account) closes with that tab's next load. An empty stamp (a signed-out tab) is dropped.
+- `conversationBeingRead` (`arrivalRuntime.ts`): both callers of the server count hand it the salon
+  being READ, never the bare selection.
+- **A resume that opens something does not read what was left open** (`resumeOpening.svelte.ts`,
+  owner 2026-11-02). The shell knows, when it announces the foreground, that the resume is a
+  notification tap, so it sends the link WITH the edge (`canari:foreground`, `detail.opening`):
+  Android takes it in `onNewIntent`, which always precedes `onResume`. The page records, in that same
+  dispatch and before any effect re-runs, that the conversation on screen (X) is held. ONE wiring,
+  `createResumeReadGate`, is what `MainChatPage`'s receipt effect asks and what the tests drive;
+  `isReadingConversationNow` asks the same hold. A tap for X itself holds nothing; a plain resume
+  still marks X. The hold ends on an event, never a clock:
+  - the selection moves (the landing selected Y, or the reader chose - a `pre` effect, so the receipt
+    effect runs once);
+  - Y's landing ENDS, read from `notifNav`: released, or abandoned (`clear()`), whether it was
+    published before the edge or after - the baseline is the landing count at the LEAVE when it was
+    published before (review of #2937, F1: taken at the edge, an abandon left the count equal and X
+    held for good). A landing for ANOTHER conversation replacing Y's keeps X held - a `chat` hold
+    uses the `landing` hold's rule, held while a landing not for X is pending;
+  - a page link navigated (`noteOpenNavigated`, from `afterNavigate`);
+  - the open was routed NOWHERE (`noteOpenRoutedNowhere`): the router's every non-routing branch
+    (`mobile/appLinkRouter.ts`: an unclaimed `open?url=`, a link not ours, a callback with no code,
+    a checkout return to no known page, and every failure that leaves nothing shown - a chat
+    landing that could not be published, a `goto` that failed with no document-load fallback, a
+    claimed link whose in-app navigation failed, reported by `openClaimedAppLink`; the `catch`es that
+    fall back to a document load navigate, so they report nothing), a native tap record that is not
+    a link, a page notification's tap with no identity or not posted by this session;
+  - the app left again, or a resume carried no link.
+
+  On iOS a page-notification resume waits for its landing ONLY while this page's tap listener is
+  REGISTERED (`notePageTapsRoutable`, set by `armPageTapListener` when the plugin's `onAction`
+  registration RESOLVED - a positive signal). No `onAction`, a throw, a rejection, or simply no
+  notification posted since the page loaded (a WebView reload, then a tap on a notification posted
+  before it) leave it unset: that resume holds nothing and warns `page notification tap lost`.
+
+  **The router's outcomes, before or after the edge.** The link reaches the router (and its landing,
+  navigation or "nowhere") through its own channel, before OR after the edge, so each of those
+  outcomes is a SEQUENCE, snapshotted when the app LEAVES the screen (a module-level listener,
+  whatever page is mounted): at the edge an outcome counted since the leave is this open's, one
+  counted after ends the hold. A `false` while already away is not a leave (review F4): a repeated
+  signal would re-snapshot past an outcome the coming resume must count. The selection moving and
+  the app leaving are not router outcomes: they end the hold only after the edge.
+  **Keys, not ids:** a link and `notifNav.pending` carry a GROUP id, the selection a MAP key, and the
+  two differ for every DM and group; every comparison resolves through `resolveConversationKey`, as
+  the landing does (review of #2937 - compared raw, a tap on a DM's own notification held it for
+  good). **A reload drops the hold, and nothing it covered survives:** the selection lives in memory
+  only, and the one selection carried across a load (`canari_pending_contact`) is written only by an
+  explicit "open this conversation", never by a resume.
+
+  **A tap on a notification the PAGE raised** follows the same rule: on Android the page's message
+  notifications are built natively (`notifyMessageFromWebSocket`) and tap as an ordinary chat link,
+  so `onNewIntent` carries them; on iOS they are the notification plugin's, which carry no link, so
+  the shell sends the marker `PAGE_NOTIFICATION_OPENING` and the hold waits for the landing the page's
+  tap handler (`routePageNotificationTap`) publishes, or for it to say the tap routes nowhere. A cold
+  start needs nothing: no conversation is open, so nothing is held, and only Y is read. The chat link
+  is parsed in ONE place (`mobile/chatLinkTarget.ts`), which the deep-link router uses too. Tests:
+  `resumeOpening.svelte.test.ts` - keys that are not group ids, each router outcome (landing
+  published, landing abandoned, navigated, nowhere) before and after the edge, a repeated leave
+  signal, Y already selected before the edge, a DM's own notification, a non-navigating link driven
+  through the REAL `processAppLinks` and `listenForNativeNotificationTaps`, the page notification's
+  tap, a cold start, the arrival rule, another conversation's landing replacing Y's, a claimed link
+  whose navigation fails, a checkout return to no known page;
+  `resumeOpening.pageTapListener.svelte.test.ts` - every registration outcome of
+  `armPageTapListener`, each test on fresh modules (a page load), so each passes alone.
+
+**The cost.** One tab event per mark that MOVED (never per message, never the whole map), one per
+server answer that moved a count (one entry per moved salon). Neither grows with a conversation's
+length or the list's; a group of N members costs one event per member who reads.
+
+The router is ONE function (`routeTabReadEvent`, `tabReadRelay.ts`) that `ChatBackgroundService`
+calls once, after the account gate: a leader applies `conversation_read` and ignores the two events
+only a leader sends. Tests: `readSync.devices.test.ts` (both review cases mutation-checked),
+`arrivalRuntime.beingRead.test.ts` (both halves, in a document), `tabReadRelay.wiring.test.ts`.
+
+**iOS, fixed in the follow-up PR (which depends on #2937).** Two iOS paths were left after the census, and the rule is fix, never defer:
+
+- **The foreground is published, not assumed.** `canari_ios.mm` used to observe only the ACTIVE pair
+  (`didBecomeActive` / `willResignActive`) for its own `g_isInForeground` and published nothing to
+  the page. That meant `isAppInForeground()` was always `true` on iOS, so `arrivalContextNow` counted a frame
+  the JS processed in the seconds before suspension as read on arrival. The shell now writes
+  `window.__canariForeground` and dispatches `canari:foreground` on the **background/foreground
+  pair** and after every page load (`CanariPublishForeground`): leaving at `didEnterBackground`;
+  coming back when the resume COMPLETES - the resume begins at `willEnterForeground`
+  (`g_resumePending`) and is published one notification-center round trip AFTER the `didBecomeActive`
+  that ends it (`getNotificationSettingsWithCompletionHandler`, answered on the main queue). A
+  tapped notification is noted (`CanariNoteResumeOpening`, called before the tap is queued for the
+  page) whenever it runs while that resume is pending, so the edge carries the link it opens
+  (`detail.opening`), as Android's does - and the shared hold of
+  [the resume that opens something](#read-state-between-devices---the-census-2026-11-02) applies
+  unchanged. **Either order:** UIKit does not promise whether the delegate runs before or after
+  `didBecomeActive` (review of #2939); a response that caused the activation comes either with the
+  activation itself or on the notification center's own connection, and that the connection hands
+  the response to the main queue before the round trip's answer is LIKELY BUT UNPROVEN - Apple
+  documents no such ordering (re-review F3). It is an ordering argument, never a delay, and it is
+  read on hardware by check LA steps 5 and 8: the shell logs `didBecomeActive: awaiting the
+  notification-center round trip` and `round trip answered: publishing the foreground edge`, and the
+  ONE rule read there is that the tap's line comes BEFORE `round trip answered` (whatever its `state`
+  or `resumePending`, and before or after `awaiting`); a failure blocks the stable. A `didBecomeActive` with no resume pending (Control Centre, a Face ID sheet) publishes
+  nothing and drops a link a cold launch left; a tap on an app active with no resume pending (a
+  banner over the open app) is not a resume (step 10). This is the same contract as Android's `MainActivity.pushForeground`, asserted for
+  both shells by `utils/appForeground.contract.test.ts`. The ACTIVE pair was deliberately not chosen: Control
+  Centre, a Face ID sheet and the notification shade resign ACTIVE without leaving the screen, and
+  a read on screen must not stop counting because a system sheet passed over it. The page now hears
+  two signals for one transition (`visibilitychange` and `canari:foreground`), so `onAppScreenChange`
+  reports one edge per transition (it remembers the last state it reported). The listeners were
+  checked for idempotence anyway, in case one is ever wired to the raw events: the read-mark flush
+  (`take()` empties), connectivity (`probeOwedOnScreen`), the playback arbiter, and the call service
+  (`cameraHeadedOn()`, `videoPausedByBackground`).
+- **A read made in the 2 s window before leaving reaches the other devices now, not at the next
+  open.** The off-screen handler of `MainChatPage` runs its delivery (the debounced mark, the owed
+  salon and DM marks, the outbox flush) under `holdWhileLeaving` (`utils/backgroundFlush.ts`), which
+  asks the shell for a `canari-leave-flush` background task BEFORE the work
+  (`begin_background_flush`) and ends it when the work SETTLES, whichever way it ends
+  (`end_background_flush`, `commands/background_flush.rs`, `canari_push.mm`). There is no timer: the only other
+  end is iOS's own expiration, and the shell logs that as an ERROR. The mark is then still owed
+  (durable) and leaves with the next one. Off iOS the work runs as it did.
+- **The next step, gated on a reading.** The hold keeps the PROCESS alive, but whether iOS keeps
+  WKWebView's WebContent process running under it has not been read on hardware. If the iPhone
+  reading (check LF in [device-verification](../../device-verification.md#lf-a-read-reaches-the-other-devices-when-the-iphone-leaves-the-app---owed-on-the-iphone-12))
+  shows the hold beginning and expiring with no settle, the delivery moves native: the
+  shell drains the durable owed marks itself, under the same task, the way the quick reply sends
+  without the page. That variant is designed and not built, because only that reading tells us whether it is needed.
+
 ## A community's salons have an order everyone shares, and a name that is only a name (2026-10-05)
 
 **Order.** `channels."sortOrder"` (migration 076; the backfill numbers each never-arranged community
@@ -4039,7 +4680,7 @@ transport failure.** Three fixes:
 
 The sidebar sorts in a `$derived` (`Sidebar.svelte`, `filteredConversationEntries`), so it re-sorts on every `conversations.set`. What was wrong was the KEY. It was `Conversation.lastMessageAt`, a stored seed advanced by `addMessageToChat`, `batchAddMessages` and the FCM merge only - history replay, channel history, `renderStoredPage` and older pages replaced `messages` and left it behind - and written from `Date.now()` by `toConversationMeta` (empty conversation) and the DM name repair, which `Math.max` then made permanent. Two devices with the same messages ordered differently.
 
-Now `conversationRecency(convo)` (`utils/chat/conversations.ts`) is the sent time of the newest message in `messages` (sorted by `compareMessageOrder`), falling back to the persisted seed only while nothing is loaded, else 0; `compareConversationRecency` breaks ties by id. A message applied by ANY path - live, pending drain, history seed - moves the row, because the key is read from the list rather than remembered. Reactions, edits and read receipts do not touch `messages` order, so they do not move it. Known residue: the local-only "member joined" notice in `ChatBackgroundService` is stamped with the local clock and does count. Test: `conversations.recency.test.ts`.
+Now `conversationRecency(convo)` (`utils/chat/conversations.ts`) is the time (`messageTime`: the server's acceptance, else `sentAt`) of the newest message in `messages` (sorted by `compareMessageOrder`), falling back to the persisted seed only while nothing is loaded, else 0; `compareConversationRecency` breaks ties by id. A message applied by ANY path - live, pending drain, history seed - moves the row, because the key is read from the list rather than remembered. Reactions, edits and read receipts do not touch `messages` order, so they do not move it. Known residue: the local-only "member joined" notice in `ChatBackgroundService` is stamped with the local clock and does count. Test: `conversations.recency.test.ts`.
 
 ### A reply belongs to ONE conversation (2026-10-06)
 
@@ -4089,7 +4730,7 @@ A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), a
 
 **No duplicate on reload.** A held send has sent nothing. A reload loses the row (memory only, as before) and the ledger hands the text back to the composer. Held sends to the same salon are released in arrival order, and each one exactly once (the resolvers are removed before they run). A Retry on a refused row asks the gate again, so it waits if a listing is in flight. The banner of an answer that arrives after the member moved to another conversation is not shown there: the row keeps the state, and the log says so.
 
-**A salon upload waits too** (the channel branch of `handleSendChat`), BEFORE the upload so a salon that never loads leaves no orphan blob. The upload indicator stays up meanwhile. A refusal throws `SalonNotLoadableError`, the file is re-staged and the banner names the cause - **only if the same conversation is still on screen**: staging is one queue for every conversation, so otherwise the file is dropped and the banner of the conversation on screen says so with the cause (`chat_media_dropped_other_conversation`) - and the caption falls through to a text send in the salon the upload was MADE in (`sentFrom`, never the conversation on screen). **Except `session-ended`:** `globalMessaging` outlives a sign-out, so a re-staged file would sit in the NEXT account's composer and the caption would be held by the next session's gate and sealed as whoever signs in; both are dropped, and the log says so. There is still no echo row for a salon upload.
+**A salon upload waits too**, BEFORE the upload so a salon that never loads leaves no orphan blob - but since 2026-11-02 it waits ON ITS ROW, after the send has returned ([a salon attachment is drawn at the tap](#a-salon-attachment-is-drawn-at-the-tap-and-its-row-carries-its-upload-2026-11-02)). The row says `queued` meanwhile; a refusal parks it in `error` with its Retry and the banner names the cause, only if the same conversation is still on screen. Nothing is re-staged (the row holds the file) and the caption is never sent alone (it is in the file's own message). **`session-ended`** withdraws the row and uploads nothing: `globalMessaging` outlives a sign-out, and nothing of the leaving account may go out under the next.
 
 **A salon entered in-session holds too.** `registerJoinedChannel` brackets its joins with `beginSalonEntry` / `settleSalonEntry`: the event draws the salon before the joins end, and a send typed then would otherwise be refused by a listing that settled before the salon existed. An entry ends without changing the last listing's outcome.
 
@@ -4238,3 +4879,20 @@ Two consequences of the drafts outliving the page (review of #2614, 2026-10-27):
   under an open conversation (a name resolved late, a rename) strands the draft under the old key:
   invisible, and forgotten only at sign-out. Not seen; it is the first thing to check if a draft
   "vanishes" from a DM.
+
+### The scroll-to-bottom badge counts only what lies below the viewport (2026-11-01)
+
+The owner saw a yellow "1" on the floating arrow while scrolled up in a conversation with nothing new. The badge was `countUnreadForUser` over the WHOLE thread: any foreign row not covered by the read mark - above the viewport, in view, or held back by `serverMarkCeiling` or an unfocused window - raised it. Reactions, edits and pins are not rows and never counted. It is now `countUnreadBelow` (`readState.ts`): the unread rows after `lastVisibleMessageId`, measured by `ChatArea.measureScroll` next to `isNearBottom`; an unmeasured position counts nothing. `readState.test.ts`.
+
+The position (`utils/chat/visibleRow.ts`) is the last row above the scroller's bottom MINUS its padding (the floating composer's height), found by binary search over the display-ordered `messageRows`; it is re-measured when the thread or conversation changes, not only on scroll, a vanished anchor resolves to the nearest surviving row (logged once), and nothing is counted while pinned to the live end.
+
+### A group conversation and a community are two entry points with two names (owner, 2026-11-04)
+
+A user in the English app wanted a GROUP and created a COMMUNITY: the community dialog was titled by its name field ("Club or group name" / "Nom de l'association ou du groupe"), and English called a community a "club" in the community screens. Decided: the words never overlap.
+
+| Entry point | What it creates | fr / en |
+|---|---|---|
+| "Nouvelle discussion" > tab "Groupe" (`SidebarNewChatModal`, `onCreateGroup`) | an MLS group conversation | button "Créer la discussion de groupe" / "Create group conversation" |
+| The rail's dashed "+" (`SidebarNewCommunityModal`, `onCreateWorkspace`) | a community (workspace with channels) | title "Nouvelle communauté" / "New community", field "Nom de la communauté" / "Community name", button "Créer la communauté" / "Create community" |
+
+**English never says "club" for a community** (the `chat_*` strings about a community's settings, invitation and deletion now say "community"). "Club" stays where it names an ASSOCIATION (the `asso_*`, `admin_*`, `posts_*`, `payout_*` and `dependency_*` families): there it is the English word for the French "association", a different object from a community.

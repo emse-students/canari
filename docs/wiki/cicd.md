@@ -143,6 +143,17 @@ Runs on every pull request to `main`, and again on every push to `main`:
 | **Frontend tests**   | `vitest` in `frontend/`                                                                                                                                           |
 | **Frontend lint**    | `oxlint` + `oxvelte` + `oxfmt --check` + `svelte-check` (0 errors required)                                                                                       |
 | **Build**            | the generated sources first - [`.github/actions/build-mls-wasm`](../../.github/actions/build-mls-wasm/action.yml) then `bun run proto:gen` - then `bun run build` |
+| **Call Service E2E** | `test-call-service-e2e`: the SFU binary, a throwaway coturn and two headless Chromes place an encrypted call ([call-service](services/call-service.md#the-end-to-end-call-in-ci)) |
+
+**THE SFU'S CALL IS A JOB OF THIS FILE, AND IT RUNS ONLY WHEN WHAT IT READS CHANGED (owner decision
+D3, 2026-11-01).** `test-call-service-e2e` fires on `changes`' `run-call-e2e`: `apps/call-service/`
+(the harness lives in its `e2e/`), `tools/headless-chrome/`, the app's `encryption.worker.ts` and the
+five `utils/` modules it and the page import, `rust-toolchain.toml` and `.bun-version`. A skipped run
+is `skipped`, which `CI passed` accepts. It is a job, not a called workflow file:
+`tools/ecosystem-shape/shape.mjs` refuses a workflow file it does not expect, and a job here is
+already invisible in the Actions list and already a need of `CI passed`. Its coturn is a
+`docker run --network host` step rather than a `services:` container, because a service container
+takes no arguments and coturn is configured by its arguments alone.
 
 **THE HARNESS SELF-TESTS ARE TRIGGERED BY THE APP'S MESSAGE FILE TOO, AND FOR TWELVE DAYS THEY WERE
 NOT.** `changes` said the rig "reads its own sources and nothing else", so `tools/cross-client-harness/`
@@ -221,7 +232,7 @@ which is how three chains came to each re-derive the same fact:
 
 1. `enumerate-services` names all eight services (no diff: every service is built every release)
 2. Builds the frontend against that estate's `VITE_*` set, then every image → GHCR, each tagged `v<version>`
-3. Self-hosted runner: sync `.env`, `docker compose pull`, then every service replaced one at a time by `infrastructure/lib/rolling.sh` ([below](#a-deploy-replaces-nothing-a-member-is-talking-to)) - production by `--tag v<version>`, so re-running an old release's deploy is a ROLLBACK
+3. Self-hosted runner: sync `.env`, `docker compose pull`, then every service replaced one at a time by `infrastructure/lib/rolling.sh` ([below](#a-deploy-replaces-nothing-a-member-is-talking-to)) - production by `--tag v<version>`, so re-running an old release's deploy is a ROLLBACK - across the replica lists too, because they rest naming each service by DNS ([why](#a-rollback-across-the-replica-lists))
 4. Database migrations, then health checks
 5. MiConnect's blueprints: a pre-release DRY-RUNS them against the production MiConnect, and a
    stable APPLIES them before `prod-released` moves. The same runner lives on MiConnect's host, so
@@ -253,6 +264,152 @@ release back. It used to deploy `latest`, and v0.16.1's rerun redeployed v0.16.4
 steps (2026-09-06). `release-chain.test.sh` pins the pair; the GHCR prune keeps 30 pushes.
 A rollback does not revert a migration the newer release applied: read it before rolling back across one.
 
+#### A migration the owner must approve is held (2026-11-01)
+
+**Why.** `apply_migrations` (`infrastructure/lib/migrations.sh`, run by `deploy-environment.sh` and
+by the dev reset) applies every file the `schema_migrations` ledger has not recorded. Migrations 034,
+038 and 042 were each written as "owed the owner's yes" and reached production with the next
+release anyway: the yes was a sentence in the backlog, never a gate. The owner's rule (2026-11-01): a
+migration is applied only if it is additive, reviewed, and with a backup taken just before.
+
+**What holds a migration** (`infrastructure/lib/migration-hold.sh`, the ONE judge, read by the deploy
+and by the release preflight). A file is held when it carries the marker - a line
+`-- canari:hold-for-owner`, any case, trailing text allowed (the author's call: a backfill, a lock on
+a hot table) - when it contains a UTF-8 byte-order mark anywhere (one before `--` hides the marker
+from the line match), or when its SQL, comments stripped, whitespace collapsed and cut into TOKENS,
+contains a statement that is not plainly additive. **That list is an allowlist**: ANY `DROP` except
+`DROP CONSTRAINT`, `DROP DEFAULT`, `DROP NOT NULL` and `DROP INDEX|TRIGGER <name>` (the re-create
+idiom, a relaxed column), any `RENAME`, `TRUNCATE`, `DELETE FROM`, `MERGE` (its `WHEN MATCHED THEN
+DELETE` deletes), a column `TYPE` change (`ALTER [COLUMN] x [SET DATA] TYPE`), `EXECUTE` of dynamic
+SQL (`EXECUTE FUNCTION|PROCEDURE <name>(` of a trigger and `GRANT EXECUTE ON FUNCTION` are not),
+`COPY ... PROGRAM` (a shell on the database host), `DETACH PARTITION`, `CREATE [OR REPLACE] RULE` (a
+rule rewrites every later statement on its table), and **any backslash outside a string, a comment or a dollar quote**: the deploy pipes each file into
+`psql`, which reads it as a meta-command (`\gexec` runs every row a query returns as SQL, `\!` runs a
+shell). The first version matched spellings (`DROP TABLE|COLUMN`) and its review listed what walked
+past it - `ALTER TABLE t DROP foo`, a statement split over lines, `DROP TYPE ... CASCADE`, a
+materialized view, a sequence, `DROP OWNED`, `RENAME COLUMN`. The second matched the allowed forms as
+string PREFIXES, and its review walked past them by naming a column after one - `DROP indexed_at`,
+`DROP default_role`, `DROP trigger_count`, `DROP index2`, a PL/pgSQL `EXECUTE on_cmd`; the forms are
+matched on WHOLE tokens now, and `INDEX`/`TRIGGER` (which PostgreSQL also accepts as column names)
+only when a name other than `CASCADE`/`RESTRICT` follows. Every one of those is a row of
+`deploy-migrations.test.sh`. Comments are stripped by a scanner that knows `'...'` strings (with `''`
+and `E'\''`), `"..."` identifiers, nested `/* */` and dollar quotes (`$$`, `$tag$`), so a `--` inside
+a string or a dollar quote does not eat the code after it (`SELECT $x$ -- $x$; DROP TABLE t;` was
+plain to the first lexer); an unterminated string, comment or dollar quote is HELD, not guessed.
+**Inside a string or a dollar-quoted body, `"` and `\` are text and leave the scanner as spaces**: the
+token pass read a `"` in a string as the start of a quoted identifier and swallowed everything after
+it (`COMMENT ON COLUMN t.size IS '... 6.1"';` then `DROP COLUMN email` was plain - final review).
+**Where the scanner cannot be sure it cuts the text as psql does, it does not try - it HOLDS.** The
+verification of that review found four places where the two disagree, each an unapproved `DROP`
+called plain, and each is now a held row rather than a patched rule: a CR that does not end a line
+(psql ends a `--` comment there, the scanner did not), a byte from 0x80 up OUTSIDE a string, a
+comment, a quoted name or a dollar body (PostgreSQL reads it as a letter, so `$\xe9$` is a dollar tag
+and `\xe9E'x'` is a name and a standard string, not an E-string), and any mention of
+`standard_conforming_strings` (off, a backslash escapes a quote in every string). Non-ASCII inside a
+comment or a string is read as before: the 7 of the 174 migrations that carry French text have it
+only there, and all 174 keep their verdict (147 plain, 27 held). The scanner runs the same under
+gawk, mawk 1.3.4 and busybox awk (188 verdicts compared, 2026-11-01).
+**A dollar-quoted body is kept verbatim otherwise, comments included**: it may be code that runs
+(`DO`, a function) or a literal, and no reader of the outer text can tell, so a `DROP` in a comment of
+a body holds the file - a false hold, never a missed one. An `UPDATE` backfill is not matched: the
+author marks it. The marker is read by ONE `grep` on the file - the first version piped
+`tr | grep -q`, and under `pipefail` grep's early exit made the pipe report a miss on any file above
+~64 KB (30 misses in 30).
+
+**What lifts it.** A line `<repo-relative path> <sha256 of the file>` in
+`infrastructure/migration-approvals.txt` (the hex compared case-insensitively), bound to the CONTENT:
+a file edited after its approval is held again, and the refusal says so. Chosen over a release input
+because `gh release create` carries none, and over an environment flag because a switch nobody reviews
+is no approval.
+
+**Who merges the approval line (owner, 2026-11-03: "Oui, après revue et dev").** The owner, or the lead agent under his delegation, on three conditions: an adversarial Opus review has passed, the migration has run on dev through a pre-release (which takes a backup right before it), and each such merge is reported on the owner's private tracking page ([decisions](backlog.d/owner-decisions-of-2026-11-03-evening.md)). Mechanics are unchanged: `arm-auto-merge.yml` still never arms such a pull request, and the lead merges it by hand with `gh pr merge --match-head-commit`.
+
+**A held migration on `main` BLOCKS EVERY RELEASE until it is approved or reverted.** The hold stops a
+migration at the release and at the deploy, never at the merge: the pull request that adds one is an
+ordinary pull request, armed and merged like any other (only the approvals file and what judges it
+are the owner's, below). Once it is on `main`, every pre-release and every stable cut from there is
+refused by gate 6 - and the deploy would refuse it anyway - until the owner merges its approval line
+or the file is reverted. That is the design: the yes is asked where it can no longer be skipped.
+
+**Never merged by automation - two locks, and what they do not cover.**
+- **`arm-auto-merge.yml` never arms a pull request that touches the OWNER'S FILES**, whoever opened it
+  (its first `canari-only` region): the approvals file, and everything that decides what a line in it
+  means - the judge (`migration-hold.sh`), the loop that asks it (`migrations.sh`), the deploy that
+  runs the loop and defines its backup (`deploy-environment.sh`), the dump (`dump-auth-db.sh`), the
+  release gate (`release-preflight.sh`, `release-preconditions.sh`) and the workflow itself - plus the
+  three places GitHub reads a CODEOWNERS from (the root, `.github/`, `docs/`), so a pull request
+  bringing one back is never armed either (`release-chain.test.sh` refuses all three outright). A push
+  that adds one of them to an armed pull request disarms it; an unreadable file list, or one at
+  GitHub's 3000-file cap (which may be cut short), refuses and disarms. **The list is read by pull
+  request number, so it describes whatever the head was at that read**: the head is read after it,
+  and the run arms only while that head is still the event's own commit. A head that moved means a
+  newer push, whose own `synchronize` run reads the new list (and disarms, if that push brought an
+  owner's file). And the arming itself names that commit (`gh pr merge --auto --match-head-commit`,
+  as the Dependabot path always did), so a push between the guard and the arming call makes GitHub
+  refuse it: that run fails, and the run the push raised judges the new head.
+- **An arming made by hand is undone too, except on a fork's pull request** (which the job skips by
+  its `if:`). The workflow listens to `auto_merge_enabled` (Canari only; `tools/ecosystem-shape` reads
+  it as a declared `# canari-only:shared` line), so a writer's own `gh pr merge --auto` on such a pull
+  request is disarmed again; elsewhere that event does nothing. Its concurrency group is its own, so
+  the event the workflow's own arming raises cannot cancel the run that armed.
+  `arm-auto-merge-app.test.sh` B32 pins the list, the head check, both events and that group.
+- **`pull_request_target` runs `main`'s copy of the workflow**, so a pull request that CHANGES the
+  guard is judged by the guard it replaces - and the one that introduced it (#2873) by none: taking it
+  out of draft armed it, and its merge followed a green CI.
+- **THE RESIDUAL RISK, ACCEPTED BY THE OWNER ON 2026-11-01: a person with write access can still merge
+  one of those pull requests BY HAND.** The protection is "never armed by automation", not "only the
+  owner". A CODEOWNERS file with the ruleset's "Require review from Code Owners" would close it, and
+  was refused that day: agents open pull requests under the owner's account, GitHub never counts an
+  author's own review, so every such merge would need his admin bypass - reserved for emergencies -
+  and it would bring back the review requests he asked to be rid of on 2026-09-04 (below). A pull
+  request from a fork is skipped by the job and merged by a human anyway.
+
+**Where it is asked, twice.**
+- **Gate 6 of the release preflight** (`held_migrations_since` in `release-preconditions.sh`): every
+  migration file ADDED, copied or renamed between the commit production SERVES and the released
+  commit - the paths production's ledger has no row for - is judged against the approvals file of the
+  released tree. A held, unapproved one refuses the TAG, before the bump and the store builds - pure
+  repository, no database. **The base is `prod-released`**, the tag the production deploy moves
+  itself once it has succeeded (after its migrations ran), so the gate asks the deploy's own question
+  - "what has production's ledger not recorded?" - of the tree. The first version diffed from the
+  latest stable TAG, which asks less: a stable whose deploy failed is in no ledger, and its held files
+  passed. It also judged files only MODIFIED since then, which the deploy never re-applies (the
+  changed checksum only warns), so it would have refused a release for a file nothing runs. For a
+  pre-release, dev's ledger is at or ahead of production's, so it asks at least what the dev deploy
+  will.
+- **The deploy, and the dev reset**, on the files the ledger has not recorded - the last line. It logs
+  every decision (`owner hold: N unrecorded file(s) examined, M held, A approved, R refused`).
+
+**How it fails.** Closed and loud: one `::error::` per held file naming it, why it is held, and the
+exact line to commit; then `NOTHING was applied`, and the deploy stops before any service is
+replaced. An unreadable ledger refuses too, with its own accusing line, rather than reading as empty.
+**Dev and production are held alike**, so the approval precedes the first estate it touches. **The
+remedy is the owner's merge of the approval, then a NEW pre-release tag**: a rerun of the refused
+release re-reads its own commit, which does not carry an approval merged after it.
+
+**The backup right before.** When an approved held file is due, the loop calls the caller's
+`migration_backup` right before applying it, and applies nothing more if it fails. The deploy's takes
+the nightly backup's own dump (`dump_auth_db`, `infrastructure/backup/dump-auth-db.sh`, shared with
+`backup.sh`, the stream checked with `gzip -t`, a failed dump deleted) into
+`<backup dir>/pre-migration/<project>-<UTC time>-<migration>.sql.gz`. **The backup directory is read
+from ONE place, the `BACKUP_DIR=` line of the runner account's crontab** (`canari_backup_dir`) - the
+line cron hands the nightly `backup.sh`, and the one `backup-report.sh` and the host report read -
+with NO default: the first version fell back to `/home/canari/backups`, a path of the box production
+left on 2026-09-24, so an approved migration would have failed its `mkdir` on every deploy. An
+unnamed directory is an `::error::`, and neither that file nor any after it is applied. The dumps are
+kept until removed by hand, with no age rule ([backup](infrastructure/backup.md#retention) says why).
+**A caller that defines no `migration_backup` - the dev reset, which truncates dev and holds only the
+fictional seed - REFUSES THE WHOLE RUN when an approved held file is due**: nothing is applied, not
+even the plain files before it, and the next deploy applies them all, with its backup.
+
+**And the schema outside migrations is closed too.** TypeORM `synchronize` used to follow
+`NODE_ENV !== 'production'`, and the production compose file defaults `${NODE_ENV:-production}`: one
+wrong `.env` line and a service would have altered production's schema at boot, outside this gate. It
+is now an explicit `TYPEORM_SYNCHRONIZE=1` (`typeorm-synchronize.ts`, one copy per TypeORM service,
+declared duplicates), set only by the local stack and the CI boot probe, and a service refuses to
+start with it next to `NODE_ENV=production`; `compose-wiring.test.sh` asserts neither deployed compose
+file names it.
+
 **`prod-deployed` is gone, and its replacement answers a different question.** That tag was the
 change detector's INPUT; the detector reads releases now, so the tag survives only as `prod-released`
 
@@ -277,10 +434,255 @@ in `depends_on` order):
 2. Wait for its healthcheck (`start_interval: 2s`, so a ready replica is seen in seconds, not at the
    next 30 s tick). An unhealthy replica is removed and the deploy STOPS - the old one never stopped
    serving (measured: 0 failed requests across a refused release).
-3. Wait out the Docker DNS lifetime nginx caches (`ROLLING_RESOLVER_TTL_SECONDS`, 2 s, plus one), so
-   every proxy has seen the new address.
-4. `docker stop` the old replica: its `SIGTERM` handler closes the listener, answers what is in
+3. **Take the old replica out of rotation** (since 2026-11-01). The nginx in front of the service -
+   the frontend's for the five services it proxies, the edge's for the frontend, named by the label
+   `canari.deploy.rotation: <proxy>:<port>` - sends the service's requests to a TARGET,
+   `proxy_pass http://$target_<service>`, set by one line of the list `rolling.sh` writes into
+   `infrastructure/edge/targets/<proxy>.conf`: `map "" $target_core_service { default
+   core-service:3012; }`. The service's line is rewritten to the NEW replica's CONTAINER NAME
+   (`canari-core-service-2:3012`, `rotation_take_out`), which Docker's DNS answers with that one
+   container; every other line is carried over byte for byte. In each running replica of
+   the proxy (no new container), the deploy asks `nginx -T` what it would load, reloads it, and waits
+   for the pairing check below.
+4. **Wait until nothing is queued on the old replica**: two consecutive reads of its own
+   `/proc/net/tcp{,6}` with no half-open connection (`SYN_RECV`, state `03`) and every LISTEN row's
+   `rx_queue` (its accept queue) at 0. What it has in flight is printed, and left to step 5. A read
+   that fails - the `docker exec`, or a table with no header - is UNKNOWN, never clean, and reads
+   that run out FAIL the deploy with the old replica still running.
+5. `docker stop` the old replica: its `SIGTERM` handler closes the listener, answers what is in
    flight, exits (`drain-on-sigterm.ts` in the four NestJS services, `serve_until` in the gateway).
+6. **The target goes back to rest** (`rotation_restore`): the service by its DNS name,
+   `core-service:3012`, which now names the new replica alone. A failure anywhere after step 3
+   restores it too, naming every replica still running - the old one included, since nothing stopped
+   it - and fails the deploy.
+
+**The lists have two forms, and the estate rests in the first.** Between deploys every target is its
+service's DNS name - byte for byte the list the frontend image bakes for an estate with no such deploy
+(`deploy-replace.test.sh` compares them). Only the ONE service being replaced is set to a container's name,
+for the minute its replacement takes. Three things follow:
+
+- **A sibling is never re-read.** The first version re-rendered every service behind a proxy from
+  `running healthy` containers, so a sibling that was `starting` or `unhealthy` at that moment got a
+  `down` placeholder and dropped out of rotation (2026-11-01 review). Now the health filter applies to
+  the service being replaced, whose staying replica must be healthy or the deploy refuses, and a
+  sibling's line is copied as the file holds it.
+- **The lists exist before anything includes them.** The frontend's `include` and the edge's are
+  unconditional, and the bind mount hides the image's own list, so a fresh host or a lost directory
+  would leave both unable to start. `deploy-environment.sh` reads the plan and calls `rotation_seed`
+  BEFORE its first `dc up`: every list written in the resting form (a list a killed deploy left
+  mid-replacement is put back at rest too), and EVERY running proxy is reloaded on it, changed or not
+  ([why](#a-rollback-across-the-replica-lists)). Two consequences, both deliberate (2026-11-01 third
+  review):
+  - **A proxy replica that is not running is skipped, at `::warning`.** `docker ps` lists restarting
+    and paused containers, and an `exec` into one fails; refusing on it would stop the deploy before
+    its migrations, so the release that fixes a crash-looping frontend could never ship. A restarting
+    replica reads the list on disk when it starts, a paused one serves nothing. Only a plain reload
+    skips: a take-out (mode `retiring`) still refuses a replica it cannot read.
+  - **The seed's edge reload loads the edge's whole `edge/nginx.conf`, before the migrations.** The
+    edge is bind-mounted from the checkout this deploy has just reset, so that file is already this
+    release's. It would be loaded later in the same deploy anyway ("reloading the edge
+    configuration"); the seed only moves the moment earlier, after the same `nginx -T` validation, so
+    a configuration nginx refuses stops the deploy before a migration instead of after. Reloading
+    only the frontend at the seed was considered and rejected: the edge's list names a FRONTEND
+    replica, so an edge left on a container's name is the whole-site `502` a rollback would cause.
+- **A rollback across the replica lists works** ([below](#a-rollback-across-the-replica-lists)).
+
+**Before a reload, the proxy is asked what it would load.** `nginx -T` in the proxy's replica must
+show `targets/<proxy>.conf` AND the line `# render <id>` this write put in it: a proxy that does not
+include the file, or reads another one (a missing or misdirected mount), would reload, pass the check
+and keep choosing the replica about to stop - so the deploy refuses. One proxy may read no target
+list: a frontend image from before 2026-11-02, recognised by including no `targets/` file and naming
+EVERY service routed through it by `<service>:<port>` - `set $upstream_x core-service:3012;` before any
+list, `server core-service:3012 resolve;` in 1.6.2's `upstream` list at rest. Both re-resolve the name
+every 2 s. It is the image the first deploy carrying the targets still finds running, and the one a
+rollback brings back. It is drained exactly as every deploy drained before the lists - the retiring
+replica stays up `ROLLING_RESOLVER_TTL_SECONDS + 1` (3 s) while that nginx re-resolves the name - with a
+`::warning` naming it. A 1.6.2 list that names a CONTAINER (a 1.6.2 deploy killed mid-replacement)
+is not a DNS name, and is refused: that proxy would keep choosing the container. Never a regression, never a refusal; the
+next deploy runs no such image. Only a transition takes that path: the running image must be the
+PREVIOUS release's - the plan carries each service's image, and THIS release's own frontend image
+reading no list is a release built wrong, refused at `::error`
+([legacy-compatibility](legacy-compatibility.md)). A reload nginx REFUSED after `nginx -T` accepted the files is read
+from the proxy's own error log (`[emerg]` since the reload) the moment no new worker has appeared,
+instead of being waited out for ten minutes.
+
+**Why steps 3 and 4 exist - a 502 one release in thirty (main CI run 41311303760, 2026-11-01: 1 POST
+in 346).** Closing a listener RESETS every connection still in its accept queue: handshakes the kernel
+had completed and the process had not yet accepted. The nginx in front had already written the POST
+into that connection, so it read the reset as `recv() failed (104: Connection reset by peer) while
+reading response header from upstream`, and a POST that has been sent is the one request nginx may
+not replay - `502`. A replica that closes its listener while it is still chosen cannot close that
+window itself: a handshake can always complete between the last `accept()` and the `close()`, and the
+window is as wide as the event loop is busy. So the replica leaves rotation first, provably, and is
+told to stop after.
+
+**The pairing check: what it proves, and what it does not.** A reload starts new workers on the new
+list; the old workers keep the old list and every connection they hold - a reload never cuts one. An
+old worker accepts nothing new, so it can only choose a replica for a request it was already
+handling. So `rolling.sh` reads, inside each proxy container, every pre-reload worker's sockets
+(`/proc/<pid>/fd`) joined to the TCP table, and the check holds once a new worker exists and, in each
+old worker, the client connections (sockets on a port nginx listens on) are no more than its
+ESTABLISHED upstream connections. Waiting for the old workers to EXIT instead would wait for the last
+WebSocket opened before the release: a `/api/ws` lives an hour and is kept alive by its pings. The
+test holds such a connection open across the release and asserts the check holds with that old
+worker still alive. It is believed when it holds, and terminates when the requests do - never by a
+clock; the read count bounds only a request that never ends.
+
+**Old workers outlive a reload, and nothing cuts them.** A deploy reloads the frontend about nine
+times (the seed, then a take-out and a restore per service it routes), and every reload leaves its
+old workers alive until their last connection closes - for a WebSocket, until the client leaves or
+its server replica is retired. There is deliberately no `worker_shutdown_timeout`. It would close
+those connections on a clock, so every member would get a reconnect at a time the deploy did not
+choose, and the pairing check would be proven against connections that were about to be cut anyway.
+What it costs is memory: a few idle workers per reload, until those WebSockets end. The retirement of
+`chat-gateway` closes most of them in the same deploy.
+
+- **An `auth_request` subrequest pairs nothing** (2026-11-01 review). Every API location of the
+  frontend asks core-service first, on an upstream connection of its own, BEFORE the request chooses
+  where it goes; counted, that connection masked a request that had not chosen yet. `rolling.sh`
+  reads, from the proxy's `nginx -T`, the port of every service an `auth_request` location proxies to
+  (`rotation_subrequest_ports`: core-service's 3012 here) and never counts a connection to it. The
+  cost: a main request to core-service also holds the check until it ends - by its own completion.
+  An `auth_request` whose target it cannot place makes the deploy refuse rather than guess. The
+  test holds a POST inside its `auth_request` across a release and asserts the check waits for it
+  and the POST is answered `200` (without the exclusion it was a `502`).
+- **No idle upstream connection exists to be counted: no list declares an `upstream` block**
+  (2026-11-01, found in CI after the review; by construction since 2026-11-02). Since nginx 1.29.7
+  an `upstream` block caches up to 32 idle connections per worker BY DEFAULT. An idle cached
+  connection is ESTABLISHED and carries nothing - in `/proc` it is a request that has chosen. CI
+  caught 13 of them pairing a POST still in its `auth_request`, which then answered `502`, one run in
+  two (the old worker closes them when its graceful shutdown begins, and the read raced that close).
+  The `upstream` lists answered it with `keepalive 0` in every http block; the target lists have no
+  block at all, and a variable `proxy_pass` caches nothing (measured on 2026-11-01: no idle `:3001`
+  in the same dump), so every upstream connection of an old worker belongs to a request in flight.
+  The cost is a connection per proxied request between the frontend and the services, as before.
+  `deploy-rolling.test.sh` asserts that the real frontend image and the running frontend declare no
+  `upstream` block in their own `nginx -T` - not by counting sockets after a request: such a count
+  also sees the upstream nginx is in the middle of closing (measured: 4, gone a second later), which
+  no read tells from a cached one without a clock.
+- **What it does not prove.** A request whose upstream FAILS after it was paired may choose again
+  from the old list: `proxy_next_upstream` (an idempotent method only, nginx's own rule) or an
+  `error_page` that proxies elsewhere (the frontend's all answer from nginx itself). That needs a
+  replica the deploy has NOT touched to fail on its own, and lands on the retiring one only by that
+  coincidence. It also assumes one upstream at a time per client connection (no `mirror`, no SSI in
+  the frontend's configuration). Both are said, not waited for.
+- **What it cannot read is unknown, never clean**: a table with no header prints `?`, a failed
+  `docker exec` is a read that did not happen, and an old worker whose fd list reads EMPTY (a live
+  worker always holds its listening socket) makes the read `?`. The cost of that rule, said: an old
+  worker still alive with NO socket at all (shutting down, its listening socket closed, held only by
+  a timer) also reads `?`, so the check never holds while it lives; if it outlives
+  `ROLLING_ROTATION_READS` (10 minutes) the deploy fails with the old replica still serving - safe,
+  never a 502.
+- **The read runs as the workers' own uid** (`docker exec -u`, the uid read from
+  `/proc/<worker>/status` before the reload). Found while fixing the review (2026-11-01): the first
+  version read `/proc/<pid>/fd` as root, which for another user's process needs `CAP_SYS_PTRACE`, which
+  an exec does not have - every fd list came back empty, no old worker ever showed a connection, and
+  the check held VACUOUSLY on every deploy (the measured 0-in-1692 came from the take-out and the
+  queue read, not from it). nginx keeps its workers dumpable, so their own uid reads them with no
+  added capability.
+
+**What the reload does to WebSockets and to the edge.** Nothing is cut by a reload, at either nginx:
+a WebSocket stays on the old worker and on the replica it was opened to. It ends only when that
+replica is retired - the gateway's, or the frontend's for the edge's streams - which is the drop the
+list below already names. The edge's own end-of-deploy reload (its `nginx.conf` from the checkout)
+reads the same `targets/edge.conf`, so it changes nothing about which frontend is chosen.
+
+**What "out of rotation" could not be, measured on Docker 29 (2026-11-01):**
+
+- **Docker's DNS.** It names a container for as long as it runs: an UNHEALTHY container and a PAUSED
+  one are both still returned, so a "drain" health state would change nothing a proxy sees.
+- **`docker network disconnect`.** It removes the address the requests in flight are answered on.
+- **A retry at nginx** (`proxy_next_upstream non_idempotent`): it would replay a POST that WAS
+  processed after any reset. The fix keeps nginx's rule and removes the reset.
+- **A netfilter rule in the replica's own namespace** (the first version of this fix): sound, but a
+  helper container, a ~450 MB image and a firewall rule on the shared host. The owner chose the
+  replica lists instead (2026-11-01).
+
+**Measured on the fixture, whose API is busy for 1.5 s when `SIGTERM` arrives** (it makes the reset a
+certainty instead of a 1-in-30 race), concurrency 12: with the old replica kept in the list while it
+stops, `502 x6` and one `ECONNRESET` (at the edge, the frontend's own queue) in 1540 POSTs; with
+steps 3-4, 0 failures in 1692 and the longest request 172 ms. The ~2 s stall a proxy used to spend on
+a retired replica's cached address is gone with the DNS rotation.
+
+**A reload costs no window, because a target is a variable and not an `upstream { ... resolve }`**
+(2026-11-02, the one `transport:ECONNRESET` of main-era run 41368923993, 1 self-test run in 58). The
+lists were `upstream` blocks of `resolve` servers until then, and nginx does NOT resolve a `resolve`
+server when it loads a list: the new worker starts with that server's peers EMPTY and fills them from
+its own asynchronous DNS query, carrying addresses over a reload only for a name the zone already
+resolved. The take-out renamed the service's server to a container and the restore renamed it back,
+so after each of those reloads the new worker refused what it took before its resolver answered (`no
+live upstreams`: a closed connection at the edge, a `502` at the frontend). Measured in isolation
+(production's edge image, its own `stream` block, `connection: close` POSTs at concurrency 12): 252
+resets in 103 895 POSTs across 300 renaming edge reloads, 0 across 300 that kept the name, 0 across 300
+of a static `server`. A variable target has no peer list to start empty: it is a DNS name the
+REQUEST waits on the resolver for - the service's at rest, the new replica's container name during a
+take-out (0 failures in 257 914 POSTs across 300 edge reloads alternating a name and an address, the
+first form built). The take-out names the container and not its address since the review of
+2026-11-02: an address goes stale under a deploy killed before its trap ran or a replica restarted in
+place, and a stale address is either a connect timeout or, once Docker hands it to another container,
+a misroute - chat-gateway and frontend-ssr both listen on `:3000`, and the frontend sends
+`X-Internal-Token` to both. A name follows a restart, and answers NXDOMAIN once its container is gone.
+Rejected on the way, each for a reason that still holds:
+
+- a `server` WITHOUT `resolve` for the container during a take-out: resolved when the file is loaded,
+  so the take-out has no window, but the restore still renames back to a `resolve` server;
+- keeping the service's name as `server <service>:<port> resolve down;` so its addresses carry over
+  to the restore: they carry over STALE - the stopped replica's address, and a connection to a removed
+  container's address on a Docker bridge is not refused, it times out, so every request choosing it
+  stalls `proxy_connect_timeout` (2 s): a failure turned into a stall, healed by a clock;
+- a `backup` line naming the new replica by address during the restore: a fallback path, and its
+  removal by a later reload is safe only once the resolver has answered - the same unprovable wait;
+- waiting `ROLLING_RESOLVER_TTL_SECONDS` before the restore: a clock.
+
+**The test that closes it** is `deploy-rolling.test.sh`'s case 2b: each proxy reloaded 150 times
+between its take-out list and its resting one (rendered by the library itself), under 12 concurrent
+POSTers, every POST asserted `200`. The frontend's reloads are a real old -> new switch: a second API
+replica runs beside the first, so the resting list reaches both and the take-out names the new one
+alone, and the case ends as a release does - the old replica retired by the library, the list at rest.
+Run on the `upstream` lists (2026-11-02), it failed: 7 `transport:ECONNRESET` in 23 068 POSTs across
+its 300 reloads. On the targets with an address for the take-out: 0 failures in 33 496 POSTs across
+300. On the targets with a container name and the API switch: 0 failures in 37 018 POSTs across
+300. Case 2 alone crosses four such reloads, which is why the window showed once in 58 runs.
+
+**The load cases run the fixture frontend, not the real image** - a gap, said. The real
+`Dockerfile.frontend` needs every service it routes to; the fixture (`rolling-fixture/frontend.conf`)
+carries what decides a reload's behaviour: the `auth_request` every API location makes before choosing
+its target, a variable target read from the mounted list, the same `resolver`, `resolver_timeout`,
+`proxy_connect_timeout` and `proxy_next_upstream` lines, which `deploy-replace.test.sh` holds equal in
+both. The real image is exercised statically under each list form: `nginx -t` and `nginx -T` with a
+take-out and a resting list mounted (`deploy-rolling.test.sh` case 0), its `auth_request` subrequests
+read as core-service's port, and every routed location parsed (`auth-request-coverage.test.mjs`).
+
+**On a Windows workstation, a `transport:ConnectionRefused` with no nginx line is the host's port,
+not a proxy.** A second local run on the targets failed case 2b on ONE `ConnectionRefused` in 22 134
+POSTs, and neither proxy logged a `[warn]` or `[error]` - every refusal nginx makes (`connect()
+failed`, `no live upstreams`) logs one, so the SYN never reached the edge. The control, the same
+client at concurrency 12 against a static `stream` edge and `http` frontend published the same way,
+with `docker exec` running beside it and NO reload: 4 554 `ConnectionRefused` in 536 531 POSTs in nine
+minutes. Windows answers a SYN its full accept queue cannot take with a reset, which the client reads
+as a refusal; Linux, where CI runs, drops the SYN and the client retransmits. The assertion stays
+strict - a listener an nginx reload closed would fail the same way, and on Linux nothing else does -
+so on Windows a lone `ConnectionRefused` with no proxy line is re-run, and anything else is read.
+
+**What a variable target costs, said.** A request waits for a DNS answer once per `valid=2s` per
+worker (Docker's resolver answers in well under a millisecond). A resolver that does not answer FAILS
+the request after `resolver_timeout 2s`, set beside both resolvers (`deploy-replace.test.sh` holds it):
+nginx's default is 30 s, which would have held every new connection to the site that long. That is a
+regression against both earlier designs, said: the edge before 2026-11-01 failed such a connection
+after the same 2 s, but 1.6.2's `upstream` lists did not fail it at all - a `resolve` server keeps
+serving the last addresses it knew while its resolver is silent. Nothing in this estate has shown a
+silent Docker resolver; the daily `resolver` job of `scheduled.yml` (`resolver-report.sh`) counts the
+edge's and the frontend's `could not be resolved` lines and goes red on any that no design explains -
+a timeout or server failure, an overlap service or a take-out's container name not found - so the
+day it happens is read rather than inferred. An exclusive service's own gap (media-service and
+call-service recreated in place) is printed with its count. And the URI, Host, keep-alive and
+WebSocket behaviour of every location is unchanged: each `proxy_pass` was already a variable
+(`set $upstream_x <service>; proxy_pass http://$upstream_x...;`, the value naming the `upstream` group),
+so nginx already passed the URI the variable form passes, every proxied location already sets
+`Host $host` and the WebSocket upgrade itself, and no list caches a connection. The only header that
+moves is the default `Host` of the two internal `auth_request` locations, which set none: it was
+`core-service`, it is now `core-service:3012` (a container's name during a take-out), and no service
+reads it.
 
 **Every service declares how it may be replaced**, as the label `canari.deploy.replace`, and
 `infrastructure/lib/replace-modes.py` refuses the compose file BEFORE anything changes when a
@@ -288,7 +690,7 @@ declaration cannot hold:
 
 | Mode        | Meaning                                         | Services                                                                                            | What it requires                                             |
 | ----------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `overlap`   | two replicas at once, as above                  | gateway, chat-delivery, core, social, frontend-ssr, frontend                                        | no host port, no volume, a healthcheck with `start_interval` |
+| `overlap`   | two replicas at once, as above                  | gateway, chat-delivery, core, social, frontend-ssr, frontend                                        | no host port, no writable volume, a healthcheck with `start_interval`, a `canari.deploy.rotation` |
 | `exclusive` | recreated in place - a short gap remains        | media-service (its metadata index is one JSON file on `media_meta`), call-service (rooms in memory) | -                                                            |
 | `pinned`    | a third-party image, never changed by a release | postgres, redis, garage, adminer, `edge`                                                            | not an image this repository builds                          |
 
@@ -296,11 +698,18 @@ declaration cannot hold:
 `127.0.0.1:8081`, so the frontend lost its port and a new `edge` service holds it: a pinned nginx in
 `stream` (L4) mode whose configuration is `infrastructure/edge/nginx.conf`, mounted as a DIRECTORY
 (a file mount keeps the inode `git reset --hard` replaces) and reloaded in place after each deploy. It
-resolves `frontend` through Docker's DNS at 2 s and fails a refused connect over to the next address.
-The frontend's own nginx does the same for the services behind it: `resolver valid=2s`,
-`proxy_connect_timeout 2s`, `proxy_next_upstream error timeout`. A refused connect is retried even for
-a POST, because nothing was sent. **These three numbers must agree with `rolling.sh`**, and
-`deploy-replace.test.sh` fails when they do not.
+sends a connection to `$target_frontend`, set by `edge/targets/edge.conf`, the list above, which lives
+in that same directory so the edge needed no new mount; the frontend mounts `edge/targets` read-only
+as `/etc/nginx/targets`. The lists are never tracked (`edge/targets/.gitignore`), so `git reset --hard`
+leaves the ones the running proxies were reloaded on. `edge/rotation/` beside it holds the `upstream`
+lists of 1.6.2, which this library never touches: a 1.6.2 frontend reads them on the first deploy
+carrying the targets, and 1.6.2's library rewrites them on a rollback
+([legacy-compatibility](legacy-compatibility.md)). A workstation or e2e stack, with no such deploy,
+reads the list baked in the frontend image: every service by its DNS name, as before. Both nginx keep
+`proxy_connect_timeout 2s` and `proxy_next_upstream` for a connect refused by a replica that DIED:
+nothing was sent, so even a POST is safe to hand on. `deploy-replace.test.sh` asserts that the lists
+are written where both proxies read them, and that each routed service is proxied to through its
+target, on the port its label declares, and through nothing else.
 
 **The proof is a test that sends throughout** (`.github/scripts/tests/deploy-rolling.test.sh`, a
 fixture estate of the same shape): ~1500 POSTs at concurrency 12 across a release, ALL `200`, on
@@ -309,15 +718,56 @@ shows hundreds of failures. A minute-boundary cron firing in both replicas was t
 race found: the form reminder now claims its row with a conditional `UPDATE`
 (`forms-reminder.scheduler.spec.ts` fails without it).
 
+**The reload's own read of the workers was a race, and it was a deploy defect** (found as a CI flake
+on PR #2939, 2026-11-02: `the reloads could not all be made (failed, 299 made)`, with ZERO failed
+POSTs, so no request was lost). `rotation_reload` learns the workers' uid, and the list of workers it
+will compare against, from the proxy BEFORE it signals the reload. It listed `/proc` and read the
+uid afterwards from the FIRST worker listed - and under load the first one can be a worker the
+previous reload retired, which exits on its own clock between the listing and that read. The read came
+back empty and the deploy stopped with `had no worker to read before the reload`
+(`awk: /proc/<pid>/status: No such file or directory` is its trace in the log). Production runs two
+reloads per replaced service, so a deploy with traffic on it could stop the same way, before stopping
+the old replica (safe: nothing was retired, a re-run passes). `workers` now reads a worker's stat,
+command line and uid together and lists it only if all three read: a worker that is gone is not one.
+Measured against a bare nginx under six looping clients, 30 runs of 300 back-to-back reloads: before,
+283 of 9000 reloads failed (15 of 30 runs); after, 0 of 9000. The same race printed `can't open /proc/<pid>/cmdline` into the
+log (the redirect failed before `2>/dev/null` applied); that noise is gone too.
+
 **What is NOT zero, said rather than hidden:**
 
-- A request can stall up to ~2 s when a proxy still holds the retired replica's address and the
-  connect times out instead of being refused (measured max 2.2 s).
+- **The first deploy carrying the target lists** still runs the OLD frontend image (1.6.2's, on its
+  `upstream` lists), which reads no target list, while the five services behind it are replaced:
+  each is drained the old way (the warning above names it), so that one deploy keeps the reset window
+  the DNS drain had - and so does a rollback to a release older than the targets. The edge is on its
+  targets from that deploy's seed on (its `nginx.conf` comes from the checkout). From the next deploy
+  on, every overlap service leaves rotation before it stops. `deploy-rolling.test.sh` runs that switch
+  from an estate deployed by 1.6.2's own library, and asserts it is drained and not refused. A
+  removal date for that path is in [legacy-compatibility](legacy-compatibility.md). When the test sees
+  a failed POST, it prints the client's failure times and the proxies' warnings, so a failure names
+  its cause in the log itself.
 - A WebSocket on the retired gateway or frontend is closed, and the client reconnects - a drop, not
   an error the member sees.
 - media-service and call-service are `exclusive`: their few seconds of gap remain
   ([backlog](backlog.md)).
-- A Node-to-Node call landing in a peer's drain window can still be refused (not observed).
+- **The lists govern the two nginx, and nothing else: every service-to-service call still goes
+  around them** (enumerated in both compose files, 2026-11-01 second review). A caller resolves its
+  peer through Docker's DNS, which names the retiring replica until it stops:
+
+  | Caller | Peer (overlap) | Variables |
+  | --- | --- | --- |
+  | chat-gateway | chat-delivery-service | `DELIVERY_SERVICE_URL` - the message-send path itself |
+  | chat-gateway | social-service | `SOCIAL_SERVICE_URL` |
+  | core-service | social-service | `FORM_URL`, `FORM_SERVICE_URL` |
+  | social-service | core-service | `USER_SERVICE_URL`, `PAYMENT_SERVICE_URL` |
+  | social-service | chat-delivery-service | `DELIVERY_INTERNAL_URL` |
+  | frontend-ssr | core-service, social-service, chat-delivery-service | `CORE_SERVICE_URL`, `SOCIAL_SERVICE_URL`, `DELIVERY_SERVICE_URL` |
+
+  (media-service, reached by three of them, is `exclusive`: its gap is the one above.) For these
+  callers the retiring replica never leaves rotation, so `wait_unqueued`'s two clean reads of its
+  accept queue are a CLOCK, not a proof: a call can land in the queue after them and be reset when
+  the listener closes - a POST among them answered with an error (not observed). That is a gap, owned
+  in the queue: [backlog](backlog.d/p2-service-to-service-calls-bypass-the-rotation.md). Every claim
+  of "no 502" in this section is about requests that go through nginx.
 - **The transition deploy** - the first one carrying this - moves the port from the frontend to the
   edge: about one second with nothing on `8081`. And compose 2.26 hashes a service with `depends_on`
   differently with and without `--no-deps`, so the deploy ALWAYS uses `--no-deps`; a manual `up -d`
@@ -332,6 +782,72 @@ race found: the form reminder now claims its row with a conditional `UPDATE`
 - The `*/5` Le Cercle webhook retry (`retryDueWebhookDeliveries`) does not claim its rows, so both
   replicas can retry in the overlap. Harmless: Le Cercle inserts with `ON CONFLICT(payment_intent_id)`,
   so no member is credited twice; only a counter update and a `[CERCLE]` line are doubled.
+
+#### A rollback across the replica lists
+
+**A rollback to 1.6.2 runs 1.6.2's library, which knows the `upstream` lists and not the targets**
+(2026-11-02). Its `git reset --hard` puts 1.6.2's `edge/nginx.conf` back first, which reads
+`edge/rotation/edge.conf`, so the edge is handled by that library as it always was. The frontend it
+finds is THIS release's, and that library classifies a proxy by its `nginx -T`: one that names a
+`/rotation/` path must include its `rotation/frontend.conf` with its render id, or the deploy stops;
+one that names none and names every service by `<service>:<port>` is a frontend from before its
+lists, drained by DNS and a 3 s wait. So this release's frontend mounts its list at
+`/etc/nginx/targets`, and its configuration names no `rotation` directory anywhere: at rest it names
+every service by DNS, and 1.6.2's library drains it as one from before its lists - a `::warning`, no
+refusal. `deploy-rolling.test.sh` runs that library (frozen as `rolling-fixture/rolling-upstream-lists.sh`,
+with 1.6.2's edge configuration and fixture frontend beside it) against the real frontend image's
+`nginx -T`, and then rolls a live fixture estate back with it and forward again.
+
+**Two costs of that rollback, said.** It REFUSES while `targets/frontend.conf` still names a
+replica - a take-out left behind by a deploy killed before its trap ran: that line is not
+`<service>:<port>`, so 1.6.2's library cannot call the frontend one from before its lists, and stops
+(`::error`, nothing replaced). The way out is not by hand: re-run the CURRENT release's deploy, whose
+`rotation_seed` puts every list back at rest and reloads every proxy, then roll back; or, failing that,
+write the file at rest (`rotation_seed`, sourcing this library) before re-running 1.6.2's. And it
+costs ONE site-wide reset window of a few milliseconds: 1.6.2's `edge/nginx.conf` is an `upstream`
+list, and the reload onto it starts the edge's worker with a `resolve` server it has never resolved -
+the very window this section closes, crossed once, at that reload.
+
+**Re-running an older release's deploy runs THAT release's `rolling.sh`**, and a release from before
+2026-11-01 never rewrites the lists. Had the lists rested naming containers, that rollback would
+remove the containers they name - the frontend's list pointing at a gateway that no longer exists,
+the edge's at a frontend that no longer exists - and answer `502` until something rewrote them. They
+rest naming each service by DNS instead, with `valid=2s`, which is exactly what the older library
+expects of the nginx in front: it starts the new replica, waits 3 s for every nginx to re-resolve, and
+retires the old one, as it always did (its reset window included). The older compose file drops the
+frontend's list mount and the older `edge/nginx.conf` reads no list, so after the rollback nothing
+reads them; the untracked files stay, and the next deploy carrying the lists re-seeds them.
+
+The rule is an invariant about what nginx RUNS, not about a file: **no deploy ends with a proxy
+running a list that names a replica** - finished, failed (step 6), or interrupted. Three mechanisms
+hold it, none of them a human procedure (2026-11-01 second review):
+
+- **A failure between take-out and restore** restores the service in flight
+  (`rotation_restore_in_flight`), whose reload is verified like any other. That restore ALWAYS
+  reloads (`rotation_restore <service> force`, 2026-11-01 third review). A failed restore has already
+  written the file at rest, so a retry that reloaded only on a changed file would reload nothing and
+  report success while nginx still named the container.
+- **A deploy that ends there anyway** - `set -e`, a final restore whose reload failed, a cancelled
+  job, a dropped session - runs `deploy-environment.sh`'s EXIT trap, which does the same and says so
+  at `::error`. `HUP`, `INT` and `TERM` are turned into exits so that trap runs for them too, and both
+  serve workflows `exec` the script, so the runner's signal on a cancelled job reaches it rather than
+  a parent shell. A `SIGKILL` runs nothing.
+- **What none of that reached** - a retry that failed too, or a `SIGKILL` - is corrected first by the
+  next deploy of this code: `rotation_seed` reloads EVERY running proxy, its list changed or not,
+  because a file at rest proves nothing about what nginx loaded. The one window left is a rollback
+  started straight after such a `SIGKILL` or double failure, before any newer deploy. Both are logged
+  at `::error` when they happen, naming the consequence.
+
+`deploy-rolling.test.sh` puts the frontend on a container's name with the file at rest and asserts
+the next seed reloads it (with the old conditional reload, it did not), then rolls the fixture back with
+the library main shipped before the lists (frozen as `rolling-fixture/rolling-pre-rotation.sh`) and
+asserts the estate answers on the older version with no edge reload, and `deploy-replace.test.sh`
+holds `ROLLING_RESOLVER_TTL_SECONDS` equal to that library's wait and to every `valid=`. It also
+fails a restore's reload once and asserts the exit trap reloads again with the file already at rest,
+skips a replica that is not running in a plain reload (and refuses it in a take-out), and checks that
+both serve workflows `exec` the deploy. **The frozen `rolling-fixture/` libraries still carry the `printf | grep -q` defect that `pipefail-early-reader.test.mjs` forbids everywhere else, so a rollback to the releases they stand for would run it against a large `nginx -T` dump; the guard exempts them because editing them would falsify the rollback test.**
+
+**The frozen `rolling-fixture/` libraries still carry the `printf | grep -q` defect that `pipefail-early-reader.test.mjs` forbids everywhere else, so a rollback to the releases they stand for would run it against a large `nginx -T` dump; the guard exempts them because editing them would falsify the rollback test.**
 
 #### The edge is ready when it listens, not when it runs
 
@@ -663,7 +1179,7 @@ landing on two unrelated commits with nothing comparing them; and each chain res
 itself. All three are the same defect - a decision taken more than once, and a precondition
 asserted nowhere.
 
-#### The five gates, and the one that makes a lag impossible
+#### The six gates, and the one that makes a lag impossible
 
 `.github/scripts/release-preflight.sh` runs before the bump, so a refusal refuses the deployment,
 both store uploads and the version bump itself:
@@ -675,6 +1191,7 @@ both store uploads and the version bump itself:
 | 3   | Did `CI passed` conclude **success** on THAT commit? | "if the tests are green" was written nowhere at all, and an ABSENT check is not a passing one         |
 | 4   | Has the dev estate already served it? (stable only)  | **production cannot be ahead of dev**                                                                 |
 | 5   | Do the App Store release notes name THIS version?    | Apple refuses a submission without them, and refusing at the END of a release costs the whole release |
+| 6   | Does it ship a held migration the owner has not approved? | the deploy would refuse it after the bump and the store builds ([held](#a-migration-the-owner-must-approve-is-held-2026-11-01)) |
 
 **Gate 4 is why this file exists** (user, 2026-09-03: _"Je ne veux pas un detecteur de retard, je ne
 veux pas que ca soit possible"_). It compares the released commit against the `dev-deployed` marker
@@ -1142,7 +1659,7 @@ gh release create vX.Y.Z --target $(git rev-parse HEAD)      <- the human gestur
   |
   '- Release (release.yml), ONE run
        |
-       |- preflight   five gates; a refusal ends it here, having moved nothing
+       |- preflight   six gates; a refusal ends it here, having moved nothing
        |- bump        writes the version into 18 files, commits, pushes to release/vX.Y.Z, outputs the SHA
        |- land        (parallel, blocks nothing) carries the version / the changelog onto main
        |
@@ -1235,6 +1752,32 @@ a companion object, a plugin command missing from its ACL: none of these are vis
 `cargo clippy`, `bun run check` or any gate that runs locally. On Android specifically, the release
 build (`:app:compileUniversalReleaseKotlin`) is the first real Kotlin compile — a debug build does
 not exercise it.
+
+### A pull request compiles the iOS app, unsigned (`compile-ios-app`, 2026-11-04)
+
+Dispatching `ios.yml` by hand per branch was a human queue, and a Swift error in `gen/apple` or a
+Swift plugin therefore first failed on the pre-release, after the merge. `ci.yml` now carries
+`compile-ios-app`: a macOS job that builds the app, both extensions and the Swift packages with
+`xcodebuild build` and `CODE_SIGNING_ALLOWED=NO`, then runs `ios-extensions.sh` on the built `.app`.
+It is a **need of `CI passed`**, so a Swift error fails the merge gate.
+
+- **No fifth workflow, and not a second call of `ios.yml`.** That job needs signing secrets and
+  `contents: write`, which a pull request (Dependabot's above all) must not have. The two share
+  `.github/scripts/ios-libapp.sh` (the Rust static library staging, extracted from `ios.yml`) and
+  `ios-extensions.sh`; the whole pull-request account is `.github/scripts/ios-app-compile.sh`.
+- **No secret.** A stub `GoogleService-Info.plist` (marker-checked, a real one is never
+  overwritten) and placeholder `VITE_*` origins stand in; no archive, no export, no upload.
+- **Path filter, so macOS minutes are paid only for Apple code.** `changes` emits `ios_app` when a
+  changed file is under `gen/apple/`, under `plugins|patches/<name>/ios/`, any `.swift .m .mm .h`
+  under `frontend/src-tauri`, `src-tauri/Cargo.toml`, `build.rs`, `tauri.conf.json` (and a
+  `tauri.ios.conf.json` should one appear; owner, 2026-11-04), `ios.yml`, the three iOS scripts or
+  `rust-toolchain.toml` - or when `ci.yml` itself changed (`run_all`). Otherwise the job is
+  `skipped`, which `CI passed` accepts. **`Cargo.lock` and the crate's `src/*.rs` deliberately do
+  not trigger it** (a lock-only Dependabot bump would cost a macOS run each; `test-rust` covers the
+  host, the release the iOS target) - that is the known gap.
+- **What it does not replace:** signing, the icon tint, the archive-only assertions and TestFlight
+  stay in `ios.yml`. `swift-syntax.sh` (parse only) still runs in `test-ci-scripts`.
+- Shape pinned by `.github/scripts/tests/ios-compile-job.test.mjs`.
 
 ### A green run is not proof that *your* file compiled
 
@@ -1557,6 +2100,14 @@ lock instead - `cargo update -p serde_with --precise 3.21.0` also added `bs58` a
 `windows-*` crates, a resolver-wide change on the one target this repository can only verify by
 compiling. The rule is in [durable-rules](durable-rules.md).
 
+**A group is a VERSION-update group unless it says `applies-to: security-updates`** (measured
+2026-10-30, #2750-#2762). The `nestjs` group never reached the multer advisory: Dependabot opened one
+pull request per `@nestjs/*` package per service, twelve in all, each editing adjacent lines of the
+same `package.json` and `bun.lock`. Each merge turned its siblings `DIRTY`, and Dependabot's own
+rebase had not caught up a day later. The backend block now has a `nestjs-security` group, so the
+advisory arrives as one pull request per service. A `DIRTY` Dependabot pull request is rebased by
+asking Dependabot for ONE (`@dependabot rebase` on that pull request), never by a sweep.
+
 ### Native and identity-provider manifests (2026-10-23)
 
 A dependency audit found three committed manifest trees nothing watched. What is declared now, and
@@ -1564,7 +2115,7 @@ what is deliberately not:
 
 | Tree | Dependabot | What gates an update |
 | --- | --- | --- |
-| `frontend/src-tauri/gen/android` (Gradle: AGP in `buildSrc`, Firebase, AndroidX, the wrapper) | `gradle`, its own block | `compile-android-app` (a job of `ci.yml`, since 2026-10-30), which runs `:app:checkArm64DebugAarMetadata`, `:app:processArm64DebugMainManifest` and `:app:compileArm64DebugKotlin`. It had no gate until then, so `ceiling_gate_for_ref` refused every update there and four bumps sat blocked; see below. |
+| `frontend/src-tauri/gen/android` (Gradle: AGP in `buildSrc`, Firebase, AndroidX, the wrapper) | `gradle`, its own block | `compile-android-app` (a job of `ci.yml`, since 2026-10-30), which runs `:app:checkArm64DebugAarMetadata`, `:app:processArm64DebugMainManifest`, `:app:compileArm64DebugKotlin` and (since 2026-11-03) `:app:mergeArm64DebugResources`. It had no gate until then, so `ceiling_gate_for_ref` refused every update there and four bumps sat blocked; see below. |
 | `frontend/src-tauri/android-tests` (the JVM test project) | `gradle`, its own block | `test-android`, which builds and runs it whenever it changes. With `gen/android` above, one of the two Gradle directories the ceiling lets through - an allowlist, so a new Gradle directory starts refused. |
 | `frontend/src-tauri/gen/apple` | **not declared** | The Podfile declares no pod, CocoaPods is not a Dependabot ecosystem, and the `swift` ecosystem reads `Package.swift` while Firebase is pinned in `project.pbxproj` + `Package.resolved` of an Xcode project. `firebase-ios-sdk` moves by hand. |
 | `infrastructure/authentik/compose.yml` | `docker-compose`, its own block | The ceiling's datastore arm, against **this file's** PostgreSQL major. |
@@ -1753,9 +2304,10 @@ ICE reaches `Connected`, a data-channel message crosses (DTLS and SCTP) and an o
 (SRTP). It runs in the `Call Service (SFU)` job of the Rust matrix whenever `apps/call-service/` changes,
 which is every Dependabot cargo bump of it, in about 2 s once compiled. **What it does not cover:** the
 SFU's forwarding logic (`main.rs` is a binary, so the test links the library directly), a browser peer,
-renegotiation, and any TURN provider but the library's own - so the by-hand call in
-[calls](frontend/modules/calls.md#the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27)
-stays owed before calling is revived. The `webrtc` 0.20 major is not refused by name any more: it does
+renegotiation, and any TURN provider but the library's own. **Those three are covered since
+2026-11-01 by `test-call-service-e2e`** (D3): the real binary, two Chromes, coturn, encrypted audio
+both ways ([call-service](services/call-service.md#the-end-to-end-call-in-ci)); video through the SFU
+stays owed ([calls](frontend/modules/calls.md#the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27)). The `webrtc` 0.20 major is not refused by name any more: it does
 not compile against this SFU, which the suite sees on its own, and the port meets this test.
 
 **`openmls*`, `tls_codec*`, `hpke-rs*` and `libcrux*` left on 2026-09-15, and that one could not be
@@ -2246,6 +2798,9 @@ are builder stages and the local compose file, which reach no estate.
   half is reported, so the half that moved would never retire. **The retirement now also reads each
   purl-scoped entry as `id package version`** (`image-scan.sh --allowlist-purls`, compared with a YAML
   parse by `image-scan-allowlist.test.mjs`) and fails on a triple the raw scan no longer reports.
+- **2026-11-06, the image scan red on `CVE-2026-115506`**, a fourth libexpat 2.9.0-r0 advisory, on every pull request. Upstream had rebuilt every nginx Alpine tag the evening before (`1.31.8-alpine` is now `b2f80f8f8814`), and that build carries libexpat 2.10.0-r0, curl 8.23.0-r0 and brotli-libs 1.2.1-r0 (read with `apk list -I` in the image; `stable-alpine` too). **The pin moved** in the production, dev and rolling-fixture compose files, and the three libexpat entries were deleted with it; the curl and brotli entries stay for adminer and postgres.
+- **2026-11-05, the image scan red on `CVE-2026-109518`**, Debian's apt and libapt-pkg7.0 3.0.3 (HIGH, fixed in 3.0.4), in `goauthentik/server:2026.8.5`, still the newest authentik release, so there was no pin to move. apt runs while upstream builds the image; at runtime only the entrypoint's `prepare_debug` branch calls it (the debugger setting or `test-all`), which this deployment does not enable, and the image runs as user 1000. **Allowlisted by purl** with the owner's approval (the tool's classifier refused the lead's own edit as a weakening), retiring with the image.
+- **2026-11-03, the image scan red on `CVE-2026-117610` and `CVE-2026-118370`**, libexpat 2.9.0-r0 (HIGH, fixed in Alpine's 2.10.0-r0), in `nginx:1.31.8-alpine` and `nginx:stable-alpine`. The pinned digest (built 2026-10-28) is still the newest plain `1.31-alpine`; the `-perl` rebuild of 2026-10-31 and the floating heads carry 2.9.0-r0 too, so there was no digest to move to: **allowlisted by purl** (`pkg:apk/alpine/libexpat@2.9.0-r0`), reached only through fontconfig (the optional `image_filter` module), retiring with the pins.
 - **2026-10-28, main's CI red again: `CVE-2026-109383` and `CVE-2026-87018`**, two more advisories on npm's bundled `undici` 6.28.0 (fixed in 6.29.1). `node:24-alpine` was re-pulled that day (24.22.1, npm 11.19.1) and still carries 6.28.0, so there was no digest to move to: **allowlisted by purl** (`pkg:npm/undici@6.28.0`), retiring with the image.
 
 **2026-10-26, the nightly `Scheduled` run red again: `CVE-2026-92392`**, curl 8.22.0-r0 (fixed in Alpine's 8.23.0-r0), in `adminer`, both nginx pins and `postgres:18-alpine`. The four floating heads were rescanned that day: `postgres:18-alpine` had a newer digest than the pin and `nginx:stable-alpine` had moved, but both still carried 8.22.0-r0, so there was no patched digest. **Allowlisted by purl** (`curl` and `libcurl`, 8.22.0-r0); it retires with the pins, and the backlog item for the brotli pins now owes both fixes ([backlog](backlog.md#p3---bump-the-four-alpine-pins-when-upstream-rebuilds-with-brotli-121-2026-10-24)).
@@ -2255,7 +2810,7 @@ are builder stages and the local compose file, which reach no estate.
 Rust ones. A `USER` change on production images needs its volumes' ownership verified on a running
 estate, so it is a backlog item ([backlog](backlog.md#p3---the-eight-service-images-run-as-root-trivy-ds-0002-measured-2026-10-23)), not a gate that would be red from day one.
 
-### A `code_scanning` rule on the ruleset: analysed 2026-10-23, NOT applied
+### A `code_scanning` rule on the ruleset: analysed 2026-10-23, APPLIED (2026-10-23)
 
 **The question.** Ruleset `22152902` requires one check, `CI passed`. The `CodeQL` check-run (the
 code scanning results of the `Security / CodeQL Security Analysis` upload) is advisory: it fails on a
@@ -2288,53 +2843,14 @@ bypass actor with `bypass_mode: always`, and auto-merge merges as whoever armed 
 binds exactly as far as `CI passed` already does for those merges, no further. And the analysis
 takes 2-4 minutes, well inside the CI run, so "in progress" costs no extra wall-clock time.
 
-**Recommendation: apply it.** No pull request this repository produces today would be blocked for a
-missing analysis, and it turns the one security verdict still advisory into a binding one. **Its
-precondition must stay true**: CodeQL must never move behind `changes` or a `paths` filter - that
-would make every documentation pull request wait on an analysis that never starts. Apply it while
-watching the first fork pull request, if one ever comes. The decision is the user's
-([owed](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)).
-
-`PUT` replaces the whole ruleset, so the body carries every current rule plus the new one (read back
-2026-10-23 with `gh api repos/emse-students/canari/rulesets/22152902`; read it again before applying):
-
-```sh
-gh api -X PUT repos/emse-students/canari/rulesets/22152902 --input - <<'JSON'
-{
-  "name": "main",
-  "target": "branch",
-  "enforcement": "active",
-  "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] } },
-  "bypass_actors": [
-    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" },
-    { "actor_id": 4791068, "actor_type": "Integration", "bypass_mode": "always" }
-  ],
-  "rules": [
-    { "type": "deletion" },
-    { "type": "non_fast_forward" },
-    { "type": "pull_request", "parameters": {
-        "allowed_merge_methods": ["squash", "merge", "rebase"],
-        "dismiss_stale_reviews_on_push": false,
-        "dismissal_restriction": { "allowed_actors": [], "enabled": false },
-        "require_code_owner_review": false,
-        "require_extra_approval_for_unattributed_changes": false,
-        "require_last_push_approval": false,
-        "required_approving_review_count": 0,
-        "required_review_thread_resolution": false,
-        "required_reviewers": [] } },
-    { "type": "required_status_checks", "parameters": {
-        "do_not_enforce_on_create": false,
-        "required_status_checks": [{ "context": "CI passed" }],
-        "strict_required_status_checks_policy": false } },
-    { "type": "code_scanning", "parameters": {
-        "code_scanning_tools": [
-          { "tool": "CodeQL", "alerts_threshold": "errors", "security_alerts_threshold": "high_or_higher" } ] } }
-  ]
-}
-JSON
-```
-
-Undoing it is the same `PUT` without the last rule.
+**Decision: applied on 2026-10-23.** Ruleset `22152902` carries the `code_scanning` rule (tool `CodeQL`,
+`alerts_threshold: errors`, `security_alerts_threshold: high_or_higher`), read back from the ruleset
+itself. No pull request this repository produces was found to be blocked for a missing analysis, and
+it turned the one security verdict that was advisory into a binding one. **Its precondition must stay
+true**: CodeQL must never move behind `changes` or a `paths` filter - that would make every
+documentation pull request wait on an analysis that never starts. Watch the first fork pull request,
+if one ever comes. Undoing it is a `PUT` of the ruleset without that rule (`PUT` replaces the whole
+ruleset, so read it first with `gh api repos/emse-students/canari/rulesets/22152902`).
 
 ### A Tauri plugin bump is two halves, and the crate half can be a runtime bump (2026-10-08)
 

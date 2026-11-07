@@ -1,7 +1,7 @@
 # Association permissions
 
-> What each of the twelve `AssociationPermissionFlag` bits actually gates, measured from its call
-> sites on 2026-08-26 - not from its comment. A flag with no call site is either dead or missing its
+> What each of the thirteen `AssociationPermissionFlag` bits actually gates, measured from its call
+> sites on 2026-08-26 (`EDIT_PROFILE`, bit 12, added 2026-11-02) - not from its comment. A flag with no call site is either dead or missing its
 > check, and the enum cannot tell you which.
 >
 > User-facing version, in French: [docs/user-guide/permissions-association.md](../user-guide/permissions-association.md).
@@ -20,13 +20,30 @@ Three tiers, widest first:
 | Tier | Who | How it is known |
 | --- | --- | --- |
 | Platform administrator | Holds **every** association right, member or not | `X-Global-Admin: true`, set by nginx from the `auth_request` `$global_admin` variable |
-| Cross-association super-admin | `MANAGE_ASSO` in the BDE of a space THIS association reaches; administers the associations its spaces reach, no others (WP6c step 2) | `isAssociationSuperAdminOf(user, association)` -> `holdsBdeFlagOver` -> `spaces/bde.ts` `holdsBdeFlagOverSql` |
+| Cross-association super-admin | `MANAGE_ASSO` in the BDE of a space THIS association reaches; administers the associations its spaces reach, no others (WP6c step 2), and never an institution (owner, 2026-11-02) | `isAssociationSuperAdminOf(user, association)` -> `holdsBdeFlagOver` -> `spaces/bde.ts` `holdsBdeFlagOverSql` |
 | The association's own member | Judged on their `permissions` bitmask alone | `callerHasFlag` |
 
 The middle tier does not inherit everything. `SUPER_ADMIN_EXCLUDED_FLAGS` -
 `MANAGE_PAYOUT_ACCOUNT | POST_AS_ASSO` - is written **once**, on the entity, with the reasoning:
 pointing an association's payouts at a bank account and speaking in its name are not
 administration. The platform administrator keeps both.
+
+**Above all three tiers sits the KIND** (owner, 2026-11-02). `TYPE_EXCLUDED_FLAGS`, beside
+`SUPER_ADMIN_EXCLUDED_FLAGS` on the entity, names the flags an entity of a kind can never grant:
+`list` -> `MANAGE_PAYOUT_ACCOUNT` (a list keeps the shop, but collects only through a payment
+delegation and holds no Lydia account), `institution` -> `MANAGE_PRODUCTS | MANAGE_PAYOUT_ACCOUNT`
+(it sells nothing), `association` -> none. `mayAct` reads it FIRST and refuses such a flag to
+everyone, the platform administrator included (a debug line names the kind); `mayActOnAny` drops
+those entities from the batch; `writablePermissions` strips the bits on write; the client
+`mayActOnAssociation` takes an `assoType` and reads the mirror. `GET :id/manage-permission` returns the
+typed code (`LIST_NO_OWN_LYDIA_ACCOUNT`, `ASSOCIATION_KIND_DOES_NOT_SELL`), which core-service
+forwards in its 403, so a list's Lydia Business creation is refused up front.
+
+**`mayAct(..., { withoutGoverningBde: true })` skips the middle tier.** One rule uses it: accepting,
+rejecting or revoking a payment delegation for the receiver (`receiverActorRole`), which the owner
+reserved to the receiver's OWN `MANAGE_PRODUCTS` holders and the platform admin - a BDE governing the
+receiver does not act for it
+([payments](frontend/modules/payments.md#payment-delegation-parent-association-routing)).
 
 The client mirrors it with `mayActOnAssociation(flag, { isGlobalAdmin, isSuperAdmin,
 memberPermissions })` in `frontend/src/lib/associations/api.ts`, reading the same exclusion set, so
@@ -65,6 +82,35 @@ Proof: `spaces/bde.integration.spec.ts` runs the predicate against PostgreSQL wi
 space, a space with no BDE, and none) and asserts who validates, who is told, each user's reach and
 the list filter; a control with the space test removed fails 10 of its 13 cases.
 
+### Creating an entity: two routes, two tiers
+
+A BDE holding `MANAGE_ASSO` still creates through `POST /associations` (unscoped: there is no
+association yet). That route keeps its own rules. The entity reaches the creator's campus by default,
+the BDE must govern that campus (`AUDIENCE_OUTSIDE_BDE_CAMPUS`), and an institution is a global admin's
+alone.
+
+**The admin create form on `/admin/spaces` (`POST /associations/admin`, owner 2026-11-02) is
+PLATFORM-ADMIN ONLY.** It is the one route that places an entity in spaces the creator does not hold
+and hands it a first admin, both cross-space acts that D24 keeps with global admins. An institution's
+first admin never holds `MANAGE_MEMBERS`: an institution's members are managed by the platform admin
+only (owner, 2026-11-02; `ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY`, the one rule of
+[the grant ceiling](#the-grant-ceiling-who-may-write-which-bits-2026-11-02), judged in the one member
+writer).
+`GlobalAdminGuard` reads `X-Global-Admin` alone, so no BDE flag opens it. The service refuses a
+placement from anyone else as well (`ADMIN_ASSOCIATION_PLATFORM_ADMIN_ONLY`), because a guard on the
+route is not a check in the function.
+
+Both routes call the same `AssociationsService.create`. An entity created there may have **no member
+at all**, which was already the case for every `POST /associations` create (the creator is never
+added). The zero-member audit of 2026-11-02 found nothing that breaks:
+- the last-admin guards run only when a member holding `MANAGE_MEMBERS` is changed;
+- every flag-holder notification with nobody to tell is a no-op;
+- the platform admin passes `mayAct` on every management tab.
+
+The one stop is Lydia onboarding: its Responsable and its cashiers must be members
+(`LYDIA_RESPONSABLE_NOT_A_MEMBER`, `LYDIA_CASHIER_NOT_A_MEMBER`), so that step waits for a first member.
+[admin](frontend/modules/admin.md#the-catalogue-and-the-create-form-adminspaces-owner-2026-11-02)
+
 ### Why it exists
 
 The same question had **four** different answers before this audit, and they disagreed:
@@ -81,24 +127,25 @@ calls it and adds **no second axis of its own**.
 
 ## What each flag gates, measured
 
-54 routes declare a flag through `@SetMetadata(PERM_FLAG_KEY, ...)` +
-`GlobalAdminOrAssociationRoleGuard`. **Six of the twelve flags declare none** - they are enforced
+53 routes declare a flag through `@SetMetadata(PERM_FLAG_KEY, ...)` +
+`GlobalAdminOrAssociationRoleGuard`. **Six of the thirteen flags declare none** - they are enforced
 elsewhere, which is exactly why the audit had to read call sites rather than count decorators.
 
 | Flag | Bit | Guard-declared routes | What it actually gates |
 | --- | --- | --- | --- |
 | `POST_AS_ASSO` | 0 | 0 | `canPostAs` - publishing a post in the association's name (`posts.controller.ts`); **editing and deleting** those posts (`PostsService.assertMayManage`, and the `canManage` field it is served through); and seeing rejected events on its calendar |
 | `PROPOSE_EVENT` | 1 | 2 | `POST :id/events`, `GET :id/link-candidates`; also `PATCH`/`DELETE :id/events/:eventId` inline, and it is the audience of every event-action notification |
-| `MANAGE_MEMBERS` | 2 | 14 | members (add / rename / remove / reorder), the logo, `PATCH :id` itself, tags, cotisants and cotisation tiers, plus the exports. Also whether `listMembers` returns bitmasks at all, and whether a form may grant a cotisation tag |
+| `MANAGE_MEMBERS` | 2 | 11 | members (add / rename / remove / reorder), tags, cotisants and cotisation tiers, plus the exports; and the `archived` field of `PATCH :id` (`UPDATE_FIELD_RIGHTS`). Also whether `listMembers` returns bitmasks at all, and whether a form may grant a cotisation tag |
 | `MANAGE_DOCUMENTS` | 3 | 8 | the private document vault (including `GET :id/vault-key`) and the association notes |
 | `MANAGE_FORMS` | 4 | 1 | `GET :id/forms`, plus `assertFormManager` on every form write and every submission read |
 | `VALIDATE_EVENTS` | 5 | 0 | BDE only, **scoped to the associations its spaces reach** (WP6c step 2, above). `mayValidateEvent` / `mayValidateEventsOf` - validating, rejecting, editing and deleting those associations' events, and depositing one on their calendars. **It never validates by typing**: a deposit is a proposal like any other (2026-09-14) |
-| `MANAGE_ASSO` | 6 | 0 | BDE only. Creating an association (unscoped: there is none yet), **deleting one** it governs (`DELETE :id`, widened from global-admin-only 2026-09-10, scoped 2026-10-04), and **being the super-admin tier above** on the associations its spaces reach |
-| `MODERATE` | 7 | 0 | BDE only. `isContentModerator` - reports, mutes and comment deletion (`moderation.controller.ts`), plus editing, deleting and PINNING any post (`assertMayManage`, `pinPost`/`unpinPost`, and the `canManage` / `canPin` fields they are drawn from) |
-| `MANAGE_PRODUCTS` | 8 | 21 | the boutique, purchases and their exports, webhook failures, the whole payment-delegation tree, and the cotisation settings on `PATCH :id` |
-| `MANAGE_PAYOUT_ACCOUNT` | 9 | 0 | `GET :id/manage-permission`, which core-service asks before opening Connect onboarding; `GET :id/payout-account`, the Lydia panel's read of the vendor token and dashboard URL |
+| `MANAGE_ASSO` | 6 | 0 | BDE only. Creating an association through `POST /associations` (unscoped: there is none yet; never the platform admin's `POST /associations/admin`, [below](#creating-an-entity-two-routes-two-tiers)), **deleting one** it governs (`DELETE :id`, widened from global-admin-only 2026-09-10, scoped 2026-10-04), and **being the super-admin tier above** on the associations its spaces reach |
+| `MODERATE` | 7 | 0 | BDE only. `isContentModerator` - reports, mutes and comment deletion (`moderation.controller.ts`), plus editing and deleting any post (`assertMayManage` and the `canManage` field). **Pinning is not moderation since WP-PIN (owner, 2026-11-03; built)**: a per-space promotion right ([section 11](spaces-and-audiences-reform.md#11-wp-pin---a-pin-is-a-promotion-per-space-not-a-global-flag-decided-2026-11-03)) - `MODERATE` in the BDE of THAT space (`bdeStandingInSpaceSql`, `posts/space-pins.ts`), institution posts included; `canPin`/`pinSpaces` are served from it, never from `isContentModerator` |
+| `MANAGE_PRODUCTS` | 8 | 21 | the boutique, purchases and their exports, webhook failures, the whole payment-delegation tree, and the cotisation settings on `PATCH :id`. Never held on an institution (`TYPE_EXCLUDED_FLAGS`); ACCEPTING a delegation reads it on the receiver without the BDE tier, while requesting, re-pointing or cancelling a list's own delegation keeps the BDE tier (intended, owner 2026-11-03). A list with no holder (32 of 44 on production, 2026-11-03, empty lists per the owner) gets it from its governing BDE super-admin or the platform admin, never a backfill - its own managers cannot grant a flag they lack ([grant ceiling](#the-grant-ceiling-who-may-write-which-bits-2026-11-02), [payments](frontend/modules/payments.md#payment-delegation-parent-association-routing)) |
+| `MANAGE_PAYOUT_ACCOUNT` | 9 | 0 | `GET :id/manage-permission`, which core-service asks before opening Connect onboarding; `GET :id/payout-account`, the Lydia panel's read of the vendor token and dashboard URL. Never held on a list or an institution (`TYPE_EXCLUDED_FLAGS`) |
 | `MANAGE_PARTNERSHIPS` | 10 | 8 | partnership cards, their icons, their codes and their claims |
 | `MANAGE_BOOKINGS` | 11 | 0 | nothing yet: the right of the planned bookings module (the bookings chantier, WP-B0). In the admin preset, inherited by a BDE super-admin, backfilled to every `MANAGE_FORMS` holder by migration 083 |
+| `EDIT_PROFILE` | 12 | 2 | the public profile: its fields of `PATCH :id` (below) and the two logo routes (`POST`/`DELETE :id/logo`, both slots). In the admin preset, offered to every kind (a list and an institution have a profile; `writablePermissions` keeps it), inherited by a BDE super-admin, and backfilled to every `MANAGE_MEMBERS` holder by migration 124 |
 
 **Deploy order and old clients for `MANAGE_BOOKINGS` (bit 11).** The admin preset is now 3871. An OLD server
 validates `permissions` against its own `ALL_PERMISSION_FLAGS` (at most 2047) and answers 400 to a mask above it,
@@ -106,6 +153,61 @@ so a new client talking to a server not yet deployed fails to add an admin - the
 `MANAGE_PARTNERSHIPS`: deploy the server first. Conversely an admin added from an OLD app keeps the old preset
 (1823, no bit 2048) and lacks the right; that is not fixed by a second backfill but by WP-B1 of the bookings
 chantier, which is where the right first has an effect.
+
+### `EDIT_PROFILE` (bit 12): the profile is not the roster, and `PATCH :id` is not one flag (owner, 2026-11-02)
+
+*"C'est un peu debile d'avoir la permission 'gerer les membres' qui permet de gerer le profil."*
+`PATCH :id` and the logo routes were gated on `MANAGE_MEMBERS`, so the only way to let someone fix
+the association's description was to let them hand out every right. The logo routes are
+`EDIT_PROFILE` now, and **`PATCH :id` asks each field's own right**: its guard admits a member, the
+association's super-admin or the platform admin, and `UPDATE_FIELD_RIGHTS`
+(`association-update-rights.ts`, the ONE table) names the right of every field. A body asks the union
+of its fields' rights; one missing refuses the whole write with a typed 403
+(`ASSOCIATION_FIELD_RIGHT_MISSING` with `right` and `fields`, or
+`ASSOCIATION_FIELD_PLATFORM_ADMIN_ONLY`), logged, so nothing is half saved.
+
+| Field | Right |
+| --- | --- |
+| `name`, `description`, `bioMarkdown`, `logoUrl`, `color`, `categoryId`, `contactEmail`; a list's `promo`, `name2`, `logoMediaId2` | `EDIT_PROFILE` |
+| `archived` | `MANAGE_MEMBERS` - ending the active life is the administrator's act, the Danger panel's, not a profile edit |
+| `cotisationEnabled`, `cotisationMode`, `cotisationExpiresAt` | `MANAGE_PRODUCTS` (D5) - alone now: a holder of it was offered the settings and then refused at the old `MANAGE_MEMBERS` guard |
+| `documentQuotaBytes` | the platform administrator alone - a typed refusal, logged at ERROR, where it used to be dropped silently |
+| `parentAssociationId` (a list's parent) | the platform administrator alone: it is a statement about ANOTHER association, set at creation. Any member manager could rewrite it before; the list profile form draws its picker, and sends it, for the platform admin only (`editRights().parent`). An UNCHANGED value resent by an old build is dropped, not refused ([legacy](legacy-compatibility.md#2027-05-03---a-list-profile-save-that-resends-its-unchanged-parent-2026-11-03)) |
+
+The client draws from the same table (`frontend/src/lib/associations/updateFields.ts`:
+`editRights().profile` is `mayWriteFields(PROFILE_FORM_FIELDS)`, `archive` is `['archived']`), and
+`updateFields.test.ts` reads the server file and fails on any difference. Nothing roster-related was
+ever in that body: tags, cotisants and tiers are their own routes and stay `MANAGE_MEMBERS`.
+
+**Nobody lost a right**: migration 124 ORs bit 12 into every `association_members` row holding bit 2,
+held for the owner (`-- canari:hold-for-owner`, its approval line in
+`infrastructure/migration-approvals.txt`, merged by his hand). Proof:
+`associations.controller.edit-profile.spec.ts` runs the real guard and controller over a member's
+bitmask (an `EDIT_PROFILE` holder edits and is refused the archive; a `MANAGE_MEMBERS`-only holder is
+refused the profile and the logos and may archive; a `MANAGE_PRODUCTS`-only holder saves the
+cotisation settings; the quota and the parent are refused to every flag and accepted from the platform
+admin), and `edit-profile-migration.integration.spec.ts` runs the migration twice against PostgreSQL.
+
+**Deploy order and old clients.** `ALL_CORE_FLAGS` is 7455 and the admin preset, with the payout
+account, 7967. An old server answers 400 to a mask above 4095, so **the server deploys before the
+client**, as for `MANAGE_BOOKINGS`: a new app talking to a server not yet deployed fails to add an
+admin with the new preset, and nothing else (the profile it saves carries no new field). **A client that
+sees a bit it does not know ignores it, and keeps it**: `mayActOnAssociation` tests one flag at a
+time, the role editor counts only the flags it has a label for, and a checkbox writes `permissions ^
+flag`, so an old app toggling another right sends bit 12 back untouched (and `updateFields.test.ts`
+asserts an unknown bit grants and blocks nothing). Two old-app residues, each with a
+dated shim in [legacy-compatibility](legacy-compatibility.md): an OLD app adding an admin posts the
+old preset (no bit 4096), and a member ADD (never an update, so an untick holds) whose mask EQUALS
+an old preset gets `EDIT_PROFILE` ORed in until 2027-05-03 (`legacy-admin-presets.ts`, derived from today's constants); and an old
+list form resends `parentAssociationId` on every save, which is dropped when unchanged. An old app's
+profile tab still draws its controls on `MANAGE_MEMBERS`, so a member holding that without
+`EDIT_PROFILE` meets a 403 there - possible only after a deliberate untick. **`EDIT_PROFILE` sits
+under the member-flag ceiling (#2949) like every flag**: a `MANAGE_MEMBERS` holder grants or revokes
+it only when it holds it, and the old-preset shim adds it only when the granter's ceiling covers it.
+**It reaches the association's own record and nothing written in its name**: no post or comment
+code reads it, so the author-only edit rule and the scoped `MODERATE` of #2953 are untouched; and
+its super-admin inheritance never covers an institution, which `holdsBdeFlagOverSql` gives no BDE
+(the client drops the tier there too, `editRights`).
 
 Nothing is dead: every flag has at least one call site. Re-measure the table rather than trusting it
 - one pass over the `@SetMetadata` decorators and one over `AssociationPermissionFlag.` references
@@ -143,8 +245,8 @@ Two things follow, and they are the shape of the repair:
    queries for a whole feed whatever its length, and `viewerCapabilities` decides each row. The
    client renders each control from its field and derives nothing.
 2. **The write guards are the same predicates.** `assertMayManage` gates `PATCH`/`DELETE`,
-   `assertContentModerator` gates `pin`/`unpin`, so a visible control and an accepted write cannot
-   disagree.
+   `SpacePinsService` gates `pin`/`unpin` on the SQL `canPin`/`pinSpaces` are read from
+   (`posts/space-pins.ts`, WP-PIN), so a visible control and an accepted write cannot disagree.
 
 **One field per control, because the controls do not share a rule.** A moderator edits, deletes and
 pins a post it did not publish and is still entitled to report it; an association's officer edits and
@@ -156,8 +258,8 @@ is what made the report button appear on a post the reader had published and the
 
 | Tier | How it is known | Edit / delete | Pin | Report |
 | --- | --- | --- | --- | --- |
-| Platform administrator | `X-Global-Admin: true` | yes | yes | yes |
-| Content moderator | `isContentModerator` - `MODERATE` in a BDE | yes, on any post | yes | yes |
+| Platform administrator | `X-Global-Admin: true` | yes | in any space, one space per pin (WP-PIN) | yes |
+| Content moderator | `isContentModerator` - `MODERATE` in a BDE | yes, on any post | per space (WP-PIN, built): only in the spaces its BDE governs, for those spaces' readers, institution posts included (G9 does not remove it) | yes |
 | The post's publisher | its author, or `POST_AS_ASSO` on the association it speaks for | yes, on its own | no | no - it would be reporting itself |
 | Any other logged-in reader | - | no | no | yes |
 
@@ -176,6 +278,159 @@ BDE super-admin is still excluded by `SUPER_ADMIN_EXCLUDED_FLAGS`, unchanged and
 `mayActOnAny` is `mayAct` batched over many associations, in the same file and built from the same
 three tiers, because a feed page decides a dozen rows per render and a per-row `mayAct` is a dozen
 round trips. `associations.service.may-act.spec.ts` asserts the two agree id by id.
+
+## The grant ceiling: who may write which bits (2026-11-02)
+
+`MANAGE_MEMBERS` answers WHO may write a member's bitmask; until 2026-11-02 nothing answered WHICH
+bits, so a granter could grant flags it did not hold. `apps/social-service/src/associations/member-flag-ceiling.ts`
+is the second half, judged in the service at the write (`addMember`, `updateMemberRole`,
+`removeMember`), so no route reaches a bitmask without it. Those three are the only writers of
+`association_members` outside migrations and the dev seed: there is no invitation, accept,
+transfer or bulk-import path (the unused `AddMembersBatchDto` was deleted).
+
+| Granter | Ceiling (`grantCeiling`) |
+| --- | --- |
+| Platform administrator | every flag |
+| BDE super-admin of this association | every flag (owner, 2026-11-02) - see below |
+| Ordinary member holding `MANAGE_MEMBERS` | its own row's flags |
+
+- **Granting and revoking are one rule.** The bits a write CHANGES (`before XOR after`) must sit
+  under the ceiling, so a member can neither add nor remove a flag it does not hold - otherwise it
+  could strip every right above its own (the treasurer's payout right). A role rename sends the
+  bitmask unchanged and passes. Bits the server strips by kind (`writablePermissions`) are compared
+  through the same filter, so they never count as the granter's change.
+- **Removing a member is a revocation of everything it holds** (`before` = its flags, `after` = 0):
+  otherwise a member holding only `MANAGE_MEMBERS` could remove the treasurer and re-add them with
+  nothing. Removing a target above the remover's ceiling takes a super-admin or the platform admin;
+  leaving is the "Quitter" button (below); the last-admin guard is unchanged. The delete is
+  conditioned on the bitmask judged, like the update (`MEMBER_CHANGED_MEANWHILE` otherwise).
+- **The "Quitter" button** (owner, 2026-11-03): every member leaves an association from its page
+  without asking anyone, except the last holder of `MANAGE_MEMBERS`, refused
+  `400 ASSOCIATION_LAST_MEMBER_MANAGER` (the sentence asks them to hand the right on first). The
+  route is `DELETE /api/associations/:id/members/me`: `NginxAuthGuard` only, no role guard, and the
+  row it removes is the caller's own, named by the vouched `x-user-id` and never by a parameter
+  (`AssociationsService.leaveAssociation`). Neither the ceiling nor the institution rule judges it,
+  an institution's member included; the BDE bypass of the last-manager guard does not apply to a
+  leaver. Tests: `member-flag-ceiling.spec.ts` (an ordinary member leaves, the last manager is
+  refused typed, a non-member touches nobody) and `associations.controller.leave.spec.ts` (the
+  guards, the path declared before `:id/members/:userId`, no target parameter).
+- **Peer deposition and the passation** (owner, 2026-11-03, verbatim): *"Tout ce qui concerne une
+  passation doit pouvoir se faire sans admin plateforme. Si le secrétaire veut ajouter et mettre les
+  permissions au nouveau secrétaire (respectivement président, trésorier...) puis se retirer, il
+  faut que ce soit faisable."* So a member holding `MANAGE_MEMBERS` may remove that right - or any
+  right within its own ceiling - from the president, as long as the president is not its last
+  holder. This is the existing rule (the ceiling plus the last-admin guard), not a new one; no code
+  changed. `member-flag-ceiling.spec.ts` pins it: the secretary adds the new secretary with its own
+  flags, then leaves through the "Quitter" route, and a member manager takes `MANAGE_MEMBERS` from a
+  president who is not its last holder; a president's whole mask (`POST_AS_ASSO`,
+  `MANAGE_PAYOUT_ACCOUNT`, `MANAGE_PRODUCTS`) handed to a newcomer or to a member promoted through
+  the roster editor; `member-last-manager.integration.spec.ts` runs the same flows on PostgreSQL.
+  **The inherent limit**: a flag can only be handed on by someone who holds it, so a flag whose LAST
+  holder has already left can be granted again only by a BDE super-admin of the association, or by
+  the platform admin when no BDE governs it. A passation therefore hands the rights over BEFORE the
+  outgoing member leaves, which is the order the owner described.
+- **The last-manager guard is serialised** (2026-11-03): the count of `MANAGE_MEMBERS` holders and
+  the delete or update it protects run in ONE transaction that first takes the association
+  `FOR UPDATE` (`underMemberLock`, the lock order `remove` uses), on the remove, leave and demote
+  paths alike. Before, two managers leaving or demoting each other at once both counted two and left
+  none; `member-last-manager.integration.spec.ts` proves exactly one succeeds, deterministically (a
+  third connection holds the lock until both writes are seen waiting on it; with the lock removed
+  the spec fails on every run). Neither a leaver nor a member demoting ITSELF ever takes the
+  BDE/platform bypass of that guard, through `members/me`, `members/<own id>` or a `PATCH` of its
+  own row.
+- **The account erasure meets the same lock, and is never refused by it** (2026-11-03). Its first
+  statement (`ERASURE_ASSOCIATION_LOCK_SQL`) locks every association the account touches - its
+  memberships included - in id order, `FOR NO KEY UPDATE`, before its `association_members` delete.
+  That strength conflicts with the guard's `FOR UPDATE`, so an erasure and a leave or demotion on one
+  association run one after the other, and each takes exactly one association lock before any
+  member row, so no cycle exists. It stays `NO KEY UPDATE` (not `FOR UPDATE`) so a proposal
+  decision's `KEY SHARE` is not serialised behind an erasure. The erasure does not ask the guard: an
+  account must be erasable, so erasing the LAST manager leaves the association with none - expected,
+  and recovered by a BDE super-admin of it, or by the platform admin when no BDE governs it.
+  `member-last-manager.integration.spec.ts` runs an erasure of one manager against a leave of the
+  other: the leave waits, then is refused.
+- **The super-admin tier cannot be acquired through the audience.** A BDE becomes an association's
+  super-admin by governing a space its rules reach, and a BDE may write audiences - so the audience
+  bound must have the same granularity as governance. It was per CAMPUS while governance is per
+  SPACE, and one campus holds two BDEs: a BDE could rewrite another BDE's association into its own
+  space, then seat itself there. Since 2026-11-02 the bound is per space
+  (`audience-policy.ts` `ruleInsideGovernedSpaces`, fed by `BDE_SPACE_STANDINGS_SQL`): a BDE writes
+  the audience only of an association whose current rules all sit in spaces it governs, every rule
+  it writes must too, and a whole-campus rule counts as inside only when it governs EVERY opened
+  space of that campus. This closes the two-granularity gap until the governance reform lands
+  (WP-R1 of `docs/wiki/spaces-and-audiences-reform.md`, on draft PR #2948). Proven against real
+  SQL in `spaces/audience-takeover.integration.spec.ts`.
+- **The super-admin is uncapped on purpose.** `SUPER_ADMIN_EXCLUDED_FLAGS` is about INHERITANCE:
+  the tier never EXERCISES `POST_AS_ASSO` or `MANAGE_PAYOUT_ACCOUNT` through `mayAct`. It may still
+  WRITE them into a row, its own included - a BDE officer is often another association's president.
+  Only an explicit row carries them, and every super-admin write that grants one is logged at info
+  (`[MEMBER-CEILING] ... a BDE super-admin granted <FLAGS> on association <id>`, no user id), after
+  the write lands. **`MANAGE_PRODUCTS` is audited the same way** (`SUPER_ADMIN_AUDITED_GRANTS`,
+  from the review of #2967): the tier inherits it, but an explicit row of it makes its holder one of
+  the association's OWN managers, the standing that accepts a list's payment delegation - so a
+  super-admin seating itself with it is a visible act. Auditing changes nothing about who may grant
+  it.
+- **No BDE MANAGES an institution, but the agenda is the BDE's** (owner, 2026-11-02, corrected
+  2026-11-03: *"Aucun BDE n'a les droits de gestion sur une institution, mais c'est le BDE qui a tous
+  les droits sur l'agenda des formations dont il est le BDE"*). Two predicates in `spaces/bde.ts`,
+  one space rule:
+  - **management** - `holdsBdeFlagOverSql` never holds over an association of type `institution`,
+    so the super-admin tier (`mayAct`, `mayActOnAny`, `DELETE :id`, the archive and profile at
+    `MANAGE_MEMBERS`, members, audience) reaches none, whatever spaces its audience reaches; the
+    last-admin bypass of the member routes reads this one too. `editRights` drops the tier for an
+    institution on the client.
+  - **agenda** - `holdsBdeAgendaRightOverSql` (`VALIDATE_EVENTS`, fixed in the predicate) follows
+    the spaces an event TARGETS, whoever organises it: the BDE of those spaces validates, rejects,
+    edits, deposits on and declares a break for an institution's event like any other. Until
+    per-event targeting (WP-E) an event targets its organiser's audience rules, so an institution's
+    event is validated by a BDE governing the spaces it targets, or by the platform admin.
+    `mayValidateEventsOf`, the pending queue, the proposal notification and `me/bde-reach`
+    (`validateEvents`) read it.
+  - **a BDE is managed by nobody but itself** (owner, 2026-11-03: *"Un BDE n'est géré par
+    personne"*): the management predicate also excludes a target that is the BDE of any space,
+    unless the holder's membership is in that same BDE. One saint-etienne BDE's whole-campus rule
+    reaches the other's spaces, and the space rule alone made each the uncapped super-admin of the
+    other.
+  - **the audience: "Lire tout, modifier dans ses espaces"** (owner, 2026-11-03): a star reads every
+    audience of its campus, writes only an entity it governs, and adds or removes rules inside its
+    own spaces only; a wider rule already in force stays as it is (`AUDIENCE_RULE_BEYOND_BDE_SPACES`),
+    the platform admin's to change. A non-admin creator's entity starts inside its spaces
+    (`creatorDefaultRules`). [profiles-and-access](profiles-and-access.md#audiences-policy-as-built-wp-a-2026-10-08)
+    has the mechanism.
+  - **an institution's proposal** is told to the BDE validators of the spaces it targets AND to the
+    platform admins when a targeted space has no BDE, or it targets none
+    (`TARGETS_AN_UNGOVERNED_SPACE_SQL`); the WARN is left for the case nobody at all is told.
+  - **leaving is the "Quitter" button** (owner, 2026-11-03): an institution's member leaves like
+    any other, judged by neither the institution rule nor the ceiling; only the last holder of
+    `MANAGE_MEMBERS` is refused (see the bullet on the button above).
+  - **no BDE moderates an institution's content; only the platform admin does** (owner,
+    2026-11-03). Enforced since `v1.6.5` by `bdeModeratesPublisherSql` and its comment twin
+    ([moderation-and-blocking](moderation-and-blocking.md#who-may-read-the-queue)).
+  Proven against real SQL in `bde.integration.spec.ts` (the agenda matrix with two institutions)
+  and through the real route guard in `audience-takeover.integration.spec.ts` (a BDE validates an
+  institution's event targeting its space, not one targeting only another BDE's, and still cannot
+  touch the institution's members or profile).
+- **Institutions are the platform admin's alone** (D20), ONE rule with ONE code,
+  `ADMIN_ASSOCIATION_INSTITUTION_MEMBERS_PLATFORM_ONLY` (`assertInstitutionMemberWrite`): add,
+  update and remove answer 403 to anyone else, and a write that HANDS an institution's member
+  `MANAGE_MEMBERS` is a 400, the platform admin's included (revoking it from an older row stays
+  free). Reordering stays `MANAGE_MEMBERS` (it writes no right).
+- **One writer inserts a member row**: `insertMembership`, used by `addMember` AND by the admin
+  create's first admin. It takes the granter and judges it - the institution rule, the ceiling, the
+  audit line - so no door skips them; the create passes its platform admin, so the first admin is
+  held to the institution rule like any other add (`admin-create.integration.spec.ts`).
+- **Refusals are typed**: 403 `MEMBER_FLAGS_BEYOND_GRANTER`, logged at WARN with the association
+  and the flag names, never a user (the editor never offers such a bit; an older installed client
+  still can).
+- **The client mirrors it** with `grantableFlags(ctx)` in `frontend/src/lib/associations/api.ts`:
+  the row editor disables a box outside it, the add presets are cut to it, and the members section
+  of an institution is drawn for the platform admin only (`editRights(...).memberRoster`).
+- **Known bound**: the ceiling reads the granter's row in the same request as the write, exactly as
+  the route guard reads `MANAGE_MEMBERS`; a concurrent demotion of the granter is not serialised
+  against it, as it is not against any guarded route.
+- **Rows written before** are not rewritten. The read-only count of rows whose flags exceed what
+  their path now allows is in the pull request that introduced the ceiling; any correction waits for
+  the owner.
 
 ## What is deliberately NOT `mayAct`
 
@@ -200,7 +455,7 @@ The association Danger panel offers **archive** and **delete**, and they are not
 
 | control | route | admitted by | reversible |
 | --- | --- | --- | --- |
-| Archive | `PATCH :id { archived }` | `GlobalAdminOrAssociationRoleGuard` at `MANAGE_MEMBERS` - so the association's own admin, and the super-admin tier | yes |
+| Archive | `PATCH :id { archived }` | `MANAGE_MEMBERS`, the `archived` field's right in `UPDATE_FIELD_RIGHTS` - so the association's own admin, and the super-admin tier | yes |
 | Delete | `DELETE :id` | `GlobalAdminOrBdeSuperAdminGuard` - global admin, or a BDE `MANAGE_ASSO` holder | **no** |
 
 Until 2026-09-09 the client gated the whole panel on the stricter of the two, so a BDE administrator

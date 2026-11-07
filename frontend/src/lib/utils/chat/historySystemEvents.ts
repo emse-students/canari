@@ -7,16 +7,21 @@ import type {
   ReadWatermarks,
 } from '$lib/types';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
-import { renderVisibleNotice } from '$lib/utils/chat/visibleNotices';
+import { receivedNoticeTime, renderVisibleNotice } from '$lib/utils/chat/visibleNotices';
+import { appMessageSentAtMs } from '$lib/utils/chat/messageUtils';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
 import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
 import {
   mergeReadWatermark,
   parseReadWatermarks,
+  boundedServerMarks,
+  receivedReadWatermarkMark,
   watermarkAfterReading,
+  type ReadClock,
 } from '$lib/utils/chat/readState';
 import {
   chat_system_message_deleted,
@@ -34,7 +39,7 @@ import {
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { noteIntegrityFinding } from '$lib/mls-client/integrityFindings';
 import type { AuthorKeySource } from '$lib/crypto/messageAuthorship';
-import type { StoredMessagePatch } from '$lib/db/types';
+import type { PendingMutation, StoredMessagePatch } from '$lib/db/types';
 import {
   mergeVettedRow,
   upgradedRow,
@@ -112,9 +117,16 @@ export interface ReplaySystemEventCtx {
    */
   pendingById: Map<string, Omit<PendingHistoryMessage, 'ingestSequence'>>;
   /**
-   * Messages deleted via a `delete_message` event during this replay, each with the id of the
-   * member that sent the event. The author check cannot always happen here - the message may not be
-   * in memory yet - so the claim is carried to whoever can verify it against the stored row.
+   * Defers a deletion, an edit or a reaction whose message memory does not show, dated by this
+   * frame's server time. The replay holds it IN MEMORY until its bodies are written, then settles it
+   * against the stored row and its AUTHOR (`settleWalkedMutations`), exactly as the live path does;
+   * only one whose target the store still lacks reaches the bounded store of mutations that came
+   * before their message (`pendingMutations.ts`).
+   */
+  keepPending: (entry: Omit<PendingMutation, 'at'>) => void;
+  /**
+   * Messages deleted via a `delete_message` event during this replay whose message memory shows,
+   * each with the id of the member that sent the event (checked against the shown row first).
    */
   deletedMessages: Map<string, { by: string; proof?: RecordedAuthorship }>;
   /** Messages edited via an `edit_message` event, with their new content and who claims to edit. */
@@ -133,6 +145,8 @@ export interface ReplaySystemEventCtx {
    * whole economy of the watermark: a page of a thousand messages costs one entry per reader.
    */
   readWatermarkUpdates: ReadWatermarks;
+  /** The same, for the marks on the SERVER's clock (`serverReadWatermarks`, see `readState.ts`). */
+  serverReadWatermarkUpdates: ReadWatermarks;
   /**
    * The shared history floor seen over the page, kept as a mutable box because it is ONE value
    * rather than a map: the accumulators are written by the handler and read by the caller once the
@@ -217,14 +231,19 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
     deletedMessages,
     editedMessages,
     readWatermarkUpdates,
+    serverReadWatermarkUpdates,
     historyFloorUpdate,
     pushPendingMessage,
   } = ctx;
 
-  /** Records a participant's read state into the page accumulator, keeping the later instant. */
-  const noteReadUpTo = (userNorm: string, at: number): void => {
-    const merged = mergeReadWatermark(readWatermarkUpdates, userNorm, at);
-    if (merged) Object.assign(readWatermarkUpdates, merged);
+  /**
+   * Records a participant's read state into the page accumulator of its clock, keeping the later
+   * instant.
+   */
+  const noteReadUpTo = (userNorm: string, at: number, clock: ReadClock): void => {
+    const into = clock === 'server' ? serverReadWatermarkUpdates : readWatermarkUpdates;
+    const merged = mergeReadWatermark(into, userNorm, at);
+    if (merged) Object.assign(into, merged);
   };
 
   if (!parsed.system) return;
@@ -305,7 +324,14 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       const getName = await resolveDisplayNames([senderNorm]);
       systemContent = chat_system_conversation_deleted({ sender: getName(senderNorm) });
     } else if (parsed.system.event === 'read_watermark') {
-      noteReadUpTo(senderNorm, Number(data.at));
+      // Bounded by the server's own time for this frame, the history row's (readState.ts).
+      const received = receivedReadWatermarkMark(data, parseServerTimestampMs(msg.timestamp));
+      if (received.refused) {
+        console.error(
+          `[HISTORY_REPLAY] REFUSED a read mark from ${senderNorm.slice(0, 8)} in ${conversationId.slice(0, 8)}…: ${received.refused}`
+        );
+      }
+      if (received.mark) noteReadUpTo(senderNorm, received.mark.at, received.mark.clock);
     } else if (parsed.system.event === 'read_receipt') {
       // The pre-watermark shape, which names message ids instead of an instant. Translated using
       // the messages we hold: an id we do not have says nothing this could act on.
@@ -318,7 +344,8 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           watermarkAfterReading(
             convo.messages.filter((mm) => idSet.has(mm.id)),
             0
-          )
+          ),
+          'server'
         );
       }
     } else if (parsed.system.event === 'delete_message' && data.messageId) {
@@ -328,7 +355,20 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       // fix; the replay path never did, because these frames could not reach the shared log and so
       // this branch was dead. The durability split made it live again, hole and all.
       if (known && !replayMutationIsAuthorised(known, senderNorm, 'delete')) return;
-      if (convo && known) {
+      if (!known) {
+        // Not shown: stored, buffered in this page, or not here yet - settled once the bodies land.
+        ctx.keepPending({
+          conversationId: ctx.conversationId,
+          messageId: data.messageId,
+          sender: senderNorm,
+          kind: 'delete',
+          slot: '',
+          rank: 0,
+          ...(ctx.authorship ? { proof: ctx.authorship } : {}),
+        });
+        return;
+      }
+      if (convo) {
         setConversation(contactName, {
           ...convo,
           messages: convo.messages.map((mm) =>
@@ -360,6 +400,19 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       const convo = getConversation(contactName);
       const known = convo?.messages.find((m) => m.id === data.messageId);
       if (known && !replayMutationIsAuthorised(known, senderNorm, 'edit')) return;
+      if (!known) {
+        ctx.keepPending({
+          conversationId: ctx.conversationId,
+          messageId: data.messageId,
+          sender: senderNorm,
+          kind: 'edit',
+          slot: '',
+          rank: editedAtMs,
+          text: data.newContent,
+          ...(ctx.authorship ? { proof: ctx.authorship } : {}),
+        });
+        return;
+      }
       // A DELETE IS ABSORBING - the tombstone wins whatever the order, exactly as the post-save
       // pass in `history.ts` has always had it. The tombstone is carried in `content`, so an edit
       // landing on a deleted row puts the deleted text back on screen. A delete seen earlier in
@@ -434,7 +487,24 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       // carrying no messages at all - "you are missing nothing, and here is who has read what".
       const bundleWatermarks = parseReadWatermarks(data.readWatermarks);
       if (bundleWatermarks) {
-        for (const [userNorm, at] of Object.entries(bundleWatermarks)) noteReadUpTo(userNorm, at);
+        for (const [userNorm, at] of Object.entries(bundleWatermarks)) {
+          noteReadUpTo(userNorm, at, 'stamped');
+        }
+      }
+      const bundleServerMarks = boundedServerMarks(
+        parseReadWatermarks(data.serverReadWatermarks),
+        parseServerTimestampMs(msg.timestamp)
+      );
+      if (bundleServerMarks.dropped > 0) {
+        console.error(
+          `[HISTORY_REPLAY] ${bundleServerMarks.dropped} server-clock read mark(s) relayed by ${senderNorm.slice(0, 8)} in ${conversationId.slice(0, 8)}… lie after the bundle's own server time - dropped`
+        );
+      }
+      const bundleServerWatermarks = bundleServerMarks.kept;
+      if (bundleServerWatermarks) {
+        for (const [userNorm, at] of Object.entries(bundleServerWatermarks)) {
+          noteReadUpTo(userNorm, at, 'server');
+        }
       }
       // The floor rides on the same frames, for the same reason and with the same merge.
       const mergedFloor = mergeHistoryFloor(historyFloorUpdate.at, data.floor);
@@ -452,7 +522,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         // applies: a durable bundle an older build wrote keeps restoring history - MARKED when
         // nothing proves its author - and nothing in it is taken on its relayer's word about
         // somebody else. Only the writes differ: they go to this page's accumulators.
-        const entries = (bundleData as Array<Record<string, unknown>>).filter(
+        const wellFormed = (bundleData as Array<Record<string, unknown>>).filter(
           (m) =>
             typeof m?.id === 'string' &&
             m.id !== '' &&
@@ -461,6 +531,17 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
             typeof m.content === 'string' &&
             m.content !== ''
         ) as unknown as BundleEntry[];
+        // A relayed server time is believed only inside the bundle frame's own (`messageTime.ts`).
+        const vettedTimes = withVettedBundleServerTimes(
+          wellFormed,
+          parseServerTimestampMs(msg.timestamp)
+        );
+        if (vettedTimes.dropped > 0) {
+          console.error(
+            `[HISTORY_REPLAY] ${vettedTimes.dropped} server time(s) relayed by ${senderNorm.slice(0, 8)} in ${conversationId.slice(0, 8)}… lie outside the bundle's own server time - dropped, those rows keep their sentAt`
+          );
+        }
+        const entries = vettedTimes.rows;
         // HELD = what memory holds AND what this page already queued. A row queued earlier in the
         // page - a decrypted original, or another bundle's copy - is held like a stored one: it is
         // upgraded by a proof and never queued twice, so a later copy cannot overwrite it.
@@ -653,6 +734,16 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         // The new messages, each merged with what its entry may change before it is queued.
         for (const { entry: m, verdict } of vetted.fresh) {
           const verified = verdict.kind === 'verified';
+          // The relayed server time checked once more, against the SIGNED sentAt
+          // (`boundedByVerifiedSentAt`): the first check could only read the relayer's `timestamp`.
+          const serverTimestamp = verified
+            ? boundedByVerifiedSentAt(m.serverTimestamp, verdict.timestamp)
+            : m.serverTimestamp;
+          if (serverTimestamp === undefined && m.serverTimestamp !== undefined) {
+            console.error(
+              `[HISTORY_REPLAY] the server time relayed by ${senderNorm.slice(0, 8)} for ${m.id.slice(0, 8)} lies below the SIGNED sentAt - dropped, the row keeps its sentAt`
+            );
+          }
           const merged = mergeVettedRow<MergeableRow>(
             {
               id: m.id,
@@ -683,9 +774,7 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
             // bundle frame's time, which is when the bundle was sent, not when the message was:
             // an exclusion window placed by it would release a message from inside the window or
             // withhold one from before it. An undated copy stays undated, as on the live path.
-            ...(typeof m.serverTimestamp === 'number'
-              ? { serverTimestamp: m.serverTimestamp }
-              : {}),
+            ...(typeof serverTimestamp === 'number' ? { serverTimestamp } : {}),
             ...(m.authorship ? { authorship: m.authorship } : {}),
             ...(row.restoredUnverified ? { restoredUnverified: true } : {}),
           };
@@ -699,13 +788,26 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
   }
 
   if (systemContent) {
-    const systemServerMs = parseServerTimestampMs(msg.timestamp);
+    // DATED BY THE FRAME, AS THE LIVE PATH DATES IT (`receivedNoticeTime`): the frame's `sentAt`
+    // stamped, the archive row's server time as the order key. An undated row used to fall through
+    // `resolveMessageTimestamp` to THIS device's clock at replay time, and a replay can run days after
+    // the event - the notice then sank below everything that followed it.
+    const dated = receivedNoticeTime(
+      appMessageSentAtMs(parsed.sentAt),
+      parseServerTimestampMs(msg.timestamp)
+    );
+    if (!dated) {
+      console.error(
+        `[HISTORY_REPLAY] REFUSED to draw '${parsed.system.event}' in ${conversationId.slice(0, 8)}… (id ${systemMessageId?.slice(0, 8) ?? 'none'}): the frame carries no sentAt and the archive row no readable server time (${String(msg.timestamp).slice(0, 40)}) - no durable instant dates it, and this device's clock is not one`
+      );
+      return;
+    }
     pushPendingMessage({
       senderId: 'system',
       content: systemContent,
       isSystem: true,
       messageId: systemMessageId,
-      timestamp: systemServerMs !== undefined ? new Date(systemServerMs) : undefined,
+      ...dated,
     });
   }
 }

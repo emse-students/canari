@@ -45,12 +45,23 @@ const CONTAINER_TYPES = new Set(['jsonb', 'json', 'simple-array', 'simple-json']
 const RAW_TABLES = [
   'read_grants',
   'read_grant_journal',
+  // Migration 132's per-reader switch "voit les commentaires": the reader, who set it.
+  'read_grant_readers',
   'post_audiences',
   'channel_message_client_tombstones',
   // Migration 106's audit copy of the logo URLs it rewrote: association ids and URLs, no account.
   'association_logo_url_rewrites',
   // Migration 118's Lydia cashiers: the person, who added them, a sealed phone.
   'lydia_cashiers',
+  // Migration 125's delegation acceptances: two association ids, who accepted, when.
+  'payment_delegation_acceptances',
+  // Migration 135's retired post ids: an id and a date, no account - written BY the erasure's own
+  // delete of the member's posts, so a resend of one never brings it back.
+  'deleted_post_ids',
+  // Migration 127's per-space pins (WP-PIN): who pinned.
+  'post_space_pins',
+  // Migration 129's dependency journal: the platform admin who changed a parent or a governor.
+  'dependency_journal',
 ];
 
 const SRC = join(__dirname, '..');

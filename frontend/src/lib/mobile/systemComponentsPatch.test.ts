@@ -23,6 +23,8 @@ const PAIRS: Record<string, string> = {
   ConfigureTabBarArgs: 'ConfigureTabBarOptions',
   SelectTabArgs: 'SelectTabOptions',
   SetBadgeArgs: 'SetBadgeOptions',
+  SetTabBarInteractiveArgs: 'SetTabBarInteractiveOptions',
+  TabBarVisibilityArgs: 'TabBarVisibilityOptions',
   SheetOptionArgs: 'SheetOption',
   SheetRowArgs: 'SheetRow',
   PresentSheetArgs: 'PresentSheetOptions',
@@ -79,5 +81,36 @@ describe('the vendored system-components plugin', () => {
     const carried = rustFields(models, rust);
     expect(carried.length).toBeGreaterThan(0);
     expect(swift[swiftName].filter((field) => !carried.includes(field))).toEqual([]);
+  });
+
+  it('starts every configuration interactive, and orders the interaction switch and the visibility by sequence', () => {
+    // The overlay outlives a WebView reload: a page reloaded under the tour's backdrop must not
+    // inherit a bar that takes no touch (`NativeTabBar.svelte` resends its state after configuring).
+    const plugin = read('ios/Sources/SystemComponentsPlugin.swift');
+    /** One method's text: from its declaration to the next `@objc` method. */
+    const method = (name: string) => {
+      const start = plugin.indexOf(`@objc public func ${name}(`);
+      expect(start).toBeGreaterThan(0);
+      const next = plugin.indexOf('@objc public func', start + 1);
+      return plugin.slice(start, next < 0 ? undefined : next);
+    };
+    const configure = method('configureTabBar');
+    expect(configure).toMatch(/overlay\.view\.isUserInteractionEnabled = true/);
+    // ONE ordering mechanism (`CommandSequence`), one instance per state, both reset by a
+    // configuration - a reloaded page counts from 1 again.
+    expect(plugin).toMatch(/^struct CommandSequence \{/m);
+    expect(plugin).toMatch(/guard seq > applied else/);
+    expect(configure).toMatch(/self\.interactiveOrder\.reset\(\)/);
+    expect(configure).toMatch(/self\.visibilityOrder\.reset\(\)/);
+    const toggle = method('setTabBarInteractive');
+    expect(toggle).toMatch(/guard self\.interactiveOrder\.admits\(args\.seq\)/);
+    // Show and hide read their `seq` and go through the one `setHidden`, which drops an older call.
+    for (const name of ['showTabBar', 'hideTabBar']) {
+      expect(method(name)).toMatch(/parseArgs\(TabBarVisibilityArgs\.self\)\.seq/);
+    }
+    const setHidden = plugin.slice(plugin.indexOf('private func setHidden('));
+    expect(setHidden.slice(0, setHidden.indexOf('\n    }\n'))).toMatch(
+      /guard self\.visibilityOrder\.admits\(seq\)/
+    );
   });
 });

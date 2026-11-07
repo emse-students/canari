@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { MediaRef } from '$lib/media';
-import { isReelMessage, isReelMessageExpired, reelMessageAsPost } from './chatReel';
+import {
+  isReelMessage,
+  isReelMessageExpired,
+  reelMessageAsPost,
+  reelTombstoneOf,
+} from './chatReel';
 
 const video: MediaRef = {
   type: 'video',
@@ -33,6 +38,29 @@ describe('isReelMessageExpired', () => {
   });
 });
 
+describe('reelTombstoneOf', () => {
+  const hint = 1_000_000;
+  it('is watchable while the hint is ahead and no 410 was met', () => {
+    expect(reelTombstoneOf({ expiresAtMs: hint }, undefined, hint - 1)).toBeNull();
+    expect(reelTombstoneOf({}, null, hint)).toBeNull();
+  });
+  it('reads "expired" from the hint alone, without a request', () => {
+    expect(reelTombstoneOf({ expiresAtMs: hint }, undefined, hint)).toBe('expired');
+  });
+  it('reads "deleted" when the 410 came BEFORE the hint, whatever the clock says now', () => {
+    expect(reelTombstoneOf({ expiresAtMs: hint }, hint - 1, hint - 1)).toBe('deleted');
+    expect(reelTombstoneOf({ expiresAtMs: hint }, hint - 1, hint + 86_400_000)).toBe('deleted');
+  });
+  it('reads "expired" when the 410 came at or after the hint', () => {
+    expect(reelTombstoneOf({ expiresAtMs: hint }, hint, hint)).toBe('expired');
+    expect(reelTombstoneOf({ expiresAtMs: hint }, hint + 5, hint + 5)).toBe('expired');
+  });
+  it('reads a 410 on a reel with no hint as "expired", the neutral reading', () => {
+    expect(reelTombstoneOf({}, 42, 42)).toBe('expired');
+    expect(reelTombstoneOf({ expiresAtMs: 0 }, 42, 42)).toBe('expired');
+  });
+});
+
 describe('reelMessageAsPost', () => {
   it('gives the viewer the video with its key, the sender and the day', () => {
     const sentAt = new Date('2026-10-09T10:00:00Z');
@@ -40,6 +68,7 @@ describe('reelMessageAsPost', () => {
       messageId: 'msg-9',
       media: { ...video, intent: 'reel-message' },
       caption: 'hello',
+      senderId: 'user-ada',
       senderName: 'Ada',
       sentAt,
     });
@@ -48,6 +77,6 @@ describe('reelMessageAsPost', () => {
     expect(post.markdown).toBe('hello');
     expect(post.authorDisplayName).toBe('Ada');
     expect(post.createdAt).toBe(sentAt.toISOString());
-    expect(post.authorId).toBeUndefined();
+    expect(post.authorId).toBe('user-ada');
   });
 });
