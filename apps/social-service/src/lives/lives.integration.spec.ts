@@ -228,6 +228,8 @@ class MemorySeats {
   readonly arrivalLog = new Map<string, { userId: string; seq: number }[]>();
   /** Makes the arrivals read fail, as a Redis outage does. */
   arrivalsDown = false;
+  /** Makes ONLY the arrivals read fail (a deterministic fault of the read, the note answering). */
+  arrivalsReadDown = false;
 
   async noteArrival(liveId: string, viewerId: string): Promise<boolean> {
     if (this.arrivalsDown) throw new Error('ECONNREFUSED');
@@ -239,7 +241,7 @@ class MemorySeats {
   }
 
   async readArrivals(liveId: string, after: number | null) {
-    if (this.arrivalsDown) throw new Error('ECONNREFUSED');
+    if (this.arrivalsDown || this.arrivalsReadDown) throw new Error('ECONNREFUSED');
     const log = this.arrivalLog.get(liveId) ?? [];
     const top = log[log.length - 1]?.seq ?? 0;
     return { top, rows: after === null ? [] : log.filter((r) => r.seq > after).slice(0, 50) };
@@ -869,6 +871,48 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
           seats.arrivalsDown = false;
           error.mockRestore();
           log.mockRestore();
+        }
+      });
+
+      it('keeps one outage per operation: a note that answers never closes a failing read, nor logs a false recovery', async () => {
+        const live = await start();
+        const logger = (
+          lives as unknown as {
+            logger: { error(m: string): void; log(m: string): void; warn(m: string): void };
+          }
+        ).logger;
+        const error = jest.spyOn(logger, 'error').mockImplementation(() => {});
+        const log = jest.spyOn(logger, 'log').mockImplementation(() => {});
+        const warn = jest.spyOn(logger, 'warn').mockImplementation(() => {});
+        try {
+          seats.arrivalsReadDown = true;
+          for (let poll = 0; poll < 4; poll++) {
+            await lives.manifest(BOB, live.id); // the note answers
+            await arrivalsFor(CAROL, live.id, 0); // the read fails
+          }
+          expect(error).toHaveBeenCalledTimes(1);
+          expect(log).not.toHaveBeenCalledWith(expect.stringContaining('answers again'));
+          // Only the read's own success closes it, with ITS count.
+          seats.arrivalsReadDown = false;
+          await arrivalsFor(CAROL, live.id, 0);
+          expect(log).toHaveBeenCalledWith(expect.stringContaining('read answers again after 4'));
+          // A live purged with an outage still open reports it; the next live's first failure accuses.
+          await lives.end(ALICE, live.id); // one open live per broadcaster
+          const doomed = await start();
+          seats.arrivalsReadDown = true;
+          await arrivalsFor(CAROL, doomed.id, 0);
+          await lives.end(ALICE, doomed.id);
+          await sweeper.sweepOnce();
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining('still failing (1 failed'));
+          const next = await start();
+          error.mockClear();
+          await arrivalsFor(CAROL, next.id, 0);
+          expect(error).toHaveBeenCalledTimes(1);
+        } finally {
+          seats.arrivalsReadDown = false;
+          error.mockRestore();
+          log.mockRestore();
+          warn.mockRestore();
         }
       });
 

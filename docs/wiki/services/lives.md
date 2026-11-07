@@ -528,8 +528,11 @@ from nobody. The client resolves each name as it does a chat author's (`resolveU
 the server carries an id and no display name. If Redis does not answer, the fields are OMITTED (logged
 `[LIVE_ARRIVAL]`, an error) and the client keeps its cursor: an outage costs lines, never the poll; a
 failed note never fails the seat. THE FIRST FAILURE OF AN OUTAGE is logged at ERROR and the later ones,
-on every poll of every viewer, are only counted: a flag (durable state, no timer) opens at the first
-failure and the next answer logs ONE recovery line carrying the count. The block list is read ONCE per
+on every poll of every viewer, are only counted: an open outage (durable state, no timer) exists PER
+OPERATION (the note and the read fail for different reasons) and PER LIVE, opens at the first failure,
+and is closed only by the SAME operation's next success on that live, which logs ONE recovery line
+carrying its own count; a live's purge reports one still open (WARN, with its count) and forgets it,
+so a later live's first failure always accuses. The block list is read ONCE per
 poll, by the controller, and handed to the chat's reader and the arrivals' reader.
 
 **Tests.** `live-seats.spec.ts` (the scripts against a real Redis: once per viewer, order, a first poll,

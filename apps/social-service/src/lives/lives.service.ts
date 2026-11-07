@@ -1588,6 +1588,7 @@ export class LivesService implements OnModuleDestroy {
     if (row) {
       await this.db.query(`DELETE FROM lives WHERE id = $1 AND "endedAt" IS NOT NULL`, [liveId]);
     }
+    this.closeArrivalOutages(liveId);
     // The arrival keys name accounts: they go with the live (best effort - their TTL is the bound).
     await this.seats.forgetArrivals(liveId).catch((e: unknown) => {
       this.logger.warn(`[LIVE_ARRIVAL] ${liveId}: arrivals left to their TTL: ${String(e)}`);
@@ -1676,41 +1677,60 @@ export class LivesService implements OnModuleDestroy {
     return watching;
   }
 
-  /** Whether the arrival log is failing now: the outage the first failure opened, until an answer. */
-  private arrivalsDown = false;
-  /** How many arrival calls failed since the outage opened - the recovery line's count. */
-  private arrivalFailures = 0;
+  /**
+   * The open outages of the arrival log: ONE per operation (the note and the read fail for different
+   * reasons, so each has its own) and PER LIVE (a later live's first failure always accuses), each
+   * holding the failed calls since it opened. Durable state, no timer: only the SAME operation's
+   * success on the SAME live closes it, and {@link closeArrivalOutages} at the live's purge.
+   */
+  private readonly arrivalOutages: Record<'note' | 'read', Map<string, number>> = {
+    note: new Map(),
+    read: new Map(),
+  };
 
   /**
    * Notes the viewer's arrival, best effort. The FIRST failure of an outage is logged at ERROR (it
    * accuses); the ones after it, on every poll of every viewer, only count - the recovery line says
-   * how many. Durable state (the flag), not a timer.
+   * how many.
    */
   private async noteArrival(liveId: string, viewerId: string): Promise<void> {
     try {
       await this.seats.noteArrival(liveId, viewerId);
-      this.arrivalsAnswered();
+      this.arrivalsAnswered('note', liveId);
     } catch (e) {
-      this.arrivalsFailed('an arrival was not noted', liveId, e);
+      this.arrivalsFailed('note', 'an arrival was not noted', liveId, e);
     }
   }
 
-  private arrivalsFailed(what: string, liveId: string, e: unknown): void {
-    this.arrivalFailures++;
-    if (this.arrivalsDown) return;
-    this.arrivalsDown = true;
+  private arrivalsFailed(op: 'note' | 'read', what: string, liveId: string, e: unknown): void {
+    const open = this.arrivalOutages[op];
+    const failed = open.get(liveId);
+    open.set(liveId, (failed ?? 0) + 1);
+    if (failed !== undefined) return;
     this.logger.error(
       `[LIVE_ARRIVAL] ${liveId}: ${what}: ${String(e)} (the arrival lines stop until it answers; further failures are counted, not logged)`
     );
   }
 
-  private arrivalsAnswered(): void {
-    if (!this.arrivalsDown) return;
+  private arrivalsAnswered(op: 'note' | 'read', liveId: string): void {
+    const failed = this.arrivalOutages[op].get(liveId);
+    if (failed === undefined) return;
+    this.arrivalOutages[op].delete(liveId);
     this.logger.log(
-      `[LIVE_ARRIVAL] the arrival log answers again after ${this.arrivalFailures} failed call(s)`
+      `[LIVE_ARRIVAL] ${liveId}: the arrival ${op} answers again after ${failed} failed call(s)`
     );
-    this.arrivalsDown = false;
-    this.arrivalFailures = 0;
+  }
+
+  /** The live is purged: an outage still open on it is reported with its count, then forgotten. */
+  private closeArrivalOutages(liveId: string): void {
+    for (const op of ['note', 'read'] as const) {
+      const failed = this.arrivalOutages[op].get(liveId);
+      if (failed === undefined) continue;
+      this.arrivalOutages[op].delete(liveId);
+      this.logger.warn(
+        `[LIVE_ARRIVAL] ${liveId}: purged with the arrival ${op} still failing (${failed} failed call(s))`
+      );
+    }
   }
 
   /** The accounts blocked either way with the reader - read once per poll, handed to every reader of it. */
@@ -1739,9 +1759,9 @@ export class LivesService implements OnModuleDestroy {
     let read: { top: number; rows: { userId: string; seq: number }[] };
     try {
       read = await this.seats.readArrivals(liveId, after ?? null);
-      this.arrivalsAnswered();
+      this.arrivalsAnswered('read', liveId);
     } catch (e) {
-      this.arrivalsFailed(`the arrivals did not answer`, liveId, e);
+      this.arrivalsFailed('read', `the arrivals did not answer`, liveId, e);
       return null;
     }
     if (after === undefined) return { arrivals: [], arrivalsMore: 0, arrivalsCursor: read.top };
