@@ -14,7 +14,9 @@
    *  - `ghost`     no fill and no edge, for a low-ranking action beside a primary one;
    *  - `danger`    a destructive action: delete, leave, revoke.
    *
-   * `size="compact"` (2rem) is for a dense toolbar only. `icon` draws a square of the row's height
+   * The height is a MIN-height (Android text zoom scales fonts, not lengths): a long label wraps and
+   * grows the box instead of overflowing. `size="compact"` (2rem) is for a dense toolbar only. `icon`
+   * draws a square of the row's height
    * around one glyph and REQUIRES an `aria-label`, because nothing else names it. `href` renders an
    * anchor wearing the same box, so a link that looks like a button is not a second implementation.
    */
@@ -61,7 +63,7 @@
     secondary: 'bg-cn-surface text-text-main hover:bg-black/5 dark:hover:bg-white/10',
     ghost:
       'border-transparent bg-transparent text-text-muted hover:bg-black/5 hover:text-text-main dark:hover:bg-white/10',
-    danger: 'border-transparent bg-red-err text-white hover:brightness-95',
+    danger: 'border-transparent bg-red-solid text-white hover:brightness-90',
   };
 
   const classes = $derived(
@@ -69,7 +71,8 @@
       'ui-control',
       size === 'compact' ? 'ui-control--compact text-sm' : 'text-base',
       icon ? 'ui-control--icon' : '',
-      'inline-flex shrink-0 cursor-pointer items-center justify-center gap-2 font-semibold whitespace-nowrap',
+      'inline-flex min-w-0 shrink-0 cursor-pointer items-center justify-center gap-2 text-center font-semibold',
+      icon ? '' : size === 'compact' ? 'py-1' : 'py-1.5',
       'transition-colors active:scale-[0.98] aria-disabled:pointer-events-none aria-disabled:opacity-50 disabled:cursor-not-allowed disabled:opacity-50',
       VARIANT[variant],
       className,

@@ -58,6 +58,7 @@
   --color-text-muted: var(--text-muted);
   --color-green-ok: var(--green-ok);
   --color-red-err: var(--red-err);
+  --color-red-solid: var(--red-solid);
   /* Third member of the status triad, next to `green-ok` and `red-err`. Warning banners used to
      hardcode `text-amber-700` / `bg-amber-50` / `border-amber-200`, none of which flip, so the
      banner stayed light while the text on it went near-white. Tint it with an opacity modifier
@@ -414,6 +415,9 @@
   --text-muted: #65686c; /* measured */
   --green-ok: #19b56a;
   --red-err: #e04d4d;
+  /* A FILL for white text: `red-err` is a text/edge red and reads 3.9:1 under white (2.8:1 in dark), under
+     AA. One value in both themes, 6:1 with white. */
+  --red-solid: #c42b2b;
   --amber-warn: #b45309;
   /* FLAT. The reference has no background gradient at all - it is one solid colour behind
      everything. The three stacked gradients that were here (amber and blue radials over a vertical
@@ -1123,8 +1127,8 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   width: 100%;
   max-width: 100%;
   padding: 0.75rem 1rem;
-  border: 2px solid var(--cn-border);
-  border-radius: var(--radius-lg);
+  border: var(--control-border-width) solid var(--control-border-color);
+  border-radius: var(--control-radius);
   font-size: var(--text-sm);
   line-height: var(--text-sm--line-height);
   color: var(--text-main);
@@ -3140,14 +3144,16 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 @layer components {
   .ui-control {
     box-sizing: border-box;
-    height: var(--control-height);
+    /* MIN-height, not height: Android's text zoom scales fonts and not lengths (textZoom.ts), so a
+       fixed box would clip a label at 200 % and a wrapped label must be able to grow it. */
+    min-height: var(--control-height);
     padding-inline: var(--control-padding-x);
     border: var(--control-border-width) solid var(--control-border-color);
     border-radius: var(--control-radius);
   }
 
   .ui-control--compact {
-    height: var(--control-height-compact);
+    min-height: var(--control-height-compact);
     padding-inline: var(--control-padding-x-compact);
   }
 

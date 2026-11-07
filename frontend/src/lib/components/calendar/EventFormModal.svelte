@@ -194,7 +194,6 @@
               options={associationOptions}
               onValueChange={(v) => (values.targetAssociationId = v)}
               variant="field"
-              density="compact"
             />
           </div>
         {/if}
@@ -392,7 +391,6 @@
                 options={linkableFormOptions}
                 onValueChange={(v) => (values.linkedFormId = v)}
                 variant="field"
-                density="compact"
               />
             </div>
           </div>

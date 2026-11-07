@@ -2,7 +2,8 @@
  * THE SCANNER BEHIND THE CONTROLS GUARD (`controlsGuard.test.ts`): which hand-built buttons, selects
  * and text fields does a Svelte file contain.
  *
- * A "raw control" is a `<button>`, a `<select>`, or an `<input>` that draws a TEXT field (no `type`,
+ * A "raw control" is a `<button>` (also `<svelte:element this="button">` and an `<input>` of type
+ * submit / button / reset / image, which draw one), a `<select>`, or an `<input>` that draws a TEXT field (no `type`,
  * a dynamic `type`, or one of text / email / password / search / tel / url / number) written in
  * markup instead of through `Button`, `Select` / `Picker` or `Input`. Checkboxes, radios, files,
  * ranges, colours and the date family are not text fields and are never counted.
@@ -35,11 +36,10 @@ const NON_TEXT_INPUT = new Set([
   'datetime-local',
   'month',
   'week',
-  'submit',
-  'button',
-  'reset',
-  'image',
 ]);
+
+/** Input types that draw a button: counted as a button, not skipped. */
+const BUTTON_INPUT = new Set(['submit', 'button', 'reset', 'image']);
 
 /** The attribute text of the tag whose name ends at `from`, read up to its closing `>`. */
 function tagAttributes(source: string, from: number): string {
@@ -72,12 +72,24 @@ function staticInputType(attributes: string): string {
 export function rawControlsIn(text: string): RawControlCounts {
   const source = withoutAnyComments(text);
   const counts: RawControlCounts = { button: 0, select: 0, input: 0 };
-  const open = /<(button|select|input)(?=[\s/>])/g;
+  const open = /<(button|select|input|svelte:element)(?=[\s/>])/g;
   for (let match = open.exec(source); match; match = open.exec(source)) {
-    const name = match[1] as keyof RawControlCounts;
+    const tag = match[1];
+    if (tag === 'svelte:element') {
+      // A dynamic element is a button when `this` says so; any other `this` is not our business.
+      const attributes = tagAttributes(source, open.lastIndex);
+      if (/(?:^|\s)this\s*=\s*["']button["']/.test(attributes)) counts.button += 1;
+      continue;
+    }
+    const name = tag as keyof RawControlCounts;
     if (name === 'input') {
       const attributes = tagAttributes(source, open.lastIndex);
-      if (NON_TEXT_INPUT.has(staticInputType(attributes))) continue;
+      const type = staticInputType(attributes);
+      if (BUTTON_INPUT.has(type)) {
+        counts.button += 1;
+        continue;
+      }
+      if (NON_TEXT_INPUT.has(type)) continue;
     }
     counts[name] += 1;
   }

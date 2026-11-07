@@ -11,7 +11,10 @@ any one site; 285 files had each drawn their own. The convention below is what r
 ## The decisions (owner, 2026-11-07)
 
 1. **One height for every control in a row: 40 px (`2.5rem`), desktop and phone.** A `compact` size
-   (32 px, `2rem`) exists for a dense toolbar only - it is not the way to make a form fit.
+   (32 px, `2rem`) exists for a dense toolbar or grid only (a price grid, a criterion editor, a
+   space list, a promo picker) - it is not the way to make a form fit, and a field `Picker` or
+   `Input` in an ordinary form is never `density="compact"`: it would sit 32 px next to 40 px
+   fields.
 2. **The secondary button is the thin grey edge of a field, on a neutral fill.** The yellow fill is
    reserved for the primary action of a surface.
 3. **Enforcement is mandatory components plus a test**, not a style guide: one Button, one text
@@ -27,6 +30,16 @@ any one site; 285 files had each drawn their own. The convention below is what r
 | `--control-border-width` | `1px` | thin |
 | `--control-border-color` | `var(--cn-border)` | the field edge, also the secondary button's |
 | `--control-radius` | `var(--radius-lg)` | the existing 8px card/button step; no new corner |
+| `--red-solid` | `#c42b2b` | the FILL of a danger button: white on it is 6:1 (`red-err` is a text/edge red, 3.9:1 under white and 2.8:1 in dark, under AA) |
+
+The height is a **`min-height`**, never a fixed `height`: the Android WebView's text zoom scales
+fonts and not lengths (`textZoom.ts`, `textZoomBoxes.test.ts`), so a fixed box clips a label at 200 %.
+`Button` lets a label wrap (no `whitespace-nowrap`), which keeps a `w-full` French label inside a
+modal at 411 px. A footer button that was taller before (the PIN modals, tight at the largest text
+size on the iPhone 12) keeps its old height with a `min-h-*` utility.
+
+An invalid field has a red halo, at rest and on focus, as well as the red edge: a 1 px red line alone
+reads as decoration.
 
 They are read by ONE class, `.ui-control` (with `--compact` and `--icon`), in the components layer
 of `app.css`. It carries geometry only; colour and type belong to each component. A call-site
@@ -64,6 +77,15 @@ Checkboxes, radios, files, ranges, colours and the date family are never counted
   file to the list is refused by the regeneration command.
 - A listed file may not exceed its numbers, and may not be BELOW them without the list being
   lowered, so progress is recorded and cannot be undone silently.
+- What it counts besides `<button>`: `<input type="submit|button|reset|image">`,
+  `<svelte:element this="button">`, and a `<button` written inside a string of a `.ts` / `.js`
+  file.
+  Widening the scan re-measured the baseline once: `ChatArea.svelte` 11 to 13 (two buttons the old
+  scan could not see), nothing else moved.
+- **Honest limit.** Nothing in the test compares the list with `main`: a PR that edits the JSON by
+  hand can raise a number or add a file and pass. Only the regeneration command refuses an
+  increase, so a diff touching `rawControlsRatchet.json` is reviewed like a lockfile: every changed
+  number must go DOWN.
 - Lowering: `CANARI_RATCHET_WRITE=1 bun x vitest run src/lib/styles/controlsGuard.test.ts` (from
   `frontend/`). It refuses a number that went up and an entry that is new.
 

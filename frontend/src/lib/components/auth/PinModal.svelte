@@ -567,7 +567,7 @@
          ends 12 px above the unlock button rather than against it, where rows 7-9 read as covered
          BY the button at the largest text size (iPhone 12, v1.2.9-alpha.4). -->
     <div class="mx-auto flex w-full max-w-xs flex-col items-center gap-1 pt-3" data-pin-footer>
-      <Button class="w-full" type="submit" form={FORM_ID} disabled={isLoading}>
+      <Button class="min-h-13 w-full" type="submit" form={FORM_ID} disabled={isLoading}>
         {#if isLoading}
           <LoaderCircle size={16} class="animate-spin" />
           {loadingStep || m.auth_pin_verifying()}

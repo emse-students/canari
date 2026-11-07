@@ -326,7 +326,6 @@
         onValueChange={(v) => (purchaseFilterProductId = v)}
         label={m.asso_achats_filter_label()}
         variant="field"
-        density="compact"
       />
     </div>
   </div>
@@ -367,7 +366,6 @@
           label={m.asso_achats_grant_product_label()}
           placeholder={m.asso_achats_grant_product_placeholder()}
           variant="field"
-          density="compact"
         />
       </div>
       {#if grantSelectedProduct}

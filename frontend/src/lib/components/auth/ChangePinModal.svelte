@@ -236,7 +236,7 @@
     69 px that were already missing.
   -->
   {#snippet footer()}
-    <Button class="w-full" type="submit" form={FORM_ID} disabled={isLoading}>
+    <Button class="min-h-12 w-full" type="submit" form={FORM_ID} disabled={isLoading}>
       {#if isLoading}
         <LoaderCircle size={16} class="animate-spin" />
         {isRecover ? m.auth_changepin_recovering() : m.auth_changepin_changing()}

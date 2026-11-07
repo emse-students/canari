@@ -10,7 +10,7 @@
  * The convention itself: docs/wiki/frontend/controls.md.
  *
  * WHAT IT COUNTS. A `<button>`, a `<select>`, and a text-like `<input>` (see `rawControls.ts`) in
- * any `.svelte` file outside `src/lib/components/ui/`, where the primitives live.
+ * any `.svelte` file (and a `<button` inside a `.ts` / `.js` string) outside `src/lib/components/ui/`, where the primitives live.
  *
  * THE RATCHET. 285 files violate today, and rewriting them in one change would be unreviewable, so
  * `rawControlsRatchet.json` records, per file, how many of each it may still contain. It works in
@@ -48,13 +48,16 @@ function readRatchet(): Ratchet {
 /** The raw controls of every screen file, by path; files with none are absent. */
 function scan(): Ratchet {
   const found: Ratchet = {};
-  for (const file of sourceFiles({ under: 'src', extensions: ['svelte'], tests: 'exclude' })) {
+  for (const file of sourceFiles({ under: 'src', extensions: SCANNED, tests: 'exclude' })) {
     if (file.path.startsWith(PRIMITIVES_DIR)) continue;
     const counts = rawControlsIn(file.text);
     if (totalRawControls(counts) > 0) found[file.path] = counts;
   }
   return found;
 }
+
+/** `.ts` / `.js` are scanned too: a `<button` inside a string is a button drawn by hand. */
+const SCANNED = ['svelte', 'ts', 'js'];
 
 const KINDS: (keyof RawControlCounts)[] = ['button', 'select', 'input'];
 
@@ -80,6 +83,15 @@ describe('rawControlsIn', () => {
     expect(totalRawControls(counts)).toBe(0);
   });
 
+  it('counts the spellings that draw a button without being `<button>`', () => {
+    const counts = rawControlsIn(
+      '<input type="submit" /><input type="button" value="x" />' +
+        '<svelte:element this="button" /><svelte:element this="div" />' +
+        'const html = \'<button class="x">\';'
+    );
+    expect(counts).toEqual({ button: 4, select: 0, input: 0 });
+  });
+
   it('does not take `<Button` or `<Input` for a raw tag', () => {
     expect(totalRawControls(rawControlsIn('<Button>a</Button><Input /><Select />'))).toBe(0);
   });
@@ -87,7 +99,6 @@ describe('rawControlsIn', () => {
 
 describe('the controls ratchet', () => {
   const found = scan();
-  const ratchet = readRatchet();
 
   it('reads the tree it thinks it is reading', () => {
     // A scan that walked nothing would pass every assertion below.
@@ -99,6 +110,7 @@ describe('the controls ratchet', () => {
 
   it('rewrites the list downwards only, when asked', () => {
     if (process.env.CANARI_RATCHET_WRITE !== '1') return;
+    const ratchet = readRatchet();
     const next: Ratchet = {};
     for (const [path, counts] of Object.entries(found)) {
       const old = ratchet[path];
@@ -113,6 +125,7 @@ describe('the controls ratchet', () => {
   });
 
   it('lets no file outside the list hand-build a control', () => {
+    const ratchet = readRatchet();
     const offenders = Object.keys(found).filter((path) => !ratchet[path]);
     expect(
       offenders,
@@ -122,6 +135,7 @@ describe('the controls ratchet', () => {
   });
 
   it('lets no listed file gain a hand-built control', () => {
+    const ratchet = readRatchet();
     const grown = Object.entries(found)
       .filter(([path]) => ratchet[path])
       .flatMap(([path, counts]) =>
@@ -133,6 +147,7 @@ describe('the controls ratchet', () => {
   });
 
   it('has been lowered to what the tree now holds', () => {
+    const ratchet = readRatchet();
     const stale = Object.entries(ratchet)
       .filter(([path, allowed]) => {
         const counts = found[path] ?? { button: 0, select: 0, input: 0 };

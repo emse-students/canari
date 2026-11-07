@@ -340,7 +340,7 @@
     "input": 1
   },
   "src/lib/components/chat/ChatArea.svelte": {
-    "button": 11,
+    "button": 13,
     "select": 0,
     "input": 1
   },
