@@ -33,6 +33,8 @@ import {
   LIVE_KEY_HEX_RE,
   LIVE_ARRIVALS_PER_POLL,
   LIVE_MANIFEST_WINDOW,
+  LIVE_POSTER_MIN_INTERVAL_MS,
+  LIVE_TITLE_MAX_CHARS,
   LIVE_RECONNECT_WINDOW_MS,
   LIVE_RESERVATION_TTL_MS,
   LIVE_RETAINED_SEGMENTS,
@@ -65,6 +67,7 @@ import {
   isLiveKeySealingConfigured,
   LIVE_KEY_ENCRYPTION_SECRET_ENV,
   LiveKeyUnavailableError,
+  openLiveKey,
   openLiveKeyOr503,
   sealLiveKey,
   storedLiveKeyColumns,
@@ -80,6 +83,8 @@ export interface LiveView {
   lastSegmentAt: Date | null;
   nextIndex: number;
   key: string;
+  /** The live's optional title (owner, 2026-11-07), plain text, or null. */
+  title: string | null;
 }
 
 /**
@@ -110,7 +115,12 @@ export interface LiveArrivalsBlock {
   arrivalsCursor: number;
 }
 
-/** A live in the list of open lives - no key: the key is read by opening it. */
+/**
+ * A live in the list of open lives (the feed card, owner 2026-11-07). The list TAKES NO SEAT: it
+ * serves what the card draws - the title, how many watch, and the newest PREVIEW IMAGE with the key
+ * that opens it - to exactly the accounts the key read would serve (the watch rule, blocks both
+ * ways, removed viewers excluded), so a card shows a picture without costing a seat on the cap.
+ */
 export interface LiveListItem {
   id: string;
   broadcasterId: string;
@@ -122,6 +132,32 @@ export interface LiveListItem {
    * decides theirs on the client; this answers the scoped half only.
    */
   viewerModerates: boolean;
+  /** The live's optional title, plain text, or null. */
+  title: string | null;
+  /**
+   * How many accounts watch it (its seats), read without taking one - `null` when the count did not
+   * answer, so the card shows no number rather than a wrong one. A count, never a name.
+   */
+  viewers: number | null;
+  /**
+   * The newest preview image: its `name` under `/api/media/public/live/<id>/<name>` (the segments'
+   * cached route) and its AGE, `now() - posterAt` on the database's clock - one clock, so the card
+   * never compares the server's stamp with the device's. `null` before the first one is stored.
+   */
+  poster: { name: string; ageMs: number } | null;
+  /**
+   * The live key, served WITH a poster and only then - the one thing the list needs it for is to
+   * open that image. The same key `GET /api/lives/:id` serves, to the same audience, without the seat.
+   * `null` with no poster, or when the stored key does not open (logged at error, the card then draws
+   * no picture).
+   */
+  key: string | null;
+}
+
+/** What a stored preview image answers (`PUT /api/lives/:id/poster`). */
+export interface LivePosterResult {
+  name: string;
+  posterAt: Date;
 }
 
 /**
@@ -240,10 +276,11 @@ interface LiveRow extends StoredLiveKey {
   nextIndex: number;
   endedAt: Date | null;
   endReason: LiveEndReason | null;
+  title: string | null;
 }
 
 const LIVE_COLUMNS = `id, "broadcasterId", "associationId", ${storedLiveKeyColumns()}, "startedAt",
-  "lastSegmentAt", "nextIndex", "endedAt", "endReason"`;
+  "lastSegmentAt", "nextIndex", "endedAt", "endReason", "title"`;
 
 /** How many plaintext keys one query of the backfill takes; it loops until none is left. */
 const PLAINTEXT_KEY_BATCH = 100;
@@ -309,13 +346,20 @@ export class LivesService implements OnModuleDestroy {
    */
   async start(
     broadcasterId: string,
-    input: { key?: unknown; associationId?: unknown; acceptedRulesVersion?: unknown }
+    input: {
+      key?: unknown;
+      associationId?: unknown;
+      acceptedRulesVersion?: unknown;
+      title?: unknown;
+    }
   ): Promise<LiveView> {
     this.logger.debug(`[LIVE] start asked by ${short(broadcasterId)}`);
     if (typeof input.key !== 'string' || !LIVE_KEY_HEX_RE.test(input.key)) {
       throw new BadRequestException({ code: 'LIVE_KEY_INVALID' });
     }
     const key = input.key;
+    // Checked BEFORE anything is written, as the key: a refused title starts nothing.
+    const title = parseLiveTitle(input.title);
     // Refused BEFORE anything is written: a live whose key cannot be sealed is never stored.
     if (!isLiveKeySealingConfigured()) {
       this.logger.error(
@@ -387,9 +431,9 @@ export class LivesService implements OnModuleDestroy {
         const id = randomUUID();
         const sealed = sealLiveKey(id, key);
         const rows: LiveRow[] = await tx.query(
-          `INSERT INTO lives (id, "broadcasterId", "associationId", "liveKeyCiphertext", "liveKeyVersion")
-           VALUES ($1, $2, $3, $4, $5) RETURNING ${LIVE_COLUMNS}`,
-          [id, broadcasterId, associationId, sealed.liveKeyCiphertext, sealed.liveKeyVersion]
+          `INSERT INTO lives (id, "broadcasterId", "associationId", "liveKeyCiphertext", "liveKeyVersion", "title")
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING ${LIVE_COLUMNS}`,
+          [id, broadcasterId, associationId, sealed.liveKeyCiphertext, sealed.liveKeyVersion, title]
         );
         await tx.query(`INSERT INTO live_starts ("broadcasterId") VALUES ($1)`, [broadcasterId]);
         return rows[0];
@@ -401,7 +445,10 @@ export class LivesService implements OnModuleDestroy {
       }
       throw e;
     }
-    this.logger.log(`[LIVE] ${row.id} started by ${short(broadcasterId)}`);
+    // The title's length, never its text: a log line is no place for what a member wrote.
+    this.logger.log(
+      `[LIVE] ${row.id} started by ${short(broadcasterId)}, title ${title === null ? 'none' : `${[...title].length} chars`}`
+    );
     // The broadcaster's own key, just sealed: answered as received, nothing to open.
     return toView(row, key);
   }
@@ -462,9 +509,14 @@ export class LivesService implements OnModuleDestroy {
    */
   async listOpen(viewerId: string): Promise<LiveListItem[]> {
     const blocked = await blockedUserIdsFor(this.db.manager, viewerId);
-    const rows: LiveListItem[] = await this.db.query(
-      `SELECT l.id, l."broadcasterId", l."associationId", l."startedAt",
-              ${bdeModeratesContentSql('$1', 'l."associationId"', 'l."broadcasterId"')} AS "viewerModerates"
+    const rows: (Omit<LiveListItem, 'viewers' | 'poster' | 'key'> &
+      StoredLiveKey & { posterName: string | null; posterAgeMs: number | null })[] =
+      await this.db.query(
+        `SELECT l.id, l."broadcasterId", l."associationId", l."startedAt", l."title",
+              ${bdeModeratesContentSql('$1', 'l."associationId"', 'l."broadcasterId"')} AS "viewerModerates",
+              l."posterName",
+              floor(extract(epoch FROM now() - l."posterAt") * 1000)::float8 AS "posterAgeMs",
+              ${storedLiveKeyColumns('l')}
          FROM lives l
         WHERE l."endedAt" IS NULL
           AND ${liveVisibleToViewerSql('l', '$1')}
@@ -473,9 +525,89 @@ export class LivesService implements OnModuleDestroy {
                            WHERE r."liveId" = l.id AND r."viewerId" = $1)
         ORDER BY l."startedAt" DESC
         LIMIT 50`,
-      [viewerId, blocked]
+        [viewerId, blocked]
+      );
+    // ONE Redis read for every count of the list - never one per live.
+    const counts = await this.seats.watchingMany(rows.map((r) => r.id));
+    const items = rows.map((r): LiveListItem => {
+      const { posterName, posterAgeMs, liveKey, liveKeyCiphertext, liveKeyVersion, ...rest } = r;
+      let key: string | null = null;
+      if (posterName !== null) {
+        try {
+          key = openLiveKey(r.id, { liveKey, liveKeyCiphertext, liveKeyVersion });
+        } catch (e) {
+          // `openLiveKey` logged the cause at ERROR; THIS live draws no picture, the others do.
+          if (!(e instanceof LiveKeyUnavailableError)) throw e;
+        }
+      }
+      return {
+        ...rest,
+        viewerModerates: rest.viewerModerates === true,
+        viewers: counts?.get(r.id) ?? null,
+        poster:
+          posterName !== null && key !== null
+            ? { name: posterName, ageMs: Math.max(0, Number(posterAgeMs)) }
+            : null,
+        key,
+      };
+    });
+    this.logger.debug(
+      `[LIVE] list for ${short(viewerId)}: ${items.length} live(s), ${items.filter((i) => i.poster).length} with a picture`
     );
-    return rows;
+    return items;
+  }
+
+  /**
+   * The broadcaster sets or clears the live's TITLE while it is open (owner, 2026-11-07): `title`
+   * parsed by {@link parseLiveTitle} (null or blank clears it). Another member's live, or none, is
+   * 404 `LIVE_NOT_FOUND` - a write route is no oracle for which lives exist; an ended one 410; a
+   * muted account 403 `LIVE_MUTED`, as at the start. The card and a viewer read it at their next
+   * list read or open; the push already sent is not re-sent.
+   */
+  async setTitle(
+    broadcasterId: string,
+    liveId: string,
+    input: { title?: unknown }
+  ): Promise<{ id: string; title: string | null }> {
+    if (!('title' in input)) {
+      throw new BadRequestException({
+        code: 'LIVE_TITLE_INVALID',
+        maxChars: LIVE_TITLE_MAX_CHARS,
+      });
+    }
+    const title = parseLiveTitle(input.title);
+    if (await this.moderation.isUserMuted(broadcasterId)) {
+      this.logger.debug(`[LIVE] title of ${liveId} refused: ${short(broadcasterId)} is muted`);
+      throw new ForbiddenException({ code: 'LIVE_MUTED' });
+    }
+    return this.db.transaction(async (tx) => {
+      const rows: {
+        broadcasterId: string;
+        endedAt: Date | null;
+        endReason: LiveEndReason | null;
+      }[] = await tx.query(
+        `SELECT "broadcasterId", "endedAt", "endReason" FROM lives WHERE id = $1 FOR UPDATE`,
+        [liveId]
+      );
+      const row = rows[0];
+      if (!row) {
+        await this.refuseIfCut(tx, liveId, broadcasterId, 'broadcaster');
+        throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+      }
+      if (row.broadcasterId !== broadcasterId) {
+        this.logger.debug(`[LIVE] title refused: ${short(broadcasterId)} is not ${liveId}'s`);
+        throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+      }
+      if (row.endedAt) {
+        this.logger.debug(`[LIVE] title of ${liveId} refused: ended (${row.endReason})`);
+        throw liveEnded(row.endedAt, row.endReason);
+      }
+      await tx.query(`UPDATE lives SET "title" = $2 WHERE id = $1`, [liveId, title]);
+      this.logger.log(
+        `[LIVE] ${liveId}: title ${title === null ? 'cleared' : `set (${[...title].length} chars)`}`
+      );
+      return { id: liveId, title };
+    });
   }
 
   /** One live and its key, to a viewer allowed to watch it ({@link assertMayWatch}). */
@@ -594,6 +726,214 @@ export class LivesService implements OnModuleDestroy {
     if (outcome.claimed) this.announceInBackground(liveId, outcome.claimed);
     this.trimInBackground(liveId);
     return outcome.result;
+  }
+
+  /**
+   * Takes the live's PREVIEW IMAGE from its broadcaster (owner, 2026-11-07): a still frame sealed
+   * under the live key, stored under the live's own prefix (`live/<id>/<random name>`) beside its
+   * segments - so the live's purge deletes it with them, the orphan reaper sees it, and nginx serves
+   * it from the segments' cached location. It REPLACES the previous one, which is deleted once the
+   * new one is recorded (a failed delete leaves it to the purge at the end).
+   *
+   * The same three steps as a segment, for the same reason (no lock and no pooled connection held
+   * across the store): RESERVE (`posterPendingName`, committed), STORE, CONFIRM. The purge leaves a
+   * live alone while either reservation is live, so no poster lands after its live's purge.
+   *
+   * Refusals: another member's live or none 404 `LIVE_NOT_FOUND`; ended 410; a poster still storing
+   * 409 `LIVE_POSTER_IN_PROGRESS`; sooner than {@link LIVE_POSTER_MIN_INTERVAL_MS} after the last
+   * stored one (the database's clock) 429 `LIVE_POSTER_TOO_FAST`; empty 400 `LIVE_POSTER_EMPTY`;
+   * the store down 503 `LIVE_STORE_UNAVAILABLE`; and the ingests' shared bound 503 `LIVE_INGEST_BUSY`
+   * - a poster is a store like a segment, so it counts against the same {@link LIVE_INGEST_MAX_CONCURRENT}.
+   */
+  async ingestPoster(
+    broadcasterId: string,
+    liveId: string,
+    data: Buffer
+  ): Promise<LivePosterResult> {
+    if (data.length === 0) throw new BadRequestException({ code: 'LIVE_POSTER_EMPTY' });
+    if (this.ingestsInFlight >= LIVE_INGEST_MAX_CONCURRENT) {
+      this.logger.warn(
+        `[LIVE_POSTER] ${liveId} refused: ${this.ingestsInFlight} ingests already storing`
+      );
+      throw new ServiceUnavailableException({ code: 'LIVE_INGEST_BUSY' });
+    }
+    this.ingestsInFlight += 1;
+    try {
+      return await this.ingestPosterOnce(broadcasterId, liveId, data);
+    } finally {
+      this.ingestsInFlight -= 1;
+    }
+  }
+
+  private async ingestPosterOnce(
+    broadcasterId: string,
+    liveId: string,
+    data: Buffer
+  ): Promise<LivePosterResult> {
+    const name = await this.reservePoster(broadcasterId, liveId);
+    try {
+      await this.store.store(liveId, name, data);
+    } catch (e) {
+      this.logger.warn(
+        `[LIVE_POSTER] ${liveId}: poster not stored, reservation released: ${causeOf(e)}`
+      );
+      await this.releasePoster(liveId, name);
+      throw new ServiceUnavailableException({ code: 'LIVE_STORE_UNAVAILABLE' });
+    }
+    const outcome = await this.confirmPoster(liveId, name);
+    if (outcome.kind === 'ended') {
+      // The live ended while the poster was storing: this was the store its purge waited for.
+      await this.purgeBestEffort(liveId, 'after a poster that met the end');
+      throw liveEnded(outcome.endedAt, outcome.endReason);
+    }
+    if (outcome.kind === 'lost') {
+      // Stored under a name no row will ever name: deleted now, or by the purge at the end.
+      await this.deletePosterObject(liveId, name, 'its reservation was taken over');
+      throw new ConflictException({ code: 'LIVE_POSTER_RESERVATION_LOST' });
+    }
+    if (outcome.previous !== null) {
+      await this.deletePosterObject(liveId, outcome.previous, 'replaced');
+    }
+    this.logger.debug(`[LIVE_POSTER] ${liveId}: poster ${name} stored (${data.length} B)`);
+    return { name, posterAt: outcome.posterAt };
+  }
+
+  /** Step one of a poster: the checks and the reservation, one short committed transaction. */
+  private async reservePoster(broadcasterId: string, liveId: string): Promise<string> {
+    return this.db.transaction(async (tx): Promise<string> => {
+      const rows: {
+        broadcasterId: string;
+        endedAt: Date | null;
+        endReason: LiveEndReason | null;
+        reservationLive: boolean | null;
+        tooSoon: boolean | null;
+      }[] = await tx.query(
+        `SELECT "broadcasterId", "endedAt", "endReason",
+                "posterPendingAt" + $2 * interval '1 millisecond' > now() AS "reservationLive",
+                "posterAt" + $3 * interval '1 millisecond' > now() AS "tooSoon"
+           FROM lives WHERE id = $1 FOR UPDATE`,
+        [liveId, LIVE_RESERVATION_TTL_MS, LIVE_POSTER_MIN_INTERVAL_MS]
+      );
+      const row = rows[0];
+      if (!row) {
+        await this.refuseIfCut(tx, liveId, broadcasterId, 'broadcaster');
+        throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+      }
+      if (row.broadcasterId !== broadcasterId) {
+        this.logger.debug(`[LIVE_POSTER] refused: ${short(broadcasterId)} is not ${liveId}'s`);
+        throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+      }
+      if (row.endedAt) {
+        this.logger.debug(`[LIVE_POSTER] ${liveId} refused: ended (${row.endReason})`);
+        throw liveEnded(row.endedAt, row.endReason);
+      }
+      if (row.reservationLive === true) {
+        this.logger.debug(`[LIVE_POSTER] ${liveId} refused: a poster is already being stored`);
+        throw new ConflictException({ code: 'LIVE_POSTER_IN_PROGRESS' });
+      }
+      if (row.tooSoon === true) {
+        this.logger.warn(`[LIVE_POSTER] ${liveId} refused: sooner than the poster interval`);
+        throw new HttpException({ code: 'LIVE_POSTER_TOO_FAST' }, HttpStatus.TOO_MANY_REQUESTS);
+      }
+      const name = randomUUID();
+      await tx.query(
+        `UPDATE lives SET "posterPendingName" = $2, "posterPendingAt" = now() WHERE id = $1`,
+        [liveId, name]
+      );
+      return name;
+    });
+  }
+
+  /**
+   * Step three of a poster, one short transaction: record it and clear the reservation, answering
+   * the poster it replaced - unless the live ended meanwhile (`ended`: nothing recorded) or the
+   * reservation is no longer this one's (`lost`: taken over as abandoned).
+   */
+  private async confirmPoster(
+    liveId: string,
+    name: string
+  ): Promise<
+    | { kind: 'stored'; previous: string | null; posterAt: Date }
+    | { kind: 'ended'; endedAt: Date | null; endReason: LiveEndReason | null }
+    | { kind: 'lost' }
+  > {
+    return this.db.transaction(async (tx) => {
+      const rows: {
+        endedAt: Date | null;
+        endReason: LiveEndReason | null;
+        posterPendingName: string | null;
+        posterName: string | null;
+      }[] = await tx.query(
+        `SELECT "endedAt", "endReason", "posterPendingName", "posterName"
+           FROM lives WHERE id = $1 FOR UPDATE`,
+        [liveId]
+      );
+      const row = rows[0];
+      if (!row) {
+        this.logger.warn(`[LIVE_POSTER] ${liveId}: poster stored after its live was deleted`);
+        const cut = await this.cutOf(tx, liveId);
+        return {
+          kind: 'ended' as const,
+          endedAt: cut?.cutAt ?? null,
+          endReason: cut ? 'cut' : null,
+        };
+      }
+      if (row.endedAt) {
+        await tx.query(
+          `UPDATE lives SET "posterPendingName" = NULL, "posterPendingAt" = NULL
+            WHERE id = $1 AND "posterPendingName" = $2`,
+          [liveId, name]
+        );
+        this.logger.debug(`[LIVE_POSTER] ${liveId}: poster stored, but the live has ended`);
+        return { kind: 'ended' as const, endedAt: row.endedAt, endReason: row.endReason };
+      }
+      if (row.posterPendingName !== name) {
+        this.logger.warn(`[LIVE_POSTER] ${liveId}: its reservation was taken over`);
+        return { kind: 'lost' as const };
+      }
+      const [stamped] = (await tx.query(
+        `UPDATE lives SET "posterName" = $2, "posterAt" = now(),
+                "posterPendingName" = NULL, "posterPendingAt" = NULL
+          WHERE id = $1 RETURNING "posterAt"`,
+        [liveId, name]
+      )) as [{ posterAt: Date }[], number];
+      return { kind: 'stored' as const, previous: row.posterName, posterAt: stamped[0].posterAt };
+    });
+  }
+
+  /** Clears a poster reservation whose store failed (only THIS one's). A failure waits out its age. */
+  private async releasePoster(liveId: string, name: string): Promise<void> {
+    try {
+      await this.db.query(
+        `UPDATE lives SET "posterPendingName" = NULL, "posterPendingAt" = NULL
+          WHERE id = $1 AND "posterPendingName" = $2`,
+        [liveId, name]
+      );
+    } catch (e) {
+      this.logger.warn(
+        `[LIVE_POSTER] ${liveId}: reservation ${name} not released, it expires with its age: ${causeOf(e)}`
+      );
+    }
+  }
+
+  /**
+   * Deletes one poster object no row names any more. Best effort: a refusal leaves it under the
+   * live's prefix, which the purge at the live's end deletes whole - so at most one stale image per
+   * failure, for the live's lifetime, never past it.
+   */
+  private async deletePosterObject(liveId: string, name: string, why: string): Promise<void> {
+    try {
+      const result = await this.store.deleteSegments(liveId, [name]);
+      if (result.failed.length > 0) {
+        this.logger.warn(
+          `[LIVE_POSTER] ${liveId}: ${why} poster ${name} refused by the store, the purge takes it`
+        );
+      }
+    } catch (e) {
+      this.logger.warn(
+        `[LIVE_POSTER] ${liveId}: ${why} poster ${name} not deleted, the purge takes it: ${causeOf(e)}`
+      );
+    }
   }
 
   /**
@@ -1510,8 +1850,9 @@ export class LivesService implements OnModuleDestroy {
    * is deleted only when that listing is EMPTY and nothing failed. A refusal keeps the row - the only
    * record that the prefix exists - for the next sweep.
    *
-   * NOT WHILE A SEGMENT IS STORING: a live whose reservation is younger than
-   * {@link LIVE_RESERVATION_TTL_MS} is `'kept'` before the store is touched (its confirm purges it).
+   * NOT WHILE A SEGMENT OR A POSTER IS STORING: a live whose reservation (`pendingAt`, or the
+   * preview's `posterPendingAt`) is younger than {@link LIVE_RESERVATION_TTL_MS} is `'kept'` before
+   * the store is touched (its confirm purges it).
    * No reservation can be taken after the end, so once this read finds none, no store of this live
    * is in flight but one past its own timeout. An OPEN live is never touched (`'kept'`, with a warn),
    * and an id with NO ROW is purged in the store alone - the orphan reaper's case.
@@ -1544,7 +1885,8 @@ export class LivesService implements OnModuleDestroy {
               (l."broadcasterId" = $4
                  OR EXISTS (SELECT 1 FROM live_cuts c WHERE c."liveId" = l.id)) AS removed,
               l."endedAt" + $3 * interval '1 millisecond' > now() AS "withinLease",
-              l."pendingAt" + $2 * interval '1 millisecond' > now() AS "storeInFlight"
+              (l."pendingAt" + $2 * interval '1 millisecond' > now()
+                 OR l."posterPendingAt" + $2 * interval '1 millisecond' > now()) AS "storeInFlight"
          FROM lives l WHERE l.id = $1`,
       [liveId, LIVE_RESERVATION_TTL_MS, LIVE_SEAT_LEASE_MS, DELETED_ACCOUNT]
     );
@@ -1575,7 +1917,7 @@ export class LivesService implements OnModuleDestroy {
       });
     }
     if (row?.storeInFlight) {
-      this.logger.debug(`[LIVE_GC] ${liveId} kept: a segment is still storing`);
+      this.logger.debug(`[LIVE_GC] ${liveId} kept: a segment or its poster is still storing`);
       return 'kept';
     }
     const result = await this.store.purge(liveId);
@@ -1922,7 +2264,26 @@ function toView(row: LiveRow, key: string): LiveView {
     lastSegmentAt: row.lastSegmentAt,
     nextIndex: row.nextIndex,
     key,
+    title: row.title,
   };
+}
+
+/**
+ * A live's TITLE as a request carries it (owner, 2026-11-07): absent or null is "no title"; a string
+ * is trimmed, and blank is "no title" too (stored NULL, never ''). Refused 400 `LIVE_TITLE_INVALID`
+ * (with `maxChars`) when it is not a string, holds a control character (a line break included: a
+ * title is one line, on a card and in a push), or is longer than {@link LIVE_TITLE_MAX_CHARS}
+ * characters - counted in code points, as PostgreSQL's `char_length` counts them.
+ */
+export function parseLiveTitle(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  const refuse = () =>
+    new BadRequestException({ code: 'LIVE_TITLE_INVALID', maxChars: LIVE_TITLE_MAX_CHARS });
+  if (typeof raw !== 'string') throw refuse();
+  const title = raw.trim();
+  if (title === '') return null;
+  if (/\p{Cc}/u.test(title) || [...title].length > LIVE_TITLE_MAX_CHARS) throw refuse();
+  return title;
 }
 
 /**

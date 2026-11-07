@@ -37,6 +37,9 @@ export const LIVES_ONE_OPEN_PER_BROADCASTER = 'lives_one_open_per_broadcaster';
 @Check('lives_next_index', `"nextIndex" >= 0`)
 @Check('lives_stored_bytes', `"storedBytes" >= 0`)
 @Check('lives_chat_seq', `"chatSeq" >= 0 AND "reactionSeq" >= 0`)
+@Check('lives_title_length', `"title" IS NULL OR char_length("title") BETWEEN 1 AND 80`)
+@Check('lives_poster_whole', `("posterName" IS NULL) = ("posterAt" IS NULL)`)
+@Check('lives_poster_pending_whole', `("posterPendingName" IS NULL) = ("posterPendingAt" IS NULL)`)
 @Check(
   'lives_pending_whole',
   `("pendingName" IS NULL) = ("pendingSha256" IS NULL) AND ("pendingName" IS NULL) = ("pendingAt" IS NULL)`
@@ -134,4 +137,32 @@ export class Live {
   /** The same for reaction bursts (C4, C7). */
   @Column({ type: 'integer', default: 0 })
   reactionSeq: number;
+
+  /**
+   * The live's optional TITLE (owner, 2026-11-07, migration 139): 1 to `LIVE_TITLE_MAX_CHARS`
+   * characters of plain text, or NULL for none. Written at the start and by the broadcaster's edit.
+   */
+  @Column({ type: 'varchar', length: 80, nullable: true })
+  title: string | null;
+
+  /**
+   * The stored PREVIEW IMAGE's random name, under `live/<id>/` beside the segments (migration 139),
+   * and when it was stored (the database's clock). Both or neither.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  posterName: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  posterAt: Date | null;
+
+  /**
+   * THE RESERVATION of a poster being stored (migration 139), the segment's `pendingName` for the
+   * preview: written before the store, cleared by its confirm, and read by the purge, which leaves
+   * the live alone while it is younger than `LIVE_RESERVATION_TTL_MS`.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  posterPendingName: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  posterPendingAt: Date | null;
 }

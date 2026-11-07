@@ -294,6 +294,49 @@ export const LIVE_REACTION_TAPS_PER_WINDOW = 10;
 /** The most bursts one poll sums after its cursor; the rest come with the next poll. */
 export const LIVE_REACTION_PAGE = 500;
 
+/**
+ * THE LONGEST LIVE TITLE, in characters (Unicode code points - what PostgreSQL's `varchar(80)` and
+ * `char_length` count): owner, 2026-11-07. The title is OPTIONAL, entered on the launch screen and
+ * editable while on air; without one the card reads "X est en direct" as before. Plain text the
+ * server stores and serves, like a post's text (lives.md, "Titles and the preview").
+ */
+export const LIVE_TITLE_MAX_CHARS = 80;
+
+/**
+ * THE LARGEST SEALED PREVIEW IMAGE ("poster") the server accepts, in bytes (owner, 2026-11-07: a
+ * refreshed still image on the feed card). The broadcaster sends a JPEG 480 px wide at quality 0.7
+ * (a 480 x 854 portrait frame is tens of kB), sealed under the live key; 256 KiB leaves room for a
+ * busy frame and is a sixteenth of a segment. Refused 413 `LIVE_POSTER_TOO_LARGE` above it.
+ */
+export const LIVE_POSTER_MAX_BYTES = 256 * 1024;
+
+/**
+ * THE SHORTEST GAP BETWEEN TWO STORED POSTERS of one live, in ms, decided on the row's `posterAt`
+ * (the database's clock): a poster sooner than this is 429 `LIVE_POSTER_TOO_FAST`. The client sends
+ * one every {@link LIVE_POSTER_EVERY_SEGMENTS} segments (~10 s), so half of that is never met by an
+ * honest broadcaster and bounds a dishonest one at 12 stores a minute.
+ */
+export const LIVE_POSTER_MIN_INTERVAL_MS = 5_000;
+
+/**
+ * HOW OFTEN THE BROADCASTER SENDS A POSTER, in SEGMENTS: one when segment `index` is enqueued with
+ * `index % 5 === 0` - segment 0 first, so the card has a picture from the first seconds, then about
+ * every 10 s (a segment is ~2 s). Counted on the segment index, which is durable (the server's
+ * `nextIndex`), never on a timer: no segment, no poster - a paused camera leaves the last image,
+ * and the card says how old it is.
+ */
+export const LIVE_POSTER_EVERY_SEGMENTS = 5;
+
+/**
+ * HOW OFTEN A FEED CARD RE-READS `GET /api/lives` WHILE IT IS ON SCREEN, in ms - what refreshes the
+ * preview image, the viewer count and the title. Served, never compiled into a client, so the load
+ * can be shaped without a release. Only while the card intersects the viewport AND the page is
+ * visible: a card scrolled away or an app in the background reads nothing. 15 s is 4 list reads a
+ * minute per reader looking at the card, against the 60 manifest polls a minute of ONE seated viewer
+ * (lives.md, "What the preview costs").
+ */
+export const LIVE_CARD_REFRESH_MS = 15_000;
+
 /** The numbers as the API serves them. */
 export function liveLimits(): {
   segmentMaxBytes: number;
@@ -316,6 +359,10 @@ export function liveLimits(): {
   reactionTapsPerWindow: number;
   strikeWindowMs: number;
   suspensionMs: number;
+  titleMaxChars: number;
+  posterMaxBytes: number;
+  posterEverySegments: number;
+  cardRefreshMs: number;
 } {
   return {
     segmentMaxBytes: LIVE_SEGMENT_MAX_BYTES,
@@ -338,5 +385,9 @@ export function liveLimits(): {
     reactionTapsPerWindow: LIVE_REACTION_TAPS_PER_WINDOW,
     strikeWindowMs: LIVE_STRIKE_WINDOW_MS,
     suspensionMs: LIVE_SUSPENSION_MS,
+    titleMaxChars: LIVE_TITLE_MAX_CHARS,
+    posterMaxBytes: LIVE_POSTER_MAX_BYTES,
+    posterEverySegments: LIVE_POSTER_EVERY_SEGMENTS,
+    cardRefreshMs: LIVE_CARD_REFRESH_MS,
   };
 }
