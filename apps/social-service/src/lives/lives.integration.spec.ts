@@ -82,6 +82,10 @@ const KEY_AT_REST = readFileSync(
   join(__dirname, '..', 'migrations', '110_live_key_at_rest.sql'),
   'utf8'
 );
+const ASSOCIATION_LAST_LIVE = readFileSync(
+  join(__dirname, '..', 'migrations', '139_association_last_live_announced_at.sql'),
+  'utf8'
+);
 /** The secret live keys are sealed under in this file (migration 110). */
 const KEY_SECRET = 'live-key-it-throwaway-secret-0123456789abcdef';
 
@@ -320,7 +324,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       `CREATE TABLE association_follows ("followerUserId" varchar(255), "associationId" uuid)`
     );
     await q(`CREATE TABLE associations (id uuid, name varchar, "logoMediaId" varchar,
-      type varchar NOT NULL DEFAULT 'association', "parentAssociationId" uuid)`);
+      type varchar NOT NULL DEFAULT 'association', "parentAssociationId" uuid, archived boolean NOT NULL DEFAULT false)`);
+    // Migration 139 (WP-1b) adds the association's last announced live, applied TWICE as the deploy
+    // may re-run it.
+    await q(ASSOCIATION_LAST_LIVE);
+    await q(ASSOCIATION_LAST_LIVE);
     // And the ones a live's VISIBILITY reads (`liveVisibleToUserSql`, the rule of a post), in the
     // columns `reader-spaces.ts` reads. ALICE..EVE share Saint-Etienne ICM; FRANK is in Gardanne
     // ISMIN and shares no space with any of them.
@@ -1208,6 +1216,88 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       ]);
       const audience = (await q(liveAudienceSql(true), [ALICE, live.id])) as { id: string }[];
       expect(audience.map((r) => r.id).sort()).toEqual([BOB, CAROL, FRANK]);
+    });
+
+    describe('an association announces at most one live per 6 hours (WP-1b)', () => {
+      /** BDE reaching Saint-Etienne ICM, ALICE speaking for it, BOB following ALICE. */
+      const setUp = async () => {
+        await q(`INSERT INTO associations (id, name, "logoMediaId") VALUES ($1, 'BDE', NULL)`, [
+          ASSO,
+        ]);
+        await q(
+          `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ICM', ${SE})`,
+          [ASSO]
+        );
+        mayActAs.add(`${ALICE}:${ASSO}`);
+        await follow(BOB);
+      };
+      /** Starts a live as the association, stores its segment 0, and ends it. */
+      const assoLive = async () => {
+        const live = await lives.start(ALICE, { key: KEY, associationId: ASSO });
+        await lives.ingest(ALICE, live.id, 0, segment(0));
+        await lives.end(ALICE, live.id);
+        return live;
+      };
+
+      it('a second live within 6 hours is claimed but pushes nothing; the slot is on the association', async () => {
+        await setUp();
+        const first = await assoLive();
+        const second = await assoLive();
+        expect((await pushed()).map((n) => n.pushData?.liveId)).toEqual([first.id]);
+        const [asso] = await q(
+          `SELECT "lastLiveAnnouncedAt" IS NOT NULL AS stamped FROM associations WHERE id = $1`,
+          [ASSO]
+        );
+        expect(asso.stamped).toBe(true);
+        // The second live is STAMPED (never announced later), though nothing was pushed: a repeat of
+        // its segment 0 cannot claim it again. Its row may already be gone with its end - either way
+        // nothing can announce it.
+        const rows = await q(`SELECT "announcedAt" FROM lives WHERE id = $1`, [second.id]);
+        for (const r of rows) expect(r.announcedAt).not.toBeNull();
+      });
+
+      it('a live once the 6 hours have passed is announced again', async () => {
+        await setUp();
+        const first = await assoLive();
+        // Moved back by SQL, relative to the database's own clock - no wall clock asserted.
+        await q(
+          `UPDATE associations SET "lastLiveAnnouncedAt" = now() - interval '6 hours 1 minute' WHERE id = $1`,
+          [ASSO]
+        );
+        const second = await assoLive();
+        expect((await pushed()).map((n) => n.pushData?.liveId)).toEqual([first.id, second.id]);
+      });
+
+      it("a member's live is never limited by it, even right after the association's", async () => {
+        await setUp();
+        const asAsso = await assoLive();
+        const own = await start();
+        await lives.ingest(ALICE, own.id, 0, segment(0));
+        expect((await pushed()).map((n) => [n.pushData?.liveId, n.recipientIds])).toEqual([
+          [asAsso.id, expect.arrayContaining([BOB])],
+          [own.id, [BOB]],
+        ]);
+      });
+
+      it('an ARCHIVED association cannot go live, and one archived after its start is not announced', async () => {
+        await setUp();
+        await q(`UPDATE associations SET archived = true WHERE id = $1`, [ASSO]);
+        expect(await refusal(lives.start(ALICE, { key: KEY, associationId: ASSO }))).toEqual({
+          status: HttpStatus.FORBIDDEN,
+          code: 'LIVE_ASSOCIATION_ARCHIVED',
+        });
+        // Archived between the start and the first frame: the slot refuses it, and the slot stays
+        // free for the day it is restored.
+        await q(`UPDATE associations SET archived = false WHERE id = $1`, [ASSO]);
+        const live = await lives.start(ALICE, { key: KEY, associationId: ASSO });
+        await q(`UPDATE associations SET archived = true WHERE id = $1`, [ASSO]);
+        await lives.ingest(ALICE, live.id, 0, segment(0));
+        expect(await pushed()).toEqual([]);
+        const [asso] = await q(`SELECT "lastLiveAnnouncedAt" FROM associations WHERE id = $1`, [
+          ASSO,
+        ]);
+        expect(asso.lastLiveAnnouncedAt).toBeNull();
+      });
     });
 
     it("A MEMBER'S LIVE RESPECTS SPACES AS A POST DOES: who shares none and does not follow is not told and cannot watch", async () => {

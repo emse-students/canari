@@ -5324,6 +5324,7 @@
   "live_start_muted": "Votre compte ne peut ni publier ni diffuser pour le moment.",
   "live_start_already_open": "Un live précédent est encore ouvert ; il se ferme de lui-même dans la minute. Réessayez ensuite.",
   "live_start_association_forbidden": "Vous ne pouvez pas diffuser au nom de cette association.",
+  "live_start_association_archived": "Cette association est archivée : elle ne peut plus lancer de live.",
   "live_start_rate_limited": "Trop de lives démarrés cette heure-ci. Réessayez plus tard.",
   "live_start_offline": "Pas de connexion : le live n'a pas démarré.",
   "live_start_failed": "Le live n'a pas pu démarrer.",

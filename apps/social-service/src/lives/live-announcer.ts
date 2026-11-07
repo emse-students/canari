@@ -16,7 +16,10 @@ import { short } from './live-log';
  * - a MEMBER's live: their ACCEPTED followers (`user_follows`; a pending request is not a follow,
  *   WP-F1) who can SEE it - since WP-F5 every accepted follower, whatever their space;
  * - an ASSOCIATION's live: EVERYONE who can see it, exactly as an association's post is announced to
- *   everyone who sees it (`announceRecipientsSql(false)`) - not only `association_follows`.
+ *   everyone who sees it (`announceRecipientsSql(false)`) - not only `association_follows`. At
+ *   most one per association per 6 hours, and none for an archived association: both are decided
+ *   before this query, in segment 0's claim (`LivesService.confirm`, WP-1b), and an archived
+ *   association cannot start a live at all (`LIVE_ASSOCIATION_ARCHIVED`).
  *
  * ONE PREDICATE DECIDES WHO SEES, in both cases: `liveVisibleToUserSql`, the rule of a post by the
  * same author or association (its association branch is `associationVisibleToUserSql`, the same
@@ -95,8 +98,8 @@ export class LiveAnnouncer {
 
   /**
    * Pushes a CLAIMED live's start to its audience (`liveAudienceSql`), and NEVER throws: a failure is
-   * logged, and the live is not retried (its claim is committed). Returns how many followers were
-   * addressed, or `null` when nothing was sent (switched off, or a failure).
+   * logged, and the live is not retried (its claim is committed). Returns how many accounts of its
+   * audience were addressed, or `null` when nothing was sent (switched off, or a failure).
    */
   async announce(liveId: string, live: ClaimedLive): Promise<number | null> {
     if (!isLiveEnabled()) {

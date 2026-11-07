@@ -5,7 +5,8 @@ Instagram-style follow suggestions, with a ceiling on the noise. This page holds
 design that answers each one, what each surface reveals and to whom, and the work packages in order.
 The queue entry is [backlog.d](backlog.d/engagement-chantier.md).
 
-**State: WP-1 BUILT (the association live audience); everything else DESIGNED, not built.**
+**State: WP-1 and WP-1b BUILT (the association live audience, and its 6-hour bound); everything
+else DESIGNED, not built.**
 
 Context it must respect, and which nothing here changes:
 
@@ -143,30 +144,39 @@ which would need a transaction around a single read. The bound to watch: the pla
 `[LIVE_ANNOUNCE]` line whose duration jumps is the symptom. The entity post announcement
 (`announceRecipientsSql(false)`) runs the same shape and has the same bound.
 
-### WP-1b - one announced live per association per 6 hours (designed, the follow-up)
-
-L16. Since the audience is now the whole campus, an association that ends and restarts a live (six
-starts an hour are allowed per broadcaster) must not ring it each time.
-
-- **Durable state, on the association**: `ALTER TABLE associations ADD COLUMN IF NOT EXISTS
-  "lastLiveAnnouncedAt" timestamptz` (plain, no backfill: NULL means never). Not read from `lives`,
-  whose rows are deleted at the end of each live.
-- **In the claim's transaction** (`LivesService.confirm`, where segment 0 stamps `announcedAt`): for
-  an association live, `UPDATE associations SET "lastLiveAnnouncedAt" = now() WHERE id = $1 AND
-  ("lastLiveAnnouncedAt" IS NULL OR "lastLiveAnnouncedAt" < now() - interval '6 hours') RETURNING id`.
-  The row lock orders two lives of the same association. A row returned: announced as today. No row:
-  the live is still claimed (stamped, so never announced later) and the announcer logs
-  `[LIVE_ANNOUNCE] <liveId> not announced: association announced a live less than 6 h ago` at log
-  level, with the previous time - an expected outcome, counted, not a warning.
-- **Proof**: integration spec - two association lives within 6 hours, one push; the second after the
-  stamp is moved back 7 hours by SQL, two pushes; a member's live is never limited by this.
-- **Owed before the stable that carries WP-1 is cut**, so production never runs the wider audience
-  without its limit.
+**An archived association cannot go live** (review of #3119): `LivesService.start` refuses it with
+`403 LIVE_ASSOCIATION_ARCHIVED`, since its live would ring a former audience; one archived between
+the start and the first frame is not announced (WP-1b's slot requires `NOT archived`).
 
 **Proof.** `lives.integration.spec.ts`, "an association's live goes to EVERYONE WHO SEES IT", on a real
 PostgreSQL: a non-follower in the audience is told, a follower is told, a reader of another campus
 holding a read grant is not, a reader who blocked the broadcaster is not, a removed viewer is not, and
 a MEMBER outside the rules' spaces is (the membership door). Mechanism and table: [lives](services/lives.md#the-push-to-the-followers-wp-l7-server-half).
+
+### WP-1b - one announced live per association per 6 hours (BUILT, in the same pull request)
+
+L16. Since the audience is now the whole campus, an association that ends and restarts a live (six
+starts an hour are allowed per broadcaster) must not ring it each time. It ships in WP-1's own pull
+request, so no release - a hotfix included - can carry the wider audience without its bound.
+
+- **Durable state, on the association**: migration 139, `ALTER TABLE associations ADD COLUMN IF NOT
+  EXISTS "lastLiveAnnouncedAt" timestamptz` (plain, no backfill: NULL means never; declared on the
+  entity with `select: false`, never served). Not read from `lives`, whose rows are deleted at the
+  end of each live.
+- **In the claim's transaction** (`LivesService.confirm`, where segment 0 stamps `announcedAt`,
+  through `takeAssociationAnnounceSlot`): for an association live, `UPDATE associations SET
+  "lastLiveAnnouncedAt" = now() WHERE id = $1 AND NOT archived AND ("lastLiveAnnouncedAt" IS NULL OR
+  "lastLiveAnnouncedAt" <= now() - make_interval(hours => 6)) RETURNING id`
+  (`LIVE_ASSOCIATION_ANNOUNCE_INTERVAL_HOURS`). The row lock orders two lives of the same
+  association. A row returned: announced as before. No row: the live is still claimed (stamped, so
+  never announced later) and one line says so, at log level - `[LIVE_ANNOUNCE] <liveId> not
+  announced: association <id> announced a live at <time>, less than 6 h ago` - an expected outcome,
+  counted, not a warning.
+- **Proof**: `lives.integration.spec.ts`, "an association announces at most one live per 6 hours":
+  a second live within 6 hours pushes nothing and stays stamped; one after the stamp is moved back
+  past 6 hours by SQL (the database's clock, no wall clock asserted) pushes; a member's live right
+  after the association's is pushed as ever; and "an ARCHIVED association cannot go live, and one
+  archived after its start is not announced".
 
 ## Follow suggestions - the query
 
@@ -646,8 +656,10 @@ written back here before WP-9 merges.
 
 **How each one ships** (decision 13): on its own, to production, after an adversarial review, a pass
 on dev through a pre-release, and a phone reading - without waiting for the owner. A package with a
-held migration (only the two drops below) still needs its approval line under the
-[held-migration rule](cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01).
+held migration - the WP-3 and WP-4 copies and the two later drops, [listed below](#which-migrations-are-held) -
+still needs its approval line under the
+[held-migration rule](cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01), in the order
+written there.
 
 **The order, and why.** Cheapest win first. The first guess handed with the decisions (the follow
 button, the association live audience and the bell before the suggestion graph) holds as it was
@@ -659,7 +671,7 @@ then WP-9). Shipping it earlier would guard nothing.
 | WP | What | Starting point | Proof |
 | --- | --- | --- | --- |
 | **WP-1** (BUILT, #3119) | An association's live reaches everyone who can see it | `lives/live-announcer.ts` | `lives.integration.spec.ts` on PostgreSQL ([above](#wp-1---an-associations-live-reaches-everyone-who-can-see-it-built)) |
-| **WP-1b** | One announced live per association per 6 hours (L16), owed before the stable carrying WP-1 | `lives/lives.service.ts` (the claim) | [above](#wp-1b---one-announced-live-per-association-per-6-hours-designed-the-follow-up) |
+| **WP-1b** (BUILT, #3119) | One announced live per association per 6 hours (L16) | `lives/lives.service.ts` (the claim) | [above](#wp-1b---one-announced-live-per-association-per-6-hours-built-in-the-same-pull-request) |
 | **WP-2** | Suivre everywhere a person or entity is named: post headers of an account the viewer does not follow, search results, association cards (today only the profile and the association page carry it) | `frontend/src/lib/follows/api.ts` | component tests per surface; a phone reading of a follow request from a post header |
 | **WP-3** | The bell (decisions 3d, 5a, 10): `account_bells` (`lives` and `none` only, L3), the HELD copy of `association_push_mutes`, the old mute endpoints writing `account_bells` (L8), a follow deleting the row in the creating statement, the seam in `fanOutPush`, the profile control, the association mute UI moved onto it | `follows/association-push-mutes.service.ts` | integration spec of the level table above; a new follow resets a reduced bell and a RETRIED follow does not; following a muted association again unmutes it; a mute set through the old endpoint after the copy is honoured; the existing mute specs still green against the new store |
 | **WP-4** | Openings for followers (5d): `opening_reminders`, the HELD copy of `form_reminders`, follower rows at publication, "Me prévenir" upsert, booking and event openings; never capped | `forms/forms-reminder.scheduler.ts` | integration spec: a follower who also asked gets ONE push, a follower gets the opening and no heads-up, a non-follower who asked gets both |
@@ -692,10 +704,21 @@ AND copies rows into it ships TWO files: the `CREATE TABLE` (plain) and the copy
 | drop of `form_reminders` | after WP-4 has served one stable | **yes** (a `DROP`) | destructive |
 
 **Approval.** Each held file is approved by the owner or by the lead under the 2026-11-03 delegation
-(an adversarial review passed, the file run on dev through a pre-release, the merge reported on the
-private tracking page - [the three conditions](backlog.d/owner-decisions-of-2026-11-03-evening.md)).
-**A held migration on `main` blocks EVERY release - pre-release and stable - until it is approved or
-reverted** (gate 6, [cicd](cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)). So a
-package carrying one is merged only when its approval can follow at once under the delegation, and a
-copy that cannot be approved promptly is reverted rather than left blocking the release train for
-every other package.
+([the conditions](backlog.d/owner-decisions-of-2026-11-03-evening.md)). **A held migration on `main`
+blocks EVERY release - pre-release and stable - until it is approved or reverted** (gate 6,
+[cicd](cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)), and `apply_migrations` refuses
+an unapproved held file on dev exactly as on production. So the file CANNOT run on dev before its
+approval, and the real order for the WP-3 and WP-4 copies is:
+
+1. The package's pull request is reviewed adversarially (the file's SQL included) and its integration
+   spec runs the copy against a real PostgreSQL - the only run before approval.
+2. It is merged only when its approval line can follow AT ONCE; from that merge every release is
+   refused until step 3.
+3. The approval line (`<path> <sha256>` in `infrastructure/migration-approvals.txt`) is merged by
+   hand, by the owner or the lead, and reported on the private tracking page.
+4. Then a NEW pre-release tag: the deploy takes the backup right before the file and runs it on dev,
+   and the package's phone reading is taken on that pre-release.
+5. The stable follows as for any package (decision 13).
+
+A copy whose approval cannot follow at once is not merged; one merged and then found wrong is
+reverted rather than left blocking the release train for every other package.

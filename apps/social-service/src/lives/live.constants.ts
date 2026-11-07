@@ -63,6 +63,13 @@ export const LIVE_SEGMENT_BURST = 15;
 /** How many lives one account may START in a rolling hour (`live_starts`); 429 `LIVE_START_RATE`. */
 export const LIVE_STARTS_PER_HOUR = 6;
 
+/**
+ * At most one ANNOUNCED live per association in this many hours (WP-1b, docs/wiki/engagement.md L16):
+ * an association's live reaches its whole audience, so ending and restarting must not ring it again.
+ * Read against `associations."lastLiveAnnouncedAt"` in segment 0's claim (`LivesService.confirm`).
+ */
+export const LIVE_ASSOCIATION_ANNOUNCE_INTERVAL_HOURS = 6;
+
 /** The rolling window of {@link LIVE_STARTS_PER_HOUR}, and how long a `live_starts` row is kept. */
 export const LIVE_START_WINDOW_MS = 60 * 60_000;
 
