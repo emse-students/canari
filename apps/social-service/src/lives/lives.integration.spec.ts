@@ -1162,34 +1162,52 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       expect((await pushed()).map((n) => n.pushData?.liveId)).toEqual([first.id, second.id]);
     });
 
-    it("an association's live goes to the ASSOCIATION's followers, named and pictured as it", async () => {
+    it("an association's live goes to EVERYONE WHO SEES IT, as its posts do - named and pictured as it (engagement decision 1)", async () => {
       await q(`INSERT INTO associations (id, name, "logoMediaId") VALUES ($1, 'BDE', 'logo1')`, [
         ASSO,
       ]);
+      // CAROL follows the association, BOB does not: following is no longer the door.
       await q(
-        `INSERT INTO association_follows ("followerUserId", "associationId") VALUES ($1, $2), ($3, $2)`,
-        [CAROL, ASSO, ALICE]
+        `INSERT INTO association_follows ("followerUserId", "associationId") VALUES ($1, $2)`,
+        [CAROL, ASSO]
       );
       await q(
         `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ICM', ${SE})`,
         [ASSO]
       );
-      await follow(BOB); // follows the member, not the association: not told
+      // FRANK is outside the audience (Gardanne ISMIN) and a named reader of Saint-Etienne: a read
+      // grant never notifies, for a live as for a post.
+      await q(`INSERT INTO read_grants (user_id, campus, formation) VALUES ($1, ${SE}, NULL)`, [
+        FRANK,
+      ]);
+      // DAVE blocked the broadcaster: not told, though the association's rules reach him.
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [DAVE, ALICE]);
       mayActAs.add(`${ALICE}:${ASSO}`);
       const live = await lives.start(ALICE, { key: KEY, associationId: ASSO });
+      // EVE was removed from this live by its broadcaster: not told.
+      await lives.removeViewer(ALICE, live.id, EVE);
       await lives.ingest(ALICE, live.id, 0, segment(0));
-      expect(await pushed()).toEqual([
-        {
-          recipientIds: [CAROL],
-          type: 'live_started',
-          actorId: ALICE,
-          actorName: 'BDE',
-          text: '',
-          associationId: ASSO,
-          associationLogoMediaId: 'logo1',
-          pushData: { liveId: live.id, associationId: ASSO, minAppVersion: '1.5.4' },
-        },
+      const sent = await pushed();
+      expect(sent).toHaveLength(1);
+      expect({ ...sent[0], recipientIds: [...sent[0].recipientIds].sort() }).toEqual({
+        recipientIds: [BOB, CAROL],
+        type: 'live_started',
+        actorId: ALICE,
+        actorName: 'BDE',
+        text: '',
+        associationId: ASSO,
+        associationLogoMediaId: 'logo1',
+        pushData: { liveId: live.id, associationId: ASSO, minAppVersion: '1.5.4' },
+      });
+
+      // A MEMBER outside the rules' spaces sees the association, so is in its audience - the post
+      // rule's membership door (`associationVisibleToUserSql`), read by the same predicate.
+      await q(`INSERT INTO association_members ("associationId", "userId") VALUES ($1, $2)`, [
+        ASSO,
+        FRANK,
       ]);
+      const audience = (await q(liveAudienceSql(true), [ALICE, live.id])) as { id: string }[];
+      expect(audience.map((r) => r.id).sort()).toEqual([BOB, CAROL, FRANK]);
     });
 
     it("A MEMBER'S LIVE RESPECTS SPACES AS A POST DOES: who shares none and does not follow is not told and cannot watch", async () => {

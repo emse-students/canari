@@ -1129,7 +1129,10 @@ rows C19 and C20 ([register-of-processing](../compliance/register-of-processing.
 
 The user's question, 2026-10-19: *can a follower get "X est en live" the way they get "X a publie"?*
 Decisions L5 and L10 of the [plan](../frontend/modules/live.md): a push ONLY to the followers of the
-member or association broadcasting. Built in `LiveAnnouncer` (`lives/live-announcer.ts`); **the
+member or association broadcasting. **Widened for associations on 2026-11-07** (owner, decision 1 of
+[engagement](../engagement.md)): an association's live now reaches everyone who can see it, as its
+posts do; a member's live still reaches only their accepted followers. The heading keeps its name
+because other pages link it. Built in `LiveAnnouncer` (`lives/live-announcer.ts`); **the
 client half - the LIVE card in the feed and the app route the tap opens - is NOT built** (below).
 
 | Question | Answer, and where it is decided |
@@ -1138,7 +1141,7 @@ client half - the LIVE card in the feed and the app route the tap opens - is NOT
 | **Once per live** | `lives."announcedAt"` (migration 094). Segment 0's CONFIRM stamps it in the SAME transaction, under the same row lock, as the segment itself (`WHERE "announcedAt" IS NULL`), and the push follows the commit. A repeat of segment 0, a reconnect, every later segment: the same stamped row, no second push. A NEW live (a new row) is a new announcement. No timer and no sweep: there is no second path to reconcile. |
 | **The trade** | Stamp before send, as `PostAnnounceScheduler` does: a crash between the commit and the send loses ONE announcement (`[LIVE_ANNOUNCE] ... NOT announced` at warn when it is an error rather than a crash); the other order could repeat it. A failing announcement never fails the segment. |
 | **Not awaited** | The ingest STARTS the announcement after segment 0's commit and answers without waiting for it, so segment 0 and its ingest slot (`LIVE_INGEST_MAX_CONCURRENT`) never wait on the audience query or the fan-out. Once per live is untouched - the claim is the commit, not the call. `LivesService` tracks the announcements in flight: `announcementsSettled()` resolves when they have (awaited at module shutdown, and by the integration spec before it reads a push - a proof, never a delay); a rejection reaching it would be a defect in `announce`, logged at error. |
-| **Who** | A member's live: `user_follows` (followers of the broadcaster). A live AS an association: `association_follows` of that association - the member's own followers are NOT told. Both minus the broadcaster, minus a follower the live is not VISIBLE to ([the rule of a post](#who-may-watch-the-rule-of-a-post): a member's follower with no space in common, an association's follower its rules and membership do not reach), minus either side of a block with the broadcaster and a viewer the broadcaster already removed: exactly who `assertMayWatch` lets in (read grants aside, which never notify), narrowed to followers (`liveAudienceSql`). |
+| **Who** | `liveAudienceSql`: ONE visibility predicate (`liveVisibleToUserSql`, [the rule of a post](#who-may-watch-the-rule-of-a-post)) over two candidate sets. A member's live: the ACCEPTED `user_follows` rows of the broadcaster. A live AS an association: **every account** (since 2026-11-07, [engagement](../engagement.md#wp-1---an-associations-live-reaches-everyone-who-can-see-it-built)), so everyone the association's rules or membership reach is told, as an entity post's announcement does (`announceRecipientsSql(false)`) - following the association is no longer the door, and the member's own followers are still NOT told. Both minus the broadcaster, minus whoever the live is not VISIBLE to, minus either side of a block with the broadcaster and a viewer the broadcaster already removed: exactly who `assertMayWatch` lets in (read grants aside, which never notify). |
 | **The name** | The association's `name`, or the member's display name from `PostNotificationsService.resolveDisplayName`. **A member with no name to give (no `users` row, or no name in it) is NOT announced** - `[LIVE_ANNOUNCE] ... NOT announced: broadcaster ... has no display name` at warn - rather than titled with the 64-hex user id, the fallback `resolveActorName` keeps for its other callers. A lookup that FAILED is a different outcome, classified where it happens: `resolveDisplayName` throws (only `null` means "no name"), and the one warn line carries that cause instead. Either way the claim is committed, so it is not retried. |
 | **Mutes** | `association_push_mutes`: `live_started` is in `MUTABLE_PUSH_TYPES`, applied by `PostNotificationsService` like an association's post ([social-service](social-service.md)). A member's live has no association, so no mute applies. |
 | **Notification levels** | The push's `contentKey` `social_live_started` is filed under the reader's **`posts`** category in chat-delivery (`push-category.ts`): the switch that silences the posts of the people you follow silences their lives too. No new category (it would need a settings row on the client). |
@@ -1147,7 +1150,9 @@ client half - the LIVE card in the feed and the app route the tap opens - is NOT
 | **Payload** | `{ type: 'social', liveId, associationId?, deepLink: 'fr.emse.canari://live/<liveId>', contentKey, actorName, contentArg: '', iconUserId or iconMediaId }` - `socialDeepLink` writes the link. |
 | **The switch** | Nothing is sent unless `LIVE_ENABLED` is `true` (checked by the announcer itself, on top of the ingest route's own guard): open on both estates since the production flip of 2026-10-30, and the ingest that claims also sits behind `lives_mode`. |
 
-Observed by `[LIVE_ANNOUNCE] <liveId> by <broadcaster> kind=member or association followers=<n>`.
+Observed by `[LIVE_ANNOUNCE] <liveId> by <broadcaster> kind=member or association followers=<n>`;
+for an association `followers=` is the whole audience reached (the field keeps its name because
+`tools/cross-client-harness/srvlog.mjs` reads the line).
 
 **The tap, and what the client still owes (WP-L7's other half, with WP-L5):** `appRouteForDeepLink`
 (`frontend/src/lib/mobile/deepLinkRoutes.ts`) owns the `live` host and sends it to the FEED
