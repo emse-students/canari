@@ -9,16 +9,14 @@
   import { useMyProfile } from '$lib/profile/myProfileModel.svelte';
   import { profileHubRows } from '$lib/profile/profileSections';
   import { m } from '$lib/paraglide/messages';
+  import { openProfilePhotoPage } from '$lib/utils/profilePhotoLink';
 
   // The identity block plus one row per section (`/profile/me/<section>`). The layout has loaded the
   // profile before this page renders, and owns the loading, error and sign-in handling.
   const model = useMyProfile();
   const profile = $derived(model.profile);
 
-  async function changeProfilePhoto() {
-    const { navigateExternal } = await import('$lib/utils/openExternal');
-    await navigateExternal('https://gallery.mitv.fr/mes-photos');
-  }
+  const changeProfilePhoto = () => openProfilePhotoPage();
 
   // Fallback display name when displayName is empty.
   const displayFallbackName = $derived(profile?.displayName || m.profile_default_name());

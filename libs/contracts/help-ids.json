@@ -13,7 +13,9 @@
     "hint-asso-manage",
     "hint-asso-manage-hub",
     "hint-booking-spaces",
-    "hint-booking-week"
+    "hint-booking-week",
+    "prompt-profile-photo",
+    "prompt-profile-photo-reminder"
   ],
   "unknownIdCode": "HELP_ID_UNKNOWN"
 }
