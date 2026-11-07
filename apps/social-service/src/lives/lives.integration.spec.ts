@@ -82,6 +82,10 @@ const KEY_AT_REST = readFileSync(
   join(__dirname, '..', 'migrations', '110_live_key_at_rest.sql'),
   'utf8'
 );
+const ASSOCIATION_LAST_LIVE = readFileSync(
+  join(__dirname, '..', 'migrations', '139_association_last_live_announced_at.sql'),
+  'utf8'
+);
 /** The secret live keys are sealed under in this file (migration 110). */
 const KEY_SECRET = 'live-key-it-throwaway-secret-0123456789abcdef';
 
@@ -264,7 +268,7 @@ async function refusal(p: Promise<unknown>): Promise<{ status: number; code?: st
   throw new Error('expected a refusal, got an answer');
 }
 
-maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () => {
+maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)', () => {
   const schema = `lives_it_${Math.random().toString(36).slice(2, 10)}`;
   let admin: Client;
   let ds: DataSource;
@@ -320,7 +324,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       `CREATE TABLE association_follows ("followerUserId" varchar(255), "associationId" uuid)`
     );
     await q(`CREATE TABLE associations (id uuid, name varchar, "logoMediaId" varchar,
-      type varchar NOT NULL DEFAULT 'association', "parentAssociationId" uuid)`);
+      type varchar NOT NULL DEFAULT 'association', "parentAssociationId" uuid, archived boolean NOT NULL DEFAULT false)`);
+    // Migration 139 (WP-1b) adds the association's last announced live, applied TWICE as the deploy
+    // may re-run it.
+    await q(ASSOCIATION_LAST_LIVE);
+    await q(ASSOCIATION_LAST_LIVE);
     // And the ones a live's VISIBILITY reads (`liveVisibleToUserSql`, the rule of a post), in the
     // columns `reader-spaces.ts` reads. ALICE..EVE share Saint-Etienne ICM; FRANK is in Gardanne
     // ISMIN and shares no space with any of them.
@@ -1162,34 +1170,167 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       expect((await pushed()).map((n) => n.pushData?.liveId)).toEqual([first.id, second.id]);
     });
 
-    it("an association's live goes to the ASSOCIATION's followers, named and pictured as it", async () => {
+    it("an association's live goes to EVERYONE WHO SEES IT, as its posts do - named and pictured as it (engagement decision 1)", async () => {
       await q(`INSERT INTO associations (id, name, "logoMediaId") VALUES ($1, 'BDE', 'logo1')`, [
         ASSO,
       ]);
+      // CAROL follows the association, BOB does not: following is no longer the door.
       await q(
-        `INSERT INTO association_follows ("followerUserId", "associationId") VALUES ($1, $2), ($3, $2)`,
-        [CAROL, ASSO, ALICE]
+        `INSERT INTO association_follows ("followerUserId", "associationId") VALUES ($1, $2)`,
+        [CAROL, ASSO]
       );
       await q(
         `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ICM', ${SE})`,
         [ASSO]
       );
-      await follow(BOB); // follows the member, not the association: not told
+      // FRANK is outside the audience (Gardanne ISMIN) and a named reader of Saint-Etienne: a read
+      // grant never notifies, for a live as for a post.
+      await q(`INSERT INTO read_grants (user_id, campus, formation) VALUES ($1, ${SE}, NULL)`, [
+        FRANK,
+      ]);
+      // DAVE blocked the broadcaster: not told, though the association's rules reach him.
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [DAVE, ALICE]);
       mayActAs.add(`${ALICE}:${ASSO}`);
       const live = await lives.start(ALICE, { key: KEY, associationId: ASSO });
+      // EVE was removed from this live by its broadcaster: not told.
+      await lives.removeViewer(ALICE, live.id, EVE);
       await lives.ingest(ALICE, live.id, 0, segment(0));
-      expect(await pushed()).toEqual([
-        {
-          recipientIds: [CAROL],
-          type: 'live_started',
-          actorId: ALICE,
-          actorName: 'BDE',
-          text: '',
-          associationId: ASSO,
-          associationLogoMediaId: 'logo1',
-          pushData: { liveId: live.id, associationId: ASSO, minAppVersion: '1.5.4' },
-        },
+      const sent = await pushed();
+      expect(sent).toHaveLength(1);
+      expect({ ...sent[0], recipientIds: [...sent[0].recipientIds].sort() }).toEqual({
+        recipientIds: [BOB, CAROL],
+        type: 'live_started',
+        actorId: ALICE,
+        actorName: 'BDE',
+        text: '',
+        associationId: ASSO,
+        associationLogoMediaId: 'logo1',
+        pushData: { liveId: live.id, associationId: ASSO, minAppVersion: '1.5.4' },
+      });
+
+      // A MEMBER outside the rules' spaces sees the association, so is in its audience - the post
+      // rule's membership door (`associationVisibleToUserSql`), read by the same predicate.
+      await q(`INSERT INTO association_members ("associationId", "userId") VALUES ($1, $2)`, [
+        ASSO,
+        FRANK,
       ]);
+      const audience = (await q(liveAudienceSql(true), [ALICE, live.id])) as { id: string }[];
+      expect(audience.map((r) => r.id).sort()).toEqual([BOB, CAROL, FRANK]);
+    });
+
+    describe('an association announces at most one live per 6 hours (WP-1b)', () => {
+      /** BDE reaching Saint-Etienne ICM, ALICE speaking for it, BOB following ALICE. */
+      const setUp = async () => {
+        await q(`INSERT INTO associations (id, name, "logoMediaId") VALUES ($1, 'BDE', NULL)`, [
+          ASSO,
+        ]);
+        await q(
+          `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ICM', ${SE})`,
+          [ASSO]
+        );
+        mayActAs.add(`${ALICE}:${ASSO}`);
+        await follow(BOB);
+      };
+      /** Starts a live as the association, stores its segment 0, and ends it. */
+      const assoLive = async () => {
+        const live = await lives.start(ALICE, { key: KEY, associationId: ASSO });
+        await lives.ingest(ALICE, live.id, 0, segment(0));
+        await lives.end(ALICE, live.id);
+        return live;
+      };
+
+      it('a second live within 6 hours is claimed but pushes nothing; the slot is on the association', async () => {
+        await setUp();
+        const first = await assoLive();
+        const second = await assoLive();
+        expect((await pushed()).map((n) => n.pushData?.liveId)).toEqual([first.id]);
+        const [asso] = await q(
+          `SELECT "lastLiveAnnouncedAt" IS NOT NULL AS stamped FROM associations WHERE id = $1`,
+          [ASSO]
+        );
+        expect(asso.stamped).toBe(true);
+        // The second live is STAMPED (never announced later), though nothing was pushed: a repeat of
+        // its segment 0 cannot claim it again. Its row may already be gone with its end - either way
+        // nothing can announce it.
+        const rows = await q(`SELECT "announcedAt" FROM lives WHERE id = $1`, [second.id]);
+        for (const r of rows) expect(r.announcedAt).not.toBeNull();
+      });
+
+      it('a live once the 6 hours have passed is announced again', async () => {
+        await setUp();
+        const first = await assoLive();
+        // Moved back by SQL, relative to the database's own clock - no wall clock asserted.
+        await q(
+          `UPDATE associations SET "lastLiveAnnouncedAt" = now() - interval '6 hours 1 minute' WHERE id = $1`,
+          [ASSO]
+        );
+        const second = await assoLive();
+        expect((await pushed()).map((n) => n.pushData?.liveId)).toEqual([first.id, second.id]);
+      });
+
+      it("a member's live is never limited by it, even right after the association's", async () => {
+        await setUp();
+        const asAsso = await assoLive();
+        const own = await start();
+        await lives.ingest(ALICE, own.id, 0, segment(0));
+        expect((await pushed()).map((n) => [n.pushData?.liveId, n.recipientIds])).toEqual([
+          [asAsso.id, expect.arrayContaining([BOB])],
+          [own.id, [BOB]],
+        ]);
+      });
+
+      it('an ARCHIVED association cannot go live, and one archived after its start is not announced', async () => {
+        await setUp();
+        await q(`UPDATE associations SET archived = true WHERE id = $1`, [ASSO]);
+        expect(await refusal(lives.start(ALICE, { key: KEY, associationId: ASSO }))).toEqual({
+          status: HttpStatus.FORBIDDEN,
+          code: 'LIVE_ASSOCIATION_ARCHIVED',
+        });
+        // Archived between the start and the first frame: the slot refuses it, and the slot stays
+        // free for the day it is restored.
+        await q(`UPDATE associations SET archived = false WHERE id = $1`, [ASSO]);
+        const live = await lives.start(ALICE, { key: KEY, associationId: ASSO });
+        await q(`UPDATE associations SET archived = true WHERE id = $1`, [ASSO]);
+        await lives.ingest(ALICE, live.id, 0, segment(0));
+        expect(await pushed()).toEqual([]);
+        const [asso] = await q(`SELECT "lastLiveAnnouncedAt" FROM associations WHERE id = $1`, [
+          ASSO,
+        ]);
+        expect(asso.lastLiveAnnouncedAt).toBeNull();
+      });
+
+      it('segment 0 locks the association BEFORE the live: an erasure holding the association, then updating the live, does not deadlock', async () => {
+        await setUp();
+        const live = await lives.start(ALICE, { key: KEY, associationId: ASSO });
+        // A second session in the account erasure's order: the association first
+        // (`ERASURE_ASSOCIATION_LOCK_SQL`'s mode), then the broadcaster's lives.
+        const erasure = ds.createQueryRunner();
+        await erasure.connect();
+        try {
+          await erasure.startTransaction();
+          await erasure.query(`SELECT 1 FROM associations WHERE id = $1 FOR NO KEY UPDATE`, [ASSO]);
+          const [{ pid }] = (await erasure.query(`SELECT pg_backend_pid() AS pid`)) as {
+            pid: number;
+          }[];
+          const ingesting = lives.ingest(ALICE, live.id, 0, segment(0));
+          // Proved by the server's own state, not a delay: the confirm is WAITING on this session.
+          for (;;) {
+            const [{ n }] = await q(
+              `SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
+              [pid]
+            );
+            if (n > 0) break;
+          }
+          // With the inverted order the confirm would hold the live here, and this would be 40P01.
+          await erasure.query(`UPDATE lives SET "lastSegmentAt" = now() WHERE id = $1`, [live.id]);
+          await erasure.commitTransaction();
+          await expect(ingesting).resolves.toMatchObject({ index: 0 });
+        } finally {
+          if (erasure.isTransactionActive) await erasure.rollbackTransaction();
+          await erasure.release();
+        }
+        expect((await pushed()).map((n) => n.pushData?.liveId)).toEqual([live.id]);
+      });
     });
 
     it("A MEMBER'S LIVE RESPECTS SPACES AS A POST DOES: who shares none and does not follow is not told and cannot watch", async () => {

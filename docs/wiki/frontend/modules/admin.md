@@ -194,7 +194,13 @@ refused here: its `MANAGE_ASSO` creates through `POST /associations`, in its own
 - **The Dependencies panel** (`AdminDependenciesPanel.svelte`, `GET`/`PUT
   /api/associations/spaces/dependencies[/:id]`, reform 2.7): each BDE with the entities that depend on
   it, then the entities attached to a non-BDE (orphaned), those with no BDE, and the institutions,
-  apart; each mismatch of 2.5 beside its entity. A platform admin changes a parent, and a list's
+  apart; each mismatch of 2.5 beside its entity. **Layout (2026-11-07):** one line per entity (name,
+  type chip, quiet "shown under X" hint, `archived` tag when the name is greyed, action); a mismatch
+  is a small labelled warning icon (`aria-label` and `title` carry the sentence), and a BDE whose
+  children have `reaches_outside_parent` heads its list with one summary and a toggle narrowing the
+  family to them (a view filter only, no server call); children are split into Associations and
+  Lists. WP-D2 (#3115) changes governance to read the parent, not this mismatch's meaning: the
+  sentence stays a statement about the audience, no longer one about who governs. A platform admin changes a parent, and a list's
   display label (G3), here; the server journals it and refuses what the two-level rule forbids. The
   panel reads the axis again after every governor designation (`revision`). The arrangement is
   `groupDependencies` (`$lib/associations/dependencies.ts`), which puts every entity in exactly one

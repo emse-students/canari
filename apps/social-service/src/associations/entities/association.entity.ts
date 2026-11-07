@@ -220,6 +220,14 @@ export class Association {
   @Column({ default: false })
   archived: boolean;
 
+  /**
+   * When this association's last live was ANNOUNCED (migration 139, WP-1b): the 6-hour limit on
+   * live announcements reads and writes it in segment 0's claim (`LivesService.confirm`), because a
+   * live row is deleted at its end. `select: false`: an internal clock, never served.
+   */
+  @Column({ type: 'timestamptz', nullable: true, select: false })
+  lastLiveAnnouncedAt: Date | null;
+
   /** Public contact e-mail, shown on the trombinoscope export and the association page. */
   @Column({ type: 'varchar', length: 255, nullable: true })
   contactEmail: string | null;

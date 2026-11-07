@@ -11,31 +11,41 @@ import { short } from './live-log';
 /** Short form of an id for a log line. */
 
 /**
- * Who is told that a live started (decision L10): the broadcaster's FOLLOWERS - the ACCEPTED
- * `user_follows` rows for a member's live (a pending request is not a follow, WP-F1),
- * `association_follows` for a live broadcast as an association - minus the
- * broadcaster, minus a follower who cannot SEE it (`liveVisibleToUserSql`: the rule of a post by the
- * same author or association, so a member's live reaches every ACCEPTED follower whatever their
- * space since WP-F5, and an association's live only the followers its audience reaches),
- * minus either side of a block with the broadcaster, minus a viewer the broadcaster already removed.
- * Exactly the accounts `LivesService.assertMayWatch` would let in (read grants aside, which never
- * notify), narrowed to the followers: a push never points at a live its reader would get a 404 or a
- * 403 for.
+ * Who is told that a live started (decision L10, widened for associations by the owner on
+ * 2026-11-07, docs/wiki/engagement.md decision 1):
+ * - a MEMBER's live: their ACCEPTED followers (`user_follows`; a pending request is not a follow,
+ *   WP-F1) who can SEE it - since WP-F5 every accepted follower, whatever their space;
+ * - an ASSOCIATION's live: EVERYONE who can see it, exactly as an association's post is announced to
+ *   everyone who sees it (`announceRecipientsSql(false)`) - not only `association_follows`. At
+ *   most one per association per 6 hours, and none for an archived association: both are decided
+ *   before this query, in segment 0's claim (`LivesService.confirm`, WP-1b), and an archived
+ *   association cannot start a live at all (`LIVE_ASSOCIATION_ARCHIVED`).
+ *
+ * ONE PREDICATE DECIDES WHO SEES, in both cases: `liveVisibleToUserSql`, the rule of a post by the
+ * same author or association (its association branch is `associationVisibleToUserSql`, the same
+ * fragment the post rule ANDs in). Only the CANDIDATES differ - the followers, or every account -
+ * so the two audiences cannot drift from what `LivesService.assertMayWatch` lets in. Both then drop
+ * the broadcaster, either side of a block with the broadcaster, and a viewer the broadcaster already
+ * removed: a push never points at a live its reader would get a 404 or a 403 for. Read grants never
+ * notify (the PLAIN predicate, as for a post's announcement).
  *
  * `association_push_mutes` is NOT read here: the mute silences the PUSH and is applied by
  * `PostNotificationsService`, the one place that pushes (`MUTABLE_PUSH_TYPES`). The reader's own
  * category switch ("posts") is applied by chat-delivery, from the push's `contentKey`.
  *
- * Parameters: `$1` the broadcaster, `$2` the live, `$3` the association (association lives only).
+ * Parameters: `$1` the broadcaster, `$2` the live (an association live carries its association on
+ * the row, which the predicate reads).
  */
 export function liveAudienceSql(asAssociation: boolean): string {
-  const followers = asAssociation
-    ? `SELECT f."followerUserId" AS id FROM association_follows f WHERE f."associationId" = $3`
+  // The candidates: an association's live is offered to every account, and the visibility term
+  // below keeps those it reaches - the way an entity post's announcement scans `users`.
+  const candidates = asAssociation
+    ? `SELECT u.id FROM users u`
     : `SELECT f."followerUserId" AS id FROM user_follows f
          WHERE f."followedUserId" = $1 AND ${acceptedFollowSql('f')}`;
   // The visibility predicate is the PLAIN one (no read grant), as for a post's announcement: a named
   // reader is never notified for their perimeter.
-  return `SELECT DISTINCT fw.id FROM (${followers}) fw
+  return `SELECT DISTINCT fw.id FROM (${candidates}) fw
     JOIN users fw_user ON fw_user.id = fw.id
     JOIN lives fw_live ON fw_live.id = $2
     WHERE fw.id <> $1
@@ -54,8 +64,8 @@ export interface ClaimedLive {
 }
 
 /**
- * "X est en live": ONE push per live to the broadcaster's followers (WP-L7, decisions L5 and L10;
- * docs/wiki/services/lives.md).
+ * "X est en live": ONE push per live - to a member's accepted followers, or to everyone who sees an
+ * association's live (WP-L7, decisions L5 and L10; docs/wiki/services/lives.md, docs/wiki/engagement.md).
  *
  * WHEN: at the first STORED segment, not at `POST /api/lives`. A live row alone has nothing to
  * watch - a start the client abandons (camera refused, the app killed, the broadcaster ending at
@@ -87,9 +97,9 @@ export class LiveAnnouncer {
   ) {}
 
   /**
-   * Pushes a CLAIMED live's start to its broadcaster's followers, and NEVER throws: a failure is
-   * logged, and the live is not retried (its claim is committed). Returns how many followers were
-   * addressed, or `null` when nothing was sent (switched off, or a failure).
+   * Pushes a CLAIMED live's start to its audience (`liveAudienceSql`), and NEVER throws: a failure is
+   * logged, and the live is not retried (its claim is committed). Returns how many accounts of its
+   * audience were addressed, or `null` when nothing was sent (switched off, or a failure).
    */
   async announce(liveId: string, live: ClaimedLive): Promise<number | null> {
     if (!isLiveEnabled()) {
@@ -110,10 +120,10 @@ export class LiveAnnouncer {
   /** Reads the audience and the broadcaster's name, then hands the push to the one pipeline. */
   private async send(liveId: string, live: ClaimedLive): Promise<number> {
     const asAssociation = live.associationId !== null;
-    const params = asAssociation
-      ? [live.broadcasterId, liveId, live.associationId]
-      : [live.broadcasterId, liveId];
-    const rows: { id: string }[] = await this.db.query(liveAudienceSql(asAssociation), params);
+    const rows: { id: string }[] = await this.db.query(liveAudienceSql(asAssociation), [
+      live.broadcasterId,
+      liveId,
+    ]);
     const recipientIds = rows.map((r) => String(r.id));
 
     let actorName: string;
@@ -155,6 +165,8 @@ export class LiveAnnouncer {
       },
     });
     this.logger.log(
+      // `followers=` names the AUDIENCE size for both kinds (an association live reaches everyone who
+      // sees it); the field keeps its name because the harness (`srvlog.mjs`) reads it.
       `[LIVE_ANNOUNCE] ${liveId} by ${short(live.broadcasterId)} ` +
         `kind=${asAssociation ? 'association' : 'member'} followers=${addressed}`
     );
