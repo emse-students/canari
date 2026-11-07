@@ -617,6 +617,50 @@ locked and the app killed, and a second device calling it with VIDEO.
 3. Repeat with an AUDIO call: `video=0`, audio screen, camera off.
 4. With `calls_mode = audio`, a video ring attempt is refused by the server: no CallKit ring at all.
 
+## The seed mirror labelled by account - owed (2026-11-07)
+
+**Proves** that the Graine seed mirror's account labels are written on hardware by both writers (the
+page and the push decrypt) and that one account's wipe removes its own seeds and leaves the other
+account's ([auth](frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07)).
+Verified so far by host tests only, and no mobile target was compiled on the Windows box that wrote
+it: the Kotlin absorber now reads `{stored, leftToApp}` from the JNI writer, and the Objective-C
+activation mirror hands the seed file to Rust (`canari_ios_mirror_graine_seeds_to_app_group`) instead
+of copying it. Needs a pre-release carrying the change, the iPhone 12 (`tools/ios-device`) - the
+platform with TWO copies of the mirror (app and App Group) - then the Mi 9T, and two test accounts A
+and B that are both members of one community with two salons S and T, plus a second device for B. A
+message is "under a session" until that salon rotates (a member joining rotates it): keep T quiet of
+joins for the whole reading.
+
+1. On the phone, sign in as A and let its community sync settle, then sign out and sign in as B -
+   for the FIRST time on this phone. Opening a salon mirrors nothing: the page mirrors a seed when it
+   RECEIVES one (B's first community sync replays the key-group frames that carry T's current
+   session) or when it MINTS one. After B's first sync settles, T's current session is labelled A
+   and B.
+2. Still as B, app killed: have a member mint a new session in S (a member joining is enough), then
+   send a message in S: **expect** a decrypted banner - the seed frame went through the push writer,
+   whose entry is labelled B alone.
+3. From B's other device, remove this phone from B's devices. **Expect** the per-account wipe (A
+   still lives here), with the page's line `[REVOKED-LOCAL] ... mirrored Graine seeds: N seed
+   entry(ies) removed from the app's copy (alone on the install: false)` and, from Rust, one line PER
+   COPY: `[GRAINE_MIRROR] the account's seeds in the app's copy: N removed, M kept for another
+   writer, 0 of unknown writer removed, K of unknown writer left, C channel(s) dropped`, and on iOS
+   a second line `... in the App Group copy: ...` with its own counts (equal to the app's when the
+   group copy was current). N counts the sessions only B wrote (step 2's at least), M the ones A also
+   wrote (T's at least), K the ones mirrored before this build. `0 of unknown writer removed` is the
+   point: another account lives here.
+4. Sign in as A WITHOUT the community sync reaching T (airplane mode right after sign-in), kill the
+   app, back online, send a message in T from another client: **expect** a decrypted banner - A's
+   label kept the shared entry through B's wipe.
+5. On the OTHER phone, holding ONE account only and updated over a pre-label build (so its mirror
+   has entries of unknown writer), with a throwaway test account: delete that account from
+   Settings. **Expect** `(alone on the install: true)` on the page's line and `K of unknown writer
+   removed` with `0 of unknown writer left` on Rust's - the pre-label entries go with the install's
+   last account. (A signed-out account keeps its parked MLS state, so it still counts as "on the
+   install": steps 1-4's phone never reads `true`.)
+6. Nothing in the log at ERROR `[GRAINE_PUSH] seed ... carries no writer account` at any step: that
+   line means a push decrypt reached the writer without its stamp. On Android, a seed RELAYED for the
+   app (no channel known to the push) logs at INFO `left to the app`, never at ERROR.
+
 ## The camera tab and Android Back - read on the Mi 9T, `1.6.3-alpha.2`, 2026-11-02
 
 **Method.** The WebView's DevTools socket (`adb forward` to `webview_devtools_remote_<pid>`) read `location.pathname`, `<html>` classes and the console (`[reel-capture]`, `[historyOverlay]`) after each press; no personal data.

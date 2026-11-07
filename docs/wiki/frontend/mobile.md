@@ -3215,7 +3215,9 @@ the way each store can answer it.
 Two files exist so a phone can act with the app shut, and each holds what the app's own stores
 seal: `graine_seeds.json` (salon seeds, for the push service to derive a message key) and
 `fcm_message_cache*.ndjson` (messages the push service decrypted, for the next start). Both are
-sealed at rest by `src-tauri/src/native_cache.rs`, the only copy of the design:
+sealed at rest by `src-tauri/src/native_cache.rs`, the only copy of the design. (The mirror's
+entries also carry their writers' account labels since 2026-11-07, so one account's wipe removes
+only its own: [auth](modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07).)
 
 - **The key is the INSTALL's, not the device key.** A random 32 bytes, created once by the native
   side at process start (Android `NativeCacheKey.ensure` from `CanariApplication`; iOS

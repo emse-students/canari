@@ -70,13 +70,14 @@ use crate::commands::picked_files::discard_picked_file;
 use crate::commands::picked_files::take_picked_file;
 use crate::commands::push::{
     ack_fcm_cache, acknowledge_quick_reply, check_push_secret_health, claim_device_notices,
-    delete_user_push_files, delete_user_quick_replies, forget_graine_channel,
-    forget_graine_sessions, get_fcm_token, get_push_diagnostic, get_voip_token, load_push_context,
-    preclaim_device_notices, read_and_clear_outbox_sent, read_and_clear_pending_call_accept,
-    read_and_clear_pending_notification_tap, read_and_clear_pending_quick_replies,
-    read_and_clear_read_watermarks, read_outbox_mirror, return_pending_quick_replies,
-    set_push_context_locale, store_device_identity, store_graine_seed, store_outbox_mirror,
-    store_push_context, store_push_secret, take_fcm_cache, take_key_group_push_joins,
+    delete_user_push_files, delete_user_quick_replies, forget_account_graine_seeds,
+    forget_graine_channel, forget_graine_sessions, get_fcm_token, get_push_diagnostic,
+    get_voip_token, load_push_context, preclaim_device_notices, read_and_clear_outbox_sent,
+    read_and_clear_pending_call_accept, read_and_clear_pending_notification_tap,
+    read_and_clear_pending_quick_replies, read_and_clear_read_watermarks, read_outbox_mirror,
+    return_pending_quick_replies, set_push_context_locale, store_device_identity,
+    store_graine_seed, store_outbox_mirror, store_push_context, store_push_secret, take_fcm_cache,
+    take_key_group_push_joins,
 };
 use crate::commands::push_registration::{
     complete_owed_push_token_deletion, end_push_registration,
@@ -237,8 +238,10 @@ pub(crate) fn android_java_vm() -> Option<&'static jni::JavaVM> {
 /// `AppHandle` in a process with no WebView; the merge and its per-channel bound are the
 /// foreground's, shared through `commands::push::merge_graine_seed`.
 ///
-/// Returns -1 if the argument could not be marshalled or parsed at all, or no cache key was handed
-/// over, which are different facts from "zero seeds were usable" and must not read as the same one.
+/// Returns `{"stored": n, "leftToApp": m}` (`SeedsStored`): a relayed seed left to the app is not a
+/// seed lost, and the Kotlin caller reports it apart, at info. Returns null if the argument could not
+/// be marshalled or parsed at all, or no cache key was handed over, which are different facts from
+/// "zero seeds were usable" and must not read as the same one.
 ///
 /// `cacheKeyB64` is the install's native cache key Kotlin unwrapped from the Android Keystore
 /// (`NativeCacheKey.retrieve`), or `""` when it could not: the mirror is sealed under it
@@ -253,28 +256,35 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     data_dir: jni::objects::JString<'a>,
     cache_key_b64: jni::objects::JString<'a>,
     seeds_json: jni::objects::JString<'a>,
-) -> i32 {
+) -> jni::objects::JString<'a> {
+    let null = || jni::objects::JString::from(jni::objects::JObject::null());
     let Ok(dir) = env.get_string(&data_dir) else {
         log::error!("[GRAINE_PUSH] jni-data-dir");
-        return -1;
+        return null();
     };
     let Ok(key) = env.get_string(&cache_key_b64) else {
         log::error!("[GRAINE_PUSH] jni-cache-key");
-        return -1;
+        return null();
     };
     let Ok(json) = env.get_string(&seeds_json) else {
         log::error!("[GRAINE_PUSH] jni-seeds-json");
-        return -1;
+        return null();
     };
     let dir: String = dir.into();
     let key: String = key.into();
     let json: String = json.into();
 
-    commands::push::store_graine_seeds_json(
+    let Some(outcome) = commands::push::store_graine_seeds_json(
         std::path::Path::new(&dir),
         native_cache::platform_key(&key).as_ref(),
         &json,
-    )
+    ) else {
+        return null();
+    };
+    env.new_string(outcome.to_json()).unwrap_or_else(|e| {
+        log::error!("[GRAINE_PUSH] jni-new-string: {e}");
+        null()
+    })
 }
 
 /// Appends one WARN or ERROR line of the push service to the log the page takes into the in-app
@@ -1814,6 +1824,7 @@ pub fn run() {
             store_graine_seed,
             forget_graine_channel,
             forget_graine_sessions,
+            forget_account_graine_seeds,
             actualiser_cle_keystore_avec_devicekey,
             flush_webview_cookies,
             take_picked_file,

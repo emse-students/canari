@@ -325,10 +325,10 @@ learning about calls is the `call_ring` row of section 1, and the register says 
      `slot_is_accounts_held` already makes for a key-group join) and drops the fetched map otherwise,
      at WARN `[PUSH_WAKE] account-switched`, no banner. Without it, account A's frame would be
      decrypted against B's state and drawn as a blind banner on B's phone.
-- **The Graine seed and channel-key caches are not per account**
-  ([p3-label-push-caches-by-account](../backlog.d/p3-label-push-caches-by-account.md)). The wake reads
-  them exactly as a full push does, so it neither fixes nor worsens that entry; the two are
-  independent and can land in either order.
+- **The Graine seed mirror labels each entry with its writers since 2026-11-07**
+  ([auth](../frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07)).
+  The wake reads it exactly as a full push does, and a seed a wake's frame yields is stamped by the
+  same decrypt, so the label needs nothing from the wake.
 
 ## 8. Rollout, and old clients
 

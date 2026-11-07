@@ -570,18 +570,15 @@ void CanariMirrorPushStateToAppGroup(void) {
   if (contextMirrored != CANARI_MLS_MIRROR_OK) {
     NSLog(@"[CanariPush] mirror %@ failed: code %d", kPushContextFileName, contextMirrored);
   }
+  // graine_seeds.json IS RUST'S TO COPY TOO, UNDER THE GROUP COPY'S WRITERS' LOCK
+  // (`graine_seeds.lock`): copied here without it, a copy read before an account's wipe could land
+  // after the wipe edited the group's copy, and the extension would hold the wiped seeds again.
+  int seedsMirrored = canari_ios_mirror_graine_seeds_to_app_group(src.UTF8String);
+  if (seedsMirrored != CANARI_MLS_MIRROR_OK) {
+    NSLog(@"[CanariPush] mirror %@ failed: code %d", kGraineSeedsFileName, seedsMirrored);
+  }
   NSDataWritingOptions opts =
       NSDataWritingAtomic | NSDataWritingFileProtectionCompleteUntilFirstUserAuthentication;
-  for (NSString *name in @[ kGraineSeedsFileName ]) {
-    NSData *data = [NSData dataWithContentsOfFile:[src stringByAppendingPathComponent:name]];
-    if (data == nil) {
-      continue;
-    }
-    NSError *err = nil;
-    if (![data writeToURL:[container URLByAppendingPathComponent:name] options:opts error:&err]) {
-      NSLog(@"[CanariPush] mirror %@ failed: %@", name, CanariErrorReason(err));
-    }
-  }
   // The push secret lives in the Keychain (app-only). Copy it into the container so the NSE
   // can authenticate the backend fetch paths (omitted proto, commit catch-up, avatar); the
   // common inline-ciphertext decrypt needs no secret. This is NOT the copy's main writer:
