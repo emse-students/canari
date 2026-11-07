@@ -8,10 +8,12 @@ When another account still lives on the install it cannot: deciding which of the
 not possible, and dropping them could cost the remaining account a seed it reads.
 
 So on a multi-account install the deleted or revoked account's pre-label seeds stay, sealed under
-the install key, unreadable without it, and never read as anybody's in particular. They drain without
-a new mechanism: the per-channel bound (20 sessions) pushes them out as new sessions arrive, the
-remaining account's retention sweep and community leave drop them by channel, a factory wipe drops
-the file, and the remaining account's own later wipe, alone on the install by then, takes them.
+the install key, unreadable without it, and never read as anybody's in particular. The remaining
+account's retention sweep and community leave reach only the sessions in its own store and the
+communities it leaves, so a pre-label entry of a salon only the wiped account read is reached by
+neither. It stays until one of three things happens: new writes in its channel push it past the
+per-channel bound (20 sessions), the remaining account's own wipe runs while it is alone on the
+install, or a factory wipe drops the file.
 
 Owed: nothing to build unless a measurement shows a multi-account install still carrying unattributed
 entries long after the label shipped; the count to read is `of unknown writer left` on the
