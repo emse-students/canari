@@ -455,6 +455,11 @@ matches it - without one, a second save became `X.mp3 (1)` and lost its type. Tw
   and keep `writeFile`: the iPhone 12 save into "Sur mon iPhone" read 1,6 Mo in Files (2026-11-04).
   **Owed:** after a pre-release, a log saved into "Telechargements" on the Mi 9T lists its real size
   there, and shared from that view to Gmail and Messenger the receiver shows the size and opens it.
+  **Read 2026-11-07 (Mi 9T, 1.6.6 data, MediaStore):** every saved `canari-log-*.txt` row holds
+  `mime_type=text/plain` and the full `_size`, so the save dialog's `txt` filter already creates a
+  `text/plain` document and the write leaves no stale metadata. "Cannot select the file in Canari" was
+  the composer's `accept` list (now `*/*`, [chat](modules/chat.md)), not the write. Messenger's refusal
+  is NOT reproduced here: if it persists, read the owner's row (Files > Details) before touching the write.
   Not read: an iOS save into iCloud Drive or a third-party provider, where the dialog plugin exports
   an EMPTY placeholder (`UIDocumentPickerViewController(url:in: .exportToService)`) before the
   write.
