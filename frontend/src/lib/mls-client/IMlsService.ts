@@ -918,8 +918,13 @@ export interface IMlsService {
    * an entry was written, `false` when there is no keystore (nothing moved).
    */
   pointUnattendedUnlockAt(newDeviceKeyB64: string): Promise<boolean>;
-  /** Generates a fresh MLS KeyPackage for this device, signed with the device-key-encrypted identity key. */
-  generateKeyPackage(deviceKeyB64: string): Promise<DatedKeyPackage>;
+  /**
+   * Generates a fresh MLS KeyPackage for this device, signed with the device-key-encrypted identity
+   * key, and publishes it. A call made while a round is in flight JOINS that round (one round at a
+   * time); `fresh` queues a new round behind it instead, for a caller that needs a round starting
+   * after something it already did.
+   */
+  generateKeyPackage(deviceKeyB64: string, opts?: { fresh?: boolean }): Promise<DatedKeyPackage>;
   /**
    * Purges the published KeyPackages (static fallback + one-time pool) and republishes
    * fresh ones from the current local keystore.

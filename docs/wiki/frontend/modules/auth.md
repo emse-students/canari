@@ -542,7 +542,7 @@ finish.
 |---|---|---|
 | Device key vault (`utils/deviceKeyVault.ts`) | PIN login | AES-GCM-wrapped key, ONE SLOT PER ACCOUNT (`canari_device_key_vault:v2:<userId>`, the account also bound as the AEAD additional data), in `sessionStorage`, or `localStorage` when "stay signed in" is on (`canari_device_key_persist`). See [the vault names its account](#the-vault-names-its-account---fixed-2026-10-14) |
 | Platform keystore, alias `mls_device_key_{userId}_{deviceId}` | `store_push_context` (Tauri) | Biometric unlock **and** background FCM/NSE decryption - the only at-rest copy on a device |
-| `push_context.json` | `store_push_context` (Tauri) | `userId`, `deviceId`, `baseUrl`, `pushToken` only. Since WP-SEC-1 it carries **no key material** |
+| `push_context.json` | `store_push_context` (Tauri), at EVERY sign-in - a biometric one passes no key and writes the file only | `userId`, `deviceId`, `baseUrl`, `pushToken`, `locale`. Since WP-SEC-1 it carries **no key material** |
 
 "Stay signed in" moves the **device key** across a restart, never the PIN - the PIN has not been
 persisted anywhere since v0.11.0. The user-facing copy (`auth_pin_stay_signed_in_desc`,
@@ -1424,8 +1424,9 @@ again instead would raise a second BiometricPrompt in the middle of a successful
 Two invariants around it:
 
 - The **local** `deviceKeyB64` in `loginImpl` stays empty. It means "a key the caller supplied", and
-  it gates the device-key vault write and `store_push_context`. Biometric mode must keep both
-  skipped - the keystore is where this key belongs at rest.
+  it gates the device-key vault write and the KEY half of `store_push_context`. Biometric mode must
+  keep both skipped - the keystore is where this key belongs at rest. The push context's FILE is
+  still written at a biometric sign-in, with `deviceKeyB64: null` ([content-free-push](../../protocols/content-free-push.md#who-writes-push_contextjson-and-when-2026-11-07)).
 - A `null` answer **fails the login** (`LoginFailure('keystore_empty')` -> PIN modal) instead of
   continuing. Continuing is a whole session that persists nothing, with nothing in the log; the PIN
   path derives a working key and loses no data.

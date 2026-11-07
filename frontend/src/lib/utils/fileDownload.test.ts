@@ -152,6 +152,12 @@ describe('fileExtension / saveDialogFilters', () => {
     expect(saveDialogFilters(hymne)).toEqual([{ name: 'mp3', extensions: ['mp3'] }]);
   });
 
+  it('sends the log file the text type: txt is the filter the dialog resolves to text/plain', () => {
+    expect(saveDialogFilters('canari-log-1.6.6-20261107-1200.txt')).toEqual([
+      { name: 'txt', extensions: ['txt'] },
+    ]);
+  });
+
   it('takes the last extension of a multi-dot name, an existing counter included', () => {
     expect(fileExtension('a.tar.gz')).toBe('gz');
     expect(fileExtension('photo (1).jpg')).toBe('jpg');

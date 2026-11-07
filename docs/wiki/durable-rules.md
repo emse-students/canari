@@ -740,6 +740,8 @@ after its deploy - build the run that DISCRIMINATES, and assert the build id, ne
 
 ## UI and i18n -> [frontend/architecture](frontend/architecture.md), [auth](frontend/modules/auth.md) (native prompts)
 
+- **A BUTTON, A SELECT AND A TEXT FIELD ARE THE THREE COMPONENTS, AND NO SCREEN DRAWS ONE** (owner, 2026-11-07). `ui/Button`, `ui/Select` (`Picker`) and `ui/Input` share one 40 px box (`.ui-control`, `--control-*` tokens): primary is the only yellow, secondary is the field edge on a neutral fill, `compact` (32 px) is for dense toolbars only. `controlsGuard.test.ts` fails a file outside `ui/` that gains a raw `<button>`, `<select>` or text `<input>`; its ratchet list only shrinks and a new file is never added. [controls](frontend/controls.md)
+
 `arch` = [frontend/architecture](frontend/architecture.md), `posts` = [posts](frontend/modules/posts.md),
 `chat` = [chat](frontend/modules/chat.md), `mob` = [mobile](frontend/mobile.md).
 
@@ -1535,6 +1537,13 @@ What must not be forgotten between the pages:
   Every slot write goes through `write_slot_mls_bin`, which carries the copy along, and the compiler
   refuses any other writer (the atomic write is private to `slot_file`); `push_context.json` follows
   every edit the same way (`write_push_context_file`) ([mobile](frontend/mobile.md#the-extensions-copy-of-the-state-follows-every-write-2026-11-05)).
+- **A FILE ONE EVENT STRIPS IS REWRITTEN BY EVERY PATH OF THE EVENT THAT UNDOES IT - NOT BY THE ONE
+  THAT HAPPENS TO HOLD A KEY.** A sign-out strips `push_context.json` of `baseUrl`; only the PIN
+  sign-in wrote it back, because the write was gated on a device key the biometric one does not
+  hold. A phone that signed out and came back by fingerprint drew generic banners for days
+  (`1.6.6`). The key and the file are two facts with two writers: `store_push_context` takes the key
+  as optional and writes the file at every sign-in, and a reader's refusal names `absent` or the
+  missing field ([content-free-push](protocols/content-free-push.md#who-writes-push_contextjson-and-when-2026-11-07)).
 - **A NATIVE VIEW OVER THE WEBVIEW CANNOT BE COVERED BY ANY WEB LAYER - EVERY SURFACE THAT COVERS THE
   SCREEN DECLARES IT.** The iOS tab bar is a `UITabBar` drawn above the WebView: no `z-index` reaches
   it, so it sat over the post composer's "Publier" and stayed tappable over every dialog (iPhone 12,

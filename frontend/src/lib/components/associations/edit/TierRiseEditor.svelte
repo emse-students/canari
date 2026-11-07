@@ -96,7 +96,6 @@
           onValueChange={(v) => (fromTag = v)}
           label={m.asso_cotisations_rise_from_aria()}
           variant="field"
-          density="compact"
         />
       </div>
       <span>{m.asso_cotisations_rise_sentence_moves_to()}</span>

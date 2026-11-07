@@ -598,7 +598,7 @@ channel id, migration 066), one instant per reader, only ever raised.
 - `GET /api/channels/:channelId/read-marks` - every CURRENT reader's mark; the client reads it beside
   every history page, since live events only carry what moved while it was connected.
 - Distinct from `POST :id/read` above, on purpose: that one dismisses this account's notifications
-  on arrival; the receipt waits for the same focus guard and 2 s debounce as a DM's
+  on arrival; the receipt waits for the same focus guard and leading-edge 2 s throttle (sent at once, burst coalesced) as a DM's
   (`MainChatPage`), so a phone in a pocket never tells a sender it read anything.
 
 The client merges both into the conversation's `readWatermarks`, so "Lu par", the avatars and `+N`
@@ -971,7 +971,7 @@ accident):
 | --- | --- | --- |
 | `association_post` | a reader | yes |
 | `association_repost` | a reader the republication newly reached (the mute is the REPUBLISHING association's) | yes |
-| `live_started` | a follower of the association broadcasting a live (WP-L7; push only, no bell row - `pushNotice`, [lives](lives.md#the-push-to-the-followers-wp-l7-server-half)) | yes |
+| `live_started` | a reader who sees the association broadcasting a live (WP-L7, widened from its followers on 2026-11-07, [engagement](../engagement.md); push only, no bell row - `pushNotice`, [lives](lives.md#the-push-to-the-followers-wp-l7-server-half)) | yes |
 | `repost_proposed`, `coorganise_proposed` | managers who must accept | **no** - operational |
 | `repost_personal_requested` | the author of a personal post an association asks to carry (D38b) | **yes** - the author's mute of the asking association |
 | `event_proposed/validated/rejected/updated/deleted/pending` | validators and proposers | **no** - operational |

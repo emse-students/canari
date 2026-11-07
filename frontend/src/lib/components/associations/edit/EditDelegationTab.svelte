@@ -278,7 +278,6 @@
               label={m.asso_deleg_select_label()}
               placeholder={m.asso_deleg_select_placeholder()}
               variant="field"
-              density="compact"
             />
           </div>
           <button

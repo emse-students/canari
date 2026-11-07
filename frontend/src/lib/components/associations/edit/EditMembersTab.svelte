@@ -313,7 +313,6 @@
           onValueChange={(v) => (newMemberPermissions = Number(v))}
           label={m.asso_members_access_label()}
           variant="field"
-          density="compact"
         />
       </div>
       <button
