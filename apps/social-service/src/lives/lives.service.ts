@@ -861,6 +861,12 @@ export class LivesService implements OnModuleDestroy {
     sha256: string
   ): Promise<ConfirmOutcome> {
     return this.db.transaction(async (tx): Promise<ConfirmOutcome> => {
+      // THE LOCK ORDER IS ASSOCIATION, THEN LIVE (durable-rules: the association is locked first).
+      // Segment 0 may take the association's announcement slot below, and the account erasure locks
+      // the user's associations before it updates their lives; taking the live first here would
+      // invert that order and deadlock (40P01). `associationId` never changes, so it is read
+      // before any lock.
+      if (index === 0) await this.lockLiveAssociation(tx, liveId);
       const rows: {
         endedAt: Date | null;
         endReason: LiveEndReason | null;
@@ -932,6 +938,25 @@ export class LivesService implements OnModuleDestroy {
   }
 
   /**
+   * Locks a live's association (`FOR NO KEY UPDATE`, the mode the slot's UPDATE needs) before
+   * segment 0's confirm locks the live, so every path takes association -> live, as the account
+   * erasure does. `associationId` is set at the start and never changes, so the unlocked read is
+   * exact. A member's live, or a live already gone, locks nothing.
+   */
+  private async lockLiveAssociation(tx: EntityManager, liveId: string): Promise<void> {
+    const [live] = (await tx.query(`SELECT "associationId" FROM lives WHERE id = $1`, [
+      liveId,
+    ])) as { associationId: string | null }[];
+    if (!live?.associationId) return;
+    this.logger.debug(
+      `[LIVE] ${liveId} segment 0: locking association ${short(live.associationId)} before the live`
+    );
+    await tx.query(`SELECT 1 FROM associations WHERE id = $1 FOR NO KEY UPDATE`, [
+      live.associationId,
+    ]);
+  }
+
+  /**
    * WP-1b: takes the association's announcement slot inside segment 0's claim transaction, and
    * answers the claim to announce - or `null` when the association announced a live less than
    * {@link LIVE_ASSOCIATION_ANNOUNCE_INTERVAL_HOURS} hours ago, or is ARCHIVED (refused at `start`;
@@ -939,7 +964,8 @@ export class LivesService implements OnModuleDestroy {
    * conditional UPDATE is the whole decision: its row lock orders two lives of one association, and
    * the instant is durable state on the association (a live row is deleted at its end, so it could
    * not hold it). The live itself is already stamped, so a refused slot is never announced later.
-   * Times are the DATABASE's.
+   * Times are the DATABASE's. LOCK ORDER: the association row is already held, taken by
+   * {@link lockLiveAssociation} BEFORE the live's `FOR UPDATE`, so this UPDATE never inverts it.
    */
   private async takeAssociationAnnounceSlot(
     tx: EntityManager,

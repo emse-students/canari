@@ -268,7 +268,7 @@ async function refusal(p: Promise<unknown>): Promise<{ status: number; code?: st
   throw new Error('expected a refusal, got an answer');
 }
 
-maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () => {
+maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)', () => {
   const schema = `lives_it_${Math.random().toString(36).slice(2, 10)}`;
   let admin: Client;
   let ds: DataSource;
@@ -1297,6 +1297,39 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
           ASSO,
         ]);
         expect(asso.lastLiveAnnouncedAt).toBeNull();
+      });
+
+      it('segment 0 locks the association BEFORE the live: an erasure holding the association, then updating the live, does not deadlock', async () => {
+        await setUp();
+        const live = await lives.start(ALICE, { key: KEY, associationId: ASSO });
+        // A second session in the account erasure's order: the association first
+        // (`ERASURE_ASSOCIATION_LOCK_SQL`'s mode), then the broadcaster's lives.
+        const erasure = ds.createQueryRunner();
+        await erasure.connect();
+        try {
+          await erasure.startTransaction();
+          await erasure.query(`SELECT 1 FROM associations WHERE id = $1 FOR NO KEY UPDATE`, [ASSO]);
+          const [{ pid }] = (await erasure.query(`SELECT pg_backend_pid() AS pid`)) as {
+            pid: number;
+          }[];
+          const ingesting = lives.ingest(ALICE, live.id, 0, segment(0));
+          // Proved by the server's own state, not a delay: the confirm is WAITING on this session.
+          for (;;) {
+            const [{ n }] = await q(
+              `SELECT count(*)::int AS n FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))`,
+              [pid]
+            );
+            if (n > 0) break;
+          }
+          // With the inverted order the confirm would hold the live here, and this would be 40P01.
+          await erasure.query(`UPDATE lives SET "lastSegmentAt" = now() WHERE id = $1`, [live.id]);
+          await erasure.commitTransaction();
+          await expect(ingesting).resolves.toMatchObject({ index: 0 });
+        } finally {
+          if (erasure.isTransactionActive) await erasure.rollbackTransaction();
+          await erasure.release();
+        }
+        expect((await pushed()).map((n) => n.pushData?.liveId)).toEqual([live.id]);
       });
     });
 
