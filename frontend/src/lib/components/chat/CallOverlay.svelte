@@ -64,6 +64,7 @@
   import { applyCallMediaSession, clearCallMediaSession } from '$lib/utils/callMediaSession';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { appendLog } from '$lib/utils/sessionLog';
+  import { bindCallVideo } from '$lib/utils/callVideoElement';
   import { createSpeakerRouter, type RoutableSink } from '$lib/utils/callAudioRoute';
   import { primeCallVoice, startCallVoice } from '$lib/utils/callVoice';
   import { CallRingback } from '$lib/utils/callRingback';
@@ -138,8 +139,17 @@
   });
   /** Whether this side is sending its camera: the self view shows, and the screen stays on. */
   let cameraOn = $derived(!call.isVideoOff && !!call.localVideoTrack);
+  /** The remote `<video>` painted its first frame for its current track (`bindCallVideo`). */
+  let remoteFrame = $state(false);
+  /**
+   * The peer's picture is ON SCREEN: a live, unmuted track (`call.remoteVideoTrack`) AND a frame
+   * painted from it. A track unmuted by packets that never decode showed a black screen (production,
+   * 2026-11-07); until its first frame the element stays transparent and the avatar shows - the
+   * rule the top bar's thumbnail follows too.
+   */
+  let remotePictureShown = $derived(!!remoteVideoStream && remoteFrame);
   /** Either picture on screen makes this a video call for the OS and for the screen lock. */
-  let videoShowing = $derived(cameraOn || !!call.remoteVideoTrack);
+  let videoShowing = $derived(cameraOn || remotePictureShown);
 
   // -- The one audio output of the call ------------------------------------------------------
   let remoteAudioSink: HTMLAudioElement | undefined = $state();
@@ -308,10 +318,14 @@
       title: peerTitle,
       artist: videoShowing ? m.chat_video_call_label() : m.call_audio_only_label(),
       muted: call.isMuted,
-      onHangup: () => {
-        appendLog('[Call] hang-up from the OS media controls');
-        callService.endCall();
-      },
+      // WebKit has no `hangup` action (it threw on every iPhone call), and the iPhone's system call
+      // controls are CallKit's: not asked there (`CallMediaSessionParams.onHangup`).
+      onHangup: isIosTauriRuntime()
+        ? null
+        : () => {
+            appendLog('[Call] hang-up from the OS media controls');
+            callService.endCall();
+          },
       onToggleMicrophone: () => {
         appendLog('[Call] microphone toggled from the OS media controls');
         callService.toggleMute();
@@ -428,16 +442,18 @@
   let localVideo: HTMLVideoElement | undefined = $state();
 
   // Bound to the TRACK: a new remote track (renegotiation) or the peer's camera back after a mute
-  // re-binds; the element never plays a stream whose picture is gone.
+  // re-binds; the element never plays a stream whose picture is gone. `remoteFrame` turns true at
+  // the binding's first painted frame (`bindCallVideo`), and the peer's picture counts as shown only
+  // then (`remotePictureShown`).
   $effect(() => {
     const el = remoteVideo;
     const track = call.remoteVideoTrack;
+    remoteFrame = false;
     if (!el || !track) return;
-    el.srcObject = new MediaStream([track]);
-    el.play().catch((e: unknown) => appendLog(`[Call] remote video did not start: ${String(e)}`));
-    return () => {
-      el.srcObject = null;
-    };
+    return bindCallVideo(el, track, 'remote video', () => {
+      appendLog('[Call] remote picture: first frame painted');
+      remoteFrame = true;
+    });
   });
 
   // Video only in the self view: the microphone is never played back to its owner.
@@ -445,11 +461,7 @@
     const el = localVideo;
     const track = call.localVideoTrack;
     if (!el || !track || call.isVideoOff) return;
-    el.srcObject = new MediaStream([track]);
-    el.play().catch((e: unknown) => appendLog(`[Call] self view did not start: ${String(e)}`));
-    return () => {
-      el.srcObject = null;
-    };
+    return bindCallVideo(el, track, 'self view');
   });
 
   /**
@@ -525,7 +537,7 @@
   let pipSupported = $derived(
     typeof document !== 'undefined' && !!document.pictureInPictureEnabled
   );
-  let showPip = $derived(!!remoteVideoStream && pipSupported);
+  let showPip = $derived(remotePictureShown && pipSupported);
 
   async function togglePictureInPicture() {
     try {
@@ -656,7 +668,8 @@
         onresize={readRemoteShape}
         onloadedmetadata={readRemoteShape}
         data-testid="call-remote-video"
-        class="absolute inset-0 h-full w-full bg-black {remoteFit}"
+        data-first-frame={remoteFrame}
+        class="absolute inset-0 h-full w-full {remoteFit} {remoteFrame ? 'bg-black' : 'opacity-0'}"
       ></video>
     {/if}
     {#if cameraOn}
@@ -670,7 +683,7 @@
         muted
         data-testid="call-self-view"
         data-mirrored={call.cameraFacing === 'user'}
-        class="{call.cameraFacing === 'user' ? '-scale-x-100' : ''} {remoteVideoStream
+        class="{call.cameraFacing === 'user' ? '-scale-x-100' : ''} {remotePictureShown
           ? 'absolute right-4 bottom-36 z-10 h-40 w-28 rounded-2xl shadow-xl ring-1 ring-white/20 landscape:bottom-28 landscape:h-28 landscape:w-40'
           : 'absolute inset-0 h-full w-full'} object-cover"
       ></video>

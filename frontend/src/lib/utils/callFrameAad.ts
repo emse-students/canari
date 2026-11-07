@@ -46,6 +46,13 @@ export interface CallTransformOptions {
   kind: CallMediaKind;
   /** The peer connection the transform belongs to (`CallService.transformEpoch`). */
   epoch: number;
+  /**
+   * A VIDEO transform's codec, set only when its transceiver was held to it (`preferVp8` succeeded
+   * before the transform was made): the worker frames the transform's video on THIS, never on the
+   * engine's frame metadata, which WebKit leaves empty (`utils/callVideoFrame.ts`, `framesAsVp8`).
+   * Absent = not known: the worker fails closed and frames whole.
+   */
+  videoCodec?: string;
 }
 
 /**

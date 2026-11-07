@@ -391,6 +391,47 @@ learning about calls is the `call_ring` row of section 1, and the register says 
   The wake reads it exactly as a full push does, and a seed a wake's frame yields is stamped by the
   same decrypt, so the label needs nothing from the wake.
 
+### Who writes `push_context.json`, and when (2026-11-07)
+
+Every background reader - `MlsContextLoader.readPushContext` (Android), the NSE and `canari_push.mm`
+(iOS) - needs `userId`, `deviceId` and `baseUrl`; the device key is in the keystore, not the file.
+
+| Event | Writer | What the file holds after it |
+|---|---|---|
+| Every sign-in, PIN **and biometric**, once `mls.bin` is saved | `store_push_context` (`TauriMlsService` init) | the whole session: `userId`, `deviceId`, `baseUrl`, `pushToken`, `locale`. A PIN sign-in also writes the key to the keystore; a biometric one passes `deviceKeyB64: null` and leaves the entry it read alone |
+| A device-key change | `store_push_context` (`changeDeviceKeyImpl`) | the same, with the new key |
+| A device id minted or restored | `store_device_identity` | patches `userId`, `deviceId` only |
+| A language change | `set_push_context_locale` | patches `locale` only |
+| A sign-out | `end_push_registration` (`keep_device_context_only`) | `userId`, `deviceId`, `locale` - **no `baseUrl`, so every reader finds no session** |
+| An account deletion | `remove_user_push_files` | nothing |
+
+**The defect this table closes (owner's Android report, `1.6.6`, production).** Until 2026-11-07 the
+init skipped `store_push_context` whole when it had no key in hand - the biometric path - so the only
+sign-in that rewrote the file was a PIN one. A sign-out strips the file (above, since #2302,
+`v1.4.1`); a phone that signed out and came back by fingerprint kept the stripped file, and every
+push since was the generic "Nouveau message de ..." banner: no decrypt, the worker enqueued for
+nothing. The owner's log shows two sign-outs and only biometric sign-ins after them, and its last
+background-decrypted message injected from the FCM cache sits BEFORE the first sign-out. iOS took
+the same path with Face ID: the NSE requires `baseUrl` too.
+
+**A refusal now says which.** The Android readers logged `push_context.json absent or invalid` for
+two different defects; `PushContextVerdict` (`fr.emse.canari.push`, unit-tested in `android-tests`)
+classifies at the read: `absent`, `unreadable (<exception class>)`, or `invalid: <fields> missing`,
+with `(the shape a sign-out leaves - no sign-in rewrote it)` when only `baseUrl` is gone. The iOS
+readers say the same words: `pushContextRefusal` in the NSE, `CanariPushContextRefusal` in
+`canari_push.mm`, both read only on the failure path, and neither changes what the reader does.
+
+**The write is fenced on the sign-out generation.** `TauriMlsService.storeSessionPushContext` is the
+one JS call site of `store_push_context`. The write is chained on the `mls.bin` save and on a token,
+so a sign-out can land between the request and the write. It would then put `baseUrl` and the bearer
+back for the account that left, after `end_push_registration` stripped them. Only the FCM service
+honours the signed-out mark: the workers, the boot receiver and the notification actions would act
+for that account again. An account switch in the same window would pair A's ids with B's token.
+So init captures `signOutGeneration()` (`auth.ts`) at ENTRY, and the write is dropped, with a line,
+if the generation has moved by then. On the native side, `deviceKeyB64: null` is the ONLY "no key"
+case: an empty or blank key is refused at ERROR (`session_key_of`, `push.rs`) rather than taken for a
+biometric sign-in.
+
 ## 8. Rollout, and old clients
 
 - **Two locks, ANDed, unchanged**: the estate's `platform_config.push_mode` and the token's

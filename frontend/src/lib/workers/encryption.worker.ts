@@ -1,7 +1,7 @@
 // encryption.worker.ts - WebRTC Encoded Transform (insertable streams) for MLS-derived call keys.
 
 import { isValidOpusPacket } from '../utils/opusPacket';
-import { clearHeaderBytes, isCallVideoCodec } from '../utils/callVideoFrame';
+import { clearHeaderBytes, framesAsVp8 } from '../utils/callVideoFrame';
 import {
   callMediaKind,
   DECRYPT_MISMATCH_FAILURES,
@@ -30,8 +30,9 @@ let decryptFailures = 0;
 /** The same failures per kind: a video key mismatch or a mangled clear header shows apart. */
 const decryptFailuresBy = { audio: 0, video: 0 };
 /**
- * Video frames whose metadata named a codec other than VP8 (`isCallVideoCodec`): encrypted WHOLE,
- * so the receiver cannot decode them - the call's video m-lines are meant to carry VP8 only.
+ * Video frames NOT framed as VP8 (`framesAsVp8`): their transform's codec was not known to be VP8,
+ * or their metadata named another codec. Encrypted WHOLE, so the receiver cannot decode them - the
+ * call's video m-lines are meant to carry VP8 only.
  */
 let videoCodecUnexpected = 0;
 /**
@@ -160,6 +161,9 @@ workerScope.onrtctransform = (event: Event) => {
   // The kind comes from the PAGE, which knows the track (`utils/callFrameAad.ts`): it is
   // authenticated in every frame, so a transform without one forwards nothing rather than guess.
   const mediaKind = callMediaKind(options?.kind);
+  // The codec this transform's transceiver is HELD to, from the page (`framesAsVp8`): the frame
+  // layout follows it, so it is the same on an engine whose metadata names no codec (WebKit).
+  const videoCodec = typeof options?.videoCodec === 'string' ? options.videoCodec : undefined;
 
   if (side !== 'sender' && side !== 'receiver') {
     self.postMessage({ type: 'warn', detail: `unknown transform side: ${String(side)}` });
@@ -217,9 +221,8 @@ workerScope.onrtctransform = (event: Event) => {
           !firstFrameSeen || mediaKind === 'video' || (side === 'sender' && mediaKind === 'audio')
             ? frameMetadata(frame)
             : undefined;
-        const mimeType = mediaKind === 'video' ? meta?.mimeType : undefined;
-        if (mediaKind === 'video' && !isCallVideoCodec(mimeType))
-          noteUnexpectedVideoCodec(mimeType);
+        const vp8 = mediaKind === 'video' && framesAsVp8(videoCodec, meta?.mimeType);
+        if (mediaKind === 'video' && !vp8) noteUnexpectedVideoCodec(meta?.mimeType, videoCodec);
         if (!firstFrameSeen && meta) {
           firstFrameSeen = true;
           self.postMessage({
@@ -230,6 +233,7 @@ workerScope.onrtctransform = (event: Event) => {
             mediaKind,
             mimeType: meta.mimeType ?? '?',
             payloadType: meta.payloadType ?? -1,
+            transformCodec: videoCodec ?? '-',
           });
         }
         if (side === 'sender') {
@@ -238,7 +242,7 @@ workerScope.onrtctransform = (event: Event) => {
             const valid = checkOpus(frame, payload, 'sender', meta);
             recordSenderShape(shape, payload, valid, meta?.rtpTimestamp);
           }
-          if (!(await encryptFrame(frame, controller, mediaKind, mimeType))) return;
+          if (!(await encryptFrame(frame, controller, mediaKind, vp8))) return;
           encrypted[mediaKind]++;
           postInPath(mediaKind);
           if (encrypted[mediaKind] === 1 || encrypted[mediaKind] % 300 === 0) {
@@ -255,7 +259,7 @@ workerScope.onrtctransform = (event: Event) => {
           }
           // Counted only when it decrypted: a failed frame is `decryptError`, and counting it here
           // too made a wrong-key call log `decryptOk` (measured in Chrome 155, 2026-10-17).
-          const outcome = await decryptFrame(frame, controller, mediaKind, mimeType);
+          const outcome = await decryptFrame(frame, controller, mediaKind, vp8);
           if (outcome === 'failed' && !opened && ++failedUnopened === DECRYPT_MISMATCH_FAILURES) {
             self.postMessage({
               type: 'undecryptable',
@@ -539,10 +543,10 @@ async function encryptFrame(
   frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame,
   controller: TransformStreamDefaultController,
   mediaKind: CallMediaKind,
-  mimeType: string | undefined
+  vp8: boolean
 ): Promise<boolean> {
   const data = new Uint8Array(frame.data);
-  const clear = clearHeaderBytes(mediaKind, mimeType, data);
+  const clear = clearHeaderBytes(mediaKind, vp8, data);
   if (mediaKind === 'video' && data.byteLength === 0) {
     controller.enqueue(frame);
     return false;
@@ -577,13 +581,21 @@ async function encryptFrame(
   return true;
 }
 
-/** Names a video frame of a codec this transform cannot frame (`isCallVideoCodec`), a few times. */
-function noteUnexpectedVideoCodec(mimeType: string | undefined): void {
+/**
+ * Names a video frame not framed as VP8 (`framesAsVp8`), a few times: the codec its metadata named
+ * (`?` = none) and the codec its transform was made for (`-` = none known), which together say
+ * whether the page or the engine was the reason.
+ */
+function noteUnexpectedVideoCodec(
+  mimeType: string | undefined,
+  transformCodec: string | undefined
+): void {
   videoCodecUnexpected++;
   if (videoCodecUnexpected <= 3 || videoCodecUnexpected % 300 === 0) {
     self.postMessage({
       type: 'videoCodecUnexpected',
-      mimeType: mimeType ?? '?',
+      mimeType: mimeType || '?',
+      transformCodec: transformCodec ?? '-',
       count: videoCodecUnexpected,
     });
   }
@@ -603,7 +615,7 @@ async function decryptFrame(
   frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame,
   controller: TransformStreamDefaultController,
   mediaKind: CallMediaKind,
-  mimeType: string | undefined
+  vp8: boolean
 ): Promise<DecryptOutcome> {
   const data = new Uint8Array(frame.data);
   // An empty video frame was passed through by the sender (`encryptFrame`): passed on the same way.
@@ -611,8 +623,9 @@ async function decryptFrame(
     controller.enqueue(frame);
     return 'skipped';
   }
-  // The receiver reads the SAME clear first byte the sender read, so both find the same length.
-  const clear = clearHeaderBytes(mediaKind, mimeType, data);
+  // The receiver reads the SAME clear first byte the sender read, under the same transform codec,
+  // so both find the same length whatever either engine's metadata says.
+  const clear = clearHeaderBytes(mediaKind, vp8, data);
   if (data.byteLength < clear + ivLength) {
     // Cannot be one of ours (every encrypted frame is header + IV + tag, 28 bytes at least): dropped,
     // and COUNTED - this branch was silent until 2026-10-19. An EMPTY frame carries nothing (Chrome

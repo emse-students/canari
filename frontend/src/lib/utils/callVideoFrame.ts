@@ -16,8 +16,9 @@
  * header; encrypted, neither exists, so an encrypted H.264 frame cannot even be packetised the way
  * the receiver expects. A clear-header scheme for H.264 would have to rewrite emulation-prevention
  * bytes inside the ciphertext. So the call's video m-lines are restricted to VP8
- * (`vp8CodecPreferences`) on every engine in scope (Chromium, WebKit), and a frame naming any other
- * codec is encrypted WHOLE - it then cannot decode, and the worker says why - never sent in clear.
+ * (`vp8CodecPreferences`) on every engine in scope (Chromium, WebKit), and a frame of a transform
+ * not known to carry VP8, or naming another codec, is encrypted WHOLE (`framesAsVp8`) - it then
+ * cannot decode, and the worker says why - never sent in clear.
  */
 
 /** Clear bytes of a VP8 key frame: the 3-byte frame tag, the start code, width and height. */
@@ -33,30 +34,51 @@ export function isVp8KeyFrame(payload: Uint8Array): boolean {
   return payload.byteLength > 0 && (payload[0] & 0x01) === 0;
 }
 
-/**
- * Whether `mimeType` - the frame metadata's - is a codec whose frames this transform encrypts with
- * a clear header. FAIL CLOSED: an engine that names no codec is NOT read as VP8, so its frames are
- * encrypted whole and counted (`not-vp8`) - the clear split is taken only on the engine's word.
- * What keeps the call on VP8 is `vp8CodecPreferences` on every transceiver; this is the frame's
- * own check, and it never trusts a silence.
- */
+/** Whether `mimeType` names VP8, the one codec a call's video frames are framed for. */
 export function isCallVideoCodec(mimeType: string | undefined): boolean {
   return mimeType !== undefined && mimeType.toLowerCase() === CALL_VIDEO_MIME_TYPE;
 }
 
 /**
+ * Whether a VIDEO frame is framed as VP8 (a clear header) - decided by the TRANSFORM's codec, never
+ * by the engine's frame metadata alone (2026-11-07).
+ *
+ * WHY. The codec is KNOWN where the transform is made: `CallService` attaches a video transform only
+ * on a transceiver it has just held to VP8 (`preferVp8`, `setCodecPreferences`), so nothing else can
+ * be negotiated on it, and it passes that fact in the transform's options (`videoCodec`). The frame
+ * metadata is an engine detail: Chromium names `video/VP8`, WebKit (iOS 1.6.5, measured in
+ * production) names NOTHING (`mime=? pt=-1`). Deciding on the metadata framed the iPhone's frames
+ * WHOLE and Chromium's SPLIT, so every video frame failed in both directions - a layout the two ends
+ * computed differently from one and the same codec.
+ *
+ * FAIL CLOSED, both ways: a transform whose codec is not known to be VP8 frames whole (counted,
+ * `not-vp8`), and so does a frame whose metadata NAMES another codec - the engine contradicting the
+ * transceiver is a negotiation that went wrong, and its frames cannot decode anyway. A metadata that
+ * names nothing (`undefined` or empty) is silence, not a contradiction: the transform's codec stands.
+ * The SAME function runs on both sides with the same inputs, so the layout is identical on every
+ * engine.
+ */
+export function framesAsVp8(
+  transformCodec: string | undefined,
+  frameMimeType: string | undefined
+): boolean {
+  if (!isCallVideoCodec(transformCodec)) return false;
+  return !frameMimeType || isCallVideoCodec(frameMimeType);
+}
+
+/**
  * How many leading bytes of `payload` stay in clear: 10 for a VP8 key frame, 3 for an interframe;
- * 0 for audio and for any video codec other than VP8 (encrypted whole). The SAME function runs on
- * both sides, on the clear first byte, so the two agree with no field. It is NOT bounded by the
- * payload: a frame shorter than its header cannot be split the same way on both sides, and the
- * sender drops it (`encryption.worker.ts`, `encryptFrame`).
+ * 0 for audio and for a video frame not framed as VP8 (`framesAsVp8`, encrypted whole). The SAME
+ * function runs on both sides, on the clear first byte, so the two agree with no field. It is NOT
+ * bounded by the payload: a frame shorter than its header cannot be split the same way on both
+ * sides, and the sender drops it (`encryption.worker.ts`, `encryptFrame`).
  */
 export function clearHeaderBytes(
   kind: 'audio' | 'video',
-  mimeType: string | undefined,
+  vp8: boolean,
   payload: Uint8Array
 ): number {
-  if (kind !== 'video' || !isCallVideoCodec(mimeType)) return 0;
+  if (kind !== 'video' || !vp8) return 0;
   return isVp8KeyFrame(payload) ? VP8_KEY_FRAME_CLEAR_BYTES : VP8_INTER_FRAME_CLEAR_BYTES;
 }
 

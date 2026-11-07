@@ -84,7 +84,9 @@ class RTCEncodedVideoFrame extends RTCEncodedAudioFrame {}
  * Runs frames through one transform of the worker and returns what it forwarded. A SENDER runs as
  * the caller and a RECEIVER as the callee (`keyAs`), so what one run sealed the next one opens.
  * The kind is the page's, in the options, as `CallService` passes it: video for a video frame
- * class unless `kind` overrides it (`null` = a transform the page gave no kind).
+ * class unless `kind` overrides it (`null` = a transform the page gave no kind). A video transform
+ * carries the codec its transceiver is held to - VP8, as `CallService.holdVideoToVp8` holds every
+ * one - unless `videoCodec` overrides it (`null` = none held).
  */
 async function run(
   side: 'sender' | 'receiver',
@@ -92,7 +94,8 @@ async function run(
   epoch?: number,
   Frame: typeof RTCEncodedAudioFrame = RTCEncodedAudioFrame,
   kind: string | null = Frame === RTCEncodedVideoFrame ? 'video' : 'audio',
-  role: 'caller' | 'callee' = side === 'sender' ? 'caller' : 'callee'
+  role: 'caller' | 'callee' = side === 'sender' ? 'caller' : 'callee',
+  videoCodec: string | null = kind === 'video' ? 'video/VP8' : null
 ): Promise<Uint8Array[]> {
   await keyAs(role);
   const input = new ReadableStream({
@@ -113,7 +116,11 @@ async function run(
     },
   });
   scope.onrtctransform!({
-    transformer: { readable: input, writable, options: { side, epoch, kind } },
+    transformer: {
+      readable: input,
+      writable,
+      options: { side, epoch, kind, videoCodec: videoCodec ?? undefined },
+    },
   } as unknown as Event);
   await finished;
   return out;
@@ -424,14 +431,86 @@ describe('encryption.worker - video frames (lot 2, 2026-10-20)', () => {
     );
   });
 
-  it('FAILS CLOSED when the engine names no codec: the frame is encrypted whole and counted', async () => {
-    metadata = () => ({ payloadType: 96 });
-    const plain = keyFrame();
-    const [sent] = await video('sender', [plain]);
-    expect(sent.byteLength).toBe(12 + plain.byteLength + 16);
-    expect(posted).toContainEqual(
-      expect.objectContaining({ type: 'videoCodecUnexpected', mimeType: '?' })
-    );
+  describe('the layout is the TRANSFORM codec, the same on every engine (production, 2026-11-07)', () => {
+    /** WebKit's encoded-frame metadata names no codec and no payload type (iOS 1.6.5, `mime=? pt=-1`). */
+    const WEBKIT = (): Metadata => ({});
+    /** The IV the next sealed frame draws, fixed so two engines' wire bytes can be compared. */
+    const FIXED_IV = Uint8Array.from({ length: 12 }, (_, i) => 0x40 + i);
+    async function sealed(meta: () => Metadata, payloads: Uint8Array[]) {
+      metadata = meta;
+      const spy = vi.spyOn(crypto, 'getRandomValues').mockImplementation(((a: Uint8Array) => {
+        a.set(FIXED_IV);
+        return a;
+      }) as typeof crypto.getRandomValues);
+      try {
+        return await video('sender', payloads);
+      } finally {
+        spy.mockRestore();
+      }
+    }
+
+    it('a WebKit frame (no metadata codec) under a VP8 transform seals to the SAME bytes as a Chrome frame', async () => {
+      const chrome = await sealed(VP8, [keyFrame(), interFrame()]);
+      const webkit = await sealed(WEBKIT, [keyFrame(), interFrame()]);
+      expect(webkit).toEqual(chrome);
+      expect(webkit[0].subarray(0, 10)).toEqual(keyFrame().subarray(0, 10));
+      expect(webkit[1].subarray(0, 3)).toEqual(interFrame().subarray(0, 3));
+      expect(posted.some((m) => m.type === 'videoCodecUnexpected')).toBe(false);
+    });
+
+    it('opens across engines, both directions: WebKit sends to Chrome, Chrome sends to WebKit', async () => {
+      const plain = [keyFrame(), interFrame()];
+      metadata = WEBKIT;
+      const fromIphone = await video('sender', plain);
+      metadata = VP8;
+      expect(await video('receiver', fromIphone)).toEqual(plain);
+      const fromAndroid = await video('sender', plain);
+      metadata = WEBKIT;
+      expect(await video('receiver', fromAndroid)).toEqual(plain);
+      expect(
+        posted.some((m) => m.type === 'decryptError' || m.type === 'videoCodecUnexpected')
+      ).toBe(false);
+    });
+
+    it('names the transform codec in the first-frame line, beside what the engine named', async () => {
+      metadata = WEBKIT;
+      await video('sender', [interFrame()]);
+      expect(posted).toContainEqual(
+        expect.objectContaining({
+          type: 'transformer',
+          mediaKind: 'video',
+          mimeType: '?',
+          payloadType: -1,
+          transformCodec: 'video/VP8',
+        })
+      );
+    });
+
+    it('FAILS CLOSED on a transform whose codec is not known: whole, counted, on every engine', async () => {
+      // The count is the worker's lifetime one (its posts are sampled): read from its report.
+      const unexpected = async (tag: string) => {
+        await scope.onmessage!({ data: { type: 'report', tag } } as MessageEvent);
+        return Number(posted.find((m) => m.tag === tag)!.videoCodecUnexpected);
+      };
+      const before = await unexpected('nocodec-before');
+      for (const meta of [VP8, WEBKIT]) {
+        metadata = meta;
+        const plain = keyFrame();
+        const [sent] = await run(
+          'sender',
+          [plain],
+          undefined,
+          RTCEncodedVideoFrame,
+          'video',
+          'caller',
+          null
+        );
+        // Whole: the same length as a split frame, but the VP8 header did NOT stay in clear.
+        expect(sent.byteLength).toBe(12 + plain.byteLength + 16);
+        expect(sent.subarray(0, 10)).not.toEqual(plain.subarray(0, 10));
+      }
+      expect((await unexpected('nocodec-after')) - before).toBe(2);
+    });
   });
 
   it('keeps the audio IV window for audio: video frames in between never flush it', async () => {
@@ -457,10 +536,11 @@ describe('encryption.worker - video frames (lot 2, 2026-10-20)', () => {
     metadata = () => ({ payloadType: 102, mimeType: 'video/H264' });
     const plain = Uint8Array.from([0, 0, 0, 1, 0x65, ...Array(30).fill(4)]);
     const [sent] = await video('sender', [plain]);
+    // Whole: a split frame has the same length, so the clear prefix is what tells them apart.
     expect(sent.byteLength).toBe(12 + plain.byteLength + 16);
-    expect(posted).toContainEqual(
-      expect.objectContaining({ type: 'videoCodecUnexpected', mimeType: 'video/H264' })
-    );
+    expect(sent.subarray(0, 10)).not.toEqual(plain.subarray(0, 10));
+    await scope.onmessage!({ data: { type: 'report', tag: 'h264' } } as MessageEvent);
+    expect(Number(posted.find((m) => m.tag === 'h264')!.videoCodecUnexpected)).toBeGreaterThan(0);
   });
 
   it('names a video frame too short for its header and an IV, with its kind', async () => {

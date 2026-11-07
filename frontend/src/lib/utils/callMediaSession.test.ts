@@ -85,6 +85,17 @@ describe('the call on the OS media session', () => {
     expect(logs.join('\n')).toContain("'togglemicrophone' unsupported");
   });
 
+  // WebKit has no `hangup` action, and the iPhone logged its refusal on every call (2026-11-07):
+  // where that is known, the page passes no hang-up and the engine is never asked.
+  it('never asks for an action the caller knows the engine lacks (`onHangup: null`), and says nothing', () => {
+    const session = fakeSession(['togglemicrophone']);
+    const p = { ...params(), onHangup: null };
+    applyCallMediaSession({ mediaSession: session as unknown as MediaSession }, p);
+    expect(session.handlers.has('hangup')).toBe(false);
+    expect(session.handlers.has('togglemicrophone')).toBe(true);
+    expect(logs.filter((l) => l.includes('unsupported'))).toEqual([]);
+  });
+
   it('clears the handlers and the state when the call goes', () => {
     const session = fakeSession(['hangup', 'togglemicrophone']);
     const host = { mediaSession: session as unknown as MediaSession };

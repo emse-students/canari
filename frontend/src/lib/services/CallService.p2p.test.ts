@@ -1487,6 +1487,35 @@ describe('the E2E worker report (2026-10-19)', () => {
       expect(mimes(mine)).toEqual(['video/VP8', 'video/rtx']);
     });
 
+    it('tells EVERY video transform the codec its transceiver was held to BEFORE it was made - never the frame metadata (WebKit names none, 2026-11-07)', async () => {
+      /** Each transform made, with whether its transceiver already held VP8 at that moment. */
+      const made: { options: Record<string, unknown>; heldFirst: boolean }[] = [];
+      const { service, pc } = await connectedCall();
+      const heldVp8 = () =>
+        pc.getTransceivers().some((t) => mimes(t)?.[0] === 'video/VP8' && !t.receiver.transform);
+      vi.stubGlobal(
+        'RTCRtpScriptTransform',
+        class extends FakeTransform {
+          constructor(worker: unknown, options: { side: string; kind: string; epoch?: number }) {
+            super(worker, options);
+            made.push({ options, heldFirst: heldVp8() || options.kind !== 'video' });
+          }
+        }
+      );
+      pc.remoteOfferAdds('video');
+      await turnCameraOn(service);
+      const video = made.filter((t) => t.options.kind === 'video');
+      // The peer's m-line (receiver + armed sender) and the camera's (sender + receiver).
+      expect(video).toHaveLength(4);
+      for (const t of video) {
+        expect(t.options.videoCodec).toBe('video/vp8');
+      }
+      // Held before the receiver transform of each video transceiver was made.
+      expect(video.filter((t) => t.options.side === 'receiver').every((t) => t.heldFirst)).toBe(
+        true
+      );
+    });
+
     it('OFF stops the capture, empties the SAME sender and goes recvonly; ON hands it a new capture, sendrecv', async () => {
       const { service, pc, lines } = await connectedCall();
       const first = await turnCameraOn(service);
@@ -2036,11 +2065,12 @@ describe('the E2E worker report (2026-10-19)', () => {
       const { lines } = await connectedCall();
       const post = (data: Record<string, unknown>) =>
         workerAnswers.last?.onmessage?.({ data } as MessageEvent);
-      post({ type: 'videoCodecUnexpected', mimeType: 'video/H264', count: 1 });
-      post({ type: 'videoCodecUnexpected', mimeType: 'video/H264', count: 2 });
+      const frame = { mimeType: 'video/H264', transformCodec: 'video/VP8' };
+      post({ type: 'videoCodecUnexpected', ...frame, count: 1 });
+      post({ type: 'videoCodecUnexpected', ...frame, count: 2 });
       post({ type: 'decryptError', detail: 'OperationError', count: 1, mediaKind: 'video' });
-      expect(lines().filter((l) => l.includes('not VP8'))).toEqual([
-        '[Call] ERROR E2E: video frames of video/H264, not VP8, crossed the transform - encrypted whole, they cannot decode (1 so far)',
+      expect(lines().filter((l) => l.includes('not framed as VP8'))).toEqual([
+        '[Call] ERROR E2E: video frames not framed as VP8 crossed the transform (frame codec video/H264, transform codec video/VP8) - encrypted whole, they cannot decode (1 so far)',
       ]);
       expect(lines()).toContain('[Call] E2E decrypt failed (video, 1): OperationError');
     });
@@ -2063,7 +2093,7 @@ describe('the E2E worker report (2026-10-19)', () => {
   it('arms the sender of a peer-created transceiver as armed, not attached (review L1)', async () => {
     const { pc, lines } = await connectedCall();
     pc.remoteOfferAdds('video');
-    expect(lines()).toContain('[Call] E2E sender transform armed, no track yet (video)');
+    expect(lines()).toContain('[Call] E2E sender transform armed, no track yet (video, video/vp8)');
   });
 
   it('WITHDRAWS the claim when the worker can no longer be asked, re-checks, and only an answered check returns it (review of #2159)', async () => {

@@ -237,7 +237,7 @@ selection placed where the first run never put it: **on a page that does not dra
 
 | Action | Local count | Server read mark | `POST /read` (banner signal) |
 |---|---|---|---|
-| click a salon (`onSelectChannelConversation`) | cleared | after 2 s debounce, only if focused + visible + foreground | once, if the newest foreign message is new |
+| click a salon (`onSelectChannelConversation`) | cleared | at once, then one trailing mark per 2 s window, only if focused + visible + foreground | once, if the newest foreign message is new |
 | message arrives, salon selected | stays 0 | via the receipt effect, same guard | at arrival, once per message |
 | message arrives, salon NOT selected | +1 | none | none |
 | open via a notification tap (read in the code, not re-measured) | the tap selects it, which is a real open | only on a select | only on a select |
@@ -437,7 +437,7 @@ up for fifteen seconds, anchored to an input that was `display: none`.
 | runtime | Photothèque | camera | Tous les fichiers |
 | --- | --- | --- | --- |
 | iOS app | **native** `PHPickerViewController` (`tauri-plugin-dialog`, `pickerMode: 'media'`) | **in-app camera overlay** (photos only in a chat) | **native** document picker |
-| Android app, Android browser | input `image/*,video/*` | **in-app camera overlay** (photos only in a chat) | input, every type |
+| Android app, Android browser | input `image/*,video/*` | **in-app camera overlay** (photos only in a chat) | input, `accept="*/*"` (a type LIST greys out the rest in Android's picker: a saved `.txt` log was unselectable, 2026-11-07) |
 | iOS browser | **no Canari menu**: the paperclip is a `<label>` around one input, and WebKit's sheet is the only menu | - | - |
 | desktop | no menu: the paperclip opens the file dialog | - | - |
 
