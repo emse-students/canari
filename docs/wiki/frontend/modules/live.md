@@ -494,6 +494,10 @@ since the production flip of 2026-10-30** (dev builds only before it, by the `de
 test). Whether a surface is drawn is the server's runtime kill switch, below. The
 chat and reactions (WP-L6) are [below](#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft); moderation (WP-L8) is merged.
 
+### What stacks over the viewer (2026-11-07)
+
+The viewer sits on `--z-viewer` (300), above `--z-modal` (280). **One rule, `utils/viewerLayer.ts`:** whatever opens over a full-screen viewer takes `--z-viewer-dialog` (305), and a component says so by `markViewerLayer()` in its own initialisation, which `Modal` and `ModalOverlay` read. The live's own dialogs (report, chat-line report, block confirmation) are on `critical` (320) and clear it already. **The defect (owner, Android, 2026-11-07):** a live's link shared "via Canari" arrives as an incoming share, whose picker (`IncomingShareHost`, mounted at the app root) is OUTSIDE the viewer's subtree, so no mark reached it and it opened on 280, under the viewer, until the live closed. `IncomingShareHost` now marks itself; the same fix covers the reel viewer and the broadcaster overlay. Test: `IncomingShareHost.svelte.test.ts`. The viewer has no other sheet (the header has a viewer COUNT, not a list; reactions are an in-page layer).
+
 ### The server's kill switch hides the live surfaces (2026-10-21)
 
 The build switch is not enough once it ships: a store binary cannot be recalled. So every live
