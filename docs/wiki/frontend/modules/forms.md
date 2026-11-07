@@ -1617,7 +1617,8 @@ draws them. Built from the owner-approved mockup of 2026-11-06 with the app's to
 
 - **The table is the editor.** Columns are chips in the header row (renamed in place, removed by
   their x), rows a narrow first column of inline inputs, "+" adds a column and "Ajouter une ligne"
-  a row (the new blank label takes the focus). **"Coller une liste"** takes one value per line
+  a row (the new blank label takes the focus); the table itself is `GridAxesTable.svelte`, shared
+  with the "Grille de choix" since 2026-11-07. **"Coller une liste"**, under the table, takes one value per line
   (commas, semicolons and tabs also split) and appends them as rows or as columns; a label already
   on the axis (trimmed, case folded - the save's own comparison) is refused and named, and what
   passes the axis maximum (40 rows, 15 columns) is counted, never dropped silently. A new grid's
@@ -1727,6 +1728,51 @@ and opened, a refused save drawn under its grid, the page told when a grid goes)
 `api.refusal.test.ts` (`itemId` carried), `routes/forms/create/page.pricedGridMultiple.svelte.test.ts`
 ("Plusieurs reponses" back off with its grid and never against the manager; a server-only refusal
 drawn under a folded grid).
+
+### Adding a question, the "Grille de choix" and the editor's menus (owner, 2026-11-07)
+
+The owner's reading: *"A l'ouverture d'un menu, ou l'ajout d'une question, il faut absolument
+mettre un wizard et rendre les choses simples et bien ordonnees"*, and the three grids had three
+editing looks. Three decisions, layout and grouping only - no feature removed, no server change.
+
+- **Adding a question is two steps** (`AddQuestionWizard.svelte`, a `Modal`: a bottom sheet on a
+  phone, a dialog wider up). Step 1, *"Quel type de question ?"*, lists the authorable types by
+  family - TEXTE (short, long), CHOIX (single, multiple, dropdown, scale), GRILLES (Grille de
+  choix, Grille d'articles), AUTRE (file) - icon left, label left-aligned, one line of
+  description each; the layout is `editorQuestionFamilies()` in `forms/questionTypes.ts`, and a
+  family with no offered type is dropped (a booking space offers no priced grid). Step 2 asks only
+  the type's essentials, through the SAME editors the card uses: the title, then the options
+  (`ChoiceOptionsEditor`), the scale (`ScaleEditor`), the rows and columns with the switch
+  (`MatrixGridEditor`), or the rows, columns and prices (`ProductGridEditor` with `essentials`,
+  which hides the cap per cell and the preview); a text or file question gets "Obligatoire". The
+  back arrow returns to step 1 with the chosen type focused; "Annuler" and Escape insert nothing
+  and give the focus back to the opener; "Ajouter" inserts the filled card (`insertQuestion` in
+  `forms/questionDraft.ts`) at the end, or right after the card whose "..." menu asked for it, and
+  opens it. Image, description and display conditions stay in the card.
+- **One "Grille de choix"** replaces "Grille unique" and "Grille multiple" in every list (the
+  wizard, the card's type menu). The stored types do not change: the switch *"Plusieurs reponses
+  par ligne"* writes `matrix_multiple` when on and `matrix_single` when off
+  (`setMatrixMultiple` in `forms/matrixEditor.ts`), and an existing `matrix_multiple` opens with it
+  on. Its rows and columns are edited in the priced grid's own table, `GridAxesTable.svelte`
+  (extracted from `ProductGridEditor`, which now draws its prices through that table's snippets):
+  chips, inline rows, drag and arrows, touch buttons, "Coller une liste" under the table. A cell
+  shows what the respondent ticks there, a radio or a checkbox. On a phone a column is the priced
+  grid's narrow 32px column, so a long column label truncates there exactly as it does on the
+  priced grid - the two grids behave alike, which is what was asked.
+- **The menus are sectioned** (`MenuList.svelte`: titled sections, icon first, text left-aligned,
+  44px rows, arrow/Home/End keys). The card's type menu uses the families above; the card's "..."
+  menu holds "Ajouter" (insert a question after this one, duplicate) and "Retirer" (delete). The
+  rare settings of a card - "depends on" and the audience condition - fold under **"Plus
+  d'options"**, opened by itself when the card already uses one. `FormAdvancedSettings` was left
+  as it is: it already groups its settings under titles folded behind "Parametres avances".
+- **"Selon" carries an "i"** (`InfoTip.svelte`, a 44px icon button opening a `FloatingSurface`,
+  keyboard and touch): a grid varies by ONE criterion; to combine two, make two questions and show
+  each according to the other criterion. It appears wherever the priced grid's price section is
+  drawn, the wizard's step 2 included.
+
+Tests: `AddQuestionWizard.svelte.test.ts` (step 1 order and alignment, step 2 per type, Ajouter at
+the end and after a card, Annuler, Escape, back, the switch both ways), `questionMenus.test.ts`,
+`matrixEditor.test.ts`, the "i" in `ProductGridEditor.svelte.test.ts`.
 
 ### The responses screen (client half of WP-G4, 2026-11-06)
 

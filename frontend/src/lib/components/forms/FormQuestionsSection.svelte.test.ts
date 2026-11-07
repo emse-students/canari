@@ -3,7 +3,8 @@
  * THE COMPACT QUESTION EDITOR: one line per question, one card open at a time, the settings in one
  * icon row. Mounted through a parent that owns the bound list, as the admin pages do.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, afterAll } from 'vitest';
+import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import { flushSync, mount, unmount } from 'svelte';
 import { m } from '$lib/paraglide/messages';
 import Harness from './FormQuestionsSectionHarness.test.svelte';
@@ -43,6 +44,33 @@ const titleInputs = (t: HTMLElement) =>
   t.querySelectorAll<HTMLInputElement>(`input[aria-label="${m.form_builder_question_label()}"]`);
 const byLabel = (t: HTMLElement, label: string) =>
   t.querySelector<HTMLButtonElement>(`[role="toolbar"] button[aria-label="${label}"]`)!;
+/** An entry of whichever menu or wizard step is open: they are portalled to the body. */
+const menuItem = (key: string) =>
+  document.querySelector<HTMLButtonElement>(`[data-menu-item="${key}"]`)!;
+/** Runs an action of the open card's "..." menu. */
+function cardAction(t: HTMLElement, action: string) {
+  byLabel(t, m.form_card_menu_aria()).click();
+  flushSync();
+  menuItem(action).click();
+  flushSync();
+}
+const addButton = (t: HTMLElement) =>
+  allButtons(t).find((b) => b.textContent?.includes(m.form_add_question_button()))!;
+/** The add wizard, both steps: the type, then "Ajouter" with what the second step holds. */
+function addThroughWizard(t: HTMLElement, kind: string) {
+  addButton(t).click();
+  flushSync();
+  menuItem(kind).click();
+  flushSync();
+  document.querySelector<HTMLButtonElement>('[data-testid="wizard-add"]')!.click();
+  flushSync();
+}
+/** Opens the open card's "Plus d'options". */
+function openMoreOptions(t: HTMLElement) {
+  const more = t.querySelector<HTMLButtonElement>('[data-testid="more-options"]')!;
+  if (more.getAttribute('aria-expanded') !== 'true') more.click();
+  flushSync();
+}
 
 describe('collapsed and expanded', () => {
   it('renders every question as one collapsed row, with an asterisk when required', () => {
@@ -80,14 +108,7 @@ describe('collapsed and expanded', () => {
 
   it('a new question is created expanded', () => {
     const { target, state } = render([]);
-    allButtons(target)
-      .find((b) => b.textContent?.includes(m.form_add_question_button()))!
-      .click();
-    flushSync();
-    allButtons(target)
-      .find((b) => b.textContent?.trim() === m.qtype_short_text())!
-      .click();
-    flushSync();
+    addThroughWizard(target, 'short_text');
     expect(state.items.length).toBe(1);
     expect(titleInputs(target).length).toBe(1);
   });
@@ -99,10 +120,15 @@ describe('the settings row', () => {
     rowButton(target, 1).click();
     flushSync();
     expect(target.querySelector('[data-testid="audience-panel"]')).toBeNull();
-    byLabel(target, m.form_builder_conditions_aria()).click();
+    openMoreOptions(target);
+    const toggle = () =>
+      [...target.querySelectorAll('label')]
+        .find((l) => l.textContent?.includes(m.form_show_if_toggle()))!
+        .querySelector<HTMLInputElement>('input')!;
+    toggle().click();
     flushSync();
     expect(target.querySelector('[data-testid="audience-panel"]')).not.toBeNull();
-    byLabel(target, m.form_builder_conditions_aria()).click();
+    toggle().click();
     flushSync();
     expect(target.querySelector('[data-testid="audience-panel"]')).toBeNull();
   });
@@ -117,8 +143,7 @@ describe('the settings row', () => {
     byLabel(target, m.form_builder_required_label()).click();
     flushSync();
     expect(state.items[1].required).toBe(true);
-    byLabel(target, m.form_builder_delete_aria()).click();
-    flushSync();
+    cardAction(target, 'remove');
     expect(state.items.map((i) => i.id)).toEqual(['q1', 'q3']);
   });
 });
@@ -189,7 +214,7 @@ describe('shortcuts and focus', () => {
     const { target } = render();
     rowButton(target, 2).click();
     flushSync();
-    byLabel(target, m.form_builder_delete_aria()).click();
+    cardAction(target, 'remove');
     await Promise.resolve();
     await new Promise((r) => setTimeout(r));
     expect(document.activeElement).toBe(rowButton(target, 2));
@@ -197,13 +222,13 @@ describe('shortcuts and focus', () => {
 
     rowButton(target, 2).click();
     flushSync();
-    byLabel(target, m.form_builder_delete_aria()).click();
+    cardAction(target, 'remove');
     await new Promise((r) => setTimeout(r));
     expect(document.activeElement).toBe(rowButton(target, 1));
 
     rowButton(target, 1).click();
     flushSync();
-    byLabel(target, m.form_builder_delete_aria()).click();
+    cardAction(target, 'remove');
     await new Promise((r) => setTimeout(r));
     expect(document.activeElement?.textContent).toContain(m.form_add_question_button());
   });
@@ -285,8 +310,20 @@ describe('touch and drag targets', () => {
 
 describe('the type menus', () => {
   const openAddMenu = (target: HTMLElement) => {
+    addButton(target).click();
+    flushSync();
+  };
+  const closeWizard = () => {
+    document
+      .querySelector<HTMLButtonElement>(
+        `[data-testid="add-question-wizard"] button[aria-label="${m.common_close_label()}"]`
+      )!
+      .click();
+    flushSync();
+  };
+  const openTypeMenu = (target: HTMLElement) => {
     allButtons(target)
-      .find((b) => b.textContent?.includes(m.form_add_question_button()))!
+      .find((b) => b.getAttribute('aria-haspopup') === 'listbox')!
       .click();
     flushSync();
   };
@@ -294,38 +331,31 @@ describe('the type menus', () => {
   it('offer the priced grid in both menus of a form', () => {
     const { target } = render();
     openAddMenu(target);
-    expect(target.textContent).toContain(m.qtype_product_grid());
+    expect(menuItem('product_grid')).not.toBeNull();
+    closeWizard();
     rowButton(target, 1).click();
     flushSync();
-    allButtons(target)
-      .find((b) => b.getAttribute('aria-haspopup') === 'listbox')!
-      .click();
-    flushSync();
-    expect(target.textContent).toContain(m.qtype_product_grid());
+    openTypeMenu(target);
+    expect(menuItem('product_grid')).not.toBeNull();
   });
 
   it('leave the priced grid out of a builder that never takes payment (a booking space)', () => {
     const { target } = render(three(), { offerPricedGrid: false });
     openAddMenu(target);
-    expect(target.textContent).toContain(m.qtype_short_text());
-    expect(target.textContent).not.toContain(m.qtype_product_grid());
+    expect(menuItem('short_text')).not.toBeNull();
+    expect(menuItem('product_grid')).toBeNull();
+    closeWizard();
     rowButton(target, 1).click();
     flushSync();
-    allButtons(target)
-      .find((b) => b.getAttribute('aria-haspopup') === 'listbox')!
-      .click();
-    flushSync();
-    expect(target.textContent).not.toContain(m.qtype_product_grid());
+    openTypeMenu(target);
+    expect(menuItem('short_text')).not.toBeNull();
+    expect(menuItem('product_grid')).toBeNull();
   });
 
   it('add a priced grid stored required, with its definition, opened, and tell the page', () => {
     let told = 0;
     const { target, state } = render(three(), { onPricedGridAdded: () => (told += 1) });
-    openAddMenu(target);
-    allButtons(target)
-      .find((b) => b.textContent?.trim() === m.qtype_product_grid())!
-      .click();
-    flushSync();
+    addThroughWizard(target, 'product_grid');
     const added = state.items[3];
     expect(added.type).toBe('product_grid');
     expect(added.required).toBe(true);
@@ -359,26 +389,19 @@ describe('the type menus', () => {
     // The first grid becomes a short text through its type menu.
     rowButton(target, 1).click();
     flushSync();
-    allButtons(target)
-      .find((b) => b.getAttribute('aria-haspopup') === 'listbox')!
-      .click();
-    flushSync();
-    allButtons(target)
-      .find((b) => b.textContent?.trim() === m.qtype_short_text())!
-      .click();
+    openTypeMenu(target);
+    menuItem('short_text').click();
     flushSync();
     expect(gone).toHaveLength(1);
     // The second grid is removed.
     rowButton(target, 2).click();
     flushSync();
-    byLabel(target, m.form_builder_delete_aria()).click();
-    flushSync();
+    cardAction(target, 'remove');
     expect(gone).toHaveLength(2);
     // Removing a question that is no grid tells the page nothing.
     rowButton(target, 1).click();
     flushSync();
-    byLabel(target, m.form_builder_delete_aria()).click();
-    flushSync();
+    cardAction(target, 'remove');
     expect(gone).toHaveLength(2);
   });
 
@@ -405,3 +428,5 @@ describe('the type menus', () => {
     );
   });
 });
+
+afterAll(adoptTransitionAnimations());

@@ -7,7 +7,8 @@
  * changed their mind kept a setting they never chose. The page now remembers that the EDITOR
  * switched it on, and a choice the manager makes on the switch is theirs to keep.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi, afterAll } from 'vitest';
+import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { m } from '$lib/paraglide/messages';
 
@@ -93,7 +94,17 @@ async function addGrid() {
     .find((b) => b.textContent?.includes(m.form_add_question_button()))!
     .click();
   await settle();
-  byText(m.qtype_product_grid()).click();
+  document.querySelector<HTMLButtonElement>('[data-menu-item="product_grid"]')!.click();
+  await settle();
+  document.querySelector<HTMLButtonElement>('[data-testid="wizard-add"]')!.click();
+  await settle();
+}
+
+/** Removes the open question through its "..." menu. */
+async function removeOpenQuestion() {
+  byAria(m.form_card_menu_aria()).click();
+  await settle();
+  document.querySelector<HTMLButtonElement>('[data-menu-item="remove"]')!.click();
   await settle();
 }
 
@@ -122,8 +133,7 @@ describe('the form builder, "several answers" and a priced grid', () => {
       await open();
       await addGrid();
       expect((await multipleSwitch()).checked).toBe(true);
-      byAria(m.form_builder_delete_aria()).click();
-      await settle();
+      await removeOpenQuestion();
       expect((await multipleSwitch()).checked).toBe(false);
       expect(await savedAllowMultiple()).toBe(false);
     },
@@ -139,7 +149,7 @@ describe('the form builder, "several answers" and a priced grid', () => {
         .find((b) => b.getAttribute('aria-haspopup') === 'listbox')!
         .click();
       await settle();
-      byText(m.qtype_short_text()).click();
+      document.querySelector<HTMLButtonElement>('[data-menu-item="short_text"]')!.click();
       await settle();
       expect(await savedAllowMultiple()).toBe(false);
     },
@@ -155,8 +165,7 @@ describe('the form builder, "several answers" and a priced grid', () => {
       await settle();
       expect(toggle.checked).toBe(true);
       await addGrid();
-      byAria(m.form_builder_delete_aria()).click();
-      await settle();
+      await removeOpenQuestion();
       expect(await savedAllowMultiple()).toBe(true);
     },
     MOUNT_BUDGET_MS
@@ -205,3 +214,5 @@ describe('the form builder, a grid refused by the server alone', () => {
     MOUNT_BUDGET_MS
   );
 });
+
+afterAll(adoptTransitionAnimations());
