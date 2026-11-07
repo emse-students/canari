@@ -2,6 +2,7 @@
   import { internalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
   import '../app.css';
+  import { pageScrollPaddingClass } from '$lib/components/layout/pageScrollPadding';
   import { afterNavigate, beforeNavigate, goto, onNavigate, preloadData } from '$app/navigation';
   import { preloadRouteCodeOnce } from '$lib/navigation/routeCodePreload';
   import { onMount, tick } from 'svelte';
@@ -793,7 +794,9 @@
       <main id="main-content" class="relative flex-1 overflow-hidden">
         <div
           bind:this={pageScrollWrap}
-          class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-(--bottom-nav-reserve) md:pb-0"
+          class="page-scroll-wrap absolute inset-0 overflow-y-auto {pageScrollPaddingClass(
+            !isLoginPage
+          )}"
         >
           <!-- NO BOUNDARY HERE: SvelteKit 3 wraps every route node in its own, closer to the page,
                armed with `+error.svelte` and reported through `handleClientError` - one held here
