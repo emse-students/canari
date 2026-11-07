@@ -2350,6 +2350,12 @@ ends, whatever either engine's metadata says. Fail closed is kept where the code
 transform made with none held, or a frame whose metadata NAMES another codec, is framed whole and
 counted `not-vp8`, its ERROR line naming both (`frame codec ..., transform codec ...`). The
 first-frame line adds `transform-codec=`, and each attach line names it (`(video, video/vp8)`).
+**The witness WebKit's frames cannot be** (follow-up of the review, P3-1): on WebKit the "frame names
+another codec" check never fires, so an engine that ignored `setCodecPreferences` would carry H.264
+framed as VP8 unseen. At every `stable`, `reportNegotiatedVideoCodecs` compares each video sender's
+and receiver's NEGOTIATED codec (`getParameters().codecs`, past RTX/RED/ULPFEC) with the codec its
+transform was told, and logs the first mismatch of the call ONCE: `ERROR E2E report: the video
+receiver (mid ...) negotiated video/H264, transform frames video/vp8`. A report, never a behaviour.
 
 Pinned by the worker suite: a WebKit-like frame (no metadata) under a VP8 transform seals to the
 SAME bytes as a Chromium one (fixed IV), and opens across engines in both directions; a transform
@@ -2376,8 +2382,8 @@ layout) and picture-in-picture follow the painted picture, not the track.
   and on did it. Not a failure: `bindCallVideo` drops an `AbortError` when its own release or the
   element's removal caused it (both known there) and logs every other rejection.
 - `Media Session action 'hangup' unsupported here` (iOS, once per page): WebKit has no `hangup`
-  action, and the iPhone's system call controls are CallKit's. The iOS app no longer asks for it
-  (`CallMediaSessionParams.onHangup: null`).
+  action, and in the iOS app CallKit owns hang-up. The iOS app neither sets nor clears it
+  (`CallMediaSessionParams.onHangup: null`, `clearCallMediaSession(host, false)`).
 - `[CALL-WAKE] the screen lock was refused NotAllowedError` (iOS, every video call): a REAL gap - the
   screen may dim during an iPhone video call - not noise. Its cause is not read: the log kept only the
   DOMException's class, and WebKit refuses a Screen Wake Lock for several reasons (hidden page, no user

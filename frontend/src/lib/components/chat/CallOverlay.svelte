@@ -318,8 +318,7 @@
       title: peerTitle,
       artist: videoShowing ? m.chat_video_call_label() : m.call_audio_only_label(),
       muted: call.isMuted,
-      // WebKit has no `hangup` action (it threw on every iPhone call), and the iPhone's system call
-      // controls are CallKit's: not asked there (`CallMediaSessionParams.onHangup`).
+      // iOS app: CallKit owns hang-up (`CallMediaSessionParams.onHangup`).
       onHangup: isIosTauriRuntime()
         ? null
         : () => {
@@ -332,7 +331,8 @@
       },
     });
   });
-  $effect(() => () => clearCallMediaSession(navigator));
+  // iOS app: CallKit owns hang-up, so the Media Session's was never set and is not cleared.
+  $effect(() => () => clearCallMediaSession(navigator, !isIosTauriRuntime()));
 
   // -- Android: the ongoing-call foreground service (WP-C-BG-A) -------------------------------
   // It keeps the process's network and microphone while the app is off screen, draws the CallStyle

@@ -74,7 +74,11 @@ import {
   type CameraFacing,
 } from '$lib/utils/callVideo';
 import { CallVideoQualityLoop } from '$lib/utils/callVideoQuality';
-import { CALL_VIDEO_MIME_TYPE } from '$lib/utils/callVideoFrame';
+import {
+  CALL_VIDEO_MIME_TYPE,
+  negotiatedCodecMismatch,
+  negotiatedMediaCodec,
+} from '$lib/utils/callVideoFrame';
 import {
   buildCallMicPipeline,
   CALL_NOISE_SUPPRESSION_DEFAULT,
@@ -564,6 +568,10 @@ export class CallService {
   private cameraOpTarget: 'on' | 'off' = 'off';
   /** The worker's `videoCodecUnexpected` was logged in this call: one ERROR line, not one per post. */
   private videoCodecUnexpectedLogged = false;
+  /** The codec each VIDEO sender and receiver's transform was told (`undefined` = none held). */
+  private videoTransformCodecs = new WeakMap<RTCRtpSender | RTCRtpReceiver, string | undefined>();
+  /** A negotiated video codec that differs from its transform's was reported in this call. */
+  private negotiatedCodecMismatchLogged = false;
   /**
    * The camera sender's quality ladder (`utils/callVideoQuality.ts`), for the peer connection and
    * sender it was started on; `null` when no camera transceiver exists.
@@ -1556,6 +1564,7 @@ export class CallService {
     this.cameraBusy = false;
     this.offPending = false;
     this.videoCodecUnexpectedLogged = false;
+    this.negotiatedCodecMismatchLogged = false;
     this.cameraFacing.set('user');
     this.canSwitchCamera.set(false);
     this.isVideoOff.set(true);
@@ -2817,6 +2826,7 @@ export class CallService {
       // check costs a look and never a verdict.
       if (pc.signalingState === 'stable' && this.pc === pc) {
         this.recheckE2eOnMediaStart('after signalling reached stable');
+        this.reportNegotiatedVideoCodecs(pc);
       }
     };
 
@@ -3688,6 +3698,7 @@ export class CallService {
       this.keyedWorker('sender', mediaKind),
       this.transformOptions('sender', mediaKind, videoCodec)
     );
+    if (mediaKind === 'video') this.videoTransformCodecs.set(sender, videoCodec);
     appendLog(
       `[Call] E2E sender transform ${how} (${describeTransformMedia(mediaKind, videoCodec)})`
     );
@@ -3704,9 +3715,48 @@ export class CallService {
       this.keyedWorker('receiver', mediaKind),
       this.transformOptions('receiver', mediaKind, videoCodec)
     );
+    if (mediaKind === 'video') this.videoTransformCodecs.set(receiver, videoCodec);
     appendLog(
       `[Call] E2E receiver transform attached (${describeTransformMedia(mediaKind, videoCodec)})`
     );
+  }
+
+  /**
+   * Once negotiation settles (`stable`), compares the codec each VIDEO sender and receiver of `pc`
+   * NEGOTIATED (`getParameters().codecs`) with the codec its transform was told
+   * (`videoTransformCodecs`), and reports the first mismatch of the call ONCE, at ERROR, in the E2E
+   * lines (`negotiatedCodecMismatch`). WHY: WebKit's frame metadata names no codec, so the worker's
+   * own "the frame names another codec" check can never fire there - an engine that ignored
+   * `setCodecPreferences` would carry H.264 framed as VP8 with nothing saying so. A REPORT only:
+   * nothing about the framing changes.
+   */
+  private reportNegotiatedVideoCodecs(pc: RTCPeerConnection): void {
+    if (this.negotiatedCodecMismatchLogged) return;
+    for (const t of pc.getTransceivers()) {
+      const sides: ['sender' | 'receiver', RTCRtpSender | RTCRtpReceiver][] = [
+        ['sender', t.sender],
+        ['receiver', t.receiver],
+      ];
+      for (const [side, end] of sides) {
+        if (!this.videoTransformCodecs.has(end)) continue;
+        let negotiated: string | undefined;
+        try {
+          negotiated = negotiatedMediaCodec(end.getParameters().codecs);
+        } catch (e) {
+          appendLog(
+            `[Call] WARN video ${side} parameters unreadable after negotiation: ${String(e)}`
+          );
+          continue;
+        }
+        const mismatch = negotiatedCodecMismatch(this.videoTransformCodecs.get(end), negotiated);
+        if (!mismatch) continue;
+        this.negotiatedCodecMismatchLogged = true;
+        appendLog(
+          `[Call] ERROR E2E report: the video ${side} (mid ${t.mid ?? '-'}) ${mismatch} - its frames cannot decode`
+        );
+        return;
+      }
+    }
   }
 
   /**

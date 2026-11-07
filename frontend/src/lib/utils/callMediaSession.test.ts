@@ -96,6 +96,22 @@ describe('the call on the OS media session', () => {
     expect(logs.filter((l) => l.includes('unsupported'))).toEqual([]);
   });
 
+  it('leaves `hangup` alone when clearing in the iOS app, where it was never set', () => {
+    // An engine that throws on `hangup`, as WebKit does: not even asked.
+    const session = fakeSession(['togglemicrophone']);
+    const asked: string[] = [];
+    const setActionHandler = session.setActionHandler.bind(session);
+    session.setActionHandler = (action: string, h: (() => void) | null) => {
+      asked.push(action);
+      setActionHandler(action, h);
+    };
+    const host = { mediaSession: session as unknown as MediaSession };
+    applyCallMediaSession(host, { ...params(), onHangup: null });
+    clearCallMediaSession(host, false);
+    expect(asked).toEqual(['togglemicrophone', 'togglemicrophone']);
+    expect(session.handlers.get('togglemicrophone')).toBeNull();
+  });
+
   it('clears the handlers and the state when the call goes', () => {
     const session = fakeSession(['hangup', 'togglemicrophone']);
     const host = { mediaSession: session as unknown as MediaSession };

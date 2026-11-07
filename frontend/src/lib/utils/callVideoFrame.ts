@@ -88,6 +88,34 @@ export interface CodecCapability {
 }
 
 /**
+ * The media codec a NEGOTIATED side carries, read from its `getParameters().codecs`: the first
+ * entry that is not a wrapper (RTX, RED, ULPFEC carry no frame of their own). `undefined` while
+ * nothing is negotiated on that side (an empty list).
+ */
+export function negotiatedMediaCodec(
+  codecs: readonly CodecCapability[] | undefined
+): string | undefined {
+  return codecs?.find((c) => !/^video\/(rtx|red|ulpfec)$/i.test(c.mimeType))?.mimeType;
+}
+
+/**
+ * The witness WebKit's frames cannot be (2026-11-07): WebKit's frame metadata names no codec, so
+ * the worker's "the frame names another codec" check never fires there, and an engine that
+ * ignored `setCodecPreferences` would send H.264 framed as VP8 unseen. So, once negotiation
+ * settles, the codec each side actually NEGOTIATED is compared with the codec its transform was
+ * told (`CallTransformOptions.videoCodec`). Returns the mismatch to report, or `null`. A report,
+ * never a behaviour: the frames are framed as before.
+ */
+export function negotiatedCodecMismatch(
+  heldCodec: string | undefined,
+  negotiated: string | undefined
+): string | null {
+  if (!negotiated) return null;
+  if (isCallVideoCodec(heldCodec) && isCallVideoCodec(negotiated)) return null;
+  return `negotiated ${negotiated}, transform frames ${heldCodec ?? 'no codec (whole)'}`;
+}
+
+/**
  * The video codec list a call transceiver is restricted to (`setCodecPreferences`): VP8 and its
  * retransmission (RTX), in the engine's own order; RED and ULPFEC are left out (they wrap media
  * packets the transform never sees, and nothing needs them on a 1:1 call). Empty when the engine
