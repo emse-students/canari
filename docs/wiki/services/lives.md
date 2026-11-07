@@ -601,7 +601,7 @@ with no live on air, the card reads nothing on a timer; it is otherwise read whe
 first page, as before. The broadcaster adds one `PUT` of at most 256 KiB every ~10 s to the segment
 it already sends every 2 s (up to 4 MiB each).
 
-`139_live_title_and_poster.sql` adds the five columns and three CHECKs (`NOT VALID`, then validated
+`140_live_title_and_poster.sql` adds the five columns and three CHECKs (`NOT VALID`, then validated
 after the commit, `lock_timeout` 5 s), additive and idempotent; applied twice by the integration spec.
 
 ## The key (Q4): served like a post CEK, removal enforced by the server

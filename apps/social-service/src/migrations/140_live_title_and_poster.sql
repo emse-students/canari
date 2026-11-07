@@ -1,4 +1,4 @@
--- Migration 139: a live's TITLE and its PREVIEW IMAGE (owner, 2026-11-07).
+-- Migration 140 (139 is held by #3119's 139_association_last_live_announced_at.sql): a live's TITLE and its PREVIEW IMAGE (owner, 2026-11-07).
 --
 -- docs/wiki/services/lives.md, "Titles and the preview". Two additions to `lives`, nothing else:
 --

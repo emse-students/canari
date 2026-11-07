@@ -139,14 +139,14 @@ export class Live {
   reactionSeq: number;
 
   /**
-   * The live's optional TITLE (owner, 2026-11-07, migration 139): 1 to `LIVE_TITLE_MAX_CHARS`
+   * The live's optional TITLE (owner, 2026-11-07, migration 140): 1 to `LIVE_TITLE_MAX_CHARS`
    * characters of plain text, or NULL for none. Written at the start and by the broadcaster's edit.
    */
   @Column({ type: 'varchar', length: 80, nullable: true })
   title: string | null;
 
   /**
-   * The stored PREVIEW IMAGE's random name, under `live/<id>/` beside the segments (migration 139),
+   * The stored PREVIEW IMAGE's random name, under `live/<id>/` beside the segments (migration 140),
    * and when it was stored (the database's clock). Both or neither.
    */
   @Column({ type: 'uuid', nullable: true })
@@ -156,7 +156,7 @@ export class Live {
   posterAt: Date | null;
 
   /**
-   * THE RESERVATION of a poster being stored (migration 139), the segment's `pendingName` for the
+   * THE RESERVATION of a poster being stored (migration 140), the segment's `pendingName` for the
    * preview: written before the store, cleared by its confirm, and read by the purge, which leaves
    * the live alone while it is younger than `LIVE_RESERVATION_TTL_MS`.
    */

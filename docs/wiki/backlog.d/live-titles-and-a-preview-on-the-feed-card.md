@@ -12,7 +12,7 @@
 4. **Push.** The title goes in the "X est en live" notification ("BDE est en live : Soirée
    d'intégration").
 
-**Built** on `feat/live-titles-and-preview` (migration 139): the mechanism, the key served without
+**Built** on `feat/live-titles-and-preview` (migration 140): the mechanism, the key served without
 a seat, where the preview is stored and what the card costs against the manifest poll are in
 [lives](../services/lives.md#titles-and-the-preview-image-owner-2026-11-07); the card and the
 broadcaster's capture in [live](../frontend/modules/live.md).

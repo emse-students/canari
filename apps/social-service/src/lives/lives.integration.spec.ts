@@ -83,7 +83,7 @@ const KEY_AT_REST = readFileSync(
   'utf8'
 );
 const TITLE_AND_POSTER = readFileSync(
-  join(__dirname, '..', 'migrations', '139_live_title_and_poster.sql'),
+  join(__dirname, '..', 'migrations', '140_live_title_and_poster.sql'),
   'utf8'
 );
 /** The secret live keys are sealed under in this file (migration 110). */
@@ -3669,7 +3669,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
     });
   });
 
-  describe('the title and the preview image (owner, 2026-11-07, migration 139)', () => {
+  describe('the title and the preview image (owner, 2026-11-07, migration 140)', () => {
     const poster = (n: number) => Buffer.from(`sealed poster ${n}`);
     /** Moves the stored poster's stamp back by SQL, past the poster interval, on the db's clock. */
     const agePoster = (liveId: string) =>
