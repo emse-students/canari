@@ -28,6 +28,8 @@ export interface LiveView {
   lastSegmentAt: string | null;
   nextIndex: number;
   key: string;
+  /** The live's optional title (owner, 2026-11-07); absent from an older server. */
+  title?: string | null;
   /**
    * On `GET /api/lives/:id` only: the reader moderates this live as a BDE (2026-11-02), as on the
    * list. Absent (the broadcaster's own view, an older server) reads as false.
@@ -41,7 +43,12 @@ export interface LiveView {
   chatWithheld?: boolean;
 }
 
-/** One open live in `GET /api/lives` (newest first, at most 50) - no key; the key is read by opening it. */
+/**
+ * One open live in `GET /api/lives` (newest first, at most 50). The list TAKES NO SEAT (owner,
+ * 2026-11-07): it carries what the feed card draws - the title, the viewer count, the newest preview
+ * image and, with that image only, the key that opens it. Each new field is optional: an older
+ * server sends none, and the card then reads as it did ("X est en direct", no picture).
+ */
 export interface LiveListItem {
   id: string;
   broadcasterId: string;
@@ -52,6 +59,17 @@ export interface LiveListItem {
    * staff hide button. Absent from an older server, read as false.
    */
   viewerModerates?: boolean;
+  /** The live's optional title (plain text), null or absent for none. */
+  title?: string | null;
+  /** How many watch; null when the count did not answer (no number shown). */
+  viewers?: number | null;
+  /**
+   * The newest preview image: `name` under the segments' public route, `ageMs` on the SERVER's
+   * clock (`now() - posterAt`), so the card never compares a server stamp with the device's clock.
+   */
+  poster?: { name: string; ageMs: number } | null;
+  /** The live key, served with a poster only - what opens it. Never logged. */
+  key?: string | null;
 }
 
 /**
@@ -157,6 +175,18 @@ export interface LiveIngestResult {
   nextIndex: number;
 }
 
+/** `PUT /api/lives/:id/poster` (owner, 2026-11-07): the stored preview image's name and time. */
+export interface LivePosterResult {
+  name: string;
+  posterAt: string;
+}
+
+/** `PATCH /api/lives/:id`: the title as the server now holds it. */
+export interface LiveTitleResult {
+  id: string;
+  title: string | null;
+}
+
 /** `POST /api/lives/:id/end`. */
 export interface LiveEndResult {
   id: string;
@@ -231,6 +261,17 @@ export interface LiveLimits {
   reactionWindowMs: number;
   reactionBurstsPerWindow: number;
   reactionTapsPerWindow: number;
+  /**
+   * The longest title, in characters (code points), owner 2026-11-07. Absent from a server before
+   * the titles: the screen then offers no title field.
+   */
+  titleMaxChars?: number;
+  /** The largest sealed preview image, in bytes. Absent from an older server: no preview is sent. */
+  posterMaxBytes?: number;
+  /** A preview image every this many segments (segment 0 first). */
+  posterEverySegments?: number;
+  /** How often a feed card on screen re-reads the list, in ms. Absent: the card refreshes with the feed only. */
+  cardRefreshMs?: number;
 }
 
 /**
@@ -273,6 +314,12 @@ export type LiveRefusalCode =
   | 'LIVE_SEGMENT_TOO_FAST'
   | 'LIVE_SEGMENT_EMPTY'
   | 'LIVE_STORE_UNAVAILABLE'
+  | 'LIVE_TITLE_INVALID'
+  | 'LIVE_POSTER_EMPTY'
+  | 'LIVE_POSTER_TOO_LARGE'
+  | 'LIVE_POSTER_TOO_FAST'
+  | 'LIVE_POSTER_IN_PROGRESS'
+  | 'LIVE_POSTER_RESERVATION_LOST'
   | 'LIVE_INGEST_BUSY'
   | 'LIVE_INDEX_INVALID'
   | 'LIVE_FROM_INVALID'

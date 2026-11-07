@@ -35,10 +35,12 @@ import type {
   LiveEndReason,
   LiveListItem,
   LiveManifest,
+  LivePosterResult,
   LiveReactionKind,
   LiveRefusalKind,
   LiveRemovedViewer,
   LiveRulesStatus,
+  LiveTitleResult,
   LiveView,
 } from './types';
 
@@ -223,7 +225,10 @@ export async function fetchLiveLimits(): Promise<LiveLimits> {
   return liveJson<LiveLimits>(`${livesBase()}/limits`, 'Live limits');
 }
 
-/** `GET /api/lives` - the open lives the caller may watch, newest first, at most 50, no key. */
+/**
+ * `GET /api/lives` - the open lives the caller may watch, newest first, at most 50. Takes NO seat;
+ * each item carries its title, viewer count and newest preview image with the key that opens it.
+ */
 export async function listOpenLives(): Promise<LiveListItem[]> {
   console.debug('[LIVE] list');
   return liveJson<LiveListItem[]>(livesBase(), 'Live list');
@@ -250,18 +255,26 @@ export async function fetchLiveRules(): Promise<LiveRulesStatus> {
 export async function startLive(
   keyHex: string,
   associationId?: string,
-  acceptedRulesVersion?: number
+  acceptedRulesVersion?: number,
+  title?: string | null
 ): Promise<LiveView> {
   console.debug(
     `[LIVE] start${associationId ? ` as association ${associationId}` : ''}${
       acceptedRulesVersion === undefined ? '' : `, rules v${acceptedRulesVersion} accepted`
-    }`
+    }, title ${title ? `${[...title].length} chars` : 'none'}`
   );
-  const body: { key: string; associationId?: string; acceptedRulesVersion?: number } = {
+  const body: {
+    key: string;
+    associationId?: string;
+    acceptedRulesVersion?: number;
+    title?: string;
+  } = {
     key: keyHex,
   };
   if (associationId) body.associationId = associationId;
   if (acceptedRulesVersion !== undefined) body.acceptedRulesVersion = acceptedRulesVersion;
+  // Sent only when there is one: a server before the titles ignores an unknown field anyway.
+  if (title) body.title = title;
   const live = await liveJson<LiveView>(livesBase(), 'Live start', {
     method: 'POST',
     body: JSON.stringify(body),
@@ -383,6 +396,39 @@ export async function putLiveSegment(
 }
 
 /**
+ * `PATCH /api/lives/:id` - the broadcaster sets or clears the title while on air (owner,
+ * 2026-11-07). `null` clears it. Refusals: `LIVE_TITLE_INVALID`, `LIVE_MUTED` (`refused`),
+ * `not-found`, `ended`.
+ */
+export async function setLiveTitle(liveId: string, title: string | null): Promise<LiveTitleResult> {
+  console.debug(`[LIVE] title of ${liveId}: ${title ? `${[...title].length} chars` : 'cleared'}`);
+  return liveJson<LiveTitleResult>(livePath(liveId), 'Live title', {
+    method: 'PATCH',
+    body: JSON.stringify({ title }),
+  });
+}
+
+/**
+ * `PUT /api/lives/:id/poster` - the live's preview image, sealed under the live key
+ * (`sealLivePoster` in `liveCrypto.ts`), raw `application/octet-stream`. Replaces the previous one. Refusals:
+ * `LIVE_POSTER_TOO_FAST` (`rate-limited`), `LIVE_STORE_UNAVAILABLE` / `LIVE_INGEST_BUSY`
+ * (`retry-segment`), `LIVE_POSTER_IN_PROGRESS` / `LIVE_POSTER_TOO_LARGE` (`refused`), `ended`.
+ * The sender retries NONE of them: the next preview is a few segments away.
+ */
+export async function putLivePoster(
+  liveId: string,
+  sealed: Uint8Array<ArrayBuffer>
+): Promise<LivePosterResult> {
+  console.debug(`[LIVE] poster of ${liveId}: ${sealed.byteLength} B`);
+  const body = new Blob([sealed], { type: 'application/octet-stream' });
+  return liveJson<LivePosterResult>(`${livePath(liveId)}/poster`, 'Live poster', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body,
+  });
+}
+
+/**
  * `POST /api/lives/:id/end` - the broadcaster ends it. Idempotent while the row exists; once the
  * end's purge deleted it, a repeat is `not-found`, which means "ended and deleted" (no replay, L3).
  */
@@ -487,13 +533,37 @@ export function liveSegmentUrl(liveId: string, name: string): string {
  * `signal` cancels the download (head AND body): a viewer that closes or restarts aborts its run's
  * fetches, so none keeps a connection beside the next run's under nginx's per-address bound.
  */
-export async function fetchLiveSegment(
+export function fetchLiveSegment(
   liveId: string,
   name: string,
   signal?: AbortSignal
 ): Promise<ArrayBuffer> {
+  return fetchLiveObject(liveId, name, `Live segment ${name}`, signal);
+}
+
+/**
+ * A live's sealed PREVIEW IMAGE (owner, 2026-11-07), by the `poster.name` the list gave: the SAME
+ * public route and nginx cache as a segment (it is stored beside them, under the live's prefix), so
+ * every card showing it asks the cache, never the store. A plain GET for the same reason as
+ * {@link fetchLiveSegment}.
+ */
+export function fetchLivePoster(
+  liveId: string,
+  name: string,
+  signal?: AbortSignal
+): Promise<ArrayBuffer> {
+  return fetchLiveObject(liveId, name, `Live poster ${name}`, signal);
+}
+
+/** The one GET of an object under a live's public prefix; `what` names it in the refusal's log. */
+async function fetchLiveObject(
+  liveId: string,
+  name: string,
+  what: string,
+  signal?: AbortSignal
+): Promise<ArrayBuffer> {
   const res = await trackedFetch(fetch, liveSegmentUrl(liveId, name), { method: 'GET', signal });
-  if (!res.ok) throw await liveRefusal(res, `Live segment ${name}`, true);
+  if (!res.ok) throw await liveRefusal(res, what, true);
   return res.arrayBuffer();
 }
 
