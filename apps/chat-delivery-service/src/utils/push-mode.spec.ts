@@ -2,7 +2,7 @@
 
 import type { Logger } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
-import { readPushMode } from './push-mode';
+import { ENVELOPE_WAKE_VERSION, parseWakeVersion, readPushMode } from './push-mode';
 
 /**
  * The switch of the content-free wake-up push, read straight from `platform_config`
@@ -41,5 +41,35 @@ describe('readPushMode', () => {
     await expect(readPushMode(managerAnswering([{ push_mode: null }]), log)).rejects.toThrow(
       /unknown value/
     );
+  });
+});
+
+/** The capability a registration declares (`push_token.wakeVersion`, migration 046). */
+describe('parseWakeVersion', () => {
+  it('reads a declared version as it is', () => {
+    expect(parseWakeVersion({ wakeVersion: 0 })).toEqual({ version: 0, malformed: false });
+    expect(parseWakeVersion({ wakeVersion: 2 })).toEqual({ version: 2, malformed: false });
+  });
+
+  it('stores a newer binary at the highest version this server serves - versions are cumulative', () => {
+    expect(parseWakeVersion({ wakeVersion: 9 })).toEqual({
+      version: ENVELOPE_WAKE_VERSION,
+      malformed: false,
+    });
+  });
+
+  it('reads the step-1 declaration `wake: true` as version 1, and silence as 0', () => {
+    expect(parseWakeVersion({ wake: true })).toEqual({ version: 1, malformed: false });
+    expect(parseWakeVersion({ wake: 'yes' })).toEqual({ version: 0, malformed: false });
+    expect(parseWakeVersion({})).toEqual({ version: 0, malformed: false });
+  });
+
+  it('reads an unreadable version as 0 and says so, whatever `wake` says', () => {
+    for (const wakeVersion of ['2', 1.5, -1, null]) {
+      expect(parseWakeVersion({ wake: true, wakeVersion })).toEqual({
+        version: 0,
+        malformed: true,
+      });
+    }
   });
 });

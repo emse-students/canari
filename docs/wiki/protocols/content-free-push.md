@@ -1,6 +1,8 @@
 # Content-free push - the whole design (2026-11-04)
 
-**DESIGN ONLY for everything past step 1.** Owner, 2026-11-04: start with the design. Goal: what
+**Step 1 built (switch OFF); WP-W3, the server half of step 2 (the envelope), built 2026-11-07
+behind the same switch and inert until a client declares version 2 (WP-W4); everything else is
+design.** Owner, 2026-11-04: start with the design. Goal: what
 Google (FCM) and Apple (APNs) receive is a wake-up and nothing they can read beyond it; the device
 fetches the rest from our server over our own TLS, decrypts it locally and builds the notification
 itself. The backlog entry is
@@ -121,19 +123,45 @@ something to fetch:
   the native side learns N answer shapes; a new push kind would need a new route before it could go
   content-free, which is how a kind gets left behind.
 
-**The envelope, concretely** (WP-W3):
+**The envelope, concretely** (WP-W3, BUILT 2026-11-07 - chat-delivery migration
+`046_push_envelope.sql`, `utils/push-envelope.ts`, `PushEnvelope`; the switch stays `full` and no
+client declares version 2 yet, so nothing writes an envelope until WP-W4 ships and the switch moves):
 
-- `push_body` - one row per SEND (one salon message, one social notification): `id`, the data map
-  shared by every recipient (`jsonb`), `createdAt`. Salon ciphertexts and seed frames are stored ONCE,
-  not once per recipient device.
-- `push_envelope` - one row per DEVICE: `id` (random uuid, the `envelopeId` of the wake), `userId`,
-  `deviceId`, `bodyId` (FK), the per-recipient overrides (`mentioned` today; the APNs locale-dependent
-  fallback body is computed at fetch time from `push_token.locale`), `silent`, `createdAt`.
+- **ONE table, `push_envelope`, one row per DEVICE - not the `push_body` + `push_envelope` pair
+  designed first** (Q2, revised when it was built): `id` (random uuid, the `envelopeId` of the wake),
+  `userId`, `deviceId`, `payload` (`jsonb`: the caller's `title`, `body`, `data` - the server-only
+  `minAppVersion` floor removed - and `inline`), `silent`, `collapseKey`, `createdAt`, `servedAt`,
+  `servedCount`; a foreign key `(userId, deviceId)` -> `push_token` `ON DELETE CASCADE`. **Why the
+  shared body was dropped**: a "send" here is ONE `sendPushToUser` call, and that call is ONE
+  recipient account - social-service's salon fan-out calls `POST /internal/push/notify` once per
+  recipient. So a shared body could only ever be shared by ONE account's devices (one or two), never
+  by a salon's members; it bought almost nothing, and it cost an orphan-body sweep, a trigger on the
+  cascade path (which the migration judge holds, since its body is a `DELETE FROM`) and a
+  lock-ordering argument for two concurrent deletions. With one table nothing can be orphaned, and
+  the three deaths are one cascade and two `DELETE`s. There are no per-recipient overrides either:
+  `mentioned` is already in that one account's data map. If the fan-out ever becomes one call per
+  salon message, storing its ciphertext once is a new table and a reversible change - measured first
+  by section 9's fan-out reading.
 - `GET /api/mls/push/wake?envelopeId=&userId=&deviceId=` (the same route, the same `PushSecretGuard` /
-  `PushSecretThrottlerGuard`, `Cache-Control: no-store`): found by `(id, userId, deviceId)` so a
-  secret opens only its own rows; answers `{status: 'push', fields, presentation}` - the merged map,
-  exactly what the full push would have carried, with NO 4 KB budget (the inline group always
-  included) - or `{status: 'gone'}`.
+  `PushSecretThrottlerGuard`, `Cache-Control: no-store`; naming both `messageId` and `envelopeId` is a
+  `400`): found by `(id, userId, deviceId)` so a secret opens only its own rows; answers
+  `{status: 'push', fields, presentation}` - exactly what the full push would have handed THIS
+  device's platform (`buildEnvelopeAnswer`: Android the data map with `title` and `body`, iOS the
+  custom keys beside `aps`), with NO 4 KB budget (the inline group always included) - or
+  `{status: 'gone'}`. The platform and locale are read with the envelope, from the device's own
+  `push_token` row, in one statement.
+- **`presentation` is `{title, body, threadId, sound?, interruptionLevel?}`**, read out of the full
+  push's APNs request by `presentationOf` (null for a background push) - the three fields designed
+  above PLUS the alert's title and body: the extension keeps the server's alert text for every kind
+  it does not rewrite (a social push, a reaction), and a wake's alert is the generic `Canari` line, so
+  without them those banners would lose their text, not only their thread. The step-1 MLS answer
+  carries it too (`buildWakeFrameAnswer`, the device's locale read for the fallback body). Readers
+  that predate the key ignore it (Android `WakeAnswer` and the two iOS readers read named keys only).
+- **The legacy `title` / `body` sentences ride in the answer** (Android's data map carries them
+  today), so the answer stays byte-identical to the full push. They now cross only our own TLS; they
+  leave with the legacy-sentence shim (WP-W7), not here.
+- **Every wake plays the same sound** (`IOS_NOTIFICATION_SOUND.message`): a sound chosen per kind
+  would tell Apple the kind. The extension applies `presentation.sound` once it runs.
 - **Serving does not delete - it marks `servedAt` and answers the same map again to the same device.**
   A delete-on-serve would turn a lost response (the connection cut after the server answered, the
   process killed before it read the body, the 20 s deadline firing) into a retry answered `gone` and
@@ -151,8 +179,9 @@ something to fetch:
   its start (`registerPushToken` skips repeats within one process, so a return to the foreground of a
   live process does not register, and its envelopes wait for the next start or the cap). An app that
   is open has the notifications list and the salons over HTTP, which are authoritative - so every
-  envelope of that device created before that registration is a banner for a phone that is now awake,
-  deleted, counted in one line; (3) the per-device cap
+  envelope of that device is a banner for a phone that is now awake: all of them are deleted (no
+  timestamp comparison: one written while the registration runs is for an open app too), counted in
+  one line (`[PUSH_ENVELOPE] register swept=<n>`); (3) the per-device cap
   `MAX_ENVELOPES_PER_DEVICE` (recommended 200), **silent envelopes evicted first** (a superseded
   `channel_read` or welcome-request-pending is worthless once a newer one exists; same-salon
   `channel_read` envelopes collapse to the newest at insert), then the oldest visible ones, accused at
@@ -162,17 +191,28 @@ something to fetch:
   device that never fetches, the population reading 4 wants named. Android also limits how many
   notification updates an app may enqueue per second (`MAX_PACKAGE_ENQUEUE_RATE`, 5), which is why a
   burst of fetched envelopes is drawn through the existing lane, one at a time.
-- **No body is left without an envelope, by construction.** Every path that deletes envelopes (the
-  token cascade, the registration sweep, the cap) runs in one transaction that also deletes the bodies
-  it left with no envelope (`DELETE FROM push_body b WHERE b.id = ANY($deletedBodyIds) AND NOT EXISTS
-  (SELECT 1 FROM push_envelope e WHERE e."bodyId" = b.id)`); the cascade path is a statement-level
-  trigger doing the same, since a cascade runs no application code. Two transactions deleting the last
-  two envelopes of one body concurrently would each see the other's envelope and keep the body, so the
-  sweep first takes the body rows `FOR UPDATE` (ordered by id, so no deadlock), then deletes the
-  envelopes, then the orphans.
-- **The send logs `[PUSH_SEND] mode=wake kind=<channel|social|...>` and the fetch
-  `[PUSH_WAKE] served|served again|gone envelope=...`**, so step 1's "sent minus served" ratio covers
-  envelopes by the same `GROUP BY`.
+- **As built**: the collapse, the insert and the cap run in ONE transaction per send
+  (`storeEnvelopes`), committed BEFORE any wake leaves, so a device that fetches at once finds its
+  envelope. A device whose new envelope the cap takes at once (a silent push on a device full of
+  banners) is not woken. The registration sweep is `sweepDeviceEnvelopes`, called after the upsert of
+  `POST /mls/push/register`; its failure is accused at ERROR and never fails the registration (the
+  device must still get its secret).
+- **What a wake that cannot be prepared does**: the switch unreadable, or the envelopes not stored
+  (a registration deleted between the token read and the insert fails the foreign key) - those
+  devices are sent NOTHING, accused at ERROR (`[SOCIAL_PUSH] push_mode unreadable`,
+  `[PUSH_ENVELOPE] store failed`), counted `failed`. Never the full push in their place: that would
+  hand Google and Apple exactly what the switch withholds. A token below version 2 is untouched.
+- **The send logs `[SOCIAL_PUSH] sent ... mode=wake kind=<data.type> envelope=<8>`** (and every full
+  send now says `mode=full`), **the fetch `[PUSH_WAKE] served|served again times=<n>|gone|foreign
+  envelope=<8>`**, so step 1's "sent minus served" ratio covers envelopes by the same `GROUP BY`,
+  and section 8.1's send reading is the `mode=` split of `[SOCIAL_PUSH] sent`.
+- **Open for WP-W5, not for WP-W4: a background launch of the iOS app must not register.** The sweep
+  is right because a registration means "the app is open". On Android a push never starts the
+  WebView (the FCM service runs without `MainActivity`), so `registerPushToken` runs only when the
+  app opens. On iOS a silent push can launch the app process in the background; if that launch runs
+  the web layer's `registerPushToken`, it would sweep envelopes the extension has not fetched yet
+  (answered `gone`, drawn "already received"). WP-W5 must read whether it does, on the iPhone 12,
+  before iOS declares version 2.
 
 ### 3.3 What the server stores that it did not store before
 
@@ -338,11 +378,22 @@ learning about calls is the `call_ring` row of section 1, and the register says 
   `PUSH_WAKE_DECLARED[platform]`. An envelope wake goes only to `wakeVersion >= 2`; a step-1 build
   keeps receiving full salon and social pushes, never a wake it would drop. (A second boolean would do
   the same and leave a third the day the wake protocol changes again; a version does not.)
-  **The migration is two steps, and only the second is destructive**: WP-W3 ADDS `wakeVersion`,
-  backfilled `1` where `wakeCapable` is true, and both are written on every register for as long as a
-  reader of `wakeCapable` ships; the column is DROPPED later, in its own migration, which goes through
+  **The migration is two steps, and only the second is destructive**: WP-W3 ADDS `wakeVersion`, and
+  both are written on every register for as long as a reader of `wakeCapable` ships; the column is
+  DROPPED later, in its own migration, which goes through
   the [held-migration lane](../cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01) (an
   approval line merged before the release that carries it).
+  **As built (046): NO backfill**, against the first design. An `UPDATE` backfill is the author's to
+  mark held (`infrastructure/lib/migration-hold.sh`), which blocks every release until an approval
+  line lands - and it buys nothing: `push_mode` has never been `wake` on production, and a row left
+  at 0 is sent the full push, the contract its binary registered under, until its next app start
+  writes the real version. On an estate where the switch already reads `wake` (dev, once WP-W1 is
+  taken), a step-1 device is sent full MLS pushes from the deploy until its app next starts: a
+  privacy step back for that window only, never a lost notification. The server reads ONLY
+  `wakeVersion` (MLS wake at `>= 1`, envelope wake at `>= 2`); a registration body says `wakeVersion`
+  (an integer, capped at 2 - versions are cumulative, so a newer binary is woken for what this server
+  can send) or the step-1 `wake: true` (= 1); an unreadable `wakeVersion` is stored 0 and accused.
+  The clients still send `wake: true` - WP-W4 makes Android send `wakeVersion: 2`.
 - **Order, as the owner set it on 2026-11-02**: Android first, on dev, then production; iOS declares
   only once its extension readings are taken. The iOS constant stays `false` until then.
 - **Legacy rows** ([legacy-compatibility](../legacy-compatibility.md)): the `legacyTitle` /
@@ -394,7 +445,7 @@ both platforms and deletes the full builders, `push_mode` and the legacy-sentenc
 | WP-W0 | Step 1, built (#2915, #2918, #2932) | the backlog entry's readings 1-5 |
 | WP-W1 | `push_mode = wake` on dev, Android | reading 1 (Mi 9T, three texts, backgrounded then killed) and reading 3 (airplane mode -> the honest notification + `[PUSH_WAKE] ... failed`) |
 | WP-W2 | `push_mode = wake` on production (Android declares, iOS does not) | WP-W1 read; then reading 4 for a week: every unfetched wake explained by a typed stage; the register + privacy policy line for MLS frames (reading 5) in the same change |
-| WP-W3 | Server: `push_body` + `push_envelope`, `wakeVersion` ADDED (non-destructive, backfilled from `wakeCapable`), `sendPushToUser` stores and wakes when `push_mode = wake` and `wakeVersion >= 2`, the fetch answers `{status: 'push', fields, presentation}`; the step-1 MLS answer gains `presentation` too | jest: the fetched map is byte-identical to the map the full push would have sent for the same input (salon, social, reaction, read, join ask), and `presentation` equals the `thread-id` / sound / interruption level `buildInternalApnsRequest` / `buildApnsRequest` would have put in `aps`; **lost response then retry**: a fetch whose answer is discarded, then the same fetch, is served the same map (`served again`), never `gone`; each of the three deaths (token cascade, registration, cap) deletes exactly its rows and leaves **no orphan body**, and two concurrent deletions of the last two envelopes of one body leave neither the body nor a deadlock; the cap evicts silent envelopes first and collapses same-salon `channel_read`; `foreign` logged and answered `gone`; the production volume counts of section 9 read and written here |
+| WP-W3 | **BUILT 2026-11-07, switch OFF** (see section 3.2 "as built"): `push_envelope` (one table - Q2 revised), `wakeVersion` ADDED (no backfill - section 8), `sendPushToUser` stores and wakes when `push_mode = wake` and `wakeVersion >= 2`, the fetch answers `{status: 'push', fields, presentation}`; the step-1 MLS answer gains `presentation` too | **Passed**: jest (`push-payload.spec.ts`: the fetched map byte-identical to the full push for a salon, a social comment, a chat reaction, a salon read and a join ask, on both platforms, and `presentation` equal to the full push's `aps`; `messaging.push-envelope.spec.ts`: every branch of the send decision; `push.controller.wake.spec.ts`: register and fetch) and PostgreSQL (`046_push_envelope.integration.spec.ts`: the migration replayed twice; a lost response fetched again is `served` twice, never `gone`; each of the three deaths deletes exactly its rows; the cap evicts silent first and takes a new silent envelope at once on a full device; same-salon `channel_read` collapses; `foreign` for another registration). The orphan-body and concurrent-deletion gates fell with the body table. **Owed before the switch moves for a version-2 device**: the production volume counts of section 9, written here |
 | WP-W3b | Server: `sendFcmWelcomeRequestPending` stores its map in an envelope and sends a silent wake to `wakeVersion >= 2` tokens instead of calling `getMessaging()` itself | jest: its tokens at `wakeVersion >= 2` receive `type=wake`, `envelopeId`, `silent=true` and nothing else, the fetched map equals today's four fields; on the Mi 9T, a new device's admission still wakes a closed member's phone (the existing welcome-request reading) |
 | WP-W3c | The held migration that DROPS `push_token.wakeCapable` | no reader of `wakeCapable` left in any shipped server; the approval line merged by the owner or the lead under the delegation, before the release carrying it |
 | WP-W4 | Android: envelope wakes (`envelopeId` -> fetch -> `dispatchPush`), the notification tag = `envelopeId` so a repeat answer redraws and never adds, the account bound at arrival and checked at dispatch, `PUSH_WAKE_DECLARED.android = 2` | `:app:compileArmDebugKotlin`; JVM tests (`WakeAnswerTest` for `push`, a repeated answer for one `envelopeId` drawing one notification, `WakeOrderTest` for an envelope ticket between a Welcome and its salon, a switch between arrival and dispatch); vitest `pushWakeCompiled.test.ts` extended; then on the Mi 9T: a salon text, a comment, a chat reaction, each with content; the blind-banner `not-inlined` reason reads zero on wake |
@@ -409,9 +460,9 @@ both platforms and deletes the full builders, `push_mode` and the legacy-sentenc
 | # | Question | Recommended |
 | --- | --- | --- |
 | Q1 | How a non-MLS push gets something to fetch | the envelope in chat-delivery (3.2 A), one implementation for every kind |
-| Q2 | One envelope per device holding the whole map, or a shared body + per-device envelopes | shared body: a salon ciphertext stored once per message, not once per device |
+| Q2 | One envelope per device holding the whole map, or a shared body + per-device envelopes | **taken when built (2026-11-07): one envelope per device holding the whole map.** The shared body was recommended so a salon ciphertext is stored once per message, but a send is one `sendPushToUser` call for ONE account, so it could only be shared by that account's devices; section 3.2 has the reasoning |
 | Q3 | How an unfetched envelope dies, with no clock | token deleted, device registers (an app start), per-device cap of 200 with silent envelopes evicted first; serving only marks `servedAt` and a repeat fetch is answered the same map |
-| Q4 | The capability: a second boolean or a version | `push_token.wakeVersion` int, added and backfilled from `wakeCapable`; the old column dropped later through the held-migration lane (WP-W3c) |
+| Q4 | The capability: a second boolean or a version | `push_token.wakeVersion` int, added (046, **not backfilled** - section 8); the old column dropped later through the held-migration lane (WP-W3c) |
 | Q5 | Should a fetched salon answer carry the author's display name | yes, keyed by `senderId`, drawn ONLY when the open proved that author; it removes the `no-names` cause of "Quelqu'un" without trusting the server's claim of authorship. Taken only if the parallel investigation finds `no-names` among the measured causes |
 | Q6 | Silent wakes at FCM `normal` priority instead of `high` (deprioritisation of high-priority pushes that draw nothing) | keep `high` and measure: `gone` and silent wake counts per day in reading 4; change only on a measured deprioritisation |
 | Q7 | What the production flip of WP-W2 waits for | every unfetched wake explained by a typed stage for a week, and the "could not be loaded" notification on under 1 % of visible wakes |

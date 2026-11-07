@@ -24,7 +24,7 @@ jest.mock('firebase-admin/messaging', () => ({
 
 /**
  * THE CONTENT-FREE WAKE-UP PUSH, asserted on what reaches FCM through the real service: two locks
- * ANDed (the estate's `push_mode` and the token's `wakeCapable`), and a wake frame that names
+ * ANDed (the estate's `push_mode` and the token's `wakeVersion`), and a wake frame that names
  * nobody (docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
  */
 describe('MessagingService - the wake-up push', () => {
@@ -66,14 +66,14 @@ describe('MessagingService - the wake-up push', () => {
       apns?: { payload: Record<string, unknown>; headers: Record<string, string> };
     };
 
-  const token = (platform: 'android' | 'ios', wakeCapable: boolean) => ({
+  const token = (platform: 'android' | 'ios', capable: boolean) => ({
     id: 1,
     userId: 'u1',
     deviceId: 'pixel',
     token: 'tok',
     platform,
     locale: 'fr',
-    wakeCapable,
+    wakeVersion: capable ? 1 : 0,
   });
 
   beforeEach(async () => {

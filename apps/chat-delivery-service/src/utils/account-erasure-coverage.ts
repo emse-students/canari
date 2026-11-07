@@ -41,6 +41,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'OneTimeKeyPackage.userId': { action: 'delete' },
   'PinVerifier.userId': { action: 'delete' },
   'PushToken.userId': { action: 'delete' },
+  // Taken by the erasure's delete of the account's `push_token` rows: migration 046's foreign key
+  // cascades to every envelope of each deleted registration.
+  'PushEnvelope.userId': { action: 'delete' },
   'QueuedMessage.recipientId': { action: 'delete' },
   'QueuedMessage.senderId': {
     action: 'delete',

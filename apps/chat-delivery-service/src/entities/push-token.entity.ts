@@ -91,11 +91,27 @@ export class PushToken {
    * Whether this device's binary understands a content-free wake-up push (migration 045).
    *
    * Written on EVERY `POST /mls/push/register`, false unless the body says `wake: true`: an old build
-   * and a downgrade are never sent a frame they would drop. A wake push goes to this token only when
-   * `platform_config.push_mode = 'wake'` AND this is true (`MessagingService.sendFcmForQueued`).
+   * and a downgrade are never sent a frame they would drop.
+   *
+   * NO LONGER READ by this server: `wakeVersion` replaced it (migration 046). Still written
+   * (`wakeVersion >= 1`) so a rollback to a release that reads it sends the same pushes; dropped by
+   * its own held migration once no shipped server reads it (content-free push WP-W3c).
    */
   @Column({ type: 'boolean', default: false })
   wakeCapable: boolean;
+
+  /**
+   * Which content-free wake this device's binary understands (migration 046): 0 none, 1 the MLS
+   * frame wake (what `wakeCapable = true` says), 2 the envelope wake too (`push_envelope`). The
+   * versions are cumulative - a binary at 2 understands 1.
+   *
+   * Written on EVERY `POST /mls/push/register`, 0 unless the body says otherwise. The ONE reader of
+   * the capability: an MLS frame is sent as a wake at `>= 1`, a `sendPushToUser` push at `>= 2`,
+   * both only while `platform_config.push_mode = 'wake'`. `wakeCapable` is still written beside it,
+   * for a rollback to a server that reads it, until its own held migration drops it (WP-W3c).
+   */
+  @Column({ type: 'integer', default: 0 })
+  wakeVersion: number;
 
   @CreateDateColumn()
   createdAt: Date;

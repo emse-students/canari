@@ -11,14 +11,54 @@ import type { EntityManager } from 'typeorm';
  * constraint; core's `PushMode` type is the same list (`pushModesAgree.test.ts`).
  *
  * - `full`: every push carries what it always has (`buildPushDataFields`). The default.
- * - `wake`: a push to a device whose registration declared `wake: true` carries only
- *   `type`, `queuedMessageId` and `silent`; the device fetches the rest (`GET /mls/push/wake`).
- *   A device that did not declare it keeps getting `full` - its binary would drop a wake frame.
+ * - `wake`: a push to a device whose registration declared the matching wake version
+ *   ({@link MLS_WAKE_VERSION} for an MLS frame, {@link ENVELOPE_WAKE_VERSION} for a
+ *   `sendPushToUser` push) carries only `type`, its key and `silent`; the device fetches the rest
+ *   (`GET /mls/push/wake`). A device below that version keeps getting `full` - its binary would drop
+ *   the wake (docs/wiki/protocols/content-free-push.md).
  */
 export type PushMode = 'full' | 'wake';
 
 /** The two values, the same list as the column's CHECK (asserted across every copy). */
 export const PUSH_MODES: readonly PushMode[] = ['full', 'wake'];
+
+/**
+ * The wake a binary understands, as its registration declares it (`push_token.wakeVersion`,
+ * migration 046). Cumulative: a binary at {@link ENVELOPE_WAKE_VERSION} understands the MLS wake too.
+ *
+ * - {@link MLS_WAKE_VERSION}: an MLS frame may be sent as a wake (`queuedMessageId`) - step 1.
+ * - {@link ENVELOPE_WAKE_VERSION}: a `sendPushToUser` push may be too (`envelopeId`) - WP-W3.
+ */
+export const MLS_WAKE_VERSION = 1;
+/** See {@link MLS_WAKE_VERSION}. The highest version this server serves. */
+export const ENVELOPE_WAKE_VERSION = 2;
+
+/**
+ * The wake version a registration declares, from its body.
+ *
+ * - `wakeVersion`, an integer from 0 up: the declaration of a binary that knows versions. A version
+ *   above the highest this server serves is stored as that highest, because versions are cumulative
+ *   (a future binary understands everything below it) - a newer app against an older server is
+ *   woken for what the server can send, never for what it cannot.
+ * - otherwise `wake: true` is version 1: the declaration every binary of step 1 sends (#2918) - a
+ *   shim with its removal condition in docs/wiki/legacy-compatibility.md.
+ * - anything else, an absent field included, is 0 - a build that predates the wake, or a downgrade,
+ *   is never sent a frame it would drop. `malformed` says the body tried and failed, so the
+ *   registration can accuse it.
+ */
+export function parseWakeVersion(body: { wake?: unknown; wakeVersion?: unknown }): {
+  version: number;
+  malformed: boolean;
+} {
+  const declared = body.wakeVersion;
+  if (declared !== undefined) {
+    if (typeof declared === 'number' && Number.isInteger(declared) && declared >= 0) {
+      return { version: Math.min(declared, ENVELOPE_WAKE_VERSION), malformed: false };
+    }
+    return { version: 0, malformed: true };
+  }
+  return { version: body.wake === true ? MLS_WAKE_VERSION : 0, malformed: false };
+}
 
 /** Whether this process has already accused a missing `platform_config` row (see `readPushMode`). */
 let missingRowAccused = false;
