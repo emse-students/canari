@@ -170,8 +170,10 @@
 
 {#snippet cellNote(key: string)}
   {#if key === guestFreeKey}
-    <span class="text-xs font-bold text-amber-900 dark:text-amber-100" data-testid="guest-free"
-      >{m.form_grid_guest_free()}</span
+    <span
+      class="line-clamp-2 min-w-0 text-xs leading-tight font-bold text-amber-900 dark:text-amber-100"
+      title={m.form_grid_guest_free()}
+      data-testid="guest-free">{m.form_grid_guest_free()}</span
     >
   {:else if matrix.cells[key] === 0}
     <span class="price-free-chip">{m.form_grid_free()}</span>
@@ -240,7 +242,10 @@
   {/if}
 
   <!-- Wide grids scroll inside their own box; the page body never scrolls sideways. -->
-  <div class="overflow-x-auto max-sm:hidden" data-testid="price-table">
+  <div
+    class="border-cn-border overflow-x-auto rounded-xl border max-sm:hidden"
+    data-testid="price-table"
+  >
     <table class="price-grid" style="--price-cols: {axes.columns.length}">
       <colgroup>
         <col class="group-col" />
@@ -250,14 +255,14 @@
       </colgroup>
       <thead>
         <tr>
-          <th scope="col" class="text-text-muted px-2 pb-2 text-left text-xs font-bold">
+          <th scope="col" class="text-text-muted px-2 text-left text-xs font-bold">
             {corner}
           </th>
           {#each axes.columns as column (column.key)}
             {@const picked = selection?.axis === 'column' && selection.key === column.key}
-            <th scope="col" class="p-1">
+            <th scope="col">
               {#if column.ids.length === 0}
-                <span class="text-text-muted block px-2 text-xs font-bold">
+                <span class="text-text-muted block truncate px-2 text-xs font-bold">
                   {columnLabel(column)}
                 </span>
               {:else}
@@ -266,7 +271,7 @@
                   onclick={() => select('column', column.key)}
                   aria-pressed={picked}
                   title={m.form_grid_select_column()}
-                  class="price-header w-full"
+                  class="price-header"
                   class:price-header-picked={picked}
                 >
                   {columnLabel(column)}
@@ -280,13 +285,13 @@
         {#each shownRows as row (row.key)}
           {@const picked = selection?.axis === 'row' && selection.key === row.key}
           <tr data-testid="price-row">
-            <th scope="row" class="p-1">
+            <th scope="row">
               <button
                 type="button"
                 onclick={() => select('row', row.key)}
                 aria-pressed={picked}
                 title={m.form_grid_select_row()}
-                class="price-header w-full text-left"
+                class="price-header text-left"
                 class:price-header-picked={picked}
               >
                 <span class="block truncate">{lineLabel(row)}</span>
@@ -297,7 +302,7 @@
               {@const key = crossKey(row, column)}
               {@const label = cellLabel(row, column)}
               {@const closed = matrix.cells[key] === null}
-              <td class="p-1">
+              <td>
                 <div
                   class="cell-host relative"
                   data-testid="price-cell"

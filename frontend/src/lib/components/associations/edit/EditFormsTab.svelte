@@ -17,7 +17,7 @@
   import { editSectionHref } from '$lib/associations/editSections';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
-  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+  import { submitterName } from '$lib/forms/submissionTable';
 
   interface Props {
     asso: Association;
@@ -260,7 +260,7 @@
                   >
                     <div class="min-w-0 flex-1">
                       <p class="text-text-main truncate text-xs font-semibold">
-                        {getUserDisplayNameSync(sub.userId)}
+                        {submitterName(sub)}
                       </p>
                       <p class="text-text-muted text-xs">
                         {(sub.totalPaid / 100).toFixed(2)} € · {new Date(

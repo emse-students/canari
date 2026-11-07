@@ -1423,6 +1423,24 @@ one-video-at-a-time, which `followVideoSound` already gives every element it is 
 correction to "one per reel": a mounted player CLAIMS playback, so the viewer mounts ONE, for the
 reel on screen, and its neighbours draw the poster.
 
+## A reply to a reply starts with a mention token (2026-11-07)
+
+**What a mention is.** Only the stored token `@[<64-hex user id>]` (`formatMentionToken`) is a mention:
+`MentionComposerInput` draws it as a chip and serialises a chip back to it, `PostMentionLink` renders it
+as a profile link, and social-service resolves it (`extractMentionUserIds`, `mentionRecipientsOf`) to
+notify its target. Top-level comments and replies share every one of those paths (`CommentComposer`,
+`CommentItem`, the server): a mention PICKED in either works the same. A typed `@First Last` is plain
+text everywhere.
+
+**The defect.** `PostComments.initiateReply` pre-filled `@${name} ` as text when replying to a reply,
+so every such reply carried a dead name. Fixed by `replyMentionPrefill` (`posts/commentAuthor.ts`),
+which pre-fills the token instead; `cancelReply` undoes it only while untouched.
+
+**Anonymous and association parents (decision, 2026-11-07).** Nothing is pre-filled: an anonymous
+author is never named or mentioned, even for the writer or a moderator who is served the account, and
+an association has no person to mention. A reply to a top-level comment pre-fills nothing either (the
+"in reply to" line names it). Pinned by `PostComments.thread.svelte.test.ts`.
+
 ## Comment media (image + GIF)
 
 A comment can carry one image or GIF (encrypted + uploaded via `MediaService.encryptAndUpload`,

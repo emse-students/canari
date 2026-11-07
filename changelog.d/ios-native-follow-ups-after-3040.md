@@ -1,3 +1,0 @@
-### Fixed - iOS: every Swift log line is readable on a store build, and the extension's push context follows every edit
-
-The keystore, button, custom-tabs and gallery lines moved from `NSLog` (`<private>` whole on a store build) to a `Logger`, and a test refuses a Swift `NSLog` anywhere; `push_context.json` is copied to the App Group at every edit, not only at activation; the extension's boot proof uses the continuous uptime its sandbox allows, and a frame ahead of the stored state is no longer called a failure ([mobile](docs/wiki/frontend/mobile.md#the-extensions-copy-of-the-state-follows-every-write-2026-11-05)).

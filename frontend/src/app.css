@@ -1271,12 +1271,12 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
  * stretches every column by the same factor, so they stay equal and the box is never half empty.
  */
 .price-grid {
-  --group-col: 10rem;
-  --price-col: 7.5rem;
+  --group-col: 9rem;
+  --price-col: 8rem;
+  --price-row: 2.5rem;
   min-width: 100%;
   table-layout: fixed;
-  border-collapse: separate;
-  border-spacing: 0;
+  border-collapse: collapse;
   width: calc(var(--group-col) + var(--price-cols) * var(--price-col));
 }
 
@@ -1288,17 +1288,86 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   width: var(--price-col);
 }
 
+/*
+ * ONE RULED TABLE: every header and every cell is a real table cell of the same fixed height, the
+ * rules are the cells' own borders, and the header row and column are tinted so they read as
+ * attached to the cells they name. The box carrying the table rounds and clips the outer corners.
+ */
+.price-grid th,
+.price-grid td {
+  height: var(--price-row);
+  padding: 0;
+  border: 1px solid var(--cn-border);
+}
+
+.price-grid thead th {
+  height: 2rem;
+}
+
+/* The box around the table draws the outer edge, so the outer cell borders are dropped. */
+.price-grid tr > :first-child {
+  border-left: 0;
+}
+
+.price-grid tr > :last-child {
+  border-right: 0;
+}
+
+.price-grid thead tr > * {
+  border-top: 0;
+}
+
+.price-grid tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.price-grid thead th,
+.price-grid tbody th {
+  background: var(--cn-bg);
+}
+
 /* A row or column header is a button: it selects the line for the bulk edits. */
 .price-header {
-  display: block;
-  min-height: 2.75rem;
-  padding: 0.375rem 0.625rem;
-  border-radius: var(--radius-lg);
-  background: var(--cn-bg);
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 2rem;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 0.5rem;
   color: var(--text-main);
   font-size: var(--text-xs);
   font-weight: 700;
-  overflow-wrap: anywhere;
+  line-height: 1.2;
+}
+
+/* In the table a cell fills its table cell edge to edge: the table draws the rules. */
+.price-grid .price-cell {
+  height: var(--price-row);
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 0.25rem;
+  padding: 0 1.75rem 0 0.5rem;
+  border: 0;
+  border-radius: 0;
+}
+
+.price-grid .price-cell-picked {
+  box-shadow: inset 0 0 0 2px var(--text-main);
+}
+
+.price-grid .price-cell-guest {
+  box-shadow: inset 0 0 0 2px var(--amber-warn);
+}
+
+.price-grid .price-cell-closed {
+  justify-content: center;
+  padding: 0 1.75rem 0 0.25rem;
+}
+
+.price-grid .price-corner {
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .price-header:hover {
@@ -1380,7 +1449,7 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
 }
 
 .price-input {
-  width: 3.5rem;
+  width: 2.75rem;
   min-height: 1.75rem;
   border: 0;
   border-bottom: 1px solid transparent;

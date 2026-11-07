@@ -641,8 +641,15 @@ export async function exportSubmissions(
 export interface PendingCashSubmission {
   id: string;
   formId: string;
-  userId: string;
+  /** Null on a GUEST's answer, from a public form's link: there is no account to name. */
+  userId: string | null;
   email: string | null;
+  /** The reference a paying guest was given; null on a member's row. */
+  reference?: string | null;
+  /** What a guest typed when the public form asked for it (migration 138); null otherwise. */
+  guestLastName?: string | null;
+  guestFirstName?: string | null;
+  guestEmail?: string | null;
   answers: Record<string, unknown>;
   totalPaid: number;
   paymentStatus: string;

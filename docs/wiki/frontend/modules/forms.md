@@ -314,7 +314,14 @@ boutique products and cotisation tiers, so all three get it.
   across the top, the corner naming both ("Promotion \ Formation"); one criterion is a single price
   column. A row or column header selects the line and opens a bar with "Même prix partout" and
   "Tout rendre indisponible" (`lineCellKeys` + `fillCells`). "Masquer les lignes indisponibles"
-  hides a row whose every cell is `null` (`rowUnavailable`) - display only.
+  hides a row whose every cell is `null` (`rowUnavailable`) - display only. **Drawn as ONE ruled
+  table (owner, 2026-11-07: "un vrai tableau a double entrees", compacted)**: the headers are the
+  table's own `th` cells, tinted, with no gap and no floating card, so a row header is exactly the
+  height of its row (2.5rem; 2rem for the header row) and a column header sits over its column; the
+  rules are the cells' borders (`border-collapse`), the rounded box around the table draws the
+  outer edge, and a cell is one line (price, `EUR`, "Gratuit" chip, corner button) instead of a
+  4.75rem box. An unavailable cell stays hatched and struck through, just smaller. The phone keeps
+  its cards.
 - **Empty is "Gratuit", said.** A cell priced `0` shows an empty box and a muted "Gratuit" chip: the
   semantics of an empty cell did not change, they are now visible. `parseEuros` reads an empty box
   as 0, a comma as a decimal point and ignores spaces (a pasted "1 000,50"); it ROUNDS TO THE CENT,
@@ -364,7 +371,7 @@ Where each part of that lives:
   back restores `0`, shown as "Gratuit". A grid with EVERY cell unavailable is refused on both
   sides (`all_unavailable`, `assertMatrixValid`): that is a closed form, not a priced one.
 - **Geometry**: `.price-grid` in `app.css` owns the column sizes; the editor supplies only the
-  price-column count. The total width has to be NAMED: `table-layout: fixed` on a table of width
+  price-column count (`--group-col` 9rem, `--price-col` 8rem, `--price-row` 2.5rem). The total width has to be NAMED: `table-layout: fixed` on a table of width
   `auto` treats column widths as PROPORTIONS - nine columns declared at 8rem inside a 1020px box
   measured 83-91px in Chrome, and unequal. With the total named, every price column is exactly its
   declared size and the wrapper scrolls once they no longer fit.
@@ -730,7 +737,7 @@ formulaire payant : retrouver qui a commandé").
 | **The e-mail is never asked twice**: when asked, it is the address Lydia's request goes to (`guestPayerEmail`) and the payment step asks nothing - a second `payerEmail` beside it is REFUSED (400 `FORM_GUEST_IDENTITY_NOT_ASKED`), never dropped; when not asked, the payer address is asked at the payment step and never stored, as before (PP2) | server `guestPayerEmail`; page `payerPromptNeeded`, the "Utilisé aussi pour le reçu Lydia" note under the field while the answer pays online |
 | Stored on the answer: `submissions.guestLastName`, `guestFirstName` (varchar 100), `guestEmail` (varchar 254), all nullable; null on every member's answer | migration 138 |
 | The fill page draws a "Vos coordonnées" block after the questions, only when the form asks one; a held send scrolls to it; "answer again" empties it (a shared device at an event) | `GuestIdentityFields.svelte`, `routes/f/[id]/+page.svelte` |
-| Responses: a guest's row shows the name it gave (else the e-mail) BESIDE its reference and the "Invité" badge - never the name alone, which would pass for an account's | `submitterName` / `guestShownName` (`submissionTable.ts`), `FormSubmissionsTable.svelte`; the manager allowlist (`submission.projection.ts`) carries the three fields |
+| Responses: a guest's row shows the name it gave (else the e-mail) BESIDE its reference and the "Invité" badge - never the name alone, which would pass for an account's | `submitterName` / `guestShownName` (`submissionTable.ts`), `FormSubmissionsTable.svelte`, and the pending-cash list of the association's Formulaires section (`EditFormsTab.svelte`, which named a row by account id alone until 2026-11-07, so a guest paying cash crashed the section into a 500); the manager allowlist (`submission.projection.ts`) carries the three fields |
 | Export: a guest's names fill the first/last name columns, and a guest marker column (`labels.guest`, "Invité") holds each guest row's reference, written whenever a row has no account; an "E-mail" column is written when the form asks it, or an answer carries one from when it did (`labels.email`); the grid sheet's buyer is "Marie Curie (Invité 1A2B-3C4D)", else "Invité 1A2B-3C4D" (`guestLabel`) | `exportSubmissions`, `addProductGridSheets` |
 
 **Erasure and retention.** `submissions.guestEmail` is `kept` in `ACCOUNT_ERASURE_COVERAGE`: it is
