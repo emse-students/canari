@@ -41,9 +41,13 @@
   import ProductGridOrderBar from '$lib/components/forms/ProductGridOrderBar.svelte';
   import PaymentMethodChoice from '$lib/components/forms/PaymentMethodChoice.svelte';
   import {
+    allRequiredAnswered as allRequiredAnsweredOf,
     firstMissingAnswer,
     formatAmount as formatCurrency,
     initialSelections,
+    isOrderEmpty,
+    ORDER_MISSING_ID,
+    revealOrderMissing,
     selectionsFromAnswers,
     isItemAnswered,
     missingAnswerMessage,
@@ -426,6 +430,13 @@
 
     const missing = firstMissingAnswer(visibleItems, selections);
     missingAnswer = missing;
+    if (missing?.itemId === null) {
+      // An empty ORDER is the form's, no card's: said once, announced, and brought into view.
+      Log.d('FormView', 'submit held: the order across the grids is empty');
+      error = '';
+      await revealOrderMissing();
+      return;
+    }
     if (missing) {
       // Said on the question's own card, which is brought into view: the bar is far from it.
       error = '';
@@ -491,10 +502,15 @@
     if (!form) return 0;
     return visibleItems.filter((item) => isItemAnswered(item, selections[item.id])).length;
   });
-  /** What `reachedEnd` waits on: every visible REQUIRED question answered - optional ones do not
-   * gate it, matching `handleSubmit`'s own validation, which only ever refuses on `item.required`. */
-  const allRequiredAnswered = $derived(
-    visibleItems.every((item) => !item.required || isItemAnswered(item, selections[item.id]))
+  /** What `reachedEnd` waits on: `handleSubmit`'s own validation as a yes/no - every visible
+   * REQUIRED question answered and, on a grid form, one unit across the grids (no grid on its own). */
+  const allRequiredAnswered = $derived(allRequiredAnsweredOf(visibleItems, selections));
+  /**
+   * The empty-order sentence, shown after a send refused for it and only while the order is still
+   * empty: it goes the moment a unit is added. The form's, no card's (`MissingAnswer` itemId null).
+   */
+  const orderMissing = $derived(
+    missingAnswer?.itemId === null && isOrderEmpty(visibleItems, selections)
   );
   const progressPct = $derived(totalCount > 0 ? Math.round((answeredCount / totalCount) * 100) : 0);
 
@@ -807,6 +823,17 @@
     <!-- ── Payment method (cash vs online) ── -->
     {#if calculateTotal() > 0 && form.allowCashPayment && !submitted}
       <PaymentMethodChoice bind:method={paymentMethodChoice} />
+    {/if}
+
+    <!-- ── The empty order: the form's, announced, gone once a unit is added ── -->
+    {#if orderMissing}
+      <div
+        id={ORDER_MISSING_ID}
+        role="alert"
+        class="border-red-err/30 bg-red-err/10 text-red-err mt-4 rounded-2xl border px-4 py-3 text-sm font-medium dark:bg-red-950/20"
+      >
+        {m.form_view_error_order_empty()}
+      </div>
     {/if}
 
     <!-- ── Error ── -->

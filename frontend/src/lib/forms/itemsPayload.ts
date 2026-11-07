@@ -32,6 +32,7 @@ const TYPES_WITH_PRICED_OPTIONS = ['single_choice', 'multiple_choice', 'dropdown
  * A priced grid (`product_grid`) carries its definition under `productGrid`, in the contract's
  * exact shape (`productGridPayload`: cents, one price per category x axis key); every other type
  * sends none - a question turned from a grid into a choice drops it here rather than on the server.
+ * A grid is always sent required: see `productGridItemRefusal` for what the flag still does.
  */
 export function toFormItemsPayload(items: any[]): FormItem[] {
   return items.map((item) => {
@@ -40,8 +41,11 @@ export function toFormItemsPayload(items: any[]): FormItem[] {
     const { productGrid, ...rest } = item;
     return {
       ...rest,
+      // A grid is sent `required: true` whatever the card holds: the flag is no choice of the
+      // manager's (the order rule is the form's), and it keeps an app that cannot draw the grid
+      // holding the send (`productGridItemRefusal`).
       ...(item.type === PRODUCT_GRID_TYPE && productGrid
-        ? { productGrid: productGridPayload(productGrid) }
+        ? { productGrid: productGridPayload(productGrid), required: true }
         : {}),
       options: hasOptions
         ? (item.options ?? [])

@@ -564,16 +564,18 @@ export interface ProductGridFormContext {
   requiresPayment: boolean;
 }
 
-/** Why one editor question would be refused at save, as its code, or null. */
+/**
+ * Why one editor question would be refused at save, as its code, or null. Judged as it is SENT:
+ * a grid always goes out `required: true` (`toFormItemsPayload`), so the card's own flag is never
+ * what the editor flags.
+ */
 export function productGridItemProblem(
-  item: { type?: string; required?: unknown; productGrid?: EditorProductGrid },
+  item: { type?: string; productGrid?: EditorProductGrid },
   form: ProductGridFormContext
 ): ProductGridDefinitionCode | null {
   if (item.type !== PRODUCT_GRID_TYPE) return null;
   const payload = item.productGrid ? productGridPayload(item.productGrid) : undefined;
-  return (
-    productGridItemRefusal({ required: item.required, productGrid: payload }, form)?.code ?? null
-  );
+  return productGridItemRefusal({ required: true, productGrid: payload }, form)?.code ?? null;
 }
 
 /** A grid question the save refuses, and the sentence the page shows and the card repeats. */
@@ -609,7 +611,6 @@ export function firstProductGridProblem(
     id: string;
     label?: string;
     type?: string;
-    required?: unknown;
     productGrid?: EditorProductGrid;
   }[],
   form: ProductGridFormContext

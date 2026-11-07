@@ -81,7 +81,8 @@ export function productGridsNameCotisation(items: readonly unknown[] | null | un
 const MESSAGES: Record<ProductGridDefinitionCode | ProductGridAnswerCode, string> = {
   PRODUCT_GRID_DEFINITION_MISSING:
     'A product grid question needs its grid (rows, columns, prices).',
-  PRODUCT_GRID_NOT_REQUIRED: 'A product grid question is always required: it is the order itself.',
+  PRODUCT_GRID_NOT_REQUIRED:
+    'A product grid question is stored required, so an app that cannot draw it holds the send.',
   PRODUCT_GRID_REQUIRES_PAYMENT: 'A form with a product grid must take payment: the grid charges.',
   PRODUCT_GRID_AXIS_INVALID: 'A product grid needs at least one row and one column, within bounds.',
   PRODUCT_GRID_ID_INVALID: 'A product grid row or column id is missing or malformed.',
@@ -104,7 +105,7 @@ const MESSAGES: Record<ProductGridDefinitionCode | ProductGridAnswerCode, string
   PRODUCT_GRID_UNKNOWN_CELL: 'An order names a cell the product grid does not have.',
   PRODUCT_GRID_QUANTITY_INVALID: 'An ordered quantity is not a whole number within the maximum.',
   PRODUCT_GRID_CELL_CLOSED: 'An order names a combination that does not exist.',
-  PRODUCT_GRID_EMPTY: 'Order at least one article.',
+  PRODUCT_GRID_EMPTY: 'The order is empty: order at least one article across the form.',
 };
 
 /**
@@ -242,24 +243,37 @@ export function respondentItems<T extends { type?: string }>(items: readonly T[]
 
 /**
  * Judges one VISIBLE grid's answer and prices it for this person: the answer as it is stored (the
- * ordered cells only, in grid order) and its lines. A refusal throws, coded.
+ * ordered cells only, in grid order), its lines and its units. An untouched grid (no answer, `{}`)
+ * is 0 units and no line; whether the ORDER is empty is the form's question
+ * ({@link productGridOrderEmpty}). A refusal throws, coded.
  */
 export function priceProductGridAnswer(
   item: ProductGridItem,
   raw: unknown,
   facts: PricingFacts
-): { answer: ProductGridAnswer; lines: ProductGridLine[] } {
+): { answer: ProductGridAnswer; lines: ProductGridLine[]; units: number } {
   const parsed = parseProductGridAnswer(item.productGrid, raw);
   // Narrowed by hand: this package compiles without strictNullChecks, where a boolean discriminant
   // does not narrow the union.
   if (!parsed.ok) {
     throw productGridRefused(item, parsed as unknown as ProductGridRefusal<ProductGridAnswerCode>);
   }
-  const { answer } = parsed as { answer: ProductGridAnswer };
+  const { answer, units } = parsed as { answer: ProductGridAnswer; units: number };
   return {
     answer,
-    lines: productGridLines(item, answer, viewerPricesFor(item, facts)),
+    units,
+    lines: units > 0 ? productGridLines(item, answer, viewerPricesFor(item, facts)) : [],
   };
+}
+
+/**
+ * The refusal of an order that holds nothing: the form shows grids to this person and not one unit
+ * is ordered across them. A form of several grids (one per article) is ordered from whichever the
+ * buyer wants, so no single grid is demanded - but an answer to an order form that orders nothing is
+ * no order. `itemId` is null: the refusal is the form's, no grid's card is at fault.
+ */
+export function productGridOrderEmpty(): BadRequestException {
+  return productGridRefused({}, { code: 'PRODUCT_GRID_EMPTY' });
 }
 
 /** Everything that sets what a form's grids charge, for the price fingerprint. */

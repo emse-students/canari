@@ -383,6 +383,13 @@ describe('the words of a refusal', () => {
         ?.message
     ).toContain(m.form_pgrid_refusal_requires_payment());
   });
+
+  it('never flags a grid for its required flag: it is sent required whatever the card holds', () => {
+    const items = [
+      { id: 'q2', type: 'product_grid', label: 'Sweat', required: false, productGrid: sweat() },
+    ];
+    expect(firstProductGridProblem(items, PAID)).toBeNull();
+  });
 });
 
 describe('ordered cells', () => {

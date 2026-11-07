@@ -5,6 +5,11 @@ import { m } from '$lib/paraglide/messages';
 
 const submission = vi.hoisted(() => ({ productGridPrices: {} as Record<string, unknown> }));
 const form = vi.hoisted(() => ({ items: [] as unknown[] }));
+const submitForm = vi.hoisted(() =>
+  vi.fn((_formId: string, _body: { answers: Record<string, unknown> }) =>
+    Promise.resolve({ submissionId: 's1' })
+  )
+);
 
 vi.mock('$app/state', () => ({
   page: { params: { id: 'f1' }, url: new URL('https://canari.test/forms/f1'), state: {} },
@@ -48,6 +53,7 @@ vi.mock('$lib/forms/api', async (orig) => ({
       hiddenItemIds: [],
       maySubmit: true,
     }),
+  submitForm,
 }));
 
 import Page from './+page.svelte';
@@ -55,7 +61,7 @@ import Page from './+page.svelte';
 /**
  * A FORM OF PRICED GRIDS ON THE MEMBER'S PAGE (WP-G2): the order is totalled across every grid in
  * the sticky bar, the category the server applied is said under the header, and a send with no
- * article is held on the grid's own card.
+ * article in ANY grid is held by one sentence for the form - an untouched grid is no fault.
  */
 const productGrid = (rows: string[], cols: string[]) => ({
   rows: rows.map((r) => ({ id: r, label: r })),
@@ -91,6 +97,7 @@ beforeEach(() => {
   };
 });
 afterEach(() => {
+  submitForm.mockClear();
   while (mounted.length) mounted.pop()!();
   document.body.innerHTML = '';
   vi.restoreAllMocks();
@@ -152,17 +159,46 @@ describe('a form of priced grids', () => {
     expect(line.match(/Cotisant BDE/g)?.length).toBe(1);
   });
 
-  it('holds a send with no article on the first grid, said on its card', async () => {
+  it('holds a send with no article in ANY grid, said once for the form and on no card', async () => {
     Element.prototype.scrollIntoView = vi.fn();
     await render();
+    // No grid draws an asterisk: none is required on its own.
+    expect(document.getElementById('q-hoodie')!.querySelector('h2')!.textContent).not.toContain(
+      '*'
+    );
+    const send = () =>
+      bar().querySelector<HTMLButtonElement>('button:not([data-order-toggle])')!.click();
+    send();
+    await settle();
+    // Announced, brought into view past the sticky bar, and on no grid card.
+    const alert = document.getElementById('form-order-missing')!;
+    expect(alert.getAttribute('role')).toBe('alert');
+    expect(alert.textContent).toContain(m.form_view_error_order_empty());
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+    expect(document.getElementById('q-hoodie')!.querySelector('[role="alert"]')).toBeNull();
+    expect(submitForm).not.toHaveBeenCalled();
+
+    // Gone the moment the order holds a unit, from EITHER grid.
+    await add('Veste XL');
+    expect(document.getElementById('form-order-missing')).toBeNull();
+  });
+
+  it('sends an order from the second grid alone: the untouched first grid is no fault', async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    // Free articles, so the send goes straight out (a paid one first asks the payer's address).
+    submission.productGridPrices = {
+      hoodie: { tierId: '_all', tierLabel: null, prices: { '*': 0 } },
+      jacket: { tierId: '_all', tierLabel: null, prices: { '*': 0 } },
+    };
+    await render();
+    await add('Veste XL');
     bar().querySelector<HTMLButtonElement>('button:not([data-order-toggle])')!.click();
     await settle();
-    const card = document.getElementById('q-hoodie')!;
-    expect(card.querySelector('[role="alert"]')?.textContent).toContain(
-      m.form_view_error_order_empty({ label: 'Sweat' })
-    );
-
-    await add('Sweat Noir M');
-    expect(card.querySelector('[role="alert"]')).toBeNull();
+    expect(document.body.textContent).not.toContain(m.form_view_error_order_empty());
+    expect(document.querySelector('[role="alert"]')).toBeNull();
+    // The send imports its checkout callbacks first: wait for the call rather than count ticks.
+    await vi.waitFor(() => expect(submitForm).toHaveBeenCalledTimes(1));
+    const [, body] = submitForm.mock.calls[0];
+    expect(body.answers).toEqual({ jacket: { 'Taille:XL': 1 } });
   });
 });

@@ -53,6 +53,13 @@ describe('a priced grid on the wire', () => {
     });
   });
 
+  it('sends a grid required, whatever its card holds', () => {
+    const [item] = toFormItemsPayload([
+      { id: 'g', type: 'product_grid', label: 'Sweat', required: false, productGrid: grid() },
+    ]);
+    expect(item.required).toBe(true);
+  });
+
   it('drops the definition of a question that is no longer a grid', () => {
     const [item] = toFormItemsPayload([
       { id: 'g', type: 'short_text', label: 'Sweat', required: true, productGrid: grid() },
