@@ -5,7 +5,7 @@
   import { Log } from '$lib/utils/Log';
   import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
   import { page } from '$app/state';
-  import { onMount, tick } from 'svelte';
+  import { onMount } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { getToken } from '$lib/stores/auth';
   import { showToast } from '$lib/stores/toast.svelte';
@@ -46,6 +46,8 @@
     formatAmount as formatCurrency,
     initialSelections,
     isOrderEmpty,
+    ORDER_MISSING_ID,
+    revealOrderMissing,
     selectionsFromAnswers,
     isItemAnswered,
     missingAnswerMessage,
@@ -510,14 +512,6 @@
   const orderMissing = $derived(
     missingAnswer?.itemId === null && isOrderEmpty(visibleItems, selections)
   );
-
-  /** Says the empty order where it is seen: the sticky bar hides the end of the page. */
-  async function revealOrderMissing() {
-    await tick();
-    document
-      .getElementById('form-order-missing')
-      ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }
   const progressPct = $derived(totalCount > 0 ? Math.round((answeredCount / totalCount) * 100) : 0);
 
   $effect(() => {
@@ -834,7 +828,7 @@
     <!-- ── The empty order: the form's, announced, gone once a unit is added ── -->
     {#if orderMissing}
       <div
-        id="form-order-missing"
+        id={ORDER_MISSING_ID}
         role="alert"
         class="border-red-err/30 bg-red-err/10 text-red-err mt-4 rounded-2xl border px-4 py-3 text-sm font-medium dark:bg-red-950/20"
       >

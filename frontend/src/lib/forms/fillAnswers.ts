@@ -1,3 +1,4 @@
+import { tick } from 'svelte';
 import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
 import type { FormItem } from './api';
@@ -143,6 +144,20 @@ export function firstMissingAnswer(
 export function isOrderEmpty(items: FormItem[], selections: Selections): boolean {
   const grids = items.filter(isProductGrid);
   return grids.length > 0 && !grids.some((item) => hasOrderedUnits(selections[item.id]));
+}
+
+/** The id of the fill pages' empty-order sentence, which `revealOrderMissing` brings into view. */
+export const ORDER_MISSING_ID = 'form-order-missing';
+
+/**
+ * Brings the empty-order sentence into view once the page has drawn it: the sticky order bar of a
+ * grid form hides the end of the page, where both fill pages say it.
+ */
+export async function revealOrderMissing(): Promise<void> {
+  await tick();
+  document
+    .getElementById(ORDER_MISSING_ID)
+    ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 
 /**
