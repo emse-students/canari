@@ -434,6 +434,40 @@ never appended to the history stream**: that stream is replayed to every member,
 belongs to one device's queue only. Why and what it costs:
 [channel-encryption §23](../protocols/channel-encryption.md#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12).
 
+**An application frame sealed before a seat's admission is withheld from that seat (2026-11-04).**
+A device admitted by a commit built on base epoch B (an Add, or its own external join) holds the
+group from B + 1, and neither a Welcome nor an external join carries the secrets of an earlier
+epoch. A member that has not applied the join yet still seals at B after the join is accepted -
+a send crossing a join - and that frame was queued and pushed to the newcomer, which acknowledged
+it as `past-epoch-application`, counted it as a lost key-group frame and asked its peers for a seed
+it was never owed (rig log, 2026-10-25: `msg_epoch=5 group_epoch=6` in the same second as
+`externalJoin ... base epoch 5`, two per community joined, each followed by three seed requests).
+`sendMessage` now drops, for an application frame, every seat for which `sealedBeforeAdmission`
+(`utils/mls-frame-epoch.ts`) holds - `frameEpoch <= admittedByBaseEpoch` - and logs one line,
+`[SEND][trace] SEALED_BEFORE_ADMISSION group= frameEpoch= withheld=N devices=`. It is the rule a
+pending seat already had (`admittedAtEpoch`), read from the admission every seat records. Commits
+are never withheld. An inferred floor (`admissionInferred`) or a seat with no recorded admission is
+never withheld from, because only a recorded admission proves the device cannot hold the epoch. A
+key group's PUBLISHER is recorded at the base leading to the epoch E it publishes, `E - 1`
+(`publisherAdmissionBase`): the publish writes an admission on ANY active seat that has none - a
+member whose seat carries no admission, not only the creator - and recording E itself would
+withhold the frames peers seal at E, which that device reads. Past the creation's publish (E = 0,
+recorded as an admission) the value is written as an INFERRED floor (`admissionInferred`): such a
+member may have been in the tree long before it published, so the floor dates the commit times it
+is answered and never withholds a frame from it. A conversation's creator is recorded
+at 0, the epoch it holds: one epoch too strict, which withholds nothing, because no other device can
+seal at the epoch a group was created at. The history stream (`GET mls/history/:groupId`, the batch)
+is not a second road to the key-group loss: the client replays it only for conversations
+(`utils/chat/conversations.ts`, the conversation metas minus salons), never a key group, and a key
+group's peer reconcile is closed (`historyReconcile.ts`, `isDistributionGroup`), so no seed request
+comes from it. A CONVERSATION joiner can still be handed the crossing frame by its stream (rows are
+filtered by arrival time, not epoch): the replay marks the row seen (`utils/chat/history.ts`, no
+queue ack) and escalates a peer reconcile, whose answer is sealed at the current epoch - the one
+road by which a message sent after the arrival still reaches the newcomer, so the stream is
+deliberately NOT filtered by this rule. Asserted in
+`messaging.durability.spec.ts` (an active device admitted after the frame),
+`mls-frame-epoch.spec.ts` and `internal.distribution-group.spec.ts` (the publisher's record).
+
 ### The queue is bounded on ONE axis, and observed on the other
 
 `cleanupExpiredQueuedMessages` bounds the queue by AGE, and that is the only axis on which
@@ -1280,7 +1314,7 @@ every client that reads it. Social-service keeps its own table ([social-service]
 `auth.controller.ts` earlier and are worded by the sign-in screen. **Not coded, on purpose:** header
 and shape validation (`Missing X-User-Id`, `ids must be ...`: a client bug, not a member's), shared-secret
 guards, push-token and link-preview failures (no screen words them), calls (held off, dev builds only),
-Lydia payment errors (the paid half waits for WP-LYDIA-1), and anything in social-service, account
+Lydia payment errors ([WP-LYDIA-1](../backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end)), and anything in social-service, account
 erasure, lives or reels.
 
 ## No platform-admin bypass on conversation data (owner, 2026-11-02)
@@ -1342,7 +1376,7 @@ All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (inj
 | POST | `/api/mls/register-device` | Register static key package for a device |
 | POST | `/api/mls/register-device/prekeys` | Bulk-upload one-time prekeys |
 | PATCH | `/api/mls/devices/:userId/:deviceId/metadata` | Update device name/OS/version |
-| GET | `/api/mls/devices/:userId/:deviceId/key-package` | Get a consumable key package |
+| GET | `/api/mls/devices/:userId/:deviceId/key-package` | Get a consumable key package; `?peek=1` reads whether the device is published and claims none ([key-package-pool](../protocols/key-package-pool.md#a-read-is-not-a-claim---the-empty-pool-storm-of-2026-11-06)) |
 | GET | `/api/mls/devices/:userId/:deviceId/signature-keys` | Every MLS signature key the device ever published (Graine v2 endorsements) |
 | GET | `/api/mls/devices/:userId` | List all registered devices for a user |
 | GET | `/api/mls/devices/:userId/:deviceId/revoked` | Is this device denylisted (gates the wipe) |
@@ -2257,12 +2291,33 @@ means no future caller can bypass it by forgetting to call `confirmUnsafeLinkIfN
 - **Fails OPEN at every layer** - no `GOOGLE_SAFE_BROWSING_API_KEY` configured, a network error, a
   timeout, or a non-2xx response from Google all resolve to "not flagged". A safety check that
   cannot answer must never become an outage for every link in the app; the config-side warning
-  (`::warning::GOOGLE_SAFE_BROWSING_API_KEY is not set...` in `serve-prod.yml`) is the only trace of it.
+  (`::warning::GOOGLE_SAFE_BROWSING_API_KEY is not set...` in `serve-prod.yml`) is the only trace of a
+  missing key.
+- **A `401` or `403` is a refusal, not a transient failure** (2026-11-06). `checkSafeBrowsing`
+  returns a verdict with a `kind` (`answered`, `refused`, `unavailable`, `unconfigured`) decided at the
+  return, never read from a message. A refusal means Google answered and rejected OUR configuration
+  (API not enabled, key restricted), so the check is dead until someone fixes it: it is still
+  "not flagged" for the caller, but it logs at ERROR with Google's JSON `error.status` and
+  `error.message` (never the key or the request URL), is cached for an hour (`REFUSAL_TTL_MS`), and is
+  counted. The daily `reportSafeBrowsing` job (`app.controller.ts`, with the other daily reports)
+  prints `[SAFE_BROWSING] refusals=N` per replica, at ERROR when `N > 0`. The count is in-process, per
+  replica, since this process started or last reported, and the job is NOT in the boot sweep (it would
+  always read 0). A restart loses the count, so the per-refusal ERROR line is the real signal.
+  A network error or a `5xx` stays `unavailable`: warn, 5 minutes. A `429` (`RESOURCE_EXHAUSTED`) stays
+  `unavailable` too, so an exhausted quota does not show in the daily count. A `400`
+  (`INVALID_ARGUMENT`) is ambiguous - the backlog said "403 or 400", but measuring shows it can be a
+  malformed URL rather than a bad key - so it logs at ERROR with Google's status but is `unavailable`:
+  transient TTL, not counted. The one-hour refusal TTL means a fixed key takes up to an hour to take
+  effect, and the link-safety route sends `Cache-Control: public, max-age=3600` with that verdict.
+  Why it exists: production answered `403` to every lookup (6 of 6 over 72 hours to 2026-11-05) and it
+  read as a passing warning. The key was fixed on the Google side; on 2026-11-06 a lookup with
+  production's own key on Google's malware test URL answered `200` with 1 match, and no `403` was
+  logged after 2026-11-05 16:57 UTC.
 - **Cached in its own `TtlCache<boolean>`**, independent of `previewCache` for the reason above.
   Google gives no cache guidance for a clean verdict (only a flagged match carries its own
   `cacheDuration`, e.g. `"300s"` - the longest one wins when several matches disagree), so a clean
-  result gets a conservative 30-minute TTL chosen here; a failed lookup gets 5 minutes, short enough
-  that a transient outage or a bad key self-heals on the next request rather than silently
+  result gets a conservative 30-minute TTL chosen here; a transient failure gets 5 minutes, short enough
+  that an outage self-heals on the next request rather than silently
   disabling the check for as long as a real answer would be trusted.
 - **Client-side dedup, not a client-side TTL**: `checkLinkSafety` keeps a `Map<string, Promise<boolean>>`
   for the page's lifetime so `AppLink` and `LinkPreviewCard` asking about the same URL around the

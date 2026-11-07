@@ -8,6 +8,7 @@
  */
 import { m } from '$lib/paraglide/messages';
 import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
+import { formCodeMessage } from '$lib/forms/answerBounds';
 import { BookingsApiError } from './api';
 
 /** Every code the organiser's routes answer, each with its sentence. */
@@ -21,6 +22,7 @@ export const ORGANISER_REFUSAL_CODES = [
   'quota-pair',
   'export-labels',
   'item-id',
+  'item-image',
   'audience-invalid',
   'unknown-account',
   'line-kind',
@@ -150,6 +152,7 @@ function sentenceFor(code: string, count: number): string | null {
     case 'export-labels':
       return m.bookings_refusal_export();
     case 'item-id':
+    case 'item-image':
     case 'audience-invalid':
       return m.bookings_refusal_questions();
     case 'unknown-account':
@@ -268,7 +271,9 @@ function fileSentenceFor(code: string): string | null {
     case 'file-purged':
       return m.form_answer_file_deleted();
     default:
-      return null;
+      // A space's questions are a form's (`assertFormItemsShape`, `withNormalisedGridAnswers`): a
+      // grid refused at save or at booking answers with a form's code.
+      return formCodeMessage(code);
   }
 }
 

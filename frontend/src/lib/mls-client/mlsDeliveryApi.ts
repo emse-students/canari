@@ -8,7 +8,11 @@ import { ackMessagesWithRetry } from './ackRetry';
 import { ADDRESSED_HISTORY_CAPABILITY, DELIVERY, type FrameDelivery } from './frameDelivery';
 import type { DeviceMembershipRow, GroupMeta, UserGroupRow } from './IMlsService';
 import type { DatedKeyPackage } from './keyPackages';
-import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
+import type {
+  DeviceKeyPackageAnswer,
+  DeviceSignatureKeys,
+  UserDeviceEntry,
+} from './deviceKeyPackage';
 import { toBase64, fromBase64 } from '$lib/utils/hex';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
@@ -932,8 +936,9 @@ export class DeliveryRefusedRenewedTokenError extends ApiRefusalError {
 }
 
 /**
- * The delivery service answered 401 and the RENEWAL that followed failed - a refresh answered 5xx
- * (`RefreshFailedError`) or one nobody answered (a transport failure, kept in `renewalFailure`).
+ * The delivery service answered 401 and the RENEWAL that followed failed - a refresh that answered
+ * with no token (`RefreshFailedError`: its no-verdict subclass `TransientAnswerError` AND the app's
+ * own 4xx) or one nobody answered (a transport failure), kept in `renewalFailure`.
  *
  * Typed HERE, where it is known that the server ANSWERED: the 401 came from the guard before any
  * handler, so the request did nothing. Rethrown as it came, a transport failure of the refresh read
@@ -959,9 +964,13 @@ export class DeliveryRenewalFailedError extends ApiRefusalError {
 
 /**
  * What a renewal failure after a delivery 401 becomes. An ALLOWLIST of the failures that say only
- * "no new token now": a refresh answered 5xx and a refresh nobody answered. Every other one is a
- * verdict the app routes on by its own type (a dead cookie, a sign-out under way, a split identity)
- * and passes as it came.
+ * "no new token now": a refresh that answered with no token (`RefreshFailedError`, the BASE - a
+ * `TransientAnswerError` and the app's own 4xx alike) and a refresh nobody answered. The BASE on
+ * purpose: the guard's 401 already proves the request did nothing, whatever made the renewal fail, and
+ * an app 4xx on the refresh left unwrapped is no refusal `isDefinitiveCommitRefusal` reads - the
+ * commit was resubmitted into the same refusal and its stage kept as unknown, blocking the group.
+ * Every other failure is a verdict on the SESSION and passes as it came: a dead cookie, a sign-out
+ * under way, a split identity.
  */
 function deliveryRenewalFailed(error: unknown, where: string): unknown {
   return error instanceof RefreshFailedError || isTransportFailure(error)
@@ -1382,13 +1391,23 @@ export class MlsDeliveryApi {
    * that made the distinction load-bearing. A 404 is an ANSWER and carries the server's reason;
    * anything else - a 5xx, a gateway error, an unreachable network, a body that does not parse -
    * is `unanswered`, which establishes nothing about the device and must not be acted on.
+   *
+   * `peek` ASKS WHETHER THE DEVICE IS PUBLISHED WITHOUT CLAIMING ONE OF ITS PACKAGES: the server
+   * answers its static row, and leaves the one-time pool alone. It refuses exactly when a claim
+   * would: `expired` only once the static row elapsed AND no usable one-time package is left. A caller
+   * that only reads the fact (an external join waiting on its own publication) must peek - a claim
+   * spends a package nobody uses. A server predating `peek` ignores it and claims, as before.
    */
-  async fetchDeviceKeyPackage(userId: string, deviceId: string): Promise<DeviceKeyPackageAnswer> {
+  async fetchDeviceKeyPackage(
+    userId: string,
+    deviceId: string,
+    opts?: { peek?: boolean }
+  ): Promise<DeviceKeyPackageAnswer> {
     // UNDER THE DEADLINE, because the wait of an external join reads this to learn whether its own
     // device is published: a hang here must be an `unanswered`, not a join that never ends.
     try {
       return await this.underDeadline('device-key-package', (signal) =>
-        this.fetchDeviceKeyPackageOnce(userId, deviceId, signal)
+        this.fetchDeviceKeyPackageOnce(userId, deviceId, signal, opts?.peek === true)
       );
     } catch (e) {
       if (e instanceof DeliveryDeadlineError) return { kind: 'unanswered', detail: e.message };
@@ -1399,12 +1418,13 @@ export class MlsDeliveryApi {
   private async fetchDeviceKeyPackageOnce(
     userId: string,
     deviceId: string,
-    signal: AbortSignal
+    signal: AbortSignal,
+    peek: boolean
   ): Promise<DeviceKeyPackageAnswer> {
     let res: Response;
     try {
       res = await this.f(
-        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/key-package`,
+        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/key-package${peek ? '?peek=1' : ''}`,
         { headers: await this.auth(), signal }
       );
     } catch (e) {
@@ -1467,13 +1487,20 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * Fetches KeyPackages for all active devices of `userId`.
+   * CLAIMS one KeyPackage from every active device of `userId` - for an adder about to add every
+   * one of them, and nobody else: each answer DELETEs one one-time package per listed device on the
+   * server. A caller that needs only the roster asks {@link listUserDevices}, which claims nothing.
    *
    * THROWS on transport/HTTP failure (network down, non-2xx): a `[]` must NEVER be
    * indistinguishable from a failure (see audit S2). Returns `[]` only for a genuine 200 with no
    * device. Best-effort callers (creation, KeyPackage fallback) opt in explicitly via
    * `.catch(() => [])`; the invitation path lets the error propagate so it never invites a
    * silent subset of members.
+   *
+   * **NEVER SHARED BETWEEN CALLERS.** A one-time package is spent by the first Welcome built on it, so
+   * two adders handed the SAME answer (two groups created at once with one person, or a creation and
+   * an admission) would build two Welcomes on one package, and the joiner would refuse the second
+   * with `NoMatchingKeyPackage`. Each claim is its own request; only the peek is joined.
    */
   async fetchUserDevices(userId: string): Promise<
     Array<{
@@ -1486,34 +1513,82 @@ export class MlsDeliveryApi {
       deviceAppVersion?: string;
     }>
   > {
-    // SIMULTANEOUS ASKERS SHARE ONE REQUEST (WP-W4): a boot asked for the account's own device list
-    // three times - the pending-invitation sweep, the welcome-request answer and the group
-    // reconcile each sent theirs. The entry lives as long as the request, so no answer is served
-    // older than the request a caller joined (see {@link joinInFlight}).
-    return this.joinInFlight(`${userId}:devices`, async () => {
-      const res = await this.f(`${this.historyUrl}/api/mls/devices/${userId}`, {
-        headers: await this.auth(),
-      });
-      if (!res.ok) throw await refusalFromResponse(res, 'fetchUserDevices failed');
-      // Raw device rows as returned by the server (untyped JSON). Optional metadata fields
-      // are re-validated with `typeof` below before being kept.
-      const devices = (await res.json()) as Array<{
-        keyPackage: string;
-        deviceId: string;
-        deviceName?: string;
-        deviceOs?: string;
-        deviceAppVersion?: string;
-      }>;
+    const devices = await this.readUserDevices(userId, false);
+    return devices.map((d) => ({
+      keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
+      deviceId: d.deviceId,
+      userId,
+      deviceName: d.deviceName,
+      deviceOs: d.deviceOs,
+      deviceAppVersion: d.deviceAppVersion,
+    }));
+  }
 
+  /**
+   * The roster of `userId`'s active devices, read WITHOUT claiming any of their KeyPackages
+   * (`?peek=1`): the settings count, the device panel, a device's name, the pre-claim at
+   * registration. Same list, same refusals and the same throw contract as {@link fetchUserDevices}:
+   * the server judges each device as a claim would - a device whose static row elapsed is still
+   * listed while a usable one-time package is left - and only counts the pool, never takes from it.
+   * No package is returned, because none was claimed for the caller to use.
+   *
+   * SIMULTANEOUS ASKERS SHARE ONE REQUEST (WP-W4), which a read may and a claim may not. The entry
+   * lives as long as the request, so no answer is served older than the request a caller joined
+   * (see {@link joinInFlight}). A server predating the peek ignores the query and claims, as every
+   * client did before, so nothing needs a floor and nothing falls back.
+   */
+  async listUserDevices(userId: string): Promise<UserDeviceEntry[]> {
+    return this.joinInFlight(`${userId}:devices:peek`, async () => {
+      const devices = await this.readUserDevices(userId, true);
       return devices.map((d) => ({
-        keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
         deviceId: d.deviceId,
         userId,
-        deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
-        deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
-        deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
+        deviceName: d.deviceName,
+        deviceOs: d.deviceOs,
+        deviceAppVersion: d.deviceAppVersion,
       }));
     });
+  }
+
+  /** `GET mls/devices/:userId`, claiming or peeking, with the optional metadata re-validated. */
+  private async readUserDevices(
+    userId: string,
+    peek: boolean
+  ): Promise<
+    Array<{
+      keyPackage: string;
+      deviceId: string;
+      deviceName?: string;
+      deviceOs?: string;
+      deviceAppVersion?: string;
+    }>
+  > {
+    const res = await this.f(
+      `${this.historyUrl}/api/mls/devices/${encodeURIComponent(userId)}${peek ? '?peek=1' : ''}`,
+      { headers: await this.auth() }
+    );
+    if (!res.ok) {
+      throw await refusalFromResponse(
+        res,
+        peek ? 'listUserDevices failed' : 'fetchUserDevices failed'
+      );
+    }
+    // Raw device rows as returned by the server (untyped JSON). Optional metadata fields
+    // are re-validated with `typeof` below before being kept.
+    const devices = (await res.json()) as Array<{
+      keyPackage: string;
+      deviceId: string;
+      deviceName?: unknown;
+      deviceOs?: unknown;
+      deviceAppVersion?: unknown;
+    }>;
+    return devices.map((d) => ({
+      keyPackage: d.keyPackage,
+      deviceId: d.deviceId,
+      deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
+      deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
+      deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
+    }));
   }
 
   /**
@@ -1671,66 +1746,48 @@ export class MlsDeliveryApi {
   }
 
   /**
-   * Delivers an MLS Welcome (and optional ratchet tree) to `targetUserId`.
-   * If `targetDeviceId` is omitted, fans out to all active devices for that user.
+   * Delivers an MLS Welcome (and optional ratchet tree) to ONE device, `targetUserId:targetDeviceId`.
+   *
+   * THE DEVICE IS REQUIRED: a Welcome is built on the package one device published, so it can only
+   * ever be addressed to that device. Every caller (the Add's sender, the pending sweep, the
+   * `welcome_request` answer, the admission, the owed-Welcome drain) knows it; a fan-out to the
+   * account's roster had no caller left and was deleted (2026-11-06).
    */
   async sendWelcome(
     welcomeBytes: Uint8Array,
     targetUserId: string,
     groupId: string,
-    targetDeviceId?: string,
-    ratchetTreeBytes?: Uint8Array,
-    /** Tauri: when `targetDeviceId` is omitted, deliver only to the first online device (Web sends to all). */
-    welcomeOpts?: { firstDeviceOnly?: boolean }
+    targetDeviceId: string,
+    ratchetTreeBytes?: Uint8Array
   ): Promise<void> {
-    const base64 = this.uint8ToB64(welcomeBytes);
-    const ratchetTreeBase64 = ratchetTreeBytes ? this.uint8ToB64(ratchetTreeBytes) : undefined;
-
-    let deviceIds: string[];
-    if (targetDeviceId) {
-      deviceIds = [targetDeviceId];
-    } else {
-      const devices = await this.fetchUserDevices(targetUserId);
-      deviceIds =
-        welcomeOpts?.firstDeviceOnly && devices.length > 0
-          ? [devices[0].deviceId]
-          : devices.map((d) => d.deviceId);
+    const response = await this.f(`${this.historyUrl}/api/mls/welcome`, {
+      method: 'POST',
+      headers: await this.auth({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        targetDeviceId,
+        targetUserId,
+        senderUserId: this.userId,
+        welcomePayload: this.uint8ToB64(welcomeBytes),
+        ratchetTreePayload: ratchetTreeBytes ? this.uint8ToB64(ratchetTreeBytes) : undefined,
+        groupId,
+      }),
+    });
+    // The refusals a sender must act on, typed at the throw from the server's code.
+    if (response.status === 403) {
+      const refusal = await refusalFromResponse(response, 'Welcome delivery');
+      if (refusal.code === 'WELCOME_TARGET_NOT_MEMBER') {
+        throw new WelcomeTargetNotMemberError(groupId, targetUserId, targetDeviceId);
+      }
     }
-    if (deviceIds.length === 0) {
-      throw new Error(`Cannot send secure invitation to ${targetUserId}: no active device found.`);
+    if (response.status === 404) {
+      const refusal = await refusalFromResponse(response, 'Welcome delivery');
+      if (refusal.code === 'WELCOME_TARGET_UNKNOWN') {
+        throw new WelcomeTargetUnknownError(groupId, targetUserId, targetDeviceId);
+      }
     }
-    await Promise.all(
-      deviceIds.map(async (deviceId) => {
-        const response = await this.f(`${this.historyUrl}/api/mls/welcome`, {
-          method: 'POST',
-          headers: await this.auth({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({
-            targetDeviceId: deviceId,
-            targetUserId,
-            senderUserId: this.userId,
-            welcomePayload: base64,
-            ratchetTreePayload: ratchetTreeBase64,
-            groupId,
-          }),
-        });
-        // The refusals a sender must act on, typed at the throw from the server's code.
-        if (response.status === 403) {
-          const refusal = await refusalFromResponse(response, 'Welcome delivery');
-          if (refusal.code === 'WELCOME_TARGET_NOT_MEMBER') {
-            throw new WelcomeTargetNotMemberError(groupId, targetUserId, deviceId);
-          }
-        }
-        if (response.status === 404) {
-          const refusal = await refusalFromResponse(response, 'Welcome delivery');
-          if (refusal.code === 'WELCOME_TARGET_UNKNOWN') {
-            throw new WelcomeTargetUnknownError(groupId, targetUserId, deviceId);
-          }
-        }
-        await assertOkMlsDeliveryResponse(
-          response,
-          `Welcome delivery to ${targetUserId}:${deviceId} (group ${groupId})`
-        );
-      })
+    await assertOkMlsDeliveryResponse(
+      response,
+      `Welcome delivery to ${targetUserId}:${targetDeviceId} (group ${groupId})`
     );
   }
 

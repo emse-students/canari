@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="03/11/2026"
+  updated="06/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -99,8 +99,14 @@
         <dd>
           Contenus que vous publiez volontairement sur le fil, visibles par les membres de la
           plateforme selon l'audience choisie. Les fichiers joints sont chiffrés avant l'envoi. Une
-          association, une liste ou une institution peut vous demander de relayer une de vos
-          publications personnelles : la demande (l'association, la liste ou l'institution, le
+          publication en cours d'envoi attend sur votre appareil, avec ses fichiers non chiffrés,
+          jusqu'à ce qu'elle soit publiée ou que vous la supprimiez ; une simple déconnexion la
+          conserve, la suppression de votre compte l'efface. Quand une publication est supprimée, le
+          serveur garde son identifiant et la date de suppression, sans auteur ni contenu, pour
+          qu'un envoi encore en route ne la fasse pas réapparaître ; cet identifiant ne désigne plus
+          personne et il est conservé sans limite de durée, même après la suppression de votre
+          compte. Une association, une liste ou une institution peut vous demander de relayer une de
+          vos publications personnelles : la demande (l'association, la liste ou l'institution, le
           membre qui l'a faite, la publication, le nombre de personnes qui la verraient pour la
           première fois et, pour une institution, son public possible) vous est adressée, et rien
           n'est montré à son public tant que vous n'avez pas accepté. Si vous acceptez la demande
@@ -229,7 +235,9 @@
           le paiement avait apporté (la cotisation, la place du formulaire), sauf une recharge du
           Cercle, dont le solde ne change pas. Aucune donnée bancaire n'est reçue ni conservée par
           Canari. Les fichiers déposés dans un formulaire (par exemple un CV) sont lisibles par
-          l'association qui l'a créé.
+          l'association qui l'a créé. Une image ajoutée à une question par l'auteur d'un formulaire
+          est publique : quiconque a le lien du formulaire peut la voir, sans compte. Elle est
+          effacée quand plus aucun formulaire ne l'affiche.
         </dd>
       </div>
       <div>
@@ -258,15 +266,20 @@
         <dd>
           Une personne sans compte qui répond à un formulaire public laisse ses réponses, et, si le
           formulaire est payant, le montant, le statut du paiement et l'identifiant de la demande
-          chez Lydia. L'adresse e-mail saisie pour payer est transmise à Lydia et n'est pas
-          conservée par Canari. Pour un paiement en ligne, Canari garde une empreinte du lien de
-          retour (jamais le lien lui-même), qui permet de consulter ce paiement. Tant qu'une réponse
-          payante attend son paiement, elle porte une empreinte calculée avec une clé secrète (HMAC)
-          à partir du formulaire et du réseau de la connexion : l'adresse IPv4, ou le préfixe /64
-          d'une adresse IPv6. L'adresse elle-même n'est pas conservée. Cette empreinte sert
-          uniquement à limiter à trois les réponses en attente de paiement depuis un même réseau ;
-          elle est effacée par une tâche planifiée, dans les cinq minutes qui suivent le règlement,
-          l'annulation ou l'expiration de la réponse.
+          chez Lydia. Par défaut, rien ne lui est demandé sur son identité : l'auteur du formulaire
+          peut lui demander son nom, son prénom et son adresse e-mail (chacun séparément), qui sont
+          alors obligatoires, conservés avec la réponse et lus par ceux qui gèrent le formulaire
+          (liste des réponses et export) ; un membre connecté n'a jamais ces champs. Si l'adresse
+          e-mail est demandée, c'est elle qui est transmise à Lydia pour un paiement en ligne.
+          Sinon, l'adresse e-mail saisie pour payer est transmise à Lydia et n'est pas conservée par
+          Canari. Pour un paiement en ligne, Canari garde une empreinte du lien de retour (jamais le
+          lien lui-même), qui permet de consulter ce paiement. Tant qu'une réponse payante attend
+          son paiement, elle porte une empreinte calculée avec une clé secrète (HMAC) à partir du
+          formulaire et du réseau de la connexion : l'adresse IPv4, ou le préfixe /64 d'une adresse
+          IPv6. L'adresse elle-même n'est pas conservée. Cette empreinte sert uniquement à limiter à
+          trois les réponses en attente de paiement depuis un même réseau ; elle est effacée par une
+          tâche planifiée, dans les cinq minutes qui suivent le règlement, l'annulation ou
+          l'expiration de la réponse.
         </dd>
       </div>
       <div>
@@ -760,7 +773,10 @@
             </td>
           </tr>
           <tr>
-            <td>Réponses aux formulaires</td>
+            <td>
+              Réponses aux formulaires, y compris le nom, le prénom et l'adresse e-mail qu'un
+              formulaire public a demandés à une personne sans compte
+            </td>
             <td>Aucune durée n'est encore fixée : elle est en cours de définition</td>
           </tr>
           <tr>

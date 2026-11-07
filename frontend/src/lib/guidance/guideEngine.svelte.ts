@@ -174,9 +174,14 @@ export class GuideEngine {
    */
   consider(quiet: boolean, pathname: string): void {
     if (this.#run || !quiet) return;
-    const guide = this.#pick(pathname);
-    if (!guide) return;
-    this.#start(guide, pathname);
+    // A help with nothing to draw is put back (declined for this situation) and the NEXT candidate is
+    // tried in the same pass: nothing reactive changes on a decline, so the scheduler would never be
+    // re-asked and a later help on the same route (the manager hint behind an empty-shop hint) would
+    // never be considered. Each pass over the loop declines one guide, so it ends.
+    for (let guide = this.#pick(pathname); guide; guide = this.#pick(pathname)) {
+      this.#start(guide, pathname);
+      if (this.#run) return;
+    }
   }
 
   #pick(pathname: string): GuideDefinition | null {

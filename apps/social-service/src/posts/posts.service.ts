@@ -9,6 +9,8 @@ import {
 import type { RepostConsent } from './member-reposts.service';
 import {
   BadRequestException,
+  ConflictException,
+  GoneException,
   Injectable,
   Logger,
   NotFoundException,
@@ -40,8 +42,10 @@ import {
 } from './reel.constants';
 import { assertReelEditShape } from './reel-rules';
 import type { ReelPurgeReason } from '../internal/reel-media';
-import { SINGLE_PHOTO_POST_SQL } from './single-photo-sql';
+import { singleMediaModeOf, singleMediaSql, type SingleMediaMode } from './full-screen-post-sql';
 import { publicationTime } from './publication-time';
+import { clientIdVerdict } from './post-client-id';
+import { violatesUniqueColumns } from '../common/pg-errors';
 import {
   invalidatePostListCache,
   postListCacheKey,
@@ -306,7 +310,7 @@ export class PostsService {
     limit: number,
     offset: number,
     kind: PostKind | undefined,
-    singlePhotos: boolean
+    singleMedia: SingleMediaMode | undefined
   ) {
     return postListCacheKey({
       feed,
@@ -316,7 +320,7 @@ export class PostsService {
       limit,
       offset,
       kind,
-      singlePhotos,
+      singleMedia,
     });
   }
 
@@ -336,9 +340,9 @@ export class PostsService {
    * The `kind` the caller restricted the page to; ABSENT MEANS BOTH. The value is matched against
    * the two literals rather than interpolated, so nothing a client sends reaches the SQL text.
    */
-  private kindFilterSql(kind: PostKind | undefined, singlePhotos = false): string {
-    if (kind === 'reel' && singlePhotos) {
-      return `AND (posts.kind = 'reel' OR (posts.kind = 'post' AND ${SINGLE_PHOTO_POST_SQL}))`;
+  private kindFilterSql(kind: PostKind | undefined, singleMedia?: SingleMediaMode): string {
+    if (kind === 'reel' && singleMedia) {
+      return `AND (posts.kind = 'reel' OR (posts.kind = 'post' AND ${singleMediaSql(singleMedia)}))`;
     }
     if (kind === 'reel') return `AND posts.kind = 'reel'`;
     if (kind === 'post') return `AND posts.kind = 'post'`;
@@ -1108,6 +1112,14 @@ export class PostsService {
   }
 
   async createPost(data: any, isGlobalAdmin: boolean) {
+    // A RESEND OF A QUEUED POST IS ONE POST (`post-client-id.ts`): the client minted the id, so a
+    // row already holding it is this author's earlier request whose answer was lost. Answered
+    // before anything is claimed or announced, so a replay claims no reel blob twice.
+    const clientId: string | undefined = typeof data.id === 'string' ? data.id : undefined;
+    if (clientId) {
+      const replayed = await this.replayClientId(clientId, data.authorId, isGlobalAdmin);
+      if (replayed) return replayed;
+    }
     // "Entre étudiants": OFF unless asked, and refused (typed) where it is not offered.
     data.studentsOnly = data.studentsOnly === true;
     if (data.studentsOnly) {
@@ -1163,12 +1175,37 @@ export class PostsService {
     post.publishedAt = publicationTime(post.scheduledAt, new Date());
     let entity: Post;
     try {
-      entity = await this.postRepo.save(post);
+      // A client id is INSERTED, never saved: `save` would turn into an UPDATE of a row that
+      // appeared under that id since the check above, and a create must never overwrite a post.
+      entity = clientId
+        ? await this.insertWithClientId(post, clientId)
+        : await this.postRepo.save(post);
     } catch (e) {
+      // Two requests of one queued post raced past the check: the primary key took the first, and
+      // this one is the replay it would have been a moment later. ITS reel claim is the row's that
+      // won, so it is NOT handed back - the replay answers that row, which still shows the reel.
+      if (
+        clientId &&
+        (await violatesUniqueColumns(e, ['id'], (q, p) => this.postRepo.query(q, p)))
+      ) {
+        const replayed = await this.replayClientId(clientId, data.authorId, isGlobalAdmin);
+        if (replayed) return replayed;
+      }
       // The blob was claimed for a reel that now will not exist. Hand it back to the idle clock so
       // it is not an exempt object nothing will ever reap - best-effort and logged by `release`.
       if (reelMediaIds.length > 0) await this.mediaRetention.release(reelMediaIds);
       throw e;
+    }
+    // A withdrawal that wrote the id's tombstone while this insert was on its way: the row must
+    // not survive it. Read AFTER the insert committed, so either the withdrawal saw this row (and
+    // deletes it) or this read sees its tombstone - never neither (`withdrawPost`).
+    if (clientId && (await this.isDeletedPostId(clientId))) {
+      this.logger.warn(
+        `[POST-CREATE] post ${clientId.slice(0, 8)} withdrawn while it was created: removed again`
+      );
+      await this.postRepo.delete({ id: clientId });
+      await this.mediaRetention.release(postMediaIds({ media: data.media }));
+      throw new GoneException('This post was deleted');
     }
     await this.invalidateListCache();
 
@@ -1189,6 +1226,123 @@ export class PostsService {
       entity,
       await this.viewerContext([entity], authorId || undefined, isGlobalAdmin)
     );
+  }
+
+  /**
+   * The row an earlier request of the same queued post wrote under `clientId`, stamped for its
+   * author as a create's answer is - or `null` when there is none and the create goes ahead.
+   *
+   * @throws ConflictException when the id is another author's post (`clientIdVerdict`).
+   */
+  private async replayClientId(clientId: string, authorId: string, isGlobalAdmin: boolean) {
+    const existing = await this.postRepo.findOne({ where: { id: clientId } });
+    const deleted = !existing && (await this.isDeletedPostId(clientId));
+    if (deleted) {
+      this.logger.warn(
+        `[POST-CREATE] post ${clientId.slice(0, 8)} refused: that id belongs to a deleted post`
+      );
+    }
+    if (clientIdVerdict(existing, deleted, authorId) === 'create') return null;
+    this.logger.log(`[POST-CREATE] post ${clientId.slice(0, 8)} sent again: answered from its row`);
+    return this.toPublicPostFromEntity(
+      existing!,
+      await this.viewerContext([existing!], authorId || undefined, isGlobalAdmin)
+    );
+  }
+
+  /** Whether a post that held `postId` was deleted (`deleted_post_ids`, migration 135). */
+  private async isDeletedPostId(postId: string): Promise<boolean> {
+    const rows: unknown[] = await this.postRepo.query(
+      'SELECT 1 FROM deleted_post_ids WHERE id = $1',
+      [postId]
+    );
+    return rows.length > 0;
+  }
+
+  /**
+   * THE AUTHOR TAKES BACK A POST THEY QUEUED, whether or not its create ever landed: the publish
+   * queue's Delete (`posts.md#the-background-publish-queue`).
+   *
+   * Writes the id's tombstone FIRST, then deletes the row if there is one. A create of that id still
+   * on its way either is seen here (and deleted) or sees the tombstone after its own insert (and
+   * removes itself, `createPost`) - so the post never exists once this answered. Then the media the
+   * queue uploaded for it (`mediaIds`) are deleted, except any a live row cites
+   * (`deleteWithdrawnMedia`).
+   *
+   * ONLY EVER THE CALLER'S OWN POST, admin or not: the author is checked before the tombstone and
+   * again on the row it would delete. Another author's post found on the second read (it was
+   * created between the two) is left, and the tombstone this call wrote is taken back.
+   *
+   * @returns `deleted: true` when a row was removed, `false` when there was none (never created, or
+   *          already gone) - both mean the post does not exist and never will.
+   * @throws ConflictException when the id is another author's post.
+   */
+  async withdrawPost(postId: string, userId: string, mediaIds: string[] = []) {
+    const before = await this.postRepo.findOne({ where: { id: postId } });
+    if (before && before.authorId !== userId) {
+      throw new ConflictException("This post id is another author's");
+    }
+    await this.postRepo.query(
+      'INSERT INTO deleted_post_ids (id) VALUES ($1) ON CONFLICT (id) DO NOTHING',
+      [postId]
+    );
+    const row = await this.postRepo.findOne({ where: { id: postId } });
+    if (row && row.authorId !== userId) {
+      // Created by another author between the two reads: their post stays, and so must its id.
+      await this.postRepo.query('DELETE FROM deleted_post_ids WHERE id = $1', [postId]);
+      this.logger.warn(
+        `[POST-WITHDRAW] post ${postId.slice(0, 8)}: another author's row appeared - left, tombstone taken back`
+      );
+      throw new ConflictException("This post id is another author's");
+    }
+    // The ids the queue names are NOT released to the idle window first: released, they would no
+    // longer be `archive`, media-service would refuse to delete them, and they would wait out the
+    // sweep. `deleteWithdrawnMedia` deletes them now unless a live row cites them.
+    //
+    // HELD BACK means owed: an id held back and then NOT deleted (refused, missing from the answer,
+    // or media-service unreachable) is released after all, or it would stay `archive` - exempt from
+    // every sweep - for ever: a crafted request, or an app uninstalled between two attempts, would
+    // otherwise strand it. Only the deleted row's own media can be held back (`deletePost` filters
+    // its own list), so nothing another post holds is ever released here.
+    const heldBack = row && row.kind !== 'reel' ? this.heldBackMedia(row, mediaIds) : [];
+    if (row) await this.deletePost(postId, userId, false, { keep: mediaIds });
+    let media: Awaited<ReturnType<PostMediaRetentionService['deleteWithdrawnMedia']>>;
+    try {
+      media = await this.mediaRetention.deleteWithdrawnMedia(userId, mediaIds);
+    } catch (e) {
+      if (heldBack.length > 0) {
+        this.logger.warn(
+          `[POST-WITHDRAW] post ${postId.slice(0, 8)}: media delete failed - ${heldBack.length} held-back media released to the idle window`
+        );
+        await this.mediaRetention.release(heldBack);
+      }
+      throw e;
+    }
+    const notTaken = new Set(media.notTaken);
+    const stranded = heldBack.filter((id) => notTaken.has(id));
+    if (stranded.length > 0) {
+      this.logger.warn(
+        `[POST-WITHDRAW] post ${postId.slice(0, 8)}: ${stranded.length} held-back media not deleted - released to the idle window`
+      );
+      await this.mediaRetention.release(stranded);
+    }
+    this.logger.log(
+      `[POST-WITHDRAW] post ${postId.slice(0, 8)}: ${row ? 'deleted' : 'no row'}, the id is retired; media ${media.deleted} deleted, ${media.absent} gone, ${media.cited} cited, ${media.refused} refused`
+    );
+    return { ok: true, deleted: !!row };
+  }
+
+  /** The ids of `row`'s own media (its attachments and its comments') that `named` holds back. */
+  private heldBackMedia(row: Post, named: string[]): string[] {
+    const wanted = new Set(named);
+    return [...postMediaIds(row), ...commentMediaIds(row.comments)].filter((id) => wanted.has(id));
+  }
+
+  /** INSERTs `post` under the client's id and reads back the row with its database defaults. */
+  private async insertWithClientId(post: Post, clientId: string): Promise<Post> {
+    post.id = clientId;
+    await this.postRepo.insert(post);
+    return this.postRepo.findOneOrFail({ where: { id: clientId } });
   }
 
   /**
@@ -1427,7 +1581,7 @@ export class PostsService {
   async listPosts(params: ListPostsParams) {
     const { feed, viewerUserId, isAdmin, promo, formation } = params;
     const kind = listKind(params);
-    const singlePhotos = params.singlePhotos === true && kind === 'reel';
+    const singleMedia = kind === 'reel' ? singleMediaModeOf(params) : undefined;
     const limit = Number(params.limit);
     const offset = Number(params.offset);
     const cacheKey = this.listPostsCacheKey(
@@ -1438,7 +1592,7 @@ export class PostsService {
       limit,
       offset,
       kind,
-      singlePhotos
+      singleMedia
     );
 
     // The stamp is read BEFORE the page is computed, so a page computed across an invalidation is
@@ -1548,7 +1702,7 @@ export class PostsService {
   private async listPostRows(params: ListPostsParams): Promise<any[]> {
     const { feed, viewerUserId, isAdmin, promo, formation } = params;
     const kind = listKind(params);
-    const singlePhotos = params.singlePhotos === true && kind === 'reel';
+    const singleMedia = kind === 'reel' ? singleMediaModeOf(params) : undefined;
     const limit = Number(params.limit);
     const offset = Number(params.offset);
 
@@ -1592,7 +1746,7 @@ export class PostsService {
 
     const hiddenFilter = this.hiddenFilterSql(isAdmin === true);
     // A dead reel is excluded in EVERY arm, and `kind` (absent = both) narrows every arm alike.
-    const reelFilters = `${this.liveReelFilterSql()}\n         ${this.kindFilterSql(kind, singlePhotos)}`;
+    const reelFilters = `${this.liveReelFilterSql()}\n         ${this.kindFilterSql(kind, singleMedia)}`;
     const serviceAccountFilter = reviewCohortAuthorFilterSql(isAdmin === true, viewerUserId);
     // WHICH POSTS THIS READER MAY SEE (WP6b), in every arm. The viewer goes LAST, after the optional
     // promo cutoff and blocked list (`tail`), so its placeholder is the next free index of each arm.
@@ -2192,7 +2346,15 @@ export class PostsService {
   }
 
   /** Permanently deletes a post. See `assertMayManage` for who may. */
-  async deletePost(postId: string, userId: string, isAdmin: boolean) {
+  async deletePost(
+    postId: string,
+    userId: string,
+    isAdmin: boolean,
+    opts: {
+      /** Ids the caller deletes itself (a withdrawal): not released to the idle window here. */
+      keep?: string[];
+    } = {}
+  ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
     const capacity = await this.assertMayManage(post, userId, isAdmin);
@@ -2209,7 +2371,8 @@ export class PostsService {
         capacity === 'moderator' ? 'moderation' : 'author'
       );
     } else {
-      await this.mediaRetention.release(orphanedMedia);
+      const kept = new Set(opts.keep ?? []);
+      await this.mediaRetention.release(orphanedMedia.filter((id) => !kept.has(id)));
     }
     return { ok: true };
   }

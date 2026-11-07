@@ -1744,6 +1744,12 @@ export function useMessaging() {
           senderId: pm.senderId.toLowerCase(),
           content: pm.content,
           timestamp: new SvelteDate(resolvedTimestamp),
+          // THE SERVER'S TIME GOES ON THE ROW SHOWN, NOT ONLY ON THE ROW STORED. It is the key the
+          // row is ordered and READ at (`messageTime`): without it every message that arrived through
+          // a drain was keyed by its author's `sentAt` until the next reload, so this reader's mark
+          // was taken on the author's clock and fell short of the very message it had read on the
+          // author's screen - the receipt one or two messages late (owner, 2026-11-05).
+          serverTimestamp: pm.serverTimestamp,
           isOwn,
           replyTo: pm.replyTo,
           isSystem,

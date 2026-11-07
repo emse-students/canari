@@ -53,7 +53,9 @@ fn refused(reason: &str) -> serde_json::Value {
 /// it: can a LATER state of this group read the same bytes?
 ///
 /// `mls-refused` - perhaps: the frame names an epoch ahead of ours (`SenderRatchetGap` carries the
-/// gap fast-fail), or nothing classified it. The commit catch-up and the worker are answers to that.
+/// gap fast-fail; on the direct path that case is read from the header first and answered
+/// `kind: EpochAhead` without asking MLS, see `MlsManager::frame_epoch_ahead`), or nothing
+/// classified it. The commit catch-up and the worker are answers to that.
 ///
 /// `mls-refused-for-good` - no: the frame was refused at an epoch this device already holds, so
 /// applying commits builds the NEXT epoch and leaves this one's secrets exactly as they were. It
@@ -112,12 +114,30 @@ pub fn decode_commits_b64_json(json: &str) -> Vec<Vec<u8>> {
 /// ciphertext (`ciphertext||tag`) and 12-byte nonce; the raw 32-byte epoch key is looked up natively
 /// so the plaintext never transits Google/FCM. The decrypted bytes are the same encoded AppMessage
 /// proto as MLS, so `extract_full_message_info` parses them identically.
+///
+/// TEST-ONLY since 2026-11-04: the production path is [`open_graine_push`], which opens with
+/// [`open_channel_ciphertext`] and names WHICH step failed; this keeps the plain "opened and
+/// renderable, or nothing" shape the cross-version push tests pin the cipher and the proto with.
+#[cfg(test)]
 pub fn decrypt_channel_message(
     raw_key: &[u8],
     nonce: &[u8],
     ciphertext: &[u8],
     language: PushLanguage,
 ) -> Option<serde_json::Value> {
+    let plaintext = open_channel_ciphertext(raw_key, nonce, ciphertext)?;
+    let info = extract_full_message_info(&plaintext, language);
+    if info["ok"].as_bool().unwrap_or(false) {
+        Some(info)
+    } else {
+        None
+    }
+}
+
+/// AES-256-GCM-opens a salon ciphertext (`ciphertext||tag`) - the one cipher step of the v1 half of
+/// [`open_graine_push`] (and of the test-only `decrypt_channel_message`), which tells the caller
+/// WHICH step failed. None, said at error, when the key or nonce is malformed or the tag does not verify.
+fn open_channel_ciphertext(raw_key: &[u8], nonce: &[u8], ciphertext: &[u8]) -> Option<Vec<u8>> {
     use aes_gcm::aead::{Aead, KeyInit};
     use aes_gcm::{Aes256Gcm, Key, Nonce};
 
@@ -135,21 +155,13 @@ pub fn decrypt_channel_message(
         );
         return None;
     }
-
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(raw_key));
-    let plaintext = match cipher.decrypt(Nonce::from_slice(nonce), ciphertext) {
-        Ok(p) => p,
+    match cipher.decrypt(Nonce::from_slice(nonce), ciphertext) {
+        Ok(p) => Some(p),
         Err(e) => {
             log::error!("[ChannelBG] AES-GCM decrypt failed: {e}");
-            return None;
+            None
         }
-    };
-
-    let info = extract_full_message_info(&plaintext, language);
-    if info["ok"].as_bool().unwrap_or(false) {
-        Some(info)
-    } else {
-        None
     }
 }
 
@@ -169,8 +181,8 @@ pub struct GrainePush<'a> {
     pub signature_b64: &'a str,
 }
 
-/// Opens a salon push against the seed mirror, and returns the metadata JSON of
-/// [`decrypt_channel_message`] or a `refused` with its reason. An opened answer carries
+/// Opens a salon push against the seed mirror, and returns the message metadata JSON of
+/// `extract_full_message_info` or a `refused` with its reason. An opened answer carries
 /// `authorProven`: `true` under a v2 session (minter and signature checked), `false` under v1, whose
 /// rows carry no author proof - the one fact a banner needs before it names the push's `senderId`.
 ///
@@ -298,7 +310,20 @@ pub fn open_graine_push(
             "[GraineBG] v2 row of session {} opened and is not renderable",
             push.session_id
         );
-        refused("plaintext-not-renderable")
+        unrenderable_salon_row(&info)
+    }
+}
+
+/// The refusal an OPENED salon row with nothing to draw becomes - a silent token when the row is
+/// deliberately never news (a withdrawn reaction, an event silenced by name), so the push posts
+/// nothing; `plaintext-not-renderable` otherwise, which the push draws as the generic line and
+/// reports (`libs/contracts/blind-banner-terms.json`, `silent` and `refused`).
+fn unrenderable_salon_row(info: &serde_json::Value) -> serde_json::Value {
+    use super::proto_fields::{KIND_REACTION_WITHDRAWN, KIND_SILENT_EVENT};
+    match info["kind"].as_str() {
+        Some(KIND_REACTION_WITHDRAWN) => refused("reaction-withdrawn"),
+        Some(KIND_SILENT_EVENT) => refused("silent-event"),
+        _ => refused("plaintext-not-renderable"),
     }
 }
 
@@ -321,16 +346,24 @@ fn open_graine_push_v1(
             return refused("graine-open-failed");
         }
     };
+    // TWO DIFFERENT FAILURES, NAMED APART (2026-11-04): a ciphertext the key does not open is
+    // `graine-open-failed`; a row that opened and has nothing to draw is the v2 half's token. Both
+    // used to read `graine-open-failed`, so a withdrawn reaction looked like a broken seed.
+    let Some(plaintext) = open_channel_ciphertext(&key, nonce, ciphertext) else {
+        return refused("graine-open-failed");
+    };
+    let mut info = extract_full_message_info(&plaintext, language);
+    if !info["ok"].as_bool().unwrap_or(false) {
+        log::debug!(
+            "[GraineBG] v1 row of session {} opened and is not renderable",
+            push.session_id
+        );
+        return unrenderable_salon_row(&info);
+    }
     // A v1 row opens WHOEVER the push names, so the answer says the author is NOT proven: a banner
     // shows the text and names nobody (`ChannelBannerAuthor`) - the server's `senderId` is a claim.
-    decrypt_channel_message(&key, nonce, ciphertext, language)
-        .map(|mut info| {
-            if info["ok"].as_bool().unwrap_or(false) {
-                info["authorProven"] = serde_json::Value::Bool(false);
-            }
-            info
-        })
-        .unwrap_or_else(|| refused("graine-open-failed"))
+    info["authorProven"] = serde_json::Value::Bool(false);
+    info
 }
 
 /// Decrypts an end-to-end-encrypted media blob (AES-256-GCM) for a notification thumbnail (WP-XP-3).
@@ -1346,12 +1379,36 @@ fn with_owner_alerts(
     answer
 }
 
+/// The `kind` a refusal carries when the frame names an epoch AHEAD of the stored state - not a
+/// `DecryptErrorKind`, because MLS is never asked: see `MlsManager::frame_epoch_ahead`.
+const EPOCH_AHEAD_KIND: &str = "EpochAhead";
+
 /// The body of [`decrypt_push_message_with_key`] once the state is loaded.
 fn decrypt_loaded(
     manager: &mut MlsManager,
     frame: &PushFrame<'_>,
     language: PushLanguage,
 ) -> serde_json::Value {
+    // NOT A FAILURE, AND IT USED TO BE SAID AS ONE. This path never writes `mls.bin` (the foreground
+    // is its single writer), so after ANY commit every push of that group is ahead of the stored
+    // state until the app drains, and the native commit catch-up is the designed answer
+    // (`PushRecoveryLadder`). It used to learn that from an MLS refusal: an ERROR here and a WARN
+    // claiming a "resync" this path never runs, 13 times on a Mi 9T reading of 2026-11-05 while
+    // every banner drew its text. An evicted group's frame is not "ahead" (`frame_epoch_ahead`):
+    // MLS names it `Evicted`, refused for good.
+    if let Some((msg_epoch, held_epoch)) =
+        manager.frame_epoch_ahead(frame.group_id, frame.ciphertext)
+    {
+        log::info!(
+            "[PushBG] key-based: frame of {} at epoch {msg_epoch} is ahead of the stored state \
+             (epoch {held_epoch}) - a commit the foreground has not merged yet; the commit catch-up \
+             reads it",
+            frame.group_id.get(..8).unwrap_or(frame.group_id)
+        );
+        let mut out = refused("mls-refused");
+        out["kind"] = serde_json::Value::String(EPOCH_AHEAD_KIND.to_string());
+        return out;
+    }
     let app = match manager.process_incoming_message_with_sender(frame.group_id, frame.ciphertext) {
         Ok(Some(app)) => app,
         Ok(None) => {
@@ -2029,6 +2086,8 @@ mod tests {
             PushLanguage::French,
         );
         assert_eq!(direct["reason"], "mls-refused");
+        // Read from the header, never learnt from an MLS refusal: the catch-up is owed, nothing failed.
+        assert_eq!(direct["kind"], EPOCH_AHEAD_KIND);
 
         let info = decrypt_push_message_with_commits_with_key(
             &bob_behind,
@@ -2053,8 +2112,151 @@ mod tests {
         assert_eq!(seeds[0]["seedB64"], STANDARD.encode(seed));
     }
 
+    /// Bob's state one commit behind alice, and a frame alice sealed at the epoch that commit made.
+    fn frame_one_commit_ahead(tag: &str, seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>, String) {
+        let (mut alice, bob, group_id) = joined_pair(tag);
+        let key = decode_base64_to_32_bytes(&key_b64(seed)).expect("key");
+        let bob_behind = bob.save_encrypted_with_key(&key).expect("encrypt bob");
+        let carol = MlsManager::load_or_create(&format!("{tag}-carol"), "dev-c", None)
+            .expect("carol load_or_create");
+        let kp = carol.generate_key_package().expect("carol key package");
+        let (commit, _welcome, _added, _skipped) = alice
+            .add_members_bulk(&group_id, &[&kp])
+            .expect("add carol");
+        alice
+            .merge_pending_commit_for(&group_id)
+            .expect("merge add");
+        let frame = alice
+            .send_message(&group_id, b"ahead")
+            .expect("alice sends");
+        (bob_behind, commit, frame, group_id)
+    }
+
+    /// The header check answers only for a group this device is still IN: a removed device's
+    /// frames are ahead by construction, and they are `Evicted` - refused for good, no catch-up -
+    /// never `EpochAhead` (review of #3042).
+    #[test]
+    fn a_frame_ahead_for_a_group_this_device_was_evicted_from_is_refused_for_good() {
+        let _fg = quiet_foreground();
+        let (mut alice, mut bob, group_id) = joined_pair("evicted-ahead");
+        let (remove, _info) = alice
+            .remove_members_for_devices(&group_id, &["evicted-ahead-bob:dev-b"])
+            .expect("remove bob");
+        alice
+            .merge_pending_commit_for(&group_id)
+            .expect("merge remove");
+        bob.process_incoming_message(&group_id, &remove)
+            .expect("bob applies his removal");
+        assert!(!bob
+            .is_group_active(&group_id)
+            .expect("bob still holds the group"));
+        // Alice moves on: another commit, then a frame at an epoch bob never reached.
+        let carol = MlsManager::load_or_create("evicted-ahead-carol", "dev-c", None).unwrap();
+        alice
+            .add_members_bulk(&group_id, &[&carol.generate_key_package().unwrap()])
+            .expect("add carol");
+        alice
+            .merge_pending_commit_for(&group_id)
+            .expect("merge add");
+        let frame = alice
+            .send_message(&group_id, b"after")
+            .expect("alice sends");
+        assert!(
+            MlsManager::parse_message_epoch(&frame).unwrap()
+                > bob.get_epoch(&group_id).expect("bob epoch")
+        );
+        assert_eq!(bob.frame_epoch_ahead(&group_id, &frame), None);
+
+        let key = decode_base64_to_32_bytes(&key_b64(61)).expect("key");
+        let bob_state = bob.save_encrypted_with_key(&key).expect("encrypt bob");
+        let out = decrypt_push_message_with_key(
+            &bob_state,
+            &key_b64(61),
+            "evicted-ahead-bob",
+            "dev-b",
+            &PushFrame {
+                group_id: &group_id,
+                sender_id: "evicted-ahead-alice",
+                ciphertext: &frame,
+            },
+            PushLanguage::French,
+        );
+        assert_eq!(out["reason"], "mls-refused-for-good", "{out}");
+        assert_eq!(out["kind"], "Evicted", "{out}");
+    }
+
+    /// A gap the catch-up could NOT close (the commits it was handed do not reach the frame) is a
+    /// defect, and keeps MLS's own classification and its ERROR - never the designed `EpochAhead`.
+    #[test]
+    fn a_gap_left_after_the_catch_up_keeps_its_mls_classification() {
+        let _fg = quiet_foreground();
+        let (bob_behind, commit, frame, group_id) = frame_one_commit_ahead("short-catchup", 62);
+        let push = PushFrame {
+            group_id: &group_id,
+            sender_id: "short-catchup-alice",
+            ciphertext: &frame,
+        };
+        let direct = decrypt_push_message_with_key(
+            &bob_behind,
+            &key_b64(62),
+            "short-catchup-bob",
+            "dev-b",
+            &push,
+            PushLanguage::French,
+        );
+        assert_eq!(direct["kind"], EPOCH_AHEAD_KIND, "{direct}");
+        let short = decrypt_push_message_with_commits_with_key(
+            &bob_behind,
+            &key_b64(62),
+            "short-catchup-bob",
+            "dev-b",
+            &[],
+            &push,
+            PushLanguage::French,
+        );
+        assert_eq!(short["reason"], "mls-refused", "{short}");
+        assert_eq!(short["kind"], "SenderRatchetGap", "{short}");
+        // And the commit the catch-up was owed does close it.
+        let full = decrypt_push_message_with_commits_with_key(
+            &bob_behind,
+            &key_b64(62),
+            "short-catchup-bob",
+            "dev-b",
+            &[commit],
+            &push,
+            PushLanguage::French,
+        );
+        assert_ne!(full["kind"], "SenderRatchetGap", "{full}");
+    }
+
+    /// A COMMIT ahead of the stored state (a PublicMessage) is read from its header the same way.
+    #[test]
+    fn a_commit_ahead_of_the_stored_state_is_read_from_its_header() {
+        let (mut alice, bob, group_id) = joined_pair("commit-ahead");
+        let carol = MlsManager::load_or_create("commit-ahead-carol", "dev-c", None).unwrap();
+        alice
+            .add_members_bulk(&group_id, &[&carol.generate_key_package().unwrap()])
+            .expect("add carol");
+        alice
+            .merge_pending_commit_for(&group_id)
+            .expect("merge add carol");
+        let dave = MlsManager::load_or_create("commit-ahead-dave", "dev-d", None).unwrap();
+        let (second, _w, _a, _s) = alice
+            .add_members_bulk(&group_id, &[&dave.generate_key_package().unwrap()])
+            .expect("add dave");
+        let held = bob.get_epoch(&group_id).expect("bob epoch");
+        assert_eq!(
+            bob.frame_epoch_ahead(&group_id, &second),
+            Some((held + 1, held)),
+            "a commit built on an epoch bob never reached"
+        );
+    }
+
     /// Alice seals `frame` for the group; bob's saved state is what the push path loads.
     fn alice_frame_for_bob(tag: &str, seed: u8, frame: &[u8]) -> (Vec<u8>, Vec<u8>, String) {
+        // It sends, so it holds the serialiser like every sender here: without it, a parallel
+        // `cargo test` failed it `foreground active` (2026-11-06).
+        let _quiet = quiet_foreground();
         let (alice, bob, group_id) = joined_pair(tag);
         let key = decode_base64_to_32_bytes(&key_b64(seed)).expect("key");
         let alice_state = alice.save_encrypted_with_key(&key).expect("encrypt alice");

@@ -6,7 +6,7 @@ vi.mock('$lib/stores/auth', () => ({ getToken: async () => 'tok' }));
 vi.mock('$lib/utils/apiUrl', () => ({ socialUrl: () => 'http://social' }));
 
 import { refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
-import { getForms, deleteForm, listPendingCashSubmissions, submitForm } from './api';
+import { getForms, deleteForm, listPendingCashSubmissions, submitForm, updateForm } from './api';
 import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
 import { formatAmount } from './fillAnswers';
 import { m } from '$lib/paraglide/messages';
@@ -36,6 +36,17 @@ describe('every refused forms call is typed at the throw', () => {
     const err = await getForms().catch((e) => e);
     expect(refusalStatus(err)).toBe(403);
     expect(refusalCode(err)).toBeNull();
+  });
+
+  it('carries the question a refused save names, and none when the body names none', async () => {
+    apiFetch.mockResolvedValue(
+      json(400, { code: 'PRODUCT_GRID_TIER_INVALID', message: 'x', itemId: 'q-grid' })
+    );
+    const err = await updateForm('f1', {} as any).catch((e) => e);
+    expect(refusalCode(err)).toBe('PRODUCT_GRID_TIER_INVALID');
+    expect(err.itemId).toBe('q-grid');
+    apiFetch.mockResolvedValue(json(400, { code: 'OTHER', message: 'x' }));
+    expect((await updateForm('f1', {} as any).catch((e) => e)).itemId).toBeNull();
   });
 
   it('keeps a status for a list read refused with a 5xx', async () => {

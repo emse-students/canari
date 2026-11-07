@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { opensAsSheet } from './floatingSurface';
   import type { Snippet } from 'svelte';
   import { tick } from 'svelte';
   import { CalendarDays, ChevronLeft, ChevronRight } from '@lucide/svelte';
@@ -81,8 +82,6 @@
     trigger,
   }: Props = $props();
 
-  const SHEET_QUERY = '(width < 40rem)';
-
   /** A date-only value reads as that day's midnight, so every helper below keeps one format. */
   const asDateTime = (v: string) => (dateOnly && v ? `${v}T00:00` : v);
   const min = $derived(asDateTime(minProp));
@@ -137,7 +136,7 @@
     if (disabled) return;
     draft = startingPoint();
     view = { year: draft.year, month: draft.month };
-    asSheet = window.matchMedia(SHEET_QUERY).matches;
+    asSheet = opensAsSheet();
     open = true;
     Log.d(
       'DATETIME',

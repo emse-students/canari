@@ -320,6 +320,8 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/compose-logging.test.sh
 	@bash .github/scripts/tests/log-retention.test.sh
 	@bash .github/scripts/tests/resolver-report.test.sh
+	@bash .github/scripts/tests/upstream-reachability-report.test.sh
+	@bash .github/scripts/tests/upstream-issues.test.sh
 	@bash .github/scripts/tests/local-copy-guards.test.sh
 	@bash .github/scripts/tests/dev-reset-guards.test.sh
 	@bun test ./tools/dev-seed/
@@ -328,6 +330,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/deploy-env.test.sh
 	@bash .github/scripts/tests/env-from-prod.test.sh
 	@bash .github/scripts/tests/deploy-migrations.test.sh
+	@bun .github/scripts/tests/migration-numbers.test.mjs
 	@bash .github/scripts/tests/deploy-registry-retry.test.sh
 	@bash .github/scripts/tests/deploy-replace.test.sh
 	@bash .github/scripts/tests/deploy-rolling.test.sh
@@ -391,6 +394,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/held-blueprints.test.sh
 	@bash .github/scripts/tests/bench-observables.test.sh
 	@bash .github/scripts/tests/ios-extensions.test.sh
+	@bun .github/scripts/tests/ios-compile-job.test.mjs
 	@bash .github/scripts/swift-syntax.sh
 	@bash .github/scripts/tests/swift-syntax.test.sh
 	@bun tools/app-store/submit.test.mjs
@@ -399,6 +403,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun tools/test-inventory/lib.test.mjs
 	@bun test tools/store-listings
 	@bun test tools/call-audio-fidelity
+	@bun test tools/video-av-sync
 
 # THE 158 SCRIPTS THAT PRODUCE EVERY CAMPAIGN VERDICT ARE LINTED HERE, and were linted by nothing at
 # all until 2026-09-07. `bun run lint` is scoped to `frontend/`; this recipe ran the self-tests and

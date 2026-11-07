@@ -186,6 +186,24 @@ export const DECLARED_GROUPS = [
     why: 'one question - "what did this person answer" - asked by the responses table and by the XLSX export an hour later, and those two must not be able to disagree. No shared TS package, and the file declares the minimal question shape itself rather than the model on either side, which is what lets the copies be identical.',
     files: ['frontend/src/lib/forms/answerText.ts', 'apps/social-service/src/forms/answer-text.ts'],
   },
+  {
+    what: 'which form options rule each other out (anonymous, public, payment, grant, audience, file) and the tier a guest pays',
+    compare: 'exact',
+    why: 'the editor shuts a switch and the server refuses a save by the SAME pairs, so the answer cannot depend on the order the switches were clicked (owner, 2026-11-06). No shared TS package, for the reason the answer reading above gives; the file imports nothing. Its spec sits beside the frontend copy.',
+    files: [
+      'frontend/src/lib/forms/formOptionRules.ts',
+      'apps/social-service/src/forms/form-option-rules.ts',
+    ],
+  },
+  {
+    what: 'the priced grid (`product_grid`): its stored shape, its refusal codes, the rule a definition and an answer obey, and how a quantity becomes a priced line',
+    compare: 'exact',
+    why: 'the editor refuses what the save refuses, and the fill page totals what the submit charges, so both must read the grid by one rule; the server still recomputes every amount. No shared TS package, and the file imports nothing. Its spec sits beside the social-service copy.',
+    files: [
+      'apps/social-service/src/forms/product-grid-contract.ts',
+      'frontend/src/lib/forms/productGridContract.ts',
+    ],
+  },
 ];
 
 /**

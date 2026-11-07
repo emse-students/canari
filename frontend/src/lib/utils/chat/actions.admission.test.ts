@@ -29,6 +29,7 @@ import {
 } from './joinRequests.svelte';
 import { resetWelcomeSent } from './welcomeSent';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
+import { devicePackages } from '$lib/mls-client/test/fixtures/devicePackages';
 
 vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
@@ -75,9 +76,9 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
           { userId: 'peer' },
           { userId: 'stranger', awaitingAdmission: true, askId: 'ask-stranger' },
         ]),
-      fetchUserDevices: vi
-        .fn()
-        .mockResolvedValue([{ deviceId: 'dev-1', keyPackage: new Uint8Array([7]) }]),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'dev-1', keyPackage: new Uint8Array([7]) },
+      ]),
       addMember: vi
         .fn()
         .mockResolvedValue({ welcome: new Uint8Array([1]), ratchetTree: new Uint8Array([2]) }),
@@ -345,7 +346,7 @@ describe('processPendingInvitations - a new user is never added automatically', 
       .mockResolvedValue([
         { id: 'i1', userId, deviceId, groupId: 'g1', status: 'pending', awaitingAdmission },
       ]),
-    fetchUserDevices: vi.fn().mockResolvedValue([{ deviceId, keyPackage: new Uint8Array([1]) }]),
+    fetchDeviceKeyPackage: devicePackages([{ deviceId, keyPackage: new Uint8Array([1]) }]),
   });
 
   const sweep = (
@@ -465,7 +466,7 @@ describe('processPendingInvitations - a new user is never added automatically', 
         { id: 'i1', userId: 'peer', deviceId: 'phone', groupId: 'g1', status: 'pending' },
         { id: 'i2', userId: 'peer', deviceId: 'laptop', groupId: 'g1', status: 'pending' },
       ]),
-      fetchUserDevices: vi.fn().mockResolvedValue([
+      fetchDeviceKeyPackage: devicePackages([
         { deviceId: 'phone', keyPackage: new Uint8Array([1]) },
         { deviceId: 'laptop', keyPackage: new Uint8Array([3]) },
       ]),
@@ -548,13 +549,10 @@ describe('processPendingInvitations - a new user is never added automatically', 
         { id: 'i1', userId: 'peer', deviceId: 'new-phone', groupId: 'g1', status: 'pending' },
         { id: 'i2', userId: 'stranger', deviceId: 's1', groupId: 'g1', status: 'pending' },
       ]),
-      fetchUserDevices: vi
-        .fn()
-        .mockImplementation(async (userId: string) =>
-          userId === 'peer'
-            ? [{ deviceId: 'new-phone', keyPackage: new Uint8Array([1]) }]
-            : [{ deviceId: 's1', keyPackage: new Uint8Array([3]) }]
-        ),
+      fetchDeviceKeyPackage: devicePackages([
+        { deviceId: 'new-phone', keyPackage: new Uint8Array([1]) },
+        { deviceId: 's1', keyPackage: new Uint8Array([3]) },
+      ]),
       getGroupMemberIdentities: vi.fn().mockResolvedValue(['self:self-device', 'peer:old-phone']),
     });
     await sweep(mlsService);

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { opensAsSheet } from './floatingSurface';
   import type { Snippet } from 'svelte';
   import { tick } from 'svelte';
   import { Check, ChevronDown } from '@lucide/svelte';
@@ -83,9 +84,6 @@
         : INLINE_TRIGGER)
   );
 
-  /** The width under which the picker is a bottom sheet - `phoneFullScreen`'s breakpoint. */
-  const SHEET_QUERY = '(width < 40rem)';
-
   let open = $state(false);
   let asSheet = $state(false);
   let triggerEl: HTMLButtonElement | null = $state(null);
@@ -102,7 +100,7 @@
 
   async function openPicker() {
     if (disabled) return;
-    asSheet = window.matchMedia(SHEET_QUERY).matches;
+    asSheet = opensAsSheet();
     open = true;
     Log.d(
       'PICKER',

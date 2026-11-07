@@ -3,6 +3,15 @@ import SwiftRs
 import Tauri
 import UIKit
 import WebKit
+import os
+
+/// The plugin's native log. A Swift `NSLog` reaches the unified log WHOLE as `<private>` on a store
+/// build, literal text included (the tab-bar plugin's line, `1.6.4-alpha.4`; the notification
+/// extension's, `1.6.5-alpha.1`); a `Logger`'s literal text is public, and each interpolation names
+/// its privacy (`nativeLogContent.test.ts` refuses a Swift `NSLog` anywhere the app compiles).
+enum CustomTabsLog {
+  static let log = Logger(subsystem: "fr.emse.canari", category: "customtabs")
+}
 
 /// iOS counterpart to the Android Chrome Custom Tab (WP-OIDC-TAB-1): presents the OIDC login
 /// page in an ASWebAuthenticationSession instead of handing it off to a full Safari app-switch
@@ -52,19 +61,19 @@ class CustomTabsPlugin: Plugin, ASWebAuthenticationPresentationContextProviding 
 
     // The URL is never logged: it carries the OIDC state and the PKCE challenge.
     guard let url = URL(string: args.url) else {
-      NSLog("[CustomTabsPlugin] openCustomTab: the URL does not parse - refused")
+      CustomTabsLog.log.error("[CustomTabsPlugin] openCustomTab: the URL does not parse - refused")
       invoke.reject("Invalid URL")
       return
     }
 
     DispatchQueue.main.async {
-      NSLog("[CustomTabsPlugin] openCustomTab: presenting a session")
+      CustomTabsLog.log.notice("[CustomTabsPlugin] openCustomTab: presenting a session")
       // A sheet already up belongs to an earlier invoke (a sign-out's end-session the user never
       // closed, then a sign-in). Its invoke is answered `cancelled` NOW and its session cancelled,
       // so no caller is left waiting on a sheet that is gone; its own completion, if UIKit still
       // runs it, finds it is no longer pending and settles nothing.
       if let earlier = self.pending {
-        NSLog("[CustomTabsPlugin] openCustomTab: an earlier session is superseded")
+        CustomTabsLog.log.notice("[CustomTabsPlugin] openCustomTab: an earlier session is superseded")
         self.pending = nil
         earlier.invoke.resolve(["outcome": "cancelled"])
         earlier.session.cancel()
@@ -80,7 +89,7 @@ class CustomTabsPlugin: Plugin, ASWebAuthenticationPresentationContextProviding 
         DispatchQueue.main.async {
           guard let self, let created, let current = self.pending, current.session === created
           else {
-            NSLog("[CustomTabsPlugin] session ended after it was superseded - nothing to settle")
+            CustomTabsLog.log.notice("[CustomTabsPlugin] session ended after it was superseded - nothing to settle")
             return
           }
           self.pending = nil
@@ -97,7 +106,7 @@ class CustomTabsPlugin: Plugin, ASWebAuthenticationPresentationContextProviding 
       guard session.start() else {
         // `start()` refuses when there is no window to present from or a session is already
         // presented: no sheet ever appeared, so the caller must hear it at once.
-        NSLog("[CustomTabsPlugin] openCustomTab: the session refused to start")
+        CustomTabsLog.log.error("[CustomTabsPlugin] openCustomTab: the session refused to start")
         self.pending = nil
         invoke.reject("ASWebAuthenticationSession refused to start")
         return
@@ -108,16 +117,16 @@ class CustomTabsPlugin: Plugin, ASWebAuthenticationPresentationContextProviding 
   /// Answers the invoke for a session that ended: the outcome the page decides its button from.
   private func settle(_ invoke: Invoke, callbackURL: URL?, error: Error?) {
     if let callbackURL, error == nil {
-      NSLog("[CustomTabsPlugin] session completed - re-dispatching the callback to the app scheme")
+      CustomTabsLog.log.notice("[CustomTabsPlugin] session completed - re-dispatching the callback to the app scheme")
       // `completed` is answered only once the re-dispatch is KNOWN to have reached the app: the
       // page keeps its button busy on `completed`, waiting for `/auth/callback`, so a re-dispatch
       // that failed and was answered `completed` would be the stuck "Redirection..." again.
       UIApplication.shared.open(callbackURL, options: [:]) { opened in
         if opened {
-          NSLog("[CustomTabsPlugin] callback re-dispatched to the app scheme")
+          CustomTabsLog.log.notice("[CustomTabsPlugin] callback re-dispatched to the app scheme")
           invoke.resolve(["outcome": "completed"])
         } else {
-          NSLog(
+          CustomTabsLog.log.error(
             "[CustomTabsPlugin] ERROR the callback could not be re-dispatched to the app scheme - the sign-in is lost"
           )
           invoke.reject("the callback could not be re-dispatched to the app scheme")
@@ -128,16 +137,17 @@ class CustomTabsPlugin: Plugin, ASWebAuthenticationPresentationContextProviding 
     if let authError = error as? ASWebAuthenticationSessionError,
       authError.code == .canceledLogin
     {
-      NSLog("[CustomTabsPlugin] session cancelled by the user")
+      CustomTabsLog.log.notice("[CustomTabsPlugin] session cancelled by the user")
       invoke.resolve(["outcome": "cancelled"])
       return
     }
     // Neither a callback nor the user's cancellation: a failure, said as one (the error's domain
     // and code only - its description may quote the URL).
     let nsError = error.map { $0 as NSError }
-    NSLog(
-      "[CustomTabsPlugin] session FAILED: domain=%@ code=%ld",
-      nsError?.domain ?? "none (no callback and no error)", nsError?.code ?? 0)
+    let domain = nsError?.domain ?? "none (no callback and no error)"
+    let code = nsError?.code ?? 0
+    CustomTabsLog.log.error(
+      "[CustomTabsPlugin] session FAILED: domain=\(domain, privacy: .public) code=\(code, privacy: .public)")
     invoke.reject(
       "ASWebAuthenticationSession failed: \(nsError?.domain ?? "no callback") \(nsError?.code ?? 0)"
     )
@@ -153,13 +163,13 @@ class CustomTabsPlugin: Plugin, ASWebAuthenticationPresentationContextProviding 
     }
     // A FALLBACK IS A SIGNAL: no key window means the app is presenting from a state the primary
     // path does not expect (backgrounded, mid scene change). Said at a level that accuses.
-    NSLog("[CustomTabsPlugin] ERROR FALLBACK presentationAnchor: no key window - using a scene's first window")
+    CustomTabsLog.log.error("[CustomTabsPlugin] ERROR FALLBACK presentationAnchor: no key window - using a scene's first window")
     if let window = UIApplication.shared.connectedScenes
       .compactMap({ ($0 as? UIWindowScene)?.windows.first }).first
     {
       return window
     }
-    NSLog("[CustomTabsPlugin] ERROR FALLBACK presentationAnchor: no window at all - an empty anchor")
+    CustomTabsLog.log.error("[CustomTabsPlugin] ERROR FALLBACK presentationAnchor: no window at all - an empty anchor")
     return ASPresentationAnchor()
   }
 }

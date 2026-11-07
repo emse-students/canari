@@ -2,9 +2,20 @@ import CallKit
 import Security
 import UIKit
 import UserNotifications
+import os
 
-/// What an `NSLog` line says of an error: its domain and code, never its text - a
-/// `localizedDescription` often quotes the file it failed on, and NSLog redacts nothing. The
+/// The extension's native log. A Swift `NSLog` reaches the unified log WHOLE as `<private>` on a
+/// store build (the tab-bar plugin's line, `1.6.4-alpha.4`; this extension's, `1.6.5-alpha.1`): the
+/// generic banner of a killed-app DM came with no readable reason. A `Logger`'s literal text is
+/// public, and each interpolation here is marked public one by one - ids and id prefixes, counts,
+/// states, outcome reasons, error domains and codes. Never a message text, a name or a key
+/// (`nativeLogContent.test.ts` refuses one, and refuses any `NSLog` in this file).
+enum NseLog {
+  static let log = Logger(subsystem: "fr.emse.canari", category: "nse")
+}
+
+/// What a log line says of an error: its domain and code, never its text - a
+/// `localizedDescription` often quotes the file it failed on, and it is marked public here. The
 /// Objective-C twin is `CanariErrorReason` (`canari_push.h`); `nativeLogContent.test.ts` holds both.
 private func errorReason(_ error: Error) -> String {
   let failure = error as NSError
@@ -23,8 +34,10 @@ private func errorReason(_ error: Error) -> String {
 /// (`canari_push.mm` `CanariHandleMlsMessage` / `CanariHandleChannelMessage`): it
 /// reuses the exact same Rust decrypt FFI (`canari_native_*`, linked from
 /// libapp.a) but reads the MLS state, push context and channel keys from the
-/// shared App Group container (`group.fr.emse.canari`) that the app mirrors into
-/// on every foreground/background transition. All decryption is read-only - the
+/// shared App Group container (`group.fr.emse.canari`). The app's copy of `mls.bin`
+/// follows EVERY write of its state (`write_slot_mls_bin`, `concurrency.rs`) - not a
+/// lifecycle event, which a process killed in the foreground never reaches; the rest
+/// is mirrored at each activation. All decryption is read-only - the
 /// extension never writes mls.bin. This is why the app's `g_mlsStateLock`
 /// (canari_push.mm) never needs a cross-process peer here: see the doc comment at
 /// its declaration for the full argument.
@@ -116,7 +129,7 @@ class NotificationService: UNNotificationServiceExtension {
 
     let userInfo = request.content.userInfo
     let type = Self.string(userInfo["type"]) ?? "message"
-    NSLog("[CanariNSE] didReceive type=\(type)")
+    NseLog.log.notice("[CanariNSE] didReceive type=\(type, privacy: .public)")
     dispatch(type: type, userInfo: userInfo, content: content)
   }
 
@@ -181,7 +194,7 @@ class NotificationService: UNNotificationServiceExtension {
       content.interruptionLevel = .timeSensitive
     }
     if groupId.isEmpty {
-      NSLog("[CanariNSE] call_ring with no groupId - banner kept without a deep link")
+      NseLog.log.notice("[CanariNSE] call_ring with no groupId - banner kept without a deep link")
     } else {
       content.threadIdentifier = groupId
       if let link = Self.chatLink(groupId) { content.userInfo["deepLink"] = link }
@@ -203,7 +216,7 @@ class NotificationService: UNNotificationServiceExtension {
     content: UNMutableNotificationContent
   ) {
     guard let key = Self.nonEmpty(Self.string(userInfo["contentKey"])) else {
-      NSLog("[CanariNSE] server push with no contentKey - keeping its own wording")
+      NseLog.log.notice("[CanariNSE] server push with no contentKey - keeping its own wording")
       return
     }
     let locale = loadPushContext()?.locale
@@ -368,7 +381,7 @@ class NotificationService: UNNotificationServiceExtension {
         Self.localizedFormat("notif.event.pending_coorganiser.body", arg, locale: locale)
       )
     default:
-      NSLog("[CanariNSE] unknown contentKey=\(key) - keeping the server's own wording")
+      NseLog.log.notice("[CanariNSE] unknown contentKey=\(key, privacy: .public) - keeping the server's own wording")
       composed = nil
     }
 
@@ -491,7 +504,7 @@ class NotificationService: UNNotificationServiceExtension {
   override func serviceExtensionTimeWillExpire() {
     // The OS is about to kill the extension: deliver whatever we have (decrypted if
     // we got there, otherwise the server fallback) rather than losing the notification.
-    NSLog("[CanariNSE] time expired - delivering best attempt")
+    NseLog.log.notice("[CanariNSE] time expired - delivering best attempt")
     // RECORDED BEFORE THE HANDOFF: iOS may end the process the moment the content is handed back.
     // The cause of an expiry is the stage the run reached, read by `end` under its own lock.
     trace?.end(outcome: "expired")
@@ -541,7 +554,7 @@ class NotificationService: UNNotificationServiceExtension {
     let up = CXCallObserver().calls.contains { !$0.hasEnded }
     guard up else { return }
     content.sound = nil
-    NSLog("[CanariNSE] a call is up - delivered without sound")
+    NseLog.log.notice("[CanariNSE] a call is up - delivered without sound")
   }
 
   /// HOW THE NOTIFICATION IS FILED, for the cross-client rig on a BENCH build only (observable O13,
@@ -561,8 +574,8 @@ class NotificationService: UNNotificationServiceExtension {
         @unknown default: level = "unknown(\(content.interruptionLevel.rawValue))"
         }
       }
-      NSLog(
-        "[CanariNSE] filed interruptionLevel=\(level) thread=\(content.threadIdentifier.prefix(8)) via=\(via)"
+      NseLog.log.notice(
+        "[CanariNSE] filed interruptionLevel=\(level, privacy: .public) thread=\(content.threadIdentifier.prefix(8), privacy: .public) via=\(via, privacy: .public)"
       )
     #endif
   }
@@ -577,7 +590,7 @@ class NotificationService: UNNotificationServiceExtension {
   /// length only, on a mismatch. Twin of `CanariChatLink` (canari_push.mm).
   static func chatLink(_ id: String, prefix: String = "") -> String? {
     guard isLinkId(id) else {
-      NSLog("[CanariNSE] chat link refused: the id is not an id (length=\(id.count))")
+      NseLog.log.notice("[CanariNSE] chat link refused: the id is not an id (length=\(id.count, privacy: .public))")
       return nil
     }
     return "fr.emse.canari://chat/\(prefix)\(id)"
@@ -586,8 +599,8 @@ class NotificationService: UNNotificationServiceExtension {
   // MARK: - Outcome log ------------------------------------------------------
 
   /// THE OUTCOME OF EVERY RUN, WHERE THE APP CAN READ IT (P1 of 2026-11-01: iPhone notifications
-  /// showing no content, and a user log that could say nothing about why). `NSLog` reaches only
-  /// Console.app on a tethered Mac; this writes into the App Group, and the app carries it into its
+  /// showing no content, and a user log that could say nothing about why). `NseLog` reaches only
+  /// Console.app or a syslog on a tethered device; this writes into the App Group, and the app carries it into its
   /// own log (`take_nse_outcomes`, `commands/nse_outcomes.rs` - the contract is written there).
   ///
   /// One line per notification: `decrypted`, `fallback` with its `cause`, `server-content`,
@@ -624,28 +637,19 @@ class NotificationService: UNNotificationServiceExtension {
       return kr == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
     }
 
-    /// This boot's `kern.bootsessionuuid`: a marker stamped with another boot's is a run that died
-    /// with that boot, whatever process holds its pid now. An IDENTITY, compared for equality - not
-    /// `kern.boottime`, which Darwin recomputes when the clock is stepped (NTP, a time zone or a
-    /// manual change), so a live run would read as another boot's and be reported `killed`. Nil when
-    /// the kernel does not answer, which only disables the boot proof (twin: `boot_session` in
-    /// `commands/nse_outcomes.rs`). READ ONCE PER PROCESS (a lazy, thread-safe `static let`): the
-    /// session cannot change under a running process, and every `mark` stamps it, so a kernel that
-    /// does not answer is said once rather than at every stage of every run.
-    static let bootSession: String? = {
-      var size = 0
-      guard sysctlbyname("kern.bootsessionuuid", nil, &size, nil, 0) == 0, size > 0 else {
-        NSLog("[CanariNSE] outcome: kern.bootsessionuuid unreadable errno=\(errno)")
-        return nil
-      }
-      var buffer = [CChar](repeating: 0, count: size + 1)
-      guard sysctlbyname("kern.bootsessionuuid", &buffer, &size, nil, 0) == 0 else {
-        NSLog("[CanariNSE] outcome: kern.bootsessionuuid unreadable errno=\(errno)")
-        return nil
-      }
-      let session = String(cString: buffer)
-      return session.isEmpty ? nil : session
-    }()
+    /// The device's continuous uptime (`mach_continuous_time`, ticks, sleep included), stamped into
+    /// every marker as `up`: the app's reader proves a marker of an EARLIER BOOT by finding its `up`
+    /// greater than its own, read after the marker - a clock that only moves forward within one boot
+    /// can only go back across a reboot. A one-sided proof, never a guess: an earlier boot's marker
+    /// stamped lower than the reader's uptime is left to the pid proof (twin: `continuous_ticks` in
+    /// `commands/nse_outcomes.rs`).
+    ///
+    /// NOT `kern.bootsessionuuid`, which this extension's sandbox refuses with `EPERM` at every launch
+    /// (iPhone 12, `v1.6.5-alpha.2`), so its boot proof never ran and the refusal was a line at every
+    /// cold start. NOT `kern.boottime`, which Darwin recomputes when the clock is stepped (NTP, a time
+    /// zone or a manual change), so a live run would read as another boot's and be reported `killed`.
+    /// The uptime is a clock read, not a sysctl the sandbox filters (owed: the bench reading).
+    static func uptimeTicks() -> UInt64 { mach_continuous_time() }
 
     /// One run's record: what it is, how far it got, and what it decided. EVERY mutable property is
     /// read and written under `lock`, because the expiry reads it from another thread while the
@@ -753,10 +757,13 @@ class NotificationService: UNNotificationServiceExtension {
           default: why = nil
           }
           let record = recordLocked(outcome: result, cause: why)
-          NSLog(
-            "[CanariNSE] outcome=\(result) cause=\(why ?? "-") stage=\(stageValue) peakMB=\(peakValue)")
+          // Copied out first: a `Logger` interpolation is an escaping autoclosure, which may not
+          // name `self`'s properties implicitly.
+          let (cause, stage, peak) = (why ?? "-", stageValue, peakValue)
+          NseLog.log.notice(
+            "[CanariNSE] outcome=\(result, privacy: .public) cause=\(cause, privacy: .public) stage=\(stage, privacy: .public) peakMB=\(peak, privacy: .public)")
           guard let dir = NotificationService.appGroupDir() else {
-            NSLog("[CanariNSE] outcome: App Group unavailable - not recorded")
+            NseLog.log.notice("[CanariNSE] outcome: App Group unavailable - not recorded")
             return
           }
           let marker = dir.appendingPathComponent(markerName)
@@ -768,19 +775,19 @@ class NotificationService: UNNotificationServiceExtension {
           // carrying an outcome, never a moment with neither. Both at once is one run, which the
           // reader settles by its (pid, at, n).
           guard let data = try? JSONSerialization.data(withJSONObject: record) else {
-            NSLog(
-              "[CanariNSE] outcome: ERROR not appended (\(appended.reason)) and not encoded for a done record"
+            NseLog.log.error(
+              "[CanariNSE] outcome: ERROR not appended (\(appended.reason, privacy: .public)) and not encoded for a done record"
             )
             return
           }
           do {
             try data.write(to: dir.appendingPathComponent(doneName), options: .atomic)
-            NSLog(
-              "[CanariNSE] outcome: not appended (\(appended.reason)) - left as a done record for the app to take"
+            NseLog.log.notice(
+              "[CanariNSE] outcome: not appended (\(appended.reason, privacy: .public)) - left as a done record for the app to take"
             )
           } catch {
-            NSLog(
-              "[CanariNSE] outcome: ERROR not appended (\(appended.reason)) and no done record: \(errorReason(error))"
+            NseLog.log.error(
+              "[CanariNSE] outcome: ERROR not appended (\(appended.reason, privacy: .public)) and no done record: \(errorReason(error), privacy: .public)"
             )
           }
         }
@@ -791,8 +798,8 @@ class NotificationService: UNNotificationServiceExtension {
       /// Removes the run's marker; already gone is the expected answer when nothing was ever written.
       private func removeMarker(_ marker: URL) {
         if unlink(marker.path) != 0, errno != ENOENT {
-          NSLog(
-            "[CanariNSE] outcome: ERROR in-flight marker NOT removed errno=\(errno) - the app may count this finished run killed"
+          NseLog.log.error(
+            "[CanariNSE] outcome: ERROR in-flight marker NOT removed errno=\(errno, privacy: .public) - the app may count this finished run killed"
           )
         }
       }
@@ -808,12 +815,12 @@ class NotificationService: UNNotificationServiceExtension {
       private func writeMarkerLocked() {
         guard !written, let dir = NotificationService.appGroupDir() else { return }
         var fields = recordLocked(outcome: nil, cause: nil)
-        if let session = NseOutcomeLog.bootSession { fields["boot"] = session }
+        fields["up"] = NSNumber(value: NseOutcomeLog.uptimeTicks())
         guard let data = try? JSONSerialization.data(withJSONObject: fields) else { return }
         do {
           try data.write(to: dir.appendingPathComponent(markerName), options: .atomic)
         } catch {
-          NSLog("[CanariNSE] outcome: in-flight marker not written: \(errorReason(error))")
+          NseLog.log.notice("[CanariNSE] outcome: in-flight marker not written: \(errorReason(error), privacy: .public)")
         }
       }
     }
@@ -891,7 +898,7 @@ class NotificationService: UNNotificationServiceExtension {
         let rotated = dir.appendingPathComponent(rotatedFile).path
         unlink(rotated)
         if rename(path, rotated) != 0 {
-          NSLog("[CanariNSE] outcome: rotation failed errno=\(errno)")
+          NseLog.log.notice("[CanariNSE] outcome: rotation failed errno=\(errno, privacy: .public)")
         }
       }
       let fd = open(path, O_WRONLY | O_APPEND | O_CREAT, 0o644)
@@ -957,7 +964,7 @@ class NotificationService: UNNotificationServiceExtension {
     let silent = Self.string(userInfo["silent"]) == "true"
     trace?.mark("wake-fetch")
     guard let ctx = loadPushContext() else {
-      NSLog("[CanariNSE] [PUSH_WAKE] ERROR push_context absent - the message cannot be fetched")
+      NseLog.log.error("[CanariNSE] [PUSH_WAKE] ERROR push_context absent - the message cannot be fetched")
       noteCause("wake-no-push-context")
       trace?.outcome = "fallback"
       applyWakeUnavailable(content: content, locale: nil)
@@ -965,7 +972,7 @@ class NotificationService: UNNotificationServiceExtension {
       return
     }
     guard !queuedMessageId.isEmpty else {
-      NSLog("[CanariNSE] [PUSH_WAKE] ERROR a wake push without queuedMessageId (server defect)")
+      NseLog.log.error("[CanariNSE] [PUSH_WAKE] ERROR a wake push without queuedMessageId (server defect)")
       noteCause("wake-no-id")
       trace?.outcome = "fallback"
       applyWakeUnavailable(content: content, locale: ctx.locale)
@@ -975,7 +982,7 @@ class NotificationService: UNNotificationServiceExtension {
     switch fetchWakeFrame(queuedMessageId: queuedMessageId, silent: silent, ctx: ctx) {
     case .frame(let fields):
       let type = fields["type"] ?? "message"
-      NSLog("[CanariNSE] [PUSH_WAKE] fetched type=\(type) - dispatched as the full push")
+      NseLog.log.notice("[CanariNSE] [PUSH_WAKE] fetched type=\(type, privacy: .public) - dispatched as the full push")
       // From here the run is the frame it fetched: `[NSE_OUTCOME]` keeps its message/channel split.
       trace?.rekind(type)
       var merged = userInfo
@@ -983,14 +990,14 @@ class NotificationService: UNNotificationServiceExtension {
       content.userInfo = merged
       dispatch(type: type, userInfo: merged, content: content)
     case .gone:
-      NSLog("[CanariNSE] [PUSH_WAKE] gone - drained or acknowledged since the push, filed passive")
+      NseLog.log.notice("[CanariNSE] [PUSH_WAKE] gone - drained or acknowledged since the push, filed passive")
       content.body = Self.localized("notif.wake.gone", locale: ctx.locale)
       content.sound = nil
       content.interruptionLevel = .passive
       trace?.outcome = "server-content"
       finish()
     case .failed(let stage):
-      NSLog("[CanariNSE] [PUSH_WAKE] ERROR fetch failed stage=\(stage) - drawn as not loaded")
+      NseLog.log.error("[CanariNSE] [PUSH_WAKE] ERROR fetch failed stage=\(stage, privacy: .public) - drawn as not loaded")
       noteCause("wake-\(stage)")
       trace?.outcome = "fallback"
       applyWakeUnavailable(content: content, locale: ctx.locale)
@@ -1023,7 +1030,7 @@ class NotificationService: UNNotificationServiceExtension {
       return .failed("transport")
     }
     guard status == 200 else {
-      NSLog("[CanariNSE] [PUSH_WAKE] ERROR status=\(status)")
+      NseLog.log.error("[CanariNSE] [PUSH_WAKE] ERROR status=\(status, privacy: .public)")
       return .failed(Self.wakeStatusToken(status))
     }
     guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -1066,7 +1073,7 @@ class NotificationService: UNNotificationServiceExtension {
 
     trace?.mark("push-context")
     guard let ctx = loadPushContext() else {
-      NSLog("[CanariNSE] push_context absent - fallback")
+      NseLog.log.notice("[CanariNSE] push_context absent - fallback")
       noteCause("no-push-context")
       trace?.outcome = "fallback"
       applyMessageContent(
@@ -1101,7 +1108,7 @@ class NotificationService: UNNotificationServiceExtension {
     // permission, the video rule and blocks. The NSE cannot drop a push (no filtering entitlement),
     // so both deliver blank; a control event that ended the call also clears its ring banner.
     if let call = decrypted, call.type == "call_invite" {
-      NSLog("[CanariNSE] call_invite over MLS: not a ring - delivered blank, the server's call_ring is the only one")
+      NseLog.log.notice("[CanariNSE] call_invite over MLS: not a ring - delivered blank, the server's call_ring is the only one")
       trace?.outcome = "call-blank"
       applyCallControlContent(content: content, callId: call.callId ?? "", ended: false)
       return
@@ -1161,13 +1168,13 @@ class NotificationService: UNNotificationServiceExtension {
       return LevelDecision(mentionsMe: mentionsMe, quiet: false)
     }
     if mentionsMe {
-      NSLog("[CanariNSE] [NOTIF] group=\(groupId.prefix(8)) level=mentions and it names me - raised")
+      NseLog.log.notice("[CanariNSE] [NOTIF] group=\(groupId.prefix(8), privacy: .public) level=mentions and it names me - raised")
       return LevelDecision(mentionsMe: true, quiet: false)
     }
     let why = mentioned == nil || me.isEmpty
       ? "the message could not be read - a mention is not proven"
       : "the message does not mention this account"
-    NSLog("[CanariNSE] [NOTIF] group=\(groupId.prefix(8)) level=mentions - kept passive: \(why)")
+    NseLog.log.notice("[CanariNSE] [NOTIF] group=\(groupId.prefix(8), privacy: .public) level=mentions - kept passive: \(why, privacy: .public)")
     return LevelDecision(mentionsMe: false, quiet: true)
   }
 
@@ -1181,7 +1188,7 @@ class NotificationService: UNNotificationServiceExtension {
   ) -> DecryptResult? {
     trace?.mark("load-state")
     guard let state = loadMlsState() else {
-      NSLog("[CanariNSE] decrypt ladder: MLS state absent group=\(groupId.prefix(8))")
+      NseLog.log.notice("[CanariNSE] decrypt ladder: MLS state absent group=\(groupId.prefix(8), privacy: .public)")
       noteCause("state-absent")
       return nil
     }
@@ -1201,19 +1208,28 @@ class NotificationService: UNNotificationServiceExtension {
     // REFUSED AT AN EPOCH THIS DEVICE HOLDS: a catch-up builds the NEXT epoch and cannot read it, so
     // none is fetched (`background.rs` `refused_by_mls`). Android twin: `PushDecrypt.RefusedForGood`.
     if Self.refusalReason(directJson) == "mls-refused-for-good" {
-      NSLog("[CanariNSE] MLS refused it at an epoch this device holds group=\(groupId.prefix(8)) -> generic fallback, no catch-up")
+      NseLog.log.notice("[CanariNSE] MLS refused it at an epoch this device holds group=\(groupId.prefix(8), privacy: .public) -> generic fallback, no catch-up")
       noteCause("refused-for-good")
       return nil
     }
 
     trace?.mark("locality")
     let locality = groupLocality(groupId: groupId, ctx: ctx)
-    NSLog("[CanariNSE] direct decrypt failed group=\(groupId.prefix(8)) locality=\(locality)")
+    // AHEAD OF THE STORED STATE IS NOT A FAILURE: Rust read the frame's epoch from its cleartext
+    // header (`kind: EpochAhead`, `background.rs` `decrypt_loaded`, #3042) - this extension never
+    // writes mls.bin, so after any commit every push of the group is ahead of it until the app
+    // drains, and the commit catch-up below is the designed answer. Said at info, as Android's
+    // `Log.d` twin does; every other refusal keeps the failure line.
+    if Self.refusalKind(directJson) == "EpochAhead" {
+      NseLog.log.info("[CanariNSE] frame ahead of the stored state group=\(groupId.prefix(8), privacy: .public) locality=\(String(describing: locality), privacy: .public) - the commit catch-up reads it")
+    } else {
+      NseLog.log.notice("[CanariNSE] direct decrypt failed group=\(groupId.prefix(8), privacy: .public) locality=\(String(describing: locality), privacy: .public)")
+    }
 
     if locality == .unknown {
       // Nothing was established, so nothing is retried: the catch-up answers an epoch gap, and
       // none has been diagnosed here.
-      NSLog("[CanariNSE] locality unknown group=\(groupId.prefix(8)) -> generic fallback")
+      NseLog.log.notice("[CanariNSE] locality unknown group=\(groupId.prefix(8), privacy: .public) -> generic fallback")
       noteCause("locality-unknown;direct=\(direct)")
       return nil
     }
@@ -1228,7 +1244,7 @@ class NotificationService: UNNotificationServiceExtension {
     // ABSENT: THE GROUP IS NOT JOINED HERE, AND THIS EXTENSION NEVER JOINS ONE - a Welcome is the
     // app's to process. The ladder used to sleep 3 x 1.8 s betting that the app joined meanwhile, a
     // race nobody observed; removed with its Android twin (user, 2026-09-28: "Supprime ce delai").
-    NSLog("[CanariNSE] group not joined here group=\(groupId.prefix(8)) -> generic fallback")
+    NseLog.log.notice("[CanariNSE] group not joined here group=\(groupId.prefix(8), privacy: .public) -> generic fallback")
     noteCause("group-absent;direct=\(direct)")
     return nil
   }
@@ -1257,7 +1273,7 @@ class NotificationService: UNNotificationServiceExtension {
         .map { $0.request.identifier }
       if !ringIds.isEmpty {
         center.removeDeliveredNotifications(withIdentifiers: ringIds)
-        NSLog("[CanariNSE] cleared \(ringIds.count) ring banner(s) for call \(callId)")
+        NseLog.log.notice("[CanariNSE] cleared \(ringIds.count, privacy: .public) ring banner(s) for call \(callId, privacy: .public)")
       }
       self.finish()
     }
@@ -1338,7 +1354,7 @@ class NotificationService: UNNotificationServiceExtension {
       let keysData = try? JSONSerialization.data(withJSONObject: keys),
       let keysJson = String(data: keysData, encoding: .utf8)
     else {
-      NSLog("[CanariNSE] \(source): device(s) added to this account - App Group unavailable, not announced")
+      NseLog.log.notice("[CanariNSE] \(source, privacy: .public): device(s) added to this account - App Group unavailable, not announced")
       return
     }
     // IN THE FOREGROUND THE APP TELLS IT (its in-app alert), as on Android: nothing is posted and
@@ -1346,11 +1362,11 @@ class NotificationService: UNNotificationServiceExtension {
     // App Group (`CanariSetAppGroupForegroundFlag`); a flag a crash left behind costs this one
     // notification, never the in-app alert.
     if FileManager.default.fileExists(atPath: dir.appendingPathComponent(appInForegroundFile).path) {
-      NSLog("[CanariNSE] \(source): device(s) added to this account - the app is in the foreground, it tells")
+      NseLog.log.notice("[CanariNSE] \(source, privacy: .public): device(s) added to this account - the app is in the foreground, it tells")
       return
     }
     guard let raw = canari_native_claim_device_notices(dir.path, keysJson) else {
-      NSLog("[CanariNSE] \(source): device-notice claim returned nothing - not announced")
+      NseLog.log.notice("[CanariNSE] \(source, privacy: .public): device-notice claim returned nothing - not announced")
       return
     }
     let claimJson = String(cString: raw)
@@ -1361,11 +1377,11 @@ class NotificationService: UNNotificationServiceExtension {
     let claimed = claim["claimed"] as? [String] ?? []
     let held = claim["held"] as? Int ?? 0
     if held > 0 {
-      NSLog("[CanariNSE] \(source): \(held) new-device key(s) held - the app has not pre-claimed this account since the update, its own pass decides")
+      NseLog.log.notice("[CanariNSE] \(source, privacy: .public): \(held, privacy: .public) new-device key(s) held - the app has not pre-claimed this account since the update, its own pass decides")
     }
     guard !claimed.isEmpty else {
       if held == 0 {
-        NSLog("[CanariNSE] \(source): device(s) added to this account were already announced")
+        NseLog.log.notice("[CanariNSE] \(source, privacy: .public): device(s) added to this account were already announced")
       }
       return
     }
@@ -1378,9 +1394,9 @@ class NotificationService: UNNotificationServiceExtension {
       identifier: "canari-new-device", content: content, trigger: nil)
     UNUserNotificationCenter.current().add(request) { error in
       if let error = error {
-        NSLog("[CanariNSE] \(source): new-device notification NOT raised: \(error)")
+        NseLog.log.notice("[CanariNSE] \(source, privacy: .public): new-device notification NOT raised: \(errorReason(error), privacy: .public)")
       } else {
-        NSLog("[CanariNSE] \(source): \(claimed.count) new device(s) on this account - notified")
+        NseLog.log.notice("[CanariNSE] \(source, privacy: .public): \(claimed.count, privacy: .public) new device(s) on this account - notified")
       }
     }
   }
@@ -1407,14 +1423,14 @@ class NotificationService: UNNotificationServiceExtension {
         ctx.deviceKeyB64, ctx.userId, ctx.deviceId, groupId)
     }
     guard epoch >= 0 else {
-      NSLog("[CanariNSE] catchup: epoch unknown group=\(groupId)")
+      NseLog.log.notice("[CanariNSE] catchup: epoch unknown group=\(groupId, privacy: .public)")
       return nil
     }
 
     guard let commitsJson = fetchCommitsFromBackend(groupId: groupId, sinceEpoch: epoch, ctx: ctx),
       !commitsJson.isEmpty, commitsJson != "[]"
     else {
-      NSLog("[CanariNSE] catchup: no commits to apply (epoch=\(epoch))")
+      NseLog.log.notice("[CanariNSE] catchup: no commits to apply (epoch=\(epoch, privacy: .public))")
       return nil
     }
 
@@ -1450,11 +1466,11 @@ class NotificationService: UNNotificationServiceExtension {
   private func groupLocality(groupId: String, ctx: PushContext) -> GroupLocality {
     guard !groupId.isEmpty else { return .absent }
     guard !ctx.deviceKeyB64.isEmpty else {
-      NSLog("[CanariNSE] groupLocality: device key absent group=\(groupId.prefix(8)) -> unknown")
+      NseLog.log.notice("[CanariNSE] groupLocality: device key absent group=\(groupId.prefix(8), privacy: .public) -> unknown")
       return .unknown
     }
     guard let state = loadMlsState() else {
-      NSLog("[CanariNSE] groupLocality: mls.bin unreadable group=\(groupId.prefix(8)) -> unknown")
+      NseLog.log.notice("[CanariNSE] groupLocality: mls.bin unreadable group=\(groupId.prefix(8), privacy: .public) -> unknown")
       return .unknown
     }
     let epoch: Int64 = state.withUnsafeBytes { statePtr in
@@ -1462,7 +1478,7 @@ class NotificationService: UNNotificationServiceExtension {
         statePtr.bindMemory(to: UInt8.self).baseAddress, state.count,
         ctx.deviceKeyB64, ctx.userId, ctx.deviceId, groupId)
     }
-    NSLog("[CanariNSE] groupLocality: epoch=\(epoch) group=\(groupId.prefix(8))")
+    NseLog.log.notice("[CanariNSE] groupLocality: epoch=\(epoch, privacy: .public) group=\(groupId.prefix(8), privacy: .public)")
     return epoch >= 0 ? .local : .absent
   }
 
@@ -1477,7 +1493,7 @@ class NotificationService: UNNotificationServiceExtension {
     do {
       try target.setResourceValues(values)
     } catch {
-      NSLog("[CanariNSE] backupExclusion: ERROR \(url.lastPathComponent) not excluded: \(errorReason(error))")
+      NseLog.log.error("[CanariNSE] backupExclusion: ERROR \(url.lastPathComponent, privacy: .public) not excluded: \(errorReason(error), privacy: .public)")
     }
   }
 
@@ -1490,11 +1506,11 @@ class NotificationService: UNNotificationServiceExtension {
     result: DecryptResult
   ) {
     guard !result.messageId.isEmpty else {
-      NSLog("[CanariNSE] writeFcmCache: messageId empty -> entry ignored")
+      NseLog.log.notice("[CanariNSE] writeFcmCache: messageId empty -> entry ignored")
       return
     }
     guard let dir = Self.appGroupDir() else {
-      NSLog("[CanariNSE] writeFcmCache: App Group container unavailable")
+      NseLog.log.notice("[CanariNSE] writeFcmCache: App Group container unavailable")
       return
     }
 
@@ -1525,7 +1541,7 @@ class NotificationService: UNNotificationServiceExtension {
     guard let entryData = try? JSONSerialization.data(withJSONObject: entry, options: []),
       let plainLine = String(data: entryData, encoding: .utf8)
     else {
-      NSLog("[CanariNSE] writeFcmCache: JSON encoding failed")
+      NseLog.log.notice("[CanariNSE] writeFcmCache: JSON encoding failed")
       return
     }
     // SEALED BEFORE IT TOUCHES THE DISK, under the install's native cache key (Rust
@@ -1533,7 +1549,7 @@ class NotificationService: UNNotificationServiceExtension {
     // still on the server, and the app's sync fetches it.
     guard let sealedRaw = canari_native_seal_cache_line(Self.retrieveNativeCacheKey(), plainLine)
     else {
-      NSLog("[CanariNSE] writeFcmCache: ERROR no cache key - entry NOT written messageId=\(result.messageId.prefix(8))")
+      NseLog.log.error("[CanariNSE] writeFcmCache: ERROR no cache key - entry NOT written messageId=\(result.messageId.prefix(8), privacy: .public)")
       return
     }
     let entryLine = String(cString: sealedRaw)
@@ -1559,9 +1575,9 @@ class NotificationService: UNNotificationServiceExtension {
       try Data(body.utf8).write(
         to: fileUrl, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
       Self.excludeFromBackup(fileUrl)
-      NSLog("[CanariNSE] writeFcmCache: messageId=\(result.messageId.prefix(8)) groupId=\(groupId.prefix(8))")
+      NseLog.log.notice("[CanariNSE] writeFcmCache: messageId=\(result.messageId.prefix(8), privacy: .public) groupId=\(groupId.prefix(8), privacy: .public)")
     } catch {
-      NSLog("[CanariNSE] writeFcmCache: failed: \(errorReason(error))")
+      NseLog.log.notice("[CanariNSE] writeFcmCache: failed: \(errorReason(error), privacy: .public)")
     }
   }
 
@@ -1602,7 +1618,7 @@ class NotificationService: UNNotificationServiceExtension {
       if let recipient = ctx?.userId, !recipient.isEmpty {
         content.userInfo["recipientId"] = recipient
       } else {
-        NSLog("[CanariNSE] ERROR a message notification with no push context names no recipient - a quick reply on it is refused, visibly")
+        NseLog.log.error("[CanariNSE] ERROR a message notification with no push context names no recipient - a quick reply on it is refused, visibly")
       }
     }
     // No group-summary text here: UNMutableNotificationContent.summaryArgument was deprecated in
@@ -1684,7 +1700,7 @@ class NotificationService: UNNotificationServiceExtension {
     let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("\(UUID().uuidString).\(ext)")
     guard (try? data.write(to: tmp, options: .atomic)) != nil else { return nil }
-    NSLog("[CanariNSE] fetchAndDecryptMedia: thumbnail ready (\(data.count)B)")
+    NseLog.log.notice("[CanariNSE] fetchAndDecryptMedia: thumbnail ready (\(data.count, privacy: .public)B)")
     return tmp
   }
 
@@ -1711,7 +1727,7 @@ class NotificationService: UNNotificationServiceExtension {
     let serverSaysMentioned = Self.string(userInfo["mentioned"]) == "true"
 
     guard !channelId.isEmpty else {
-      NSLog("[CanariNSE] handleChannelMessage: channelId missing")
+      NseLog.log.notice("[CanariNSE] handleChannelMessage: channelId missing")
       noteCause("no-channel-id")
       trace?.outcome = "fallback"
       finish()
@@ -1736,7 +1752,7 @@ class NotificationService: UNNotificationServiceExtension {
       seedSource = "frame"
     }
     if seedHeld {
-      NSLog("[CanariNSE] handleChannelMessage: seed source=\(seedSource) channel=\(channelId) session=\(sessionId)")
+      NseLog.log.notice("[CanariNSE] handleChannelMessage: seed source=\(seedSource, privacy: .public) channel=\(channelId, privacy: .public) session=\(sessionId, privacy: .public)")
     }
     // RUST READS THE SESSION FROM THE MIRROR ITSELF and applies every rule the app applies to a row
     // - the floor, and under a v2 session the author, the signature and the AAD (channel-encryption
@@ -1753,13 +1769,14 @@ class NotificationService: UNNotificationServiceExtension {
         body = Self.parseDecryptedText(json)
         authorProven = body != nil && Self.parseAuthorProven(json)
         if body == nil {
-          NSLog(
-            "[CanariNSE] handleChannelMessage: not opened reason=\(Self.refusalReason(json) ?? "none") channel=\(channelId) session=\(sessionId)"
+          let refusal = Self.refusalReason(json) ?? "none"
+          NseLog.log.notice(
+            "[CanariNSE] handleChannelMessage: not opened reason=\(refusal, privacy: .public) channel=\(channelId, privacy: .public) session=\(sessionId, privacy: .public)"
           )
         }
       }
     } else {
-      NSLog("[CanariNSE] handleChannelMessage: no seed/ciphertext - generic channel=\(channelId)")
+      NseLog.log.notice("[CanariNSE] handleChannelMessage: no seed/ciphertext - generic channel=\(channelId, privacy: .public)")
     }
 
     if body != nil {
@@ -1798,8 +1815,8 @@ class NotificationService: UNNotificationServiceExtension {
       content.sound = UNNotificationSound(named: UNNotificationSoundName(Self.messageSoundFile))
     }
     if body == nil, !senderId.isEmpty || serverSaysMentioned {
-      NSLog(
-        "[CanariNSE] handleChannelMessage: blind banner -> no author, no mention (server named sender=\(senderId.prefix(8)) mentioned=\(serverSaysMentioned)) channel=\(channelId)"
+      NseLog.log.notice(
+        "[CanariNSE] handleChannelMessage: blind banner -> no author, no mention (server named sender=\(senderId.prefix(8), privacy: .public) mentioned=\(serverSaysMentioned, privacy: .public)) channel=\(channelId, privacy: .public)"
       )
     }
     // The phone's names, read at most once for this banner: the speaker, the author line and the
@@ -1819,8 +1836,8 @@ class NotificationService: UNNotificationServiceExtension {
       // ONE LINE, and "WARN" only for a fault (`salonAuthorAccuses`): a v1 session or a name the
       // app has not resolved yet is an ordinary state.
       let level = Self.salonAuthorAccuses(reason) ? "WARN " : ""
-      NSLog(
-        "[CanariNSE] [SALON_AUTHOR] \(level)author UNNAMED reason=\(reason) author=\(id.prefix(8)) channel=\(channelId) -> 'someone' and a '?' disc"
+      NseLog.log.notice(
+        "[CanariNSE] [SALON_AUTHOR] \(level, privacy: .public)author UNNAMED reason=\(reason, privacy: .public) author=\(id.prefix(8), privacy: .public) channel=\(channelId, privacy: .public) -> 'someone' and a '?' disc"
       )
       content.subtitle = Self.someoneCapitalised(locale: ctx?.locale)
     case .unproven:
@@ -1896,17 +1913,17 @@ class NotificationService: UNNotificationServiceExtension {
     guard let frame = Self.nonEmpty(Self.string(userInfo["seedFrame"])),
       let groupId = Self.nonEmpty(Self.string(userInfo["seedGroupId"]))
     else {
-      NSLog("[CanariNSE] openSeedFrame: no frame on this push (a sender older than section 19, or not inlined) channel=\(channelId)")
+      NseLog.log.notice("[CanariNSE] openSeedFrame: no frame on this push (a sender older than section 19, or not inlined) channel=\(channelId, privacy: .public)")
       return false
     }
     guard let ctx = loadPushContext(), let state = loadMlsState(), let dir = Self.appGroupDir() else {
-      NSLog("[CanariNSE] openSeedFrame: push context, MLS state or App Group unavailable group=\(groupId.prefix(8))")
+      NseLog.log.notice("[CanariNSE] openSeedFrame: push context, MLS state or App Group unavailable group=\(groupId.prefix(8), privacy: .public)")
       return false
     }
     // The frame's MLS sender is the salon message's author, who attached it: Rust refuses the frame
     // when the push names anybody else (WP-G2-1b).
     guard let frameSender = Self.nonEmpty(Self.string(userInfo["senderId"])) else {
-      NSLog("[CanariNSE] openSeedFrame: the push names no sender group=\(groupId.prefix(8))")
+      NseLog.log.notice("[CanariNSE] openSeedFrame: the push names no sender group=\(groupId.prefix(8), privacy: .public)")
       return false
     }
     var json = decryptProtoJson(
@@ -1914,25 +1931,27 @@ class NotificationService: UNNotificationServiceExtension {
     if Self.refusalReason(json) == "mls-refused" {
       switch groupLocality(groupId: groupId, ctx: ctx) {
       case .local:
-        NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=local -> commit catch-up")
+        NseLog.log.notice("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8), privacy: .public) locality=local -> commit catch-up")
         json = catchupJson(ctx: ctx, groupId: groupId, senderId: frameSender, protoB64: frame) ?? json
       case .absent:
         // Channel-encryption section 26: Android joins the key group from this push; the extension
         // reads a MIRROR of the app's MLS state and never writes it, so it cannot. The banner stays
         // generic and the app joins the group at its next foreground (its community load).
-        NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=absent -> this device is not in the salon's key group; the extension does not join, the app joins at its next foreground")
+        NseLog.log.notice("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8), privacy: .public) locality=absent -> this device is not in the salon's key group; the extension does not join, the app joins at its next foreground")
       case .unknown:
-        NSLog("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8)) locality=unknown -> nothing established")
+        NseLog.log.notice("[CanariNSE] openSeedFrame: refused group=\(groupId.prefix(8), privacy: .public) locality=unknown -> nothing established")
       }
     }
     // A v1 seed is refused by Rust since the floor reached the v2 writer (channel-encryption 21.7);
     // its own log line reaches no logger in the extension, so the reason is said here.
     let v1Refused = Self.v1RefusedSessions(json)
     if !v1Refused.isEmpty {
-      NSLog("[CanariNSE] openSeedFrame: REFUSED v1 seed(s) \(v1Refused.joined(separator: ",")) group=\(groupId.prefix(8)) - a v1 seed is no longer accepted")
+      let sessions = v1Refused.joined(separator: ",")
+      NseLog.log.notice("[CanariNSE] openSeedFrame: REFUSED v1 seed(s) \(sessions, privacy: .public) group=\(groupId.prefix(8), privacy: .public) - a v1 seed is no longer accepted")
     }
     guard let seedsJson = Self.keyMaterialSeeds(json) else {
-      NSLog("[CanariNSE] openSeedFrame: frame did not yield key material reason=\(Self.refusalReason(json) ?? "none") group=\(groupId.prefix(8)) channel=\(channelId)")
+      let refusal = Self.refusalReason(json) ?? "none"
+      NseLog.log.notice("[CanariNSE] openSeedFrame: frame did not yield key material reason=\(refusal, privacy: .public) group=\(groupId.prefix(8), privacy: .public) channel=\(channelId, privacy: .public)")
       return false
     }
     let stored = canari_native_store_graine_seeds(dir.path, Self.retrieveNativeCacheKey(), seedsJson)
@@ -1940,13 +1959,13 @@ class NotificationService: UNNotificationServiceExtension {
     // reasons go to no logger in the extension. Android twin: `absorbGraineSeeds`.
     let offered = (try? JSONSerialization.jsonObject(with: Data(seedsJson.utf8)) as? [Any])?.count ?? -1
     if offered > 0 && stored < offered {
-      NSLog("[CanariNSE] openSeedFrame: ERROR the native writer kept \(stored) of \(offered) seed(s) group=\(groupId.prefix(8))")
+      NseLog.log.error("[CanariNSE] openSeedFrame: ERROR the native writer kept \(stored, privacy: .public) of \(offered, privacy: .public) seed(s) group=\(groupId.prefix(8), privacy: .public)")
     } else {
-      NSLog("[CanariNSE] openSeedFrame: stored \(stored) seed(s) group=\(groupId.prefix(8))")
+      NseLog.log.notice("[CanariNSE] openSeedFrame: stored \(stored, privacy: .public) seed(s) group=\(groupId.prefix(8), privacy: .public)")
     }
     let held = graineSeedHeld(channelId: channelId, sessionId: sessionId)
     if !held {
-      NSLog("[CanariNSE] openSeedFrame: the frame opened and holds no seed for this message's session group=\(groupId.prefix(8)) channel=\(channelId) session=\(sessionId)")
+      NseLog.log.notice("[CanariNSE] openSeedFrame: the frame opened and holds no seed for this message's session group=\(groupId.prefix(8), privacy: .public) channel=\(channelId, privacy: .public) session=\(sessionId, privacy: .public)")
     }
     return held
   }
@@ -1993,7 +2012,7 @@ class NotificationService: UNNotificationServiceExtension {
     }
     out += ns.substring(from: cursor)
     if named + unknown > 0 {
-      NSLog("[CanariNSE] [MENTION_NAME] named=\(named) unknown=\(unknown)")
+      NseLog.log.notice("[CanariNSE] [MENTION_NAME] named=\(named, privacy: .public) unknown=\(unknown, privacy: .public)")
     }
     return out.replacingOccurrences(of: "[ \\t]{2,}", with: " ", options: .regularExpression)
   }
@@ -2035,7 +2054,7 @@ class NotificationService: UNNotificationServiceExtension {
   ) -> String {
     let id = senderId.lowercased()
     let name = id.isEmpty ? nil : (nameBook()?[id] as? String).flatMap { $0.isEmpty ? nil : $0 }
-    NSLog("[CanariNSE] [MENTION_NAME] author named=\(name != nil)")
+    NseLog.log.notice("[CanariNSE] [MENTION_NAME] author named=\(name != nil, privacy: .public)")
     // The placeholder opens the sentence in both languages, so the word is capitalised there.
     let who = name ?? someoneCapitalised(locale: locale)
     return localizedFormat("notif.social.mention.title", who, locale: locale)
@@ -2065,13 +2084,13 @@ class NotificationService: UNNotificationServiceExtension {
   ) -> (names: [String: Any]?, unusable: String?) {
     switch read.unusable {
     case "no-name-file":
-      NSLog("[CanariNSE] \(label) no display_names.json - nobody is named")
+      NseLog.log.notice("[CanariNSE] \(label, privacy: .public) no display_names.json - nobody is named")
     case "unreadable":
-      NSLog("[CanariNSE] \(label) display_names.json unreadable")
+      NseLog.log.notice("[CanariNSE] \(label, privacy: .public) display_names.json unreadable")
     case "other-account":
-      NSLog("[CanariNSE] \(label) display_names.json belongs to another account - not used")
+      NseLog.log.notice("[CanariNSE] \(label, privacy: .public) display_names.json belongs to another account - not used")
     case "no-names":
-      NSLog("[CanariNSE] \(label) display_names.json names nobody (no-names)")
+      NseLog.log.notice("[CanariNSE] \(label, privacy: .public) display_names.json names nobody (no-names)")
     default:
       break
     }
@@ -2104,8 +2123,8 @@ class NotificationService: UNNotificationServiceExtension {
   private static func logSalonNamesUnusable(_ reason: String?, channelId: String) {
     guard let reason = reason else { return }
     let level = salonAuthorAccuses(reason) ? "WARN " : ""
-    NSLog(
-      "[CanariNSE] [SALON_AUTHOR] \(level)display_names.json names nobody reason=\(reason) channel=\(channelId)"
+    NseLog.log.notice(
+      "[CanariNSE] [SALON_AUTHOR] \(level, privacy: .public)display_names.json names nobody reason=\(reason, privacy: .public) channel=\(channelId, privacy: .public)"
     )
   }
 
@@ -2180,6 +2199,17 @@ class NotificationService: UNNotificationServiceExtension {
     return dict["reason"] as? String
   }
 
+  /// The `kind` Rust put beside a refusal (`DecryptErrorKind`, or `EpochAhead` for a frame read
+  /// ahead of the stored state) - a type the layer that KNOWS classified, never re-derived from a
+  /// message here. Nil for an answer that is not a refusal or carries no kind.
+  private static func refusalKind(_ json: String?) -> String? {
+    guard let json = json, let data = json.data(using: .utf8),
+      let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+      (dict["ok"] as? Bool) != true
+    else { return nil }
+    return dict["kind"] as? String
+  }
+
   /// The sessions whose v1 seed Rust refused in a `graine-key-material` answer (`v1Refused`).
   private static func v1RefusedSessions(_ json: String?) -> [String] {
     guard let json = json, let data = json.data(using: .utf8),
@@ -2212,9 +2242,9 @@ class NotificationService: UNNotificationServiceExtension {
     let held = canari_native_graine_seed_held(
       dir.path, Self.retrieveNativeCacheKey(), channelId, sessionId)
     if held < 0 {
-      NSLog("[CanariNSE] graineSeedHeld: ERROR the seed mirror is unreadable channel=\(channelId)")
+      NseLog.log.error("[CanariNSE] graineSeedHeld: ERROR the seed mirror is unreadable channel=\(channelId, privacy: .public)")
     } else if held == 0 {
-      NSLog("[CanariNSE] graineSeedHeld: miss channel=\(channelId) session=\(sessionId)")
+      NseLog.log.notice("[CanariNSE] graineSeedHeld: miss channel=\(channelId, privacy: .public) session=\(sessionId, privacy: .public)")
     }
     return held == 1
   }
@@ -2235,7 +2265,7 @@ class NotificationService: UNNotificationServiceExtension {
     var item: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &item)
     guard status == errSecSuccess, let data = item as? Data, data.count == 32 else {
-      NSLog("[CanariNSE] retrieveNativeCacheKey: ERROR no key (status=\(status))")
+      NseLog.log.error("[CanariNSE] retrieveNativeCacheKey: ERROR no key (status=\(status, privacy: .public))")
       return ""
     }
     // RAW bytes, like the device key's item: re-encoded, never read as UTF-8.
@@ -2268,7 +2298,7 @@ class NotificationService: UNNotificationServiceExtension {
       keys.insert(incomingThreadId)
     }
     content.badge = NSNumber(value: keys.count)
-    NSLog("[CanariNSE] applyBadgeCount: badge=\(keys.count)")
+    NseLog.log.notice("[CanariNSE] applyBadgeCount: badge=\(keys.count, privacy: .public)")
   }
 
   // MARK: - Shared App Group state --------------------------------------------
@@ -2393,7 +2423,7 @@ class NotificationService: UNNotificationServiceExtension {
   /// and which term it lacked. Best-effort - the banner is up either way, and the count is a rate.
   private func reportBlindBanner(ctx: PushContext, channelId: String, missing: [String]) {
     guard let secret = loadPushSecret() else {
-      NSLog("[CanariNSE] reportBlindBanner: no push secret - the blind banner goes uncounted channel=\(channelId)")
+      NseLog.log.notice("[CanariNSE] reportBlindBanner: no push secret - the blind banner goes uncounted channel=\(channelId, privacy: .public)")
       return
     }
     let payload: [String: Any] = [
@@ -2403,7 +2433,8 @@ class NotificationService: UNNotificationServiceExtension {
     guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
     let status = syncRequest(
       method: "POST", urlStr: "\(ctx.baseUrl)/api/mls/push/blind-banner", secret: secret, body: body)?.1
-    NSLog("[CanariNSE] reportBlindBanner: HTTP \(status.map(String.init) ?? "none") channel=\(channelId) missing=\(missing.joined(separator: ","))")
+    let (http, fields) = (status.map(String.init) ?? "none", missing.joined(separator: ","))
+    NseLog.log.notice("[CanariNSE] reportBlindBanner: HTTP \(http, privacy: .public) channel=\(channelId, privacy: .public) missing=\(fields, privacy: .public)")
   }
 
   /// Fetches the sender avatar, caching it in the container. Returns a local file URL.
@@ -2479,7 +2510,7 @@ class NotificationService: UNNotificationServiceExtension {
       content.attachments = [attachment]
       return true
     } catch {
-      NSLog("[CanariNSE] attachImage error: \(errorReason(error))")
+      NseLog.log.notice("[CanariNSE] attachImage error: \(errorReason(error), privacy: .public)")
       return false
     }
   }
@@ -2526,7 +2557,7 @@ class NotificationService: UNNotificationServiceExtension {
         withAttributes: attrs)
     }
     guard let png = image.pngData() else {
-      NSLog("[CanariNSE] initialsImage: PNG encoding failed - notification goes out without an icon")
+      NseLog.log.notice("[CanariNSE] initialsImage: PNG encoding failed - notification goes out without an icon")
       return nil
     }
     let url = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -2534,7 +2565,7 @@ class NotificationService: UNNotificationServiceExtension {
     do {
       try png.write(to: url, options: .atomic)
     } catch {
-      NSLog("[CanariNSE] initialsImage: write failed: \(errorReason(error))")
+      NseLog.log.notice("[CanariNSE] initialsImage: write failed: \(errorReason(error), privacy: .public)")
       return nil
     }
     return url

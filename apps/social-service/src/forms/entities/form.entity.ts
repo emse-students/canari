@@ -1,3 +1,4 @@
+import type { GuestIdentityField } from '../guest-identity';
 import type { AudienceCondition } from '../../pricing/audience';
 import type { PriceMatrix } from '../../pricing/price-matrix';
 import {
@@ -113,11 +114,21 @@ export class Form {
 
   /**
    * When true, anybody holding the link may answer WITHOUT an account (migration 068). A guest has
-   * no identity to charge, to grant to, to count once or to match a profile criterion against, so a
-   * public form is free, criteria-free and answerable more than once - `assertPublicConfigValid`.
+   * no account to grant to, no profile to restrict an audience by and no identity to count once,
+   * so a public form grants nothing, restricts nobody and is answerable more than once
+   * (`form-option-rules.ts`, `assertPublicConfigValid`). A guest pays, and on a grid by promo,
+   * formation or cotisation pays the "everyone else" tier.
    */
   @Column({ default: false })
   isPublic: boolean;
+
+  /**
+   * What a PUBLIC form asks a guest about who they are (migration 138, owner 2026-11-06): a list
+   * drawn from `lastName`, `firstName`, `email`, each required once asked. Null asks nothing - the
+   * default, and every form before 138. A member is never asked (`guest-identity.ts`).
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  guestFields: GuestIdentityField[] | null;
 
   /** When true, a user can submit the form multiple times (e.g. product orders). */
   @Column({ default: false })

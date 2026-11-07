@@ -15,6 +15,7 @@ import { m } from '$lib/paraglide/messages';
 const preloads: string[] = [];
 const stopped: string[] = [];
 vi.mock('$lib/reels/reelPreload', () => ({
+  worthPreloading: () => true,
   ReelPreload: class {
     #id: string;
     constructor(ref: { mediaId: string }) {
@@ -25,6 +26,11 @@ vi.mock('$lib/reels/reelPreload', () => ({
       stopped.push(this.#id);
     }
   },
+}));
+const releasePlayback = vi.fn();
+const holdPlayback = vi.fn((_reason: string) => releasePlayback);
+vi.mock('$lib/actions/playWhileVisible', () => ({
+  holdPlayback: (reason: string) => holdPlayback(reason),
 }));
 const captured: string[] = [];
 vi.mock('$lib/reels/reelPosters.svelte', () => ({
@@ -114,6 +120,16 @@ afterEach(() => {
 });
 
 describe('ReelViewer', () => {
+  it('holds the playback from its first line (before any player mounts) and releases it on close', async () => {
+    await render();
+    expect(holdPlayback, 'whatever plays behind stops as the viewer opens').toHaveBeenCalledTimes(
+      1
+    );
+    expect(releasePlayback).not.toHaveBeenCalled();
+    unmount(mounted.pop()!);
+    expect(releasePlayback, 'closing gives the feed back').toHaveBeenCalledTimes(1);
+  });
+
   it('plays the touched reel first, alone, and preloads the next once it has settled', async () => {
     const { playing, loadPage, settleCurrent } = await render();
     expect(loadPage).toHaveBeenCalledWith(0, 10);

@@ -1090,6 +1090,51 @@ export class MediaService {
   }
 
   /**
+   * Deletes PUBLIC assets a service has stopped citing - a form question's image (`form_item_images`
+   * in social-service is the caller's allowlist; this is the second one).
+   *
+   * Only an entry stored as a public asset (`publicAsset: true`, written by
+   * {@link uploadPublicAsset} or {@link promoteToPublicAssets}) is deleted: a chat medium, a form
+   * file, a reel, a poster or an object whose class is unknown is REFUSED, whatever id the caller
+   * names. An id already tombstoned answers `deleted` (the work is done, and its tombstone keeps its
+   * own date and reason); an id with no entry is refused, since nothing proves it public.
+   */
+  async removePublicAssets(mediaIds: string[]): Promise<{ deleted: string[]; refused: string[] }> {
+    const deleted: string[] = [];
+    const refused: string[] = [];
+    for (const mediaId of mediaIds) {
+      // Checked first and on its own: the id is a key of the metadata map below, so nothing that is
+      // not a UUID (`__proto__`, `constructor`) ever reaches the read or the write.
+      if (!UUID_REGEX.test(mediaId)) {
+        this.logger.warn(`media ${mediaId}: public-asset delete refused - not a media id`);
+        refused.push(mediaId);
+        continue;
+      }
+      const entry = this.meta.items[mediaId];
+      if (entry?.purgedAt) {
+        deleted.push(mediaId);
+        continue;
+      }
+      if (entry?.publicAsset !== true) {
+        this.logger.warn(`media ${mediaId}: public-asset delete refused - not a public asset`);
+        refused.push(mediaId);
+        continue;
+      }
+      await this.storage.delete(mediaId);
+      const now = Date.now();
+      this.meta.items[mediaId] = {
+        createdAt: entry.createdAt ?? now,
+        lastAccessAt: entry.lastAccessAt ?? now,
+        purgedAt: now,
+        purgeReason: 'manual_delete',
+      };
+      deleted.push(mediaId);
+    }
+    if (deleted.length > 0) await this.persistMetadata();
+    return { deleted, refused };
+  }
+
+  /**
    * Claims objects for CanaReels: sets class `reel` on every one that is the named owner's.
    *
    * The claim is what makes the later purge safe. A reel's row names its blob by id, ids are not
@@ -1853,6 +1898,60 @@ export class MediaService {
     this.setAccess(mediaId, Date.now(), ownerId, retentionClass, size);
     onRegistered();
     await this.persistMetadata();
+  }
+
+  /**
+   * THE UPLOADER TAKES BACK A POST MEDIA THAT NO POST WILL CITE: the app's publish queue, when the
+   * member deletes a queued post whose files were already uploaded (frontend
+   * `posts/publishQueue/`). An `archive` object is exempt from the idle sweep, so without this it
+   * would stay for ever, cited by nothing.
+   *
+   * Narrow on purpose: the entry's recorded uploader is `ownerId` (none recorded: refused, never on
+   * trust) and its class is `archive` (a post's media - never a reel, a chat file, a form file, a
+   * poster or a public asset). Owner and class do NOT prove the object is uncited - an uploader's
+   * `archive` objects include the media of posts already published, an association's among them,
+   * which a former admin would otherwise strip. So it is reached only through
+   * `internal/own-archive-delete`, from social-service's withdrawal, which checked that no live
+   * post or comment cites the id (review of #3061).
+   *
+   * @returns `deleted`, `absent` (unknown or already purged: the same end state, so idempotent), or
+   *          `refused` (not theirs, or not a post's media).
+   */
+  async removeOwnArchive(
+    mediaId: string,
+    ownerId: string
+  ): Promise<'deleted' | 'absent' | 'refused'> {
+    if (!UUID_REGEX.test(mediaId)) throw new BadRequestException('Invalid mediaId');
+    const entry = this.meta.items[mediaId];
+    if (!entry || entry.purgedAt) {
+      this.logger.log(`media ${mediaId}: withdrawal by its uploader - already gone`);
+      return 'absent';
+    }
+    if (
+      !entry.ownerId ||
+      entry.ownerId !== ownerId ||
+      entry.retentionClass !== 'archive' ||
+      this.isPublicAssetEntry(entry)
+    ) {
+      // Name only the conditions that failed: a line that lists both sends its reader after the
+      // wrong one.
+      const why = [
+        !entry.ownerId
+          ? 'no uploader recorded'
+          : entry.ownerId !== ownerId
+            ? 'another uploader'
+            : null,
+        entry.retentionClass !== 'archive'
+          ? `class ${entry.retentionClass ?? 'unclassified'}, not archive`
+          : null,
+        this.isPublicAssetEntry(entry) ? 'a public asset' : null,
+      ].filter((reason): reason is string => reason !== null);
+      this.logger.warn(`media ${mediaId}: withdrawal by ${ownerId} refused (${why.join('; ')})`);
+      return 'refused';
+    }
+    await this.remove(mediaId);
+    this.logger.log(`media ${mediaId}: withdrawn by its uploader, its post was never published`);
+    return 'deleted';
   }
 
   async remove(mediaId: string): Promise<void> {

@@ -1,5 +1,6 @@
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsBoolean,
@@ -259,7 +260,30 @@ export class FormInputDto {
   items: FormItemInputDto[];
 }
 
+/**
+ * The publish queue's withdrawal of a post it queued (`POST /posts/:id/withdraw`): the media it
+ * uploaded for it, which social-service deletes unless a live row cites them.
+ */
+export class WithdrawPostDto {
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @IsUUID('all', { each: true })
+  mediaIds?: string[];
+}
+
 export class CreatePostDto {
+  /**
+   * The post's id, minted by the CLIENT when it queued the post, so a resend after a lost answer
+   * is answered from the row the first request wrote instead of making a second post
+   * (`post-client-id.ts`). A random v4 UUID only (the nil UUID and other versions are refused): its
+   * unguessability is what makes the 409 for another author's id harmless. Optional: without it
+   * the database generates the id, as before.
+   */
+  @IsUUID('4')
+  @IsOptional()
+  id?: string;
+
   @IsString()
   @IsOptional()
   authorId?: string;
@@ -379,6 +403,38 @@ export class ListPostsQueryDto {
   @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   singlePhotos?: boolean;
+
+  /**
+   * With `kind=reel`: the posts whose only content is ONE picture OR ONE video come too (owner,
+   * 2026-11-06: a feed video not filmed with the Canari camera is in CanaReels as a picture is).
+   * Wins over `singlePhotos`, which stays for an installed client that asks for pictures alone.
+   * Ignored without `kind=reel`.
+   */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  singleMedia?: boolean;
+
+  /**
+   * With `kind=reel`: the posts of TWO TO TEN pictures and videos and nothing else come too, as
+   * well as the single ones (owner, 2026-11-06: a carousel, swiped left and right as on
+   * Instagram). Wins over `singleMedia` and `singlePhotos`, which keep their meaning for an
+   * installed client that cannot draw a carousel. Ignored without `kind=reel`.
+   */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  multiMedia?: boolean;
+
+  /**
+   * With `multiMedia`: a post with a LINK in its text comes too, the client drawing the link in the
+   * caption (owner, 2026-11-06). Ignored without `multiMedia`, so an installed client that sends an
+   * older switch keeps the rule it was built for.
+   */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  withLinks?: boolean;
 
   /** Custom feed: filter by author promotion (personal posts only). */
   @IsOptional()

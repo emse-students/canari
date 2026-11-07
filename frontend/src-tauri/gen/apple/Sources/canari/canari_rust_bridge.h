@@ -178,6 +178,11 @@ int canari_ios_import_app_group_share(const char *data_dir, const char *cache_di
 #define CANARI_MLS_MIRROR_FAILED (-3)
 int canari_ios_mirror_mls_bin_to_app_group(const char *data_dir);
 
+/* The activation mirror's push_context.json half (commands/push.rs): the app's push context copied
+   into the App Group - or the copy removed when the app holds none - UNDER the lock every edit of
+   the file takes, each edit copying it itself. Answers one of the CANARI_MLS_MIRROR_* codes above. */
+int canari_ios_mirror_push_context_to_app_group(const char *data_dir);
+
 /* Once per process, before the page exists: deletes the share copies no current manifest names,
    the App Group's leftover claim files, and repairs an App Group epoch behind the app's. The
    report is NSLogged by the caller (Rust's CanariShareSweep, same layout; flags are SWEEP_*). */

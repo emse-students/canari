@@ -635,7 +635,7 @@ fn load_resealed_legacy_state(
     })?;
     let path = data_dir.join("mls.bin");
     match crate::concurrency::while_claim_current(claim, || {
-        crate::concurrency::write_mls_bin_atomically(&path, resealed)
+        crate::concurrency::write_slot_mls_bin(&path, resealed)
     }) {
         Ok(Ok(())) => Ok(Some(manager)),
         Ok(Err(e)) => {
@@ -1709,13 +1709,9 @@ pub(crate) async fn recevoir_message_bytes(
             .lock()
             .map_err(|_| "Failed to lock state")?;
         match lock.as_ref() {
-            Some(manager) => {
-                let group_epoch = manager.get_epoch(&group_id).ok();
-                match (MlsManager::parse_message_epoch(&message_bytes), group_epoch) {
-                    (Some(msg_ep), Some(group_ep)) if msg_ep > group_ep => Some((msg_ep, group_ep)),
-                    _ => None,
-                }
-            }
+            // ONE COPY of the question (`MlsManager::frame_epoch_ahead`), which leaves an evicted
+            // group's frame to MLS (`Evicted`) instead of queueing it for a resync that cannot come.
+            Some(manager) => manager.frame_epoch_ahead(&group_id, &message_bytes),
             None => None,
         }
         // lock is released here - no await has happened yet

@@ -1,6 +1,6 @@
 [package]
 name = "chat-gateway"
-version = "1.6.4-alpha.2"
+version = "1.6.6-alpha.4"
 edition = "2024"
 
 [dependencies]

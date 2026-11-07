@@ -99,6 +99,17 @@ export function serverPresencePost(): boolean | null {
   return loadCachedServerInfo()?.presencePost ?? null;
 }
 
+/**
+ * Whether this estate serves the background publish queue, as the last `/api/version` answer said -
+ * or `null` when no server has ever answered, which is "not known", never "no". Read by
+ * `publishQueue.svelte.ts`, which sends nothing until it is `true`. The cached answer counts, for
+ * the reason {@link serverPresencePost} gives.
+ */
+export function serverPublishQueue(): boolean | null {
+  if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.publishQueue;
+  return loadCachedServerInfo()?.publishQueue ?? null;
+}
+
 /** True when the client is below the server-enforced minimum version. */
 export function isBelowMinClientVersion(): boolean {
   return lastCheck?.belowMinVersion === true;

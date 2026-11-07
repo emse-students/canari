@@ -51,6 +51,7 @@ import type { FollowsService } from '../follows/follows.service';
 import type { AssociationsService } from '../associations/associations.service';
 import { bellRowShownSql, PostNotificationsService } from './post-notifications.service';
 import { PostNotification } from './entities/post-notification.entity';
+import { createPostNotificationsTable } from './post-notifications.it-schema';
 import type { PostMediaRetentionService } from './post-media-retention.service';
 import type { ListPostsFeed, ListPostsParams } from './list-feed';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
@@ -228,14 +229,11 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
       CREATE TABLE user_blocks ("blockerId" varchar(255) NOT NULL, "blockedId" varchar(255) NOT NULL);
       CREATE TABLE user_follows ("followerUserId" varchar(255) NOT NULL,
         "followedUserId" varchar(255) NOT NULL, status varchar(16) NOT NULL);
-      CREATE TABLE post_notifications (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        "recipientId" varchar NOT NULL, type varchar NOT NULL, "postId" varchar NOT NULL,
-        "actorId" varchar NOT NULL, "actorName" varchar, "associationId" varchar,
-        "associationLogoUrl" varchar, text varchar NOT NULL, meta jsonb, "commentId" varchar,
-        read boolean NOT NULL DEFAULT false, "createdAt" timestamp NOT NULL DEFAULT now());
       CREATE TABLE user_moderation ("userId" varchar(255) PRIMARY KEY,
         "isMuted" boolean NOT NULL DEFAULT false);
     `);
+    // The bell's table as the estates hold it - its columns' types from the migrations (#3019's 500).
+    await createPostNotificationsTable(q);
     for (const file of [
       '071_spaces.sql',
       '072_drop_is_bde.sql',

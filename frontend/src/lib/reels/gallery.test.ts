@@ -49,7 +49,18 @@ describe('saveVideoToGallery', () => {
     const chunks = invoke.mock.calls.filter(([c]) => c === 'plugin:gallery|append_video_chunk');
     expect(chunks).toHaveLength(3);
     const save = invoke.mock.calls.find(([c]) => c === 'plugin:gallery|save_video')!;
-    expect(save[1]).toEqual({ session: chunks[0][1].session, name: 'r.mp4' });
+    expect(save[1]).toEqual({
+      session: chunks[0][1].session,
+      name: 'r.mp4',
+      mime: 'video/mp4',
+    });
+  });
+
+  it('hands the platform the container the video is in', async () => {
+    rust('saved');
+    await saveVideoToGallery(new Blob([new Uint8Array([1])]), 'v.mov', 'video/quicktime');
+    const save = invoke.mock.calls.find(([c]) => c === 'plugin:gallery|save_video')!;
+    expect(save[1]).toMatchObject({ name: 'v.mov', mime: 'video/quicktime' });
   });
 
   it('a refusal is an outcome, not a failure', async () => {

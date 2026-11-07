@@ -9,6 +9,7 @@
  */
 import type { PostComment } from '$lib/posts/api';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+import { formatMentionToken, isMentionUserId } from '$lib/utils/mentions';
 import { m } from '$lib/paraglide/messages';
 
 export type CommentAuthorKind = 'personal' | 'anonymous' | 'association';
@@ -67,4 +68,20 @@ export function commentAuthorHref(comment: PostComment): string | null {
   }
   if (kind === 'anonymous' || !comment.userId) return null;
   return `/profile/${encodeURIComponent(comment.userId)}`;
+}
+
+/**
+ * WHAT A REPLY TO A REPLY STARTS WITH: a mention TOKEN of the answered member (`@[id] `), never the
+ * typed text `@First Last`. Only the token is a mention: the composer draws it as a chip, the
+ * renderer as a profile link and the server tells its target (`mentionRecipientsOf`); a typed name
+ * is plain text everywhere, which is what replies used to carry.
+ *
+ * Empty for a reply to a top-level comment (the "in reply to" line already names it), and for an
+ * anonymous or association comment: an anonymous author is never named, not even to the writer or
+ * a moderator who was served the account, and an association has no person to mention.
+ */
+export function replyMentionPrefill(comment: PostComment): string {
+  if (!comment.parentId || commentAuthorKind(comment) !== 'personal') return '';
+  if (!comment.userId || !isMentionUserId(comment.userId)) return '';
+  return `${formatMentionToken(comment.userId)} `;
 }

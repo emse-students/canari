@@ -112,3 +112,28 @@ export function placeBubble(
       };
   }
 }
+
+/** One computed corner radius ("8px", "50%", "8px 4px") as px: a percentage is read against the box. */
+function cornerPx(value: string, box: { width: number; height: number }): number {
+  const parts = value.trim().split(/\s+/);
+  const px = (part: string, side: number): number =>
+    part.endsWith('%') ? (parseFloat(part) / 100) * side : parseFloat(part);
+  const horizontal = px(parts[0] ?? '', box.width);
+  const vertical = px(parts[1] ?? parts[0] ?? '', box.height);
+  return Math.min(horizontal, vertical);
+}
+
+/**
+ * The spotlight's corner radius, CONCENTRIC with the control: the SMALLEST of its four computed
+ * corner radii grown by the padding (a control with one square corner must not get a round ring),
+ * capped at half the padded short side. `null` when no corner parses, so the CSS default applies.
+ */
+export function ringRadius(
+  corners: readonly string[],
+  box: { width: number; height: number },
+  pad: number
+): number | null {
+  const radii = corners.map((corner) => cornerPx(corner, box)).filter(Number.isFinite);
+  if (radii.length === 0) return null;
+  return Math.min(Math.min(...radii) + pad, (Math.min(box.width, box.height) + 2 * pad) / 2);
+}

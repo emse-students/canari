@@ -20,8 +20,40 @@ It replaces every per-entry "the user's gesture, when the time comes": a removal
 the version the floor must pass, and this rule is what moves the floor there. The raise is a production
 setting, so it is done by the owner or with the owner's go, and written into the entry it unblocks.
 
-**Production's floor is `1.5.1`** (read from `GET /api/version` on 2026-10-31). An older figure on this
-page is the floor at the date its entry names.
+**Production's floor is `1.6.2`** (read back from `GET /api/version` on 2026-11-04, after the owner's raise;
+the owner decided to KEEP `1.6.2`, not lower it to `1.6.0`). **Dev reads `1.6.2` too** (raised on the
+owner's instruction and read back from its `GET /api/version`, 2026-11-04). An older figure on this page
+is the floor at the date its entry names.
+
+### Entries `1.6.2` unblocks (both estates read it, 2026-11-04)
+
+"Carried by" is the first stable tag containing the pull request (`git tag --contains`). **Nothing is
+removed by this change**: removal is its own pull request, and an entry with a second half keeps waiting
+on it. The first eleven rows were already met by `1.6.0`; the last four need `1.6.1` or `1.6.2`.
+
+| Entry | Carried by | Still owed besides the floor |
+| --- | --- | --- |
+| Send-ledger entry with no epoch | #2269, `v1.5.0` | - |
+| Member clients that still Add automatically | #2358, `v1.5.0` | - (the rule becomes true; nothing to remove) |
+| The `join-ask-1` capability gate | #2442, `v1.5.0` | - |
+| Add-lock release with no token | #2426, `v1.5.0` | - |
+| Plaintext native cache reader | #2271, `v1.5.0` | - |
+| OIDC callback with no PKCE verifier | #2317, #2326, `v1.5.0` | the `without a PKCE verifier` warning silent for a week on production, and the redirect hardening |
+| `follow-status` answers `following: true` for a pending request | #2616 (WP-F4), `v1.5.1` | - |
+| Explicit slug on association creation | #2545, `v1.5.1` | - |
+| `PUT lydia-business-key` answers `410` | #2772, `v1.5.2` | - |
+| `X-Canari-Client-Version` on `/api/lives` routes | #2812, `v1.6.0` (floor condition `1.5.4`) | - |
+| `klipy_cid` drop | `v1.2.9` | - (already met at floor `1.5.1`) |
+| Presence GET (server half) | #2661, `v1.5.1` | the `legacy GET /api/presence served` line absent from production for a week |
+| Paid-form tier codes of #2667 (wording only) | #2667, `v1.5.1` | - |
+| Device-notice marker named by the key in hex | #2871, `v1.6.1` | every build has run since and migrated its markers (data at rest: the floor alone does not retire it) |
+| Call record with no start clocks | #2890, `v1.6.2` | - |
+
+**NOT unblocked by `1.6.2`:** the entries whose carrying pull request first ships in `v1.6.3` (the
+institution's republication consent, #2965; WP-PIN's body-less pin, #2984; `GET spaces/audiences`, #2951;
+`kind=reel` on `feed=all`, #2990; the creator-with-several-BDEs error, #2986), a restored message with
+no author signature (#2276, `v1.5.0`; the oldest unsigned message must also leave retention), and the
+refresh cookie on `tauri://localhost` (a desktop measurement). Entries not named here were not re-checked.
 
 ---
 
@@ -984,7 +1016,7 @@ deleted (reels.md point 5; `routes/posts/+page.ts` and `buildListOptions` never 
 only `listPosts({ kind })` caller in the client is `reels/allReels.ts`. Production's floor is past
 `1.2.9`, and dev's `1.2.7`-`1.2.8` builds predate the filter, so their only `kind=reel` was the
 viewer too. A `1.2.9-alpha.2`/`.3` device still filtering its "Tout" tab would get the viewer's set
-there: reels it may see, nothing more.
+there: reels it may see, nothing more. Since 2026-11-06 the current client asks `singleMedia=true` AND `singlePhotos=true`; `singlePhotos` alone stays served as pictures only, so these installed clients never receive a video (`services/reels.md`).
 **Why the client still sends the old shape:** a stable ships both stores BEFORE production deploys,
 and `feed=reels` is refused `400` by an older server's `@IsIn` - a native build sending it would
 lose the viewer for those days. So the client switches (`listAllReels`: `feed: 'reels'`, and
@@ -1314,6 +1346,88 @@ mobile only - green build, green deploy, wrong behaviour.
 **Cost of keeping it:** two shapes for one concept, and a head typed optional at every use site
 though the server always sends one. No correctness cost: a missing head means an unbounded walk,
 which is what every client did before the bound existed.
+
+### No date yet - the CanaReels list asked with BOTH `singleMedia=true` and `singlePhotos=true` (2026-11-06)
+
+**Site:** `buildListPostsSearchParams` in
+[`frontend/src/lib/posts/api.ts`](../../frontend/src/lib/posts/api.ts) (the `singlePhotos` line next to
+`singleMedia`).
+**What it humours:** a social-service that does not carry the `singleMedia` switch yet (a production
+or dev estate deployed before this change) drops the unknown parameter and would answer the reels
+alone; the extra `singlePhotos=true` keeps the pictures coming.
+**Removal condition:** both estates' social-service carry the change that introduced `singleMedia`
+(a stable shipped and deployed on production, the pre-release on dev). Then the client sends
+`singleMedia` only and the line goes.
+**Cost of keeping it:** one redundant query parameter. The server reads `singleMedia` first, so
+nothing is read twice.
+
+---
+
+### No date yet - `singlePhotos=true` answered as pictures only, after `singleMedia` exists (2026-11-06)
+
+**Site:** `singleMediaModeOf` and `SINGLE_PHOTO_POST_SQL` in
+[`apps/social-service/src/posts/full-screen-post-sql.ts`](../../apps/social-service/src/posts/full-screen-post-sql.ts),
+read by `PostsService` (`kindFilterSql`).
+**What it humours:** every installed client up to the last release that does not send `singleMedia`
+asks `GET /api/posts?kind=reel&singlePhotos=true`. Its `fullScreenPageOf` knows no video outside a
+reel and would draw one as a reel page and log an accusation, so the server must not hand it a feed
+video: the old switch keeps meaning "pictures only".
+**Removal condition:** `minClientVersion` has passed the first stable that sends `singleMedia`
+(`singlePhotos` then reaches only a client that no longer unlocks). Then `singlePhotos`, its DTO
+field, `SINGLE_PHOTO_POST_SQL` and the `'photos'` mode and cache-key suffix are deleted and
+`singleMedia` becomes the only switch.
+**Cost of keeping it:** a second SQL clause and a cache-key variant; two tests pin the precedence.
+
+---
+
+### No date yet - the CanaReels list asked with `multiMedia=true` AND both older switches (2026-11-06)
+
+**Site:** `buildListPostsSearchParams` in
+[`frontend/src/lib/posts/api.ts`](../../frontend/src/lib/posts/api.ts) (`multiMedia` sets
+`singleMedia` and `singlePhotos` too).
+**What it humours:** a social-service without the `multiMedia` switch (an estate deployed before
+this change) drops the unknown parameter; the two older switches keep the single pictures and
+videos coming, and the client simply draws no carousel it was not sent.
+**Removal condition:** both estates' social-service carry the change that introduced `multiMedia`
+(a stable deployed on production, the pre-release on dev). Then the client sends `multiMedia` alone
+and both lines go (this entry and the `singleMedia` + `singlePhotos` one above).
+**Cost of keeping it:** two redundant query parameters. The server reads `multiMedia` first.
+
+---
+
+### No date yet - `singleMedia=true` answered without carousels, after `multiMedia` exists (2026-11-06)
+
+**Site:** `singleMediaModeOf` and the `media` mode in
+[`apps/social-service/src/posts/full-screen-post-sql.ts`](../../apps/social-service/src/posts/full-screen-post-sql.ts).
+**What it humours:** every installed client up to the last release that does not send `multiMedia`
+asks `kind=reel&singleMedia=true`. Its `fullScreenPageOf` reads a post of several media as no page at
+all, draws it as a reel of its first media and logs an accusation, so the server must not hand it a
+carousel: `singleMedia` keeps meaning "one picture or one video".
+**Removal condition:** `minClientVersion` has passed the first stable that sends `multiMedia`. Then
+`singleMedia`, its DTO field, the `media` mode and its `+media` cache-key suffix go (with
+`singlePhotos`, per the entry above), and `multiMedia` becomes the only switch.
+**Cost of keeping it:** one more mode and cache-key variant; `posts.service.reels.spec.ts` pins that
+`singleMedia` alone never answers a carousel.
+
+---
+
+### No date yet - the CanaReels list keeps a post with a link OUT unless `withLinks=true` (2026-11-06)
+
+**Site:** `singleMediaModeOf`, the `carousel` mode and the `http(s)://` clause of `nothingElseSql` in
+[`apps/social-service/src/posts/full-screen-post-sql.ts`](../../apps/social-service/src/posts/full-screen-post-sql.ts).
+**What it humours:** every client built without the change that introduced `withLinks` - every
+release through `1.6.6-alpha.1`, and any later one cut before that change merged - reads a photo,
+video or carousel post with a link in its text as no page at all (`fullScreenPageOf`), draws it
+wrong and logs an accusation. None of them sends `withLinks`, so the server keeps the link out for
+them, in every mode. The first client that sends it is `1.6.6-alpha.2` at the earliest, the first
+stable `1.6.6` at the earliest.
+**Removal condition:** `minClientVersion` has passed the first stable that sends `withLinks`
+(`1.6.6` at the earliest; read the release that actually carries the change, never this line). Then
+the link clause, the `kept-out` rule, the `carousel` mode and its `+carousel` cache-key suffix go,
+and `multiMedia` alone means `carousel-links` (with the `singleMedia` and `singlePhotos` entries
+above, `withLinks` and `multiMedia` collapse into one switch).
+**Cost of keeping it:** one more mode and cache-key variant; `posts.service.reels.spec.ts` pins
+that neither `multiMedia` nor `withLinks` alone lets a link in.
 
 ---
 

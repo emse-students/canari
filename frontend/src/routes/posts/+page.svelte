@@ -3,8 +3,10 @@
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { feedToShowAfterPublish } from '$lib/posts/landingFeed';
+  import { onPostPublished } from '$lib/posts/publishQueue/publishQueue.svelte';
   import { onMount, untrack } from 'svelte';
   import { pullToRefresh } from '$lib/actions/pullToRefresh';
+  import { registerRetapRefresh } from '$lib/navigation/scrollToTop';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import {
@@ -718,6 +720,16 @@
     void loadScheduled();
   }
 
+  // THE COMPOSER CLOSES BEFORE THE POST EXISTS (the background publish queue): the list is read
+  // again when the queue says the server holds it, so the post appears where its author is.
+  $effect(() =>
+    onPostPublished((post) => {
+      Log.d('POSTS', `queued post ${post.id} published: refreshing the feed`);
+      void refreshPosts();
+      void loadScheduled();
+    })
+  );
+
   function postPublishedAt(post: PostEntity): number {
     return new Date(post.publishedAt).getTime();
   }
@@ -793,7 +805,13 @@
     // Attach pull-to-refresh to the root scroll container (page-scroll-wrap in +layout.svelte).
     const scrollContainer = document.querySelector<HTMLElement>('.page-scroll-wrap');
     if (scrollContainer) {
-      const { destroy } = pullToRefresh(scrollContainer, { onRefresh: refreshPosts });
+      const { destroy: destroyPull } = pullToRefresh(scrollContainer, { onRefresh: refreshPosts });
+      // A re-tap of the Feed tab while already at the top refreshes through the SAME action.
+      const unregisterRetap = registerRetapRefresh(refreshPosts);
+      const destroy = () => {
+        destroyPull();
+        unregisterRetap();
+      };
       // The tab row comes back on the first scroll UP (see `tabsShown`). No log per event.
       // Seeded at where the page already is (a restored scroll is not the top), so the first
       // event measures from there rather than reading the whole offset as one scroll down.

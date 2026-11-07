@@ -1,15 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import {
-    CircleAlert,
-    LoaderCircle,
-    Maximize,
-    Minimize,
-    Pause,
-    Play,
-    Volume2,
-    VolumeX,
-  } from '@lucide/svelte';
+  import { CircleAlert, Maximize, Minimize, Pause, Play, Volume2, VolumeX } from '@lucide/svelte';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { followVideoSound, type VideoSoundScope } from '$lib/actions/playWhileVisible';
   import { videoSound } from '$lib/stores/videoSound.svelte';
@@ -29,6 +20,7 @@
   import VideoPoster from './VideoPoster.svelte';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
+  import MediaSpinner from './MediaSpinner.svelte';
 
   /**
    * CANARI'S VIDEO PLAYER - the full-screen viewer's, wherever a video is opened (user, 2026-10-01).
@@ -594,16 +586,8 @@
     {/if}
 
     {#if minimal && buffering}
-      <!-- A SLOW NETWORK, NOT A REFUSAL: the reel was asked to play and waits for its data. A
-           spinner, never a target - a tap on the picture still plays or pauses. -->
-      <div
-        class="pointer-events-none absolute top-1/2 left-1/2 z-30 -translate-x-1/2 -translate-y-1/2 text-white/80"
-        role="status"
-        aria-label={m.video_loading_label()}
-        data-video-buffering
-      >
-        <LoaderCircle size={36} strokeWidth={2} class="animate-spin motion-reduce:animate-none" />
-      </div>
+      <!-- A SLOW NETWORK, NOT A REFUSAL: the reel was asked to play and waits for its data. -->
+      <MediaSpinner />
     {/if}
 
     {#if minimal}

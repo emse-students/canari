@@ -23,7 +23,7 @@ Most `/api` locations carry `auth_request /internal/auth/verify`, which calls `c
 |---|---|---|---|
 | `/api/ws` | `chat-gateway:3000` | yes | WebSocket upgrade, token from `canari_ws_token` cookie |
 | `/api/presence` | `chat-gateway:3000` | yes | Online presence (Redis): `POST` with the ids in the body, `client_max_body_size 128k`; the legacy `GET ?users=` for installed clients ([chat-gateway](../services/chat-gateway.md#the-ids-travel-in-a-body-never-in-the-url-2026-10-28)) |
-| `/api/admin/presence` (and `/history`) | `chat-gateway:3000` | yes | Admin monitoring: connected people and devices counted by platform and app version, now and over 24 h - counts only ([census](../services/chat-gateway.md#the-anonymous-census-and-its-24-hour-series-2026-11-02)) |
+| `/api/admin/presence` (and `/history`) | `chat-gateway:3000` | yes | Admin monitoring: connected people and devices counted by platform and app version, now and over 24 h / 7 d / 30 d (`?window=`) - counts only ([census](../services/chat-gateway.md#the-anonymous-census-and-its-24-hour-series-2026-11-02)) |
 | `/api/mls/*` | `chat-delivery-service:3010` | yes | MLS API; Redis history at `/api/mls/history/*` |
 | `/api/chat-delivery-health` | `chat-delivery-service:3010` | no | Liveness probe -> `GET /api/health` |
 | `/api/media/*` | `media-service:3011` | yes | Encrypted blob storage (Garage) |
@@ -114,6 +114,15 @@ layer served `Access-Control-Allow-Origin: *` in production until 2026-08-30, be
 a literal on the service in `docker-compose.prod.yml` and the allowlist CD wrote never reached the
 container. The measurement, the fix and how to verify an origin list at all are on
 [chat-gateway](../services/chat-gateway.md#cors-the-list-is-a-fact-about-the-clients).
+
+**`/api/public/*` has ONE CORS layer, nginx's, and the services do not log a denial there** (2026-11-06).
+`location /api/public/` hides the upstream `Access-Control-Allow-*` headers and sends
+`Access-Control-Allow-Origin: *`, so a browser reads those routes from any origin whatever the NestJS
+allowlist says. The services' `CORS DENIED` line (`cors-origins.ts`) used to fire there for
+`https://portail-etu.emse.fr`, claiming a failure that cannot happen. `corsOptions` now reads the request
+path and skips the line for `EDGE_OWNED_CORS_PREFIXES` (`/api/public/`); every other route still logs a
+real refusal. A new `location` where nginx answers CORS itself belongs in that list
+(`cors-origins.spec.ts`).
 
 ## The generated config is validated at build time
 

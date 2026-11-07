@@ -1,3 +1,4 @@
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { getSavedUserId } from '$lib/stores/user';
 
 /**
@@ -11,11 +12,9 @@ export interface PostCommentDraft {
   parentId: string | null;
 }
 
-const KEY_PREFIX = 'canari_post_comment_draft:';
-
 /** The storage key of one account's draft on one post. */
 export function postCommentDraftKey(userId: string, postId: string): string {
-  return `${KEY_PREFIX}${userId}:${postId}`;
+  return ACCOUNT_KEY.postCommentDraft(userId, postId);
 }
 
 function ownedKey(postId: string, action: string): string | null {

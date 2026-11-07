@@ -216,6 +216,24 @@ export async function admitNewcomerToDistributionGroup(
         );
         break;
       } catch (e) {
+        // A KEY GROUP'S REFUSAL EARLY IN A RESUME MOVES NOTHING AT ONCE - ON PURPOSE. Before the
+        // mailbox is listed on this link, the refusal's catch-up replays no log over the seeds
+        // still queued (`catchUpOnRefusedCommit`, channel-encryption 22.2): the QUEUE moves the
+        // epoch, in order. So an unmoved epoch here is not yet the proof that nothing won: wait for
+        // this link's drain and the epoch check it scheduled, then read the epoch the queue
+        // reached. Outside the MLS lock (the commit released it), and never inside a frame - this
+        // runs from an admin's gesture.
+        if (e instanceof CommitRefusedError && mlsService.getEpoch(groupId) <= e.baseEpoch) {
+          try {
+            await mlsService.whenGroupDrained(groupId);
+            await mlsService.whenDistributionEpochSettled(groupId);
+          } catch (drainError) {
+            // Only a destroyed service rejects the wait (sign-out): the epoch read below decides.
+            log(
+              `[GRAINE] ADMIT ${newcomer.slice(0, 8)} into ${label}: the drain the refusal waited for was abandoned (${String(drainError)})`
+            );
+          }
+        }
         const caughtUpTo = mlsService.getEpoch(groupId);
         const rebuild = rebuildableRefusal(e, caughtUpTo);
         if (rebuild === 'epoch-moved' && e instanceof CommitRefusedError) {

@@ -1753,6 +1753,32 @@ a companion object, a plugin command missing from its ACL: none of these are vis
 build (`:app:compileUniversalReleaseKotlin`) is the first real Kotlin compile — a debug build does
 not exercise it.
 
+### A pull request compiles the iOS app, unsigned (`compile-ios-app`, 2026-11-04)
+
+Dispatching `ios.yml` by hand per branch was a human queue, and a Swift error in `gen/apple` or a
+Swift plugin therefore first failed on the pre-release, after the merge. `ci.yml` now carries
+`compile-ios-app`: a macOS job that builds the app, both extensions and the Swift packages with
+`xcodebuild build` and `CODE_SIGNING_ALLOWED=NO`, then runs `ios-extensions.sh` on the built `.app`.
+It is a **need of `CI passed`**, so a Swift error fails the merge gate.
+
+- **No fifth workflow, and not a second call of `ios.yml`.** That job needs signing secrets and
+  `contents: write`, which a pull request (Dependabot's above all) must not have. The two share
+  `.github/scripts/ios-libapp.sh` (the Rust static library staging, extracted from `ios.yml`) and
+  `ios-extensions.sh`; the whole pull-request account is `.github/scripts/ios-app-compile.sh`.
+- **No secret.** A stub `GoogleService-Info.plist` (marker-checked, a real one is never
+  overwritten) and placeholder `VITE_*` origins stand in; no archive, no export, no upload.
+- **Path filter, so macOS minutes are paid only for Apple code.** `changes` emits `ios_app` when a
+  changed file is under `gen/apple/`, under `plugins|patches/<name>/ios/`, any `.swift .m .mm .h`
+  under `frontend/src-tauri`, `src-tauri/Cargo.toml`, `build.rs`, `tauri.conf.json` (and a
+  `tauri.ios.conf.json` should one appear; owner, 2026-11-04), `ios.yml`, the three iOS scripts or
+  `rust-toolchain.toml` - or when `ci.yml` itself changed (`run_all`). Otherwise the job is
+  `skipped`, which `CI passed` accepts. **`Cargo.lock` and the crate's `src/*.rs` deliberately do
+  not trigger it** (a lock-only Dependabot bump would cost a macOS run each; `test-rust` covers the
+  host, the release the iOS target) - that is the known gap.
+- **What it does not replace:** signing, the icon tint, the archive-only assertions and TestFlight
+  stay in `ios.yml`. `swift-syntax.sh` (parse only) still runs in `test-ci-scripts`.
+- Shape pinned by `.github/scripts/tests/ios-compile-job.test.mjs`.
+
 ### A green run is not proof that *your* file compiled
 
 The iOS `project.pbxproj` is hand-maintained (there is no xcodegen here), so a source file that is
@@ -2772,6 +2798,8 @@ are builder stages and the local compose file, which reach no estate.
   half is reported, so the half that moved would never retire. **The retirement now also reads each
   purl-scoped entry as `id package version`** (`image-scan.sh --allowlist-purls`, compared with a YAML
   parse by `image-scan-allowlist.test.mjs`) and fails on a triple the raw scan no longer reports.
+- **2026-11-06, the image scan red on `CVE-2026-115506`**, a fourth libexpat 2.9.0-r0 advisory, on every pull request. Upstream had rebuilt every nginx Alpine tag the evening before (`1.31.8-alpine` is now `b2f80f8f8814`), and that build carries libexpat 2.10.0-r0, curl 8.23.0-r0 and brotli-libs 1.2.1-r0 (read with `apk list -I` in the image; `stable-alpine` too). **The pin moved** in the production, dev and rolling-fixture compose files, and the three libexpat entries were deleted with it; the curl and brotli entries stay for adminer and postgres.
+- **2026-11-05, the image scan red on `CVE-2026-109518`**, Debian's apt and libapt-pkg7.0 3.0.3 (HIGH, fixed in 3.0.4), in `goauthentik/server:2026.8.5`, still the newest authentik release, so there was no pin to move. apt runs while upstream builds the image; at runtime only the entrypoint's `prepare_debug` branch calls it (the debugger setting or `test-all`), which this deployment does not enable, and the image runs as user 1000. **Allowlisted by purl** with the owner's approval (the tool's classifier refused the lead's own edit as a weakening), retiring with the image.
 - **2026-11-03, the image scan red on `CVE-2026-117610` and `CVE-2026-118370`**, libexpat 2.9.0-r0 (HIGH, fixed in Alpine's 2.10.0-r0), in `nginx:1.31.8-alpine` and `nginx:stable-alpine`. The pinned digest (built 2026-10-28) is still the newest plain `1.31-alpine`; the `-perl` rebuild of 2026-10-31 and the floating heads carry 2.9.0-r0 too, so there was no digest to move to: **allowlisted by purl** (`pkg:apk/alpine/libexpat@2.9.0-r0`), reached only through fontconfig (the optional `image_filter` module), retiring with the pins.
 - **2026-10-28, main's CI red again: `CVE-2026-109383` and `CVE-2026-87018`**, two more advisories on npm's bundled `undici` 6.28.0 (fixed in 6.29.1). `node:24-alpine` was re-pulled that day (24.22.1, npm 11.19.1) and still carries 6.28.0, so there was no digest to move to: **allowlisted by purl** (`pkg:npm/undici@6.28.0`), retiring with the image.
 

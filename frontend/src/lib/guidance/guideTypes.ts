@@ -102,7 +102,10 @@ export interface GuideDefinition {
    * Makes the help replayable from Settings > Preferences > "Revoir les aides": the label of its
    * button and the route it plays on. The welcome tour has its own row there.
    */
-  readonly replay?: { readonly label: () => string; readonly route: '/posts' | '/chat' };
+  readonly replay?: {
+    readonly label: () => string;
+    readonly route: '/posts' | '/chat' | '/bookings';
+  };
 }
 
 /** Why a help ended. Every one of them records it as seen, except none: an end is an end. */

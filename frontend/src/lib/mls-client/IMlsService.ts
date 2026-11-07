@@ -4,7 +4,11 @@ import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import type { DatedKeyPackage } from './keyPackages';
 import type { SkippedDevice } from './skippedKeyPackage';
 import type { DeviceEvent, DevicePin, KeyPackageVerdict } from './deviceTrust';
-import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
+import type {
+  DeviceKeyPackageAnswer,
+  DeviceSignatureKeys,
+  UserDeviceEntry,
+} from './deviceKeyPackage';
 import type { FrameDelivery } from './frameDelivery';
 import type { IncomingDeliveryMeta } from './incomingDelivery';
 import type { MlsDecryptSession } from './mlsDecryptSession';
@@ -1113,11 +1117,44 @@ export interface IMlsService {
    * Welcome and the Commit behind it may only be processed in the order they arrived.
    *
    * Idempotent, and silent when nothing was held.
+   *
+   * While {@link holdInboundUntilRowsSeeded} is armed it only records that the client is ready: the
+   * held frames are replayed when the restore seeds the conversation rows, not here.
    */
   markInboundReady(): Promise<void>;
+  /**
+   * Arms the cold start's third precondition: no inbound frame is handled, and no pull is issued,
+   * before the restore has seeded the conversation rows ({@link notifyConversationRowsSeeded}).
+   * Every {@link fetchPendingMessages} asked meanwhile, by any caller, joins the ONE boot pull the
+   * seeding issues - so none of them may be awaited ahead of the restore.
+   *
+   * A frame of a group this device holds, handled while its row does not exist yet, is refused
+   * `absent-conversation` and fetched again once the row exists - a race that heals at every cold
+   * start, which is still a defect. The login arms this before the gateway handshake starts and
+   * ends it with {@link endRowSeedingHold} once its restore has returned.
+   */
+  holdInboundUntilRowsSeeded(): void;
+  /**
+   * The login's own end of {@link holdInboundUntilRowsSeeded}, called once its restore returned or
+   * threw. Silent when the seeding already released the hold - every ordinary boot. Otherwise the
+   * restore ended without seeding a row (it threw before, or ran against another client) and this
+   * releases what was held, at a level that accuses: the rows the frames wait for are not coming.
+   */
+  endRowSeedingHold(): void;
   /** True when the live gateway WebSocket is open (used for reconnect watchdog). */
   isWsOpen(): boolean;
-  /** Fetches all registered devices (with KeyPackages) for the given user. Throws on transport/HTTP failure; `[]` only when the user genuinely has no active device. */
+  /**
+   * The roster of the given user's active devices, CLAIMING NOTHING: for a caller that needs the
+   * ids, a count or the names. Throws on transport/HTTP failure; `[]` only when the user genuinely
+   * has no active device. Simultaneous askers share one request.
+   */
+  listUserDevices(userId: string): Promise<UserDeviceEntry[]>;
+  /**
+   * CLAIMS one KeyPackage from every active device of the given user, for an adder about to add
+   * every one of them - a caller that only reads the roster asks {@link listUserDevices}. Never
+   * shared between callers: two adders on one package would build two Welcomes on it. Throws on
+   * transport/HTTP failure; `[]` only when the user genuinely has no active device.
+   */
   fetchUserDevices(userId: string): Promise<
     Array<{
       keyPackage: Uint8Array;
@@ -1143,12 +1180,12 @@ export interface IMlsService {
   publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void>;
   /** Bulk-upload multiple one-time prekeys to the server pool. */
   publishKeyPackages(packages: DatedKeyPackage[]): Promise<void>;
-  /** Delivers a Welcome message to the target user/device via the delivery service. */
+  /** Delivers a Welcome message to ONE device of the target user via the delivery service. */
   sendWelcome(
     welcomeBytes: Uint8Array,
     targetUserId: string,
     groupId: string,
-    targetDeviceId?: string,
+    targetDeviceId: string,
     ratchetTreeBytes?: Uint8Array
   ): Promise<void>;
   /** Returns the current MLS epoch number for a group (needed for epoch-gating). */
@@ -1406,13 +1443,16 @@ export interface IMlsService {
   ): Promise<ExternalJoinOutcome>;
   /**
    * Decrypts a frame that arrived on a key-distribution group and hands it to the Graine handler.
-   * Returns whether the frame may be acknowledged.
+   * Returns whether the frame may be acknowledged. `aheadOfMailbox` is the arrival stamp
+   * (`IncomingDeliveryMeta.aheadOfMailbox`): such a frame, ahead of the group's epoch, steps no
+   * commit - it is left queued and pulled again behind the commits and seeds queued before it.
    */
   routeDistributionFrame(
     groupId: string,
     sender: string,
     ciphertext: Uint8Array,
-    senderDeviceId?: string
+    senderDeviceId?: string,
+    aheadOfMailbox?: boolean
   ): Promise<boolean>;
   /** Returns the unique device ID assigned to this MLS instance. */
   getDeviceId(): string;
@@ -1423,8 +1463,13 @@ export interface IMlsService {
    */
   resolveDeviceId(userId: string): Promise<string>;
   /** Fetches messages queued on the delivery service that were not yet delivered
-   * (e.g. during a disconnect). Should be called after every connect/reconnect. */
-  fetchPendingMessages(): Promise<void>;
+   * (e.g. during a disconnect). Should be called after every connect/reconnect. Single-flight: an
+   * ask made while a pull is fetching, the queue is draining or a pulled row is still queued is
+   * owed and run once all have ended, and resolves then. While {@link holdInboundUntilRowsSeeded}
+   * is armed, every ask joins the whole-mailbox boot pull the restore's seeding issues.
+   * @param forGroups the groups the ask is for, if any - a group barrier on one of them waits for
+   *   the owed pull's listing; none means the whole mailbox, and every group's barrier waits. */
+  fetchPendingMessages(forGroups?: readonly string[]): Promise<void>;
   /**
    * Resolves when this device's mailbox is empty - nothing left to fetch, nothing left to apply.
    *
@@ -1501,6 +1546,10 @@ export interface IMlsService {
    * is the order the second phase keeps with a live delivery: the pull is announced in the same
    * tick, so each archive replay waits for it at its barrier and skips what it decrypted, and every
    * later write of a row MERGES into it rather than replacing it.
+   *
+   * AND IT RELEASES THE COLD START'S HOLD ({@link holdInboundUntilRowsSeeded}): the held socket
+   * frames are replayed and the boot pull is issued here, so at a cold start nothing was refused
+   * for lack of a row in the first place.
    */
   notifyConversationRowsSeeded(): void;
 
@@ -1939,4 +1988,9 @@ export interface IMlsService {
    * reference to this object and blocking GC.
    */
   destroy(): void;
+  /**
+   * Whether {@link destroy} ran: set once, never cleared. What a continuation that outlived its
+   * client (a catch-up released by the destroy) reads before it reports anything for the session.
+   */
+  isDestroyed(): boolean;
 }

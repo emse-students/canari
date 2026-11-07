@@ -3,7 +3,7 @@
   import { formatAmount } from '$lib/forms/fillAnswers';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
-  import { Ban, Paperclip, Upload, X } from '@lucide/svelte';
+  import { Ban, CircleAlert, Paperclip, Upload, X } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { uploadFormAnswerFile, type UploadedAnswerFile } from '$lib/forms/api';
   import {
@@ -14,6 +14,9 @@
   import { refusalStatus } from '$lib/utils/apiRefusal';
   import { UploadAbortedError, type XhrUploadOptions } from '$lib/utils/uploadXhr';
   import { Log } from '$lib/utils/Log';
+  import { associationLogoSrc } from '$lib/associations/api';
+  import { questionImageAlt } from '$lib/forms/questionImage';
+  import { ANSWER_MAX_TEXT_LENGTH } from '$lib/forms/answerBounds';
 
   /**
    * ONE QUESTION OF A FORM BEING FILLED IN - its card, its label and the input its type calls for.
@@ -56,6 +59,11 @@
     fileHint?: string;
     /** What a 429 (too many files uploaded and not sent) reads as. Defaults to the form's. */
     fileTooManyError?: string;
+    /**
+     * Why the page refused to send because of THIS question - said under it, the card drawn in the
+     * error colour. Null when the question is not the one at fault.
+     */
+    error?: string | null;
   }
 
   let {
@@ -72,6 +80,7 @@
     uploadFile = (itemId, file, transport) => uploadFormAnswerFile(formId, itemId, file, transport),
     fileHint,
     fileTooManyError,
+    error = null,
   }: Props = $props();
 
   /**
@@ -88,6 +97,8 @@
   let upload = $state.raw<{ controller: AbortController; percent: number | null } | null>(null);
   let fileError = $state<string | null>(null);
   const uploading = $derived(upload !== null);
+  /** The question's image, absolute on a native shell (`associationLogoSrc` prefixes the media base). */
+  const questionImageSrc = $derived(associationLogoSrc(item.imageUrl));
 
   $effect(() => {
     onUploadingChange?.(uploading);
@@ -201,7 +212,12 @@
   {/if}
 {/snippet}
 
-<div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-5 shadow-sm">
+<div
+  id={`q-${item.id}`}
+  class="rounded-2xl bg-(--cn-surface) p-4 shadow-sm sm:px-6 sm:py-5 {error
+    ? 'border-red-err border-2'
+    : 'border-cn-border border'}"
+>
   <!-- svelte-ignore a11y_label_has_associated_control -->
   <label class="mb-1.5 flex items-start gap-2">
     <span
@@ -209,9 +225,9 @@
     >
       {index + 1}
     </span>
-    <span class="text-text-main text-sm leading-snug font-bold">
+    <span class="text-text-main text-base leading-snug font-bold">
       {item.label}
-      {#if item.required}<span class="ml-0.5 text-red-500">*</span>{/if}
+      {#if item.required}<span class="text-red-err ml-0.5" aria-hidden="true">*</span>{/if}
     </span>
   </label>
 
@@ -219,10 +235,18 @@
     <p class="text-text-muted mb-3 ml-6 text-xs leading-relaxed">{item.description}</p>
   {/if}
 
-  {#if item.imageUrl}
-    <div class="border-cn-border/60 mb-3 ml-6 overflow-hidden rounded-xl border">
-      <img src={item.imageUrl} alt="" class="max-h-48 w-full object-cover" loading="lazy" />
-    </div>
+  {#if questionImageSrc}
+    <!-- The whole picture, never cropped: a question's image is often what it asks about (a plan,
+         a menu). Its src goes through the public media base, so a native shell reaches the API. -->
+    <figure class="border-cn-border/60 bg-cn-bg mb-3 ml-6 overflow-hidden rounded-lg border">
+      <img
+        src={questionImageSrc}
+        alt={questionImageAlt(item)}
+        class="mx-auto block h-auto max-h-96 w-auto max-w-full object-contain"
+        loading="lazy"
+        decoding="async"
+      />
+    </figure>
   {/if}
 
   {#if item.type === 'short_text'}
@@ -230,16 +254,31 @@
       type="text"
       class="border-cn-border text-text-main bg-cn-bg placeholder:text-text-muted/50 focus:border-cn-yellow w-full rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
       bind:value
+      maxlength={ANSWER_MAX_TEXT_LENGTH}
       placeholder={m.form_view_answer_placeholder()}
       {disabled}
     />
   {:else if item.type === 'long_text'}
+    <!-- The server's bound, told before the send (D2): a cover letter past it was an English 400. -->
     <textarea
       rows="4"
       class="border-cn-border text-text-main bg-cn-bg placeholder:text-text-muted/50 focus:border-cn-yellow w-full resize-y rounded-2xl border-2 px-4 py-3 text-sm transition-all outline-none focus:shadow-[0_0_0_4px_rgba(250,204,21,0.12)] disabled:opacity-50"
       bind:value
+      maxlength={ANSWER_MAX_TEXT_LENGTH}
+      aria-describedby={`count-${formId}-${item.id}`}
       placeholder={m.form_view_answer_placeholder()}
       {disabled}></textarea>
+    <p
+      id={`count-${formId}-${item.id}`}
+      class="mt-1 text-right text-xs {String(value ?? '').length >= ANSWER_MAX_TEXT_LENGTH
+        ? 'text-red-err font-semibold'
+        : 'text-text-muted'}"
+    >
+      {m.form_answer_char_count({
+        count: String(value ?? '').length,
+        max: ANSWER_MAX_TEXT_LENGTH,
+      })}
+    </p>
   {:else if item.type === 'dropdown' || item.type === 'single'}
     <Picker
       value={value ?? ''}
@@ -328,7 +367,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each item.rows ?? [] as row (row)}
+          {#each item.rows ?? [] as row, rowIndex (rowIndex)}
             <tr class="hover:bg-cn-border/10 transition-colors">
               <td
                 class="text-text-main border-cn-border sticky left-0 z-10 border-t bg-(--cn-surface) px-3 py-3 text-sm font-medium"
@@ -339,7 +378,7 @@
                   {#if item.type === 'matrix_single'}
                     <input
                       type="radio"
-                      name={`matrix-${formId}-${item.id}-${row}`}
+                      name={`matrix-${formId}-${item.id}-${rowIndex}`}
                       value={col.id}
                       bind:group={value[row]}
                       class="accent-cn-yellow h-4 w-4"
@@ -422,8 +461,15 @@
       {/if}
     </div>
   {:else}
-    <div class="bg-red-err/10 text-red-err border-red-err/30 rounded-xl border p-3 text-xs">
-      {m.form_view_unsupported_type({ type: item.type })}
+    <div class="bg-cn-yellow/10 text-text-main border-cn-yellow/30 rounded-xl border p-3 text-xs">
+      <!-- A type this build does not know (the coming product_grid): never an empty card. -->
+      {m.form_view_update_app_to_answer()}
     </div>
+  {/if}
+
+  {#if error}
+    <p role="alert" class="text-red-err mt-3 flex items-center gap-2 text-xs font-bold">
+      <CircleAlert size={16} class="shrink-0" />{error}
+    </p>
   {/if}
 </div>

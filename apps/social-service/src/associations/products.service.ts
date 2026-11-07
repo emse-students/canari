@@ -308,6 +308,11 @@ export interface PurchaseListRow {
   source: 'form' | 'product';
   productId: string | null;
   formId: string | null;
+  /**
+   * The form answer this payment paid for; null for a boutique purchase. The responses screen opens
+   * the refund of an answer from it, through the same dialog as this list.
+   */
+  submissionId: string | null;
   productName: string;
   amountCents: number;
   paymentMethod: PurchasePaymentMethod;
@@ -3314,6 +3319,7 @@ export class ProductsService {
       source: r.source,
       productId: r.productId,
       formId: r.formId,
+      submissionId: r.submissionId ?? null,
       productName: r.productName,
       amountCents: r.amountCents,
       paymentMethod: r.paymentMethod,

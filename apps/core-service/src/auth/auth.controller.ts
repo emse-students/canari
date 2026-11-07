@@ -238,6 +238,24 @@ const REFRESH_MAX_AGE = SESSION_TTL_SECONDS; // 7 days in seconds - the cookie a
 const ENDED_SESSIONS_SAID_CAP = 4096;
 
 /** Controller handling OIDC login, token refresh, logout, and nginx JWT verification. */
+/**
+ * THE ONE BODY OF A MAINTENANCE REFUSAL (sign-in, refresh, nginx's auth_request), a 503.
+ *
+ * `message` keeps what it always carried - the operator's text, else an English default - so a
+ * client that predates the field reads what it always read. `maintenanceMessage` is the OPERATOR's
+ * text alone, or null: a client words the default itself in its own language (the platform gate's
+ * `platform_gate_maintenance_default_msg`), and could not tell the two apart from `message` without
+ * comparing sentences.
+ */
+function maintenanceRefusal(platformConfig: { maintenanceMessage?: string | null }) {
+  return {
+    code: 'MAINTENANCE',
+    message:
+      platformConfig.maintenanceMessage || 'Canari is under maintenance. Please try again later.',
+    maintenanceMessage: platformConfig.maintenanceMessage || null,
+  };
+}
+
 @Controller('auth')
 export class AuthController {
   private readonly logger = new Logger(AuthController.name);
@@ -669,12 +687,7 @@ export class AuthController {
   private async refuseDuringMaintenance(user: User): Promise<void> {
     const platformConfig = await this.platformService.getConfig();
     if (this.platformService.isAccessBlockedByMaintenance(platformConfig, !!user.admin)) {
-      throw new ServiceUnavailableException({
-        code: 'MAINTENANCE',
-        message:
-          platformConfig.maintenanceMessage ||
-          'Canari is under maintenance. Please try again later.',
-      });
+      throw new ServiceUnavailableException(maintenanceRefusal(platformConfig));
     }
   }
 
@@ -848,14 +861,11 @@ export class AuthController {
     const platformConfig = await this.platformService.getConfig();
     if (this.platformService.isAccessBlockedByMaintenance(platformConfig, isAdmin)) {
       // Do NOT touch the session here: maintenance is a temporary refusal, and
-      // consuming the rotation would sign the user out of a healthy session.
-      this.clearRefreshCookie(res);
-      throw new ServiceUnavailableException({
-        code: 'MAINTENANCE',
-        message:
-          platformConfig.maintenanceMessage ||
-          'Canari is under maintenance. Please try again later.',
-      });
+      // consuming the rotation would sign the user out of a healthy session. Nor the COOKIE: it
+      // was cleared here from the day maintenance mode was added (no reason recorded), which sent
+      // every web and Android user to login once the maintenance ended and left their session row
+      // orphaned - the client's maintenance screen promised a session it had just been told to drop.
+      throw new ServiceUnavailableException(maintenanceRefusal(platformConfig));
     }
 
     const client = this.clientInfo(req);
@@ -988,7 +998,8 @@ export class AuthController {
   /**
    * Creation options for the restore key of the calling session, and the id of the key it holds
    * now. The client asks at EVERY start and re-registers unless that id is the one it registered
-   * itself, so a key planted by anybody else is evicted at the owner's next start.
+   * itself, so a key planted by anybody else is evicted at the owner's next start. The digest of the
+   * accepted origins rides along (`originsDigest`), the other half of an origin refusal's verdict.
    */
   @Post('restore/registration/options')
   @HttpCode(200)
@@ -996,12 +1007,15 @@ export class AuthController {
   @Throttle({ default: { limit: RESTORE_REGISTER_LIMIT_PER_MINUTE, ttl: 60_000 } })
   async restoreRegistrationOptions(
     @Req() req: Request
-  ): Promise<{ options: unknown; registeredCredentialId: string | null }> {
+  ): Promise<{ options: unknown; registeredCredentialId: string | null; originsDigest: string }> {
     this.requireRestoreAvailable();
     const { sessionId } = await this.restoreRegistrationCaller(req);
     return {
       options: await this.restoreCredentials.registrationOptions(sessionId, new Date()),
       registeredCredentialId: await this.restoreCredentials.registeredKeyOf(sessionId),
+      // What a `RESTORE_ORIGIN_NOT_ALLOWED` was a verdict against: the client skips a new key only
+      // while this AND its version are what it was refused at, so a fixed configuration heals.
+      originsDigest: this.restoreCredentials.allowedOriginsDigest(),
     };
   }
 
@@ -1056,6 +1070,15 @@ export class AuthController {
           restoreRefusal(
             'RESTORE_REGISTRATION_CONFLICT',
             'Another registration for this session committed first'
+          )
+        );
+      case 'origin-refused':
+        // A verdict on the BUILD, not on this request: the client records it and stops asking until
+        // it runs another version (restoreCredential.ts, `ensureRestoreKey`).
+        throw new ForbiddenException(
+          restoreRefusal(
+            'RESTORE_ORIGIN_NOT_ALLOWED',
+            'This build of the app is not one this estate vouches for'
           )
         );
       case 'invalid':
@@ -1328,12 +1351,7 @@ export class AuthController {
     const platformConfig = await this.platformService.getConfig();
     if (this.platformService.isAccessBlockedByMaintenance(platformConfig, !!payload.admin)) {
       res.set('X-Maintenance-Mode', 'true');
-      return res.status(503).json({
-        code: 'MAINTENANCE',
-        message:
-          platformConfig.maintenanceMessage ||
-          'Canari is under maintenance. Please try again later.',
-      });
+      return res.status(503).json(maintenanceRefusal(platformConfig));
     }
 
     res.set('X-User-Id', payload.sub);

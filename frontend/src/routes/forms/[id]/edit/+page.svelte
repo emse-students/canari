@@ -1,10 +1,13 @@
 <script lang="ts">
   import { kindHasSection } from '$lib/associations/editSections';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
+  import { questionImageRefusalMessage } from '$lib/forms/questionImage';
+  import { formCodeMessage, formItemsProblem } from '$lib/forms/answerBounds';
+  import { refusalCode } from '$lib/utils/apiRefusal';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import {
     activePaymentProvider,
     loadActivePaymentProvider,
@@ -14,6 +17,7 @@
   import {
     FormNotFoundError,
     getForm,
+    getSubmissions,
     updateForm,
     uploadFormImage,
     uploadFormItemImage,
@@ -23,6 +27,7 @@
     type Form,
   } from '$lib/forms/api';
   import {
+    associationLogoSrc,
     canAssociationReceiveFormPayments,
     getAssociation,
     type Association,
@@ -47,20 +52,41 @@
     matrixOf,
     matrixPayload,
     matrixProblem,
-    pricesOnProfile,
     type PriceMatrix,
   } from '$lib/pricing/priceMatrix';
   import { gridProblemMessage } from '$lib/pricing/gridProblem';
   import { formSummary } from '$lib/forms/summary';
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { firstEmptyCondition } from '$lib/forms/audience';
+  import {
+    firstEmptyConditionQuestion,
+    firstItemsFaultQuestion,
+    refusedProductGridFault,
+  } from '$lib/forms/questionFault';
   import { fromFormItems, toFormItemsPayload } from '$lib/forms/itemsPayload';
+  import {
+    firstProductGridProblem,
+    multipleSubmissionsAfterGridAdded,
+    multipleSubmissionsAfterGridGone,
+    type GridMultipleSubmissions,
+    profileTierCriterion,
+    orderedProductGridCells,
+  } from '$lib/forms/productGridEditor';
+  import { PRODUCT_GRID_TYPE } from '$lib/forms/productGridContract';
   import {
     FILE_RETENTION_DEFAULT_DAYS,
     fileQuestionProblem,
     hasFileQuestion,
   } from '$lib/forms/fileQuestion';
+  import { formConfigConflicts, type GuestPricedGrid } from '$lib/forms/formOptionRules';
+  import {
+    conflictCodeMessage,
+    editorOptionState,
+    formConflictMessage,
+  } from '$lib/forms/formOptionConflict';
+  import { Log } from '$lib/utils/Log';
   import { CircleAlert, FileText, ImagePlus, Users, X } from '@lucide/svelte';
+  import { askedGuestFields } from '$lib/forms/guestIdentity';
   import { m } from '$lib/paraglide/messages';
 
   const formId = $derived(page.params.id as string);
@@ -76,6 +102,8 @@
   let allowMultipleSubmissions = $state(false);
   let anonymous = $state(false);
   let isPublic = $state(false);
+  /** What a public form asks a guest (`guestIdentity.ts`); none by default. */
+  let guestFields = $state<string[]>([]);
 
   // Payment
   let basePrice = $state(0);
@@ -108,6 +136,22 @@
   let imageError = $state('');
 
   let items = $state<any[]>([]);
+  /** Per priced grid, the cells some answer ordered: removing their row or column warns first. */
+  let orderedCells = $state<Record<string, string[]>>({});
+
+  /**
+   * Reads which grid cells were ordered, when the form holds a priced grid that has answers. A
+   * failed read is logged and leaves the editor without warnings - it never blocks editing.
+   */
+  async function loadOrderedCells(id: string, f: Form) {
+    const gridIds = (f.items ?? []).filter((i) => i.type === PRODUCT_GRID_TYPE).map((i) => i.id);
+    if (gridIds.length === 0 || !f.submissionCount) return;
+    try {
+      orderedCells = orderedProductGridCells(await getSubmissions(id), gridIds);
+    } catch (e) {
+      console.warn('[forms] the ordered grid cells could not be read; removals will not warn:', e);
+    }
+  }
   let isSubmitting = $state(false);
   let error = $state('');
 
@@ -177,10 +221,12 @@
       allowMultipleSubmissions = f.allowMultipleSubmissions ?? false;
       anonymous = f.anonymous ?? false;
       isPublic = f.isPublic ?? false;
+      guestFields = askedGuestFields(f.guestFields);
       cashPaymentExpiryDays = f.cashPaymentExpiryDays ?? undefined;
       fileRetentionDays = f.fileRetentionDays ?? FILE_RETENTION_DEFAULT_DAYS;
       imageUrl = f.imageUrl ?? null;
       items = fromFormItems(f.items ?? [], requiresPayment);
+      void loadOrderedCells(id, f);
       try {
         formations = await fetchFormations();
       } catch {
@@ -211,6 +257,46 @@
   );
 
   const formHasFile = $derived(hasFileQuestion(items));
+  /** The options as the shared rule reads them: what every switch and the save are judged by. */
+  const optionState = $derived(
+    editorOptionState({
+      anonymous,
+      isPublic,
+      requiresPayment,
+      grantsCotisation: cotisation.grantsCotisation,
+      submitCondition,
+      items,
+    })
+  );
+
+  /** A save refused on a question opens that question: a folded card hides its own error. */
+  let reveal = $state<{ id: string } | null>(null);
+  /** The priced grid a refused save is about, and its sentence, drawn under that grid. */
+  let gridFault = $state<{ itemId: string; message: string } | null>(null);
+  /**
+   * Whether a priced grid - not the manager - switched "several answers" on: only then does removing
+   * the last grid switch it back off. Any choice made on the switch itself clears it.
+   */
+  let multipleTurnedOnByGrid = $state(false);
+  const multipleSubmissions = (): GridMultipleSubmissions => ({
+    allow: allowMultipleSubmissions,
+    turnedOnByGrid: multipleTurnedOnByGrid,
+  });
+  function applyMultipleSubmissions(next: GridMultipleSubmissions) {
+    allowMultipleSubmissions = next.allow;
+    multipleTurnedOnByGrid = next.turnedOnByGrid;
+  }
+  /** A priced grid may copy the registration price grid's categories in one click. */
+  const formTiers = $derived(profileTierCriterion(priceMatrix, requiresPayment));
+  function revealQuestion(id: string | null) {
+    if (id) reveal = { id };
+  }
+  /** The banner sits at the top: a refusal about settings must be seen from the save bar. */
+  let errorBanner = $state<HTMLElement | null>(null);
+  async function scrollToError() {
+    await tick();
+    errorBanner?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
 
   async function handleSave() {
     if (titleMissing) {
@@ -221,19 +307,41 @@
       error = m.form_error_association_required();
       return;
     }
-    const fileProblem = fileQuestionProblem({
-      items,
-      isPublic,
-      anonymous,
-      fileRetentionDays,
-      submitCondition,
-    });
+    const itemsProblem = formItemsProblem(items);
+    if (itemsProblem) {
+      error = itemsProblem;
+      revealQuestion(firstItemsFaultQuestion(items));
+      return;
+    }
+    // The server's refusal, said first and in the reader's language: the same rule, whichever
+    // switch was turned on last (`formOptionRules.ts`).
+    const [conflict] = formConfigConflicts(
+      optionState,
+      matrixPayload(priceMatrix, requiresPayment) as GuestPricedGrid | null
+    );
+    if (conflict) {
+      Log.d('forms-editor', `save refused before sending: ${conflict}`);
+      error = formConflictMessage(conflict);
+      return;
+    }
+    // A priced grid is judged by the contract the server judges it by, on the payload it will send.
+    gridFault = firstProductGridProblem(items, { isPublic, requiresPayment });
+    if (gridFault) {
+      error = gridFault.message;
+      revealQuestion(gridFault.itemId);
+      return;
+    }
+    const fileProblem = fileQuestionProblem({ items, fileRetentionDays, submitCondition });
     if (fileProblem) {
+      // A form-level refusal (public, anonymous, retention): no question is at fault, the
+      // settings are, so the banner is brought into view instead of opening a card.
       error = fileProblem;
+      await scrollToError();
       return;
     }
     const empty = firstEmptyCondition(submitCondition, items);
     if (empty) {
+      revealQuestion(firstEmptyConditionQuestion(items));
       error =
         empty.scope === 'form'
           ? m.form_error_audience_empty()
@@ -260,6 +368,8 @@
         maxSubmissions,
         allowMultipleSubmissions,
         isPublic,
+        // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
+        guestFields: isPublic && !anonymous ? askedGuestFields(guestFields) : [],
         ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
         requiresPayment,
         // `associationId` is deliberately absent: it is fixed at creation and the API refuses a
@@ -273,7 +383,17 @@
       await updateForm(formId, payload);
       goto(resolve('/forms'));
     } catch (e: any) {
-      error = providerRefusalMessage(e) ?? e.message;
+      // A grid the server alone could refuse (a cotisation tier it does not sell) is drawn under
+      // that grid and its card opened, as the page's own check does.
+      gridFault = refusedProductGridFault(e, items);
+      if (gridFault) revealQuestion(gridFault.itemId);
+      error =
+        gridFault?.message ??
+        questionImageRefusalMessage(e) ??
+        formCodeMessage(refusalCode(e)) ??
+        conflictCodeMessage(refusalCode(e)) ??
+        providerRefusalMessage(e) ??
+        e.message;
     } finally {
       isSubmitting = false;
     }
@@ -334,6 +454,7 @@
   {:else}
     {#if error}
       <div
+        bind:this={errorBanner}
         class="bg-red-err/10 border-red-err/30 text-red-err mb-6 flex items-center gap-2 rounded-2xl border-2 px-4 py-3 text-sm font-medium"
       >
         <CircleAlert size={18} class="shrink-0" />
@@ -384,7 +505,7 @@
         {#if imageUrl}
           <div class="border-cn-border relative overflow-hidden rounded-xl border">
             <img
-              src={imageUrl}
+              src={associationLogoSrc(imageUrl) ?? ''}
               alt={m.form_image_section()}
               class="max-h-56 w-full object-cover"
               loading="lazy"
@@ -421,7 +542,7 @@
     <!-- 2. Money -->
     <FormPaymentSection
       bind:requiresPayment
-      {anonymous}
+      {optionState}
       {isPublic}
       bind:basePrice
       bind:allowCashPayment
@@ -438,10 +559,19 @@
     <!-- 3. Questions -->
     <FormQuestionsSection
       bind:items
+      {reveal}
       {requiresPayment}
       {gridQuestionIds}
       {tiers}
       {formations}
+      {formTiers}
+      {isPublic}
+      {gridFault}
+      {orderedCells}
+      onPricedGridAdded={() =>
+        applyMultipleSubmissions(multipleSubmissionsAfterGridAdded(multipleSubmissions()))}
+      onPricedGridGone={() =>
+        applyMultipleSubmissions(multipleSubmissionsAfterGridGone(multipleSubmissions(), items))}
       imageUploadFn={async (file) => {
         const r = await uploadFormItemImage(formId, file);
         return r.imageUrl;
@@ -451,12 +581,18 @@
     <!-- 4. Rarely wanted, and folded away -->
     <FormAdvancedSettings
       bind:maxSubmissions
-      bind:allowMultipleSubmissions
+      bind:allowMultipleSubmissions={
+        () => allowMultipleSubmissions,
+        (on) => {
+          allowMultipleSubmissions = on;
+          multipleTurnedOnByGrid = false;
+        }
+      }
       bind:anonymous
       anonymousFixed
       bind:isPublic
-      profilePricing={pricesOnProfile(priceMatrix, requiresPayment)}
-      {requiresPayment}
+      bind:guestFields
+      {optionState}
       bind:opensAt
       bind:submitCondition
       bind:settings={cotisation}

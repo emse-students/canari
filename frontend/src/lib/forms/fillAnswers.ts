@@ -1,6 +1,9 @@
+import { tick } from 'svelte';
 import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
 import type { FormItem } from './api';
+import { hasOrderedUnits, isProductGrid } from './productGridFill';
+import { FILLABLE_QUESTION_TYPE_VALUES } from './questionTypes';
 
 /**
  * WHAT A PERSON FILLING A FORM HAS ANSWERED - the rules the fill page applies, taken out of it.
@@ -20,6 +23,9 @@ export function initialSelections(items: FormItem[]): Selections {
   for (const item of items) {
     if (item.type === 'multiple_choice') {
       initial[item.id] = [];
+    } else if (isProductGrid(item)) {
+      // A priced grid's answer: `"rowId:colId"` -> quantity, holding only the cells ordered.
+      initial[item.id] = {};
     } else if (isMatrix(item)) {
       initial[item.id] = {};
       for (const row of item.rows ?? []) {
@@ -43,28 +49,62 @@ function hasValue(value: unknown): boolean {
   return value !== '' && value !== undefined && value !== null;
 }
 
-/** Whether this question has an answer: every row, for a matrix; one value otherwise. */
+/** The types this build can draw an input for; any other is a newer type it cannot answer. */
+const KNOWN_TYPES = new Set([...FILLABLE_QUESTION_TYPE_VALUES, 'single']);
+
+/**
+ * Whether this build knows how to answer a question type. A type this build cannot draw - one added
+ * after this release - is drawn as "update the app" and blocks a send when required, rather than
+ * going out empty for the server to refuse in English.
+ */
+export function isKnownQuestionType(type: string): boolean {
+  return KNOWN_TYPES.has(type);
+}
+
+/**
+ * Whether this question has an answer - the rule the server applies to a required question
+ * (`answer-bounds.ts` `isQuestionAnswered`). A grid is answered by ONE row, or by every row when
+ * the question says `requireEveryRow` (decided 2026-11-06, D5). A priced grid is answered by one
+ * unit ordered (an empty object is not an order) - though no grid is required on its own
+ * (`firstMissingAnswer`); anything else by one value.
+ */
 export function isItemAnswered(item: FormItem, value: unknown): boolean {
+  if (isProductGrid(item)) return hasOrderedUnits(value);
   if (isMatrix(item)) {
     if (!value || typeof value !== 'object') return false;
-    return (item.rows ?? []).every((row) => hasValue((value as Record<string, unknown>)[row]));
+    const rows = value as Record<string, unknown>;
+    if (item.requireEveryRow) return (item.rows ?? []).every((row) => hasValue(rows[row]));
+    return (item.rows ?? []).some((row) => hasValue(rows[row]));
   }
   return hasValue(value);
 }
 
-/** Why a required question is not answered yet - what the page has to say about it. */
+/**
+ * Why the form cannot be sent yet - what the page has to say, and which question (`itemId`), so the
+ * page can mark that card and bring it into view. `order` is the FORM's: no question is at fault
+ * (`itemId` null), the page says it beside its send button.
+ */
 export type MissingAnswer =
-  | { kind: 'matrix'; label: string }
-  | { kind: 'row'; label: string; row: string }
-  | { kind: 'select'; label: string }
-  | { kind: 'answer'; label: string };
+  | ({ itemId: string } & (
+      | { kind: 'matrix'; label: string }
+      | { kind: 'row'; label: string; row: string }
+      | { kind: 'select'; label: string }
+      | { kind: 'answer'; label: string }
+      | { kind: 'update'; label: string }
+    ))
+  | { itemId: null; kind: 'order' };
 
 /**
- * The first REQUIRED question, in order, that has no answer - or null when the form may be sent.
+ * The first REQUIRED question, in order, that has no answer, then an empty order - or null when the
+ * form may be sent.
  *
  * Optional questions never block, which is what `allRequiredAnswered` and the submit button both
  * rely on. The kind names the sentence: a matrix without an answer, one of its rows, an empty choice
- * list, or anything else.
+ * list, an empty order, or anything else.
+ *
+ * A PRICED GRID IS NEVER REQUIRED ON ITS OWN, whatever its stored flag: a form of several grids (one
+ * per article) is ordered from whichever the buyer wants. What is required is the ORDER - one unit
+ * across the grids in `items` (the VISIBLE ones), the server's `PRODUCT_GRID_EMPTY` rule.
  */
 export function firstMissingAnswer(
   items: FormItem[],
@@ -73,17 +113,59 @@ export function firstMissingAnswer(
   for (const item of items) {
     if (!item.required) continue;
     const value = selections[item.id];
-    if (isMatrix(item)) {
-      if (!value || typeof value !== 'object') return { kind: 'matrix', label: item.label };
-      const row = (item.rows ?? []).find((r) => !hasValue((value as Record<string, unknown>)[r]));
-      if (row !== undefined) return { kind: 'row', label: item.label, row };
+    const itemId = item.id;
+    if (!isKnownQuestionType(item.type)) {
+      return { itemId, kind: 'update', label: item.label };
+    } else if (isProductGrid(item)) {
+      continue;
+    } else if (isMatrix(item)) {
+      const rows = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
+      if (item.requireEveryRow) {
+        const row = (item.rows ?? []).find((r) => !hasValue(rows[r]));
+        if (row !== undefined) return { itemId, kind: 'row', label: item.label, row };
+      } else if (!isItemAnswered(item, rows)) {
+        return { itemId, kind: 'matrix', label: item.label };
+      }
     } else if (Array.isArray(value) || item.type === 'multiple_choice') {
-      if (!hasValue(value)) return { kind: 'select', label: item.label };
+      if (!hasValue(value)) return { itemId, kind: 'select', label: item.label };
     } else if (!hasValue(value)) {
-      return { kind: 'answer', label: item.label };
+      return { itemId, kind: 'answer', label: item.label };
     }
   }
+  if (isOrderEmpty(items, selections)) return { itemId: null, kind: 'order' };
   return null;
+}
+
+/**
+ * Whether `items` (the VISIBLE questions) hold priced grids and not one unit is ordered across them
+ * - the ORDER rule, the server's `PRODUCT_GRID_EMPTY`. False on a form showing no grid. One
+ * predicate for the send's check, the end-of-form gate and the page's "order at least one article".
+ */
+export function isOrderEmpty(items: FormItem[], selections: Selections): boolean {
+  const grids = items.filter(isProductGrid);
+  return grids.length > 0 && !grids.some((item) => hasOrderedUnits(selections[item.id]));
+}
+
+/** The id of the fill pages' empty-order sentence, which `revealOrderMissing` brings into view. */
+export const ORDER_MISSING_ID = 'form-order-missing';
+
+/**
+ * Brings the empty-order sentence into view once the page has drawn it: the sticky order bar of a
+ * grid form hides the end of the page, where both fill pages say it.
+ */
+export async function revealOrderMissing(): Promise<void> {
+  await tick();
+  document
+    .getElementById(ORDER_MISSING_ID)
+    ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+
+/**
+ * Whether every REQUIRED visible question is answered and the order, if any, holds a unit - the
+ * same rule `firstMissingAnswer` applies, as a yes/no: a grid is never required on its own.
+ */
+export function allRequiredAnswered(items: FormItem[], selections: Selections): boolean {
+  return firstMissingAnswer(items, selections) === null;
 }
 
 /** The sentence for a missing answer, in the reader's language. */
@@ -95,8 +177,12 @@ export function missingAnswerMessage(missing: MissingAnswer): string {
       return m.form_view_error_complete_row({ row: missing.row, label: missing.label });
     case 'select':
       return m.form_view_error_select_option({ label: missing.label });
+    case 'order':
+      return m.form_view_error_order_empty();
     case 'answer':
       return m.form_view_error_answer({ label: missing.label });
+    case 'update':
+      return m.form_view_error_update_app({ label: missing.label });
   }
 }
 
@@ -152,10 +238,50 @@ export function pricedQuestionsAwaitingAnswer(
   );
 }
 
-/** Only the answers to questions the person could see - what the server is sent. */
+/**
+ * Only the ANSWERED questions the person could see - what the server is sent.
+ *
+ * An unanswered question is left out rather than sent empty: a grid's seeded `{ row: '' }` map
+ * went out for every visible grid, and every empty selection counted against the server's cap on
+ * an answer's keys, so a form of more than fifty visible questions was refused whatever was filled
+ * (D3 of the 2026-11-06 audit). A grid keeps only its answered rows. The server judges a required
+ * question by the same rule (`isItemAnswered`), so leaving one out says the same as sending it empty.
+ */
 export function visibleAnswers(visible: FormItem[], selections: Selections): Selections {
-  const ids = new Set(visible.map((item) => item.id));
-  return Object.fromEntries(Object.entries(selections).filter(([id]) => ids.has(id)));
+  const out: Selections = {};
+  for (const item of visible) {
+    const value = selections[item.id];
+    if (isProductGrid(item)) {
+      // An order holds only its ordered cells already (`withCellQuantity`); an empty one stays out.
+      if (hasOrderedUnits(value)) out[item.id] = value;
+    } else if (isMatrix(item)) {
+      if (!value || typeof value !== 'object') continue;
+      const rows = Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).filter(([, cell]) => hasValue(cell))
+      );
+      if (Object.keys(rows).length > 0) out[item.id] = rows;
+    } else if (hasValue(value)) {
+      out[item.id] = value;
+    }
+  }
+  return out;
+}
+
+/**
+ * The selections to show for an answer read back from the server: its values over the empty shape
+ * each question starts from. A stored grid holds only its answered rows (`visibleAnswers`), and a
+ * row's input binds to its key, so the missing rows are seeded again here.
+ */
+export function selectionsFromAnswers(items: FormItem[], answers: Selections): Selections {
+  const out = initialSelections(items);
+  for (const [id, value] of Object.entries(answers)) {
+    const item = items.find((i) => i.id === id);
+    out[id] =
+      item && isMatrix(item) && value && typeof value === 'object'
+        ? { ...out[id], ...(value as Record<string, unknown>) }
+        : value;
+  }
+  return out;
 }
 
 /** An amount in cents, in the reader's locale. Empty for an undefined amount. */

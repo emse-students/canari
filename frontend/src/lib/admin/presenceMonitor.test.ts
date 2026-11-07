@@ -3,9 +3,7 @@ import {
   buildBuckets,
   devicesByPlatform,
   layersOf,
-  peakDevices,
   runsOf,
-  stackedBands,
   versionShares,
   type Census,
   type CensusHistory,
@@ -103,60 +101,9 @@ describe('the 24-hour window', () => {
   it('answers a degenerate window with nothing', () => {
     expect(buildBuckets({ now: 10, intervalSecs: 0, windowSecs: 100, samples: [] })).toEqual([]);
   });
-
-  it('keeps a scale for an empty window', () => {
-    expect(peakDevices(buildBuckets(history([])))).toBe(1);
-    expect(peakDevices(buildBuckets(history([sample(1000 * 60, [group('web', '1', 9)])])))).toBe(9);
-  });
 });
 
-describe('the stacked bands', () => {
-  const box = { width: 500, height: 100 };
-
-  it('draws one polygon per layer per run, and none across a gap', () => {
-    const buckets = buildBuckets({
-      now: 1000 * 60,
-      intervalSecs: 60,
-      windowSecs: 5 * 60,
-      samples: [
-        sample(996 * 60, [group('web', '1', 2)]),
-        sample(997 * 60, [group('web', '1', 2), group('ios', '1', 2)]),
-        sample(1000 * 60, [group('ios', '1', 4)]),
-      ],
-    });
-    const layers = layersOf(buckets.flatMap((b) => (b.sample ? [b.sample] : [])));
-
-    const bands = stackedBands(buckets, layers, box, 4);
-
-    // run 1 (two minutes): web and ios; run 2 (one minute): ios only.
-    expect(bands.map((b) => b.layer)).toEqual(['web', 'ios', 'ios']);
-  });
-
-  it('widens a lone sample to one minute so it is visible', () => {
-    const buckets = buildBuckets({
-      now: 1000 * 60,
-      intervalSecs: 60,
-      windowSecs: 5 * 60,
-      samples: [sample(1000 * 60, [group('web', '1', 4)])],
-    });
-    const [band] = stackedBands(buckets, ['web'], box, 4);
-    const xs = band.points.split(' ').map((p) => Number(p.split(',')[0]));
-    expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(box.width / 5);
-  });
-
-  it('scales the top of the stack to the peak', () => {
-    const buckets = buildBuckets({
-      now: 1000 * 60,
-      intervalSecs: 60,
-      windowSecs: 60,
-      samples: [sample(1000 * 60, [group('web', '1', 4)])],
-    });
-    const [band] = stackedBands(buckets, ['web'], box, 4);
-    const ys = band.points.split(' ').map((p) => Number(p.split(',')[1]));
-    expect(Math.min(...ys)).toBe(0);
-    expect(Math.max(...ys)).toBe(box.height);
-  });
-
+describe('the layers', () => {
   it('orders the layers named platforms first, then the unnamed ones, then the unfamiliar', () => {
     const layers = layersOf([
       sample(60, [group('unknown', 'x', 1), group('zzz', 'x', 1), group('ios', 'x', 1)]),

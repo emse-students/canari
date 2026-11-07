@@ -28,20 +28,21 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
+  import type { MentionRosterMember } from '$lib/utils/users/mentionRoster';
 
   interface Props {
     value?: string;
     placeholder?: string;
     disabled?: boolean;
     singleLine?: boolean;
-    /** Live markdown preview (* / _ italic_, __underline__, **bold**, escapes, muted delimiters). */
+    /** Live markdown preview (* / _ italic_, **bold** / __bold__, escapes, muted delimiters). */
     markdownPreview?: boolean;
     maxlength?: number;
     minHeight?: string;
     class?: string;
     editorClass?: string;
-    /** When set, only users whose IDs are in this list appear in @mention suggestions. */
-    allowedUserIds?: string[];
+    /** The conversation's members, suggested locally by the @mention picker. */
+    mentionRoster?: MentionRosterMember[];
     onchange?: (text: string) => void;
     onkeydown?: (e: KeyboardEvent) => void;
     onpaste?: (e: ClipboardEvent) => void;
@@ -67,7 +68,7 @@
     minHeight = '44px',
     class: className = '',
     editorClass = '',
-    allowedUserIds,
+    mentionRoster,
     onchange,
     onkeydown,
     onpaste,
@@ -97,9 +98,16 @@
       if (editorEl) setPlainTextSelection(editorEl, pos, pos);
     },
     focus: () => editorEl?.focus(),
-    get allowedUserIds() {
-      return allowedUserIds;
+    get roster() {
+      return mentionRoster;
     },
+  });
+
+  // An open picker follows the roster prop (a member list that finished loading, a conversation
+  // switch) instead of keeping the rows it opened on.
+  $effect(() => {
+    void mentionRoster;
+    mention.refreshRoster();
   });
 
   const renderOptions = $derived({ markdownPreview });
@@ -622,7 +630,6 @@
       :is(
         .md-composer-muted,
         .md-composer-italic,
-        .md-composer-underline,
         .md-composer-bold,
         .md-composer-bold-italic,
         .md-composer-strike,
@@ -670,11 +677,6 @@
 
   :global(.md-composer-italic) {
     font-style: italic;
-  }
-
-  :global(.md-composer-underline) {
-    text-decoration: underline;
-    text-underline-offset: 2px;
   }
 
   :global(.md-composer-bold) {

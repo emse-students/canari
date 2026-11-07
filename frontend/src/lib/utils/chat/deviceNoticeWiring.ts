@@ -107,7 +107,7 @@ async function deviceLabelOf(
   deviceId: string
 ): Promise<string | undefined> {
   try {
-    const devices = await mls.fetchUserDevices(userId);
+    const devices = await mls.listUserDevices(userId);
     return devices.find((d) => d.deviceId === deviceId)?.deviceName?.trim() || undefined;
   } catch (e) {
     console.warn('[DEVICE_NOTICE] device list unreadable - alert shown without a name:', e);
@@ -215,7 +215,7 @@ async function preclaimOldOwnDevices(mls: IMlsService, userId: string, deviceId:
   try {
     const enrolledAt = await ownEnrolledAtOf(mls, userId, deviceId);
     if (enrolledAt === 'unanswered') return;
-    const devices = await mls.fetchUserDevices(userId);
+    const devices = await mls.listUserDevices(userId);
     const old: string[] = [];
     // False once ANY listed device's key ages go unanswered: its keys may be old, and a marker
     // written now would let an engine post them as new - so Rust withholds it.

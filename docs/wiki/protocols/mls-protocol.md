@@ -1572,6 +1572,14 @@ itself in (an older client) is still said and reported (`entersAsUnvouchedDevice
 `[UNINVITED_ENTRY] kind=unvouched-device`, `chat_system_unvouched_device_entry`) and answered no
 history until a member's Add of it (`historyWithheld.ts`); there is no tap that lifts it any more.
 
+**A community's key group is not such a door, and its line says so** (2026-11-05). A key group is
+entered by external commit by design (the app classifies it `open`, `crate::admission`), so a
+member's new browser entering every key group of every community is the ordinary path. The device
+observer (`device_trust.rs`) records the event exactly as before, but says it at info when the
+group's admission policy is `open` (`unvouched_entry_level`) and at ERROR only in a conversation or
+an unclassified group - a Mi 9T reading of `1.6.5-alpha.1` logged 70 such ERROR lines for 7 web
+sign-ins, every one in a key group.
+
 **History is the existing design's, unchanged here.** A device added by a member's Add is not
 withheld; what history it receives is decided by the history-answer rules
 ([history-answer-addressing](history-answer-addressing.md)), which this change does not touch.

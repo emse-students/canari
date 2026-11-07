@@ -66,6 +66,7 @@
         href={place.href}
         use:preloadRouteOnView={place.href}
         use:guideAnchor={`nav.${place.id}`}
+        data-app-place={place.href}
         class="group relative flex min-w-0 flex-1 items-center justify-center transition-all duration-200 active:scale-95
  {isActive ? 'text-amber-600 dark:text-amber-400' : 'text-text-muted hover:text-text-main'}"
       >

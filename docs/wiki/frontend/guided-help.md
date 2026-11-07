@@ -43,7 +43,7 @@ Binding, on top of the ones above.
 | 1 | Create: post composer and event form (hint on the opening control, decision 1) | draft PR #2982 |
 | 2 | Chats and CanaReels, plus the feed tabs' explanation moved from the (i) button (decision 2), plus the "what's new" mechanism only, content with 1.6.4 (decision 3) | built, draft PR; [below](#whats-new-and-the-batch-2-hints) |
 | 3 | Associations and the campus space (shop, publish as, manage; "Mon espace" is feed-tabs step 3); batch 2 read PASS on both phones 2026-11-04 | built, draft PR; [below](#batch-3---associations-and-the-campus-space) |
-| 4 | Booking a room | after batch 3 |
+| 4 | Booking a room: the Reservations page and a space's week | built, in 1.6.5 (owner, 2026-11-05); [below](#batch-4---booking-a-room) |
 
 ## The pieces
 
@@ -158,7 +158,8 @@ Three refinements keep that exact:
   `set_tab_bar_interactive`, which turns the overlay's root view's `isUserInteractionEnabled` off so
   UIKit's hit test hands the touch to the WebView, where the backdrop takes it. Each call carries a
   rising `seq` (the command is async, so two quick toggles may reach the main queue out of order, and
-  Swift drops an older one arriving last); a configuration resets the bar to interactive and the
+  Swift drops an older one arriving last - the one `CommandSequence` that orders show and hide too,
+  [mobile](mobile.md#the-native-ios-tab-bar)); a configuration resets the bar to interactive and the
   sequence to -1, and `NativeTabBar` sends its state after EVERY configuration - the overlay outlives
   a WebView reload, so a page reloaded under the backdrop would otherwise inherit a bar that takes no
   touch. A call is recorded as sent only once the plugin answered. The bar stays drawn:
@@ -335,6 +336,23 @@ answer is yes, a replay held back, another help runs) and `postAsAccess.test.ts`
 four read on the Mi 9T and the iPhone 12 with a plain member, a non-member, a manager and an account
 that can post as an association.
 
+## Batch 4 - booking a room
+
+Built 2026-11-04, `kind: 'hint'` each, once per account, listed after batch 3 in `guides/index.ts`.
+Ships in 1.6.5 (owner, 2026-11-05), ahead of the batch 3 phone reading. Both pages load after the route settles, so
+a help starts when its anchors mount; every anchor is marked by the element's own render condition.
+
+| Id | Route | Anchor(s) | Steps (fr) |
+| --- | --- | --- | --- |
+| `hint-booking-spaces` | `/bookings` | `bookings.mine` (the "Vos prochaines réservations" section, drawn once loaded), `bookings.spaces` (a wrapper of `SpaceList`, drawn only when the read succeeded and the list is not empty) | "Vos réservations" - coming ones first, past and cancelled folded below; "Réserver un espace" - pick a space for its week; a link-only space is opened by its link or QR code |
+| `hint-booking-week` | `/bookings/spaces/<id>` (not `manage`, not `edit`) | `bookings.column` (a wrapper of `ColumnSelect`, drawn only for a space with several columns), `bookings.week` (`data-week-grid`: the planning list on a phone, the grid wide); both marked by `SpaceWeek` in `book` mode once the first read of the week landed | "Une colonne par ressource"; "Réserver un créneau" - body by layout (list and the icon-only + button on a phone, grid and drag on a wide screen), then the sheet adjusts the length and adds people |
+
+`hint-booking-spaces` declares `replay` (`/bookings`, label "Réservations"); the space hint has none (one
+route per space). The week anchors wait for `loaded` so a help never starts on the dimmed empty grid
+and a failed read (the error line) leaves both steps out; the grid keeps its anchor while a week is
+loaded, so moving week does not drop a step. Pinned by `guides/batch4Hints.test.ts`. Owed on a phone:
+the two read on the Mi 9T and the iPhone 12, with a one-column and a several-column space.
+
 ## Back, focus, motion
 
 - **Back** closes a help like every overlay: its entry is pushed on the history overlay stack
@@ -359,6 +377,32 @@ that can post as an association.
   `data-tracking`, which turns their transition off - they follow the target instead of lagging it.
   `scrollend` and the next step clear it; where `scrollend` does not fire, the cost is only that the
   glide waits for the next step.
+- **The spotlight follows its target WHATEVER moves it (2026-11-05).** A `ResizeObserver` sees a
+  change of SIZE only, and `scroll`/`resize` listeners see neither a banner leaving, a skeleton
+  replaced by a shorter block, a scrollbar appearing nor a sidebar widening: the target MOVED with
+  its size untouched and the ring kept a stale box (measured in Chromium: a 120x40 button moved from
+  y=50 to y=10, the ring stayed at 44 instead of 4). `guideAnchorFollow.ts` closes it with an
+  `IntersectionObserver` whose `rootMargin` shrinks the viewport to exactly the target's box: any
+  shift or resize drops the intersection ratio below 1, the callback fires, and the observer is
+  re-armed around the new box. It is an event, not a poll and not a per-frame read; it catches moves
+  by any cause (an offset ancestor, a font, an image, a grid render) without enumerating ancestors,
+  which a `ResizeObserver` on ancestors plus a `MutationObserver` could not promise. Its report joins
+  the same one-measure-per-frame schedule. The frame is made of the viewport size and the target's box, so a
+  `ResizeObserver` on `documentElement` and on the target re-frames when the window grows (slack the
+  intersection cannot see) and when a target that had no box gains one (it had no observer at all).
+  A target partly off screen IS framed (a negative inset becomes a positive `rootMargin`). The real
+  limit is a target clipped by an ancestor scroller: its ratio is below 1 from the start, the first
+  callback re-arms on that ratio, and moves are then seen against it.
+  Measured in Chromium (review of #3050): 1px moves fire in each of the four directions, on
+  fractional coordinates; 0.5px moves do NOT fire; a box at top -10px reports ratio 1 and a move to
+  -5px reports 0.875, which fires; a clipped target settles after 2 arms. WebKit is untested - a
+  re-arm that lingers there is the residual risk, and the bench reading on the iPhone checks it.
+- **The ring hugs the control**: its padding is symmetric (0.375rem on all sides, then the 2px ring),
+  and its corner radius is the control's own computed radius plus that padding (concentric), capped at
+  half the short side - a pill target gets a pill ring, not the fixed `--radius-lg` corner.
+- Pinned by `guideAnchorFollow.test.ts` (move reported, observer re-armed), the overlay test (a shift
+  with no size change moves the spotlight) and `guideAnchorSources.test.ts` (every anchor a guide
+  names is marked by a control on every layout).
 - The layer is its own rung, `--z-guide` (one over `--z-modal`): a help never runs over a modal or
   a sheet (it would not be quiet - it is suspended), and the call and a confirmation keep their rungs
   above it. The accent ink is the `guide-ink` token (brand dark in light, yellow in dark).

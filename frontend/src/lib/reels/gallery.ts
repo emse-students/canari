@@ -70,15 +70,27 @@ export async function stageBlob(session: string, blob: Blob): Promise<void> {
   }
 }
 
-/** Saves an MP4 into the phone's gallery (Android `Movies/Canari`, iOS Photos). */
-export async function saveVideoToGallery(video: Blob, name: string): Promise<GallerySaveOutcome> {
+/**
+ * Saves a video into the phone's gallery (Android `Movies/Canari`, iOS Photos). `mime` is the
+ * container it is in (a reel is an MP4, a feed video may be a mov or a webm); `name` carries its
+ * extension, which iOS reads the container from.
+ */
+export async function saveVideoToGallery(
+  video: Blob,
+  name: string,
+  mime = 'video/mp4'
+): Promise<GallerySaveOutcome> {
   if (!hasNativeGallery()) throw new GalleryError('unavailable', 'gallery: not a phone build');
   const session = crypto.randomUUID();
   console.debug(`[gallery] saving ${name}, ${video.size} bytes, session ${session}`);
   let answer: { status: string };
   try {
     await stageBlob(session, video);
-    answer = await invoke<{ status: string }>(galleryCommand('saveVideo'), { session, name });
+    answer = await invoke<{ status: string }>(galleryCommand('saveVideo'), {
+      session,
+      name,
+      mime,
+    });
   } catch (err) {
     console.error('[gallery] the save failed', err);
     // `save_video` removes its file on every path; a failure BEFORE it leaves a staged one behind.

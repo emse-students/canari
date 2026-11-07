@@ -18,6 +18,8 @@ const SUBMITTER_FIELDS = [
   'id',
   'formId',
   'answers',
+  // What each ordered grid cell was charged (migration 137): the payer's own receipt, line by line.
+  'lines',
   'totalPaid',
   'paymentStatus',
   'paymentMethod',
@@ -28,9 +30,18 @@ const SUBMITTER_FIELDS = [
 /**
  * The fields a form MANAGER reads in the responses lists. `userId` and `email` are there because
  * the list names the submitter (`submitterName`, the pending-cash list); a manager already reads
- * both on every member page. No provider id, no fulfilment flag.
+ * both on every member page. A guest's name and e-mail (migration 138) are there because the
+ * manager ASKED for them (`guest-identity.ts`): they are what files a guest's answer under a name.
+ * No provider id, no fulfilment flag.
  */
-const MANAGER_FIELDS = [...SUBMITTER_FIELDS, 'userId', 'email'] as const;
+const MANAGER_FIELDS = [
+  ...SUBMITTER_FIELDS,
+  'userId',
+  'email',
+  'guestLastName',
+  'guestFirstName',
+  'guestEmail',
+] as const;
 
 export type SubmitterSubmissionView = Pick<Submission, (typeof SUBMITTER_FIELDS)[number]>;
 export type ManagerSubmissionView = Pick<Submission, (typeof MANAGER_FIELDS)[number]> & {

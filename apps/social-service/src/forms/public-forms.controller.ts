@@ -65,7 +65,15 @@ export class PublicFormsController {
     }
     const result = await this.service.submit(
       id,
-      { answers: dto.answers, payerEmail: dto.payerEmail, paymentMethod: dto.paymentMethod },
+      {
+        answers: dto.answers,
+        payerEmail: dto.payerEmail,
+        paymentMethod: dto.paymentMethod,
+        // Only what the form asks is kept; `submit` refuses the rest (`guest-identity.ts`).
+        guestLastName: dto.guestLastName,
+        guestFirstName: dto.guestFirstName,
+        guestEmail: dto.guestEmail,
+      },
       'guest',
       // The visitor a paid answer is counted against (PP5): the address the throttle counts too.
       clientAddress(req)

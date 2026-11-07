@@ -27,7 +27,7 @@
     loading = true;
     error = '';
     try {
-      blocked = await listBlockedUsers();
+      blocked = await listBlockedUsers({ fresh: true });
     } catch (err) {
       Log.d('SettingsBlockedSection.load failed', err);
       error = m.settings_blocked_load_error();

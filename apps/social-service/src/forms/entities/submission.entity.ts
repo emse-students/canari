@@ -1,3 +1,4 @@
+import type { ProductGridLine } from '../product-grid-contract';
 import {
   Entity,
   Column,
@@ -35,6 +36,15 @@ export class Submission {
 
   @Column({ default: 0 })
   totalPaid: number;
+
+  /**
+   * The priced lines of the answer's product grids AS CHARGED (migration 137): per ordered cell, the
+   * row and column labels, the category, the unit price and the quantity - so an export says what
+   * was charged even after the creator renames a row or moves a price. Written by `submit` (and
+   * rewritten with the answer on a retry that reuses the row); null on an answer with no grid.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  lines: ProductGridLine[] | null;
 
   /**
    * Lifecycle status of the payment.
@@ -142,6 +152,23 @@ export class Submission {
    */
   @Column({ type: 'varchar', length: 64, nullable: true, select: false })
   guestVisitorKey: string | null;
+
+  /**
+   * What a guest typed when the PUBLIC form asked for it (migration 138, `guest-identity.ts`): a
+   * last name, a first name, an e-mail - each null unless the form asked it. Never a member's: a
+   * member is never asked. When the form asks for the e-mail it is also the address Lydia's request
+   * went to; when it does not, that address is not stored (PP2).
+   */
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  guestLastName: string | null;
+
+  /** See `guestLastName`. */
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  guestFirstName: string | null;
+
+  /** See `guestLastName`. */
+  @Column({ type: 'varchar', length: 254, nullable: true })
+  guestEmail: string | null;
 
   @CreateDateColumn()
   createdAt: Date;

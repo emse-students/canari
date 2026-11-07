@@ -7,7 +7,7 @@
 ## Responsibilities
 
 - Render dynamic association forms for member submissions.
-- Support optional online payments (Stripe Checkout) or cash payments.
+- Support optional online payments (Lydia) or cash payments.
 - Display submission confirmation and payment status.
 - Let a form manager build and configure a form, including its price grid and the cotisation a
   paid submission grants.
@@ -52,12 +52,13 @@ than copies it:
 
 | Piece | What it owns |
 |---|---|
-| `forms/fillAnswers.ts` | The empty selection per type, "is this answered", the first required question left empty (and its sentence), which questions an answer reveals, the answers actually sent, the amount formatter |
+| `forms/fillAnswers.ts` | The empty selection per type, "is this answered", the first required question left empty (and its sentence), which questions an answer reveals, the answers actually sent (the ANSWERED ones only), the amount formatter |
+| `forms/answerBounds.ts` | The bounds of an answer (`libs/contracts/form-answers.json`), the sentence for each coded refusal of a submit or a save, and the editor's grid-label check - see [answers, grids and refusals](#answers-grids-and-the-codes-a-submit-is-refused-with-2026-11-06) |
 | `forms/FormQuestion.svelte` | One question card: label, help, image, and the input its type calls for, bound to the answer. Pricing arrives as two callbacks (`optionModifier`, `optionClosed`), because only the page holds the grid slice |
 | `forms/FormHeader.svelte` | Title, banner, the price badge (once, for both layouts), description, the anonymity notice |
 
-What stays in the page is what only a signed-in submission has: the pricing slice, saved cards,
-cash, the reminder, and the sticky submit bar.
+What stays in the page is what only a signed-in submission has: the pricing slice, cash, the
+reminder, and the sticky submit bar.
 
 **One defect closed by the extraction**: validation said `!val` where the progress bar said
 `val !== ''`, so a required linear scale starting at 0 counted as answered on the bar and was
@@ -67,23 +68,27 @@ type hands its answer back to the PARENT - the one thing moving it behind a `$bi
 
 ## Payment methods
 
+The form UI offers Lydia and cash since 2026-10-07; Stripe and saved cards are gone from it.
+
 | Method | Flow |
 |---|---|
 | Free | Direct submit, no payment |
-| Stripe Checkout | Redirect to Stripe-hosted page, return to `/forms/:id?session_id=...` |
-| Saved card | `POST /api/payments/charge-saved-method` (no redirect) |
-| Cash | Submit marked pending, association admin validates manually |
+| Lydia (online) | The payer types the address Lydia sends the request to (never stored); redirect to Lydia's payer page, return to `/forms/success?submission_id=...` (see the flow above) |
+| Cash | Submit marked `pending_cash`, association admin validates manually before its deadline |
+
+A paid answer can be refunded from Canari, in full or in part, by a payout manager of the association
+(the Achats tab, [payments](payments.md#refunds-from-canari-enrolment-lot-4)); a TOTAL refund turns the
+answer `refunded`, which frees its seat and its single-answer slot.
 
 ## Key component: forms/[id]/+page.svelte
 
-The single form submission page handles all four payment flows. Key state:
+The single form submission page handles the three payment flows. Key state:
 
 - `form` — form definition loaded on mount
 - `answers` — user-provided field values
 - `paymentStep` — `'form' | 'payment' | 'confirmation'`
 - `memberPricing` — a BOOLEAN returned by the API, never derived here. The fill page has no idea
   which tag or tier decides it, which is why swapping that rule server-side needed no change here.
-- Card registration setup: `POST /api/payments/setup-payment-method` (Stripe SetupIntent)
 
 ### The submit response names no outcome, because a service with no locale cannot (2026-09-23)
 
@@ -95,19 +100,87 @@ was not a fallback, it was an unreachable branch, which is why nothing ever repo
 
 The response now only IDENTIFIES the submission (`{ submissionId }`) and the page says what happened.
 The two other success shapes already worked this way and that is exactly why only one path showed
-English: cash returns `{ submissionId, cashPayment: true }` and Stripe returns
+English: cash returns `{ submissionId, cashPayment: true }` and an online payment returns
 `{ checkoutUrl, submissionId }`, neither carrying prose, so both fell through to Paraglide.
 
 **A response field a client RENDERS cannot be written by a service that has no locale.** The server
 may return a code or an id; the words are the client's.
 
-STILL OPEN on this page, and deliberately not fixed with it: `error = e.message || m.form_view_...`
-at [`+page.svelte`](../../../../frontend/src/routes/forms/[id]/+page.svelte) lines 259 and 529 renders
-whatever prose the server threw - `Form is closed`, `Failed to create checkout session: ...` - so the
-error half of the same screen is still English. A generic translated fallback would lose the reason,
-and picking a translation from the prose is branching on an error message, which
-[durable-rules](../../durable-rules.md) forbids. It needs typed error codes on the submit path, which
-is a design change rather than this cleanup.
+The error half of the screen followed on 2026-11-06 (D6 of the forms audit): every refusal of the
+submit path a person can meet now carries a typed `code`, and both fill pages word it through
+`formSubmitRefusalMessage` - [answers, grids and refusals](#answers-grids-and-the-codes-a-submit-is-refused-with-2026-11-06).
+
+## Answers, grids, and the codes a submit is refused with (2026-11-06)
+
+From the forms capability audit of 2026-11-06 (`docs/wiki/forms-capability-audit-2026-11-06.md`, work package WP-G0).
+
+**A form holding a visible grid could not be submitted from 2026-06-01 to this fix (D1).** A grid
+(`matrix_single`, `matrix_multiple`) is answered `{ rowLabel: columnOptionId }` (a list of ids per row
+for a multiple grid), and the fill page sent that map for every visible grid, answered or not. The DTO
+validator `IsValidAnswers` (from `c586c84cb9`, 2026-06-01) accepted only a string, a string list or a
+number per key, so the global `ValidationPipe` answered every such submit an English 400, member and
+guest alike. Nothing caught it because every grid test called `FormsService.submit` directly, never
+through the pipe. Now:
+
+- **The shape** is accepted by `isAcceptedAnswerValue` (`apps/social-service/src/forms/answer-bounds.ts`):
+  one level of object, at most `maxGridRows` keys, values a bounded string or string list.
+- **The meaning** is judged in `submit` by `normaliseGridAnswer`: every key one of the question's
+  rows, every value one of its column option ids (a list of distinct ids for a multiple grid), else
+  400 `FORM_GRID_ANSWER_INVALID`. Empty rows are dropped, and a grid with no answered row is absent,
+  so what is STORED holds only answered rows (the export's `answerText` already read a row map).
+  A row map is a GRID's shape only: on a declared question that is not a grid it is the same 400
+  (a page opened before the question changed type), on a key the form does not declare it is
+  dropped (a stale page's `{ row: '' }` for a deleted grid must not fail the send). Rows are
+  collected as entries, so a row labelled `__proto__` or `constructor` is an own key and never the
+  prototype's. Booking spaces share the rule (`bookings.service.ts` `validAnswers`), and the
+  space editor words a form's grid codes (`bookings/refusals.ts` falls back to `formCodeMessage`).
+- **`forms.submit-grid.http.spec.ts`** boots the member and guest controllers behind the real
+  `ValidationPipe`, configured as `main.ts` does, and submits grid answers over HTTP.
+
+**A required grid wants ONE answered row (D5, decided 2026-11-06).** It demanded every row, so an
+order ("which colours") could not be required. `requireEveryRow` (a per-question switch, "Exiger une
+réponse dans chaque ligne", shown in the editor for a required grid) restores the old rule. One
+predicate on each side: `isQuestionAnswered` (server) and `isItemAnswered` (client). The server's old
+`!!val` also refused a required scale answered 0; the shared predicate counts a zero.
+
+**Only answered questions are sent (D3).** `visibleAnswers` sent every visible question's EMPTY
+selection too, so a form of more than 50 visible questions was refused whatever was filled. It now
+sends answered questions only. The bounds live in ONE contract, `libs/contracts/form-answers.json`
+(read by `answer-bounds.spec.ts` and `answerBounds.test.ts`): `maxQuestions` (100) bounds BOTH the
+questions a form may hold at save (`FORM_TOO_MANY_QUESTIONS`) and the keys of an answer, so every
+savable form is answerable in full; `maxGridRows` (50) bounds a grid's rows at save
+(`FORM_GRID_TOO_MANY_ROWS`) and a grid answer's keys; `maxTextLength` (2000) and `maxSelections` (50)
+are unchanged.
+
+**A text answer shows its bound (D2).** The `long_text` textarea and the `short_text` input carry
+`maxlength` = `maxTextLength`, and the textarea a "n / 2000 caractères" counter, so a cover letter is
+stopped where it is typed instead of by an English 400.
+
+**Two rows or two columns of one label are refused at save (D4).** The answer is keyed by the row
+LABEL, so two rows "Vert" were one answer and one radio group. `assertFormItemsShape` refuses them
+with 400 `FORM_GRID_DUPLICATE_LABEL` (forms and booking spaces); the editor marks the duplicate
+inline ("En double") and the create and edit pages refuse the save first (`formItemsProblem`). The
+fill page names a row's radio group by its index, not its label. Rows keyed by id are the
+`product_grid` design (audit section 4), not this fix.
+
+**Every refusal a person can meet on the submit path carries a code (D6).** `FORM_NOT_OPEN_YET`,
+`FORM_CLOSED`, `FORM_FULL`, `FORM_ANSWER_MISSING` (with `itemId`), `FORM_ANSWER_TOO_LONG`,
+`FORM_ANSWER_TOO_MANY_SELECTIONS`, `FORM_ANSWER_NOT_AN_OPTION` (a priced answer naming no option of
+its question, `answer-options.ts`), `FORM_GRID_ANSWER_INVALID`, `FORM_COMBINATION_UNAVAILABLE` (403),
+`FORM_SIGN_IN_REQUIRED`, `FORM_FILE_NEEDS_ACCOUNT`, beside the existing `ALREADY_ANSWERED` (the
+anonymous path's second answer now answers it too, as a 409), `GUEST_PENDING_LIMIT` and the payment
+codes. `formSubmitRefusalMessage` (both fill pages) maps a form code, then a payment code
+(`providerRefusalMessage`), then the status (`describeApiRefusal`), then the page's generic line -
+never `e.message`. The contract's `codes` list is asserted on both sides, and the client test fails
+on a code with no sentence. What still carries no code: the `ValidationPipe`'s own 400 (a malformed
+body the page cannot produce) and a file answer naming no uploaded file (`fileAnswersOf`), both
+worded by the generic line. The create and edit pages map the save codes the same way but still
+fall back to `e.message` for the uncoded save refusals.
+
+**A question type this build does not know** (the coming `product_grid`) is drawn as "Mettez à jour
+l'application pour répondre à cette question" (`FormQuestion.svelte`'s `{:else}`), and a required
+one blocks the send with the same sentence (`firstMissingAnswer`, kind `update`), instead of an empty
+card the server refuses.
 
 ## The admin screens
 
@@ -124,8 +197,10 @@ labelled component on the other). Everything shared now lives in one place:
 | `FormQuestionsSection.svelte` | The builder list, drag-and-drop, the type picker |
 | `FormAdvancedSettings.svelte` | The collapsed "advanced" category: responses, audience, cotisation |
 | `FormSaveBar.svelte` | The footer summary and the save button |
-| `pricing/PriceGridEditor.svelte` | The dimensions, and the cell grid they cross into |
-| `pricing/CriterionEditor.svelte` | One dimension's buckets |
+| `pricing/PriceGridEditor.svelte` | The criteria (two at most to add) and the "Critère" menu; titled "Prix d'inscription" on a form - see [the price table](#the-price-table---two-criteria-rows-by-columns-owner-2026-11-06) |
+| `pricing/PriceCellsEditor.svelte` | The 2D price table, its header bulk bar, and the phone's cards |
+| `pricing/CriterionEditor.svelte` | One criterion as compact rows: a line per group, chips, a "+" offering what is left |
+| `pricing/bucketValues.ts` | A group's values as chips, and the values no group holds yet |
 | `AudienceConditionEditor.svelte` | One condition's criteria, used by the form AND by a question |
 | `pricing/priceMatrix.ts` | The matrix state, its cross product, and the payload it becomes |
 | `pricing/criteriaOptions.ts` | The promo / formation option lists a criterion offers |
@@ -135,12 +210,28 @@ labelled component on the other). Everything shared now lives in one place:
 | `ui/Select.svelte`, `ui/Toggle.svelte` | The select and the switch, one geometry each |
 | `forms/cotisationSettings.ts` | The cotisation state, and the payload it becomes |
 | `forms/itemsPayload.ts` | Questions to/from the wire, euros to/from cents |
+| `ProductGridEditor.svelte`, `ProductGridPreview.svelte` | A priced grid's table editor and its buyer's preview |
+| `forms/productGridEditor.ts` | The priced grid's editor model, its payload and its pre-save check |
 | `forms/summary.ts` | The save bar's one line: question count, and what the form costs |
 | `forms/gridProblem.ts` | One sentence per `GridProblem` code, for the editor AND the save button |
 
 Section order, top to bottom: **General** (title, description, poster), **Payment**, **Questions**,
 **Advanced settings** (collapsed). The two pages carry the SAME sections in the SAME order: a
 setting reachable only once a form exists is a setting a manager cannot plan for.
+
+### The question editor is one line per question (owner, 2026-11-06)
+
+The owner: *"on peut carrément compresser l'interface d'édition des formulaires, là c'est beaucoup trop d'espace et de choses inutiles."* Four decisions, all answered, plus one added the same day.
+
+1. **Collapsed questions, one line each** (like Google Forms): number, handle, title, type icon and name, an asterisk when required. Clicking the line (or Enter / Space on it) expands it; **only one question is expanded at a time**, the list (`FormQuestionsSection`) owning which. Escape collapses and returns focus to the row. A question just added or just duplicated is created expanded, and expanding moves focus to its title. A form loaded for editing starts fully collapsed.
+2. **The grey preview box is deleted** ("L'utilisateur verra un champ court..."): the type's icon and name say it. Choice lists, scale and matrix editors stay, they are the content. A FILE question's explanation (who reads the file, when it goes - `fileHint`, which a booking space overrides, else `form_builder_file_hint`) is a visible muted line under the open card: a tooltip is invisible on touch.
+3. **One icon row at the bottom of the open card**, in this order: Obligatoire (asterisk toggle), Conditions (opens the "show only to certain people" panel, `AudienceConditionEditor`, only while switched on; the long explanation is the tooltip), Dupliquer, Supprimer; on touch, where there is no drag handle, two reorder arrows follow, and a collapse chevron ends the row. Every icon has an accessible name. The "show if another answer" picker pair (`dependsOn`) is unchanged and sits above the row.
+4. **No visible field labels.** The title is the main field, larger, placeholder "Question sans titre"; the type is a compact menu beside it (icon only below `sm`). The labels remain as `aria-label`s.
+5. **Duplicate, easy** (added the same day): the icon on the collapsed row (hover or focus on desktop, always visible on touch), the icon row, and **Cmd+D on Apple platforms, Ctrl+D elsewhere** on a focused question (the browser's bookmark shortcut is cancelled; Shift, Alt and auto-repeat copy nothing). The copy is inserted right AFTER the original, opens expanded with its title selected. It copies everything (`questionDuplicate.ts`) under a NEW question id and new option and row ids. The original keeps its id, so conditions in OTHER questions keep pointing at the original. The copy's own answer condition stays valid because its source is before the original; one that is not (a stale reference to itself or a later question) is dropped and logged. A copy is an ordinary added question: the server rules for a form that already has submissions apply exactly as for any new question.
+
+**A save refused because of a question opens that question.** A folded card hides its own error, so the pages hand the id to the section through `reveal`, a fresh object each time (`questionFault.ts`): the first question with an empty audience condition, and the first grid `formItemsProblem` refuses (a duplicated row or column, too many rows), so its "En double" mark is visible. A form-level refusal (the file rule on a public or anonymous form) has no question to blame: the page scrolls its error banner into view instead of opening a card. After a delete, focus goes to the row that took the place, else the previous row, else the "add a question" button. The form-level option toggles (public, anonymous, tiered pricing) live outside the question cards and are untouched. The drag rule of #3081 applies (a press on a button, field or label never starts a drag), so a collapsed row, whose body is a button, drags from its grip: a 44 x 44 px `data-drag-handle` shown from `sm`; touch reorders with the arrows of the open card. The collapsed row, the grip and the duplicate icon are at least 44 px.
+
+Tests: `FormQuestionsSection.svelte.test.ts` (collapsed / expanded, one at a time, asterisk, conditions panel, reveal, Escape, duplicate by icon and Ctrl+D), `questionDuplicate.test.ts` (the copy's contents, ids, position, references).
 
 ### Four sections, because six of them buried the common case
 
@@ -207,6 +298,51 @@ terms the manager on that screen recognises. A product's `CriteriaContext.questi
 is exactly what refuses an `answer` dimension on it - a product has no questions to price on, and
 that refusal costs no code of its own.
 
+### The price table - two criteria, rows by columns (owner, 2026-11-06)
+
+Redesigned for `1.6.6` from the owner-approved mockup ("Prix d'inscription"); a UI change only, the
+stored grid is untouched and an existing form opens unchanged. The editor is shared by forms,
+boutique products and cotisation tiers, so all three get it.
+
+- **Two criteria at most.** The "Critère" menu (Promotion / Formation / Cotisation / Réponse à une
+  question) greys a used kind ("Déjà utilisé") and every kind once two are set ("Deux critères au
+  plus : retirez-en un"), and `add` refuses too (`MAX_CRITERIA`). The SERVER has no such bound
+  (`parsePriceMatrix` maps any number of dimensions), so a stored grid with three still loads and
+  saves: `gridAxes` nests every criterion but the last down the side, and every cell is still one
+  row by one column.
+- **A true table.** `gridAxes` puts the first criterion's groups down the side and the second's
+  across the top, the corner naming both ("Promotion \ Formation"); one criterion is a single price
+  column. A row or column header selects the line and opens a bar with "Même prix partout" and
+  "Tout rendre indisponible" (`lineCellKeys` + `fillCells`). "Masquer les lignes indisponibles"
+  hides a row whose every cell is `null` (`rowUnavailable`) - display only. **Drawn as ONE ruled
+  table (owner, 2026-11-07: "un vrai tableau a double entrees", compacted)**: the headers are the
+  table's own `th` cells, tinted, with no gap and no floating card, so a row header is exactly the
+  height of its row (2.5rem; 2rem for the header row) and a column header sits over its column; the
+  rules are the cells' borders (`border-collapse`), the rounded box around the table draws the
+  outer edge, and a cell is one line (price, `EUR`, "Gratuit" chip, corner button) instead of a
+  4.75rem box. An unavailable cell stays hatched and struck through, just smaller. The phone keeps
+  its cards.
+- **Empty is "Gratuit", said.** A cell priced `0` shows an empty box and a muted "Gratuit" chip: the
+  semantics of an empty cell did not change, they are now visible. `parseEuros` reads an empty box
+  as 0, a comma as a decimal point and ignores spaces (a pasted "1 000,50"); it ROUNDS TO THE CENT,
+  the rounding `matrixPayload` applies, so the box shows what will be saved, and refuses a negative
+  or an amount whose cents are not a safe integer. Text that is not a price leaves the cell as it
+  was, and the box is rewritten from the grid either way.
+- **Unavailable is drawn as a closed priced-grid cell**: `.price-cell-closed`, hatched and struck
+  through. `.price-cell`, `.price-cell-closed`, `.price-free-chip` in `app.css` are the shared cell
+  classes, for the priced-grid question (WP-G3) to wear too.
+- **The guest's free seat is flagged where it is fixed.** On a public form, `guestFreeCellKey`
+  mirrors the server's `freeFallbackCells` (`answer-options.ts`, PR #3084's rule): only the TRUE
+  fallback - "Tous les autres" on every criterion, each reachable, priced 0, in a grid that charges
+  someone. That cell carries "Un invité ne peut pas avoir un tarif gratuit" and a status line under
+  the table names it.
+- **Criteria are compact rows**: one line per group (an underlined name, the values as chips, a "+"
+  that offers only what no group of the criterion holds - the server refuses overlapping groups;
+  a promo offers the six most recent unplaced years and takes an older one typed), and "Tous les
+  autres" as one muted line. A new group is named "Groupe N" at once.
+- **A phone (< 640px)** gets one card per row with a labelled pill per price; a tap opens an inline
+  editor under the card, a hold toggles availability. Nothing scrolls sideways.
+
 ### A cell may say the combination DOES NOT EXIST
 
 Some configurations are not sold: "non-cotisant, formule week-end" is a combination the association
@@ -229,20 +365,16 @@ no priority rule. What changed is that the cell a person lands in may refuse the
 
 Where each part of that lives:
 
-- **Editor**: a cell toggles between a number and `Indisponible`, and the CELL is the gesture. An
-  unavailable cell has nothing to type in, so clicking it is what reopens it; an open cell owes its
-  click to the caret, so closing it is the one action left on a control that overlays the cell and
-  costs no width (`.cell-action`, shown on hover or while the cell holds the focus, and always shown
-  on a coarse pointer - the only affordance a touch screen has). Coming back restores `0`, not the
-  price that was there, because that price is gone and `0` is the one value nobody mistakes for a
-  considered one. A grid with EVERY cell unavailable is refused on both sides
-  (`all_unavailable`, `assertMatrixValid`): that is a closed form, not a priced one.
-- **Geometry**: `.price-grid` in `app.css` owns the column sizes; the editor supplies only the two
-  counts. The total width has to be NAMED, which is the non-obvious part: `table-layout: fixed` on a
-  table of width `auto` treats column widths as PROPORTIONS, not sizes - nine columns declared at
-  8rem inside a 1020px box measured 83-91px in Chrome, and unequal. With the total named, every
-  price column is exactly its declared size and the wrapper scrolls once they no longer fit; below
-  that total each column stretches by the same factor, so they stay equal.
+- **Editor**: a cell toggles between a number and `Indisponible` from a button in its CORNER, or
+  a touch hold (`longPress`); an open cell owes its click to the caret, so the corner overlays it
+  and costs no width (`.cell-action`, shown on hover or focus, always on a coarse pointer). Coming
+  back restores `0`, shown as "Gratuit". A grid with EVERY cell unavailable is refused on both
+  sides (`all_unavailable`, `assertMatrixValid`): that is a closed form, not a priced one.
+- **Geometry**: `.price-grid` in `app.css` owns the column sizes; the editor supplies only the
+  price-column count (`--group-col` 9rem, `--price-col` 8rem, `--price-row` 2.5rem). The total width has to be NAMED: `table-layout: fixed` on a table of width
+  `auto` treats column widths as PROPORTIONS - nine columns declared at 8rem inside a 1020px box
+  measured 83-91px in Chrome, and unequal. With the total named, every price column is exactly its
+  declared size and the wrapper scrolls once they no longer fit.
 - **Server**: `resolveCellPrice` returns `null` rather than throwing, and `submit` refuses right
   after it - not in `assertMaySubmit`, because only the VISIBLE answers decide which cell applies.
   `hasSubmission` reports `maySubmit: false` when the submitter's whole row is closed, the same
@@ -479,10 +611,11 @@ The registry insert and the answer are ONE transaction (`ON CONFLICT DO NOTHING 
 what refuses a second answer from the same account). `allowMultipleSubmissions` still works and then
 registers nobody.
 
-**Free only, refused where it is chosen** (`assertAnonymousConfigValid`): a payment names its payer
-to Stripe and to the submission, and a cotisation is granted TO an account. A price grid, cash, a
-cotisation grant and an option supplement are all refused; the create screen disables the payment
-toggle and the anonymity toggle against each other, with the reason as the hint.
+**Free only, refused where it is chosen** (the shared option rule,
+[below](#which-options-rule-each-other-out-one-rule-in-either-order-2026-11-06)): a payment names its
+payer to the processor and to the submission, and a cotisation is granted TO an account. A price, a
+grid, cash, a cotisation grant and an option supplement are all refused; the editor shuts the
+payment switch and the anonymity switch against each other, with the reason as the hint.
 
 **Fixed at creation**, exactly like the association link: turning it on later would promise
 anonymity to answers already stored with a name, and turning it off would quietly start naming
@@ -503,15 +636,61 @@ redirect (`+layout.ts` lets `/f/` through as it does `/legal`). A member who ope
 to `/forms/:id`, where the form knows who they are; the share button and the QR code of a public form
 hand out the `/f/` address.
 
-**Everything follows from a guest having no identity** (`assertPublicConfigValid`, refused at save
-time with the sentence shown on the save bar):
+**Everything follows from a guest having no identity** (the shared option rule
+[below](#which-options-rule-each-other-out-one-rule-in-either-order-2026-11-06), then
+`assertPublicConfigValid`, refused at save time with a code and shown on the save bar):
 
 | A guest has no... | so a public form... |
 |---|---|
 | account to grant to | grants no cotisation (refused at save, and `fulfilPayment` refuses it again for a guest row - ERROR, no grant) |
-| profile to match | has no `submitCondition`, no question shown by promo, formation or cotisation (an ANSWER condition is fine), and a price grid on ANSWER dimensions only |
-| account to charge | still CHARGES (WP-P1, decision PP1): a base price, an answer grid, option supplements, online payment to the e-mail it types, or cash |
-| identity to recognise twice | takes several answers (`allowMultipleSubmissions` is forced on) - identify guests with a "Nom prénom" question |
+| profile to match | has no `submitCondition` and no question shown by promo, formation or cotisation (an ANSWER condition is fine). A price grid on promo, formation or cotisation IS allowed (owner, 2026-11-06): a guest lands in the "everyone else" group of each such criterion and pays that tier |
+| account to charge | still CHARGES (WP-P1, decision PP1): a base price, a grid, option supplements, online payment to the e-mail it types, or cash |
+| identity to recognise twice | takes several answers (`allowMultipleSubmissions` is forced on) - identify guests by asking their name or e-mail ([below](#a-guests-name-and-e-mail-when-the-form-asks-2026-11-06)) |
+
+## Which options rule each other out: one rule, in either order (2026-11-06)
+
+The owner found the editor asymmetric: a grid by promo shut "Formulaire public", but switching the
+form public FIRST and adding the grid afterwards was accepted - each switch carried its own copy of
+the rule. Now **one pure function** decides: `frontend/src/lib/forms/formOptionRules.ts` =
+`apps/social-service/src/forms/form-option-rules.ts`, copied byte for byte and held so by the
+`declared-duplicates` gate (no shared TS package, as for `answerText.ts`). Each pair is ONE row of
+`FORM_OPTION_CONFLICTS`:
+
+- the editor shuts a switch when `conflictsIfEnabled(state, option)` is not empty, whichever of the
+  two was on first, and its hint lists every real reason and nothing else (`conflictHint`,
+  `formOptionConflict.ts`); the save button runs `formConfigConflicts` before sending;
+- the server runs `formConfigConflicts` in `assertFormOptionsCoherent` on create, and on update over
+  the form AS IT WILL BE SAVED (the edit merged onto the stored form), and refuses with a 400 whose
+  body carries `code`.
+
+| Options | Verdict | Code | Why |
+|---|---|---|---|
+| anonymous + payment (price, grid, cash, supplement) | refused | `FORM_ANONYMOUS_PAYMENT` | paying names the payer |
+| anonymous + cotisation grant | refused | `FORM_ANONYMOUS_COTISATION_GRANT` | a cotisation is granted to an account |
+| anonymous + file question | refused | `FORM_ANONYMOUS_FILE` | a file is tied to its uploader |
+| public + restricted audience, or a question shown by promo, formation or cotisation | refused | `FORM_PUBLIC_AUDIENCE` | a guest has no profile to check |
+| public + cotisation grant | refused | `FORM_PUBLIC_COTISATION_GRANT` | a guest has no account |
+| public + file question | refused | `FORM_PUBLIC_FILE` | a guest has no account to upload with |
+| public + payment | allowed | - | WP-P1: a guest pays with the e-mail it types |
+| public + grid on promo, formation or cotisation | allowed | - | the guest pays the "everyone else" tier |
+| public + grid whose every guest cell is unavailable | refused | `FORM_PUBLIC_GUEST_TIER_UNAVAILABLE` | no guest could answer: a public form in name only |
+| every other pair | allowed | - | |
+
+**The guest's tier is never a client's number.** `PricingFactsService.build` with no user answers no
+promo, no formation and no cotisation without asking anyone, `bucketFor` puts that in `_others` on
+every profile criterion, and `submit` prices the cell from those facts
+(`forms.service.seat-hold.spec.ts`, "charges a guest the everyone else tier"). The "everyone else"
+group always EXISTS - a grid is complete at save (`assertMatrixValid`) - so a guest always has a
+cell; what a manager can do is close it, which is why the closed case is refused rather than a rule
+"an others tier must exist". A guest cell at **0** is refused by `freeFallbackCells` only when it is the TRUE fallback, "everyone
+else" on EVERY criterion with each reachable; a cell naming an option ("Sans repas : 0") is a free
+choice and is accepted, and so is a member tier at 0 (the manager's business).
+The editor says it under a public form's grid by promo, formation or cotisation: "Les invités paient
+le tarif « autres »".
+
+Not in the table, because they read a value rather than two options: a public form forces several
+answers on (the editor sets it with the switch), a public form taking cash needs a deadline, and the
+free-fallback check above (`assertPublicConfigValid`).
 
 A guest's answer is a `submissions` row with `userId` NULL and its real time (cut to the day when the
 form is ALSO anonymous); the responses table names it "Invité". The two routes live in
@@ -532,12 +711,51 @@ the page calls them with plain `fetch`, never `apiFetch`, whose refresh-and-retr
 
 **A guest pays (WP-P1, [chantier](../../public-paid-forms-chantier.md))** through the member's
 paid path, with `userId` NULL: the same seat lock and 30-minute hold, the same `markPaid`. What a
-guest cannot steer, the server sets: a `userId` or `email` in the body is dropped, and the Lydia
+guest cannot steer, the server sets: a `userId` or `email` in the body is dropped (a name or e-mail the form asked travels in its own fields, [below](#a-guests-name-and-e-mail-when-the-form-asks-2026-11-06)), and the Lydia
 return URL is `/f/:id`, never one the client names. `getPublic` is an allowlist (price, currency,
 cash, the answer-grid slice) and the submit reply is one too (`toGuestSubmitReply`: the payer page or
 "cash owed", never the submission id). A guest's purchase record has `userId` NULL (migration 103);
 the association's Achats tab names it "Invité". Both fill pages total with ONE rule,
 `lib/forms/fillPricing.ts`.
+
+### A guest's name and e-mail, when the form asks (2026-11-06)
+
+Owner's decisions of 2026-11-06, built for `1.6.6`. **Off by default**: a guest is asked nothing
+about who they are. The creator ticks any of **Nom / Prénom / E-mail** ("Demander aux invités",
+`GuestIdentitySettings.svelte`, drawn under the "Formulaire public" switch while it is on) - three
+independent choices stored as `forms.guestFields` (jsonb, migration 138: a canonical list drawn from
+`lastName`, `firstName`, `email`; null asks nothing, and an empty list is stored as null). The
+settings advise ticking them on a public form, firmly on one that charges ("Conseillé pour un
+formulaire payant : retrouver qui a commandé").
+
+| Rule | Where |
+|---|---|
+| A ticked field is REQUIRED of a guest; a field not ticked is REFUSED (400 `FORM_GUEST_IDENTITY_NOT_ASKED`), so the columns hold only what the creator asked | `guestIdentityFor` (`apps/social-service/src/forms/guest-identity.ts`), called in `submit` before anything is written or issued; a missing one is 400 `FORM_GUEST_IDENTITY_MISSING` |
+| Lengths: a name 100 characters, the e-mail 254 and shaped like one | `GuestSubmitFormDto`, `libs/contracts/form-answers.json` (`maxGuestNameLength`, `maxGuestEmailLength`) |
+| A member is never asked, and a member's answer carrying any of them is REFUSED, not stripped (the member DTO declares them so the global `whitelist` cannot drop them silently) | `SubmitFormDto`, `guestIdentityFor(..., 'member')` |
+| An anonymous form cannot ask them: refused at save with `FORM_ANONYMOUS_GUEST_IDENTITY`, judged on the form as it WILL be saved (an edit's list, else the stored one) | `judge()` in `assertFormOptionsCoherent`, beside the shared option pairs; not a pair of `form-option-rules.ts`, since the editor never sends guest fields on an anonymous form |
+| **The e-mail is never asked twice**: when asked, it is the address Lydia's request goes to (`guestPayerEmail`) and the payment step asks nothing - a second `payerEmail` beside it is REFUSED (400 `FORM_GUEST_IDENTITY_NOT_ASKED`), never dropped; when not asked, the payer address is asked at the payment step and never stored, as before (PP2) | server `guestPayerEmail`; page `payerPromptNeeded`, the "Utilisé aussi pour le reçu Lydia" note under the field while the answer pays online |
+| Stored on the answer: `submissions.guestLastName`, `guestFirstName` (varchar 100), `guestEmail` (varchar 254), all nullable; null on every member's answer | migration 138 |
+| The fill page draws a "Vos coordonnées" block after the questions, only when the form asks one; a held send scrolls to it; "answer again" empties it (a shared device at an event) | `GuestIdentityFields.svelte`, `routes/f/[id]/+page.svelte` |
+| Responses: a guest's row shows the name it gave (else the e-mail) BESIDE its reference and the "Invité" badge - never the name alone, which would pass for an account's | `submitterName` / `guestShownName` (`submissionTable.ts`), `FormSubmissionsTable.svelte`, and the pending-cash list of the association's Formulaires section (`EditFormsTab.svelte`, which named a row by account id alone until 2026-11-07, so a guest paying cash crashed the section into a 500); the manager allowlist (`submission.projection.ts`) carries the three fields |
+| Export: a guest's names fill the first/last name columns, and a guest marker column (`labels.guest`, "Invité") holds each guest row's reference, written whenever a row has no account; an "E-mail" column is written when the form asks it, or an answer carries one from when it did (`labels.email`); the grid sheet's buyer is "Marie Curie (Invité 1A2B-3C4D)", else "Invité 1A2B-3C4D" (`guestLabel`) | `exportSubmissions`, `addProductGridSheets` |
+
+**Erasure and retention.** `submissions.guestEmail` is `kept` in `ACCOUNT_ERASURE_COVERAGE`: it is
+written only on rows with no account, so no account's erasure can reach it (the names are not
+account-shaped columns). They live as long as the answer - the submissions rule, which is still
+**none (OPEN)** in register row C8; a guest's own request is answered by hand, the row
+anonymised rather than deleted ([data-subject-requests](../../compliance/data-subject-requests.md#a-guest-with-no-account-a-public-forms-answer-register-c8)).
+
+**Older clients (P3-4 of the review of #3096).** The export's word list gained `email` and `guest`
+(the guest marker column, each guest row's reference beside the name it typed, so a typed name
+never reads as an account's). As with `file` before it, the server refuses an export that would
+write one of those columns without its word - so a store build older than `1.6.6` gets a 400 when
+it exports a form holding a guest's answer (the `guest` column) or asking the e-mail. Updating the
+app is the fix; no default word is substituted ([`export-labels.ts`](../../../../apps/social-service/src/forms/export-labels.ts)). Register C8 and the privacy
+policy say so. Tests: `forms.service.guest-identity.spec.ts`, `guest-identity.integration.spec.ts`
+(migration 138 applied twice, the stored columns, the Lydia address), `guestIdentity.test.ts`,
+`GuestIdentitySettings.svelte.test.ts`, `routes/f/[id]/page.guestIdentity.svelte.test.ts`,
+`FormResponsesPanel.svelte.test.ts`.
 
 ### At most three answers waiting per visitor (WP-P3, decision PP5)
 
@@ -660,7 +878,8 @@ the price is only as good as the answer it is computed from:
 - **The stored answer is the priced one.** The answer to a question the submitter did not see
   (`visibleItemIds`) is neither charged nor required, and it is no longer stored either, nor is its
   file attached.
-- **A public form that charges cannot leave a reachable "everyone else" cell at 0**
+- **A public form that charges cannot leave the reachable "everyone else" cell at 0** (the one where
+  every criterion is "everyone else"; a named option at 0 is accepted)
   (`freeFallbackCells`, checked at publication and on every edit of a public form). That cell is
   reached when a priced question can be skipped (not required), hidden (it has a condition), or
   answered with an option no group holds. The manager prices that cell or marks it unavailable; a
@@ -682,8 +901,8 @@ server must be able to hand it to them. That one fact decides the whole design.
 | Read | `GET /api/forms/:id/files/:fileId` | `assertFormManager` FIRST, then the bytes from `GET /media/internal/form-file/:id` with their own Content-Type, `Content-Disposition: attachment` (ASCII + RFC 5987 name), `nosniff`, `no-store`. Never through `GET /media/:id`, the push proxy's `GET /media/internal/:id` (no per-object ACL - both refuse the class) nor `/media/public` |
 | Purge | `FormFileRetentionScheduler`, hourly at :37 | see below |
 
-**Refused at save**, with the sentence on the save bar (`assertPublicConfigValid`,
-`assertAnonymousConfigValid`, and `fileQuestionProblem` on the page):
+**Refused at save**, with the sentence on the save bar (the shared option rule,
+`FORM_PUBLIC_FILE` and `FORM_ANONYMOUS_FILE`, on both sides):
 
 - **a public form** (D40): a guest has no account to upload with;
 - **an anonymous form**: the `form_files` row and the blob's owner name the uploader, which would
@@ -735,6 +954,50 @@ id sits in an answer. One log per deleted file and per failure (`[FORM_FILE_GC]`
 **For reuse (bookings):** `purgeExpiredFiles` in `apps/social-service/src/forms/file-retention-purge.ts`
 takes each candidate's START date as data (`{ fileId, ownerId, start, retentionDays }`), so a caller
 whose clock starts somewhere else - a booking slot's end - passes that instead of `attachedAt`.
+
+## A question's image (2026-11-06)
+
+The owner asked for it on 2026-11-06: *"pouvoir joindre une image a une question, au meme titre
+qu'une description"*. Half of it already existed and nobody saw it: an upload route
+(`POST /api/forms/:id/items/image`), `items[].imageUrl` and its render in `FormQuestion` - but only
+on the EDIT page (the create page had no form id to upload against), as a dashed box below the
+description, stored at the 256 px logo bound and cropped to 192 px high. The URL field took any
+string, and nothing ever deleted a replaced or removed image.
+
+| Piece | What holds |
+|---|---|
+| Media path | a PUBLIC asset (`POST media/upload/public`, `size=content`): no session reads it, so a guest on `/f/:id` sees it. Not the encrypted post path - a guest holds no key - and not the avatar route, whose URLs are signed per viewer since phase 1 ([backlog](../../backlog.d/p2-avatar-urls-refuse-unsigned-requests.md)); `/api/media/public/` is unsigned and stays so. Re-encoded to WebP by the media service, EXIF and GPS dropped |
+| Size | the device resizes with the post preset (`IMAGE_COMPRESS_PRESETS.post`, 1600 px / 0.85, `questionImage.ts`) and the media service stores it inside 1600 px (`PUBLIC_IMAGE_BOUNDS.content`); a result still over the public route's 2 MiB is refused on the device with its own sentence |
+| Stored as | `items[].imageUrl` = `/api/media/public/<uuid>`, the ONLY shape the DTO accepts (`@Matches`, empty string = none), and an optional `items[].imageAlt` (300 characters) |
+| Who may cite it | `form_item_images` (migration 136), one row per image: uploaded on an existing form, the row names it; uploaded from the create page (`POST /api/forms/items/image`), the row is UNBOUND and only its uploader's next save may cite it, which binds it. A save citing any other id is a 400 `QUESTION_IMAGE_NOT_YOURS` (`claimForSave`, inside the save's transaction). An id is not a secret: without this a manager could cite another form's image and then have it deleted by removing it |
+| Release | when no form cites it any more: the blob through `media/internal/public-asset-delete` (public assets only), then the row - each id in its own transaction under its advisory lock, the citation re-read there (`items @> [{"imageUrl": ...}]`). Called after an edit drops an image and after a form's delete; an ARCHIVED form still cites its images and keeps them |
+| Reconciliation | hourly at :19, every row older than 24 h that no form cites: an upload never saved, a form removed with its association, a release that failed |
+| Respondent | `FormQuestion` draws it under the label and the help, WHOLE (`object-contain`, at most 384 px high), lazy, its src through the public media base (`associationLogoSrc`, so a native shell reaches the API); alt = `imageAlt`, else "Illustration de la question « label »" - never empty, since the picture is usually what the question is about |
+| Editor | "+ Ajouter une image" beside "+ Ajouter une description" on BOTH pages; then a thumbnail, the alt field, "Remplacer l'image" and "Supprimer l'image". The old image is not deleted by the editor: the server releases it when the SAVE leaves no question citing it |
+
+**A duplicated question cites the same image** (same id, same form): it is claimed once, and the
+release keeps it while either copy does - asserted in `form-item-images.integration.spec.ts`.
+
+**A booking space's question carries no image**: its questions reuse `FormItemDto`, so they would
+take the same URL shape, and a space citing a form's image would lose it with that form - the
+citation check reads `forms` only. `assertSettingsValid` refuses an image the edit INTRODUCES (400
+`item-image`); one the stored space already holds is kept and logged at WARN, so an older space
+still saves its rename. No booking screen uploads one.
+
+**Nor does an association's logo**: `logoUrl` takes our own `/api/media/public/<id>` reference by
+hand, so a logo naming a question image would vanish with that form's question. A NEW value whose id
+is a row of `form_item_images` - relative or absolute, any host - is a 400
+`ASSOCIATION_IMAGE_IS_QUESTION_IMAGE` (`assertNotQuestionImage`, `association-image-url.ts`); a
+stored value is kept. No lock is needed: the row is written before the upload's URL is returned.
+No client sends a typed `logoUrl`, so no sentence is mapped.
+
+**No backfill**: before 136 `imageUrl` took any string, so a stored value of the public shape may
+name an association logo or a form banner pasted into a question. A row is a licence to delete, so
+136 writes none; such a form is refused on its next save until the image is removed and uploaded
+again (production, read 2026-11-06: no form cites one). Asserted in
+`form-item-images.integration.spec.ts`.
+
+**Submissions and exports are unchanged**: an image is part of the question, never of an answer.
 
 ## A form's association is chosen once, at creation
 
@@ -1049,7 +1312,7 @@ test and the geometry is exported instead of inlined: a retuned radius moves the
 
 ## The paid half: what it needs, scoped 2026-09-30
 
-Found while scoping it, so it is not re-derived (the paid half itself waits for WP-LYDIA-1, [backlog](../../backlog.md)):
+Found while scoping it, so it is not re-derived (Lydia is live in production since 2026-11-06, [backlog](../../backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end); the paid half itself is its own work packages):
 
 - **The payer's e-mail IS Lydia's `payerRecipient`** - the Lydia payer-address blocker resolves itself for a
   guest form, since the guest types an e-mail. It does not for a logged-in boutique purchase.
@@ -1103,19 +1366,19 @@ Measured on `main` before this: `submit` counted `pending` toward `maxSubmission
 - **The hold is read from the row.** `apps/social-service/src/forms/seat-hold.ts` holds the one constant (`PENDING_PAYMENT_HOLD_SECONDS`, 30 min, from which the Lydia request's shorter lifetime is derived, D1 below) and the one SQL fragment (`PENDING_HOLD_CUTOFF_SQL`, on the DATABASE clock: the column is a `timestamp` written by the database's `now()`, and the service process does not run in the same zone - measured +2 h against a UTC session). The hold counts from **`paymentRequestedAt`** (migration 084), the instant the row's CURRENT payment request was issued, not from `createdAt`: `submit` reuses a live pending row and issues a new request, and the hold restarts with it. `seatHoldingWhere` counts `paid`, `free`, `pending_cash` and a `pending` younger than the hold; the seat count, `get`, `getPublic`, `hasSubmission` and the reuse in `submit` all read it, so a seat is free the moment the hold passes, whether or not any job ran.
 - **A retry is not a new answer.** `submit` looks the person's live pending row up BEFORE the capacity check: it already holds their seat, so a retry on a form it filled is reused instead of being refused as "Form is full" (which it was on `main`).
 - **The job only makes the row say it.** `FormReminderScheduler.expireStalePendingPayments` (every 5 min, a `running` flag against self-overlap) first reads at Lydia every `pending` row whose request has ended and settles it on a verified answer (the reconciliation sweep, [lydia-api](../../lydia-api.md#7-reconciliation---the-sweep-lydias-documentation-asks-for)), then moves what is left `pending` past the hold to `expired` - both by ONE hold cutoff read from the database clock at the start of the tick (`pendingHoldCutoff`), so no row is expired that the read did not select - never a delete, the row is the trace a late payment is matched against. Its `WHERE` names the only state it leaves, so a second run moves nothing. `paymentMethod` tells an online `expired` (null) from a cash one (`cash`).
-- **A late payment (`markPaid`) is decided under the form's row lock** (`lockFormSeats`, `SELECT ... FOR UPDATE` on `forms`, READ COMMITTED). A row still holding its seat becomes `paid`; one that holds none (`expired`, `cancelled`, `pending` past the hold) becomes `paid` while the cap has room, else **`paid_over_capacity`**, logged at WARN with the submission, the form and the amount. It grants no cotisation (no seat was given) but keeps its purchase record (the payer's trace). Refunding is the organiser's, outside the application: no refund mechanism exists.
+- **A late payment (`markPaid`) is decided under the form's row lock** (`lockFormSeats`, `SELECT ... FOR UPDATE` on `forms`, READ COMMITTED). A row still holding its seat becomes `paid`; one that holds none (`expired`, `cancelled`, `pending` past the hold) becomes `paid` while the cap has room, else **`paid_over_capacity`**, logged at WARN with the submission, the form and the amount. It grants no cotisation (no seat was given) but keeps its purchase record (the payer's trace). It is refunded from Canari like any confirmed form payment ([payments](payments.md#refunds-from-canari-enrolment-lot-4)): a total refund turns it `refunded`.
 - **What a payment buys runs from durable flags.** The cotisation grant and the purchase record run after the payment's commit; `cotisationGrantedAt` and `purchaseRecordedAt` (migration 084) are CLAIMED by a conditional `UPDATE` only one caller can win, and released if the effect failed. A replay of the same payment (a repeated Lydia callback, or the callback and the payer's return - `confirmPayment` - both landing in `markPaid`) finishes only what is still NULL: before this, each call re-granted and wrote another purchase record, and a failed grant was lost for good. The migration sets both flags on every row already `paid`, because the old code ran both effects on every call.
 - **The row names its current request by BOTH of Lydia's ids.** `request/do` answers a numeric `request_id` (what the callbacks and `request/cancel` carry) and a `request_uuid` (what `request/state` and the return URL carry), measured on the sandbox 2026-10-15 ([payments](payments.md)). `submit` stores the first in **`paymentRequestId`** (migration 084) and the second in `stripeSessionId`, by named-column `UPDATE`: the whole-entity `save` it replaced wrote the pre-transaction `paymentRequestedAt` back and silently undid the hold restart of a reuse (measured on Postgres 18).
 - **`markPaid` never decides by id, but accuses a foreign one.** One payment can reach it under TWO ids (the callback's `request_id`, `confirmPayment`'s `request_uuid`), and the row now stores BOTH, so idempotence still comes from the row alone (a settled status is a no-op, the two flags) and a replay by either id is silent. The id that settled the row goes in **`paymentSettledBy`** (migration 084) and `stripeSessionId` is no longer overwritten. A confirmation on a settled row naming NEITHER stored id is a second request paid for one answer: logged at ERROR with both sides, status unchanged (the money landed; refusing would hide it). A row written before 084 names only its uuid, so its own callback's numeric id is not accused.
 - **One answer per person, at submit (2026-10-21).** A submit after a PAID answer on a single-answer form inserted a new row and issued a new `request/do`, and a second paid purchase was recorded for one answer. `submit` now reads the person's rows UNDER THE FORM LOCK (`answerHoldingWhere`: every seat-holding row plus `paid_over_capacity`) and refuses ANY such row other than the live pending one it reuses - every row is read, not the newest, so an older paid answer behind a newer pending one still refuses (review of #2215) - with **409 `ALREADY_ANSWERED`** (Paraglide `form_already_answered` via `paymentRefusal.ts`) before anything is issued: it is checked FIRST, before the settle that would cancel a pending request at Lydia, and again under the lock. `hasSubmission` reads the same predicate, so the page shows such an answer as answered - and, reading every such row as the guard does, shows the most decided one (`pickShownAnswer`: paid or paid over capacity, then free or cash, an online `pending` last), so a legacy older paid row behind a newer pending one no longer shows "pending" with a retry the server refuses. Logged at INFO: a second tab or a back button is expected, not an accusation. A `cancelled` or `expired` row (declined, cancelled or expired request) is no answer, so the retry after it goes on. Anonymous forms keep their registry, guests and multiple-answer forms are untouched. Tests in `forms.service.seat-hold.spec.ts`. Controls, each run by deleting the check: the lock-held check alone fails one test, two simultaneous FREE answers by the same person (both pass the early check before either row exists, and only the check under the lock stops the second insert); the early check alone fails two, an older paid answer behind a live pending row (the lock-held check still refuses, but only after the settle has cancelled the request at Lydia); both together fail seven; the newest row picked again in `hasSubmission` fails three.
 - **One answer per person, also for a late payment.** On a single-answer form, a late payment whose payer already has another row holding a seat or paid lands `paid_over_capacity`, logged at ERROR: never a silent second `paid`.
-- **Two decisions of the lead session, 2026-10-22 (decided as lead, not by the user's own word).** (1) A refund done outside the app, or a manager deleting a paid answer, does NOT free the single-answer slot: `ALREADY_ANSWERED` stays, and a refund stays a manual act on the association's Lydia account until refunds are an actual feature. (2) A person holding a `pending_cash` answer who then submits online stays REFUSED; a manager converts or cancels the cash answer first.
+- **Two decisions of the lead session, 2026-10-22 (decided as lead, not by the user's own word).** (1) A refund done OUTSIDE the app, or a manager deleting a paid answer, does NOT free the single-answer slot: `ALREADY_ANSWERED` stays. A TOTAL refund through Canari (enrolment lot 4, [payments](payments.md#refunds-from-canari-enrolment-lot-4)) does: it turns the answer `refunded` under the form lock, which no longer holds a seat nor counts as an answer. (2) A person holding a `pending_cash` answer who then submits online stays REFUSED; a manager converts or cancels the cash answer first.
 - **`cancel-pending` applies only to the row's CURRENT request.** core-service names the request it reports (the callback's `requestId`), and `cancelPendingSubmission` compares it to the stored id under the row lock: another id leaves the row as is, logged, and a report naming none is refused. A row with no stored id matches no report and leaves `pending` through the expiry job. Since #1910 (merged 2026-10-15) the multipart callbacks are parsed, so every cancel or expiry is reported; the comparison and the settled-row no-op are what make that safe. **And the report is a trigger, never the verdict (2026-10-18):** a current, payee-matching report then reads the row's `request_uuid` at Lydia (`settleFromProvider`), and only `declined` or `cancelled-or-expired` (`SETTLED_REFUSED_REQUEST_STATES`) releases the seat - under the lock, while the row still names the uuid read; `paid` records the payment; `open`, an unmeasured state or a failed read keeps the seat (`unreadable` is core's retryable 503) ([payments](payments.md#what-confirms-a-payment-2026-10-16)).
 - **What confirms a payment: the callback, and the payer's return when the callback has not (2026-10-15).** It was claimed here that "every payment reaches `markPaid` twice", the callback and `verify-session`. **False, measured on the sandbox** ([payments](payments.md#what-requeststate-answers-and-what-it-does-not-2026-10-15)): `verify-session` took the submission from the `order_ref` it expected `request/state` to echo, and no variant of that call echoes it, so it could never name a submission; and no page reached it anyway, since Lydia does not fill `{CHECKOUT_SESSION_ID}` and the return URL carries `submission_id` instead. The callback was the ONLY confirmation, and a payment whose callback was lost stayed `pending` until the job expired it. `verify-session`, `cancel-session` and `retrieveSession` are deleted. **`POST forms/submissions/:id/confirm-payment`** (submitter or manager) replaces them: on a `pending` row - and on an `expired` or `cancelled` one that names a request, since a payment made at the end of the hold whose callback is lost leaves the row released with no seat (`CONFIRMABLE_PAYMENT_STATUSES`) - it reads the row's OWN `request_uuid` through core-service `payments/request-state` with the Business's vendor token and, on `paid`, calls `markPaid` with that uuid, which decides it like any late payment (`paid` while the form has room, else `paid_over_capacity`) and re-checks UNDER THE ROW LOCK that the row still names the uuid read (`onlyIfRowNames`: a retry that replaced it settled it itself, so nothing is written, at WARN); on `declined` (the payer refused, state 5) or `cancelled-or-expired` (6) it RELEASES a `pending` row to `cancelled` under the row lock, only while the row still names that uuid (`releaseSettledRefusedRow`), so the payer may retry at once (see [a declined payment](#a-declined-payment-releases-the-answer-2026-10-21)); `open` and `unknown` answer the row unchanged, a failed read at WARN. A row whose id is not a Lydia uuid (32 hex digits, `LYDIA_REQUEST_UUID_RE`) - a Stripe-era `cs_...` - is not asked about at all, one INFO line, since core would refuse it with a 400 on every poll. It is throttled per user and submission (`UserResourceThrottlerGuard`, `CONFIRM_PAYMENT_PER_MINUTE` = 12, above the return page's 10-read poll), since each call spends the platform's tokens on Lydia; a 429 ends the poll on "awaiting confirmation". `1 = paid` and `5 = declined` were measured on dev on 2026-10-21 ([payments](payments.md#what-requeststate-answers-and-what-it-does-not-2026-10-15)). The success page polls it instead of the plain read, so a payment reaches `markPaid` once (callback, or return) or twice (both, in either order). Nothing comes from the client but the submission id it may already read - unlike the public `mark-paid` deleted on 2026-08-22. The same measurement found `payments/request-state` refusing every real request: it validated the uuid as the dashed RFC 4122 shape, and Lydia issues 32 hex digits with no dash, so every settle that reached the state read (D2 below) answered 409 on `main` from #1906 until this fix, before any release carried it. Fixed (`SESSION_ID_RE`), with a test that fails on the old shape.
 - **What confirms a payment since 2026-10-16: Lydia's answer about the row's OWN request, on either trigger.** The callback is verified with the Business private token of the association that owns the payment, over every received field but `sig` (measured on the sandbox), and is then only a TRIGGER: `provider-confirm` checks the verifying Business is the one the row's request was ISSUED to (`lydiaVendorToken`, never the payee resolved now, so a list's delegation revoked or moved meanwhile loses nothing - [payments](payments.md#who-refunds-a-delegates-payment-the-account-that-took-it-owner-review-of-2967-2026-11-03); an authentic callback of one association never settles another's row) and runs the same `settleFromProvider` read as `confirm-payment` - `markPaid` only on Lydia's `paid`, never on the callback's word or amount. An association with NO key stored has its callbacks refused (one 400, the same as a bad signature) and its form payments confirmed only on the payer's return - the designed state, shown in the Lydia panel as "callbacks cannot be verified yet" until a payout manager enters the key. Mechanism, key storage and the boutique gap: [payments](payments.md#what-confirms-a-payment-2026-10-16).
 - **The cancel page tells the payer what happened.** It reads the row first and shows a payment the callback already confirmed as paid (or over capacity), never as cancelled; a cancel that found the request PAID at Lydia (`alreadyPaid`) shows the same; the 409 `PREVIOUS_PAYMENT_OPEN` is an answer, shown with its own title and `form_previous_payment_open`, logged at info rather than as an error; anything else says the cancel is not confirmed and when the answer is released. `paymentCancelView` in `paymentReturn.ts` is the one mapping.
 - **Every status move is one locked step.** `submit` takes the form lock too (its REPEATABLE READ transaction prevented neither race its comment named: measured on Postgres 18, four concurrent submits on a 1-seat form took 4 seats on `main`, 1 now). `cancelPendingSubmission`, `validateCashPayment` and `cancelCashPayment` go through `moveLockedSubmission` (row lock, check, write), so a cancel or expiry callback of an old request cannot overwrite a `paid` committed in between.
-- **The manager sees it first.** `getSubmissions` and the XLSX put `paid_over_capacity` rows on top (`overCapacityFirst`); `frontend/src/lib/forms/paymentStatus.ts` labels both new words (the XLSX takes them from the client, as above) and colours an over-capacity pill as refused, not settled. The return page (`paymentReturn.ts`) keeps waiting on `expired` (a late payment may still land) and says "payment received, form full" on `paid_over_capacity` - it says the payment is at the top of the organiser's responses and to contact them about a refund, and promises neither a notification (D3) nor a refund nothing here enforces.
+- **The manager sees it first.** `getSubmissions` and the XLSX put `paid_over_capacity` rows on top (`overCapacityFirst`); `frontend/src/lib/forms/paymentStatus.ts` labels both new words (the XLSX takes them from the client, as above) and colours an over-capacity pill as refused, not settled. The return page (`paymentReturn.ts`) keeps waiting on `expired` (a late payment may still land) and says "payment received, form full" on `paid_over_capacity` - it says the payment is at the top of the organiser's responses and to contact them about a refund, and promises neither a notification (D3) nor a refund, which stays the organiser's decision (made from the Achats tab).
 
 ### A declined payment releases the answer (2026-10-21)
 
@@ -1163,8 +1426,9 @@ the fulfilment flags.
 `apps/social-service/src/forms/submission.projection.ts` now decides, as an ALLOWLIST, so a column
 added later is private until someone adds it there:
 
-- the submitter's view: `id`, `formId`, `answers`, `totalPaid`, `paymentStatus`, `paymentMethod`,
-  `cashExpiresAt`, `createdAt`. `GET submissions/:id` answers `id`, `formId`, `totalPaid`,
+- the submitter's view: `id`, `formId`, `answers`, `lines` (a priced grid's charged lines,
+  [below](#the-priced-grid-product_grid-wp-g1-2026-11-06)), `totalPaid`, `paymentStatus`,
+  `paymentMethod`, `cashExpiresAt`, `createdAt`. `GET submissions/:id` answers `id`, `formId`, `totalPaid`,
   `currency` and `paymentStatus` only.
 - the manager's view adds `userId` and `email`. Both lists use `userId` to name the submitter
   (`submitterName`, the pending-cash list), and a manager already reads both on member pages.
@@ -1186,3 +1450,426 @@ with recognisable values and fails if any of the eight routes answers one, by va
 a member without the flag gets a 403 from the payout read. The token was readable by every member
 until this shipped, so whether it can be rotated is a question for Lydia
 ([backlog](../../backlog.md)).
+
+## The priced grid (`product_grid`, WP-G1, 2026-11-06)
+
+**Server side built (WP-G1), the fill page (WP-G2, [below](#the-fill-page-wp-g2)) and the editor
+(WP-G3, [below](#the-editor-wp-g3)); the client half of the export (WP-G4) builds on it.** Decided by the owner on 2026-11-06; design, use cases and the work
+packages: the forms capability audit of 2026-11-06 (`docs/wiki/forms-capability-audit-2026-11-06.md`),
+section 4.
+
+**The builders offer the type since WP-G3.** `QUESTION_TYPES` (frontend) lists it, because a form
+may hold it and the server's `SUPPORTED_QUESTION_TYPES` must equal that list; the two pickers
+(`FormBuilder.svelte`, `FormQuestionsSection.svelte`) read `AUTHORABLE_QUESTION_TYPES`, an explicit
+list of the types whose editor exists (`questionTypes.ts`, asserted by `questionTypes.test.ts`),
+which gained `product_grid` with its editor. A builder whose answers never pay - a booking space
+(`SpaceEditor.svelte`) - passes `offerPricedGrid={false}`: every grid there would be refused
+`PRODUCT_GRID_REQUIRES_PAYMENT`. The fill page reads its own list, `FILLABLE_QUESTION_TYPE_VALUES` (`fillAnswers.ts`
+`isKnownQuestionType`), which holds `product_grid` since WP-G2: an older build draws a priced grid
+"update the app" and blocks the send.
+
+A new question type - NOT a mode of the survey grids (`matrix_single`, `matrix_multiple`): an
+order, rows x columns ("Vert" x "M"), each cell a quantity, each unit at the price of the payer's
+category. No stock (a pre-order); no total cap per order (the cap per cell is enough); a second
+order is a second answer (`allowMultipleSubmissions`), never an edit.
+
+**The ORDER is required, never one grid (decided 2026-11-06, for `1.6.6`).** A merch form holds one
+grid per article (sweat capuche, sweat col rond, sweat zippé, veste softshell) and a buyer orders
+whichever they want, so any single grid may be left untouched; what is refused is an answer whose
+VISIBLE grids hold no unit between them (`PRODUCT_GRID_EMPTY`, judged once per submit, `itemId`
+null). It replaced a per-grid rule written when a form was assumed to hold one grid, under which a
+buyer had to take at least one of EVERY article. A grid hidden by an audience or an answer condition
+neither counts toward the order nor is demanded; a form whose every grid is hidden asks no order.
+A VISIBLE grid always demands the order, even on a form that also charges a base price: a form
+selling a registration WITHOUT an article hides its grids behind a condition, or has none.
+
+**The fill page** says the empty order once (`role="alert"`, `#form-order-missing`, scrolled into
+view past the sticky bar), derived from `isOrderEmpty`, so it goes the moment a unit is added; the
+end-of-form gate (`allRequiredAnswered`) reads the same rule through `firstMissingAnswer`.
+
+**`required` stays STORED `true`, and means nothing to a page that draws grids.** The save still
+refuses `_NOT_REQUIRED`, and the editor sends `required: true` whatever the card holds
+(`toFormItemsPayload`) and no longer draws the switch or the asterisk; the fill page draws no
+asterisk on a grid and `firstMissingAnswer` skips grids, then asks the order. Chosen over dropping
+the flag because (1) every form already saved stays valid with no migration, and (2) a build older
+than WP-G2, which cannot draw the type and knows only "a required question of a type I do not
+know", keeps holding the send with "mettez à jour l'application" instead of sending the form
+without its order.
+
+### One contract, copied byte for byte
+
+`apps/social-service/src/forms/product-grid-contract.ts` = `frontend/src/lib/forms/productGridContract.ts`
+(declared duplicate, `exact`; its spec sits beside the server copy). It holds the stored shape, every
+refusal code, the structural rule a definition obeys (`productGridItemRefusal`), the rule an answer
+obeys (`parseProductGridAnswer`) and how a quantity becomes a priced line (`productGridLines`). The
+editor refuses what the save refuses and the fill page totals what the submit charges, by the same
+code - and the server recomputes every amount anyway.
+
+The definition is nested under `item.productGrid` (not flat on the item as the audit sketched): the
+DTO's `rows?: string[]` already belongs to the survey grids and cannot also hold objects.
+
+```ts
+item = { id, type: 'product_grid', label, required: true, showIf?, productGrid: {
+  rows: [{ id, label }], columns: [{ id, label }],     // ids /^[A-Za-z0-9][A-Za-z0-9_-]{0,35}$/
+  maxPerCell: 1..99,                                    // 1 = a checkbox, more = a stepper
+  closedCells: ['rowId:colId'],                         // "no Creme in XS": cannot be ordered
+  pricing: { mode: 'single' | 'per_row' | 'per_column',
+             tiers: null | Dimension,                   // ONE cotisation, promo or formation criterion
+             prices: { [tierId]: { [axisKey]: cents } } } } }
+answer = { 'rowId:colId': quantity }                    // zero cells omitted when stored
+```
+
+`tierId` is a bucket id and `_others` ("everyone else", where every guest lands), or `_all` when
+`tiers` is null; `axisKey` is `*`, a row id or a column id by the mode. No row + column surcharge.
+
+### The save (`FormsService.create`/`update` -> `normaliseProductGridItems`, `forms/product-grid.ts`)
+
+Each refusal is a 400 `{ code, message, itemId }`: `PRODUCT_GRID_DEFINITION_MISSING`,
+`_NOT_REQUIRED`, `_REQUIRES_PAYMENT` (a grid charges, so `requiresPayment` - which also makes an
+anonymous grid form impossible), `_AXIS_INVALID` (1..40 rows, 1..15 columns), `_ID_INVALID`,
+`_DUPLICATE_ID`, `_LABEL_INVALID` (empty or over 100), `_DUPLICATE_LABEL` (per axis, trimmed and
+case-folded - the survey grids' row rule should match it), `_MAX_PER_CELL_INVALID`,
+`_CLOSED_CELL_INVALID`, `_ALL_CELLS_CLOSED`, `_PRICE_MODE_INVALID`, `_TIER_INVALID` (not a profile
+criterion, or refused by the price grid's own `parseDimension` - a tier the association does not
+sell, a promo that is no year - or two categories that can hold one person, or a cotisation on a
+personal form), `_GUEST_PRICE_MISSING` (a public form without the price a guest pays, named before
+the rest of completeness), `_PRICES_INCOMPLETE` (exactly one price per category x axis key),
+`_PRICE_INVALID` (integer cents, 0..1 000 000). The grid is STORED normalised: known fields only,
+labels trimmed, the tier criterion as the parser returned it. An edit that only opens the link or
+switches payment off is judged against the stored grids. A `productGrid` sent on another type is
+dropped. The prices enter `priceFingerprint`, so a list moving a grid price meets
+`assertKindMayPrice` like any other price.
+
+### What a page is told
+
+`GET /forms/:id/check` and the public read carry `productGridPrices: { [itemId]: { tierId,
+tierLabel, prices } }`: each grid's prices for THIS viewer, the category resolved on the server
+(`viewerPricesFor`, the price grid's `bucketFor`; a guest's facts know nobody, so `_others`). The
+public read serves the grid without its price lists (`respondentItems`). `GET /forms/:id` still
+serves the whole form - the editor reads it, as it reads the whole price grid.
+
+### The submit (`FormsService.submit`)
+
+For each VISIBLE grid, before the `required` check every other type takes: `priceProductGridAnswer`
+judges the answer - 400 `PRODUCT_GRID_ANSWER_MISSING` (a non-object - a string, a list: an app that
+cannot draw the type, which a newer client words "mettez a jour l'application"), `_UNKNOWN_CELL`,
+`_QUANTITY_INVALID` (not an integer in 0..maxPerCell), `_CELL_CLOSED` - then prices it at the
+viewer's category. An ABSENT answer, `{}` or all zeros is an untouched grid: 0 units, no line, and
+nothing stored under its id (a `{}` sent is dropped from the stored answers). After the loop, visible
+grids holding 0 units between them refuse the whole submit `PRODUCT_GRID_EMPTY` with `itemId: null`
+(`productGridOrderEmpty`), before any row is written - member and guest alike. The stored answer is
+the judged one; the lines' sum joins `totalCents` with the base price
+(or the price grid's cell) and the choice supplements. A grid order whose total exceeds
+`PROVIDER_MAX_AMOUNT_CENTS` is refused `AMOUNT_OUT_OF_RANGE` BEFORE any row is written, cash
+included. Nothing else changes: the total is the ONE `unit_amount` sent to core-service, the
+payable-range check, the 30-minute seat hold, the reuse of a pending row (its answer, lines and
+total rewritten together), the D2 settle, cash, `markPaid` and refunds (a total refund frees the
+seat; the lines stay). A hidden grid is neither required, charged nor stored.
+
+**`submissions.lines`** (migration 137, `jsonb NULL`, additive, not held): per ordered cell
+`{ itemId, itemLabel, rowId, rowLabel, colId, colLabel, quantity, unitCents, lineCents, tierId,
+tierLabel }`, null on an answer without a grid. In the submitter's and the manager's views. It
+holds no account id, so an account erasure leaves it as it is (`NO_ACCOUNT` in
+`internal/account-erasure.ts`, which the coverage spec requires of every jsonb column).
+
+**The answers validator is ONE function**, `isAcceptedAnswerValue` in `forms/answer-bounds.ts`
+(WP-G0's, which `IsValidAnswers` calls): a flat object whose values are ALL numbers is a priced
+grid's answer - at most `PRODUCT_GRID_MAX_CELLS` (40 x 15 = 600) keys of at most 73 characters,
+finite numbers - and any other flat object is a survey grid's (50 rows of strings or string
+lists); a map mixing the two is refused. Both bounds are in `libs/contracts/form-answers.json`
+(`maxProductGridCells`, `maxProductGridCellKey`). `withNormalisedGridAnswers` passes a
+`product_grid` answer through untouched to `priceProductGridAnswer`, the only judge of what it
+means; a number map on any other question is still `FORM_GRID_ANSWER_INVALID`.
+
+### The fill page (WP-G2)
+
+Both fill pages hand a `product_grid` question to `ProductGridQuestion.svelte` instead of
+`FormQuestion.svelte` (its own card: the product photo across the top, the title and the
+viewer's price - "des X" when rows or sizes differ - and the description as the spec line). The
+design is the owner's mockup of 2026-11-06 (`Fill-Desktop`, `Fill-Mobile`, `Fill-Guest-Mobile`),
+drawn with the app's tokens.
+
+- **Two drawings of one answer, picked by CSS alone (`sm`, 640px).** From 640px a table with
+  alternating rows: each open cell a "+" that becomes a - n + stepper (+ disabled at `maxPerCell`),
+  a checkbox when `maxPerCell` is 1. Below it a card per row, its sizes as pills that wrap - a tapped
+  pill becomes "M x1" with - and + (a toggled pill at a cap of 1) - so nothing scrolls sideways. A
+  closed cell is struck through and has no control. The pill stepper's - and + are `h-11` themselves:
+  `h-full` inside the bordered `h-11` pill was 42px, under the touch floor (fixed in WP-G3). A grid of ONE row has no row label anywhere.
+  `per_row` writes the price on each row (both drawings), `per_column` under each size (and in each
+  pill).
+- **The answer** is `{ "rowId:colId": quantity }` holding only the cells ordered
+  (`productGridFill.ts` `withCellQuantity`: clamped to 0..`maxPerCell`, a cell at 0 dropped, a new
+  object per write so `bind:value` sees it), sent through the unchanged submit path.
+  `initialSelections` starts it `{}`; `isItemAnswered` / `firstMissingAnswer` want one unit
+  (`kind: 'order'`). The fill page draws it because `FILLABLE_QUESTION_TYPE_VALUES` holds
+  `product_grid` (`questionTypes.test.ts` asserts the fill page draws every canonical type).
+- **The total.** `fillPriceState` takes `productGridPrices` and returns `gridLines` (every visible
+  grid's lines, `productGridOrderLines` -> the contract's `parseProductGridAnswer` +
+  `productGridLines`) and `gridCents`; its `total` is base + supplements + lines, the sum
+  `FormsService.submit` charges. It is a PREVIEW. A grid the server sent no prices for, or an answer
+  the contract refuses, adds no line and logs at error level - never a total the submit would
+  contradict.
+- **The bar.** `ProductGridOrderBar.svelte`: "Total : 84 EUR", the article count, and a recap that
+  unfolds line by line ("Sweat capuche Noir M x1 28 EUR"; a one-row grid's line has no row), beside
+  the page's own pay button (one `{#snippet}` per page, shared with the plain bar). A member form
+  holding a visible grid keeps its bar `sticky` from the start (the `reachedEnd` latch still governs
+  every other form); the guest page sticks its footer the same way.
+- **Who pays what.** `FormViewerTier.svelte`, at the foot of `FormHeader`: "<display name> - Tarif
+  applique : <category>" for a member, "Tarif applique : Tous les autres" and a sign-in link
+  (`/login?returnTo=/forms/:id`) for a guest. The category is `productGridPrices[id].tierLabel`, or
+  `form_criterion_others` for `_others`; a grid with one list (`_all`) names none, and the line is
+  absent when no visible grid prices by category.
+- **Refusals.** A send with no article in ANY visible grid is held by ONE sentence for the form,
+  beside the send button ("Commandez au moins un article", `MissingAnswer` `{ itemId: null, kind:
+  'order' }`, checked after every required question); no grid card is marked, and an untouched
+  grid next to an ordered one is no fault. A required question of another type is still held on
+  its own card (`MissingAnswer` carries its `itemId`). The server's five answer codes are worded by `productGridRefusalMessage`
+  (`PRODUCT_GRID_ANSWER_MISSING` -> reload or update; the three cell codes -> "an item is no longer
+  offered"; `_EMPTY`), reached through the ONE entry point both pages call,
+  `formSubmitRefusalMessage` (`answerBounds.ts`), whose `formCodeMessage` falls through to it for
+  any code that is not a form's own. An empty order is also left out of the answer sent
+  (`visibleAnswers`).
+
+Tests: `productGridFill.test.ts` (clamping, lines and total across two grids, a hidden grid, missing
+prices, the category words, every code), `ProductGridQuestion.svelte.test.ts` (stepper bounds,
+closed cells, the checkbox, the phone pill path, a one-row grid, both price modes, the error
+state), `routes/forms/[id]/page.productGrid.svelte.test.ts` (the bar's total and recap across two
+grids, the category line, a send held on the grid).
+
+### Responses and export (server half of WP-G4)
+
+`answerText` (both copies) reads a grid `Vert / M x2; Noir / L x1`, from the row's `lines` (what
+was charged, so a renamed or deleted row keeps its old label) before the grid's labels. The XLSX
+adds two sheets (`forms/product-grid-export.ts`): **Articles**, one line per ordered cell (date,
+buyer - a member's name, or the guest word and its reference -, question, row, column, category,
+quantity, unit price, line total, status); **Totaux**, per grid, quantities per row x column with
+row totals, column totals and amounts, counted over `paid` + `free`, then the same block for
+`pending_cash` (money not yet received). The words come from the client's
+`ExportLabels.productGrid` (16 keys); a grid form exported without them is refused
+`EXPORT_LABELS_PRODUCT_GRID_MISSING`.
+
+Tests: `product-grid-contract.spec.ts` (every code, every mode), `forms.service.product-grid.spec.ts`
+(the save, both reads, the charge per mode and category, a guest, forged answers and amounts, cash,
+the total bound, the real `ValidationPipe`), `product-grid-export.spec.ts` (the three sheets read
+back), `answer-text.spec.ts`, and against PostgreSQL `product-grid.integration.spec.ts` (migration
+137 twice, lines through jsonb, the reused row rewritten, the seat held then freed) and
+`refunds.integration.spec.ts` (a total refund of a grid order).
+
+### The editor (WP-G3)
+
+`ProductGridEditor.svelte`, drawn by `FormBuilder.svelte` inside the question card when the type is
+`product_grid`; the model and every rule are in `forms/productGridEditor.ts`, so the component only
+draws them. Built from the owner-approved mockup of 2026-11-06 with the app's tokens.
+
+- **The table is the editor.** Columns are chips in the header row (renamed in place, removed by
+  their x), rows a narrow first column of inline inputs, "+" adds a column and "Ajouter une ligne"
+  a row (the new blank label takes the focus); the table itself is `GridAxesTable.svelte`, shared
+  with the "Grille de choix" since 2026-11-07. **"Coller une liste"**, under the table, takes one value per line
+  (commas, semicolons and tabs also split) and appends them as rows or as columns; a label already
+  on the axis (trimmed, case folded - the save's own comparison) is refused and named, and what
+  passes the axis maximum (40 rows, 15 columns) is counted, never dropped silently. A new grid's
+  one blank row or column gives way to a pasted list. Two labels of one axis that collide are
+  marked as they are typed (`collidingLabelKeys`).
+- **Reordering**: each row and column has a grip, dragged onto another entry (its drag events stop
+  at the grid, so the question card does not move) or moved with the arrow keys (up/down for a
+  row, left/right for a column). **No HTML5 drag reaches a touch screen**, so on a coarse pointer
+  or below `sm` each row has up/down buttons beside its label and each column left/right buttons
+  under its chip (`ui-icon-button`, 44px, labelled with the entry: *"Monter la ligne Vert"*), the
+  way the question list moves on a phone (#3083); the grips are hidden on a coarse pointer. Focus
+  follows the entry to the same button, or to the other one at the end of the axis.
+- **On a phone (below `sm`) the table fits the screen**: measured at 390px, a grid of six sizes
+  draws in the 304px the question card leaves, with no sideways scroll. The table takes the full
+  width; each size column is 32px (`max-sm:w-8 min-w-8`), its chip stacked (label, x, then the
+  left/right arrows under it, as wide as the column with `tap-target` hit boxes); the row label
+  column takes the rest (at least 104px), its label a `textarea` that wraps and
+  grows (`fitLabel`: on input, and on a WIDTH change only, so the height it sets never feeds the
+  observer back; a typed or pasted line break becomes a space), the row's x 32px beside it and its
+  up/down arrows under it. A cell shows its state without its price (a closed one an x); the
+  header "+" gives way to an "Ajouter une colonne" button beside "Ajouter une ligne", both now
+  under the table rather than in its footer so a scrolled table never carries them away. **A grid
+  too wide to fit** (more than six sizes, or a per-row / per-column price) scrolls inside its own
+  box, never the page, with the row labels and the corner `sticky` on the card's surface. From
+  `sm` up nothing changed.
+- **Touch targets**: the chip's x keeps the chip's drawing and is widened to 44px by `tap-target`
+  (the chip still sizes it, so `iconButtonScale.test.ts` keeps its exemption); the price-mode and
+  criterion-kind buttons take `tap-target`; the price inputs, which no `::before` can widen, grow to
+  44px (`pointer-coarse:min-h-11`).
+- **Ids**: `crypto.randomUUID()`, which the contract's id pattern accepts. Renaming a label never
+  changes an id - answers, prices and closed cells are keyed by it.
+- **Closing a cell**: a click closes the combination (struck through, "Fermee") and a second
+  reopens it. The last open cell cannot be closed (`PRODUCT_GRID_ALL_CELLS_CLOSED`), and neither
+  can a row or column be REMOVED when every cell left would be closed (`removalClosesEveryCell`;
+  `removeAxisEntry` answers `closes_every_cell` and touches nothing): the gesture is refused under
+  the table (*"Impossible de supprimer..."*), before any orders confirm, and nothing reopens the
+  manager's closed cells behind their back.
+- **Prices**: *Un prix pour tout / Par ligne / Par colonne*; the inputs appear where the mode puts
+  them (one field, a price column beside the rows, a price row under the headers). EUROS in the
+  editor, typed with a comma or a dot; a blank stays `null` and is LEFT OUT of the payload, so the
+  contract names the list incomplete instead of the save charging 0. `parseEuroInput` accepts digits
+  and one separator only (`1e3`, `0x10`, a sign are unreadable, hence blank) and rounds to the cent
+  ON THE DIGITS (`1,005` is 1,01; a float round would give 1,00), and the field is rewritten with what
+  was stored, so the field, the cell and the cents sent never disagree. A price above 10 000 EUR is
+  kept and refused by name (`PRODUCT_GRID_PRICE_INVALID`), never clamped. A key the new mode needs
+  starts at its category's single price, else the last price of the mode, else any price the list
+  holds, so switching modes or adding "XXL" changes nothing until the manager edits it. Keys of
+  another mode stay in the editor and never reach the wire.
+- **Categories**: a *Prix par categorie* switch. On, it takes the registration price grid's profile
+  criterion when the form has one (`profileTierCriterion`: the first cotisation, promo or formation
+  dimension holding a category - never an answer, which a grid cannot price on), else a new
+  cotisation criterion (promo when the association sells no cotisation); *Selon* switches the kind,
+  and the categories are edited with the price grid's own `CriterionEditor`. One TAB per category,
+  "Autres" (`_others`) always last; each tab is a complete price list, a new category starting as a
+  copy of "Autres". On a public form the hint says a guest pays "Autres", and the save names that
+  price first (`PRODUCT_GRID_GUEST_PRICE_MISSING`). **Leaving a criterion asks first** when it
+  would lose input (owner, 2026-11-07): another *Selon*, the registration grid's copy, or the switch
+  turned off keep only "Autres"'s list, so `tierSwitchLosesInput` asks when a group names anyone or
+  a group's prices differ from "Autres"; a criterion still as it started is left at once.
+- **Cap per cell**: a stepper, 1..99, default 5; at 1 the hint says the buyer gets a checkbox.
+- **Preview**: the fill page's own `ProductGridQuestion.svelte`, inert, toggled *Ordinateur /
+  Telephone* through its `layout` prop (`desktop` / `phone` force one drawing at any width; the fill
+  pages keep `responsive`, the 640px switch). It is handed what a buyer would be: `editorGridView`
+  (the payload less its price lists) and `editorViewerPrices` (the tab on screen's list, in cents,
+  a blank price absent) - so the preview cannot draw a grid the fill page would not.
+- **No required switch**: adding a grid (or turning a question into one) sets the stored
+  `required` (see "The ORDER is required, never one grid" above), and the card draws neither the
+  switch nor the asterisk; `productGridItemProblem` judges the grid as sent, `required: true`, so
+  the editor never flags a grid for it. Adding a grid also calls the page's `onPricedGridAdded`, which switches
+  `allowMultipleSubmissions` on (a second order is a second answer, decision Q3) - the manager may
+  turn it off. **It goes back off only if the editor turned it on**: the page keeps
+  `multipleTurnedOnByGrid` (`GridMultipleSubmissions`, `multipleSubmissionsAfterGridAdded` /
+  `...AfterGridGone` in `productGridEditor.ts`), set only when a grid switched it from off;
+  removing a grid or changing its type calls `onPricedGridGone`, which switches it off when that
+  flag is set AND no grid remains. Any write through the switch's binding - the manager's toggle,
+  or the public switch forcing it on - clears the flag, so the choice is theirs from then on.
+- **The wire** (`itemsPayload.ts`): `toFormItemsPayload` sends `productGrid` as
+  `productGridPayload` builds it - the contract's exact shape, cents, one price per category x
+  axis key, closed cells of live entries only - and drops it from any other type; `fromFormItems`
+  reads cents back as euros (`editorProductGrid`; a broken stored grid opens as a new one).
+- **Validation**: `firstProductGridProblem` runs the contract's own `productGridItemRefusal` on that
+  payload before the save, so the page refuses what the server refuses and in the same words. The
+  page shows the question's title and the sentence in its banner, opens the card through `reveal`,
+  and the card repeats the sentence under the table (`gridFault`). The server's coded 400 is worded
+  by the same `productGridDefinitionMessage`, reached through `formCodeMessage`'s default branch.
+  **A refusal only the server can make** (`PRODUCT_GRID_TIER_INVALID` for a cotisation tier the
+  association does not sell, or any definition code the local check missed) is drawn the same way:
+  its body carries `itemId` (`ProductGridRefusalBody`, `product-grid.ts`), the forms client keeps it
+  on `SocialApiError.itemId`, and `refusedProductGridFault` (`questionFault.ts`) turns it into the
+  page's `gridFault` and opens the card. A grid code naming no grid of the form is logged at error
+  level and leaves the banner alone.
+- **Duplicating** (`questionDuplicate.ts`): the copy's rows and columns get FRESH ids
+  (`withFreshProductGridIds`), its closed cells and price keys following them; two questions
+  sharing a row id would read as one article in the export's totals.
+- **Removing an ordered row or column** (edit page): the server does NOT refuse it (an answer keeps
+  its `lines`, so its export still names what was charged). The edit page reads the form's answers
+  once when a grid has any (`getSubmissions` -> `orderedProductGridCells`), and removing a row or
+  column an answer ordered asks first (*"Des reponses contiennent cet article..."*). A failed read
+  is logged and leaves removals unwarned; it never blocks editing.
+
+Tests: `productGridEditor.test.ts` (every edit, the payload judged by the contract, modes,
+categories, a guest's price, the wire trip, fresh ids, every code worded, ordered cells, colliding
+labels, a removal refused for closing every cell, "Plusieurs reponses" switched back),
+`ProductGridEditor.svelte.test.ts` (add, rename, remove with and without orders, paste, arrows,
+the touch arrow buttons and 44px targets, a removal refused under the table, closing a cell, the
+three modes, the cap, category tabs, the preview),
+`FormQuestionsSection.svelte.test.ts` (offered on a form and not on a booking space, added required
+and opened, a refused save drawn under its grid, the page told when a grid goes), `itemsPayload.test.ts`, `questionDuplicate.test.ts`,
+`questionTypes.test.ts`, `questionFault.test.ts` (a server refusal mapped to its grid),
+`api.refusal.test.ts` (`itemId` carried), `routes/forms/create/page.pricedGridMultiple.svelte.test.ts`
+("Plusieurs reponses" back off with its grid and never against the manager; a server-only refusal
+drawn under a folded grid).
+
+### Adding a question, the "Grille de choix" and the editor's menus (owner, 2026-11-07)
+
+The owner's reading: *"A l'ouverture d'un menu, ou l'ajout d'une question, il faut absolument
+mettre un wizard et rendre les choses simples et bien ordonnees"*, and the three grids had three
+editing looks. Three decisions, layout and grouping only - no feature removed, no server change.
+
+- **Adding a question is two steps** (`AddQuestionWizard.svelte`, a `Modal`: a bottom sheet on a
+  phone, a dialog wider up). Step 1, *"Quel type de question ?"*, lists the authorable types by
+  family - TEXTE (short, long), CHOIX (single, multiple, dropdown, scale), GRILLES (Grille de
+  choix, Grille d'articles), AUTRE (file) - icon left, label left-aligned, one line of
+  description each; the layout is `editorQuestionFamilies()` in `forms/questionTypes.ts`, and a
+  family with no offered type is dropped (a booking space offers no priced grid). Step 2 asks only
+  the type's essentials, through the SAME editors the card uses: the title, then the options
+  (`ChoiceOptionsEditor`), the scale (`ScaleEditor`), the rows and columns with the switch
+  (`MatrixGridEditor`), or the rows, columns and prices (`ProductGridEditor` with `essentials`,
+  which hides the cap per cell and the preview); a text or file question gets "Obligatoire". The
+  back arrow returns to step 1 with the chosen type focused; "Annuler" and Escape insert nothing
+  and give the focus back to the opener; "Ajouter" inserts the filled card (`insertQuestion` in
+  `forms/questionDraft.ts`) at the end, or right after the card whose "..." menu asked for it, and
+  opens it. Image, description and display conditions stay in the card.
+- **One "Grille de choix"** replaces "Grille unique" and "Grille multiple" in every list (the
+  wizard, the card's type menu). The stored types do not change: the switch *"Plusieurs reponses
+  par ligne"* writes `matrix_multiple` when on and `matrix_single` when off
+  (`setMatrixMultiple` in `forms/matrixEditor.ts`), and an existing `matrix_multiple` opens with it
+  on. Its rows and columns are edited in the priced grid's own table, `GridAxesTable.svelte`
+  (extracted from `ProductGridEditor`, which now draws its prices through that table's snippets):
+  chips, inline rows, drag and arrows, touch buttons, "Coller une liste" under the table. A cell
+  shows what the respondent ticks there, a radio or a checkbox. On a phone a column is the priced
+  grid's narrow 32px column, so a long column label truncates there exactly as it does on the
+  priced grid - the two grids behave alike, which is what was asked.
+- **The menus are sectioned** (`MenuList.svelte`: titled sections, icon first, text left-aligned,
+  44px rows, arrow/Home/End keys). The card's type menu uses the families above; the card's "..."
+  menu holds "Ajouter" (insert a question after this one, duplicate) and "Retirer" (delete). The
+  rare settings of a card - "depends on" and the audience condition - fold under **"Plus
+  d'options"**, opened by itself when the card already uses one. `FormAdvancedSettings` was left
+  as it is: it already groups its settings under titles folded behind "Parametres avances".
+- **"Selon" carries an "i"** (`InfoTip.svelte`, a 44px icon button opening a `FloatingSurface`,
+  keyboard and touch): a grid varies by ONE criterion; to combine two, make two questions and show
+  each according to the other criterion. It appears wherever the priced grid's price section is
+  drawn, the wizard's step 2 included.
+
+Tests: `AddQuestionWizard.svelte.test.ts` (step 1 order and alignment, step 2 per type, Ajouter at
+the end and after a card, Annuler, Escape, back, the switch both ways), `questionMenus.test.ts`,
+`matrixEditor.test.ts`, the "i" in `ProductGridEditor.svelte.test.ts`.
+
+### The responses screen (client half of WP-G4, 2026-11-06)
+
+The `/forms` accordion is now `FormResponsesPanel.svelte`, the owner-approved mockup reproduced with
+the app's tokens. Everything is derived from `getSubmissions` (no new read); the rules are pure
+functions in `lib/forms/responsesView.ts`.
+
+- **Summary cards**: answers (and how many are a guest's), and on a paid form paid, unpaid cash
+  (with the amount still to collect), amount collected (`paid` + `paid_over_capacity`, the money
+  that landed) and refunded. **A partial refund leaves its answer `paid` with `totalPaid` whole**
+  (only a refund of the whole payment writes `refunded`), so the amount it gave back is read from
+  the payment's refund standing (`RefundStanding.refundedCents`) and moved from collected to
+  refunded; a manager the refunds list refuses (403) cannot read it, and the card says the amount
+  is gross of partial refunds rather than show a net it does not know.
+- **"Réponses"**: a search over the name, a guest's reference and every answer's text (case and
+  accents folded), and four filter chips - *Toutes*, *Payées* (`paid`, `paid_over_capacity`), *Non
+  payées* (`pending_cash`: the unpaid state a manager acts on; an online `pending` is the payer's to
+  finish and reads under *Toutes* only), *Remboursées* (`refunded`). The table is
+  `FormSubmissionsTable`, which now marks a guest's answer **Invité** (no account on a non-anonymous
+  form; its name is the reference it was given), says how a paid answer paid (*Payé · Lydia* /
+  *Payé · espèces*), strikes a refunded amount, and draws two row actions: **Marquer payé** on a
+  `pending_cash` answer (the existing `validate-cash`) and **Rembourser** on a paid answer of an
+  association form, which opens the association's own `RefundDialog` on the payment that paid that
+  answer. The purchases list now carries `submissionId` for that; a manager without
+  `MANAGE_PRODUCTS` + `MANAGE_PAYOUT_ACCOUNT` gets a 403 there and simply sees no refund control.
+- **"Totaux"** (a form with a priced grid): one row x column table per grid with row, column and
+  grid totals, a grand total in pieces, and the switch **Compter les réponses non payées** (on by
+  default). **The counting rule is ONE implementation**: `PRODUCT_GRID_RECEIVED_STATUSES` (`paid`,
+  `free`), `PRODUCT_GRID_AWAITING_CASH_STATUSES` (`pending_cash`), `productGridLinesOf` and
+  `productGridTotals` moved into `product-grid-contract.ts` (copied byte for byte), and the export's
+  "Totaux" sheet calls the same functions. A refunded, cancelled, expired or still-pending answer is
+  in neither list, so it never counts (owner).
+- **"Résumé"**: a bar per option of every single choice, multiple choice and dropdown question
+  (refunded, cancelled and expired answers left out; a multiple choice counts once per ticked
+  option), plus pieces per product on a grid form. **Managers only** (owner): the whole screen is
+  - `getSubmissions` answers a form manager and nobody else - and the tab says so.
+- **Exporter**: the row's export control is now a menu (`FormExportMenu.svelte`): *Excel* (the
+  workbook), and on a grid form *CSV · Articles* and *CSV · Totaux*. A CSV is written by the server
+  from the SAME sheet the workbook carries (`GET /forms/:id/export?format=articles-csv|totals-csv`,
+  `sheetAsCsv`: `;`-separated with a byte-order mark, which a French spreadsheet opens as columns,
+  and every text cell starting with `=`, `+`, `-`, `@`, a tab or a carriage return prefixed with
+  `'` - a buyer's name or a row label is typed by someone else, and a CSV cell has no type to stop
+  a spreadsheet running it as a formula);
+  a CSV of a form without a grid is refused `EXPORT_FORMAT_NEEDS_PRODUCT_GRID`, an unknown format
+  `EXPORT_FORMAT_UNKNOWN`. `exportLabels()` now sends `productGrid` (16 Paraglide strings) on every
+  export, and `refunded` joined `PAYMENT_STATUSES`, so the file names that status in words too.
+
+Tests: `FormResponsesPanel.svelte.test.ts` (filters, search, the guest badge, the cards, the totals
+with and without unpaid cash, a closed cell, the bars, the refund control),
+`FormExportMenu.svelte.test.ts`, `product-grid-contract.spec.ts` (the counting rule) and
+`product-grid-export.spec.ts` (both CSVs read back, both refusals).

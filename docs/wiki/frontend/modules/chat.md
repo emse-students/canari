@@ -867,6 +867,18 @@ uses and which is case-insensitive on BOTH sides for reasons its own doc comment
 not agree about one input: an EMPTY `allowedUserIds` means "no restriction" here and "offer nobody"
 there, and the array is legitimately empty while a channel's member list is still loading. So it is
 passed only when non-empty, and a test pins that reading rather than leaving it to the helper's
+
+**A conversation with a roster suggests from it, locally (2026-11-06).** `allowedUserIds` filtered
+the server's answer, and that answer is the school's top 10 matches: with one letter a small group's
+members were rarely among them, so "@M" proposed nobody. `MainChatPage` now passes the group's or
+salon's members as `mentionRoster` (ids stamped with when each last spoke here,
+`buildMentionRoster`), and the composable filters them itself (`suggestFromRoster`): a bare `@`
+opens the list, a word of the name must start with the folded query, latest speakers first then
+alphabetical, six rows. No debounce and no search request. Names come from the display-name cache;
+the first open batch-resolves the missing ones and reads the reader's blocks, once per picker. The
+reader and the accounts the reader blocked are never offered (the server hides blocked accounts both
+ways from search; the client only knows its own blocks). An EMPTY roster, a list still loading,
+falls back to the server search, logged. Posts and comments pass no roster and keep the search.
 default.
 
 ### The composer's own emoji picker, and what it shares with the reaction one
@@ -1128,6 +1140,49 @@ Four properties, each of which would be a defect if dropped:
 
 `BaseMlsService.deliveryIdentity.test.ts` pins all four plus the base case, driving the real drain
 through `enqueueMessage` rather than asserting on the Map.
+
+### One pull at a time, and the one asked meanwhile is owed (2026-11-04)
+
+`done` records that this device DECIDED to acknowledge a row; the ack naming it leaves only when the
+whole drain ends (`onDrainEnd`). Two pulls used to run side by side at boot - the reconnect's, then
+`refetchFramesLeftBehind`'s re-fetch for the conversations the restore had just seeded - and the
+second listed rows the first one's drain had settled but not yet acknowledged. The repeat met `done`
+and was accused as an ack the server forgot: two `[QUEUE] delivery ... arrived twice` lines after each
+launch on the Mi 9T (`1.6.4-alpha.3`, dev).
+
+The overlap is deleted, not classified. `fetchPendingMessages` is SINGLE-FLIGHT WITH ONE OWED RE-RUN:
+
+- asked while a pull is fetching, the queue is draining, or a row a PULL listed is still queued
+  (`hasQueuedFrom('pull')`: held by a commit, or parked behind a Welcome - PENDING, not merely
+  runnable), it starts no request - the pull is OWED (`owePull`), the caller's groups are added to it
+  (an ask naming none makes it `'all'`), and the caller's promise settles when it has run;
+- the owed pull is issued (`issueOwedPull`) in the tick `onDrainEnd` announces the drain's ack (its
+  flush chains behind that ack), or at the end of a fetch or of `processQueue` when no drain runs -
+  never while a pull's row is still queued: a commit-held row's drain starts at the commit's end
+  (`resumeFramesHeldByCommit`), and its `onDrainEnd` issues it;
+- the owed record is consumed when it is issued, so a burst of asks is one pull and nothing is timed;
+  the issue re-checks the gates of an ask (resolved user, leader tab, client not destroyed), and
+  `destroy()` drops the record, releasing its askers with nothing pulled.
+
+It is NOT chained into `pendingPullInFlight` (that held every barrier behind the whole drain).
+`waitForGroupQueueIdle` waits on the owed pull's listing only for a group it was asked for, or for
+every group when an ask named none (a reconnect, a barrier, a re-enrolment: the whole mailbox);
+`mailboxListedOnThisLink` - and so `isGroupDrained` - reads false while a pull is owed. A held live
+key-group frame (`holdLiveKeyGroupFrame`) just asks for its group's pull.
+
+One crossing no pull can be ordered against is left, and it has its own shape: a row the SOCKET handed
+in, listed by a pull whose flush left before that row's ack. Every ack request carries a serial
+(`announceAck`), each delivery remembers the channel that admitted it and the serial of the ack naming
+it, and a pull records the serial of its flush (`listedAfterAck` on `DeliveryArrival`):
+
+| The repeat | Shape | Line |
+| --- | --- | --- |
+| pull lists a row the socket took in, ack not sent before the pull's flush | `pull:crossed-live-ack` | `log`, once; not acknowledged again - that ack covers it |
+| pull lists a `done` row whose ack failed | `pull:done` | `log`: the `[ACK]` failure above |
+| pull lists a `done` row a PULL took in, ack landed before | `pull:done` | `warn`: nothing routine explains it |
+
+`BaseMlsService.singleFlightPull.test.ts` drives both through the real pull, scheduler and drain:
+two asks during a drain give exactly one second pull, after the drain's ack, and no repeat.
 
 ## Outbox (outbound delivery)
 
@@ -2011,7 +2066,7 @@ nothing can - the reference is not in any copy this device holds.
 The quote itself also had a left padding and no right one, so its text ran into the bubble's edge;
 `MessageReplyQuote` was padded on both sides. **That component is no longer a strip inside the
 bubble at all since 2026-09-22** - it is a second, receded bubble stacked flush above the reply,
-under a caption row naming who answered whom, measured off the reference in both themes:
+under a caption row naming who answered whom (worded by `utils/chat/replyCaption.ts`: when the sender header is already drawn above, the caption drops the replier and reads "A répondu à <quoted author>" / "A répondu à son message"; without a header it names both; an unknown quoted author gives the name-less form), measured off the reference in both themes:
 [design-reference section 37](../design-reference.md). Nothing above changes: an edit still has to
 preserve the envelope's `replyTo`, and the quote is still drawn from it.
 
@@ -3809,6 +3864,26 @@ sidebar order kept when they answer in reverse, and no retry while a sibling is 
   row is dated by its server `createdAt` on every path, or the heads under the last message flicker
   with each history load (2026-10-12,
   [social-service](../../services/social-service.md#read-receipts-in-a-salon)).
+  **How a DM or group receipt is computed, end to end.** The reader's receipt effect
+  (`MainChatPage`) takes `readMarkTarget`: the newest `messageTime` among the FOREIGN rows held,
+  bounded by `serverMarkCeiling` (the newest `serverTimestamp` held, and what the server said to this
+  account, `serverClock.ts`); it leaves as `read_watermark {serverAt}`; the author's device merges it
+  into `serverReadWatermarks` and draws the head on its last own row with `serverTimestamp <= mark`
+  (`readersOf`). So the reader's rows and the author's rows must carry the SAME key, the server's
+  acceptance: `queuedCreatedAt` on a received row, the `receivedAt` the send answered on the author's.
+  **The receipt one or two messages late (owner, 2026-11-05, 1.6.5).** `batchAddMessages` - the drain
+  every live arrival goes through - gave the server time to the STORED row only and built the SHOWN
+  row without it, so until a reload every received row was keyed by its author's `sentAt`. Measured on
+  dev with a logpoint on `readMarkTarget` in two bench browsers: the reader's rows held
+  `serverTimestamp: undefined`, its mark was the author's `sentAt` of the last message (author clock,
+  ~0.7 s behind the server, plus the network), and the author compared it with the later server time
+  of its own rows - the head stayed on the message before a quick pair, both of the pair single-checked.
+  The ceiling, with no dated foreign row, held the mark at the reader's own last send, which is why it
+  moved only when the reader acted. A reaction played no part (the same run without one gives the same
+  head); nor did #2937 or #2939: the row never carried the field, and #2824 (`1.6.0`, marks on the server
+  clock) made it load-bearing. Fixed at the row: the shown row carries `serverTimestamp`.
+  `readReceipt.oneLate.svelte.test.ts` (the owner's sequence, reactions both ways, arrivals while open,
+  a second device on each side; all four fail without the fix).
 - **GIFs**: an in-app picker (KLIPY) sends a GIF by URL; on Android the soft keyboard's own
   GIF/sticker button also works via `commitContent` (see below). GIFs skip canvas compression in
   `useMessaging.handleFilesSelected` so their animation is preserved.

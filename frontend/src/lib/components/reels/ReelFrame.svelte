@@ -37,6 +37,8 @@
      * owes the bottom safe-area inset only there. Written by the frame.
      */
     reachesBottom?: boolean;
+    /** Which media is on show when the frame holds several (`ReelBackdrop`'s `sourceKey`). */
+    sourceKey?: unknown;
   }
 
   let {
@@ -45,6 +47,7 @@
     frameEl = $bindable(null),
     latch = false,
     reachesBottom = $bindable(false),
+    sourceKey,
   }: Props = $props();
 
   let boxWidth = $state(0);
@@ -78,7 +81,7 @@
   bind:clientHeight={boxHeight}
   data-reel-stage
 >
-  <ReelBackdrop host={frameEl} active={!box.fillsStage && box.width > 0} />
+  <ReelBackdrop host={frameEl} active={!box.fillsStage && box.width > 0} {sourceKey} />
   <div
     bind:this={frameEl}
     class="absolute overflow-hidden bg-black {box.fillsStage ? '' : 'rounded-2xl'}"

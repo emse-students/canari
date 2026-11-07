@@ -1,4 +1,5 @@
 import type { RedisService } from '../common/redis/redis.service';
+import type { SingleMediaMode } from './full-screen-post-sql';
 
 /**
  * THE FEED CACHE HAS ONE NAME AND ONE WAY TO THROW IT AWAY.
@@ -98,7 +99,8 @@ export interface PostListCacheKeyParts {
   limit: number;
   offset: number;
   kind: string | undefined;
-  singlePhotos: boolean;
+  /** The single-attachment posts the CanaReels list adds, or none (`full-screen-post-sql.ts`). */
+  singleMedia: SingleMediaMode | undefined;
 }
 
 /**
@@ -107,7 +109,7 @@ export interface PostListCacheKeyParts {
  * is why the builder and that reader live side by side.
  */
 export function postListCacheKey(p: PostListCacheKeyParts): string {
-  return `${POST_LIST_CACHE_PREFIX}${p.feed}:${p.viewerUserId ?? 'anon'}:${p.promo ?? '-'}:${p.formation ?? '-'}:${p.limit}:${p.offset}:${p.kind ?? '-'}${p.singlePhotos ? '+photos' : ''}`;
+  return `${POST_LIST_CACHE_PREFIX}${p.feed}:${p.viewerUserId ?? 'anon'}:${p.promo ?? '-'}:${p.formation ?? '-'}:${p.limit}:${p.offset}:${p.kind ?? '-'}${p.singleMedia ? `+${p.singleMedia}` : ''}`;
 }
 
 /** The viewer field of a key {@link postListCacheKey} built (`anon` for a signed-out page). */

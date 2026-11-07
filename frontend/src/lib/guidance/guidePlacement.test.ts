@@ -1,6 +1,28 @@
 /** Where the bubble lands: the side with room, clamped inside the viewport, centred with no target. */
 import { describe, expect, it } from 'vitest';
-import { placeBubble } from './guidePlacement';
+import { placeBubble, ringRadius } from './guidePlacement';
+
+describe('ringRadius', () => {
+  const box = { width: 100, height: 40 };
+
+  it('grows the control radius by the padding', () => {
+    expect(ringRadius(['8px', '8px', '8px', '8px'], box, 6)).toBe(14);
+  });
+
+  it('reads a percentage against the box, not as px', () => {
+    // 50% of a 100x40 box is the ellipse 50x20: the smaller axis is 20, grown to 26 and capped at 26.
+    expect(ringRadius(['50%', '50%', '50%', '50%'], box, 6)).toBe(26);
+    expect(ringRadius(['10%', '10%', '10%', '10%'], box, 0)).toBe(4);
+  });
+
+  it('takes the smallest of the four corners', () => {
+    expect(ringRadius(['12px', '0px', '12px', '12px'], box, 6)).toBe(6);
+  });
+
+  it('is null when nothing parses', () => {
+    expect(ringRadius(['', '', '', ''], box, 6)).toBeNull();
+  });
+});
 
 const PHONE = { width: 390, height: 844 };
 const BUBBLE = { width: 320, height: 160 };

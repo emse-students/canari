@@ -30,6 +30,11 @@ describe('redactLogLine - what must never enter', () => {
     ],
     ['a bearer header', '[API] Authorization: Bearer abc.def-ghi_jkl', 'abc.def-ghi_jkl'],
     [
+      'a push-secret header',
+      '[Push] Authorization: PushSecret q7Z-pS3cr3t_value.x',
+      'q7Z-pS3cr3t_value',
+    ],
+    [
       'an OIDC code in a query',
       '[auth] callback https://canari.emse.fr/cb?code=Xy9kLm2Q&state=s1',
       'Xy9kLm2Q',
@@ -128,6 +133,15 @@ describe('redactLogLine - what must never enter', () => {
       expectIdempotent(raw);
     });
   }
+
+  // The native push service's scheme, whose lines this log takes since 2026-11-04: named as a
+  // scheme like Bearer, so the secret goes whatever its shape and the scheme stays readable. The
+  // secret here is one no shape rule catches: only the scheme can mask it.
+  it('masks a PushSecret header as a scheme', () => {
+    expect(redactLogLine('[Push] header PushSecret ab12 sent').line).toBe(
+      '[Push] header PushSecret [secret] sent'
+    );
+  });
 
   // Shortened, not removed: the 8-character prefix is the convention every log of this project
   // follows, and what lets a line be matched against a server log. It is not counted as redacted.

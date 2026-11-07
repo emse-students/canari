@@ -63,6 +63,7 @@ use crate::commands::mls_account_state::{
     adopt_unsettled_user_mls_reset, commit_user_mls_reset, delete_user_mls_state,
     mls_other_accounts_present, rollback_user_mls_reset, stage_user_mls_reset,
 };
+use crate::commands::native_push_log::take_native_push_log;
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
 use crate::commands::nse_outcomes::take_nse_outcomes;
 use crate::commands::picked_files::discard_picked_file;
@@ -274,6 +275,32 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
         native_cache::platform_key(&key).as_ref(),
         &json,
     )
+}
+
+/// Appends one WARN or ERROR line of the push service to the log the page takes into the in-app
+/// log (`commands/native_push_log.rs`, Kotlin `NativePushLog`). True when written; a refusal is
+/// said here and the caller says it again in logcat, where this crate's log may not reach.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_fr_emse_canari_NativePushLog_nativeAppendPushLog<'a>(
+    mut env: jni::JNIEnv<'a>,
+    _this: jni::objects::JObject<'a>,
+    data_dir: jni::objects::JString<'a>,
+    line: jni::objects::JString<'a>,
+) -> jni::sys::jboolean {
+    let dir: Option<String> = env.get_string(&data_dir).ok().map(Into::into);
+    let text: Option<String> = env.get_string(&line).ok().map(Into::into);
+    let (Some(dir), Some(text)) = (dir, text) else {
+        log::error!("[NATIVE_PUSH_LOG] jni-string");
+        return 0;
+    };
+    match commands::native_push_log::append(std::path::Path::new(&dir), &text) {
+        Ok(()) => 1,
+        Err(e) => {
+            log::error!("[NATIVE_PUSH_LOG] append refused: {e}");
+            0
+        }
+    }
 }
 
 /// Whether the seed mirror under `dataDir` holds a session: 1 yes, 0 no, -1 it cannot be read.
@@ -1769,6 +1796,7 @@ pub fn run() {
             read_and_clear_read_watermarks,
             take_key_group_push_joins,
             take_nse_outcomes,
+            take_native_push_log,
             store_outbox_mirror,
             read_outbox_mirror,
             read_and_clear_outbox_sent,
