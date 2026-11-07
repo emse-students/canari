@@ -191,7 +191,10 @@
   const hasOptions = $derived(
     !['short_text', 'long_text', 'linear_scale', 'file', PRODUCT_GRID_TYPE].includes(item.type)
   );
-  /** A priced grid is always required (its order is the answer): the asterisk is not a choice. */
+  /**
+   * A priced grid is never required on its own - the ORDER is, across the form's grids - so its
+   * card has no asterisk and no required switch (it is sent `required: true`, `toFormItemsPayload`).
+   */
   const isPricedGrid = $derived(item.type === PRODUCT_GRID_TYPE);
 
   /**
@@ -225,7 +228,7 @@
     else if (action === 'remove') onRemove();
   }
 
-  /** Turns the question into a priced grid: its definition, required, and the page told. */
+  /** Turns the question into a priced grid: its definition, its stored flag, and the page told. */
   function becomePricedGrid() {
     if (!item.productGrid) item.productGrid = newProductGrid();
     item.required = true;
@@ -355,7 +358,8 @@
           class="min-w-0 flex-1 truncate text-sm font-semibold {item.label
             ? 'text-text-main'
             : 'text-text-muted/60 italic'}"
-          >{item.label || m.form_builder_title_placeholder()}{#if item.required}<span
+          >{item.label ||
+            m.form_builder_title_placeholder()}{#if item.required && !isPricedGrid}<span
               class="ml-0.5 text-red-500"
               data-testid="required-mark">*</span
             >{/if}</span
@@ -654,19 +658,20 @@
       role="toolbar"
       aria-label={m.form_builder_settings_row_aria()}
     >
-      <button
-        type="button"
-        onclick={() => (item.required = !item.required)}
-        aria-pressed={!!item.required}
-        disabled={isPricedGrid}
-        aria-label={m.form_builder_required_label()}
-        title={isPricedGrid ? m.form_pgrid_always_required() : m.form_builder_required_label()}
-        class="ui-icon-button rounded-lg transition-colors {item.required
-          ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-          : 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
-      >
-        <Asterisk size={18} />
-      </button>
+      {#if !isPricedGrid}
+        <button
+          type="button"
+          onclick={() => (item.required = !item.required)}
+          aria-pressed={!!item.required}
+          aria-label={m.form_builder_required_label()}
+          title={m.form_builder_required_label()}
+          class="ui-icon-button rounded-lg transition-colors {item.required
+            ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+            : 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
+        >
+          <Asterisk size={18} />
+        </button>
+      {/if}
       {#if onMoveUp && onMoveDown}
         <!-- Touch has no drag handle: reordering is two arrows. -->
         <button

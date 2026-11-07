@@ -604,10 +604,11 @@ The registry insert and the answer are ONE transaction (`ON CONFLICT DO NOTHING 
 what refuses a second answer from the same account). `allowMultipleSubmissions` still works and then
 registers nobody.
 
-**Free only, refused where it is chosen** (`assertAnonymousConfigValid`): a payment names its payer
-to Stripe and to the submission, and a cotisation is granted TO an account. A price grid, cash, a
-cotisation grant and an option supplement are all refused; the create screen disables the payment
-toggle and the anonymity toggle against each other, with the reason as the hint.
+**Free only, refused where it is chosen** (the shared option rule,
+[below](#which-options-rule-each-other-out-one-rule-in-either-order-2026-11-06)): a payment names its
+payer to the processor and to the submission, and a cotisation is granted TO an account. A price, a
+grid, cash, a cotisation grant and an option supplement are all refused; the editor shuts the
+payment switch and the anonymity switch against each other, with the reason as the hint.
 
 **Fixed at creation**, exactly like the association link: turning it on later would promise
 anonymity to answers already stored with a name, and turning it off would quietly start naming
@@ -628,15 +629,61 @@ redirect (`+layout.ts` lets `/f/` through as it does `/legal`). A member who ope
 to `/forms/:id`, where the form knows who they are; the share button and the QR code of a public form
 hand out the `/f/` address.
 
-**Everything follows from a guest having no identity** (`assertPublicConfigValid`, refused at save
-time with the sentence shown on the save bar):
+**Everything follows from a guest having no identity** (the shared option rule
+[below](#which-options-rule-each-other-out-one-rule-in-either-order-2026-11-06), then
+`assertPublicConfigValid`, refused at save time with a code and shown on the save bar):
 
 | A guest has no... | so a public form... |
 |---|---|
 | account to grant to | grants no cotisation (refused at save, and `fulfilPayment` refuses it again for a guest row - ERROR, no grant) |
-| profile to match | has no `submitCondition`, no question shown by promo, formation or cotisation (an ANSWER condition is fine), and a price grid on ANSWER dimensions only |
-| account to charge | still CHARGES (WP-P1, decision PP1): a base price, an answer grid, option supplements, online payment to the e-mail it types, or cash |
+| profile to match | has no `submitCondition` and no question shown by promo, formation or cotisation (an ANSWER condition is fine). A price grid on promo, formation or cotisation IS allowed (owner, 2026-11-06): a guest lands in the "everyone else" group of each such criterion and pays that tier |
+| account to charge | still CHARGES (WP-P1, decision PP1): a base price, a grid, option supplements, online payment to the e-mail it types, or cash |
 | identity to recognise twice | takes several answers (`allowMultipleSubmissions` is forced on) - identify guests with a "Nom prénom" question |
+
+## Which options rule each other out: one rule, in either order (2026-11-06)
+
+The owner found the editor asymmetric: a grid by promo shut "Formulaire public", but switching the
+form public FIRST and adding the grid afterwards was accepted - each switch carried its own copy of
+the rule. Now **one pure function** decides: `frontend/src/lib/forms/formOptionRules.ts` =
+`apps/social-service/src/forms/form-option-rules.ts`, copied byte for byte and held so by the
+`declared-duplicates` gate (no shared TS package, as for `answerText.ts`). Each pair is ONE row of
+`FORM_OPTION_CONFLICTS`:
+
+- the editor shuts a switch when `conflictsIfEnabled(state, option)` is not empty, whichever of the
+  two was on first, and its hint lists every real reason and nothing else (`conflictHint`,
+  `formOptionConflict.ts`); the save button runs `formConfigConflicts` before sending;
+- the server runs `formConfigConflicts` in `assertFormOptionsCoherent` on create, and on update over
+  the form AS IT WILL BE SAVED (the edit merged onto the stored form), and refuses with a 400 whose
+  body carries `code`.
+
+| Options | Verdict | Code | Why |
+|---|---|---|---|
+| anonymous + payment (price, grid, cash, supplement) | refused | `FORM_ANONYMOUS_PAYMENT` | paying names the payer |
+| anonymous + cotisation grant | refused | `FORM_ANONYMOUS_COTISATION_GRANT` | a cotisation is granted to an account |
+| anonymous + file question | refused | `FORM_ANONYMOUS_FILE` | a file is tied to its uploader |
+| public + restricted audience, or a question shown by promo, formation or cotisation | refused | `FORM_PUBLIC_AUDIENCE` | a guest has no profile to check |
+| public + cotisation grant | refused | `FORM_PUBLIC_COTISATION_GRANT` | a guest has no account |
+| public + file question | refused | `FORM_PUBLIC_FILE` | a guest has no account to upload with |
+| public + payment | allowed | - | WP-P1: a guest pays with the e-mail it types |
+| public + grid on promo, formation or cotisation | allowed | - | the guest pays the "everyone else" tier |
+| public + grid whose every guest cell is unavailable | refused | `FORM_PUBLIC_GUEST_TIER_UNAVAILABLE` | no guest could answer: a public form in name only |
+| every other pair | allowed | - | |
+
+**The guest's tier is never a client's number.** `PricingFactsService.build` with no user answers no
+promo, no formation and no cotisation without asking anyone, `bucketFor` puts that in `_others` on
+every profile criterion, and `submit` prices the cell from those facts
+(`forms.service.seat-hold.spec.ts`, "charges a guest the everyone else tier"). The "everyone else"
+group always EXISTS - a grid is complete at save (`assertMatrixValid`) - so a guest always has a
+cell; what a manager can do is close it, which is why the closed case is refused rather than a rule
+"an others tier must exist". A guest cell at **0** is refused by `freeFallbackCells` only when it is the TRUE fallback, "everyone
+else" on EVERY criterion with each reachable; a cell naming an option ("Sans repas : 0") is a free
+choice and is accepted, and so is a member tier at 0 (the manager's business).
+The editor says it under a public form's grid by promo, formation or cotisation: "Les invités paient
+le tarif « autres »".
+
+Not in the table, because they read a value rather than two options: a public form forces several
+answers on (the editor sets it with the switch), a public form taking cash needs a deadline, and the
+free-fallback check above (`assertPublicConfigValid`).
 
 A guest's answer is a `submissions` row with `userId` NULL and its real time (cut to the day when the
 form is ALSO anonymous); the responses table names it "Invité". The two routes live in
@@ -785,7 +832,8 @@ the price is only as good as the answer it is computed from:
 - **The stored answer is the priced one.** The answer to a question the submitter did not see
   (`visibleItemIds`) is neither charged nor required, and it is no longer stored either, nor is its
   file attached.
-- **A public form that charges cannot leave a reachable "everyone else" cell at 0**
+- **A public form that charges cannot leave the reachable "everyone else" cell at 0** (the one where
+  every criterion is "everyone else"; a named option at 0 is accepted)
   (`freeFallbackCells`, checked at publication and on every edit of a public form). That cell is
   reached when a priced question can be skipped (not required), hidden (it has a condition), or
   answered with an option no group holds. The manager prices that cell or marks it unavailable; a
@@ -807,8 +855,8 @@ server must be able to hand it to them. That one fact decides the whole design.
 | Read | `GET /api/forms/:id/files/:fileId` | `assertFormManager` FIRST, then the bytes from `GET /media/internal/form-file/:id` with their own Content-Type, `Content-Disposition: attachment` (ASCII + RFC 5987 name), `nosniff`, `no-store`. Never through `GET /media/:id`, the push proxy's `GET /media/internal/:id` (no per-object ACL - both refuse the class) nor `/media/public` |
 | Purge | `FormFileRetentionScheduler`, hourly at :37 | see below |
 
-**Refused at save**, with the sentence on the save bar (`assertPublicConfigValid`,
-`assertAnonymousConfigValid`, and `fileQuestionProblem` on the page):
+**Refused at save**, with the sentence on the save bar (the shared option rule,
+`FORM_PUBLIC_FILE` and `FORM_ANONYMOUS_FILE`, on both sides):
 
 - **a public form** (D40): a guest has no account to upload with;
 - **an anonymous form**: the `form_files` row and the blob's owner name the uploader, which would
@@ -1376,8 +1424,31 @@ which gained `product_grid` with its editor. A builder whose answers never pay -
 
 A new question type - NOT a mode of the survey grids (`matrix_single`, `matrix_multiple`): an
 order, rows x columns ("Vert" x "M"), each cell a quantity, each unit at the price of the payer's
-category. Always required; no stock (a pre-order); no total cap per order (the cap per cell is
-enough); a second order is a second answer (`allowMultipleSubmissions`), never an edit.
+category. No stock (a pre-order); no total cap per order (the cap per cell is enough); a second
+order is a second answer (`allowMultipleSubmissions`), never an edit.
+
+**The ORDER is required, never one grid (decided 2026-11-06, for `1.6.6`).** A merch form holds one
+grid per article (sweat capuche, sweat col rond, sweat zippé, veste softshell) and a buyer orders
+whichever they want, so any single grid may be left untouched; what is refused is an answer whose
+VISIBLE grids hold no unit between them (`PRODUCT_GRID_EMPTY`, judged once per submit, `itemId`
+null). It replaced a per-grid rule written when a form was assumed to hold one grid, under which a
+buyer had to take at least one of EVERY article. A grid hidden by an audience or an answer condition
+neither counts toward the order nor is demanded; a form whose every grid is hidden asks no order.
+A VISIBLE grid always demands the order, even on a form that also charges a base price: a form
+selling a registration WITHOUT an article hides its grids behind a condition, or has none.
+
+**The fill page** says the empty order once (`role="alert"`, `#form-order-missing`, scrolled into
+view past the sticky bar), derived from `isOrderEmpty`, so it goes the moment a unit is added; the
+end-of-form gate (`allRequiredAnswered`) reads the same rule through `firstMissingAnswer`.
+
+**`required` stays STORED `true`, and means nothing to a page that draws grids.** The save still
+refuses `_NOT_REQUIRED`, and the editor sends `required: true` whatever the card holds
+(`toFormItemsPayload`) and no longer draws the switch or the asterisk; the fill page draws no
+asterisk on a grid and `firstMissingAnswer` skips grids, then asks the order. Chosen over dropping
+the flag because (1) every form already saved stays valid with no migration, and (2) a build older
+than WP-G2, which cannot draw the type and knows only "a required question of a type I do not
+know", keeps holding the send with "mettez à jour l'application" instead of sending the form
+without its order.
 
 ### One contract, copied byte for byte
 
@@ -1434,10 +1505,14 @@ serves the whole form - the editor reads it, as it reads the whole price grid.
 ### The submit (`FormsService.submit`)
 
 For each VISIBLE grid, before the `required` check every other type takes: `priceProductGridAnswer`
-judges the answer - 400 `PRODUCT_GRID_ANSWER_MISSING` (no object: an app that cannot draw the type,
-which a newer client words "mettez a jour l'application"), `_UNKNOWN_CELL`, `_QUANTITY_INVALID`
-(not an integer in 0..maxPerCell), `_CELL_CLOSED`, `_EMPTY` - then prices it at the viewer's
-category. The stored answer is the judged one; the lines' sum joins `totalCents` with the base price
+judges the answer - 400 `PRODUCT_GRID_ANSWER_MISSING` (a non-object - a string, a list: an app that
+cannot draw the type, which a newer client words "mettez a jour l'application"), `_UNKNOWN_CELL`,
+`_QUANTITY_INVALID` (not an integer in 0..maxPerCell), `_CELL_CLOSED` - then prices it at the
+viewer's category. An ABSENT answer, `{}` or all zeros is an untouched grid: 0 units, no line, and
+nothing stored under its id (a `{}` sent is dropped from the stored answers). After the loop, visible
+grids holding 0 units between them refuse the whole submit `PRODUCT_GRID_EMPTY` with `itemId: null`
+(`productGridOrderEmpty`), before any row is written - member and guest alike. The stored answer is
+the judged one; the lines' sum joins `totalCents` with the base price
 (or the price grid's cell) and the choice supplements. A grid order whose total exceeds
 `PROVIDER_MAX_AMOUNT_CENTS` is refused `AMOUNT_OUT_OF_RANGE` BEFORE any row is written, cash
 included. Nothing else changes: the total is the ONE `unit_amount` sent to core-service, the
@@ -1498,9 +1573,11 @@ drawn with the app's tokens.
   (`/login?returnTo=/forms/:id`) for a guest. The category is `productGridPrices[id].tierLabel`, or
   `form_criterion_others` for `_others`; a grid with one list (`_all`) names none, and the line is
   absent when no visible grid prices by category.
-- **Refusals.** A send with no article is held on the grid's card (red border, the sentence under
-  it, the card scrolled into view) - every required question now does the same (`MissingAnswer`
-  carries `itemId`). The server's five answer codes are worded by `productGridRefusalMessage`
+- **Refusals.** A send with no article in ANY visible grid is held by ONE sentence for the form,
+  beside the send button ("Commandez au moins un article", `MissingAnswer` `{ itemId: null, kind:
+  'order' }`, checked after every required question); no grid card is marked, and an untouched
+  grid next to an ordered one is no fault. A required question of another type is still held on
+  its own card (`MissingAnswer` carries its `itemId`). The server's five answer codes are worded by `productGridRefusalMessage`
   (`PRODUCT_GRID_ANSWER_MISSING` -> reload or update; the three cell codes -> "an item is no longer
   offered"; `_EMPTY`), reached through the ONE entry point both pages call,
   `formSubmitRefusalMessage` (`answerBounds.ts`), whose `formCodeMessage` falls through to it for
@@ -1604,8 +1681,10 @@ draws them. Built from the owner-approved mockup of 2026-11-06 with the app's to
   pages keep `responsive`, the 640px switch). It is handed what a buyer would be: `editorGridView`
   (the payload less its price lists) and `editorViewerPrices` (the tab on screen's list, in cents,
   a blank price absent) - so the preview cannot draw a grid the fill page would not.
-- **Always required**: adding a grid (or turning a question into one) sets `required` and the
-  asterisk is disabled; it also calls the page's `onPricedGridAdded`, which switches
+- **No required switch**: adding a grid (or turning a question into one) sets the stored
+  `required` (see "The ORDER is required, never one grid" above), and the card draws neither the
+  switch nor the asterisk; `productGridItemProblem` judges the grid as sent, `required: true`, so
+  the editor never flags a grid for it. Adding a grid also calls the page's `onPricedGridAdded`, which switches
   `allowMultipleSubmissions` on (a second order is a second answer, decision Q3) - the manager may
   turn it off. **It goes back off only if the editor turned it on**: the page keeps
   `multipleTurnedOnByGrid` (`GridMultipleSubmissions`, `multipleSubmissionsAfterGridAdded` /

@@ -1,8 +1,11 @@
+import { m } from '$lib/paraglide/messages';
 import type { FormItem } from './api';
 import {
+  allRequiredAnswered,
   firstMissingAnswer,
   initialSelections,
   isItemAnswered,
+  missingAnswerMessage,
   pricedQuestionsAwaitingAnswer,
   selectionsFromAnswers,
   visibleAnswers,
@@ -84,15 +87,46 @@ describe('isItemAnswered and firstMissingAnswer agree', () => {
     expect(initialSelections([grid])).toEqual({ pg: {} });
     expect(isItemAnswered(grid, {})).toBe(false);
     expect(isItemAnswered(grid, { 'r:c': 0 })).toBe(false);
-    expect(firstMissingAnswer([grid], { pg: {} })).toEqual({
-      itemId: 'pg',
-      kind: 'order',
-      label: 'Sweat',
-    });
+    expect(firstMissingAnswer([grid], { pg: {} })).toEqual({ itemId: null, kind: 'order' });
     expect(isItemAnswered(grid, { 'r:c': 2 })).toBe(true);
     expect(firstMissingAnswer([grid], { pg: { 'r:c': 2 } })).toBeNull();
     expect(visibleAnswers([grid], { pg: {} })).toEqual({});
     expect(visibleAnswers([grid], { pg: { 'r:c': 2 } })).toEqual({ pg: { 'r:c': 2 } });
+  });
+
+  it('asks one unit of the ORDER, never of each grid: an untouched grid of two is no fault', () => {
+    const sweat = q({ id: 'sweat', type: 'product_grid', required: true, label: 'Sweat' });
+    const veste = q({ id: 'veste', type: 'product_grid', required: true, label: 'Veste' });
+    const name = q({ id: 'nom', type: 'short_text', required: true, label: 'Nom' });
+    const items = [name, sweat, veste];
+    const empty = initialSelections(items);
+    // A required question is still named first, on its card...
+    expect(firstMissingAnswer(items, empty)).toEqual({
+      itemId: 'nom',
+      kind: 'answer',
+      label: 'Nom',
+    });
+    // ...then the empty order, the form's and no card's.
+    const named = { ...empty, nom: 'Ada' };
+    const missing = firstMissingAnswer(items, named);
+    expect(missing).toEqual({ itemId: null, kind: 'order' });
+    expect(missingAnswerMessage(missing!)).toBe(m.form_view_error_order_empty());
+    // One unit in EITHER grid sends the form; the untouched grid is left out of the payload.
+    const veste1 = { ...named, veste: { 'r:c': 1 } };
+    expect(firstMissingAnswer(items, veste1)).toBeNull();
+    expect(visibleAnswers(items, veste1)).toEqual({ nom: 'Ada', veste: { 'r:c': 1 } });
+  });
+
+  it('gates the end of the form on the ORDER, never on each grid', () => {
+    const sweat = q({ id: 'sweat', type: 'product_grid', required: true });
+    const veste = q({ id: 'veste', type: 'product_grid', required: true });
+    expect(allRequiredAnswered([sweat, veste], { sweat: {}, veste: {} })).toBe(false);
+    expect(allRequiredAnswered([sweat, veste], { sweat: {}, veste: { 'r:c': 1 } })).toBe(true);
+  });
+
+  it('asks no order of a form whose grids are all hidden from this person', () => {
+    const name = q({ id: 'nom', type: 'short_text', required: true, label: 'Nom' });
+    expect(firstMissingAnswer([name], { nom: 'Ada' })).toBeNull();
   });
 
   it('asks to update the app for a required question of a type it does not know', () => {

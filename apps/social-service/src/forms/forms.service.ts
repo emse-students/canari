@@ -44,6 +44,12 @@ import * as ExcelJS from 'exceljs';
 import { answerText, type AnswerQuestion, type AnswerWords } from './answer-text';
 import type { ExportLabels } from './export-labels';
 import {
+  conditionNamesProfile,
+  formConfigConflicts,
+  type FormConfigConflict,
+  type FormOptionState,
+} from './form-option-rules';
+import {
   FormFilesService,
   fileAnswersOf,
   hasFileQuestion,
@@ -144,6 +150,7 @@ import {
   normaliseProductGridItems,
   priceProductGridAnswer,
   productGridItems,
+  productGridOrderEmpty,
   productGridPriceFingerprint,
   productGridPricesFor,
   productGridsCharge,
@@ -231,25 +238,50 @@ export function priceFingerprint(form: CreateFormDto): string {
 }
 
 /**
- * Whether a form takes money or grants something. An anonymous form refuses both: a payment names
- * its payer to the processor and to the submission, the identity it promised not to keep.
+ * The options of a form that can rule each other out, as the ONE shared rule reads them
+ * (`form-option-rules.ts`, the editor's copy byte for byte). `takesPayment` counts every price
+ * source and a cash flag or a grid even at 0: an anonymous form refuses each, since any of them
+ * puts a payer's name on the answer.
  */
-function takesMoneyOrGrants(input: CreateFormDto): boolean {
-  return (
-    input.requiresPayment === true ||
-    (input.basePrice ?? 0) > 0 ||
-    input.priceMatrix != null ||
-    input.allowCashPayment === true ||
-    input.grantsCotisation === true
-  );
+function formOptionStateOf(input: CreateFormDto & { anonymous?: boolean }): FormOptionState {
+  return {
+    anonymous: input.anonymous === true,
+    isPublic: input.isPublic === true,
+    takesPayment:
+      chargesMoney(input) || input.priceMatrix != null || input.allowCashPayment === true,
+    grantsCotisation: input.grantsCotisation === true,
+    restrictsAudience:
+      input.submitCondition != null || (input.items ?? []).some(hasProfileCriterion),
+    hasFileQuestion: hasFileQuestion(input.items),
+  };
 }
+
+/**
+ * The sentence each refusal carries beside its code - dev-facing, the editor words its own from the
+ * code (`formOptionConflict.ts`).
+ */
+const FORM_CONFLICT_MESSAGE: Record<FormConfigConflict, string> = {
+  FORM_ANONYMOUS_PAYMENT:
+    'An anonymous form must be free: a payment or a cotisation grant identifies the submitter.',
+  FORM_ANONYMOUS_COTISATION_GRANT:
+    'An anonymous form cannot grant a cotisation: a cotisation is granted to an account.',
+  FORM_ANONYMOUS_FILE:
+    'An anonymous form cannot ask for a file: a file is tied to the account that uploads it.',
+  FORM_PUBLIC_AUDIENCE:
+    'A public form cannot depend on who answers: a guest has no profile to match a criterion ' +
+    'against.',
+  FORM_PUBLIC_COTISATION_GRANT:
+    'A public form cannot grant a cotisation: a guest has no account to grant it to.',
+  FORM_PUBLIC_FILE:
+    'A public form cannot ask for a file: a guest has no account to upload it with.',
+  FORM_PUBLIC_GUEST_TIER_UNAVAILABLE:
+    'A public form must leave its guests a price: a guest pays the "everyone else" tier of every ' +
+    'criterion on promo, formation or cotisation, and every such cell is marked unavailable.',
+};
 
 /** Whether a question is shown or hidden by who the person IS - a promo, a formation, a cotisation. */
 function hasProfileCriterion(item: any): boolean {
-  const condition = normaliseCondition(item);
-  if (!condition) return false;
-  const { answer: _answer, ...profileOnly } = condition;
-  return Object.keys(profileOnly).length > 0;
+  return conditionNamesProfile(normaliseCondition(item));
 }
 
 /** Where a submission comes from: a signed-in member, or a guest on a public form's link. */
@@ -331,24 +363,39 @@ export class FormsService {
   }
 
   /**
-   * Refuses an anonymous form that also takes money or grants something. A payment names its payer
-   * to the processor and to the submission, and a cotisation is granted TO an account, so each is
-   * the identity the form promised not to keep - refused where it is chosen, not dropped silently.
+   * Refuses a form whose options rule each other out, by the ONE rule the editor also reads
+   * (`formConfigConflicts`, `form-option-rules.ts`): the pairs (anonymous with a payment, a grant
+   * or a file; public with a restricted audience, a grant or a file), then a public grid that
+   * leaves a guest no price. The refusal carries the conflict's CODE, so the screen names the cause
+   * without reading the sentence. Judged on the form as it WILL be saved - the caller merges an
+   * edit onto the stored form - so the order the options were switched on cannot matter.
+   *
+   * A grid on promo, formation or cotisation is NOT refused on a public form: a guest has none of
+   * them, lands in the "everyone else" group of each (`PricingFactsService.build` with no user)
+   * and pays that tier (owner, 2026-11-06).
    */
-  private assertAnonymousConfigValid(input: CreateFormDto & { anonymous?: boolean }): void {
-    if (input.anonymous !== true) return;
-    if (takesMoneyOrGrants(input)) {
-      throw new BadRequestException(
-        'An anonymous form must be free: a payment or a cotisation grant identifies the submitter.'
+  private assertFormOptionsCoherent(
+    input: CreateFormDto & { anonymous?: boolean },
+    stored?: CreateFormDto & { anonymous?: boolean }
+  ): void {
+    const judge = (form: CreateFormDto & { anonymous?: boolean }) =>
+      formConfigConflicts(
+        formOptionStateOf(form),
+        form.priceMatrix as PriceMatrix | null | undefined
       );
-    }
-    // A file is uploaded by an account and kept on a row that names it, and its CONTENT (a CV)
-    // names its author too - the identity the form promised not to keep.
-    if (hasFileQuestion(input.items)) {
-      throw new BadRequestException(
-        'An anonymous form cannot ask for a file: a file is tied to the account that uploads it.'
-      );
-    }
+    // An EDIT answers for what it introduces, never for what the form already was: a form stored
+    // before a rule (an anonymous one whose option still carries a supplement, which `submit`
+    // refuses to charge) must stay editable - a title, a closing date - or its manager could never
+    // save it again. A conflict already stored is not the edit's; adding a conflicting option to a
+    // form that has none stays refused.
+    const alreadyStored = new Set<FormConfigConflict>(stored ? judge(stored) : []);
+    const conflicts = judge(input).filter((code) => !alreadyStored.has(code));
+    if (conflicts.length === 0) return;
+    const [code] = conflicts;
+    this.logger.log(
+      `[FORMS] save refused: options conflict code=${code} all=${conflicts.join(',')}`
+    );
+    throw formRefusal(code, FORM_CONFLICT_MESSAGE[code]);
   }
 
   /**
@@ -372,38 +419,24 @@ export class FormsService {
   }
 
   /**
-   * Refuses a public form that would need to know who a guest is. A guest has no account, so there
-   * is nobody to grant a cotisation to, to match a profile criterion against, or to count once -
-   * each is refused where it is chosen, rather than being a setting that quietly does nothing for
-   * the people the link reaches.
-   *
-   * A guest CAN pay (decision PP1, `public-paid-forms-chantier.md`): a base price, option
-   * supplements, cash, and a price grid whose every criterion is an ANSWER (a menu, a formula).
-   * Lydia needs only the e-mail the guest types. A grid criterion on promo, formation or cotisation
-   * is WHO the person is, which a guest has not got, so it stays refused.
+   * What a public form needs beyond the option pairs (`assertFormOptionsCoherent`): rules that read
+   * a VALUE rather than whether two options are on. A guest CAN pay (decision PP1,
+   * `public-paid-forms-chantier.md`) - a base price, option supplements, cash, and a price grid on
+   * answers or on promo, formation or cotisation, where a guest pays the "everyone else" tier - so
+   * what is refused here is a default that would give a guest a free or endless seat.
    */
   private assertPublicConfigValid(input: CreateFormDto): void {
     if (input.isPublic !== true) return;
-    if (input.grantsCotisation === true) {
-      throw new BadRequestException(
-        'A public form cannot grant a cotisation: a guest has no account to grant it to.'
-      );
-    }
-    const dimensions = (input.priceMatrix as PriceMatrix | null | undefined)?.dimensions ?? [];
-    if (dimensions.some((d) => d.kind !== 'answer')) {
-      throw new BadRequestException(
-        'A public form can price only on answers: a guest has no profile to match a promo, a ' +
-          'formation or a cotisation against.'
-      );
-    }
-    // A charging grid whose "everyone else" cell is FREE and reachable - a priced question left
-    // empty, hidden, or answered with an ungrouped option - would hand a guest a free seat by
-    // default, with none of the paid path's limits. The manager prices it or marks it unavailable.
+    // A charging grid whose cell a GUEST lands in is FREE - a priced question left empty, hidden,
+    // or answered with an ungrouped option, or the "everyone else" tier of a profile criterion -
+    // would hand a guest a free seat by default, with none of the paid path's limits. The manager
+    // prices it or marks it unavailable.
     const freeCells = freeFallbackCells(
       input.priceMatrix as PriceMatrix | null | undefined,
       (input.items ?? []) as PricedItem[]
     );
     if (freeCells.length > 0) {
+      this.logger.log(`[FORMS] save refused: public form, free guest cell "${freeCells[0]}"`);
       throw new BadRequestException(
         'A public form that charges cannot leave its "everyone else" price at 0: a guest who skips ' +
           `or hides a priced question would answer for free (cell "${freeCells[0]}"). Price it or ` +
@@ -425,22 +458,11 @@ export class FormsService {
           'seat until then.'
       );
     }
-    if (input.submitCondition != null || (input.items ?? []).some(hasProfileCriterion)) {
-      throw new BadRequestException(
-        'A public form cannot depend on who answers: a guest has no profile to match a criterion ' +
-          'against.'
-      );
-    }
+    // Not a conflict between two options: the editor switches several answers on WITH the public
+    // link, since a guest cannot be recognised a second time.
     if (input.allowMultipleSubmissions !== true) {
       throw new BadRequestException(
         'A public form must accept several answers: a guest cannot be recognised a second time.'
-      );
-    }
-    // Decision D40: a file upload needs an account, and an anonymous write of files is the largest
-    // abuse surface a form could open. Refused here rather than at the guest's submit.
-    if (hasFileQuestion(input.items)) {
-      throw new BadRequestException(
-        'A public form cannot ask for a file: a guest has no account to upload it with.'
       );
     }
   }
@@ -650,7 +672,7 @@ export class FormsService {
     }
     assertUniqueItemIds(input.items);
     assertFormItemsShape(input.items);
-    this.assertAnonymousConfigValid(input);
+    this.assertFormOptionsCoherent(input);
     this.assertPublicConfigValid(input);
     this.assertFileQuestionConfigValid(input);
     input = {
@@ -813,8 +835,9 @@ export class FormsService {
     const formFull =
       !!form.maxSubmissions && (await this.countActiveSubmissions(id)) >= form.maxSubmissions;
     // The guest's slice of the grid, exactly as a member's is built (`hasSubmission`), from facts
-    // that know nobody: a public form's grid prices on answers only (`assertPublicConfigValid`),
-    // so the slice is the whole grid. The page totals from it; `submit` recomputes what is charged.
+    // that know nobody: every criterion on promo, formation or cotisation resolves to its "everyone
+    // else" tier, and what is left is the answer criteria. The page totals from it; `submit`
+    // recomputes what is charged, from the same facts.
     const guestFacts = await this.factsFor(form, undefined);
     const pricing = form.priceMatrix ? pricingViewFor(form.priceMatrix, guestFacts) : null;
     // AN ALLOWLIST, like `submission.projection.ts`: a column added to the form later is not served
@@ -906,14 +929,16 @@ export class FormsService {
       assertUniqueItemIds(input.items, form.items);
       assertFormItemsShape(input.items);
     }
-    this.assertAnonymousConfigValid({ ...input, items, anonymous: form.anonymous });
-    // Unlike anonymity, a link can be opened or withdrawn at any time: it promises nothing about
-    // the answers already stored. An absent value means "leave it", so the stored one is checked -
-    // for every field the check reads, or an edit sending only `isPublic: true` would publish a
-    // stored cotisation grant or a promo-priced grid nobody re-checked.
-    this.assertPublicConfigValid({
+    // The form as this edit WILL save it: an absent field keeps the stored value, for every field a
+    // rule reads, or an edit sending only `isPublic: true` would publish a stored cotisation grant or
+    // an audience restriction nobody re-checked - and a rule judged on the edit alone would depend on
+    // which switch the manager touched last. Anonymity is the stored value: it is fixed above.
+    // Unlike anonymity, a link can be opened or withdrawn at any time: it promises nothing about the
+    // answers already stored.
+    const effective = {
       ...input,
       items,
+      anonymous: form.anonymous,
       isPublic: input.isPublic ?? form.isPublic,
       grantsCotisation: input.grantsCotisation ?? form.grantsCotisation,
       priceMatrix: input.priceMatrix !== undefined ? input.priceMatrix : form.priceMatrix,
@@ -929,7 +954,9 @@ export class FormsService {
           : (form.cashPaymentExpiryDays ?? undefined),
       requiresPayment: input.requiresPayment ?? form.requiresPayment,
       basePrice: input.basePrice ?? form.basePrice,
-    });
+    } as CreateFormDto & { anonymous: boolean };
+    this.assertFormOptionsCoherent(effective, form as unknown as CreateFormDto);
+    this.assertPublicConfigValid(effective);
     // An absent condition keeps the stored one, which still meets the questions sent now.
     this.assertFileQuestionConfigValid({
       items,
@@ -1615,17 +1642,24 @@ export class FormsService {
     // The priced grids' lines, computed HERE from the stored grid and this person's category - never
     // from an amount a client sent - and snapshotted on the row (`submissions.lines`, migration 137).
     const gridLines: ProductGridLine[] = [];
+    // The ORDER rule is the form's, not a grid's: a form of several grids (one per article) is
+    // ordered from whichever the buyer wants, and only the VISIBLE grids together must hold a unit.
+    let visibleGrids = 0;
+    let orderedUnits = 0;
     for (const item of form.items) {
       // A question this submitter never saw neither charges them nor blocks them.
       if (!visible.has(item.id)) continue;
       const answer = input.answers[item.id];
-      // A priced grid is judged by its own rule (always required, at least one unit, declared cells,
-      // 0..maxPerCell, no closed cell) with a CODED refusal - an app that cannot draw it sends no
-      // object and is told to update (`PRODUCT_GRID_ANSWER_MISSING`). What is stored is the answer
-      // as judged: the ordered cells only.
+      // A priced grid is judged by its own rule (declared cells, 0..maxPerCell, no closed cell) with
+      // a CODED refusal - an app that cannot draw it sends a non-object and is told to update
+      // (`PRODUCT_GRID_ANSWER_MISSING`). An untouched grid (no answer, `{}`) is accepted and stores
+      // nothing; what is stored otherwise is the answer as judged: the ordered cells only.
       if (isProductGridItem(item)) {
         const priced = priceProductGridAnswer(item, answer, facts);
-        storedAnswers[item.id] = priced.answer;
+        visibleGrids += 1;
+        orderedUnits += priced.units;
+        if (priced.units > 0) storedAnswers[item.id] = priced.answer;
+        else delete storedAnswers[item.id];
         gridLines.push(...priced.lines);
         continue;
       }
@@ -1644,6 +1678,13 @@ export class FormsService {
       ) {
         totalCents = this.calculateModifiers(item, answer, totalCents, lineItems, currency);
       }
+    }
+    if (visibleGrids > 0 && orderedUnits === 0) {
+      this.logger.debug(
+        `[FORMS] submit refused: an empty order across ${visibleGrids} visible grid(s) ` +
+          `form=${form.id.slice(0, 8)}`
+      );
+      throw productGridOrderEmpty();
     }
     const lines = gridLines.length > 0 ? gridLines : null;
     if (lines) {

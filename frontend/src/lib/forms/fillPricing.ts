@@ -15,8 +15,9 @@ import { productGridOrderLines } from './productGridFill';
  * copies of a price rule is how a page and the invoice come to disagree.
  *
  * The page derives no pricing RULE: everything about who the person is was resolved by the server
- * (a guest's slice is the whole grid, since a public form prices on answers only), and what is left
- * is their own answers, resolved here as they click. The server recomputes the whole thing at submit
+ * (a guest's slice is built from facts that know nobody, so it sits in the "everyone else" tier of
+ * each criterion on who the person is), and what is left is their own answers, resolved here as they
+ * click. The server recomputes the whole thing at submit
  * and that figure is what is charged.
  */
 export interface FillPriceState {

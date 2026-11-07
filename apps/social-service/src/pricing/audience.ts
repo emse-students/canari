@@ -1,3 +1,5 @@
+import { OTHERS_BUCKET_ID } from '../forms/form-option-rules';
+
 /**
  * The audience predicate: who a person is, and whether they fall in a given bucket.
  *
@@ -76,9 +78,10 @@ export type Dimension =
  * It is generated, never stored, and cannot be deleted: it is what makes a dimension a PARTITION
  * rather than a filter, and therefore what guarantees no submitter is ever unpriced. A null
  * formation, a track the school invents next year, a non-cotisant, a promo outside every bucket and
- * an unanswered question all land here.
+ * an unanswered question all land here - and so does a guest, on every criterion about who the
+ * person is. Defined once, in the file the editor shares (`form-option-rules.ts`).
  */
-export const OTHERS_BUCKET_ID = '_others';
+export { OTHERS_BUCKET_ID };
 
 /**
  * A criterion used on its own rather than as a matrix dimension - for a question's visibility and

@@ -77,22 +77,19 @@ export function isValidFileRetention(days: unknown): days is number {
 
 /**
  * Why this form cannot be saved because of a file question, in the reader's language - or null.
- * The same refusals the server makes (`assertPublicConfigValid`, `assertAnonymousConfigValid`,
- * `assertFileQuestionConfigValid`), and the retention range the database holds.
+ * The server's `assertFileQuestionConfigValid`, and the retention range the database holds. A file
+ * on a public or an anonymous form is a conflict between two options, judged by the shared rule
+ * (`formOptionRules.ts`) before this is asked.
  *
  * An ANSWER criterion on who may submit is refused: the file is uploaded before any answer exists,
  * and the upload is judged on that same condition, so every upload would be refused.
  */
 export function fileQuestionProblem(form: {
   items: ReadonlyArray<{ type?: string }>;
-  isPublic: boolean;
-  anonymous: boolean;
   fileRetentionDays: unknown;
   submitCondition?: { answer?: unknown } | null;
 }): string | null {
   if (!hasFileQuestion(form.items)) return null;
-  if (form.isPublic) return m.form_public_hint_blocked_file();
-  if (form.anonymous) return m.form_anonymous_hint_file();
   if (form.submitCondition?.answer != null) return m.form_file_submit_condition_answer();
   if (!isValidFileRetention(form.fileRetentionDays)) return m.form_file_retention_invalid();
   return null;
