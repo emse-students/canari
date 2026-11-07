@@ -1,4 +1,5 @@
 import { m } from '$lib/paraglide/messages';
+import { movedList } from './listMove';
 import { getLocale } from '$lib/paraglide/runtime';
 import { Log } from '$lib/utils/Log';
 import type { Dimension } from '$lib/pricing/priceMatrix';
@@ -280,11 +281,8 @@ export function moveAxisEntry(
   from: number,
   to: number
 ): boolean {
-  const list = grid[axis];
-  if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return false;
-  const next = [...list];
-  const [moved] = next.splice(from, 1);
-  next.splice(to, 0, moved);
+  const next = movedList(grid[axis], from, to);
+  if (!next) return false;
   grid[axis] = next;
   Log.d(TAG, `moved a ${axis} entry from ${from} to ${to}`);
   return true;

@@ -2,18 +2,23 @@
   import { tick } from 'svelte';
   import FormBuilder from './FormBuilder.svelte';
   import FormSection from './FormSection.svelte';
+  import AddQuestionWizard from './AddQuestionWizard.svelte';
   import type { MembershipTier } from '$lib/associations/api';
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { AUTHORABLE_QUESTION_TYPES } from '$lib/forms/questionTypes';
   import { duplicateQuestion } from '$lib/forms/questionDuplicate';
   import { PRODUCT_GRID_TYPE } from '$lib/forms/productGridContract';
-  import { newProductGrid, type ProductGridTierDimension } from '$lib/forms/productGridEditor';
+  import type { ProductGridTierDimension } from '$lib/forms/productGridEditor';
+  import { insertQuestion, type DraftQuestion } from '$lib/forms/questionDraft';
+  import { Log } from '$lib/utils/Log';
   import { ListChecks, Plus } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { draggableCard } from '$lib/actions/draggableCard';
 
   /**
-   * The question builder: the list, its drag-and-drop reordering, and the type picker.
+   * The question builder: the list, its drag-and-drop reordering, and the add wizard
+   * (`AddQuestionWizard`), opened from the button under the list (a question at the end) or from a
+   * card's "..." menu (a question right after that card).
    *
    * The create and edit screens each held a verbatim copy of all ninety lines of this, differing
    * only in whether they passed an image uploader - so every fix to the picker or the drag
@@ -94,7 +99,8 @@
 
   let dragIndex = $state(-1);
   let dropIndex = $state(-1);
-  let showTypePicker = $state(false);
+  /** The add wizard, and where its question goes: after that index, or at the end (null). */
+  let wizard = $state<{ afterIndex: number | null } | null>(null);
   let listEl = $state<HTMLElement | null>(null);
   let addButtonEl = $state<HTMLButtonElement | null>(null);
   /** The one question being edited; the others are a single line each. */
@@ -115,34 +121,26 @@
       : m.form_questions_count({ count: items.length })
   );
 
-  function addItem(type: string = 'short_text') {
-    const id = crypto.randomUUID();
-    expandedId = id;
+  function openWizard(afterIndex: number | null) {
+    Log.d('FormQuestionsSection', `add wizard opened, after ${afterIndex ?? 'the end'}`);
+    wizard = { afterIndex };
+  }
+
+  function cancelWizard() {
+    Log.d('FormQuestionsSection', 'add wizard cancelled, nothing inserted');
+    // The dialog's focus trap gives the focus back to what opened it: the add button, or the
+    // card's "..." button (which takes it back from its menu before asking).
+    wizard = null;
+  }
+
+  /** "Ajouter": the filled question goes where the wizard was opened from, and opens there. */
+  function addQuestion(question: DraftQuestion) {
+    const afterIndex = wizard?.afterIndex ?? null;
+    wizard = null;
+    items = insertQuestion(items, question, afterIndex);
     selectTitleId = null;
-    const pricedGrid = type === PRODUCT_GRID_TYPE;
-    items = [
-      ...items,
-      pricedGrid
-        ? {
-            id,
-            label: '',
-            required: true,
-            type,
-            options: [],
-            rows: [],
-            productGrid: newProductGrid(),
-          }
-        : {
-            id,
-            label: '',
-            required: false,
-            type,
-            options: [{ label: '', priceModifier: undefined }],
-            rows: [],
-          },
-    ];
-    showTypePicker = false;
-    if (pricedGrid) onPricedGridAdded?.();
+    expandedId = question.id;
+    if (question.type === PRODUCT_GRID_TYPE) onPricedGridAdded?.();
   }
 
   function duplicateItem(index: number) {
@@ -239,6 +237,7 @@
             if (expandedId === _item.id) expandedId = null;
           }}
           onDuplicate={() => duplicateItem(i)}
+          onInsertAfter={() => openWizard(i)}
           authorableTypes={types}
           onBecamePricedGrid={onPricedGridAdded}
           onLeftPricedGrid={onPricedGridGone}
@@ -251,47 +250,26 @@
     {/each}
   </div>
 
-  <div class="relative">
-    <button
-      bind:this={addButtonEl}
-      type="button"
-      onclick={() => (showTypePicker = !showTypePicker)}
-      class="border-cn-border text-text-muted hover:border-cn-yellow hover:text-cn-dark hover:bg-cn-yellow/5 flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed py-3 text-sm font-bold transition-all"
-    >
-      <Plus size={18} />
-      {m.form_add_question_button()}
-    </button>
+  <button
+    bind:this={addButtonEl}
+    type="button"
+    onclick={() => openWizard(null)}
+    aria-haspopup="dialog"
+    class="border-cn-border text-text-muted hover:border-cn-yellow hover:text-cn-dark hover:bg-cn-yellow/5 flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed py-3 text-sm font-bold transition-all"
+  >
+    <Plus size={18} />
+    {m.form_add_question_button()}
+  </button>
 
-    {#if showTypePicker}
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div
-        class="fixed inset-0 z-(--z-popover-scrim)"
-        onclick={() => (showTypePicker = false)}
-      ></div>
-      <div
-        class="border-cn-border absolute right-0 bottom-full left-0 z-(--z-popover) mb-2 rounded-2xl border-2 bg-(--cn-surface) p-3 shadow-xl"
-      >
-        <p class="text-text-muted text-2xs mb-2.5 ml-1 font-bold tracking-wider uppercase">
-          {m.form_question_type_picker_label()}
-        </p>
-        <div class="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-          {#each types as qtype (qtype.value)}
-            {@const Icon = qtype.Icon}
-            <button
-              type="button"
-              onclick={() => addItem(qtype.value)}
-              class="border-cn-border hover:border-cn-yellow hover:bg-cn-yellow/5 group flex flex-col items-center gap-1.5 rounded-xl border p-2.5 text-center transition-all"
-            >
-              <Icon size={18} class="text-text-muted group-hover:text-cn-dark transition-colors" />
-              <span
-                class="text-text-muted group-hover:text-text-main text-2xs leading-tight font-semibold"
-                >{qtype.label()}</span
-              >
-            </button>
-          {/each}
-        </div>
-      </div>
-    {/if}
-  </div>
+  <AddQuestionWizard
+    open={wizard !== null}
+    offered={types}
+    {requiresPayment}
+    {tiers}
+    {formations}
+    {formTiers}
+    {isPublic}
+    onCancel={cancelWizard}
+    onAdd={addQuestion}
+  />
 </FormSection>

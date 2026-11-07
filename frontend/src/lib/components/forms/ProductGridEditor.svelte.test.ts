@@ -3,7 +3,7 @@
  * THE PRICED GRID EDITOR (WP-G3), driven as a manager would: the table is the editor, and what it
  * leaves behind is a grid the contract accepts.
  */
-import { describe, it, expect, afterEach, vi, beforeEach } from 'vitest';
+import { describe, it, expect, afterAll, afterEach, vi, beforeEach } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { m } from '$lib/paraglide/messages';
 import { productGridItemRefusal } from '$lib/forms/productGridContract';
@@ -17,6 +17,10 @@ import {
   type ProductGridTierDimension,
 } from '$lib/forms/productGridEditor';
 import Harness from './ProductGridEditorHarness.test.svelte';
+import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
+
+// The info tip's popover fades out at teardown.
+afterAll(adoptTransitionAnimations());
 
 const confirmMock = vi.hoisted(() => vi.fn(async () => true));
 vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm: confirmMock }));
@@ -370,6 +374,25 @@ describe('categories', () => {
       _others: { '*': 3100 },
     });
     expect(valid(state.grid)).toBeNull();
+  });
+
+  it('explains beside "Selon" that a grid varies on one criterion only, by tap or keyboard', () => {
+    const { target } = render(sweat(), { formTiers: cotisants });
+    expect(target.querySelector('[data-testid="info-tip"]')).toBeNull();
+    target.querySelector<HTMLInputElement>('[role="switch"], input[type="checkbox"]')!.click();
+    flushSync();
+    const tip = byAria(target, m.form_pgrid_tiers_info_aria());
+    expect(tip.dataset.testid).toBe('info-tip');
+    // A 44px target on a touch screen: the shared icon-button box.
+    expect(tip.className).toContain('ui-icon-button');
+    expect(tip.getAttribute('aria-expanded')).toBe('false');
+    expect(document.querySelector('[data-testid="info-tip-text"]')).toBeNull();
+    tip.click();
+    flushSync();
+    expect(tip.getAttribute('aria-expanded')).toBe('true');
+    expect(document.querySelector('[data-testid="info-tip-text"]')?.textContent).toBe(
+      m.form_pgrid_tiers_info()
+    );
   });
 
   it('says a guest pays "Autres" on a public form', () => {

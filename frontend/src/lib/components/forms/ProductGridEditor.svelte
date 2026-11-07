@@ -1,20 +1,9 @@
 <script lang="ts">
-  import { tick } from 'svelte';
-  import {
-    ArrowDown,
-    ArrowLeft,
-    ArrowRight,
-    ArrowUp,
-    ClipboardPaste,
-    GripVertical,
-    Minus,
-    Monitor,
-    Plus,
-    Smartphone,
-    X,
-  } from '@lucide/svelte';
+  import { Minus, Monitor, Plus, Smartphone, X } from '@lucide/svelte';
   import CriterionEditor from '$lib/components/pricing/CriterionEditor.svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
+  import InfoTip from '$lib/components/ui/InfoTip.svelte';
+  import GridAxesTable from './GridAxesTable.svelte';
   import ProductGridQuestion from './ProductGridQuestion.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import type { MembershipTier } from '$lib/associations/api';
@@ -52,10 +41,8 @@
     setPrice,
     setPriceMode,
     setTiers,
-    splitPastedList,
     syncTierLists,
     toggleClosedCell,
-    type AddEntriesResult,
     type EditorProductGrid,
     type ProductGridAxis,
     type ProductGridTierDimension,
@@ -99,6 +86,11 @@
     problem?: string | null;
     /** The question's title, which the preview's card carries as the buyer reads it. */
     title?: string;
+    /**
+     * Only what a new grid cannot do without - its rows, columns and prices - as the add wizard's
+     * second step draws it; the cap per cell and the buyer's preview stay in the question card.
+     */
+    essentials?: boolean;
   }
 
   let {
@@ -110,6 +102,7 @@
     isPublic = false,
     problem = null,
     title = '',
+    essentials = false,
   }: Props = $props();
 
   const TAG = 'ProductGridEditor';
@@ -120,12 +113,8 @@
   const activeTier = $derived(tierIds.includes(selectedTier) ? selectedTier : tierIds[0]);
   const mode = $derived(grid.pricing.mode);
 
-  let pasteOpen = $state(false);
-  let pasteText = $state('');
-  let pasteFeedback = $state('');
   /** Why the last removal was refused, said under the table where the gesture was made. */
   let tableFeedback = $state('');
-  let tableEl = $state<HTMLElement | null>(null);
 
   const MODES: { value: ProductGridPriceMode; label: () => string }[] = [
     { value: 'single', label: () => m.form_pgrid_mode_single() },
@@ -166,18 +155,6 @@
     return euros === null ? '-' : formatAmount(Math.round(euros * 100));
   }
 
-  function addEntry(axis: ProductGridAxis) {
-    if (!addBlankEntry(grid, axis)) {
-      pasteFeedback = m.form_pgrid_axis_full({ max: axisMax(axis) });
-      return;
-    }
-    // The new blank label takes the focus: "+" then typing is the common case.
-    void tick().then(() => {
-      const inputs = tableEl?.querySelectorAll<HTMLInputElement>(`[data-axis-input="${axis}"]`);
-      inputs?.[inputs.length - 1]?.focus();
-    });
-  }
-
   /**
    * Removes a row or column. One already ordered in an answer asks first: the past orders keep what
    * they were charged (`submissions.lines`), but the article stops being offered.
@@ -203,147 +180,22 @@
     }
   }
 
-  function feedbackOf(result: AddEntriesResult, axis: ProductGridAxis): string {
-    const parts: string[] = [];
-    if (result.duplicates.length > 0) {
-      parts.push(m.form_pgrid_paste_duplicates({ labels: result.duplicates.join(', ') }));
-    }
-    if (result.overflow > 0) {
-      parts.push(m.form_pgrid_paste_overflow({ count: result.overflow, max: axisMax(axis) }));
-    }
-    return parts.join(' ');
-  }
-
-  function pasteAs(axis: ProductGridAxis) {
-    const labels = splitPastedList(pasteText);
-    if (labels.length === 0) {
-      pasteFeedback = m.form_pgrid_paste_empty();
-      return;
-    }
-    // The blank entry a new grid starts with is replaced, not kept beside the pasted list.
+  /**
+   * Appends a pasted list. The one blank entry a new grid starts with gives way to it rather than
+   * stay beside it (an axis is never left empty: the list is appended in the same step).
+   */
+  function addPasted(axis: ProductGridAxis, labels: string[]) {
     const list = grid[axis];
-    if (list.length === 1 && !list[0].label.trim()) removeBlankStarter(axis);
-    const result = addAxisEntries(grid, axis, labels);
-    pasteFeedback = feedbackOf(result, axis);
-    if (!pasteFeedback) {
-      pasteText = '';
-      pasteOpen = false;
+    if (list.length === 1 && !list[0].label.trim()) {
+      grid[axis] = [];
+      Log.d(TAG, `the blank ${axis} starter gives way to a pasted list`);
     }
+    return addAxisEntries(grid, axis, labels);
   }
 
-  /** The one blank starter entry gives way to a pasted list (an axis is never left empty). */
-  function removeBlankStarter(axis: ProductGridAxis) {
-    grid[axis] = [];
-    Log.d(TAG, `the blank ${axis} starter gives way to a pasted list`);
-  }
-
-  // Reordering: a grip is dragged onto another entry, or moved with the arrow keys.
-  let dragAxis = $state<ProductGridAxis | null>(null);
-  let dragFrom = $state(-1);
-
-  function onGripDragStart(e: DragEvent, axis: ProductGridAxis, index: number) {
-    // The question card is draggable too: this drag is the grid's, never the card's.
-    e.stopPropagation();
-    dragAxis = axis;
-    dragFrom = index;
-    e.dataTransfer?.setData('text/plain', `${axis}:${index}`);
-  }
-
-  function onEntryDragOver(e: DragEvent, axis: ProductGridAxis) {
-    if (dragAxis !== axis) return;
-    e.preventDefault();
-    e.stopPropagation();
-  }
-
-  function onEntryDrop(e: DragEvent, axis: ProductGridAxis, index: number) {
-    if (dragAxis !== axis) return;
-    e.preventDefault();
-    e.stopPropagation();
-    moveAxisEntry(grid, axis, dragFrom, index);
-    endDrag();
-  }
-
-  function endDrag() {
-    dragAxis = null;
-    dragFrom = -1;
-  }
-
-  async function onGripKeydown(e: KeyboardEvent, axis: ProductGridAxis, index: number) {
-    const back = axis === 'rows' ? 'ArrowUp' : 'ArrowLeft';
-    const forward = axis === 'rows' ? 'ArrowDown' : 'ArrowRight';
-    if (e.key !== back && e.key !== forward) return;
-    e.preventDefault();
-    const to = e.key === back ? index - 1 : index + 1;
-    if (!moveAxisEntry(grid, axis, index, to)) return;
-    await tick();
-    tableEl?.querySelectorAll<HTMLElement>(`[data-axis-grip="${axis}"]`)[to]?.focus();
-  }
-
-  /**
-   * The touch path: an arrow button moves its entry one step. Focus follows the entry to the same
-   * button at its new place, or to the other one once that end of the axis is reached (a disabled
-   * button cannot hold focus).
-   */
-  async function moveByButton(axis: ProductGridAxis, index: number, step: -1 | 1) {
-    const to = index + step;
-    if (!moveAxisEntry(grid, axis, index, to)) return;
-    await tick();
-    const atEnd = step < 0 ? to === 0 : to === grid[axis].length - 1;
-    const side = (atEnd ? -step : step) < 0 ? 'back' : 'forward';
-    tableEl?.querySelectorAll<HTMLElement>(`[data-axis-move="${axis}:${side}"]`)[to]?.focus();
-  }
-
-  /** The arrow buttons show where no drag works: a coarse pointer, or a phone-width page. */
-  const moveButtonClass =
-    'ui-icon-button text-text-muted hover:text-text-main hidden rounded-lg hover:bg-black/5 disabled:opacity-25 max-sm:inline-flex pointer-coarse:inline-flex dark:hover:bg-white/10';
-  /** A column's arrows on a phone: as wide as its narrow column, the 44px hit box from `tap-target`. */
-  const columnMoveButtonClass =
-    'text-text-muted hover:text-text-main tap-target hidden h-11 w-11 items-center justify-center rounded-lg hover:bg-black/5 disabled:opacity-25 max-sm:inline-flex max-sm:w-full pointer-coarse:inline-flex dark:hover:bg-white/10';
-  /** The row label column is sticky, so a grid too wide for the phone scrolls under it. */
-  const stickyLabelClass = 'bg-cn-surface sticky left-0 z-1';
-
-  /**
-   * A row label is a textarea so it WRAPS in the phone's narrow column; it grows to its content
-   * here rather than through `field-sizing`, which older WebKit lacks. A line break is no label:
-   * Enter and pasted newlines become nothing and a space.
-   */
-  function fitLabel(node: HTMLTextAreaElement) {
-    const fit = () => {
-      node.style.height = 'auto';
-      // Border-box: the underline counts in the height, not in `scrollHeight`.
-      node.style.height = `${node.scrollHeight + node.offsetHeight - node.clientHeight}px`;
-    };
-    fit();
-    node.addEventListener('input', fit);
-    // The column's width settles after mount (and changes with the page): the lines follow it.
-    // Only a WIDTH change refits: the height this sets must not feed back into the observer.
-    let width = node.clientWidth;
-    const resize =
-      typeof ResizeObserver === 'undefined'
-        ? null
-        : new ResizeObserver(() => {
-            if (node.clientWidth === width) return;
-            width = node.clientWidth;
-            fit();
-          });
-    resize?.observe(node);
-    return {
-      destroy: () => {
-        node.removeEventListener('input', fit);
-        resize?.disconnect();
-      },
-    };
-  }
-
-  function onRowLabelKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && !e.isComposing) e.preventDefault();
-  }
-
-  function onRowLabelInput(row: { label: string }, e: Event) {
-    const field = e.currentTarget as HTMLTextAreaElement;
-    const label = field.value.replace(/[\r\n]+/g, ' ');
-    if (label !== field.value) field.value = label;
-    row.label = label;
+  function renameEntry(axis: ProductGridAxis, id: string, label: string) {
+    const entry = grid[axis].find((e) => e.id === id);
+    if (entry) entry.label = label;
   }
 
   // Categories: off, or one profile criterion.
@@ -405,7 +257,7 @@
 </script>
 
 <div class="space-y-4" data-testid="product-grid-editor">
-  <!-- Settings bar: price mode, cap per cell, paste a list. -->
+  <!-- Settings bar: price mode and cap per cell (the cap stays in the card, never in the wizard). -->
   <div class="bg-cn-surface-alt flex flex-wrap items-end gap-x-6 gap-y-4 rounded-lg p-4">
     <div class="flex flex-col gap-1.5">
       <span id="pg-mode-{domKey}" class="text-text-main text-xs font-bold"
@@ -427,88 +279,44 @@
       </div>
     </div>
 
-    <div class="flex flex-col gap-1.5">
-      <span id="pg-max-{domKey}" class="text-text-main text-xs font-bold"
-        >{m.form_pgrid_max_label()}</span
-      >
-      <div
-        role="group"
-        aria-labelledby="pg-max-{domKey}"
-        class="bg-cn-surface flex items-center gap-1 rounded-full p-0.5"
-      >
-        <button
-          type="button"
-          class="ui-icon-button text-text-main rounded-full hover:bg-black/5 disabled:opacity-30 dark:hover:bg-white/10"
-          aria-label={m.form_pgrid_max_decrease()}
-          disabled={grid.maxPerCell <= PRODUCT_GRID_MIN_PER_CELL}
-          onclick={() => setMaxPerCell(grid, grid.maxPerCell - 1)}><Minus size={16} /></button
+    {#if !essentials}
+      <div class="flex flex-col gap-1.5">
+        <span id="pg-max-{domKey}" class="text-text-main text-xs font-bold"
+          >{m.form_pgrid_max_label()}</span
         >
-        <span
-          class="text-text-main min-w-6 text-center text-sm font-bold tabular-nums"
-          aria-live="polite"
-          data-testid="max-per-cell">{grid.maxPerCell}</span
+        <div
+          role="group"
+          aria-labelledby="pg-max-{domKey}"
+          class="bg-cn-surface flex items-center gap-1 rounded-full p-0.5"
         >
-        <button
-          type="button"
-          class="ui-icon-button text-text-main rounded-full hover:bg-black/5 disabled:opacity-30 dark:hover:bg-white/10"
-          aria-label={m.form_pgrid_max_increase()}
-          disabled={grid.maxPerCell >= PRODUCT_GRID_MAX_PER_CELL}
-          onclick={() => setMaxPerCell(grid, grid.maxPerCell + 1)}><Plus size={16} /></button
-        >
+          <button
+            type="button"
+            class="ui-icon-button text-text-main rounded-full hover:bg-black/5 disabled:opacity-30 dark:hover:bg-white/10"
+            aria-label={m.form_pgrid_max_decrease()}
+            disabled={grid.maxPerCell <= PRODUCT_GRID_MIN_PER_CELL}
+            onclick={() => setMaxPerCell(grid, grid.maxPerCell - 1)}><Minus size={16} /></button
+          >
+          <span
+            class="text-text-main min-w-6 text-center text-sm font-bold tabular-nums"
+            aria-live="polite"
+            data-testid="max-per-cell">{grid.maxPerCell}</span
+          >
+          <button
+            type="button"
+            class="ui-icon-button text-text-main rounded-full hover:bg-black/5 disabled:opacity-30 dark:hover:bg-white/10"
+            aria-label={m.form_pgrid_max_increase()}
+            disabled={grid.maxPerCell >= PRODUCT_GRID_MAX_PER_CELL}
+            onclick={() => setMaxPerCell(grid, grid.maxPerCell + 1)}><Plus size={16} /></button
+          >
+        </div>
       </div>
-    </div>
-    <p class="text-text-muted max-w-52 pb-1 text-xs">
-      {grid.maxPerCell === 1
-        ? m.form_pgrid_max_hint_checkbox()
-        : m.form_pgrid_max_hint_stepper({ max: grid.maxPerCell })}
-    </p>
-
-    <button
-      type="button"
-      aria-expanded={pasteOpen}
-      onclick={() => {
-        pasteOpen = !pasteOpen;
-        pasteFeedback = '';
-      }}
-      class="bg-cn-surface text-text-main ml-auto inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-bold"
-    >
-      <ClipboardPaste size={18} />
-      {m.form_pgrid_paste_button()}
-    </button>
+      <p class="text-text-muted max-w-52 pb-1 text-xs">
+        {grid.maxPerCell === 1
+          ? m.form_pgrid_max_hint_checkbox()
+          : m.form_pgrid_max_hint_stepper({ max: grid.maxPerCell })}
+      </p>
+    {/if}
   </div>
-
-  {#if pasteOpen}
-    <div
-      class="border-cn-border flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-start"
-    >
-      <label class="flex min-w-0 flex-1 flex-col gap-1.5">
-        <span class="text-text-main text-sm font-bold">{m.form_pgrid_paste_label()}</span>
-        <textarea
-          rows="4"
-          bind:value={pasteText}
-          placeholder={m.form_pgrid_paste_placeholder()}
-          class="border-cn-border text-text-main focus:border-cn-yellow bg-cn-surface resize-y rounded-lg border px-3 py-2.5 text-sm outline-none"
-        ></textarea>
-      </label>
-      <div class="flex flex-col gap-2 sm:pt-6">
-        <button
-          type="button"
-          onclick={() => pasteAs('rows')}
-          class="bg-cn-yellow text-cn-ink min-h-11 rounded-lg px-4 text-sm font-bold"
-          >{m.form_pgrid_paste_as_rows()}</button
-        >
-        <button
-          type="button"
-          onclick={() => pasteAs('columns')}
-          class="bg-cn-border/60 text-text-main min-h-11 rounded-lg px-4 text-sm font-bold"
-          >{m.form_pgrid_paste_as_columns()}</button
-        >
-      </div>
-    </div>
-  {/if}
-  {#if pasteFeedback}
-    <p class="text-red-err text-xs font-semibold" role="status">{pasteFeedback}</p>
-  {/if}
 
   <!-- Categories: one price list each, "Autres" always last. -->
   <div class="space-y-3">
@@ -549,6 +357,8 @@
             {/if}
           {/each}
         </div>
+        <!-- One criterion only, said where it is chosen (owner, 2026-11-07). -->
+        <InfoTip label={m.form_pgrid_tiers_info_aria()} text={m.form_pgrid_tiers_info()} />
         {#if formTiers}
           <button
             type="button"
@@ -614,264 +424,97 @@
       </label>
     {/if}
 
-    <!-- The table: the editor and its own preview. -->
-    <div class="overflow-x-auto pt-3" bind:this={tableEl}>
-      <table class="border-separate border-spacing-0 max-sm:w-full">
-        <thead>
+    <!-- The table: the shared rows-and-columns editor, the cells and prices drawn here. -->
+    <GridAxesTable
+      rows={grid.rows}
+      columns={grid.columns}
+      isDuplicate={(axis, label) =>
+        (axis === 'rows' ? duplicateRows : duplicateColumns).has(productGridLabelKey(label))}
+      onRename={renameEntry}
+      onAddBlank={(axis) => addBlankEntry(grid, axis)}
+      onAddMany={addPasted}
+      onMove={(axis, from, to) => moveAxisEntry(grid, axis, from, to)}
+      onRemove={removeEntry}
+      maxOf={axisMax}
+      rowPlaceholder={m.form_pgrid_row_placeholder()}
+      columnPlaceholder={m.form_pgrid_column_placeholder()}
+    >
+      {#snippet afterCornerHeader()}
+        {#if mode === 'per_row'}
+          <th scope="col" class="text-text-muted w-24 px-1.5 pb-2 text-left text-xs font-bold"
+            >{m.form_pgrid_price_header()}</th
+          >
+        {/if}
+      {/snippet}
+      {#snippet headerRow()}
+        {#if mode === 'per_column'}
           <tr>
             <th
-              scope="col"
-              class="text-text-muted {stickyLabelClass} w-56 min-w-44 pr-2 pb-2 text-left text-xs font-bold max-sm:w-auto max-sm:min-w-26 max-sm:pr-1"
-              >{m.form_pgrid_corner()}</th
+              scope="row"
+              class="text-text-main bg-cn-surface sticky left-0 z-1 pr-2 pb-2 text-left text-xs font-bold"
+              >{m.form_pgrid_price_header()}</th
             >
-            {#if mode === 'per_row'}
-              <th scope="col" class="text-text-muted w-24 px-1.5 pb-2 text-left text-xs font-bold"
-                >{m.form_pgrid_price_header()}</th
-              >
-            {/if}
-            {#each grid.columns as column, ci (column.id)}
-              <th
-                scope="col"
-                class="w-26 px-1 pb-2 align-bottom max-sm:w-8 max-sm:min-w-8 max-sm:px-0.5"
-                ondragover={(e) => onEntryDragOver(e, 'columns')}
-                ondrop={(e) => onEntryDrop(e, 'columns', ci)}
-              >
-                <span
-                  class="bg-cn-border/60 flex items-center justify-center gap-0.5 rounded-full py-0.5 pr-0.5 pl-1 max-sm:flex-col max-sm:rounded-lg max-sm:px-0 {duplicateColumns.has(
-                    productGridLabelKey(column.label)
-                  )
-                    ? 'ring-red-err ring-2'
-                    : ''}"
-                >
-                  <button
-                    type="button"
-                    draggable="true"
-                    data-axis-grip="columns"
-                    ondragstart={(e) => onGripDragStart(e, 'columns', ci)}
-                    ondragend={endDrag}
-                    onkeydown={(e) => onGripKeydown(e, 'columns', ci)}
-                    aria-label={m.form_pgrid_move_column({ label: column.label || ci + 1 })}
-                    class="text-text-muted flex h-8 w-4 shrink-0 cursor-grab items-center justify-center max-sm:hidden pointer-coarse:hidden"
-                    ><GripVertical size={12} /></button
-                  >
+            {#each grid.columns as column (column.id)}
+              <td class="px-1 pb-2">
+                <span class="{priceBoxClass} justify-center">
                   <input
-                    data-axis-input="columns"
-                    bind:value={column.label}
-                    aria-label={m.form_pgrid_column_label({ n: ci + 1 })}
-                    aria-invalid={duplicateColumns.has(productGridLabelKey(column.label)) ||
-                      !column.label.trim()}
-                    placeholder={m.form_pgrid_column_placeholder()}
-                    maxlength={100}
-                    class="text-text-main placeholder:text-text-muted/60 min-h-8 w-12 min-w-0 border-0 bg-transparent text-center text-sm font-bold outline-none max-sm:w-full max-sm:text-xs"
+                    inputmode="decimal"
+                    class={priceInputClass}
+                    aria-label={m.form_pgrid_price_column({ label: column.label || '-' })}
+                    value={priceText(column.id)}
+                    onchange={(e) => commitPrice(column.id, e)}
                   />
-                  <button
-                    type="button"
-                    onclick={() => removeEntry('columns', column.id)}
-                    disabled={grid.columns.length <= 1}
-                    aria-label={m.form_pgrid_remove_column({ label: column.label || ci + 1 })}
-                    class="text-text-muted hover:text-red-err tap-target flex h-8 w-7 shrink-0 items-center justify-center rounded-full disabled:opacity-30 max-sm:w-full"
-                    ><X size={12} /></button
+                  <span class="text-text-muted text-xs" aria-hidden="true"
+                    >{m.form_pgrid_euro()}</span
                   >
                 </span>
-                <span
-                  class="mt-1 hidden justify-center gap-0.5 max-sm:flex max-sm:flex-col pointer-coarse:flex"
-                >
-                  <button
-                    type="button"
-                    data-axis-move="columns:back"
-                    onclick={() => moveByButton('columns', ci, -1)}
-                    disabled={ci === 0}
-                    aria-label={m.form_pgrid_move_column_left({ label: column.label || ci + 1 })}
-                    class={columnMoveButtonClass}><ArrowLeft size={16} /></button
-                  >
-                  <button
-                    type="button"
-                    data-axis-move="columns:forward"
-                    onclick={() => moveByButton('columns', ci, 1)}
-                    disabled={ci === grid.columns.length - 1}
-                    aria-label={m.form_pgrid_move_column_right({ label: column.label || ci + 1 })}
-                    class={columnMoveButtonClass}><ArrowRight size={16} /></button
-                  >
-                </span>
-              </th>
+              </td>
             {/each}
-            <!-- On a phone this "+" gives way to the footer's, and the cell keeps a sliver so the last
-                 column's widened hit boxes stay inside the table. -->
-            <th class="pb-2 pl-1 align-bottom max-sm:w-2 max-sm:p-0">
-              <button
-                type="button"
-                onclick={() => addEntry('columns')}
-                aria-label={m.form_pgrid_add_column()}
-                title={m.form_pgrid_add_column()}
-                class="ui-icon-button border-cn-border bg-cn-surface text-text-main rounded-full border max-sm:hidden"
-                ><Plus size={16} /></button
-              >
-            </th>
+            <td></td>
           </tr>
-          {#if mode === 'per_column'}
-            <tr>
-              <th
-                scope="row"
-                class="text-text-main {stickyLabelClass} pr-2 pb-2 text-left text-xs font-bold"
-                >{m.form_pgrid_price_header()}</th
+        {/if}
+      {/snippet}
+      {#snippet afterRowLabel(row)}
+        {#if mode === 'per_row'}
+          <td class="px-1.5 py-0.5">
+            <span class={priceBoxClass}>
+              <input
+                inputmode="decimal"
+                class={priceInputClass}
+                aria-label={m.form_pgrid_price_row({ label: row.label || '-' })}
+                value={priceText(row.id)}
+                onchange={(e) => commitPrice(row.id, e)}
+              />
+              <span class="text-text-muted pl-0.5 text-xs" aria-hidden="true"
+                >{m.form_pgrid_euro()}</span
               >
-              {#each grid.columns as column (column.id)}
-                <td class="px-1 pb-2">
-                  <span class="{priceBoxClass} justify-center">
-                    <input
-                      inputmode="decimal"
-                      class={priceInputClass}
-                      aria-label={m.form_pgrid_price_column({ label: column.label || '-' })}
-                      value={priceText(column.id)}
-                      onchange={(e) => commitPrice(column.id, e)}
-                    />
-                    <span class="text-text-muted text-xs" aria-hidden="true"
-                      >{m.form_pgrid_euro()}</span
-                    >
-                  </span>
-                </td>
-              {/each}
-              <td></td>
-            </tr>
-          {/if}
-        </thead>
-        <tbody>
-          {#each grid.rows as row, ri (row.id)}
-            <tr
-              ondragover={(e) => onEntryDragOver(e, 'rows')}
-              ondrop={(e) => onEntryDrop(e, 'rows', ri)}
-            >
-              <th
-                scope="row"
-                class="{stickyLabelClass} py-0.5 pr-2 text-left font-normal max-sm:min-w-26 max-sm:pr-1"
-              >
-                <span class="flex items-center gap-1 max-sm:flex-wrap max-sm:gap-0">
-                  <button
-                    type="button"
-                    draggable="true"
-                    data-axis-grip="rows"
-                    ondragstart={(e) => onGripDragStart(e, 'rows', ri)}
-                    ondragend={endDrag}
-                    onkeydown={(e) => onGripKeydown(e, 'rows', ri)}
-                    aria-label={m.form_pgrid_move_row({ label: row.label || ri + 1 })}
-                    class="ui-icon-button text-text-muted cursor-grab rounded-lg max-sm:hidden pointer-coarse:hidden"
-                    ><GripVertical size={14} /></button
-                  >
-                  <!-- On a phone the arrows go under the label, the label keeping the width. -->
-                  <span class="contents max-sm:order-last max-sm:flex max-sm:w-full">
-                    <button
-                      type="button"
-                      data-axis-move="rows:back"
-                      onclick={() => moveByButton('rows', ri, -1)}
-                      disabled={ri === 0}
-                      aria-label={m.form_pgrid_move_row_up({ label: row.label || ri + 1 })}
-                      class={moveButtonClass}><ArrowUp size={16} /></button
-                    >
-                    <button
-                      type="button"
-                      data-axis-move="rows:forward"
-                      onclick={() => moveByButton('rows', ri, 1)}
-                      disabled={ri === grid.rows.length - 1}
-                      aria-label={m.form_pgrid_move_row_down({ label: row.label || ri + 1 })}
-                      class={moveButtonClass}><ArrowDown size={16} /></button
-                    >
-                  </span>
-                  <textarea
-                    rows="1"
-                    use:fitLabel
-                    data-axis-input="rows"
-                    value={row.label}
-                    oninput={(e) => onRowLabelInput(row, e)}
-                    onkeydown={onRowLabelKeydown}
-                    aria-label={m.form_pgrid_row_label({ n: ri + 1 })}
-                    aria-invalid={duplicateRows.has(productGridLabelKey(row.label)) ||
-                      !row.label.trim()}
-                    placeholder={m.form_pgrid_row_placeholder()}
-                    maxlength={100}
-                    class="text-text-main placeholder:text-text-muted/60 focus:border-cn-yellow min-h-10 w-0 min-w-0 flex-1 resize-none overflow-hidden border-0 border-b bg-transparent px-1 py-2.5 text-sm font-semibold break-words outline-none max-sm:px-0 {duplicateRows.has(
-                      productGridLabelKey(row.label)
-                    )
-                      ? 'border-red-err'
-                      : 'border-cn-border'}"></textarea>
-                  <button
-                    type="button"
-                    onclick={() => removeEntry('rows', row.id)}
-                    disabled={grid.rows.length <= 1}
-                    aria-label={m.form_pgrid_remove_row({ label: row.label || ri + 1 })}
-                    class="text-text-muted hover:text-red-err tap-target flex h-11 w-11 shrink-0 items-center justify-center rounded-full disabled:opacity-30 max-sm:w-8"
-                    ><X size={14} /></button
-                  >
-                </span>
-              </th>
-              {#if mode === 'per_row'}
-                <td class="px-1.5 py-0.5">
-                  <span class={priceBoxClass}>
-                    <input
-                      inputmode="decimal"
-                      class={priceInputClass}
-                      aria-label={m.form_pgrid_price_row({ label: row.label || '-' })}
-                      value={priceText(row.id)}
-                      onchange={(e) => commitPrice(row.id, e)}
-                    />
-                    <span class="text-text-muted pl-0.5 text-xs" aria-hidden="true"
-                      >{m.form_pgrid_euro()}</span
-                    >
-                  </span>
-                </td>
-              {/if}
-              {#each grid.columns as column (column.id)}
-                {@const closed = isCellClosed(grid, row.id, column.id)}
-                <td class="px-1 py-0.5 max-sm:px-0.5">
-                  <button
-                    type="button"
-                    aria-pressed={closed}
-                    data-cell="{row.id}:{column.id}"
-                    onclick={() => {
-                      tableFeedback = '';
-                      toggleClosedCell(grid, row.id, column.id);
-                    }}
-                    aria-label={closed
-                      ? m.form_pgrid_cell_closed_aria({ row: row.label, column: column.label })
-                      : m.form_pgrid_cell_open_aria({ row: row.label, column: column.label })}
-                    title={closed
-                      ? m.form_pgrid_cell_reopen_title()
-                      : m.form_pgrid_cell_close_title()}
-                    class="flex h-11 w-full min-w-18 items-center justify-center rounded-lg text-xs transition-colors max-sm:min-w-0 {closed
-                      ? 'border-text-muted bg-cn-surface-alt text-text-main border border-dashed font-bold line-through'
-                      : 'bg-cn-surface text-text-muted hover:bg-cn-yellow/15 border border-black/10 font-semibold dark:border-white/10'}"
-                    ><span class="max-sm:hidden"
-                      >{closed
-                        ? m.form_pgrid_cell_closed()
-                        : cellPriceLabel(row.id, column.id)}</span
-                    >{#if closed}<X size={14} class="sm:hidden" aria-hidden="true" />{/if}</button
-                  >
-                </td>
-              {/each}
-              <td></td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
-    <!-- Outside the table, so a grid that scrolls sideways never carries them out of view. -->
-    <div class="flex flex-wrap gap-x-4 pt-1.5">
-      <button
-        type="button"
-        onclick={() => addEntry('rows')}
-        class="text-text-muted hover:text-text-main inline-flex min-h-11 items-center gap-2 px-1 text-sm font-bold"
-      >
-        <Plus size={16} />
-        {m.form_pgrid_add_row()}
-      </button>
-      <button
-        type="button"
-        onclick={() => addEntry('columns')}
-        class="text-text-muted hover:text-text-main inline-flex min-h-11 items-center gap-2 px-1 text-sm font-bold sm:hidden"
-      >
-        <Plus size={16} />
-        {m.form_pgrid_add_column()}
-      </button>
-    </div>
+            </span>
+          </td>
+        {/if}
+      {/snippet}
+      {#snippet cell(row, column)}
+        {@const closed = isCellClosed(grid, row.id, column.id)}
+        <button
+          type="button"
+          aria-pressed={closed}
+          data-cell="{row.id}:{column.id}"
+          onclick={() => {
+            tableFeedback = '';
+            toggleClosedCell(grid, row.id, column.id);
+          }}
+          aria-label={closed
+            ? m.form_pgrid_cell_closed_aria({ row: row.label, column: column.label })
+            : m.form_pgrid_cell_open_aria({ row: row.label, column: column.label })}
+          title={closed ? m.form_pgrid_cell_reopen_title() : m.form_pgrid_cell_close_title()}
+          class="flex h-11 w-full min-w-18 items-center justify-center rounded-lg text-xs transition-colors max-sm:min-w-0 {closed
+            ? 'border-text-muted bg-cn-surface-alt text-text-main border border-dashed font-bold line-through'
+            : 'bg-cn-surface text-text-muted hover:bg-cn-yellow/15 border border-black/10 font-semibold dark:border-white/10'}"
+          ><span class="max-sm:hidden"
+            >{closed ? m.form_pgrid_cell_closed() : cellPriceLabel(row.id, column.id)}</span
+          >{#if closed}<X size={14} class="sm:hidden" aria-hidden="true" />{/if}</button
+        >
+      {/snippet}
+    </GridAxesTable>
     <p class="text-text-muted pt-1 text-xs">{m.form_pgrid_close_hint()}</p>
     {#if tableFeedback}
       <p class="text-red-err pt-1 text-xs font-semibold" role="status" data-testid="table-feedback">
@@ -892,40 +535,42 @@
 
   <!-- What a buyer sees: the fill page's own component, forced to one drawing, at the prices of
        the tab on screen. Inert - a preview takes no order. -->
-  <section
-    class="space-y-3 border-t border-black/10 pt-4 dark:border-white/10"
-    aria-label={m.form_pgrid_preview_aria()}
-  >
-    <div class="flex flex-wrap items-center gap-3">
-      <span class="text-text-main flex-1 text-sm font-bold">
-        {tierIds.length > 1
-          ? m.form_pgrid_preview_title_tier({ tier: tierName(activeTier) })
-          : m.form_pgrid_preview_title()}
-      </span>
-      <SegmentedControl
-        label={m.form_pgrid_preview_size_aria()}
-        value={previewLayout}
-        onSelect={(key) => (previewLayout = key)}
-        items={[
-          { key: 'desktop', label: m.form_pgrid_preview_desktop(), icon: Monitor },
-          { key: 'phone', label: m.form_pgrid_preview_phone(), icon: Smartphone },
-        ]}
-        class="w-full sm:w-64"
-      />
-    </div>
-    <div
-      class="bg-cn-bg rounded-lg p-4 {previewLayout === 'phone' ? 'mx-auto max-w-sm' : ''}"
-      inert
-      data-testid="grid-preview-{previewLayout}"
+  {#if !essentials}
+    <section
+      class="space-y-3 border-t border-black/10 pt-4 dark:border-white/10"
+      aria-label={m.form_pgrid_preview_aria()}
     >
-      <ProductGridQuestion
-        item={previewItem}
-        grid={previewGrid}
-        value={{}}
-        disabled={false}
-        prices={previewPrices}
-        layout={previewLayout}
-      />
-    </div>
-  </section>
+      <div class="flex flex-wrap items-center gap-3">
+        <span class="text-text-main flex-1 text-sm font-bold">
+          {tierIds.length > 1
+            ? m.form_pgrid_preview_title_tier({ tier: tierName(activeTier) })
+            : m.form_pgrid_preview_title()}
+        </span>
+        <SegmentedControl
+          label={m.form_pgrid_preview_size_aria()}
+          value={previewLayout}
+          onSelect={(key) => (previewLayout = key)}
+          items={[
+            { key: 'desktop', label: m.form_pgrid_preview_desktop(), icon: Monitor },
+            { key: 'phone', label: m.form_pgrid_preview_phone(), icon: Smartphone },
+          ]}
+          class="w-full sm:w-64"
+        />
+      </div>
+      <div
+        class="bg-cn-bg rounded-lg p-4 {previewLayout === 'phone' ? 'mx-auto max-w-sm' : ''}"
+        inert
+        data-testid="grid-preview-{previewLayout}"
+      >
+        <ProductGridQuestion
+          item={previewItem}
+          grid={previewGrid}
+          value={{}}
+          disabled={false}
+          prices={previewPrices}
+          layout={previewLayout}
+        />
+      </div>
+    </section>
+  {/if}
 </div>

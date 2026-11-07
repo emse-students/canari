@@ -4,7 +4,13 @@
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import AudienceConditionEditor from './AudienceConditionEditor.svelte';
   import ProductGridEditor from './ProductGridEditor.svelte';
+  import ChoiceOptionsEditor from './ChoiceOptionsEditor.svelte';
+  import ScaleEditor from './ScaleEditor.svelte';
+  import MatrixGridEditor from './MatrixGridEditor.svelte';
   import Picker from '$lib/components/ui/Picker.svelte';
+  import FloatingSurface from '$lib/components/ui/FloatingSurface.svelte';
+  import MenuList from '$lib/components/ui/MenuList.svelte';
+  import { opensAsSheet } from '$lib/components/ui/floatingSurface';
   import type { PickerOption } from '$lib/components/ui/picker';
   import { associationLogoSrc, type MembershipTier } from '$lib/associations/api';
   import { QUESTION_IMAGE_ACCEPT, questionImageUploadError } from '$lib/forms/questionImage';
@@ -16,16 +22,27 @@
     ChevronDown,
     ChevronUp,
     Copy,
+    Ellipsis,
     GitBranch,
     GripVertical,
     ImagePlus,
     Plus,
-    Trash2,
-    Users,
+    SlidersHorizontal,
     X,
   } from '@lucide/svelte';
-  import { AUTHORABLE_QUESTION_TYPES, QUESTION_TYPES } from '$lib/forms/questionTypes';
-  import { duplicateLabels, gridRowLabels } from '$lib/forms/answerBounds';
+  import {
+    AUTHORABLE_QUESTION_TYPES,
+    editorKindEntry,
+    editorKindOf,
+    editorQuestionFamilies,
+    isMatrixType,
+  } from '$lib/forms/questionTypes';
+  import {
+    questionCardMenuSections,
+    questionKindSections,
+    type QuestionCardAction,
+  } from '$lib/forms/questionMenus';
+  import { ensureMatrixAxes } from '$lib/forms/matrixEditor';
   import { PRODUCT_GRID_TYPE } from '$lib/forms/productGridContract';
   import { newProductGrid, type ProductGridTierDimension } from '$lib/forms/productGridEditor';
   import { m } from '$lib/paraglide/messages';
@@ -51,6 +68,7 @@
     onExpand,
     onCollapse,
     onDuplicate,
+    onInsertAfter,
     authorableTypes = AUTHORABLE_QUESTION_TYPES,
     onBecamePricedGrid,
     onLeftPricedGrid,
@@ -91,8 +109,10 @@
     onExpand?: () => void;
     /** Escape, or the collapse button. */
     onCollapse?: () => void;
-    /** The duplicate icon or Ctrl/Cmd+D. */
+    /** The duplicate icon, the "..." menu's copy, or Ctrl/Cmd+D. */
     onDuplicate?: () => void;
+    /** The "..." menu's "a question after this one": the list opens the add wizard for this place. */
+    onInsertAfter?: () => void;
     /** The types the type menu offers (a builder with no payment leaves the priced grid out). */
     authorableTypes?: typeof AUTHORABLE_QUESTION_TYPES;
     /** The question just became a priced grid: the page switches several answers on. */
@@ -113,6 +133,13 @@
   const IS_APPLE =
     typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform ?? '');
   let showTypePicker = $state(false);
+  let typeAsSheet = $state(false);
+  let typeAnchor = $state<HTMLButtonElement | null>(null);
+  let showCardMenu = $state(false);
+  let cardMenuAsSheet = $state(false);
+  let cardMenuAnchor = $state<HTMLButtonElement | null>(null);
+  /** "Plus d'options": the conditions, folded unless one is set (a live setting is never hidden). */
+  let moreOpen = $state(false);
   let titleEl = $state<HTMLInputElement | null>(null);
   let rowButtonEl = $state<HTMLButtonElement | null>(null);
   /** Set when the card collapses from the keyboard, so focus lands on its row and not on the page. */
@@ -122,6 +149,7 @@
   // Opening a card moves focus to its title; closing it from the keyboard returns focus to its row.
   $effect(() => {
     if (expanded && !wasExpanded) {
+      moreOpen = item.showIf != null || !!item.dependsOn;
       titleEl?.focus();
       if (selectTitleOnOpen) titleEl?.select();
     } else if (!expanded && wasExpanded && restoreRowFocus) {
@@ -140,38 +168,24 @@
       e.preventDefault();
       if (!e.repeat) onDuplicate?.();
     } else if (e.key === 'Escape' && expanded && !e.defaultPrevented) {
-      if (showTypePicker) {
-        showTypePicker = false;
-        e.stopPropagation();
-        return;
-      }
       restoreRowFocus = true;
       onCollapse?.();
     }
   }
 
-  const currentType = $derived(QUESTION_TYPES.find((t) => t.value === item.type));
+  /** How the card names its type: both survey grids are the one "Grille de choix". */
+  const currentType = $derived(editorKindEntry(item.type));
+  const typeSections = $derived(
+    questionKindSections(editorQuestionFamilies(authorableTypes), { currentType: item.type })
+  );
+  const cardMenuSections = questionCardMenuSections();
   /** The audience panel is open exactly when the condition is switched on. */
   const conditionsOn = $derived(item.showIf != null);
   function toggleConditions() {
     item.showIf = conditionsOn ? null : {};
   }
 
-  const isMatrix = $derived(['matrix_single', 'matrix_multiple'].includes(item.type));
-  // A grid answer is keyed by its row label, so two rows of one label are one answer (D4): marked
-  // here as it is typed, refused by the page before the save and by the server at it.
-  const duplicateRows = $derived(
-    isMatrix ? duplicateLabels(gridRowLabels(item.rows)) : new Set<string>()
-  );
-  const duplicateColumns = $derived(
-    isMatrix
-      ? duplicateLabels(
-          (item.options ?? [])
-            .filter((o: any) => o.label?.trim())
-            .map((o: any) => o.label as string)
-        )
-      : new Set<string>()
-  );
+  const isMatrix = $derived(isMatrixType(item.type));
   // A DENYLIST: every type not named here gets the options editor. A type with no options (a file
   // included) must be added, or its card grows an options list it will never use.
   const hasOptions = $derived(
@@ -180,41 +194,42 @@
   /** A priced grid is always required (its order is the answer): the asterisk is not a choice. */
   const isPricedGrid = $derived(item.type === PRODUCT_GRID_TYPE);
 
+  /**
+   * The type menu's choice. A kind already on screen changes nothing (a "Grille de choix" keeps
+   * its switch); a grid gets a row and a column to type in; leaving a priced grid tells the page.
+   */
+  function changeKind(key: string) {
+    showTypePicker = false;
+    typeAnchor?.focus();
+    if (key === editorKindOf(item.type)) return;
+    const entry = editorQuestionFamilies(authorableTypes)
+      .flatMap((f) => f.kinds)
+      .find((k) => k.kind === key);
+    if (!entry) return;
+    Log.d('FORMS', `question type ${item.type} -> ${entry.type}`);
+    const wasPricedGrid = item.type === PRODUCT_GRID_TYPE;
+    item.type = entry.type;
+    if (entry.type === PRODUCT_GRID_TYPE) becomePricedGrid();
+    else if (wasPricedGrid) onLeftPricedGrid?.();
+    if (isMatrixType(entry.type)) ensureMatrixAxes(item);
+  }
+
+  function runCardAction(key: string) {
+    showCardMenu = false;
+    // The menu's entry is going away: the focus goes back to the "..." it was opened from.
+    cardMenuAnchor?.focus();
+    const action = key as QuestionCardAction;
+    Log.d('FORMS', `question card menu: ${action}`);
+    if (action === 'insert_after') onInsertAfter?.();
+    else if (action === 'duplicate') onDuplicate?.();
+    else if (action === 'remove') onRemove();
+  }
+
   /** Turns the question into a priced grid: its definition, required, and the page told. */
   function becomePricedGrid() {
     if (!item.productGrid) item.productGrid = newProductGrid();
     item.required = true;
     onBecamePricedGrid?.();
-  }
-
-  const fieldClass =
-    'w-full min-w-0 px-3 py-2.5 sm:px-4 sm:py-3 border-2 border-cn-border sm:border-black/10 dark:sm:border-white/10 rounded-xl sm:rounded-2xl text-sm sm:text-base text-text-main bg-(--cn-surface) outline-none transition-all placeholder:text-text-muted/50 focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]';
-
-  function addOption() {
-    if (!item.options) item.options = [];
-    item.options = [
-      ...item.options,
-      {
-        id: crypto.randomUUID(),
-        label: '',
-        priceModifier: undefined,
-      },
-    ];
-  }
-
-  function removeOption(idx: number) {
-    if (!item.options) return;
-    item.options = item.options.filter((_: any, i: number) => i !== idx);
-  }
-
-  function addRow() {
-    if (!item.rows) item.rows = [];
-    item.rows = [...item.rows, { id: crypto.randomUUID(), value: '' }];
-  }
-
-  function removeRow(idx: number) {
-    if (!item.rows) return;
-    item.rows = item.rows.filter((_: any, i: number) => i !== idx);
   }
 
   if (item.type === PRODUCT_GRID_TYPE && !item.productGrid) item.productGrid = newProductGrid();
@@ -248,20 +263,6 @@
       .filter((o: any) => o.id && o.label)
       .map((o: any) => ({ id: o.id, label: o.label }));
   }
-
-  /** A linear scale starts at 0 or 1. */
-  const SCALE_MIN_OPTIONS: PickerOption[] = [0, 1].map((v) => ({
-    value: String(v),
-    label: String(v),
-  }));
-  /** ...and ends anywhere from 2 to 10. */
-  const SCALE_MAX_OPTIONS: PickerOption[] = Array.from({ length: 9 }, (_, i) => i + 2).map((v) => ({
-    value: String(v),
-    label: String(v),
-  }));
-
-  /** The two scale pickers wear the question's own field box, sized to their content. */
-  const scaleTriggerClass = `${fieldClass} w-auto min-w-[4rem] flex items-center justify-between gap-2 text-left`;
 
   /** The two condition pickers: a compact box sharing the row. */
   const conditionTriggerClass =
@@ -399,65 +400,53 @@
         placeholder={m.form_builder_title_placeholder()}
         class="border-cn-border text-text-main placeholder:text-text-muted/50 focus:border-cn-yellow min-w-0 flex-1 border-b-2 bg-transparent px-1 py-1.5 text-base font-semibold outline-none sm:text-lg"
       />
-      <div class="relative shrink-0">
-        <button
-          id="type-picker-{item.id}"
-          type="button"
-          aria-label="{m.form_builder_type_label()}: {currentType?.label() ?? item.type}"
-          aria-haspopup="listbox"
-          aria-expanded={showTypePicker}
-          onclick={() => (showTypePicker = !showTypePicker)}
-          class="border-cn-border text-text-main focus:border-cn-yellow flex cursor-pointer items-center gap-1.5 rounded-xl border-2 bg-(--cn-surface) px-2 py-1.5 text-left text-xs font-medium outline-none"
-        >
-          {#if currentType}
-            {@const CurIcon = currentType.Icon}
-            <CurIcon size={15} class="text-text-muted shrink-0" />
-            <span class="hidden max-w-32 truncate sm:inline">{currentType.label()}</span>
-          {:else}
-            <span>{item.type}</span>
-          {/if}
-          <ChevronDown size={13} class="text-text-muted/60 shrink-0" />
-        </button>
-        {#if showTypePicker}
-          <div
-            role="presentation"
-            class="fixed inset-0 z-(--z-popover-scrim)"
-            onclick={() => (showTypePicker = false)}
-          ></div>
-          <div
-            class="border-cn-border absolute top-full right-0 z-(--z-popover) mt-1 w-64 max-w-[calc(100vw-2rem)] rounded-2xl border-2 bg-(--cn-surface) p-2 shadow-xl"
-          >
-            <div class="grid grid-cols-2 gap-1">
-              {#each authorableTypes as qt (qt.value)}
-                {@const QIcon = qt.Icon}
-                <button
-                  type="button"
-                  onclick={() => {
-                    const wasPricedGrid = item.type === PRODUCT_GRID_TYPE;
-                    item.type = qt.value;
-                    if (qt.value === PRODUCT_GRID_TYPE) becomePricedGrid();
-                    else if (wasPricedGrid) onLeftPricedGrid?.();
-                    showTypePicker = false;
-                  }}
-                  class="flex min-w-0 items-center gap-2 rounded-xl px-3 py-2 transition-all {item.type ===
-                  qt.value
-                    ? 'bg-cn-yellow/15 text-cn-dark font-semibold'
-                    : 'hover:bg-cn-yellow/5 text-text-main'}"
-                >
-                  <QIcon
-                    size={14}
-                    class="shrink-0 {item.type === qt.value ? 'text-cn-dark' : 'text-text-muted'}"
-                  />
-                  <span class="min-w-0 text-xs leading-tight font-medium break-words"
-                    >{qt.label()}</span
-                  >
-                </button>
-              {/each}
-            </div>
-          </div>
+      <button
+        bind:this={typeAnchor}
+        id="type-picker-{item.id}"
+        type="button"
+        aria-label="{m.form_builder_type_label()}: {currentType?.label() ?? item.type}"
+        aria-haspopup="listbox"
+        aria-expanded={showTypePicker}
+        onclick={() => {
+          if (showTypePicker) {
+            showTypePicker = false;
+            return;
+          }
+          typeAsSheet = opensAsSheet();
+          showTypePicker = true;
+        }}
+        class="border-cn-border text-text-main focus:border-cn-yellow flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-xl border-2 bg-(--cn-surface) px-2 text-left text-xs font-medium outline-none"
+      >
+        {#if currentType}
+          {@const CurIcon = currentType.Icon}
+          <CurIcon size={15} class="text-text-muted shrink-0" />
+          <span class="hidden max-w-32 truncate sm:inline">{currentType.label()}</span>
+        {:else}
+          <span>{item.type}</span>
         {/if}
-      </div>
+        <ChevronDown size={13} class="text-text-muted/60 shrink-0" />
+      </button>
     </div>
+
+    <FloatingSurface
+      open={showTypePicker}
+      asSheet={typeAsSheet}
+      anchor={typeAnchor}
+      label={m.form_builder_type_label()}
+      popoverWidth="content"
+      onClose={(refocus) => {
+        showTypePicker = false;
+        if (refocus) typeAnchor?.focus();
+      }}
+    >
+      <div class="min-w-60">
+        <MenuList
+          sections={typeSections}
+          label={m.form_builder_type_label()}
+          onSelect={changeKind}
+        />
+      </div>
+    </FloatingSurface>
 
     <!-- Optional description and image: one row of affordances, each opening its own field -->
     <div class="mb-3 space-y-3">
@@ -586,297 +575,82 @@
         {fileHint ?? m.form_builder_file_hint()}
       </p>
     {:else if item.type === 'linear_scale'}
-      <div
-        class="space-y-4 rounded-xl border border-black/5 bg-white/30 p-3 sm:space-y-5 sm:rounded-2xl sm:p-5 dark:border-white/10 dark:bg-black/20"
-      >
-        <div class="flex flex-wrap items-center gap-2 sm:gap-4">
-          <span class="text-text-main w-full text-sm font-bold sm:w-auto"
-            >{m.form_builder_scale_prefix()}</span
-          >
-          <Picker
-            label={m.form_builder_scale_min_picker()}
-            value={String(item.scale.min)}
-            options={SCALE_MIN_OPTIONS}
-            onValueChange={(v) => (item.scale.min = Number(v))}
-            triggerClass={scaleTriggerClass}
-          />
-          <span class="text-text-muted text-xs font-bold uppercase"
-            >{m.form_builder_scale_to()}</span
-          >
-          <Picker
-            label={m.form_builder_scale_max_picker()}
-            value={String(item.scale.max)}
-            options={SCALE_MAX_OPTIONS}
-            onValueChange={(v) => (item.scale.max = Number(v))}
-            triggerClass={scaleTriggerClass}
-          />
-        </div>
-        <div class="grid grid-cols-1 gap-3 pt-1 sm:grid-cols-2 sm:gap-5 sm:pt-2">
-          <Input
-            label={m.form_builder_scale_min_label({ min: item.scale.min })}
-            bind:value={item.scale.minLabel}
-            placeholder={m.form_builder_scale_min_placeholder()}
-            class="[&_input]:px-3 [&_input]:py-2.5 [&_input]:text-sm [&_label]:ml-0"
-          />
-          <Input
-            label={m.form_builder_scale_max_label({ max: item.scale.max })}
-            bind:value={item.scale.maxLabel}
-            placeholder={m.form_builder_scale_max_placeholder()}
-            class="[&_input]:px-3 [&_input]:py-2.5 [&_input]:text-sm [&_label]:ml-0"
-          />
-        </div>
-      </div>
+      <ScaleEditor {item} />
+    {:else if isMatrix}
+      <MatrixGridEditor {item} />
     {:else if hasOptions}
-      <div class="space-y-3 sm:space-y-4">
-        <div class="flex flex-col gap-0.5 sm:flex-row sm:items-end sm:justify-between">
-          <h4 class="text-text-main text-xs font-bold tracking-widest uppercase opacity-80">
-            {isMatrix ? m.form_builder_columns_header() : m.form_builder_options_header()}
-          </h4>
-          {#if !isMatrix && showPriceModifier && !pricedByGrid}
-            <div class="text-text-muted text-2xs flex gap-2 font-semibold sm:text-xs">
-              <span class="w-20 text-right">{m.form_builder_price_public_header()}</span>
-            </div>
-          {/if}
-        </div>
+      <ChoiceOptionsEditor {item} {showPriceModifier} {pricedByGrid} />
+    {/if}
 
-        {#if !isMatrix && pricedByGrid}
-          <p
-            class="border-cn-yellow/40 bg-cn-yellow/5 text-text-muted rounded-xl border px-3 py-2 text-xs"
-          >
-            {m.form_builder_priced_by_grid()}
-          </p>
-        {/if}
-
-        <div class="space-y-2 sm:space-y-2.5">
-          {#each item.options as opt, idx (opt.id)}
-            <div
-              class="rounded-xl border border-black/5 bg-black/[0.02] p-2.5 sm:rounded-none sm:border-0 sm:bg-transparent sm:p-0 dark:border-white/10 dark:bg-white/[0.02]"
-            >
-              <div class="mb-2 flex items-center justify-between gap-2 sm:hidden">
-                <span class="text-text-muted text-2xs font-bold tracking-wide uppercase">
-                  {isMatrix
-                    ? m.form_builder_column_mobile_label()
-                    : m.form_builder_option_mobile_label()}
-                  {idx + 1}
-                </span>
-                <button
-                  class="ui-icon-button text-text-muted rounded-lg transition-colors hover:bg-red-500/10 hover:text-red-500"
-                  onclick={() => removeOption(idx)}
-                  type="button"
-                  title={m.common_delete_button()}
-                  aria-label={m.form_builder_option_remove_aria()}
+    <!-- "Plus d'options": the two conditions, rare, folded unless one is set. -->
+    <div class="mt-4 border-t border-black/5 pt-2 dark:border-white/5">
+      <button
+        type="button"
+        aria-expanded={moreOpen}
+        onclick={() => (moreOpen = !moreOpen)}
+        data-testid="more-options"
+        class="text-text-muted hover:text-text-main flex min-h-11 w-full items-center gap-2 rounded-lg px-1 text-left text-xs font-bold"
+      >
+        <SlidersHorizontal size={14} aria-hidden="true" class="shrink-0" />
+        <span class="flex-1">{m.form_card_more_options()}</span>
+        <ChevronDown
+          size={14}
+          aria-hidden="true"
+          class="shrink-0 transition-transform {moreOpen ? 'rotate-180' : ''}"
+        />
+      </button>
+      {#if moreOpen}
+        <div class="space-y-4 pt-2 pb-1" data-testid="more-options-panel">
+          {#if eligibleConditionSources.length > 0}
+            <div>
+              <div class="mb-2 flex items-center gap-1.5">
+                <GitBranch size={13} class="text-text-muted/70 shrink-0" />
+                <span class="text-text-muted text-2xs font-bold uppercase"
+                  >{m.form_builder_conditional_label()}</span
                 >
-                  <X size={16} />
-                </button>
               </div>
-
-              <!-- Desktop: horizontal row -->
-              <div class="group/opt hidden items-center gap-2 sm:flex">
-                <span class="text-text-muted w-5 shrink-0 text-center font-mono text-xs opacity-60">
-                  {idx + 1}.
-                </span>
-                <div class="min-w-0 flex-1">
-                  <Input
-                    placeholder={isMatrix
-                      ? m.form_builder_column_placeholder()
-                      : m.form_builder_option_placeholder()}
-                    bind:value={opt.label}
-                  />
-                </div>
-                {#if !isMatrix && showPriceModifier && !pricedByGrid}
-                  <div class="w-20 shrink-0">
-                    <Input
-                      type="number"
-                      placeholder="0.00"
-                      bind:value={opt.priceModifier}
-                      step="0.01"
-                      min="0"
-                    />
-                  </div>
-                {/if}
-                <button
-                  class="ui-icon-button text-text-muted rounded-xl transition-colors hover:bg-red-500/10 hover:text-red-500"
-                  onclick={() => removeOption(idx)}
-                  type="button"
-                  title={m.form_builder_option_remove_aria()}
-                >
-                  <X size={18} />
-                </button>
-              </div>
-
-              <!-- Mobile: full-width field -->
-              <div class="space-y-2 sm:hidden">
-                <input
-                  type="text"
-                  bind:value={opt.label}
-                  placeholder={isMatrix
-                    ? m.form_builder_column_placeholder()
-                    : m.form_builder_option_placeholder()}
-                  class={fieldClass}
+              <div class="flex flex-wrap items-center gap-2">
+                <Picker
+                  label={m.form_builder_conditional_label()}
+                  value={item.dependsOn ?? ''}
+                  options={conditionSourceOptions}
+                  onValueChange={(v) => {
+                    item.dependsOn = v;
+                    item.dependsValue = '';
+                  }}
+                  triggerClass={conditionTriggerClass}
                 />
-                {#if !isMatrix && showPriceModifier && !pricedByGrid}
-                  <div>
-                    <label
-                      for="opt-price-{opt.id}"
-                      class="text-text-muted text-2xs mb-1 block font-bold"
-                      >{m.form_builder_price_public_mobile()}</label
-                    >
-                    <input
-                      id="opt-price-{opt.id}"
-                      type="number"
-                      bind:value={opt.priceModifier}
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
-                      class={fieldClass}
-                    />
-                  </div>
+                {#if item.dependsOn}
+                  <span class="text-text-muted shrink-0 text-xs">=</span>
+                  <Picker
+                    label={m.form_builder_conditional_label()}
+                    value={item.dependsValue ?? ''}
+                    options={conditionValueOptions}
+                    onValueChange={(v) => (item.dependsValue = v)}
+                    triggerClass={conditionTriggerClass}
+                  />
                 {/if}
               </div>
-              {#if duplicateColumns.has(opt.label)}
-                <p class="text-red-err mt-1 text-xs font-semibold sm:pl-7" role="alert">
-                  {m.form_builder_grid_duplicate_inline()}
-                </p>
-              {/if}
             </div>
-          {/each}
-        </div>
-
-        <button
-          class="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-amber-500/30 px-3 py-2.5 text-sm font-bold text-amber-600 transition-colors hover:bg-amber-500/10 hover:text-amber-500 sm:w-auto sm:justify-start sm:border-0 sm:py-2 dark:text-amber-500 dark:hover:text-amber-400"
-          onclick={addOption}
-          type="button"
-        >
-          <Plus size={18} strokeWidth={2.5} />
-          {isMatrix ? m.form_builder_add_column() : m.form_builder_add_option()}
-        </button>
-
-        {#if isMatrix}
-          <div
-            class="mt-5 space-y-3 border-t border-dashed border-black/10 pt-4 sm:mt-8 sm:space-y-4 sm:pt-6 dark:border-white/10"
-          >
-            <h4 class="text-text-main text-xs font-bold tracking-widest uppercase opacity-80">
-              {m.form_builder_rows_header()}
-            </h4>
-
-            <div class="space-y-2 sm:space-y-2.5">
-              {#each item.rows as row, idx (row.id)}
-                <div
-                  class="rounded-xl border border-black/5 bg-black/[0.02] p-2.5 sm:border-0 sm:bg-transparent sm:p-0 dark:border-white/10 dark:bg-white/[0.02]"
-                >
-                  <div class="mb-2 flex items-center justify-between gap-2 sm:hidden">
-                    <span class="text-text-muted text-2xs font-bold tracking-wide uppercase">
-                      {m.form_builder_row_mobile_label({ idx: idx + 1 })}
-                    </span>
-                    <button
-                      class="ui-icon-button text-text-muted rounded-lg transition-colors hover:bg-red-500/10 hover:text-red-500"
-                      onclick={() => removeRow(idx)}
-                      type="button"
-                      title={m.common_delete_button()}
-                      aria-label={m.form_builder_row_remove_aria()}
-                    >
-                      <X size={16} />
-                    </button>
-                  </div>
-                  <div class="hidden items-center gap-2 sm:flex">
-                    <span
-                      class="text-text-muted w-5 shrink-0 text-center font-mono text-xs opacity-60"
-                    >
-                      {idx + 1}.
-                    </span>
-                    <div class="min-w-0 flex-1">
-                      <Input
-                        placeholder={m.form_builder_row_placeholder()}
-                        bind:value={row.value}
-                      />
-                    </div>
-                    <button
-                      class="ui-icon-button text-text-muted rounded-xl transition-colors hover:bg-red-500/10 hover:text-red-500"
-                      onclick={() => removeRow(idx)}
-                      type="button"
-                      title={m.form_builder_row_remove_aria()}
-                    >
-                      <X size={18} />
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    bind:value={row.value}
-                    placeholder={m.form_builder_row_placeholder()}
-                    class="{fieldClass} sm:hidden"
-                  />
-                  {#if duplicateRows.has(row.value)}
-                    <p class="text-red-err mt-1 text-xs font-semibold sm:pl-7" role="alert">
-                      {m.form_builder_grid_duplicate_inline()}
-                    </p>
-                  {/if}
-                </div>
-              {/each}
-            </div>
-
-            <button
-              class="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-amber-500/30 px-3 py-2.5 text-sm font-bold text-amber-600 transition-colors hover:bg-amber-500/10 sm:w-auto sm:justify-start sm:border-0 sm:py-2 dark:text-amber-500"
-              onclick={addRow}
-              type="button"
-            >
-              <Plus size={18} strokeWidth={2.5} />
-              {m.form_builder_add_row()}
-            </button>
-
-            {#if item.required}
-              <!-- D5: a required grid wants one answered row, unless every row is asked for. -->
-              <Toggle
-                label={m.form_builder_require_every_row()}
-                bind:checked={
-                  () => item.requireEveryRow === true,
-                  (on) => {
-                    item.requireEveryRow = on;
-                  }
-                }
-              />
-            {/if}
-          </div>
-        {/if}
-      </div>
-    {/if}
-
-    <!-- Conditional logic -->
-    {#if eligibleConditionSources.length > 0}
-      <div class="mt-4 border-t border-black/5 pt-4 dark:border-white/5">
-        <div class="mb-2 flex items-center gap-1.5">
-          <GitBranch size={13} class="text-text-muted/70 shrink-0" />
-          <span class="text-text-muted text-2xs font-bold tracking-wider uppercase"
-            >{m.form_builder_conditional_label()}</span
-          >
-        </div>
-        <div class="flex flex-wrap items-center gap-2">
-          <Picker
-            label={m.form_builder_conditional_label()}
-            value={item.dependsOn ?? ''}
-            options={conditionSourceOptions}
-            onValueChange={(v) => {
-              item.dependsOn = v;
-              item.dependsValue = '';
-            }}
-            triggerClass={conditionTriggerClass}
+          {/if}
+          <!-- Audience condition: shown to some people only, and only when switched on. -->
+          <Toggle
+            label={m.form_show_if_toggle()}
+            hint={m.form_show_if_hint()}
+            bind:checked={() => conditionsOn, () => toggleConditions()}
           />
-          {#if item.dependsOn}
-            <span class="text-text-muted shrink-0 text-xs">=</span>
-            <Picker
-              label={m.form_builder_conditional_label()}
-              value={item.dependsValue ?? ''}
-              options={conditionValueOptions}
-              onValueChange={(v) => (item.dependsValue = v)}
-              triggerClass={conditionTriggerClass}
-            />
+          {#if conditionsOn}
+            <div data-testid="audience-panel">
+              <AudienceConditionEditor bind:condition={item.showIf} {tiers} {formations} />
+            </div>
           {/if}
         </div>
-      </div>
-    {/if}
+      {/if}
+    </div>
 
-    <!-- The settings row: required, conditions, duplicate, delete (and reorder on touch). -->
+    <!-- The settings row: required, reorder on touch, the "..." menu, collapse. -->
     <div
-      class="mt-3 flex items-center gap-0.5 border-t border-black/5 pt-2 dark:border-white/5"
+      class="mt-1 flex items-center gap-0.5 border-t border-black/5 pt-2 dark:border-white/5"
       role="toolbar"
       aria-label={m.form_builder_settings_row_aria()}
     >
@@ -892,36 +666,6 @@
           : 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
       >
         <Asterisk size={18} />
-      </button>
-      <button
-        type="button"
-        onclick={toggleConditions}
-        aria-pressed={conditionsOn}
-        aria-label={m.form_builder_conditions_aria()}
-        title="{m.form_show_if_toggle()} - {m.form_show_if_hint()}"
-        class="ui-icon-button rounded-lg transition-colors {conditionsOn
-          ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-          : 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
-      >
-        <Users size={18} />
-      </button>
-      <button
-        type="button"
-        onclick={onDuplicate}
-        aria-label={m.form_builder_duplicate_aria()}
-        title={m.form_builder_duplicate_title()}
-        class="ui-icon-button text-text-muted hover:text-text-main rounded-lg transition-colors hover:bg-black/5 dark:hover:bg-white/10"
-      >
-        <Copy size={18} />
-      </button>
-      <button
-        type="button"
-        onclick={onRemove}
-        aria-label={m.form_builder_delete_aria()}
-        title={m.form_builder_delete_title()}
-        class="ui-icon-button text-text-muted rounded-lg transition-colors hover:bg-red-500/10 hover:text-red-500"
-      >
-        <Trash2 size={18} />
       </button>
       {#if onMoveUp && onMoveDown}
         <!-- Touch has no drag handle: reordering is two arrows. -->
@@ -947,21 +691,53 @@
         </button>
       {/if}
       <button
+        bind:this={cardMenuAnchor}
+        type="button"
+        onclick={() => {
+          if (showCardMenu) {
+            showCardMenu = false;
+            return;
+          }
+          cardMenuAsSheet = opensAsSheet();
+          showCardMenu = true;
+        }}
+        aria-label={m.form_card_menu_aria()}
+        title={m.form_card_menu_aria()}
+        aria-haspopup="true"
+        aria-expanded={showCardMenu}
+        class="ui-icon-button text-text-muted hover:text-text-main ml-auto rounded-lg transition-colors hover:bg-black/5 dark:hover:bg-white/10"
+      >
+        <Ellipsis size={18} />
+      </button>
+      <button
         type="button"
         onclick={onCollapse}
         aria-label={m.form_builder_collapse_aria()}
         title={m.form_builder_collapse_aria()}
-        class="ui-icon-button text-text-muted hover:text-text-main ml-auto rounded-lg transition-colors hover:bg-black/5 dark:hover:bg-white/10"
+        class="ui-icon-button text-text-muted hover:text-text-main rounded-lg transition-colors hover:bg-black/5 dark:hover:bg-white/10"
       >
         <ChevronUp size={18} />
       </button>
     </div>
 
-    <!-- Audience condition: shown to some people only, and only when switched on. -->
-    {#if conditionsOn}
-      <div class="mt-3" data-testid="audience-panel">
-        <AudienceConditionEditor bind:condition={item.showIf} {tiers} {formations} />
+    <FloatingSurface
+      open={showCardMenu}
+      asSheet={cardMenuAsSheet}
+      anchor={cardMenuAnchor}
+      label={m.form_card_menu_aria()}
+      popoverWidth="content"
+      onClose={(refocus) => {
+        showCardMenu = false;
+        if (refocus) cardMenuAnchor?.focus();
+      }}
+    >
+      <div class="min-w-60">
+        <MenuList
+          sections={cardMenuSections}
+          label={m.form_card_menu_aria()}
+          onSelect={runCardAction}
+        />
       </div>
-    {/if}
+    </FloatingSurface>
   {/if}
 </div>
