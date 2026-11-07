@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { resolve } from '$app/paths';
   import { internalPath } from '$lib/utils/internalPath';
   import { onMount } from 'svelte';
@@ -495,12 +496,7 @@
             class="flex w-full shrink-0 flex-col items-stretch gap-2 sm:w-auto sm:flex-row sm:items-center"
           >
             {#if userId}
-              <button
-                type="button"
-                onclick={() => toggleFollow()}
-                disabled={followLoading}
-                class="border-cn-border text-text-main flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition-colors hover:bg-(--cn-surface) disabled:opacity-50"
-              >
+              <Button variant="secondary" onclick={() => toggleFollow()} disabled={followLoading}>
                 {#if following}
                   <BellOff size={16} />
                   {m.asso_unfollow_button()}
@@ -508,14 +504,13 @@
                   <Bell size={16} />
                   {m.asso_follow_button()}
                 {/if}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="secondary"
                 onclick={() => togglePushMute()}
                 disabled={muteLoading}
                 aria-pressed={pushMuted}
                 data-testid="asso-push-mute"
-                class="border-cn-border text-text-main flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition-colors hover:bg-(--cn-surface) disabled:opacity-50"
               >
                 {#if pushMuted}
                   <Volume2 size={16} />
@@ -524,19 +519,18 @@
                   <VolumeX size={16} />
                   {m.asso_push_mute_button()}
                 {/if}
-              </button>
+              </Button>
             {/if}
             {#if myMembership}
-              <button
-                type="button"
+              <Button
+                variant="secondary"
                 onclick={() => leave()}
                 disabled={leaving}
                 data-testid="asso-leave"
-                class="border-cn-border text-text-main flex items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-medium transition-colors hover:bg-(--cn-surface) disabled:opacity-50"
               >
                 <LogOut size={16} />
                 {m.asso_leave_button()}
-              </button>
+              </Button>
             {/if}
             {#if canManage}
               <a
@@ -616,15 +610,15 @@
             {m.common_members_label()}
           </h1>
           {#if members.length > 0}
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="compact"
               onclick={handleExportTrombinoscope}
               disabled={exportingPdf}
-              class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors hover:bg-(--cn-surface) disabled:opacity-50"
             >
               <Download size={14} />
               {exportingPdf ? m.common_generating_label() : m.asso_trombinoscope_button()}
-            </button>
+            </Button>
           {/if}
         </div>
         <p class="text-text-muted text-sm">

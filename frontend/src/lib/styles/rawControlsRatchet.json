@@ -20,7 +20,7 @@
     "input": 0
   },
   "src/lib/components/associations/AssociationCalendarSection.svelte": {
-    "button": 9,
+    "button": 5,
     "select": 0,
     "input": 0
   },
@@ -29,13 +29,8 @@
     "select": 0,
     "input": 0
   },
-  "src/lib/components/associations/AssociationDetailView.svelte": {
-    "button": 4,
-    "select": 0,
-    "input": 0
-  },
   "src/lib/components/associations/AssociationDocumentManager.svelte": {
-    "button": 13,
+    "button": 4,
     "select": 0,
     "input": 0
   },
@@ -55,7 +50,7 @@
     "input": 0
   },
   "src/lib/components/associations/edit/EditAchatsTab.svelte": {
-    "button": 6,
+    "button": 4,
     "select": 0,
     "input": 1
   },
@@ -65,22 +60,17 @@
     "input": 0
   },
   "src/lib/components/associations/edit/EditBoutiqueTab.svelte": {
-    "button": 7,
+    "button": 2,
     "select": 0,
     "input": 11
   },
   "src/lib/components/associations/edit/EditCotisationsTab.svelte": {
-    "button": 14,
+    "button": 2,
     "select": 0,
     "input": 5
   },
   "src/lib/components/associations/edit/EditDangerTab.svelte": {
     "button": 2,
-    "select": 0,
-    "input": 0
-  },
-  "src/lib/components/associations/edit/EditDelegationTab.svelte": {
-    "button": 8,
     "select": 0,
     "input": 0
   },
@@ -109,13 +99,8 @@
     "select": 0,
     "input": 0
   },
-  "src/lib/components/associations/edit/LydiaBusinessOnboardingForm.svelte": {
-    "button": 6,
-    "select": 0,
-    "input": 0
-  },
   "src/lib/components/associations/edit/LydiaCashiersSection.svelte": {
-    "button": 8,
+    "button": 0,
     "select": 3,
     "input": 0
   },
@@ -129,13 +114,8 @@
     "select": 0,
     "input": 4
   },
-  "src/lib/components/associations/edit/RefundCheckDialog.svelte": {
-    "button": 4,
-    "select": 0,
-    "input": 0
-  },
   "src/lib/components/associations/edit/RefundDialog.svelte": {
-    "button": 5,
+    "button": 0,
     "select": 0,
     "input": 2
   },
@@ -215,7 +195,7 @@
     "input": 1
   },
   "src/lib/components/bookings/booker/UnitDetailSheet.svelte": {
-    "button": 5,
+    "button": 1,
     "select": 0,
     "input": 0
   },
@@ -236,11 +216,6 @@
   },
   "src/lib/components/bookings/organiser/ResourceEditor.svelte": {
     "button": 2,
-    "select": 0,
-    "input": 0
-  },
-  "src/lib/components/bookings/organiser/SpaceEditor.svelte": {
-    "button": 6,
     "select": 0,
     "input": 0
   },
@@ -335,7 +310,7 @@
     "input": 0
   },
   "src/lib/components/chat/ChannelSettingsPanel.svelte": {
-    "button": 6,
+    "button": 2,
     "select": 0,
     "input": 1
   },
@@ -350,7 +325,7 @@
     "input": 0
   },
   "src/lib/components/chat/ChatGroupPanel.svelte": {
-    "button": 13,
+    "button": 5,
     "select": 0,
     "input": 2
   },
@@ -630,7 +605,7 @@
     "input": 0
   },
   "src/lib/components/moderation/ModerationLiveCutDialog.svelte": {
-    "button": 5,
+    "button": 1,
     "select": 0,
     "input": 0
   },
@@ -985,7 +960,7 @@
     "input": 0
   },
   "src/lib/components/settings/SettingsBackupSection.svelte": {
-    "button": 6,
+    "button": 2,
     "select": 0,
     "input": 1
   },
@@ -1145,7 +1120,7 @@
     "input": 0
   },
   "src/lib/components/sidebar/SidebarCommunityAdminPanel.svelte": {
-    "button": 7,
+    "button": 3,
     "select": 0,
     "input": 2
   },
@@ -1175,7 +1150,7 @@
     "input": 0
   },
   "src/routes/admin/agenda/+page.svelte": {
-    "button": 6,
+    "button": 1,
     "select": 0,
     "input": 0
   },
@@ -1185,7 +1160,7 @@
     "input": 3
   },
   "src/routes/admin/carte/[id]/+page.svelte": {
-    "button": 23,
+    "button": 6,
     "select": 0,
     "input": 1
   },
@@ -1205,12 +1180,12 @@
     "input": 1
   },
   "src/routes/admin/moderation/+page.svelte": {
-    "button": 19,
+    "button": 7,
     "select": 0,
     "input": 0
   },
   "src/routes/admin/platform/+page.svelte": {
-    "button": 5,
+    "button": 0,
     "select": 0,
     "input": 5
   },
@@ -1270,7 +1245,7 @@
     "input": 0
   },
   "src/routes/calendar/export/+page.svelte": {
-    "button": 8,
+    "button": 5,
     "select": 0,
     "input": 0
   },

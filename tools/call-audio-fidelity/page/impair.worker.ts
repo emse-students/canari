@@ -39,7 +39,7 @@ function webkitMetadata() {
       const original = frame.getMetadata?.bind(frame);
       Object.defineProperty(frame, 'getMetadata', {
         value: () => {
-          const meta = { ...(original?.() ?? {}) };
+          const meta = { ...original?.() };
           delete meta.mimeType;
           delete meta.payloadType;
           return meta;

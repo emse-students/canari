@@ -49,7 +49,10 @@ padding or a corner on a control: that is the drift this page exists to stop.
 ## The three components (`src/lib/components/ui/`)
 
 - **`Button.svelte`** - variants `primary` (yellow, the surface's one action), `secondary` (grey
-  edge, neutral fill: cancel, back, "Modifier"), `ghost` (no fill, no edge), `danger` (red fill);
+  edge, neutral fill: cancel, back, "Modifier"), `ghost` (no fill, no edge), `danger-outline` (red text and a thin red edge on the neutral fill: a
+  destructive action on a list row or a panel - delete, leave, revoke, mute, reject - which reads as
+  destructive without outshouting the primary) and `danger` (SOLID red, kept for the final confirm
+  INSIDE a confirmation; one solid red per view at most);
   sizes `default` and `compact`; `icon` (a square the height of the row, needs an `aria-label`);
   `loading` (spinner, inert) and `disabled`; `href` (renders an anchor in the same box). The old
   `outline` variant (a 2 px black edge, the one in the screenshot) is gone: its three users are
@@ -103,6 +106,15 @@ It runs inside `bun run test` / `make test-frontend`. No workflow was added for 
 | text `<input>` | 105 | 104 |
 | **All** | **1038** | **1018** |
 
+Batch 2 (24 files, a codemod for the text buttons: yellow fill, red fill, bordered or neutral-fill,
+plain text; not a list row, a tab or a chip): 276 files / 1020 controls (after the wider scan)
+became 271 files / 877. The codemod DID convert four vertical icon-over-label tiles
+(`MessageMobileActions`) into horizontal buttons, which was wrong and was reverted: **a tile is not
+a text button either**, it stays raw until it has a component of its own. It also flattened red
+buttons to `secondary`; they are `danger-outline` now, and a yellow Validate / Approve repeated on
+list rows, like twin export buttons, is `secondary` (one primary per view). The current number is
+always the sum of `rawControlsRatchet.json`.
+
 Of the 926 buttons, by their classes (heuristic, one bucket each): 132 are `ui-icon-button` (the
 44 px / 38 px square of the headers and overlays - these keep working and are migrated to
 `Button icon` last, since the owner's 40 px replaces both sizes), 84 a hand-drawn yellow fill, 57 a
@@ -117,10 +129,11 @@ Existing components, found before writing any: `ui/Button`, `ui/Input`, `ui/Sele
 
 ## Migrating a file
 
-1. A text button becomes `<Button variant="...">`: yellow fill is `primary`, red is `danger`, a
-   border or a neutral fill is `secondary`, text only is `ghost`. Drop every height, padding, font
+1. A text button becomes `<Button variant="...">`: yellow fill is `primary` (one per view),
+   a red button on a row or a panel is `danger-outline`, solid red `danger` only for the confirm
+   inside a confirmation, a border or a neutral fill is `secondary`, text only is `ghost`. Drop every height, padding, font
    and corner utility; keep layout (`w-full`, `shrink-0`, margins).
-2. A list row, a tab or a chip is not a button in this sense: leave it, and it stays counted until a
+2. A list row, a tab, a chip or a vertical icon-over-label tile is not a button in this sense: leave it, and it stays counted until a
    later change gives it a component of its own.
 3. A raw text field becomes `Input` (its `class` lands on the wrapper, everything else on the
    `<input>`); a raw select becomes `Select`.
