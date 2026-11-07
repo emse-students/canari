@@ -51,17 +51,27 @@ printed and nothing is written.
 The report tells people; this half stops the amplification (2 000 `502`s and 4 600 warnings an hour in the
 five-hour outage). `apps/core-service/src/users/upstream-health.ts` is the state, `avatar.service.ts` its user:
 
-- written by the failure that proves the outage (a timeout, a transport failure, a 5xx), cleared by the FIRST
-  answer of any status (a `404` absence, a refused key and a `304` all prove the gallery is up);
-- while down, the first request that arrives is the one **probe** and every other request is answered
-  `unavailable` (a `502` `no-store`, so clients draw initials as before) without leaving the process. No timer:
-  the probe is simply the next request, so recovery is seen at the first request after it, and a quiet period
-  costs nothing. A stale cached photo is not served during the outage (it would hide it);
-- `avatar-presence` skips the gallery the same way and answers `null` (clients then ask each avatar, which
-  short-circuits);
+- **what proves an outage** is decided by ONE classifier (`classifyUpstreamFailure`) used by both paths: no HTTP
+  response at all (timeout, transport error) or a gateway/edge status (502, 503, 504, Cloudflare 520-530). Any
+  other status (400, 404, 410, 429, a 500 for one record, a redirect) is the gallery ANSWERING about that id and
+  proves it is up; a local exception (a cache or `Buffer` fault after an answer) flips nothing. So one bad face
+  never blanks a salon's ~30 requests;
+- the state is cleared by the FIRST answer of any status, including a late one from a request asked before the flip;
+- while down, requests are answered `unavailable` (a `502` `no-store`, so clients draw initials as before)
+  without leaving the process, and **probes are spaced by a COUNT of skipped requests** - the n-th probe after
+  1, 2, 4 ... skips, capped at 64, reset on recovery. "One probe in flight" alone would not do: Cloudflare's 530
+  answers in milliseconds, requests arrive every couple of seconds and rarely overlap, so each would find the
+  slot free and ask again (~2 000 asks an hour). Traffic is the clock: 100 sequential requests against a
+  fast-failing gallery make 7 calls (spec). A stale cached photo is not served during the outage (it would hide it);
+- the transport timeout (axios `timeout`, a socket-inactivity timer) is what bounds a probe, and every path out of
+  `admit()` reaches `recordSuccess`, `recordFailure` or `release`, each taking the admission it was given: only the
+  PROBE frees the probe slot, so a late failure of a request asked before the flip cannot admit a second probe;
+- `avatar-presence` uses the same state and answers `null` while down (clients then ask each avatar, which
+  short-circuits); its outage failures log nothing beyond the transition;
 - the log carries two transitions: `Avatar gallery <url> is DOWN (<cause>)` and `... is back after Ns - M
-  request(s) were answered without asking it`. The controller writes no `[AVATAR]` line for a short-circuited
-  request. **To read an outage: grep core-service's log for `gallery .* (is DOWN|is back)`.**
+  request(s) were answered without asking it`. **To read an outage: grep core-service's log for
+  `gallery .* (is DOWN|is back)`.** Every avatar request still writes its ONE `[AVATAR]` line (the signed-avatar
+  phase-2 measurement counts them): a skipped one as `outcome=known-down status=502` at info level.
 - The state lives in the process (per replica, re-learned by one failed request after a restart): the right
   lifetime for "is this peer reachable from here now".
 
