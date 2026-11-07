@@ -157,6 +157,7 @@ describe('LivesController', () => {
   const manifest = jest.fn().mockResolvedValue({ liveId: 'm' });
   const read = jest.fn().mockResolvedValue({ messages: [] });
   const readArrivals = jest.fn().mockResolvedValue(null);
+  const blockedFor = jest.fn().mockResolvedValue(new Set<string>());
   const cut = jest.fn().mockResolvedValue({ newlyCut: true });
   const rulesStatus = jest.fn().mockResolvedValue({ version: 1 });
   /** The posts' one moderator predicate, faked: only `MODERATOR` holds `MODERATE` in a BDE. */
@@ -175,7 +176,7 @@ describe('LivesController', () => {
     Promise.reject(new ForbiddenException({ code: 'MODERATION_OUT_OF_SCOPE' }))
   );
   const controller = new LivesController(
-    { ingest, manifest, cut, rulesStatus, readArrivals } as unknown as LivesService,
+    { ingest, manifest, cut, rulesStatus, readArrivals, blockedFor } as unknown as LivesService,
     { isContentModerator, mayModerateLive, refuseModeration } as unknown as AssociationsService,
     { read } as unknown as LiveChatService
   );
@@ -260,14 +261,14 @@ describe('LivesController', () => {
       'b'.repeat(64),
       LIVE,
       { messagesAfter: undefined, reactionsAfter: undefined, arrivalsAfter: undefined },
-      { withheld: undefined }
+      { withheld: undefined, blocked: expect.any(Set) }
     );
     await controller.manifest(LIVE, 'b'.repeat(64), '3', '1', '41', '0');
     expect(read).toHaveBeenLastCalledWith(
       'b'.repeat(64),
       LIVE,
       { messagesAfter: 41, reactionsAfter: 0, arrivalsAfter: undefined },
-      { withheld: undefined }
+      { withheld: undefined, blocked: expect.any(Set) }
     );
   });
 
@@ -281,7 +282,7 @@ describe('LivesController', () => {
       'b'.repeat(64),
       LIVE,
       { messagesAfter: undefined, reactionsAfter: undefined, arrivalsAfter: undefined },
-      { withheld: true }
+      { withheld: true, blocked: expect.any(Set) }
     );
     manifest.mockResolvedValueOnce({ liveId: 'm', chatWithheld: true });
     await expect(controller.manifest(LIVE, 'b'.repeat(64))).resolves.toEqual({ liveId: 'm' });
@@ -293,7 +294,7 @@ describe('LivesController', () => {
     await expect(
       controller.manifest(LIVE, 'b'.repeat(64), undefined, '1', '1', '1', '6')
     ).resolves.toEqual({ liveId: 'm', chat: { messages: [], ...block } });
-    expect(readArrivals).toHaveBeenLastCalledWith('b'.repeat(64), LIVE, 6);
+    expect(readArrivals).toHaveBeenLastCalledWith('b'.repeat(64), LIVE, 6, expect.any(Set));
     // A reader the chat is withheld from: the arrivals are not even read.
     readArrivals.mockClear();
     manifest.mockResolvedValueOnce({ liveId: 'm', chatWithheld: true });

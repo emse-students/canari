@@ -491,17 +491,24 @@ arrival is otherwise invisible") no longer holds: an arrival is now the one thin
 no route answers the list of who watches NOW, and the count is unchanged.
 
 **What is recorded, where.** Redis, no table, no migration: per live, a set of who arrived
-(`live:arrived:<id>`, the dedupe), a counter and a log of the newest 100 (`live:arrivalseq:<id>`,
-`live:arrivals:<id>`). `NOTE_ARRIVAL_LUA` is ONE script: `SADD` is the dedupe, so a seat that lapsed
-and was taken again, or a flapping network, announces nobody twice; the counter orders the log.
-Every key expires 6 h after its last write and `purgeEnded` deletes them with the live (an account
-erasure leaves an id in them only for the live's life - the register, C19).
+(`live:{<id>}:arrived`, the dedupe), a counter and a log of the newest 100 (`live:{<id>}:arrivalseq`,
+`live:{<id>}:arrivals`) - the live id is a HASH TAG, so on a cluster the three keys of one script share
+a slot; on the single node run today the braces are ordinary characters, no cost. `NOTE_ARRIVAL_LUA` is
+ONE script: `SADD` is the dedupe, so a seat that lapsed and was taken again, or a flapping network,
+announces nobody twice; the counter orders the log. Every key expires 6 h after its last take (every
+take, fresh or not, refreshes the TTL - proven through the real `RedisService`), and `purgeEnded`
+deletes them with the live (an account erasure leaves an id in them only for the live's life - the
+register, C19).
 
 **Who is announced, and to whom.** The note is written by `LivesService.takeSeat`, the one place a seat
 is taken, AFTER the watch rule - so a removed, blocked or hidden-from viewer never reaches it:
 - a reader the chat is WITHHELD from (a named reader, owner 2026-11-04) is NEVER noted, and is served no
   arrival fields on their own poll either - they take no part in the chat, so nobody is told they are
   here and they are shown none;
+- a PLATFORM ADMIN who opens a reported review-cohort live passes the watch rule through the cohort
+  exception (`adminSeesCohort`) but is NOT in the live's audience: the watch statement also selects
+  the same visibility WITHOUT that exception (`inAudience`), and only an in-audience viewer is
+  noted - so the admin is announced to nobody across the cohort wall;
 - the BROADCASTER takes no seat and is never announced; a reader is never shown their own arrival;
 - at READ (`LivesService.readArrivals`, per reader): an account blocked in EITHER direction
   (`blockedUserIdsFor`) is dropped, and so is a viewer the broadcaster removed (`live_removed_viewers`),
@@ -520,7 +527,10 @@ arrival is observed by the server itself, which holds the live key anyway; seali
 from nobody. The client resolves each name as it does a chat author's (`resolveUserDisplayName`), so
 the server carries an id and no display name. If Redis does not answer, the fields are OMITTED (logged
 `[LIVE_ARRIVAL]`, an error) and the client keeps its cursor: an outage costs lines, never the poll; a
-failed note never fails the seat.
+failed note never fails the seat. THE FIRST FAILURE OF AN OUTAGE is logged at ERROR and the later ones,
+on every poll of every viewer, are only counted: a flag (durable state, no timer) opens at the first
+failure and the next answer logs ONE recovery line carrying the count. The block list is read ONCE per
+poll, by the controller, and handed to the chat's reader and the arrivals' reader.
 
 **Tests.** `live-seats.spec.ts` (the scripts against a real Redis: once per viewer, order, a first poll,
 trimming, expiry, per-live), `lives.integration.spec.ts` "the arrival lines" (once, never the

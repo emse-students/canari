@@ -745,6 +745,10 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
      * stand-in; the Redis scripts have their own spec (`live-seats.spec.ts`).
      */
     describe('the arrival lines', () => {
+      /** As the controller does: the block list read once, handed to the arrivals' reader. */
+      const arrivalsFor = async (who: string, liveId: string, after: number | undefined) =>
+        lives.readArrivals(who, liveId, after, await lives.blockedFor(who));
+
       it('notes an arrival ONCE per viewer, and a first poll is told no history', async () => {
         const live = await start();
         await lives.get(CAROL, live.id);
@@ -752,19 +756,19 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
         await lives.leave(CAROL, live.id);
         await lives.manifest(CAROL, live.id);
         expect(seats.arrivalLog.get(live.id)).toEqual([{ userId: CAROL, seq: 1 }]);
-        await expect(lives.readArrivals(ALICE, live.id, undefined)).resolves.toEqual({
+        await expect(arrivalsFor(ALICE, live.id, undefined)).resolves.toEqual({
           arrivals: [],
           arrivalsMore: 0,
           arrivalsCursor: 1,
         });
         await lives.get(BOB, live.id);
-        await expect(lives.readArrivals(ALICE, live.id, 1)).resolves.toEqual({
+        await expect(arrivalsFor(ALICE, live.id, 1)).resolves.toEqual({
           arrivals: [{ userId: BOB, seq: 2 }],
           arrivalsMore: 0,
           arrivalsCursor: 2,
         });
         // Read once: the cursor has passed it.
-        await expect(lives.readArrivals(ALICE, live.id, 2)).resolves.toEqual({
+        await expect(arrivalsFor(ALICE, live.id, 2)).resolves.toEqual({
           arrivals: [],
           arrivalsMore: 0,
           arrivalsCursor: 2,
@@ -776,7 +780,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
         await lives.get(ALICE, live.id);
         await lives.get(BOB, live.id);
         expect(seats.arrivalLog.get(live.id)?.map((r) => r.userId)).toEqual([BOB]);
-        const own = await lives.readArrivals(BOB, live.id, 0);
+        const own = await arrivalsFor(BOB, live.id, 0);
         expect(own).toEqual({ arrivals: [], arrivalsMore: 0, arrivalsCursor: 1 });
       });
 
@@ -787,11 +791,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
           live.id,
           crowd.map((userId, i) => ({ userId, seq: i + 1 }))
         );
-        const block = await lives.readArrivals(ALICE, live.id, 0);
+        const block = await arrivalsFor(ALICE, live.id, 0);
         expect(block?.arrivals.map((a) => a.userId)).toEqual(crowd.slice(0, 3));
         expect(block?.arrivalsMore).toBe(2);
         expect(block?.arrivalsCursor).toBe(5);
-        await expect(lives.readArrivals(ALICE, live.id, 5)).resolves.toMatchObject({
+        await expect(arrivalsFor(ALICE, live.id, 5)).resolves.toMatchObject({
           arrivals: [],
           arrivalsMore: 0,
         });
@@ -806,20 +810,66 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
         await q(`INSERT INTO user_blocks VALUES ($1, $2)`, [ALICE, BOB]);
         await q(`INSERT INTO user_blocks VALUES ($1, $2)`, [DAVE, ALICE]);
         await lives.removeViewer(ALICE, live.id, CAROL);
-        const block = await lives.readArrivals(ALICE, live.id, 0);
+        const block = await arrivalsFor(ALICE, live.id, 0);
         expect(block).toEqual({ arrivals: [], arrivalsMore: 0, arrivalsCursor: 3 });
         // FRANK sees DAVE, CAROL (removed: no) - the rule is per reader.
-        const frank = await lives.readArrivals(FRANK, live.id, 0);
+        const frank = await arrivalsFor(FRANK, live.id, 0);
         expect(frank?.arrivals.map((a) => a.userId)).toEqual([BOB, DAVE]);
       });
 
       it('answers null, never throws, when the log does not; the poll then omits the fields', async () => {
         const live = await start();
         seats.arrivalsDown = true;
-        await expect(lives.readArrivals(ALICE, live.id, 0)).resolves.toBeNull();
+        await expect(arrivalsFor(ALICE, live.id, 0)).resolves.toBeNull();
         // A take whose arrival cannot be noted still seats the viewer.
         await expect(lives.get(BOB, live.id)).resolves.toMatchObject({ id: live.id });
         seats.arrivalsDown = false;
+      });
+
+      it('announces NO platform admin who opens a reported review-cohort live across the cohort wall', async () => {
+        const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+        process.env.SERVICE_ACCOUNT_USER_ID = ALICE;
+        await q(`UPDATE users SET admin = true WHERE id = $1`, [FRANK]);
+        try {
+          const live = await start();
+          // The admin passes the watch rule through the cohort exception, and holds a seat...
+          await lives.get(FRANK, live.id);
+          await lives.manifest(FRANK, live.id);
+          expect(seats.held.size).toBe(1);
+          // ...and is in the live's audience for nobody: no arrival is noted.
+          expect(seats.arrivalLog.get(live.id)).toBeUndefined();
+        } finally {
+          await q(`UPDATE users SET admin = false WHERE id = $1`, [FRANK]);
+          if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+          else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+        }
+      });
+
+      it('logs the first failure of an outage ONCE and one recovery line with the count', async () => {
+        const live = await start();
+        const logger = (
+          lives as unknown as { logger: { error(m: string): void; log(m: string): void } }
+        ).logger;
+        const error = jest.spyOn(logger, 'error').mockImplementation(() => {});
+        const log = jest.spyOn(logger, 'log').mockImplementation(() => {});
+        try {
+          seats.arrivalsDown = true;
+          await lives.get(BOB, live.id);
+          await lives.manifest(BOB, live.id);
+          await lives.get(CAROL, live.id);
+          expect(error).toHaveBeenCalledTimes(1);
+          seats.arrivalsDown = false;
+          await lives.manifest(BOB, live.id);
+          expect(log).toHaveBeenCalledWith(expect.stringContaining('after 3 failed call(s)'));
+          // A second outage opens a new first line.
+          seats.arrivalsDown = true;
+          await lives.manifest(BOB, live.id);
+          expect(error).toHaveBeenCalledTimes(2);
+        } finally {
+          seats.arrivalsDown = false;
+          error.mockRestore();
+          log.mockRestore();
+        }
       });
 
       it("deletes the live's arrival log at its purge", async () => {

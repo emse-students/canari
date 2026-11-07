@@ -16,7 +16,7 @@
  */
 import { HttpStatus } from '@nestjs/common';
 import Redis from 'ioredis';
-import type { RedisService } from '../common/redis';
+import { RedisService } from '../common/redis';
 import {
   LIVE_ARRIVALS_LOG_MAX,
   LIVE_ARRIVALS_PAGE,
@@ -138,7 +138,7 @@ describe('the viewer cap, as the service types it', () => {
         { userId: 'eve', seq: 3 },
       ],
     });
-    const [counter, , log] = arrivalKeys(LIVE);
+    const [, counter, log] = arrivalKeys(LIVE);
     expect(read.calls[0]).toMatchObject({ keys: [counter, log], args: [1, LIVE_ARRIVALS_PAGE] });
     const first = seatsAnswering(async () => [3]);
     await first.seats.readArrivals(LIVE, null);
@@ -275,6 +275,45 @@ maybe('the seat script against a real Redis', () => {
     expect(await takeReply(seatMember(LIVE, 'c'), 5)).toEqual([1, 2, 1]);
     // A refusal at the cap carries no count.
     expect(await takeReply(seatMember(LIVE, 'd'), 2)).toEqual([0, 2]);
+  });
+
+  /**
+   * THROUGH THE REAL `RedisService.evalScript` (its argument order, its key count): what the service
+   * methods send is what the scripts expect. A KNOWN (non-fresh) note must still refresh the TTL -
+   * the dedupe set lives as long as anybody takes a seat.
+   */
+  it('notes, reads and forgets arrivals through LiveSeats and the real RedisService', async () => {
+    const saved = process.env.REDIS_URL;
+    process.env.REDIS_URL = URL!;
+    const service = new RedisService();
+    if (saved === undefined) delete process.env.REDIS_URL;
+    else process.env.REDIS_URL = saved;
+    const seats = new LiveSeats(service);
+    const keys = arrivalKeys(LIVE);
+    try {
+      await redis.del(...keys);
+      await expect(seats.noteArrival(LIVE, 'bob')).resolves.toBe(true);
+      // A shortened TTL, then a KNOWN viewer's note: not fresh, and the TTL is back to full.
+      for (const k of keys) await redis.pexpire(k, 1_000);
+      await expect(seats.noteArrival(LIVE.toUpperCase(), 'bob')).resolves.toBe(false);
+      for (const k of keys) {
+        expect(await redis.pttl(k)).toBeGreaterThan(1_000);
+        expect(await redis.pttl(k)).toBeLessThanOrEqual(LIVE_ARRIVALS_TTL_MS);
+      }
+      await seats.noteArrival(LIVE, 'eve');
+      await expect(seats.readArrivals(LIVE, null)).resolves.toEqual({ top: 2, rows: [] });
+      await expect(seats.readArrivals(LIVE, 1)).resolves.toEqual({
+        top: 2,
+        rows: [{ userId: 'eve', seq: 2 }],
+      });
+      await seats.forgetArrivals(LIVE);
+      expect(await redis.exists(...keys)).toBe(0);
+      // The three keys share ONE hash tag: one slot on a cluster.
+      expect(new Set(keys.map((k) => /\{([^}]+)\}/.exec(k)?.[1])).size).toBe(1);
+    } finally {
+      await redis.del(...keys);
+      await service.onModuleDestroy();
+    }
   });
 
   /**

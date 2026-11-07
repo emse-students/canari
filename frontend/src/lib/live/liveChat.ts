@@ -347,7 +347,7 @@ export class LiveChatSession {
     if (this.chatWithheld) this.arrivalsAfter = undefined;
     else if (Number.isSafeInteger(block.arrivalsCursor)) this.arrivalsAfter = block.arrivalsCursor;
     this.chain = this.chain
-      .then(() => this.apply(block))
+      .then(() => this.apply(block, block.messagesCursor))
       .catch((e: unknown) => {
         // A block that throws must not stall the chain behind it. Rows are tried one by one, so
         // reaching this is a defect in the session itself.
@@ -576,7 +576,7 @@ export class LiveChatSession {
     this.opts.onLiveOver?.(error);
   }
 
-  private async apply(block: LiveChatBlock): Promise<void> {
+  private async apply(block: LiveChatBlock, ownCursor: number): Promise<void> {
     const key = this.keyHex;
     if (this.stopped || key === null) return;
     // A withheld block carries no line; one that was in flight when the switch went off is not drawn.
@@ -603,7 +603,7 @@ export class LiveChatSession {
         break;
       }
     }
-    const arrived = this.drawArrivals(block);
+    const arrived = this.drawArrivals(block, ownCursor);
     if (messages.length > 0 || arrived) {
       Log.d(TAG, { op: 'receive', messages: messages.length, dropped, arrived });
       this.changed();
@@ -619,14 +619,16 @@ export class LiveChatSession {
   /**
    * Draws the block's ARRIVAL lines ("X a rejoint", owner 2026-11-07): one per named account, then
    * one "et N autres" for the crowd the server folded. Never for a withheld reader, never twice for
-   * one server sequence, and a malformed row is dropped and said. They sort just after this poll's
-   * messages (a half step past the message cursor), so a later message lands under them. Only the
+   * one server sequence, and a malformed row is dropped and said. They sort just after THIS poll's
+   * messages: a half step past the block's own cursor (`ownCursor`, captured when the block
+   * arrived, not read when it is drawn - a block applied after a newer one still sorts under its
+   * own messages), so a later message lands under them. Only the
    * newest {@link LIVE_ARRIVAL_LINES_KEPT} stay, so a crowd never buries the conversation.
    * Returns whether a line was added.
    */
-  private drawArrivals(block: LiveChatBlock): boolean {
+  private drawArrivals(block: LiveChatBlock, ownCursor: number): boolean {
     if (this.chatWithheld || !Array.isArray(block.arrivals)) return false;
-    const seq = (this.messagesAfter ?? 0) + 0.5;
+    const seq = (Number.isSafeInteger(ownCursor) ? ownCursor : 0) + 0.5;
     let added = false;
     for (const a of block.arrivals) {
       if (typeof a?.userId !== 'string' || !Number.isSafeInteger(a.seq)) {

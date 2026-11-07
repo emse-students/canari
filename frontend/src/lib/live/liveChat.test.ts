@@ -749,6 +749,17 @@ describe('the arrival lines (owner, 2026-11-07)', () => {
     expect(lines.at(-1)?.text).toBe('apres');
   });
 
+  it("sorts a block's arrivals under ITS OWN messages, even when a newer block arrived before it was drawn", async () => {
+    const s = session();
+    // Two polls land back to back: the cursors move at arrival, the rows are drawn in order after.
+    const first = s.receive(
+      block([wire(1, 'un')], 1, { arrivals: [{ userId: JOINER, seq: 1 }], arrivalsCursor: 1 })
+    );
+    const second = s.receive(block([wire(2, 'deux'), wire(3, 'trois')], 3));
+    await Promise.all([first, second]);
+    expect(lines.map((l) => l.kind ?? l.text)).toEqual(['un', 'arrival', 'deux', 'trois']);
+  });
+
   it('draws a line once per server sequence, and drops a malformed row', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const s = session();

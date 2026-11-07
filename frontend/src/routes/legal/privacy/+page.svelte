@@ -145,21 +145,22 @@
           la taille de chaque segment, les membres que vous retirez du direct, et, pour chaque
           spectateur, le fait qu'il regarde (son compte et l'heure de sa dernière lecture). Le
           nombre de spectateurs est affiché à vous et à ceux qui regardent. À votre arrivée sur un
-          direct, le serveur retient que vous êtes arrivé (votre compte, jusqu'à la fin du direct),
-          et une ligne « X a rejoint », avec votre nom, apparaît dans le chat pour les autres
-          spectateurs et pour la personne qui diffuse, sauf pour un compte avec lequel un blocage
-          existe et sauf si le chat vous est masqué ; au plus trois noms à la fois, le reste est
-          compté. Aucune fonction de Canari ne montre la liste de ceux qui regardent à un instant
-          donné. Les messages du chat sont chiffrés avec la même clé ; leur auteur est connu du
-          serveur et son nom est affiché aux autres spectateurs. Les réactions (cœur, rire, bravo,
-          feu, poussin) ne sont pas chiffrées : le serveur enregistre qui réagit et compte les
-          réactions. Un direct n'est pas enregistré et n'a pas de rediffusion. Avant votre premier
-          direct, vous acceptez les règles de publication : la version acceptée et sa date sont
-          conservées. Pour limiter les abus, le serveur garde aussi l'heure de chacun de vos
-          démarrages pendant une heure. Les journaux techniques notent les débuts et fins de direct,
-          les coupures et les retraits de spectateurs, avec le début de l'identifiant du compte
-          concerné, et, comme pour toute requête, le serveur web journalise l'adresse IP de chaque
-          lecture.
+          direct, le serveur retient que vous êtes arrivé (votre compte, jusqu'à la suppression du
+          direct, peu après sa fin), et une ligne « X a rejoint », avec votre nom, apparaît dans le
+          chat pour les autres spectateurs et pour la personne qui diffuse, sauf pour un compte avec
+          lequel un blocage existe dans un sens ou dans l'autre, sauf pour les spectateurs que la
+          personne qui diffuse a retirés, et sauf si le chat vous est masqué ; au plus trois noms à
+          la fois, le reste est compté. Aucune fonction de Canari ne montre la liste de ceux qui
+          regardent à un instant donné. Les messages du chat sont chiffrés avec la même clé ; leur
+          auteur est connu du serveur et son nom est affiché aux autres spectateurs. Les réactions
+          (cœur, rire, bravo, feu, poussin) ne sont pas chiffrées : le serveur enregistre qui réagit
+          et compte les réactions. Un direct n'est pas enregistré et n'a pas de rediffusion. Avant
+          votre premier direct, vous acceptez les règles de publication : la version acceptée et sa
+          date sont conservées. Pour limiter les abus, le serveur garde aussi l'heure de chacun de
+          vos démarrages pendant une heure. Les journaux techniques notent les débuts et fins de
+          direct, les coupures et les retraits de spectateurs, avec le début de l'identifiant du
+          compte concerné, et, comme pour toute requête, le serveur web journalise l'adresse IP de
+          chaque lecture.
         </dd>
       </div>
       <div>

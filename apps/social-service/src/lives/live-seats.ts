@@ -92,10 +92,15 @@ end
 return n
 `;
 
-/** The three Redis keys of one live's arrivals: who arrived (dedupe), the counter, the ordered log. */
+/**
+ * The three Redis keys of one live's arrivals: who arrived (dedupe), the counter, the ordered log.
+ * The live id is a HASH TAG (`{...}`): on a Redis Cluster the three keys of one script hash to ONE
+ * slot, so the multi-key scripts stay legal. On the single node this estate runs, the braces are
+ * ordinary characters of the key name - no cost, no behaviour change.
+ */
 export const arrivalKeys = (liveId: string): [string, string, string] => {
   const id = liveId.toLowerCase();
-  return [`live:arrived:${id}`, `live:arrivalseq:${id}`, `live:arrivals:${id}`];
+  return [`live:{${id}}:arrived`, `live:{${id}}:arrivalseq`, `live:{${id}}:arrivals`];
 };
 
 /**
@@ -263,7 +268,7 @@ export class LiveSeats {
     liveId: string,
     after: number | null
   ): Promise<{ top: number; rows: LiveArrivalRow[] }> {
-    const [counter, , log] = arrivalKeys(liveId);
+    const [, counter, log] = arrivalKeys(liveId);
     const reply = await this.redis.evalScript(
       READ_ARRIVALS_LUA,
       [counter, log],

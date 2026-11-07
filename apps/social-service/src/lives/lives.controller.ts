@@ -217,12 +217,14 @@ export class LivesController {
     // the manifest let this viewer watch. Whether it is WITHHELD from them (a named reader, owner
     // 2026-11-04) was decided by that same watch statement, so it is asked again on every poll and a
     // switch flipped in the read-access grid holds from the next one, without a reconnect.
-    const block = await this.chat.read(caller, id, cursors, { withheld: chatWithheld });
+    // ONE read of the block list per poll, for the chat and the arrivals alike.
+    const blocked = await this.lives.blockedFor(caller);
+    const block = await this.chat.read(caller, id, cursors, { withheld: chatWithheld, blocked });
     // THE ARRIVAL LINES (owner, 2026-11-07) ride the same block - and are NOT served to a reader the
     // chat is withheld from: they take no part in it, so they are shown none and announced to none.
     const arrivals = chatWithheld
       ? null
-      : await this.lives.readArrivals(caller, id, cursors.arrivalsAfter);
+      : await this.lives.readArrivals(caller, id, cursors.arrivalsAfter, blocked);
     return { ...manifest, chat: { ...block, ...arrivals } };
   }
 
