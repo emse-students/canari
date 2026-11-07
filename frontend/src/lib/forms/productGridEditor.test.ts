@@ -37,6 +37,7 @@ import {
   setTiers,
   splitPastedList,
   syncTierLists,
+  tierSwitchLosesInput,
   toggleClosedCell,
   withFreshProductGridIds,
   type EditorProductGrid,
@@ -263,6 +264,24 @@ describe('categories', () => {
     expect(judge(grid, { isPublic: true, requiresPayment: true })?.code).toBe(
       'PRODUCT_GRID_GUEST_PRICE_MISSING'
     );
+  });
+
+  it('leaving a criterion asks only when it would lose a named group or a group price', () => {
+    const grid = sweat();
+    expect(tierSwitchLosesInput(grid)).toBe(false);
+    // Freshly switched on: one empty group, prices copied from the list on screen - nothing typed.
+    setTiers(grid, { id: 'd2', kind: 'promo', buckets: [{ id: 'b1', label: 'Groupe 1' }] });
+    expect(tierSwitchLosesInput(grid)).toBe(false);
+    // Only "Autres" survives a switch, so a change there alone is not at stake.
+    setPrice(grid, '_others', '*', 31);
+    setPrice(grid, 'b1', '*', 31);
+    expect(tierSwitchLosesInput(grid)).toBe(false);
+    setPrice(grid, 'b1', '*', 25);
+    expect(tierSwitchLosesInput(grid)).toBe(true);
+    // A group naming anyone is input too, whatever its prices.
+    const named = sweat();
+    setTiers(named, JSON.parse(JSON.stringify(cotisants)));
+    expect(tierSwitchLosesInput(named)).toBe(true);
   });
 
   it('copies the registration price grid profile criterion, never an answer criterion', () => {

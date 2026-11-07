@@ -3070,6 +3070,8 @@
   "form_pgrid_tier_others": "Others",
   "form_pgrid_tier_unnamed": "Unnamed",
   "form_pgrid_tiers_badge": "Categories",
+  "form_pgrid_tiers_switch_confirm": "This criterion's groups and their prices will be erased; only the \"Others\" prices are kept. Continue?",
+  "form_pgrid_tiers_switch_confirm_button": "Erase",
   "form_pgrid_tiers_by": "By",
   "form_pgrid_tiers_copy_form": "Use the registration price's categories",
   "form_pgrid_tiers_hint": "Each person sees only their own price.",
