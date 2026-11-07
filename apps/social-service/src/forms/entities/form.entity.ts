@@ -113,8 +113,10 @@ export class Form {
 
   /**
    * When true, anybody holding the link may answer WITHOUT an account (migration 068). A guest has
-   * no identity to charge, to grant to, to count once or to match a profile criterion against, so a
-   * public form is free, criteria-free and answerable more than once - `assertPublicConfigValid`.
+   * no account to grant to, no profile to restrict an audience by and no identity to count once,
+   * so a public form grants nothing, restricts nobody and is answerable more than once
+   * (`form-option-rules.ts`, `assertPublicConfigValid`). A guest pays, and on a grid by promo,
+   * formation or cotisation pays the "everyone else" tier.
    */
   @Column({ default: false })
   isPublic: boolean;
