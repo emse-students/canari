@@ -1,3 +1,0 @@
-### Fixed - `**bold **` renders bold, and the composer's toolbar, preview and the published post read one markdown grammar
-
-A post containing `**TOP 5 MINIMOYS **` showed its asterisks: CommonMark refuses a closing marker after a space, and the toolbar wrote exactly that when a selection ended on a space. The toolbar now keeps edge whitespace outside its markers, toggles off, works line by line on headings, lists and quotes; the renderer tolerates the old text; the preview no longer shows `__x__` as an underline the post never draws. The cases table and the parity test are in [markdown-coherence](docs/wiki/frontend/markdown-coherence.md).
