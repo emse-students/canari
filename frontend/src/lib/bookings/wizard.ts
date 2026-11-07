@@ -39,7 +39,7 @@ export const SLOT_LENGTH_CHOICES = [15, 20, 25, 30, 45, 60, 90, 120] as const;
 export const DEFAULT_SLOT_MINUTES = 30;
 
 /** A duration in the reader's words: "30 min", "2 h", "1 h 30". */
-export function durationLabel(minutes: number): string {
+function durationLabel(minutes: number): string {
   const h = Math.floor(minutes / 60);
   const rest = minutes % 60;
   if (h === 0) return m.bookings_wizard_minutes({ minutes: rest });
