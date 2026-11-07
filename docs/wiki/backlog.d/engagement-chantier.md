@@ -5,7 +5,7 @@ an association's live reaches everyone who sees it, four sources of follow sugge
 surfaces, the faces of mutual follows, a per-account bell (posts and lives by default, reduced to
 lives or nothing), friends' activity behind a sharing setting that is ON by default, campus trends,
 shotgun openings told to followers once, a daily cap of 5 pushes on the NEW kinds only, onboarding in
-the feed and suggested posts. **WP-1 (the association live audience) is built; WP-2..WP-10 are
+the feed and suggested posts. **WP-1 (the association live audience) is built; WP-1b (one announced live per association per 6 hours) is owed before the stable carrying WP-1; WP-2..WP-10 are
 designed, in order, each one small pull request shipping on its own after an adversarial review, a
 dev pass and a phone reading.** Owed, as read-only production queries written on the page: R1 (the
 trend threshold) before WP-10, R2 (the cap check) before WP-8. Everything is on
