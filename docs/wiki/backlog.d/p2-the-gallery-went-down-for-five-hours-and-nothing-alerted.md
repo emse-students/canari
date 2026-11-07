@@ -21,7 +21,8 @@ that proves it and cleared by the first answer, one probe at a time, one log lin
 
 **Owed (this entry closes when both are shipped):**
 
-1. **Le Cercle's `[MIGALLERY]` photo fetch needs the same treatment, in its own repository** (the state machine
-   is ~60 lines with no dependency: copy `upstream-health.ts` and its spec).
+1. **Le Cercle's `[MIGALLERY]` photo fetch: the same mechanism is built as a draft merge request in its own
+   repository (rootz/le-cercle !33, 2026-11-07); owed its merge and release.** Keep its `upstream-health.ts` in
+   step with Canari's.
 2. **One reading of the report on a real failure**, or the drill the wiki page describes, to see an issue open
    and close; and one reading of core-service's `is DOWN` / `is back` lines on a real outage.
