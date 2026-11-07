@@ -6,8 +6,8 @@ import type { LoggerService } from '@nestjs/common';
  *
  * "Enfants directs. Et il ne peut y avoir que deux niveaux maximum. Un BDE n'est gere par personne.
  * Les associations/listes peuvent etre gerees par un BDE. Les institutions ne peuvent pas etre
- * gerees." The governing parent (`associations."parentAssociationId"`) is ADDITIVE in WP-D1: nothing
- * reads it for governance until WP-D2.
+ * gerees." The governing parent (`associations."parentAssociationId"`) IS governance since WP-D2:
+ * MANAGE_ASSO in its parent BDE (or itself when a BDE) - `holdsBdeFlagOverSql`.
  *
  * The same three rules are enforced by migration 131 (`canari_dependency_refusal` and its two
  * triggers), which makes a hand-written UPDATE unable to break them; the service asks THIS first so

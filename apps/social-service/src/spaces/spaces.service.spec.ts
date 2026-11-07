@@ -9,7 +9,13 @@ import type { DataSource, Repository } from 'typeorm';
 import type { Association } from '../associations/entities/association.entity';
 import { AssociationAudience } from './association-audience.entity';
 import { Space, SPACE_CAMPUSES, SPACE_FORMATIONS } from './space.entity';
-import { SpacesService, normaliseRules, ruleReachesSpace, smallestRules } from './spaces.service';
+import {
+  FORMER_PARENT_SEATS_SQL,
+  SpacesService,
+  normaliseRules,
+  ruleReachesSpace,
+  smallestRules,
+} from './spaces.service';
 import { ENTITY_GOVERNOR_SPACE_STANDINGS_SQL, HOLDS_BDE_FLAG_OVER_SQL } from './bde';
 import {
   DEPENDENCY_CHILD_IS_A_BDE,
@@ -109,6 +115,8 @@ describe('SpacesService', () => {
     governs?: boolean;
     /** The campuses whose every space the entity's PARENT governs; by default `bdeCampuses`. */
     parentCampuses?: string[];
+    /** What `FORMER_PARENT_SEATS_SQL` answers: the child's rows held by the former parent's officers. */
+    formerParentSeats?: { userId: string; permissions: number }[];
     /** Associations by id, when a test needs more than one (`setParent`). */
     byId?: Record<string, Partial<Association>>;
     /** What `spaces.count` answers: the spaces a former governor still governs. */
@@ -161,6 +169,7 @@ describe('SpacesService', () => {
       // management predicate (does the star govern THIS entity) answers from the same campuses: a
       // rule of the entity on one of them reaches a governed space.
       query: jest.fn().mockImplementation(async (sql: string) => {
+        if (sql === FORMER_PARENT_SEATS_SQL) return opts.formerParentSeats ?? [];
         if (sql === HOLDS_BDE_FLAG_OVER_SQL) {
           return [
             {
@@ -358,6 +367,37 @@ describe('SpacesService', () => {
         'admin-1',
         'admin',
       ]);
+    });
+
+    it("names at WARN the child's rows the FORMER parent's officers hold, and revokes none (WP-D2)", async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      try {
+        const other = { id: 'other', type: 'association' as const, parentAssociationId: null };
+        const moved = withParents(
+          { bde: BDE, other, club: { ...CLUB, parentAssociationId: 'bde' } },
+          ['bde', 'other'],
+          { formerParentSeats: [{ userId: 'officer-of-bde-1', permissions: 255 }] }
+        );
+        await moved.service.setParent('club', 'other', ACTOR);
+        const query = (moved.service as unknown as { dataSource: { query: jest.Mock } }).dataSource
+          .query;
+        expect(query).toHaveBeenCalledWith(FORMER_PARENT_SEATS_SQL, ['club', 'bde', 1 << 6]);
+        expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+          '[DEPENDENCY] club left parent bde: 1 member row(s) held by its MANAGE_ASSO holders stay - review them: officer-=255',
+        ]);
+        // Nothing is deleted: the only writes are the parent and its journal line.
+        expect(moved.manager.delete).not.toHaveBeenCalled();
+
+        // A first parent (none before) has no former officers to name.
+        warn.mockClear();
+        const first = withParents({ bde: BDE, club: CLUB }, ['bde'], {
+          formerParentSeats: [{ userId: 'x', permissions: 1 }],
+        });
+        await first.service.setParent('club', 'bde', ACTOR);
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
     });
 
     it.each([
@@ -774,7 +814,7 @@ describe('SpacesService', () => {
         ).resolves.toEqual([{ formation: 'ICM', campus: 'gardanne', editable: true }]);
       });
 
-      it('lets a parent read its child reaching outside its campus, and narrow it back', async () => {
+      it('lets a parent read its child reaching outside its campus, and leaves the rule outside it to the admin', async () => {
         const o = {
           association: { id: 'a', type: 'association' as const },
           rules: [

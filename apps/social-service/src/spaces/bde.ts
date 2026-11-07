@@ -26,7 +26,9 @@ export function isBdeAssociationSql(alias: string): string {
  * - **A parent that governs no space**: nothing joins either - a parent left without a space
  *   governs nobody (reform 2.2; the Dependencies panel shows it as a mismatch).
  * - **A BDE** has no parent ("un BDE n'est gere par personne", D2, G10) and is governed through a
- *   membership in ITSELF only - never by another BDE whose audience overlaps it.
+ *   membership in ITSELF only - never by another BDE whose audience overlaps it, and never by a
+ *   parent a hand-written row gives it: the last clause refuses the parent path for a child that
+ *   governs a space, so this does not rest on migration 131's triggers alone.
  * - **An institution** has no parent (the triggers of migration 131 refuse one) and governs itself
  *   as an institution, never as a BDE: the `type` tests exclude both paths even for a hand-written
  *   row, so no BDE ever governs an institution (E5, G9).
@@ -36,7 +38,8 @@ export function isBdeAssociationSql(alias: string): string {
 export function governingBdeJoinSql(child: string, bde: string): string {
   return `JOIN associations ${bde} ON ${bde}.id IN (${child}."parentAssociationId", ${child}.id)
       AND ${bde}.type = 'association' AND ${child}.type <> 'institution'
-      AND ${isBdeAssociationSql(bde)}`;
+      AND ${isBdeAssociationSql(bde)}
+      AND (${bde}.id = ${child}.id OR NOT ${isBdeAssociationSql(child)})`;
 }
 
 /**

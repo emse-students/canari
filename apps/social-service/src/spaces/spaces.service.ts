@@ -30,6 +30,19 @@ import {
 import type { DependencyMismatch } from './dependency-rules';
 import { writeDependencyJournal } from './dependency-journal';
 import type { AudienceRuleDto } from './dto/space.dto';
+
+/**
+ * The member rows of association `$1` held by users who hold flag `$3` (MANAGE_ASSO) in association
+ * `$2` - its FORMER parent. Answers `userId`, `permissions`. Read once a parent changes
+ * (`SpacesService.warnFormerParentSeats`), to name what the change did not revoke.
+ */
+export const FORMER_PARENT_SEATS_SQL = `SELECT seat."userId", seat.permissions
+  FROM association_members seat
+  WHERE seat."associationId" = $1
+    AND EXISTS (SELECT 1 FROM association_members officer
+      WHERE officer."associationId" = $2 AND officer."userId" = seat."userId"
+        AND (officer.permissions & $3) <> 0)
+  ORDER BY seat."userId"`;
 import { Space, SPACE_CAMPUSES, SPACE_FORMATIONS } from './space.entity';
 import type { SpaceCampus, SpaceFormation } from './space.entity';
 
@@ -261,8 +274,11 @@ export class SpacesService {
    * guarded by the controller), and optionally its G3 display label (`undefined` leaves the label as
    * it is). The rules are asked first (`dependencyRefusal`) so a refusal is a typed 409; a trigger
    * refusal from a racing write maps to the same code. A parent change writes a `dependency_journal`
-   * line in the same transaction; an unchanged value writes nothing. ADDITIVE in WP-D1: nothing
-   * reads the parent for governance yet.
+   * line in the same transaction; an unchanged value writes nothing. A PRIVILEGE CHANGE since WP-D2:
+   * the parent IS the governor (MANAGE_ASSO in its parent BDE, or itself when a BDE -
+   * `holdsBdeFlagOverSql`), so the new parent's officers gain the super-admin tier, moderation and
+   * deletion of the child, and the former parent's lose them - while member rows the former
+   * parent's officers wrote for themselves stay, and are named at WARN (`warnFormerParentSeats`).
    */
   async setParent(
     associationId: string,
@@ -345,6 +361,32 @@ export class SpacesService {
     );
     this.logger.log(
       `[DEPENDENCY] ${associationId}: parent ${child.parentAssociationId ?? 'none'} -> ${parentId ?? 'none'}${labelChanges ? `, label -> ${displayParentId ?? 'none'}` : ''} by ${actor.userId.slice(0, 8)}`
+    );
+    if (parentChanges && child.parentAssociationId !== null) {
+      await this.warnFormerParentSeats(associationId, child.parentAssociationId);
+    }
+  }
+
+  /**
+   * A parent change moves governance, but not the member rows the FORMER parent's officers may have
+   * written for themselves in the child while they governed it (a super-admin seats itself
+   * uncapped, `member-flag-ceiling.ts`). Revoking them is a decision, not a side effect of a
+   * dependency write - so they are NAMED at WARN for the platform admin to review, never removed.
+   * The same was true under the reach rule; WP-D2 makes the moment observable.
+   */
+  private async warnFormerParentSeats(childId: string, formerParentId: string): Promise<void> {
+    const seats = (await this.dataSource.query(FORMER_PARENT_SEATS_SQL, [
+      childId,
+      formerParentId,
+      AssociationPermissionFlag.MANAGE_ASSO,
+    ])) as { userId: string; permissions: number }[];
+    if (seats.length === 0) {
+      this.logger.debug(`[DEPENDENCY] ${childId}: no member row of the former parent's officers`);
+      return;
+    }
+    this.logger.warn(
+      `[DEPENDENCY] ${childId} left parent ${formerParentId}: ${seats.length} member row(s) held by its MANAGE_ASSO holders stay - review them: ` +
+        seats.map((s) => `${s.userId.slice(0, 8)}=${s.permissions}`).join(', ')
     );
   }
 

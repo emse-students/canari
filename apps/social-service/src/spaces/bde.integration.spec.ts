@@ -30,6 +30,7 @@ import {
   holdsBdeAgendaRightOverSql,
   isBdeAssociationSql,
 } from './bde';
+import { FORMER_PARENT_SEATS_SQL } from './spaces.service';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -328,6 +329,51 @@ maybe('BDE governance against PostgreSQL (migrations 071 and 072 included)', () 
         MANAGE_ASSO,
       ]);
       expect(rows[0].holds).toBe(false);
+    } finally {
+      await client.query('ROLLBACK');
+    }
+  });
+
+  it('refuses a BDE to another BDE even when a hand-written row names it as the parent (D2, G10)', async () => {
+    // Migration 131's trigger refuses such a row; the predicate does not rely on it.
+    await client.query('BEGIN');
+    try {
+      await client.query(`UPDATE associations SET "parentAssociationId" = $2 WHERE id = $1`, [
+        A.bdeGa,
+        A.bdeSe,
+      ]);
+      const holds = async (userId: string) =>
+        (await client.query(HOLDS_BDE_FLAG_OVER_SQL, [userId, A.bdeGa, MANAGE_ASSO])).rows[0]
+          .holds as boolean;
+      expect(await holds('seManage')).toBe(false);
+      // Its own officers still govern it.
+      expect(await holds('gaManage')).toBe(true);
+    } finally {
+      await client.query('ROLLBACK');
+    }
+  });
+
+  it("names the child's rows held by its former parent's MANAGE_ASSO holders (setParent's WARN)", async () => {
+    await client.query('BEGIN');
+    try {
+      // seManage (MANAGE_ASSO in bdeSe) seated itself in clubSe; clubVal is clubSe's own officer.
+      await client.query(
+        `INSERT INTO association_members ("associationId", "userId", permissions) VALUES ($1, 'seManage', 255)`,
+        [A.clubSe]
+      );
+      const { rows } = await client.query(FORMER_PARENT_SEATS_SQL, [
+        A.clubSe,
+        A.bdeSe,
+        MANAGE_ASSO,
+      ]);
+      expect(rows).toEqual([{ userId: 'seManage', permissions: 255 }]);
+      // A VALIDATE_EVENTS-only officer of the former parent is not named: it governed nothing.
+      await client.query(
+        `INSERT INTO association_members ("associationId", "userId", permissions) VALUES ($1, 'seVal', 1)`,
+        [A.clubSe]
+      );
+      const again = await client.query(FORMER_PARENT_SEATS_SQL, [A.clubSe, A.bdeSe, MANAGE_ASSO]);
+      expect(again.rows.map((r) => r.userId)).toEqual(['seManage']);
     } finally {
       await client.query('ROLLBACK');
     }

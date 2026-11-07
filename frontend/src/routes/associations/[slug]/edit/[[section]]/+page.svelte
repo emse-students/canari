@@ -81,8 +81,8 @@
   let myMembership = $derived(members.find((mb) => mb.userId === userId));
   let isGlobalAdminUser = $derived(isGlobalAdmin());
   /**
-   * BDE super-admin OF THIS association (MANAGE_ASSO in the BDE of a space it reaches, WP6c step
-   * 2): may administer it without being a member. `superAdminOf` is the server's `me/bde-reach`,
+   * BDE super-admin OF THIS association (MANAGE_ASSO in its parent BDE, or itself when a BDE,
+   * WP-D2): may administer it without being a member. `superAdminOf` is the server's `me/bde-reach`,
    * which never lists an institution: an institution has no governing BDE (owner, 2026-11-02), and
    * the type check says so here too rather than trusting a stale list.
    */
@@ -176,8 +176,8 @@
    * `DELETE :id` moved to `GlobalAdminOrBdeSuperAdminGuard` on 2026-09-10 (user), so it now admits
    * exactly what CREATE has always admitted: a global admin, or a BDE member holding
    * `MANAGE_ASSO`. It is deliberately NOT `mayActOnAssociation`, because an association's own
-   * admin never holds it, however many flags they have. Since WP6c step 2 the server checks it in
-   * the handler, scoped: the BDE must govern THIS association (a space it reaches), which is what
+   * admin never holds it, however many flags they have. Since WP-D2 the server checks it in the
+   * handler, scoped: MANAGE_ASSO in its parent BDE (or itself when a BDE), which is what
    * `isSuperAdminUser` already reads. Since 2026-11-02 (owner) an INSTITUTION is deleted by the
    * global admin alone (`INSTITUTION_DELETE_ADMIN_ONLY`): `rights.delete` carries both rules.
    */
@@ -347,7 +347,7 @@
       const uid = currentUserId();
       const mine = members.find((mb) => mb.userId === uid);
       // Await the BDE reach so the access decision is deterministic. It is THIS association's
-      // super-admin tier (WP6c step 2): MANAGE_ASSO in the BDE of a space it reaches.
+      // super-admin tier: MANAGE_ASSO in its parent BDE (or itself when a BDE), WP-D2.
       superAdminOf = (await getMyBdeReach()).manageAsso;
       const canEdit = mayEnterEditArea({
         isGlobalAdmin: isGlobalAdmin(),

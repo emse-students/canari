@@ -117,8 +117,8 @@
   let myMembership = $derived(members.find((m) => m.userId === userId));
   /**
    * The associations whose BDE grants the viewer a scoped power - the server's own answer. A BDE
-   * governs the associations reaching its spaces, not every association (WP6c step 2), so the two
-   * BDE-derived controls below read THIS association out of it.
+   * governs its children - MANAGE_ASSO in its parent BDE (or itself when a BDE), WP-D2 - not every
+   * association, so the two BDE-derived controls below read THIS association out of it.
    */
   let bdeReach = $state<BdeReach>({ validateEvents: [], manageAsso: [] });
   let canManage = $derived(

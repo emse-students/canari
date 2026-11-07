@@ -256,6 +256,8 @@ EXISTS (SELECT 1 FROM associations gov_child
   JOIN associations gov_bde ON gov_bde.id IN (gov_child."parentAssociationId", gov_child.id)
       AND gov_bde.type = 'association' AND gov_child.type <> 'institution'
       AND EXISTS (SELECT 1 FROM spaces bde_space WHERE bde_space."bdeAssociationId" = gov_bde.id)
+      AND (gov_bde.id = gov_child.id
+        OR NOT EXISTS (SELECT 1 FROM spaces bde_space WHERE bde_space."bdeAssociationId" = gov_child.id))
   JOIN association_members gov_m ON gov_m."associationId" = gov_bde.id
   WHERE gov_child.id = ${association}
     AND gov_m."userId" = ${user} AND (gov_m.permissions & ${flag}) <> 0)
@@ -263,7 +265,9 @@ EXISTS (SELECT 1 FROM associations gov_child
 
 - **One difference from the sketch above, on purpose:** the entity ITSELF is a candidate governor
   when it is a BDE, so a BDE's own officers keep governing the BDE (its super-admin tier, its own
-  content's moderation), as they did. A BDE has no parent, so no other BDE ever joins (G10).
+  content's moderation), as they did. A BDE has no parent, and the last clause refuses the parent
+  path for a child that governs a space, so no other BDE ever joins (G10) even through a
+  hand-written row.
 - **The `type` tests do not trust the triggers of migration 131**: a hand-written parent on an
   institution, or an institution named as a parent, governs nothing (E5, G9) - pinned in
   `bde.integration.spec.ts` and `bde-moderation.integration.spec.ts`.
@@ -285,6 +289,10 @@ EXISTS (SELECT 1 FROM associations gov_child
   `editable` is false for every rule of an entity the reader does not govern.
 - **A refused moderation act on an entity with no governing parent** is classified
   `MODERATION_RESERVED_TO_PLATFORM_ADMIN` (`reservedPublisherSql`), since nobody else may act on it.
+- **`setParent` is a privilege change now**: moving a child names at WARN the child's member rows
+  held by the FORMER parent's `MANAGE_ASSO` holders (`FORMER_PARENT_SEATS_SQL`) - rows they may
+  have written for themselves while governing it, which the move does not revoke (neither did the
+  reach rule). Revoking is the platform admin's decision, never a side effect.
 - **No migration.** `EXPLAIN (ANALYZE)` on a production-shaped fixture (97 entities, 74 parented,
   ~3000 member rows): one child 0.25 ms, every association a user governs 0.8 ms, 20 publishers
   0.6 ms - nested loops over a primary key and `association_members ("associationId")`, the spaces

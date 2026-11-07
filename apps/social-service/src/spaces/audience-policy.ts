@@ -170,7 +170,8 @@ function ruleOnGovernedCampus(r: RuleLike, spaces: readonly SpaceStanding[]): bo
  * whether or not its rules exceed the star's spaces - the editor shows those rules read-only. An
  * institution stays the platform admin's; a reader governing no space is no star. The PARENT of the
  * entity (`governsEntity`, WP-D2) reads it wherever its rules lie: a child the platform admin sent
- * to another campus is still its parent's to see, and to bring back inside its spaces.
+ * to another campus is still its parent's to see. The parent may ADD rules inside its own spaces; a
+ * rule outside them stays the platform admin's to remove (`AUDIENCE_RULE_BEYOND_BDE_SPACES`).
  */
 export function assertBdeMayReadAudience(
   type: string,

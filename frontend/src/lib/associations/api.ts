@@ -1071,9 +1071,9 @@ export function invalidateMyAssociations(): void {
 /**
  * The associations whose BDE grants the caller each SCOPED power (WP6c step 2), as the server's
  * own predicate computes them: `validateEvents` (validate, edit, deposit on, declare a break for)
- * and `manageAsso` (administer as a super-admin). A BDE governs the associations reaching its
- * space, never all of them, so "is a BDE somewhere" (`holdsBdeFlag`) cannot draw a control on ONE
- * association. A global admin holds every power and is not in these lists - callers OR that tier.
+ * and `manageAsso` (administer as a super-admin: MANAGE_ASSO in its parent BDE, or itself when a
+ * BDE, WP-D2). A BDE governs its children, never all associations, so "is a BDE somewhere"
+ * (`holdsBdeFlag`) cannot draw a control on ONE association. A global admin holds every power and is not in these lists - callers OR that tier.
  */
 export interface BdeReach {
   validateEvents: string[];
