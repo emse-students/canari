@@ -185,13 +185,9 @@
         </span>
       {/each}
       {#if editable && editing !== entity.id}
-        <button
-          type="button"
-          class="text-cn-dark ml-auto shrink-0 text-xs font-semibold underline-offset-2 hover:underline"
-          onclick={() => open(entity)}
-        >
+        <Button variant="ghost" size="compact" class="ml-auto" onclick={() => open(entity)}>
           {m.admin_dependencies_change()}
-        </button>
+        </Button>
       {/if}
     </div>
     {#each entity.mismatches.filter((x) => x !== 'reaches_outside_parent') as mismatch (mismatch)}
@@ -228,7 +224,7 @@
         <Button loading={saving} disabled={saving} onclick={() => save(entity)}>
           {m.common_save_button()}
         </Button>
-        <Button variant="outline" disabled={saving} onclick={() => (editing = null)}>
+        <Button variant="secondary" disabled={saving} onclick={() => (editing = null)}>
           {m.common_cancel_button()}
         </Button>
       </div>
@@ -302,16 +298,16 @@
             >
               <TriangleAlert size={14} />
               {m.admin_dependencies_mismatch_summary({ count: outsideCount(family) })}
-              <button
-                type="button"
-                class="text-cn-dark font-semibold underline-offset-2 hover:underline"
+              <Button
+                variant="ghost"
+                size="compact"
                 data-mismatch-filter={family.bde.id}
                 onclick={() => (onlyMismatched[family.bde.id] = !onlyMismatched[family.bde.id])}
               >
                 {onlyMismatched[family.bde.id]
                   ? m.admin_dependencies_mismatch_show_all()
                   : m.admin_dependencies_mismatch_show_only()}
-              </button>
+              </Button>
             </p>
           {/if}
           {@render familyChildren(visibleChildren(family))}

@@ -560,7 +560,7 @@
 {#snippet payButton()}
   <Button
     variant="primary"
-    class="shrink-0 px-6"
+    class="shrink-0"
     disabled={submitted ||
       formFull ||
       submitting ||

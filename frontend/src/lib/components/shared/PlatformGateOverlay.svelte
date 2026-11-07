@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import { Download, Wrench } from '@lucide/svelte';
   import {
@@ -81,9 +82,8 @@
     </div>
 
     {#snippet footer()}
-      <button
-        type="button"
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-bold shadow-sm disabled:opacity-60"
+      <Button
+        class="w-full"
         disabled={updating || target === null}
         onclick={() => void handleUpdate()}
       >
@@ -93,7 +93,7 @@
           : target
             ? updateTargetButtonLabel(target.kind)
             : m.common_loading_label()}
-      </button>
+      </Button>
     {/snippet}
   </Modal>
 {:else if showMaintenance && info}
@@ -118,14 +118,9 @@
     </div>
 
     {#snippet footer()}
-      <button
-        type="button"
-        class="text-cn-ink bg-cn-yellow hover:bg-cn-yellow-hover w-full rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-60"
-        disabled={loggingOut}
-        onclick={() => void handleMaintenanceLogout()}
-      >
+      <Button class="w-full" disabled={loggingOut} onclick={() => void handleMaintenanceLogout()}>
         {loggingOut ? m.platform_gate_logging_out() : m.platform_gate_logout_button()}
-      </button>
+      </Button>
     {/snippet}
   </Modal>
 {/if}

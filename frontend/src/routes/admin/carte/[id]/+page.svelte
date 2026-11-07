@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { onMount, tick, untrack } from 'svelte';
@@ -620,12 +621,7 @@
         {/if}
         <div class="flex items-center gap-2">
           {#if canEdit}
-            <button
-              type="button"
-              onclick={handleSave}
-              disabled={saving}
-              class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50"
-            >
+            <Button variant="secondary" onclick={handleSave} disabled={saving}>
               {#if saved}
                 <Check size={16} />
                 {m.carte_saved_label()}
@@ -637,7 +633,7 @@
                     ? m.carte_unsaved_label()
                     : m.carte_save_button()}
               {/if}
-            </button>
+            </Button>
           {/if}
           <!-- BEING LIVE IS A STATE, NOT A BUTTON. The status only reports; taking the map off the
                portail is its own action, and it confirms. -->
@@ -651,48 +647,39 @@
             <!-- The live map is older than what is saved. Nothing republishes on its own: an
                  autosave that reached the portail would put half-arranged layouts online (D2). -->
             {#if publicationStale}
-              <button
-                type="button"
+              <Button
                 onclick={handlePublish}
                 disabled={publishing}
                 title={m.carte_publish_update_hint()}
-                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
               >
                 <RefreshCw size={16} />
                 {publishing ? m.carte_publishing_label() : m.carte_publish_update_button()}
-              </button>
+              </Button>
             {/if}
-            <button
-              type="button"
+            <Button
+              variant="secondary"
               onclick={handleUnpublish}
               disabled={publishing}
               title={m.carte_unpublish_hint()}
-              class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50"
             >
               <GlobeLock size={16} />
               {publishing ? m.carte_publishing_label() : m.carte_unpublish_button()}
-            </button>
+            </Button>
           {:else}
-            <button
-              type="button"
+            <Button
+              variant="secondary"
               onclick={handlePublish}
               disabled={publishing}
               title={m.carte_publish_hint()}
-              class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50"
             >
               <Globe size={16} />
               {publishing ? m.carte_publishing_label() : m.carte_publish_button()}
-            </button>
+            </Button>
           {/if}
-          <button
-            type="button"
-            onclick={handleExport}
-            disabled={exporting}
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
-          >
+          <Button onclick={handleExport} disabled={exporting}>
             <Download size={16} />
             {exporting ? m.carte_exporting_label() : m.carte_export_button()}
-          </button>
+          </Button>
         </div>
       </header>
 
@@ -772,29 +759,32 @@
         <!-- Poster preview column: a zoom toolbar above a scrollable, fit-height stage. -->
         <div class="space-y-2">
           <div class="flex items-center gap-1.5">
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="compact"
+              icon
               onclick={() => zoomBy(-0.25)}
               aria-label={m.carte_zoom_out()}
-              class="ui-icon-button border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg rounded-lg border"
             >
               <ZoomOut size={15} />
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="secondary"
+              size="compact"
+              class="min-w-[3.5rem]"
               onclick={() => (zoom = 1)}
-              class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg min-w-[3.5rem] rounded-lg border px-2 py-1 text-xs font-semibold"
             >
               {Math.round(zoom * 100)}%
-            </button>
-            <button
-              type="button"
+            </Button>
+            <Button
+              variant="secondary"
+              size="compact"
+              icon
               onclick={() => zoomBy(0.25)}
               aria-label={m.carte_zoom_in()}
-              class="ui-icon-button border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg rounded-lg border"
             >
               <ZoomIn size={15} />
-            </button>
+            </Button>
           </div>
           <!-- Scrollable stage: the outer div is sized to the scaled poster so zoom overflows +
                scrolls; the inner (un-scaled) element is the exact node captured for PDF export. -->
@@ -844,11 +834,7 @@
                 <h3 class="text-text-main text-sm font-bold">
                   {m.carte_settings_heading()}
                 </h3>
-                <button
-                  type="button"
-                  onclick={toggleFullPage}
-                  class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
-                >
+                <Button variant="secondary" size="compact" onclick={toggleFullPage}>
                   {#if isFullPage}
                     <Minimize size={14} />
                     {m.carte_fullpage_exit()}
@@ -856,7 +842,7 @@
                     <Maximize size={14} />
                     {m.carte_fullpage_enter()}
                   {/if}
-                </button>
+                </Button>
               </div>
 
               <div class="flex flex-wrap items-center gap-3">
@@ -871,17 +857,17 @@
                   <input type="file" accept="image/*" class="hidden" onchange={onBackgroundFile} />
                 </label>
                 {#if bgDataUrl}
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="compact"
                     onclick={() => {
                       bgDataUrl = null;
                       bgVersion++;
                     }}
-                    class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm font-semibold"
                   >
                     <X size={15} />
                     {m.carte_background_clear()}
-                  </button>
+                  </Button>
                   <label class="text-text-muted inline-flex items-center gap-2 text-xs">
                     {m.carte_scrim_label()}
                     <input
@@ -914,14 +900,10 @@
               <h3 class="text-text-main text-sm font-bold">
                 {m.carte_elements_heading()}
               </h3>
-              <button
-                type="button"
-                onclick={addText}
-                class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center gap-2 rounded-xl border px-3 py-1.5 text-sm font-semibold"
-              >
+              <Button variant="secondary" size="compact" onclick={addText}>
                 <Type size={15} />
                 {m.carte_add_text()}
-              </button>
+              </Button>
             </section>
 
             {#if selectedDecoration}
@@ -995,30 +977,30 @@
                 {/if}
 
                 <div class="flex flex-wrap gap-2 pt-1">
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="compact"
                     onclick={() => decoBringToFront(selectedDecoration.id)}
-                    class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
                   >
                     <BringToFront size={13} />
                     {m.carte_panel_front()}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="compact"
                     onclick={() => decoSendToBack(selectedDecoration.id)}
-                    class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
                   >
                     <SendToBack size={13} />
                     {m.carte_panel_back()}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="danger-outline"
+                    size="compact"
                     onclick={() => deleteDecoration(selectedDecoration.id)}
-                    class="inline-flex items-center gap-1.5 rounded-lg border border-red-500/40 px-2.5 py-1 text-xs font-semibold text-red-500 hover:bg-red-500/10"
                   >
                     <Trash2 size={13} />
                     {m.carte_deco_delete()}
-                  </button>
+                  </Button>
                 </div>
               </section>
             {/if}
@@ -1200,30 +1182,30 @@
                 </div>
 
                 <div class="flex flex-wrap gap-2 pt-1">
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="compact"
                     onclick={() => bringToFront(selectedBubble.assoId)}
-                    class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
                   >
                     <BringToFront size={13} />
                     {m.carte_panel_front()}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="compact"
                     onclick={() => sendToBack(selectedBubble.assoId)}
-                    class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
                   >
                     <SendToBack size={13} />
                     {m.carte_panel_back()}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="compact"
                     onclick={() => resetBubble(selectedBubble.assoId)}
-                    class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold"
                   >
                     <RotateCcw size={13} />
                     {m.carte_panel_reset()}
-                  </button>
+                  </Button>
                 </div>
               {:else}
                 <p class="text-text-muted text-xs">{m.carte_panel_empty()}</p>

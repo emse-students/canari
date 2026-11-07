@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import { Megaphone } from '@lucide/svelte';
   import {
@@ -67,14 +68,9 @@
     </div>
 
     {#snippet footer()}
-      <button
-        type="button"
-        onclick={() => void close()}
-        disabled={dismissing}
-        class="bg-cn-yellow hover:bg-cn-yellow-hover text-cn-ink rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
-      >
+      <Button onclick={() => void close()} disabled={dismissing}>
         {m.announcement_understood_button()}
-      </button>
+      </Button>
     {/snippet}
   </Modal>
 {/if}

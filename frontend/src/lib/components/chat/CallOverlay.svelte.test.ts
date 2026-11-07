@@ -615,8 +615,25 @@ describe('a video call (lot 2)', () => {
 
     peerVideo(service);
     expect(remoteView()).not.toBeNull();
+    // A track with no frame painted yet is no picture: the self view keeps the screen.
+    expect(selfView()?.classList.contains('inset-0')).toBe(true);
+    remoteView()!.dispatchEvent(new Event('loadeddata'));
+    flushSync();
     expect(selfView()?.classList.contains('inset-0')).toBe(false);
     expect(selfView()?.classList.contains('w-28')).toBe(true);
+  });
+
+  // Production, 2026-11-07: a peer track unmuted by packets that never decoded drew a BLACK screen.
+  it("keeps the peer's avatar, the picture transparent, until the picture's first frame is painted", async () => {
+    const service = fakeService('incall');
+    await render(service);
+    peerVideo(service);
+    expect(remoteView()?.classList.contains('opacity-0')).toBe(true);
+    expect(document.querySelector('[data-testid="call-avatar"]')).not.toBeNull();
+    remoteView()!.dispatchEvent(new Event('loadeddata'));
+    flushSync();
+    expect(remoteView()?.classList.contains('opacity-0')).toBe(false);
+    expect(document.querySelector('[data-testid="call-avatar"]')).toBeNull();
   });
 
   it('mirrors the FRONT camera only', async () => {

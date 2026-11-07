@@ -3,6 +3,7 @@
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { Snippet } from 'svelte';
   import { X } from '@lucide/svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import { fly } from 'svelte/transition';
   import { portal } from '$lib/actions/portal';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
@@ -303,13 +304,9 @@
           >
             <h2 class="text-cn-dark text-base font-semibold">{title}</h2>
             {#if dismissible}
-              <button
-                onclick={dismiss}
-                class="ui-icon-button hover:bg-cn-bg text-text-muted hover:text-cn-dark rounded-lg transition-colors"
-                aria-label={m.common_close_label()}
-              >
+              <Button variant="ghost" icon onclick={dismiss} aria-label={m.common_close_label()}>
                 <X size={16} />
-              </button>
+              </Button>
             {/if}
           </div>
         {/if}

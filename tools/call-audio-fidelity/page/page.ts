@@ -21,6 +21,7 @@ import {
   callVideoConstraints,
   preferVp8,
 } from '../../../frontend/src/lib/utils/callVideo';
+import { CALL_VIDEO_MIME_TYPE } from '../../../frontend/src/lib/utils/callVideoFrame';
 import {
   CALL_VIDEO_LADDER,
   CallVideoQualityLoop,
@@ -89,6 +90,11 @@ interface RigConfig {
   videoCodec?: 'vp8' | 'h264';
   /** EXPERIMENT: video frames encrypted WHOLE, VP8 header included (the worker before 2026-10-20). */
   wholeFrameVideo?: boolean;
+  /**
+   * SCENARIO: this side's video frames reach the app worker with NO codec in their metadata, as
+   * WebKit's do (`mime=? pt=-1`, iOS 1.6.5 in production, 2026-11-07) - the cross-engine call.
+   */
+  webkitVideoMetadata?: boolean;
   /**
    * EXPERIMENT: hold the camera sender on this rung of `CALL_VIDEO_LADDER` (0 = 720p) instead of
    * running the app's quality ladder - the encode cost of each rung, measured apart.
@@ -190,10 +196,17 @@ async function keyWorker(): Promise<Worker> {
   return w;
 }
 
+/**
+ * A transform's options, as `CallService.transformOptions` makes them: a video transform names the
+ * codec its transceiver is held to (`requireVideoCodec` holds every video transceiver to VP8 unless
+ * the H.264 experiment asks otherwise), which is what the worker frames on.
+ */
 function transformOptions(side: 'sender' | 'receiver', kind: 'audio' | 'video' = 'audio') {
   return {
     side,
     kind,
+    ...(kind === 'video' && cfg.videoCodec !== 'h264' ? { videoCodec: CALL_VIDEO_MIME_TYPE } : {}),
+    webkitVideoMetadata: !!cfg.webkitVideoMetadata,
     wholeFrameVideo: !!cfg.wholeFrameVideo,
     passthrough: !cfg.e2e,
     doubleEncrypt: !!cfg.doubleEncrypt,

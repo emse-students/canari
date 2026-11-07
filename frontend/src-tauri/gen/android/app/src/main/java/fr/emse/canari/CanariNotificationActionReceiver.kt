@@ -84,9 +84,10 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             Log.w(TAG, "handleReply: empty text -> abort")
             return
         }
-        val pushCtx = MlsContextLoader.loadPushContext(context)
+        val pushCtxRead = MlsContextLoader.readPushContext(context)
+        val pushCtx = pushCtxRead.context
         if (pushCtx == null) {
-            Log.e(TAG, "handleReply: push_context.json absent -> abort")
+            Log.e(TAG, "handleReply: push_context.json ${pushCtxRead.verdict.describe()} -> abort")
             return
         }
         val service = CanariFirebaseMessagingService()
@@ -181,9 +182,10 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
         }
         CanariFirebaseMessagingService.appendReadWatermark(context, groupId, at, serverAt)
 
-        val pushCtx = MlsContextLoader.loadPushContext(context)
+        val pushCtxRead = MlsContextLoader.readPushContext(context)
+        val pushCtx = pushCtxRead.context
         if (pushCtx == null) {
-            Log.e(TAG, "sendReadWatermark: push_context.json absent -> frame not queued")
+            Log.e(TAG, "sendReadWatermark: push_context.json ${pushCtxRead.verdict.describe()} -> frame not queued")
             return
         }
         val service = CanariFirebaseMessagingService()
@@ -252,9 +254,10 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             Log.e(TAG, "handleCallDecline: no callId on the intent -> the caller is not told")
             return
         }
-        val pushCtx = MlsContextLoader.loadPushContext(context)
+        val pushCtxRead = MlsContextLoader.readPushContext(context)
+        val pushCtx = pushCtxRead.context
         if (pushCtx == null) {
-            Log.e(TAG, "handleCallDecline: push_context.json absent -> the caller is not told")
+            Log.e(TAG, "handleCallDecline: push_context.json ${pushCtxRead.verdict.describe()} -> the caller is not told")
             return
         }
         val service = CanariFirebaseMessagingService()

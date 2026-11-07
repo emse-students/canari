@@ -1898,9 +1898,9 @@ or an MLS group (a salon's mark goes to the server and is out of scope):
 
 | Gesture | Frames |
 | --- | --- |
-| Open a conversation that has unread messages | 1, after the 2 s debounce |
+| Open a conversation that has unread messages | 1, at once (leading edge since 2026-11-07; before it, after a 2 s debounce) |
 | Scroll, or load older history | 0. The target is the max over every loaded message, and older rows are below it |
-| A peer's message arrives while it is open and focused | 1 per 2 s window |
+| A peer's message arrives while it is open and focused | 1 at once, then at most 1 trailing per 2 s window (leading-edge throttle, 2026-11-07) |
 | **Send a message** | **1, 2 s later.** `watermarkAfterReading` counted own messages, so the reader's mark moved over their own send |
 | Leave within 2 s of reading | **0, and the receipt was LOST.** The cleanup zeroed the pending value after the local mark had already moved, so nothing sent it again |
 | Read while offline, then reconnect | one frame per debounce window, all sent on reconnect |
