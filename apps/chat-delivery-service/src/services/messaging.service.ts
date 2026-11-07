@@ -97,7 +97,14 @@ import {
   type NoHolderFacts,
 } from '../utils/device-seat';
 import { isBlockedBetween } from '../utils/user-blocks';
-import { readPushMode } from '../utils/push-mode';
+import {
+  ENVELOPE_WAKE_VERSION,
+  MLS_WAKE_VERSION,
+  effectiveWakeVersion,
+  readPushMode,
+  type PushMode,
+} from '../utils/push-mode';
+import { storeEnvelopes, type EnvelopeNotWoken } from '../utils/push-envelope';
 import { sameSideOfReviewCohort } from '../review-cohort';
 import {
   SHARED_PAYLOAD_WRITES_ENV,
@@ -131,6 +138,9 @@ import {
   buildApnsRequest,
   buildWakeApnsRequest,
   buildWakeDataFields,
+  isInternalSilent,
+  type EnvelopeContent,
+  type WakeKey,
   LONGEST_FALLBACK_LOCALE,
   buildInternalAndroidHalf,
   buildInternalApnsHalf,
@@ -1153,19 +1163,23 @@ export class MessagingService {
    * The FCM message of a content-free wake-up push for one token: the Android data map, or the APNs
    * request in the device's language - nothing else (`buildWakeDataFields`, `buildWakeApnsRequest`).
    * Android keeps the full push's priority and TTL: a wake that arrives late is fetched late, and the
-   * row it names is still queued.
+   * row it names is still there.
    *
    * @param pt - The destination token, whose platform and locale decide the shape.
-   * @param input - The frame's description, read for its id, `silent` and `mentionsOnly` only.
+   * @param key - The row the device will fetch: a queued MLS frame or an envelope.
+   * @param silent - Whether the push draws nothing.
+   * @param mentionsOnly - The recipient keeps the conversation at `mentions` (MLS frames only).
+   * @param android - The Android options the full push of the same kind is sent with.
    */
-  private buildWakeMessage(pt: PushToken, input: PushMessageInput): Message {
+  private buildWakeMessage(
+    pt: PushToken,
+    key: WakeKey,
+    silent: boolean,
+    mentionsOnly: boolean,
+    android: { priority: 'high'; ttl?: number }
+  ): Message {
     if (pt.platform === 'ios') {
-      const request = buildWakeApnsRequest(
-        input.queuedMessageId,
-        input.silent,
-        !!input.mentionsOnly,
-        pt.locale
-      );
+      const request = buildWakeApnsRequest(key, silent, mentionsOnly, pt.locale);
       return {
         token: pt.token,
         apns: {
@@ -1179,8 +1193,8 @@ export class MessagingService {
     }
     return {
       token: pt.token,
-      data: buildWakeDataFields(input.queuedMessageId, input.silent, !!input.mentionsOnly),
-      android: { priority: 'high', ttl: 86_400_000 },
+      data: buildWakeDataFields(key, silent, mentionsOnly),
+      android,
     };
   }
 
@@ -1419,18 +1433,24 @@ export class MessagingService {
     // self-contained by design - so each token now carries exactly the half it reads.
     //
     // THE WAKE-UP PUSH (owner, 2026-11-02): two locks, ANDed - the estate's `push_mode` and the
-    // token's own `wakeCapable` (its binary declared it understands one). The switch is read only
-    // when some destination could take a wake, and never cached; an unreadable switch throws, and
-    // this device's push is not sent (the fan-out logs it; the frame stays queued).
-    const pushMode = pushTokens.some((pt) => pt.wakeCapable)
+    // token's own `wakeVersion` (its binary declared it understands the MLS wake). The switch is read
+    // only when some destination could take a wake, and never cached; an unreadable switch throws,
+    // and this device's push is not sent (the fan-out logs it; the frame stays queued).
+    const pushMode = pushTokens.some((pt) => effectiveWakeVersion(pt) >= MLS_WAKE_VERSION)
       ? await readPushMode(this.groupRepo.manager, this.logger)
       : 'full';
     for (const pt of pushTokens) {
-      const wake = pushMode === 'wake' && pt.wakeCapable;
+      const wake = pushMode === 'wake' && effectiveWakeVersion(pt) >= MLS_WAKE_VERSION;
       try {
         await getMessaging().send(
           wake
-            ? this.buildWakeMessage(pt, messageInput)
+            ? this.buildWakeMessage(
+                pt,
+                { queuedMessageId: messageInput.queuedMessageId },
+                messageInput.silent,
+                !!messageInput.mentionsOnly,
+                { priority: 'high', ttl: 86_400_000 }
+              )
             : pt.platform === 'ios'
               ? {
                   token: pt.token,
@@ -7817,6 +7837,79 @@ export class MessagingService {
   }
 
   /**
+   * THE ENVELOPE WAKE's decision for one `sendPushToUser` send (content-free push WP-W3,
+   * docs/wiki/protocols/content-free-push.md section 3.2): which devices are woken, and under which
+   * envelope.
+   *
+   * Two locks, ANDed, as for an MLS frame: the estate's `push_mode` and the token's
+   * `effectiveWakeVersion >= ENVELOPE_WAKE_VERSION`. The switch is read only when some destination
+   * could take an envelope wake, and never cached. When it reads `wake`, the push is stored once per
+   * capable device (`storeEnvelopes`) BEFORE any wake leaves, so a device that fetches at once finds it.
+   *
+   * Returns the envelope per device, and the tokens to WITHHOLD: `failed` when the switch could not be
+   * read or the envelopes could not be stored - accused at ERROR, and never sent the full push in their
+   * place, which would hand Google and Apple exactly what the switch withholds;
+   * `registration-gone` (the token was deleted since it was read) and `evicted` (the cap took the new
+   * envelope at once) are no failure - each logged by `storeEnvelopes`.
+   */
+  private async envelopesForWake(
+    userId: string,
+    pushTokens: PushToken[],
+    content: EnvelopeContent,
+    traceId: string
+  ): Promise<{
+    envelopes: Map<string, string>;
+    withheld: Map<string, 'failed' | EnvelopeNotWoken>;
+  }> {
+    const envelopes = new Map<string, string>();
+    const withheld = new Map<string, 'failed' | EnvelopeNotWoken>();
+    const capable = pushTokens.filter((pt) => effectiveWakeVersion(pt) >= ENVELOPE_WAKE_VERSION);
+    if (capable.length === 0) return { envelopes, withheld };
+
+    let mode: PushMode;
+    try {
+      mode = await readPushMode(this.pushTokenRepo.manager, this.logger);
+    } catch (e) {
+      this.logger.error(
+        `[SOCIAL_PUSH][${traceId}] push_mode unreadable - ${capable.length} envelope-capable device(s) of ` +
+          `user=${userId} sent NOTHING: ${String(e)}`
+      );
+      for (const pt of capable) withheld.set(pt.id, 'failed');
+      return { envelopes, withheld };
+    }
+    if (mode !== 'wake') return { envelopes, withheld };
+
+    try {
+      const stored = await storeEnvelopes(
+        this.pushTokenRepo.manager,
+        userId,
+        capable.map((pt) => pt.deviceId),
+        content,
+        this.logger,
+        traceId
+      );
+      for (const pt of capable) {
+        const envelopeId = stored.ids.get(pt.deviceId);
+        if (envelopeId) {
+          envelopes.set(pt.deviceId, envelopeId);
+          continue;
+        }
+        // `storeEnvelopes` answers every device it was asked for, one way or the other.
+        const reason = stored.notWoken.get(pt.deviceId);
+        if (!reason) throw new Error(`storeEnvelopes answered nothing for device ${pt.deviceId}`);
+        withheld.set(pt.id, reason);
+      }
+    } catch (e) {
+      this.logger.error(
+        `[PUSH_ENVELOPE][${traceId}] store failed - ${capable.length} device(s) of user=${userId} ` +
+          `type=${content.data.type ?? 'none'} sent NOTHING: ${String(e)}`
+      );
+      for (const pt of capable) withheld.set(pt.id, 'failed');
+    }
+    return { envelopes, withheld };
+  }
+
+  /**
    * Sends a non-MLS push to every registered device of a user - the side-channel signals where the
    * server never sees the MLS plaintext: reactions, community channel messages and their silent
    * `channel_read` frames, posts, form reminders.
@@ -7828,6 +7921,9 @@ export class MessagingService {
    * `inline` is a group of fields that ride together or not at all - a salon message's ciphertext
    * and the seed frame that opens it - decided per token by what that token's platform is sent
    * (`withInlineGroup`). Empty for every push that has none.
+   *
+   * A device whose binary understands the envelope wake, while `push_mode = wake`, is sent a
+   * content-free wake instead and fetches all of this from its envelope (`envelopesForWake`).
    *
    * Returns { sent, failed } - failure is non-fatal for the caller.
    */
@@ -7891,15 +7987,45 @@ export class MessagingService {
       return { sent: 0, failed: 0 };
     }
 
+    const { envelopes, withheld } = await this.envelopesForWake(
+      userId,
+      pushTokens,
+      { title, body, data, inline },
+      traceId
+    );
+
     let sent = 0;
     let failed = 0;
     for (const pt of pushTokens) {
+      const refusal = withheld.get(pt.id);
+      if (refusal === 'failed') {
+        failed++;
+        continue;
+      }
+      // Not woken, and not a failure: the registration went, or the cap took the new envelope.
+      if (refusal) continue;
       // ONE HALF PER TOKEN, BECAUSE THE PLATFORM IS KNOWN HERE - the duplication `sendFcmForQueued`
       // stopped for its own pushes. Every token used to receive the data map AND an APNs payload the
       // same fields are spread into, so an inlined ciphertext travelled twice in one message and
       // FCM sized the pair. iOS needs the APNs block (a data-only push never wakes the extension);
       // Android reads the data map (onMessageReceived fires in the background) and nothing else.
       try {
+        const envelopeId = envelopes.get(pt.deviceId);
+        if (envelopeId) {
+          // The content-free wake: the device fetches the envelope and runs it through the path
+          // this full push would have taken. Android keeps the full push's options.
+          await getMessaging().send(
+            this.buildWakeMessage(pt, { envelopeId }, isInternalSilent(data), false, {
+              priority: 'high',
+            })
+          );
+          sent++;
+          this.logger.log(
+            `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId} platform=${pt.platform} ` +
+              `mode=wake kind=${data.type ?? 'none'} envelope=${envelopeId.slice(0, 8)}`
+          );
+          continue;
+        }
         let half: { inlined: boolean; bytes: number };
         if (pt.platform === 'ios') {
           const ios = buildInternalApnsHalf(title, body, data, inline, pt.locale);
@@ -7926,7 +8052,7 @@ export class MessagingService {
         sent++;
         this.logger.log(
           `[SOCIAL_PUSH][${traceId}] sent user=${userId} device=${pt.deviceId} platform=${pt.platform} ` +
-            `inline=${Object.keys(inline).length === 0 ? 'none' : half.inlined} bytes=${half.bytes}`
+            `mode=full inline=${Object.keys(inline).length === 0 ? 'none' : half.inlined} bytes=${half.bytes}`
         );
         if (Object.keys(inline).length > 0 && !half.inlined) {
           // Not a failure - the device fetches the message and draws the fallback - but a budget

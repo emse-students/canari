@@ -750,6 +750,25 @@ estates, with both stores serving it. No floor client writes plaintext then, and
 that ran the new build once has had its files sealed. After that the `Plaintext` arms become a
 refusal (`SealError`), and the three migration functions go. A client floor, not a server version.
 
+### No date yet - a push registration saying `wake: true` instead of `wakeVersion` (2026-11-07)
+
+**Site:** `parseWakeVersion` in `apps/chat-delivery-service/src/utils/push-mode.ts`, and the
+`wakeCapable` write beside `wakeVersion` in `PushController.registerPushToken`, and
+`effectiveWakeVersion` in the same `push-mode.ts`, which reads a row's version as 0 while its
+`wakeCapable` is false (a row re-registered by a server that knows only `wakeCapable`).
+**Known gap, closed only by WP-W3c:** `wakeCapable` cannot tell version 1 from version 2. A server
+rolled back before 046 that re-registers a downgraded binary still saying `wake: true` (version 1)
+writes `wakeCapable = true` and leaves the stale `wakeVersion = 2`, so that device is read as
+version 2 and sent envelope wakes its binary drops, until its next registration on a new server.
+**Shim:** a registration body without `wakeVersion` that says `wake: true` - every build of step 1
+(#2918) - is read as wake version 1 (the MLS frame wake), and `push_token.wakeCapable` is still written
+(`wakeVersion >= 1`) so a rollback to a server that reads it sends the same pushes
+([content-free-push](protocols/content-free-push.md#8-rollout-and-old-clients)).
+**Removal condition:** `minClientVersion` at or above the first release whose client sends
+`wakeVersion` (WP-W4), on both estates with both stores serving it, for the `wake: true` read; and
+the held migration that drops `wakeCapable` (WP-W3c) merged and deployed, for the second write and
+for `effectiveWakeVersion` (which then becomes a read of `wakeVersion` alone).
+
 ### No date yet - a device-notice marker named by the key in hex, written by a build before 1.6.1
 
 **Site:** `announced_by_an_older_build` and `legacy_marker_name` in

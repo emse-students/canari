@@ -44,6 +44,7 @@ import {
 import { parseSessionId } from '../utils/session-id';
 import { publisherAdmissionBase } from '../utils/mls-frame-epoch';
 import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
+import { deleteAccountPushTokens } from '../utils/push-envelope';
 import {
   eraseUserRedisTraces,
   findRoutesOfUser,
@@ -1065,7 +1066,8 @@ export class InternalController {
       this.otpRepo.delete({ userId }),
       // The account's membership history goes with it: nothing will ever answer for this person.
       this.membershipIntervalRepo.delete({ userId }),
-      this.pushTokenRepo.delete({ userId }),
+      // In the order a push store locks them, so the two never deadlock (push-envelope.ts).
+      deleteAccountPushTokens(manager, userId),
       this.pinVerifierRepo.delete({ userId }),
       this.revokedDeviceRepo.delete({ userId }),
       manager.delete(DeviceSignatureKey, { userId }),

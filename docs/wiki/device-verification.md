@@ -603,6 +603,36 @@ Play may cluster the deliberate dead-wake-pipe abort with `e3697bc4`, both being
 looper callback, so read the frames below `cb_handler`: an `onFirstActivityCreateWry` closure means
 a dead pipe (the owner-decided abort); `get_webview` or `handle_message` means a real regression.
 
+## CFP-W3. The step-1 wake still wakes after migration 046 - owed on the Mi 9T, on dev
+
+**Proves** that moving the wake capability from `push_token.wakeCapable` to `wakeVersion` (content-free
+push WP-W3, [design](protocols/content-free-push.md#8-rollout-and-old-clients)) left the step-1 MLS
+wake working on a real phone, and that the envelope half is inert while no client declares version 2.
+Nothing native changed; the server reads a different column, writes it from the same `wake: true`,
+and the wake answer gained a `presentation` key the Android reader must ignore. Needs dev on a release
+carrying 046, `push_mode = wake` on dev (WP-W1), and the Mi 9T on any build carrying the step-1 client.
+
+1. BEFORE reopening the app after the deploy, send the Mi 9T a 1:1 text with the app killed.
+   **Expect** a banner with content, and on the server `[PUSH_SEND] ... mode=full` for that device: its
+   row reads `wakeVersion = 0` until the app starts (046 writes no backfill - the full push is the
+   contract the binary registered under, never a lost notification).
+2. Open the app once (a cold start registers), then kill it. **Expect** on the server
+   `[PUSH_REGISTER] ... wake=1`, and no `[PUSH_ENVELOPE] register sweep FAILED` line.
+3. Send three texts (1:1, group, salon) with the app killed - reading 1 of the
+   [backlog entry](backlog.d/push-payloads-carry-nothing-for-google-and-apple.md#readings-owed-the-code-is-verified-only-by-compiling-and-ios-not-even-that-before-a-release).
+   **Expect** the 1:1 and group banners with their text, `[PUSH_WAKE] fetched` in
+   `adb logcat -s CanariFCM` before the decrypt (the extra `presentation` key read by nothing), and on
+   the server `mode=wake` sends with one `[PUSH_WAKE] served queued=...` each. **Expect** the salon to
+   arrive as a FULL push (`[SOCIAL_PUSH] sent ... mode=full`): the device declares version 1, so no
+   `[PUSH_ENVELOPE]` line and no `mode=wake` on `[SOCIAL_PUSH]` anywhere.
+4. On the dev database: `SELECT platform, "wakeVersion", count(*) FROM push_token GROUP BY 1, 2` and
+   `SELECT count(*) FROM push_envelope`. **Expect** the Mi 9T's row at 1 and ZERO envelopes - an
+   envelope before WP-W4 ships is a writer this row did not expect.
+
+The envelope wake itself (a salon, a comment and a chat reaction, each drawn with content from its
+envelope; a repeat fetch drawing ONE notification) is WP-W4's reading, owed once Android declares
+version 2.
+
 ## The VoIP ring announces a video call as video - owed
 
 **Proves** that the native ring carries the media kind (alpha.2 bench: a video call rang as audio).
