@@ -1368,8 +1368,16 @@
   "admin_dependencies_archived": "archived",
   "admin_dependencies_group_associations": "Associations",
   "admin_dependencies_group_lists": "Lists",
-  "admin_dependencies_mismatch_summary_one": "{count} entity has an audience that exceeds the BDE's spaces",
-  "admin_dependencies_mismatch_summary_other": "{count} entities have an audience that exceeds the BDE's spaces",
+  "admin_dependencies_mismatch_summary": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} entity has an audience that exceeds the BDE's spaces",
+        "countPlural=other": "{count} entities have an audience that exceeds the BDE's spaces"
+      }
+    }
+  ],
   "admin_dependencies_mismatch_show_only": "Show them",
   "admin_dependencies_mismatch_show_all": "Show all",
   "admin_dependencies_shown_under": "shown under {name}",

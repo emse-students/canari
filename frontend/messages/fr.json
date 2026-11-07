@@ -1400,8 +1400,16 @@
   "admin_dependencies_archived": "archivée",
   "admin_dependencies_group_associations": "Associations",
   "admin_dependencies_group_lists": "Listes",
-  "admin_dependencies_mismatch_summary_one": "{count} entité a une audience qui dépasse les espaces du BDE",
-  "admin_dependencies_mismatch_summary_other": "{count} entités ont une audience qui dépasse les espaces du BDE",
+  "admin_dependencies_mismatch_summary": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} entité a une audience qui dépasse les espaces du BDE",
+        "countPlural=other": "{count} entités ont une audience qui dépasse les espaces du BDE"
+      }
+    }
+  ],
   "admin_dependencies_mismatch_show_only": "Les afficher",
   "admin_dependencies_mismatch_show_all": "Tout afficher",
   "admin_dependencies_shown_under": "affichée sous {name}",

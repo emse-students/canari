@@ -152,7 +152,7 @@ it('summarises the warnings per BDE and filters the list to them', async () => {
   const target = await render();
   const family = target.querySelector('[data-family="bde"]')!;
   expect(family.querySelector('[data-mismatch-summary]')!.textContent).toContain(
-    m.admin_dependencies_mismatch_summary_other({ count: 2 })
+    m.admin_dependencies_mismatch_summary({ count: 2 })
   );
   expect(target.querySelector('[data-mismatch-summary="fsss"]')).toBeNull();
   expect(family.querySelectorAll('[data-dependency-row]')).toHaveLength(4);
@@ -188,4 +188,39 @@ it('says why a name is greyed: the entity is archived', async () => {
     m.admin_dependencies_archived()
   );
   expect(target.querySelector('[data-dependency-row="fine"] [data-archived-hint]')).toBeNull();
+});
+
+it('shows every child again once the last flagged one is reparented', async () => {
+  api.setDependency.mockResolvedValue(undefined);
+  const target = await render();
+  const family = () => target.querySelector('[data-family="bde"]')!;
+  family().querySelector<HTMLButtonElement>('[data-mismatch-filter]')!.click();
+  flushSync();
+  expect(family().querySelectorAll('[data-dependency-row]')).toHaveLength(2);
+
+  api.listDependencies.mockResolvedValue(
+    AXIS.map((x) => (x.mismatches.length ? { ...x, mismatches: [] } : x))
+  );
+  target.querySelector('[data-dependency-row="list"]')!.querySelector('button')!.click();
+  flushSync();
+  button(target, m.common_save_button()).click();
+  await vi.waitFor(() => expect(target.querySelector('[data-mismatch-filter]')).toBeNull());
+  expect(family().querySelectorAll('[data-dependency-row]')).toHaveLength(4);
+});
+
+it('keeps a readable sentence for the mismatches the summary does not cover', async () => {
+  api.listDependencies.mockResolvedValue([
+    e({ id: 'bde', name: 'BDE', governs: true }),
+    e({
+      id: 'x',
+      name: 'Liste X',
+      type: 'list',
+      parentAssociationId: 'bde',
+      mismatches: ['parent_governs_nothing'],
+    }),
+  ]);
+  const target = await render();
+  expect(
+    target.querySelector('[data-mismatch-text="parent_governs_nothing"]')!.textContent
+  ).toContain(m.dependency_mismatch_parent_governs_nothing());
 });

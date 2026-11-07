@@ -43,8 +43,29 @@
 
   const reachesOutside = (e: DependencyEntity) => e.mismatches.includes('reaches_outside_parent');
   const outsideCount = (family: BdeFamily) => family.children.filter(reachesOutside).length;
+  /** The filter only applies while a flagged child remains: with none left no control exists to undo it. */
   const visibleChildren = (family: BdeFamily) =>
-    onlyMismatched[family.bde.id] ? family.children.filter(reachesOutside) : family.children;
+    onlyMismatched[family.bde.id] && outsideCount(family) > 0
+      ? family.children.filter(reachesOutside)
+      : family.children;
+
+  /** A BDE's children split into associations and lists, empty blocks dropped. */
+  function subgroups(
+    rows: DependencyEntity[]
+  ): { key: 'association' | 'list'; title: string; rows: DependencyEntity[] }[] {
+    return [
+      {
+        key: 'association' as const,
+        title: m.admin_dependencies_group_associations(),
+        rows: rows.filter((r) => r.type !== 'list'),
+      },
+      {
+        key: 'list' as const,
+        title: m.admin_dependencies_group_lists(),
+        rows: rows.filter((r) => r.type === 'list'),
+      },
+    ].filter((g) => g.rows.length > 0);
+  }
 
   const tree = $derived(groupDependencies(entities));
   const byId = $derived(new Map(entities.map((e) => [e.id, e])));
@@ -63,6 +84,12 @@
     loading = true;
     try {
       entities = await listDependencies();
+      // A filter whose flagged children are all gone must not outlive its toggle.
+      for (const family of groupDependencies(entities).families) {
+        if (onlyMismatched[family.bde.id] && outsideCount(family) === 0) {
+          onlyMismatched[family.bde.id] = false;
+        }
+      }
       error = null;
     } catch (e) {
       Log.d('admin.dependencies.load failed', e);
@@ -119,10 +146,11 @@
     ? byId.get(entity.displayParentAssociationId)
     : undefined}
   <li class="py-1.5" data-dependency-row={entity.id} data-archived={entity.archived || undefined}>
-    <div class="flex items-center gap-2">
+    <div class="flex flex-wrap items-center gap-x-2 gap-y-1 sm:flex-nowrap">
       <span
         class="text-text-main min-w-0 truncate text-sm font-medium"
         class:opacity-60={entity.archived}
+        title={entity.name}
       >
         {entity.name}
       </span>
@@ -138,7 +166,10 @@
         </span>
       {/if}
       {#if label}
-        <span class="text-text-muted min-w-0 truncate text-xs">
+        <span
+          class="text-text-muted min-w-0 truncate text-xs"
+          title={m.admin_dependencies_shown_under({ name: label.name })}
+        >
           {m.admin_dependencies_shown_under({ name: label.name })}
         </span>
       {/if}
@@ -163,6 +194,11 @@
         </button>
       {/if}
     </div>
+    {#each entity.mismatches.filter((x) => x !== 'reaches_outside_parent') as mismatch (mismatch)}
+      <p class="text-amber-warn mt-0.5 text-xs" data-mismatch-text={mismatch}>
+        {mismatchText(mismatch)}
+      </p>
+    {/each}
     {#if editing === entity.id}
       <div class="mt-2 flex flex-wrap items-end gap-3" data-dependency-editor>
         <div class="w-56">
@@ -200,23 +236,18 @@
   </li>
 {/snippet}
 
-{#snippet children(rows: DependencyEntity[])}
-  {#each [[m.admin_dependencies_group_associations(), rows.filter((r) => r.type !== 'list')], [m.admin_dependencies_group_lists(), rows.filter((r) => r.type === 'list')]] as [title, sub] (title)}
-    {#if sub.length > 0}
-      <div
-        class="border-cn-border mt-1 ml-3 border-l pl-3"
-        data-subgroup={sub[0].type === 'list' ? 'list' : 'association'}
-      >
-        <h4 class="text-text-muted text-xs font-semibold tracking-wide uppercase">
-          {title} ({sub.length})
-        </h4>
-        <ul class="divide-cn-border/70 divide-y">
-          {#each sub as child (child.id)}
-            {@render row(child, true)}
-          {/each}
-        </ul>
-      </div>
-    {/if}
+{#snippet familyChildren(rows: DependencyEntity[])}
+  {#each subgroups(rows) as sub (sub.key)}
+    <div class="border-cn-border mt-1 ml-3 border-l pl-3" data-subgroup={sub.key}>
+      <h4 class="text-text-muted text-xs font-semibold tracking-wide uppercase">
+        {sub.title} ({sub.rows.length})
+      </h4>
+      <ul class="divide-cn-border/70 divide-y">
+        {#each sub.rows as child (child.id)}
+          {@render row(child, true)}
+        {/each}
+      </ul>
+    </div>
   {/each}
 {/snippet}
 
@@ -270,13 +301,10 @@
               data-mismatch-summary={family.bde.id}
             >
               <TriangleAlert size={14} />
-              {outsideCount(family) === 1
-                ? m.admin_dependencies_mismatch_summary_one({ count: 1 })
-                : m.admin_dependencies_mismatch_summary_other({ count: outsideCount(family) })}
+              {m.admin_dependencies_mismatch_summary({ count: outsideCount(family) })}
               <button
                 type="button"
                 class="text-cn-dark font-semibold underline-offset-2 hover:underline"
-                aria-pressed={onlyMismatched[family.bde.id] === true}
                 data-mismatch-filter={family.bde.id}
                 onclick={() => (onlyMismatched[family.bde.id] = !onlyMismatched[family.bde.id])}
               >
@@ -286,7 +314,7 @@
               </button>
             </p>
           {/if}
-          {@render children(visibleChildren(family))}
+          {@render familyChildren(visibleChildren(family))}
         </section>
       {:else}
         <p class="text-text-muted text-sm">{m.admin_dependencies_no_bde()}</p>
