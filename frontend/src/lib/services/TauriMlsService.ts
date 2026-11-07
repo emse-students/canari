@@ -876,36 +876,38 @@ export class TauriMlsService extends BaseMlsService {
       () => {}
     );
 
-    // Save session context for Android push notifications (no-op on desktop).
-    // Must run AFTER saveState writes mls.bin (C3: race condition fix).
-    // Only applicable when a device key is available (C5: skip in biometric mode
-    // where deviceKeyB64="" would store an empty key, overwriting the
-    // biometric key already stored by biometricLoginImpl → getKeyBytes).
-    if (deviceKeyB64.length > 0) {
-      void savePromise.then(() =>
-        getToken()
-          .then((pushToken: string) =>
-            invoke('store_push_context', {
-              deviceKeyB64,
-              userId,
-              deviceId: this.deviceId,
-              baseUrl: this.historyUrl,
-              pushToken,
-              // Restated because this call REPLACES push_context.json - see set_push_context_locale.
-              locale: getLocale(),
-            })
-          )
-          // EVERY SWALLOWED BRANCH LOGS. This chain is gated on a network round-trip and a
-          // keystore write, and it silently carried the device-identity backup until that backup
-          // became `store_device_identity`'s own job - months of drift with nothing in any log.
-          // `String(e)`: the class names the cause (`TransportFailureError` on an offline start,
-          // when no token exists), and the stack of a known throw is a dozen lines that say nothing.
-          // NOT re-attempted at the reconnect - an open item, see offline-and-weak-network section 15.
-          .catch((e) =>
-            console.warn(`[MLS][Tauri] push_context write after init failed: ${String(e)}`)
-          )
-      );
-    }
+    // Save the session context the native background side reads (Android FCM service, iOS NSE;
+    // no-op on desktop). Must run AFTER saveState writes mls.bin (C3: race condition fix).
+    //
+    // WRITTEN ON EVERY SIGN-IN, BIOMETRIC ONE INCLUDED (2026-11-07). It used to be skipped when
+    // `deviceKeyB64` was empty (C5: an empty key would have overwritten the keystore entry the
+    // biometric login had just read). But a sign-out strips push_context.json to its identity keys
+    // - no `baseUrl` - so a phone that signed out and back in by fingerprint kept the stripped file,
+    // and every push since was a generic banner until a PIN sign-in. The native command now takes
+    // the key as OPTIONAL: `null` writes the session's file and leaves the keystore entry alone.
+    void savePromise.then(() =>
+      getToken()
+        .then((pushToken: string) =>
+          invoke('store_push_context', {
+            deviceKeyB64: deviceKeyB64.length > 0 ? deviceKeyB64 : null,
+            userId,
+            deviceId: this.deviceId,
+            baseUrl: this.historyUrl,
+            pushToken,
+            // Restated because this call REPLACES push_context.json - see set_push_context_locale.
+            locale: getLocale(),
+          })
+        )
+        // EVERY SWALLOWED BRANCH LOGS. This chain is gated on a network round-trip and a
+        // keystore write, and it silently carried the device-identity backup until that backup
+        // became `store_device_identity`'s own job - months of drift with nothing in any log.
+        // `String(e)`: the class names the cause (`TransportFailureError` on an offline start,
+        // when no token exists), and the stack of a known throw is a dozen lines that say nothing.
+        // NOT re-attempted at the reconnect - an open item, see offline-and-weak-network section 15.
+        .catch((e) =>
+          console.warn(`[MLS][Tauri] push_context write after init failed: ${String(e)}`)
+        )
+    );
 
     // Populate the local groups cache from Rust after init. AWAITED, so it is on the boot's
     // critical path in a way the write above is not - which is the whole reason both carry a clock.
