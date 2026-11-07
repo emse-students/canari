@@ -36,6 +36,7 @@ import {
   serveEnvelope,
   storeEnvelopes,
   sweepDeviceEnvelopes,
+  deleteAccountPushTokens,
 } from '../utils/push-envelope';
 
 const URL = process.env.CHAT_DELIVERY_IT_DATABASE_URL;
@@ -57,6 +58,8 @@ const readOf = (channelId: string): EnvelopeContent => ({
 });
 
 maybe('migration 046 (push_envelope) against PostgreSQL', () => {
+  // A cap test runs 200 store transactions, one round trip each; 5 s is a laptop's margin, not CI's.
+  jest.setTimeout(60_000);
   const schema = `push_envelope_it_${Date.now()}`;
   const options = { extra: { options: `-c search_path=${schema}` } };
   let admin: Client;
@@ -86,13 +89,27 @@ maybe('migration 046 (push_envelope) against PostgreSQL', () => {
     return client;
   };
   /**
-   * Resolves once `count` lock requests are waiting in the database: the proof that the stores have
-   * reached their lock and are blocked on it. Polled, never timed - jest's own timeout ends a hang.
+   * Resolves once `count` sessions are blocked BEHIND `holder`: the proof that the operations under
+   * test have reached their lock and wait on the row the holder keeps. Scoped to the holder's own
+   * blocking tree, so no other session of the database can satisfy it. Transitive, because a second
+   * waiter on one row queues behind the first (`pg_blocking_pids` names the first waiter, not the
+   * holder). Polled, never timed - jest's own timeout ends a hang.
    */
-  const untilALockWaits = async (count = 1) => {
+  const untilBlockedBy = async (holder: Client, count = 1) => {
+    const [{ pid }] = (await holder.query(`SELECT pg_backend_pid() AS pid`)).rows as Array<{
+      pid: number;
+    }>;
     for (;;) {
       const [{ waiting }] = (
-        await admin.query(`SELECT count(*)::int AS waiting FROM pg_locks WHERE NOT granted`)
+        await admin.query(
+          `WITH RECURSIVE behind AS (
+             SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))
+             UNION
+             SELECT a.pid FROM pg_stat_activity a JOIN behind b ON b.pid = ANY(pg_blocking_pids(a.pid))
+           )
+           SELECT count(*)::int AS waiting FROM behind`,
+          [pid]
+        )
       ).rows as Array<{ waiting: number }>;
       if (waiting >= count) return;
       await new Promise((resolve) => setImmediate(resolve));
@@ -114,7 +131,7 @@ maybe('migration 046 (push_envelope) against PostgreSQL', () => {
         [deviceId]
       );
       const stores = start();
-      await untilALockWaits(stores.length);
+      await untilBlockedBy(holder, stores.length);
       await holder.query('COMMIT');
       await Promise.all(stores);
     } finally {
@@ -194,7 +211,7 @@ maybe('migration 046 (push_envelope) against PostgreSQL', () => {
       await other.query(`DELETE FROM push_token WHERE "userId" = 'u1' AND "deviceId" = 'pixel'`);
       // The store's lock waits for the delete in flight - proven by the waiting lock, not a clock.
       const pending = store('u1', ['pixel', 'tablet'], comment);
-      await untilALockWaits();
+      await untilBlockedBy(other);
       await other.query('COMMIT');
       const result = await pending;
       expect(result.notWoken).toEqual(new Map([['pixel', 'registration-gone']]));
@@ -203,6 +220,52 @@ maybe('migration 046 (push_envelope) against PostgreSQL', () => {
       expect(await envelopesOf('u1', 'pixel')).toEqual([]);
     } finally {
       await other.end();
+    }
+  });
+
+  it("an account's erasure and a store to two of its devices never deadlock - both lock in deviceId order", async () => {
+    // Inserted b before a, so a bare DELETE's scan meets b first: it would take b, then queue for
+    // a behind the store, which holds a and wants b - the cycle the ordered lock removes.
+    await register('u1', 'b');
+    await register('u1', 'a');
+    expect(
+      (await q(`SELECT "deviceId" FROM push_token WHERE "userId" = 'u1' ORDER BY ctid`)).map(
+        (r: { deviceId: string }) => r.deviceId
+      )
+    ).toEqual(['b', 'a']);
+    // The erasure runs on a session that cannot use an index: through the primary key a delete
+    // would meet the rows in deviceId order by luck, and this test would prove nothing.
+    const seqScan = new DataSource({
+      type: 'postgres',
+      url: URL,
+      entities: [PushToken, PushEnvelope],
+      synchronize: false,
+      installExtensions: false,
+      extra: {
+        options: `-c search_path=${schema} -c enable_indexscan=off -c enable_bitmapscan=off -c enable_indexonlyscan=off`,
+      },
+    });
+    await seqScan.initialize();
+    const holder = await connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query(
+        `SELECT 1 FROM push_token WHERE "userId" = 'u1' AND "deviceId" = 'a' FOR UPDATE`
+      );
+      const pending = store('u1', ['a', 'b'], comment);
+      await untilBlockedBy(holder, 1);
+      const erasure = deleteAccountPushTokens(seqScan.manager, 'u1');
+      await untilBlockedBy(holder, 2);
+      await holder.query('COMMIT');
+      // Either rejection would be Postgres' deadlock abort.
+      const [stored, erased] = await Promise.all([pending, erasure]);
+      expect([...stored.ids.keys()].sort()).toEqual(['a', 'b']);
+      expect(erased).toBe(2);
+      expect(await q(`SELECT 1 FROM push_token WHERE "userId" = 'u1'`)).toEqual([]);
+      expect(await q(`SELECT 1 FROM push_envelope WHERE "userId" = 'u1'`)).toEqual([]);
+    } finally {
+      await holder.end();
+      await seqScan.destroy();
     }
   });
 
@@ -358,12 +421,20 @@ maybe('migration 046 (push_envelope) against PostgreSQL', () => {
   it('the cap takes a new silent envelope at once on a device full of banners, and says so', async () => {
     await register('u1', 'pixel');
     for (let i = 0; i < MAX_ENVELOPES_PER_DEVICE; i++) await store('u1', ['pixel'], comment);
+    // The spies beforeAll installed: spyOn hands back the existing ones.
+    const log = jest.spyOn(Logger.prototype, 'log');
+    const warn = jest.spyOn(Logger.prototype, 'warn');
+    log.mockClear();
+    warn.mockClear();
     const result = await store('u1', ['pixel'], readOf('c-1'));
     expect(result.ids.has('pixel')).toBe(false);
     expect(result.notWoken.get('pixel')).toBe('evicted');
     const rows = await envelopesOf('u1', 'pixel');
     expect(rows).toHaveLength(MAX_ENVELOPES_PER_DEVICE);
     expect(rows.every((r) => !r.silent)).toBe(true);
+    // The only pending read of its salon is lost: said at log level, with its count, never a WARN.
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/cap silent .*unserved-silent=1/));
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('the cap evicts a SERVED envelope before any unserved one, and only an unserved banner warns', async () => {

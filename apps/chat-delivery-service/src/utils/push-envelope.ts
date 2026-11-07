@@ -137,8 +137,10 @@ export async function storeEnvelopes(
     for (const deviceId of present) {
       // ALREADY-SERVED envelopes first: the device fetched them, so they are kept only so a lost
       // response can be fetched again - and a live app process, which never re-registers (the client
-      // skips an unchanged token), fills its cap with exactly these. Then silent envelopes (a
-      // superseded read frame is worth less than any banner), then the oldest visible ones.
+      // skips an unchanged token), fills its cap with exactly these. Then silent envelopes (a silent
+      // push draws nothing, so losing one is worth less than losing any banner - but it is not
+      // necessarily superseded: same-salon reads collapse at insert, so what is left is the ONLY read
+      // of its salon or another silent kind), then the oldest visible ones.
       const evicted = (await tx.query(
         `WITH gone AS (
            DELETE FROM push_envelope
@@ -169,10 +171,14 @@ export async function storeEnvelopes(
 }
 
 /**
- * The cap's line, at the level its evidence earns. Only an UNSERVED VISIBLE envelope evicted is a
- * banner the device never fetched - the "device that never fetches" the WARN names. Served
- * envelopes are the normal turnover of a live app process and unserved silent ones are superseded
- * reads: counted at debug, never accused.
+ * The cap's line, at the level its evidence earns:
+ * - an UNSERVED VISIBLE envelope evicted is a banner the device never fetched - the "device that
+ *   never fetches" the WARN names;
+ * - an UNSERVED SILENT one is a real loss too, only a smaller one: same-salon reads collapse at
+ *   insert, so it is the ONLY pending read of its salon (that salon's badge stays stale until the
+ *   app opens) or another silent kind - never merely a superseded read. Logged at log level, so its
+ *   rate can be read, and not accused: nothing the user sees is missing;
+ * - served envelopes alone are the normal turnover of a live app process: debug.
  */
 function reportEviction(
   logger: Logger,
@@ -191,6 +197,8 @@ function reportEviction(
     (own ? ' including this push - not woken' : '');
   if (unservedVisible > 0) {
     logger.warn(`[PUSH_ENVELOPE][${traceId}] cap ${counts} - a device that never fetches`);
+  } else if (unservedSilent > 0) {
+    logger.log(`[PUSH_ENVELOPE][${traceId}] cap silent ${counts} - a pending silent push lost`);
   } else {
     logger.debug(`[PUSH_ENVELOPE][${traceId}] cap turnover ${counts}`);
   }
@@ -217,6 +225,33 @@ export async function sweepDeviceEnvelopes(
     [userId, deviceId]
   )) as Array<{ n: number }>;
   return rows[0]?.n ?? 0;
+}
+
+/**
+ * Deletes every push registration of an account (its erasure), their envelopes going with them by
+ * the cascade. Answers the number of registrations deleted.
+ *
+ * LOCKS THE ROWS IN `deviceId` ORDER FIRST, the order {@link storeEnvelopes} takes them in. A bare
+ * `DELETE ... WHERE "userId" = $1` locks rows in the order its scan meets them; against a store
+ * holding device `a` and waiting for `b`, a delete that took `b` first and waits for `a` is a
+ * deadlock, and Postgres aborts one of the two. Taking both orders from one rule removes the cycle
+ * instead of surviving it.
+ */
+export async function deleteAccountPushTokens(
+  manager: EntityManager,
+  userId: string
+): Promise<number> {
+  return manager.transaction(async (tx) => {
+    await tx.query(`SELECT 1 FROM push_token WHERE "userId" = $1 ORDER BY "deviceId" FOR UPDATE`, [
+      userId,
+    ]);
+    const rows = (await tx.query(
+      `WITH gone AS (DELETE FROM push_token WHERE "userId" = $1 RETURNING 1)
+       SELECT count(*)::int AS n FROM gone`,
+      [userId]
+    )) as Array<{ n: number }>;
+    return rows[0]?.n ?? 0;
+  });
 }
 
 /**

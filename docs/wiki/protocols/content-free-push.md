@@ -184,12 +184,15 @@ client declares version 2 yet, so nothing writes an envelope until WP-W4 ships a
   one line (`[PUSH_ENVELOPE] register swept=<n>`); (3) the per-device cap
   `MAX_ENVELOPES_PER_DEVICE` (recommended 200), **served envelopes evicted first** (the device
   already drew them; they stay only so a lost response can be fetched again), **then silent ones** (a
-  superseded `channel_read` or welcome-request-pending is worthless once a newer one exists; same-salon
-  `channel_read` envelopes collapse to the newest at insert), then the oldest visible ones. Only the
-  last is a loss, so only it is accused at WARN `[PUSH_ENVELOPE] cap` with the three counts (served,
-  silent, visible); an eviction of served or silent envelopes alone is the cap's ordinary turnover
-  on a device that fetches, logged at debug - a WARN there would fire on every healthy device past
-  200 pushes since its last app start. The number 200 is not derived from a platform rate: it is
+  silent push draws nothing, so it is worth less than any banner - but it is NOT merely superseded:
+  same-salon `channel_read` envelopes already collapse to the newest at insert, so an evicted one is
+  the only pending read of its salon, or another silent kind), then the oldest visible ones. Each
+  eviction line carries the three counts (served, unserved silent, unserved visible), at the level
+  its loss earns: an unserved banner is accused at WARN `[PUSH_ENVELOPE] cap` (a device that never
+  fetches); an unserved silent one is logged at log level `[PUSH_ENVELOPE] cap silent` (a stale salon
+  badge until the app opens - a rate to read, nothing the user misses); served ones alone are the
+  cap's ordinary turnover on a device that fetches, at debug - a WARN there would fire on every
+  healthy device past 200 pushes since its last app start. The number 200 is not derived from a platform rate: it is
   four times the 50 notifications Android lets one app keep active (beyond which the system refuses
   the app's new posts), so a device at the cap holds more banners than it could ever show - it is a
   device that never fetches, the population reading 4 wants named. Android also limits how many
@@ -207,7 +210,12 @@ client declares version 2 yet, so nothing writes an envelope until WP-W4 ships a
   rows the other has committed - without it both could insert past the cap or keep two read
   envelopes of one salon. The lock is the weakest that conflicts with a delete, so a concurrent
   token refresh is not blocked. Both are proven against PostgreSQL with a second session holding the
-  row (`046_push_envelope.integration.spec.ts`). The registration sweep is `sweepDeviceEnvelopes`, called after the upsert of
+  row (`046_push_envelope.integration.spec.ts`). **Every multi-row writer of `push_token` takes the
+  same order**: the account erasure (`deleteAccountPushTokens`, from `InternalController`) locks the
+  account's rows `ORDER BY "deviceId" FOR UPDATE` before its delete, because a bare
+  `DELETE ... WHERE "userId"` locks in scan order and deadlocks against a store holding one device and
+  waiting for another - proven by the same spec, with the erasure's session denied every index so its
+  scan meets the rows out of `deviceId` order (it fails `deadlock detected` without the lock). The registration sweep is `sweepDeviceEnvelopes`, called after the upsert of
   `POST /mls/push/register`; its failure is accused at ERROR and never fails the registration (the
   device must still get its secret).
 - **What a wake that cannot be prepared does**: the switch unreadable, or the envelopes not stored
