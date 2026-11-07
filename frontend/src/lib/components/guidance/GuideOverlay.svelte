@@ -4,6 +4,7 @@
   import { page } from '$app/state';
   import { ChevronsRight } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import Button from '$lib/components/ui/Button.svelte';
   import { portal } from '$lib/actions/portal';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { screenCover } from '$lib/actions/coversScreen.svelte';
@@ -486,14 +487,9 @@
           </button>
         {/if}
         {#if view.step.action}
-          <button
-            type="button"
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-lg px-4 py-2 text-sm font-bold transition-colors"
-            onclick={() => guideEngine.act()}
-            data-guide-action
-          >
+          <Button onclick={() => guideEngine.act()} data-guide-action>
             {view.step.action.label()}
-          </button>
+          </Button>
         {:else}
           <button
             type="button"
