@@ -53,6 +53,7 @@ import { SenderMismatchError } from '../verifiedSender';
 import { isFrameFromThisDevice } from '../ownDeviceFrame';
 import { createMlsStatePersister } from '../mlsStatePersister';
 import { receiveCheckpointSkipBudget } from '../receiveCheckpointSkip';
+import { serverCheckpointSkipMode } from '$lib/stores/appVersionCheck.svelte';
 import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
 import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
 import { applyReactionFrame } from './reactionFrame';
@@ -186,13 +187,14 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // And what a dev build of #2815 left behind (review of #2817): nothing reads it any more.
   forgetLegacyAdmissionFreeze(log);
 
-  const receiveSkipBudget = receiveCheckpointSkipBudget();
-  if (receiveSkipBudget > 0) {
-    console.warn(
-      `[MLS] MEASUREMENT SWITCH ON (non-production build): live receive-only drains skip their checkpoint while fewer than ${receiveSkipBudget} frames are unsaved`
-    );
-  }
-  const statePersister = createMlsStatePersister({ mlsService, log, receiveSkipBudget });
+  // WP-CHECKPOINT-SKIP: the server's switch, read at every drain end (not once here), so a mode
+  // moved at `/admin/platform` - or the first `/api/version` answer of a cold start - reaches this
+  // session without a restart. `off` until a server has said `on`; the persister logs each change.
+  const statePersister = createMlsStatePersister({
+    mlsService,
+    log,
+    receiveSkipBudget: () => receiveCheckpointSkipBudget(serverCheckpointSkipMode()),
+  });
   registerMlsStatePersister(statePersister);
   installMlsStatePersisterLifecycle(statePersister);
 

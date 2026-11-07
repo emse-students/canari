@@ -2807,7 +2807,7 @@ Off by default and unreachable on production; it only lets a development build b
 
 ### Documented - the Mi 9T crash measurement of the checkpoint-skip switch is read
 
-No frame was lost over six switch-ON kill-and-resume trials of up to 60 skipped frames; what it does not cover is named in [open-questions](docs/wiki/open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13).
+No frame was lost over six switch-ON kill-and-resume trials of up to 60 skipped frames; what it does not cover is named in [open-questions](docs/wiki/open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below).
 
 ### Fixed - ci: the compose-wiring self-test no longer reports a present key as missing
 
@@ -4152,7 +4152,7 @@ Today's day number no longer overruns its circle and "S'abonner au calendrier" s
 
 ### Changed - the per-drain checkpoint is measured on the phone, and skipping it is parked as a decision
 
-On the Mi 9T, a full checkpoint costs about 100 times the one decrypt it follows: 49 ms against 0.49 ms at 7.7 MB. New tests show that a state left behind by received frames re-reads them and loses none. Skipping the checkpoint still weakens durability, so it is recorded as a decision for the user and nothing is built ([open-questions](docs/wiki/open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13)).
+On the Mi 9T, a full checkpoint costs about 100 times the one decrypt it follows: 49 ms against 0.49 ms at 7.7 MB. New tests show that a state left behind by received frames re-reads them and loses none. Skipping the checkpoint still weakens durability, so it is recorded as a decision for the user and nothing is built ([open-questions](docs/wiki/open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below)).
 
 ### Fixed - a native checkpoint no longer freezes the screen of an Android phone
 

@@ -1840,6 +1840,73 @@ for LA, plus the Xcode device console (or Console.app) filtered on `leave flush`
 3. **Off iOS nothing changed.** On the Mi 9T, repeat step 1: there is no `leave flush` line, and the mark leaves
    as before.
 
+## CKS. The checkpoint-skip switch on dev - owed on BOTH phones before the flip
+
+**THE SWITCH STAYS `off` IN PRODUCTION UNTIL BOTH READINGS PASS ON BOTH PHONES** (the Mi 9T and the
+iPhone 12). WP-CHECKPOINT-SKIP was built on 2026-11-07 behind `platform_config.checkpoint_skip_mode`
+(core migration 020): with it `on`, a live drain that only received application frames leaves its
+MLS checkpoint to the next send, commit, background edge or logout, until 100 receive generations are
+unsaved. The decision, the measurement of 2026-10-22 and what it left uncovered are in
+[open-questions](open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below).
+What is read here is the two cases that measurement did not cover.
+
+**Precondition - NOT ambient, assert each line:**
+
+- A pre-release carrying the switch serves dev (`GET https://dev.canari-emse.fr/api/version` answers
+  a `checkpointSkip` field) and is installed on the phone (Mi 9T: the release APK or the Play tester
+  build; iPhone 12: TestFlight). A bench debug build is not needed.
+- **The switch is `on` on dev**: as `canari-test-gamma` (dev's global admin) at `/admin/platform`,
+  "Sauvegarde de l'état de chiffrement après réception" -> "Différée", saved; then
+  `/api/version` answers `"checkpointSkip":{"mode":"on"}`.
+- **The phone heard it**: after a relaunch (or a return to the foreground), the in-app log carries
+  `[MLS] Checkpoint skip ON: live receive-only drains defer their checkpoint while fewer than 100
+  receive generations are unsaved`. Without that line the run is a control, not a reading.
+- A DM between the phone's bench account and a peer driven from the harness Chrome, which sends
+  NUMBERED messages (`live-1`, `dead-1`, ...) so a gap or a duplicate is read off the conversation.
+- The phone's in-app log open afterwards (the summary and the reload lines go through it; the
+  per-drain `checkpoint deferred ...` line is a debug line, read only in a debug build's console).
+
+**CKS-1. A kill DURING a drain of more than K frames.**
+
+1. Phone open on the feed (NOT the DM, so the drain is the only reader). The peer sends `live-1` ..
+   `live-10`; the phone receives them and writes no checkpoint line for them (they are deferred).
+2. Kill the app: Mi 9T `adb shell am force-stop fr.emse.canari`; iPhone, swipe it away in the app
+   switcher.
+3. The peer sends `dead-1` .. `dead-300` while the phone is dead.
+4. Relaunch and unlock, and kill the app again while the catch-up drain runs - the first time right
+   after the unlock, the second time a second or two later, the third time just after the in-app log
+   shows `Encrypted state checkpoint persisted. Covers ...` (the drain reached K = 100 and
+   checkpointed). Three kills, three relaunches.
+5. Relaunch, unlock, wait for the list to settle, open the DM.
+
+**Expect:** every one of the 310 messages exactly once, in order; in the log no `live-ahead`, no
+`unreadable for good`, no duplicate row, and at least one `Covers N receive generations left by M
+skipped drains` line. A message missing, doubled or unreadable is a FAIL.
+
+**CKS-2. A phone away for HOURS with traffic** - two runs, because they take two different paths.
+
+- **(a) Killed.** Phone open on the feed; the peer sends `live-1` .. `live-20` (deferred). Mi 9T:
+  `adb shell input keyevent KEYCODE_HOME`, then `adb shell am kill fr.emse.canari` and assert
+  `pidof` is empty - **never `force-stop` here**, which cancels every FCM broadcast and so takes the
+  background engine out of the run; iPhone: swipe it away.
+- **(b) Backgrounded, not killed** (the native resume reload, the path that can say `live-ahead`).
+  Same start, then only Home - the process stays alive.
+
+For each run, over AT LEAST THREE HOURS the peer sends one numbered message every ~15 minutes and,
+once in the middle, a burst of 50. Write down every notification the phone shows (the background
+engine decrypts and advances `mls.bin` on its own). Then open the app, unlock, open the DM.
+
+**Expect:** every message exactly once, in order; every notification shown matches a message in the
+DM; no `unreadable for good`, no duplicate. In run (b) read the resume reload's line: a `live-ahead`
+outcome is ALLOWED only if no message the background engine notified is then missing - that is the
+question the switch reopens (the live state is persisted over what the engine wrote,
+`TauriMlsService.reloadStateFromDisk`). A missing notified message is a FAIL.
+
+**After the run:** the verdict, the build, the phone and the counts go into a row here and into
+[the question](open-questions.md#the-readings-owed-before-the-flip). Any FAIL: the switch goes back
+to `off` on dev at once and the question is reopened. Both readings passing on both phones: the lead
+flips production at `/admin/platform` and says so.
+
 ## The iPhone 12 owed-readings inventory (2026-10-11)
 
 Every reading the wiki, the backlog, `CLAUDE.md` and the pull requests of 2026-10-09 to 2026-10-11

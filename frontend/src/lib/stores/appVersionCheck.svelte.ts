@@ -6,6 +6,7 @@ import {
   serverVersionInfoToWire,
   type AppVersionCheckResult,
   type CallsMode,
+  type CheckpointSkipMode,
   type LivesMode,
 } from '$lib/utils/appVersion';
 import { connectivity } from '$lib/stores/connectivity.svelte';
@@ -82,6 +83,18 @@ export function serverCallsMode(): CallsMode {
  */
 export function serverLivesMode(): LivesMode {
   return lastCheck?.livesMode ?? 'off';
+}
+
+/**
+ * The server's checkpoint-skip switch (WP-CHECKPOINT-SKIP) as the last `/api/version` answer gave it,
+ * `off` before any answer - `off` is the durability every client has always had. Read by
+ * `mls-client/receiveCheckpointSkip.ts` at EVERY drain end, never cached in the pipeline, so a switch
+ * moved at `/admin/platform` reaches a running session on its next version refresh (focus, online,
+ * visibility). The cached answer counts, for the reason {@link serverPresencePost} gives.
+ */
+export function serverCheckpointSkipMode(): CheckpointSkipMode {
+  if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.checkpointSkipMode;
+  return loadCachedServerInfo()?.checkpointSkipMode ?? 'off';
 }
 
 /**

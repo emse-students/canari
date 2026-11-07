@@ -13,7 +13,14 @@
   import { m } from '$lib/paraglide/messages';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
-  import { CALLS_MODES, LIVES_MODES, type CallsMode, type LivesMode } from '$lib/utils/appVersion';
+  import {
+    CALLS_MODES,
+    CHECKPOINT_SKIP_MODES,
+    LIVES_MODES,
+    type CallsMode,
+    type CheckpointSkipMode,
+    type LivesMode,
+  } from '$lib/utils/appVersion';
   import { PUSH_MODES, type PushMode } from '$lib/admin/pushMode';
 
   type PaymentProviderChoice = 'lydia' | 'disabled';
@@ -26,6 +33,7 @@
     callsMode: CallsMode;
     livesMode: LivesMode;
     pushMode: PushMode;
+    checkpointSkipMode: CheckpointSkipMode;
   };
 
   /**
@@ -50,6 +58,7 @@
   let callsMode = $state<CallsMode>('off');
   let livesMode = $state<LivesMode>('off');
   let pushMode = $state<PushMode>('full');
+  let checkpointSkipMode = $state<CheckpointSkipMode>('off');
   /** One label per mode, typed so a fourth mode cannot reach the picker unlabelled. */
   const CALLS_MODE_LABELS: Record<CallsMode, () => string> = {
     off: m.admin_platform_calls_mode_off,
@@ -74,6 +83,17 @@
   };
   const PUSH_MODE_OPTIONS: PickerOption[] = $derived(
     PUSH_MODES.map((mode) => ({ value: mode, label: PUSH_MODE_LABELS[mode]() }))
+  );
+  /** One label per checkpoint-skip mode, typed so a new mode cannot reach the picker unlabelled. */
+  const CHECKPOINT_SKIP_MODE_LABELS: Record<CheckpointSkipMode, () => string> = {
+    off: m.admin_platform_checkpoint_skip_mode_off,
+    on: m.admin_platform_checkpoint_skip_mode_on,
+  };
+  const CHECKPOINT_SKIP_MODE_OPTIONS: PickerOption[] = $derived(
+    CHECKPOINT_SKIP_MODES.map((mode) => ({
+      value: mode,
+      label: CHECKPOINT_SKIP_MODE_LABELS[mode](),
+    }))
   );
   /** A product name, which reads the same in every locale, and the localized "off" switch. */
   const PAYMENT_PROVIDER_OPTIONS: PickerOption[] = $derived([
@@ -209,6 +229,7 @@
     callsMode = data.callsMode;
     livesMode = data.livesMode;
     pushMode = data.pushMode;
+    checkpointSkipMode = data.checkpointSkipMode;
   }
 
   /**
@@ -226,6 +247,7 @@
       callsMode,
       livesMode,
       pushMode,
+      checkpointSkipMode,
     };
     return Object.fromEntries(
       (Object.keys(form) as (keyof PlatformConfig)[])
@@ -497,6 +519,26 @@
         />
         <p class="text-text-muted text-xs">
           {m.admin_platform_push_mode_hint()}
+        </p>
+      </div>
+
+      <div class="space-y-1.5">
+        <label for="checkpoint-skip-mode" class="text-text-main text-sm font-bold">
+          {m.admin_platform_checkpoint_skip_mode_label()}
+        </label>
+        <Picker
+          id="checkpoint-skip-mode"
+          value={checkpointSkipMode}
+          options={CHECKPOINT_SKIP_MODE_OPTIONS}
+          label={m.admin_platform_checkpoint_skip_mode_label()}
+          triggerClass="border-cn-border text-text-main focus-visible:ring-cn-yellow/40 flex w-full max-w-xs items-center justify-between gap-2 rounded-xl border bg-transparent px-3 py-2 text-left text-sm focus-visible:ring-2 focus:outline-none"
+          onValueChange={(v) => {
+            const mode = CHECKPOINT_SKIP_MODES.find((known) => known === v);
+            if (mode) checkpointSkipMode = mode;
+          }}
+        />
+        <p class="text-text-muted text-xs">
+          {m.admin_platform_checkpoint_skip_mode_hint()}
         </p>
       </div>
 

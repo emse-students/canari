@@ -604,6 +604,10 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
         // Dev keeps today's push payloads (migration 018); the wake-up push is moved to `wake` by
         // hand at `/admin/platform` for its readings, and a reset puts it back.
         push_mode: 'full',
+        // Dev starts with the MLS checkpoint skip OFF like every estate (migration 020); it is moved
+        // to `on` by hand at `/admin/platform` for the readings of WP-CHECKPOINT-SKIP, and a reset
+        // puts it back.
+        checkpoint_skip_mode: 'off',
       },
     ],
     users,

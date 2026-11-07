@@ -16,9 +16,19 @@ measurement or a device nobody here has. None of them is waiting on an implement
 
 ---
 
-### DECISION OWED - may a drain that only RECEIVED application frames skip its full checkpoint? (2026-10-13)
+### DECIDED 2026-11-07 (lead, owner's delegation): build with K=100 behind checkpoint_skip_mode, OFF; flip after the dev readings below
 
-**ANSWERED 2026-10-18 (user): yes, but ONLY after the Mi 9T crash measurement below.** The work package is [WP-CHECKPOINT-SKIP](backlog.md#decided-by-the-user-on-2026-10-18---every-design-question-answered); this section stays as the measured reasoning and the protocol, and is deleted when the measurement is read and the build ships.
+*The question, asked 2026-10-13: may a drain that only RECEIVED application frames skip its full checkpoint?*
+
+**ANSWERED 2026-10-18 (user): yes, but ONLY after the Mi 9T crash measurement below.** The
+measurement was read on 2026-10-22, and on 2026-11-07 the lead, under the owner's delegation, decided
+to BUILD it, conservatively: **K = 100** (the measured value, a count of deferred receive
+generations, never a clock), behind the server switch **`platform_config.checkpoint_skip_mode`**
+(core migration 020, `off` by default on every estate, moved at `/admin/platform`, published by
+`GET /api/version` as `checkpointSkip.mode`). Built in [WP-CHECKPOINT-SKIP](backlog.md#decided-by-the-user-on-2026-10-18---every-design-question-answered).
+**The switch is flipped by the lead on dev, then production, only after [the readings
+below](#the-readings-owed-before-the-flip) pass.** This section stays as the measured reasoning and
+the protocol, and is deleted when those readings are read and the switch is on in production.
 
 **What happens today.** Every drain ends with a full encrypted checkpoint of the WHOLE MLS state,
 even a drain of one application frame. `mlsStatePersister.onBulkIngestEnd` sets
@@ -87,30 +97,38 @@ three app-level consequences are not measured:
 - push frames while it is dead;
 - resume, and read the log for `live-ahead`, duplicates and `unreadable for good`.
 
-**The measurement switch (2026-10-18, inert).** No build holds a state ahead of the disk, so the
-protocol above cannot be run as written. `mlsStatePersister` takes a `receiveSkipBudget` (default 0 =
-today's behaviour, pinned by a test), read by `receiveCheckpointSkipBudget`
-(`mls-client/receiveCheckpointSkip.ts`) only on a development-estate build AND with an explicit
-`canari_dev_checkpoint_skip_k` key:
+**The switch (a measurement key on 2026-10-18, a server switch since 2026-11-07).** `mlsStatePersister`
+takes a `receiveSkipBudget` GETTER, read at every drain end, which returns 0 (today's behaviour,
+pinned by a test) unless the estate's `checkpointSkip.mode` is `on`, and then K = 100
+(`RECEIVE_CHECKPOINT_SKIP_BUDGET`, `mls-client/receiveCheckpointSkip.ts`). Read at each drain end
+because a cold start's first drains run before `/api/version` answers, and a switch moved at
+`/admin/platform` reaches a running session on its next version refresh. Absent, unknown or not yet
+answered reads as `off`. The development-only `canari_dev_checkpoint_skip_k` key is gone:
 
 - It skips ONLY a LIVE drain (`bufferUi`) that never called `persistNow` (so never a commit, a
   Welcome or a structural change) and whose window overlapped no history replay or restore, which
   save a stream cursor and seen hashes of their own and must never get ahead of the MLS state.
 - The budget counts application FRAMES (ratchet generations, one `scheduleDeferred` each), not
-  drains: a catch-up drain of hundreds of frames reaches it and checkpoints at once. The cap (500)
-  stays under `maximum_forward_distance` (2000).
+  drains: a catch-up drain of hundreds of frames reaches it and checkpoints at once. K = 100 is a
+  client constant, not a server value, so no admin can set a number the window does not allow.
+- A history-replay or restore window raises the urgency whatever the budget says at that moment, so a
+  switch turned on between a replay's inner close and the live drain's outer close cannot skip it.
 - A failed write restores the urgency it was covering, so the retry is not skipped, and no skip is
   decided while an urgent checkpoint is still in flight.
 - Frames read outside the conversation path report themselves (`noteReceivedFrame`): a key-group
   commit is structural (never skipped), a key-group seed or a frame refused for its sender spends a
   counted generation, and a partial gap replay (`applied > 0`, not healed) asks for a checkpoint.
 - **The real worst case** is K-1 skipped frames plus the size of the drain that reaches the budget
-  (that drain checkpoints, but a kill during it loses it): with the cap of 500 that stays under
-  `maximum_forward_distance` (2000) while a drain stays under ~1500 frames.
-- It logs at warn on every skip. An explicit `flush` (background, logout, send) writes as before.
-- **To use it on the Mi 9T:** `VITE_DEPLOY_ENVIRONMENT=development` must be set before
-  `bun a1apk.mjs --debug` (the bench build does not set it, and a store tester WebView is not
-  inspectable), then set `localStorage.canari_dev_checkpoint_skip_k` through the devtools socket.
+  (that drain checkpoints, but a kill during it loses it): with K = 100 that stays under
+  `maximum_forward_distance` (2000) while a drain stays under ~1900 frames.
+- **Logging (no line per frame):** the switch's state is said once per change (`[MLS] Checkpoint skip
+  ON: ...` / `OFF`, never at birth while off); each deferred drain is ONE `Log.d` debug line
+  (`checkpoint deferred after a live receive-only drain (N/100 receive generations unsaved)`); the
+  checkpoint that ends a run carries the count on the line it always wrote (`... persisted. Covers N
+  receive generations left by M skipped drains.`). The only warn is the failure path: a write that
+  covered skipped drains and failed (`... the disk is still behind by ...`). With the switch off
+  every line is what it always was, pinned by a test.
+- An explicit `flush` (background, logout, send) writes as before.
 
 **MEASURED on the Mi 9T, 2026-10-22 (switch ON, local estate, bench accounts, dev debug build of
 `main` at the merge of #2078): NO FRAME LOST, NO `live-ahead`, NO DUPLICATE, NO `unreadable for good`
@@ -141,11 +159,29 @@ sends `dead` more, the app is relaunched and unlocked. Read from `adb logcat` an
   `setItem` and assert the key after the relaunch, or the run is a second control.
 - **What this does NOT cover:** a kill DURING a drain of more than K frames (the worst case above), a
   kill with a commit in the window (structural, never skipped by construction), K of 200-500, and a
-  phone that stays killed for hours. The decision to build is the user's, on these numbers.
+  phone that stays killed for hours. The first and the last are [owed before the
+  flip](#the-readings-owed-before-the-flip); K above 100 is not built.
 - **The device:** the phone carried the RELEASE build 1.3.1 (first install 2026-10-13 23:37:42, last
   update 2026-10-21 00:25:39); it was uninstalled ON PURPOSE on 2026-10-22 to install the debug build,
   which destroyed that install's enrolment and MLS store (a bench phone, Master's yes). The debug
   install is a NEW device (2026-10-22 01:46:27) with the bench owner on the local estate.
+
+#### The readings owed before the flip
+
+Both on DEV (`dev.canari-emse.fr`, a pre-release carrying the switch), the switch moved to `on` at
+`/admin/platform`, on BOTH bench phones (the Mi 9T and the iPhone 12). The protocol, step by step, is
+[CKS in device-verification](device-verification.md#cks-the-checkpoint-skip-switch-on-dev---owed-on-both-phones-before-the-flip).
+
+1. **A kill DURING a drain of more than K frames.** The peer queues ~300 frames while the phone is
+   dead, the phone is relaunched, and killed again while that catch-up drain runs (the drain reaches
+   K and checkpoints; the kill must land before or during that write). Expect, after the next resume:
+   every frame readable once, no duplicate, no `live-ahead`, no `unreadable for good`.
+2. **A phone killed for HOURS with traffic.** Skipped drains pending, the phone killed, the peer
+   writing over several hours (with the native background engine taking the pushes), then resumed.
+   Same expectations, and every notification the background engine showed matches a message in the
+   conversation.
+
+Either one failing keeps the switch `off` and reopens this section.
 
 ### DECISION OWED - should a read receipt wait for a COUNT or an event instead of the 2 s window? (2026-10-15)
 
