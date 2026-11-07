@@ -18,7 +18,11 @@
 #   2. a release under load: every POST answered 200, and only the new version is left running;
 #   2b. THE RELOADS THEMSELVES: each proxy reloaded hundreds of times between a take-out list and the
 #      resting one, under load - every POST answered 200 (the `upstream` lists failed this within a
-#      few dozen reloads: a renamed `resolve` server starts its worker with no peer);
+#      few dozen reloads: a renamed `resolve` server starts its worker with no peer), the mesh's under
+#      calls from another service;
+#   2c. ONE SERVICE CALLING ANOTHER across that one's release: every call through the mesh answered
+#      200, pooled connections or not - and, as its control, the same calls made to the API by its own
+#      DNS name DO fail: the reset the mesh removes, reproduced;
 #   3. a request held in its `auth_request` when the release starts: the pairing check waits for it
 #      to choose its upstream, and it is answered;
 #   4. TWO ROLLBACKS, each run by the library an older release shipped (frozen in rolling-fixture/):
@@ -92,7 +96,7 @@ export ROLLING_DRAIN_SECONDS=3
 # shellcheck source-path=SCRIPTDIR source=../../../infrastructure/lib/rolling.sh
 . "$REPO/infrastructure/lib/rolling.sh"
 
-VERSIONS="v1 v2 v3 v4 v5a v5b v5 broken v6"
+VERSIONS="v1 v2 v3 v3m v3d v4 v5a v5b v5 broken v6"
 TMP="$(mktemp -d)"
 cleanup() {
   # TAG and EDGE_DIR given: the file requires them, and the cleanup that runs FIRST has neither -
@@ -117,6 +121,18 @@ ROTATION_DIR="$EDGE/targets"
 # use_edge_conf <file> - the edge's nginx.conf on disk becomes <file>, as a checkout of that release has it.
 use_edge_conf() { cp "$1" "$EDGE/nginx.conf"; }
 use_edge_conf "$REPO/infrastructure/edge/nginx.conf"
+# THE MESH RUNS THE REAL edge/mesh.conf, its routes swapped for the fixture's one: every `server` of the
+# real file is dropped, and one for the API (port 3000, `$target_api`) closes its `http` block. So every
+# directive the fixture proves - keep-alive, buffering, the resolver, the connect failover - is the one
+# production runs, by construction rather than by a comparison.
+# shellcheck disable=SC2016 # nginx text, unexpanded on purpose
+awk '
+  /^http \{$/ { inhttp = 1 }
+  /^    server \{$/ { skip = 1; next }
+  skip && /^    \}$/ { skip = 0; next }
+  skip { next }
+  inhttp && /^\}$/ { print "    server {\n        listen 3000;\n        location / {\n            proxy_pass http://$target_api;\n        }\n    }" }
+  { print }' "$REPO/infrastructure/edge/mesh.conf" >"$EDGE/mesh.conf"
 # with_release_1_6_2 <function...> - runs it with the library 1.6.2 shipped, in a subshell (it defines
 # the same functions, and must not replace this file's), writing that release's lists where it did.
 with_release_1_6_2() {
@@ -160,6 +176,13 @@ plan() {
   # `tr`: a Windows Python ends its lines with CR, which would end up inside a replica list.
   dc config --format json | "$PYTHON" "$REPO/infrastructure/lib/replace-modes.py" rolltest/ | tr -d '\r'
 }
+# older_plan - the plan as a release from before the mesh computed it from ITS compose file: no mesh,
+# no caller, and one route per service (its label named the frontend alone). A rollback runs the older
+# release's own checkout, so its library never meets a second route; this fixture keeps one compose
+# file for every era, so the older libraries are handed what their release would have read.
+older_plan() {
+  plan | awk '$1 != "mesh" && $1 != "caller" { sub(/,.*/, "", $4); print }'
+}
 # deploy - what deploy-environment.sh does with the plan: the lists first, then the services.
 deploy() {
   local p
@@ -169,6 +192,25 @@ deploy() {
 running_versions() {
   docker ps --filter "label=com.docker.compose.project=$PROJECT" --filter "label=com.docker.compose.service=api" \
     --format '{{.Image}}' | sort | tr '\n' ' '
+}
+# start_caller <name> <url> [keepalive] - client.mjs INSIDE the `caller` container: one service calling
+# another, at concurrency 12, until stop_callers names it. Not through the edge - a service's call never
+# is.
+CALLER_PIDS=""
+start_caller() {
+  nopath dc exec -T caller rm -f "/tmp/$1.stop"
+  nopath dc exec -T caller bun /fixture/client.mjs "$2" "/tmp/$1.stop" 12 ${3:+"$3"} >"$TMP/$1.json" &
+  CALLER_PIDS="$CALLER_PIDS $!"
+}
+# stop_callers <name...> - stops those clients and prints what each got.
+stop_callers() {
+  local name
+  sleep 2
+  for name in "$@"; do nopath dc exec -T caller touch "/tmp/$name.stop"; done
+  # shellcheck disable=SC2086 # one pid per word
+  wait $CALLER_PIDS
+  CALLER_PIDS=""
+  for name in "$@"; do printf '    %s: %s\n' "$name" "$(cat "$TMP/$name.json")"; done
 }
 # answered_by - the version that answers one POST through the edge, or nothing.
 answered_by() {
@@ -214,6 +256,7 @@ done < <(
   PROJECT="canari-rolltest-render"
   mkdir -p "$ROTATION_DIR"
   cp "$REPO/infrastructure/edge/nginx.conf" "$TMP/real/edge/nginx.conf"
+  cp "$REPO/infrastructure/edge/mesh.conf" "$TMP/real/edge/mesh.conf"
   rotation_seed <<<"$prod_plan" >/dev/null || {
     echo fail "rotation_seed writes the production lists"
     exit 1
@@ -270,6 +313,27 @@ done < <(
   else
     echo fail "the real edge configuration accepts a list naming a container, on $edge_image"
   fi
+  # THE REAL MESH, on the image it runs, with the production list at rest and then mid-replacement.
+  if nopath docker run --rm -v "$(host_path "$TMP/real/edge"):/etc/nginx/edge:ro" "$edge_image" nginx -t -q -c /etc/nginx/edge/mesh.conf >&2; then
+    echo ok "the real mesh configuration accepts the production list at rest, on $edge_image"
+  else
+    echo fail "the real mesh configuration refuses the production list at rest, on $edge_image"
+  fi
+  rotation_write mesh core-service "$(rotation_block core-service 3012 canari-core-service-2)" || {
+    echo fail "rotation_write sets core-service to a container's name in the mesh's list"
+    exit 1
+  }
+  # shellcheck disable=SC2031 # set by the rotation_write just above, in this same subshell
+  mesh_token="$ROTATION_TOKEN"
+  mesh_dump="$(nopath docker run --rm -v "$(host_path "$TMP/real/edge"):/etc/nginx/edge:ro" "$edge_image" nginx -T -q -c /etc/nginx/edge/mesh.conf 2>&1)"
+  # shellcheck disable=SC2016 # nginx text, unexpanded on purpose
+  if grep -qE '^# configuration file /etc/nginx/edge/targets/mesh\.conf:$' <<<"$mesh_dump" &&
+    grep -qxF "# render $mesh_token" <<<"$mesh_dump" &&
+    grep -qF 'map "" $target_core_service { default canari-core-service-2:3012; }' <<<"$mesh_dump"; then
+    echo ok "the real mesh accepts a list naming a container, and its nginx -T shows that list with its render id"
+  else
+    echo fail "the real mesh refuses a list naming a container, or its nginx -T does not show it with its render id"
+  fi
   # And a fresh host with no list at all: the reason rotation_seed runs before any `up`.
   rm -f "$ROTATION_DIR"/*.conf
   if nopath docker run --rm -v "$rot:/etc/nginx/targets:ro" rolltest/frontend-real nginx -t -q >/dev/null 2>&1; then
@@ -294,7 +358,7 @@ use_edge_conf "$FIX/edge-upstream-lists.conf"
 # first deploy - a real, one-time cost of the transition, and not what the cases measure.
 deploy_1_6_2() {
   local p
-  p="$(plan)"
+  p="$(older_plan)"
   rotation_seed <<<"$p" && replace_services <<<"$p"
 }
 with_release_1_6_2 deploy_1_6_2 >"$TMP/v1.log" 2>&1 || {
@@ -369,7 +433,7 @@ unset ROLLING_LOG_SINCE
 # retired replica holds ONE line inside the window (the one before it is excluded); v3's own start line
 # is seen only by the sweep, api having been replaced before the frontend.
 got="$(sed -nE 's/^\[TRANSPORT_RESETS\] service=([a-z_-]+) container=[0-9a-f]+ state=([a-z]+) count=([0-9a-z]+)$/\1 \2 \3/p' "$TMP/release.log" | sort | tr '\n' '|')"
-want='api retired 1|api running 1|auth running 0|edge running 0|frontend retired 0|frontend running 0|'
+want='api retired 1|api running 1|auth running 0|caller running 0|edge running 0|frontend retired 0|frontend running 0|mesh running 0|'
 if [ "$got" = "$want" ]; then
   ok "the transport-reset lines are exactly the retired and running containers, one reset inside the window and one outside excluded"
 else
@@ -445,24 +509,33 @@ for cid in $(containers_of api); do [ "$cid" = "$api_old" ] || api_cid="$cid"; d
 if [ -z "$api_cid" ] || ! wait_healthy "$api_cid" api >>"$TMP/storm.log" 2>&1; then storm=unscaled; fi
 fe_cid="$(containers_of frontend)"
 edge_cid="$(containers_of edge)"
+mesh_cid="$(containers_of mesh)"
+# The API's take-out writes BOTH its lists, the frontend's and the mesh's: one service calls it too.
 if [ "$storm" = ready ] &&
   ! { rotation_take_out api "$api_cid" && cp "$(rotation_file frontend)" "$TMP/frontend.out" &&
+    cp "$(rotation_file mesh)" "$TMP/mesh.out" &&
     rotation_restore api force && cp "$(rotation_file frontend)" "$TMP/frontend.rest" &&
+    cp "$(rotation_file mesh)" "$TMP/mesh.rest" &&
     rotation_take_out frontend "$fe_cid" && cp "$(rotation_file edge)" "$TMP/edge.out" &&
     rotation_restore frontend force && cp "$(rotation_file edge)" "$TMP/edge.rest"; } >>"$TMP/storm.log" 2>&1; then
   storm=unrendered
 fi
-for proxy in frontend edge; do
+for proxy in frontend edge mesh; do
   # The render id aside, the two lists must differ, or this would reload one list onto itself.
   cmp -s <(grep -v '^# render ' "$TMP/$proxy.out") <(grep -v '^# render ' "$TMP/$proxy.rest") && storm=unrendered
 done
 reloads=0
 if [ "$storm" = ready ]; then
   ROLLTEST_CONCURRENCY=12 start_client storm
+  # A SERVICE CALLING THE API THROUGH THE MESH, POOLING ITS CONNECTIONS as a service's fetch does: a
+  # reload's old worker closes the idle keep-alive connections it holds, and a caller writing into one
+  # would read a reset. The mesh keeps none (`keepalive_timeout 0`), so this must see nothing.
+  start_caller storm-calls http://mesh:3000/api/send keepalive
+  sleep 2
   for _ in $(seq 1 "$STORM_CYCLES"); do
     for form in out rest; do
-      for proxy in frontend edge; do
-        case "$proxy" in frontend) cid="$fe_cid" ;; *) cid="$edge_cid" ;; esac
+      for proxy in frontend edge mesh; do
+        case "$proxy" in frontend) cid="$fe_cid" ;; mesh) cid="$mesh_cid" ;; *) cid="$edge_cid" ;; esac
         if cp "$TMP/$proxy.$form" "$(rotation_file "$proxy")" && rotation_reload "$proxy" "$cid" plain "" >>"$TMP/storm.log" 2>&1; then
           reloads=$((reloads + 1))
         else
@@ -472,6 +545,7 @@ if [ "$storm" = ready ]; then
     done
   done
   stop_client storm
+  stop_callers storm-calls
 fi
 if [ "$storm" = ready ]; then
   ok "$reloads reloads, each proxy alternating between a take-out list and the resting one, every one taking effect"
@@ -489,6 +563,18 @@ if [ -s "$TMP/storm.json" ]; then
     dc logs --no-color --timestamps edge frontend 2>&1 | grep -E '\[(warn|error|crit|alert|emerg)\]' | tail -n 10 | sed 's/^/    /'
   fi
 fi
+if [ -s "$TMP/storm-calls.json" ]; then
+  bad="$(failures storm-calls)"
+  total="$(field storm-calls "Object.values(r.statuses).reduce((a, b) => a + b, 0)")"
+  if [ -z "$bad" ] && [ "${total:-0}" -gt 100 ]; then
+    ok "every one of $total calls another service made through the mesh, pooling its connections, across $reloads reloads was answered 200"
+  else
+    fail "calls through the mesh across $reloads reloads failed: ${bad:-none} (of ${total:-0})"
+    dc logs --no-color --timestamps mesh 2>&1 | grep -E '\[(warn|error|crit|alert|emerg)\]' | tail -n 10 | sed 's/^/    /'
+  fi
+else
+  fail "the calls through the mesh during the reloads reported nothing"
+fi
 # The release's own end: the new API replica alone, the old one drained and removed, the list at rest.
 if { rotation_take_out api "$api_cid" && retire api "$api_old" && rotation_restore api; } >>"$TMP/storm.log" 2>&1 &&
   [ "$(containers_of api)" = "$api_cid" ]; then
@@ -498,6 +584,63 @@ else
   cat "$TMP/storm.log" >&2
 fi
 if lists_at_rest; then ok "every list is back at rest after the reloads"; else fail "a list still names a replica after the reloads"; fi
+
+# ── 2c. One service calling another across that one's release ───────────────
+# THE GAP THE MESH CLOSES (2026-11-07, backlog P2 since 2026-11-01). A call from one service to another
+# never went through the frontend nginx, so the take-out never covered it: it resolved the API by
+# Docker's DNS, which names the retiring replica until it stops, and a call queued on it when its
+# listener closed was reset - a POST, which nothing may replay. The callers now name the mesh, which
+# the API's rotation takes it out of before it stops. Two callers through the mesh, one pooling its
+# connections as a service's fetch does and one opening a connection per call, across a release of
+# the API: every call answered 200.
+printf '\ndeploy-rolling: v3 -> v3m, another service calling the API through the mesh\n'
+build v3m
+export TAG=v3m
+start_caller mesh-pooled http://mesh:3000/api/send keepalive
+start_caller mesh-close http://mesh:3000/api/send
+sleep 2
+if deploy >"$TMP/mesh.log" 2>&1; then ok "the release succeeded"; else
+  fail "the release succeeded"
+  cat "$TMP/mesh.log" >&2
+fi
+stop_callers mesh-pooled mesh-close
+if grep -qE '^  mesh: [0-9a-f]+ reloaded; paired' "$TMP/mesh.log"; then
+  ok "the mesh took the old API replica out of its list, the pairing check holding, before it stopped"
+else
+  fail "the mesh never proved the old API replica out of its list"
+  cat "$TMP/mesh.log" >&2
+fi
+for caller in mesh-pooled mesh-close; do
+  bad="$(failures "$caller")"
+  total="$(field "$caller" "Object.values(r.statuses).reduce((a, b) => a + b, 0)")"
+  if [ -z "$bad" ] && [ "${total:-0}" -gt 20 ] && [ "$(field "$caller" "r.versions.v3m > 0 ? 'yes' : 'no'")" = yes ]; then
+    ok "$caller: every one of $total calls across the API's release was answered 200, the new release among them"
+  else
+    fail "$caller: calls across the API's release failed: ${bad:-none} (of ${total:-0}), or none reached v3m"
+    dc logs --no-color --timestamps mesh api 2>&1 | grep -E '\[(warn|error|crit|alert|emerg)\]|DRAIN' | sed 's/^/    /'
+  fi
+done
+
+# THE CONTROL, AND THE REPRODUCTION: the same calls made the way every service made them before the
+# mesh - to the API by its own DNS name, one connection per call - across the same kind of release.
+# They must FAIL: without that, a fixture too gentle to catch the reset would pass the case above for
+# nothing.
+printf '\ndeploy-rolling: v3m -> v3d, the same calls made to the API by its DNS name, which must be seen to fail\n'
+build v3d
+export TAG=v3d
+start_caller direct http://api:3000/api/send
+sleep 2
+deploy >"$TMP/direct.log" 2>&1 || {
+  fail "the release under direct calls succeeded"
+  cat "$TMP/direct.log" >&2
+}
+stop_callers direct
+bad="$(failures direct)"
+if [ -n "$bad" ]; then
+  ok "calls to the API by its DNS name fail across its release ($bad) - the reset the mesh removes, reproduced"
+else
+  fail "calls to the API by its DNS name saw NO failure across its release - the fixture cannot show the gap, so the case above proves nothing"
+fi
 
 # ── 3. A request held in its auth_request ────────────────────────────────────
 printf '\ndeploy-rolling: v3 -> v4 with a POST still in its auth_request\n'
@@ -627,7 +770,7 @@ if lists_at_rest; then ok "the lists a rollback finds name each service by DNS";
 if (
   # shellcheck source-path=SCRIPTDIR source=rolling-fixture/rolling-pre-rotation.sh
   . "$FIX/rolling-pre-rotation.sh"
-  replace_services <<<"$(plan)"
+  replace_services <<<"$(older_plan)"
 ) >"$TMP/rollback.log" 2>&1; then
   ok "the older library replaces the estate"
 else

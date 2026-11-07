@@ -202,11 +202,11 @@ jobs:
         run: bash infrastructure/deploy/log-retention-report.sh
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
-  # DID DOCKER'S DNS FAIL THE TWO PROXIES?
+  # DID DOCKER'S DNS FAIL THE PROXIES?
   #
   # Since the replica lists became variable targets (2026-11-02), every request the frontend proxies
   # and every connection the edge relays waits on Docker's resolver for its target, and a resolver
-  # that fails fails the request after `resolver_timeout`. Counts the edge's and the frontend's
+  # that fails fails the request after `resolver_timeout`. Counts the edge's, the frontend's and the mesh's
   # `could not be resolved` lines of the last day and goes RED on any no design explains: a timeout
   # or server failure (the DNS itself), an overlap service or a take-out's container name not found.
   # An exclusive service's own gap is printed, counted. infrastructure/lib/resolver-report.sh;

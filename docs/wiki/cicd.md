@@ -690,9 +690,9 @@ declaration cannot hold:
 
 | Mode        | Meaning                                         | Services                                                                                            | What it requires                                             |
 | ----------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `overlap`   | two replicas at once, as above                  | gateway, chat-delivery, core, social, frontend-ssr, frontend                                        | no host port, no writable volume, a healthcheck with `start_interval`, a `canari.deploy.rotation` |
+| `overlap`   | two replicas at once, as above                  | gateway, chat-delivery, core, social, frontend-ssr, frontend                                        | no host port, no writable volume, a healthcheck with `start_interval`, a `canari.deploy.rotation` naming every proxy in front (`frontend:3012,mesh:3012`) |
 | `exclusive` | recreated in place - a short gap remains        | media-service (its metadata index is one JSON file on `media_meta`), call-service (rooms in memory) | -                                                            |
-| `pinned`    | a third-party image, never changed by a release | postgres, redis, garage, adminer, `edge`                                                            | not an image this repository builds                          |
+| `pinned`    | a third-party image, never changed by a release | postgres, redis, garage, adminer, `edge`, `mesh`                                                    | not an image this repository builds                          |
 
 **THE HOST PORT MOVED TO A CONTAINER THAT NEVER CHANGES.** Two replicas cannot both bind
 `127.0.0.1:8081`, so the frontend lost its port and a new `edge` service holds it: a pinned nginx in
@@ -749,25 +749,9 @@ log (the redirect failed before `2>/dev/null` applied); that noise is gone too.
   an error the member sees.
 - media-service and call-service are `exclusive`: their few seconds of gap remain
   ([backlog](backlog.md)).
-- **The lists govern the two nginx, and nothing else: every service-to-service call still goes
-  around them** (enumerated in both compose files, 2026-11-01 second review). A caller resolves its
-  peer through Docker's DNS, which names the retiring replica until it stops:
-
-  | Caller | Peer (overlap) | Variables |
-  | --- | --- | --- |
-  | chat-gateway | chat-delivery-service | `DELIVERY_SERVICE_URL` - the message-send path itself |
-  | chat-gateway | social-service | `SOCIAL_SERVICE_URL` |
-  | core-service | social-service | `FORM_URL`, `FORM_SERVICE_URL` |
-  | social-service | core-service | `USER_SERVICE_URL`, `PAYMENT_SERVICE_URL` |
-  | social-service | chat-delivery-service | `DELIVERY_INTERNAL_URL` |
-  | frontend-ssr | core-service, social-service, chat-delivery-service | `CORE_SERVICE_URL`, `SOCIAL_SERVICE_URL`, `DELIVERY_SERVICE_URL` |
-
-  (media-service, reached by three of them, is `exclusive`: its gap is the one above.) For these
-  callers the retiring replica never leaves rotation, so `wait_unqueued`'s two clean reads of its
-  accept queue are a CLOCK, not a proof: a call can land in the queue after them and be reset when
-  the listener closes - a POST among them answered with an error (not observed). That is a gap, owned
-  in the queue: [backlog](backlog.d/p2-service-to-service-calls-bypass-the-rotation.md). Every claim
-  of "no 502" in this section is about requests that go through nginx.
+- **A call from one service to another goes through the mesh** since 2026-11-07, and is covered by
+  the same take-out ([below](#service-to-service-calls-go-through-the-mesh)); what it still does not
+  cover is said there.
 - **The transition deploy** - the first one carrying this - moves the port from the frontend to the
   edge: about one second with nothing on `8081`. And compose 2.26 hashes a service with `depends_on`
   differently with and without `--no-deps`, so the deploy ALWAYS uses `--no-deps`; a manual `up -d`
@@ -782,6 +766,62 @@ log (the redirect failed before `2>/dev/null` applied); that noise is gone too.
 - The `*/5` Le Cercle webhook retry (`retryDueWebhookDeliveries`) does not claim its rows, so both
   replicas can retry in the overlap. Harmless: Le Cercle inserts with `ON CONFLICT(payment_intent_id)`,
   so no member is credited twice; only a counter update and a `[CERCLE]` line are doubled.
+
+#### Service-to-service calls go through the mesh
+
+**The cause (read in the code, 2026-11-07).** The replica lists governed the frontend and the edge,
+but a service called its peer by Docker's DNS: `http://core-service:3012` from chat-delivery, media,
+social and the SSR, `http://social-service:3014` from chat-delivery and media, and back. Docker's DNS
+names a retiring replica until it STOPS, so a call can be accepted into its backlog after
+`wait_unqueued` read it empty, and is reset when the listener closes - a POST cannot be replayed. The
+first enumeration also missed four calls made by CODE DEFAULTS that no compose file set
+(chat-delivery's `CORE_SERVICE_INTERNAL_URL` and `SOCIAL_SERVICE_URL`, core's `CHAT_DELIVERY_URL`,
+media's `SOCIAL_SERVICE_URL` in `lives-mode.ts`).
+
+**The fix: one more proxy in the rotation, `mesh`** (`infrastructure/edge/mesh.conf`):
+
+- An nginx on the edge's image and digest, one `server` per routed service ON THAT SERVICE'S PORT
+  (3010, 3012, 3014), each `proxy_pass http://$target_<svc>` from its own list `targets/mesh.conf`.
+  A caller changes its host and nothing else: `http://mesh:3012`.
+- **Pinned**: no release replaces it, a deploy only RELOADS it, and a reload keeps the listening
+  sockets - so the proxy itself never leaves a gap.
+- `keepalive_timeout 0`: no idle connection from a caller, so a reload's old worker holds nothing it
+  must close. The variable `proxy_pass` keeps no upstream connection, so the pairing check (no old
+  worker's socket on the retiring replica) means what it says.
+- Headers and body pass untouched. The frontend nginx could not be the mesh: it strips `X-Internal-*`
+  and runs `auth_request`, and it is replaced by every release.
+- The rotation label is a list: `canari.deploy.rotation: frontend:3012,mesh:3012`. A take-out writes
+  and reloads EVERY proxy named, and is refused at the first that fails; a restore tries them all
+  and reports a failure only after.
+
+**Two gates keep it whole.** `replace-modes.py` refuses, before anything stops, an `environment` value
+naming a rotated service by its DNS name (`calls core-service by Docker's DNS, around its
+rotation`). `.github/scripts/tests/internal-url-defaults.py`, run by `deploy-replace.test.sh` on both
+estates, finds every `scheme://<service>:<port>` default in a service's production sources and
+requires the deployed compose file to SET one of the variables in front of it - a code default
+nobody set is how the four calls above were missed. Both fail on the compose files of `v1.6.6`.
+
+**The reproduction.** `deploy-rolling.test.sh` case 2c deploys a release while a `caller` container
+POSTs to the replaced `api`: through `http://mesh:3000`, pooled and not, every call answers `200`;
+the control, the same caller on `http://api:3000`, sees the reset. Storm 2b reloads the mesh with the
+frontend and the edge under a pooled caller, with no failure.
+
+**The count stays.** `rolling.sh` (`transport_resets`) reads each retiring replica's log before its
+`docker rm`, and one sweep at the end of `replace_services` reads every running container of every
+replaced service: `[TRANSPORT_RESETS] service=<name> container=<id> state=<retired|running>
+count=<n>`, then `total=<n> unknown=<k>`; an unreadable log is `unknown` with a `::warning::`, never
+`0`. The logs do not name the peer (bun 1.4 says `ECONNRESET` with no host), so the count includes
+external callers and is read against an ordinary day; after the mesh, a rise at deploys is a defect.
+
+**What it does not cover:**
+
+- **The first deploy carrying it**: callers not yet replaced still call by DNS, and the mesh is
+  created by `up` before its first reload. From the next deploy on, every call goes through it. A
+  rollback to an older release returns to DNS, and `--remove-orphans` removes the mesh.
+- **A bump of the nginx image recreates it**, about one second of refused calls - the edge's cost.
+- media-service and call-service are `exclusive`: a call to them keeps their stop-first gap.
+- A public throttled route called from inside (the SSR to `/api/public/*`, no `X-Real-IP`) is keyed
+  on the mesh's address instead of the SSR's - one internal caller either way.
 
 #### A rollback across the replica lists
 

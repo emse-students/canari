@@ -4,7 +4,7 @@
 Reads `docker compose config --format json` on stdin and prints one line per service, in the order
 the deploy must replace them (every service after everything it `depends_on`):
 
-    <service> <mode> <publishes-a-host-port: yes|no> <rotation: proxy:port, or -> <image, or ->
+    <service> <mode> <publishes-a-host-port: yes|no> <rotation: proxy:port[,proxy:port...], or -> <image, or ->
 
 Takes one argument: the image prefix of what THIS repository builds (`<registry>/<owner>/<repo>/`),
 because one rule below is about those images and no other.
@@ -29,11 +29,12 @@ rather than discover it on production:
   - no volume it could write: two writers on one store is exactly the state `exclusive` exists for.
     A READ-ONLY bind mount is two readers of one file, and is allowed (the rotation file the
     deploy writes for the nginx in front, below);
-  - a ROTATION, as the label `canari.deploy.rotation: <proxy service>:<port>`: the nginx that
-    routes to this service by an explicit list of replicas the deploy writes, so the old replica
-    can be taken OUT of that list - and proven out - before it is told to stop. A replica still in
-    rotation when its listener closes resets whatever is queued on it: a 502 on a POST nginx may
-    not replay (main CI run 41311303760, 2026-11-01);
+  - a ROTATION, as the label `canari.deploy.rotation: <proxy service>:<port>[,<proxy>:<port>...]`:
+    EVERY nginx that routes to this service by an explicit list of replicas the deploy writes, so the
+    old replica can be taken OUT of each list - and proven out - before it is told to stop. A replica
+    still in rotation when its listener closes resets whatever is queued on it: a 502 on a POST nginx
+    may not replay (main CI run 41311303760, 2026-11-01). A service other services call names the
+    `mesh` beside the frontend: the proxy those callers go through;
   - a compose-level healthcheck WITH `start_interval`: the old replica leaves when the new one is
     `healthy`, so a service with no healthcheck has no moment at which that is known, and without
     `start_interval` Docker runs the first check one full `interval` (30 s) after the start.
@@ -42,12 +43,18 @@ WHAT `pinned` REQUIRES: an image this repository does not build. Every release m
 every image it builds, so such a service is replaced by every release whatever it is called - with
 a gap, since nothing overlaps it. Calling it pinned would hide that gap; it is `exclusive`, and says so.
 
+AND NO SERVICE MAY CALL A ROTATED SERVICE AROUND ITS ROTATION: an environment value naming one
+(`http://core-service:3012`) is refused. Such a caller resolves its peer through Docker's DNS, which
+names the retiring replica until it stops, so no take-out covers its calls - the reset the rotation
+exists to remove (2026-11-07). The caller names a proxy of the rotation instead (`http://mesh:3012`).
+
 Used by `infrastructure/deploy/deploy-environment.sh` on the resolved file at deploy time, and by
 `.github/scripts/tests/deploy-replace.test.sh` on both compose files.
 docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to
 """
 
 import json
+import re
 import sys
 
 LABEL = "canari.deploy.replace"
@@ -80,8 +87,36 @@ def writable_volumes(service):
 
 
 def rotation_of(service):
-    """The `proxy:port` this service is routed through, or None."""
+    """The label as written - `proxy:port`, comma-separated when several proxies route here - or None."""
     return labels_of(service).get(ROTATION_LABEL)
+
+
+def routes_of(service):
+    """Every (proxy, port) this service is routed through, in the label's order; [] with no label."""
+    rotation = rotation_of(service)
+    if rotation is None:
+        return []
+    return [(proxy, port) for proxy, _, port in (route.partition(":") for route in rotation.split(","))]
+
+
+# `scheme://[credentials@]host:port` in an environment value: the host is a peer this service calls.
+ADDRESS = re.compile(r"[a-z]+://(?:[^@/\s]*@)?([A-Za-z0-9_-]+):([0-9]+)")
+
+
+def direct_calls(name, service, services):
+    """Every environment value of this service that reaches a ROTATED service by its own DNS name."""
+    environment = service.get("environment") or {}
+    if isinstance(environment, list):
+        environment = dict(item.split("=", 1) if "=" in item else (item, "") for item in environment)
+    refusals = []
+    for key, value in sorted(environment.items()):
+        for host, _ in ADDRESS.findall(str(value or "")):
+            if host != name and host in services and rotation_of(services[host]) is not None:
+                refusals.append(
+                    f"{name}: {key}={value} calls {host} by Docker's DNS, around its rotation - its retiring "
+                    f"replica would still be chosen; call it through a proxy of {ROTATION_LABEL}={rotation_of(services[host])}"
+                )
+    return refusals
 
 
 def refusals_for(name, service, own_prefix, services):
@@ -110,13 +145,17 @@ def refusals_for(name, service, own_prefix, services):
             f"{name}: overlap, but no {ROTATION_LABEL} label names the proxy that routes to it - its old replica could not be taken out of rotation before it stops"
         )
     if rotation is not None:
-        proxy, _, port = rotation.partition(":")
         if mode != "overlap":
             refusals.append(f"{name}: {ROTATION_LABEL} on a {mode} service, which is never taken out of rotation")
-        if proxy not in services or proxy == name:
-            refusals.append(f"{name}: {ROTATION_LABEL}={rotation} names no other service of this file")
-        if not port.isdigit():
-            refusals.append(f"{name}: {ROTATION_LABEL}={rotation} is not <proxy service>:<port>")
+        proxies = [proxy for proxy, _ in routes_of(service)]
+        if len(set(proxies)) != len(proxies):
+            refusals.append(f"{name}: {ROTATION_LABEL}={rotation} names one proxy twice")
+        for proxy, port in routes_of(service):
+            if proxy not in services or proxy == name:
+                refusals.append(f"{name}: {ROTATION_LABEL}={rotation} names no other service of this file")
+            if not port.isdigit():
+                refusals.append(f"{name}: {ROTATION_LABEL}={rotation} is not <proxy service>:<port>[,...]")
+    refusals += direct_calls(name, service, services)
     if mode == "pinned" and str(service.get("image", "")).startswith(own_prefix):
         refusals.append(
             f"{name}: pinned, but its image is built by this repository, so every release replaces it - declare overlap or exclusive"

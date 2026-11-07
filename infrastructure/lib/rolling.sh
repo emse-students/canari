@@ -12,7 +12,8 @@
 # WHAT IT DOES INSTEAD, per service, in the order `replace-modes.py` derives from `depends_on`:
 #
 #   overlap    the new container starts BESIDE the old one (`--scale` to one more, `--no-recreate`).
-#              Once it is HEALTHY, the nginx in front of the service (its ROTATION, a label) is given
+#              Once it is HEALTHY, each nginx in front of the service (its ROTATION, a label: the
+#              frontend for what members send, the mesh for what other services call) is given
 #              a list that sends the service's requests to the new replica's name alone, and
 #              reloaded; the old replica is told to stop
 #              only once the pairing check says no old nginx worker is still about to choose a replica
@@ -24,14 +25,14 @@
 #   exclusive  stopped, then started, as before: a gap, for a service that keeps state in its own
 #              process and would split it if two ran at once.
 #   pinned     brought up as it is; recreated only when its own definition changes (a datastore's
-#              digest, the edge's image), which a release does not do.
+#              digest, the image of the edge and of the mesh), which a release does not do.
 #
 # A NEW REPLICA THAT NEVER BECOMES HEALTHY IS REMOVED AND THE OLD ONE KEEPS SERVING. The deploy then
 # fails, loudly, on an estate that is still up - the opposite of the old order, where the failure was
 # discovered by the estate being down.
 #
 # The caller defines `dc` (its compose invocation), `DOCKER_CLI`, `PROJECT` (the compose project,
-# read from the file's `name:`), `ROTATION_DIR` (the host directory both proxies mount, where the
+# read from the file's `name:`), `ROTATION_DIR` (the host directory every proxy mounts, where the
 # replica lists are written) and `on_port_conflict <service>` (frees a host port held by a stale
 # container it is allowed to remove, or returns 1), and runs from the repository root.
 #
@@ -64,14 +65,14 @@ ROLLING_ROTATION_READS="${ROLLING_ROTATION_READS:-1200}"
 ROLLING_QUIESCE_READS="${ROLLING_QUIESCE_READS:-100}"
 
 # HOW LONG AN nginx KEEPS AN ADDRESS IT RESOLVED BY NAME: `valid=` in the resolver of the frontend
-# image and of the edge, which resolve a resting target (a service's DNS name) per request. Two
+# image, of the edge and of the mesh, which resolve a resting target (a service's DNS name) per request. Two
 # things read it, and neither is a guess:
 #   - a frontend image from BEFORE the target lists (a transition, rotation_is_legacy) re-resolves
 #     every service by DNS, so a replica it may still choose is retired only once this has run out -
 #     the drain every deploy made before 2026-11-01;
 #   - a ROLLBACK runs the older release's own rolling.sh, which waits exactly this long before
 #     retiring, so the targets it finds (named by DNS, rotation_restore) must expire as fast.
-# deploy-replace.test.sh holds this number to both proxies' configurations and to the frozen libraries.
+# deploy-replace.test.sh holds this number to every proxy's configuration and to the frozen libraries.
 ROLLING_RESOLVER_TTL_SECONDS=2
 # The default stands for a caller of retire() outside replace_services (deploy-rolling.test.sh case 2b
 # retires a replica directly): the window is then the whole log.
@@ -138,8 +139,8 @@ wait_healthy() {
 # paused one included (measured on Docker 29, 2026-11-01). So each nginx in front reads an explicit
 # list: the TARGET of every service it routes to, one `map "" $target_<service> { default <host>:<port>; }`
 # per service, which its `proxy_pass http://$target_<service>` reads. Written by this file into
-# ROTATION_DIR (mounted read-only into the frontend as /etc/nginx/targets and, through its own
-# directory, into the edge) and applied by `nginx -s reload`.
+# ROTATION_DIR (mounted read-only into the frontend as /etc/nginx/targets and, through the edge/
+# directory they both mount, into the edge and the mesh) and applied by `nginx -s reload`.
 #
 # TWO FORMS, AND THE ESTATE RESTS IN THE FIRST. Between deploys every target is the service's DNS
 # NAME (`core-service:3012`) - the very list the frontend image bakes for an estate with no such
@@ -181,7 +182,9 @@ ROTATION_IMAGES=""
 rotation_routes_set() {
   local plan
   plan="$(cat)"
-  ROTATION_ROUTES="$(printf '%s\n' "$plan" | awk '$4 != "" && $4 != "-" { split($4, r, ":"); print $1, r[1], r[2] }')"
+  # One line per (service, proxy): a service other services call is routed through the frontend AND
+  # the mesh (`frontend:3012,mesh:3012`), and each of its proxies takes its retiring replica out.
+  ROTATION_ROUTES="$(printf '%s\n' "$plan" | awk '$4 != "" && $4 != "-" { n = split($4, rs, ","); for (i = 1; i <= n; i++) { split(rs[i], r, ":"); print $1, r[1], r[2] } }')"
   ROTATION_IMAGES="$(printf '%s\n' "$plan" | awk 'NF >= 5 && $5 != "-" { print $1, $5 }')"
 }
 
@@ -201,9 +204,10 @@ rotation_file() {
   printf '%s/%s.conf\n' "$ROTATION_DIR" "$1"
 }
 
-# rotation_route <service> - prints "<proxy> <port>" for a routed service, nothing otherwise.
+# rotation_route <service> - prints "<proxy>:<port>" for each proxy routing to <service>, one per
+# line in the label's order, nothing for a service with no route.
 rotation_route() {
-  printf '%s\n' "$ROTATION_ROUTES" | awk -v s="$1" '$1 == s { print $2, $3 }'
+  printf '%s\n' "$ROTATION_ROUTES" | awk -v s="$1" '$1 == s { print $2 ":" $3 }'
 }
 
 # rotation_var <service> - the nginx variable a proxy reads <service>'s target from, `$` left out:
@@ -636,7 +640,7 @@ rotation_apply() {
 }
 
 # rotation_seed - reads the plan on stdin and writes every proxy's list in the resting form. Called
-# BEFORE ANY `up`: the frontend and the edge include their list unconditionally and refuse to start
+# BEFORE ANY `up`: the frontend, the edge and the mesh include their list unconditionally and refuse to start
 # without it - a fresh host, a lost directory. A list that already exists is normalised to the
 # resting form too (a deploy killed mid-replacement leaves a container's name in it).
 #
@@ -692,22 +696,28 @@ rotation_restore_in_flight() {
 # frontend-ssr both listen on :3000, and the frontend sends `X-Internal-Token` to both. Docker's DNS
 # answers a container's name on every network it is attached to, which is every network the proxy
 # can reach it on. A service with no route has nothing to do.
+#
+# EVERY PROXY ROUTING TO THE SERVICE, in turn, each proven before the next (2026-11-07): the frontend
+# for what members send, the mesh for what the other services call. The replica is stopped only once
+# all of them hold - one proxy still choosing it is a reset, whoever its caller.
 rotation_take_out() {
-  local service="$1" cid="$2" route proxy port state
-  route="$(rotation_route "$service")"
-  [ -n "$route" ] || return 0
-  proxy="${route%% *}"
-  port="${route#* }"
+  local service="$1" cid="$2" routes route proxy state
+  routes="$(rotation_route "$service")"
+  [ -n "$routes" ] || return 0
   state="$($DOCKER_CLI inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{.Name}}' "$cid" 2>/dev/null)" || state=gone
   case "$state" in
   'running healthy '* | 'running none '*) ;;
   *)
-    printf '::error::%s: the replica meant to stay (%s) is %s - taking the others out would leave %s nothing to choose\n' "$service" "${cid:0:12}" "${state% *}" "$proxy" >&2
+    printf '::error::%s: the replica meant to stay (%s) is %s - taking the others out would leave %s nothing to choose\n' \
+      "$service" "${cid:0:12}" "${state% *}" "$(printf '%s' "$routes" | sed 's/:.*//' | tr '\n' ' ' | sed 's/ $//')" >&2
     return 1
     ;;
   esac
-  rotation_write "$proxy" "$service" "$(rotation_block "$service" "$port" "${state##* /}")" || return 1
-  rotation_apply "$proxy" retiring
+  for route in $routes; do
+    proxy="${route%%:*}"
+    rotation_write "$proxy" "$service" "$(rotation_block "$service" "${route#*:}" "${state##* /}")" || return 1
+    rotation_apply "$proxy" retiring || return 1
+  done
 }
 
 # rotation_restore <service> [force] - the target of <service> back in the resting form (its DNS name:
@@ -715,14 +725,20 @@ rotation_take_out() {
 # The retry after a failure needs `force` (2026-11-01 third review): a restore whose reload failed has
 # already written the file at rest, so the retry finds it unchanged, and without `force` it would reload
 # nothing, clear the marker and report success while nginx still names the container.
+# Every proxy of the service is restored even when one fails, and the failure is returned: a proxy left
+# on a container's name because a sibling's reload failed first is the 502 a rollback would cause.
 rotation_restore() {
-  local service="$1" force="${2:-}" route proxy
-  route="$(rotation_route "$service")"
-  [ -n "$route" ] || return 0
-  proxy="${route%% *}"
-  rotation_write "$proxy" "$service" "$(rotation_block "$service" "${route#* }")" || return 1
-  [ "$ROTATION_CHANGED" = yes ] || [ "$force" = force ] || return 0
-  rotation_apply "$proxy" plain
+  local service="$1" force="${2:-}" route proxy status=0
+  for route in $(rotation_route "$service"); do
+    proxy="${route%%:*}"
+    if ! rotation_write "$proxy" "$service" "$(rotation_block "$service" "${route#*:}")"; then
+      status=1
+      continue
+    fi
+    [ "$ROTATION_CHANGED" = yes ] || [ "$force" = force ] || continue
+    rotation_apply "$proxy" plain || status=1
+  done
+  return "$status"
 }
 
 # The retiring replica's own sockets: no connection half-open (state 03, SYN_RECV) and every
@@ -746,10 +762,10 @@ END { if (!hdr) { print "? ?"; exit } for (i = 1; i <= k; i++) if (E[i] in liste
 # SIGTERM is what drains it, and a WebSocket would never let it reach zero. Returns 1 when the reads
 # run out.
 #
-# WHAT IT DOES NOT COVER: a call from ANOTHER SERVICE (chat-gateway to chat-delivery, social to core,
-# frontend-ssr to all three...) resolves the replica through Docker's DNS, never left any rotation,
-# and can arrive after the two reads - for those callers the reads are a clock, not a proof. The
-# enumerated gap: docs/wiki/backlog.d/p2-service-to-service-calls-bypass-the-rotation.md.
+# A CALL FROM ANOTHER SERVICE IS COVERED THE SAME WAY (2026-11-07): the callers name the mesh, not
+# their peer, so the take-out of the mesh's list stops them too. A caller that named its peer by
+# Docker's DNS would not be - that is what replace-modes.py refuses in an environment value.
+# docs/wiki/cicd.md#service-to-service-calls-go-through-the-mesh.
 wait_unqueued() {
   local service="$1" cid="$2" read=0 clean=0 out="" raw
   while [ "$read" -lt "$ROLLING_QUIESCE_READS" ]; do

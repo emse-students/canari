@@ -160,10 +160,12 @@ services:
       RUST_LOG: chat_gateway=info,tower_http=info
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       REDIS_URL: redis://redis:6379
-      DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
+      # Every call to another of our services goes through `mesh`, as in production - the
+      # production file says why; replace-modes.py refuses a direct name.
+      DELIVERY_SERVICE_URL: http://mesh:3010
       # The presence audience (WP-PRESENCE): who shares a conversation or a community with whom is
       # asked of chat-delivery and social-service over this network. Unset, every presence read is a 503.
-      SOCIAL_SERVICE_URL: http://social-service:3014
+      SOCIAL_SERVICE_URL: http://mesh:3014
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       # Never `*`. This environment is publicly resolvable and testers sign in with real accounts;
       # a wildcard allowlist there is a different thing from a wildcard on a laptop.
@@ -180,6 +182,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      mesh:
+        condition: service_started
 
   call-service:
     logging: *logging
@@ -215,7 +219,7 @@ services:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
-      canari.deploy.rotation: frontend:3010
+      canari.deploy.rotation: frontend:3010,mesh:3010
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-delivery-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
     <<: *dev-limits
@@ -245,6 +249,10 @@ services:
       FRONTEND_URL: ${FRONTEND_URL:-}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
+      # Its two peers, through the mesh. Set here although the code has a default: that default names
+      # each peer directly, around its rotation (deploy-replace.test.sh fails a default no file sets).
+      CORE_SERVICE_INTERNAL_URL: http://mesh:3012
+      SOCIAL_SERVICE_URL: http://mesh:3014
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
       # Short-lived Cloudflare TURN credentials for dev's calls (`/api/calls/ice-servers`, lot 1).
       # Rendered from the DEV_CLOUDFLARE_* secrets (env-manifest.tsv), never production's names.
@@ -282,6 +290,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      mesh:
+        condition: service_started
     healthcheck:
       test:
         [
@@ -371,6 +381,9 @@ services:
       GARAGE_SECRET_ACCESS_KEY: ${GARAGE_SECRET_ACCESS_KEY:?GARAGE_SECRET_ACCESS_KEY is required - set via CD secrets or .env}
       GARAGE_BUCKET: ${GARAGE_BUCKET:-canari-media-dev}
       MEDIA_MAX_SIZE_MB: "${MEDIA_MAX_SIZE_MB:-50}"
+      # The live switch's relay (lives-mode.ts), through the mesh: the code's default names
+      # social-service directly, around its rotation.
+      SOCIAL_SERVICE_URL: http://mesh:3014
     volumes:
       - media_meta:/app/media_meta
       # Staging of resumable upload sessions (parts land here before the object store takes the blob).
@@ -387,13 +400,15 @@ services:
     depends_on:
       garage:
         condition: service_healthy
+      mesh:
+        condition: service_started
 
   # Handles Auth, Users, Payment
   core-service:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
-      canari.deploy.rotation: frontend:3012
+      canari.deploy.rotation: frontend:3012,mesh:3012
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/core-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
     <<: *dev-limits
@@ -435,8 +450,10 @@ services:
       LYDIA_ENV: homologation
       LYDIA_PROVIDER_TOKEN: ${LYDIA_PROVIDER_TOKEN:-}
       LYDIA_PROVIDER_PRIVATE_TOKEN: ${LYDIA_PROVIDER_PRIVATE_TOKEN:-}
-      FORM_URL: http://social-service:3014
-      FORM_SERVICE_URL: http://social-service:3014
+      FORM_URL: http://mesh:3014
+      FORM_SERVICE_URL: http://mesh:3014
+      # chat-delivery through the mesh: the code's default names it directly, around its rotation.
+      CHAT_DELIVERY_URL: http://mesh:3010
       # Account deletion fans out to media-service to remove the user's own uploads.
       MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
       FRONTEND_URL: ${FRONTEND_URL:-}
@@ -469,13 +486,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      mesh:
+        condition: service_started
 
   # Handles Channels, Posts, Forms
   social-service:
     logging: *logging
     labels:
       canari.deploy.replace: overlap
-      canari.deploy.rotation: frontend:3014
+      canari.deploy.rotation: frontend:3014,mesh:3014
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/social-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
     <<: *dev-limits
@@ -494,7 +513,7 @@ services:
       DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       DB_DATABASE: auth_db
       CHANNELS_ENCRYPTION_SECRET: "${CHANNELS_ENCRYPTION_SECRET:?CHANNELS_ENCRYPTION_SECRET is required - see .env.example}"
-      USER_SERVICE_URL: http://core-service:3012
+      USER_SERVICE_URL: http://mesh:3012
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
@@ -506,8 +525,8 @@ services:
       # nothing unless this is exactly `true`. render-env.sh computes it - `true` on dev, `false` on
       # production until the amount format Lydia signs is measured.
       LYDIA_RECONCILE_ENABLED: ${LYDIA_RECONCILE_ENABLED:-false}
-      DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010
-      PAYMENT_SERVICE_URL: http://core-service:3012
+      DELIVERY_INTERNAL_URL: http://mesh:3010
+      PAYMENT_SERVICE_URL: http://mesh:3012
       FRONTEND_URL: ${FRONTEND_URL:-}
       # AND THE SAME CLASS AGAIN, MEASURED 2026-09-22: four keys production forwards to this
       # service and this file did not, `INTERNAL_SECRET` chief among them. `.env` on the dev box
@@ -555,11 +574,13 @@ services:
         condition: service_started
       media-service:
         condition: service_started
+      mesh:
+        condition: service_started
 
   # SvelteKit server (adapter-node). Renders NO component - the app stays a SPA - it only
   # writes each page's Open Graph head into the shell before nginx sends it, which is the
   # one thing a crawler or an unfurler can see (frontend/src/hooks.server.ts). Reaches the
-  # services directly on this network, never back through nginx, with INTERNAL_SECRET.
+  # services through the mesh, never back through the frontend nginx, with INTERNAL_SECRET.
   #
   # THE PREVIOUS VERSION OF THIS FILE HAD NO SUCH SERVICE AT ALL, while production's frontend
   # depends on it - one more sign the file predated the estate it claimed to mirror.
@@ -589,9 +610,9 @@ services:
       # host from `Host`, which nginx @ssr forwards). No PROTOCOL_HEADER: it would trust a value a
       # client can send. Nothing guards a form action today; see architecture.md.
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
-      SOCIAL_SERVICE_URL: http://social-service:3014
-      CORE_SERVICE_URL: http://core-service:3012
-      DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
+      SOCIAL_SERVICE_URL: http://mesh:3014
+      CORE_SERVICE_URL: http://mesh:3012
+      DELIVERY_SERVICE_URL: http://mesh:3010
     # The image's own HEALTHCHECK, restated with `start_interval` so a new replica is known healthy
     # within seconds of booting rather than one 30 s interval later.
     healthcheck:
@@ -607,6 +628,8 @@ services:
       core-service:
         condition: service_started
       chat-delivery-service:
+        condition: service_started
+      mesh:
         condition: service_started
 
   # nginx serving a build. Dev runs its OWN nginx and its own edge, so production's single public
@@ -677,6 +700,32 @@ services:
     depends_on:
       frontend:
         condition: service_started
+
+  # WHERE ONE SERVICE CALLS ANOTHER, and a release never replaces it - see `edge/mesh.conf` and the
+  # production file. Not published: only this estate's services reach it.
+  mesh:
+    logging: *logging
+    labels:
+      canari.deploy.replace: pinned
+    image: nginx:1.31.8-alpine@sha256:b2f80f8f88146b0772fdcc7d92cea621aa8c2889fa8d07ed61d4884fcea53e09
+    restart: always
+    <<: *dev-limits
+    command: ["nginx", "-c", "/etc/nginx/edge/mesh.conf", "-g", "daemon off;"]
+    volumes:
+      - ./edge:/etc/nginx/edge:ro
+    expose:
+      - "3010"
+      - "3012"
+      - "3014"
+    # Healthy means LISTENING on all three ports - the production file says why; deploy-replace.test.sh
+    # holds the two to the same test.
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /var/run/nginx.pid && grep -q ' 00000000:0BC2 00000000:0000 0A ' /proc/net/tcp && grep -q ' 00000000:0BC4 00000000:0000 0A ' /proc/net/tcp && grep -q ' 00000000:0BC6 00000000:0000 0A ' /proc/net/tcp"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 1s
 
 volumes:
   # THE 15 VOLUME IS KEPT, AND KEEPING IT IS THE ROLLBACK. Rolling back is pointing

@@ -224,11 +224,11 @@ fi
 
 # ── How each service may be replaced, and the proxies' replica lists ─────────
 # Read BEFORE ANY `up`, for two reasons. A declaration two replicas could not honour is refused while
-# nothing has changed. And the frontend and the edge include their replica list unconditionally, so a
+# nothing has changed. And the frontend, the edge and the mesh include their replica list unconditionally, so a
 # list that does not exist - a fresh host, a lost directory - is a proxy that cannot start:
 # rotation_seed writes every list in its resting form (each service by its DNS name) first.
 #
-# Where rolling.sh writes the lists: inside edge/, which the edge already mounts, and mounted
+# Where rolling.sh writes the lists: inside edge/, which the edge and the mesh already mount, and mounted
 # read-only into the frontend as /etc/nginx/targets (both compose files). Not tracked by git, so
 # `git reset --hard` leaves the lists the running proxies were reloaded on. edge/rotation/ holds the
 # `upstream` lists of 1.6.2, which this library never touches: a frontend of that release still reads
@@ -368,13 +368,16 @@ if ! replace_services <<<"$REPLACE_PLAN"; then
   exit 1
 fi
 
-# THE EDGE IS NOT REPLACED, SO ITS CONFIGURATION IS RELOADED: `edge/` is bind-mounted from this
-# checkout, which `git reset --hard` has just moved. `nginx -t` first, so a broken file is refused by
-# a test while the running configuration keeps serving; `-s reload` is graceful - the old workers
-# finish their connections.
+# THE EDGE AND THE MESH ARE NOT REPLACED, SO THEIR CONFIGURATIONS ARE RELOADED: `edge/` is
+# bind-mounted from this checkout, which `git reset --hard` has just moved. `nginx -t` first, so a
+# broken file is refused by a test while the running configuration keeps serving; `-s reload` is
+# graceful - the old workers finish their connections, and the listening sockets pass to the new ones.
 printf '\nreloading the edge configuration\n'
 dc exec -T edge nginx -t -c /etc/nginx/edge/nginx.conf
 dc exec -T edge nginx -s reload -c /etc/nginx/edge/nginx.conf
+printf '\nreloading the mesh configuration\n'
+dc exec -T mesh nginx -t -c /etc/nginx/edge/mesh.conf
+dc exec -T mesh nginx -s reload -c /etc/nginx/edge/mesh.conf
 
 # Anything this file no longer declares (`--remove-orphans`), and nothing else: every declared service
 # is already running what this release asked for, and `--no-recreate` keeps this from replacing any

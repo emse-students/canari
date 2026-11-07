@@ -14,6 +14,7 @@ MODES="$REPO/infrastructure/lib/replace-modes.py"
 DEPLOY="$REPO/infrastructure/deploy/deploy-environment.sh"
 FRONTEND_NGINX="$REPO/infrastructure/local/Dockerfile.frontend"
 EDGE_NGINX="$REPO/infrastructure/edge/nginx.conf"
+MESH_NGINX="$REPO/infrastructure/edge/mesh.conf"
 FIXTURE_DIR="$REPO/.github/scripts/tests/rolling-fixture"
 FIXTURE_NGINX="$FIXTURE_DIR/frontend.conf"
 ROLLING="$REPO/infrastructure/lib/rolling.sh"
@@ -42,6 +43,14 @@ done
 [ -n "$PYTHON" ] || {
   printf '::error::no Python interpreter runs here - replace-modes.py cannot be exercised\n' >&2
   exit 1
+}
+
+# mesh_routes - prints "<port> <target variable>" for every `server` of the mesh: the port it listens on
+# and the `$target_<service>` its `proxy_pass` reads, `$` left out.
+mesh_routes() {
+  # shellcheck disable=SC2016 # an awk program
+  awk '$1 == "listen" { p = $2; sub(/;$/, "", p) }
+    $1 == "proxy_pass" { t = $2; sub(/;$/, "", t); sub(/^http:\/\/\$/, "", t); print p, t }' "$MESH_NGINX"
 }
 
 # edge_healthcheck - reads a `compose config` JSON on stdin, prints its edge's healthcheck test.
@@ -134,19 +143,79 @@ for v in json.load(sys.stdin)["services"]["frontend"].get("volumes") or []:
 
   # Every service the frontend nginx routes to by a list has, in the image, the target a workstation
   # reads - by its variable and on the port its label declares - and is proxied to through it alone.
-  while read -r svc _ _ rot _; do
-    rot="${rot%$'\r'}" # a Windows Python ends its lines with CR
-    [ "${rot%%:*}" = frontend ] || continue
-    var="target_${svc//-/_}"
-    if grep -qF "map \"\" \$$var { default $svc:${rot#*:}; }" "$FRONTEND_NGINX" && grep -qF "proxy_pass http://\$$var" "$FRONTEND_NGINX"; then
-      ok "$file: $svc is proxied to through \$$var, $svc:${rot#*:} at rest in the frontend image"
-    else
-      fail "$file: $svc is routed through the frontend on port ${rot#*:}, but the frontend image has no \$$var at rest, or proxies through none"
-    fi
-    if grep -qE "set \\\$upstream_[a-z_]+ $svc(:[0-9]+)?;" "$FRONTEND_NGINX"; then
-      fail "$file: the frontend nginx still names $svc by itself in a set - a request there would never leave by its target"
-    fi
+  # Every service the MESH routes to has its own `server` there, on the port its label declares,
+  # proxying to its target; and the mesh proxies to nothing else.
+  mesh_want=""
+  while read -r svc _ _ rots _; do
+    rots="${rots%$'\r'}" # a Windows Python ends its lines with CR
+    for rot in ${rots//,/ }; do
+      var="target_${svc//-/_}"
+      case "${rot%%:*}" in
+      frontend)
+        if grep -qF "map \"\" \$$var { default $svc:${rot#*:}; }" "$FRONTEND_NGINX" && grep -qF "proxy_pass http://\$$var" "$FRONTEND_NGINX"; then
+          ok "$file: $svc is proxied to through \$$var, $svc:${rot#*:} at rest in the frontend image"
+        else
+          fail "$file: $svc is routed through the frontend on port ${rot#*:}, but the frontend image has no \$$var at rest, or proxies through none"
+        fi
+        if grep -qE "set \\\$upstream_[a-z_]+ $svc(:[0-9]+)?;" "$FRONTEND_NGINX"; then
+          fail "$file: the frontend nginx still names $svc by itself in a set - a request there would never leave by its target"
+        fi
+        ;;
+      mesh) mesh_want="$mesh_want${rot#*:} $var"$'\n' ;;
+      esac
+    done
   done <<<"$plan"
+  mesh_got="$(mesh_routes)"
+  if [ -n "$mesh_want" ] && [ "$(printf '%s' "$mesh_want" | sort)" = "$(printf '%s\n' "$mesh_got" | sort)" ]; then
+    ok "$file: the mesh has one server per service routed through it, on its label's port, proxying to its target alone ($(printf '%s' "$mesh_want" | tr '\n' ',' | sed 's/,$//'))"
+  else
+    fail "$file: the mesh's servers ($(printf '%s\n' "$mesh_got" | tr '\n' ',')) are not the routes the labels declare ($(printf '%s' "$mesh_want" | tr '\n' ','))"
+  fi
+
+  # THE MESH IS PINNED, ON THE EDGE'S IMAGE AND MOUNT, AND HEALTHY ONLY ONCE IT LISTENS ON EVERY PORT.
+  # Pinned is what closes the gap: a mesh a release replaced would be the exposure it removes.
+  if grep -qE '^mesh pinned no - [^ ]+$' <<<"$plan"; then
+    ok "$file: the mesh is pinned and publishes no host port"
+  else
+    fail "$file: the mesh is not 'pinned no -'"
+  fi
+  mesh_facts="$(printf '%s' "$config" | "$PYTHON" -c '
+import json, sys
+s = json.load(sys.stdin)["services"]
+m = s.get("mesh") or {}
+print(m.get("image") == s["edge"]["image"])
+print(" ".join(v.get("source", "").replace("\\", "/").rsplit("/", 1)[-1] + ">" + v.get("target", "") for v in m.get("volumes") or []))
+print(" ".join(m.get("command") or []))
+print(" ".join((m.get("healthcheck") or {}).get("test") or []))
+print(" ".join(sorted(str(p) for p in m.get("expose") or [])))' | tr -d '\r')"
+  {
+    read -r same_image
+    read -r mesh_mounts
+    read -r mesh_command
+    read -r mesh_health
+    read -r mesh_expose
+  } <<<"$mesh_facts"
+  if [ "$same_image" = True ] && [ "$mesh_mounts" = "edge>/etc/nginx/edge" ] && [ "$mesh_command" = "nginx -c /etc/nginx/edge/mesh.conf -g daemon off;" ]; then
+    ok "$file: the mesh runs the edge's image, mounts the edge/ directory, and loads edge/mesh.conf"
+  else
+    fail "$file: the mesh runs the edge's image: $same_image; mounts '$mesh_mounts'; runs '$mesh_command'"
+  fi
+  health_ok=yes
+  case "$mesh_health" in "CMD-SHELL test -s /var/run/nginx.pid "*) ;; *) health_ok=no ;; esac
+  for port in $(printf '%s' "$mesh_want" | awk '{ print $1 }'); do
+    grep -qF "$(printf ' 00000000:%04X 00000000:0000 0A ' "$port")" <<<"$mesh_health" || health_ok=no
+  done
+  if [ "$health_ok" = yes ] && [ "$mesh_expose" = "$(printf '%s' "$mesh_want" | awk '{ print $1 }' | sort | tr '\n' ' ' | sed 's/ $//')" ]; then
+    ok "$file: the mesh exposes every routed port and is healthy only once it listens on each"
+  else
+    fail "$file: the mesh exposes '$mesh_expose' and its healthcheck '$mesh_health' does not read the LISTEN row of every routed port"
+  fi
+
+  # NO SERVICE FALLS BACK, IN ITS OWN CODE, TO A ROTATED PEER BY ITS DNS NAME: every such default in
+  # the sources has a variable this estate sets (replace-modes.py holds the value set).
+  while read -r verdict message; do
+    if [ "$verdict" = ok ]; then ok "$message"; else fail "$message"; fi
+  done < <(printf '%s' "$config" | "$PYTHON" "$REPO/.github/scripts/tests/internal-url-defaults.py" "$REPO" "$file" | tr -d '\r')
 
   # The edge is HEALTHY only once it LISTENS, and by the same test the rolling fixture proves: a
   # pinned service with no healthcheck is believed at `running`, before nginx has opened its port
@@ -199,6 +268,28 @@ if printf '%s' '{"services":{"a":{'"$L"':"overlap",'"$R"'},"image":"own/a:1",'"$
 else
   fail "refuses overlap on a read-only bind mount, or prints no rotation or no image"
 fi
+R2='"canari.deploy.rotation":"p:80,m:80"'
+M='"m":{'"$L"':"pinned"},"image":"x"}'
+if printf '%s' '{"services":{"a":{'"$L"':"overlap",'"$R2"'},"image":"own/a:1",'"$HC"'},'"$P"','"$M"'}}' |
+  "$PYTHON" "$MODES" own/ | grep -x 'a overlap no p:80,m:80 own/a:1' >/dev/null; then
+  ok "accepts a rotation through two proxies, and prints both"
+else
+  fail "refuses a rotation through two proxies, or does not print both"
+fi
+refuses "a rotation naming one proxy twice" '{"services":{"a":{'"$L"':"overlap","canari.deploy.rotation":"p:80,p:81"},"image":"own/a:1",'"$HC"'},'"$P"'}}' 'names one proxy twice'
+refuses "a second route through no service" '{"services":{"a":{'"$L"':"overlap",'"$R2"'},"image":"own/a:1",'"$HC"'},'"$P"'}}' 'names no other service'
+# THE CALL AROUND THE ROTATION (2026-11-07): a service whose environment names a rotated service by
+# its DNS name reaches the retiring replica until it stops. Refused, whatever the scheme or path; a
+# caller naming a proxy of the rotation is accepted.
+refuses "a service calling a rotated one by its DNS name" \
+  '{"services":{"a":{'"$L"':"overlap",'"$R2"'},"image":"own/a:1",'"$HC"'},'"$P"','"$M"',"c":{'"$L"':"pinned"},"image":"x","environment":{"PEER_URL":"http://a:80/api"}}}}' \
+  'PEER_URL=http://a:80/api calls a by Docker'"'"'s DNS, around its rotation'
+if printf '%s' '{"services":{"a":{'"$L"':"overlap",'"$R2"'},"image":"own/a:1",'"$HC"'},'"$P"','"$M"',"c":{'"$L"':"pinned"},"image":"x","environment":{"PEER_URL":"http://m:80","DB":"postgres://u:p@db:5432/x"}}}}' |
+  "$PYTHON" "$MODES" own/ >/dev/null 2>&1; then
+  ok "accepts a service calling a rotated one through its proxy, and an address of a service with no rotation"
+else
+  fail "refuses a service calling a rotated one through its proxy"
+fi
 refuses "overlap with no healthcheck" '{"services":{"a":{'"$L"':"overlap"},"image":"own/a:1"}}}' 'no healthcheck'
 refuses "overlap with no start_interval" '{"services":{"a":{'"$L"':"overlap"},"image":"own/a:1","healthcheck":{"test":["CMD","true"]}}}}' 'start_interval'
 refuses "pinned on an image this repository builds" '{"services":{"a":{'"$L"':"pinned"},"image":"own/a:1"}}}' 'built by this repository'
@@ -224,6 +315,20 @@ if grep -qF 'include /etc/nginx/edge/targets/edge.conf;' "$EDGE_NGINX" && grep -
   ok "the edge sends a connection to the frontend target its list sets"
 else
   fail "the edge does not read edge/targets/edge.conf, or does not proxy to \$target_frontend"
+fi
+# shellcheck disable=SC2016 # nginx text, unexpanded on purpose
+if grep -qF 'include /etc/nginx/edge/targets/mesh.conf;' "$MESH_NGINX" && [ "$(grep -cE '^ *proxy_pass http://\$target_[a-z_]+;$' "$MESH_NGINX")" = "$(grep -cE '^ *proxy_pass ' "$MESH_NGINX")" ]; then
+  ok "the mesh reads edge/targets/mesh.conf and proxies every call to a target its list sets"
+else
+  fail "the mesh does not read edge/targets/mesh.conf, or proxies somewhere no list sets"
+fi
+# ONE REQUEST PER CALLER CONNECTION AND NO CACHED UPSTREAM ONE: a reload's old worker closes an idle
+# keep-alive connection a caller may be writing into, and a cached upstream one would pass the pairing
+# check for a chosen request (edge/mesh.conf says both).
+if grep -qE '^    keepalive_timeout 0;$' "$MESH_NGINX" && ! grep -qE '^[[:space:]]*upstream[[:space:]]' "$MESH_NGINX"; then
+  ok "the mesh keeps no idle connection to a caller, and declares no upstream block"
+else
+  fail "the mesh keeps caller connections alive, or declares an upstream block"
 fi
 if grep -qF 'include /etc/nginx/targets/frontend.conf;' "$FRONTEND_NGINX" && grep -qF 'include /etc/nginx/targets/frontend.conf;' "$FIXTURE_NGINX"; then
   ok "the frontend nginx and the fixture both read /etc/nginx/targets/frontend.conf"
@@ -282,12 +387,12 @@ fi
 # fixtures', and the wait of the libraries older releases ship - a rollback runs one against these lists.
 ttl="$(sed -n 's/^ROLLING_RESOLVER_TTL_SECONDS=\([0-9]*\)$/\1/p' "$ROLLING")"
 frozen_ttl="$(sed -n 's/^ROLLING_RESOLVER_TTL_SECONDS=\([0-9]*\)$/\1/p' "$FIXTURE_DIR/rolling-pre-rotation.sh" "$FIXTURE_DIR/rolling-upstream-lists.sh" | sort -u | tr '\n' ' ')"
-others="$(grep -ho 'resolver 127.0.0.11 valid=[0-9]*s' "$FRONTEND_NGINX" "$EDGE_NGINX" "$FIXTURE_NGINX" \
+others="$(grep -ho 'resolver 127.0.0.11 valid=[0-9]*s' "$FRONTEND_NGINX" "$EDGE_NGINX" "$MESH_NGINX" "$FIXTURE_NGINX" \
   "$FIXTURE_DIR/frontend-pre-rotation.conf" "$FIXTURE_DIR/frontend-upstream-lists.conf" "$FIXTURE_DIR/edge-upstream-lists.conf" |
   sed 's/.*valid=\([0-9]*\)s/\1/' | sort -u | tr '\n' ' ')"
 if [ -n "$ttl" ] && [ "$frozen_ttl" = "$ttl " ] && [ "$others" = "$ttl " ] &&
   [ "$(grep -c 'resolver 127.0.0.11 valid=' "$EDGE_NGINX")" = 1 ]; then
-  ok "one resolver lifetime (${ttl}s) in rolling.sh, both frozen older libraries, the frontend image, the edge and every fixture configuration"
+  ok "one resolver lifetime (${ttl}s) in rolling.sh, both frozen older libraries, the frontend image, the edge, the mesh and every fixture configuration"
 else
   fail "the resolver lifetimes disagree: rolling.sh '$ttl', the older libraries '$frozen_ttl', the configurations '$others'"
 fi
@@ -295,7 +400,7 @@ fi
 # THE RESOLVER'S BOUND (2026-11-02 review): every target at rest is looked up for its request, so a
 # resolver that does not answer holds that request for `resolver_timeout` - 30 s by default. Each
 # configuration that resolves a target must bound it, once per resolver.
-for conf in "$FRONTEND_NGINX" "$EDGE_NGINX" "$FIXTURE_NGINX"; do
+for conf in "$FRONTEND_NGINX" "$EDGE_NGINX" "$MESH_NGINX" "$FIXTURE_NGINX"; do
   resolvers="$(grep -c 'resolver 127.0.0.11 valid=' "$conf")"
   bounds="$(grep -cE '^ *resolver_timeout 2s;' "$conf")"
   if [ "$resolvers" -ge 1 ] && [ "$bounds" = "$resolvers" ]; then
@@ -306,10 +411,10 @@ for conf in "$FRONTEND_NGINX" "$EDGE_NGINX" "$FIXTURE_NGINX"; do
 done
 
 for directive in 'proxy_connect_timeout 2s;' 'proxy_next_upstream error timeout;'; do
-  if grep -qF "    $directive" "$FRONTEND_NGINX" && grep -qF "    $directive" "$FIXTURE_NGINX"; then
-    ok "the frontend nginx and the fixture both carry '$directive'"
+  if grep -qF "    $directive" "$FRONTEND_NGINX" && grep -qF "    $directive" "$FIXTURE_NGINX" && grep -qF "    $directive" "$MESH_NGINX"; then
+    ok "the frontend nginx, the fixture and the mesh all carry '$directive'"
   else
-    fail "'$directive' is not in both the frontend nginx and the fixture - the fixture would prove a configuration production does not run"
+    fail "'$directive' is not in the frontend nginx, the fixture and the mesh alike - the fixture would prove a configuration production does not run"
   fi
 done
 if grep -q 'proxy_next_upstream on;' "$EDGE_NGINX" && grep -q 'proxy_connect_timeout 2s;' "$EDGE_NGINX"; then
@@ -339,6 +444,21 @@ if [ -z "$stray" ]; then
   ok "no other 'dc up' in deploy-environment.sh can recreate a service"
 else
   fail "deploy-environment.sh recreates services outside rolling.sh: $stray"
+fi
+# The two pinned proxies read their configuration from the checkout, so the release reloads each after
+# replacing the estate - tested first, so a broken file keeps the running one.
+replace_line="$(grep -n '^if ! replace_services <<<' "$DEPLOY" | cut -d: -f1)"
+reloads=""
+for p in "edge nginx.conf" "mesh mesh.conf"; do
+  read -r proxy conf <<<"$p"
+  t="$(grep -n "^dc exec -T $proxy nginx -t -c /etc/nginx/edge/$conf\$" "$DEPLOY" | cut -d: -f1)"
+  r="$(grep -n "^dc exec -T $proxy nginx -s reload -c /etc/nginx/edge/$conf\$" "$DEPLOY" | cut -d: -f1)"
+  { [ -n "$t" ] && [ -n "$r" ] && [ -n "$replace_line" ] && [ "$replace_line" -lt "$t" ] && [ "$t" -lt "$r" ]; } || reloads="$reloads $proxy"
+done
+if [ -z "$reloads" ]; then
+  ok "deploy-environment.sh tests then reloads the edge and the mesh after replacing the estate"
+else
+  fail "deploy-environment.sh does not test-then-reload, after the replacement:$reloads"
 fi
 
 # The lists exist before anything that includes them starts: a fresh host, or a lost directory, would
@@ -401,6 +521,7 @@ done < <(
       api-sick) echo 'running unhealthy /p-api-3' ;;
       api-exited) echo 'exited none /p-api-4' ;;
       sib-1) echo 'running unhealthy /p-sib-1' ;;
+      call-new) echo 'running healthy /p-call-2' ;;
       *) return 1 ;;
       esac
       ;;
@@ -480,6 +601,37 @@ edge pinned yes -'
   )"
   verdict "after a restore whose reload failed, the exit trap reloads again though the file is already at rest" \
     '[ "$retried" = "trap-cleared front:plain front:plain " ]'
+
+  # A SERVICE OTHER SERVICES CALL IS ROUTED THROUGH TWO PROXIES (2026-11-07): the frontend for what
+  # members send, the mesh for what services call. Its take-out sets both lists, each proven retiring in
+  # turn, and stops at the first that fails; its restore puts both back at rest even when the first
+  # reload fails - a proxy left on a container's name is the 502 a rollback would cause.
+  mesh_of() { rotation_existing_block "$ROT/mesh.conf" "$1" | sed -n 's/^map "" \$[a-z_]* { default \(.*\); }$/\1/p'; }
+  PLAN2="$PLAN
+call overlap no front:3002,mesh:3002
+mesh pinned no -"
+  rotation_seed <<<"$PLAN2" >/dev/null
+  verdict "rotation_seed writes a list for every proxy, the second route included" \
+    '[ "$(block_of call)" = call:3002 ] && [ "$(mesh_of call)" = call:3002 ] && [ -z "$(mesh_of api)" ]'
+  taken="$(
+    rotation_apply() { echo "$1:$2"; }
+    rotation_take_out call call-new
+  )"
+  verdict "a service routed through two proxies is taken out of each, each reloaded as retiring" \
+    '[ "$(printf "%s\n" "$taken" | tr "\n" " ")" = "front:retiring mesh:retiring " ] && [ "$(block_of call)" = p-call-2:3002 ] && [ "$(mesh_of call)" = p-call-2:3002 ]'
+  stopped_at="$(
+    rotation_apply() { echo "$1:$2"; [ "$1" != front ]; }
+    rotation_take_out call call-new || echo refused
+  )"
+  verdict "a take-out whose first proxy fails is refused before the second is touched" \
+    '[ "$(printf "%s\n" "$stopped_at" | tr "\n" " ")" = "front:retiring refused " ]'
+  restored="$(
+    rotation_apply() { echo "$1:$2"; [ "$1" != front ]; }
+    rotation_restore call || echo failed
+  )"
+  verdict "a restore puts every proxy back at rest though the first reload failed, and says it failed" \
+    '[ "$(printf "%s\n" "$restored" | tr "\n" " ")" = "front:plain mesh:plain failed " ] && [ "$(block_of call)" = call:3002 ] && [ "$(mesh_of call)" = call:3002 ]'
+  rotation_seed <<<"$PLAN" >/dev/null
 
   # A proxy replica that is not running (restarting, paused) cannot be exec-ed into: a plain reload
   # skips it with a warning rather than stopping the deploy that may be the fix; a retiring one refuses.

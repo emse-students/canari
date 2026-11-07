@@ -6,11 +6,20 @@
 // Prints {statuses, versions, maxMs, failed}: `failed` holds the first 20 non-200 answers with the
 // moment each was sent, so a failure can be placed in the deploy's timeline.
 //
-// Usage: bun client.mjs <url> <stop-file> [concurrency]
+// ALSO ONE SERVICE CALLING ANOTHER (2026-11-07): run inside the fixture's `caller` container, against
+// the mesh or the API's own name. With `keepalive` it pools its connections as a service's `fetch`
+// does, rather than opening one per request.
+//
+// Usage: bun client.mjs <url> <stop-file> [concurrency] [keepalive]
 import { existsSync } from 'node:fs';
 
-const [url, stopFile, concurrencyArg] = process.argv.slice(2);
+const [url, stopFile, concurrencyArg, mode] = process.argv.slice(2);
 const concurrency = Number(concurrencyArg ?? 4);
+const keepAlive = mode === 'keepalive';
+// A request that never ends would hold the stop forever: a connection to the address of a replica
+// already removed is not refused on a Docker bridge, it times out. Bounds the FAILURE case only - the
+// longest request a passing run sees is ~200 ms - and it is counted as one.
+const REQUEST_BOUND_MS = 10_000;
 const statuses = new Map();
 const versions = new Map();
 let maxMs = 0;
@@ -28,8 +37,9 @@ async function worker() {
       const res = await fetch(url, {
         method: 'POST',
         body: '{"text":"hello"}',
-        headers: { connection: 'close' },
-        keepalive: false,
+        headers: keepAlive ? {} : { connection: 'close' },
+        keepalive: keepAlive,
+        signal: AbortSignal.timeout(REQUEST_BOUND_MS),
       });
       const body = await res.text();
       key = String(res.status);

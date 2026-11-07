@@ -187,7 +187,7 @@ The two tests of `useConversations.salonStoredPage` now wait for the store to ho
 
 ### Added - the deploy log counts the connection resets a service logged during a release
 
-`rolling.sh` reads each retiring replica's log before removing it and, once the last service is replaced, every running container of the replaced services, then prints one `[TRANSPORT_RESETS]` line per container and a deploy-wide total; an unreadable log reads `unknown`, never zero. The proxy for service-to-service calls waits for these readings ([backlog](docs/wiki/backlog.d/p2-service-to-service-calls-bypass-the-rotation.md)).
+`rolling.sh` reads each retiring replica's log before removing it and, once the last service is replaced, every running container of the replaced services, then prints one `[TRANSPORT_RESETS]` line per container and a deploy-wide total; an unreadable log reads `unknown`, never zero. The proxy for service-to-service calls waits for these readings ([cicd](docs/wiki/cicd.md#service-to-service-calls-go-through-the-mesh)).
 
 ### Changed - the form editor shows one line per question, and a question can be duplicated
 

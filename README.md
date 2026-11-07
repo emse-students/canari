@@ -48,6 +48,8 @@ Browser / Tauri (Native App)
     |-> core-service:3012      (NestJS)     OIDC auth (Authentik), users, payments
     `-> social-service:3014    (NestJS)     Posts, forms, channels, associations
 
+Service to service:  caller ──> mesh:<port> (nginx) ──> chat-delivery | core | social
+
 Infrastructure: PostgreSQL · Redis · Garage
 ```
 
