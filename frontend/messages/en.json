@@ -5339,6 +5339,7 @@
   "live_start_muted": "Your account can neither publish nor broadcast for now.",
   "live_start_already_open": "An earlier live is still open; it closes by itself within the minute. Try again then.",
   "live_start_association_forbidden": "You cannot broadcast on behalf of this association.",
+  "live_start_association_archived": "This association is archived: it can no longer go live.",
   "live_start_rate_limited": "Too many lives started this hour. Try again later.",
   "live_start_offline": "No connection: the live did not start.",
   "live_start_failed": "The live could not start.",
