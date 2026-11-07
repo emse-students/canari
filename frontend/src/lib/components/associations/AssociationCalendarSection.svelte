@@ -520,6 +520,7 @@
           </div>
           <div class="flex shrink-0 items-center gap-1">
             <Button
+              variant="secondary"
               size="compact"
               onclick={() => validateEvent(ev.id)}
               title={m.asso_calendar_validate_title()}

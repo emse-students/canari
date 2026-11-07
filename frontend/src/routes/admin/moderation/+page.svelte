@@ -649,7 +649,7 @@
                 <!-- A BDE moderator mutes the people of its own spaces only (2026-11-02). -->
                 {#if report.canMuteReporter === true}
                   <Button
-                    variant="secondary"
+                    variant="danger-outline"
                     size="compact"
                     onclick={() =>
                       openMuteDialog(
@@ -666,7 +666,7 @@
                 {/if}
                 {#if report.reportedUserId && report.canMuteReportedUser === true}
                   <Button
-                    variant="secondary"
+                    variant="danger-outline"
                     size="compact"
                     onclick={() =>
                       openMuteDialog(
@@ -694,7 +694,7 @@
                     {m.moderation_masquer_post()}
                   </Button>
                   <Button
-                    variant="secondary"
+                    variant="danger-outline"
                     size="compact"
                     onclick={() => handleDeletePost(report)}
                     disabled={processingId === report.id}
@@ -705,7 +705,7 @@
                 </div>
               {:else if report.contentType === 'comment'}
                 <Button
-                  variant="secondary"
+                  variant="danger-outline"
                   size="compact"
                   onclick={() => handleDeleteComment(report)}
                   disabled={processingId === report.id}
@@ -889,7 +889,7 @@
             </Button>
             {#if post.authorId}
               <Button
-                variant="secondary"
+                variant="danger-outline"
                 size="compact"
                 onclick={async () => {
                   processingId = post.id;
@@ -908,7 +908,7 @@
               </Button>
             {/if}
             <Button
-              variant="secondary"
+              variant="danger-outline"
               size="compact"
               class="ml-auto"
               onclick={() => handleDeleteHidden(post.id)}

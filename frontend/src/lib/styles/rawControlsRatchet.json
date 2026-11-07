@@ -570,7 +570,7 @@
     "input": 0
   },
   "src/lib/components/messages/MessageMobileActions.svelte": {
-    "button": 6,
+    "button": 10,
     "select": 0,
     "input": 0
   },
@@ -1160,7 +1160,7 @@
     "input": 3
   },
   "src/routes/admin/carte/[id]/+page.svelte": {
-    "button": 8,
+    "button": 6,
     "select": 0,
     "input": 1
   },

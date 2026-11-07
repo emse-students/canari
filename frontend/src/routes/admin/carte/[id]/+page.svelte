@@ -759,14 +759,15 @@
         <!-- Poster preview column: a zoom toolbar above a scrollable, fit-height stage. -->
         <div class="space-y-2">
           <div class="flex items-center gap-1.5">
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="compact"
+              icon
               onclick={() => zoomBy(-0.25)}
               aria-label={m.carte_zoom_out()}
-              class="ui-icon-button border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg rounded-lg border"
             >
               <ZoomOut size={15} />
-            </button>
+            </Button>
             <Button
               variant="secondary"
               size="compact"
@@ -775,14 +776,15 @@
             >
               {Math.round(zoom * 100)}%
             </Button>
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="compact"
+              icon
               onclick={() => zoomBy(0.25)}
               aria-label={m.carte_zoom_in()}
-              class="ui-icon-button border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg rounded-lg border"
             >
               <ZoomIn size={15} />
-            </button>
+            </Button>
           </div>
           <!-- Scrollable stage: the outer div is sized to the scaled poster so zoom overflows +
                scrolls; the inner (un-scaled) element is the exact node captured for PDF export. -->
@@ -992,7 +994,7 @@
                     {m.carte_panel_back()}
                   </Button>
                   <Button
-                    variant="secondary"
+                    variant="danger-outline"
                     size="compact"
                     onclick={() => deleteDecoration(selectedDecoration.id)}
                   >

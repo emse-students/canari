@@ -620,7 +620,7 @@
   </div>
   <div class="border-cn-border/60 space-y-2 border-t pt-4">
     <p class="text-text-muted text-sm">{m.bookings_delete_space_hint()}</p>
-    <Button variant="secondary" onclick={removeSpace}>
+    <Button variant="danger-outline" onclick={removeSpace}>
       <Trash2 size={16} />
       {m.bookings_delete_space_button()}
     </Button>

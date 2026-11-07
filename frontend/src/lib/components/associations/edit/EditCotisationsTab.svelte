@@ -1207,7 +1207,7 @@
                     </div>
                     {#if canManageMembers}
                       <Button
-                        variant="secondary"
+                        variant="danger-outline"
                         size="compact"
                         class="shrink-0"
                         onclick={() => void handleRevoke(item)}

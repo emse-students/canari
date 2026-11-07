@@ -643,13 +643,13 @@
                community, so there is no per-member access to give up. Leaving is a community-level
                action there (the community panel's own "leave"). -->
             {#if selectedChannel?.isPrivate}
-              <Button variant="secondary" class="w-full" onclick={handleLeaveChannel}>
+              <Button variant="danger-outline" class="w-full" onclick={handleLeaveChannel}>
                 <LogOut size={18} strokeWidth={2.5} />
                 {m.chat_leave_channel_button()}
               </Button>
             {/if}
             {#if canManage}
-              <Button variant="secondary" class="w-full" onclick={handleDeleteChannel}>
+              <Button variant="danger-outline" class="w-full" onclick={handleDeleteChannel}>
                 <Trash2 size={18} strokeWidth={2.5} />
                 {m.chat_delete_channel_button()}
               </Button>
@@ -854,7 +854,6 @@
                         />
                       </div>
                       <Button
-                        class="mt-0"
                         onclick={() => void addAllowedUser()}
                         disabled={!addingUserId.trim() || memberAdding}
                       >

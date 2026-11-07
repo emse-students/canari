@@ -686,7 +686,7 @@
         </Button>
         {#if announcement}
           <Button
-            variant="secondary"
+            variant="danger-outline"
             disabled={announcementSaving}
             onclick={() => void retireAnnouncement()}
           >

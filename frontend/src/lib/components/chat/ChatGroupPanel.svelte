@@ -588,7 +588,7 @@
       <!-- A direct message has no group to leave: it is deleted, never left. -->
       {#if isGroupConversation && onGroupLeave && !confirmLeave && !confirmDelete}
         <Button
-          variant="secondary"
+          variant="danger-outline"
           class="w-full"
           onclick={() => {
             confirmLeave = true;
@@ -630,7 +630,7 @@
       {#if onGroupDelete && !confirmLeave}
         {#if !confirmDelete}
           <Button
-            variant="secondary"
+            variant="danger-outline"
             class="w-full"
             onclick={() => {
               confirmDelete = true;

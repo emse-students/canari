@@ -203,12 +203,17 @@
             <!-- Per event, from the server: the BDE of THIS event association's space decides it
                  (WP6c step 2), so the queue may hold rows this viewer sees but does not judge. -->
             {#if ev.canValidate}
-              <Button size="compact" onclick={() => validate(ev)} disabled={actingId === ev.id}>
+              <Button
+                variant="secondary"
+                size="compact"
+                onclick={() => validate(ev)}
+                disabled={actingId === ev.id}
+              >
                 <Check size={14} />
                 {m.common_validate_button()}
               </Button>
               <Button
-                variant="secondary"
+                variant="danger-outline"
                 size="compact"
                 onclick={() => openRejectModal(ev)}
                 disabled={actingId === ev.id}
@@ -225,7 +230,7 @@
               {m.admin_agenda_association_link_label()}
             </a>
             <Button
-              variant="secondary"
+              variant="danger-outline"
               size="compact"
               onclick={() => remove(ev)}
               disabled={actingId === ev.id}
@@ -287,7 +292,7 @@
       >
         {m.common_cancel_button()}
       </Button>
-      <Button variant="secondary" onclick={confirmReject} disabled={rejecting}>
+      <Button variant="danger" onclick={confirmReject} disabled={rejecting}>
         <X size={14} />
         {rejecting
           ? m.admin_agenda_reject_confirm_progress()

@@ -1,5 +1,4 @@
 <script lang="ts">
-  import Button from '$lib/components/ui/Button.svelte';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import {
@@ -249,59 +248,59 @@
         class="bg-cn-surface flex max-w-[calc(100vw-2rem)] flex-wrap items-center justify-center gap-3 rounded-2xl border border-black/10 px-4 py-3 shadow-xl dark:border-white/10"
       >
         {#if !isDeleted && canReply}
-          <Button
-            variant="ghost"
+          <button
             onclick={() => {
               onReply?.();
               onClose?.();
             }}
+            class="text-text-main flex flex-col items-center gap-1 rounded-xl px-3 py-2 transition-transform hover:bg-black/5 active:scale-95 dark:hover:bg-white/5"
             aria-label={m.msg_reply_label()}
           >
             <Reply size={20} />
             <span class="text-text-muted text-2xs font-medium">{m.msg_reply_label()}</span>
-          </Button>
+          </button>
         {/if}
 
         {#if !isDeleted && onForward}
-          <Button
-            variant="ghost"
+          <button
             onclick={() => {
               onForward?.();
               onClose?.();
             }}
+            class="text-text-main flex flex-col items-center gap-1 rounded-xl px-3 py-2 transition-transform hover:bg-black/5 active:scale-95 dark:hover:bg-white/5"
             aria-label={m.msg_forward_label()}
           >
             <Forward size={20} />
             <span class="text-text-muted text-2xs font-medium">{m.msg_forward_label()}</span>
-          </Button>
+          </button>
         {/if}
 
         {#if !isDeleted && onCopy}
-          <Button
-            variant="ghost"
+          <button
             onclick={() => {
               onCopy?.();
               onClose?.();
             }}
+            class="text-text-main flex flex-col items-center gap-1 rounded-xl px-3 py-2 transition-transform hover:bg-black/5 active:scale-95 dark:hover:bg-white/5"
             aria-label={m.msg_copy_label()}
           >
             <Copy size={20} />
             <span class="text-text-muted text-2xs font-medium">{m.msg_copy_label()}</span>
-          </Button>
+          </button>
         {/if}
 
         {#if !isDeleted && onShare}
-          <Button
-            variant="ghost"
+          <button
             onclick={() => {
               onShare?.();
               onClose?.();
             }}
+            class="text-text-main flex flex-col items-center gap-1 rounded-xl px-3 py-2 transition-transform hover:bg-black/5 active:scale-95 dark:hover:bg-white/5"
             aria-label={m.msg_share_label()}
           >
             <Share2 size={20} />
             <span class="text-text-muted text-2xs font-medium">{m.msg_share_label()}</span>
-          </Button>
+          </button>
         {/if}
 
         {#if !isDeleted && onPin}

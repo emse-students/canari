@@ -504,6 +504,7 @@
             </p>
             <div class="flex flex-wrap gap-2">
               <Button
+                variant="secondary"
                 class="flex-1 basis-32"
                 data-testid="calendar-export-pdf"
                 onclick={() => handleExport('pdf')}
@@ -515,6 +516,7 @@
                 {exporting === 'pdf' ? m.common_generating_label() : m.calendar_export_format_pdf()}
               </Button>
               <Button
+                variant="secondary"
                 class="flex-1 basis-32"
                 data-testid="calendar-export-png"
                 onclick={() => handleExport('png')}

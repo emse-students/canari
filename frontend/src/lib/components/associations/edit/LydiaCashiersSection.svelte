@@ -270,7 +270,7 @@
               {/if}
               {#if row.canRevokeCurrent}
                 <Button
-                  variant="secondary"
+                  variant="danger-outline"
                   size="compact"
                   onclick={() => void revoke(cashier, 'current')}
                   disabled={busy}
@@ -280,7 +280,7 @@
               {/if}
               {#if row.canRevokePrevious}
                 <Button
-                  variant="secondary"
+                  variant="danger-outline"
                   size="compact"
                   onclick={() => void revoke(cashier, 'previous')}
                   disabled={busy}

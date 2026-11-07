@@ -12,7 +12,9 @@
    *  - `primary`   the yellow fill, reserved for THE action of a surface (save, send, confirm);
    *  - `secondary` the thin grey edge of a field on a neutral fill - everything else, cancel included;
    *  - `ghost`     no fill and no edge, for a low-ranking action beside a primary one;
-   *  - `danger`    a destructive action: delete, leave, revoke.
+   *  - `danger-outline` a destructive action on a list row or a panel: red text and a thin red edge on
+   *    the neutral fill, so it reads as destructive without outshouting the primary;
+   *  - `danger`    SOLID red, for the final confirm inside a confirmation (delete, leave, revoke).
    *
    * The height is a MIN-height (Android text zoom scales fonts, not lengths): a long label wraps and
    * grows the box instead of overflowing. `size="compact"` (2rem) is for a dense toolbar only. `icon`
@@ -34,7 +36,7 @@
     /** Slot content rendered inside the button. */
     children?: import('svelte').Snippet;
     /** Visual variant. */
-    variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
+    variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'danger-outline';
     /** `default` is 2.5rem, `compact` 2rem. */
     size?: 'default' | 'compact';
     /** A square holding one icon; the caller supplies `aria-label`. */
@@ -64,6 +66,8 @@
     ghost:
       'border-transparent bg-transparent text-text-muted hover:bg-black/5 hover:text-text-main dark:hover:bg-white/10',
     danger: 'border-transparent bg-red-solid text-white hover:brightness-90',
+    'danger-outline':
+      'border-red-err/50 bg-cn-surface text-red-solid hover:bg-red-err/10 dark:text-red-err',
   };
 
   const classes = $derived(

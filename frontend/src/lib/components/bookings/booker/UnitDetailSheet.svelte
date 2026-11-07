@@ -227,7 +227,7 @@
         </Button>
       {/if}
       {#if mayCancel}
-        <Button variant="secondary" onclick={cancel}>
+        <Button variant="danger-outline" onclick={cancel}>
           {m.bookings_cancel_action()}
         </Button>
       {/if}

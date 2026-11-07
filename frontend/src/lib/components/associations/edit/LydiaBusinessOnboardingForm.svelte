@@ -267,7 +267,7 @@
         {/if}
         {#if view?.adminCanDisconnect}
           <Button
-            variant="secondary"
+            variant="danger-outline"
             size="compact"
             onclick={() => void handleDisconnect()}
             disabled={disconnecting}

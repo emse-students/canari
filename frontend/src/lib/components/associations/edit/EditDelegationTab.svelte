@@ -320,6 +320,7 @@
                   <div class="flex flex-wrap items-center gap-2">
                     {#if child.status === 'pending'}
                       <Button
+                        variant="secondary"
                         size="compact"
                         onclick={() => void handleApprove(child.associationId)}
                         disabled={busyChildIds.has(child.associationId) || !canReceiveDelegation}
@@ -328,7 +329,7 @@
                         {m.asso_deleg_approve_button()}
                       </Button>
                       <Button
-                        variant="secondary"
+                        variant="danger-outline"
                         size="compact"
                         onclick={() => void handleReject(child.associationId)}
                         disabled={busyChildIds.has(child.associationId)}
@@ -360,7 +361,7 @@
                         {m.asso_deleg_export_button()}
                       </Button>
                       <Button
-                        variant="secondary"
+                        variant="danger-outline"
                         size="compact"
                         onclick={() => void handleReject(child.associationId)}
                         disabled={busyChildIds.has(child.associationId)}
