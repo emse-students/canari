@@ -106,9 +106,20 @@ export interface MessageHandlerDeps {
     /** The community's salons were rearranged: re-read the order, the event names no salon. */
     channelsReordered?: boolean;
   }) => void;
-  /** This account cleared a community's unread on some device - see `sessionTypes.onSalonUnreadCleared`. */
+  /**
+   * This account emptied a community's unread ("Marquer tout comme lu") on one of its devices - this
+   * one included. Addressed by the server to this account alone; the handler re-reads the counts
+   * (one request), because the server's own count is the only one that knows what the clear covered
+   * on a device that holds different messages.
+   */
   onSalonUnreadCleared?: (event: { workspaceId: string }) => void;
-  /** This device's own role in a community changed - see `sessionTypes.onWorkspaceRoleChanged`. */
+  /**
+   * This device's own role in a community changed, pushed by the server to the member it concerns.
+   *
+   * Carries what the role GRANTS rather than only its name: the client caches `viewerCanManage`,
+   * which is derived from the permission set, and deriving it here from a label would be a second
+   * copy of a rule social-service already owns.
+   */
   onWorkspaceRoleChanged?: (event: {
     workspaceId: string;
     roleName: string;

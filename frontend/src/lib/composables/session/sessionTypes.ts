@@ -10,6 +10,7 @@ import type { SvelteMap } from 'svelte/reactivity';
 import type { IMlsService } from '$lib/mlsService';
 import type { BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage } from '$lib/db';
+import type { MessageHandlerDeps } from '$lib/mls-client/messagePipeline/deps';
 import type { LoginErrorCode } from './loginErrors';
 import type { AddMessageToChatOptions, Conversation, MessageBatchOrigin } from '$lib/types';
 
@@ -29,7 +30,21 @@ export interface SessionExpiredOutcome {
 }
 
 /** Callbacks that useChatSession needs from the parent composable (useConversations + UI glue). Passed to login(), logout(), reconnect helpers, etc. */
-export interface ChatSessionCallbacks {
+export interface ChatSessionCallbacks extends Pick<
+  MessageHandlerDeps,
+  | 'onChannelMemberJoined'
+  | 'onChannelMemberKicked'
+  | 'onChannelRemovalReleased'
+  | 'onRolePermissionsChanged'
+  | 'onChannelUpdated'
+  | 'onChannelDeleted'
+  | 'onWorkspaceUpdated'
+  | 'onSalonUnreadCleared'
+  | 'onWorkspaceRoleChanged'
+  | 'onWorkspaceDeleted'
+  | 'onChannelMessageDeleted'
+  | 'onReadStateAdvanced'
+> {
   /** Reactive map of all open conversations, keyed by conversation ID. */
   conversations: SvelteMap<string, Conversation>;
   /** Restores conversations from IndexedDB and re-checks MLS state consistency. */
@@ -92,66 +107,6 @@ export interface ChatSessionCallbacks {
   ) => Promise<void>;
   saveConversation: (contactName: string) => Promise<void>;
   selectConversation: (name: string) => void;
-  onChannelMemberJoined?: (event: any) => void;
-  onChannelMemberKicked?: (event: any) => void;
-  onChannelRemovalReleased?: (event: {
-    workspaceId: string;
-    channelId: string;
-    removedUserId: string;
-    /** The actor who released it - never elected for it. */
-    releasedBy: string;
-    /** The actor's device that released it - re-decided only where the tree holds its leaf. */
-    releasedByDevice: string;
-  }) => void;
-  onRolePermissionsChanged?: (event: { roleId: string; permissions: string[] }) => void;
-  onChannelUpdated?: (event: {
-    channelId: string;
-    name?: string;
-    workspaceId?: string;
-    /** The server's verdict on whether THIS device may post here. Absent = unchanged. */
-    viewerCanWrite?: boolean;
-  }) => void;
-  onChannelDeleted?: (event: { channelId: string; workspaceId?: string }) => void;
-  onWorkspaceUpdated?: (event: {
-    workspaceId: string;
-    imageMediaId?: string;
-    channelsReordered?: boolean;
-  }) => void;
-  /**
-   * This account emptied a community's unread ("Marquer tout comme lu") on one of its devices - this
-   * one included. Addressed by the server to this account alone; the handler re-reads the counts
-   * (one request), because the server's own count is the only one that knows what the clear covered
-   * on a device that holds different messages.
-   */
-  onSalonUnreadCleared?: (event: { workspaceId: string }) => void;
-  /**
-   * This device's own role in a community changed, pushed by the server to the member it concerns.
-   *
-   * Carries what the role GRANTS rather than only its name: the client caches `viewerCanManage`,
-   * which is derived from the permission set, and deriving it here from a label would be a second
-   * copy of a rule social-service already owns.
-   */
-  onWorkspaceRoleChanged?: (event: {
-    workspaceId: string;
-    roleName: string;
-    canManage: boolean;
-    /** Whether the role lets this member govern salons. Absent (an older server) = unchanged. */
-    canManageChannels?: boolean;
-    /**
-     * Whether the role lets this member pin or delete OTHER members' messages. Absent (an older
-     * server) = unchanged.
-     */
-    canModerate?: boolean;
-    permissions: string[];
-  }) => void;
-  onWorkspaceDeleted?: (event: { workspaceId: string; deletedBy?: string }) => void;
-  onChannelMessageDeleted?: (event: {
-    channelId: string;
-    messageId: string;
-    deletedBy?: string;
-  }) => void;
-  /** A participant's read watermark moved forward - `at` is how far they have now read. */
-  onReadStateAdvanced?: (event: { conversationKey: string; senderId: string; at: number }) => void;
   /** Drains the orphan buffer for a conversation once it is added to the map
    *  (e.g. after processing an MLS Welcome). Called through MessageHandlerDeps. */
   drainOrphanMessages?: (convoKey: string) => void;
