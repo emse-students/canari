@@ -437,7 +437,7 @@ up for fifteen seconds, anchored to an input that was `display: none`.
 | runtime | Photothèque | camera | Tous les fichiers |
 | --- | --- | --- | --- |
 | iOS app | **native** `PHPickerViewController` (`tauri-plugin-dialog`, `pickerMode: 'media'`) | **in-app camera overlay** (photos only in a chat) | **native** document picker |
-| Android app, Android browser | input `image/*,video/*` | **in-app camera overlay** (photos only in a chat) | input, every type |
+| Android app, Android browser | input `image/*,video/*` | **in-app camera overlay** (photos only in a chat) | input, `accept="*/*"` (a type LIST greys out the rest in Android's picker: a saved `.txt` log was unselectable, 2026-11-07) |
 | iOS browser | **no Canari menu**: the paperclip is a `<label>` around one input, and WebKit's sheet is the only menu | - | - |
 | desktop | no menu: the paperclip opens the file dialog | - | - |
 
