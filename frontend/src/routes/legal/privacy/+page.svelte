@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="07/11/2026"
+  updated="08/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -428,10 +428,12 @@
       <div>
         <dt>Aides déjà vues</dt>
         <dd>
-          Si vous avez déjà vu la visite guidée de bienvenue (son identifiant et la date),
-          enregistré sur votre compte pour qu'elle ne réapparaisse pas sur un autre appareil. Une
-          copie est gardée sur l'appareil jusqu'à la suppression du compte ou la réinitialisation de
-          l'appareil.
+          Les aides déjà vues (la visite guidée de bienvenue, les aides au premier usage et la carte
+          qui invite à ajouter une photo de profil), chacune avec son identifiant et la date,
+          enregistrées sur votre compte pour qu'elles ne réapparaissent pas sur un autre appareil.
+          La date de la première carte « photo de profil » sert aussi à ne vous la rappeler qu'une
+          seule fois, 30 jours plus tard, si vous n'avez toujours pas de photo. Une copie est gardée
+          sur l'appareil jusqu'à la suppression du compte ou la réinitialisation de l'appareil.
         </dd>
       </div>
       <div>
@@ -681,7 +683,7 @@
             </td>
           </tr>
           <tr>
-            <td>Visite guidée de bienvenue déjà vue</td>
+            <td>Aides déjà vues (visite guidée, aides au premier usage, carte photo de profil)</td>
             <td>
               Tant que le compte existe ; supprimée à la suppression du compte. La copie sur
               l'appareil y reste jusqu'à la suppression du compte ou la réinitialisation de

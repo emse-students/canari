@@ -14,7 +14,7 @@ import {
 } from './profilePhotoPromptStage';
 
 vi.mock('$lib/utils/Log', () => ({ Log: { d: () => {}, i: () => {} } }));
-const openProfilePhotoPage = vi.fn(async () => {});
+const openProfilePhotoPage = vi.fn(() => {});
 vi.mock('$lib/utils/profilePhotoLink', () => ({
   openProfilePhotoPage: () => openProfilePhotoPage(),
 }));

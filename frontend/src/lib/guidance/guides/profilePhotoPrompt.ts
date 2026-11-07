@@ -30,7 +30,7 @@ function stage() {
 
 const openGallery: GuideStep['action'] = {
   label: m.guide_profile_photo_action,
-  run: () => void openProfilePhotoPage(),
+  run: openProfilePhotoPage,
 };
 
 export const profilePhotoPrompt: GuideDefinition = {

@@ -16,7 +16,7 @@
   const model = useMyProfile();
   const profile = $derived(model.profile);
 
-  const changeProfilePhoto = openProfilePhotoPage;
+  const changeProfilePhoto = () => openProfilePhotoPage();
 
   // Fallback display name when displayName is empty.
   const displayFallbackName = $derived(profile?.displayName || m.profile_default_name());

@@ -25,8 +25,8 @@ export class HelpSeenService {
    * was first recorded. A row whose id a later release retired is kept in the table (it is the
    * account's own history until erasure) but never handed to a client that cannot declare it.
    *
-   * THE AGE IS MEASURED HERE, on the server's clock, from the row's own `seen_at` (written once, by
-   * the first insert; a repeat is `DO NOTHING`): a client that waits "30 days after the first
+   * THE AGE IS MEASURED HERE: this application server's `Date.now()` minus the database's `seen_at`
+   * (written once, by the first insert; a repeat is `DO NOTHING`) - two server clocks, never a device's: a client that waits "30 days after the first
    * showing" (the profile-photo reminder) never compares its own clock to an instant it did not
    * write, so a skewed phone clock cannot make the reminder early, late or repeated.
    */

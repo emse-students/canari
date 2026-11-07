@@ -33,12 +33,6 @@ export class OwnProfilePhoto {
     this.#hasPhoto = answer;
     Log.d('ownProfilePhoto', `presence for the signed-in account: ${String(answer)}`);
   }
-
-  /** Forgets the account (sign-out). */
-  reset(): void {
-    this.#account = null;
-    this.#hasPhoto = null;
-  }
 }
 
 /** The app's one store. */
