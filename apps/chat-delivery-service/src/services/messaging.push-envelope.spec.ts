@@ -53,7 +53,8 @@ describe('MessagingService - the envelope wake', () => {
     id: string,
     deviceId: string,
     platform: 'android' | 'ios',
-    wakeVersion: number
+    wakeVersion: number,
+    wakeCapable = wakeVersion >= 1
   ) => ({
     id,
     userId: 'u1',
@@ -62,6 +63,7 @@ describe('MessagingService - the envelope wake', () => {
     platform,
     locale: 'fr',
     wakeVersion,
+    wakeCapable,
   });
 
   const salon = {
@@ -90,7 +92,7 @@ describe('MessagingService - the envelope wake', () => {
     modeRows = [{ push_mode: 'wake' }];
     store.mockImplementation(async (_m, _u, deviceIds) => {
       const ids = [E1, E2];
-      return new Map(deviceIds.map((d, i) => [d, ids[i]]));
+      return { ids: new Map(deviceIds.map((d, i) => [d, ids[i]])), notWoken: new Map() };
     });
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -206,12 +208,35 @@ describe('MessagingService - the envelope wake', () => {
   });
 
   it('does not wake a device whose new envelope the cap evicted at once, and calls it no failure', async () => {
-    store.mockResolvedValue(new Map());
+    store.mockResolvedValue({ ids: new Map(), notWoken: new Map([['pixel', 'evicted']]) });
     pushTokenRepo.find.mockResolvedValue([token('t1', 'pixel', 'android', 2)]);
     await expect(
       service.sendPushToUser('u1', 'x', '', { type: 'channel_read', channelId: 'c-1' })
     ).resolves.toEqual({ sent: 0, failed: 0 });
     expect(fcmSend).not.toHaveBeenCalled();
+  });
+
+  it("wakes the account's other devices when one registration went since it was read", async () => {
+    store.mockResolvedValue({
+      ids: new Map([['tablet', E2]]),
+      notWoken: new Map([['pixel', 'registration-gone']]),
+    });
+    pushTokenRepo.find.mockResolvedValue([
+      token('t1', 'pixel', 'android', 2),
+      token('t2', 'tablet', 'android', 2),
+    ]);
+    await expect(pushSalon()).resolves.toEqual({ sent: 1, failed: 0 });
+    expect(fcmSend).toHaveBeenCalledTimes(1);
+    expect(sent().token).toBe('tok-tablet');
+    expect(sent().data).toEqual({ type: 'wake', envelopeId: E2, silent: 'false' });
+  });
+
+  it('sends the full push to a version-2 row a pre-046 server re-registered (wakeCapable false)', async () => {
+    pushTokenRepo.find.mockResolvedValue([token('t1', 'pixel', 'android', 2, false)]);
+    await pushSalon();
+    expect(sent().data).toMatchObject({ type: 'channel', channelName: 'secret-salon' });
+    expect(manager.query).not.toHaveBeenCalledWith(expect.stringMatching(/push_mode/));
+    expect(store).not.toHaveBeenCalled();
   });
 
   it('stores nothing for a push its category refuses', async () => {

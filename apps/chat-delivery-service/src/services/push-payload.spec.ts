@@ -650,7 +650,7 @@ describe('the envelope wake key', () => {
 });
 
 /**
- * WP-W3's gate: what an envelope answers is BYTE-IDENTICAL to what the full push would have handed
+ * WP-W3's gate: what an envelope answers is the same key/value set the full push would have handed
  * the same platform, and its presentation is what that push's `aps` said
  * (docs/wiki/protocols/content-free-push.md section 10).
  */

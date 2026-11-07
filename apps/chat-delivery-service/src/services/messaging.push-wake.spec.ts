@@ -74,6 +74,7 @@ describe('MessagingService - the wake-up push', () => {
     platform,
     locale: 'fr',
     wakeVersion: capable ? 1 : 0,
+    wakeCapable: capable,
   });
 
   beforeEach(async () => {

@@ -15,7 +15,8 @@ import { cutDeviceId } from './log-repeat';
  *    (a session end, a revocation, an invalid token, an account erasure);
  * 2. the device registers again ({@link sweepDeviceEnvelopes}) - an app start, and an app that is
  *    open reads the notifications list and the salons over HTTP, which are authoritative;
- * 3. the per-device cap ({@link MAX_ENVELOPES_PER_DEVICE}), silent envelopes evicted first.
+ * 3. the per-device cap ({@link MAX_ENVELOPES_PER_DEVICE}): already-served envelopes evicted first,
+ *    then silent ones, then the oldest visible ones.
  *
  * Serving never deletes ({@link serveEnvelope}): a response lost on the way would otherwise become a
  * `gone` counted as served. The device deduplicates a repeat by the envelope id.
@@ -39,20 +40,45 @@ export function envelopeCollapseKey(data: Record<string, string>): string | null
   return data.type === 'channel_read' && data.channelId ? `channel_read:${data.channelId}` : null;
 }
 
+/** Why a device asked for was not woken by {@link storeEnvelopes}. */
+export type EnvelopeNotWoken =
+  /** Its `push_token` row was deleted after the sender read it: there is nobody to wake. */
+  | 'registration-gone'
+  /** The cap took its new envelope at once (a silent push on a device full of banners). */
+  | 'evicted';
+
+/** What {@link storeEnvelopes} did, per device. */
+export interface StoredEnvelopes {
+  /** The envelope written for each device that is to be woken. */
+  ids: Map<string, string>;
+  /** Every other device asked for, and why it is not woken. Neither reason is a failure. */
+  notWoken: Map<string, EnvelopeNotWoken>;
+}
+
 /**
- * Stores ONE push for the given devices of one account, in one transaction: collapses the older
- * envelopes sharing its key, writes one envelope per device, then enforces the cap per device.
+ * Stores ONE push for the given devices of one account, in one transaction: locks the devices'
+ * registrations, collapses the older envelopes sharing its key, writes one envelope per device still
+ * registered, then enforces the cap per device.
  *
- * Returns the envelope id written for each device that still holds one - a device whose new envelope
- * the cap evicted at once (a silent push on a device full of envelopes) is absent, and must not be
- * woken for it. Throws when the transaction fails (a registration deleted concurrently fails its
- * foreign key, for one): the caller sends none of these devices a wake and accuses it.
+ * THE LOCK COMES FIRST, AND IT IS WHAT MAKES THE REST DETERMINISTIC. `SELECT ... FOR NO KEY UPDATE`
+ * on the `push_token` rows, in `deviceId` order:
+ * - a registration deleted after the sender read its token is simply not returned (a delete in
+ *   flight is waited for, then skipped), so it gets no envelope and fails no foreign key - and the
+ *   account's OTHER devices are stored and woken all the same. It is reported `registration-gone`;
+ * - two stores to one device are serialised, so the collapse and the cap of the second see the
+ *   first's rows: never two read envelopes of one salon, never a device above the cap. The fixed
+ *   order means two stores to two shared devices cannot deadlock.
+ * `NO KEY UPDATE` (not `UPDATE`) leaves the foreign key's own `KEY SHARE` free, so the inserts below
+ * do not wait on themselves, and a concurrent registration upsert waits only for this transaction.
+ *
+ * Throws only when the transaction itself fails; the caller then wakes none of these devices and
+ * accuses it.
  *
  * @param manager - Any manager on the chat-delivery database; the work runs in its own transaction.
  * @param userId - The recipient account.
- * @param deviceIds - The devices to wake, each with a `push_token` row.
+ * @param deviceIds - The devices to wake, as the sender read their tokens.
  * @param content - What the full push would have carried.
- * @param logger - For the collapse and cap lines.
+ * @param logger - For the collapse, registration-gone and cap lines.
  * @param traceId - The send's trace id.
  */
 export async function storeEnvelopes(
@@ -62,11 +88,29 @@ export async function storeEnvelopes(
   content: EnvelopeContent,
   logger: Logger,
   traceId: string
-): Promise<Map<string, string>> {
+): Promise<StoredEnvelopes> {
   const silent = isInternalSilent(content.data);
   const collapseKey = envelopeCollapseKey(content.data);
-  const ids = new Map(deviceIds.map((deviceId) => [deviceId, randomUUID()]));
   return manager.transaction(async (tx) => {
+    const locked = (await tx.query(
+      `SELECT "deviceId" FROM push_token
+        WHERE "userId" = $1 AND "deviceId" = ANY($2::varchar[])
+        ORDER BY "deviceId"
+        FOR NO KEY UPDATE`,
+      [userId, deviceIds]
+    )) as Array<{ deviceId: string }>;
+    const present = locked.map((row) => row.deviceId);
+    const notWoken = new Map<string, EnvelopeNotWoken>();
+    for (const deviceId of deviceIds) {
+      if (present.includes(deviceId)) continue;
+      notWoken.set(deviceId, 'registration-gone');
+      logger.log(
+        `[PUSH_ENVELOPE][${traceId}] registration gone user=${userId} device=${cutDeviceId(deviceId)} - ` +
+          `deleted after the send read it; nothing to wake`
+      );
+    }
+    const ids = new Map(present.map((deviceId) => [deviceId, randomUUID()]));
+    if (present.length === 0) return { ids, notWoken };
     if (collapseKey) {
       const collapsed = (await tx.query(
         `WITH gone AS (
@@ -75,7 +119,7 @@ export async function storeEnvelopes(
            RETURNING id
          )
          SELECT count(*)::int AS n FROM gone`,
-        [userId, deviceIds, collapseKey]
+        [userId, present, collapseKey]
       )) as Array<{ n: number }>;
       const n = collapsed[0]?.n ?? 0;
       if (n > 0) {
@@ -90,36 +134,66 @@ export async function storeEnvelopes(
          FROM unnest($5::uuid[], $6::varchar[]) AS u(id, "deviceId")`,
       [userId, JSON.stringify(content), silent, collapseKey, [...ids.values()], [...ids.keys()]]
     );
-    for (const deviceId of deviceIds) {
-      // Silent envelopes first (oldest first), then the oldest visible ones: a superseded read
-      // frame is worth less than any banner.
+    for (const deviceId of present) {
+      // ALREADY-SERVED envelopes first: the device fetched them, so they are kept only so a lost
+      // response can be fetched again - and a live app process, which never re-registers (the client
+      // skips an unchanged token), fills its cap with exactly these. Then silent envelopes (a
+      // superseded read frame is worth less than any banner), then the oldest visible ones.
       const evicted = (await tx.query(
         `WITH gone AS (
            DELETE FROM push_envelope
             WHERE id IN (
               SELECT id FROM push_envelope
                WHERE "userId" = $1 AND "deviceId" = $2
-               ORDER BY silent DESC, "createdAt" ASC, id ASC
+               ORDER BY "servedAt" IS NOT NULL DESC, silent DESC, "createdAt" ASC, id ASC
                LIMIT GREATEST(
                  (SELECT count(*) FROM push_envelope WHERE "userId" = $1 AND "deviceId" = $2) - $3,
                  0
                )
             )
-           RETURNING id
+           RETURNING id, silent, "servedAt" IS NOT NULL AS served
          )
-         SELECT id FROM gone`,
+         SELECT id, silent, served FROM gone`,
         [userId, deviceId, MAX_ENVELOPES_PER_DEVICE]
-      )) as Array<{ id: string }>;
+      )) as Array<{ id: string; silent: boolean; served: boolean }>;
       if (evicted.length === 0) continue;
       const own = evicted.some((row) => row.id === ids.get(deviceId));
-      if (own) ids.delete(deviceId);
-      logger.warn(
-        `[PUSH_ENVELOPE][${traceId}] cap user=${userId} device=${cutDeviceId(deviceId)} evicted=${evicted.length} ` +
-          `max=${MAX_ENVELOPES_PER_DEVICE}${own ? ' including this push - not woken' : ''} - a device that never fetches`
-      );
+      if (own) {
+        ids.delete(deviceId);
+        notWoken.set(deviceId, 'evicted');
+      }
+      reportEviction(logger, traceId, userId, deviceId, evicted, own);
     }
-    return ids;
+    return { ids, notWoken };
   });
+}
+
+/**
+ * The cap's line, at the level its evidence earns. Only an UNSERVED VISIBLE envelope evicted is a
+ * banner the device never fetched - the "device that never fetches" the WARN names. Served
+ * envelopes are the normal turnover of a live app process and unserved silent ones are superseded
+ * reads: counted at debug, never accused.
+ */
+function reportEviction(
+  logger: Logger,
+  traceId: string,
+  userId: string,
+  deviceId: string,
+  evicted: Array<{ silent: boolean; served: boolean }>,
+  own: boolean
+): void {
+  const served = evicted.filter((row) => row.served).length;
+  const unservedSilent = evicted.filter((row) => !row.served && row.silent).length;
+  const unservedVisible = evicted.length - served - unservedSilent;
+  const counts =
+    `user=${userId} device=${cutDeviceId(deviceId)} max=${MAX_ENVELOPES_PER_DEVICE} ` +
+    `served=${served} unserved-silent=${unservedSilent} unserved-visible=${unservedVisible}` +
+    (own ? ' including this push - not woken' : '');
+  if (unservedVisible > 0) {
+    logger.warn(`[PUSH_ENVELOPE][${traceId}] cap ${counts} - a device that never fetches`);
+  } else {
+    logger.debug(`[PUSH_ENVELOPE][${traceId}] cap turnover ${counts}`);
+  }
 }
 
 /**

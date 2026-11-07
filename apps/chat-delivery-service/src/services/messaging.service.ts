@@ -93,10 +93,11 @@ import { isBlockedBetween } from '../utils/user-blocks';
 import {
   ENVELOPE_WAKE_VERSION,
   MLS_WAKE_VERSION,
+  effectiveWakeVersion,
   readPushMode,
   type PushMode,
 } from '../utils/push-mode';
-import { storeEnvelopes } from '../utils/push-envelope';
+import { storeEnvelopes, type EnvelopeNotWoken } from '../utils/push-envelope';
 import { sameSideOfReviewCohort } from '../review-cohort';
 import {
   SHARED_PAYLOAD_WRITES_ENV,
@@ -1388,11 +1389,11 @@ export class MessagingService {
     // token's own `wakeVersion` (its binary declared it understands the MLS wake). The switch is read
     // only when some destination could take a wake, and never cached; an unreadable switch throws,
     // and this device's push is not sent (the fan-out logs it; the frame stays queued).
-    const pushMode = pushTokens.some((pt) => pt.wakeVersion >= MLS_WAKE_VERSION)
+    const pushMode = pushTokens.some((pt) => effectiveWakeVersion(pt) >= MLS_WAKE_VERSION)
       ? await readPushMode(this.groupRepo.manager, this.logger)
       : 'full';
     for (const pt of pushTokens) {
-      const wake = pushMode === 'wake' && pt.wakeVersion >= MLS_WAKE_VERSION;
+      const wake = pushMode === 'wake' && effectiveWakeVersion(pt) >= MLS_WAKE_VERSION;
       try {
         await getMessaging().send(
           wake
@@ -7592,14 +7593,15 @@ export class MessagingService {
    * envelope.
    *
    * Two locks, ANDed, as for an MLS frame: the estate's `push_mode` and the token's
-   * `wakeVersion >= ENVELOPE_WAKE_VERSION`. The switch is read only when some destination could take
-   * an envelope wake, and never cached. When it reads `wake`, the push is stored once per capable
-   * device (`storeEnvelopes`) BEFORE any wake leaves, so a device that fetches at once finds it.
+   * `effectiveWakeVersion >= ENVELOPE_WAKE_VERSION`. The switch is read only when some destination
+   * could take an envelope wake, and never cached. When it reads `wake`, the push is stored once per
+   * capable device (`storeEnvelopes`) BEFORE any wake leaves, so a device that fetches at once finds it.
    *
    * Returns the envelope per device, and the tokens to WITHHOLD: `failed` when the switch could not be
    * read or the envelopes could not be stored - accused at ERROR, and never sent the full push in their
-   * place, which would hand Google and Apple exactly what the switch withholds; `evicted` when the cap
-   * took the new envelope at once (logged by the cap's own line).
+   * place, which would hand Google and Apple exactly what the switch withholds;
+   * `registration-gone` (the token was deleted since it was read) and `evicted` (the cap took the new
+   * envelope at once) are no failure - each logged by `storeEnvelopes`.
    */
   private async envelopesForWake(
     userId: string,
@@ -7608,11 +7610,11 @@ export class MessagingService {
     traceId: string
   ): Promise<{
     envelopes: Map<string, string>;
-    withheld: Map<string, 'failed' | 'evicted'>;
+    withheld: Map<string, 'failed' | EnvelopeNotWoken>;
   }> {
     const envelopes = new Map<string, string>();
-    const withheld = new Map<string, 'failed' | 'evicted'>();
-    const capable = pushTokens.filter((pt) => pt.wakeVersion >= ENVELOPE_WAKE_VERSION);
+    const withheld = new Map<string, 'failed' | EnvelopeNotWoken>();
+    const capable = pushTokens.filter((pt) => effectiveWakeVersion(pt) >= ENVELOPE_WAKE_VERSION);
     if (capable.length === 0) return { envelopes, withheld };
 
     let mode: PushMode;
@@ -7638,9 +7640,15 @@ export class MessagingService {
         traceId
       );
       for (const pt of capable) {
-        const envelopeId = stored.get(pt.deviceId);
-        if (envelopeId) envelopes.set(pt.deviceId, envelopeId);
-        else withheld.set(pt.id, 'evicted');
+        const envelopeId = stored.ids.get(pt.deviceId);
+        if (envelopeId) {
+          envelopes.set(pt.deviceId, envelopeId);
+          continue;
+        }
+        // `storeEnvelopes` answers every device it was asked for, one way or the other.
+        const reason = stored.notWoken.get(pt.deviceId);
+        if (!reason) throw new Error(`storeEnvelopes answered nothing for device ${pt.deviceId}`);
+        withheld.set(pt.id, reason);
       }
     } catch (e) {
       this.logger.error(
@@ -7745,7 +7753,8 @@ export class MessagingService {
         failed++;
         continue;
       }
-      if (refusal === 'evicted') continue;
+      // Not woken, and not a failure: the registration went, or the cap took the new envelope.
+      if (refusal) continue;
       // ONE HALF PER TOKEN, BECAUSE THE PLATFORM IS KNOWN HERE - the duplication `sendFcmForQueued`
       // stopped for its own pushes. Every token used to receive the data map AND an APNs payload the
       // same fields are spread into, so an inlined ciphertext travelled twice in one message and

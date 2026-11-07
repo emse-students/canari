@@ -34,6 +34,22 @@ export const MLS_WAKE_VERSION = 1;
 export const ENVELOPE_WAKE_VERSION = 2;
 
 /**
+ * The wake version this server may act on for one registration: `wakeVersion`, but only while
+ * `wakeCapable` agrees - and 0 otherwise.
+ *
+ * Until `wakeCapable` is dropped (WP-W3c) the row can be written by a server that does not know
+ * `wakeVersion`: an old replica still serving during a rotation, or a rollback to a release before
+ * 046, writes `wakeCapable` from the body (false for a binary that does not say `wake: true`, a
+ * downgraded one included) and leaves `wakeVersion` as the last new server set it. The two then
+ * disagree, and only `wakeCapable` was written by the latest registration. Reading 0 there sends the
+ * full push - the contract every binary understands - until the next registration on a new server
+ * writes both again. Remove with `wakeCapable` (docs/wiki/legacy-compatibility.md).
+ */
+export function effectiveWakeVersion(token: { wakeVersion: number; wakeCapable: boolean }): number {
+  return token.wakeCapable ? token.wakeVersion : 0;
+}
+
+/**
  * The wake version a registration declares, from its body.
  *
  * - `wakeVersion`, an integer from 0 up: the declaration of a binary that knows versions. A version

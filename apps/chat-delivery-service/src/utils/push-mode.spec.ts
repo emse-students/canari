@@ -2,7 +2,12 @@
 
 import type { Logger } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
-import { ENVELOPE_WAKE_VERSION, parseWakeVersion, readPushMode } from './push-mode';
+import {
+  ENVELOPE_WAKE_VERSION,
+  effectiveWakeVersion,
+  parseWakeVersion,
+  readPushMode,
+} from './push-mode';
 
 /**
  * The switch of the content-free wake-up push, read straight from `platform_config`
@@ -71,5 +76,18 @@ describe('parseWakeVersion', () => {
         malformed: true,
       });
     }
+  });
+});
+
+/** Until `wakeCapable` is dropped, a row a pre-046 server re-registered must not be woken. */
+describe('effectiveWakeVersion', () => {
+  it('reads the version while wakeCapable agrees', () => {
+    expect(effectiveWakeVersion({ wakeVersion: 2, wakeCapable: true })).toBe(2);
+    expect(effectiveWakeVersion({ wakeVersion: 1, wakeCapable: true })).toBe(1);
+  });
+
+  it('reads 0 when a server that knows only wakeCapable wrote it false', () => {
+    expect(effectiveWakeVersion({ wakeVersion: 2, wakeCapable: false })).toBe(0);
+    expect(effectiveWakeVersion({ wakeVersion: 1, wakeCapable: false })).toBe(0);
   });
 });
