@@ -48,7 +48,7 @@
    *
    * The space the bar covers is the PLUGIN's answer (`getTabBarInsets`), written to
    * `--bottom-nav-reserve`, which is what `.page-scroll-wrap` and `.mobile-nav-inset` reserve: the
-   * floating iOS 26 pill and the classic bar are not the web bar's `4rem`.
+   * floating iOS 26 pill and the classic bar are not the web bar's `--bottom-nav-height`.
    */
   interface Props {
     /**

@@ -248,7 +248,7 @@ describe('NativeTabBar', () => {
     }
   });
 
-  it('reserves the space the plugin measures, not the web bar’s 4rem', async () => {
+  it('reserves the space the plugin measures, not the web bar’s --bottom-nav-height', async () => {
     await mountBar({ visible: true });
     expect(document.documentElement.style.getPropertyValue('--bottom-nav-reserve')).toBe('83px');
   });
