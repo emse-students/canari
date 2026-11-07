@@ -31,6 +31,7 @@ import {
   LIVE_CUT_RETENTION_MS,
   LIVE_INGEST_MAX_CONCURRENT,
   LIVE_KEY_HEX_RE,
+  LIVE_ARRIVALS_PER_POLL,
   LIVE_MANIFEST_WINDOW,
   LIVE_RECONNECT_WINDOW_MS,
   LIVE_RESERVATION_TTL_MS,
@@ -97,6 +98,17 @@ export type LiveViewerView = LiveView & { viewerModerates: boolean; chatWithheld
  * as the visibility. The controller puts it on the chat block; it is not a manifest field.
  */
 export type LiveManifestForViewer = LiveManifest & { chatWithheld: boolean };
+
+/**
+ * The arrival fields of the chat block (owner, 2026-11-07): at most `LIVE_ARRIVALS_PER_POLL` named
+ * accounts - the client resolves each name as it does a chat author's - the count folded behind
+ * them, and the cursor to pass back as `arrivalsAfter`.
+ */
+export interface LiveArrivalsBlock {
+  arrivals: { userId: string; seq: number }[];
+  arrivalsMore: number;
+  arrivalsCursor: number;
+}
 
 /** A live in the list of open lives - no key: the key is read by opening it. */
 export interface LiveListItem {
@@ -1576,6 +1588,10 @@ export class LivesService implements OnModuleDestroy {
     if (row) {
       await this.db.query(`DELETE FROM lives WHERE id = $1 AND "endedAt" IS NOT NULL`, [liveId]);
     }
+    // The arrival keys name accounts: they go with the live (best effort - their TTL is the bound).
+    await this.seats.forgetArrivals(liveId).catch((e: unknown) => {
+      this.logger.warn(`[LIVE_ARRIVAL] ${liveId}: arrivals left to their TTL: ${String(e)}`);
+    });
     this.logger.debug(`[LIVE_GC] ${liveId} deleted (${result.deleted} segment object(s))`);
     return 'deleted';
   }
@@ -1643,9 +1659,66 @@ export class LivesService implements OnModuleDestroy {
    * Answers the live's viewer count as the take counted it, or `null` for the broadcaster (no seat,
    * no take) - who asks {@link viewerCount} instead, and only where a count is shown.
    */
-  private async takeSeat(row: LiveRow, viewerId: string): Promise<number | null> {
+  private async takeSeat(
+    row: LiveRow & { chatWithheld: boolean },
+    viewerId: string
+  ): Promise<number | null> {
     if (row.broadcasterId === viewerId) return null;
-    return this.seats.take(row.id, viewerId);
+    const watching = await this.seats.take(row.id, viewerId);
+    // THE ARRIVAL (owner, 2026-11-07): noted once per viewer per live, and NEVER for a reader the
+    // chat is withheld from - they take no part in it, so nobody is told they are here. Best effort:
+    // a courtesy line must not fail the poll that carries the video.
+    if (!row.chatWithheld) {
+      await this.seats.noteArrival(row.id, viewerId).catch((e: unknown) => {
+        this.logger.error(`[LIVE_ARRIVAL] ${row.id}: an arrival was not noted: ${String(e)}`);
+      });
+    }
+    return watching;
+  }
+
+  /**
+   * THE ARRIVAL LINES of a poll ("X a rejoint", owner 2026-11-07 - the reversal of "a count, never an
+   * identity", lives.md "Arrival lines"), for a viewer the chat is served to. Read AFTER the
+   * manifest let them watch. What this reader may see: not themselves, not an account blocked either
+   * way, not a viewer the broadcaster removed. THE RATE RULE IS A COUNT, never a clock: at most
+   * {@link LIVE_ARRIVALS_PER_POLL} are named, the rest of what the poll read is folded into
+   * `arrivalsMore`; the cursor passes everything read, filtered or folded, so nothing is served twice.
+   * A first poll (`after` undefined) reads the top only: a joiner is told no history.
+   *
+   * `null` when Redis does not answer: the caller then omits the fields and the client keeps its
+   * cursor - an outage costs lines, never the poll.
+   */
+  async readArrivals(
+    viewerId: string,
+    liveId: string,
+    after: number | undefined
+  ): Promise<LiveArrivalsBlock | null> {
+    let read: { top: number; rows: { userId: string; seq: number }[] };
+    try {
+      read = await this.seats.readArrivals(liveId, after ?? null);
+    } catch (e) {
+      this.logger.error(`[LIVE_ARRIVAL] ${liveId}: the arrivals did not answer: ${String(e)}`);
+      return null;
+    }
+    if (after === undefined) return { arrivals: [], arrivalsMore: 0, arrivalsCursor: read.top };
+    if (read.rows.length === 0) {
+      return { arrivals: [], arrivalsMore: 0, arrivalsCursor: after };
+    }
+    const blocked = new Set(await blockedUserIdsFor(this.db.manager, viewerId));
+    const removed: { viewerId: string }[] = await this.db.query(
+      `SELECT "viewerId" FROM live_removed_viewers WHERE "liveId" = $1 AND "viewerId" = ANY($2::varchar[])`,
+      [liveId, read.rows.map((r) => r.userId)]
+    );
+    const gone = new Set(removed.map((r) => r.viewerId));
+    const visible = read.rows.filter(
+      (r) => r.userId !== viewerId && !blocked.has(r.userId) && !gone.has(r.userId)
+    );
+    const named = visible.slice(0, LIVE_ARRIVALS_PER_POLL);
+    return {
+      arrivals: named,
+      arrivalsMore: visible.length - named.length,
+      arrivalsCursor: read.rows[read.rows.length - 1].seq,
+    };
   }
 
   /**

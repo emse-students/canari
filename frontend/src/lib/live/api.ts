@@ -308,6 +308,7 @@ export function manifestQuery(from?: number, chat?: LiveChatQuery): string {
     if (chat.messagesAfter !== undefined) params.set('messagesAfter', String(chat.messagesAfter));
     if (chat.reactionsAfter !== undefined)
       params.set('reactionsAfter', String(chat.reactionsAfter));
+    if (chat.arrivalsAfter !== undefined) params.set('arrivalsAfter', String(chat.arrivalsAfter));
   }
   const query = params.toString();
   return query ? `?${query}` : '';

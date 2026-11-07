@@ -72,6 +72,8 @@ export interface LiveChatBlock {
 export interface LiveChatCursors {
   messagesAfter?: number;
   reactionsAfter?: number;
+  /** The arrival lines' cursor (read by `LivesService.readArrivals`, not by this service). */
+  arrivalsAfter?: number;
 }
 
 /** A message's input once checked: the idempotence key and the sealed bytes. */

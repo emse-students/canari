@@ -156,6 +156,7 @@ describe('LivesController', () => {
   const ingest = jest.fn().mockResolvedValue({ index: 0 });
   const manifest = jest.fn().mockResolvedValue({ liveId: 'm' });
   const read = jest.fn().mockResolvedValue({ messages: [] });
+  const readArrivals = jest.fn().mockResolvedValue(null);
   const cut = jest.fn().mockResolvedValue({ newlyCut: true });
   const rulesStatus = jest.fn().mockResolvedValue({ version: 1 });
   /** The posts' one moderator predicate, faked: only `MODERATOR` holds `MODERATE` in a BDE. */
@@ -174,7 +175,7 @@ describe('LivesController', () => {
     Promise.reject(new ForbiddenException({ code: 'MODERATION_OUT_OF_SCOPE' }))
   );
   const controller = new LivesController(
-    { ingest, manifest, cut, rulesStatus } as unknown as LivesService,
+    { ingest, manifest, cut, rulesStatus, readArrivals } as unknown as LivesService,
     { isContentModerator, mayModerateLive, refuseModeration } as unknown as AssociationsService,
     { read } as unknown as LiveChatService
   );
@@ -258,14 +259,14 @@ describe('LivesController', () => {
     expect(read).toHaveBeenLastCalledWith(
       'b'.repeat(64),
       LIVE,
-      { messagesAfter: undefined, reactionsAfter: undefined },
+      { messagesAfter: undefined, reactionsAfter: undefined, arrivalsAfter: undefined },
       { withheld: undefined }
     );
     await controller.manifest(LIVE, 'b'.repeat(64), '3', '1', '41', '0');
     expect(read).toHaveBeenLastCalledWith(
       'b'.repeat(64),
       LIVE,
-      { messagesAfter: 41, reactionsAfter: 0 },
+      { messagesAfter: 41, reactionsAfter: 0, arrivalsAfter: undefined },
       { withheld: undefined }
     );
   });
@@ -279,11 +280,33 @@ describe('LivesController', () => {
     expect(read).toHaveBeenLastCalledWith(
       'b'.repeat(64),
       LIVE,
-      { messagesAfter: undefined, reactionsAfter: undefined },
+      { messagesAfter: undefined, reactionsAfter: undefined, arrivalsAfter: undefined },
       { withheld: true }
     );
     manifest.mockResolvedValueOnce({ liveId: 'm', chatWithheld: true });
     await expect(controller.manifest(LIVE, 'b'.repeat(64))).resolves.toEqual({ liveId: 'm' });
+  });
+
+  it('adds the arrival fields to the chat block, and NEVER to a withheld reader (owner, 2026-11-07)', async () => {
+    const block = { arrivals: [{ userId: 'x', seq: 1 }], arrivalsMore: 2, arrivalsCursor: 7 };
+    readArrivals.mockResolvedValueOnce(block);
+    await expect(
+      controller.manifest(LIVE, 'b'.repeat(64), undefined, '1', '1', '1', '6')
+    ).resolves.toEqual({ liveId: 'm', chat: { messages: [], ...block } });
+    expect(readArrivals).toHaveBeenLastCalledWith('b'.repeat(64), LIVE, 6);
+    // A reader the chat is withheld from: the arrivals are not even read.
+    readArrivals.mockClear();
+    manifest.mockResolvedValueOnce({ liveId: 'm', chatWithheld: true });
+    await expect(controller.manifest(LIVE, 'b'.repeat(64), undefined, '1')).resolves.toEqual({
+      liveId: 'm',
+      chat: { messages: [] },
+    });
+    expect(readArrivals).not.toHaveBeenCalled();
+    // A refusal of the arrivals (null) leaves the block as the chat made it.
+    await expect(controller.manifest(LIVE, 'b'.repeat(64), undefined, '1')).resolves.toEqual({
+      liveId: 'm',
+      chat: { messages: [] },
+    });
   });
 
   it('refuses a malformed chat cursor BEFORE the manifest renews a seat', async () => {

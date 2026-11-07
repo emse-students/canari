@@ -1,6 +1,12 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { RedisService } from '../common/redis';
-import { LIVE_SEAT_LEASE_MS, LIVE_VIEWER_CAP } from './live.constants';
+import {
+  LIVE_ARRIVALS_LOG_MAX,
+  LIVE_ARRIVALS_PAGE,
+  LIVE_ARRIVALS_TTL_MS,
+  LIVE_SEAT_LEASE_MS,
+  LIVE_VIEWER_CAP,
+} from './live.constants';
 
 /**
  * The one Redis key holding every seat of every live on this estate: a sorted set whose member is
@@ -85,6 +91,51 @@ for _, m in ipairs(redis.call('ZRANGE', KEYS[1], 0, -1)) do
 end
 return n
 `;
+
+/** The three Redis keys of one live's arrivals: who arrived (dedupe), the counter, the ordered log. */
+export const arrivalKeys = (liveId: string): [string, string, string] => {
+  const id = liveId.toLowerCase();
+  return [`live:arrived:${id}`, `live:arrivalseq:${id}`, `live:arrivals:${id}`];
+};
+
+/**
+ * NOTE ONE ARRIVAL, ONCE PER VIEWER PER LIVE: `SADD` is the dedupe (a seat that lapsed and was taken
+ * again is the same arrival, so a flapping network announces nobody twice), the counter is the
+ * cursor's order, the log keeps the newest few. KEYS: the arrived set, the counter, the log; ARGV:
+ * the viewer, the TTL in ms, the log's size. Reply 1 for a new arrival, 0 for a known one.
+ */
+export const NOTE_ARRIVAL_LUA = `
+local fresh = redis.call('SADD', KEYS[1], ARGV[1])
+if fresh == 1 then
+  local seq = redis.call('INCR', KEYS[2])
+  redis.call('ZADD', KEYS[3], seq, ARGV[1])
+  redis.call('ZREMRANGEBYRANK', KEYS[3], 0, -(tonumber(ARGV[3]) + 1))
+end
+for i = 1, 3 do redis.call('PEXPIRE', KEYS[i], ARGV[2]) end
+return fresh
+`;
+
+/**
+ * READ THE ARRIVALS AFTER A CURSOR. KEYS: the counter, the log; ARGV: the cursor (-1 for a first poll,
+ * which reads only the top) and the page. Reply `{top, viewer, seq, viewer, seq, ...}`, ascending.
+ */
+export const READ_ARRIVALS_LUA = `
+local top = tonumber(redis.call('GET', KEYS[1]) or '0')
+local reply = {top}
+if tonumber(ARGV[1]) < 0 then return reply end
+local rows = redis.call('ZRANGEBYSCORE', KEYS[2], '(' .. ARGV[1], '+inf', 'WITHSCORES', 'LIMIT', 0, tonumber(ARGV[2]))
+for _, v in ipairs(rows) do reply[#reply + 1] = v end
+return reply
+`;
+
+/** Deletes a live's three arrival keys (KEYS as {@link arrivalKeys}). */
+export const FORGET_ARRIVALS_LUA = `return redis.call('DEL', KEYS[1], KEYS[2], KEYS[3])`;
+
+/** One arrival as read from the log, before the reader's filters. */
+export interface LiveArrivalRow {
+  userId: string;
+  seq: number;
+}
 
 /**
  * The seat member of one viewer on one live. The live id is LOWER-CASED: the take is keyed by the
@@ -187,6 +238,54 @@ export class LiveSeats {
       this.logger.debug(`[LIVE_SEAT] ${liveId}: ${count} watching (broadcaster's read)`);
     }
     return count;
+  }
+
+  /**
+   * Records that the viewer arrived on the live, once ({@link NOTE_ARRIVAL_LUA}). Best effort by the
+   * caller's choice: it throws, and the caller logs and goes on - an arrival line is a courtesy, not
+   * a seat.
+   */
+  async noteArrival(liveId: string, viewerId: string): Promise<boolean> {
+    const fresh = await this.redis.evalScript(
+      NOTE_ARRIVAL_LUA,
+      [...arrivalKeys(liveId)],
+      [viewerId, LIVE_ARRIVALS_TTL_MS, LIVE_ARRIVALS_LOG_MAX]
+    );
+    return Number(fresh) === 1;
+  }
+
+  /**
+   * The arrivals after `after` (ascending, at most {@link LIVE_ARRIVALS_PAGE}) and the log's top
+   * sequence. `after` null is a first poll: the top only, no history. Throws on a Redis failure or a
+   * reply this code did not write.
+   */
+  async readArrivals(
+    liveId: string,
+    after: number | null
+  ): Promise<{ top: number; rows: LiveArrivalRow[] }> {
+    const [counter, , log] = arrivalKeys(liveId);
+    const reply = await this.redis.evalScript(
+      READ_ARRIVALS_LUA,
+      [counter, log],
+      [after === null ? -1 : after, LIVE_ARRIVALS_PAGE]
+    );
+    if (!Array.isArray(reply) || reply.length % 2 !== 1) {
+      throw new Error(`unreadable arrivals reply ${JSON.stringify(reply)}`);
+    }
+    const top = Number(reply[0]);
+    const rows: LiveArrivalRow[] = [];
+    for (let i = 1; i < reply.length; i += 2) {
+      rows.push({ userId: String(reply[i]), seq: Number(reply[i + 1]) });
+    }
+    if (!Number.isInteger(top) || rows.some((r) => !Number.isInteger(r.seq))) {
+      throw new Error(`unreadable arrivals reply ${JSON.stringify(reply)}`);
+    }
+    return { top, rows };
+  }
+
+  /** Forgets a live's arrivals (its purge). Idempotent; throws on a Redis failure. */
+  async forgetArrivals(liveId: string): Promise<void> {
+    await this.redis.evalScript(FORGET_ARRIVALS_LUA, [...arrivalKeys(liveId)], []);
   }
 
   /** Gives the viewer's seat on the live back. Idempotent; throws 503 when Redis does not answer. */
