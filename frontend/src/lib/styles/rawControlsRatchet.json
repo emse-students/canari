@@ -1,0 +1,1382 @@
+{
+  "src/lib/components/MainChatPage.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/admin/PresenceLineChart.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/admin/access/ReadGrantCard.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/admin/access/ReviewerCard.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/associations/AssociationCalendarSection.svelte": {
+    "button": 9,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/associations/AssociationCreatePage.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/associations/AssociationDetailView.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/associations/AssociationDocumentManager.svelte": {
+    "button": 13,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/associations/AssociationMemberRow.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/associations/CellPicker.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/associations/SquareImageCropper.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/associations/edit/EditAchatsTab.svelte": {
+    "button": 6,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/associations/edit/EditAudienceTab.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/associations/edit/EditBoutiqueTab.svelte": {
+    "button": 7,
+    "select": 0,
+    "input": 11
+  },
+  "src/lib/components/associations/edit/EditCotisationsTab.svelte": {
+    "button": 14,
+    "select": 0,
+    "input": 5
+  },
+  "src/lib/components/associations/edit/EditDangerTab.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/associations/edit/EditDelegationTab.svelte": {
+    "button": 8,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/associations/edit/EditFormsTab.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/associations/edit/EditMembersTab.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/associations/edit/EditPartnershipsTab.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/associations/edit/EditProfileTab.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/associations/edit/EditProposalsTab.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/associations/edit/LydiaBusinessOnboardingForm.svelte": {
+    "button": 6,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/associations/edit/LydiaCashiersSection.svelte": {
+    "button": 8,
+    "select": 3,
+    "input": 0
+  },
+  "src/lib/components/associations/edit/LydiaResponsableForm.svelte": {
+    "button": 1,
+    "select": 1,
+    "input": 0
+  },
+  "src/lib/components/associations/edit/PartnershipEditor.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 4
+  },
+  "src/lib/components/associations/edit/RefundCheckDialog.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/associations/edit/RefundDialog.svelte": {
+    "button": 5,
+    "select": 0,
+    "input": 2
+  },
+  "src/lib/components/associations/edit/TierRiseEditor.svelte": {
+    "button": 0,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/auth/BiometricBottomSheet.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/auth/BiometricEnrollSheet.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/auth/ChangePinModal.svelte": {
+    "button": 0,
+    "select": 0,
+    "input": 3
+  },
+  "src/lib/components/auth/LoginForm.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/auth/PinModal.svelte": {
+    "button": 10,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/bookings/booker/BookingSheet.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/bookings/booker/ColumnSelect.svelte": {
+    "button": 1,
+    "select": 1,
+    "input": 0
+  },
+  "src/lib/components/bookings/booker/DayStrip.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/bookings/booker/MyBookingCard.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/bookings/booker/MyBookingRow.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/bookings/booker/PlanningList.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/bookings/booker/SpaceBanner.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/bookings/booker/SpaceGrid.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/bookings/booker/SpaceList.svelte": {
+    "button": 0,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/bookings/booker/UnitDetailSheet.svelte": {
+    "button": 5,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/bookings/booker/WeekBar.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/bookings/organiser/AvailabilityEditor.svelte": {
+    "button": 6,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/bookings/organiser/EditBookingsTab.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/bookings/organiser/ResourceEditor.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/bookings/organiser/SpaceEditor.svelte": {
+    "button": 6,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/bookings/organiser/SpacePosterField.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/bookings/organiser/SpaceWizard.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/bookings/organiser/StrandedBookings.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/bookings/organiser/TemplatePicker.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/bookings/organiser/UpcomingBookings.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/bookings/organiser/WeekPainter.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/calendar/AddEventToCalendarButton.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/calendar/CalendarDayEventsPanel.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/calendar/CalendarEventDetailModal.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/calendar/CalendarScheduleList.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/calendar/CalendarSubscribeModal.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/calendar/CoOwnerPicker.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/calendar/EventFormModal.svelte": {
+    "button": 6,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/calendar/MonthCalendarGridRich.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/channels/ChannelPoll.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/channels/PollComposerModal.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/chat/CallOverlay.svelte": {
+    "button": 6,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/chat/CallPermissionControl.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/chat/ChannelSettingsPanel.svelte": {
+    "button": 6,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/chat/ChatArea.svelte": {
+    "button": 13,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/chat/ChatComposer.svelte": {
+    "button": 11,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/chat/ChatGroupPanel.svelte": {
+    "button": 13,
+    "select": 0,
+    "input": 2
+  },
+  "src/lib/components/chat/ChatHeader.svelte": {
+    "button": 9,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/chat/ComposerEmojiPicker.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/chat/ComposerGifPanel.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/chat/ConversationMediaPanel.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/chat/ConversationTile.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/chat/DeviceManagementPanel.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/chat/ForwardMessageModal.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/chat/GifGrid.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/chat/GifPickerModal.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/chat/JoinRequestRow.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/chat/NotificationLevelControl.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/chat/SharedMediaThumb.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/chat/TabFollowerBanner.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/chat/VoiceRecorder.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/forms/AddQuestionWizard.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/forms/ChoiceOptionsEditor.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 2
+  },
+  "src/lib/components/forms/FormBuilder.svelte": {
+    "button": 12,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/forms/FormExportMenu.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/forms/FormPaymentSection.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/forms/FormQuestion.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/forms/FormQuestionsSection.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/forms/FormResponsesPanel.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/forms/FormSaveBar.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/forms/FormSection.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/forms/FormSubmissionsTable.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/forms/GridAxesTable.svelte": {
+    "button": 14,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/forms/ProductGridEditor.svelte": {
+    "button": 7,
+    "select": 0,
+    "input": 3
+  },
+  "src/lib/components/forms/ProductGridOrderBar.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/forms/ProductGridQuestion.svelte": {
+    "button": 6,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/guidance/GuideOverlay.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/layout/BootGate.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/layout/CallBanner.svelte": {
+    "button": 6,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/legal/LegalDocument.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/live/LiveBroadcaster.svelte": {
+    "button": 13,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/live/LiveChatPanel.svelte": {
+    "button": 7,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/live/LiveFeedCard.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/live/LiveReactionBar.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/live/LiveReportControl.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/live/LiveViewer.svelte": {
+    "button": 6,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/messages/ChatReelTile.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/messages/ControlRefusedNotice.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/messages/EmojiGrid.svelte": {
+    "button": 5,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/messages/MessageBubble.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/messages/MessageBubbleToolbar.svelte": {
+    "button": 9,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/messages/MessageEmojiPicker.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/messages/MessageMediaRenderer.svelte": {
+    "button": 8,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/messages/MessageMentionChip.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/messages/MessageMetadata.svelte": {
+    "button": 6,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/messages/MessageMobileActions.svelte": {
+    "button": 10,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/messages/MessageReactions.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/messages/MessageReplyQuote.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/messages/UploadAction.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/messages/VoiceMessagePlayer.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/moderation/ModerationChatLineBlock.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/moderation/ModerationLiveBlock.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/moderation/ModerationLiveCutDialog.svelte": {
+    "button": 5,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/moderation/ModerationLiveWithdrawDialog.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/moderation/ModerationMuteDialog.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/moderation/ModerationPostPreviewModal.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/moderation/ReportReasonDialog.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/navigation/EcosystemLauncher.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/navigation/MobileHeader.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/navigation/Navbar.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/navigation/SectionHub.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/navigation/SessionActionButtons.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/notifications/DeviceNoticeRow.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/notifications/NotificationRow.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/CommentComposer.svelte": {
+    "button": 6,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/CommentItem.svelte": {
+    "button": 8,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/posts/CommentLikeButton.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/CommentsPreview.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/CreatePostForm.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/EditPostForm.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/FeedTabRow.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/FormSection.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/MediaCaptionChip.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/MediaCaptionField.svelte": {
+    "button": 0,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/posts/MediaThumbRemoveButton.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/PollOptionsEditor.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/posts/PollSection.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/PollVotersSheet.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/PostActions.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/PostActionsMenu.svelte": {
+    "button": 15,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/PostComments.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/PostComposerBar.svelte": {
+    "button": 7,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/PostContent.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/PostForms.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/PostMedia.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/PostMediaOpenStub.test-helper.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/PostMentionLink.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/PostPolls.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/PostRepostersSheet.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/PostShareSheet.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/posts/PublishQueueBanner.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/ReactionsDisplay.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/ReelsEntryButton.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/posts/RepublishDialog.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/posts/ScheduledPostsPanel.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/pricing/CriterionEditor.svelte": {
+    "button": 6,
+    "select": 0,
+    "input": 2
+  },
+  "src/lib/components/pricing/PriceCellsEditor.svelte": {
+    "button": 8,
+    "select": 0,
+    "input": 3
+  },
+  "src/lib/components/pricing/PriceGridEditor.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/pricing/PromoPicker.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/profile/ProfileBioSection.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/profile/ProfileCorrectionRequest.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/profile/ProfileEditForm.svelte": {
+    "button": 4,
+    "select": 2,
+    "input": 3
+  },
+  "src/lib/components/profile/ProfileFollowersSection.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/profile/ProfileNotepadSection.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/profile/ProfileRoleHistorySection.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 3
+  },
+  "src/lib/components/reels/CameraOverlayStub.test-helper.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/reels/CameraScreen.svelte": {
+    "button": 6,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/reels/PostShareSheetStub.test-helper.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/reels/ReelActionRail.svelte": {
+    "button": 5,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/reels/ReelCapture.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/reels/ReelEditor.svelte": {
+    "button": 15,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/reels/ReelPublishSheet.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/reels/ReelReview.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/reels/ReelSaveButton.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/reels/ReelSendSheet.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/reels/ReelShutter.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/reels/ReelSlide.svelte": {
+    "button": 5,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/reels/ReelViewer.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/reels/ReelViewerStub.test-helper.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/settings/MinesweeperCell.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/settings/MinesweeperModal.svelte": {
+    "button": 16,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/settings/RepostConsentSetting.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/settings/SettingsAboutSection.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/settings/SettingsBackupSection.svelte": {
+    "button": 6,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/settings/SettingsBlockedSection.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/settings/SettingsDangerZone.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/settings/SettingsMutedAssociations.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/settings/SettingsNotificationsSection.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/settings/SettingsPreferencesSection.svelte": {
+    "button": 7,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/settings/SettingsSecuritySection.svelte": {
+    "button": 5,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/settings/SettingsStorageSection.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shared/CardIconEditor.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shared/CommentsDrawer.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shared/EnvironmentBanner.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shared/FullScreenViewer.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shared/GlassMenuButton.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shared/InlineVideo.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shared/MarkdownComposerToolbar.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shared/MediaLightbox.svelte": {
+    "button": 7,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shared/MediaLoadFailure.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shared/MentionDropdown.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shared/MlsFatalErrorBanner.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shared/MultiUserSelector.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shared/OpenInAppBanner.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shared/PdfViewerModal.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shared/PermissionGrid.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shared/SidePanel.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shared/UserAutocomplete.svelte": {
+    "button": 0,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/shared/VideoPlayer.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shared/VideoPreparationProgress.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shop/AmountPicker.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shop/PartnershipCardList.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/shop/ProductPurchaseButton.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/sidebar/CommunityRailMenu.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/sidebar/Sidebar.svelte": {
+    "button": 8,
+    "select": 0,
+    "input": 0
+  },
+  "src/lib/components/sidebar/SidebarCommunityAdminPanel.svelte": {
+    "button": 7,
+    "select": 0,
+    "input": 2
+  },
+  "src/lib/components/sidebar/SidebarHeaderControls.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/sidebar/SidebarNewChannelModal.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/sidebar/SidebarNewChatModal.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 1
+  },
+  "src/lib/components/sidebar/SidebarNewCommunityModal.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 1
+  },
+  "src/routes/+error.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/admin/agenda/+page.svelte": {
+    "button": 6,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/admin/carte/+page.svelte": {
+    "button": 6,
+    "select": 0,
+    "input": 3
+  },
+  "src/routes/admin/carte/[id]/+page.svelte": {
+    "button": 23,
+    "select": 0,
+    "input": 1
+  },
+  "src/routes/admin/cercle/+page.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 4
+  },
+  "src/routes/admin/database/+page.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/admin/legacy-cotisations/+page.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 1
+  },
+  "src/routes/admin/moderation/+page.svelte": {
+    "button": 19,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/admin/platform/+page.svelte": {
+    "button": 5,
+    "select": 0,
+    "input": 5
+  },
+  "src/routes/admin/profile-corrections/+page.svelte": {
+    "button": 5,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/admin/spaces/+page.svelte": {
+    "button": 5,
+    "select": 0,
+    "input": 1
+  },
+  "src/routes/admin/status/+page.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/admin/storage/+page.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/admin/users/+page.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 1
+  },
+  "src/routes/associations/+page.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/associations/[slug]/edit/[[section]]/+page.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/auth/callback/+page.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/bookings/spaces/[spaceId]/manage/+page.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/c/join/[token]/+page.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/calendar/+page.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/calendar/export/+page.svelte": {
+    "button": 8,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/directory/+page.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 3
+  },
+  "src/routes/documents/+page.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 1
+  },
+  "src/routes/f/[id]/+page.svelte": {
+    "button": 0,
+    "select": 0,
+    "input": 1
+  },
+  "src/routes/forms/+page.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/forms/[id]/+page.svelte": {
+    "button": 5,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/forms/[id]/edit/+page.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/g/join/[token]/+page.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/institutions/+page.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/lists/+page.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/lives/[liveId]/+page.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/notifications/+page.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/notifications/follow-requests/+page.svelte": {
+    "button": 3,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/notifications/requests/+page.svelte": {
+    "button": 2,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/posts/+page.svelte": {
+    "button": 6,
+    "select": 0,
+    "input": 1
+  },
+  "src/routes/posts/[postId]/+page.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/profile/(me)/+page.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/profile/[id]/+page.svelte": {
+    "button": 4,
+    "select": 0,
+    "input": 0
+  },
+  "src/routes/settings/+page.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/test/stubs/ComposerGoLiveStub.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/test/stubs/LiveCardStub.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  },
+  "src/test/stubs/LiveOverlayStub.svelte": {
+    "button": 1,
+    "select": 0,
+    "input": 0
+  }
+}

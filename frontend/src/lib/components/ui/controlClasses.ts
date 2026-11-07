@@ -8,14 +8,16 @@
  */
 
 /** Border/focus colours, split out because only these differ between valid and invalid. */
-const EDGE_OK = 'border-cn-border focus:border-cn-yellow';
-const EDGE_INVALID = 'border-red-err focus:border-red-err';
+const EDGE_OK = 'focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]';
+/** A red halo at rest AND on focus: a 1px red edge alone is too weak to read as an error. */
+const EDGE_INVALID =
+  'border-red-err shadow-[0_0_0_3px_color-mix(in_srgb,var(--red-err)_25%,transparent)] ' +
+  'focus:border-red-err focus:shadow-[0_0_0_4px_color-mix(in_srgb,var(--red-err)_30%,transparent)]';
 
 /** Everything that depends on neither validity nor density. */
 const BASE =
-  'text-text-main placeholder:text-text-muted/50 disabled:bg-cn-border/20 w-full rounded-2xl ' +
-  'border-2 bg-(--cn-surface) transition-all outline-none ' +
-  'focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)] disabled:opacity-50';
+  'ui-control text-text-main placeholder:text-text-muted/50 disabled:bg-cn-border/20 w-full ' +
+  'bg-(--cn-surface) transition-colors outline-none disabled:opacity-50';
 
 /**
  * How much room the control takes.
@@ -29,8 +31,8 @@ const BASE =
 export type ControlDensity = 'default' | 'compact';
 
 const DENSITY: Record<ControlDensity, string> = {
-  default: 'px-4 py-3 text-base',
-  compact: 'px-3 py-2 text-sm',
+  default: 'text-base',
+  compact: 'ui-control--compact text-sm',
 };
 
 /** Returns the full class string for a text input or a select. */

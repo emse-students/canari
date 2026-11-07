@@ -250,7 +250,6 @@
 {#snippet guestPayButton()}
   <Button
     variant="primary"
-    class="px-8"
     disabled={blocked || submitting}
     loading={submitting}
     onclick={() => void handleSubmit()}

@@ -701,7 +701,6 @@
               onValueChange={(v) => (activateMode = v as 'lifetime' | 'dated')}
               label={m.asso_cotisations_mode_label()}
               variant="field"
-              density="compact"
             />
           </div>
           {#if activateMode === 'dated'}
@@ -760,7 +759,6 @@
               onValueChange={(v) => (configMode = v as 'lifetime' | 'dated')}
               label={m.asso_cotisations_mode_label()}
               variant="field"
-              density="compact"
             />
           </div>
           {#if configMode === 'dated'}
@@ -1294,7 +1292,6 @@
                 onValueChange={(v) => (addVariantKey = v)}
                 label={m.asso_cotisations_add_tier_label()}
                 variant="field"
-                density="compact"
               />
             </div>
           {/if}

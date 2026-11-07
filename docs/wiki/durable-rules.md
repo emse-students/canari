@@ -740,6 +740,8 @@ after its deploy - build the run that DISCRIMINATES, and assert the build id, ne
 
 ## UI and i18n -> [frontend/architecture](frontend/architecture.md), [auth](frontend/modules/auth.md) (native prompts)
 
+- **A BUTTON, A SELECT AND A TEXT FIELD ARE THE THREE COMPONENTS, AND NO SCREEN DRAWS ONE** (owner, 2026-11-07). `ui/Button`, `ui/Select` (`Picker`) and `ui/Input` share one 40 px box (`.ui-control`, `--control-*` tokens): primary is the only yellow, secondary is the field edge on a neutral fill, `compact` (32 px) is for dense toolbars only. `controlsGuard.test.ts` fails a file outside `ui/` that gains a raw `<button>`, `<select>` or text `<input>`; its ratchet list only shrinks and a new file is never added. [controls](frontend/controls.md)
+
 `arch` = [frontend/architecture](frontend/architecture.md), `posts` = [posts](frontend/modules/posts.md),
 `chat` = [chat](frontend/modules/chat.md), `mob` = [mobile](frontend/mobile.md).
 
