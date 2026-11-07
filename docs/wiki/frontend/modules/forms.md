@@ -314,7 +314,14 @@ boutique products and cotisation tiers, so all three get it.
   across the top, the corner naming both ("Promotion \ Formation"); one criterion is a single price
   column. A row or column header selects the line and opens a bar with "Même prix partout" and
   "Tout rendre indisponible" (`lineCellKeys` + `fillCells`). "Masquer les lignes indisponibles"
-  hides a row whose every cell is `null` (`rowUnavailable`) - display only.
+  hides a row whose every cell is `null` (`rowUnavailable`) - display only. **Drawn as ONE ruled
+  table (owner, 2026-11-07: "un vrai tableau a double entrees", compacted)**: the headers are the
+  table's own `th` cells, tinted, with no gap and no floating card, so a row header is exactly the
+  height of its row (2.5rem; 2rem for the header row) and a column header sits over its column; the
+  rules are the cells' borders (`border-collapse`), the rounded box around the table draws the
+  outer edge, and a cell is one line (price, `EUR`, "Gratuit" chip, corner button) instead of a
+  4.75rem box. An unavailable cell stays hatched and struck through, just smaller. The phone keeps
+  its cards.
 - **Empty is "Gratuit", said.** A cell priced `0` shows an empty box and a muted "Gratuit" chip: the
   semantics of an empty cell did not change, they are now visible. `parseEuros` reads an empty box
   as 0, a comma as a decimal point and ignores spaces (a pasted "1 000,50"); it ROUNDS TO THE CENT,
@@ -364,7 +371,7 @@ Where each part of that lives:
   back restores `0`, shown as "Gratuit". A grid with EVERY cell unavailable is refused on both
   sides (`all_unavailable`, `assertMatrixValid`): that is a closed form, not a priced one.
 - **Geometry**: `.price-grid` in `app.css` owns the column sizes; the editor supplies only the
-  price-column count. The total width has to be NAMED: `table-layout: fixed` on a table of width
+  price-column count (`--group-col` 9rem, `--price-col` 8rem, `--price-row` 2.5rem). The total width has to be NAMED: `table-layout: fixed` on a table of width
   `auto` treats column widths as PROPORTIONS - nine columns declared at 8rem inside a 1020px box
   measured 83-91px in Chrome, and unequal. With the total named, every price column is exactly its
   declared size and the wrapper scrolls once they no longer fit.
