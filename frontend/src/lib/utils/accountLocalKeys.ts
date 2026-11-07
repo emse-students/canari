@@ -66,6 +66,8 @@ export const ACCOUNT_KEY = {
   /** `conversations.ts`: the archived conversation ids (lower-cased, as it always was). */
   archivedConversations: (userId: string) =>
     `canari_archived_conversations_${userId.toLowerCase()}`,
+  /** `noHolder.svelte.ts`: conversations the user took off their list because no holder came back. */
+  unopenableHidden: (userId: string) => `canari_unopenable_hidden:v1:${userId}`,
   /** `seenLedgerBounds.ts`: the index of the per-group seen ledgers. */
   seenCipherIndex: (userId: string) => `history_seen_cipher_index:${userId}`,
   /**
@@ -221,6 +223,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.addLockMarkers(userId),
     ACCOUNT_KEY.deviceKeyEpoch(userId),
     ACCOUNT_KEY.archivedConversations(userId),
+    ACCOUNT_KEY.unopenableHidden(userId),
     ACCOUNT_KEY.seenCipherIndex(userId),
     ACCOUNT_KEY.postComposerDraft(userId),
     ACCOUNT_KEY.workspaceSnapshot(userId),

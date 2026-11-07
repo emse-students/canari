@@ -8,6 +8,7 @@ import {
   deviceEventAudience,
   deviceEventKey,
   entersAsUnvouchedDevice,
+  entersByItsOwnCommit,
   entersUninvited,
   isNewToItsOwner,
   keyFingerprintOf,
@@ -281,14 +282,19 @@ describe('entersUninvited - an entry no member made', () => {
 });
 
 describe('entersAsUnvouchedDevice - a member device that admitted itself into a group it was never in', () => {
-  it('is a device of a present user, never in this group, that signed its own admission', () => {
-    expect(entersAsUnvouchedDevice(event({ addedBy: 'Bob:web-2', firstInGroup: true }))).toBe(true);
+  it('is a KNOWN device of a present user, never in this group, that signed its own admission under a new key', () => {
+    expect(
+      entersAsUnvouchedDevice(
+        event({ addedBy: 'Bob:web-2', firstInGroup: true, trust: 'key-changed' })
+      )
+    ).toBe(true);
   });
 
-  it('holds whatever the pin says - a pin is one store, written by any group', () => {
+  it('is only the key-changed class (D3): a further device under its known or a first-seen key is not', () => {
     for (const trust of ['pinned', 'key-changed', 'first-sight'] as const) {
       const e = event({ addedBy: 'bob:web-2', trust, firstInGroup: true });
-      expect(entersAsUnvouchedDevice(e)).toBe(true);
+      expect(entersByItsOwnCommit(e)).toBe(true);
+      expect(entersAsUnvouchedDevice(e)).toBe(trust === 'key-changed');
       // And the owner is told, whichever: the alert is what carries "Not me".
       expect(announcesNewDevice(e)).toBe(true);
     }

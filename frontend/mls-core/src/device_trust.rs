@@ -165,7 +165,7 @@ impl DeviceEvent {
             && match self.trust {
                 LeafTrust::KeyChanged => true,
                 LeafTrust::FirstSight => self.member_already_present,
-                LeafTrust::Pinned => self.enters_as_unvouched_device(),
+                LeafTrust::Pinned => self.enters_by_its_own_commit() || self.added_by_unvouched,
             }
     }
 
@@ -173,10 +173,22 @@ impl DeviceEvent {
     /// signed by that very device (an external commit), its user already held a leaf, and the
     /// device was never in this group ([`DeviceEvent::first_in_group`]) - whatever its pin says.
     /// The twin of `entersAsUnvouchedDevice` in `deviceTrust.ts`, held to the same table.
+    ///
+    /// ONLY UNDER A KEY OTHER THAN THE ONE KNOWN FOR THAT ID (owner, 2026-10-31, D3 of
+    /// `docs/wiki/protocols/mls-availability-no-holder.md`): a further device - a NEW id - that lets
+    /// itself in when no member device is online is announced like an added one and answered under
+    /// rule 2; a KNOWN id entering by its own commit under a new key stays withheld.
     pub fn enters_as_unvouched_device(&self) -> bool {
         if self.added_by_unvouched && self.added_by.is_some() {
             return true;
         }
+        self.trust == LeafTrust::KeyChanged && self.enters_by_its_own_commit()
+    }
+
+    /// Whether a device of a MEMBER brought ITSELF into a group it was never in: the commit admitting
+    /// it was signed by that very device, its user already held a leaf, and the device was never in
+    /// this group. The twin of `entersByItsOwnCommit` in `deviceTrust.ts`.
+    pub fn enters_by_its_own_commit(&self) -> bool {
         self.first_in_group
             && self.member_already_present
             && self
@@ -930,8 +942,8 @@ impl DeviceTrust {
     /// removed and re-added under its pinned key (a heal), is the same device and says nothing.
     ///
     /// `door` is the group's admission policy ([`crate::admission`]). It decides nothing here - the
-    /// event is recorded whatever it says - and only names what a device's entry by its own commit
-    /// IS ([`unvouched_entry_level`]).
+    /// event is recorded whatever it says - and only names the door a device's entry by its own
+    /// commit came through, in its info line.
     ///
     /// @returns whether anything was written.
     #[allow(clippy::too_many_arguments)]
@@ -1003,15 +1015,25 @@ impl DeviceTrust {
                     );
                     continue;
                 }
-                LeafTrust::Pinned => match unvouched_entry_level(door) {
-                    log::Level::Error => log::error!(
-                        "[TRUST] {group_id} epoch {epoch}: {identity} entered by its OWN commit under a key \
-                         pinned elsewhere, never in this group - the pin vouches for nothing here, recorded"
-                    ),
-                    _ => log::info!(
+                // A MEMBER'S DEVICE ENTERING BY ITS OWN COMMIT, under the key known for it, is a DOOR
+                // in every group, never an accusation - so it is said at info, and recorded and
+                // announced like a device a member added. A community's key group is entered by
+                // external commit by design (`crate::admission`: classified `open`; 70 ERROR lines on
+                // a Mi 9T for 7 web sign-ins, 2026-11-05). A conversation is entered so by a further
+                // device that found no member device online to add it (D1 of
+                // `docs/wiki/protocols/mls-availability-no-holder.md`, owner 2026-10-31), and D2 makes
+                // that entry an ordinary added device. The one entry still accused is a known id
+                // under ANOTHER key: the `KeyChanged` arm above.
+                LeafTrust::Pinned => match door {
+                    Some(AdmissionPolicy::Open) => log::info!(
                         "[TRUST] {group_id} epoch {epoch}: {identity} entered this key group by its own \
-                         external commit - the key group's door (admission open); its pin from another \
-                         group vouches for nothing here, recorded"
+                         external commit - the key group's door (admission open), under its known key; \
+                         recorded"
+                    ),
+                    Some(AdmissionPolicy::Closed) | None => log::info!(
+                        "[TRUST] {group_id} epoch {epoch}: {identity} entered by its own commit under its \
+                         known key, never in this group - a further device's own door (D1), announced as \
+                         an added device; recorded"
                     ),
                 },
                 LeafTrust::FirstSight => log::info!(
@@ -1044,24 +1066,6 @@ impl DeviceTrust {
     }
 }
 
-/// The level a member's device ENTERING BY ITS OWN COMMIT, never in this group, is said at - the
-/// fact [`DeviceEvent::enters_as_unvouched_device`] reads - named by the group's admission policy.
-///
-/// A community's key group is entered by external commit BY DESIGN (`crate::admission`: the app
-/// classifies every key group it registers `open`), and its door is the server's join gate, never a
-/// member's Add. So a further device of a member entering one is the ordinary path - a user's new
-/// browser enters every key group of every community that way - and an ERROR there accused it once
-/// per key group per device (70 lines on a Mi 9T for 7 web sign-ins, 2026-11-05). In a
-/// conversation (`closed`) or a group nobody classified, the same entry is what a further device
-/// no longer does since 2026-10-31 (it asks a member's device to add it): an older client or an
-/// entry nobody made, and it stays an ERROR. The event is recorded either way.
-pub(crate) fn unvouched_entry_level(door: Option<AdmissionPolicy>) -> log::Level {
-    match door {
-        Some(AdmissionPolicy::Open) => log::Level::Info,
-        Some(AdmissionPolicy::Closed) | None => log::Level::Error,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1071,25 +1075,9 @@ mod tests {
     }
 
     #[test]
-    fn an_own_entry_into_a_key_group_is_its_door_and_into_anything_else_an_accusation() {
-        // A key group is classified `open` by the app, and external commit is its door: a member's
-        // new browser entering it is the ordinary path, said at info (Mi 9T, 2026-11-05: 70 ERROR
-        // lines for 7 web sign-ins). A conversation, or a group nobody classified, keeps the ERROR.
-        assert_eq!(
-            unvouched_entry_level(Some(AdmissionPolicy::Open)),
-            log::Level::Info
-        );
-        assert_eq!(
-            unvouched_entry_level(Some(AdmissionPolicy::Closed)),
-            log::Level::Error
-        );
-        assert_eq!(unvouched_entry_level(None), log::Level::Error);
-    }
-
-    #[test]
     fn an_own_entry_into_a_key_group_is_recorded_as_in_any_other_group() {
         // The policy names the line, never the event: what the app announces and withholds is
-        // decided on the event, exactly as before.
+        // decided on the event, exactly as in a conversation (D2/D3, owner 2026-10-31).
         let mut t = DeviceTrust::default();
         let own = ("alice:phone-a", &[1u8; 32][..]);
         let a_before = vec![lk(0, "alice:phone-a", 1), lk(1, "bob:phone-1", 2)];
@@ -1104,11 +1092,13 @@ mod tests {
         t.observe_merged_commit("gB", 9, &b_before, &b_after, Some("bob:web-2"), own, open);
         let events = t.take_events();
         assert_eq!(events.len(), 1);
-        assert!(events[0].enters_as_unvouched_device());
+        assert!(events[0].enters_by_its_own_commit());
+        assert!(!events[0].enters_as_unvouched_device());
+        assert!(events[0].announces_new_device());
     }
 
     #[test]
-    fn a_device_pinned_in_another_group_entering_this_one_by_itself_is_unvouched_here() {
+    fn a_device_pinned_in_another_group_entering_this_one_by_itself_is_announced_never_withheld() {
         // The pin store is ONE store: a tree of group A writes the pin, and it must vouch for
         // nothing in group B, where the device was never a leaf (review of #2594, 2026-10-27).
         let mut t = DeviceTrust::default();
@@ -1133,6 +1123,33 @@ mod tests {
         let e = &events[0];
         assert_eq!(e.trust, LeafTrust::Pinned);
         assert!(e.first_in_group);
+        assert!(e.enters_by_its_own_commit());
+        // D3 (owner, 2026-10-31): the same key it is known by - announced, never withheld.
+        assert!(!e.enters_as_unvouched_device());
+        assert!(e.announces_new_device());
+    }
+
+    #[test]
+    fn a_known_device_entering_a_group_by_itself_under_a_new_key_stays_unvouched() {
+        // The one class D3 keeps withheld: a KNOWN id, a key other than the pinned one, its own
+        // commit, never in this group.
+        let mut t = DeviceTrust::default();
+        let own = ("alice:phone-a", &[1u8; 32][..]);
+        let a_before = vec![lk(0, "alice:phone-a", 1), lk(1, "bob:phone-1", 2)];
+        let mut a_after = a_before.clone();
+        a_after.push(lk(2, "bob:web-2", 3));
+        t.observe_merged_commit("gA", 4, &a_before, &a_after, Some("bob:phone-1"), own, None);
+        t.take_events();
+        let b_before = vec![lk(0, "alice:phone-a", 1), lk(1, "bob:phone-1", 2)];
+        let mut b_after = b_before.clone();
+        b_after.push(lk(2, "bob:web-2", 4));
+        t.observe_merged_commit("gB", 9, &b_before, &b_after, Some("bob:web-2"), own, None);
+        let events = t.take_events();
+        let e = events
+            .iter()
+            .find(|e| e.identity == "bob:web-2")
+            .expect("the entry is an event");
+        assert_eq!(e.trust, LeafTrust::KeyChanged);
         assert!(e.enters_as_unvouched_device());
         assert!(e.announces_new_device());
     }
