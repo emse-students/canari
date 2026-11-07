@@ -1353,7 +1353,7 @@
   "asso_edit_dependents_error": "Could not read the attached entities.",
   "asso_edit_dependents_manage": "Manage in Spaces & audiences",
   "admin_dependencies_title": "Dependencies",
-  "admin_dependencies_legend": "Each BDE and the entities depending on it. A list may be shown under another association (the BDS, the BDA) without depending on it. Mismatches with the audience are flagged, never corrected for you.",
+  "admin_dependencies_legend": "Each BDE and the entities attached to it. A list may be shown under another association without depending on it. Mismatches with the audience are flagged, never corrected for you.",
   "admin_dependencies_loading": "Loading dependencies…",
   "admin_dependencies_load_error": "Could not load the dependencies.",
   "admin_dependencies_save_error": "Could not save the dependency.",
@@ -1365,6 +1365,21 @@
   "admin_dependencies_kind_association": "Association",
   "admin_dependencies_kind_list": "List",
   "admin_dependencies_kind_institution": "Institution",
+  "admin_dependencies_archived": "archived",
+  "admin_dependencies_group_associations": "Associations",
+  "admin_dependencies_group_lists": "Lists",
+  "admin_dependencies_mismatch_summary": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} entity has an audience that exceeds the BDE's spaces",
+        "countPlural=other": "{count} entities have an audience that exceeds the BDE's spaces"
+      }
+    }
+  ],
+  "admin_dependencies_mismatch_show_only": "Show them",
+  "admin_dependencies_mismatch_show_all": "Show all",
   "admin_dependencies_shown_under": "shown under {name}",
   "admin_dependencies_change": "Change",
   "admin_dependencies_parent_label": "Parent BDE",
