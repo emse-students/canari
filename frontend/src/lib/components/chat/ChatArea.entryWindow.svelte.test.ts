@@ -192,6 +192,28 @@ describe('ChatArea entry window (F6)', () => {
     }
   );
 
+  it('reveals the entry frame alone: the widen comes after, never in the reveal flush', async () => {
+    // The full-window floor used to come back the moment `entering` fell, so the reveal's own flush
+    // clamped the window to 60 and mounted the 40 rows the stepped widen exists to spread out - 60
+    // rows at the reveal on the salon-mount bench, 2026-11-07, and the reveal frame paid for them.
+    rowPx = 48; // 20 rows = 960 px: the viewport is filled, no fill step.
+    modelGeometry();
+    const target = mountArea(THREAD);
+    const scroller = target.querySelector<HTMLElement>('.chat-messages-scroll')!;
+    expect(scroller.classList.contains('opacity-0')).toBe(true);
+    let rowsAtReveal: number | null = null;
+    const observer = new MutationObserver(() => {
+      if (rowsAtReveal === null && scroller.classList.contains('opacity-100')) {
+        rowsAtReveal = target.querySelectorAll(ROW_SELECTOR).length;
+      }
+    });
+    observer.observe(scroller, { attributes: true, attributeFilter: ['class'] });
+    await settleEntry();
+    observer.disconnect();
+    expect(rowsAtReveal).toBe(20);
+    expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(60);
+  });
+
   it('mounts 20 rows first, widens to 60, and moves scrollTop by exactly the height added', async () => {
     rowPx = 48; // 20 rows = 960 px: the viewport is filled, no fill step.
     modelGeometry();

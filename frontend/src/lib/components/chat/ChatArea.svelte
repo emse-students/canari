@@ -443,6 +443,14 @@
    * frame - the conversation appears already scrolled to the bottom.
    */
   let entering = $state(false);
+  /**
+   * True from the reveal until the widen after it has reached the full entry window. While set, the
+   * render window's floor stays the entry frame's (`ENTRY_FIRST_FRAME_GROUPS`): the full-window floor
+   * read as soon as `entering` fell CLAMPED the window to 60 groups in the reveal's own flush, so the
+   * 40 rows the stepped widen exists to spread out were mounted in ONE task before the reveal painted
+   * (measured on the salon-mount bench, 2026-11-07: 60 rows at the reveal, never 20).
+   */
+  let entryWidening = $state(false);
 
   function scrollToBottom(smooth = true) {
     if (!chatContainer) return;
@@ -505,6 +513,8 @@
     }
     if (epoch !== entryEpoch) return;
     scrollToBottomSettled(() => {
+      // In the SAME flush as the reveal, so the floor never rises between the two.
+      if (epoch === entryEpoch) entryWidening = true;
       entering = false;
       void widenEntryWindow(epoch);
     });
@@ -519,28 +529,33 @@
    * lowers the start: a reader who has paginated further up keeps their wider window.
    */
   async function widenEntryWindow(epoch: number) {
-    await yieldToMainThread();
-    if (epoch !== entryEpoch) return;
-    const target = widenedEntryStart(
-      renderWindow.start,
-      messageGroups.length,
-      INITIAL_RENDER_GROUPS
-    );
-    if (target === null) return;
-    // ONE STEP PER TASK: the rows come ENTRY_WIDEN_STEP at a time with a yield between, so no task
-    // of the widen is longer than that many rows whatever the thread holds.
-    for (;;) {
-      if (epoch !== entryEpoch || !chatContainer) return;
-      const next = widenStepStart(renderWindow.start, target, ENTRY_WIDEN_STEP);
-      if (next === null) return;
-      const prevHeight = chatContainer.scrollHeight;
-      const prevTop = chatContainer.scrollTop;
-      Log.d('chat.entry', `widening window ${renderWindow.start} -> ${next} (target ${target})`);
-      windowStart = next;
-      await tick();
-      if (epoch !== entryEpoch || !chatContainer) return;
-      chatContainer.scrollTop = prevTop + (chatContainer.scrollHeight - prevHeight);
+    try {
       await yieldToMainThread();
+      if (epoch !== entryEpoch) return;
+      const target = widenedEntryStart(
+        renderWindow.start,
+        messageGroups.length,
+        INITIAL_RENDER_GROUPS
+      );
+      if (target === null) return;
+      // ONE STEP PER TASK: the rows come ENTRY_WIDEN_STEP at a time with a yield between, so no
+      // task of the widen is longer than that many rows whatever the thread holds.
+      for (;;) {
+        if (epoch !== entryEpoch || !chatContainer) return;
+        const next = widenStepStart(renderWindow.start, target, ENTRY_WIDEN_STEP);
+        if (next === null) return;
+        const prevHeight = chatContainer.scrollHeight;
+        const prevTop = chatContainer.scrollTop;
+        Log.d('chat.entry', `widening window ${renderWindow.start} -> ${next} (target ${target})`);
+        windowStart = next;
+        await tick();
+        if (epoch !== entryEpoch || !chatContainer) return;
+        chatContainer.scrollTop = prevTop + (chatContainer.scrollHeight - prevHeight);
+        await yieldToMainThread();
+      }
+    } finally {
+      // A retired widen leaves the flag to the entry that retired it, which resets it.
+      if (epoch === entryEpoch) entryWidening = false;
     }
   }
 
@@ -799,10 +814,10 @@
       : resolveRenderWindow(
           windowStart,
           messageGroups.length,
-          // The 20-group floor belongs to the entry frame alone: any other time a list replaced by a
-          // shorter one (WP-EMPTYVIEW-1) must settle on a full window, not on a first frame that
-          // nothing widens.
-          entering ? ENTRY_FIRST_FRAME_GROUPS : INITIAL_RENDER_GROUPS
+          // The 20-group floor belongs to the entry - its hidden frame and the widen after the
+          // reveal - alone: any other time a list replaced by a shorter one (WP-EMPTYVIEW-1) must
+          // settle on a full window, not on a first frame that nothing widens.
+          entering || entryWidening ? ENTRY_FIRST_FRAME_GROUPS : INITIAL_RENDER_GROUPS
         )
   );
   let windowEnd = $derived(renderWindow.end);
@@ -1131,6 +1146,7 @@
         // Hold the list invisible until fillViewportThenPin() lands it at the bottom, so the
         // entry never flashes the top of the conversation before teleporting down.
         entering = true;
+        entryWidening = false;
         // A new entry retires the previous one's fill and widen at once, not a tick later.
         entryEpoch++;
         tick().then(() => fillViewportThenPin());

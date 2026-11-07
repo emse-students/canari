@@ -760,6 +760,81 @@ run on this build (and the DOM row count after the open) before any further chan
 **Owed:** the remaining three cold runs, the warm and airplane rows, and the `click>` columns of the
 report, on this build.
 
+### Why #2914 did not move the clock, and the two cuts after it (2026-11-07)
+
+**The answer to the question above: neither reading - the widen never ran.** A salon reveal mounted
+60 rows, not 20, on every build since F6. The render window's floor is `ENTRY_FIRST_FRAME_GROUPS`
+(20) only while `entering` is true; the reveal sets `entering = false`, and in that same flush the
+floor became `INITIAL_RENDER_GROUPS` (60), so `clampWindowStart` lowered the window to 60 groups at
+once. The 40 rows the stepped widen of #2914 was built to spread out were mounted in the reveal's
+own task, before its paint, and `widenEntryWindow` then found nothing to do. The happy-dom test of
+#2914 could not see it: it counted rows after the timers had run, not at the reveal.
+
+**The instrument that found it: `frontend/bench/salon-mount/`** (new, a desktop shape, not the
+phone). A production Svelte build of the real components with the app's stylesheet, mounted in a
+headless Chrome over CDP at the Mi 9T's viewport (411 x 891 CSS px), CPU throttled, nothing else on
+the thread (no session, no MLS, no network). `--scene pane` mounts `ChatArea` over a 200-message
+salon of one-line own messages (the bench seed's shape); `--scene hub` draws the communities hub
+first (ten communities, nine salons each, `Sidebar` beside an always-mounted `ChatArea`, as in
+`MainChatPage`), then times the tap on a salon row: the pane takes the salon, the sidebar hides, the
+listing hands in fresh objects. It reads the reveal in the microtask that commits it (a per-frame
+poll read it a frame late, after the widen's first tasks), the rows mounted at that moment, the long
+tasks, and every warning the ENGINE printed (CDP `Log`). `--compare <dir>` interleaves a baseline
+build run by run. Usage: [the bench's header](../../../frontend/bench/salon-mount/run.mjs).
+
+**It also reproduced the phone's console storm.** The `1.6.3-alpha.2` runs carry ~480
+`Invalid keyframe value for property transform: translate(NaNpx, NaNpx) scale(Infinity, Infinity)`
+lines per run, ~100 inside the salon open's first long task. The hub scene prints 108 per open. The
+rail and the salon rows carry `animate:flip`; Svelte measures and re-measures every row of a keyed
+list at each reconcile, and the open hides the sidebar (`display: none`) in the same flush that
+hands it a fresh listing. Each row's box "moved" to 0 x 0, and `flip` divides by it.
+
+**What changed.**
+- `ChatArea`: `entryWidening`, set in the reveal's own flush and cleared when the widen ends (or by
+  the next entry), keeps the floor at the entry frame until the widen has grown the window itself.
+  The reveal now paints 20 rows; the other 40 follow in steps of 10, one task each, after the paint.
+  Pinned by `ChatArea.entryWindow.svelte.test.ts` ("reveals the entry frame alone"), which reads the
+  rows at the reveal and FAILS on the previous `ChatArea` (60, not 20).
+- `Sidebar`: `animate:flipShown` (`$lib/utils/flipShown.ts`): `flip` when the row is drawn before and
+  after, NO animation (`duration: 0`, which Svelte answers without touching the element) when either
+  box is empty. A row that appears or disappears has no path to slide along. The drag reorder keeps
+  its animation: both boxes are drawn.
+
+**Measured** (medians of 9 interleaved runs per arm at CPU x4, 7 at x1; this workstation; `first` is
+a fresh page's first open, `reopen` a second open in the same page; ms from the gesture):
+
+| scene, CPU | open | reveal, before | reveal, after | rows at reveal | engine warnings |
+| --- | --- | --- | --- | --- | --- |
+| pane, x4 | first | 711 | **609** | 60 -> 20 | 0 -> 0 |
+| pane, x4 | reopen | 375 | **157** | 60 -> 20 | 0 -> 0 |
+| hub, x4 | first | 563 | **386** | 60 -> 20 | 108 -> 0 |
+| hub, x4 | reopen | 340 | **171** | 60 -> 20 | 108 -> 0 |
+| hub, x1 | first | 99 | **68** | 60 -> 20 | 108 -> 0 |
+| hub, x1 | reopen | 59 | **26** | 60 -> 20 | 108 -> 0 |
+
+The gesture's own task (the mount, before the reveal) did not move beyond the spread (hub x4: 384 ->
+378 first, 172 -> 162 reopen): the gain is the second task, the reveal's, which no longer mounts 40
+rows. The widen's steps after the paint are 55-160 ms each at x4. `flipShown`'s own milliseconds are
+within the noise on desktop; what it removes for certain is the storm and the per-row style reads on
+hidden rows.
+
+**What this does not prove.** The bench is a desktop V8 under throttling, so a SHAPE: the Mi 9T's
+JIT, GPU and WebView differ, and the first open on the phone also pays for code never run before in
+that process, which the bench's `first` only partly reproduces. **Owed on the Mi 9T, with the next
+pre-release:** `community-open.mjs` cold and warm at 1x on the `BancOuverture-1` seed, reading
+`salon>msgs`, `reopen>msgs`, the salon-open long tasks (the first should lose the ~175 ms of 40 rows,
+the reopen fall from ~330 ms), and the console: zero `Invalid keyframe` lines.
+
+**Next, by the profile of the reveal-first open** (`--scene pane --profile`, readable build): the
+mount itself, ~145 ms at x4 for a same-page reopen, is the template pass (~80 ms, of which the 20
+bubbles ~63, `MessageTextBody` the largest share inside them) and the mount's effects (~60 ms), whose
+bulk is two synchronous layout reads - `publishComposerHeight`'s first `offsetHeight` (~22 ms) and
+`observeThreadGrowth`'s first `threadReach` (~16 ms) - plus that observer's `MutationObserver` follow
+(~31 ms), which reads layout again after every flush of the entry.
+Moving those reads to a `ResizeObserver`'s first callback (after layout, as `watchClampOverflow` did
+in #2926) is the next candidate; it touches the thread's anchor mechanism, so it needs the
+media-frame bench beside this one.
+
 ## 7. Not measured, and owed
 
 - **A CPU profile of the warm resume at 4x** (blocker 5's 2 s before the tap is handled):
