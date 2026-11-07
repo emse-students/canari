@@ -87,7 +87,7 @@ advanced receive ratchets (semantics - needs the TAB-3b answer); per-group stora
 native export + seal is 49 ms at 7.7 MB against a 0.49 ms decrypt. A file left behind by received
 frames re-reads them and never loses them, within the 2000-generation window. Three app-level
 consequences are unmeasured, the native resume reload first
-([open-questions](../open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13)).
+([open-questions](../open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below)).
 
 ## The WebCrypto seal (v2) - measured 2026-10-12
 

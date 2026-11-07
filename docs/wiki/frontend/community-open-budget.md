@@ -463,7 +463,7 @@ What the measurements say is already within reach, and what stands between it an
 
 **Two Pixel findings that are not on the open path** and go to the queue as their own items: the
 checkpoint per bulk ingest, read watermarks included, is the parked decision of
-[open-questions](../open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13)
+[open-questions](../open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below)
 (94-238 ms each, off the JavaScript thread since #1826); the 45 identical `[HISTORY_RECONCILE] ...
 asked 30s ago` lines in 250 ms were a noise defect (P3), FIXED 2026-10-17: `reconcileAllGroups` counts the groups already asked inside the window and reports them once in its pass line.
 
