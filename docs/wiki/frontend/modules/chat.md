@@ -237,7 +237,7 @@ selection placed where the first run never put it: **on a page that does not dra
 
 | Action | Local count | Server read mark | `POST /read` (banner signal) |
 |---|---|---|---|
-| click a salon (`onSelectChannelConversation`) | cleared | after 2 s debounce, only if focused + visible + foreground | once, if the newest foreign message is new |
+| click a salon (`onSelectChannelConversation`) | cleared | at once, then one trailing mark per 2 s window, only if focused + visible + foreground | once, if the newest foreign message is new |
 | message arrives, salon selected | stays 0 | via the receipt effect, same guard | at arrival, once per message |
 | message arrives, salon NOT selected | +1 | none | none |
 | open via a notification tap (read in the code, not re-measured) | the tap selects it, which is a real open | only on a select | only on a select |

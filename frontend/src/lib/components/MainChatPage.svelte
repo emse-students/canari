@@ -717,7 +717,7 @@
     };
   });
 
-  // ─── Read watermark (debounced 2 s; delivered at once on leave or off-screen) ──
+  // ─── Read watermark (sent at once, then one trailing mark per 2 s window; delivered at once on leave or off-screen) ──
   /** The pending mark of the conversation being read (see `readMarkDebounce.ts`). */
   const readMarks = createReadMarkDebounce(2000);
 
@@ -809,7 +809,7 @@
     // transport differs - `advanceReadMark`, which the server stores and fans out as `channel.read`.
     const channelReceipt = isSelectedChannel;
 
-    // A SALON'S MARK IS WRITTEN DOWN BEFORE ANY NETWORK. The debounce below can be cut short (the
+    // A SALON'S MARK IS WRITTEN DOWN BEFORE ANY NETWORK. The throttle below can be cut short (the
     // reader leaves, the page reloads) and the POST can fail (a deploy, a dead link); the owed mark
     // survives both and is delivered by the next flush. See `salonReadMarkQueue.ts`.
     if (channelReceipt) {

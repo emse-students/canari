@@ -598,7 +598,7 @@ channel id, migration 066), one instant per reader, only ever raised.
 - `GET /api/channels/:channelId/read-marks` - every CURRENT reader's mark; the client reads it beside
   every history page, since live events only carry what moved while it was connected.
 - Distinct from `POST :id/read` above, on purpose: that one dismisses this account's notifications
-  on arrival; the receipt waits for the same focus guard and 2 s debounce as a DM's
+  on arrival; the receipt waits for the same focus guard and leading-edge 2 s throttle (sent at once, burst coalesced) as a DM's
   (`MainChatPage`), so a phone in a pocket never tells a sender it read anything.
 
 The client merges both into the conversation's `readWatermarks`, so "Lu par", the avatars and `+N`
