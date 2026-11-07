@@ -125,12 +125,22 @@ export interface LiveChatBlock {
    * the message cursor is not the reader's to keep; the reactions are served as to anyone.
    */
   withheld?: true;
+  /**
+   * THE ARRIVAL LINES ("X a rejoint", owner, 2026-11-07): the accounts that arrived since the last
+   * poll - at most 3, never the reader and never an account blocked either way - the count folded
+   * behind them, and the cursor to pass back. Absent from a withheld reader's block and from an older
+   * server's, so an arrival line is drawn only where the server sent one.
+   */
+  arrivals?: { userId: string; seq: number }[];
+  arrivalsMore?: number;
+  arrivalsCursor?: number;
 }
 
 /** What a poll asks of the chat: absent cursors on the first poll (the newest 50, no reaction backlog). */
 export interface LiveChatQuery {
   messagesAfter?: number;
   reactionsAfter?: number;
+  arrivalsAfter?: number;
 }
 
 /** `POST /api/lives/:id/messages/:messageId/hide`. */

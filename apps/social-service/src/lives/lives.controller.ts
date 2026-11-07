@@ -22,7 +22,7 @@ import { AssociationsService } from '../associations/associations.service';
 import { LiveEnabledGuard } from './live-enabled.guard';
 import { LIVE_SEGMENT_MAX_BYTES, liveLimits } from './live.constants';
 import { LiveChatService, type LiveChatBlock } from './live-chat.service';
-import { LivesService, type LiveManifest } from './lives.service';
+import { LivesService, type LiveArrivalsBlock, type LiveManifest } from './lives.service';
 import { readBoundedBody } from './read-bounded-body';
 
 /** The caller nginx authenticated, as every account id is compared: trimmed, lower case. */
@@ -191,8 +191,9 @@ export class LivesController {
     @Query('from') from?: string,
     @Query('chat') chat?: string,
     @Query('messagesAfter') messagesAfter?: string,
-    @Query('reactionsAfter') reactionsAfter?: string
-  ): Promise<LiveManifest & { chat?: LiveChatBlock }> {
+    @Query('reactionsAfter') reactionsAfter?: string,
+    @Query('arrivalsAfter') arrivalsAfter?: string
+  ): Promise<LiveManifest & { chat?: LiveChatBlock & Partial<LiveArrivalsBlock> }> {
     const caller = callerOf(userId);
     // The cursors are checked BEFORE the manifest, so a malformed one never costs a seat renewal.
     const cursors =
@@ -202,6 +203,8 @@ export class LivesController {
               messagesAfter === undefined ? undefined : seqOf(messagesAfter, 'MESSAGES_AFTER'),
             reactionsAfter:
               reactionsAfter === undefined ? undefined : seqOf(reactionsAfter, 'REACTIONS_AFTER'),
+            arrivalsAfter:
+              arrivalsAfter === undefined ? undefined : seqOf(arrivalsAfter, 'ARRIVALS_AFTER'),
           }
         : null;
     const { chatWithheld, ...manifest } = await this.lives.manifest(
@@ -214,10 +217,15 @@ export class LivesController {
     // the manifest let this viewer watch. Whether it is WITHHELD from them (a named reader, owner
     // 2026-11-04) was decided by that same watch statement, so it is asked again on every poll and a
     // switch flipped in the read-access grid holds from the next one, without a reconnect.
-    return {
-      ...manifest,
-      chat: await this.chat.read(caller, id, cursors, { withheld: chatWithheld }),
-    };
+    // ONE read of the block list per poll, for the chat and the arrivals alike.
+    const blocked = await this.lives.blockedFor(caller);
+    const block = await this.chat.read(caller, id, cursors, { withheld: chatWithheld, blocked });
+    // THE ARRIVAL LINES (owner, 2026-11-07) ride the same block - and are NOT served to a reader the
+    // chat is withheld from: they take no part in it, so they are shown none and announced to none.
+    const arrivals = chatWithheld
+      ? null
+      : await this.lives.readArrivals(caller, id, cursors.arrivalsAfter, blocked);
+    return { ...manifest, chat: { ...block, ...arrivals } };
   }
 
   /**

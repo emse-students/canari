@@ -223,6 +223,33 @@ class MemorySeats {
     for (const m of gone) this.held.delete(m);
     return gone.length;
   }
+
+  /** The arrivals log, as the Redis scripts keep it: once per viewer per live, ascending seq. */
+  readonly arrivalLog = new Map<string, { userId: string; seq: number }[]>();
+  /** Makes the arrivals read fail, as a Redis outage does. */
+  arrivalsDown = false;
+  /** Makes ONLY the arrivals read fail (a deterministic fault of the read, the note answering). */
+  arrivalsReadDown = false;
+
+  async noteArrival(liveId: string, viewerId: string): Promise<boolean> {
+    if (this.arrivalsDown) throw new Error('ECONNREFUSED');
+    const log = this.arrivalLog.get(liveId) ?? [];
+    if (log.some((r) => r.userId === viewerId)) return false;
+    log.push({ userId: viewerId, seq: (log[log.length - 1]?.seq ?? 0) + 1 });
+    this.arrivalLog.set(liveId, log);
+    return true;
+  }
+
+  async readArrivals(liveId: string, after: number | null) {
+    if (this.arrivalsDown || this.arrivalsReadDown) throw new Error('ECONNREFUSED');
+    const log = this.arrivalLog.get(liveId) ?? [];
+    const top = log[log.length - 1]?.seq ?? 0;
+    return { top, rows: after === null ? [] : log.filter((r) => r.seq > after).slice(0, 50) };
+  }
+
+  async forgetArrivals(liveId: string): Promise<void> {
+    this.arrivalLog.delete(liveId);
+  }
 }
 
 /** The HTTP status a Nest exception would answer, and its body's `code`. */
@@ -712,6 +739,189 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       expect(seats.held.size).toBe(1);
       seats.cap = 0;
       expect((await refusal(lives.manifest(CAROL, live.id))).code).toBe('LIVE_ENDED');
+    });
+
+    /**
+     * THE ARRIVAL LINES (owner, 2026-11-07; the reversal of "a count, never an identity"): "X a
+     * rejoint" for every viewer, rate-limited by a COUNT per poll. The seat store is the in-memory
+     * stand-in; the Redis scripts have their own spec (`live-seats.spec.ts`).
+     */
+    describe('the arrival lines', () => {
+      /** As the controller does: the block list read once, handed to the arrivals' reader. */
+      const arrivalsFor = async (who: string, liveId: string, after: number | undefined) =>
+        lives.readArrivals(who, liveId, after, await lives.blockedFor(who));
+
+      it('notes an arrival ONCE per viewer, and a first poll is told no history', async () => {
+        const live = await start();
+        await lives.get(CAROL, live.id);
+        await lives.get(CAROL, live.id);
+        await lives.leave(CAROL, live.id);
+        await lives.manifest(CAROL, live.id);
+        expect(seats.arrivalLog.get(live.id)).toEqual([{ userId: CAROL, seq: 1 }]);
+        await expect(arrivalsFor(ALICE, live.id, undefined)).resolves.toEqual({
+          arrivals: [],
+          arrivalsMore: 0,
+          arrivalsCursor: 1,
+        });
+        await lives.get(BOB, live.id);
+        await expect(arrivalsFor(ALICE, live.id, 1)).resolves.toEqual({
+          arrivals: [{ userId: BOB, seq: 2 }],
+          arrivalsMore: 0,
+          arrivalsCursor: 2,
+        });
+        // Read once: the cursor has passed it.
+        await expect(arrivalsFor(ALICE, live.id, 2)).resolves.toEqual({
+          arrivals: [],
+          arrivalsMore: 0,
+          arrivalsCursor: 2,
+        });
+      });
+
+      it('never announces the broadcaster, and never names the reader to themselves', async () => {
+        const live = await start();
+        await lives.get(ALICE, live.id);
+        await lives.get(BOB, live.id);
+        expect(seats.arrivalLog.get(live.id)?.map((r) => r.userId)).toEqual([BOB]);
+        const own = await arrivalsFor(BOB, live.id, 0);
+        expect(own).toEqual({ arrivals: [], arrivalsMore: 0, arrivalsCursor: 1 });
+      });
+
+      it('names at most 3 per poll and folds the rest into a count, the cursor passing all', async () => {
+        const live = await start();
+        const crowd = ['1', '2', '3', '4', '5'].map((c) => c.repeat(64));
+        seats.arrivalLog.set(
+          live.id,
+          crowd.map((userId, i) => ({ userId, seq: i + 1 }))
+        );
+        const block = await arrivalsFor(ALICE, live.id, 0);
+        expect(block?.arrivals.map((a) => a.userId)).toEqual(crowd.slice(0, 3));
+        expect(block?.arrivalsMore).toBe(2);
+        expect(block?.arrivalsCursor).toBe(5);
+        await expect(arrivalsFor(ALICE, live.id, 5)).resolves.toMatchObject({
+          arrivals: [],
+          arrivalsMore: 0,
+        });
+      });
+
+      it('hides a joiner across a block in EITHER direction, and a viewer the broadcaster removed', async () => {
+        const live = await start();
+        await lives.get(BOB, live.id);
+        await lives.get(CAROL, live.id);
+        await lives.get(DAVE, live.id);
+        // ALICE blocked BOB; DAVE blocked ALICE; CAROL stays; then CAROL is removed.
+        await q(`INSERT INTO user_blocks VALUES ($1, $2)`, [ALICE, BOB]);
+        await q(`INSERT INTO user_blocks VALUES ($1, $2)`, [DAVE, ALICE]);
+        await lives.removeViewer(ALICE, live.id, CAROL);
+        const block = await arrivalsFor(ALICE, live.id, 0);
+        expect(block).toEqual({ arrivals: [], arrivalsMore: 0, arrivalsCursor: 3 });
+        // FRANK sees DAVE, CAROL (removed: no) - the rule is per reader.
+        const frank = await arrivalsFor(FRANK, live.id, 0);
+        expect(frank?.arrivals.map((a) => a.userId)).toEqual([BOB, DAVE]);
+      });
+
+      it('answers null, never throws, when the log does not; the poll then omits the fields', async () => {
+        const live = await start();
+        seats.arrivalsDown = true;
+        await expect(arrivalsFor(ALICE, live.id, 0)).resolves.toBeNull();
+        // A take whose arrival cannot be noted still seats the viewer.
+        await expect(lives.get(BOB, live.id)).resolves.toMatchObject({ id: live.id });
+        seats.arrivalsDown = false;
+      });
+
+      it('announces NO platform admin who opens a reported review-cohort live across the cohort wall', async () => {
+        const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+        process.env.SERVICE_ACCOUNT_USER_ID = ALICE;
+        await q(`UPDATE users SET admin = true WHERE id = $1`, [FRANK]);
+        try {
+          const live = await start();
+          // The admin passes the watch rule through the cohort exception, and holds a seat...
+          await lives.get(FRANK, live.id);
+          await lives.manifest(FRANK, live.id);
+          expect(seats.held.size).toBe(1);
+          // ...and is in the live's audience for nobody: no arrival is noted.
+          expect(seats.arrivalLog.get(live.id)).toBeUndefined();
+        } finally {
+          await q(`UPDATE users SET admin = false WHERE id = $1`, [FRANK]);
+          if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+          else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+        }
+      });
+
+      it('logs the first failure of an outage ONCE and one recovery line with the count', async () => {
+        const live = await start();
+        const logger = (
+          lives as unknown as { logger: { error(m: string): void; log(m: string): void } }
+        ).logger;
+        const error = jest.spyOn(logger, 'error').mockImplementation(() => {});
+        const log = jest.spyOn(logger, 'log').mockImplementation(() => {});
+        try {
+          seats.arrivalsDown = true;
+          await lives.get(BOB, live.id);
+          await lives.manifest(BOB, live.id);
+          await lives.get(CAROL, live.id);
+          expect(error).toHaveBeenCalledTimes(1);
+          seats.arrivalsDown = false;
+          await lives.manifest(BOB, live.id);
+          expect(log).toHaveBeenCalledWith(expect.stringContaining('after 3 failed call(s)'));
+          // A second outage opens a new first line.
+          seats.arrivalsDown = true;
+          await lives.manifest(BOB, live.id);
+          expect(error).toHaveBeenCalledTimes(2);
+        } finally {
+          seats.arrivalsDown = false;
+          error.mockRestore();
+          log.mockRestore();
+        }
+      });
+
+      it('keeps one outage per operation: a note that answers never closes a failing read, nor logs a false recovery', async () => {
+        const live = await start();
+        const logger = (
+          lives as unknown as {
+            logger: { error(m: string): void; log(m: string): void; warn(m: string): void };
+          }
+        ).logger;
+        const error = jest.spyOn(logger, 'error').mockImplementation(() => {});
+        const log = jest.spyOn(logger, 'log').mockImplementation(() => {});
+        const warn = jest.spyOn(logger, 'warn').mockImplementation(() => {});
+        try {
+          seats.arrivalsReadDown = true;
+          for (let poll = 0; poll < 4; poll++) {
+            await lives.manifest(BOB, live.id); // the note answers
+            await arrivalsFor(CAROL, live.id, 0); // the read fails
+          }
+          expect(error).toHaveBeenCalledTimes(1);
+          expect(log).not.toHaveBeenCalledWith(expect.stringContaining('answers again'));
+          // Only the read's own success closes it, with ITS count.
+          seats.arrivalsReadDown = false;
+          await arrivalsFor(CAROL, live.id, 0);
+          expect(log).toHaveBeenCalledWith(expect.stringContaining('read answers again after 4'));
+          // A live purged with an outage still open reports it; the next live's first failure accuses.
+          await lives.end(ALICE, live.id); // one open live per broadcaster
+          const doomed = await start();
+          seats.arrivalsReadDown = true;
+          await arrivalsFor(CAROL, doomed.id, 0);
+          await lives.end(ALICE, doomed.id);
+          await sweeper.sweepOnce();
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining('still failing (1 failed'));
+          const next = await start();
+          error.mockClear();
+          await arrivalsFor(CAROL, next.id, 0);
+          expect(error).toHaveBeenCalledTimes(1);
+        } finally {
+          seats.arrivalsReadDown = false;
+          error.mockRestore();
+          log.mockRestore();
+          warn.mockRestore();
+        }
+      });
+
+      it("deletes the live's arrival log at its purge", async () => {
+        const live = await start();
+        await lives.end(ALICE, live.id);
+        await sweeper.sweepOnce();
+        expect(seats.arrivalLog.has(live.id)).toBe(false);
+      });
     });
 
     it('THE END DRAINS ITS VIEWERS: a seated viewer still fetches what its last manifest named, and its leave lets the purge go (LIVE-WEB-2)', async () => {
@@ -3315,6 +3525,25 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
         }
         // The flag rides the chat block only: the manifest itself carries no `chatWithheld`.
         expect(await poll(BOB)).not.toHaveProperty('chatWithheld');
+      });
+
+      it('BOB is announced to nobody and is shown no arrival; CAROL is announced and shown them', async () => {
+        const arrivalsPoll = (who: string, after?: string) =>
+          polls().manifest(liveId, who, undefined, '1', '0', '0', after);
+        // CAROL opens first: her cursor is the log's top, no history.
+        await lives.get(CAROL, liveId);
+        const first = (await arrivalsPoll(CAROL)).chat;
+        expect(first).toMatchObject({ arrivals: [], arrivalsMore: 0, arrivalsCursor: 1 });
+        await lives.get(BOB, liveId);
+        await lives.get(FRANK, liveId);
+        // BOB's open noted nothing: only FRANK arrived.
+        const carol = (await arrivalsPoll(CAROL, '1')).chat;
+        expect(carol?.arrivals?.map((a) => a.userId)).toEqual([FRANK]);
+        // BOB's own poll: withheld, and no arrival field at all.
+        const bob = (await arrivalsPoll(BOB, '1')).chat;
+        expect(bob).toMatchObject({ withheld: true });
+        expect(bob).not.toHaveProperty('arrivals');
+        expect(bob).not.toHaveProperty('arrivalsCursor');
       });
 
       it('BOB may not send (403 LIVE_CHAT_WITHHELD, nothing written) but may react; the others send', async () => {

@@ -253,6 +253,22 @@ export const LIVE_CHAT_BACKLOG = 50;
 export const LIVE_CHAT_PAGE = 100;
 
 /**
+ * THE ARRIVAL LINES' RATE RULE (owner, 2026-11-07, "X a rejoint" visible to every viewer,
+ * rate-limited): a poll names at most this many arrivals; the rest of what it read is folded into a
+ * count ("et N autres"). A COUNT PER POLL, never a clock: the same arrivals give the same answer.
+ */
+export const LIVE_ARRIVALS_PER_POLL = 3;
+
+/** The most arrivals one poll reads after its cursor (above the viewer cap, so one poll reads all). */
+export const LIVE_ARRIVALS_PAGE = 50;
+
+/** The arrivals log keeps this many newest entries per live; the dedupe set is the live's own. */
+export const LIVE_ARRIVALS_LOG_MAX = 100;
+
+/** How long the arrival keys live without a take: a live's own length, deleted at its purge. */
+export const LIVE_ARRIVALS_TTL_MS = 6 * 60 * 60 * 1000;
+
+/**
  * THE FIVE FLOATING REACTIONS (owner, 2026-10-20, superseding C8): ❤️ like (heart), 😂 laugh,
  * 👏 clap (bravo), 🔥 fire, 🐤 canari (the canary chick). No sad, no angry. ASCII wire names; the
  * client draws the Noto picture. A burst naming an older kind (`love`, `happy`) is 400

@@ -59,6 +59,62 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
+describe('LiveChatPanel arrival lines (owner, 2026-11-07)', () => {
+  const arrival = (seq: number, authorId = BOB): LiveChatLine =>
+    line({
+      id: null,
+      clientId: `arrival:${seq}`,
+      authorId,
+      text: '',
+      seq: seq + 0.5,
+      kind: 'arrival',
+    });
+
+  it('draws "X a rejoint" with the name, and the folded crowd as one line', () => {
+    const { target } = render({
+      lines: [
+        arrival(1),
+        line({
+          id: null,
+          clientId: 'arrivals-more:9',
+          authorId: '',
+          text: '',
+          kind: 'arrivals-more',
+          more: 4,
+        }),
+      ],
+    });
+    const one = target.querySelector('[data-live-chat-arrival]')!;
+    expect(one.textContent).toContain('Bob');
+    expect(one.textContent).toContain(m.live_chat_arrival());
+    expect(target.querySelector('[data-live-chat-arrivals-more]')?.textContent?.trim()).toBe(
+      m.live_chat_arrivals_more_other({ count: 4 })
+    );
+  });
+
+  it('says "1 autre" in the singular', () => {
+    const { target } = render({
+      lines: [
+        line({ id: null, clientId: 'arrivals-more:2', kind: 'arrivals-more', more: 1, text: '' }),
+      ],
+    });
+    expect(target.querySelector('[data-live-chat-arrivals-more]')?.textContent?.trim()).toBe(
+      m.live_chat_arrivals_more_one()
+    );
+  });
+
+  it('offers no action on an arrival: no report, no hide, even to a moderator', () => {
+    const { target } = render({ lines: [arrival(1)], canModerate: true, report: vi.fn() });
+    expect(target.querySelector('[data-live-chat-line-toggle]')).toBeNull();
+    expect(target.querySelector('[data-live-chat-line]')).toBeNull();
+  });
+
+  it('never raises the "new messages" chip', () => {
+    const { target } = render({ lines: [arrival(1), arrival(2)] });
+    expect(target.querySelector('[data-live-chat-new]')).toBeNull();
+  });
+});
+
 describe('LiveChatPanel host mark', () => {
   it("marks the broadcaster's lines and no one else's", () => {
     const { target } = render({

@@ -31,6 +31,7 @@ import {
   LIVE_CUT_RETENTION_MS,
   LIVE_INGEST_MAX_CONCURRENT,
   LIVE_KEY_HEX_RE,
+  LIVE_ARRIVALS_PER_POLL,
   LIVE_MANIFEST_WINDOW,
   LIVE_RECONNECT_WINDOW_MS,
   LIVE_RESERVATION_TTL_MS,
@@ -97,6 +98,17 @@ export type LiveViewerView = LiveView & { viewerModerates: boolean; chatWithheld
  * as the visibility. The controller puts it on the chat block; it is not a manifest field.
  */
 export type LiveManifestForViewer = LiveManifest & { chatWithheld: boolean };
+
+/**
+ * The arrival fields of the chat block (owner, 2026-11-07): at most `LIVE_ARRIVALS_PER_POLL` named
+ * accounts - the client resolves each name as it does a chat author's - the count folded behind
+ * them, and the cursor to pass back as `arrivalsAfter`.
+ */
+export interface LiveArrivalsBlock {
+  arrivals: { userId: string; seq: number }[];
+  arrivalsMore: number;
+  arrivalsCursor: number;
+}
 
 /** A live in the list of open lives - no key: the key is read by opening it. */
 export interface LiveListItem {
@@ -1576,6 +1588,11 @@ export class LivesService implements OnModuleDestroy {
     if (row) {
       await this.db.query(`DELETE FROM lives WHERE id = $1 AND "endedAt" IS NOT NULL`, [liveId]);
     }
+    this.closeArrivalOutages(liveId);
+    // The arrival keys name accounts: they go with the live (best effort - their TTL is the bound).
+    await this.seats.forgetArrivals(liveId).catch((e: unknown) => {
+      this.logger.warn(`[LIVE_ARRIVAL] ${liveId}: arrivals left to their TTL: ${String(e)}`);
+    });
     this.logger.debug(`[LIVE_GC] ${liveId} deleted (${result.deleted} segment object(s))`);
     return 'deleted';
   }
@@ -1643,9 +1660,129 @@ export class LivesService implements OnModuleDestroy {
    * Answers the live's viewer count as the take counted it, or `null` for the broadcaster (no seat,
    * no take) - who asks {@link viewerCount} instead, and only where a count is shown.
    */
-  private async takeSeat(row: LiveRow, viewerId: string): Promise<number | null> {
+  private async takeSeat(
+    row: LiveRow & { chatWithheld: boolean; inAudience: boolean },
+    viewerId: string
+  ): Promise<number | null> {
     if (row.broadcasterId === viewerId) return null;
-    return this.seats.take(row.id, viewerId);
+    const watching = await this.seats.take(row.id, viewerId);
+    // THE ARRIVAL (owner, 2026-11-07): noted once per viewer per live, and NEVER for a reader the
+    // chat is withheld from - they take no part in it, so nobody is told they are here - nor for
+    // one who watches only through the review cohort's exception (a platform admin judging a report:
+    // not in the live's audience, so announced to nobody across the cohort wall). Best effort: a
+    // courtesy line must not fail the poll that carries the video.
+    if (!row.chatWithheld && row.inAudience) {
+      await this.noteArrival(row.id, viewerId);
+    }
+    return watching;
+  }
+
+  /**
+   * The open outages of the arrival log: ONE per operation (the note and the read fail for different
+   * reasons, so each has its own) and PER LIVE (a later live's first failure always accuses), each
+   * holding the failed calls since it opened. Durable state, no timer: only the SAME operation's
+   * success on the SAME live closes it, and {@link closeArrivalOutages} at the live's purge.
+   */
+  private readonly arrivalOutages: Record<'note' | 'read', Map<string, number>> = {
+    note: new Map(),
+    read: new Map(),
+  };
+
+  /**
+   * Notes the viewer's arrival, best effort. The FIRST failure of an outage is logged at ERROR (it
+   * accuses); the ones after it, on every poll of every viewer, only count - the recovery line says
+   * how many.
+   */
+  private async noteArrival(liveId: string, viewerId: string): Promise<void> {
+    try {
+      await this.seats.noteArrival(liveId, viewerId);
+      this.arrivalsAnswered('note', liveId);
+    } catch (e) {
+      this.arrivalsFailed('note', 'an arrival was not noted', liveId, e);
+    }
+  }
+
+  private arrivalsFailed(op: 'note' | 'read', what: string, liveId: string, e: unknown): void {
+    const open = this.arrivalOutages[op];
+    const failed = open.get(liveId);
+    open.set(liveId, (failed ?? 0) + 1);
+    if (failed !== undefined) return;
+    this.logger.error(
+      `[LIVE_ARRIVAL] ${liveId}: ${what}: ${String(e)} (the arrival lines stop until it answers; further failures are counted, not logged)`
+    );
+  }
+
+  private arrivalsAnswered(op: 'note' | 'read', liveId: string): void {
+    const failed = this.arrivalOutages[op].get(liveId);
+    if (failed === undefined) return;
+    this.arrivalOutages[op].delete(liveId);
+    this.logger.log(
+      `[LIVE_ARRIVAL] ${liveId}: the arrival ${op} answers again after ${failed} failed call(s)`
+    );
+  }
+
+  /** The live is purged: an outage still open on it is reported with its count, then forgotten. */
+  private closeArrivalOutages(liveId: string): void {
+    for (const op of ['note', 'read'] as const) {
+      const failed = this.arrivalOutages[op].get(liveId);
+      if (failed === undefined) continue;
+      this.arrivalOutages[op].delete(liveId);
+      this.logger.warn(
+        `[LIVE_ARRIVAL] ${liveId}: purged with the arrival ${op} still failing (${failed} failed call(s))`
+      );
+    }
+  }
+
+  /** The accounts blocked either way with the reader - read once per poll, handed to every reader of it. */
+  async blockedFor(viewerId: string): Promise<Set<string>> {
+    return new Set(await blockedUserIdsFor(this.db.manager, viewerId));
+  }
+
+  /**
+   * THE ARRIVAL LINES of a poll ("X a rejoint", owner 2026-11-07 - the reversal of "a count, never an
+   * identity", lives.md "Arrival lines"), for a viewer the chat is served to. Read AFTER the
+   * manifest let them watch. What this reader may see: not themselves, not an account blocked either
+   * way, not a viewer the broadcaster removed. THE RATE RULE IS A COUNT, never a clock: at most
+   * {@link LIVE_ARRIVALS_PER_POLL} are named, the rest of what the poll read is folded into
+   * `arrivalsMore`; the cursor passes everything read, filtered or folded, so nothing is served twice.
+   * A first poll (`after` undefined) reads the top only: a joiner is told no history.
+   *
+   * `null` when Redis does not answer: the caller then omits the fields and the client keeps its
+   * cursor - an outage costs lines, never the poll.
+   */
+  async readArrivals(
+    viewerId: string,
+    liveId: string,
+    after: number | undefined,
+    blockedIds: ReadonlySet<string>
+  ): Promise<LiveArrivalsBlock | null> {
+    let read: { top: number; rows: { userId: string; seq: number }[] };
+    try {
+      read = await this.seats.readArrivals(liveId, after ?? null);
+      this.arrivalsAnswered('read', liveId);
+    } catch (e) {
+      this.arrivalsFailed('read', `the arrivals did not answer`, liveId, e);
+      return null;
+    }
+    if (after === undefined) return { arrivals: [], arrivalsMore: 0, arrivalsCursor: read.top };
+    if (read.rows.length === 0) {
+      return { arrivals: [], arrivalsMore: 0, arrivalsCursor: after };
+    }
+    const blocked = blockedIds;
+    const removed: { viewerId: string }[] = await this.db.query(
+      `SELECT "viewerId" FROM live_removed_viewers WHERE "liveId" = $1 AND "viewerId" = ANY($2::varchar[])`,
+      [liveId, read.rows.map((r) => r.userId)]
+    );
+    const gone = new Set(removed.map((r) => r.viewerId));
+    const visible = read.rows.filter(
+      (r) => r.userId !== viewerId && !blocked.has(r.userId) && !gone.has(r.userId)
+    );
+    const named = visible.slice(0, LIVE_ARRIVALS_PER_POLL);
+    return {
+      arrivals: named,
+      arrivalsMore: visible.length - named.length,
+      arrivalsCursor: read.rows[read.rows.length - 1].seq,
+    };
   }
 
   /**
@@ -1703,27 +1840,44 @@ export class LivesService implements OnModuleDestroy {
     viewerId: string,
     liveId: string,
     opts: { adminSeesCohort: boolean }
-  ): Promise<LiveRow & { serverNow: Date; chatWithheld: boolean }> {
+  ): Promise<LiveRow & { serverNow: Date; chatWithheld: boolean; inAudience: boolean }> {
     // `serverNow` from the same clock that wrote `lastSegmentAt`, so a viewer compares like with like.
     // `chatWithheld` in the SAME statement as the visibility: one snapshot decides both, on every
     // open and every poll - so a switch flipped in the read-access grid holds from the next poll on.
-    const rows: (LiveRow & { serverNow: Date; visible: boolean; chatWithheld: boolean })[] =
-      await manager.query(
-        `SELECT ${LIVE_COLUMNS}, now() AS "serverNow",
+    // `inAudience`: the same visibility WITHOUT the review cohort's exception, in the same snapshot.
+    // A platform admin who opens a reported cohort live passes `visible` and is NOT in its audience;
+    // the arrival note reads this one, so the admin is announced to nobody across the cohort wall.
+    const rows: (LiveRow & {
+      serverNow: Date;
+      visible: boolean;
+      inAudience?: boolean;
+      chatWithheld: boolean;
+    })[] = await manager.query(
+      `SELECT ${LIVE_COLUMNS}, now() AS "serverNow",
                 ${liveVisibleToViewerSql('lives', '$2', opts)} AS visible,
+                ${
+                  opts.adminSeesCohort
+                    ? `${liveVisibleToViewerSql('lives', '$2', { ...opts, adminSeesCohort: false })} AS "inAudience",`
+                    : ''
+                }
                 ${liveChatWithheldFromViewerSql('lives', '$2')} AS "chatWithheld"
            FROM lives WHERE id = $1`,
-        [liveId, viewerId]
-      );
+      [liveId, viewerId]
+    );
     const found = rows[0];
     if (!found) {
       // A live staff CUT and already purged is still a 410 that says so, to whom it was visible.
       await this.refuseIfCut(manager, liveId, viewerId, 'viewer');
       throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
     }
-    const { visible, chatWithheld, ...rest } = found;
-    // `=== true`, as `visible`: only an explicit true withholds.
-    const row = { ...rest, chatWithheld: chatWithheld === true };
+    const { visible, chatWithheld, inAudience, ...rest } = found;
+    // `=== true`, as `visible`: only an explicit true withholds. Without the cohort exception asked,
+    // `visible` IS the audience.
+    const row = {
+      ...rest,
+      chatWithheld: chatWithheld === true,
+      inAudience: opts.adminSeesCohort ? inAudience === true : visible === true,
+    };
     // `=== true` and nothing looser: a driver answering `'t'` must not widen the gate.
     if (visible !== true) {
       this.logger.debug(`[LIVE] ${liveId} hidden from ${short(viewerId)}: not in its audience`);
