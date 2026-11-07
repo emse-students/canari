@@ -343,6 +343,30 @@ export function setTiers(grid: EditorProductGrid, tiers: ProductGridTierDimensio
 }
 
 /**
+ * Whether leaving the current criterion - another criterion, the registration grid's copy, or one
+ * price for everybody - would lose what the manager entered under it: a group that names anyone
+ * (a tier, a year, a formation), or a group whose prices differ from "everyone else"'s. Only
+ * "everyone else"'s list survives the switch (`setTiers` copies it), so that is the one that is not
+ * at stake. A criterion just switched on, still as it started, loses nothing and asks nothing.
+ */
+export function tierSwitchLosesInput(grid: EditorProductGrid): boolean {
+  const tiers = grid.pricing.tiers;
+  if (!tiers) return false;
+  const named = tiers.buckets.some(
+    (b) =>
+      b.id !== PRODUCT_GRID_OTHERS_TIER &&
+      (b.anyTier === true || (b.variantKeys?.length ?? 0) > 0 || (b.values?.length ?? 0) > 0)
+  );
+  if (named) return true;
+  const others = grid.pricing.prices[PRODUCT_GRID_OTHERS_TIER] ?? {};
+  return editorTierIds(grid).some((tierId) => {
+    if (tierId === PRODUCT_GRID_OTHERS_TIER) return false;
+    const list = grid.pricing.prices[tierId] ?? {};
+    return editorAxisKeys(grid).some((key) => (list[key] ?? null) !== (others[key] ?? null));
+  });
+}
+
+/**
  * Gives every category of the current criterion a price list - after a category is added in the
  * criterion editor, say - copied from `source` (default: "everyone else"). Lists of categories that
  * are gone stay in the editor and never reach the payload.

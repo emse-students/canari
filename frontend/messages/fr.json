@@ -3102,6 +3102,8 @@
   "form_pgrid_tier_others": "Autres",
   "form_pgrid_tier_unnamed": "Sans nom",
   "form_pgrid_tiers_badge": "Catégories",
+  "form_pgrid_tiers_switch_confirm": "Les groupes de ce critère et leurs prix seront effacés ; seuls les prix « Autres » sont gardés. Continuer ?",
+  "form_pgrid_tiers_switch_confirm_button": "Effacer",
   "form_pgrid_tiers_by": "Selon",
   "form_pgrid_tiers_copy_form": "Reprendre les catégories du prix d'inscription",
   "form_pgrid_tiers_hint": "Chacun ne voit que son prix.",

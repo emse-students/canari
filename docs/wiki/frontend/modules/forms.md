@@ -1713,7 +1713,10 @@ draws them. Built from the owner-approved mockup of 2026-11-06 with the app's to
   and the categories are edited with the price grid's own `CriterionEditor`. One TAB per category,
   "Autres" (`_others`) always last; each tab is a complete price list, a new category starting as a
   copy of "Autres". On a public form the hint says a guest pays "Autres", and the save names that
-  price first (`PRODUCT_GRID_GUEST_PRICE_MISSING`).
+  price first (`PRODUCT_GRID_GUEST_PRICE_MISSING`). **Leaving a criterion asks first** when it
+  would lose input (owner, 2026-11-07): another *Selon*, the registration grid's copy, or the switch
+  turned off keep only "Autres"'s list, so `tierSwitchLosesInput` asks when a group names anyone or
+  a group's prices differ from "Autres"; a criterion still as it started is left at once.
 - **Cap per cell**: a stepper, 1..99, default 5; at 1 the hint says the buyer gets a checkbox.
 - **Preview**: the fill page's own `ProductGridQuestion.svelte`, inert, toggled *Ordinateur /
   Telephone* through its `layout` prop (`desktop` / `phone` force one drawing at any width; the fill
