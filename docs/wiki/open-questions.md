@@ -547,7 +547,3 @@ acted on (the hourly commit-log hole report on the server, the shortfall report 
 client). The question is whether the USER should ever see that a frame was dropped on their device: the
 "SECURISE & SYNC" shield that did so lied, and was removed by the user's choice to stop exposing the
 machinery. **Nothing is blocked on it**, and it is a product decision, not a measurement.
-
-## Should a live chat show "X joined" lines? (2026-11-07)
-
-Owner axis "more alive" asked for arrival lines. Not built: the lives design is "a count, never an identity and never a list, to anybody" ([lives](services/lives.md#exact-not-rounded---confirmed-by-the-owner-2026-10-21)), and a named arrival line is a live list of who opened the live. Options: (a) keep it refused (the default, nothing shipped); (b) an anonymous cue folded from the viewer count's delta (no name, discloses nothing the exact count does not); (c) named lines, which reverse the rule and need a server arrival event plus a rate limit. Recommendation: (b) if anything. Substance: [live](frontend/modules/live.md#the-chat-readable-over-the-video-and-the-host-mark-2026-11-07).
