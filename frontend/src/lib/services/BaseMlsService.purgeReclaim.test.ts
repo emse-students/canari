@@ -73,6 +73,8 @@ describe('republishKeyMaterial completes the purge it starts', () => {
     const handed = forgetKeyPackages.mock.calls[0][0] as Uint8Array[];
     expect(handed.map((b) => Array.from(b))).toEqual([Array.from(ONE), Array.from(TWO)]);
     expect(generateKeyPackage).toHaveBeenCalledTimes(1);
+    // FRESH, never a join: a round already in flight may have counted the pool before the purge.
+    expect(generateKeyPackage).toHaveBeenCalledWith('device-key', { fresh: true });
   });
 
   it('forgets NOTHING when the purge reported nothing, because a failed purge returns an empty list', async () => {

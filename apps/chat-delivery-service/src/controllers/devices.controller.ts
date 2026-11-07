@@ -61,6 +61,7 @@ import { parseSessionId } from '../utils/session-id';
 import { DeviceSessionsNotEndedError, endDeviceSessions } from '../internal/device-sessions';
 import type { RevocationReason } from '../entities/revoked-device.entity';
 import { RefusalCode } from '../utils/refusal-codes';
+import { upsertDeviceKeyPackage } from '../utils/device-key-package';
 
 /**
  * Why a device cannot be handed a KeyPackage right now - and whether that is for ever.
@@ -411,12 +412,13 @@ export class DevicesController {
       });
     }
     await this.deviceSignatureKeys.record(userId, deviceId, [keyPackagePayload], 'register-device');
-    const existing = await this.keyPackageRepo.findOne({
-      where: { userId, deviceId },
-    });
-    const isNew = !existing;
-    if (!existing) {
-      const keyPackage = this.keyPackageRepo.create({
+    // ONE STATEMENT, NOT A READ THEN A WRITE: two registrations of one device in the same
+    // millisecond both read "no row" and the second insert answered 500 on the unique pair
+    // (production 2026-11-07). `upsertDeviceKeyPackage` keeps what each branch wrote - including
+    // `createdAt` reset to now on a re-registration, which the device list's cutoff reads.
+    const { inserted: isNew } = await upsertDeviceKeyPackage(
+      this.dataSource,
+      {
         userId,
         deviceId,
         keyPackage: keyPackagePayload,
@@ -424,26 +426,9 @@ export class DevicesController {
         deviceName,
         deviceOs,
         deviceAppVersion,
-        createdAt: new Date(),
-      });
-      await this.keyPackageRepo.save(keyPackage);
-    } else {
-      // Use update() instead of save() : TypeORM's SubjectChangedColumnsComputer
-      // skips @CreateDateColumn fields in UPDATE queries (isCreateDate = true),
-      // so save() would leave createdAt unchanged. Devices re-registering after
-      // > 30 days would stay invisible to getUserDevices (30-day cutoff on createdAt).
-      await this.keyPackageRepo.update(
-        { userId, deviceId },
-        {
-          keyPackage: keyPackagePayload,
-          notAfter,
-          ...(deviceName !== undefined && { deviceName }),
-          ...(deviceOs !== undefined && { deviceOs }),
-          ...(deviceAppVersion !== undefined && { deviceAppVersion }),
-          createdAt: new Date(),
-        }
-      );
-    }
+      },
+      crypto.randomUUID()
+    );
 
     // Create pending DeviceGroupMembership entries for all groups this user
     // already belongs to.  Without this, getPendingInvitations on other
