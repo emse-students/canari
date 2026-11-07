@@ -21,7 +21,13 @@ export interface CallMediaSessionParams {
   title: string;
   artist: string;
   muted: boolean;
-  onHangup: () => void;
+  /**
+   * The OS's hang-up, or `null` where the engine is KNOWN to have no `hangup` action, so it is not
+   * asked: WebKit (the iOS app) throws on it, measured on the iPhone 12 on every call until
+   * 2026-11-07 - and there the system's call controls are CallKit's, never the Media Session's.
+   * Asking anyway only to log the refusal was learning by failing what was already known.
+   */
+  onHangup: (() => void) | null;
   onToggleMicrophone: () => void;
 }
 
@@ -75,11 +81,12 @@ export function applyCallMediaSession(
   } catch (e) {
     appendLog(`[Call] Media Session metadata refused: ${String(e)}`);
   }
-  const handlers: Record<CallAction, () => void> = {
+  const handlers: Record<CallAction, (() => void) | null> = {
     hangup: params.onHangup,
     togglemicrophone: params.onToggleMicrophone,
   };
-  for (const [action, handler] of Object.entries(handlers) as [CallAction, () => void][]) {
+  for (const [action, handler] of Object.entries(handlers) as [CallAction, (() => void) | null][]) {
+    if (!handler) continue; // an action the engine is known not to have (`onHangup`)
     try {
       session.setActionHandler(action as MediaSessionAction, handler);
     } catch (e) {
