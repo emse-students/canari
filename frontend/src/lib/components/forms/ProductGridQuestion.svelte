@@ -46,6 +46,11 @@
     currency?: string;
     /** Why the page refused to send - said under the grid, which is drawn in the error colour. */
     error?: string | null;
+    /**
+     * Which drawing shows: by the width (`responsive`, the fill pages), or one of the two forced -
+     * the editor's preview (`ProductGridEditor.svelte`) shows either at any width.
+     */
+    layout?: 'responsive' | 'desktop' | 'phone';
   }
 
   let {
@@ -56,7 +61,22 @@
     prices,
     currency = 'eur',
     error = null,
+    layout = 'responsive',
   }: Props = $props();
+
+  /** The classes that show or hide each drawing, by `layout`. */
+  const desktopShown = $derived(
+    layout === 'responsive' ? 'hidden sm:block' : layout === 'desktop' ? 'block' : 'hidden'
+  );
+  const phoneShown = $derived(
+    layout === 'responsive' ? 'flex sm:hidden' : layout === 'phone' ? 'flex' : 'hidden'
+  );
+  const hintDesktopShown = $derived(
+    layout === 'responsive' ? 'hidden sm:inline' : layout === 'desktop' ? 'inline' : 'hidden'
+  );
+  const hintPhoneShown = $derived(
+    layout === 'responsive' ? 'sm:hidden' : layout === 'phone' ? 'inline' : 'hidden'
+  );
 
   const multiRow = $derived(grid.rows.length > 1);
   const checkbox = $derived(grid.maxPerCell === 1);
@@ -218,6 +238,8 @@
       {#if price}<span class="text-text-muted text-2xs font-semibold">{price}</span>{/if}
     </button>
   {:else}
+    <!-- The - and + are h-11 themselves, never h-full: the pill's 1px border leaves 42px inside it,
+         and the centred buttons overlap that border to keep the 44px touch target. -->
     <span
       role="group"
       aria-label={name}
@@ -226,7 +248,7 @@
     >
       <button
         type="button"
-        class="flex h-full w-11 items-center justify-center disabled:opacity-50"
+        class="flex h-11 w-11 shrink-0 items-center justify-center disabled:opacity-50"
         aria-label={m.form_grid_remove_one({ name })}
         {disabled}
         onclick={(event) => setQuantity(row, col, qty - 1, event)}
@@ -238,7 +260,7 @@
       >
       <button
         type="button"
-        class="flex h-full w-11 items-center justify-center disabled:opacity-35"
+        class="flex h-11 w-11 shrink-0 items-center justify-center disabled:opacity-35"
         aria-label={m.form_grid_add_one({ name })}
         data-cell-entry={productGridCellKey(row.id, col.id)}
         disabled={disabled || qty >= grid.maxPerCell}
@@ -283,7 +305,7 @@
     {/if}
 
     <!-- From 640px: a table. Scrolls sideways only past what the column holds (15 sizes). -->
-    <div class="hidden overflow-x-auto sm:block" data-grid-desktop>
+    <div class="overflow-x-auto {desktopShown}" data-grid-desktop>
       <table class="w-full table-fixed border-separate border-spacing-0 text-sm">
         <thead>
           <tr>
@@ -333,7 +355,7 @@
     </div>
 
     <!-- Below 640px: a card per row, its sizes as pills that wrap - never a sideways scroll. -->
-    <div class="flex flex-col gap-2 sm:hidden" data-grid-phone>
+    <div class="flex-col gap-2 {phoneShown}" data-grid-phone>
       {#each grid.rows as row, ri (row.id)}
         <div
           role="group"
@@ -361,12 +383,12 @@
 
     {#if !disabled}
       <p class="text-text-muted text-xs">
-        <span class="hidden sm:inline">
+        <span class={hintDesktopShown}>
           {checkbox
             ? m.form_grid_hint_desktop_single()
             : m.form_grid_hint_desktop({ max: grid.maxPerCell })}
         </span>
-        <span class="sm:hidden">
+        <span class={hintPhoneShown}>
           {checkbox ? m.form_grid_hint_phone_single() : m.form_grid_hint_phone()}
         </span>
         {#if hasClosed}{m.form_grid_hint_closed()}{/if}

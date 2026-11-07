@@ -3,6 +3,7 @@ import axios from 'axios';
 import { FormsService } from './forms.service';
 import { SubmitFormDto } from './dto/form.dto';
 import type { ProductGrid } from './product-grid-contract';
+import type { ProductGridRefusalBody } from './product-grid';
 import type { PricingFacts } from '../pricing/audience';
 import { PROVIDER_MAX_AMOUNT_CENTS } from '../common/core-payment-error';
 
@@ -267,6 +268,38 @@ describe('FormsService - product grid: the save', () => {
     // A personal form has no association to be a member of.
     expect(await refusalCode(service.create(createInput({ associationId: undefined })))).toBe(
       'PRODUCT_GRID_TIER_INVALID'
+    );
+  });
+
+  it('names the refused question in the 400, so the editor draws it under its grid', async () => {
+    const { service } = makeService();
+    const unknownTier = {
+      ...SINGLE_TIERED,
+      pricing: {
+        ...SINGLE_TIERED.pricing,
+        tiers: {
+          ...COTISATION_TIERS,
+          buckets: [{ id: 'cotisant', label: 'C', variantKeys: ['gold'] }],
+        },
+      },
+    };
+    const refusal = await service
+      .create(createInput({ items: [gridItem(unknownTier)] }))
+      .then(() => null)
+      .catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(BadRequestException);
+    const body = (refusal as BadRequestException).getResponse() as ProductGridRefusalBody;
+    expect(body).toEqual({
+      code: 'PRODUCT_GRID_TIER_INVALID',
+      message: expect.any(String),
+      itemId: 'q-grid',
+    });
+    // A structural refusal names its question the same way.
+    const missing = await service
+      .create(createInput({ items: [gridItem(SINGLE_TIERED, { id: 'q-other', required: false })] }))
+      .catch((error: unknown) => error);
+    expect(((missing as BadRequestException).getResponse() as ProductGridRefusalBody).itemId).toBe(
+      'q-other'
     );
   });
 

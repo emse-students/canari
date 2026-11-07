@@ -160,6 +160,8 @@ export interface Form extends CreateFormPayload {
   associationName?: string | null;
   /** Banner/header image URL (public, served via media-service). */
   imageUrl?: string | null;
+  /** Answers holding a place (`GET /forms/:id` only): the editor warns before removing an ordered row. */
+  submissionCount?: number;
 }
 
 import { apiFetch } from '$lib/utils/apiFetch';
@@ -187,12 +189,18 @@ async function refusal(res: Response, fallback: string): Promise<SocialApiError>
   const body = await res.json().catch(() => ({}));
   const message = Array.isArray(body.message) ? body.message.join(' ') : body.message;
   const code = typeof body.code === 'string' ? body.code : null;
-  Log.i('FORMS', `${fallback}: refused status=${res.status} code=${code ?? 'none'}`);
+  const itemId = typeof body.itemId === 'string' ? body.itemId : null;
+  Log.i(
+    'FORMS',
+    `${fallback}: refused status=${res.status} code=${code ?? 'none'} item=${itemId ?? 'none'}`
+  );
   return new SocialApiError(
     message || `${fallback} (${res.status})`,
     code,
     res.status,
-    amountBoundsOf(body)
+    amountBoundsOf(body),
+    null,
+    itemId
   );
 }
 

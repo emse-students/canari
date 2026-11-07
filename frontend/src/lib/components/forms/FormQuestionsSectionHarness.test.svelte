@@ -7,11 +7,31 @@
     initial: any[];
     onItems: (items: any[]) => void;
     reveal?: { id: string } | null;
+    offerPricedGrid?: boolean;
+    onPricedGridAdded?: () => void;
+    onPricedGridGone?: () => void;
+    gridFault?: { itemId: string; message: string } | null;
   }
 
-  let { initial, onItems, reveal = null }: Props = $props();
+  let {
+    initial,
+    onItems,
+    reveal = null,
+    offerPricedGrid = true,
+    onPricedGridAdded,
+    onPricedGridGone,
+    gridFault = null,
+  }: Props = $props();
   let items = $state(untrack(() => initial));
   $effect(() => onItems($state.snapshot(items)));
 </script>
 
-<FormQuestionsSection bind:items requiresPayment={false} {reveal} />
+<FormQuestionsSection
+  bind:items
+  requiresPayment={false}
+  {reveal}
+  {offerPricedGrid}
+  {onPricedGridAdded}
+  {onPricedGridGone}
+  {gridFault}
+/>

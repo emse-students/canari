@@ -197,8 +197,10 @@ labelled component on the other). Everything shared now lives in one place:
 | `FormQuestionsSection.svelte` | The builder list, drag-and-drop, the type picker |
 | `FormAdvancedSettings.svelte` | The collapsed "advanced" category: responses, audience, cotisation |
 | `FormSaveBar.svelte` | The footer summary and the save button |
-| `pricing/PriceGridEditor.svelte` | The dimensions, and the cell grid they cross into |
-| `pricing/CriterionEditor.svelte` | One dimension's buckets |
+| `pricing/PriceGridEditor.svelte` | The criteria (two at most to add) and the "Critère" menu; titled "Prix d'inscription" on a form - see [the price table](#the-price-table---two-criteria-rows-by-columns-owner-2026-11-06) |
+| `pricing/PriceCellsEditor.svelte` | The 2D price table, its header bulk bar, and the phone's cards |
+| `pricing/CriterionEditor.svelte` | One criterion as compact rows: a line per group, chips, a "+" offering what is left |
+| `pricing/bucketValues.ts` | A group's values as chips, and the values no group holds yet |
 | `AudienceConditionEditor.svelte` | One condition's criteria, used by the form AND by a question |
 | `pricing/priceMatrix.ts` | The matrix state, its cross product, and the payload it becomes |
 | `pricing/criteriaOptions.ts` | The promo / formation option lists a criterion offers |
@@ -208,6 +210,8 @@ labelled component on the other). Everything shared now lives in one place:
 | `ui/Select.svelte`, `ui/Toggle.svelte` | The select and the switch, one geometry each |
 | `forms/cotisationSettings.ts` | The cotisation state, and the payload it becomes |
 | `forms/itemsPayload.ts` | Questions to/from the wire, euros to/from cents |
+| `ProductGridEditor.svelte`, `ProductGridPreview.svelte` | A priced grid's table editor and its buyer's preview |
+| `forms/productGridEditor.ts` | The priced grid's editor model, its payload and its pre-save check |
 | `forms/summary.ts` | The save bar's one line: question count, and what the form costs |
 | `forms/gridProblem.ts` | One sentence per `GridProblem` code, for the editor AND the save button |
 
@@ -294,6 +298,44 @@ terms the manager on that screen recognises. A product's `CriteriaContext.questi
 is exactly what refuses an `answer` dimension on it - a product has no questions to price on, and
 that refusal costs no code of its own.
 
+### The price table - two criteria, rows by columns (owner, 2026-11-06)
+
+Redesigned for `1.6.6` from the owner-approved mockup ("Prix d'inscription"); a UI change only, the
+stored grid is untouched and an existing form opens unchanged. The editor is shared by forms,
+boutique products and cotisation tiers, so all three get it.
+
+- **Two criteria at most.** The "Critère" menu (Promotion / Formation / Cotisation / Réponse à une
+  question) greys a used kind ("Déjà utilisé") and every kind once two are set ("Deux critères au
+  plus : retirez-en un"), and `add` refuses too (`MAX_CRITERIA`). The SERVER has no such bound
+  (`parsePriceMatrix` maps any number of dimensions), so a stored grid with three still loads and
+  saves: `gridAxes` nests every criterion but the last down the side, and every cell is still one
+  row by one column.
+- **A true table.** `gridAxes` puts the first criterion's groups down the side and the second's
+  across the top, the corner naming both ("Promotion \ Formation"); one criterion is a single price
+  column. A row or column header selects the line and opens a bar with "Même prix partout" and
+  "Tout rendre indisponible" (`lineCellKeys` + `fillCells`). "Masquer les lignes indisponibles"
+  hides a row whose every cell is `null` (`rowUnavailable`) - display only.
+- **Empty is "Gratuit", said.** A cell priced `0` shows an empty box and a muted "Gratuit" chip: the
+  semantics of an empty cell did not change, they are now visible. `parseEuros` reads an empty box
+  as 0, a comma as a decimal point and ignores spaces (a pasted "1 000,50"); it ROUNDS TO THE CENT,
+  the rounding `matrixPayload` applies, so the box shows what will be saved, and refuses a negative
+  or an amount whose cents are not a safe integer. Text that is not a price leaves the cell as it
+  was, and the box is rewritten from the grid either way.
+- **Unavailable is drawn as a closed priced-grid cell**: `.price-cell-closed`, hatched and struck
+  through. `.price-cell`, `.price-cell-closed`, `.price-free-chip` in `app.css` are the shared cell
+  classes, for the priced-grid question (WP-G3) to wear too.
+- **The guest's free seat is flagged where it is fixed.** On a public form, `guestFreeCellKey`
+  mirrors the server's `freeFallbackCells` (`answer-options.ts`, PR #3084's rule): only the TRUE
+  fallback - "Tous les autres" on every criterion, each reachable, priced 0, in a grid that charges
+  someone. That cell carries "Un invité ne peut pas avoir un tarif gratuit" and a status line under
+  the table names it.
+- **Criteria are compact rows**: one line per group (an underlined name, the values as chips, a "+"
+  that offers only what no group of the criterion holds - the server refuses overlapping groups;
+  a promo offers the six most recent unplaced years and takes an older one typed), and "Tous les
+  autres" as one muted line. A new group is named "Groupe N" at once.
+- **A phone (< 640px)** gets one card per row with a labelled pill per price; a tap opens an inline
+  editor under the card, a hold toggles availability. Nothing scrolls sideways.
+
 ### A cell may say the combination DOES NOT EXIST
 
 Some configurations are not sold: "non-cotisant, formule week-end" is a combination the association
@@ -316,20 +358,16 @@ no priority rule. What changed is that the cell a person lands in may refuse the
 
 Where each part of that lives:
 
-- **Editor**: a cell toggles between a number and `Indisponible`, and the CELL is the gesture. An
-  unavailable cell has nothing to type in, so clicking it is what reopens it; an open cell owes its
-  click to the caret, so closing it is the one action left on a control that overlays the cell and
-  costs no width (`.cell-action`, shown on hover or while the cell holds the focus, and always shown
-  on a coarse pointer - the only affordance a touch screen has). Coming back restores `0`, not the
-  price that was there, because that price is gone and `0` is the one value nobody mistakes for a
-  considered one. A grid with EVERY cell unavailable is refused on both sides
-  (`all_unavailable`, `assertMatrixValid`): that is a closed form, not a priced one.
-- **Geometry**: `.price-grid` in `app.css` owns the column sizes; the editor supplies only the two
-  counts. The total width has to be NAMED, which is the non-obvious part: `table-layout: fixed` on a
-  table of width `auto` treats column widths as PROPORTIONS, not sizes - nine columns declared at
-  8rem inside a 1020px box measured 83-91px in Chrome, and unequal. With the total named, every
-  price column is exactly its declared size and the wrapper scrolls once they no longer fit; below
-  that total each column stretches by the same factor, so they stay equal.
+- **Editor**: a cell toggles between a number and `Indisponible` from a button in its CORNER, or
+  a touch hold (`longPress`); an open cell owes its click to the caret, so the corner overlays it
+  and costs no width (`.cell-action`, shown on hover or focus, always on a coarse pointer). Coming
+  back restores `0`, shown as "Gratuit". A grid with EVERY cell unavailable is refused on both
+  sides (`all_unavailable`, `assertMatrixValid`): that is a closed form, not a priced one.
+- **Geometry**: `.price-grid` in `app.css` owns the column sizes; the editor supplies only the
+  price-column count. The total width has to be NAMED: `table-layout: fixed` on a table of width
+  `auto` treats column widths as PROPORTIONS - nine columns declared at 8rem inside a 1020px box
+  measured 83-91px in Chrome, and unequal. With the total named, every price column is exactly its
+  declared size and the wrapper scrolls once they no longer fit.
 - **Server**: `resolveCellPrice` returns `null` rather than throwing, and `submit` refuses right
   after it - not in `assertMaySubmit`, because only the VISIBLE answers decide which cell applies.
   `hasSubmission` reports `maySubmit: false` when the submitter's whole row is closed, the same
@@ -1369,18 +1407,18 @@ until this shipped, so whether it can be rotated is a question for Lydia
 
 ## The priced grid (`product_grid`, WP-G1, 2026-11-06)
 
-**Server side built (WP-G1) and the fill page (WP-G2, [below](#the-fill-page-wp-g2)); the editor
-(WP-G3) and the client half of the export (WP-G4) build on it.** Decided by the owner on 2026-11-06; design, use cases and the work
+**Server side built (WP-G1), the fill page (WP-G2, [below](#the-fill-page-wp-g2)) and the editor
+(WP-G3, [below](#the-editor-wp-g3)); the client half of the export (WP-G4) builds on it.** Decided by the owner on 2026-11-06; design, use cases and the work
 packages: the forms capability audit of 2026-11-06 (`docs/wiki/forms-capability-audit-2026-11-06.md`),
 section 4.
 
-**The builders do not OFFER the type yet.** `QUESTION_TYPES` (frontend) lists it, because a form may
-hold it and the server's `SUPPORTED_QUESTION_TYPES` must equal that list; the two pickers
+**The builders offer the type since WP-G3.** `QUESTION_TYPES` (frontend) lists it, because a form
+may hold it and the server's `SUPPORTED_QUESTION_TYPES` must equal that list; the two pickers
 (`FormBuilder.svelte`, `FormQuestionsSection.svelte`) read `AUTHORABLE_QUESTION_TYPES`, an explicit
-list of the types whose editor exists (`questionTypes.ts`, asserted by `questionTypes.test.ts`).
-Offering it before WP-G3 would hand people a question every save refuses
-(`PRODUCT_GRID_DEFINITION_MISSING`). WP-G3 adds `product_grid` to that list with its editor. The
-fill page reads its own list, `FILLABLE_QUESTION_TYPE_VALUES` (`fillAnswers.ts`
+list of the types whose editor exists (`questionTypes.ts`, asserted by `questionTypes.test.ts`),
+which gained `product_grid` with its editor. A builder whose answers never pay - a booking space
+(`SpaceEditor.svelte`) - passes `offerPricedGrid={false}`: every grid there would be refused
+`PRODUCT_GRID_REQUIRES_PAYMENT`. The fill page reads its own list, `FILLABLE_QUESTION_TYPE_VALUES` (`fillAnswers.ts`
 `isKnownQuestionType`), which holds `product_grid` since WP-G2: an older build draws a priced grid
 "update the app" and blocks the send.
 
@@ -1482,7 +1520,8 @@ drawn with the app's tokens.
   alternating rows: each open cell a "+" that becomes a - n + stepper (+ disabled at `maxPerCell`),
   a checkbox when `maxPerCell` is 1. Below it a card per row, its sizes as pills that wrap - a tapped
   pill becomes "M x1" with - and + (a toggled pill at a cap of 1) - so nothing scrolls sideways. A
-  closed cell is struck through and has no control. A grid of ONE row has no row label anywhere.
+  closed cell is struck through and has no control. The pill stepper's - and + are `h-11` themselves:
+  `h-full` inside the bordered `h-11` pill was 42px, under the touch floor (fixed in WP-G3). A grid of ONE row has no row label anywhere.
   `per_row` writes the price on each row (both drawings), `per_column` under each size (and in each
   pill).
 - **The answer** is `{ "rowId:colId": quantity }` holding only the cells ordered
@@ -1540,6 +1579,123 @@ the total bound, the real `ValidationPipe`), `product-grid-export.spec.ts` (the 
 back), `answer-text.spec.ts`, and against PostgreSQL `product-grid.integration.spec.ts` (migration
 137 twice, lines through jsonb, the reused row rewritten, the seat held then freed) and
 `refunds.integration.spec.ts` (a total refund of a grid order).
+
+### The editor (WP-G3)
+
+`ProductGridEditor.svelte`, drawn by `FormBuilder.svelte` inside the question card when the type is
+`product_grid`; the model and every rule are in `forms/productGridEditor.ts`, so the component only
+draws them. Built from the owner-approved mockup of 2026-11-06 with the app's tokens.
+
+- **The table is the editor.** Columns are chips in the header row (renamed in place, removed by
+  their x), rows a narrow first column of inline inputs, "+" adds a column and "Ajouter une ligne"
+  a row (the new blank label takes the focus). **"Coller une liste"** takes one value per line
+  (commas, semicolons and tabs also split) and appends them as rows or as columns; a label already
+  on the axis (trimmed, case folded - the save's own comparison) is refused and named, and what
+  passes the axis maximum (40 rows, 15 columns) is counted, never dropped silently. A new grid's
+  one blank row or column gives way to a pasted list. Two labels of one axis that collide are
+  marked as they are typed (`collidingLabelKeys`).
+- **Reordering**: each row and column has a grip, dragged onto another entry (its drag events stop
+  at the grid, so the question card does not move) or moved with the arrow keys (up/down for a
+  row, left/right for a column). **No HTML5 drag reaches a touch screen**, so on a coarse pointer
+  or below `sm` each row has up/down buttons beside its label and each column left/right buttons
+  under its chip (`ui-icon-button`, 44px, labelled with the entry: *"Monter la ligne Vert"*), the
+  way the question list moves on a phone (#3083); the grips are hidden on a coarse pointer. Focus
+  follows the entry to the same button, or to the other one at the end of the axis.
+- **On a phone (below `sm`) the table fits the screen**: measured at 390px, a grid of six sizes
+  draws in the 304px the question card leaves, with no sideways scroll. The table takes the full
+  width; each size column is 32px (`max-sm:w-8 min-w-8`), its chip stacked (label, x, then the
+  left/right arrows under it, as wide as the column with `tap-target` hit boxes); the row label
+  column takes the rest (at least 104px), its label a `textarea` that wraps and
+  grows (`fitLabel`: on input, and on a WIDTH change only, so the height it sets never feeds the
+  observer back; a typed or pasted line break becomes a space), the row's x 32px beside it and its
+  up/down arrows under it. A cell shows its state without its price (a closed one an x); the
+  header "+" gives way to an "Ajouter une colonne" button beside "Ajouter une ligne", both now
+  under the table rather than in its footer so a scrolled table never carries them away. **A grid
+  too wide to fit** (more than six sizes, or a per-row / per-column price) scrolls inside its own
+  box, never the page, with the row labels and the corner `sticky` on the card's surface. From
+  `sm` up nothing changed.
+- **Touch targets**: the chip's x keeps the chip's drawing and is widened to 44px by `tap-target`
+  (the chip still sizes it, so `iconButtonScale.test.ts` keeps its exemption); the price-mode and
+  criterion-kind buttons take `tap-target`; the price inputs, which no `::before` can widen, grow to
+  44px (`pointer-coarse:min-h-11`).
+- **Ids**: `crypto.randomUUID()`, which the contract's id pattern accepts. Renaming a label never
+  changes an id - answers, prices and closed cells are keyed by it.
+- **Closing a cell**: a click closes the combination (struck through, "Fermee") and a second
+  reopens it. The last open cell cannot be closed (`PRODUCT_GRID_ALL_CELLS_CLOSED`), and neither
+  can a row or column be REMOVED when every cell left would be closed (`removalClosesEveryCell`;
+  `removeAxisEntry` answers `closes_every_cell` and touches nothing): the gesture is refused under
+  the table (*"Impossible de supprimer..."*), before any orders confirm, and nothing reopens the
+  manager's closed cells behind their back.
+- **Prices**: *Un prix pour tout / Par ligne / Par colonne*; the inputs appear where the mode puts
+  them (one field, a price column beside the rows, a price row under the headers). EUROS in the
+  editor, typed with a comma or a dot; a blank stays `null` and is LEFT OUT of the payload, so the
+  contract names the list incomplete instead of the save charging 0. `parseEuroInput` accepts digits
+  and one separator only (`1e3`, `0x10`, a sign are unreadable, hence blank) and rounds to the cent
+  ON THE DIGITS (`1,005` is 1,01; a float round would give 1,00), and the field is rewritten with what
+  was stored, so the field, the cell and the cents sent never disagree. A price above 10 000 EUR is
+  kept and refused by name (`PRODUCT_GRID_PRICE_INVALID`), never clamped. A key the new mode needs
+  starts at its category's single price, else the last price of the mode, else any price the list
+  holds, so switching modes or adding "XXL" changes nothing until the manager edits it. Keys of
+  another mode stay in the editor and never reach the wire.
+- **Categories**: a *Prix par categorie* switch. On, it takes the registration price grid's profile
+  criterion when the form has one (`profileTierCriterion`: the first cotisation, promo or formation
+  dimension holding a category - never an answer, which a grid cannot price on), else a new
+  cotisation criterion (promo when the association sells no cotisation); *Selon* switches the kind,
+  and the categories are edited with the price grid's own `CriterionEditor`. One TAB per category,
+  "Autres" (`_others`) always last; each tab is a complete price list, a new category starting as a
+  copy of "Autres". On a public form the hint says a guest pays "Autres", and the save names that
+  price first (`PRODUCT_GRID_GUEST_PRICE_MISSING`).
+- **Cap per cell**: a stepper, 1..99, default 5; at 1 the hint says the buyer gets a checkbox.
+- **Preview**: the fill page's own `ProductGridQuestion.svelte`, inert, toggled *Ordinateur /
+  Telephone* through its `layout` prop (`desktop` / `phone` force one drawing at any width; the fill
+  pages keep `responsive`, the 640px switch). It is handed what a buyer would be: `editorGridView`
+  (the payload less its price lists) and `editorViewerPrices` (the tab on screen's list, in cents,
+  a blank price absent) - so the preview cannot draw a grid the fill page would not.
+- **Always required**: adding a grid (or turning a question into one) sets `required` and the
+  asterisk is disabled; it also calls the page's `onPricedGridAdded`, which switches
+  `allowMultipleSubmissions` on (a second order is a second answer, decision Q3) - the manager may
+  turn it off. **It goes back off only if the editor turned it on**: the page keeps
+  `multipleTurnedOnByGrid` (`GridMultipleSubmissions`, `multipleSubmissionsAfterGridAdded` /
+  `...AfterGridGone` in `productGridEditor.ts`), set only when a grid switched it from off;
+  removing a grid or changing its type calls `onPricedGridGone`, which switches it off when that
+  flag is set AND no grid remains. Any write through the switch's binding - the manager's toggle,
+  or the public switch forcing it on - clears the flag, so the choice is theirs from then on.
+- **The wire** (`itemsPayload.ts`): `toFormItemsPayload` sends `productGrid` as
+  `productGridPayload` builds it - the contract's exact shape, cents, one price per category x
+  axis key, closed cells of live entries only - and drops it from any other type; `fromFormItems`
+  reads cents back as euros (`editorProductGrid`; a broken stored grid opens as a new one).
+- **Validation**: `firstProductGridProblem` runs the contract's own `productGridItemRefusal` on that
+  payload before the save, so the page refuses what the server refuses and in the same words. The
+  page shows the question's title and the sentence in its banner, opens the card through `reveal`,
+  and the card repeats the sentence under the table (`gridFault`). The server's coded 400 is worded
+  by the same `productGridDefinitionMessage`, reached through `formCodeMessage`'s default branch.
+  **A refusal only the server can make** (`PRODUCT_GRID_TIER_INVALID` for a cotisation tier the
+  association does not sell, or any definition code the local check missed) is drawn the same way:
+  its body carries `itemId` (`ProductGridRefusalBody`, `product-grid.ts`), the forms client keeps it
+  on `SocialApiError.itemId`, and `refusedProductGridFault` (`questionFault.ts`) turns it into the
+  page's `gridFault` and opens the card. A grid code naming no grid of the form is logged at error
+  level and leaves the banner alone.
+- **Duplicating** (`questionDuplicate.ts`): the copy's rows and columns get FRESH ids
+  (`withFreshProductGridIds`), its closed cells and price keys following them; two questions
+  sharing a row id would read as one article in the export's totals.
+- **Removing an ordered row or column** (edit page): the server does NOT refuse it (an answer keeps
+  its `lines`, so its export still names what was charged). The edit page reads the form's answers
+  once when a grid has any (`getSubmissions` -> `orderedProductGridCells`), and removing a row or
+  column an answer ordered asks first (*"Des reponses contiennent cet article..."*). A failed read
+  is logged and leaves removals unwarned; it never blocks editing.
+
+Tests: `productGridEditor.test.ts` (every edit, the payload judged by the contract, modes,
+categories, a guest's price, the wire trip, fresh ids, every code worded, ordered cells, colliding
+labels, a removal refused for closing every cell, "Plusieurs reponses" switched back),
+`ProductGridEditor.svelte.test.ts` (add, rename, remove with and without orders, paste, arrows,
+the touch arrow buttons and 44px targets, a removal refused under the table, closing a cell, the
+three modes, the cap, category tabs, the preview),
+`FormQuestionsSection.svelte.test.ts` (offered on a form and not on a booking space, added required
+and opened, a refused save drawn under its grid, the page told when a grid goes), `itemsPayload.test.ts`, `questionDuplicate.test.ts`,
+`questionTypes.test.ts`, `questionFault.test.ts` (a server refusal mapped to its grid),
+`api.refusal.test.ts` (`itemId` carried), `routes/forms/create/page.pricedGridMultiple.svelte.test.ts`
+("Plusieurs reponses" back off with its grid and never against the manager; a server-only refusal
+drawn under a folded grid).
 
 ### The responses screen (client half of WP-G4, 2026-11-06)
 

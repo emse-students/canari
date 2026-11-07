@@ -4,7 +4,13 @@ import {
   addDimension,
   allCellKeys,
   emptyMatrix,
-  gridLayout,
+  crossKey,
+  fillCells,
+  gridAxes,
+  guestFreeCellKey,
+  lineCellKeys,
+  parseEuros,
+  rowUnavailable,
   hasCell,
   isComplete,
   matrixOf,
@@ -169,19 +175,156 @@ describe('price matrix editing', () => {
   });
 
   describe('layout', () => {
-    it('puts the last criterion across the top', () => {
+    const twoCriteria = (): PriceMatrix => {
       let m = withCotisation();
       m = addDimension(m, { ...newDimension('formation'), id: 'f' });
-      m = addBucket(m, 'f', { id: 'icm', label: 'ICM', values: ['ICM'] });
-      const { columns, rows } = gridLayout(m);
-      expect(columns.map((c) => c.id)).toEqual(['icm', OTHERS_BUCKET_ID]);
+      return addBucket(m, 'f', { id: 'icm', label: 'ICM', values: ['ICM'] });
+    };
+
+    it('puts the first criterion down the side and the second across the top', () => {
+      const { columns, rows } = gridAxes(twoCriteria());
+      expect(columns.map((c) => c.ids)).toEqual([['icm'], [OTHERS_BUCKET_ID]]);
       expect(rows.map((r) => r.ids)).toEqual([['yes'], [OTHERS_BUCKET_ID]]);
+      expect(crossKey(rows[0], columns[1])).toBe(`yes|${OTHERS_BUCKET_ID}`);
     });
 
-    it('gives a single criterion one row', () => {
-      const { columns, rows } = gridLayout(withCotisation());
+    it('gives a single criterion one row per group and a single price column', () => {
+      const { columns, rows } = gridAxes(withCotisation());
+      expect(rows.map((r) => r.key)).toEqual(['yes', OTHERS_BUCKET_ID]);
+      expect(columns).toEqual([{ ids: [], labels: [], key: '' }]);
+      expect(crossKey(rows[0], columns[0])).toBe('yes');
+    });
+
+    it('still lays out a stored grid of three criteria, the extra ones nested in the rows', () => {
+      let m = twoCriteria();
+      m = addDimension(m, { ...newDimension('promo'), id: 'p' });
+      m = addBucket(m, 'p', { id: 'y', label: '1A', values: [2026] });
+      const { columns, rows } = gridAxes(m);
+      expect(rows).toHaveLength(4);
       expect(columns).toHaveLength(2);
-      expect(rows).toEqual([{ ids: [], labels: [] }]);
+      const keys = rows.flatMap((r) => columns.map((c) => crossKey(r, c)));
+      expect(keys.sort()).toEqual(allCellKeys(m.dimensions).sort());
+    });
+
+    it('fills a whole row or column, and nothing else', () => {
+      const m = twoCriteria();
+      const axes = gridAxes(m);
+      const filled = fillCells(m, lineCellKeys(axes, 'column', 'icm'), 12);
+      expect(filled.cells['yes|icm']).toBe(12);
+      expect(filled.cells[`${OTHERS_BUCKET_ID}|icm`]).toBe(12);
+      expect(filled.cells[`yes|${OTHERS_BUCKET_ID}`]).toBe(m.cells[`yes|${OTHERS_BUCKET_ID}`]);
+      const closed = fillCells(m, lineCellKeys(axes, 'row', 'yes'), null);
+      expect(rowUnavailable(closed, axes.rows[0], axes.columns)).toBe(true);
+      expect(rowUnavailable(closed, axes.rows[1], axes.columns)).toBe(false);
+      expect(isComplete(closed)).toBe(true);
+    });
+  });
+
+  describe('typed prices', () => {
+    it('reads an empty box as free and a comma as a decimal point', () => {
+      expect(parseEuros('')).toBe(0);
+      expect(parseEuros(' 12,5 ')).toBe(12.5);
+      expect(parseEuros('abc')).toBeNull();
+      expect(parseEuros('-3')).toBeNull();
+    });
+
+    it('ignores thousands spaces, a no-break one included', () => {
+      expect(parseEuros('1 000,50')).toBe(1000.5);
+      expect(parseEuros('1 000')).toBe(1000);
+      expect(parseEuros('1 000,5')).toBe(1000.5);
+    });
+
+    // The box must show what `matrixPayload` will send: 12.345 € would be saved as 1234 cents.
+    it('rounds to the cent, as the payload does', () => {
+      expect(parseEuros('12,345')).toBe(12.35);
+      expect(parseEuros('0,001')).toBe(0);
+      expect(parseEuros('19,99')).toBe(19.99);
+      const m = matrixOf({ dimensions: [{ id: 'f', kind: 'formation', buckets: [] }], cells: {} })!;
+      m.cells[OTHERS_BUCKET_ID] = parseEuros('12,345');
+      expect((matrixPayload(m) as { cells: Record<string, number> }).cells[OTHERS_BUCKET_ID]).toBe(
+        1235
+      );
+    });
+
+    it('refuses an amount whose cents are not a safe integer, and Infinity', () => {
+      expect(parseEuros('1e300')).toBeNull();
+      expect(parseEuros('Infinity')).toBeNull();
+      expect(parseEuros('12,5,0')).toBeNull();
+    });
+  });
+
+  describe('the guest seat, read like the server', () => {
+    it('treats an empty showIf as no condition, as normaliseCondition does', () => {
+      // A required single choice every option of which sits in a group closes "everyone else".
+      const grid: PriceMatrix = {
+        dimensions: [
+          {
+            id: 'q',
+            kind: 'answer',
+            questionId: 'meal',
+            buckets: [{ id: 'y', label: 'Oui', values: ['o1'] }],
+          },
+        ],
+        cells: { y: 10, [OTHERS_BUCKET_ID]: 0 },
+      };
+      const item = {
+        id: 'meal',
+        type: 'single_choice',
+        required: true,
+        options: [{ id: 'o1' }],
+      };
+      expect(guestFreeCellKey(grid, [{ ...item, showIf: {} }])).toBeNull();
+      expect(guestFreeCellKey(grid, [{ ...item, showIf: { promos: [2026] } }])).toBe(
+        OTHERS_BUCKET_ID
+      );
+    });
+  });
+
+  describe('the guest seat of a public form', () => {
+    const charging = (): PriceMatrix => {
+      const m = withCotisation();
+      m.cells.yes = 10;
+      m.cells[OTHERS_BUCKET_ID] = 0;
+      return m;
+    };
+
+    it('flags the all-"everyone else" cell priced 0 in a grid that charges', () => {
+      expect(guestFreeCellKey(charging(), [])).toBe(OTHERS_BUCKET_ID);
+    });
+
+    it('flags nothing once that cell is priced, closed, or the grid charges nobody', () => {
+      const priced = charging();
+      priced.cells[OTHERS_BUCKET_ID] = 5;
+      expect(guestFreeCellKey(priced, [])).toBeNull();
+      const closed = charging();
+      closed.cells[OTHERS_BUCKET_ID] = null;
+      expect(guestFreeCellKey(closed, [])).toBeNull();
+      const free = charging();
+      free.cells.yes = 0;
+      expect(guestFreeCellKey(free, [])).toBeNull();
+    });
+
+    it('never flags a named group priced 0 - only the true fallback', () => {
+      const m = charging();
+      m.cells.yes = 0;
+      m.cells[OTHERS_BUCKET_ID] = 10;
+      expect(guestFreeCellKey(m, [])).toBeNull();
+    });
+
+    it('flags nothing when a required question puts every answer in a group', () => {
+      let m: PriceMatrix = { dimensions: [], cells: {} };
+      m = addDimension(m, { ...newDimension('answer', { questionId: 'q' }), id: 'a' });
+      m = addBucket(m, 'a', { id: 'o1', label: 'Oui', values: ['yes'] });
+      m.cells.o1 = 10;
+      m.cells[OTHERS_BUCKET_ID] = 0;
+      const item = {
+        id: 'q',
+        type: 'single_choice',
+        required: true,
+        options: [{ id: 'yes' }],
+      };
+      expect(guestFreeCellKey(m, [item])).toBeNull();
+      expect(guestFreeCellKey(m, [{ ...item, required: false }])).toBe(OTHERS_BUCKET_ID);
     });
   });
 

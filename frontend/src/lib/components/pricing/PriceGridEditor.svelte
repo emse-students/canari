@@ -1,16 +1,18 @@
 <script lang="ts">
-  import { TriangleAlert, Ban, Grid3x3, Plus } from '@lucide/svelte';
+  import { TriangleAlert, Plus } from '@lucide/svelte';
   import CriterionEditor from './CriterionEditor.svelte';
-  import { CONTROL_HINT_CLASS, controlClass } from '$lib/components/ui/controlClasses';
+  import PriceCellsEditor from './PriceCellsEditor.svelte';
+  import FloatingSurface from '$lib/components/ui/FloatingSurface.svelte';
+  import { CONTROL_HINT_CLASS } from '$lib/components/ui/controlClasses';
   import type { MembershipTier } from '$lib/associations/api';
   import type { FormItem } from '$lib/forms/api';
   import {
     addBucket,
     addDimension,
-    cellKey,
     emptyMatrix,
-    gridLayout,
+    guestFreeCellKey,
     matrixProblem,
+    MAX_CRITERIA,
     newDimension,
     pricesOnProfile,
     removeBucket,
@@ -19,28 +21,23 @@
     type PriceMatrix,
   } from '$lib/pricing/priceMatrix';
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
+  import { criterionTitle } from '$lib/pricing/criterionTitle';
   import { gridProblemMessage } from '$lib/pricing/gridProblem';
+  import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
 
   /**
-   * The pricing grid: the criteria a form discriminates on, and one price per combination.
+   * The pricing grid: the criteria a price discriminates on, and one price per combination.
    *
-   * It is a GRID rather than a list of rules because the criteria multiply: ticking "formation" and
-   * "promotion" describes a table that has to be filled, and exactly one cell then applies to any
-   * person - no priority, no tie-break, nothing to explain. That is the user's own framing and it is
-   * what makes this screen possible to read.
+   * It is a GRID rather than a list of rules because the criteria multiply, and exactly one cell
+   * then applies to any person - no priority, no tie-break, nothing to explain. Since 2026-11-06 it
+   * is drawn as what it is, a table: at most TWO criteria (owner), the first down the side, the
+   * second across the top (`PriceCellsEditor`). The "Critère" menu refuses a third; a stored grid
+   * with more still loads and saves untouched, laid out with the extra criteria nested in the rows.
    *
    * Every cell always has a value: adding a criterion copies existing prices across, and adding a
    * group starts it from the "everyone else" price. So the grid is complete from the first click and
    * the manager only edits what actually differs.
-   *
-   * A cell can also be marked UNAVAILABLE, which is a decision no price can carry - 0 means free.
-   * It is how a combination that simply does not exist ("non-cotisant, formule week-end") stops
-   * being offered, and the fill page then greys out the options that would lead to it.
-   *
-   * Availability is carried by the cell, not by a button beside it. An unavailable cell has nothing
-   * to type in, so clicking it is what reopens it; an available cell must give its click to the
-   * caret, so closing it is the one action left on a control inside the cell, which takes no width.
    */
   interface Props {
     /** Non-null whenever the manager has switched the grid on, even before the first criterion. */
@@ -52,10 +49,13 @@
     items: FormItem[];
     /** Whether the beneficiary association sells any cotisation - gates that one criterion. */
     hasCotisation: boolean;
+    /** The block's title; a form calls it "Prix d'inscription", a product its own grid. */
+    title?: string;
     /**
      * The form is public: a guest has no promo, formation or cotisation, so on a criterion about
      * who the person is it pays the "everyone else" tier - said under the grid, never by hiding a
-     * criterion (owner, 2026-11-06).
+     * criterion (owner, 2026-11-06). The cell a guest lands in may not be free (`freeFallbackCells`
+     * server-side, decision PP1), so it is flagged where it is fixed.
      */
     isPublic?: boolean;
   }
@@ -67,40 +67,66 @@
     formations,
     items,
     hasCotisation,
+    title = m.form_grid_title(),
     isPublic = false,
   }: Props = $props();
 
   const problem = $derived(matrixProblem(matrix));
   /** A public form's grid on who the person is: guests land in its "everyone else" tier. */
   const guestsPayOthers = $derived(isPublic && pricesOnProfile(matrix));
-  const layout = $derived(matrix ? gridLayout(matrix) : { columns: [], rows: [] });
+  const sources = $derived({ tiers, formations, items });
   const usedKinds = $derived(new Set((matrix?.dimensions ?? []).map((d) => d.kind)));
+  const full = $derived((matrix?.dimensions.length ?? 0) >= MAX_CRITERIA);
+  const guestFreeKey = $derived(isPublic ? guestFreeCellKey(matrix, items) : null);
 
-  /** One criterion of each kind, except `answer` - a form can price on two questions. */
-  const available = $derived(
+  /**
+   * The criteria this grid can be divided on. One of each kind, except `answer` - a form can price
+   * on two questions. A kind this grid cannot offer at all is left out; one already used, or past
+   * the two-criteria bound, is shown greyed with why.
+   */
+  const menu = $derived(
     (
       [
-        {
-          kind: 'cotisation' as const,
-          label: m.form_criterion_cotisation(),
-          enabled: hasCotisation,
-        },
-        { kind: 'promo' as const, label: m.form_criterion_promo(), enabled: true },
-        { kind: 'formation' as const, label: m.form_criterion_formation(), enabled: true },
-        {
-          kind: 'answer' as const,
-          label: m.form_criterion_answer(),
-          enabled: items.some((i) => (i.options?.length ?? 0) > 0),
-        },
+        { kind: 'promo' as const, offered: true },
+        { kind: 'formation' as const, offered: true },
+        { kind: 'cotisation' as const, offered: hasCotisation },
+        { kind: 'answer' as const, offered: items.some((i) => (i.options?.length ?? 0) > 0) },
       ] as const
-    ).filter((c) => c.enabled && (c.kind === 'answer' || !usedKinds.has(c.kind)))
+    )
+      .filter((c) => c.offered)
+      .map((c) => {
+        const taken = c.kind !== 'answer' && usedKinds.has(c.kind);
+        const note = taken
+          ? m.form_grid_criterion_taken()
+          : full
+            ? m.form_grid_criterion_full()
+            : null;
+        return { kind: c.kind, label: criterionTitle(c.kind), note };
+      })
   );
 
+  let menuOpen = $state(false);
+  let menuAsSheet = $state(false);
+  let menuAnchor: HTMLButtonElement | null = $state(null);
+
+  function openMenu() {
+    menuAsSheet = window.matchMedia('(width < 40rem)').matches;
+    menuOpen = true;
+    Log.d('PRICE_GRID', `criterion menu open, ${menu.length} kinds, full=${full}`);
+  }
+
   function add(kind: DimensionKind) {
+    // The menu greys these out; refusing here too keeps the bound true whatever reaches this call.
+    if (full || (kind !== 'answer' && usedKinds.has(kind))) {
+      Log.d('PRICE_GRID', `criterion ${kind} refused: full or already used`);
+      return;
+    }
+    Log.d('PRICE_GRID', `add criterion ${kind}`);
     // A brand-new grid inherits the single price, so switching criteria on changes no total.
     const seeded: PriceMatrix =
       matrix && matrix.dimensions.length > 0 ? matrix : emptyMatrix(basePrice);
     matrix = addDimension(seeded, newDimension(kind));
+    menuOpen = false;
   }
 
   /**
@@ -110,6 +136,7 @@
    */
   function remove(dimensionId: string) {
     if (!matrix) return;
+    Log.d('PRICE_GRID', `remove criterion ${dimensionId}`);
     const next = removeDimension(matrix, dimensionId);
     matrix = next.dimensions.length === 0 ? emptyMatrix(basePrice) : next;
   }
@@ -119,42 +146,44 @@
     if (matrix) matrix = { ...matrix, cells: { ...matrix.cells } };
   }
 
-  function setCell(key: string, raw: string) {
-    if (!matrix) return;
-    const value = raw === '' ? 0 : Number(raw);
-    matrix = { ...matrix, cells: { ...matrix.cells, [key]: Number.isNaN(value) ? 0 : value } };
-  }
-
-  /**
-   * Flips one cell between a price and "this combination does not exist".
-   *
-   * Coming back from unavailable restores 0, not the price that was there before: that price is
-   * gone, and 0 is the one value a manager cannot mistake for a considered one.
-   */
-  function toggleAvailability(key: string) {
-    if (!matrix) return;
-    const next = matrix.cells[key] === null ? 0 : null;
-    matrix = { ...matrix, cells: { ...matrix.cells, [key]: next } };
+  /** "Lignes" for every criterion but the last of two or more, which runs across the top. */
+  function axisLabel(index: number, count: number): string {
+    return count > 1 && index === count - 1 ? m.form_grid_axis_columns() : m.form_grid_axis_rows();
   }
 </script>
 
 <div class="border-cn-border space-y-4 border-t-2 pt-4">
-  <div class="flex items-start gap-2">
-    <Grid3x3 size={16} class="text-text-muted mt-0.5 shrink-0" />
-    <div>
-      <p class="text-text-main text-sm font-bold">{m.form_grid_title()}</p>
-      <p class={CONTROL_HINT_CLASS}>{m.form_grid_hint()}</p>
-    </div>
+  <div>
+    <p class="text-text-main text-base font-bold">{title}</p>
+    <p class={CONTROL_HINT_CLASS}>{m.form_grid_hint()}</p>
   </div>
 
-  {#if matrix}
-    <div class="space-y-3">
-      {#each matrix.dimensions as dimension (dimension.id)}
+  <section class="space-y-2" aria-labelledby="price-criteria-heading">
+    <div class="flex items-center gap-3">
+      <h3 id="price-criteria-heading" class="text-text-main flex-1 text-sm font-bold">
+        {m.form_grid_criteria_heading()}
+      </h3>
+      {#if menu.length > 0}
+        <button
+          bind:this={menuAnchor}
+          type="button"
+          onclick={() => (menuOpen ? (menuOpen = false) : openMenu())}
+          aria-expanded={menuOpen}
+          aria-haspopup="true"
+          class="border-cn-border text-text-main hover:bg-cn-bg inline-flex min-h-11 items-center gap-1.5 rounded-full border px-4 text-sm font-bold"
+        >
+          <Plus size={16} />
+          {m.form_grid_add_criterion()}
+        </button>
+      {/if}
+    </div>
+
+    {#if matrix}
+      {#each matrix.dimensions as dimension, i (dimension.id)}
         <CriterionEditor
           {dimension}
-          {tiers}
-          {formations}
-          {items}
+          axisLabel={axisLabel(i, matrix.dimensions.length)}
+          {sources}
           onAddBucket={(bucket) => {
             if (matrix) matrix = addBucket(matrix, dimension.id, bucket);
           }}
@@ -165,23 +194,8 @@
           onChange={touched}
         />
       {/each}
-    </div>
-  {/if}
-
-  {#if available.length > 0}
-    <div class="flex flex-wrap gap-2">
-      {#each available as criterion (criterion.kind)}
-        <button
-          type="button"
-          onclick={() => add(criterion.kind)}
-          class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-xl border-2 px-3 py-2 text-xs font-bold transition-colors"
-        >
-          <Plus size={13} />
-          {m.form_grid_filter_by({ criterion: criterion.label })}
-        </button>
-      {/each}
-    </div>
-  {/if}
+    {/if}
+  </section>
 
   {#if matrix && problem}
     <p
@@ -193,90 +207,43 @@
   {/if}
 
   {#if matrix && !problem}
-    <!-- Wide content scrolls inside its own box; the page body never scrolls sideways. -->
-    <div class="border-cn-border overflow-x-auto rounded-2xl border-2">
-      <!-- The counts are all `.price-grid` needs; the sizes are its own, in `app.css`. -->
-      <table
-        class="price-grid text-sm"
-        style="--group-cols: {matrix.dimensions.length - 1}; --price-cols: {layout.columns.length}"
-      >
-        <colgroup>
-          {#each matrix.dimensions.slice(0, -1) as dimension (dimension.id)}
-            <col class="group-col" />
-          {/each}
-          {#each layout.columns as column (column.id)}
-            <col class="price-col" />
-          {/each}
-        </colgroup>
-        <thead>
-          <tr class="border-cn-border bg-cn-bg border-b-2">
-            {#each matrix.dimensions.slice(0, -1) as dimension (dimension.id)}
-              <th
-                class="text-text-muted px-3 py-2 text-left text-xs font-bold tracking-wide uppercase"
-              >
-                {m.form_grid_group_column()}
-              </th>
-            {/each}
-            {#each layout.columns as column (column.id)}
-              <th class="text-text-main px-3 py-2 text-left text-xs font-bold break-words">
-                {column.label || m.form_criterion_others()}
-              </th>
-            {/each}
-          </tr>
-        </thead>
-        <tbody class="divide-cn-border/50 divide-y">
-          {#each layout.rows as row (row.ids.join('|'))}
-            <tr>
-              {#each row.labels as label, i (i)}
-                <td class="text-text-main px-3 py-2 text-xs font-semibold break-words">
-                  {label || m.form_criterion_others()}
-                </td>
-              {/each}
-              {#each layout.columns as column (column.id)}
-                {@const key = cellKey([...row.ids, column.id])}
-                {@const unavailable = matrix.cells[key] === null}
-                <td class="p-1.5">
-                  {#if unavailable}
-                    <button
-                      type="button"
-                      onclick={() => toggleAvailability(key)}
-                      title={m.form_grid_cell_restore_title()}
-                      class="text-text-muted border-cn-border bg-cn-border/20 hover:border-cn-yellow/40 hover:text-text-main w-full rounded-2xl border-2 border-dashed py-2 text-center text-xs font-semibold transition-colors"
-                    >
-                      {m.form_grid_cell_unavailable()}
-                    </button>
-                  {:else}
-                    <div class="cell-host relative">
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={matrix.cells[key] ?? 0}
-                        oninput={(e) => setCell(key, e.currentTarget.value)}
-                        class="{controlClass(false, 'compact')} no-spinner"
-                      />
-                      <button
-                        type="button"
-                        onclick={() => toggleAvailability(key)}
-                        title={m.form_grid_cell_disable_title()}
-                        class="cell-action text-text-muted hover:text-red-err absolute inset-y-0 right-2 flex items-center"
-                      >
-                        <Ban size={13} />
-                      </button>
-                    </div>
-                  {/if}
-                </td>
-              {/each}
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
-    <p class={CONTROL_HINT_CLASS}>{m.form_grid_currency_hint()}</p>
-    <p class={CONTROL_HINT_CLASS}>{m.form_grid_unavailable_hint()}</p>
+    <PriceCellsEditor
+      bind:matrix={() => matrix as PriceMatrix, (next) => (matrix = next)}
+      {sources}
+      {guestFreeKey}
+    />
     {#if guestsPayOthers}
       <p class={CONTROL_HINT_CLASS}>{m.form_price_grid_guest_tier()}</p>
     {/if}
-    <p class={CONTROL_HINT_CLASS}>{m.form_grid_toggle_hint()}</p>
   {/if}
 </div>
+
+<FloatingSurface
+  open={menuOpen}
+  asSheet={menuAsSheet}
+  anchor={menuAnchor}
+  label={m.form_grid_add_criterion()}
+  popoverWidth="content"
+  onClose={(refocus) => {
+    menuOpen = false;
+    if (refocus) menuAnchor?.focus();
+  }}
+>
+  <div class="flex flex-col p-1" data-testid="criterion-menu">
+    {#each menu as item (item.kind)}
+      <button
+        type="button"
+        onclick={() => add(item.kind)}
+        aria-disabled={item.note !== null}
+        class="hover:bg-cn-bg flex min-h-11 flex-col items-start justify-center rounded-lg px-3 py-1.5 text-left text-sm font-semibold {item.note
+          ? 'text-text-muted'
+          : 'text-text-main'}"
+      >
+        <span>{item.label}</span>
+        {#if item.note}
+          <span class="text-text-muted text-xs font-normal">{item.note}</span>
+        {/if}
+      </button>
+    {/each}
+  </div>
+</FloatingSurface>

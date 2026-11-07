@@ -71,3 +71,35 @@ describe('duplicateQuestion', () => {
     expect(duplicateQuestion(base(), 9)).toBeNull();
   });
 });
+
+describe('duplicating a priced grid', () => {
+  it('gives the copy fresh row and column ids and remaps its closed cells and prices', () => {
+    const items = [
+      {
+        id: 'g',
+        type: 'product_grid',
+        label: 'Sweat',
+        productGrid: {
+          rows: [
+            { id: 'r1', label: 'Vert' },
+            { id: 'r2', label: 'Noir' },
+          ],
+          columns: [{ id: 'c1', label: 'M' }],
+          maxPerCell: 5,
+          closedCells: ['r2:c1'],
+          pricing: { mode: 'per_row' as const, tiers: null, prices: { _all: { r1: 28, r2: 30 } } },
+        },
+      },
+    ];
+    const r = duplicateQuestion(items, 0)!;
+    const copy = r.items[1].productGrid!;
+    const [r1, r2] = copy.rows.map((row) => row.id);
+    expect([r1, r2]).not.toContain('r1');
+    expect(copy.columns[0].id).not.toBe('c1');
+    expect(copy.closedCells).toEqual([`${r2}:${copy.columns[0].id}`]);
+    expect(copy.pricing.prices._all).toEqual({ [r1]: 28, [r2]: 30 });
+    // The original keeps its ids: answers already stored point at them.
+    expect(items[0].productGrid.rows[0].id).toBe('r1');
+    expect(items[0].productGrid.closedCells).toEqual(['r2:c1']);
+  });
+});

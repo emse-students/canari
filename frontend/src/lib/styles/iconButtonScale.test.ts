@@ -45,6 +45,10 @@ const cssPath = join(src, 'app.css');
  * button is added or removed - which is exactly when someone should be asked to justify it again.
  */
 const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
+  'lib/components/forms/ProductGridEditor.svelte': {
+    count: 3,
+    why: "the grip and the x inside a priced grid's column chip, sized by the chip so fifteen columns still fit a table row (on a touch screen the x is widened by `tap-target` and the grip, which no drag reaches there, gives way to 44px arrow buttons); and a row's x, 32px wide in the phone's narrow label column so a word like Bordeaux fits beside it, its hit box widened to 44px by `tap-target`. A column's arrows take the same shape (44px tall, the column's width on a phone, `tap-target`) through `columnMoveButtonClass`, a constant this scan does not read",
+  },
   'lib/components/forms/ProductGridQuestion.svelte': {
     count: 4,
     why: 'the - and + halves of a priced-grid stepper pill, each the full 44px height of the pill and a third of its width, so the pill reads as one control',
@@ -60,6 +64,10 @@ const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
   'lib/components/chat/ChatComposer.svelte': {
     count: 2,
     why: 'crosses overlaying a 64px media thumbnail',
+  },
+  'lib/components/pricing/CriterionEditor.svelte': {
+    count: 2,
+    why: 'the cross inside a value chip and the dashed "+" that closes the chip row, drawn at chip height so a group stays one line; the touch hit area is widened by `tap-target` instead',
   },
   'lib/components/posts/MediaThumbRemoveButton.svelte': {
     count: 1,
