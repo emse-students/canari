@@ -1411,7 +1411,7 @@ no purge date (flagged to the DPO); account deletion is a durable queue (#1965).
 
 ## Decided by the user on 2026-10-18 (second batch)
 
-- **`graine_seeds.json` and `channel_keys.json` stay on account deletion for now.** They are per-install native files holding community keys, with no owner. Backlog item: verify whether the next session re-mirrors them, then write an erasure rule using the same `push_context.json` ownership proof.
+- **`graine_seeds.json` and `channel_keys.json` stay on account deletion for now.** They are per-install native files holding community keys, with no owner. Backlog item: verify whether the next session re-mirrors them, then write an erasure rule using the same `push_context.json` ownership proof. *(Superseded 2026-11-07: each mirror entry now names its writers and the account wipes remove the account's own - [auth](frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07); `channel_keys.json` is deleted at every start.)*
 - **WP-RESTORE-1 (account restore through WebAuthn, native + server)** is MERGED (#2065, 2026-10-24); it stays out of a stable until it is read on a phone ([its entry](#p2---wp-restore-1-zero-tap-sign-in-restoration-required-by-google-play-from-april-2027)).
 - **The MiConnect terms hold is lifted by the lead** as soon as the three preconditions listed above are verified; the lead tells the user.
 - **The KLIPY key is not rotated** (re-decided 2026-10-24: dev reuses the production key) - the revisit condition is on [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review).
@@ -2053,10 +2053,6 @@ The owed mark is written at decision time and drained into the outbox at every o
 ## P3 - A leader taken over in the middle of its own PIN change reloads and tears the change (found 2026-10-18, review of #2058)
 
 Another tab's "Take over" makes the changing leader `releaseLeadership`, and the demotion handler (`useChatSession.svelte.ts`) reloads it 50 ms later whatever it is doing; the recovery finishes the move, but it costs a recovery prompt. **Owed**: refuse or defer a takeover while this tab is changing the key (the realm knows it, `RealmHold.changing`), with a two-realm test ([auth](frontend/modules/auth.md#the-other-tabs-of-the-account)).
-
-## P2 - A deleted account's community keys stay on the phone in per-install files with no owner (found 2026-10-18, fourth review of #2023)
-
-`graine_seeds.json` (with its `.lock`) and `channel_keys.json` are ONE file per install and hold community keys that can decrypt history the server still stores. (Since 2026-10-22 the first is sealed at rest under the INSTALL's native cache key and the second is deleted at the first run ([mobile](frontend/mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)) - which changes nothing here: the install key opens the mirror for whichever account is signed in.) Neither records whose it is, so the account-deletion wipe cannot remove them (and a sign-out already leaves them, deliberately). **The minimal safe rule** is the one `delete_user_push_files` uses: remove only when an ownership proof names the deleted account, as `push_context.json` does. **Check first**: two local accounts in the same community may share entries, and whether the live account re-mirrors them from its own session decides if a per-account split or an owner field is the right cut ([auth](frontend/modules/auth.md#an-account-deletion-wipes-that-accounts-local-database-and-vault-slot-wp-del-local-2026-10-18)).
 
 ## P3 - The case-collision refusal keeps the deletion marker for ever (found 2026-10-18, fourth review of #2023)
 

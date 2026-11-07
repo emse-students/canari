@@ -17,14 +17,22 @@ import { isTauriRuntime } from '$lib/utils/openExternal';
  */
 
 /**
- * Mirrors one session's seed natively. Tauri only; a no-op on web.
+ * Mirrors one session's seed natively, labelled with the account it was stored for. Tauri only; a
+ * no-op on web.
+ *
+ * THE LABEL is what lets the wipe of ONE account (`forget_account_graine_seeds`, called by
+ * `accountLocalWipe.ts`) remove exactly that account's seeds from a file every account of the install
+ * shares: an entry keeps the label of every account that wrote it, and goes only with the last.
  *
  * **Best-effort, and that is a real answer rather than a swallowed one:** a seed too old to be
  * mirrored, or a mirror that failed to write, costs a richer notification and nothing else - the
  * banner degrades to "new message in #salon", which is the existing behaviour for an oversized
  * ciphertext. It never costs a message: the WebView reads the durable store, not this file.
  */
-export async function mirrorGraineSeed(session: StoredGraineSession): Promise<void> {
+export async function mirrorGraineSeed(
+  session: StoredGraineSession,
+  accountId: string
+): Promise<void> {
   if (!isTauriRuntime()) return;
   try {
     const { invoke } = await import('@tauri-apps/api/core');
@@ -39,6 +47,7 @@ export async function mirrorGraineSeed(session: StoredGraineSession): Promise<vo
         firstIndex: session.firstIndex,
         minterUserId: session.v2 ? session.senderId : null,
         signingPublicKeyB64: session.v2?.signingPublicKeyB64 ?? null,
+        accountId,
       },
     });
   } catch (e) {

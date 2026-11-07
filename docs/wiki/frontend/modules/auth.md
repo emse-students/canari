@@ -1185,7 +1185,7 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
   | every keystore entry | B's alias `<userId>_<deviceId>`, named by B's device id and B's at-rest marker - both left in place by the session end for exactly this (round 7) |
   | `localStorage` / `sessionStorage` | B's per-account keys, B's vault slot, B's upload marks and session metadata |
   | the in-app log, the HTTP cache, notification avatars, `fcm_token.txt`, `keystore_aliases.xml`, the Share Extension's share | LEFT: nothing in them names an account, and A reads them |
-  | `graine_seeds.json`, `channel_keys.json` (sealed at rest) | LEFT - **decided** (round 7 review): sealed under the install's native cache key, unlabelled, shared with A's communities; labelling each entry with the account that wrote it is owed ([backlog](../../backlog.d/p3-label-push-caches-by-account.md)) |
+  | `graine_seeds.json` (sealed at rest) | B's entries only, BY LABEL (2026-11-07, [below](#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07)): an entry B alone wrote goes, one A also wrote keeps A, one written before the label is left. `channel_keys.json` no longer exists: every start deletes the one an older build left (`native_cache::remove_legacy_channel_keys`) |
 
   **Nothing on the revoked path can refuse any more**: it used to begin with the PIN reset's
   `removeMlsState`, which round 5 made refusable, and a refusal threw past `clearAuth` and the wipe -
@@ -1267,6 +1267,39 @@ retirement order and the withheld reset in the shell. `components/auth/PinModal.
 renders the gate without a reachable reset. Mutation-checked: removing the native guard fails three
 cases, collapsing the slots into one fails seven, re-offering the reset fails two, retiring the
 unlabelled slot without the key comparison fails one.
+
+#### The seed mirror labels each entry with its writers (2026-11-07)
+
+`graine_seeds.json` is ONE file per install, and a seed is a SALON's, not an account's: two accounts
+of one install may read the same salon and mirror the same session. So each entry carries
+`accounts`, the label of every account that wrote it - `account_label` in `mls_account_state.rs`,
+the parked directory's hash (SHA-256 hex) of the id in its canonical spelling (ASCII-lowercased,
+because the three writers read the id from three places). Who writes the label:
+
+- **the page** (`store_graine_seed`): the signed-in account it stored the session for
+  (`mirrorGraineSeed(session, accountId)`, `frameHandler.ts`, `channelSeal.ts`);
+- **the push decrypt** (both platforms, `store_graine_seeds_json`): `background.rs`
+  (`with_seed_writer`) stamps every seed of a key-material answer with the account whose device
+  key opened `mls.bin` - the account whose key group carried it. Kotlin and Swift hand the array
+  on unchanged, so no platform code names an account.
+
+A second write of a session ADDS its writer; the per-account wipe
+(`forget_account_graine_seeds`, the step "the mirrored Graine seeds" of
+`wipeDeletedAccountLocalData`, so the deleted-account AND the revoked-device wipe) drops the
+account's label from every entry and removes an entry only when its list empties - **an allowlist
+by label**, never a guess from the community. On iOS it edits the app's copy and the App Group's,
+which the extension writes itself. A relayed (bundle) seed is mirrored natively only for a salon
+holding a session labelled with THAT account: another account's admission is not this one's.
+
+**An entry written before the label is never read as an account's** (decided 2026-11-07). The push
+path wrote it for the slot's owner of the day and the page for the account signed in, and nothing
+kept which: on an install two accounts share it may be either's. So no per-account wipe removes it
+and no relayed-seed check counts it; a later write labels it and marks it `unattributed: true`,
+because that write proves who wrote it now, not before - its wipe drops its label and leaves the
+entry. Such an entry leaves the way every entry leaves without a wipe: the per-channel bound of 20
+sessions, the retention sweep, a community leaving the device, the factory wipe. Pinned by the
+`graine_mirror_tests` in `push.rs` and `accountLocalWipe.test.ts`; owed one bench reading
+([device-verification](../../device-verification.md#the-seed-mirror-labelled-by-account---owed-2026-11-07)).
 
 ### How often the sheet comes back - the biometric cadence (2026-09-28)
 

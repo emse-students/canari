@@ -1355,8 +1355,34 @@ pub fn decrypt_push_message_with_key(
         return refused("state-unreadable");
     };
 
-    let answer = decrypt_loaded(&mut manager, frame, language);
+    let answer = with_seed_writer(decrypt_loaded(&mut manager, frame, language), user_id);
     with_owner_alerts(answer, &mut manager, user_id, device_id)
+}
+
+/// Stamps every seed of a key-material answer with the label of the account the state was opened
+/// for (`commands::push::SEED_WRITER_FIELD`, `account_label`) - the account whose device key opened
+/// `mls.bin`, so the account whose key group carried the seed. The mirror writer labels the entry
+/// with it, which is what lets a per-account wipe remove exactly that account's seeds
+/// (`forget_account_graine_seeds`). Stamped HERE, beside the decrypt, because this is the one place
+/// that knows both the seeds and the account: the Kotlin and Swift callers hand the array to the
+/// writer as they got it, so neither platform's code names the account itself.
+fn with_seed_writer(mut answer: serde_json::Value, user_id: &str) -> serde_json::Value {
+    if answer["reason"] != "graine-key-material" {
+        return answer;
+    }
+    let label = crate::commands::mls_account_state::account_label(user_id);
+    if let Some(seeds) = answer["seeds"].as_array_mut() {
+        for seed in seeds
+            .iter_mut()
+            .filter_map(serde_json::Value::as_object_mut)
+        {
+            seed.insert(
+                crate::commands::push::SEED_WRITER_FIELD.to_string(),
+                label.clone().into(),
+            );
+        }
+    }
+    answer
 }
 
 /// Adds `ownDeviceAdded` - the keys of the "a new device was added to your account" alerts the
@@ -1664,6 +1690,7 @@ pub fn decrypt_push_message_with_commits_with_key(
             refused_by_mls(&e)
         }
     };
+    let answer = with_seed_writer(answer, user_id);
     with_owner_alerts(answer, &mut manager, user_id, device_id)
 }
 
@@ -2034,6 +2061,33 @@ mod tests {
         assert_eq!(seeds[0]["channelId"], "ch-salon");
         assert_eq!(seeds[0]["sessionId"], "sess-abc");
         assert_eq!(seeds[0]["seedB64"], STANDARD.encode(seed));
+        // Stamped with the account the state was opened for - Bob's, never the sender's - in the
+        // spelling-proof label the mirror and the per-account wipe share.
+        assert_eq!(
+            seeds[0][crate::commands::push::SEED_WRITER_FIELD],
+            crate::commands::mls_account_state::account_label("Graine-Bob")
+        );
+        assert_ne!(
+            seeds[0][crate::commands::push::SEED_WRITER_FIELD],
+            crate::commands::mls_account_state::account_label("graine-alice")
+        );
+    }
+
+    /// Only a key-material answer is stamped: a message, a refusal or a control frame carries no
+    /// seed, and gains no field.
+    #[test]
+    fn only_key_material_is_stamped_with_its_writer() {
+        let message = serde_json::json!({ "ok": true, "body": "x" });
+        assert_eq!(with_seed_writer(message.clone(), "bob"), message);
+        let material = serde_json::json!({
+            "ok": false, "reason": "graine-key-material", "seeds": [{ "sessionId": "s" }, 3]
+        });
+        let stamped = with_seed_writer(material, "bob");
+        assert_eq!(
+            stamped["seeds"][0]["account"],
+            crate::commands::mls_account_state::account_label("bob")
+        );
+        assert_eq!(stamped["seeds"][1], 3, "a malformed seed is left as it is");
     }
 
     /// NOTIF-19, 2026-09-27: a seed sealed ONE COMMIT AHEAD of the device must come out of the

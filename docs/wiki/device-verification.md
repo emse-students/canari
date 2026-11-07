@@ -617,6 +617,35 @@ locked and the app killed, and a second device calling it with VIDEO.
 3. Repeat with an AUDIO call: `video=0`, audio screen, camera off.
 4. With `calls_mode = audio`, a video ring attempt is refused by the server: no CallKit ring at all.
 
+## The seed mirror labelled by account - owed (2026-11-07)
+
+**Proves** that the Graine seed mirror's account labels are written on hardware by both writers (the
+page and the push decrypt) and that one account's wipe removes its own seeds and leaves the other
+account's ([auth](frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07)).
+Verified so far by host tests only; the Kotlin and Swift callers were not touched (they hand the
+decrypt's `seeds` array on unchanged), and no mobile target was compiled on the Windows box that
+wrote it. Needs a pre-release carrying the change, the iPhone 12 (`tools/ios-device`) - the platform
+with TWO copies of the mirror (app and App Group) - then the Mi 9T, and two test accounts A and B
+that are both members of one community with two salons S and T, plus a second device for B. A
+message is "under a session" until that salon rotates (a member joining rotates it): keep T quiet
+of joins for the whole reading.
+
+1. On the phone, sign in as A, open T, then sign out and sign in as B, open T: T's current session
+   is now labelled A and B.
+2. Still as B, app killed: have a member mint a new session in S (a member joining is enough), then
+   send a message in S: **expect** a decrypted banner - the seed frame went through the push writer,
+   whose entry is labelled B alone.
+3. From B's other device, remove this phone from B's devices. **Expect** the per-account wipe (A
+   still lives here), with the in-app log lines `[REVOKED-LOCAL] ... mirrored Graine seeds: N seed
+   entry(ies) removed` and, from Rust, `[GRAINE_MIRROR] the account's seeds: N removed, M kept for
+   another writer, K of unknown writer left, ...` - once per copy on iOS (two lines), once on Android.
+   N counts the sessions only B wrote (step 2's at least), M the ones A also wrote (T's at least), K
+   the ones mirrored before this build.
+4. Sign in as A WITHOUT opening T, kill the app, send a message in T from another client: **expect**
+   a decrypted banner - A's label kept the shared entry through B's wipe.
+5. Nothing in the log at ERROR `[GRAINE_PUSH] seed ... carries no writer account` at any step: that
+   line means a push decrypt reached the writer without its stamp.
+
 ## The camera tab and Android Back - read on the Mi 9T, `1.6.3-alpha.2`, 2026-11-02
 
 **Method.** The WebView's DevTools socket (`adb forward` to `webview_devtools_remote_<pid>`) read `location.pathname`, `<html>` classes and the console (`[reel-capture]`, `[historyOverlay]`) after each press; no personal data.

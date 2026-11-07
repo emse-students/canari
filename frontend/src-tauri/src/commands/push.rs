@@ -783,13 +783,14 @@ pub(crate) fn store_graine_seeds_json(
             log::warn!("[GRAINE_PUSH] incomplete seed entry skipped");
             continue;
         };
-        // A RELAYED SEED (a bundle's) ONLY FOR A SALON THIS DEVICE ALREADY READS. Native code does
+        // A RELAYED SEED (a bundle's) ONLY FOR A SALON THIS ACCOUNT ALREADY READS. Native code does
         // not know which salons are private, nor which key group carried the frame, so it cannot make
-        // the app's scope check (`storeIncomingSeed`); a salon the mirror already holds a session of
-        // is one the app admitted seeds for. Any other is left to the app, which reads the same
-        // answer from its durable queue at its next start and checks it fully.
+        // the app's scope check (`storeIncomingSeed`); a salon the mirror holds a session of LABELLED
+        // WITH THIS ACCOUNT is one the app admitted seeds for, for this account - another account's
+        // admission on the same install is not this one's. Any other is left to the app, which reads
+        // the same answer from its durable queue at its next start and checks it fully.
         if seed["relayed"].as_bool() == Some(true)
-            && !mirror_holds_channel(data_dir, key, entry.channel_id)
+            && !mirror_holds_channel(data_dir, key, entry.channel_id, entry.account)
         {
             left_to_the_app += 1;
             continue;
@@ -812,20 +813,34 @@ pub(crate) fn store_graine_seeds_json(
     stored
 }
 
-/// Whether the mirror holds at least one session of `channel_id` - a salon whose seeds the app has
-/// admitted. Read without the lock, as [`read_graine_seed`] reads: every writer renames a whole
-/// file over the old one.
+/// Whether the mirror holds at least one session of `channel_id` labelled with `account` - a salon
+/// whose seeds the app has admitted FOR THAT ACCOUNT. Read without the lock, as [`read_graine_seed`]
+/// reads: every writer renames a whole file over the old one.
+///
+/// An entry written before the label names nobody ([`entry_accounts`]) and answers no: a legacy
+/// entry is never read as this account's. No `account` at all answers no too - the seed is left to
+/// the app, the conservative side.
 ///
 /// THE MIRROR IS SEALED, so it is opened with `key` through [`read_graine_mirror`], the one reader -
 /// a plain-text parse fails on every sealed file, and every relayed seed would then be left to the
 /// app. An absent file holds nothing; an unreadable one holds nothing either, and says so at ERROR,
 /// because a mirror this device wrote and cannot open is not an expected state.
 #[cfg(any(target_os = "android", target_os = "ios", test))]
-fn mirror_holds_channel(data_dir: &std::path::Path, key: &CacheKey, channel_id: &str) -> bool {
+fn mirror_holds_channel(
+    data_dir: &std::path::Path,
+    key: &CacheKey,
+    channel_id: &str,
+    account: Option<&str>,
+) -> bool {
+    let Some(account) = account else {
+        return false;
+    };
     match read_graine_mirror(data_dir, Some(key)) {
-        Ok(Some(root)) => root[channel_id]
-            .as_object()
-            .is_some_and(|sessions| !sessions.is_empty()),
+        Ok(Some(root)) => root[channel_id].as_object().is_some_and(|sessions| {
+            sessions
+                .values()
+                .any(|entry| entry_accounts(entry).contains(&account))
+        }),
         Ok(None) => false,
         Err(e) => {
             log::error!("[GRAINE_PUSH] mirror unreadable while checking salon {channel_id}: {e}");
@@ -912,7 +927,9 @@ const GRAINE_MIRROR_SESSIONS_PER_CHANNEL: usize = 20;
 
 /// Merges one Graine seed into {app_data_dir}/graine_seeds.json so the background push service can
 /// derive a message key with the app killed. The file is a JSON map
-/// `channelId -> { sessionId -> { seed, createdAt, firstIndex, [version, minterUserId, signingPk] } }`.
+/// `channelId -> { sessionId -> { seed, createdAt, firstIndex, [version, minterUserId, signingPk],
+/// accounts, [unattributed] } }` - `accounts` the label of every account that wrote the entry
+/// ([`label_entry`], the per-account wipe's allowlist: [`forget_account_entries`]).
 ///
 /// **Bounded, unlike the epoch mirror it replaced.** Epoch keys were few and a whole channel's
 /// worth could be kept; seeds accumulate for ever, in a file rewritten on every rotation, which is
@@ -929,8 +946,11 @@ pub(crate) async fn store_graine_seed(
     app: tauri::AppHandle,
     seed: MirrorSeedInput,
 ) -> Result<(), String> {
+    // THE WRITER IS THE PAGE'S SIGNED-IN ACCOUNT, named by the page: the seed was admitted into
+    // that account's durable store a moment ago (`frameHandler.ts`, `channelSeal.ts`).
+    let account = crate::commands::mls_account_state::account_label(&seed.account_id);
     with_app_mirror(app, move |dir, key| {
-        merge_graine_seed(dir, key, &seed.as_mirror_seed()).map(|_| ())
+        merge_graine_seed(dir, key, &seed.as_mirror_seed(&account)).map(|_| ())
     })
     .await
 }
@@ -984,11 +1004,17 @@ pub(crate) struct MirrorSeedInput {
     /// Both set on a v2 session, both null on a v1 one.
     minter_user_id: Option<String>,
     signing_public_key_b64: Option<String>,
+    /// The signed-in account the page stored the session for - the entry's label.
+    account_id: String,
 }
 
 impl MirrorSeedInput {
-    fn as_mirror_seed(&self) -> MirrorSeed<'_> {
+    /// The seed as the mirror holds it, labelled with `account` ([`account_label`] of its writer).
+    ///
+    /// [`account_label`]: crate::commands::mls_account_state::account_label
+    fn as_mirror_seed<'a>(&'a self, account: &'a str) -> MirrorSeed<'a> {
         MirrorSeed {
+            account: Some(account),
             channel_id: &self.channel_id,
             session_id: &self.session_id,
             seed_b64: &self.seed_b64,
@@ -1016,6 +1042,11 @@ pub(crate) struct MirrorSeed<'a> {
     pub first_index: u32,
     /// What a v2 push is verified against; `None` is a v1 session.
     pub v2: Option<MirrorSeedV2<'a>>,
+    /// The label ([`account_label`]) of the account whose state or page produced the seed, or `None`
+    /// when the writer named none - an entry of UNKNOWN writer, which no per-account wipe removes.
+    ///
+    /// [`account_label`]: crate::commands::mls_account_state::account_label
+    pub account: Option<&'a str>,
 }
 
 /// The v2 half of a mirrored seed: the author its rows must name and the key that signs them.
@@ -1053,6 +1084,16 @@ impl<'a> MirrorSeed<'a> {
         } else {
             None
         };
+        // THE PUSH DECRYPT STAMPS EVERY SEED WITH THE ACCOUNT ITS STATE WAS OPENED FOR
+        // (`background.rs`, `with_seed_writer`), so an extracted seed without it is a broken
+        // invariant: still mirrored, since a seed is what the banner needs, but as an entry of unknown
+        // writer - which no per-account wipe ever removes - and said.
+        let account = seed[SEED_WRITER_FIELD].as_str().filter(|a| !a.is_empty());
+        if account.is_none() {
+            log::error!(
+                "[GRAINE_PUSH] seed {session_id} carries no writer account - mirrored unattributed"
+            );
+        }
         Some(Self {
             channel_id,
             session_id,
@@ -1060,6 +1101,7 @@ impl<'a> MirrorSeed<'a> {
             created_at: seed["createdAt"].as_i64().unwrap_or(0),
             first_index: seed["firstIndex"].as_u64().unwrap_or(0) as u32,
             v2,
+            account,
         })
     }
 
@@ -1075,8 +1117,186 @@ impl<'a> MirrorSeed<'a> {
             entry["minterUserId"] = v2.minter_user_id.into();
             entry["signingPk"] = v2.signing_public_key_b64.into();
         }
+        if let Some(account) = self.account {
+            entry[ACCOUNTS_FIELD] = serde_json::json!([account]);
+        }
         entry
     }
+}
+
+/// The field of an EXTRACTED seed (the push decrypt's `seeds` array) naming its writer's label -
+/// stamped by `background.rs` (`with_seed_writer`), read by [`MirrorSeed::from_extracted`]. Only
+/// where a push service runs: a desktop build has no push decrypt and no extracted seed.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+pub(crate) const SEED_WRITER_FIELD: &str = "account";
+
+/// The field of a mirror entry listing the label of every account that wrote it.
+const ACCOUNTS_FIELD: &str = "accounts";
+
+/// The field of a mirror entry that ALSO had a writer nobody can name: an entry written before the
+/// label, then labelled by a later write. `true` or absent.
+const UNATTRIBUTED_FIELD: &str = "unattributed";
+
+/// The labels an entry names, empty for an entry that names none. Read by the relayed-seed check,
+/// which only a push service runs.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+fn entry_accounts(entry: &serde_json::Value) -> Vec<&str> {
+    entry[ACCOUNTS_FIELD]
+        .as_array()
+        .map(|list| list.iter().filter_map(serde_json::Value::as_str).collect())
+        .unwrap_or_default()
+}
+
+/// Whether an entry had a writer nobody can name - written before the label (no `accounts` list,
+/// or one that is not a list), or labelled since and marked [`UNATTRIBUTED_FIELD`].
+///
+/// **THE LEGACY DECISION** (2026-11-07): an entry the mirror held before the label was written by
+/// whichever account was signed in at the time, and on an install two accounts share nothing says
+/// which - the file carried no account and the push path wrote it for the slot's owner of the day.
+/// So it is NEVER read as an account's: no per-account wipe removes it (it may be the remaining
+/// account's), and no relayed-seed check counts it as one account's admission. A later write by an
+/// account adds that account's label and KEEPS this mark, because that write proves who wrote it
+/// now, not who wrote it before. Such an entry leaves the way every entry leaves without a wipe:
+/// the per-channel bound, the retention sweep, a community leaving the device, the factory wipe.
+fn entry_unattributed(entry: &serde_json::Value) -> bool {
+    !entry[ACCOUNTS_FIELD].is_array() || entry[UNATTRIBUTED_FIELD].as_bool() == Some(true)
+}
+
+/// Adds `account` to the writers an entry names, and says whether that changed it. An entry that
+/// named none (written before the label) is marked [`UNATTRIBUTED_FIELD`] as it gains its first.
+fn label_entry(entry: &mut serde_json::Value, account: &str) -> bool {
+    let unattributed = entry_unattributed(entry);
+    let Some(obj) = entry.as_object_mut() else {
+        return false;
+    };
+    if let Some(list) = obj.get_mut(ACCOUNTS_FIELD).and_then(|v| v.as_array_mut()) {
+        if list.iter().any(|a| a.as_str() == Some(account)) {
+            return false;
+        }
+        list.push(account.into());
+        return true;
+    }
+    obj.insert(ACCOUNTS_FIELD.to_string(), serde_json::json!([account]));
+    if unattributed {
+        obj.insert(UNATTRIBUTED_FIELD.to_string(), true.into());
+    }
+    true
+}
+
+/// What [`forget_account_entries`] did to the mirror.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct AccountForgotten {
+    /// Entries that account ALONE wrote - removed.
+    pub removed: usize,
+    /// Entries it wrote with another account, or with a writer nobody can name - its label dropped,
+    /// the entry kept for the others.
+    pub unlabelled: usize,
+    /// Entries of unknown writer the wipe could not judge and LEFT ([`entry_unattributed`]).
+    pub unattributed_kept: usize,
+    /// Channel entries left with no session, dropped.
+    pub channels_dropped: usize,
+}
+
+/// Drops `account` from every entry of the mirror: an entry it alone wrote goes, an entry it shares
+/// keeps its other writers, an entry of unknown writer stays untouched. **AN ALLOWLIST BY LABEL**,
+/// never a guess from the community or the salon: a seed is the salon's, and two accounts of one
+/// install may read the same salon.
+///
+/// Split out of the command because that is the whole decision; the command only reads a file and
+/// writes it back.
+fn forget_account_entries(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    account: &str,
+) -> AccountForgotten {
+    let mut done = AccountForgotten::default();
+    let mut emptied: Vec<String> = Vec::new();
+    for (channel_id, sessions) in map.iter_mut() {
+        let Some(sessions) = sessions.as_object_mut() else {
+            // A malformed channel entry names no writer: left, like every entry of unknown writer.
+            continue;
+        };
+        sessions.retain(|_, entry| {
+            let unattributed = entry_unattributed(entry);
+            let Some(list) = entry.get_mut(ACCOUNTS_FIELD).and_then(|v| v.as_array_mut()) else {
+                done.unattributed_kept += 1;
+                return true;
+            };
+            let before = list.len();
+            list.retain(|a| a.as_str() != Some(account));
+            if list.len() == before {
+                if unattributed {
+                    done.unattributed_kept += 1;
+                }
+                return true;
+            }
+            if list.is_empty() && !unattributed {
+                done.removed += 1;
+                return false;
+            }
+            done.unlabelled += 1;
+            true
+        });
+        if sessions.is_empty() {
+            emptied.push(channel_id.clone());
+        }
+    }
+    for channel_id in &emptied {
+        map.remove(channel_id);
+    }
+    done.channels_dropped = emptied.len();
+    done
+}
+
+/// [`forget_account_entries`] on the mirror in `data_dir`, written back sealed when it changed.
+pub(crate) fn forget_account_in_mirror(
+    data_dir: &std::path::Path,
+    key: &CacheKey,
+    account: &str,
+) -> Result<AccountForgotten, String> {
+    with_graine_mirror(data_dir, key, |map| {
+        let done = forget_account_entries(map, account);
+        let changed = done.removed > 0 || done.unlabelled > 0 || done.channels_dropped > 0;
+        Ok((done, changed))
+    })
+}
+
+/// Removes ONE account's Graine seeds from the push mirror - the deleted-account wipe and the
+/// revoked device's wipe of one account (`accountLocalWipe.ts`): every entry `user_id` alone wrote
+/// goes, every entry another account (or a writer nobody can name) also wrote stays, without its
+/// label ([`forget_account_entries`]).
+///
+/// BOTH COPIES ON iOS: the app's, and the App Group's the notification extension reads and writes
+/// itself - the next activation would copy the app's over it, but until then it would still hold
+/// the account's seeds. Returns how many entries were removed, across the copies.
+#[tauri::command]
+pub(crate) async fn forget_account_graine_seeds(
+    app: tauri::AppHandle,
+    user_id: String,
+) -> Result<usize, String> {
+    if user_id.trim().is_empty() {
+        return Err("no account named".to_string());
+    }
+    let account = crate::commands::mls_account_state::account_label(&user_id);
+    with_app_mirror(app, move |dir, key| {
+        #[cfg(target_os = "ios")]
+        let group = Some(crate::app_group::app_group_dir()?);
+        #[cfg(not(target_os = "ios"))]
+        let group: Option<std::path::PathBuf> = None;
+        let mut removed = 0usize;
+        for copy in std::iter::once(dir.to_path_buf()).chain(group) {
+            let done = forget_account_in_mirror(&copy, key, &account)?;
+            log::info!(
+                "[GRAINE_MIRROR] the account's seeds: {} removed, {} kept for another writer, {} of unknown writer left, {} channel(s) dropped",
+                done.removed,
+                done.unlabelled,
+                done.unattributed_kept,
+                done.channels_dropped
+            );
+            removed += done.removed;
+        }
+        Ok(removed)
+    })
+    .await
 }
 
 /// The v2 half of an entry already in the file, for the replacement check.
@@ -1132,15 +1352,22 @@ pub(crate) fn merge_graine_seed(
                     "session {session_id} is already held with another seed, salon or endorsement"
                 ));
             }
-            // THE FLOOR IS THE ONLY THING A SECOND COPY MAY MOVE, and only down - the durable
-            // store's rule. An entry written before the floor was mirrored has none, and reads as 0.
+            // THE FLOOR AND THE WRITERS ARE THE ONLY THINGS A SECOND COPY MAY MOVE - the floor only
+            // down, the durable store's rule (an entry written before the floor was mirrored has
+            // none, and reads as 0); the writers only by ADDING this copy's account, so an account
+            // that also holds the session keeps it through another account's wipe.
             let held_floor = held["firstIndex"].as_u64().unwrap_or(0) as u32;
-            if seed.first_index < held_floor {
-                map[held_channel.as_str()][session_id]["firstIndex"] = seed.first_index.into();
-                return Ok((0, true));
+            let entry = &mut map[held_channel.as_str()][session_id];
+            let lowered = seed.first_index < held_floor;
+            if lowered {
+                entry["firstIndex"] = seed.first_index.into();
             }
-            // The same seed again: nothing to write, and the bound has nothing new to trim.
-            return Ok((0, false));
+            let labelled = seed
+                .account
+                .is_some_and(|account| label_entry(entry, account));
+            // The same seed again by a writer it already names: nothing to write, and the bound has
+            // nothing new to trim.
+            return Ok((0, lowered || labelled));
         }
         let channel_entry = map
             .entry(channel_id.to_string())
@@ -2703,6 +2930,7 @@ pub(crate) fn store_push_secret(secret: String, app: tauri::AppHandle) -> Result
 
 #[cfg(test)]
 mod graine_mirror_tests {
+    use super::{forget_account_entries, forget_account_in_mirror, AccountForgotten};
     use super::{
         graine_seed_held, merge_graine_seed, prune_graine_sessions, read_graine_mirror,
         read_graine_seed, remove_graine_sessions, reseal_graine_mirror, store_graine_seeds_json,
@@ -2713,13 +2941,26 @@ mod graine_mirror_tests {
     /// The install key every test seals under.
     const KEY: CacheKey = [3u8; 32];
 
-    /// A v1 seed at floor 0 - what every test below wrote before the entry carried more.
+    /// A v1 seed at floor 0, of a writer nobody named - what every test below wrote before the
+    /// entry carried more.
     fn merge(
         dir: &std::path::Path,
         channel_id: &str,
         session_id: &str,
         seed_b64: &str,
         created_at: i64,
+    ) -> Result<usize, String> {
+        merge_as(dir, channel_id, session_id, seed_b64, created_at, None)
+    }
+
+    /// [`merge`], written by `account` (a label, as `account_label` makes one).
+    fn merge_as(
+        dir: &std::path::Path,
+        channel_id: &str,
+        session_id: &str,
+        seed_b64: &str,
+        created_at: i64,
+        account: Option<&str>,
     ) -> Result<usize, String> {
         merge_graine_seed(
             dir,
@@ -2731,6 +2972,7 @@ mod graine_mirror_tests {
                 created_at,
                 first_index: 0,
                 v2: None,
+                account,
             },
         )
     }
@@ -2934,6 +3176,7 @@ mod graine_mirror_tests {
                 minter_user_id: minter,
                 signing_public_key_b64: "cGs=",
             }),
+            account: None,
         }
     }
 
@@ -2986,18 +3229,23 @@ mod graine_mirror_tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// A bundle's seeds (`relayed`) reach the mirror only for a salon it already holds a session
-    /// of: native code cannot tell a private salon this viewer may not read from a public one, so
-    /// every other relayed seed is left to the app, which reads the same answer from its queue.
-    /// A seed distributed by its own sender (not relayed) is mirrored as before.
+    /// A bundle's seeds (`relayed`) reach the mirror only for a salon THIS ACCOUNT already holds a
+    /// session of: native code cannot tell a private salon this viewer may not read from a public
+    /// one, so every other relayed seed is left to the app, which reads the same answer from its
+    /// queue. Another account's session of the salon, and a session of unknown writer, are not this
+    /// account's admission. A seed distributed by its own sender (not relayed) is mirrored as before.
     #[test]
-    fn a_relayed_seed_is_mirrored_only_for_a_salon_the_device_already_reads() {
+    fn a_relayed_seed_is_mirrored_only_for_a_salon_the_account_already_reads() {
         let dir = mirror_dir("relayed");
-        merge(&dir, "read-salon", "s-held", "c2VlZA==", 1).unwrap();
+        merge_as(&dir, "read-salon", "s-held", "c2VlZA==", 1, Some("acct-a")).unwrap();
+        merge_as(&dir, "b-salon", "s-b-held", "c2VlZA==", 1, Some("acct-b")).unwrap();
+        merge(&dir, "legacy-salon", "s-old", "c2VlZA==", 1).unwrap();
         let seeds = serde_json::json!([
-            { "channelId": "read-salon", "sessionId": "s-a", "seedB64": "c2VlZA==", "createdAt": 2, "relayed": true },
-            { "channelId": "other-salon", "sessionId": "s-b", "seedB64": "c2VlZA==", "createdAt": 3, "relayed": true },
-            { "channelId": "new-salon", "sessionId": "s-c", "seedB64": "c2VlZA==", "createdAt": 4 },
+            { "channelId": "read-salon", "sessionId": "s-a", "seedB64": "c2VlZA==", "createdAt": 2, "relayed": true, "account": "acct-a" },
+            { "channelId": "other-salon", "sessionId": "s-b", "seedB64": "c2VlZA==", "createdAt": 3, "relayed": true, "account": "acct-a" },
+            { "channelId": "b-salon", "sessionId": "s-d", "seedB64": "c2VlZA==", "createdAt": 3, "relayed": true, "account": "acct-a" },
+            { "channelId": "legacy-salon", "sessionId": "s-e", "seedB64": "c2VlZA==", "createdAt": 3, "relayed": true, "account": "acct-a" },
+            { "channelId": "new-salon", "sessionId": "s-c", "seedB64": "c2VlZA==", "createdAt": 4, "account": "acct-a" },
         ]);
         assert_eq!(
             store_graine_seeds_json(&dir, Some(&KEY), &seeds.to_string()),
@@ -3005,8 +3253,157 @@ mod graine_mirror_tests {
         );
         assert!(mirror(&dir)["read-salon"].get("s-a").is_some());
         assert!(mirror(&dir).get("other-salon").is_none());
+        assert!(
+            mirror(&dir)["b-salon"].get("s-d").is_none(),
+            "acct-b's admission is not acct-a's"
+        );
+        assert!(
+            mirror(&dir)["legacy-salon"].get("s-e").is_none(),
+            "an unattributed entry admits nobody"
+        );
         assert!(mirror(&dir)["new-salon"].get("s-c").is_some());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// EVERY WRITER LABELS ITS ENTRY: the page's account and the push decrypt's stamp both reach the
+    /// `accounts` list, a second account writing the same session is added to it, and the same
+    /// writer again changes nothing.
+    #[test]
+    fn each_writer_labels_the_entry_it_writes() {
+        let dir = mirror_dir("labels");
+        merge_as(&dir, "chan", "s-1", "c2VlZA==", 1, Some("acct-a")).unwrap();
+        assert_eq!(
+            mirror(&dir)["chan"]["s-1"]["accounts"],
+            serde_json::json!(["acct-a"])
+        );
+        let pushed = serde_json::json!([
+            { "channelId": "chan", "sessionId": "s-1", "seedB64": "c2VlZA==", "createdAt": 1, "account": "acct-b" },
+            { "channelId": "chan", "sessionId": "s-2", "seedB64": "c2VlZA==", "createdAt": 2, "account": "acct-b" },
+        ]);
+        assert_eq!(
+            store_graine_seeds_json(&dir, Some(&KEY), &pushed.to_string()),
+            2
+        );
+        let held = mirror(&dir);
+        assert_eq!(
+            held["chan"]["s-1"]["accounts"],
+            serde_json::json!(["acct-a", "acct-b"])
+        );
+        assert_eq!(
+            held["chan"]["s-2"]["accounts"],
+            serde_json::json!(["acct-b"])
+        );
+        assert!(held["chan"]["s-1"].get("unattributed").is_none());
+        let before = std::fs::read(dir.join("graine_seeds.json")).unwrap();
+        assert_eq!(
+            merge_as(&dir, "chan", "s-1", "c2VlZA==", 1, Some("acct-a")),
+            Ok(0)
+        );
+        assert_eq!(
+            std::fs::read(dir.join("graine_seeds.json")).unwrap(),
+            before,
+            "not rewritten"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// THE PER-ACCOUNT WIPE IS AN ALLOWLIST BY LABEL: an entry the account alone wrote goes, one it
+    /// shares keeps the other writer, another account's entry and an entry of unknown writer are
+    /// untouched, and a channel left empty is dropped.
+    #[test]
+    fn the_account_wipe_removes_only_what_that_account_alone_wrote() {
+        let dir = mirror_dir("wipe");
+        merge_as(&dir, "only-b", "s-b", "c2VlZA==", 1, Some("acct-b")).unwrap();
+        merge_as(&dir, "shared", "s-ab", "c2VlZA==", 1, Some("acct-a")).unwrap();
+        merge_as(&dir, "shared", "s-ab", "c2VlZA==", 1, Some("acct-b")).unwrap();
+        merge_as(&dir, "shared", "s-a", "c2VlZA==", 2, Some("acct-a")).unwrap();
+        merge(&dir, "shared", "s-old", "c2VlZA==", 3).unwrap();
+
+        let done = forget_account_in_mirror(&dir, &KEY, "acct-b").unwrap();
+        assert_eq!(
+            done,
+            AccountForgotten {
+                removed: 1,
+                unlabelled: 1,
+                unattributed_kept: 1,
+                channels_dropped: 1,
+            }
+        );
+        let held = mirror(&dir);
+        assert!(
+            held.get("only-b").is_none(),
+            "B's channel went with its one entry"
+        );
+        assert_eq!(
+            held["shared"]["s-ab"]["accounts"],
+            serde_json::json!(["acct-a"])
+        );
+        assert_eq!(
+            held["shared"]["s-a"]["accounts"],
+            serde_json::json!(["acct-a"])
+        );
+        assert!(
+            held["shared"].get("s-old").is_some(),
+            "unknown writer: never judged"
+        );
+        assert_eq!(
+            graine_seed_held(&dir, Some(&KEY), "shared", "s-ab"),
+            1,
+            "A still opens the shared session's pushes"
+        );
+        // Idempotent: a resumed wipe finds nothing of B left and writes nothing.
+        let before = std::fs::read(dir.join("graine_seeds.json")).unwrap();
+        let again = forget_account_in_mirror(&dir, &KEY, "acct-b").unwrap();
+        assert_eq!((again.removed, again.unlabelled), (0, 0));
+        assert_eq!(
+            std::fs::read(dir.join("graine_seeds.json")).unwrap(),
+            before
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// THE LEGACY DECISION: an entry written before the label is never read as an account's. A
+    /// later write labels it AND keeps the mark that it had a writer nobody can name, so that
+    /// writer's wipe drops its label and leaves the entry - it may be the other account's.
+    #[test]
+    fn a_legacy_entry_is_never_taken_as_one_accounts() {
+        let dir = mirror_dir("legacy-label");
+        // The shape every build before the label wrote.
+        let legacy = serde_json::json!({ "chan": { "s-1": { "seed": "c2VlZA==", "createdAt": 1, "firstIndex": 0 } } });
+        std::fs::write(dir.join("graine_seeds.json"), legacy.to_string()).unwrap();
+
+        // Nobody's wipe touches it.
+        let done = forget_account_in_mirror(&dir, &KEY, "acct-a").unwrap();
+        assert_eq!((done.removed, done.unattributed_kept), (0, 1));
+        assert!(mirror(&dir)["chan"].get("s-1").is_some());
+
+        // A's next write of the session labels it and keeps the mark.
+        merge_as(&dir, "chan", "s-1", "c2VlZA==", 1, Some("acct-a")).unwrap();
+        let entry = mirror(&dir)["chan"]["s-1"].clone();
+        assert_eq!(entry["accounts"], serde_json::json!(["acct-a"]));
+        assert_eq!(entry["unattributed"], true);
+
+        // A's wipe drops A's label and keeps the entry.
+        let done = forget_account_in_mirror(&dir, &KEY, "acct-a").unwrap();
+        assert_eq!((done.removed, done.unlabelled), (0, 1));
+        let entry = mirror(&dir)["chan"]["s-1"].clone();
+        assert_eq!(entry["accounts"], serde_json::json!([]));
+        assert_eq!(entry["seed"], "c2VlZA==");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A malformed channel or session entry names no writer and is left as it is.
+    #[test]
+    fn the_account_wipe_leaves_malformed_entries() {
+        let mut root = serde_json::json!({
+            "odd-chan": 7,
+            "chan": { "s-odd": "not an entry", "s-1": { "seed": "c2VlZA==", "accounts": ["acct-a"] } },
+        });
+        let map = root.as_object_mut().unwrap();
+        let done = forget_account_entries(map, "acct-a");
+        assert_eq!(done.removed, 1);
+        assert_eq!(map["odd-chan"], 7);
+        assert_eq!(map["chan"]["s-odd"], "not an entry");
     }
 
     #[test]

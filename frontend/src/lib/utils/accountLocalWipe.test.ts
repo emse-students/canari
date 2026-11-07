@@ -141,11 +141,13 @@ describe('wipeDeletedAccountLocalData', () => {
     expect(invokeMock).not.toHaveBeenCalled();
     tauri = true;
     await wipeDeletedAccountLocalData('user-a', AFTER_DELETE);
-    expect(invokeMock).toHaveBeenCalledTimes(5);
+    expect(invokeMock).toHaveBeenCalledTimes(6);
     // The account's MLS states - its parked one, and the slot only when its record names it.
     expect(invokeMock).toHaveBeenCalledWith('delete_user_mls_state', { userId: 'user-a' });
     // The push side's plaintext files too - gated natively on the owner `push_context.json` names.
     expect(invokeMock).toHaveBeenCalledWith('delete_user_push_files', { userId: 'user-a' });
+    // Its Graine seeds in the push mirror - the entries its label alone names.
+    expect(invokeMock).toHaveBeenCalledWith('forget_account_graine_seeds', { userId: 'user-a' });
     // And this account's waiting quick replies - its lines only, never the whole file.
     expect(invokeMock).toHaveBeenCalledWith('delete_user_quick_replies', { userId: 'user-a' });
     // The data is gone, so the at-rest marker goes: the explicit reset that frees the keystore entry.
@@ -183,6 +185,19 @@ describe('wipeDeletedAccountLocalData', () => {
     });
     expect(await wipeDeletedAccountLocalData('user-a', AFTER_DELETE)).toEqual([
       'the native push files',
+    ]);
+    expect(pendingDeletedAccountWipes()).toEqual(['user-a']);
+    invokeMock.mockImplementation(async () => {});
+  });
+
+  it('reports a seed-mirror step that failed, so the wipe stays owed', async () => {
+    tauri = true;
+    markDeletedAccountWipePending('user-a');
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'forget_account_graine_seeds') throw new Error('no native cache key');
+    });
+    expect(await wipeDeletedAccountLocalData('user-a', AFTER_DELETE)).toEqual([
+      'the mirrored Graine seeds',
     ]);
     expect(pendingDeletedAccountWipes()).toEqual(['user-a']);
     invokeMock.mockImplementation(async () => {});

@@ -125,13 +125,16 @@ export async function revokedWipeScope(userId: string): Promise<'install' | 'acc
  *   residue (`delete_user_mls_state`), the native session ended first WITHOUT a sweep;
  * - the native message database, its push files (outbox, cached pushes, read marks, device notices,
  *   `push_context.json` when it names the account), its names copy and its waiting quick replies;
+ * - its entries of the Graine seed mirror (`graine_seeds.json`): those it alone wrote, by the label
+ *   each entry carries since 2026-11-07 - never another account's, nor one written before the label;
  * - the WebView databases named by the account; its at-rest key marker and keystore entry; its
  *   session metadata, upload release marks, per-account local keys and its vault slot.
  *
  * LEFT, because nothing in them names an account and another account reads them: the in-app log,
  * the HTTP cache, the cached notification avatars, the device-wide FCM token and keystore alias
- * index, the share captured by the Share Extension, and the push service's sealed caches
- * (`graine_seeds.json`, `channel_keys.json`) - see auth.md, "A revoked device another account uses".
+ * index, and the share captured by the Share Extension - see auth.md, "A revoked device another
+ * account uses". (`channel_keys.json` no longer exists: every start deletes the one an older build
+ * left, `native_cache.rs`.)
  *
  * @returns the steps that failed, empty when everything of the account was removed
  */

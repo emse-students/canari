@@ -334,6 +334,14 @@ export async function wipeDeletedAccountLocalData(
       const removed = await invoke<number>('delete_user_push_files', { userId });
       console.log(`${tag} native push files: ${removed} file(s) removed`);
     });
+    // The account's Graine seeds in the push mirror: the entries ONLY this account wrote - an entry
+    // another account also wrote keeps that writer, and one written before the label (writer
+    // unknown) is never judged (`forget_account_graine_seeds`, `push.rs`).
+    await step('the mirrored Graine seeds', async () => {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const removed = await invoke<number>('forget_account_graine_seeds', { userId });
+      console.log(`${tag} mirrored Graine seeds: ${removed} seed entry(ies) removed`);
+    });
     // The notification replies still waiting for the page: ONLY this account's lines, since the file
     // can hold another account's (`delete_user_quick_replies`, `push.rs`). Always 0 off iOS.
     await step('the waiting quick replies', async () => {

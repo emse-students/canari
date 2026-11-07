@@ -70,13 +70,14 @@ use crate::commands::picked_files::discard_picked_file;
 use crate::commands::picked_files::take_picked_file;
 use crate::commands::push::{
     ack_fcm_cache, acknowledge_quick_reply, check_push_secret_health, claim_device_notices,
-    delete_user_push_files, delete_user_quick_replies, forget_graine_channel,
-    forget_graine_sessions, get_fcm_token, get_push_diagnostic, get_voip_token, load_push_context,
-    preclaim_device_notices, read_and_clear_outbox_sent, read_and_clear_pending_call_accept,
-    read_and_clear_pending_notification_tap, read_and_clear_pending_quick_replies,
-    read_and_clear_read_watermarks, read_outbox_mirror, return_pending_quick_replies,
-    set_push_context_locale, store_device_identity, store_graine_seed, store_outbox_mirror,
-    store_push_context, store_push_secret, take_fcm_cache, take_key_group_push_joins,
+    delete_user_push_files, delete_user_quick_replies, forget_account_graine_seeds,
+    forget_graine_channel, forget_graine_sessions, get_fcm_token, get_push_diagnostic,
+    get_voip_token, load_push_context, preclaim_device_notices, read_and_clear_outbox_sent,
+    read_and_clear_pending_call_accept, read_and_clear_pending_notification_tap,
+    read_and_clear_pending_quick_replies, read_and_clear_read_watermarks, read_outbox_mirror,
+    return_pending_quick_replies, set_push_context_locale, store_device_identity,
+    store_graine_seed, store_outbox_mirror, store_push_context, store_push_secret, take_fcm_cache,
+    take_key_group_push_joins,
 };
 use crate::commands::push_registration::{
     complete_owed_push_token_deletion, end_push_registration,
@@ -1814,6 +1815,7 @@ pub fn run() {
             store_graine_seed,
             forget_graine_channel,
             forget_graine_sessions,
+            forget_account_graine_seeds,
             actualiser_cle_keystore_avec_devicekey,
             flush_webview_cookies,
             take_picked_file,

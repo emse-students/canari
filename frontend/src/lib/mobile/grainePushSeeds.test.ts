@@ -152,3 +152,23 @@ describe('the JNI symbol, which no compiler here checks', () => {
     expect(kotlin).toContain('nativeStoreGraineSeeds(');
   });
 });
+
+describe('the writer label every mirrored seed carries (2026-11-07)', () => {
+  const graineMirrorTs = readFileSync(resolve(here, '../utils/graine/graineMirror.ts'), 'utf8');
+
+  it('both push decrypts stamp the seeds with the account their state was opened for', () => {
+    // Two decrypt entries answer key material; each must run the stamp (plus its definition), or
+    // the push path's entries are mirrored unattributed and no per-account wipe can remove them.
+    expect(background.match(/with_seed_writer\(/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
+    expect(pushRs).toContain('pub(crate) const SEED_WRITER_FIELD: &str = "account";');
+  });
+
+  it('the page names its account under the key the command deserialises', () => {
+    expect(graineMirrorTs).toMatch(/\n\s+accountId,\n/);
+    expect(pushRs).toMatch(/\n\s+account_id: String,\n/);
+  });
+
+  it('the per-account wipe command is registered', () => {
+    expect(libRs).toMatch(/\n\s+forget_account_graine_seeds,\n/);
+  });
+});
