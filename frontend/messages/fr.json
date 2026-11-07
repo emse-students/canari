@@ -5432,6 +5432,7 @@
   "live_chat_pending": "Envoi...",
   "live_chat_you": "Vous",
   "live_chat_someone": "Un membre",
+  "live_chat_host": "Hôte",
   "live_chat_retry": "Renvoyer",
   "live_chat_discard": "Supprimer",
   "live_chat_hide": "Masquer le message de {name}",

@@ -967,6 +967,14 @@ a text or a ciphertext.
 `LiveViewer.svelte.test.ts`'s chat cases, `LiveBroadcaster.svelte.test.ts`'s on-air chat, `liveBroadcast.svelte.test.ts`'s `chatHeardEnd`). **Owed**: the crypto review of the chat seal, and a phone
 reading of the panel, the bar and the floats on the Mi 9T and the iPhone 12 ([backlog](../../backlog.md)).
 
+## The chat readable over the video, and the host mark (2026-11-07)
+
+The owner's two axes of 2026-11-07: readable over the picture, and more alive.
+
+- **Built, readable.** The bottom block of the viewer carries a taller dark gradient (`via-cn-scrim/30`, `pt-24`, tokens only); a line is medium weight with a double shadow (a tight edge and a soft halo); the oldest lines already fade out at the top of the list (mask). Each line already showed the author's avatar and name; a test now pins it.
+- **Built, the host marked.** `LiveChatPanel` takes `hostId` (the viewer passes `live.broadcasterId`): that account's lines carry a "Host" pill (`live_chat_host`). Nothing new is disclosed: the broadcaster's id is already in the live's list item, and the chat shows authors to its whole audience.
+- **NOT built, DECIDED: no "X joined" lines.** The server exposes no joins: a viewer is a seat in Redis, read INSIDE a script so only a COUNT leaves it, and [lives](../../services/lives.md#exact-not-rounded---confirmed-by-the-owner-2026-10-21) records the owner's standing rule - **a count, never an identity and never a list, to anybody**, the reason being that "an arrival is otherwise invisible". A line naming who joined, shown to the audience (or even to the host), is exactly that list, in real time, and would also tell someone's contacts when they opened a live. Building it needs a new owner decision on that rule, then a server change (an arrival event on the seat take, never a client claim) and a rate limit. **The minimal form to put to the owner if wanted:** an ANONYMOUS arrival cue (a single "N joined" tick folded from the count's delta, no name), which discloses nothing the exact count does not already. Parked in [open-questions](../../open-questions.md#should-a-live-chat-show-x-joined-lines-2026-11-07).
+
 ## The first rig readings, and what they hold against the `lives_mode` flip (LIVE-WEB, 2026-10-27)
 
 Production serves `lives.mode = off`, dev `on`. A finding here **blocks the FLIP of `lives_mode` on

@@ -27,6 +27,8 @@
     maxChars: number | null;
     /** The broadcaster or staff: every line gets a hide button. */
     canModerate?: boolean;
+    /** The live's broadcaster: that account's lines carry the host badge. Absent: no badge. */
+    hostId?: string | null;
     send(text: string): Promise<LiveChatSendFailure | null>;
     retry(clientId: string): void;
     discard(clientId: string): void;
@@ -40,6 +42,7 @@
     canWrite,
     maxChars,
     canModerate = false,
+    hostId = null,
     send,
     retry,
     discard,
@@ -191,6 +194,9 @@
           >
           <span class="min-w-0 flex-1 break-words">
             <bdi class="font-bold">{nameOf(line)}</bdi>
+            {#if hostId !== null && line.authorId === hostId.toLowerCase()}
+              <span class="live-chat-host" data-live-chat-host>{m.live_chat_host()}</span>
+            {/if}
             <bdi class="whitespace-pre-wrap" dir="auto"><EmojiText text={line.text} /></bdi>
             {#if line.status === 'pending'}
               <span class="sr-only">{m.live_chat_pending()}</span>
@@ -340,9 +346,26 @@
   .live-chat-list {
     mask-image: linear-gradient(to bottom, transparent 0, var(--color-cn-scrim) 2.5rem);
   }
-  /* White on a moving picture: the shadow, not a box, keeps a line legible. */
+  /* White on a moving picture, Instagram-live style: medium weight (names stay bold) and a double
+     shadow - a tight edge and a soft halo - keep a line legible on a bright frame. The dark
+     gradient under the whole bottom block is the viewer's. */
   .live-chat-line {
-    text-shadow: 0 0.0625rem 0.25rem color-mix(in srgb, var(--color-cn-scrim) 85%, transparent);
+    font-weight: 500;
+    text-shadow:
+      0 0.0625rem 0.125rem color-mix(in srgb, var(--color-cn-scrim) 90%, transparent),
+      0 0 0.5rem color-mix(in srgb, var(--color-cn-scrim) 70%, transparent);
+  }
+  /* The broadcaster's lines are marked: a small amber pill after the name. */
+  .live-chat-host {
+    display: inline-block;
+    border-radius: 999px;
+    background: var(--color-cn-yellow);
+    color: var(--color-cn-ink);
+    padding: 0 0.375rem;
+    font-size: var(--text-xs);
+    font-weight: 700;
+    text-shadow: none;
+    vertical-align: baseline;
   }
   /* The shared glass recipe (`.glass-chrome`: blur, saturate, a hairline edge) on DARK tokens, fixed
      for the live whatever the theme: the picture behind is the video, never the theme's surface. */

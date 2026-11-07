@@ -59,6 +59,34 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
+describe('LiveChatPanel host mark', () => {
+  it("marks the broadcaster's lines and no one else's", () => {
+    const { target } = render({
+      hostId: BOB.toUpperCase(),
+      lines: [
+        line({ id: 'm-1', clientId: 'c-1', authorId: BOB }),
+        line({ id: 'm-2', clientId: 'c-2', authorId: ME, mine: true }),
+      ],
+    });
+    const lines = target.querySelectorAll('[data-live-chat-line]');
+    const badge = lines[0]!.querySelector('[data-live-chat-host]');
+    expect(badge?.textContent).toBe(m.live_chat_host());
+    expect(lines[1]!.querySelector('[data-live-chat-host]')).toBeNull();
+  });
+
+  it('draws no badge when the host is unknown', () => {
+    const { target } = render({ lines: [line({})] });
+    expect(target.querySelector('[data-live-chat-host]')).toBeNull();
+  });
+
+  it('keeps the author avatar slot and name on every line', () => {
+    const { target } = render({ lines: [line({})] });
+    const li = target.querySelector('[data-live-chat-line]')!;
+    expect(li.textContent).toContain('Bob');
+    expect(li.querySelector('span.shrink-0')).not.toBeNull();
+  });
+});
+
 describe('LiveChatPanel', () => {
   it('draws a message as plain text: markup and links stay text', () => {
     const { target } = render({
