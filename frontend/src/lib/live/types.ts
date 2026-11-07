@@ -68,8 +68,11 @@ export interface LiveListItem {
    * clock (`now() - posterAt`), so the card never compares a server stamp with the device's clock.
    */
   poster?: { name: string; ageMs: number } | null;
-  /** The live key, served with a poster only - what opens it. Never logged. */
-  key?: string | null;
+  /**
+   * The PREVIEW key, served with a poster only: HKDF of the live key (`deriveLivePosterKey`), so it
+   * opens the picture and nothing else - never a segment, never the chat. Never logged.
+   */
+  posterKey?: string | null;
 }
 
 /**
@@ -268,10 +271,12 @@ export interface LiveLimits {
   titleMaxChars?: number;
   /** The largest sealed preview image, in bytes. Absent from an older server: no preview is sent. */
   posterMaxBytes?: number;
-  /** A preview image every this many segments (segment 0 first). */
-  posterEverySegments?: number;
-  /** How often a feed card on screen re-reads the list, in ms. Absent: the card refreshes with the feed only. */
-  cardRefreshMs?: number;
+  /**
+   * THE ONE PERIOD of the preview, in ms: the broadcaster sends a poster every
+   * `round(previewPeriodMs / LIVE_SEGMENT_MS)` segments, and a feed card on screen re-reads the list
+   * once per period. Absent: no preview is sent, and the card refreshes with the feed only.
+   */
+  previewPeriodMs?: number;
 }
 
 /**

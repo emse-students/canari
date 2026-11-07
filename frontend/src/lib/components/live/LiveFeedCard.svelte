@@ -7,7 +7,9 @@
    *
    * It asks `GET /api/lives` (no seat taken) whenever `refreshKey` changes - the feed bumps it when
    * it asks for its own first page - AND, while the card is on screen in a visible page, every
-   * `cardRefreshMs` the server's limits name, so the preview and the count move. That period is a
+   * `previewPeriodMs` the server's limits name - the SAME period the broadcaster sends a preview on,
+   * so each read can name a new still and none is read twice - so the preview and the count move.
+   * Each answered list drops the kept stills of the lives it no longer names. That period is a
    * cost knob only: were it wrong, the picture would be staler or the list read more often; nothing
    * is decided from it, and no request is in flight twice (the next read is scheduled when the last
    * one answered). Off screen, in a hidden page, or with nothing on air, no timer runs.
@@ -19,7 +21,7 @@
   import LiveViewerCount from './LiveViewerCount.svelte';
   import { fetchLiveLimits } from '$lib/live/api';
   import { loadOpenLivesForFeed } from '$lib/live/openLives';
-  import type { loadLivePoster } from '$lib/live/livePosterView';
+  import { forgetLivePostersExcept, type loadLivePoster } from '$lib/live/livePosterView';
   import type { LiveListItem } from '$lib/live/types';
   import { m } from '$lib/paraglide/messages';
 
@@ -32,7 +34,7 @@
     onOpen: (live: LiveListItem) => void;
     /** The list loader; the server's unless a test hands its own. */
     load?: typeof loadOpenLivesForFeed;
-    /** The limits loader (read once, for `cardRefreshMs`); the server's unless a test hands its own. */
+    /** The limits loader (read once, for `previewPeriodMs`); the server's unless a test hands its own. */
     fetchLimits?: typeof fetchLiveLimits;
     /** Reports whether the card intersects the viewport; an IntersectionObserver unless a test hands its own. */
     watchOnScreen?: (el: HTMLElement, report: (onScreen: boolean) => void) => () => void;
@@ -80,8 +82,10 @@
     console.debug(`[LIVE] feed card: reading the list (${why})`);
     const outcome = await load(viewerId);
     if (mine !== generation) return;
-    if (outcome.kind === 'answered') lives = outcome.lives;
-    else if (outcome.kind === 'hidden') lives = [];
+    if (outcome.kind === 'answered') {
+      lives = outcome.lives;
+      forgetLivePostersExcept(outcome.lives.map((l) => l.id));
+    } else if (outcome.kind === 'hidden') lives = [];
   }
 
   $effect(() => {
@@ -99,7 +103,7 @@
     limitsAsked = true;
     void fetchLimits().then(
       (limits) => {
-        refreshMs = limits.cardRefreshMs ?? null;
+        refreshMs = limits.previewPeriodMs ?? null;
         console.debug(`[LIVE] feed card: on-screen refresh every ${refreshMs ?? '-'} ms`);
       },
       (e) =>

@@ -152,6 +152,7 @@ export function fakeDeps() {
       name: 'p',
       posterAt: '2026-10-19T10:00:00.000Z',
     })),
+    derivePosterKey: vi.fn(async (_k: string, _l: string) => 'pk'.repeat(32)),
     sealPoster: vi.fn(
       async (_k: string, _l: string, plain: Uint8Array) =>
         new Uint8Array(plain) as Uint8Array<ArrayBuffer>

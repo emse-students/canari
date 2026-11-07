@@ -8,6 +8,7 @@ import {
   LIVE_POSTER_JPEG_QUALITY,
   LIVE_POSTER_WIDTH_PX,
   LivePosterSender,
+  posterEverySegments,
   grabPosterFrame,
 } from './livePoster';
 import { TransportFailureError } from '$lib/utils/transportFailure';
@@ -103,6 +104,14 @@ describe('LivePosterSender', () => {
     give(new Uint8Array([1]));
     await expect(turn).resolves.toBe('stopped');
     expect(deps.put).not.toHaveBeenCalled();
+  });
+});
+
+describe('posterEverySegments', () => {
+  it("turns the server's ONE preview period into this client's 2 s segments, at least one", () => {
+    expect(posterEverySegments(16_000)).toBe(8);
+    expect(posterEverySegments(10_000)).toBe(5);
+    expect(posterEverySegments(500)).toBe(1);
   });
 });
 

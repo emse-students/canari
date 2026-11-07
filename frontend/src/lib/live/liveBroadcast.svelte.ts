@@ -45,8 +45,8 @@ import {
   type LiveSegmentUploaderOptions,
 } from './api';
 import { sealLiveSegment } from './liveCrypto';
-import { LivePosterSender } from './livePoster';
-import { sealLivePoster } from './livePosterCrypto';
+import { LivePosterSender, posterEverySegments } from './livePoster';
+import { deriveLivePosterKey, sealLivePoster } from './livePosterCrypto';
 import { liveTitleToSend } from './liveTitle';
 import {
   ScreenWakeLock,
@@ -144,9 +144,11 @@ export interface LiveBroadcastDeps {
   setLiveTitle: (liveId: string, title: string | null) => Promise<LiveTitleResult>;
   /** `PUT /api/lives/:id/poster`: one sealed preview image. */
   putLivePoster: (liveId: string, sealed: Uint8Array<ArrayBuffer>) => Promise<unknown>;
-  /** Seals a preview image under the live key (`livePosterCrypto.ts`). */
+  /** The poster key of a live, from its live key (`livePosterCrypto.ts`, HKDF). */
+  derivePosterKey: (liveKeyHex: string, liveId: string) => Promise<string>;
+  /** Seals a preview image under the POSTER key (`livePosterCrypto.ts`), never the live key. */
   sealPoster: (
-    keyHex: string,
+    posterKeyHex: string,
     liveId: string,
     plain: Uint8Array
   ) => Promise<Uint8Array<ArrayBuffer>>;
@@ -185,6 +187,7 @@ export function defaultLiveBroadcastDeps(): LiveBroadcastDeps {
     startLive,
     setLiveTitle,
     putLivePoster,
+    derivePosterKey: deriveLivePosterKey,
     sealPoster: sealLivePoster,
     fetchLive,
     endLive,
@@ -481,15 +484,24 @@ export class LiveBroadcast {
    * server before them, which would 404 the route): then nothing is captured at all.
    */
   #createPosterSender(liveId: string, keyHex: string, limits: LiveLimits): LivePosterSender | null {
-    const every = limits.posterEverySegments;
+    const period = limits.previewPeriodMs;
     const maxBytes = limits.posterMaxBytes;
-    if (!every || !maxBytes) {
+    if (!period || !maxBytes) {
       console.debug('[LIVE-BROADCAST] the server serves no poster numbers - no preview image');
       return null;
     }
+    // The server's ONE period, in this client's segments (2 s each): the card reads once per period.
+    const every = posterEverySegments(period);
+    console.debug(`[LIVE-BROADCAST] a preview every ${every} segment(s) (${period} ms)`);
+    // The preview is sealed under the DERIVED poster key - the one the list serves without a seat -
+    // never the live key. Derived once, at the first turn that needs it.
+    let posterKey: Promise<string> | null = null;
     return new LivePosterSender({
       capture: () => this.#posterCapture?.() ?? Promise.resolve(null),
-      seal: (plain) => this.#deps.sealPoster(keyHex, liveId, plain),
+      seal: async (plain) => {
+        posterKey ??= this.#deps.derivePosterKey(keyHex, liveId);
+        return this.#deps.sealPoster(await posterKey, liveId, plain);
+      },
       put: (sealed) => this.#deps.putLivePoster(liveId, sealed),
       everySegments: every,
       maxBytes,

@@ -64,10 +64,10 @@ async function settle() {
   flushSync();
 }
 
-function render(outcomes: OpenLivesOutcome[], cardRefreshMs?: number) {
+function render(outcomes: OpenLivesOutcome[], previewPeriodMs?: number) {
   const load = vi.fn(async () => outcomes.shift() ?? { kind: 'kept' as const });
   const onOpen = vi.fn();
-  const fetchLimits = vi.fn(async () => ({ cardRefreshMs }) as never);
+  const fetchLimits = vi.fn(async () => ({ previewPeriodMs }) as never);
   let report: (v: boolean) => void = () => {};
   const watchOnScreen = vi.fn((_el: HTMLElement, r: (v: boolean) => void) => {
     report = r;
@@ -107,7 +107,7 @@ describe('LiveFeedCard', () => {
       title: 'Soirée',
       viewers: 7,
       poster: { name: 'p1', ageMs: 4000 },
-      key: 'ab'.repeat(32),
+      posterKey: 'ab'.repeat(32),
     });
     const { onOpen, loadPoster } = render([{ kind: 'answered', lives: [live] }]);
     await settle();
@@ -183,7 +183,7 @@ describe('LiveFeedCard', () => {
     expect(document.querySelector('[data-live-feed-card]')).toBeNull();
   });
 
-  it('re-reads the list every cardRefreshMs only while on screen in a visible page', async () => {
+  it('re-reads the list every previewPeriodMs only while on screen in a visible page', async () => {
     vi.useFakeTimers();
     const answered = (): OpenLivesOutcome => ({ kind: 'answered', lives: [item('l1', 'u1')] });
     const { load, onScreen } = render(

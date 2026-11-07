@@ -250,6 +250,14 @@ limit_req_zone $binary_remote_addr zone=lives_segments:1m rate=30r/s;\n\
 # bounds from the constants. (nginx grants each response one second of head start, so a single short\n\
 # fetch runs a little faster than the rate.)\n\
 limit_conn_zone $binary_remote_addr zone=lives_segments_conn:1m;\n\
+# A LIVE'S PREVIEW IMAGE has zones of its OWN (review of #3135): a poster takes no seat, so if it\n\
+# shared the segments' per-address quota, 300 feed readers behind one campus address would push the\n\
+# seated viewers' segment fetches into 429s. Its bytes have their own budget, LIVE_POSTER_EGRESS_BPS\n\
+# (8 Mb/s, live.constants.ts): limit_conn 4 x limit_rate 250 000 B/s = 8 Mb/s per address, which\n\
+# live-segments-route.test.mjs recomputes. 25 r/s with a 50 burst: ~325 readers behind one address\n\
+# each reading one poster per 16 s period is ~20 r/s. Past it a card keeps its older picture.\n\
+limit_req_zone $binary_remote_addr zone=lives_posters:1m rate=25r/s;\n\
+limit_conn_zone $binary_remote_addr zone=lives_posters_conn:1m;\n\
 \n\
 # THE CACHE-CONTROL OF AN SSR RESPONSE, decided in two steps.\n\
 # 1. A response that DECLARED its own public max-age keeps it: routes/sitemap.xml/+server.ts is\n\
@@ -926,6 +934,71 @@ server {\n\
     set $upstream_media_live media-service:3011;\n\
     proxy_set_header X-Internal-Secret "";\n\
     proxy_pass http://$upstream_media_live$uri;\n\
+    proxy_http_version 1.1;\n\
+    proxy_set_header Host $host;\n\
+    proxy_set_header X-Real-IP $remote_addr;\n\
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
+    add_header Cache-Control "private, max-age=120";\n\
+    add_header X-Canari-Cache $upstream_cache_status always;\n\
+    add_header Access-Control-Allow-Origin $api_error_cors_origin always;\n\
+    add_header Access-Control-Allow-Credentials "true" always;\n\
+    add_header Vary "Origin" always;\n\
+    include /etc/nginx/snippets/csp.conf;\n\
+    add_header X-Content-Type-Options "nosniff" always;\n\
+    add_header X-Frame-Options "DENY" always;\n\
+    }\n\
+    include /etc/nginx/snippets/api-error-headers.conf;\n\
+    return 404 "{\\"statusCode\\":404,\\"message\\":\\"not found\\"}";\n\
+    }\n\
+    # ONE SEALED LIVE PREVIEW IMAGE (review of #3135). The SAME object store and the SAME cache as a\n\
+    # segment - a poster is stored under the live's prefix, beside its segments, and media-service\n\
+    # serves it by the same canonical route - but reached by its OWN public path, so it is counted\n\
+    # in its OWN zones (lives_posters, lives_posters_conn) and never spends a seated viewer's segment\n\
+    # quota. The two uuids are captured and the upstream request is the segment route's canonical\n\
+    # path; the cache key IS that path, so a poster is one cache entry whichever reader asked. The\n\
+    # same ^~ guard shape: only two lower-case uuids, `\\z`, everything else a 404 here. A client\n\
+    # that asked for a segment by this path would get it at the poster rate (4 x 2 Mb/s per address),\n\
+    # never more: the route widens nothing. Every other line as the segment location, for the same\n\
+    # reasons (stated there).\n\
+    location ^~ /api/media/public/live-poster/ {\n\
+    location ~ "^/api/media/public/live-poster/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\z" {\n\
+    limit_except GET { deny all; }\n\
+    limit_req zone=lives_posters burst=50 nodelay;\n\
+    limit_req_status 429;\n\
+    limit_req_log_level warn;\n\
+    limit_conn lives_posters_conn 4;\n\
+    limit_conn_status 429;\n\
+    limit_conn_log_level warn;\n\
+    limit_rate 250000;\n\
+    set $live_poster_path /api/media/public/live/$1/$2;\n\
+    proxy_cache live_segments;\n\
+    proxy_cache_key $live_poster_path;\n\
+    proxy_cache_valid 200 2m;\n\
+    proxy_cache_valid 404 10s;\n\
+    proxy_cache_lock on;\n\
+    proxy_cache_lock_timeout 10s;\n\
+    proxy_cache_lock_age 10s;\n\
+    proxy_buffering on;\n\
+    proxy_ignore_headers Cache-Control Expires Set-Cookie Vary X-Accel-Expires;\n\
+    proxy_hide_header Cache-Control;\n\
+    proxy_hide_header Set-Cookie;\n\
+    proxy_hide_header Vary;\n\
+    proxy_hide_header Access-Control-Allow-Origin;\n\
+    proxy_hide_header Access-Control-Allow-Credentials;\n\
+    proxy_set_header X-User-Id "";\n\
+    proxy_set_header X-User-Logged-In "false";\n\
+    proxy_set_header X-Global-Admin "false";\n\
+    proxy_set_header X-Internal-Token "";\n\
+    proxy_set_header X-Session-Id "";\n\
+    proxy_set_header Cookie "";\n\
+    proxy_set_header Authorization "";\n\
+    proxy_set_header Origin "";\n\
+    proxy_set_header Range "";\n\
+    proxy_set_header If-Range "";\n\
+    set $upstream_media_live media-service:3011;\n\
+    proxy_set_header X-Internal-Secret "";\n\
+    proxy_pass http://$upstream_media_live$live_poster_path;\n\
     proxy_http_version 1.1;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\

@@ -3,8 +3,9 @@
  * sent every few segments so the feed card shows the stream, not just a line.
  *
  * THE CADENCE IS THE SEGMENT INDEX, NEVER A TIMER. A poster goes when segment `index` is enqueued
- * with `index % everySegments === 0` (the server's `posterEverySegments`, 5: segment 0 first, then
- * ~10 s apart). The index is durable - the server's `nextIndex` - so a camera paused in the
+ * with `index % everySegments === 0` ({@link posterEverySegments}: the server's ONE preview period in
+ * this client's 2 s segments - 8 for 16 s; segment 0 first). The index is durable - the server's
+ * `nextIndex` - so a camera paused in the
  * background sends no segment and therefore no poster: the card keeps the last image and says how
  * old it is (the server's `posterAt`). A missed or refused upload only means a staler image; nothing
  * is retried, because the next one is a few segments away.
@@ -20,12 +21,22 @@
 
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { isLiveRefusal, LiveRefusalError } from './api';
+import { LIVE_SEGMENT_MS } from './constants';
 
 /** The preview's width in pixels; the height follows the frame's aspect. */
 export const LIVE_POSTER_WIDTH_PX = 480;
 
 /** The JPEG quality asked of the canvas. */
 export const LIVE_POSTER_JPEG_QUALITY = 0.7;
+
+/**
+ * The server's preview period (`previewPeriodMs`) as a number of THIS client's segments
+ * ({@link LIVE_SEGMENT_MS}): the cadence stays on the durable segment index, and the feed card,
+ * which reads once per period, sees every poster sent. At least one.
+ */
+export function posterEverySegments(previewPeriodMs: number): number {
+  return Math.max(1, Math.round(previewPeriodMs / LIVE_SEGMENT_MS));
+}
 
 /**
  * Grabs the frame the `<video>` shows now as a JPEG {@link LIVE_POSTER_WIDTH_PX} wide (never wider
@@ -66,11 +77,11 @@ export async function grabPosterFrame(
 export interface LivePosterSenderDeps {
   /** The current frame as JPEG bytes, or null when there is none. */
   capture: () => Promise<Uint8Array | null>;
-  /** Seals the bytes under the live key. */
+  /** Seals the bytes under the POSTER key (derived from the live key, never the live key itself). */
   seal: (plain: Uint8Array) => Promise<Uint8Array<ArrayBuffer>>;
   /** Uploads the sealed bytes (`PUT /api/lives/:id/poster`). */
   put: (sealed: Uint8Array<ArrayBuffer>) => Promise<unknown>;
-  /** A poster every this many segments (the server's `posterEverySegments`). */
+  /** A poster every this many segments ({@link posterEverySegments}). */
   everySegments: number;
   /** The server's bound on the sealed bytes; a larger frame is not sent. */
   maxBytes: number;

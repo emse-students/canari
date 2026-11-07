@@ -37,6 +37,7 @@ import { LIVE_KEY_ENCRYPTION_SECRET_ENV } from './live-key-at-rest';
 import { LiveRetentionScheduler } from './live-retention.scheduler';
 import { LiveReportAgeScheduler } from './live-report-age.scheduler';
 import { LiveAnnouncer, liveAudienceSql } from './live-announcer';
+import { derivePosterKey } from './live-poster-key';
 import { seatMember, type LiveSeats } from './live-seats';
 import type { LivePurgeResult, LiveSegmentStore, LiveTrimResult } from './live-segment-store';
 import {
@@ -3814,7 +3815,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
     const poster = (n: number) => Buffer.from(`sealed poster ${n}`);
     /** Moves the stored poster's stamp back by SQL, past the poster interval, on the db's clock. */
     const agePoster = (liveId: string) =>
-      q(`UPDATE lives SET "posterAt" = "posterAt" - interval '6 seconds' WHERE id = $1`, [liveId]);
+      q(`UPDATE lives SET "posterAt" = "posterAt" - interval '9 seconds' WHERE id = $1`, [liveId]);
 
     it('takes a title of 1 to 80 characters at the start, blank as none, and refuses the rest', async () => {
       const eighty = 'é'.repeat(80); // 80 code points, 160 UTF-8 bytes: the bound counts characters
@@ -3896,7 +3897,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await expect(lives.ingestPoster(ALICE, live.id, poster(5))).resolves.toBeDefined();
     });
 
-    it('serves the title, the count, the poster and the KEY in the list WITHOUT TAKING A SEAT', async () => {
+    it('serves the title, the count, the poster and the PREVIEW KEY in the list WITHOUT TAKING A SEAT', async () => {
       const live = await lives.start(ALICE, { key: KEY, title: 'Soirée' });
       await lives.get(CAROL, live.id); // one viewer seated
       // Before any poster: no picture, so no key either.
@@ -3904,21 +3905,66 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         title: 'Soirée',
         viewers: 1,
         poster: null,
-        key: null,
+        posterKey: null,
       });
       const stored = await lives.ingestPoster(ALICE, live.id, poster(1));
       const [item] = await lives.listOpen(BOB);
-      expect(item).toMatchObject({ viewers: 1, key: KEY, poster: { name: stored.name } });
+      expect(item).toMatchObject({
+        viewers: 1,
+        posterKey: derivePosterKey(KEY, live.id),
+        poster: { name: stored.name },
+      });
+      // The PREVIEW key, never the live key: the seated route stays the only one serving that.
+      expect(item).not.toHaveProperty('key');
+      expect(item.posterKey).not.toBe(KEY);
       expect(item.poster!.ageMs).toBeGreaterThanOrEqual(0);
       expect(item.poster!.ageMs).toBeLessThan(60_000);
       await agePoster(live.id);
-      expect((await lives.listOpen(BOB))[0].poster!.ageMs).toBeGreaterThanOrEqual(6_000);
+      expect((await lives.listOpen(BOB))[0].poster!.ageMs).toBeGreaterThanOrEqual(9_000);
       // BOB's reads took no seat: CAROL's is the only one.
       expect([...seats.held]).toEqual([seatMember(live.id, CAROL)]);
       // A count that does not answer is no count - never a wrong one, never a failed list.
       seats.countsDown = true;
-      expect((await lives.listOpen(BOB))[0]).toMatchObject({ viewers: null, key: KEY });
+      expect((await lives.listOpen(BOB))[0]).toMatchObject({
+        viewers: null,
+        posterKey: derivePosterKey(KEY, live.id),
+      });
       seats.countsDown = false;
+    });
+
+    it('a key that does not open costs THAT card its picture, logged ONCE per outage, not per read', async () => {
+      const a = await start(ALICE);
+      const b = await start(BOB);
+      await lives.ingestPoster(BOB, b.id, poster(1));
+      const sealed: { liveKeyCiphertext: string }[] = await q(
+        `SELECT "liveKeyCiphertext" FROM lives WHERE id = $1`,
+        [b.id]
+      );
+      await q(
+        `UPDATE lives SET "liveKeyCiphertext" = (SELECT "liveKeyCiphertext" FROM lives WHERE id = $1)
+          WHERE id = $2`,
+        [a.id, b.id]
+      );
+      const errors = jest.spyOn(Logger.prototype, 'error');
+      try {
+        for (let i = 0; i < 3; i++) {
+          const items = await lives.listOpen(CAROL);
+          expect(items.find((x) => x.id === b.id)).toMatchObject({ poster: null, posterKey: null });
+        }
+        const keyErrors = () =>
+          errors.mock.calls.filter((c) => String(c[0]).includes(`[LIVE_KEY] ${b.id}`));
+        expect(keyErrors()).toHaveLength(1);
+        // The key opens again: the outage ends, and the card has its picture back.
+        await q(`UPDATE lives SET "liveKeyCiphertext" = $2 WHERE id = $1`, [
+          b.id,
+          sealed[0].liveKeyCiphertext,
+        ]);
+        const back = (await lives.listOpen(CAROL)).find((x) => x.id === b.id);
+        expect(back?.posterKey).toBe(derivePosterKey(KEY, b.id));
+        expect(keyErrors()).toHaveLength(1);
+      } finally {
+        errors.mockRestore();
+      }
     });
 
     it('REFUSES the list, so the key and the poster, to a blocked account either way and to a removed viewer', async () => {
@@ -3931,7 +3977,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       // An account the live is not visible to (no shared space, no follow) is not served it either.
       await expect(lives.listOpen(FRANK)).resolves.toEqual([]);
       await expect(lives.listOpen(EVE)).resolves.toEqual([
-        expect.objectContaining({ id: live.id, key: KEY }),
+        expect.objectContaining({ id: live.id, posterKey: derivePosterKey(KEY, live.id) }),
       ]);
     });
 

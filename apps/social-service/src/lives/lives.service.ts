@@ -74,6 +74,7 @@ import {
   storedLiveKeyColumns,
   type StoredLiveKey,
 } from './live-key-at-rest';
+import { derivePosterKey } from './live-poster-key';
 
 /** A live as its viewers read it: the key included (L2, Q4). */
 export interface LiveView {
@@ -147,12 +148,12 @@ export interface LiveListItem {
    */
   poster: { name: string; ageMs: number } | null;
   /**
-   * The live key, served WITH a poster and only then - the one thing the list needs it for is to
-   * open that image. The same key `GET /api/lives/:id` serves, to the same audience, without the seat.
-   * `null` with no poster, or when the stored key does not open (logged at error, the card then draws
-   * no picture).
+   * The PREVIEW key (`derivePosterKey`: HKDF of the live key), served WITH a poster and only then. It
+   * opens that image and nothing else - never a segment, never the chat - so the seated
+   * `GET /api/lives/:id` stays the only route the live key leaves by. `null` with no poster, or when
+   * the stored key does not open (reported once per outage, the card then draws no picture).
    */
-  key: string | null;
+  posterKey: string | null;
 }
 
 /** What a stored preview image answers (`PUT /api/lives/:id/poster`). */
@@ -535,7 +536,7 @@ export class LivesService implements OnModuleDestroy {
    */
   async listOpen(viewerId: string): Promise<LiveListItem[]> {
     const blocked = await blockedUserIdsFor(this.db.manager, viewerId);
-    const rows: (Omit<LiveListItem, 'viewers' | 'poster' | 'key'> &
+    const rows: (Omit<LiveListItem, 'viewers' | 'poster' | 'posterKey'> &
       StoredLiveKey & { posterName: string | null; posterAgeMs: number | null })[] =
       await this.db.query(
         `SELECT l.id, l."broadcasterId", l."associationId", l."startedAt", l."title",
@@ -557,24 +558,21 @@ export class LivesService implements OnModuleDestroy {
     const counts = await this.seats.watchingMany(rows.map((r) => r.id));
     const items = rows.map((r): LiveListItem => {
       const { posterName, posterAgeMs, liveKey, liveKeyCiphertext, liveKeyVersion, ...rest } = r;
-      let key: string | null = null;
-      if (posterName !== null) {
-        try {
-          key = openLiveKey(r.id, { liveKey, liveKeyCiphertext, liveKeyVersion });
-        } catch (e) {
-          // `openLiveKey` logged the cause at ERROR; THIS live draws no picture, the others do.
-          if (!(e instanceof LiveKeyUnavailableError)) throw e;
-        }
-      }
+      // The DERIVED preview key, never the live key: it opens the picture and nothing else. A key
+      // that does not open leaves THIS live without a picture (reported once per outage).
+      const posterKey =
+        posterName !== null
+          ? this.posterKeyFor(r.id, { liveKey, liveKeyCiphertext, liveKeyVersion })
+          : null;
       return {
         ...rest,
         viewerModerates: rest.viewerModerates === true,
         viewers: counts?.get(r.id) ?? null,
         poster:
-          posterName !== null && key !== null
+          posterName !== null && posterKey !== null
             ? { name: posterName, ageMs: Math.max(0, Number(posterAgeMs)) }
             : null,
-        key,
+        posterKey,
       };
     });
     this.logger.debug(
@@ -2035,6 +2033,7 @@ export class LivesService implements OnModuleDestroy {
       await this.db.query(`DELETE FROM lives WHERE id = $1 AND "endedAt" IS NOT NULL`, [liveId]);
     }
     this.closeArrivalOutages(liveId);
+    this.closePosterKeyOutage(liveId);
     // The arrival keys name accounts: they go with the live (best effort - their TTL is the bound).
     await this.seats.forgetArrivals(liveId).catch((e: unknown) => {
       this.logger.warn(`[LIVE_ARRIVAL] ${liveId}: arrivals left to their TTL: ${String(e)}`);
@@ -2168,6 +2167,48 @@ export class LivesService implements OnModuleDestroy {
   }
 
   /** The live is purged: an outage still open on it is reported with its count, then forgotten. */
+  /**
+   * A live whose stored key would not open for the FEED LIST, with how many list reads met it since.
+   * The list reads every open live on every reader's refresh, so an unreadable key would otherwise
+   * log one ERROR per live per reader per refresh: it is logged ONCE when it starts, its end once
+   * (the next read that opens it, or the live's purge) - durable for the outage, not a clock.
+   */
+  private readonly posterKeyOutages = new Map<string, number>();
+
+  /** The poster key of one listed live, or null when its stored key does not open (reported once). */
+  private posterKeyFor(liveId: string, stored: StoredLiveKey): string | null {
+    let liveKey: string;
+    try {
+      liveKey = openLiveKey(liveId, stored, false);
+    } catch (e) {
+      if (!(e instanceof LiveKeyUnavailableError)) throw e;
+      const seen = this.posterKeyOutages.get(liveId);
+      if (seen === undefined) {
+        this.logger.error(
+          `[LIVE_KEY] ${liveId}: the key does not open (${e.reason}) - its card shows no picture until it does`
+        );
+      }
+      this.posterKeyOutages.set(liveId, (seen ?? 0) + 1);
+      return null;
+    }
+    const failed = this.posterKeyOutages.get(liveId);
+    if (failed !== undefined) {
+      this.posterKeyOutages.delete(liveId);
+      this.logger.log(`[LIVE_KEY] ${liveId}: the key opens again after ${failed} list read(s)`);
+    }
+    return derivePosterKey(liveKey, liveId);
+  }
+
+  /** At the live's purge: an outage still open is closed, and said. */
+  private closePosterKeyOutage(liveId: string): void {
+    const failed = this.posterKeyOutages.get(liveId);
+    if (failed === undefined) return;
+    this.posterKeyOutages.delete(liveId);
+    this.logger.warn(
+      `[LIVE_KEY] ${liveId}: purged with its key still unreadable (${failed} list read(s))`
+    );
+  }
+
   private closeArrivalOutages(liveId: string): void {
     for (const op of ['note', 'read'] as const) {
       const failed = this.arrivalOutages[op].get(liveId);

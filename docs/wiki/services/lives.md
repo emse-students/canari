@@ -97,8 +97,9 @@ they close. What must be true before lives open in production, and in what order
 | Starts per account | 6 in a rolling hour; ONE open at a time (the partial unique index) | `LIVE_STARTS_PER_HOUR`, `LIVE_START_WINDOW_MS` | same route (`startsPerHour`) |
 | Ingests storing at once, per instance | 4 (the database pool is 10), a preview image counted with the segments | `LIVE_INGEST_MAX_CONCURRENT` | - |
 | A live's title (owner, 2026-11-07) | optional, 1-80 characters (code points), one line | `LIVE_TITLE_MAX_CHARS` (and the `lives_title_length` CHECK) | same route (`titleMaxChars`) |
-| A preview image | at most 256 KiB sealed, at most one per 5 s (database clock), the broadcaster sends one every 5 segments | `LIVE_POSTER_MAX_BYTES`, `LIVE_POSTER_MIN_INTERVAL_MS`, `LIVE_POSTER_EVERY_SEGMENTS` | same route (`posterMaxBytes`, `posterEverySegments`) |
-| How often a feed card on screen re-reads the list | 15 s | `LIVE_CARD_REFRESH_MS` | same route (`cardRefreshMs`) |
+| A preview image | at most 256 KiB sealed (about 48 KiB typical), at most one per 8 s (database clock) | `LIVE_POSTER_MAX_BYTES`, `LIVE_POSTER_MIN_INTERVAL_MS`, `LIVE_POSTER_TYPICAL_BYTES` | same route (`posterMaxBytes`) |
+| The preview period: the broadcaster sends one still per period (8 segments), a card on screen re-reads the list once per period | 16 s | `LIVE_PREVIEW_PERIOD_MS` | same route (`previewPeriodMs`) |
+| The preview's egress per address (its own nginx zones, apart from the segments) | 8 Mb/s (4 connections x 250 kB/s) | `LIVE_POSTER_EGRESS_BPS` | - (nginx, asserted by `live-segments-route.test.mjs`) |
 | Store timeout / reservation age | 30 s / 35 s | `LIVE_STORE_TIMEOUT_MS`, `LIVE_RESERVATION_TTL_MS` | - |
 | Viewer cap of the HOST, all lives together (**the user wants NO cap, 2026-10-20; the cap stays until the [plan](../frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20) is measured; no VISIBLE ceiling, 2026-10-21: [live-scaling](../frontend/modules/live-scaling.md)**) | 24 = floor(90 Mb/s `LIVE_HOST_EGRESS_BPS` x 0.8 `LIVE_EGRESS_SHARE` / 3 Mb/s `LIVE_VIEWER_BITRATE_BPS`) | `LIVE_VIEWER_CAP`, same file | same route (`viewerCap`) |
 | Seat lease | 30 s after the last key read or manifest poll | `LIVE_SEAT_LEASE_MS` | same route (`seatLeaseMs`) |
@@ -124,9 +125,9 @@ Refusals are typed: the body's `code` is the discriminator, never the message.
 | Route | Who | Answers |
 | --- | --- | --- |
 | `GET /api/lives/limits` | any member | the numbers above |
-| `GET /api/lives` | any member | the open lives the caller may watch ([the rule of a post](#who-may-watch-the-rule-of-a-post)), newest first, at most 50, **takes NO seat**. Each item: `{ id, broadcasterId, associationId, startedAt, title, viewers, poster, key }` - `viewers` the seat count (null when Redis does not answer), `poster` `{ name, ageMs }` or null, and `key` served ONLY with a poster ([titles and the preview](#titles-and-the-preview-image-owner-2026-11-07)) |
+| `GET /api/lives` | any member | the open lives the caller may watch ([the rule of a post](#who-may-watch-the-rule-of-a-post)), newest first, at most 50, **takes NO seat**. Each item: `{ id, broadcasterId, associationId, startedAt, title, viewers, poster, posterKey }` - `viewers` the seat count (null when Redis does not answer), `poster` `{ name, ageMs }` or null (its bytes at `/api/media/public/live-poster/<id>/<name>`), and `posterKey` - a key DERIVED from the live key that opens the poster and nothing else, never the live key - served ONLY with a poster ([titles and the preview](#titles-and-the-preview-image-owner-2026-11-07)). `Cache-Control: no-store` |
 | `PATCH /api/lives/:id` `{ title }` | the broadcaster, on air | `{ id, title }`. `400 LIVE_TITLE_INVALID` (with `maxChars`; also a missing field), `403 LIVE_MUTED`, `404 LIVE_NOT_FOUND` (another member's live too), `410 LIVE_ENDED` |
-| `PUT /api/lives/:id/poster` raw `application/octet-stream` | the broadcaster, on air | `{ name, posterAt }`. `413 LIVE_POSTER_TOO_LARGE` (over 256 KiB), `400 LIVE_POSTER_EMPTY`, `429 LIVE_POSTER_TOO_FAST` (under 5 s since the last), `409 LIVE_POSTER_IN_PROGRESS` / `LIVE_POSTER_RESERVATION_LOST`, `503 LIVE_STORE_UNAVAILABLE`, `503 LIVE_INGEST_BUSY`, `410 LIVE_ENDED` |
+| `PUT /api/lives/:id/poster` raw `application/octet-stream` | the broadcaster, on air | `{ name, posterAt }`. `413 LIVE_POSTER_TOO_LARGE` (over 256 KiB), `400 LIVE_POSTER_EMPTY`, `429 LIVE_POSTER_TOO_FAST` (under 8 s since the last), `409 LIVE_POSTER_IN_PROGRESS` / `LIVE_POSTER_RESERVATION_LOST`, `503 LIVE_STORE_UNAVAILABLE`, `503 LIVE_INGEST_BUSY`, `410 LIVE_ENDED` |
 | `GET /api/lives/rules` | any member | `{ version, acceptedVersion, acceptedAt }`: the first-live rules the caller must have accepted, and what they did accept ([moderation](#moderation-wp-l8-server-half)) |
 | `GET /api/lives/standing` | any member | the CALLER's own `{ cutsOnRecord, suspendedUntil, withdrawnAt }` ([the ladder](#the-strike-ladder-wp-l8b)), so the pre-live screen can say why a start would be refused before it is pressed |
 | `POST /api/lives` `{ key, associationId?, acceptedRulesVersion?, title? }` | any member (L1) | `201` the live with its key and title. `400 LIVE_KEY_INVALID` (not 64 lower-case hex), `400 LIVE_TITLE_INVALID` (with `maxChars`, checked before anything is written), `400 LIVE_ASSOCIATION_INVALID`, `403 LIVE_MUTED`, `403 LIVE_ASSOCIATION_FORBIDDEN` (no `POST_AS_ASSO` there), `403 LIVE_ASSOCIATION_ARCHIVED` (the association is archived: it no longer acts, and its live would ring its whole former audience - review of #3119), `403 LIVE_RULES_NOT_ACCEPTED` (with `rulesVersion`), `403 LIVE_BROADCAST_WITHDRAWN`, `403 LIVE_BROADCAST_SUSPENDED` (with `suspendedUntil`), `409 LIVE_ALREADY_OPEN`, `429 LIVE_START_RATE` (6 starts in the hour), `503 LIVE_KEY_SEALING_UNAVAILABLE` (no secret to seal the key: nothing written, [the key at rest](#the-live-key-at-rest)) |
@@ -550,7 +551,7 @@ Client: [live](../frontend/modules/live.md#the-chat-readable-over-the-video-and-
 
 **The decisions** ([backlog](../backlog.d/live-titles-and-a-preview-on-the-feed-card.md)): a live
 carries an optional title (at most 80 characters, entered before the start, editable on air; none
-reads "X est en live"); the feed shows a refreshed still of the stream, sealed under the live key,
+reads "X est en live"); the feed shows a refreshed still of the stream, sealed under a key derived from the live key,
 with the EN DIRECT badge, the viewer count and the title, as ONE large card or a carousel of cards;
 the preview takes no viewer seat and adds no per-viewer poll; the follower push carries the title.
 
@@ -565,12 +566,13 @@ a muted account, another member's live (`404`, as for a segment) and an ended on
 erasure of the broadcaster sets it to NULL with the rest of the row's identity.
 
 **The preview image: where it lives.** An object under the live's own prefix, `live/<liveId>/<uuid>`,
-beside the segments - so it is served by the same public route and the same nginx cache
-([above](#serving-a-segment-from-the-nginx-cache-wp-l4)), deleted by the same end-of-live purge
-(a CUT live is purged like any ended one, so its preview goes with it), and swept by the same
-orphan reaper. Media-service and nginx did not change. The row names the current one
-(`"posterName"`, `"posterAt"`); the previous object is deleted best effort when a new one is
-confirmed (a failure logs a `warn` and the purge takes it at the end).
+beside the segments - so it is deleted by the same end-of-live purge (a CUT live is purged like any
+ended one, so its preview goes with it) and swept by the same orphan reaper. Media-service did not
+change. The row names the current one (`"posterName"`, `"posterAt"`); the previous object is deleted
+best effort when a new one is confirmed (a failure logs a `warn` and the purge takes it at the end).
+**It is READ through its own public path**, `/api/media/public/live-poster/<liveId>/<name>`, which
+nginx maps onto the same upstream object and the same `live_segments` cache (the cache key is the
+upstream path), but counts in its OWN zones - see [what the preview costs](#what-the-preview-costs).
 
 **Storing it** follows a segment's reserve / store / confirm: `"posterPendingName"` and
 `"posterPendingAt"` reserve the slot under the row lock, the bytes go to the store outside any
@@ -578,28 +580,63 @@ transaction, and the confirm re-takes the lock and either names the new poster, 
 (the object is deleted, `410`), or finds its reservation taken over as abandoned (`409
 LIVE_POSTER_RESERVATION_LOST`). `purgeEnded` treats a live `"posterPendingAt"` like a segment in
 flight and waits. The rate bound reads `"posterAt"` against `now()` - the DATABASE clock, never the
-device's: under 5 s since the last poster is `429 LIVE_POSTER_TOO_FAST`. A poster shares the
-ingest semaphore with segments, so a preview can never add a fifth concurrent store.
+device's: under `LIVE_POSTER_MIN_INTERVAL_MS` (8 s, half the preview period) since the last poster
+is `429 LIVE_POSTER_TOO_FAST`. A poster shares the ingest semaphore with segments, so a preview can
+never add a fifth concurrent store.
 
-**The key without a seat.** `GET /api/lives` already answers exactly the audience that may watch
-(the post rule, blocks both ways, the live's removed viewers - the same predicate as the seated
-`GET /api/lives/:id`). For each item it now also serves the key, but ONLY when a poster exists: the
-key is what opens the preview, and a live with nothing to open needs none. No seat is taken, so the
-24-seat cap is untouched; nothing new is told to anyone who could not already take a seat and read
-the same key. The viewer count is ONE Redis script for the whole page (`watchingMany`,
+**ONE period** (review of #3135). `LIVE_PREVIEW_PERIOD_MS` = 16 s, served as `previewPeriodMs` in
+`GET /api/lives/limits`, drives BOTH ends: the broadcaster sends a poster every
+`round(previewPeriodMs / 2 s)` = 8 segments (the cadence stays on the durable segment index, never a
+timer), and a card on screen re-reads the list once per period. So each list read can name a new
+still and no still is fetched twice; the server's 8 s floor only refuses a client that ignores it.
+
+**The key without a seat - a key that opens the picture and nothing else** (review of #3135).
+`GET /api/lives` already answers exactly the audience that may watch (the post rule, blocks both
+ways, the live's removed viewers - the same predicate as the seated `GET /api/lives/:id`). It must
+still never hand out a key that opens the STREAM or the CHAT: the seated `GET /api/lives/:id` is the
+ONLY place the live key leaves the server. So the poster is sealed under a DERIVED key,
+`posterKey = HKDF-SHA256(ikm = live key, salt = the live id's 16 bytes, info = "canari-live-poster-v1")`,
+32 bytes - computed by the broadcaster with WebCrypto to seal (`deriveLivePosterKey` in
+`livePosterCrypto.ts`) and by the server in `listOpen` (`derivePosterKey` in `live-poster-key.ts`)
+to serve, ONLY when a poster exists. HKDF is one-way: holding `posterKey` tells nothing of the live
+key, and the poster's AEAD label differs from the segment's and the chat line's, so a segment or a
+chat line sealed under the live key does not open under it (both sides pin one test vector, and
+`livePosterCrypto.test.ts` asserts a segment and a chat line are refused). No seat is taken, so the
+24-seat cap is untouched. The viewer count is ONE Redis script for the whole page (`watchingMany`,
 `COUNT_MANY_LIVE_SEATS_LUA`): one round trip, and `null` for every item if Redis does not answer
 (the list still answers). `poster.ageMs` is computed by PostgreSQL (`now() - "posterAt"`), so the
-client never compares a server stamp with its own clock. A stored key that does not open
-(`LiveKeyUnavailableError`) leaves THAT item with no picture and logs a `warn`; the list answers.
+client never compares a server stamp with its own clock. The list is served `Cache-Control:
+no-store`: it carries keys and a per-reader audience. **A stored key that does not open**
+(`LiveKeyUnavailableError`) leaves THAT item with no picture (`posterKey: null`) and the list
+answers; it logs at `error` ONCE per live per outage (`[LIVE_KEY] <liveId>: the key does not open`),
+then once when it opens again (with the number of list reads it cost), and the purge reports one
+still open at `warn` - never a line per list read.
 
-**What it costs, against the manifest poll.** A seated viewer polls the manifest about once a second
-(60 requests a minute, each a database read and a Redis renew). A card on screen re-reads the list
-every `cardRefreshMs` = 15 s (4 a minute: one query for the whole page plus one Redis script) and
-fetches at most the newest poster of each live it shows - one new object every 5 segments (about
-10 s with 2 s segments), a cache hit for every card after the first. Off screen, in a hidden page or
-with no live on air, the card reads nothing on a timer; it is otherwise read when the feed reads its
-first page, as before. The broadcaster adds one `PUT` of at most 256 KiB every ~10 s to the segment
-it already sends every 2 s (up to 4 MiB each).
+**Who edits the title** (decided by the review coordinator, 2026-11-07, reversible): ONLY the
+broadcaster, for an association's live too - an association's admins do not edit a live they do not
+run. Lifting it is one guard in `editTitle` plus a test.
+
+### What the preview costs
+
+**In bytes.** A 480 px JPEG at quality 0.7 seals to about `LIVE_POSTER_TYPICAL_BYTES` = 48 KiB
+(256 KiB at most, refused above). One per 16 s period, fetched ONCE per new name: about
+48 KiB / 16 s = 3 KiB/s, **about 24.6 kb/s per card on screen**, nothing when the card is off screen,
+the page hidden or no live on air. The card keeps the newest opened still of each listed live in
+memory by its NAME (`livePosterView.ts`), so a list naming the same poster, or the card drawn again,
+asks the network nothing; an answered list drops the stills of the lives it no longer names.
+
+**Against the uplink.** The poster path has its OWN nginx zones, so a feed full of readers can never
+spend the seated viewers' budget: `lives_posters` (25 r/s per address, burst 50),
+`lives_posters_conn` (4 connections per address) and `limit_rate` 250 kB/s per connection, so at most
+4 x 2 Mb/s = `LIVE_POSTER_EGRESS_BPS` = 8 Mb/s per address - about 325 readers behind one NAT at
+24.6 kb/s each. `live-segments-route.test.mjs` asserts that product against the constant, and that
+the segments' share plus this budget stays within the host's egress. A reader over it gets a `429`
+(`rate-limited`, logged at `log`): a staler picture, never a seated viewer's refusal.
+
+**Against the manifest poll.** A seated viewer polls the manifest about once a second (60 requests
+a minute, each a database read and a Redis renew). A card on screen re-reads the list once per
+16 s period (under 4 a minute: one query for the whole page plus one Redis script). The broadcaster
+adds one `PUT` of about 48 KiB every 16 s to the segment it already sends every 2 s (up to 4 MiB each).
 
 `140_live_title_and_poster.sql` adds the five columns and three CHECKs (`NOT VALID`, then validated
 after the commit, `lock_timeout` 5 s), additive and idempotent; applied twice by the integration spec.

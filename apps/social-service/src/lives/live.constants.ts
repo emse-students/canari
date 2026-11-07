@@ -318,31 +318,48 @@ export const LIVE_TITLE_MAX_CHARS = 80;
 export const LIVE_POSTER_MAX_BYTES = 256 * 1024;
 
 /**
+ * THE ONE PERIOD OF THE PREVIEW, in ms (review of #3135: two cadences, 10 s sent and 15 s read,
+ * left a third of the posters unseen). BOTH ends read it from the limits:
+ *
+ * - the BROADCASTER sends a poster every `round(previewPeriodMs / segment length)` segments (8 with
+ *   its 2 s segments), counted on the durable segment index, never on a timer - no segment, no
+ *   poster, and a paused camera leaves the last image with its age;
+ * - a FEED CARD on screen, in a visible page, re-reads `GET /api/lives` once per period, so each
+ *   poster sent is the one the next read names.
+ *
+ * Served, never compiled into a client, so the load can be shaped without a release. It is a cost
+ * knob and nothing else: wrong, the picture is staler or the list read more often; nothing is
+ * decided from it.
+ */
+export const LIVE_PREVIEW_PERIOD_MS = 16_000;
+
+/**
  * THE SHORTEST GAP BETWEEN TWO STORED POSTERS of one live, in ms, decided on the row's `posterAt`
- * (the database's clock): a poster sooner than this is 429 `LIVE_POSTER_TOO_FAST`. The client sends
- * one every {@link LIVE_POSTER_EVERY_SEGMENTS} segments (~10 s), so half of that is never met by an
- * honest broadcaster and bounds a dishonest one at 12 stores a minute.
+ * (the database's clock): a poster sooner than this is 429 `LIVE_POSTER_TOO_FAST`. Half the
+ * {@link LIVE_PREVIEW_PERIOD_MS}: never met by an honest broadcaster, and a dishonest one is bounded
+ * at 7.5 stores a minute.
  */
-export const LIVE_POSTER_MIN_INTERVAL_MS = 5_000;
+export const LIVE_POSTER_MIN_INTERVAL_MS = LIVE_PREVIEW_PERIOD_MS / 2;
 
 /**
- * HOW OFTEN THE BROADCASTER SENDS A POSTER, in SEGMENTS: one when segment `index` is enqueued with
- * `index % 5 === 0` - segment 0 first, so the card has a picture from the first seconds, then about
- * every 10 s (a segment is ~2 s). Counted on the segment index, which is durable (the server's
- * `nextIndex`), never on a timer: no segment, no poster - a paused camera leaves the last image,
- * and the card says how old it is.
+ * WHAT A POSTER TYPICALLY WEIGHS, in bytes - a planning figure (a 480 x 854 JPEG at quality 0.7 is
+ * tens of kB), to be replaced by the reading owed on both phones. It sizes the budget below.
  */
-export const LIVE_POSTER_EVERY_SEGMENTS = 5;
+export const LIVE_POSTER_TYPICAL_BYTES = 48 * 1024;
 
 /**
- * HOW OFTEN A FEED CARD RE-READS `GET /api/lives` WHILE IT IS ON SCREEN, in ms - what refreshes the
- * preview image, the viewer count and the title. Served, never compiled into a client, so the load
- * can be shaped without a release. Only while the card intersects the viewport AND the page is
- * visible: a card scrolled away or an app in the background reads nothing. 15 s is 4 list reads a
- * minute per reader looking at the card, against the 60 manifest polls a minute of ONE seated viewer
- * (lives.md, "What the preview costs").
+ * THE PREVIEW'S EGRESS BUDGET, in bits per second (review of #3135). The viewer cap is a bandwidth
+ * budget (`LIVE_HOST_EGRESS_BPS` x `LIVE_EGRESS_SHARE` = 72 Mb/s for seated viewers), and a poster
+ * takes no seat, so its bytes get their OWN budget out of the 18 Mb/s the live share leaves: 8 Mb/s.
+ *
+ * Posters are served by their OWN nginx location and zones (`/api/media/public/live-poster/`), so a
+ * card reader never spends the segments' per-address quota; that location bounds ONE address at
+ * `limit_conn` x `limit_rate` = this budget - `live-segments-route.test.mjs` recomputes it, as it
+ * does the cap. What it buys: one poster of {@link LIVE_POSTER_TYPICAL_BYTES} per
+ * {@link LIVE_PREVIEW_PERIOD_MS} per reader is ~24.6 kb/s, so ~325 card readers behind ONE campus
+ * address before a 429 - which costs a card a stale picture, never a seated viewer a segment.
  */
-export const LIVE_CARD_REFRESH_MS = 15_000;
+export const LIVE_POSTER_EGRESS_BPS = 8_000_000;
 
 /** The numbers as the API serves them. */
 export function liveLimits(): {
@@ -368,8 +385,7 @@ export function liveLimits(): {
   suspensionMs: number;
   titleMaxChars: number;
   posterMaxBytes: number;
-  posterEverySegments: number;
-  cardRefreshMs: number;
+  previewPeriodMs: number;
 } {
   return {
     segmentMaxBytes: LIVE_SEGMENT_MAX_BYTES,
@@ -394,7 +410,6 @@ export function liveLimits(): {
     suspensionMs: LIVE_SUSPENSION_MS,
     titleMaxChars: LIVE_TITLE_MAX_CHARS,
     posterMaxBytes: LIVE_POSTER_MAX_BYTES,
-    posterEverySegments: LIVE_POSTER_EVERY_SEGMENTS,
-    cardRefreshMs: LIVE_CARD_REFRESH_MS,
+    previewPeriodMs: LIVE_PREVIEW_PERIOD_MS,
   };
 }

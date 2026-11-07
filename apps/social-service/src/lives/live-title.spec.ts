@@ -43,8 +43,7 @@ describe('a live title (owner, 2026-11-07)', () => {
     expect(liveLimits()).toMatchObject({
       titleMaxChars: 80,
       posterMaxBytes: 256 * 1024,
-      posterEverySegments: 5,
-      cardRefreshMs: 15_000,
+      previewPeriodMs: 16_000,
     });
   });
 });

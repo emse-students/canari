@@ -538,31 +538,39 @@ export function fetchLiveSegment(
   name: string,
   signal?: AbortSignal
 ): Promise<ArrayBuffer> {
-  return fetchLiveObject(liveId, name, `Live segment ${name}`, signal);
+  return fetchLiveObject(liveSegmentUrl(liveId, name), `Live segment ${name}`, signal);
 }
 
 /**
- * A live's sealed PREVIEW IMAGE (owner, 2026-11-07), by the `poster.name` the list gave: the SAME
- * public route and nginx cache as a segment (it is stored beside them, under the live's prefix), so
- * every card showing it asks the cache, never the store. A plain GET for the same reason as
- * {@link fetchLiveSegment}.
+ * The public URL of a live's PREVIEW IMAGE: its OWN path (`/api/media/public/live-poster/`), which
+ * nginx counts in its own zones and budget so a card reader never spends a seated viewer's segment
+ * quota - and maps onto the same stored object and the same cache as the segment route (review of
+ * #3135, lives.md "What the preview costs").
+ */
+export function livePosterUrl(liveId: string, name: string): string {
+  return `${mediaUrl()}/api/media/public/live-poster/${liveId.toLowerCase()}/${name.toLowerCase()}`;
+}
+
+/**
+ * A live's sealed PREVIEW IMAGE (owner, 2026-11-07), by the `poster.name` the list gave, through
+ * {@link livePosterUrl}: every card showing it asks nginx's cache, never the store. A plain GET for
+ * the same reason as {@link fetchLiveSegment}.
  */
 export function fetchLivePoster(
   liveId: string,
   name: string,
   signal?: AbortSignal
 ): Promise<ArrayBuffer> {
-  return fetchLiveObject(liveId, name, `Live poster ${name}`, signal);
+  return fetchLiveObject(livePosterUrl(liveId, name), `Live poster ${name}`, signal);
 }
 
-/** The one GET of an object under a live's public prefix; `what` names it in the refusal's log. */
+/** The one GET of a live's public object; `what` names it in the refusal's log. */
 async function fetchLiveObject(
-  liveId: string,
-  name: string,
+  url: string,
   what: string,
   signal?: AbortSignal
 ): Promise<ArrayBuffer> {
-  const res = await trackedFetch(fetch, liveSegmentUrl(liveId, name), { method: 'GET', signal });
+  const res = await trackedFetch(fetch, url, { method: 'GET', signal });
   if (!res.ok) throw await liveRefusal(res, what, true);
   return res.arrayBuffer();
 }

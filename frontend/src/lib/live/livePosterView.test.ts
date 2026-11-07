@@ -1,15 +1,17 @@
 /**
- * The card's preview load: each way it ends is a typed value, and only an opened image is shown.
+ * The card's preview load: each way it ends is a typed value, only an opened image is shown, and a
+ * poster already opened is NEVER fetched again - only a new name reaches the network.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LiveRefusalError } from './api';
 import { LivePosterOpenError } from './livePosterCrypto';
-import { loadLivePoster } from './livePosterView';
+import { forgetLivePostersExcept, loadLivePoster } from './livePosterView';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 
-const LIVE = { id: 'l1', poster: { name: 'p1', ageMs: 3000 }, key: 'ab'.repeat(32) };
+const LIVE = { id: 'l1', poster: { name: 'p1', ageMs: 3000 }, posterKey: 'ab'.repeat(32) };
 
 beforeEach(() => {
+  forgetLivePostersExcept([]);
   for (const level of ['debug', 'log', 'warn'] as const) {
     vi.spyOn(console, level).mockImplementation(() => {});
   }
@@ -24,14 +26,32 @@ const deps = (
   open: vi.fn(openImpl),
 });
 
+const refusal = (status: number, kind: 'not-found' | 'rate-limited') =>
+  new LiveRefusalError(status, null, 'x', kind, null, null, null);
+
 describe('loadLivePoster', () => {
-  it('opens the named poster under the served key into a JPEG blob', async () => {
+  it('opens the named poster under the served POSTER key into a JPEG blob', async () => {
     const d = deps(async () => new ArrayBuffer(4));
     const outcome = await loadLivePoster(LIVE, undefined, d);
     expect(outcome.kind).toBe('shown');
     if (outcome.kind === 'shown') expect(outcome.image.type).toBe('image/jpeg');
     expect(d.fetch).toHaveBeenCalledWith('l1', 'p1', undefined);
-    expect(d.open).toHaveBeenCalledWith(LIVE.key, 'l1', expect.any(Uint8Array));
+    expect(d.open).toHaveBeenCalledWith(LIVE.posterKey, 'l1', expect.any(Uint8Array));
+  });
+
+  it('fetches a poster ONCE: the same name again asks the network nothing, a new one does', async () => {
+    const d = deps(async () => new ArrayBuffer(4));
+    await loadLivePoster(LIVE, undefined, d);
+    await expect(loadLivePoster({ ...LIVE }, undefined, d)).resolves.toMatchObject({
+      kind: 'shown',
+    });
+    expect(d.fetch).toHaveBeenCalledTimes(1);
+    await loadLivePoster({ ...LIVE, poster: { name: 'p2', ageMs: 1000 } }, undefined, d);
+    expect(d.fetch).toHaveBeenCalledTimes(2);
+    // A live no longer listed is forgotten: listed again later, its poster is fetched anew.
+    forgetLivePostersExcept(['other']);
+    await loadLivePoster({ ...LIVE, poster: { name: 'p2', ageMs: 1000 } }, undefined, d);
+    expect(d.fetch).toHaveBeenCalledTimes(3);
   });
 
   it('asks nothing without a poster or a key', async () => {
@@ -39,17 +59,23 @@ describe('loadLivePoster', () => {
     await expect(loadLivePoster({ ...LIVE, poster: null }, undefined, d)).resolves.toEqual({
       kind: 'none',
     });
-    await expect(loadLivePoster({ ...LIVE, key: null }, undefined, d)).resolves.toEqual({
+    await expect(loadLivePoster({ ...LIVE, posterKey: null }, undefined, d)).resolves.toEqual({
       kind: 'none',
     });
     expect(d.fetch).not.toHaveBeenCalled();
   });
 
-  it('types a replaced object, no network, a seal that does not open, and an abort', async () => {
+  it('types a replaced object, the preview budget, no network, a bad seal and an abort', async () => {
     const gone = deps(async () => {
-      throw new LiveRefusalError(404, null, 'x', 'not-found', null, null, null);
+      throw refusal(404, 'not-found');
     });
     await expect(loadLivePoster(LIVE, undefined, gone)).resolves.toEqual({ kind: 'gone' });
+    const limited = deps(async () => {
+      throw refusal(429, 'rate-limited');
+    });
+    await expect(loadLivePoster(LIVE, undefined, limited)).resolves.toEqual({
+      kind: 'rate-limited',
+    });
     const offline = deps(async () => {
       throw new TransportFailureError(new TypeError('x'));
     });

@@ -522,8 +522,8 @@ the two values together.
 | `lib/live/fmp4Segments.ts` | The ONE fMP4 box reader of the live: `initSegmentEnd` (where a segment's `ftyp` + `moov` stop), on the same box-header reader as the [broadcaster's](#the-broadcaster-as-built) `Fmp4Splitter`, and `Fmp4ParseError` (a box it cannot frame: "Live indisponible", `playback`) |
 | `lib/live/openLives.ts` | The card's list (the reader's own live left out), `formatLiveElapsed` |
 | `lib/live/liveCrypto.ts` | The seal of [format v1](#the-segment-seal-format-v1); the viewer calls `openLiveSegment` and skips a segment on `LiveSegmentOpenError` |
-| `lib/live/livePosterView.ts` | `loadLivePoster`: fetch the preview the list named, open it under the key served with it, a typed `LivePosterLoad` for every way it ends |
-| `lib/live/livePosterCrypto.ts` | The preview's seal (`canari-live-poster-v1`, the segment seal's construction with its own label, so neither opens as the other) |
+| `lib/live/livePosterView.ts` | `loadLivePoster`: fetch the preview the list named, open it under the `posterKey` served with it (never the live key), fetched once per name, a typed `LivePosterLoad` for every way it ends |
+| `lib/live/livePosterCrypto.ts` | The preview's seal (`canari-live-poster-v1`, the segment seal's construction with its own label, so neither opens as the other) and `deriveLivePosterKey`, the HKDF that turns the live key into the poster key |
 | `components/live/` | `LiveFeedCard`, `LivePosterImage` (one preview, object URLs revoked), `LiveViewer`, `LiveIdentity` (who is on air: picture and name, a member or an association), `LiveBadge` |
 
 **The card (reshaped by the owner on 2026-11-07, [lives](../../services/lives.md#titles-and-the-preview-image-owner-2026-11-07)).**
@@ -532,12 +532,18 @@ is on air. ONE live is a LARGE card (4:5): its preview still, the EN DIRECT badg
 the title (or "X est en live" without one), who broadcasts and the preview's age; SEVERAL are a
 horizontal snap carousel of the same cards, compact (3:4). A tap opens the viewer. The preview is
 loaded only when the list names a NEW poster (keyed on its name), swapped in once it opened, so the
-card never flashes empty; a failed load keeps the picture it had.
+card never flashes empty; a failed load keeps the picture it had. **A poster is fetched ONCE**:
+`livePosterView.ts` keeps the newest opened still of each listed live by its name, so a card drawn
+again (one live becoming a carousel, a tab switch) asks the network nothing, and each answered list
+drops the stills of the lives it no longer names (`forgetLivePostersExcept`). The bytes come from
+the poster's own path, `/api/media/public/live-poster/<id>/<name>`, counted by nginx apart from the
+segments; a `429` there is `rate-limited`, a staler picture.
 
 It asks `GET /api/lives` (no seat) when the FEED asks for its first page - the tab load and
 `refreshPosts` (pull-to-refresh, retry, reconnect, a publish) bump one counter - AND, while the card
-intersects the viewport (`IntersectionObserver`) in a visible page, every `cardRefreshMs` (15 s,
-served by `GET /api/lives/limits`, read once and only once a live is on air). The next read is
+intersects the viewport (`IntersectionObserver`) in a visible page, every `previewPeriodMs` (16 s,
+served by `GET /api/lives/limits`, read once and only once a live is on air) - the SAME period the
+broadcaster sends a still on, so each read can name a new one. The next read is
 scheduled when the last one answered, so two never overlap. **That timer decides nothing**: wrong,
 it only makes the picture staler or the list read more often - which is why its period is the
 server's. Off screen, in a hidden page or with no live, no timer runs. A lost answer keeps the cards
@@ -759,9 +765,12 @@ shows it (or "Ajouter un titre") and opens an inline editor; `saveTitle` sends `
 
 The preview still is grabbed from the screen's own `<video>` (the camera or a shared screen alike):
 a canvas 480 px wide (never upscaled), JPEG at quality 0.7 - JPEG because WebKit has no WebP
-encoder - sealed under the live key and `PUT` by `LivePosterSender`. **Its cadence is the segment
-index, not a clock**: segment 0, then every `posterEverySegments` (5) segments, so about every 10 s
-with 2 s segments, and a broadcaster with no segment going out sends no preview. One turn at a time
+encoder - sealed under the POSTER key (`deriveLivePosterKey`: WebCrypto HKDF-SHA256 of the live key,
+salt the live id, info `canari-live-poster-v1`, derived once per live - a key that opens this image
+and no segment or chat line, [lives](../../services/lives.md#titles-and-the-preview-image-owner-2026-11-07))
+and `PUT` by `LivePosterSender`. **Its cadence is the segment index, not a clock**: segment 0, then
+every `posterEverySegments(previewPeriodMs)` segments - the server's ONE preview period (16 s) in
+2 s segments, so 8 - and a broadcaster with no segment going out sends no preview. One turn at a time
 (a due index during a turn is skipped, not queued), no retry (the next turn is a fresh frame), an
 ended live stops it for good, a frame over `posterMaxBytes` is skipped; every turn's outcome is
 typed (`LivePosterTurn`) and logged.

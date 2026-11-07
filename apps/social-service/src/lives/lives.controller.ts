@@ -148,8 +148,12 @@ export class LivesController {
     await this.associations.refuseModeration(caller, { kind: 'broadcaster', id: target });
   }
 
-  /** The open lives the caller may watch, newest first. */
+  /**
+   * The open lives the caller may watch, newest first, with each one's preview key. `no-store`: the
+   * answer is per reader, and a key never sits in any cache.
+   */
   @Get()
+  @Header('Cache-Control', 'no-store')
   list(@Headers('x-user-id') userId: string) {
     return this.lives.listOpen(callerOf(userId));
   }

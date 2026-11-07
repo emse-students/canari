@@ -1,9 +1,11 @@
 <script lang="ts">
   /**
    * A LIVE'S PREVIEW STILL ON THE FEED CARD (owner, 2026-11-07): the image the broadcaster seals
-   * every few segments, opened with the key the list served beside it - no seat taken.
+   * every few segments, opened with the POSTER key the list served beside it (derived from the live
+   * key, it opens this image and nothing else) - no seat taken.
    *
-   * Keyed on the poster's NAME: a list refresh that names the same object asks nothing, a new name
+   * Keyed on the poster's NAME: a list refresh that names the same object asks nothing (and a card
+   * drawn again is answered from `loadLivePoster`'s memo, never the network), a new name
    * loads the new still and swaps it in only once it opened, so the card never flashes empty. A load
    * that fails keeps the previous picture (`loadLivePoster` says why); every object URL this made is
    * revoked when replaced and when the card goes.
@@ -14,7 +16,7 @@
   import type { LiveListItem } from '$lib/live/types';
 
   interface Props {
-    live: Pick<LiveListItem, 'id' | 'poster' | 'key'>;
+    live: Pick<LiveListItem, 'id' | 'poster' | 'posterKey'>;
     /** The image's accessible description. */
     alt: string;
     /** The loader; the real one unless a test hands its own. */
@@ -31,7 +33,7 @@
   $effect(() => {
     const name = posterName;
     if (!name) return;
-    const item = untrack(() => ({ id: liveId, poster: live.poster, key: live.key }));
+    const item = untrack(() => ({ id: liveId, poster: live.poster, posterKey: live.posterKey }));
     const abort = new AbortController();
     void load(item, abort.signal).then((outcome) => {
       if (abort.signal.aborted || outcome.kind !== 'shown') return;

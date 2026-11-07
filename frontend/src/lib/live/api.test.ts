@@ -43,6 +43,7 @@ import {
   LiveRefusalError,
   LiveSegmentUploader,
   liveSegmentUrl,
+  livePosterUrl,
   manifestQuery,
   postLiveMessage,
   postLiveReactions,
@@ -232,6 +233,10 @@ describe('the routes', () => {
     );
     expect(apiFetch).not.toHaveBeenCalled();
     expect(liveSegmentUrl(LIVE, 'n')).toBe(`https://media.test/api/media/public/live/${LIVE}/n`);
+    // The preview has its OWN path, so nginx counts it apart from the segments (review of #3135).
+    expect(livePosterUrl(LIVE, 'n')).toBe(
+      `https://media.test/api/media/public/live-poster/${LIVE}/n`
+    );
   });
 
   it("the segment fetch carries the caller's signal, and nothing else is added for it", async () => {

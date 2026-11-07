@@ -857,11 +857,11 @@ describe('LiveBroadcast - the title and the preview image (owner, 2026-11-07)', 
     expect(b.titleProblem).toBe('offline');
   });
 
-  it('sends a preview on the SEGMENT cadence - index 0, then every 5th - sealed for the live', async () => {
+  it('sends a preview on the SEGMENT cadence - index 0, then once per period - sealed under the POSTER key', async () => {
     const f = fakeDeps();
     f.deps.fetchLiveLimits.mockResolvedValue({
       ...LIMITS,
-      posterEverySegments: 5,
+      previewPeriodMs: 10_000, // 5 segments of 2 s
       posterMaxBytes: 1_000,
     });
     const cam = fakeCamera();
@@ -873,7 +873,11 @@ describe('LiveBroadcast - the title and the preview image (owner, 2026-11-07)', 
     await b.start();
     for (let i = 0; i < 6; i++) await chunk(f.recorders[0], join(initSegment(), fragment()));
     await vi.waitFor(() => expect(f.deps.putLivePoster).toHaveBeenCalledTimes(2));
-    expect(f.deps.sealPoster).toHaveBeenCalledWith(KEY, LIVE_ID, frame);
+    // Derived once from the live key, and the live key itself never seals a preview.
+    expect(f.deps.derivePosterKey).toHaveBeenCalledTimes(1);
+    expect(f.deps.derivePosterKey).toHaveBeenCalledWith(KEY, LIVE_ID);
+    expect(f.deps.sealPoster).toHaveBeenCalledWith('pk'.repeat(32), LIVE_ID, frame);
+    expect(f.deps.sealPoster).not.toHaveBeenCalledWith(KEY, LIVE_ID, frame);
     // The live ends: no preview after it.
     f.uploaders[0].options.onStopped!(ended());
     expect(b.phase).toBe('ended');
