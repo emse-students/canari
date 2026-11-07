@@ -1,0 +1,19 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "kit.config.js",
+    "src/env.ts",
+    "src/lib/mlsServicePlatform.native.ts",
+    "scripts/**/*.{ts,js,mjs}"
+  ],
+  "project": ["src/**/*.{ts,js,svelte}", "scripts/**/*.{ts,js,mjs}"],
+  "ignore": [
+    "src/lib/paraglide/**",
+    "src/lib/wasm/**",
+    "src/lib/proto/canari.*",
+    ".paraglide-test/**"
+  ],
+  "ignoreUnresolved": ["^\\$lib/(wasm|proto/canari)", "^\\$lib/paraglide/"],
+  "ignoreDependencies": ["emoji-picker-element-data", "husky"],
+  "ignoreBinaries": ["wasm-pack"]
+}

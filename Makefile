@@ -366,6 +366,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/docs-merge-artefacts.test.mjs
 	@bun .github/scripts/tests/line-endings.test.mjs
 	@bun .github/scripts/tests/assert-frontend-build.test.mjs
+	@bun .github/scripts/tests/dead-code-ratchet.test.mjs
 	@bun .github/scripts/tests/wiki-links.test.mjs
 	@bun .github/scripts/tests/docs-private-guard.test.mjs
 	@bun .github/scripts/tests/pipefail-early-reader.test.mjs
