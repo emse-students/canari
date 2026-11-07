@@ -16,7 +16,8 @@
    *
    * A VIDEO CALL MINIMISED keeps its camera on (as on every phone), so the bar carries the camera
    * button while it sends - the user browsing the app can cut it without going back - and a
-   * thumbnail of the peer's picture when there is one, muted like every `<video>` of a call.
+   * thumbnail of the peer's picture when there is one, muted like every `<video>` of a call; the
+   * peer's avatar in its place until that picture has a frame (`utils/callVideoElement.ts`).
    */
   import { Mic, MicOff, Phone, PhoneOff, Video } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -28,6 +29,8 @@
   import { resolveCallPeers } from '$lib/utils/chat/callPeers';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { appendLog } from '$lib/utils/sessionLog';
+  import { bindCallVideo } from '$lib/utils/callVideoElement';
+  import Avatar from '$lib/components/shared/Avatar.svelte';
   import type { CallService } from '$lib/services/CallService';
 
   const service = $derived(globalSession.callService as CallService | null);
@@ -36,8 +39,8 @@
   const visible = $derived(!!service && call.callState !== 'idle' && !callView.showsFullScreen);
   const isIncoming = $derived(call.callState === 'incoming');
 
-  const peerName = $derived.by(() => {
-    if (!visible || !service) return '';
+  const peer = $derived.by(() => {
+    if (!visible || !service) return null;
     const peers = resolveCallPeers({
       userId: globalSession.userId || currentUserId() || '',
       callGroupId: service.currentGroupId,
@@ -45,8 +48,9 @@
       incomingCallerId: service.incomingCallerId,
       nameOf: getUserDisplayNameSync,
     });
-    return peers[0]?.displayName || m.call_label();
+    return peers[0] ?? null;
   });
+  const peerName = $derived(visible ? peer?.displayName || m.call_label() : '');
   const statusText = $derived(callStatusText(call.kind, call.duration));
   /** An OS holding a microphone, either side, in place of the timer while it lasts. */
   const micNotice = $derived(
@@ -75,16 +79,17 @@
   }
 
   // The peer's thumbnail, bound to its TRACK (the full screen's element is gone while minimised).
+  // The peer's avatar shows until the element has a FRAME to paint: a track unmuted by packets that
+  // never decode drew a black square here (production, 2026-11-07) - `bindCallVideo`, the rule the
+  // full screen uses too.
   let thumb: HTMLVideoElement | undefined = $state();
+  let thumbFrame = $state(false);
   $effect(() => {
     const el = thumb;
     const track = call.remoteVideoTrack;
+    thumbFrame = false;
     if (!el || !track) return;
-    el.srcObject = new MediaStream([track]);
-    el.play().catch((e: unknown) => appendLog(`[Call] bar thumbnail did not start: ${String(e)}`));
-    return () => {
-      el.srcObject = null;
-    };
+    return bindCallVideo(el, track, 'bar thumbnail', () => (thumbFrame = true));
   });
 
   function cameraOff() {
@@ -116,15 +121,25 @@
       onclick={expand}
     >
       {#if call.remoteVideoTrack && call.callState !== 'ended'}
-        <video
-          bind:this={thumb}
-          autoplay
-          playsinline
-          muted
-          aria-hidden="true"
-          data-testid="call-banner-video"
-          class="size-9 shrink-0 rounded-lg bg-black object-cover"
-        ></video>
+        <!-- The element plays from the start (it must, to receive a frame) but stays transparent over
+             the peer's avatar until its first frame: never a black square for a picture that does
+             not decode. -->
+        <span class="relative size-9 shrink-0 overflow-hidden rounded-lg" aria-hidden="true">
+          {#if !thumbFrame && peer}
+            <Avatar userId={peer.userId} fill shape="soft" fallbackLabel={peer.displayName} />
+          {/if}
+          <video
+            bind:this={thumb}
+            autoplay
+            playsinline
+            muted
+            data-testid="call-banner-video"
+            data-first-frame={thumbFrame}
+            class="absolute inset-0 h-full w-full object-cover {thumbFrame
+              ? 'bg-black'
+              : 'opacity-0'}"
+          ></video>
+        </span>
       {/if}
       <span class="relative flex size-2.5 shrink-0" aria-hidden="true">
         {#if call.kind !== 'live' && call.kind !== 'ended'}

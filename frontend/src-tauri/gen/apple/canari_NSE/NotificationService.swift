@@ -964,7 +964,9 @@ class NotificationService: UNNotificationServiceExtension {
     let silent = Self.string(userInfo["silent"]) == "true"
     trace?.mark("wake-fetch")
     guard let ctx = loadPushContext() else {
-      NseLog.log.error("[CanariNSE] [PUSH_WAKE] ERROR push_context absent - the message cannot be fetched")
+      NseLog.log.error(
+        "[CanariNSE] [PUSH_WAKE] ERROR push_context \(Self.pushContextRefusal(), privacy: .public) - the message cannot be fetched"
+      )
       noteCause("wake-no-push-context")
       trace?.outcome = "fallback"
       applyWakeUnavailable(content: content, locale: nil)
@@ -1073,7 +1075,7 @@ class NotificationService: UNNotificationServiceExtension {
 
     trace?.mark("push-context")
     guard let ctx = loadPushContext() else {
-      NseLog.log.notice("[CanariNSE] push_context absent - fallback")
+      NseLog.log.notice("[CanariNSE] push_context \(Self.pushContextRefusal(), privacy: .public) - fallback")
       noteCause("no-push-context")
       trace?.outcome = "fallback"
       applyMessageContent(
@@ -2343,6 +2345,24 @@ class NotificationService: UNNotificationServiceExtension {
     return PushContext(
       deviceKeyB64: deviceKeyB64, userId: userId, deviceId: deviceId, baseUrl: baseUrl,
       locale: locale)
+  }
+
+  /// Why `loadPushContext` answered nil, for the line that reports it: `absent`, `unreadable (...)`,
+  /// or `invalid: <fields> missing` - flagged when it is the shape a sign-out leaves (no `baseUrl`).
+  /// One line used to say "absent" for all of them, and a stripped file sends its reader to a
+  /// different fix than a missing one. Read only on that failure path; never names a value.
+  /// Mirror of Android's `PushContextVerdict`.
+  private static func pushContextRefusal() -> String {
+    guard let dir = appGroupDir() else { return "unreadable (no App Group container)" }
+    let url = dir.appendingPathComponent(pushContextFile)
+    guard FileManager.default.fileExists(atPath: url.path) else { return "absent" }
+    guard let data = try? Data(contentsOf: url),
+      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return "unreadable (not a JSON object)" }
+    let missing = ["userId", "deviceId", "baseUrl"].filter { (json[$0] as? String ?? "").isEmpty }
+    if missing.isEmpty { return "usable" }
+    let shape = missing == ["baseUrl"] ? " (the shape a sign-out leaves - no sign-in rewrote it)" : ""
+    return "invalid: \(missing.joined(separator: ",")) missing\(shape)"
   }
 
   /// WP-SEC-1: retrieves the MLS device key from the background-accessible Keychain item

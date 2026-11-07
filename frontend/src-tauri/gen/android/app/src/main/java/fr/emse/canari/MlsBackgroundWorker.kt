@@ -95,9 +95,10 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
             return Result.retry()
         }
 
-        val ctx = MlsContextLoader.loadPushContext(applicationContext)
+        val read = MlsContextLoader.readPushContext(applicationContext)
+        val ctx = read.context
         if (ctx == null) {
-            Log.e(TAG, "doWork: push_context.json missing or invalid -> failure")
+            Log.e(TAG, "doWork: push_context.json ${read.verdict.describe()} -> failure")
             return Result.failure()
         }
         val filesDir = MlsContextLoader.tauriDataDir(applicationContext).also { it.mkdirs() }.absolutePath

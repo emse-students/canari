@@ -58,6 +58,7 @@
   --color-text-muted: var(--text-muted);
   --color-green-ok: var(--green-ok);
   --color-red-err: var(--red-err);
+  --color-red-solid: var(--red-solid);
   /* Third member of the status triad, next to `green-ok` and `red-err`. Warning banners used to
      hardcode `text-amber-700` / `bg-amber-50` / `border-amber-200`, none of which flip, so the
      banner stayed light while the text on it went near-white. Tint it with an opacity modifier
@@ -388,6 +389,22 @@
      and most of them have not been re-examined yet, so an input that has no fill of its own must
      not vanish outright. Take it down as surfaces get their fills. */
   --cn-border: rgba(0, 0, 0, 0.1);
+  /* ============================== THE CONTROLS ==============================
+     ONE HEIGHT FOR EVERY CONTROL IN A ROW (owner, 2026-11-07: *"les boutons ne sont pas alignes, ont
+     des hauteurs differentes et des styles differents"*): a button, a select and a text field are
+     all 2.5rem, on a desktop and on a phone. `compact` (2rem) exists for a dense toolbar only.
+     Read by `.ui-control` at the end of this file, which `Button`, `Input` and `Picker` all wear -
+     a call site never spells these numbers. The corner is the existing card/button step, not a new
+     one. The border is the thin grey every field already had, and it is also the SECONDARY
+     button's: a button and a select side by side differ by what they do, never by how they are
+     drawn. See docs/wiki/frontend/controls.md. */
+  --control-height: 2.5rem;
+  --control-height-compact: 2rem;
+  --control-padding-x: 1rem;
+  --control-padding-x-compact: 0.75rem;
+  --control-border-width: 1px;
+  --control-border-color: var(--cn-border);
+  --control-radius: var(--radius-lg);
   /* The scrollbar thumb is drawn from the TEXT side of the palette, never the surface side. It used
      to be `color-mix(in srgb, var(--cn-surface) 20%, transparent)`, copied into seven files - which
      in light mode is white at 20% over a white surface, i.e. no scrollbar at all. Nothing reported
@@ -398,6 +415,9 @@
   --text-muted: #65686c; /* measured */
   --green-ok: #19b56a;
   --red-err: #e04d4d;
+  /* A FILL for white text: `red-err` is a text/edge red and reads 3.9:1 under white (2.8:1 in dark), under
+     AA. One value in both themes, 6:1 with white. */
+  --red-solid: #c42b2b;
   --amber-warn: #b45309;
   /* FLAT. The reference has no background gradient at all - it is one solid colour behind
      everything. The three stacked gradients that were here (amber and blue radials over a vertical
@@ -1107,8 +1127,8 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   width: 100%;
   max-width: 100%;
   padding: 0.75rem 1rem;
-  border: 2px solid var(--cn-border);
-  border-radius: var(--radius-lg);
+  border: var(--control-border-width) solid var(--control-border-color);
+  border-radius: var(--control-radius);
   font-size: var(--text-sm);
   line-height: var(--text-sm--line-height);
   color: var(--text-main);
@@ -3115,5 +3135,35 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
     --glass-chrome-bg: var(--cn-surface);
     --glass-chrome-edge: var(--cn-border);
     --glass-chrome-blur: none;
+  }
+}
+
+/* THE CONTROL BOX. Geometry only - height, side padding, edge, corner - because it is the part that
+   must be IDENTICAL across a button, a select and a text field; colour and type belong to each
+   component. In the components layer, so a call-site utility (`w-full`, `px-8`) still wins. */
+@layer components {
+  .ui-control {
+    box-sizing: border-box;
+    /* MIN-height, not height: Android's text zoom scales fonts and not lengths (textZoom.ts), so a
+       fixed box would clip a label at 200 % and a wrapped label must be able to grow it. */
+    min-height: var(--control-height);
+    padding-inline: var(--control-padding-x);
+    border: var(--control-border-width) solid var(--control-border-color);
+    border-radius: var(--control-radius);
+  }
+
+  .ui-control--compact {
+    min-height: var(--control-height-compact);
+    padding-inline: var(--control-padding-x-compact);
+  }
+
+  /* The icon-only form: a square the height of the row, no side padding. */
+  .ui-control--icon {
+    width: var(--control-height);
+    padding-inline: 0;
+  }
+
+  .ui-control--icon.ui-control--compact {
+    width: var(--control-height-compact);
   }
 }

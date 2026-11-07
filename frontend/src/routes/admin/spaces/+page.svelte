@@ -300,7 +300,7 @@
       <p class="text-text-muted mt-0.5 text-sm">{m.admin_spaces_subtitle()}</p>
     </div>
     <Button
-      variant={creating ? 'outline' : 'primary'}
+      variant={creating ? 'secondary' : 'primary'}
       aria-expanded={creating}
       onclick={() => (creating = !creating)}
     >
@@ -551,7 +551,7 @@
         {/if}
         {#if section.next}
           <Button
-            variant="outline"
+            variant="secondary"
             loading={section.loading}
             disabled={section.loading}
             onclick={() => loadMore(kind)}

@@ -14,6 +14,9 @@ weights, spacing, radii, surfaces, the whole colour treatment - is in scope: *"T
 bouger, etre redimensionne"*. The goal is not to erase Canari's identity but to make it
 *"BEAUCOUP plus ergonomique"*.
 
+**Buttons, selects and text fields (2026-11-07):** their height, edge and corner are one convention,
+not a measurement of the reference - [controls](controls.md).
+
 ---
 
 ## 1. The finding in one line

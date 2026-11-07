@@ -3979,9 +3979,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         requesterDeviceId: String,
     ) {
         // File loads (read-only, outside the lock)
-        val ctx = MlsContextLoader.loadPushContext(this)
+        val ctxRead = MlsContextLoader.readPushContext(this)
+        val ctx = ctxRead.context
         if (ctx == null) {
-            Log.e(TAG, "processWelcomeRequestBackground: push_context.json absent -> abort")
+            Log.e(TAG, "processWelcomeRequestBackground: push_context.json ${ctxRead.verdict.describe()} -> abort")
             return
         }
         val secret = retrievePushSecret(this)
@@ -4438,9 +4439,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         // Load the push context (file read) before the lock - read-only, thread-safe.
-        val ctx = MlsContextLoader.loadPushContext(this)
+        val read = MlsContextLoader.readPushContext(this)
+        val ctx = read.context
         if (ctx == null) {
-            Log.e(TAG, "tryDecrypt: push_context.json absent or invalid -> abort")
+            Log.e(TAG, "tryDecrypt: push_context.json ${read.verdict.describe()} -> abort")
             return PushDecrypt.Refused
         }
 
@@ -4798,9 +4800,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         queuedMessageId: String?,
         inlineProto: String?,
     ) {
-        val ctx = MlsContextLoader.loadPushContext(this)
+        val ctxRead = MlsContextLoader.readPushContext(this)
+        val ctx = ctxRead.context
         if (ctx == null) {
-            Log.e(TAG, "processReceivedWelcomeBackground: push_context.json absent -> abort")
+            Log.e(TAG, "processReceivedWelcomeBackground: push_context.json ${ctxRead.verdict.describe()} -> abort")
             return
         }
 
@@ -5209,9 +5212,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      */
     private fun groupLocality(groupId: String): GroupLocality {
         if (groupId.isEmpty()) return GroupLocality.ABSENT
-        val ctx = MlsContextLoader.loadPushContext(this)
+        val read = MlsContextLoader.readPushContext(this)
+        val ctx = read.context
         if (ctx == null) {
-            Log.w(TAG, "groupLocality: push context absent group=${groupId.take(8)} -> UNKNOWN")
+            Log.w(TAG, "groupLocality: push context ${read.verdict.describe()} group=${groupId.take(8)} -> UNKNOWN")
             return GroupLocality.UNKNOWN
         }
         val locality = withMlsStateLock(5) {

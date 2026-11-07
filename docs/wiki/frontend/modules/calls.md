@@ -2225,9 +2225,13 @@ experiment rows of the rig (below) settle it on Chrome 155:
   preference has its sender removed before any negotiation carries it. A video frame that still
   names another codec is encrypted WHOLE (it cannot decode) and counted `not-vp8` - the worker
   report then leads with ERROR and the call logs one `ERROR E2E: video frames of <mime>, not VP8`
-  line. Never a clear frame. **The frame's own check FAILS CLOSED**: an engine whose frame metadata
-  names no codec is not read as VP8 - its frames are encrypted whole and counted, the clear split
-  is taken only on the engine's word (`setCodecPreferences` stays the real guard).
+  line. Never a clear frame. **The split is decided by the TRANSFORM's codec, not the frame's
+  metadata** (since 2026-11-07, [below](#the-iphone-and-android-framed-video-differently-production-2026-11-07)):
+  a video transform is made only after its transceiver was held to VP8, and it is TOLD that codec
+  (`CallTransformOptions.videoCodec`); `framesAsVp8` splits on it, and FAILS CLOSED - whole, counted
+  `not-vp8` - for a transform with no codec held, or a frame whose metadata NAMES another codec.
+  Metadata that names nothing (WebKit) is silence, not a contradiction. Until 2026-11-07 the frame
+  metadata decided, and WebKit's silence framed the iPhone's video whole.
 - **Short frames are handled the same way on both sides**: an EMPTY video frame is passed through
   untouched by sender and receiver (it carries nothing); a non-empty one shorter than its header
   (not a frame an encoder emits) is DROPPED by the sender and counted (`short-sent`) - framed whole,
@@ -2307,7 +2311,7 @@ Audio stays clean on every row (match 0.96-0.98, LSD 3.92-4.02 dB on the gated r
 | Mi 9T to desktop Chrome, `bun callpeer.mjs --browser w3 --launch --dial --video --hangup` (and the phone dialling) | `video ... VP8`, ~30 fps, freezes 0, key frames a handful; the worker line's `video frames` growing both ways, `not-vp8=0`; `E2E proven`                                                                               |
 | Mi 9T: off/on, switch front/back, minimise                                                                         | the desktop's picture mutes to the avatar and comes back; the back camera is not mirrored; the bar shows the thumbnail and the camera button                                                                           |
 | Mi 9T: rotate                                                                                                      | the desktop's picture is `contain` in landscape, `cover` in portrait; the corner turns                                                                                                                                 |
-| iPhone 12 (WKWebView)                                                                                              | `RTCRtpReceiver.getCapabilities('video')` lists VP8 and `setCodecPreferences` exists (else the camera stays off, said), frame metadata names `video/VP8` (a WebKit that names nothing FAILS CLOSED: whole frame, a `not-vp8` ERROR); orientation; the camera purpose string at the native revival |
+| iPhone 12 (WKWebView)                                                                                              | `RTCRtpReceiver.getCapabilities('video')` lists VP8 and `setCodecPreferences` exists (else the camera stays off, said); orientation; the camera purpose string at the native revival. **Read in production 2026-11-07: WebKit's frame metadata names NO codec (`mime=? pt=-1`)** - the defect [below](#the-iphone-and-android-framed-video-differently-production-2026-11-07) |
 
 **Notes, accepted as they stand:**
 
@@ -2316,6 +2320,94 @@ Audio stays clean on every row (match 0.96-0.98, LSD 3.92-4.02 dB on the gated r
 - **An old client cannot decrypt the new video** (a `<=1.3.1-alpha.4` dev build framed video whole).
   Those builds had `CALLS_VIDEO_ENABLED = false` and only dev builds call at all, so no shipped
   build is affected; audio between the two is unchanged.
+
+### The iPhone and Android framed video differently (production, 2026-11-07)
+
+**The reading.** A 1:1 video call in production (`calls_mode = audio_video`) between the iPhone
+(WebKit, `1.6.5`) and an Android phone (Chrome 157 WebView, `1.6.6`): audio both ways, NO picture
+either way.
+
+| Side | What its log said |
+| --- | --- |
+| iPhone | `E2E sender transformer #3 ...: first frame video mime=? pt=-1`; `ERROR E2E: video frames of ?, not VP8, crossed the transform - encrypted whole`; `decrypted video=0 decrypt-failed=302`, "while another receiver of this call decrypts - not a key mismatch" |
+| Android | `first frame video mime=video/VP8 pt=106`; `decrypted video=0`; `ERROR E2E key mismatch - 100 video frame(s) failed` |
+
+**The cause.** WebKit's `RTCEncodedVideoFrame.getMetadata()` names no codec and no payload type.
+The worker decided the frame layout from that metadata and FAILED CLOSED on silence: the iPhone
+encrypted its frames whole and, receiving, read Android's frames as whole; Android read VP8 and split
+off the 10/3-byte clear header, sending and receiving. Two layouts for one codec, so every video frame
+failed in both directions - Android's line says "key mismatch" because no video receiver of its peer
+connection ever opened a frame; the keys were right (audio decrypted under the same pair). The
+call bar's thumbnail showed the peer's track on its word alone - unmuted because packets arrived - so
+the owner saw a black square.
+
+**The fix: carry the codec from where it is KNOWN.** `CallService.holdVideoToVp8` holds every video
+transceiver to VP8 (`setCodecPreferences`) BEFORE its transforms are made - in the same task, so the
+Chromium ordering rule still holds - and the transforms are told the codec
+(`CallTransformOptions.videoCodec`). Nothing but VP8 can be negotiated on such a transceiver, so the
+codec is a fact before the first frame. The worker frames on it (`framesAsVp8`): the same input on both
+ends, whatever either engine's metadata says. Fail closed is kept where the codec is NOT known: a
+transform made with none held, or a frame whose metadata NAMES another codec, is framed whole and
+counted `not-vp8`, its ERROR line naming both (`frame codec ..., transform codec ...`). The
+first-frame line adds `transform-codec=`, and each attach line names it (`(video, video/vp8)`).
+**The witness WebKit's frames cannot be** (follow-up of the review, P3-1): on WebKit the "frame names
+another codec" check never fires, so an engine that ignored `setCodecPreferences` would carry H.264
+framed as VP8 unseen. At every `stable`, `reportNegotiatedVideoCodecs` compares each video sender's
+and receiver's NEGOTIATED codec (`getParameters().codecs`, past RTX/RED/ULPFEC) with the codec its
+transform was told, and logs the first mismatch of the call ONCE: `ERROR E2E report: the video
+receiver (mid ...) negotiated video/H264, transform frames video/vp8`. A report, never a behaviour.
+
+Pinned by the worker suite: a WebKit-like frame (no metadata) under a VP8 transform seals to the
+SAME bytes as a Chromium one (fixed IV), and opens across engines in both directions; a transform
+with no codec frames whole on both. `CallService.p2p.test.ts` pins that every video transform is
+told `video/vp8` and that its transceiver held VP8 before its receiver transform was made. The rig
+row `video-webkit-metadata` strips the codec from the caller's frame metadata (`impair.worker.ts`)
+and must pass like `video`. **Measured 2026-11-07** (Chrome 156 headless, 34 s): `video-webkit-metadata`
+PASS - VP8 1280x720 27.5 fps, 0 freezes, 5 key frames, worker frames 1002 / 990, decrypted 990, failed
+0, `not-VP8` 0 - beside `video` PASS at 27.5 fps, 1005 decrypted, failed 0. (A first run read 26.7 fps,
+under the 27 fps bar with 0 failed frames; the re-run passed - the fps is this machine's load.)
+
+**The picture shows only once a frame is painted** (`utils/callVideoElement.ts`, `bindCallVideo`,
+shared by the full screen, the bar's thumbnail and the self view): the remote element stays
+transparent over the peer's avatar until its `loadeddata`, so a track unmuted by packets that never
+decode shows the avatar, never black. The full screen's `videoShowing` (wake lock, speaker default,
+layout) and picture-in-picture follow the painted picture, not the track.
+
+**Three other lines of the same calls.**
+
+- `self view did not start: AbortError` (WebKit, "The operation was aborted") and `remote video did
+  not start: AbortError` (Chromium, "interrupted by a new load request"): a `play()` still pending
+  when the binding was released - assigning `srcObject` or removing the element runs the media
+  element's load or pause steps, which reject it. Every minimise, camera switch, or peer camera off
+  and on did it. Not a failure: `bindCallVideo` drops an `AbortError` when its own release or the
+  element's removal caused it (both known there) and logs every other rejection.
+- `Media Session action 'hangup' unsupported here` (iOS, once per page): WebKit has no `hangup`
+  action, and in the iOS app CallKit owns hang-up. The iOS app neither sets nor clears it
+  (`CallMediaSessionParams.onHangup: null`, `clearCallMediaSession(host, false)`).
+- `[CALL-WAKE] the screen lock was refused NotAllowedError` (iOS, every video call): a REAL gap - the
+  screen may dim during an iPhone video call - not noise. Its cause is not read: the log kept only the
+  DOMException's class, and WebKit refuses a Screen Wake Lock for several reasons (hidden page, no user
+  activation, permission, feature policy). The line now carries the engine's sentence
+  (`refused (NotAllowedError: ...)`); the fix follows from it, and if it is a WKWebView refusal the
+  answer is native (`UIApplication.idleTimerDisabled`, beside `canariProximity`).
+
+**Version skew - ACCEPTED by the owner (2026-11-07: "si ça casse, tant pis, on fait avec").** No
+compatibility handshake, no fallback: an updated iPhone and a non-updated one exchange no picture
+until both update. Every iOS build with video (`1.5.2` to `1.6.6`) framed
+whole on both sides. So iPhone to iPhone on those builds was whole to whole: it decrypted, and
+whether the picture showed is unread (in Chrome a whole-framed VP8 still decoded, with ~500 spurious
+key frames in 34 s). After this fix: a new iPhone with ANY Android (old or new) shows pictures; a new
+iPhone with an OLD iPhone does not (split against whole), audio unaffected, the receiving side logging
+`undecryptable`. No capability or version is exchanged in `CallMsg`, so nothing can tell the two apart
+during a call - and none is added: the break lasts until both iPhones run this fix (raising
+`minClientVersion` past it once both stores serve it ends it for good).
+
+**Owed on the phones** (a pre-release with this change; iPhone 12 and Mi 9T, both directions, both
+roles): `transform-codec=video/vp8` on every video first-frame line with `mime=?` on the iPhone;
+`decrypted video` growing and `decrypt-failed` ~0 on both; `not-vp8=0`; the picture on both screens;
+the bar shows the avatar, then the picture; no `did not start: AbortError` across a minimise, a camera
+switch and an off/on; no `'hangup' unsupported` on the iPhone; and the iPhone's `CALL-WAKE` line read
+with its sentence.
 
 ## The quality ladder (2026-10-21) - 720p, and an automatic drop
 

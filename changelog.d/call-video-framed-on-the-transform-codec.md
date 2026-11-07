@@ -1,0 +1,3 @@
+### Fixed - a video call between an iPhone and an Android phone carries a picture
+
+WebKit's encoded frames name no codec, so the E2E worker framed the iPhone's video whole while Chromium split off the clear VP8 header: every video frame failed to decrypt, both ways, and the call bar showed a black square. The worker now frames on the codec the page held the transceiver to, told to the transform when it is made, and a picture shows only once a frame is painted (the avatar until then). Accepted by the owner: an updated iPhone and an iPhone on an older version exchange no picture until both update (audio unaffected). See [calls](docs/wiki/frontend/modules/calls.md#the-iphone-and-android-framed-video-differently-production-2026-11-07).
