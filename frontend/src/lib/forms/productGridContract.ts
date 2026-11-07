@@ -166,8 +166,11 @@ export type ProductGridDefinitionCode = (typeof PRODUCT_GRID_DEFINITION_CODES)[n
 
 /**
  * Why an ANSWER is refused at submit. `PRODUCT_GRID_ANSWER_MISSING` is the one an app that cannot
- * draw the grid meets (it sends nothing, or a string): a client that knows this code says "update
- * the app" - a client that draws the grid always sends an object.
+ * draw the grid meets (it sends a string, or a list): a client that knows this code says "update
+ * the app". An ABSENT answer is an untouched grid, an empty order line - not this code.
+ * `PRODUCT_GRID_EMPTY` is judged across the FORM, never per grid: a form may hold several grids (one
+ * per article) and a buyer orders from whichever they want, but the order as a whole holds at least
+ * one unit (decided 2026-11-06, `docs/wiki/frontend/modules/forms.md`, "The priced grid").
  */
 export const PRODUCT_GRID_ANSWER_CODES = [
   'PRODUCT_GRID_ANSWER_MISSING',
@@ -292,6 +295,12 @@ function tiersRefusal(raw: unknown): ProductGridRefusal<ProductGridDefinitionCod
  * `form.isPublic`: a guest pays "everyone else", so a public form's grid must price that category
  * (`PRODUCT_GRID_GUEST_PRICE_MISSING`, judged before completeness so the editor can name it).
  * `form.requiresPayment`: a grid charges, so the form takes payment.
+ *
+ * `required` is STORED true and checked here, but it no longer means "this grid must be ordered
+ * from": the order rule is the form's (`PRODUCT_GRID_EMPTY`), and no page draws a grid's asterisk.
+ * It stays true so a build that cannot draw the grid - which knows only "a required question of a
+ * type I do not know" - still holds the send and says "update the app", and so every form already
+ * saved stays valid.
  */
 export function productGridItemRefusal(
   item: { required?: unknown; productGrid?: unknown },
@@ -385,14 +394,17 @@ export type ProductGridAnswerResult =
   | ({ ok: false } & ProductGridRefusal<ProductGridAnswerCode>);
 
 /**
- * Judges an answer: every key a declared cell, every value an integer from 0 to `maxPerCell`, no
- * unit in a closed cell, at least one unit in all (the type is always required). The answer
- * returned keeps the ordered cells only, in the grid's row-then-column order - what is stored.
+ * Judges ONE grid's answer: every key a declared cell, every value an integer from 0 to
+ * `maxPerCell`, no unit in a closed cell. An absent answer (`undefined`, `null`) and `{}` are an
+ * untouched grid: accepted, 0 units. Whether the ORDER holds a unit is judged across the form's
+ * visible grids by the caller, from the `units` of each (`PRODUCT_GRID_EMPTY`). The answer returned
+ * keeps the ordered cells only, in the grid's row-then-column order - what is stored.
  */
 export function parseProductGridAnswer(
   grid: Pick<ProductGrid, 'rows' | 'columns' | 'maxPerCell' | 'closedCells'>,
   raw: unknown
 ): ProductGridAnswerResult {
+  if (raw === undefined || raw === null) return { ok: true, answer: {}, units: 0 };
   if (!isPlainObject(raw)) return { ok: false, code: 'PRODUCT_GRID_ANSWER_MISSING' };
   const cells = grid.rows.flatMap((r) => grid.columns.map((c) => productGridCellKey(r.id, c.id)));
   const declared = new Set(cells);
@@ -419,7 +431,6 @@ export function parseProductGridAnswer(
     answer[key] = quantity;
     units += quantity;
   }
-  if (units === 0) return { ok: false, code: 'PRODUCT_GRID_EMPTY' };
   return { ok: true, answer, units };
 }
 

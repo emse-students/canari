@@ -199,8 +199,13 @@ describe('product grid contract - an answer', () => {
     expect(parsed).toEqual({ ok: true, answer: { 'vert:m': 2, 'noir:l': 1 }, units: 3 });
   });
 
+  it('accepts an untouched grid - absent, {} or all zero - as 0 units, the order being the form', () => {
+    for (const raw of [undefined, null, {}, { 'vert:m': 0 }]) {
+      expect(parseProductGridAnswer(g, raw)).toEqual({ ok: true, answer: {}, units: 0 });
+    }
+  });
+
   it('refuses each defect with its own code', () => {
-    expect(code(undefined)).toBe('PRODUCT_GRID_ANSWER_MISSING');
     expect(code('')).toBe('PRODUCT_GRID_ANSWER_MISSING');
     expect(code(['vert:m'])).toBe('PRODUCT_GRID_ANSWER_MISSING');
     expect(code({ 'rose:m': 1 })).toBe('PRODUCT_GRID_UNKNOWN_CELL');
@@ -211,8 +216,6 @@ describe('product grid contract - an answer', () => {
     expect(code({ 'vert:m': '2' })).toBe('PRODUCT_GRID_QUANTITY_INVALID');
     expect(code({ 'creme:xs': 1 })).toBe('PRODUCT_GRID_CELL_CLOSED');
     expect(code({ 'creme:xs': 0, 'vert:m': 1 })).toBeNull();
-    expect(code({})).toBe('PRODUCT_GRID_EMPTY');
-    expect(code({ 'vert:m': 0 })).toBe('PRODUCT_GRID_EMPTY');
   });
 });
 
