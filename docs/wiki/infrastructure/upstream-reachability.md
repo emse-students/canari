@@ -46,15 +46,52 @@ with the downtime, non-consecutive failures never alarm, a refusal is red, a dry
 fails (twice, to pass the suspect step) and then to a healthy one. With `dry_run` ticked the decisions are
 printed and nothing is written.
 
+## The app does not keep asking a gallery known to be down (2026-11-07)
+
+The report tells people; this half stops the amplification (2 000 `502`s and 4 600 warnings an hour in the
+five-hour outage). `apps/core-service/src/users/upstream-health.ts` is the state, `avatar.service.ts` its user:
+
+- **what proves an outage** is decided by ONE classifier (`classifyUpstreamFailure`) used by both paths: no HTTP
+  response at all (timeout, transport error) or a gateway/edge status (502, 503, 504, Cloudflare 520-530). Any
+  other status (400, 404, 410, 429, a 500 for one record, a redirect) is the gallery ANSWERING about that id and
+  proves it is up; a local exception (a cache or `Buffer` fault after an answer) flips nothing. So one bad face
+  never blanks a salon's ~30 requests;
+- the state is cleared by the FIRST answer of any status, including a late one from a request asked before the flip;
+- while down, requests are answered `unavailable` (a `502` `no-store`, so clients draw initials as before)
+  without leaving the process, and **probes are spaced by a COUNT of skipped requests** - the n-th probe after
+  1, 2, 4 ... skips, capped at 64, reset on recovery. "One probe in flight" alone would not do: Cloudflare's 530
+  answers in milliseconds, requests arrive every couple of seconds and rarely overlap, so each would find the
+  slot free and ask again (~2 000 asks an hour). Traffic is the clock: 100 sequential requests against a
+  fast-failing gallery make 7 calls (spec). A stale cached photo is not served during the outage (it would hide it);
+- the transport timeout (axios `timeout`, a socket-inactivity timer) is what bounds a probe, and every path out of
+  `admit()` reaches `recordSuccess`, `recordFailure` or `release`, each taking the admission it was given: only the
+  PROBE frees the probe slot, so a late failure of a request asked before the flip cannot admit a second probe;
+- `avatar-presence` uses the same state and answers `null` while down (clients then ask each avatar, which
+  short-circuits); its outage failures log nothing beyond the transition;
+- the log carries two transitions: `Avatar gallery <url> is DOWN (<cause>)` and `... is back after Ns - M
+  request(s) were answered without asking it`. **To read an outage: grep core-service's log for
+  `gallery .* (is DOWN|is back)`.** Every avatar request still writes its ONE `[AVATAR]` line (the signed-avatar
+  phase-2 measurement counts them): a skipped one as `outcome=known-down status=502` at info level.
+- The state lives in the process (per replica, re-learned by one failed request after a restart): the right
+  lifetime for "is this peer reachable from here now".
+
+Tests: `upstream-health.spec.ts` (the state machine), `avatar-outage.spec.ts` (one probe, silence, return line,
+presence). Le Cercle's `[MIGALLERY]` fetch needs the same treatment in its own repository, still owed: see
+[the backlog entry](../backlog.d/p2-the-gallery-went-down-for-five-hours-and-nothing-alerted.md).
+
 ## What it does not do
 
-- It does not stop the app asking a gallery known to be down. That needs durable state in core-service (set by
-  the failure that proves it, cleared by the first success, one probe at a time, one log line per transition)
-  and is still owed, as is the same treatment in Le Cercle: see
-  [the backlog entry](../backlog.d/p2-the-gallery-went-down-for-five-hours-and-nothing-alerted.md).
 - It reads the public names from outside; it does not read any connector's own journal.
 
-## The transport decision: `--protocol http2` for a tunnel connector that loses QUIC
+## The 25-minute tunnel outage of 2026-11-05: cause, and the transport change NOT taken
+
+**Cause (owner, 2026-11-07): an independent technical problem outside the project, not our transport.**
+**No transport change is taken**, and the `--protocol http2` recommendation that stood from 2026-11-06 is
+withdrawn: nothing shows QUIC was the cause. The watch is the `upstream` job - a `tunnel-down` issue opens one
+issue per outage. The analysis below is kept as background only.
+
+**Not taken - why:** the facts below are consistent with a network fault upstream of the connector, which no
+choice of transport on our side would have prevented.
 
 **Facts of 2026-11-05.** A connector logged QUIC "timeout: no recent network activity" on all its connections
 for 25 minutes while TCP traffic from the same machine stayed up, and it recovered by itself. The band of
@@ -68,8 +105,5 @@ for 25 minutes while TCP traffic from the same machine stayed up, and it recover
 | Fallback | None needed: there is nothing to fall to. | cloudflared falls back to http2 when QUIC cannot be DIALLED; an ESTABLISHED QUIC session that goes silent is not documented to flip. Treat the fallback as unproven until a lossy window is seen to use it. |
 | Reversibility | One flag (or `protocol: http2` in the connector's config); remove it to return to auto. | - |
 
-**Recommendation: `http2` on the connector that lost QUIC.** It is reversible, it is the transport that stayed
-up, and what it gives up (QUIC on a lossy path) is the property that failed. It is a host change, so an owner
-or DSI action, with the steps in
-[the backlog entry](../backlog.d/p2-the-tunnel-connector-lost-every-connection-for-25-minutes.md). Afterwards the
-`upstream` job is the measurement: a `tunnel-down` issue under http2 would refute the transport as the cause.
+If `tunnel-down` issues recur from the same connector, this table is where to restart: `http2` is one flag,
+reversible, on a connector the project owns.
