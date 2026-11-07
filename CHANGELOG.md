@@ -14,6 +14,201 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.6.6] - 2026-11-07
+
+### Added - a post of several photos and videos now appears in CanaReels, swiped left and right
+
+A feed post of two to ten photos and videos (no file, poll, form, linked event or link in its text) is a carousel page in the CanaReels viewer: up and down still change the post, left and right change the photo or video, dots show the position, and only the visible video plays. Installed apps keep their lists through a new switch (`multiMedia`). Decisions in [reels](docs/wiki/frontend/modules/reels.md#carousel-pages---a-post-of-several-photos-and-videos-owner-2026-11-06), the server rule in [services/reels](docs/wiki/services/reels.md#reading).
+
+### Fixed - the device list no longer leaves out a device that still holds fresh KeyPackages
+
+A roster read (`?peek=1`) judged a device on its static KeyPackage alone, so a device whose static row had expired but whose one-time packages were fresh vanished from the device panel and from the pre-claim. The peek now refuses exactly when a claim would, counting the pool without taking from it. Also: `sendWelcome` always names its device, and a seed bundle refuses (unacknowledged, redelivered) once the session it began for ends. See [key-package-pool](docs/wiki/protocols/key-package-pool.md#a-read-is-not-a-claim---the-empty-pool-storm-of-2026-11-06).
+
+### Fixed - selecting text in a field inside a reorderable card no longer drags the card
+
+In the form editor (question cards) and the association members list, pressing and dragging inside a text field dragged the whole card instead of selecting. A press on a field, button, link or editable area now never starts a drag; the grip and the inert parts of the card still do. One rule in [architecture](docs/wiki/frontend/architecture.md#a-draggable-card-never-starts-a-drag-from-a-field-2026-11-06).
+
+### Fixed - a form holding a grid question can be submitted again
+
+From 2026-06-01 every form with a visible grid (single or multiple choice per row) was refused at submit, member and guest alike, with an English error: the server's answer validator took no grid answer, and no test sent one through it. The server now accepts and checks grid answers, a required grid wants one answered row unless "every row" is asked, only answered questions are sent, a long text shows its 2000-character limit, duplicate grid labels are refused at save, and every submit refusal is worded in French from its code. Mechanism: [forms](docs/wiki/frontend/modules/forms.md#answers-grids-and-the-codes-a-submit-is-refused-with-2026-11-06).
+
+### Fixed - a form of several priced grids no longer forces one of every article
+
+A buyer orders from whichever grids they want; only the whole order must hold one article, and the
+fill page says so once for the form ([forms](docs/wiki/frontend/modules/forms.md#the-priced-grid-product_grid-wp-g1-2026-11-06)).
+
+### Added - a form question can show an image, on the create page too
+
+"Ajouter une image" now sits beside "Ajouter une description" on both form pages; the image is stored at 1600 px (not the 256 px logo bound), shown whole to respondents and guests, and deleted once no form cites it (migration 136). Design: [forms](docs/wiki/frontend/modules/forms.md#a-questions-image-2026-11-06).
+
+### Fixed - a maintenance no longer signs users out
+
+The refresh's maintenance 503 cleared the refresh cookie, so web and Android users met the sign-in page once a maintenance ended; it now leaves the cookie and the session alone. The launch screen shows the operator's maintenance text, a lost answer body reads as no answer rather than a sign-out, and only a refresh answer that is no verdict is retried. Mechanism in [offline and weak network](docs/wiki/frontend/offline-and-weak-network.md#first-paint-never-waits-on-the-network-the-boot-session-question-2026-11-05).
+
+### Changed - a post photo is sent at 1600 px, quality 0.85
+
+A post photo measured 436 KB at 2048 px and quality 0.92, about ten seconds on slow 3G, so the owner chose 1600 px at 0.85; chat and comment photos are unchanged ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md)).
+
+### Changed - a photo, video or carousel post with a link in its text now appears in CanaReels
+
+The link is tappable in the caption, through the same link handling as a post card. Installed apps keep their lists through a new switch (`withLinks`). Decisions in [reels](docs/wiki/frontend/modules/reels.md#a-post-with-a-link-in-its-text-owner-2026-11-06), the server rule in [services/reels](docs/wiki/services/reels.md#reading).
+
+### Added - a public form may ask guests their last name, first name and e-mail
+
+Off by default, three boxes under "Formulaire public"; each ticked one is required of a guest, members never see them, and an asked e-mail is the Lydia payer address (typed once). Guest rows show the name, the export has the columns; migration 138. Rules and data: [forms](docs/wiki/frontend/modules/forms.md#a-guests-name-and-e-mail-when-the-form-asks-2026-11-06), register row C8 and the privacy policy.
+
+### Fixed - asking about a device's KeyPackage no longer spends one
+
+Adding one device used to claim a one-time KeyPackage from every device of its account, and a device checking whether it was itself published claimed one of its own each time it asked. On 2026-11-06 this emptied five pools in two minutes (430 empty-pool serves in an hour). The adding paths now claim the one device they add, and the self-check reads with `?peek=1`. The first half takes effect once the ANSWERING devices (the ones adding) run this client; the self-check needs the joining device updated and the server deployed ([key-package-pool](docs/wiki/protocols/key-package-pool.md#a-read-is-not-a-claim---the-empty-pool-storm-of-2026-11-06)).
+
+### Added - a post of a single video now appears in CanaReels, like a single picture does
+
+A feed post whose only content is one video (not filmed with the Canari camera, no poll, form, linked event or link in its text) is drawn as a full-screen page in the CanaReels viewer and never expires. The list has its own switch (`singleMedia`), so installed apps keep receiving pictures only. The rule and its consequences are in [reels](docs/wiki/services/reels.md#reading).
+
+### Changed - adding a form question is a two-step wizard, and the two survey grids are one "Grille de choix"
+
+The type is chosen from a grouped list, then only its essentials are asked; the card's menus are
+sectioned and its rare settings fold under "Plus d'options"
+([forms](docs/wiki/frontend/modules/forms.md#adding-a-question-the-grille-de-choix-and-the-editors-menus-owner-2026-11-07)).
+
+### Changed - the admin connections page draws a line for every platform and every version, over 24 h, 7 d or 30 d
+
+The history no longer merges small cells (owner's decision of 2026-11-05): two line charts with a clickable legend and a hover tooltip replace the stacked area, a period selector adds 7 days and 30 days from a 5-minute peak series kept in Redis, and the live versions are broken down by platform. The reasoning, the Redis size arithmetic and what an admin can now read are in [chat-gateway](docs/wiki/services/chat-gateway.md#the-anonymous-census-and-its-24-hour-series-2026-11-02).
+
+### Fixed - a failing edge, server or portal no longer shows the sign-in page at launch
+
+When the first token refresh of a launch got a 5xx, a 408/429, an edge's HTML 403 or a captive portal's `200 text/html` instead of the app's answer, the app showed the sign-in page; it now keeps the session and says who failed - this network, the server, or a maintenance - and retries. Only the app's own 401/403 signs a user out. Mechanism in [offline and weak network](docs/wiki/frontend/offline-and-weak-network.md#first-paint-never-waits-on-the-network-the-boot-session-question-2026-11-05).
+
+### Added - a public name that stops answering opens an issue, once
+
+The gallery's five-hour outage and a tunnel connector's 25 minutes of 2026-11-05 reported nothing; the `upstream` job of `scheduled.yml` now probes the gallery, dev, the legacy name and production, suspects a first failure, opens one issue on the second consecutive one and closes it with the downtime ([upstream-reachability](docs/wiki/infrastructure/upstream-reachability.md)).
+
+### Fixed - a cold start no longer refuses its queued frames before the conversation rows exist
+
+The login now holds every socket frame and every mailbox pull (its own, an outbox flush's, a reconnect's) until the restore has seeded the conversation rows, so frames of conversations the device already had are no longer refused `absent-conversation` and fetched a second time ([auth](docs/wiki/frontend/modules/auth.md#and-since-2026-11-06-nothing-is-handled-before-the-conversation-rows-exist)).
+
+### Fixed - tapping "Aa" in the post composer no longer shifts the screen
+
+The formatting row replaced two or three rows of attachment chips, so the footer shrank and the text area under a selection jumped by up to 148 pt on an iPhone 12. The formatting actions are now labelled chips filling the same room. The readings (keyboard stays open through select, "Aa", Bold and handle drags on the iPhone 12 and the Mi 9T) and what is still owed on Gboard are in [posts](docs/wiki/frontend/modules/posts.md#the-formatting-row-keeps-the-keyboard-and-the-footers-height-2026-11-06).
+
+### Fixed - source-scan and stored-page tests no longer lose to a loaded machine
+
+`audioSession.captureSites` reads the run's shared source snapshot instead of walking the disk, and the salon stored-page tests wait for their events rather than a 1 s `vi.waitFor` ([test-suite-reform](docs/wiki/test-suite-reform.md#8-intermittent-local-failures-under-load-read-2026-10-30)). The sqlite and pending-mutation victims have no code cause (third reading there).
+
+### Fixed - reading the device list no longer spends one-time KeyPackages
+
+The settings device count, the device panel, the new-device notices and the Welcome fan-out read an account's device list with `?peek=1`, which claims nothing; only group creation and the Graine admission claim, and a claim is never shared between two callers. Mechanism: [key-package-pool](docs/wiki/protocols/key-package-pool.md#a-read-is-not-a-claim---the-empty-pool-storm-of-2026-11-06).
+
+### Changed - the wiki no longer says Lydia is not live in production
+
+The owner confirmed on 2026-11-06 that Lydia is active in production, and the production core's startup log reads `Lydia configured: yes (https://lydia-app.com)`. The notes that waited on it now name only what is still owed ([WP-LYDIA-1](docs/wiki/backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end)).
+
+### Fixed - a prepared video's sound no longer runs ahead of its picture
+
+Chrome's audio decoder closed the holes of a phone's audio track, so a re-encoded video's sound ran
+early by the sum of them, growing to the end; the holes are now restored as silence, and every video
+is also resampled to a constant 30 fps ([video-preparation](docs/wiki/frontend/video-preparation.md#constant-frame-rate-and-the-audio-holes-the-decoder-closes)).
+
+### Fixed - the app no longer sits on its splash from launch when the network hangs
+
+A first launch used to wait for the silent session refresh (up to about 40 s on a path that hangs) before drawing anything. The refresh now runs beside the page: a boot screen shows at once, and a network that cannot be reached is stated, with a retry, instead of being read as a signed-out user. The cause and the table of outcomes are in [offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#first-paint-never-waits-on-the-network-the-boot-session-question-2026-11-05).
+
+### Fixed - a form's options rule each other out the same way whatever the order of the clicks
+
+The editor and the server now read one shared rule for which options exclude each other, so switching "Formulaire public" on before or after another option gets the same answer, and the server refuses an incoherent form with a code. A public form may now carry a price grid by promo, formation or cotisation: a guest pays the "autres" tier. Rule table: [forms](docs/wiki/frontend/modules/forms.md#which-options-rule-each-other-out-one-rule-in-either-order-2026-11-06).
+
+### Added - forms: the priced grid can be written in the editor
+
+The "Grille d'articles" question is offered in the form builder: the table is the editor (rows, columns, a pasted list, reordering, closed cells), with one price, a price per row or per column, a tab per category, a cap per cell and a desktop/phone preview. Mechanism: [forms](docs/wiki/frontend/modules/forms.md#the-editor-wp-g3).
+
+### Added - forms: the priced grid can be filled in
+
+A member or a guest orders from a "Grille avec prix" question: a table of steppers on a computer, a card per row with size pills on a phone, struck-through cells for combinations that do not exist. A sticky bar totals the order across every grid, with a line-by-line recap, and the page names the price category the server applied. Mechanism: [forms](docs/wiki/frontend/modules/forms.md#the-fill-page-wp-g2).
+
+### Added - forms: the priced grid (`product_grid`), server side
+
+A new question type for orders (sizes x colours, a quantity per cell, a price per row, per column or for all, per category with guests paying "autres"). The server judges the grid at save, recomputes every amount at submit and hands Lydia that one total. Each answer keeps the lines it was charged for (migration 137), and the export gains "Articles" and "Totaux" sheets. Mechanism: [forms](docs/wiki/frontend/modules/forms.md#the-priced-grid-product_grid-wp-g1-2026-11-06).
+
+### Added - forms: the responses screen (summary cards, filters, totals, poll results, CSV exports)
+
+A form's responses open on summary cards and three tabs: the answers with search, payment filters, an "Invité" badge, "mark paid" and "refund"; a priced grid's totals with a switch for unpaid cash; and a bar per option, for managers only. The export menu adds the "Articles" and "Totaux" sheets as CSV. Mechanism: [forms](docs/wiki/frontend/modules/forms.md#the-responses-screen-client-half-of-wp-g4-2026-11-06).
+
+### Fixed - "@" in a group or salon proposes its members at once
+
+Typing "@M" in a group proposed nobody until several letters were typed: the suggestions came from the school-wide search (top 10) and were filtered to the members afterwards. A conversation now suggests from its own members locally: a bare "@" lists them, latest speakers first, each letter filters (accents ignored, any word of the name). Posts and comments keep the search. Mechanism in [chat](docs/wiki/frontend/modules/chat.md).
+
+### Fixed - a first-time hint's spotlight stays on its button when the page shifts under it
+
+The ring was measured on size changes and scrolls only, so content settling above a control left it drawn offset; an observer of the control's own box now re-measures on any move, and the ring's corners follow the control's ([guided help](docs/wiki/frontend/guided-help.md)).
+
+### Fixed - iOS: every Swift log line is readable on a store build, and the extension's push context follows every edit
+
+The keystore, button, custom-tabs and gallery lines moved from `NSLog` (`<private>` whole on a store build) to a `Logger`, and a test refuses a Swift `NSLog` anywhere; `push_context.json` is copied to the App Group at every edit, not only at activation; the extension's boot proof uses the continuous uptime its sandbox allows, and a frame ahead of the stored state is no longer called a failure ([mobile](docs/wiki/frontend/mobile.md#the-extensions-copy-of-the-state-follows-every-write-2026-11-05)).
+
+### Fixed - `**bold **` renders bold, and the composer's toolbar, preview and the published post read one markdown grammar
+
+A post containing `**TOP 5 MINIMOYS **` showed its asterisks: CommonMark refuses a closing marker after a space, and the toolbar wrote exactly that when a selection ended on a space. The toolbar now keeps edge whitespace outside its markers, toggles off, works line by line on headings, lists and quotes; the renderer tolerates the old text; the preview no longer shows `__x__` as an underline the post never draws. The cases table and the parity test are in [markdown-coherence](docs/wiki/frontend/markdown-coherence.md).
+
+### Fixed - the services no longer log `CORS DENIED` for `/api/public/*`, where nginx answers CORS with `*`
+
+A public read from `portail-etu.emse.fr` logged a refusal that never happened; the line is now skipped for the paths nginx owns and still fires on every credentialed route ([nginx](docs/wiki/infrastructure/nginx.md)).
+
+### Fixed - `vite dev` no longer takes minutes to listen after a Paraglide compile
+
+The CLI and the vite plugin wrote different Paraglide output into the same folder and invalidated each other's cache, so the next `vite dev` rewrote ~4,500 files first (222 s). Both now read `project.inlang/paraglide.config.js` ([architecture](docs/wiki/frontend/architecture.md#two-writers-of-srclibparaglide-one-set-of-options-2026-11-06)).
+
+### Changed - publishing a post closes the composer at once and the send resumes after a cut
+
+The post and its files are kept on the device and sent in the background one file at a time, in
+resumable parts, behind a progress line with Pause, Retry and Delete; a lost answer never makes a
+second post, a deleted one never comes back, and the next composer no longer brings back the photos
+just published
+([posts](docs/wiki/frontend/modules/posts.md#the-background-publish-queue)).
+
+### Fixed - a read receipt no longer sits one or two messages before the last one read
+
+A message received live kept its server time only on disk, so until a reload the reader's mark was taken on the author's clock and fell short of what it had read; the shown row now carries it ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed
+
+- Saving a reel no longer fails with "media is undefined" on a row the viewer plays: the save read `media[0]` alone, the viewer also reads `images` (an older server's name). Both now share `fullScreenMediaOf` ([saveReel](frontend/src/lib/reels/saveReel.ts)).
+
+### Fixed - a reply in a group no longer prints the sender's name twice
+
+Under the sender's name, the caption now reads "A répondu à <quoted author>" (or "A répondu à son message"); own messages and 1:1 keep the full form, and an unknown author gets a name-less form, never an id ([#3046](https://github.com/emse-students/canari/pull/3046), [chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - a refused link-safety check is now reported as dead, not as a passing warning
+
+Google Safe Browsing refused production's lookups with `403` from an unknown date until the key was fixed on 2026-11-06, and the app logged each one as a transient warning, so every link read "not flagged" unnoticed. A `401` or `403` is now its own verdict, logged at ERROR with Google's own diagnosis (never the key), cached an hour, and counted in a daily `[SAFE_BROWSING] refusals=N` line; network errors and `5xx` still fail open as before ([chat-delivery](docs/wiki/services/chat-delivery.md#link-safety-is-its-own-endpoint-deliberately-not-a-field-on-the-preview-wp-safelink-1)).
+
+### Fixed - the salon stored-page test no longer races a 1 s `vi.waitFor` under load
+
+The two tests of `useConversations.salonStoredPage` now wait for the store to hold the drawn rows, queue position by queue position, instead of polling against a deadline ([testing-methodology](docs/wiki/testing-methodology.md)).
+
+### Added - the deploy log counts the connection resets a service logged during a release
+
+`rolling.sh` reads each retiring replica's log before removing it and, once the last service is replaced, every running container of the replaced services, then prints one `[TRANSPORT_RESETS]` line per container and a deploy-wide total; an unreadable log reads `unknown`, never zero. The proxy for service-to-service calls waits for these readings ([backlog](docs/wiki/backlog.d/p2-service-to-service-calls-bypass-the-rotation.md)).
+
+### Changed - the form editor shows one line per question, and a question can be duplicated
+
+A question that is not being edited is one line (number, title, type, asterisk if required); clicking it opens it, one at a time. The open card has the title, a compact type menu, and one icon row (required, conditions, duplicate, delete); the grey preview box and the field labels are gone. Duplicate is also one click on the collapsed row and Ctrl/Cmd+D. Decisions in [forms](docs/wiki/frontend/modules/forms.md#the-question-editor-is-one-line-per-question-owner-2026-11-06).
+
+### Fixed - the edge nginx pin moves to the rebuild that carries libexpat 2.10
+
+`CVE-2026-115506` (libexpat 2.9.0-r0) turned every pull request's container scan red. Upstream had just rebuilt nginx with libexpat 2.10.0, so the edge pin moved to that build and the three libexpat allowlist entries were deleted ([cicd](docs/wiki/cicd.md#container-images-are-scanned-2026-10-23)).
+
+### Changed - the price grid of a form is a table: two criteria, rows by columns, and an empty price says "Gratuit"
+
+The "Prix d'inscription" editor (and the same grid on boutique products and cotisations) lays out at most two criteria as rows and columns, fills or closes a whole row or column from its header, can hide the unavailable rows, shows a card per row on a phone, and marks the free guest cell a public form would be refused for. Stored grids open unchanged. [forms](docs/wiki/frontend/modules/forms.md#the-price-table---two-criteria-rows-by-columns-owner-2026-11-06)
+
+### Fixed - the priced-grid editor reorders on a phone, and says where the server refused it
+
+On a phone the grid editor now fits the screen, with six sizes and wrapping row labels, and a wider grid scrolls inside its own box under sticky row labels. Rows and columns move with 44px arrow buttons on a touch screen or a phone-width page, and every small control of the grid editor reaches 44px on touch. Removing a row or column that would leave every cell closed is refused with a message, and "Plusieurs reponses" goes back off when the grid that switched it on is removed. A grid refused by the server alone (an unknown cotisation tier) is now drawn under that grid ([forms](docs/wiki/frontend/modules/forms.md#the-editor-wp-g3)).
+
+### Fixed - opening a CanaReel now stops the video playing behind it
+
+The feed's video kept playing (with sound if unmuted) until the reel's own player had loaded, and for good behind a photo page or a failed reel, because only a mounted player counted as an open viewer. The viewer now holds playback from its first line and releases it on close. Cause and mechanism: [reels](docs/wiki/frontend/modules/reels.md#what-plays-behind-the-viewer-stops-when-it-opens-owner-2026-11-06).
+
 ## [1.6.5] - 2026-11-05
 
 ### Fixed - the manager hint was never offered after an empty-shop hint, and a republisher's name was cut to "R..." beside the students-only chip
