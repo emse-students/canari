@@ -238,8 +238,10 @@ pub(crate) fn android_java_vm() -> Option<&'static jni::JavaVM> {
 /// `AppHandle` in a process with no WebView; the merge and its per-channel bound are the
 /// foreground's, shared through `commands::push::merge_graine_seed`.
 ///
-/// Returns -1 if the argument could not be marshalled or parsed at all, or no cache key was handed
-/// over, which are different facts from "zero seeds were usable" and must not read as the same one.
+/// Returns `{"stored": n, "leftToApp": m}` (`SeedsStored`): a relayed seed left to the app is not a
+/// seed lost, and the Kotlin caller reports it apart, at info. Returns null if the argument could not
+/// be marshalled or parsed at all, or no cache key was handed over, which are different facts from
+/// "zero seeds were usable" and must not read as the same one.
 ///
 /// `cacheKeyB64` is the install's native cache key Kotlin unwrapped from the Android Keystore
 /// (`NativeCacheKey.retrieve`), or `""` when it could not: the mirror is sealed under it
@@ -254,28 +256,35 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     data_dir: jni::objects::JString<'a>,
     cache_key_b64: jni::objects::JString<'a>,
     seeds_json: jni::objects::JString<'a>,
-) -> i32 {
+) -> jni::objects::JString<'a> {
+    let null = || jni::objects::JString::from(jni::objects::JObject::null());
     let Ok(dir) = env.get_string(&data_dir) else {
         log::error!("[GRAINE_PUSH] jni-data-dir");
-        return -1;
+        return null();
     };
     let Ok(key) = env.get_string(&cache_key_b64) else {
         log::error!("[GRAINE_PUSH] jni-cache-key");
-        return -1;
+        return null();
     };
     let Ok(json) = env.get_string(&seeds_json) else {
         log::error!("[GRAINE_PUSH] jni-seeds-json");
-        return -1;
+        return null();
     };
     let dir: String = dir.into();
     let key: String = key.into();
     let json: String = json.into();
 
-    commands::push::store_graine_seeds_json(
+    let Some(outcome) = commands::push::store_graine_seeds_json(
         std::path::Path::new(&dir),
         native_cache::platform_key(&key).as_ref(),
         &json,
-    )
+    ) else {
+        return null();
+    };
+    env.new_string(outcome.to_json()).unwrap_or_else(|e| {
+        log::error!("[GRAINE_PUSH] jni-new-string: {e}");
+        null()
+    })
 }
 
 /// Appends one WARN or ERROR line of the push service to the log the page takes into the in-app

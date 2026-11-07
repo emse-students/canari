@@ -6,6 +6,7 @@ import { clearDeviceKey } from '$lib/utils/deviceKeyVault';
 import { deleteIndexedDbByName } from '$lib/utils/indexedDbDelete';
 import { dropUploadReleaseMarksOf } from '$lib/utils/chat/uploadReleaseMarks';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { otherAccountOnInstall } from '$lib/utils/installAccounts';
 import {
   ACCOUNT_KEY,
   accountLocalStorageKeysIn,
@@ -335,12 +336,20 @@ export async function wipeDeletedAccountLocalData(
       console.log(`${tag} native push files: ${removed} file(s) removed`);
     });
     // The account's Graine seeds in the push mirror: the entries ONLY this account wrote - an entry
-    // another account also wrote keeps that writer, and one written before the label (writer
-    // unknown) is never judged (`forget_account_graine_seeds`, `push.rs`).
+    // another account also wrote keeps that writer. One written before the label (writer unknown)
+    // goes too when no other account lives here, since nothing else will ever remove it for an
+    // account that is gone; with another account here it may be theirs and stays
+    // (`forget_account_graine_seeds`, `push.rs`).
     await step('the mirrored Graine seeds', async () => {
+      const aloneOnInstall = !(await otherAccountOnInstall(userId, tag));
       const { invoke } = await import('@tauri-apps/api/core');
-      const removed = await invoke<number>('forget_account_graine_seeds', { userId });
-      console.log(`${tag} mirrored Graine seeds: ${removed} seed entry(ies) removed`);
+      const removed = await invoke<number>('forget_account_graine_seeds', {
+        userId,
+        aloneOnInstall,
+      });
+      console.log(
+        `${tag} mirrored Graine seeds: ${removed} seed entry(ies) removed from the app's copy (alone on the install: ${aloneOnInstall})`
+      );
     });
     // The notification replies still waiting for the page: ONLY this account's lines, since the file
     // can hold another account's (`delete_user_quick_replies`, `push.rs`). Always 0 off iOS.

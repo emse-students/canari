@@ -141,13 +141,19 @@ describe('wipeDeletedAccountLocalData', () => {
     expect(invokeMock).not.toHaveBeenCalled();
     tauri = true;
     await wipeDeletedAccountLocalData('user-a', AFTER_DELETE);
-    expect(invokeMock).toHaveBeenCalledTimes(6);
+    // Six steps, plus the seed step's question whether another account lives here.
+    expect(invokeMock).toHaveBeenCalledTimes(7);
     // The account's MLS states - its parked one, and the slot only when its record names it.
     expect(invokeMock).toHaveBeenCalledWith('delete_user_mls_state', { userId: 'user-a' });
     // The push side's plaintext files too - gated natively on the owner `push_context.json` names.
     expect(invokeMock).toHaveBeenCalledWith('delete_user_push_files', { userId: 'user-a' });
     // Its Graine seeds in the push mirror - the entries its label alone names.
-    expect(invokeMock).toHaveBeenCalledWith('forget_account_graine_seeds', { userId: 'user-a' });
+    // Alone on the install (no other account recorded, no other MLS state): its entries of unknown
+    // writer go too, since nothing else will ever remove them for an account that is gone.
+    expect(invokeMock).toHaveBeenCalledWith('forget_account_graine_seeds', {
+      userId: 'user-a',
+      aloneOnInstall: true,
+    });
     // And this account's waiting quick replies - its lines only, never the whole file.
     expect(invokeMock).toHaveBeenCalledWith('delete_user_quick_replies', { userId: 'user-a' });
     // The data is gone, so the at-rest marker goes: the explicit reset that frees the keystore entry.
@@ -187,6 +193,39 @@ describe('wipeDeletedAccountLocalData', () => {
       'the native push files',
     ]);
     expect(pendingDeletedAccountWipes()).toEqual(['user-a']);
+    invokeMock.mockImplementation(async () => {});
+  });
+
+  it('keeps the seeds of unknown writer when another account lives on the install', async () => {
+    tauri = true;
+    // Another account's device identity is recorded here: it may have written them.
+    localStorage.setItem(ACCOUNT_KEY.deviceId('user-b'), 'device-b');
+    await wipeDeletedAccountLocalData('user-a', AFTER_DELETE);
+    expect(invokeMock).toHaveBeenCalledWith('forget_account_graine_seeds', {
+      userId: 'user-a',
+      aloneOnInstall: false,
+    });
+    localStorage.removeItem(ACCOUNT_KEY.deviceId('user-b'));
+    invokeMock.mockClear();
+    // No other identity recorded, but the native side holds another account's MLS state.
+    invokeMock.mockImplementation(async (cmd: string) =>
+      cmd === 'mls_other_accounts_present' ? true : undefined
+    );
+    await wipeDeletedAccountLocalData('user-a', AFTER_DELETE);
+    expect(invokeMock).toHaveBeenCalledWith('forget_account_graine_seeds', {
+      userId: 'user-a',
+      aloneOnInstall: false,
+    });
+    // And an answer the native side cannot give is read as "present": less is erased.
+    invokeMock.mockClear();
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'mls_other_accounts_present') throw new Error('no answer');
+    });
+    await wipeDeletedAccountLocalData('user-a', AFTER_DELETE);
+    expect(invokeMock).toHaveBeenCalledWith('forget_account_graine_seeds', {
+      userId: 'user-a',
+      aloneOnInstall: false,
+    });
     invokeMock.mockImplementation(async () => {});
   });
 

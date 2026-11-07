@@ -130,7 +130,7 @@ describe('the shape of one seed, from the frame to the mirror to the reader', ()
 describe('the JNI symbol, which no compiler here checks', () => {
   it.each([
     [
-      /external fun nativeStoreGraineSeeds\(dataDir: String, cacheKeyB64: String, seedsJson: String\): Int/,
+      /external fun nativeStoreGraineSeeds\(dataDir: String, cacheKeyB64: String, seedsJson: String\): String\?/,
       'Java_fr_emse_canari_CanariFirebaseMessagingService_nativeStoreGraineSeeds',
     ],
     [
@@ -170,5 +170,11 @@ describe('the writer label every mirrored seed carries (2026-11-07)', () => {
 
   it('the per-account wipe command is registered', () => {
     expect(libRs).toMatch(/\n\s+forget_account_graine_seeds,\n/);
+  });
+
+  it('a relayed seed left to the app is reported apart from a seed lost, under the keys Kotlin reads', () => {
+    expect(pushRs).toContain('"stored": self.stored, "leftToApp": self.left_to_the_app');
+    expect(kotlin).toContain('optInt("leftToApp", 0)');
+    expect(kotlin).toContain('stored + leftToApp < offered');
   });
 });

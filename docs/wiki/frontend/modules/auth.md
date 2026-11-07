@@ -1185,7 +1185,7 @@ renamed, never read or rewritten** - no MLS byte and no key is touched by a swit
   | every keystore entry | B's alias `<userId>_<deviceId>`, named by B's device id and B's at-rest marker - both left in place by the session end for exactly this (round 7) |
   | `localStorage` / `sessionStorage` | B's per-account keys, B's vault slot, B's upload marks and session metadata |
   | the in-app log, the HTTP cache, notification avatars, `fcm_token.txt`, `keystore_aliases.xml`, the Share Extension's share | LEFT: nothing in them names an account, and A reads them |
-  | `graine_seeds.json` (sealed at rest) | B's entries only, BY LABEL (2026-11-07, [below](#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07)): an entry B alone wrote goes, one A also wrote keeps A, one written before the label is left. `channel_keys.json` no longer exists: every start deletes the one an older build left (`native_cache::remove_legacy_channel_keys`) |
+  | `graine_seeds.json` (sealed at rest) | B's entries only, BY LABEL (2026-11-07, [below](#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07)): an entry B alone wrote goes, one A also wrote keeps A, one written before the label is left (it may be A's). `channel_keys.json` no longer exists: every start deletes the one an older build left (`native_cache::remove_legacy_channel_keys`) |
 
   **Nothing on the revoked path can refuse any more**: it used to begin with the PIN reset's
   `removeMlsState`, which round 5 made refusable, and a refusal threw past `clearAuth` and the wipe -
@@ -1283,22 +1283,53 @@ because the three writers read the id from three places). Who writes the label:
   key opened `mls.bin` - the account whose key group carried it. Kotlin and Swift hand the array
   on unchanged, so no platform code names an account.
 
-A second write of a session ADDS its writer; the per-account wipe
-(`forget_account_graine_seeds`, the step "the mirrored Graine seeds" of
-`wipeDeletedAccountLocalData`, so the deleted-account AND the revoked-device wipe) drops the
-account's label from every entry and removes an entry only when its list empties - **an allowlist
-by label**, never a guess from the community. On iOS it edits the app's copy and the App Group's,
-which the extension writes itself. A relayed (bundle) seed is mirrored natively only for a salon
-holding a session labelled with THAT account: another account's admission is not this one's.
+A second write of a session ADDS its writer. **Every exit is by label** - `forget_account_entries`
+in `push.rs`, one decision for three scopes: it drops the account's label from the entries it
+reaches and removes an entry only when its list empties - **an allowlist by label**, never a guess
+from the community:
+
+- **the per-account wipe** (`forget_account_graine_seeds`, the step "the mirrored Graine seeds" of
+  `wipeDeletedAccountLocalData`, so the deleted-account AND the revoked-device wipe), over the whole
+  file. On iOS it edits the app's copy FIRST, then the App Group's (which the extension writes
+  itself): a group directory that cannot be resolved is reported on its own and never costs the
+  app's copy its wipe, and each copy logs its own counts;
+- **a community leaving the device** (`forget_graine_channel`) and **the retention sweep**
+  (`forget_graine_sessions`): they name the account they run for, so one account leaving a community
+  or sweeping its sessions never takes a seed another account of the install still reads (a held
+  session is `already-held`: nothing would mirror it again).
+
+A relayed (bundle) seed is mirrored natively only for a salon holding a session labelled with THAT
+account: another account's admission is not this one's. On Android the writer reports such a seed
+as LEFT TO THE APP (`leftToApp`, logged at INFO), apart from a seed it failed to store; during the
+transition - before an account's first labelled write in a salon - its relayed seeds therefore
+degrade to the generic banner until the app opens and mirrors them itself.
 
 **An entry written before the label is never read as an account's** (decided 2026-11-07). The push
 path wrote it for the slot's owner of the day and the page for the account signed in, and nothing
-kept which: on an install two accounts share it may be either's. So no per-account wipe removes it
-and no relayed-seed check counts it; a later write labels it and marks it `unattributed: true`,
-because that write proves who wrote it now, not before - its wipe drops its label and leaves the
-entry. Such an entry leaves the way every entry leaves without a wipe: the per-channel bound of 20
-sessions, the retention sweep, a community leaving the device, the factory wipe. Pinned by the
-`graine_mirror_tests` in `push.rs` and `accountLocalWipe.test.ts`; owed one bench reading
+kept which: on an install two accounts share it may be either's. So no relayed-seed check counts it;
+a later write labels it and marks it `unattributed: true`, because that write proves who wrote it
+now, not before. What the exits do with it:
+
+- **the wipe of the install's ONLY account** drops it (`aloneOnInstall`, the test
+  `revokedWipeScope` makes: `otherAccountOnInstall` in `installAccounts.ts`) - nobody else can need
+  it;
+- **the wipe of one account among several** leaves it (`Unattributed::Keep`): it may be the other
+  account's. That residue is the one open item
+  ([backlog](../../backlog.d/p3-unlabelled-seeds-outlive-an-account-on-a-shared-install.md));
+- **a community leaving the device and the retention sweep** drop it in the channel or sessions they
+  name, as they did before the label: the worst it costs another account is the generic banner it
+  had then.
+
+**What the label does not order** (stated, not fixed): a push decrypt ALREADY IN FLIGHT for the
+wiped account when its wipe runs can still write a labelled entry after it - one seed, sealed, read
+by nobody, removed by the next exit that reaches it. And `mirror_holds_channel`, the relayed-seed
+check, reads the file without the writers' lock: the writers rename whole files, so it reads one
+version or the other, and a stale answer costs one relayed seed left to the app. **The iOS
+activation copy of the file into the App Group** goes through Rust
+(`canari_ios_mirror_graine_seeds_to_app_group`, `sync_seed_mirror_copy`) under the GROUP copy's
+`graine_seeds.lock`, the lock the wipe holds there: an unlocked copy could bring back seeds a wipe
+had just removed. Pinned by the `graine_mirror_tests` in `push.rs`, `accountLocalWipe.test.ts` and
+`iosMlsMirror.test.ts`; owed one bench reading
 ([device-verification](../../device-verification.md#the-seed-mirror-labelled-by-account---owed-2026-11-07)).
 
 ### How often the sheet comes back - the biometric cadence (2026-09-28)

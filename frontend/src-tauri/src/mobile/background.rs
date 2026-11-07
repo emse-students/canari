@@ -2164,6 +2164,12 @@ mod tests {
         assert_eq!(seeds.len(), 1);
         assert_eq!(seeds[0]["sessionId"], "sess-new");
         assert_eq!(seeds[0]["seedB64"], STANDARD.encode(seed));
+        // The catch-up path stamps its writer too: without it, every seed it yields would be
+        // mirrored unattributed, out of reach of the account's wipe.
+        assert_eq!(
+            seeds[0][crate::commands::push::SEED_WRITER_FIELD],
+            crate::commands::mls_account_state::account_label("graine-ahead-bob")
+        );
     }
 
     /// Bob's state one commit behind alice, and a frame alice sealed at the epoch that commit made.

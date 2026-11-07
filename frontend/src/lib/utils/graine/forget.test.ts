@@ -34,7 +34,8 @@ vi.mock('$lib/services/ChannelService', () => ({
 const forgetMirror = vi.fn();
 vi.mock('./graineMirror', () => ({
   mirrorGraineSeed: vi.fn(),
-  forgetGraineChannelMirror: (channelId: string) => forgetMirror(channelId),
+  forgetGraineChannelMirror: (channelId: string, accountId: string) =>
+    forgetMirror(channelId, accountId),
 }));
 
 function mkSession(over: Partial<StoredGraineSession> = {}): StoredGraineSession {
@@ -131,6 +132,8 @@ describe('forgetCommunityGraine', () => {
     await forgetCommunityGraine('ws-1');
 
     expect(forgetMirror.mock.calls.map(([id]) => id).sort()).toEqual(['chan-1', 'chan-2']);
+    // This account's entries only: another account of the install may still read the salon.
+    expect(forgetMirror.mock.calls.every(([, account]) => account === 'alice')).toBe(true);
   });
 
   it('lets a rejoining member ask for the history again', async () => {

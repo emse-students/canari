@@ -183,6 +183,11 @@ int canari_ios_mirror_mls_bin_to_app_group(const char *data_dir);
    the file takes, each edit copying it itself. Answers one of the CANARI_MLS_MIRROR_* codes above. */
 int canari_ios_mirror_push_context_to_app_group(const char *data_dir);
 
+/* The activation mirror's graine_seeds.json half (commands/push.rs): the app's seed mirror copied
+   over the App Group's copy UNDER that copy's writers' lock (graine_seeds.lock), so it cannot bring
+   back seeds an account's wipe removed. Answers one of the CANARI_MLS_MIRROR_* codes above. */
+int canari_ios_mirror_graine_seeds_to_app_group(const char *data_dir);
+
 /* Once per process, before the page exists: deletes the share copies no current manifest names,
    the App Group's leftover claim files, and repairs an App Group epoch behind the app's. The
    report is NSLogged by the caller (Rust's CanariShareSweep, same layout; flags are SWEEP_*). */
