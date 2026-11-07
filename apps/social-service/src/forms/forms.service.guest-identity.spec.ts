@@ -275,15 +275,29 @@ describe('guest identity on a public form', () => {
       await expect(
         sent.service.update('f1', { guestFields: ['email'] } as any, 'u-owner', true)
       ).rejects.toThrow(/anonymous form cannot ask a guest/);
+      expect(sent.formRepo.save).not.toHaveBeenCalled();
+    });
 
-      // A stored list the edit leaves out is still judged: the form would keep asking.
-      const kept = baseForm({ anonymous: true, isPublic: true, guestFields: ['lastName'] });
-      const keptService = makeService(kept);
-      jest.spyOn(keptService.service, 'assertFormManager').mockResolvedValue(kept as any);
+    // Turning a form that asks guests anonymous: refused, and nothing saved. The guest list it
+    // keeps is read through `effective` (`input.guestFields ?? form.guestFields`).
+    it('refuses an edit making anonymous a form that keeps asking guests', async () => {
+      const asks = baseForm({ anonymous: false, isPublic: true, guestFields: ['lastName'] });
+      const { service, formRepo } = makeService(asks);
+      jest.spyOn(service, 'assertFormManager').mockResolvedValue(asks as any);
       await expect(
-        keptService.service.update('f1', { anonymous: true, title: 'x' } as any, 'u-owner', true)
-      ).rejects.toThrow(/anonymous form cannot ask a guest/);
-      expect(keptService.formRepo.save).not.toHaveBeenCalled();
+        service.update('f1', { anonymous: true } as any, 'u-owner', true)
+      ).rejects.toThrow(BadRequestException);
+      expect(formRepo.save).not.toHaveBeenCalled();
+    });
+
+    // #3084's rule: an edit answers for what it INTRODUCES. A conflict already stored (no editor
+    // can write one) does not lock its form out of a title change.
+    it('keeps an already stored conflict editable, and refuses only what an edit adds', async () => {
+      const stored = baseForm({ anonymous: true, isPublic: true, guestFields: ['lastName'] });
+      const { service, formRepo } = makeService(stored);
+      jest.spyOn(service, 'assertFormManager').mockResolvedValue(stored as any);
+      await service.update('f1', { title: 'Sondage 2' } as any, 'u-owner', true);
+      expect(formRepo.save).toHaveBeenCalled();
     });
 
     it('keeps the stored list when an edit leaves it out, and clears it when sent empty', async () => {

@@ -16,6 +16,8 @@
   import GuestIdentitySettings from './GuestIdentitySettings.svelte';
   import { Settings2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { conflictsIfEnabled, type FormOptionState } from '$lib/forms/formOptionRules';
+  import { conflictHint } from '$lib/forms/formOptionConflict';
 
   /**
    * "Parametres avances": everything real but rarely wanted, folded away so the common case - a
@@ -42,16 +44,17 @@
     anonymousFixed: boolean;
     /**
      * Answerable without an account from a shared link. A guest has no identity, so this forces
-     * repeat answers on and cannot sit beside an audience restriction, a cotisation grant or a
-     * price grid on who the person is. A guest CAN pay (WP-P1).
+     * repeat answers on. A guest CAN pay (WP-P1), and on a grid by who the person is pays the
+     * "everyone else" tier.
      */
     isPublic: boolean;
     /** What a public form asks a guest (`guestIdentity.ts`): last name, first name, e-mail. */
     guestFields: string[];
-    /** Whether the price grid divides on promo, formation or cotisation - what a guest has not got. */
-    profilePricing: boolean;
-    /** A paid form cannot be anonymous: a payment names its payer. */
-    requiresPayment: boolean;
+    /**
+     * The form's options as the shared rule reads them (`editorOptionState`): what shuts the
+     * anonymous, public and audience switches, whichever was switched on first.
+     */
+    optionState: FormOptionState;
     /** Opening date, as a `datetime-local` string. Empty when the form is open at once. */
     opensAt: string;
     /** Who may answer at all; null means anybody. */
@@ -66,10 +69,7 @@
     grantBlocker: CotisationGrantBlocker | null;
     /** The beneficiary association's name, for the explanation of what gets granted. */
     associationName: string;
-    /**
-     * Whether the form asks for a file. A file needs an account and names its uploader, so it shuts
-     * the public and anonymous switches - the server's two refusals, said before a save.
-     */
+    /** Whether the form asks for a file: it shows the retention field and counts as a setting. */
     hasFileQuestion: boolean;
     /** Days an answer's file is kept, 1 to 30; shown only when the form asks for a file. */
     fileRetentionDays: number;
@@ -82,8 +82,7 @@
     anonymousFixed,
     isPublic = $bindable(),
     guestFields = $bindable(),
-    profilePricing,
-    requiresPayment,
+    optionState,
     opensAt = $bindable(),
     submitCondition = $bindable(),
     settings = $bindable(),
@@ -109,15 +108,15 @@
   );
 
   /**
-   * What keeps the public switch shut: the server's refusals (`assertPublicConfigValid`), said
-   * before a save. A payment is NOT one of them any more: a guest pays with an e-mail it types.
+   * Why each switch is shut, by the ONE rule the server refuses a save with (`formOptionRules.ts`):
+   * a pair is judged the same whichever of its two options was switched on first. Each hint names
+   * every real reason and nothing else; null when the switch is open.
    */
-  const publicBlocker = $derived.by(() => {
-    if (isPublic) return null;
-    if (submitCondition != null || settings.grantsCotisation || profilePricing) return 'identity';
-    if (hasFileQuestion) return 'file';
-    return null;
-  });
+  const anonymousBlocker = $derived(conflictHint(conflictsIfEnabled(optionState, 'anonymous')));
+  const publicBlocker = $derived(conflictHint(conflictsIfEnabled(optionState, 'isPublic')));
+  const audienceBlocker = $derived(
+    conflictHint(conflictsIfEnabled(optionState, 'restrictsAudience'))
+  );
 
   const badge = $derived.by(() => {
     if (submitCondition != null) return m.form_advanced_badge_restricted();
@@ -156,20 +155,17 @@
          promise it to answers already written with a name. Said in the hint, not left to a refusal. -->
     <Toggle
       bind:checked={anonymous}
-      disabled={anonymousFixed || ((requiresPayment || hasFileQuestion) && !anonymous)}
+      disabled={anonymousFixed || anonymousBlocker != null}
       label={m.form_anonymous_label()}
       hint={anonymousFixed
         ? m.form_anonymous_hint_fixed()
-        : requiresPayment
-          ? m.form_anonymous_hint_paid()
-          : hasFileQuestion
-            ? m.form_anonymous_hint_file()
-            : m.form_anonymous_hint()}
+        : (anonymousBlocker ?? m.form_anonymous_hint())}
     />
 
     <!-- A guest is nobody the server can recognise, grant to or match against a criterion, so the
-         switch turns repeats on with it and stays shut beside an audience, a grant, a grid on who
-         the person is or a file: the server's refusals, said before a save rather than after one. -->
+         switch turns repeats on with it and stays shut beside an audience, a grant or a file: the
+         server's refusals, said before a save rather than after one. A grid on who the person is
+         does not shut it: a guest pays the "everyone else" tier. -->
     <Toggle
       bind:checked={
         () => isPublic,
@@ -180,14 +176,15 @@
       }
       disabled={publicBlocker != null}
       label={m.form_public_label()}
-      hint={publicBlocker === 'identity'
-        ? m.form_public_hint_blocked()
-        : publicBlocker === 'file'
-          ? m.form_public_hint_blocked_file()
-          : m.form_public_hint()}
+      hint={publicBlocker ?? m.form_public_hint()}
     />
 
-    <GuestIdentitySettings bind:guestFields {isPublic} {anonymous} charges={requiresPayment} />
+    <GuestIdentitySettings
+      bind:guestFields
+      {isPublic}
+      {anonymous}
+      charges={optionState.takesPayment}
+    />
 
     <!-- Shown only when a question asks for a file: a setting about files on a form that takes none
          would be a number nobody can see the effect of. -->
@@ -224,9 +221,9 @@
          predicate, so a form reserved to one promo and a price for that promo cannot disagree. -->
     <Toggle
       label={m.form_audience_toggle()}
-      disabled={isPublic && submitCondition == null}
-      hint={isPublic && submitCondition == null
-        ? m.form_audience_blocked_public()
+      disabled={audienceBlocker != null && submitCondition == null}
+      hint={submitCondition == null
+        ? (audienceBlocker ?? m.form_audience_toggle_hint())
         : m.form_audience_toggle_hint()}
       bind:checked={
         () => submitCondition != null,

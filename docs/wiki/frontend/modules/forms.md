@@ -604,10 +604,11 @@ The registry insert and the answer are ONE transaction (`ON CONFLICT DO NOTHING 
 what refuses a second answer from the same account). `allowMultipleSubmissions` still works and then
 registers nobody.
 
-**Free only, refused where it is chosen** (`assertAnonymousConfigValid`): a payment names its payer
-to Stripe and to the submission, and a cotisation is granted TO an account. A price grid, cash, a
-cotisation grant and an option supplement are all refused; the create screen disables the payment
-toggle and the anonymity toggle against each other, with the reason as the hint.
+**Free only, refused where it is chosen** (the shared option rule,
+[below](#which-options-rule-each-other-out-one-rule-in-either-order-2026-11-06)): a payment names its
+payer to the processor and to the submission, and a cotisation is granted TO an account. A price, a
+grid, cash, a cotisation grant and an option supplement are all refused; the editor shuts the
+payment switch and the anonymity switch against each other, with the reason as the hint.
 
 **Fixed at creation**, exactly like the association link: turning it on later would promise
 anonymity to answers already stored with a name, and turning it off would quietly start naming
@@ -628,15 +629,61 @@ redirect (`+layout.ts` lets `/f/` through as it does `/legal`). A member who ope
 to `/forms/:id`, where the form knows who they are; the share button and the QR code of a public form
 hand out the `/f/` address.
 
-**Everything follows from a guest having no identity** (`assertPublicConfigValid`, refused at save
-time with the sentence shown on the save bar):
+**Everything follows from a guest having no identity** (the shared option rule
+[below](#which-options-rule-each-other-out-one-rule-in-either-order-2026-11-06), then
+`assertPublicConfigValid`, refused at save time with a code and shown on the save bar):
 
 | A guest has no... | so a public form... |
 |---|---|
 | account to grant to | grants no cotisation (refused at save, and `fulfilPayment` refuses it again for a guest row - ERROR, no grant) |
-| profile to match | has no `submitCondition`, no question shown by promo, formation or cotisation (an ANSWER condition is fine), and a price grid on ANSWER dimensions only |
-| account to charge | still CHARGES (WP-P1, decision PP1): a base price, an answer grid, option supplements, online payment to the e-mail it types, or cash |
+| profile to match | has no `submitCondition` and no question shown by promo, formation or cotisation (an ANSWER condition is fine). A price grid on promo, formation or cotisation IS allowed (owner, 2026-11-06): a guest lands in the "everyone else" group of each such criterion and pays that tier |
+| account to charge | still CHARGES (WP-P1, decision PP1): a base price, a grid, option supplements, online payment to the e-mail it types, or cash |
 | identity to recognise twice | takes several answers (`allowMultipleSubmissions` is forced on) - identify guests by asking their name or e-mail ([below](#a-guests-name-and-e-mail-when-the-form-asks-2026-11-06)) |
+
+## Which options rule each other out: one rule, in either order (2026-11-06)
+
+The owner found the editor asymmetric: a grid by promo shut "Formulaire public", but switching the
+form public FIRST and adding the grid afterwards was accepted - each switch carried its own copy of
+the rule. Now **one pure function** decides: `frontend/src/lib/forms/formOptionRules.ts` =
+`apps/social-service/src/forms/form-option-rules.ts`, copied byte for byte and held so by the
+`declared-duplicates` gate (no shared TS package, as for `answerText.ts`). Each pair is ONE row of
+`FORM_OPTION_CONFLICTS`:
+
+- the editor shuts a switch when `conflictsIfEnabled(state, option)` is not empty, whichever of the
+  two was on first, and its hint lists every real reason and nothing else (`conflictHint`,
+  `formOptionConflict.ts`); the save button runs `formConfigConflicts` before sending;
+- the server runs `formConfigConflicts` in `assertFormOptionsCoherent` on create, and on update over
+  the form AS IT WILL BE SAVED (the edit merged onto the stored form), and refuses with a 400 whose
+  body carries `code`.
+
+| Options | Verdict | Code | Why |
+|---|---|---|---|
+| anonymous + payment (price, grid, cash, supplement) | refused | `FORM_ANONYMOUS_PAYMENT` | paying names the payer |
+| anonymous + cotisation grant | refused | `FORM_ANONYMOUS_COTISATION_GRANT` | a cotisation is granted to an account |
+| anonymous + file question | refused | `FORM_ANONYMOUS_FILE` | a file is tied to its uploader |
+| public + restricted audience, or a question shown by promo, formation or cotisation | refused | `FORM_PUBLIC_AUDIENCE` | a guest has no profile to check |
+| public + cotisation grant | refused | `FORM_PUBLIC_COTISATION_GRANT` | a guest has no account |
+| public + file question | refused | `FORM_PUBLIC_FILE` | a guest has no account to upload with |
+| public + payment | allowed | - | WP-P1: a guest pays with the e-mail it types |
+| public + grid on promo, formation or cotisation | allowed | - | the guest pays the "everyone else" tier |
+| public + grid whose every guest cell is unavailable | refused | `FORM_PUBLIC_GUEST_TIER_UNAVAILABLE` | no guest could answer: a public form in name only |
+| every other pair | allowed | - | |
+
+**The guest's tier is never a client's number.** `PricingFactsService.build` with no user answers no
+promo, no formation and no cotisation without asking anyone, `bucketFor` puts that in `_others` on
+every profile criterion, and `submit` prices the cell from those facts
+(`forms.service.seat-hold.spec.ts`, "charges a guest the everyone else tier"). The "everyone else"
+group always EXISTS - a grid is complete at save (`assertMatrixValid`) - so a guest always has a
+cell; what a manager can do is close it, which is why the closed case is refused rather than a rule
+"an others tier must exist". A guest cell at **0** is refused by `freeFallbackCells` only when it is the TRUE fallback, "everyone
+else" on EVERY criterion with each reachable; a cell naming an option ("Sans repas : 0") is a free
+choice and is accepted, and so is a member tier at 0 (the manager's business).
+The editor says it under a public form's grid by promo, formation or cotisation: "Les invités paient
+le tarif « autres »".
+
+Not in the table, because they read a value rather than two options: a public form forces several
+answers on (the editor sets it with the switch), a public form taking cash needs a deadline, and the
+free-fallback check above (`assertPublicConfigValid`).
 
 A guest's answer is a `submissions` row with `userId` NULL and its real time (cut to the day when the
 form is ALSO anonymous); the responses table names it "Invité". The two routes live in
@@ -679,7 +726,7 @@ formulaire payant : retrouver qui a commandé").
 | A ticked field is REQUIRED of a guest; a field not ticked is REFUSED (400 `FORM_GUEST_IDENTITY_NOT_ASKED`), so the columns hold only what the creator asked | `guestIdentityFor` (`apps/social-service/src/forms/guest-identity.ts`), called in `submit` before anything is written or issued; a missing one is 400 `FORM_GUEST_IDENTITY_MISSING` |
 | Lengths: a name 100 characters, the e-mail 254 and shaped like one | `GuestSubmitFormDto`, `libs/contracts/form-answers.json` (`maxGuestNameLength`, `maxGuestEmailLength`) |
 | A member is never asked, and a member's answer carrying any of them is REFUSED, not stripped (the member DTO declares them so the global `whitelist` cannot drop them silently) | `SubmitFormDto`, `guestIdentityFor(..., 'member')` |
-| An anonymous form cannot ask them (refused at save) | `assertAnonymousConfigValid` |
+| An anonymous form cannot ask them: refused at save with `FORM_ANONYMOUS_GUEST_IDENTITY`, judged on the form as it WILL be saved (an edit's list, else the stored one) | `judge()` in `assertFormOptionsCoherent`, beside the shared option pairs; not a pair of `form-option-rules.ts`, since the editor never sends guest fields on an anonymous form |
 | **The e-mail is never asked twice**: when asked, it is the address Lydia's request goes to (`guestPayerEmail`) and the payment step asks nothing - a second `payerEmail` beside it is REFUSED (400 `FORM_GUEST_IDENTITY_NOT_ASKED`), never dropped; when not asked, the payer address is asked at the payment step and never stored, as before (PP2) | server `guestPayerEmail`; page `payerPromptNeeded`, the "Utilisé aussi pour le reçu Lydia" note under the field while the answer pays online |
 | Stored on the answer: `submissions.guestLastName`, `guestFirstName` (varchar 100), `guestEmail` (varchar 254), all nullable; null on every member's answer | migration 138 |
 | The fill page draws a "Vos coordonnées" block after the questions, only when the form asks one; a held send scrolls to it; "answer again" empties it (a shared device at an event) | `GuestIdentityFields.svelte`, `routes/f/[id]/+page.svelte` |
@@ -824,7 +871,8 @@ the price is only as good as the answer it is computed from:
 - **The stored answer is the priced one.** The answer to a question the submitter did not see
   (`visibleItemIds`) is neither charged nor required, and it is no longer stored either, nor is its
   file attached.
-- **A public form that charges cannot leave a reachable "everyone else" cell at 0**
+- **A public form that charges cannot leave the reachable "everyone else" cell at 0** (the one where
+  every criterion is "everyone else"; a named option at 0 is accepted)
   (`freeFallbackCells`, checked at publication and on every edit of a public form). That cell is
   reached when a priced question can be skipped (not required), hidden (it has a condition), or
   answered with an option no group holds. The manager prices that cell or marks it unavailable; a
@@ -846,8 +894,8 @@ server must be able to hand it to them. That one fact decides the whole design.
 | Read | `GET /api/forms/:id/files/:fileId` | `assertFormManager` FIRST, then the bytes from `GET /media/internal/form-file/:id` with their own Content-Type, `Content-Disposition: attachment` (ASCII + RFC 5987 name), `nosniff`, `no-store`. Never through `GET /media/:id`, the push proxy's `GET /media/internal/:id` (no per-object ACL - both refuse the class) nor `/media/public` |
 | Purge | `FormFileRetentionScheduler`, hourly at :37 | see below |
 
-**Refused at save**, with the sentence on the save bar (`assertPublicConfigValid`,
-`assertAnonymousConfigValid`, and `fileQuestionProblem` on the page):
+**Refused at save**, with the sentence on the save bar (the shared option rule,
+`FORM_PUBLIC_FILE` and `FORM_ANONYMOUS_FILE`, on both sides):
 
 - **a public form** (D40): a guest has no account to upload with;
 - **an anonymous form**: the `form_files` row and the blob's owner name the uploader, which would

@@ -52,7 +52,6 @@
     matrixOf,
     matrixPayload,
     matrixProblem,
-    pricesOnProfile,
     type PriceMatrix,
   } from '$lib/pricing/priceMatrix';
   import { gridProblemMessage } from '$lib/pricing/gridProblem';
@@ -79,6 +78,13 @@
     fileQuestionProblem,
     hasFileQuestion,
   } from '$lib/forms/fileQuestion';
+  import { formConfigConflicts, type GuestPricedGrid } from '$lib/forms/formOptionRules';
+  import {
+    conflictCodeMessage,
+    editorOptionState,
+    formConflictMessage,
+  } from '$lib/forms/formOptionConflict';
+  import { Log } from '$lib/utils/Log';
   import { CircleAlert, FileText, ImagePlus, Users, X } from '@lucide/svelte';
   import { askedGuestFields } from '$lib/forms/guestIdentity';
   import { m } from '$lib/paraglide/messages';
@@ -251,6 +257,17 @@
   );
 
   const formHasFile = $derived(hasFileQuestion(items));
+  /** The options as the shared rule reads them: what every switch and the save are judged by. */
+  const optionState = $derived(
+    editorOptionState({
+      anonymous,
+      isPublic,
+      requiresPayment,
+      grantsCotisation: cotisation.grantsCotisation,
+      submitCondition,
+      items,
+    })
+  );
 
   /** A save refused on a question opens that question: a folded card hides its own error. */
   let reveal = $state<{ id: string } | null>(null);
@@ -296,6 +313,17 @@
       revealQuestion(firstItemsFaultQuestion(items));
       return;
     }
+    // The server's refusal, said first and in the reader's language: the same rule, whichever
+    // switch was turned on last (`formOptionRules.ts`).
+    const [conflict] = formConfigConflicts(
+      optionState,
+      matrixPayload(priceMatrix, requiresPayment) as GuestPricedGrid | null
+    );
+    if (conflict) {
+      Log.d('forms-editor', `save refused before sending: ${conflict}`);
+      error = formConflictMessage(conflict);
+      return;
+    }
     // A priced grid is judged by the contract the server judges it by, on the payload it will send.
     gridFault = firstProductGridProblem(items, { isPublic, requiresPayment });
     if (gridFault) {
@@ -303,13 +331,7 @@
       revealQuestion(gridFault.itemId);
       return;
     }
-    const fileProblem = fileQuestionProblem({
-      items,
-      isPublic,
-      anonymous,
-      fileRetentionDays,
-      submitCondition,
-    });
+    const fileProblem = fileQuestionProblem({ items, fileRetentionDays, submitCondition });
     if (fileProblem) {
       // A form-level refusal (public, anonymous, retention): no question is at fault, the
       // settings are, so the banner is brought into view instead of opening a card.
@@ -369,6 +391,7 @@
         gridFault?.message ??
         questionImageRefusalMessage(e) ??
         formCodeMessage(refusalCode(e)) ??
+        conflictCodeMessage(refusalCode(e)) ??
         providerRefusalMessage(e) ??
         e.message;
     } finally {
@@ -519,7 +542,7 @@
     <!-- 2. Money -->
     <FormPaymentSection
       bind:requiresPayment
-      {anonymous}
+      {optionState}
       {isPublic}
       bind:basePrice
       bind:allowCashPayment
@@ -569,8 +592,7 @@
       anonymousFixed
       bind:isPublic
       bind:guestFields
-      profilePricing={pricesOnProfile(priceMatrix, requiresPayment)}
-      {requiresPayment}
+      {optionState}
       bind:opensAt
       bind:submitCondition
       bind:settings={cotisation}

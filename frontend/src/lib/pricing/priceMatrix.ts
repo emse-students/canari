@@ -10,8 +10,12 @@
  * happens in `matrixPayload`.
  */
 
-/** The generated group every criterion ends with. Never stored, never editable, always last. */
-export const OTHERS_BUCKET_ID = '_others';
+/**
+ * The generated group every criterion ends with. Never stored, never editable, always last.
+ * Defined once, in the file the server shares (`formOptionRules.ts`).
+ */
+import { OTHERS_BUCKET_ID } from '$lib/forms/formOptionRules';
+export { OTHERS_BUCKET_ID };
 
 /** The four things a form can discriminate on. */
 export type DimensionKind = 'cotisation' | 'promo' | 'formation' | 'answer';
@@ -373,8 +377,9 @@ export function matrixOf(raw: unknown): PriceMatrix | null {
  */
 /**
  * Whether a grid that will be SAVED divides on who the person is (promo, formation, cotisation)
- * rather than on their answers only - what a public form's guest has not got, so the public switch
- * stays shut (`FormAdvancedSettings`). A grid the payload drops (`matrixPayload`) counts for nothing.
+ * rather than on their answers only - what a public form's guest has not got, so a guest pays that
+ * criterion's "everyone else" tier, said under the grid (`PriceGridEditor`). A grid the payload drops
+ * (`matrixPayload`) counts for nothing.
  */
 export function pricesOnProfile(matrix: PriceMatrix | null, enabled = true): boolean {
   return enabled && !!matrix && matrix.dimensions.some((d) => d.kind !== 'answer');

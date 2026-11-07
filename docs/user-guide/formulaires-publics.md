@@ -15,17 +15,21 @@ Un invite peut **payer** comme un membre :
 - un **prix** fixe ;
 - des **supplements** sur les options (ex. : "+3 EUR pour le repas") ;
 - une **grille de prix selon les reponses** (ex. : menu vegetarien 10 EUR, menu viande 12 EUR) ;
+- une **grille de prix selon la promo, la formation ou la cotisation** : un invite n'a rien de
+  tout cela, il paie donc le tarif **"autres"** de la grille (qui doit rester disponible) ;
 - en **ligne** (Lydia) ou en **especes** si vous l'autorisez.
 
 Ce qui reste **impossible** sur un formulaire public, parce qu'un invite n'a ni compte ni profil :
 
 - accorder une **cotisation** ;
-- une grille de prix selon la **promo**, la **formation** ou la **cotisation** ;
-- restreindre le **public** (promo, formation, cotisants...) ;
+- restreindre le **public**, ou afficher une question selon la promo, la formation ou la
+  cotisation ;
 - une question **fichier** (CV, justificatif...).
 
-L'editeur vous le dit : l'interrupteur "Formulaire public" reste grise tant qu'un de ces
-reglages est actif, avec la raison en dessous.
+L'editeur vous le dit, dans les deux sens : l'interrupteur "Formulaire public" reste grise
+tant qu'un de ces reglages est actif, et sur un formulaire deja public la cotisation et le
+public restreint restent grises, avec la raison en dessous (une question fichier est refusee a
+l'enregistrement, avec la meme raison).
 
 ## Mettre un formulaire en public
 
@@ -105,5 +109,6 @@ Cherchez sa reponse par son nom dans la liste des reponses : la reference est af
 cote de "Invite".
 
 **Pourquoi l'interrupteur "Formulaire public" est-il grise ?**
-Le formulaire accorde une cotisation, a une grille de prix selon la promo, la formation ou
-la cotisation, restreint son public, ou pose une question fichier. Retirez ce reglage.
+Le formulaire accorde une cotisation, restreint son public (ou affiche une question selon la
+promo, la formation ou la cotisation), ou pose une question fichier. Retirez ce reglage. Une
+grille de prix selon la promo ne bloque pas : les invites paient le tarif "autres".
