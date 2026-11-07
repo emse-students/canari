@@ -1858,7 +1858,10 @@ What is read here is the two cases that measurement did not cover.
 - **The switch is `on` on dev**: as `canari-test-gamma` (dev's global admin) at `/admin/platform`,
   "Sauvegarde de l'état de chiffrement après réception" -> "Différée", saved; then
   `/api/version` answers `"checkpointSkip":{"mode":"on"}`.
-- **The phone heard it**: after a relaunch (or a return to the foreground), the in-app log carries
+- **The phone heard it**: a running session re-reads the mode only at its next version check,
+  which focus, coming back online and visibility trigger (there is no periodic refresh), and only a
+  LIVE answer counts, never the cached one. After a relaunch (or a return to the foreground), the
+  in-app log carries
   `[MLS] Checkpoint skip ON: live receive-only drains defer their checkpoint while fewer than 100
   receive generations are unsaved`. Without that line the run is a control, not a reading.
 - A DM between the phone's bench account and a peer driven from the harness Chrome, which sends
@@ -1893,14 +1896,18 @@ skipped drains` line. A message missing, doubled or unreadable is a FAIL.
   Same start, then only Home - the process stays alive.
 
 For each run, over AT LEAST THREE HOURS the peer sends one numbered message every ~15 minutes and,
-once in the middle, a burst of 50. Write down every notification the phone shows (the background
-engine decrypts and advances `mls.bin` on its own). Then open the app, unlock, open the DM.
+once in the middle, a burst of 50. Write down every notification the phone shows. The background
+engine decrypts each push READ-ONLY from `mls.bin`, which is behind by the deferred generations, and
+never writes it (the one background write, a staged Welcome, is refused while the app runs:
+`foreground-active` / `warm-process` in `prepare_welcome_background_with_key`,
+`mobile/background.rs`). Then open the app, unlock, open the DM.
 
 **Expect:** every message exactly once, in order; every notification shown matches a message in the
-DM; no `unreadable for good`, no duplicate. In run (b) read the resume reload's line: a `live-ahead`
-outcome is ALLOWED only if no message the background engine notified is then missing - that is the
-question the switch reopens (the live state is persisted over what the engine wrote,
-`TauriMlsService.reloadStateFromDisk`). A missing notified message is a FAIL.
+DM; no `unreadable for good`, no duplicate. What this targets: that a push decrypted from a file
+behind by up to 99 generations still shows its text, and, in run (b), that the resume reload says
+`live-ahead` (expected with deferred generations: the live state is persisted over the file,
+`TauriMlsService.reloadStateFromDisk`, which discards nothing since the engine never wrote it) and
+keeps every message. A missing message, or a notification that could not be read, is a FAIL.
 
 **After the run:** the verdict, the build, the phone and the counts go into a row here and into
 [the question](open-questions.md#the-readings-owed-before-the-flip). Any FAIL: the switch goes back

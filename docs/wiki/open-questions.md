@@ -71,14 +71,27 @@ three app-level consequences are not measured:
    that a replay skips the frame. This is the safe direction of TAB-3b; the defect it fixes runs the
    other way ([history-reconciliation](protocols/history-reconciliation.md#a-cold-start-re-accuses-frames-it-already-read-the-mark-must-be-one-write-with-the-advance-tab-3b-measured-2026-09-08)).
 2. **The native resume reload would see `live-ahead` on most resumes instead of rarely.** It then
-   refuses the reload and persists the live state, which discards whatever the background FCM engine
-   wrote to `mls.bin` meanwhile (`TauriMlsService.reloadStateFromDisk`). Whether that loses a frame
-   the background engine read AND acknowledged is the question to measure first. The background
-   flush (`mlsStatePersisterLifecycle`, on the native foreground edge) runs before the engine
-   starts, but it is not awaited.
+   refuses the reload and persists the live state (`TauriMlsService.reloadStateFromDisk`). The
+   background flush (`mlsStatePersisterLifecycle`, on the native foreground edge) is not awaited.
+   This item first assumed the background FCM engine writes `mls.bin` as it decrypts; it does not -
+   see the correction below the list.
 3. **Forward secrecy at rest.** The keys of frames already read stay on disk until the next
    checkpoint. The plaintext rows sit on the same disk under the same device key, so the exposure is
-   believed to be nil. That is a judgement, not a measurement.
+   believed to be nil. That is a judgement, not a measurement. **With the skip on, in a quiet
+   foreground session, those keys stay on disk for an UNBOUNDED time but a BOUNDED count**: at most
+   K - 1 receive generations, until the next send, commit, background edge or logout.
+
+**Corrected 2026-11-07 (review of #3116): the background engine does NOT advance `mls.bin` when
+it decrypts a push.** Push decrypts are read-only - an ephemeral manager catches up in memory and
+never writes the file (`canari_native_decrypt_message_with_commits`, `mobile/ios_ffi.rs`;
+`decrypt_push_message_with_commits_with_key`, `mobile/background.rs`) - and the one background
+write, a staged Welcome, is refused while the app runs (`foreground-active`) or while a live manager
+is in the process (`warm-process`, `prepare_welcome_background_with_key`, `mobile/background.rs`).
+So persisting the live state over the file on `live-ahead` discards nothing a push decrypt wrote.
+What a reading still targets: that a resume with deferred generations is classified `live-ahead` and
+keeps every message; that a push decrypted read-only from a file behind by up to K - 1 generations
+still shows its text (the ephemeral ratchet moves forward); and that a cold start from that file
+re-reads nothing twice and loses nothing.
 
 **The proposal, if the user takes it.**
 
@@ -103,7 +116,14 @@ pinned by a test) unless the estate's `checkpointSkip.mode` is `on`, and then K 
 (`RECEIVE_CHECKPOINT_SKIP_BUDGET`, `mls-client/receiveCheckpointSkip.ts`). Read at each drain end
 because a cold start's first drains run before `/api/version` answers, and a switch moved at
 `/admin/platform` reaches a running session on its next version refresh. Absent, unknown or not yet
-answered reads as `off`. The development-only `canari_dev_checkpoint_skip_k` key is gone:
+answered reads as `off`, and so does a cached answer: only a LIVE `/api/version` answer obtained
+by this process turns it on, so a cached `on` cannot outlive an emergency `off`. A running session
+re-reads the mode only at its next version check, which focus, coming back online and visibility
+trigger - there is no periodic refresh. **Native mobile only (Android and iOS Tauri), whatever the
+server says**: on web and desktop the budget is 0, because only the phones were measured; they open
+only after their own CKS row - a leader tab killed with deferred generations, a follower tab's
+promotion to leader, and a hard reload. The development-only `canari_dev_checkpoint_skip_k` key is
+gone:
 
 - It skips ONLY a LIVE drain (`bufferUi`) that never called `persistNow` (so never a commit, a
   Welcome or a structural change) and whose window overlapped no history replay or restore, which
@@ -176,10 +196,10 @@ Both on DEV (`dev.canari-emse.fr`, a pre-release carrying the switch), the switc
    dead, the phone is relaunched, and killed again while that catch-up drain runs (the drain reaches
    K and checkpoints; the kill must land before or during that write). Expect, after the next resume:
    every frame readable once, no duplicate, no `live-ahead`, no `unreadable for good`.
-2. **A phone killed for HOURS with traffic.** Skipped drains pending, the phone killed, the peer
-   writing over several hours (with the native background engine taking the pushes), then resumed.
-   Same expectations, and every notification the background engine showed matches a message in the
-   conversation.
+2. **A phone away for HOURS with traffic**, killed and then backgrounded. Skipped drains pending,
+   the peer writing over several hours (the native background engine decrypting the pushes
+   READ-ONLY from a `mls.bin` behind by the deferred generations), then resumed. Same expectations,
+   and every notification shown matches a message in the conversation.
 
 Either one failing keeps the switch `off` and reopens this section.
 

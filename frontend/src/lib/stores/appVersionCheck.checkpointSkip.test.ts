@@ -3,9 +3,9 @@
  * THE CHECKPOINT-SKIP SWITCH IS `off` UNTIL A SERVER SAYS `on`, AND A SAID `on` IS HEARD.
  *
  * `serverCheckpointSkipMode()` is read by the MLS state persister at every drain end. Before any
- * answer it must be `off` - today's durability - and once an answer said `on`, the live answer and
- * then the session's cached copy carry it (the cache is written through the module itself, so this
- * test restates no storage format).
+ * answer it must be `off` - today's durability - and once an answer said `on`, only the live answer
+ * of THIS process carries it - never the session's cached copy, which would let a cached `on`
+ * outlive an emergency `off`.
  */
 export {};
 
@@ -66,7 +66,7 @@ describe('serverCheckpointSkipMode', () => {
     expect(mod.serverCheckpointSkipMode()).toBe('off');
   });
 
-  it('probe failed, cache says on -> on', async () => {
+  it('probe failed, cache says on -> OFF: only a live answer of this process turns the skip on', async () => {
     vi.stubGlobal('fetch', answering(serverInfo('on')));
     await (await import('./appVersionCheck.svelte')).refreshAppVersionCheck();
 
@@ -75,6 +75,9 @@ describe('serverCheckpointSkipMode', () => {
     const mod = await import('./appVersionCheck.svelte');
 
     expect(mod.getAppVersionCheck()).toBeNull();
-    expect(mod.serverCheckpointSkipMode()).toBe('on');
+    expect(mod.serverCheckpointSkipMode()).toBe('off');
+    // An offline refresh adopts the cache for its verdict, never for the switch.
+    await mod.refreshAppVersionCheck();
+    expect(mod.serverCheckpointSkipMode()).toBe('off');
   });
 });

@@ -1,4 +1,5 @@
-import type { CheckpointSkipMode } from '$lib/utils/appVersion';
+import { isMobileTauriRuntime, type CheckpointSkipMode } from '$lib/utils/appVersion';
+import { serverCheckpointSkipMode } from '$lib/stores/appVersionCheck.svelte';
 
 /**
  * How many application FRAMES (ratchet generations) a run of live receive-only drains may leave
@@ -15,13 +16,27 @@ import type { CheckpointSkipMode } from '$lib/utils/appVersion';
 export const RECEIVE_CHECKPOINT_SKIP_BUDGET = 100;
 
 /**
- * The persister's `receiveSkipBudget` for a server mode: {@link RECEIVE_CHECKPOINT_SKIP_BUDGET} when
- * the estate's `checkpointSkip.mode` (`/api/version`, `platform_config.checkpoint_skip_mode`) is
- * `on`, and 0 - every drain checkpoints, the behaviour every build had before WP-CHECKPOINT-SKIP -
- * otherwise. The mode is the lead's switch, OFF in every estate until the readings of
- * docs/wiki/device-verification.md pass; the budget is not a server value, so no admin can set a
- * number the ratchet window does not allow.
+ * The persister's `receiveSkipBudget` for a server mode on a platform: {@link RECEIVE_CHECKPOINT_SKIP_BUDGET}
+ * when the estate's `checkpointSkip.mode` (`/api/version`, `platform_config.checkpoint_skip_mode`) is
+ * `on` AND this is a native mobile build (Android or iOS Tauri), and 0 - every drain checkpoints, the
+ * behaviour every build had before WP-CHECKPOINT-SKIP - otherwise.
+ *
+ * NATIVE MOBILE ONLY, WHATEVER THE SERVER SAYS: only the phones were measured. Web and desktop open
+ * after their own row (a leader tab killed with deferred generations, a follower promotion, a hard
+ * reload - docs/wiki/open-questions.md). The budget is not a server value either, so no admin can
+ * set a number the ratchet window does not allow.
  */
-export function receiveCheckpointSkipBudget(mode: CheckpointSkipMode): number {
-  return mode === 'on' ? RECEIVE_CHECKPOINT_SKIP_BUDGET : 0;
+export function receiveCheckpointSkipBudget(
+  mode: CheckpointSkipMode,
+  nativeMobile: boolean
+): number {
+  return mode === 'on' && nativeMobile ? RECEIVE_CHECKPOINT_SKIP_BUDGET : 0;
+}
+
+/**
+ * THE GETTER `setupMessageHandler` HANDS THE STATE PERSISTER, read at every drain end: the server's
+ * mode as the last live `/api/version` answer of this process gave it, on this build's platform.
+ */
+export function receiveSkipBudgetFromServer(): number {
+  return receiveCheckpointSkipBudget(serverCheckpointSkipMode(), isMobileTauriRuntime());
 }

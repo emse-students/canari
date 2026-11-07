@@ -52,8 +52,7 @@ import { classifyIncomingDecryptError } from '../mlsDecryptError';
 import { SenderMismatchError } from '../verifiedSender';
 import { isFrameFromThisDevice } from '../ownDeviceFrame';
 import { createMlsStatePersister } from '../mlsStatePersister';
-import { receiveCheckpointSkipBudget } from '../receiveCheckpointSkip';
-import { serverCheckpointSkipMode } from '$lib/stores/appVersionCheck.svelte';
+import { receiveSkipBudgetFromServer } from '../receiveCheckpointSkip';
 import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
 import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
 import { applyReactionFrame } from './reactionFrame';
@@ -189,11 +188,12 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
 
   // WP-CHECKPOINT-SKIP: the server's switch, read at every drain end (not once here), so a mode
   // moved at `/admin/platform` - or the first `/api/version` answer of a cold start - reaches this
-  // session without a restart. `off` until a server has said `on`; the persister logs each change.
+  // session without a restart. `off` until a live answer says `on`, and 0 off native mobile; the
+  // persister logs each change. Pinned by setupMessageHandler.checkpointSkip.test.ts.
   const statePersister = createMlsStatePersister({
     mlsService,
     log,
-    receiveSkipBudget: () => receiveCheckpointSkipBudget(serverCheckpointSkipMode()),
+    receiveSkipBudget: receiveSkipBudgetFromServer,
   });
   registerMlsStatePersister(statePersister);
   installMlsStatePersisterLifecycle(statePersister);

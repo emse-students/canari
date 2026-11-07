@@ -15,6 +15,8 @@ const CACHED_SERVER_VERSION_KEY = 'canari:last_server_version_info';
 
 let lastCheck = $state<AppVersionCheckResult | null>(null);
 let inflight: Promise<AppVersionCheckResult> | null = null;
+/** The checkpoint-skip mode of the last LIVE answer this process obtained; see {@link serverCheckpointSkipMode}. */
+let liveCheckpointSkipMode: CheckpointSkipMode = 'off';
 
 function loadCachedServerInfo(): ReturnType<typeof parseServerVersionInfo> {
   if (typeof sessionStorage === 'undefined') return null;
@@ -86,15 +88,18 @@ export function serverLivesMode(): LivesMode {
 }
 
 /**
- * The server's checkpoint-skip switch (WP-CHECKPOINT-SKIP) as the last `/api/version` answer gave it,
- * `off` before any answer - `off` is the durability every client has always had. Read by
- * `mls-client/receiveCheckpointSkip.ts` at EVERY drain end, never cached in the pipeline, so a switch
- * moved at `/admin/platform` reaches a running session on its next version refresh (focus, online,
- * visibility). The cached answer counts, for the reason {@link serverPresencePost} gives.
+ * The server's checkpoint-skip switch (WP-CHECKPOINT-SKIP) as the last LIVE `/api/version` answer of
+ * THIS PROCESS gave it, `off` before one - `off` is the durability every client has always had. Read
+ * through `receiveSkipBudgetFromServer` (`mls-client/receiveCheckpointSkip.ts`), which
+ * `setupMessageHandler.ts` hands the state persister, at EVERY drain end. A switch moved at
+ * `/admin/platform` reaches a running session at its next version check, which only focus, coming
+ * back online and visibility trigger - there is no periodic refresh.
+ *
+ * NEVER THE CACHED ANSWER, unlike {@link serverPresencePost}: a cached `on` would outlive an emergency
+ * `off` for as long as the session cache does, and only a weakened durability depends on it.
  */
 export function serverCheckpointSkipMode(): CheckpointSkipMode {
-  if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.checkpointSkipMode;
-  return loadCachedServerInfo()?.checkpointSkipMode ?? 'off';
+  return liveCheckpointSkipMode;
 }
 
 /**
@@ -165,6 +170,7 @@ export async function refreshAppVersionCheck(): Promise<AppVersionCheckResult> {
 
       if (live) {
         saveCachedServerInfo(live);
+        liveCheckpointSkipMode = live.checkpointSkipMode;
       }
 
       lastCheck = buildAppVersionCheckResult(serverInfo);
