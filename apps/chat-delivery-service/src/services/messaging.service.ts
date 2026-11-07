@@ -2659,13 +2659,17 @@ export class MessagingService {
         !isUnresolvedIdentity(deviceId);
       /** Whether this commit writes its committer's seat - decided, then done, in the transaction. */
       let committerSeat = false;
-      // D1 IS COUNTABLE (review of #2832): an external commit into a CONVERSATION by a device whose
-      // user already holds another `active` device there is a further device that let itself in -
-      // the door of docs/wiki/protocols/mls-availability-no-holder.md, D1. Read before the advance,
-      // only for an external commit, and said as a tag on the ACCEPT line rather than a line of its
-      // own. A key group is entered this way by every device by design and is not counted.
-      const furtherDeviceSelfJoin =
+      // D1 IS COUNTABLE (review of #2832): an external commit into a CONVERSATION, replacing no leaf,
+      // by a device whose user already holds another `active` device there is a further device that
+      // let itself in - the door of docs/wiki/protocols/mls-availability-no-holder.md, D1. A device
+      // demoted to `pending` that rejoins by replacing its OWN leaf (a Remove in the commit) is not
+      // D1 and is not counted, nor is a key group, which every device enters this way by design.
+      // WHILE THE GATE IS SHUT the tag counts the entries no current client makes (an older client,
+      // or a modified one): the label says what the commit IS, never which door the server opened.
+      // Read outside the transaction, a log label only - it decides nothing.
+      const ownCommitByFurtherDevice =
         frame.external &&
+        frame.removedLeaves.length === 0 &&
         committerNeedsSeat &&
         distributionScopeOf(group) === null &&
         (await this.deviceGroupRepo.count({
@@ -3179,7 +3183,7 @@ export class MessagingService {
       this.logger.log(
         `[COMMIT][${traceId}] ACCEPT group=${groupId} newEpoch=${group.activeEpoch}` +
           (refusedAdmits.length > 0 ? ` refusedAdmits=${refusedAdmits.length}` : '') +
-          (furtherDeviceSelfJoin ? ' kind=further_device_self_join' : '')
+          (ownCommitByFurtherDevice ? ' kind=own_commit_by_further_device' : '')
       );
 
       return {

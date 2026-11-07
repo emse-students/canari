@@ -444,9 +444,11 @@ device), and D2 announces both entries the same way.
    `gh release list` and the merge commit, never this line).
 
 Then the constant flips in a one-line pull request. Until then a further device in a conversation
-with no member online waits, as before this page. **D1 is countable once open**: the commit gate's
-ACCEPT line of an external commit into a conversation by a user who already holds another `active`
-device there carries `kind=further_device_self_join` (`validateCommit`).
+with no member online waits, as before this page. **D1 is countable**: the commit gate's ACCEPT
+line of an external commit into a conversation, replacing no leaf, by a user who already holds another
+`active` device there carries `kind=own_commit_by_further_device` (`validateCommit`; a demoted device
+rejoining over its own leaf is not counted). While the gate is shut it counts the entries no current
+client makes - an older client or a modified one.
 
 ### D5: the banner, and what decides it
 
