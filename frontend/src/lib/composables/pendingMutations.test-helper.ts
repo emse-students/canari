@@ -17,7 +17,7 @@ import { applyReactionFrame } from '$lib/mls-client/messagePipeline/reactionFram
 export const KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 /** Another device's key: what this device cannot open. */
 export const OTHER_KEY = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=';
-export const ME = 'me-user-id';
+const ME = 'me-user-id';
 export const CONVO = 'conversation-key';
 /** The phase a catch-up drain opens (`BaseMlsService`). */
 export const DRAIN = { bufferUi: true, showOverlay: true };

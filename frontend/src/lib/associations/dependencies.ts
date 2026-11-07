@@ -88,7 +88,7 @@ export function isBde(entity: Pick<DependencyEntity, 'type' | 'governs'>): boole
 }
 
 /** One BDE and the entities that depend on it, in the panel's order. */
-export interface BdeFamily {
+interface BdeFamily {
   bde: DependencyEntity;
   children: DependencyEntity[];
 }

@@ -57,7 +57,7 @@ export interface NearViewportOptions {
 }
 
 /** The nearest ancestor that scrolls vertically - the box the node actually moves in - or `null`. */
-export function scrollRoot(node: HTMLElement): HTMLElement | null {
+function scrollRoot(node: HTMLElement): HTMLElement | null {
   for (let el = node.parentElement; el; el = el.parentElement) {
     const overflowY = getComputedStyle(el).overflowY;
     if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') return el;

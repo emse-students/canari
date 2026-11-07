@@ -1,7 +1,7 @@
 import type { Component } from 'svelte';
 
 /** One entry of a `MenuList`: an icon on the left, a left-aligned label, an optional muted line. */
-export interface MenuListItem {
+interface MenuListItem {
   /** Handed back to `onSelect`; unique within the list. */
   key: string;
   label: string;

@@ -38,8 +38,6 @@ export const ORGANISER_REFUSAL_CODES = [
   'poster-not-yours',
 ] as const;
 
-export type OrganiserRefusalCode = (typeof ORGANISER_REFUSAL_CODES)[number];
-
 /** Every code the booker's routes answer (WP-B3), each with its sentence. */
 export const BOOKER_REFUSAL_CODES = [
   'audience',
@@ -83,8 +81,6 @@ export const BOOKER_REFUSAL_CODES = [
   'file-purged',
 ] as const;
 
-export type BookerRefusalCode = (typeof BOOKER_REFUSAL_CODES)[number];
-
 /**
  * The FAMILY codes an edit is refused with (owner, 2026-11-02), each with the precise rule as
  * `reason` beside it (`BookingsApiError.reason`): the code a booking would have been refused with,
@@ -96,8 +92,6 @@ export const EDIT_REFUSAL_CODES = [
   'BOOKING_EDIT_OUTSIDE_RULES',
   'BOOKING_EDIT_FORBIDDEN',
 ] as const;
-
-export type EditRefusalCode = (typeof EDIT_REFUSAL_CODES)[number];
 
 /**
  * An edit's refusal: the rule's own sentence when it says more than the family's (which ceiling,

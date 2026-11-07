@@ -123,7 +123,7 @@ export interface PosterBubble {
 }
 
 /** A category zone grouping the associations that belong to it. */
-export interface PosterZone {
+interface PosterZone {
   /** Category id, or null for the "uncategorized" catch-all zone. */
   categoryId: string | null;
   label: string;

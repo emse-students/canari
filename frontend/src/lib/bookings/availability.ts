@@ -23,7 +23,7 @@ export const MAX_AVAILABILITY_LINES = 200;
 export type Weekday = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 /** A wall time `HH:MM`, `24:00` allowed as an END only. */
-export type WallTime = string;
+type WallTime = string;
 
 /**
  * One line as the organiser edits it. An `end` at or before `start` means "the next day": the
@@ -69,7 +69,7 @@ export function weekdayNames(locale: string, style: 'long' | 'short'): string[] 
 }
 
 /** The next ISO weekday. */
-export const nextWeekday = (d: number): Weekday => ((d % 7) + 1) as Weekday;
+const nextWeekday = (d: number): Weekday => ((d % 7) + 1) as Weekday;
 
 /** The calendar date after `date` (`YYYY-MM-DD`), in plain calendar arithmetic. */
 export function nextDate(date: string): string {

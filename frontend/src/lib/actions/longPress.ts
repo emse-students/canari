@@ -26,7 +26,7 @@ import { Log } from '$lib/utils/Log';
 /** Hold time that turns a press into a hold. */
 export const LONG_PRESS_MS = 450;
 /** Pointer travel past which the press is a scroll or a drag, not a hold. */
-export const LONG_PRESS_SLOP_PX = 10;
+const LONG_PRESS_SLOP_PX = 10;
 
 export interface LongPressParams {
   /**

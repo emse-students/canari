@@ -43,7 +43,7 @@ export const LYDIA_ADDABLE_CASHIER_ROLES: readonly LydiaAddableCashierRole[] = [
 ];
 
 /** One row of the "Caissiers" section and the actions it offers. */
-export interface LydiaCashierRowView {
+interface LydiaCashierRowView {
   cashier: LydiaCashier;
   /** "Changer le rôle": gate on, and never the Responsable (whose role is all the rights). */
   canChangeRole: boolean;

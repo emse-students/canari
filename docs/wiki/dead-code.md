@@ -53,6 +53,22 @@ against `#[tauri::command]` in Rust), the Kotlin, Swift and Objective-C bridges 
 `frontend/src-tauri/`, and NestJS providers wired by decorator. knip checks TS imports only; before
 deleting an export that smells like a bridge, grep its name under `frontend/src-tauri/` and `apps/`.
 
+**Four traps knip cannot see, met in the first export sweep (2026-11-07)**:
+
+- **A declared duplicate keeps its exports.** `frontend/src/lib/bookings/zonedTime.ts` and the other
+  frontend files of `.github/scripts/lib/declared-duplicates.mjs` are byte-for-byte copies of a
+  NestJS file, where the "unused" function is used. Deleting it on one side breaks the
+  `declared-duplicates` gate; their exports are `ignoreIssues` in `knip.json`.
+- **A test that READS a source file by text** (`signOutEndsLiveSession.test.ts` slices
+  `export function tearDownLiveSession(`) pins the `export` keyword without importing anything. Such
+  an export carries `@public` and the name of the test in its JSDoc; knip honours the tag. The only
+  detector is the full Vitest run, so a sweep always runs the whole suite, not the touched folders.
+- **A wire shape checked by a contract test** (`src/lib/contracts/wireShapes.test.ts` extracts the
+  `export interface PublishedCarte*` declarations of `carte/publish.ts` and compares them with the
+  server's): its types are `ignoreIssues` in `knip.json`.
+- A constant mirrored on the Rust side (`GRAINE_MIRROR_SESSIONS_PER_CHANNEL`) was documented as
+  "mirrors the TypeScript one": when the TS copy was deleted the explanation moved to the Rust doc.
+
 ## How to allow-list
 
 1. A false positive in knip: prefer an `entry` or `ignoreDependencies` line in `knip.json` with a
