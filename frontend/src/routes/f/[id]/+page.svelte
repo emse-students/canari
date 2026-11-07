@@ -37,6 +37,14 @@
   import ProductGridOrderBar from '$lib/components/forms/ProductGridOrderBar.svelte';
   import PaymentMethodChoice from '$lib/components/forms/PaymentMethodChoice.svelte';
   import PayerEmailPrompt from '$lib/components/payments/PayerEmailPrompt.svelte';
+  import GuestIdentityFields from '$lib/components/forms/GuestIdentityFields.svelte';
+  import {
+    askedGuestFields,
+    emptyGuestIdentity,
+    firstGuestFieldProblem,
+    guestIdentityPayload,
+    payerPromptNeeded,
+  } from '$lib/forms/guestIdentity';
   import Button from '$lib/components/ui/Button.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -71,7 +79,13 @@
   let askingPayerEmail = $state(false);
   /** The required question the last send stopped on: its card says why, until it is answered. */
   let missingAnswer = $state<MissingAnswer | null>(null);
+  /** The name and e-mail the form asks a guest, as typed ("Vos coordonnees"). */
+  let guestIdentity = $state(emptyGuestIdentity());
+  /** Whether a send was held on them: their fields then say what is missing. */
+  let guestIdentityChecked = $state(false);
 
+  /** What the form asks a guest about who they are; nothing by default (owner, 2026-11-06). */
+  const askedFields = $derived(askedGuestFields(form?.guestFields));
   const isNotOpenYet = $derived(!!form?.opensAt && new Date(form.opensAt) > new Date());
   const isClosed = $derived(!!form?.closedAt && new Date(form.closedAt) < new Date());
   // No profile half: the server refuses a public form whose questions depend on who answers.
@@ -98,6 +112,12 @@
   const total = $derived(form ? price.total : 0);
   const paysOnline = $derived(
     total > 0 && !(form?.allowCashPayment && paymentMethodChoice === 'cash')
+  );
+  /** What the payment note says about the address: kept when the form asked it, else not kept. */
+  const paymentNote = $derived(
+    askedFields.includes('email')
+      ? m.form_guest_payment_note_email_kept()
+      : m.form_guest_payment_note()
   );
   const blocked = $derived(
     !form || isNotOpenYet || isClosed || form.formFull || price.priceUnavailable
@@ -144,9 +164,21 @@
         ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
       return;
     }
-    // Lydia's request goes to an address, and Canari keeps none: the guest types it, and it is
-    // forwarded once (PP2).
-    if (paysOnline && !payerEmail) {
+    // The name and e-mail the creator asked, said on their own fields, brought into view.
+    const identityProblem = firstGuestFieldProblem(askedFields, guestIdentity);
+    if (identityProblem) {
+      guestIdentityChecked = true;
+      error = '';
+      Log.d('PublicForm', `submit held: guest ${identityProblem} missing or invalid`);
+      document
+        .getElementById('guest-identity')
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return;
+    }
+    // Lydia's request goes to an address. When the form asked the guest's e-mail, that one is it
+    // (typed once, kept with the answer); otherwise the guest types one here, forwarded once and
+    // never stored (PP2).
+    if (payerPromptNeeded(paysOnline, askedFields) && !payerEmail) {
       Log.d('PublicForm', `asking the payer address form=${form.id}`);
       askingPayerEmail = true;
       return;
@@ -157,6 +189,7 @@
       const reply = await submitPublicForm(form.id, {
         answers: visibleAnswers(visibleItems, selections),
         website: honeypot,
+        ...guestIdentityPayload(askedFields, guestIdentity),
         ...(payerEmail ? { payerEmail } : {}),
         ...(total > 0 && form.allowCashPayment ? { paymentMethod: paymentMethodChoice } : {}),
       });
@@ -205,6 +238,9 @@
     submitted = false;
     cashOwedCents = null;
     cashReference = null;
+    // A shared device at an event: the next answer may be somebody else's.
+    guestIdentity = emptyGuestIdentity();
+    guestIdentityChecked = false;
     error = '';
     window.scrollTo({ top: 0 });
   }
@@ -337,6 +373,16 @@
         </div>
       {/if}
 
+      <!-- Only what the creator asked, after the questions and before how to pay: the e-mail here is
+           the one Lydia uses, never asked twice. -->
+      <GuestIdentityFields
+        asked={askedFields}
+        bind:values={guestIdentity}
+        showErrors={guestIdentityChecked}
+        emailPaysLydia={paysOnline}
+        disabled={isNotOpenYet || isClosed || form.formFull || submitting}
+      />
+
       {#if total > 0 && form.allowCashPayment}
         <PaymentMethodChoice bind:method={paymentMethodChoice} />
       {/if}
@@ -381,7 +427,7 @@
             action={guestPayButton}
           />
           {#if paysOnline}
-            <p class="text-text-muted mt-2 text-center text-xs">{m.form_guest_payment_note()}</p>
+            <p class="text-text-muted mt-2 text-center text-xs">{paymentNote}</p>
           {/if}
         </div>
       {:else}
@@ -397,7 +443,7 @@
           {@render guestPayButton()}
           {#if paysOnline}
             <p class="text-text-muted max-w-sm text-center text-xs">
-              {m.form_guest_payment_note()}
+              {paymentNote}
             </p>
           {/if}
         </div>

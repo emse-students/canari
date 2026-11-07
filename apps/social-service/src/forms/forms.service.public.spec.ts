@@ -144,6 +144,7 @@ describe('FormsService - public forms', () => {
           'currency',
           'description',
           'formFull',
+          'guestFields',
           'id',
           'imageUrl',
           'items',

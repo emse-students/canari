@@ -22,6 +22,10 @@ export const ANSWER_MAX_TEXT_LENGTH = 2000;
 export const ANSWER_MAX_SELECTIONS = 50;
 /** The rows one grid may declare. */
 export const GRID_MAX_ROWS = 50;
+/** The characters of a guest's last or first name, when a public form asks (`guestIdentity.ts`). */
+export const GUEST_NAME_MAX_LENGTH = 100;
+/** The characters of a guest's e-mail, when a public form asks. */
+export const GUEST_EMAIL_MAX_LENGTH = 254;
 
 export const FORM_NOT_OPEN_YET = 'FORM_NOT_OPEN_YET';
 export const FORM_CLOSED = 'FORM_CLOSED';
@@ -37,6 +41,8 @@ export const FORM_FILE_NEEDS_ACCOUNT = 'FORM_FILE_NEEDS_ACCOUNT';
 export const FORM_GRID_DUPLICATE_LABEL = 'FORM_GRID_DUPLICATE_LABEL';
 export const FORM_GRID_TOO_MANY_ROWS = 'FORM_GRID_TOO_MANY_ROWS';
 export const FORM_TOO_MANY_QUESTIONS = 'FORM_TOO_MANY_QUESTIONS';
+export const FORM_GUEST_IDENTITY_MISSING = 'FORM_GUEST_IDENTITY_MISSING';
+export const FORM_GUEST_IDENTITY_NOT_ASKED = 'FORM_GUEST_IDENTITY_NOT_ASKED';
 
 /**
  * The sentence for a form's CODED refusal, or `null` when the code is none of a form's (the
@@ -71,6 +77,11 @@ export function formCodeMessage(code: string | null): string | null {
       return m.form_builder_grid_too_many_rows({ max: GRID_MAX_ROWS });
     case FORM_TOO_MANY_QUESTIONS:
       return m.form_builder_too_many_questions({ max: FORM_MAX_QUESTIONS });
+    case FORM_GUEST_IDENTITY_MISSING:
+      return m.form_refusal_guest_identity_missing();
+    case FORM_GUEST_IDENTITY_NOT_ASKED:
+      // The page sends only what the form asks: the form changed under an open page.
+      return m.form_refusal_guest_identity_changed();
     default:
       // A priced grid's coded refusal (`PRODUCT_GRID_*`): an answer's, else a definition's at save.
       return productGridRefusalMessage(code) ?? productGridDefinitionMessage(code);

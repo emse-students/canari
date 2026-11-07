@@ -45,6 +45,8 @@ const LABELS: ExportLabels = {
   amount: 'Montant paye',
   status: 'Statut',
   statuses: { paid: 'Paye', pending_cash: 'Especes', free: 'Gratuit' },
+  // The guest marker column of the main sheet: these answers include a guest's.
+  guest: 'Invite',
   productGrid: GRID_WORDS,
 };
 

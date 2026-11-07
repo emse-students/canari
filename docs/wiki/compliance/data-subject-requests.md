@@ -64,6 +64,40 @@ Check the column names against the entity before running: the entity files are u
 `apps/*/src/**/entities/`, and an unnamed `@Entity()` takes the snake_case of its class
 (`push_token`, `key_package`).
 
+#### A guest with no account (a public form's answer, register C8)
+
+A guest has no `users` row, so nothing above finds them, and no account's erasure reaches their
+answer. They are found only by what the form asked them (migration 138, [forms](../frontend/modules/forms.md#a-guests-name-and-e-mail-when-the-form-asks-2026-11-06)) -
+always with `"userId" IS NULL`, which is what makes the row a guest's:
+
+```sql
+SELECT id, "formId", "createdAt", "paymentStatus", "totalPaid",
+       "guestLastName", "guestFirstName", "guestEmail", answers
+  FROM submissions
+ WHERE "userId" IS NULL
+   AND ("guestEmail" ILIKE :'email'
+        OR ("guestLastName" ILIKE :'last' AND "guestFirstName" ILIKE :'first'));
+```
+
+A form that asked nothing holds no identity column: such a guest is found only by what they
+wrote in the answers (a reference they quote, `guestReference` = the first eight hex digits of
+`id`), and the requester proves the answer is theirs - say so in the reply rather than guess.
+
+**Erasure is an ANONYMISATION of the row, never its deletion** - the same choice the account
+erasure makes for a member's answer (`submissions`: `"userId"`, `email` NULL, `answers = '{}'`):
+
+```sql
+UPDATE submissions
+   SET "guestLastName" = NULL, "guestFirstName" = NULL, "guestEmail" = NULL, answers = '{}'::jsonb
+ WHERE id = ANY(:'ids'::uuid[]) AND "userId" IS NULL;
+```
+
+Why not `DELETE`: a paid row is the association's accounting record (amount, status, Lydia request
+ids, `lines`; basis 6.1.c in C8), its `purchase_records` row points at it, and a waiting row holds
+a seat - deleting it would erase a payment and free a seat that was sold. Anonymised, the row
+keeps what accounting needs and names nobody. The `AND "userId" IS NULL` guard keeps the statement
+off any member's row. Like every production write, it waits for the owner's yes.
+
 ### MiConnect (Authentik)
 
 The admin interface (`/if/admin/`, Directory > Users) shows the user's attributes (formation,

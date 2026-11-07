@@ -204,6 +204,20 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'submissions.lines': NO_ACCOUNT(
     'the priced lines of one submission (migration 137): product id, cell, quantity, unit price'
   ),
+  'forms.guestFields': NO_ACCOUNT(
+    'the names of the fields a public form asks a guest (migration 138): lastName, firstName, email'
+  ),
+  // A GUEST'S e-mail belongs to no account: it is written only on a guest's answer (`userId` NULL,
+  // `guest-identity.ts` refuses it from a member), so no account's erasure can reach it - there is
+  // no id to find it by, and the row already names nobody this erasure knows. It lives as long as
+  // the answer (register C8); a guest's own request is answered by hand: found by "guestEmail" or the
+  // two name columns with "userId" IS NULL, and the row anonymised, never deleted (it may be a
+  // payment record) - docs/wiki/compliance/data-subject-requests.md, "A guest with no account".
+  'submissions.guestEmail': {
+    action: 'kept',
+    reason:
+      "a guest's e-mail on a public form's answer (migration 138): written only on rows with no account, so no account's erasure reaches it",
+  },
 
   'association_products.priceMatrix': NO_ACCOUNT('prices by tag of a product'),
   'association_products.requiredTags': NO_ACCOUNT('tag names a buyer must hold'),

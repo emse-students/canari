@@ -54,6 +54,15 @@ export const FORM_FILE_NEEDS_ACCOUNT = 'FORM_FILE_NEEDS_ACCOUNT';
 export const FORM_GRID_DUPLICATE_LABEL = 'FORM_GRID_DUPLICATE_LABEL';
 export const FORM_GRID_TOO_MANY_ROWS = 'FORM_GRID_TOO_MANY_ROWS';
 export const FORM_TOO_MANY_QUESTIONS = 'FORM_TOO_MANY_QUESTIONS';
+/** A public form asks a guest for a name or an e-mail the answer does not carry (`guest-identity.ts`). */
+export const FORM_GUEST_IDENTITY_MISSING = 'FORM_GUEST_IDENTITY_MISSING';
+/** An answer carries a guest name or e-mail the form does not ask - or comes from a member. */
+export const FORM_GUEST_IDENTITY_NOT_ASKED = 'FORM_GUEST_IDENTITY_NOT_ASKED';
+
+/** The characters of a guest's last or first name (`submissions.guestLastName`, migration 138). */
+export const GUEST_NAME_MAX_LENGTH = 100;
+/** The characters of a guest's e-mail (`submissions.guestEmail`): RFC 5321's path limit. */
+export const GUEST_EMAIL_MAX_LENGTH = 254;
 
 /**
  * A 400 carrying a typed `code`, the shape every coded refusal of this service answers (`{ code,

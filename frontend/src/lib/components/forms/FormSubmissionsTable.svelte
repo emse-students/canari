@@ -21,6 +21,7 @@
     answeredItems,
     maxAnswerColumns,
     panelAddsNothing,
+    guestShownName,
     submitterName,
   } from '$lib/forms/submissionTable';
   import { m } from '$lib/paraglide/messages';
@@ -197,10 +198,13 @@
 {/snippet}
 
 <!-- The submitter, and a GUEST's answer (a public form's link, no account) marked as one: its name
-     is the reference it was given when it paid, and the badge says why there is no account. -->
+     is what the guest typed when the form asked (owner, 2026-11-06), ALWAYS beside the reference it
+     was given when it paid and the badge, so a typed name never passes for an account's. -->
 {#snippet submitter(sub: Submission)}
   {#if isGuestAnswer(sub, anonymous)}
+    {@const given = guestShownName(sub)}
     <span class="inline-flex items-center gap-2">
+      {#if given}<span data-testid="guest-name">{given}</span>{/if}
       {#if sub.reference}<span class="font-mono text-xs">{sub.reference}</span>{/if}
       <span
         class="bg-control-fill text-text-main rounded-full px-2 py-0.5 text-xs font-bold"

@@ -205,6 +205,24 @@ describe('the "Réponses" tab', () => {
     expect(rowNames(target)[3]).toContain('1A2B-3C4D');
   });
 
+  // Owner, 2026-11-06: a guest who gave a name is shown under it in place of the reference, and
+  // keeps the badge; the search finds the name too.
+  it('names a guest by what they typed, beside the reference and the badge', () => {
+    const named = SUBMISSIONS.map((s) =>
+      s.id === 'guest' ? { ...s, guestFirstName: 'Marie', guestLastName: 'Curie' } : s
+    );
+    const target = render(named);
+    expect(rowNames(target)[3]).toContain('Marie Curie');
+    // Never the name alone: it would read as an account's (review of #3096).
+    expect(rowNames(target)[3]).toContain('1A2B-3C4D');
+    expect(target.querySelectorAll('table [data-testid="guest-badge"]')).toHaveLength(1);
+    const input = target.querySelector<HTMLInputElement>('[data-testid="responses-search"]')!;
+    input.value = 'curie';
+    input.dispatchEvent(new Event('input'));
+    flushSync();
+    expect(rowNames(target)).toHaveLength(1);
+  });
+
   it('offers "mark paid" on the cash answer only', () => {
     const target = render();
     expect(target.querySelectorAll('table [data-testid="mark-paid"]')).toHaveLength(1);

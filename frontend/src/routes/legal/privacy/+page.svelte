@@ -266,15 +266,20 @@
         <dd>
           Une personne sans compte qui répond à un formulaire public laisse ses réponses, et, si le
           formulaire est payant, le montant, le statut du paiement et l'identifiant de la demande
-          chez Lydia. L'adresse e-mail saisie pour payer est transmise à Lydia et n'est pas
-          conservée par Canari. Pour un paiement en ligne, Canari garde une empreinte du lien de
-          retour (jamais le lien lui-même), qui permet de consulter ce paiement. Tant qu'une réponse
-          payante attend son paiement, elle porte une empreinte calculée avec une clé secrète (HMAC)
-          à partir du formulaire et du réseau de la connexion : l'adresse IPv4, ou le préfixe /64
-          d'une adresse IPv6. L'adresse elle-même n'est pas conservée. Cette empreinte sert
-          uniquement à limiter à trois les réponses en attente de paiement depuis un même réseau ;
-          elle est effacée par une tâche planifiée, dans les cinq minutes qui suivent le règlement,
-          l'annulation ou l'expiration de la réponse.
+          chez Lydia. Par défaut, rien ne lui est demandé sur son identité : l'auteur du formulaire
+          peut lui demander son nom, son prénom et son adresse e-mail (chacun séparément), qui sont
+          alors obligatoires, conservés avec la réponse et lus par ceux qui gèrent le formulaire
+          (liste des réponses et export) ; un membre connecté n'a jamais ces champs. Si l'adresse
+          e-mail est demandée, c'est elle qui est transmise à Lydia pour un paiement en ligne.
+          Sinon, l'adresse e-mail saisie pour payer est transmise à Lydia et n'est pas conservée par
+          Canari. Pour un paiement en ligne, Canari garde une empreinte du lien de retour (jamais le
+          lien lui-même), qui permet de consulter ce paiement. Tant qu'une réponse payante attend
+          son paiement, elle porte une empreinte calculée avec une clé secrète (HMAC) à partir du
+          formulaire et du réseau de la connexion : l'adresse IPv4, ou le préfixe /64 d'une adresse
+          IPv6. L'adresse elle-même n'est pas conservée. Cette empreinte sert uniquement à limiter à
+          trois les réponses en attente de paiement depuis un même réseau ; elle est effacée par une
+          tâche planifiée, dans les cinq minutes qui suivent le règlement, l'annulation ou
+          l'expiration de la réponse.
         </dd>
       </div>
       <div>
@@ -768,7 +773,10 @@
             </td>
           </tr>
           <tr>
-            <td>Réponses aux formulaires</td>
+            <td>
+              Réponses aux formulaires, y compris le nom, le prénom et l'adresse e-mail qu'un
+              formulaire public a demandés à une personne sans compte
+            </td>
             <td>Aucune durée n'est encore fixée : elle est en cours de définition</td>
           </tr>
           <tr>

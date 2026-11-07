@@ -1,5 +1,6 @@
 import { answerText, type AnswerGridLine, type AnswerWords } from './answerText';
 import type { FormItem } from './api';
+import { guestDisplayName } from './guestIdentity';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { m } from '$lib/paraglide/messages';
 
@@ -123,6 +124,18 @@ export function panelAddsNothing(
 }
 
 /**
+ * What a guest's row is shown under when the guest gave it: the name the form asked, else the
+ * e-mail it asked, else null (the reference, or "Invite", stands in then).
+ */
+export function guestShownName(sub: {
+  guestFirstName?: string | null;
+  guestLastName?: string | null;
+  guestEmail?: string | null;
+}): string | null {
+  return guestDisplayName(sub) ?? (sub.guestEmail || null);
+}
+
+/**
  * The name a response is filed under.
  *
  * The submitter's real name when the account carries one, and their display name when it does not.
@@ -135,13 +148,27 @@ export function submitterName(sub: {
   lastName: string | null;
   userId: string | null;
   reference?: string | null;
+  guestFirstName?: string | null;
+  guestLastName?: string | null;
+  guestEmail?: string | null;
 }): string {
   const real = [sub.firstName, sub.lastName].filter(Boolean).join(' ');
   if (real) return real;
   if (sub.userId) return getUserDisplayNameSync(sub.userId);
   // An anonymous answer has no author to name; callers branch on the form before asking. So a row
-  // with no account HERE is a guest's, from a public form's link: said, rather than left blank -
-  // and a guest who PAID is filed under the reference they were given, which is what they quote.
+  // with no account HERE is a guest's, from a public form's link. Named by what the guest typed when
+  // the form asked (owner, 2026-11-06: the name, else the e-mail); otherwise said, rather than left
+  // blank - and a guest who PAID is filed under the reference they were given, which they quote.
+  // A typed name is never shown bare: it keeps the guest word and the reference beside it, so it
+  // cannot pass for an account's name (review of #3096).
+  const given = guestShownName(sub);
+  if (given) {
+    return `${given} (${
+      sub.reference
+        ? m.form_submitter_guest_reference({ reference: sub.reference })
+        : m.form_submitter_guest()
+    })`;
+  }
   return sub.reference
     ? m.form_submitter_guest_reference({ reference: sub.reference })
     : m.form_submitter_guest();

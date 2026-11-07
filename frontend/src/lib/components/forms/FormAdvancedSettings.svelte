@@ -13,6 +13,7 @@
   import AudienceConditionEditor from './AudienceConditionEditor.svelte';
   import CotisationTierPicker from '$lib/components/pricing/CotisationTierPicker.svelte';
   import FormSection from './FormSection.svelte';
+  import GuestIdentitySettings from './GuestIdentitySettings.svelte';
   import { Settings2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { conflictsIfEnabled, type FormOptionState } from '$lib/forms/formOptionRules';
@@ -47,6 +48,8 @@
      * "everyone else" tier.
      */
     isPublic: boolean;
+    /** What a public form asks a guest (`guestIdentity.ts`): last name, first name, e-mail. */
+    guestFields: string[];
     /**
      * The form's options as the shared rule reads them (`editorOptionState`): what shuts the
      * anonymous, public and audience switches, whichever was switched on first.
@@ -78,6 +81,7 @@
     anonymous = $bindable(),
     anonymousFixed,
     isPublic = $bindable(),
+    guestFields = $bindable(),
     optionState,
     opensAt = $bindable(),
     submitCondition = $bindable(),
@@ -96,6 +100,7 @@
       (allowMultipleSubmissions ? 1 : 0) +
       (anonymous ? 1 : 0) +
       (isPublic ? 1 : 0) +
+      (isPublic && guestFields.length > 0 ? 1 : 0) +
       (opensAt ? 1 : 0) +
       (settings.grantsCotisation ? 1 : 0) +
       // A file question puts a deletion delay to work, which is a setting doing something.
@@ -172,6 +177,13 @@
       disabled={publicBlocker != null}
       label={m.form_public_label()}
       hint={publicBlocker ?? m.form_public_hint()}
+    />
+
+    <GuestIdentitySettings
+      bind:guestFields
+      {isPublic}
+      {anonymous}
+      charges={optionState.takesPayment}
     />
 
     <!-- Shown only when a question asks for a file: a setting about files on a form that takes none

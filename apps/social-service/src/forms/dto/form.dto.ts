@@ -1,4 +1,6 @@
 import {
+  ArrayMaxSize,
+  ArrayUnique,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -32,8 +34,11 @@ import {
   GRID_MAX_ROWS,
   isAcceptedAnswerValue,
   PRODUCT_GRID_MAX_CELLS,
+  GUEST_EMAIL_MAX_LENGTH,
+  GUEST_NAME_MAX_LENGTH,
   type FormAnswerValue,
 } from '../answer-bounds';
+import { GUEST_IDENTITY_FIELDS, type GuestIdentityField } from '../guest-identity';
 
 /**
  * Validates that `answers` is a shallow Record of at most {@link FORM_MAX_QUESTIONS} keys whose
@@ -289,6 +294,18 @@ export class CreateFormDto {
   @IsOptional()
   isPublic?: boolean;
 
+  /**
+   * What a public form asks a guest about who they are (`guest-identity.ts`): any of `lastName`,
+   * `firstName`, `email`, each required of the guest once asked. Absent keeps the stored value; an
+   * empty list or null asks nothing (stored as null).
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(GUEST_IDENTITY_FIELDS.length)
+  @ArrayUnique()
+  @IsIn(GUEST_IDENTITY_FIELDS, { each: true })
+  guestFields?: GuestIdentityField[] | null;
+
   /** Allow the same user to submit multiple times (e.g. product orders). */
   @IsBoolean()
   @IsOptional()
@@ -319,18 +336,44 @@ export class CreateFormDto {
 export class UpdateFormDto extends CreateFormDto {}
 
 /**
- * A guest's answer to a public form: the answers, how they pay when the form charges, and nothing
- * that could name anyone. No account, no stored address, no return URL - the server chooses where
- * Lydia sends a guest back (`FormsService.submit`).
+ * A guest's answer to a public form: the answers, how they pay when the form charges, and - only
+ * when the form asks for them (`guest-identity.ts`, owner 2026-11-06) - a name and an e-mail. No
+ * account, no stored network address, no return URL - the server chooses where Lydia sends a guest
+ * back (`FormsService.submit`).
  */
 export class GuestSubmitFormDto {
   @IsValidAnswers()
   answers: Record<string, FormAnswerValue>;
 
-  /** Where Lydia sends the payment request. Forwarded to core-service, never persisted (PP2). */
+  /**
+   * Where Lydia sends the payment request when the form does NOT ask for the guest's e-mail.
+   * Forwarded to core-service, never persisted (PP2). When the form asks for it, `guestEmail` is
+   * that address and this field is not read.
+   */
   @IsEmail()
   @IsOptional()
   payerEmail?: string;
+
+  /**
+   * A guest's last name, first name and e-mail - only when the form asks for each
+   * (`guest-identity.ts`, which refuses one it does not ask and requires one it does). When the
+   * form asks for the e-mail it is also where Lydia sends the payment request (one address, typed
+   * once), and it is stored with the answer.
+   */
+  @IsString()
+  @IsOptional()
+  @MaxLength(GUEST_NAME_MAX_LENGTH)
+  guestLastName?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(GUEST_NAME_MAX_LENGTH)
+  guestFirstName?: string;
+
+  @IsEmail()
+  @IsOptional()
+  @MaxLength(GUEST_EMAIL_MAX_LENGTH)
+  guestEmail?: string;
 
   /** `online` (default) or `cash` (when the form allows it). */
   @IsString()
@@ -372,6 +415,21 @@ export class SubmitFormDto {
   @IsEmail()
   @IsOptional()
   payerEmail?: string;
+
+  /**
+   * DECLARED SO A MEMBER'S ANSWER CARRYING THEM IS REFUSED, NOT STRIPPED. A member is never asked
+   * for a guest's name or e-mail (Canari knows who they are); the global pipe's `whitelist` would
+   * silently drop an undeclared field, and a dropped field is a save that did something else than
+   * it said. `guestIdentityFor` answers 400 `FORM_GUEST_IDENTITY_NOT_ASKED` for any of them.
+   */
+  @IsOptional()
+  guestLastName?: string;
+
+  @IsOptional()
+  guestFirstName?: string;
+
+  @IsOptional()
+  guestEmail?: string;
 
   @IsValidAnswers()
   answers: Record<string, FormAnswerValue>;

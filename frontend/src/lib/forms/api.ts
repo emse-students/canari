@@ -3,6 +3,7 @@ import { statusLabels } from './paymentStatus';
 import type { AnswerWords } from './answerText';
 import type { PaymentRequestState } from './paymentReturn';
 import type { ProductGridLine, ProductGridPrices, ProductGridView } from './productGridContract';
+import type { GuestIdentityField } from './guestIdentity';
 
 export interface FormOption {
   label: string;
@@ -111,6 +112,11 @@ export interface CreateFormPayload {
    * audience criterion that takes several answers - a guest has no identity for any of those.
    */
   isPublic?: boolean;
+  /**
+   * What a public form asks a guest about who they are (`guestIdentity.ts`): any of `lastName`,
+   * `firstName`, `email`, each required once asked. Null or absent asks nothing, the default.
+   */
+  guestFields?: GuestIdentityField[] | null;
   /** Whether cash (physical) payment is accepted as an alternative to the online payment. */
   allowCashPayment?: boolean;
   /**
@@ -396,6 +402,10 @@ export interface Submission {
   createdAt: string;
   /** The reference a PAYING GUEST was given ("1A2B-3C4D"); null on every other row. */
   reference?: string | null;
+  /** What a guest typed when the public form asked for it (migration 138); null otherwise. */
+  guestLastName?: string | null;
+  guestFirstName?: string | null;
+  guestEmail?: string | null;
   /** The file answers of this submission whose file the retention purge has deleted. */
   deletedFileIds?: string[];
   /** The live files of this submission, by id: the name a manager's download is saved under. */
@@ -486,6 +496,10 @@ export interface ExportLabels {
   file: string;
   /** The same cell once the retention purge has deleted the file. */
   fileDeleted: string;
+  /** Header of a guest's e-mail column, written when the form asks guests for it. */
+  email: string;
+  /** Header of the guest marker column (each guest row's reference), written when a row has no account. */
+  guest: string;
   /**
    * The words of a priced grid's "Articles" and "Totaux" sheets (`product-grid-export.ts`). Sent
    * with every export: the server refuses a grid form's export without them
@@ -525,6 +539,8 @@ export function exportLabels(): ExportLabels {
     statuses: statusLabels(),
     file: m.form_answer_file(),
     fileDeleted: m.form_answer_file_deleted(),
+    email: m.form_guest_identity_email(),
+    guest: m.form_submitter_guest(),
     productGrid: {
       articlesSheet: m.form_export_grid_articles_sheet(),
       totalsSheet: m.form_export_grid_totals_sheet(),
@@ -722,6 +738,8 @@ export type PublicForm = Pick<
   | 'paymentsPaused'
 > & {
   closedAt?: string | null;
+  /** What the page asks a guest about who they are; [] asks nothing (`guestIdentity.ts`). */
+  guestFields: GuestIdentityField[];
   formFull: boolean;
   pricing: PricingView | null;
   /** Question id -> a guest's prices on that priced grid ("everyone else", or the one list). */
@@ -792,7 +810,8 @@ export async function getPublicForm(id: string): Promise<PublicForm> {
 /**
  * Sends one guest answer. `website` is the honeypot the page hides from people; the server drops
  * any answer that fills it. A paid answer carries the address Lydia sends the request to
- * (`payerEmail`, never stored) and the method. A refusal is thrown through the one builder, so a
+ * (`payerEmail`, never stored) and the method - or, when the form asks the guest's e-mail, that
+ * e-mail (`guestEmail`, stored with the answer) is the address, typed once. A refusal is thrown through the one builder, so a
  * payment refusal (`code`, the amount bounds) is worded by `providerRefusalMessage`.
  */
 export async function submitPublicForm(
@@ -802,6 +821,10 @@ export async function submitPublicForm(
     website: string;
     payerEmail?: string;
     paymentMethod?: 'online' | 'cash';
+    /** Only the fields the form asks (`guestIdentityPayload`); the server refuses any other. */
+    guestLastName?: string;
+    guestFirstName?: string;
+    guestEmail?: string;
   }
 ): Promise<PublicSubmitReply> {
   const res = await fetch(`${socialUrl()}/api/public/forms/${encodeURIComponent(id)}/submit`, {
