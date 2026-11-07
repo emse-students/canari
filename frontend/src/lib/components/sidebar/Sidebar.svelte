@@ -4,7 +4,7 @@
   import { previewContentOf } from '$lib/utils/chat/listPreview';
   import { untrack } from 'svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
-  import { flip } from 'svelte/animate';
+  import { flipShown } from '$lib/utils/flipShown';
   import { SvelteMap } from 'svelte/reactivity';
   import { dndzone, TRIGGERS, type DndEvent } from 'svelte-dnd-action';
   import { keepRowActivationKeys } from '$lib/utils/dndActivationKeys';
@@ -597,7 +597,7 @@
       >
         {#each orderedWorkspaces as workspace (workspace.id)}
           {@const hasUnread = communityHasUnread(workspace.channels, conversations)}
-          <div animate:flip={{ duration: 150 }} class="relative">
+          <div animate:flipShown={{ duration: 150 }} class="relative">
             <!-- THE MENU IS A HOLD UNDER A FINGER AND A RIGHT CLICK UNDER A MOUSE (`longPress`), and
                  the mouse's main button is left to the drag: held on an icon, it starts a reorder.
                  The hold swallows the click that ends it - the browser's and the one the drag
@@ -851,7 +851,7 @@
                 <button
                   type="button"
                   data-channel-row={channel.name}
-                  animate:flip={{ duration: 150 }}
+                  animate:flipShown={{ duration: 150 }}
                   onkeydown={(e) =>
                     canReorderChannels && handleChannelKeydown(e, currentWorkspace, channel)}
                   aria-keyshortcuts={canReorderChannels ? 'Alt+ArrowUp Alt+ArrowDown' : undefined}
