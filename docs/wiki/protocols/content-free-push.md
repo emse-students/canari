@@ -417,7 +417,20 @@ the same path with Face ID: the NSE requires `baseUrl` too.
 **A refusal now says which.** The Android readers logged `push_context.json absent or invalid` for
 two different defects; `PushContextVerdict` (`fr.emse.canari.push`, unit-tested in `android-tests`)
 classifies at the read: `absent`, `unreadable (<exception class>)`, or `invalid: <fields> missing`,
-with `(the shape a sign-out leaves - no sign-in rewrote it)` when only `baseUrl` is gone.
+with `(the shape a sign-out leaves - no sign-in rewrote it)` when only `baseUrl` is gone. The iOS
+readers say the same words: `pushContextRefusal` in the NSE, `CanariPushContextRefusal` in
+`canari_push.mm`, both read only on the failure path, and neither changes what the reader does.
+
+**The write is fenced on the sign-out generation.** `TauriMlsService.storeSessionPushContext` is the
+one JS call site of `store_push_context`. The write is chained on the `mls.bin` save and on a token,
+so a sign-out can land between the request and the write. It would then put `baseUrl` and the bearer
+back for the account that left, after `end_push_registration` stripped them. Only the FCM service
+honours the signed-out mark: the workers, the boot receiver and the notification actions would act
+for that account again. An account switch in the same window would pair A's ids with B's token.
+So init captures `signOutGeneration()` (`auth.ts`) at ENTRY, and the write is dropped, with a line,
+if the generation has moved by then. On the native side, `deviceKeyB64: null` is the ONLY "no key"
+case: an empty or blank key is refused at ERROR (`session_key_of`, `push.rs`) rather than taken for a
+biometric sign-in.
 
 ## 8. Rollout, and old clients
 

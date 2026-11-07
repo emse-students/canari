@@ -2164,6 +2164,27 @@ pub(crate) fn acknowledge_quick_reply(reply_id: String, outcome: String) -> Resu
 }
 
 #[cfg(test)]
+mod session_key_tests {
+    use super::session_key_of;
+
+    #[test]
+    fn none_is_the_biometric_sign_in() {
+        assert_eq!(session_key_of(None), Ok(None));
+    }
+
+    #[test]
+    fn an_empty_or_blank_key_is_refused_not_taken_for_a_biometric_sign_in() {
+        assert!(session_key_of(Some("")).is_err());
+        assert!(session_key_of(Some("   ")).is_err());
+    }
+
+    #[test]
+    fn a_key_is_handed_on_trimmed() {
+        assert_eq!(session_key_of(Some(" abc= ")), Ok(Some("abc=")));
+    }
+}
+
+#[cfg(test)]
 mod quick_reply_tests {
     use super::*;
 
@@ -2373,7 +2394,7 @@ pub(crate) fn store_push_context(
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
 
-    match device_key_b64.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
+    match session_key_of(device_key_b64.as_deref())? {
         Some(key) => store_session_device_key(key, &user_id, &device_id, &app)?,
         None => log::info!(
             "[PushCtx] store_push_context: no device key (biometric sign-in) - keystore entry left as it is, the session's context written"
@@ -2388,6 +2409,23 @@ pub(crate) fn store_push_context(
         &push_token.unwrap_or_default(),
         locale,
     )
+}
+
+/// What [`store_push_context`] does with the key it was handed: `None` is the biometric sign-in (no
+/// key in hand, the keystore entry left alone) and is the ONLY such case. A key that is present but
+/// empty is a caller defect - the JS side sends `null` for "no key" - so it is refused, never taken
+/// for a biometric sign-in, which would leave the keystore on whatever key it held before.
+fn session_key_of(device_key_b64: Option<&str>) -> Result<Option<&str>, String> {
+    match device_key_b64 {
+        None => Ok(None),
+        Some(key) if key.trim().is_empty() => {
+            log::error!(
+                "[PushCtx] store_push_context: an EMPTY device key was passed - refused (no key is `null`)"
+            );
+            Err("device_key_b64 is empty - pass null for a session with no key in hand".to_string())
+        }
+        Some(key) => Ok(Some(key.trim())),
+    }
 }
 
 /// The keystore half of [`store_push_context`]: puts this session's device key in the entry the
