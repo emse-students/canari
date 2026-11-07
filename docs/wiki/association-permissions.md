@@ -20,7 +20,7 @@ Three tiers, widest first:
 | Tier | Who | How it is known |
 | --- | --- | --- |
 | Platform administrator | Holds **every** association right, member or not | `X-Global-Admin: true`, set by nginx from the `auth_request` `$global_admin` variable |
-| Cross-association super-admin | `MANAGE_ASSO` in the BDE of a space THIS association reaches; administers the associations its spaces reach, no others (WP6c step 2), and never an institution (owner, 2026-11-02) | `isAssociationSuperAdminOf(user, association)` -> `holdsBdeFlagOver` -> `spaces/bde.ts` `holdsBdeFlagOverSql` |
+| Cross-association super-admin | `MANAGE_ASSO` in THIS association's parent BDE (`parentAssociationId`, WP-D2, 2026-11-07; read from reach before it, WP6c step 2), or in itself when it is a BDE; never an institution (owner, 2026-11-02), never an entity with no parent | `isAssociationSuperAdminOf(user, association)` -> `holdsBdeFlagOver` -> `spaces/bde.ts` `holdsBdeFlagOverSql` |
 | The association's own member | Judged on their `permissions` bitmask alone | `callerHasFlag` |
 
 The middle tier does not inherit everything. `SUPER_ADMIN_EXCLUDED_FLAGS` -
@@ -52,6 +52,13 @@ tier: the page reads it from `GET /api/associations/me/bde-reach` (`getMyBdeReac
 own list of the associations each scoped BDE power reaches - never from "is a BDE somewhere".
 
 ### WP6c step 2: a BDE governs the associations its spaces reach (2026-10-04)
+
+> **SUPERSEDED FOR MANAGEMENT AND MODERATION BY WP-D2 (2026-11-07):** `holdsBdeFlagOverSql` now
+> reads the PARENT (`parentAssociationId`), never the audience - see
+> [reform 2.4](spaces-and-audiences-reform.md#24-who-governs-what-and-how-the-predicates-change). The
+> agenda rows of the table below were already `holdsBdeAgendaRightOverSql` (per space) and stay so;
+> the last-admin bypass and the `MANAGE_ASSO` row read the parent. The paragraph is the 2026-10-04
+> history.
 
 **THE ONE PREDICATE IS `holdsBdeFlagOverSql(user, association, flag)` in `spaces/bde.ts`**: the user
 holds `flag` in the BDE of a space that one of the association's `association_audiences` rules
@@ -139,7 +146,7 @@ elsewhere, which is exactly why the audit had to read call sites rather than cou
 | `MANAGE_DOCUMENTS` | 3 | 8 | the private document vault (including `GET :id/vault-key`) and the association notes |
 | `MANAGE_FORMS` | 4 | 1 | `GET :id/forms`, plus `assertFormManager` on every form write and every submission read |
 | `VALIDATE_EVENTS` | 5 | 0 | BDE only, **scoped to the associations its spaces reach** (WP6c step 2, above). `mayValidateEvent` / `mayValidateEventsOf` - validating, rejecting, editing and deleting those associations' events, and depositing one on their calendars. **It never validates by typing**: a deposit is a proposal like any other (2026-09-14) |
-| `MANAGE_ASSO` | 6 | 0 | BDE only. Creating an association through `POST /associations` (unscoped: there is none yet; never the platform admin's `POST /associations/admin`, [below](#creating-an-entity-two-routes-two-tiers)), **deleting one** it governs (`DELETE :id`, widened from global-admin-only 2026-09-10, scoped 2026-10-04), and **being the super-admin tier above** on the associations its spaces reach |
+| `MANAGE_ASSO` | 6 | 0 | BDE only. Creating an association through `POST /associations` (unscoped: there is none yet; never the platform admin's `POST /associations/admin`, [below](#creating-an-entity-two-routes-two-tiers)), **deleting one** it governs (`DELETE :id`, widened from global-admin-only 2026-09-10, scoped 2026-10-04), and **being the super-admin tier above** on its children (WP-D2) |
 | `MODERATE` | 7 | 0 | BDE only. `isContentModerator` - reports, mutes and comment deletion (`moderation.controller.ts`), plus editing and deleting any post (`assertMayManage` and the `canManage` field). **Pinning is not moderation since WP-PIN (owner, 2026-11-03; built)**: a per-space promotion right ([section 11](spaces-and-audiences-reform.md#11-wp-pin---a-pin-is-a-promotion-per-space-not-a-global-flag-decided-2026-11-03)) - `MODERATE` in the BDE of THAT space (`bdeStandingInSpaceSql`, `posts/space-pins.ts`), institution posts included; `canPin`/`pinSpaces` are served from it, never from `isContentModerator` |
 | `MANAGE_PRODUCTS` | 8 | 21 | the boutique, purchases and their exports, webhook failures, the whole payment-delegation tree, and the cotisation settings on `PATCH :id`. Never held on an institution (`TYPE_EXCLUDED_FLAGS`); ACCEPTING a delegation reads it on the receiver without the BDE tier, while requesting, re-pointing or cancelling a list's own delegation keeps the BDE tier (intended, owner 2026-11-03). A list with no holder (32 of 44 on production, 2026-11-03, empty lists per the owner) gets it from its governing BDE super-admin or the platform admin, never a backfill - its own managers cannot grant a flag they lack ([grant ceiling](#the-grant-ceiling-who-may-write-which-bits-2026-11-02), [payments](frontend/modules/payments.md#payment-delegation-parent-association-routing)) |
 | `MANAGE_PAYOUT_ACCOUNT` | 9 | 0 | `GET :id/manage-permission`, which core-service asks before opening Connect onboarding; `GET :id/payout-account`, the Lydia panel's read of the vendor token and dashboard URL. Never held on a list or an institution (`TYPE_EXCLUDED_FLAGS`) |
@@ -349,7 +356,9 @@ transfer or bulk-import path (the unused `AddMembersBatchDto` was deleted).
   and recovered by a BDE super-admin of it, or by the platform admin when no BDE governs it.
   `member-last-manager.integration.spec.ts` runs an erasure of one manager against a leave of the
   other: the leave waits, then is refused.
-- **The super-admin tier cannot be acquired through the audience.** A BDE becomes an association's
+- **The super-admin tier cannot be acquired through the audience** - since WP-D2 (2026-11-07) by
+  construction: the tier is the PARENT's, and no audience write moves a parent; the parent writes
+  inside its own spaces only (`ENTITY_GOVERNOR_SPACE_STANDINGS_SQL`). The history: a BDE became an association's
   super-admin by governing a space its rules reach, and a BDE may write audiences - so the audience
   bound must have the same granularity as governance. It was per CAMPUS while governance is per
   SPACE, and one campus holds two BDEs: a BDE could rewrite another BDE's association into its own
@@ -374,7 +383,7 @@ transfer or bulk-import path (the unused `AddMembersBatchDto` was deleted).
   2026-11-03: *"Aucun BDE n'a les droits de gestion sur une institution, mais c'est le BDE qui a tous
   les droits sur l'agenda des formations dont il est le BDE"*). Two predicates in `spaces/bde.ts`,
   one space rule:
-  - **management** - `holdsBdeFlagOverSql` never holds over an association of type `institution`,
+  - **management** - `holdsBdeFlagOverSql` (the PARENT since WP-D2) never holds over an association of type `institution`,
     so the super-admin tier (`mayAct`, `mayActOnAny`, `DELETE :id`, the archive and profile at
     `MANAGE_MEMBERS`, members, audience) reaches none, whatever spaces its audience reaches; the
     last-admin bypass of the member routes reads this one too. `editRights` drops the tier for an
