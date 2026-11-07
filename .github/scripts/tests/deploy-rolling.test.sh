@@ -266,8 +266,11 @@ done < <(
   # A ROLLBACK RUNS THE LIBRARY OF 1.6.2 AGAINST THIS IMAGE. That library reads `nginx -T`: an image
   # that names a `/rotation/` path, or leaves a routed service unnamed by DNS, is refused and the
   # rollback stops; this one must be taken for an image it drains by DNS (its rotation_is_legacy).
+  # 1.6.2 read its own compose file, with no mesh and one route per label - the plan older_plan gives.
+  # shellcheck disable=SC2034 # read by the eval below
+  prod_plan_1_6_2="$(awk '$1 != "mesh" { sub(/,.*/, "", $4); print }' <<<"$prod_plan")"
   # shellcheck disable=SC2016 # evaluated in the subshell that loaded the older library
-  if with_release_1_6_2 eval 'rotation_routes_set <<<"$prod_plan" && printf "%s\n" "$rest" | rotation_is_legacy frontend'; then
+  if with_release_1_6_2 eval 'rotation_routes_set <<<"$prod_plan_1_6_2" && printf "%s\n" "$rest" | rotation_is_legacy frontend'; then
     echo ok "the library of 1.6.2 takes the real frontend at rest for one it drains by DNS, so a rollback to it is not refused"
   else
     echo fail "the library of 1.6.2 would REFUSE the real frontend - a rollback to it would stop (a /rotation/ path in nginx -T, or a service not named by DNS)"

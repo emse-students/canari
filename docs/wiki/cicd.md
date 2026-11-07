@@ -804,7 +804,10 @@ nobody set is how the four calls above were missed. Both fail on the compose fil
 **The reproduction.** `deploy-rolling.test.sh` case 2c deploys a release while a `caller` container
 POSTs to the replaced `api`: through `http://mesh:3000`, pooled and not, every call answers `200`;
 the control, the same caller on `http://api:3000`, sees the reset. Storm 2b reloads the mesh with the
-frontend and the edge under a pooled caller, with no failure.
+frontend and the edge under a pooled caller, with no failure. Measured 2026-11-07 on a workstation:
+through the mesh, 4,872 pooled and 5,160 unpooled calls, all `200`, both versions answering; by DNS,
+4,008 `200` beside 2,609 refused and 12 hung to the client's 10 s bound; the storm, 41,281 calls
+through the mesh, all `200`.
 
 **The count stays.** `rolling.sh` (`transport_resets`) reads each retiring replica's log before its
 `docker rm`, and one sweep at the end of `replace_services` reads every running container of every
