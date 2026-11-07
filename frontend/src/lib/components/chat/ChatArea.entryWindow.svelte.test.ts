@@ -75,19 +75,19 @@ function modelGeometry() {
   });
 }
 
-function conversationOf(count: number): Conversation {
+function conversationOf(count: number, id = 'g1'): Conversation {
   const base = Date.UTC(2026, 9, 14, 8, 0, 0);
   const messages: ChatMessage[] = Array.from({ length: count }, (_, i) => ({
-    id: `m${String(i).padStart(4, '0')}`,
+    id: `${id}m${String(i).padStart(4, '0')}`,
     senderId: i % 2 ? 'alice' : 'bob',
     content: `message ${i}`,
     timestamp: new Date(base + i * 1000),
     isOwn: false,
   }));
   return {
-    id: 'g1',
+    id,
     name: 'Salon',
-    contactName: 'g1',
+    contactName: id,
     messages,
     lifecycle: 'active',
     mlsStateHex: null,
@@ -114,6 +114,45 @@ function mountArea(count: number) {
     target.remove();
   });
   return target;
+}
+
+/** The same mount with a conversation the test can switch, as the parent page does. */
+function mountSwitchable(count: number) {
+  const target = document.createElement('div');
+  document.body.appendChild(target);
+  const props = $state({
+    conversation: conversationOf(count, 'g1'),
+    messageText: '',
+    onMessageChange: () => {},
+    bindDraftWriter: () => () => {},
+    onSend: () => {},
+    onInviteMembers: () => {},
+  });
+  const app = mount(ChatArea, { target, props });
+  flushSync();
+  mounted.push(() => {
+    void unmount(app);
+    target.remove();
+  });
+  return { target, props };
+}
+
+/** Records the rows mounted at the moment the scroller is next shown (`opacity-100`). */
+function rowsAtNextReveal(target: HTMLElement): { readonly rows: number | null; stop(): void } {
+  const scroller = target.querySelector<HTMLElement>('.chat-messages-scroll')!;
+  let rows: number | null = null;
+  const observer = new MutationObserver(() => {
+    if (rows === null && scroller.classList.contains('opacity-100')) {
+      rows = target.querySelectorAll(ROW_SELECTOR).length;
+    }
+  });
+  observer.observe(scroller, { attributes: true, attributeFilter: ['class'] });
+  return {
+    get rows() {
+      return rows;
+    },
+    stop: () => observer.disconnect(),
+  };
 }
 
 /**
@@ -191,6 +230,84 @@ describe('ChatArea entry window (F6)', () => {
       expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(60);
     }
   );
+
+  it('reveals the entry frame alone: the widen comes after, never in the reveal flush', async () => {
+    // The full-window floor used to come back the moment `entering` fell, so the reveal's own flush
+    // clamped the window to 60 and mounted the 40 rows the stepped widen exists to spread out - 60
+    // rows at the reveal on the salon-mount bench, 2026-11-07, and the reveal frame paid for them.
+    rowPx = 48; // 20 rows = 960 px: the viewport is filled, no fill step.
+    modelGeometry();
+    const target = mountArea(THREAD);
+    const scroller = target.querySelector<HTMLElement>('.chat-messages-scroll')!;
+    expect(scroller.classList.contains('opacity-0')).toBe(true);
+    let rowsAtReveal: number | null = null;
+    const observer = new MutationObserver(() => {
+      if (rowsAtReveal === null && scroller.classList.contains('opacity-100')) {
+        rowsAtReveal = target.querySelectorAll(ROW_SELECTOR).length;
+      }
+    });
+    observer.observe(scroller, { attributes: true, attributeFilter: ['class'] });
+    await settleEntry();
+    observer.disconnect();
+    expect(rowsAtReveal).toBe(20);
+    expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(60);
+  });
+
+  it('a switch during the reveal frame: the retired reveal shows nothing, the new entry reveals 20', async () => {
+    // The reveal callback of the FIRST conversation is queued for the next frame; the switch lands
+    // before it. That stale callback used to drop `entering` for the NEW conversation with both
+    // flags false, so its floor was 60 and its 40 rows mounted in the reveal's flush.
+    rowPx = 48;
+    modelGeometry();
+    const { target, props } = mountSwitchable(THREAD);
+    await vi.advanceTimersByTimeAsync(0); // the first entry's fill: its reveal waits on a frame
+    props.conversation = conversationOf(THREAD, 'g2');
+    flushSync();
+    const reveal = rowsAtNextReveal(target);
+    await settleEntry();
+    reveal.stop();
+    expect(reveal.rows).toBe(20);
+    const rows = [...target.querySelectorAll(ROW_SELECTOR)];
+    expect(rows.length).toBe(60);
+    expect(rows.every((r) => r.id.startsWith('msg-g2'))).toBe(true);
+  });
+
+  it('a switch after the first widen step: the new conversation still reaches 60', async () => {
+    // The retired widen leaves `entryWidening` to the entry that retired it; a flag stuck true
+    // would hold the next conversation at the 20-row floor for good.
+    rowPx = 48;
+    modelGeometry();
+    const { target, props } = mountSwitchable(THREAD);
+    for (let i = 0; i < 40 && target.querySelectorAll(ROW_SELECTOR).length < 30; i++) {
+      await vi.advanceTimersByTimeAsync(1);
+    }
+    expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(30);
+    props.conversation = conversationOf(THREAD, 'g2');
+    flushSync();
+    await settleEntry();
+    const rows = [...target.querySelectorAll(ROW_SELECTOR)];
+    expect(rows.length).toBe(60);
+    expect(rows.every((r) => r.id.startsWith('msg-g2'))).toBe(true);
+  });
+
+  it('the widen takes no step while a finger is on the thread, and resumes when it lifts', async () => {
+    // A step writes `scrollTop`; under a finger that fights the drag (iOS WebKit can cancel it).
+    rowPx = 48;
+    modelGeometry();
+    const target = mountArea(THREAD);
+    const scroller = target.querySelector<HTMLElement>('.chat-messages-scroll')!;
+    const touch = (type: string, left: number) => {
+      const e = new Event(type);
+      Object.defineProperty(e, 'touches', { value: { length: left } });
+      scroller.dispatchEvent(e);
+    };
+    touch('touchstart', 1);
+    await settleEntry();
+    expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(20);
+    touch('touchend', 0);
+    await settleEntry();
+    expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(60);
+  });
 
   it('mounts 20 rows first, widens to 60, and moves scrollTop by exactly the height added', async () => {
     rowPx = 48; // 20 rows = 960 px: the viewport is filled, no fill step.

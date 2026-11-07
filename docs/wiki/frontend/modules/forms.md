@@ -1720,7 +1720,10 @@ draws them. Built from the owner-approved mockup of 2026-11-06 with the app's to
   and the categories are edited with the price grid's own `CriterionEditor`. One TAB per category,
   "Autres" (`_others`) always last; each tab is a complete price list, a new category starting as a
   copy of "Autres". On a public form the hint says a guest pays "Autres", and the save names that
-  price first (`PRODUCT_GRID_GUEST_PRICE_MISSING`).
+  price first (`PRODUCT_GRID_GUEST_PRICE_MISSING`). **Leaving a criterion asks first** when it
+  would lose input (owner, 2026-11-07): another *Selon*, the registration grid's copy, or the switch
+  turned off keep only "Autres"'s list, so `tierSwitchLosesInput` asks when a group names anyone or
+  a group's prices differ from "Autres"; a criterion still as it started is left at once.
 - **Cap per cell**: a stepper, 1..99, default 5; at 1 the hint says the buyer gets a checkbox.
 - **Preview**: the fill page's own `ProductGridQuestion.svelte`, inert, toggled *Ordinateur /
   Telephone* through its `layout` prop (`desktop` / `phone` force one drawing at any width; the fill
@@ -1870,3 +1873,7 @@ Tests: `FormResponsesPanel.svelte.test.ts` (filters, search, the guest badge, th
 with and without unpaid cash, a closed cell, the bars, the refund control),
 `FormExportMenu.svelte.test.ts`, `product-grid-contract.spec.ts` (the counting rule) and
 `product-grid-export.spec.ts` (both CSVs read back, both refusals).
+
+## The order bar rests on the bottom of the screen (2026-11-07)
+
+Measured on dev 1.6.6-alpha.4: the grid's order bar (`ProductGridOrderBar`) floated at 65-80 % of the height with the next card visible under it. Cause: `position: sticky; bottom: 0` stops at the scroll container's PADDING edge, and `.page-scroll-wrap` reserved `--bottom-nav-reserve` (4rem + safe area) on every page, including `/f/:id` which renders no bottom navigation. `pageScrollPaddingClass` (`$lib/components/layout/pageScrollPadding.ts`) now applies the reserve only where `routes/+layout.svelte` mounts the app chrome (`!isLoginPage`). The guest wrapper clears the home indicator with `max(0.75rem, var(--safe-area-inset-bottom))`. Inside the app the member page's bar rests on the reserve's edge, and since 2026-11-07 that edge IS the navigation's top (owner: "la coller a la navigation"): the reserve had stayed 4rem after #648 cut the bar to 3rem, so it was 1rem of nothing; both now read `--bottom-nav-height` (`app.css`), the reserve adding the bar's 1px border and the safe area. Pinned by `pageScrollPadding.test.ts` and the wrapper test in `f/[id]/page.productGrid.svelte.test.ts`.

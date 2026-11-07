@@ -230,12 +230,16 @@
    entirely has to be PORTALLED to the body, and `$lib/actions/portal` is how.
    ========================================================================================== */
 :root {
-  /* WHAT THE BOTTOM BAR COVERS, AND THE ONE PLACE IT IS SPELT. The web bar (`BottomNav`) is 4rem
-     plus the home-indicator strip. The iOS app's native bar (`NativeTabBar`) is not - the iOS 26
-     floating pill and the classic bar each have their own height - so that component overwrites
-     this on the document with the plugin's measured inset. `.page-scroll-wrap`, `.mobile-nav-inset`
-     and the keyboard's scroll padding all reserve THIS, so no reservation can keep the old number. */
-  --bottom-nav-reserve: calc(4rem + var(--safe-area-inset-bottom, 0px));
+  /* WHAT THE BOTTOM BAR COVERS, AND THE ONE PLACE IT IS SPELT. The web bar (`BottomNav`) draws
+     its row at `--bottom-nav-height` (Instagram's 48px, #648) under a 1px top border, plus the
+     home-indicator strip. The iOS app's native bar (`NativeTabBar`) is not - the iOS 26 floating
+     pill and the classic bar each have their own height - so that component overwrites the reserve
+     on the document with the plugin's measured inset. `.page-scroll-wrap`, `.mobile-nav-inset` and
+     the keyboard's scroll padding all reserve THIS, so no reservation can keep the old number.
+     Until 2026-11-07 the reserve still said 4rem after #648 cut the row to 3rem, so every page -
+     a form's sticky order bar most visibly - kept a 1rem strip of nothing above the bar. */
+  --bottom-nav-height: 3rem;
+  --bottom-nav-reserve: calc(var(--bottom-nav-height) + 1px + var(--safe-area-inset-bottom, 0px));
 
   /* The navigation frame. Each scrim is one rung UNDER the thing it dims: a scrim exists to catch
      the click that closes it, so putting it OVER that thing makes the thing stop answering. */

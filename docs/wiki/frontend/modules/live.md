@@ -494,6 +494,10 @@ since the production flip of 2026-10-30** (dev builds only before it, by the `de
 test). Whether a surface is drawn is the server's runtime kill switch, below. The
 chat and reactions (WP-L6) are [below](#the-chat-and-the-floating-reactions-client-half-wp-l6-2026-10-19-draft); moderation (WP-L8) is merged.
 
+### What stacks over the viewer (2026-11-07)
+
+The viewer sits on `--z-viewer` (300), above `--z-modal` (280). **One rule, `utils/viewerLayer.ts`:** whatever opens over a full-screen viewer takes `--z-viewer-dialog` (305), and a component says so by `markViewerLayer()` in its own initialisation, which `Modal` and `ModalOverlay` read. The live's own dialogs (report, chat-line report, block confirmation) are on `critical` (320) and clear it already. **The defect (owner, Android, 2026-11-07):** a live's link shared "via Canari" arrives as an incoming share, whose picker (`IncomingShareHost`, mounted at the app root) is OUTSIDE the viewer's subtree, so no mark reached it and it opened on 280, under the viewer, until the live closed. `IncomingShareHost` now marks itself; the same fix covers the reel viewer and the broadcaster overlay. Test: `IncomingShareHost.svelte.test.ts`. The viewer has no other sheet (the header has a viewer COUNT, not a list; reactions are an in-page layer).
+
 ### The server's kill switch hides the live surfaces (2026-10-21)
 
 The build switch is not enough once it ships: a store binary cannot be recalled. So every live
@@ -966,6 +970,14 @@ a text or a ciphertext.
 `livePlayer.test.ts`'s chat block, `api.test.ts`'s chat routes, `LiveChatPanel.svelte.test.ts`,
 `LiveViewer.svelte.test.ts`'s chat cases, `LiveBroadcaster.svelte.test.ts`'s on-air chat, `liveBroadcast.svelte.test.ts`'s `chatHeardEnd`). **Owed**: the crypto review of the chat seal, and a phone
 reading of the panel, the bar and the floats on the Mi 9T and the iPhone 12 ([backlog](../../backlog.md)).
+
+## The chat readable over the video, and the host mark (2026-11-07)
+
+The owner's two axes of 2026-11-07: readable over the picture, and more alive.
+
+- **Built, readable.** The bottom block of the viewer carries a taller dark gradient (`via-cn-scrim/30`, `pt-24`, tokens only); a line is medium weight with a double shadow (a tight edge and a soft halo); the oldest lines already fade out at the top of the list (mask). Each line already showed the author's avatar and name; a test now pins it.
+- **Built, the host marked.** `LiveChatPanel` takes `hostId` (the viewer passes `live.broadcasterId`): that account's lines carry a "Host" pill (`live_chat_host`). Nothing new is disclosed: the broadcaster's id is already in the live's list item, and the chat shows authors to its whole audience.
+- **Arrival lines: DECIDED 2026-11-07 (owner), built in its own pull request.** "X a rejoint" lines are visible to every viewer, rate-limited (option (c)); the owner answered knowing it shows everyone who joined. It deliberately reverses the standing rule of [lives](../../services/lives.md) ("a count, never an identity"), recorded as decision 12 of the owner's 2026-11-07 list (`docs/wiki/backlog.d/owner-decisions-of-2026-11-07.md`). This page's readability and host-mark work does not depend on it.
 
 ## The first rig readings, and what they hold against the `lives_mode` flip (LIVE-WEB, 2026-10-27)
 

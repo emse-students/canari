@@ -238,6 +238,10 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     sql: "push_mode IN ('full', 'wake')",
     holds: oneOf('push_mode', ['full', 'wake']),
   },
+  CHK_platform_config_checkpoint_skip_mode: {
+    sql: "checkpoint_skip_mode IN ('off', 'on')",
+    holds: oneOf('checkpoint_skip_mode', ['off', 'on']),
+  },
   CHK_spaces_campus: {
     sql: "campus IN ('saint-etienne', 'gardanne')",
     holds: oneOf('campus', CAMPUSES),

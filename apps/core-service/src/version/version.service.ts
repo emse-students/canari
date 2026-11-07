@@ -2,7 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { PlatformService } from '../platform/platform.service';
 import { deployedVersion } from '../platform/deployed-version';
 import { deployBuild } from '../platform/deploy-build';
-import type { CallsMode, LivesMode } from '../platform/entities/platform-config.entity';
+import type {
+  CallsMode,
+  CheckpointSkipMode,
+  LivesMode,
+} from '../platform/entities/platform-config.entity';
 
 export type AppVersionResponse = {
   version: string;
@@ -35,6 +39,15 @@ export type AppVersionResponse = {
    */
   lives: {
     mode: LivesMode;
+  };
+  /**
+   * The server's switch for WP-CHECKPOINT-SKIP (`platform_config.checkpoint_skip_mode`): `on` lets a
+   * client leave the MLS checkpoint of a live receive-only drain to the next existing trigger, until
+   * its own count of unsaved receive generations is reached. NOTHING IS ENFORCED HERE - the
+   * checkpoint is the client's own durability - so a client that cannot read the field stays `off`.
+   */
+  checkpointSkip: {
+    mode: CheckpointSkipMode;
   };
   /**
    * A CAPABILITY, NOT A SWITCH: this core-service forwards a PKCE `code_verifier` from
@@ -85,6 +98,7 @@ export class VersionService {
       },
       calls: { mode: platform.callsMode },
       lives: { mode: platform.livesMode },
+      checkpointSkip: { mode: platform.checkpointSkipMode },
       oidcPkce: true,
       presencePost: true,
       publishQueue: true,

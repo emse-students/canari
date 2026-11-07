@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="06/11/2026"
+  updated="07/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -215,6 +215,31 @@
           le fait qu'un lecteur a déjà été notifié d'une publication, ou qu'elle lui a déjà été
           annoncée, par une republication, et sa date, jusqu'à l'effacement de la publication ou de
           son compte.
+        </dd>
+      </div>
+      <div>
+        <dt>Lecteurs nommés (accès en lecture accordé à une personne)</dt>
+        <dd>
+          Un administrateur de la plateforme peut accorder à une personne nommée, par exemple un
+          responsable de l'École ou de la Maison des Élèves, un accès en lecture aux publications
+          des associations, des listes et des institutions d'un campus ou d'une formation. Cet accès
+          est nominatif : il ne vient ni de l'espace de la personne ni de son appartenance à une
+          association. Il donne à cette personne la lecture de ces publications et des directs de
+          ces associations, et la possibilité d'y réagir. Il n'ouvre jamais les publications
+          personnelles d'un membre ni une publication marquée « Entre étudiants », et il ne permet
+          ni de publier, ni de republier, ni de voter à un sondage ; une personne nommée n'est pas
+          notifiée des publications qu'elle lit ainsi. Par défaut, sur une publication que seul cet
+          accès lui ouvre, elle ne voit ni les commentaires des étudiants (elle ne peut ni en écrire
+          ni en aimer), ni qui a réagi ou voté quoi (seulement les totaux), ni le chat d'un direct
+          (elle regarde le direct et envoie des réactions flottantes, sans lire ni écrire de
+          message) ; un administrateur peut activer pour elle l'option « voit les commentaires »,
+          qui ouvre les commentaires et le chat. Une personne qui voit déjà une publication par ses
+          propres moyens (son espace, son association, une republication, un abonnement accepté)
+          garde tout ce que cela lui donne. Sont conservés : le compte de la personne nommée, le
+          campus et la formation concernés, l'administrateur qui a accordé l'accès, la date, et
+          l'état de l'option ; chaque octroi, retrait ou changement de l'option est inscrit dans un
+          journal consultable des seuls administrateurs. La personne nommée ne peut pas consulter
+          cette liste ; vous pouvez nous demander si vous y figurez.
         </dd>
       </div>
       <div>
@@ -756,6 +781,16 @@
               soit masquée par la modération ou supprimée, qu'un blocage intervienne entre vous et
               l'auteur, ou que l'un des deux comptes soit supprimé ; le réglage d'accord : tant que
               le compte existe
+            </td>
+          </tr>
+          <tr>
+            <td>Lecteurs nommés</td>
+            <td>
+              L'accès : jusqu'à son retrait par un administrateur ou la suppression du compte de la
+              personne nommée (les lignes d'accès sont alors supprimées) ; le journal des octrois et
+              retraits : conservé sans limite de durée, sans le nom de la personne ni celui de
+              l'administrateur après la suppression de leur compte (restent le campus, la formation,
+              l'action et la date)
             </td>
           </tr>
           <tr>

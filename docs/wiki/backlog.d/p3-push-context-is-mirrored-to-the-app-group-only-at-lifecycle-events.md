@@ -6,5 +6,6 @@ foreground followed by a foreground kill paired account B's state with A's push 
 `PUSH_CONTEXT_LOCK`, and the activation mirror copies it through Rust under the same lock
 ([mobile](../frontend/mobile.md#the-extensions-copy-of-the-state-follows-every-write-2026-11-05)).
 
-**Owed on the iPhone 12:** sign in as A, switch to B in the foreground, `ios.mjs terminate`, push a DM
-to B - the banner carries its text and the extension's `outcome=decrypted`. Closes when read.
+**Owed on the iPhone 12, on any build `>= 1.6.6-alpha.2`:** row R2 of
+[device-verification](../device-verification.md#ios-3075-the-ios-follow-ups-of-3075---owed-on-the-iphone-12)
+(an account switch in the foreground, a foreground kill, a DM to B). Closes when read.

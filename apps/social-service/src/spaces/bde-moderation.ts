@@ -6,16 +6,18 @@ import { isReaderSpaceSql } from './reader-spaces';
  * THE SCOPE OF A BDE MODERATOR (owner, 2026-11-02, amending D23).
  *
  * `MODERATE` used to be global: a member holding it in ANY BDE curated the whole platform. It is now
- * read like `VALIDATE_EVENTS` and `MANAGE_ASSO` (`holdsBdeFlagOverSql`): a BDE moderates only what
- * lives in the spaces it governs. A platform administrator is not asked any of this - they stay
+ * read like `MANAGE_ASSO` (`holdsBdeFlagOverSql`): a BDE moderates only what its children publish and
+ * what the people of its spaces publish. A platform administrator is not asked any of this - they stay
  * global, and every caller short-circuits on them before splicing a fragment from here.
  *
  * "In the governed spaces" means, for each kind of target:
- * - an ASSOCIATION's content (a post or a live in its name): the association is reached by a space
- *   the BDE governs - exactly `holdsBdeFlagOverSql`, so an association reaching no space is governed
- *   by nobody but the platform admin, and so is an INSTITUTION: no BDE governs one (owner, 2026-11-02
- *   and 2026-11-03), so no BDE moderates its content either. The same predicate leaves a BDE's own
- *   content to its own members, as its management is;
+ * - an ASSOCIATION's content (a post or a live in its name): the BDE is the association's PARENT
+ *   (WP-R4 on WP-D2's governance, reform 2.4) - exactly `holdsBdeFlagOverSql`, so an association
+ *   with no parent is moderated by nobody but the platform admin, whatever its audience reaches, and
+ *   so is an INSTITUTION: no BDE governs one (owner, 2026-11-02 and 2026-11-03, G9), so no BDE
+ *   moderates its content either. Another BDE whose spaces the association reaches moderates
+ *   nothing of it. The same predicate leaves a BDE's own content to its own members, as its
+ *   management is;
  * - a PERSON's content (a personal post or live): its author belongs to one of the spaces the BDE
  *   governs - the same per-space standing (`bdeStandingInSpaceSql`) every BDE power reads
  *   (`isReaderSpaceSql`, the readers' own definition). Someone with no space - staff, a review
@@ -43,8 +45,9 @@ const MODERATE = String(AssociationPermissionFlag.MODERATE);
 /** 403 `code`: the caller moderates somewhere, but not where this target lives. */
 export const MODERATION_OUT_OF_SCOPE = 'MODERATION_OUT_OF_SCOPE';
 /**
- * 403 `code`: the target is published in an INSTITUTION's or a BDE's name (or is a comment under
- * a post in such a name), which no other BDE moderates - the platform admin's (owner, 2026-11-03).
+ * 403 `code`: the target is published in an INSTITUTION's or a BDE's name, or in the name of an
+ * entity with no governing parent (or is a comment under a post in such a name), which no other BDE
+ * moderates - the platform admin's (owner, 2026-11-03; WP-D2).
  * Classified at the throw (`AssociationsService.refuseModeration`, `MODERATION_RESERVED_SQL`), so the
  * client words "only the platform administration moderates this" rather than "outside your spaces".
  */
@@ -84,11 +87,11 @@ export function bdeModeratesUserSql(moderator: string, target: string): string {
 
 /**
  * THE PUBLISHER HALF OF THE ONE PREDICATE: user `moderator` holds `MODERATE` over what is published in
- * the name of association `association` (a non-NULL SQL expression) - the association is reached by a
- * space the moderator's BDE governs (`holdsBdeFlagOverSql`, the management predicate). So it is FALSE,
+ * the name of association `association` (a non-NULL SQL expression) - the moderator's BDE is the
+ * association's PARENT (`holdsBdeFlagOverSql`, the governance predicate, WP-D2). So it is FALSE,
  * whatever the audience reaches, for an INSTITUTION and for ANOTHER BDE (owner, 2026-11-02 and
- * 2026-11-03: only the platform admin moderates those), and for an association reaching none of the
- * moderator's spaces. A BDE's own content stays its own moderators'.
+ * 2026-11-03, G9: only the platform admin moderates those), for an association with no parent, and
+ * for one depending on another BDE. A BDE's own content stays its own moderators'.
  */
 export function bdeModeratesPublisherSql(moderator: string, association: string): string {
   return holdsBdeFlagOverSql(moderator, association, MODERATE);
@@ -151,14 +154,19 @@ export const BDE_MODERATED_ASSOCIATION_IDS_SQL = `SELECT ma.id::text AS id FROM 
   WHERE ma.id = ANY($2::uuid[]) AND ${bdeModeratesPublisherSql('$1', 'ma.id')}`;
 
 /**
- * Association `association` (a SQL expression, may be NULL) is an INSTITUTION or the BDE of a space:
- * a publisher whose content no other BDE moderates (owner, 2026-11-03). It only CLASSIFIES a refusal
+ * Association `association` (a SQL expression, may be NULL) is an INSTITUTION, the BDE of a space, or
+ * an entity no BDE governs as a parent (none set, or one governing no space - WP-D2): a publisher
+ * whose content no other BDE moderates (owner, 2026-11-03; B2). It only CLASSIFIES a refusal
  * (`MODERATION_RESERVED_SQL`); it grants and refuses nothing.
  */
 function reservedPublisherSql(association: string): string {
   return `EXISTS (SELECT 1 FROM associations rsv WHERE rsv.id = ${association}
-    AND (rsv.type = 'institution' OR EXISTS (SELECT 1 FROM spaces rsv_space
-      WHERE rsv_space."bdeAssociationId" = rsv.id)))`;
+    AND (rsv.type = 'institution'
+      OR EXISTS (SELECT 1 FROM spaces rsv_space WHERE rsv_space."bdeAssociationId" = rsv.id)
+      OR NOT EXISTS (SELECT 1 FROM associations rsv_parent
+        WHERE rsv_parent.id = rsv."parentAssociationId" AND rsv_parent.type = 'association'
+          AND EXISTS (SELECT 1 FROM spaces rsv_pspace
+            WHERE rsv_pspace."bdeAssociationId" = rsv_parent.id))))`;
 }
 
 /** Post `postId` (a uuid SQL expression) is published in a reserved name. */

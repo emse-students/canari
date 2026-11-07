@@ -1,12 +1,13 @@
 /**
  * ONE CAMPUS, TWO BDEs: A BDE CANNOT TAKE OVER THE OTHER'S ASSOCIATION, against a REAL PostgreSQL.
  *
- * Governance is per SPACE (`holdsBdeFlagOverSql`); the audience bound used to be per CAMPUS. So an
- * officer of the BDE governing (ICM, saint-etienne) could rewrite the audience of an association
- * reaching only (ISMIN, saint-etienne) - governed by another BDE - into its own space, become its
- * super-admin, then seat itself there. This file runs the real standing SQL
- * (`BDE_SPACE_STANDINGS_SQL`) and the real governance SQL (`HOLDS_BDE_FLAG_OVER_SQL`) and feeds them
- * to the policies that decide (`assertBdeMayWriteAudience`, `grantCeiling`).
+ * Governance is by PARENT since WP-D2 (`holdsBdeFlagOverSql`); it was read from reach, and the
+ * audience bound per CAMPUS before that. So an officer of the BDE governing (ICM, saint-etienne) could
+ * rewrite the audience of an association reaching only (ISMIN, saint-etienne) - governed by another
+ * BDE - into its own space, become its super-admin, then seat itself there; and a whole-campus rule
+ * made BOTH BDEs its super-admins. This file runs the real standing SQL (`BDE_SPACE_STANDINGS_SQL`,
+ * `ENTITY_GOVERNOR_SPACE_STANDINGS_SQL`) and the real governance SQL (`HOLDS_BDE_FLAG_OVER_SQL`) and
+ * feeds them to the policies that decide (`assertBdeMayWriteAudience`, `grantCeiling`).
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like `bde.integration.spec.ts`; CI's `test-social-integration`
  * sets it. Locally:
@@ -28,6 +29,7 @@ import { flagsBeyondCeiling, grantCeiling } from '../associations/member-flag-ce
 import { assertBdeMayWriteAudience, type SpaceStanding } from './audience-policy';
 import {
   BDE_SPACE_STANDINGS_SQL,
+  ENTITY_GOVERNOR_SPACE_STANDINGS_SQL,
   HOLDS_BDE_AGENDA_RIGHT_OVER_SQL,
   HOLDS_BDE_FLAG_OVER_SQL,
 } from './bde';
@@ -49,6 +51,13 @@ const A = {
   schoolIsmin: '00000000-0000-4000-8000-0000000000e4', // an INSTITUTION reaching (ISMIN, s-e) only
   clubWide: '00000000-0000-4000-8000-0000000000e5', // reaches the WHOLE of saint-etienne
 } as const;
+
+/** The governing parents (WP-D2): each club under one BDE; the BDEs and institutions under nobody. */
+const PARENT: Partial<Record<keyof typeof A, keyof typeof A>> = {
+  clubIcm: 'bdeIcm',
+  clubIsmin: 'bdeIsmin',
+  clubWide: 'bdeIcm',
+};
 
 /** The refusal's typed code, or null when the call passed. */
 const codeOf = (fn: () => void): string | null => {
@@ -85,13 +94,16 @@ maybe('one campus with two BDEs, against PostgreSQL', () => {
     id: string,
     submitted: { formation: string | null; campus: string | null }[]
   ): Promise<string | null> => {
-    const [spaces, governed, current] = await Promise.all([
+    const [spaces, parentSpaces, governed, current] = await Promise.all([
       standings(userId),
+      client
+        .query(ENTITY_GOVERNOR_SPACE_STANDINGS_SQL, [id, userId, MANAGE_ASSO])
+        .then((r) => r.rows as SpaceStanding[]),
       governs(userId, id),
       rulesOf(id),
     ]);
     return codeOf(() =>
-      assertBdeMayWriteAudience('association', spaces, governed, current, submitted)
+      assertBdeMayWriteAudience('association', spaces, parentSpaces, governed, current, submitted)
     );
   };
 
@@ -102,7 +114,8 @@ maybe('one campus with two BDEs, against PostgreSQL', () => {
     await client.query(`SET search_path TO ${schema}, public`);
     await client.query(`
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
-        "isBDE" boolean NOT NULL DEFAULT false, type varchar NOT NULL DEFAULT 'association');
+        "isBDE" boolean NOT NULL DEFAULT false, type varchar NOT NULL DEFAULT 'association',
+        "parentAssociationId" uuid);
       CREATE TABLE posts (id uuid PRIMARY KEY);
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL, permissions integer NOT NULL DEFAULT 0);
@@ -112,6 +125,12 @@ maybe('one campus with two BDEs, against PostgreSQL', () => {
         id,
         key,
         key.startsWith('school') ? 'institution' : 'association',
+      ]);
+    }
+    for (const [child, parent] of Object.entries(PARENT)) {
+      await client.query(`UPDATE associations SET "parentAssociationId" = $2 WHERE id = $1`, [
+        A[child as keyof typeof A],
+        A[parent],
       ]);
     }
     await client.query(migration('071_spaces.sql'));
@@ -220,6 +239,42 @@ maybe('one campus with two BDEs, against PostgreSQL', () => {
     // The agenda is not management: the ICM BDE's events target the ISMIN spaces too.
     const agenda = await client.query(HOLDS_BDE_AGENDA_RIGHT_OVER_SQL, ['isminOfficer', A.bdeIcm]);
     expect(agenda.rows[0].holds).toBe(true);
+  });
+
+  /**
+   * THE P1 RESIDUAL WP-D2 CLOSES: clubWide's whole-campus rule reaches BOTH BDEs' spaces, so the
+   * reach-based predicate made both officers its uncapped super-admins. Its parent is the ICM BDE.
+   */
+  it('a whole-campus rule on a shared campus makes only the PARENT govern (WP-D2)', async () => {
+    expect(await governs('icmOfficer', A.clubWide)).toBe(true);
+    expect(await governs('isminOfficer', A.clubWide)).toBe(false);
+    // ... nor does the ISMIN BDE gain it by the platform admin widening the audience further.
+    expect(
+      await writeAs('isminOfficer', A.clubWide, [
+        { formation: null, campus: 'saint-etienne' },
+        { formation: 'ISMIN', campus: 'saint-etienne' },
+      ])
+    ).toBe('AUDIENCE_OUTSIDE_BDE_CAMPUS');
+  });
+
+  it('a parent writes inside ITS OWN spaces, not those of another BDE its officer also manages', async () => {
+    await client.query('BEGIN');
+    try {
+      // The ICM officer is ALSO an officer of the ISMIN BDE: it reads across both, but clubIcm's
+      // parent is the ICM BDE, so the ISMIN space stays outside what it may add (G8, D1).
+      await client.query(
+        `INSERT INTO association_members ("associationId", "userId", permissions) VALUES ($1, 'icmOfficer', $2)`,
+        [A.bdeIsmin, MANAGE_ASSO]
+      );
+      expect(
+        await writeAs('icmOfficer', A.clubIcm, [
+          { formation: 'ICM', campus: 'saint-etienne' },
+          { formation: 'ISMIN', campus: 'saint-etienne' },
+        ])
+      ).toBe('AUDIENCE_RULE_BEYOND_BDE_SPACES');
+    } finally {
+      await client.query('ROLLBACK');
+    }
   });
 
   describe('"Lire tout, modifier dans ses espaces" (owner, 2026-11-03)', () => {
@@ -348,6 +403,20 @@ maybe('one campus with two BDEs, against PostgreSQL', () => {
     it('still admits the same BDE on an association of its space', async () => {
       const { guard } = guardFor();
       await expect(guard.canActivate(archiveAs('icmOfficer', A.clubIcm))).resolves.toBe(true);
+    });
+
+    /**
+     * E3 (owner, 2026-11-02): a BDE MAY delete an association or list that depends on it. The delete
+     * route (`DELETE :id`) asks exactly `isAssociationSuperAdminOf`, then refuses an institution; the
+     * child governs no space and has no child, so `assertMayReleaseDependents` lets it through.
+     */
+    it('opens the delete gate to the PARENT only: never to the other BDE of a shared campus (E3)', async () => {
+      const { service } = guardFor();
+      expect(await service.isAssociationSuperAdminOf('icmOfficer', A.clubIcm)).toBe(true);
+      expect(await service.isAssociationSuperAdminOf('icmOfficer', A.clubWide)).toBe(true);
+      // clubWide reaches the ISMIN BDE's spaces too: reach used to open its delete to that BDE.
+      expect(await service.isAssociationSuperAdminOf('isminOfficer', A.clubWide)).toBe(false);
+      expect(await service.isAssociationSuperAdminOf('isminOfficer', A.clubIcm)).toBe(false);
     });
 
     /**

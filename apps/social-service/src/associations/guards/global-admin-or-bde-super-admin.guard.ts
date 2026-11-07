@@ -8,7 +8,7 @@ import { AssociationsService } from '../associations.service';
  * document-reviewer grants).
  *
  * UNSCOPED ON PURPOSE, and only for those routes: a route naming an association asks
- * `isAssociationSuperAdminOf`, the BDE governing that association's spaces (WP6c step 2).
+ * `isAssociationSuperAdminOf`: MANAGE_ASSO in its parent BDE (or itself when a BDE), WP-D2.
  */
 @Injectable()
 export class GlobalAdminOrBdeSuperAdminGuard implements CanActivate {

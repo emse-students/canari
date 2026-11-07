@@ -139,3 +139,14 @@ describe('a guest form of priced grids', () => {
     expect(document.getElementById('form-order-missing')).toBeNull();
   });
 });
+
+describe('the guest order bar rests on the bottom of the screen', () => {
+  it('sticks to bottom 0 with the home-indicator clearance, inside nothing that pads it', async () => {
+    await render();
+    const wrap = document.querySelector<HTMLElement>('[data-order-bar-wrap]')!;
+    expect(wrap.classList.contains('sticky')).toBe(true);
+    expect(wrap.classList.contains('bottom-0')).toBe(true);
+    expect(wrap.className).toContain('pb-[max(0.75rem,var(--safe-area-inset-bottom,0px))]');
+    expect(wrap.querySelector('[data-order-bar]')).not.toBeNull();
+  });
+});

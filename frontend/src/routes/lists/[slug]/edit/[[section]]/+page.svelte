@@ -85,8 +85,8 @@
    * super-admin - whom the server grants `MANAGE_MEMBERS` on every association - was refused the
    * controls here. That omission is the exact drift `mayActOnAssociation` exists to end.
    *
-   * The super-admin tier is THIS list's (WP6c step 2): `MANAGE_ASSO` in the BDE of a space it
-   * reaches, read from the server's `me/bde-reach` - a BDE of another space holds nothing here.
+   * The super-admin tier is THIS list's: `MANAGE_ASSO` in its parent BDE (WP-D2), read from the
+   * server's `me/bde-reach` - another BDE holds nothing here.
    */
   let superAdminOf = $state<string[]>([]);
   let isSuperAdminUser = $derived(!!list && superAdminOf.includes(list.id));

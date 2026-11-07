@@ -313,6 +313,27 @@ carry over because #3018's and #3008's files are unchanged (owner, 2026-11-05).
 **Sideloaded bench APK.** It is signed by the upload key, so dev refuses its restore key (see
 [account-restore](account-restore.md)).
 
+## IOS-3075. The iOS follow-ups of #3075 - owed on the iPhone 12
+
+Built and merged by #3075 (2026-11-06); **the first build carrying them is `1.6.6-alpha.2`**, and the
+stable `1.6.6` ships them. Compiled only: the Rust half is tested on the host (`cargo test --lib --
+nse_outcomes push`), the Swift and Objective-C halves have never compiled here, only in the release
+workflow. Read on the iPhone 12 (`canari-test-gamma`, then a second bench account for R2) with
+`python -m pymobiledevice3 syslog live` running, on any TestFlight build `>= 1.6.6-alpha.2`. Each
+row closes its [backlog.d](backlog.d/README.md) entry, linked in the row.
+
+| Row | Do | PASS when | FAIL when |
+| --- | --- | --- | --- |
+| R1a. Swift lines in clear, the extension ([entry](backlog.d/p2-swift-nslog-lines-are-unreadable-on-a-store-build.md)) | Kill the app (`bun tools/ios-device/ios.mjs terminate`), send gamma a DM from the harness Chrome | The syslog shows `[CanariNSE] outcome=decrypted cause=... stage=... peakMB=...` with every value readable | The `[CanariNSE]` line reads `<private>` |
+| R1b. Swift lines in clear, a plugin ([entry](backlog.d/p2-swift-nslog-lines-are-unreadable-on-a-store-build.md)) | Sign out, tap "Se connecter" | The syslog shows `[CustomTabsPlugin] openCustomTab: presenting a session`, then `session completed - re-dispatching the callback to the app scheme`, subsystem `fr.emse.canari`, category `customtabs` | Either line is `<private>`, or the plugin line is under `Canari{Foundation}` (an `NSLog` left) |
+| R2. `push_context.json` follows an account switch ([entry](backlog.d/p3-push-context-is-mirrored-to-the-app-group-only-at-lifecycle-events.md)) | Signed in as A with the app in the FOREGROUND, switch to account B, stay in the foreground, then `ios.mjs terminate` (no swipe, no background first); send B a DM | B's banner carries the message text, and the extension's line reads `outcome=decrypted` | The banner is the generic "Nouveau message de ..." or the line is `outcome=fallback` with a cause naming the context or the device - the extension still read A's context |
+| R3a. No more sandbox refusal ([entry](backlog.d/p3-the-nse-cannot-read-its-boot-session.md)) | Any push to the killed app (R1a's is enough) | No `kern.bootsessionuuid unreadable` line in the syslog | The line is there: the build does not carry #3075 |
+| R3b. A marker from before a reboot ([entry](backlog.d/p3-the-nse-cannot-read-its-boot-session.md)) | Kill the app, send a DM, and power the phone off while the banner is still being made (a large photo makes the window longer); power on, unlock, open the app | The app's log has an `[NSE_OUTCOME] {...}` line with `"outcome":"killed"` for that run: the marker's `up` was ahead of the new uptime | Neither `killed` nor any line for that run AND no later drain counts it: the marker waits (stamped below the new uptime and `kill(pid, 0)` answered `EPERM`, logged `[NSE_OUTCOME] pid liveness not provable`) - which says the one-sided proof is not enough, and a new entry is owed |
+
+R3b is a race the bench cannot force: a run that FINISHED before the power-off leaves no marker
+(its line reads `decrypted` or `fallback` at the next drain), which is no verdict - repeat until a
+drain reports either a `killed` line or the `pid liveness not provable` warning.
+
 ## The layout pass of 2026-09-09, and the sixth check that ran later the same day
 
 Six fixes shipped in `v0.16.6-alpha.5`'s ancestors on the strength of a browser emulated at 393px.
@@ -1839,6 +1860,80 @@ for LA, plus the Xcode device console (or Console.app) filtered on `leave flush`
    aeroplane mode off and open the app: the owed mark leaves at once (the web tab drops the badge).
 3. **Off iOS nothing changed.** On the Mi 9T, repeat step 1: there is no `leave flush` line, and the mark leaves
    as before.
+
+## CKS. The checkpoint-skip switch on dev - owed on BOTH phones before the flip
+
+**THE SWITCH STAYS `off` IN PRODUCTION UNTIL BOTH READINGS PASS ON BOTH PHONES** (the Mi 9T and the
+iPhone 12). WP-CHECKPOINT-SKIP was built on 2026-11-07 behind `platform_config.checkpoint_skip_mode`
+(core migration 020): with it `on`, a live drain that only received application frames leaves its
+MLS checkpoint to the next send, commit, background edge or logout, until 100 receive generations are
+unsaved. The decision, the measurement of 2026-10-22 and what it left uncovered are in
+[open-questions](open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below).
+What is read here is the two cases that measurement did not cover.
+
+**Precondition - NOT ambient, assert each line:**
+
+- A pre-release carrying the switch serves dev (`GET https://dev.canari-emse.fr/api/version` answers
+  a `checkpointSkip` field) and is installed on the phone (Mi 9T: the release APK or the Play tester
+  build; iPhone 12: TestFlight). A bench debug build is not needed.
+- **The switch is `on` on dev**: as `canari-test-gamma` (dev's global admin) at `/admin/platform`,
+  "Sauvegarde de l'état de chiffrement après réception" -> "Différée", saved; then
+  `/api/version` answers `"checkpointSkip":{"mode":"on"}`.
+- **The phone heard it**: a running session re-reads the mode only at its next version check,
+  which focus, coming back online and visibility trigger (there is no periodic refresh), and only a
+  LIVE answer counts, never the cached one. After a relaunch (or a return to the foreground), the
+  in-app log carries
+  `[MLS] Checkpoint skip ON: live receive-only drains defer their checkpoint while fewer than 100
+  receive generations are unsaved`. Without that line the run is a control, not a reading.
+- A DM between the phone's bench account and a peer driven from the harness Chrome, which sends
+  NUMBERED messages (`live-1`, `dead-1`, ...) so a gap or a duplicate is read off the conversation.
+- The phone's in-app log open afterwards (the summary and the reload lines go through it; the
+  per-drain `checkpoint deferred ...` line is a debug line, read only in a debug build's console).
+
+**CKS-1. A kill DURING a drain of more than K frames.**
+
+1. Phone open on the feed (NOT the DM, so the drain is the only reader). The peer sends `live-1` ..
+   `live-10`; the phone receives them and writes no checkpoint line for them (they are deferred).
+2. Kill the app: Mi 9T `adb shell am force-stop fr.emse.canari`; iPhone, swipe it away in the app
+   switcher.
+3. The peer sends `dead-1` .. `dead-300` while the phone is dead.
+4. Relaunch and unlock, and kill the app again while the catch-up drain runs - the first time right
+   after the unlock, the second time a second or two later, the third time just after the in-app log
+   shows `Encrypted state checkpoint persisted. Covers ...` (the drain reached K = 100 and
+   checkpointed). Three kills, three relaunches.
+5. Relaunch, unlock, wait for the list to settle, open the DM.
+
+**Expect:** every one of the 310 messages exactly once, in order; in the log no `live-ahead`, no
+`unreadable for good`, no duplicate row, and at least one `Covers N receive generations left by M
+skipped drains` line. A message missing, doubled or unreadable is a FAIL.
+
+**CKS-2. A phone away for HOURS with traffic** - two runs, because they take two different paths.
+
+- **(a) Killed.** Phone open on the feed; the peer sends `live-1` .. `live-20` (deferred). Mi 9T:
+  `adb shell input keyevent KEYCODE_HOME`, then `adb shell am kill fr.emse.canari` and assert
+  `pidof` is empty - **never `force-stop` here**, which cancels every FCM broadcast and so takes the
+  background engine out of the run; iPhone: swipe it away.
+- **(b) Backgrounded, not killed** (the native resume reload, the path that can say `live-ahead`).
+  Same start, then only Home - the process stays alive.
+
+For each run, over AT LEAST THREE HOURS the peer sends one numbered message every ~15 minutes and,
+once in the middle, a burst of 50. Write down every notification the phone shows. The background
+engine decrypts each push READ-ONLY from `mls.bin`, which is behind by the deferred generations, and
+never writes it (the one background write, a staged Welcome, is refused while the app runs:
+`foreground-active` / `warm-process` in `prepare_welcome_background_with_key`,
+`mobile/background.rs`). Then open the app, unlock, open the DM.
+
+**Expect:** every message exactly once, in order; every notification shown matches a message in the
+DM; no `unreadable for good`, no duplicate. What this targets: that a push decrypted from a file
+behind by up to 99 generations still shows its text, and, in run (b), that the resume reload says
+`live-ahead` (expected with deferred generations: the live state is persisted over the file,
+`TauriMlsService.reloadStateFromDisk`, which discards nothing since the engine never wrote it) and
+keeps every message. A missing message, or a notification that could not be read, is a FAIL.
+
+**After the run:** the verdict, the build, the phone and the counts go into a row here and into
+[the question](open-questions.md#the-readings-owed-before-the-flip). Any FAIL: the switch goes back
+to `off` on dev at once and the question is reopened. Both readings passing on both phones: the lead
+flips production at `/admin/platform` and says so.
 
 ## The iPhone 12 owed-readings inventory (2026-10-11)
 

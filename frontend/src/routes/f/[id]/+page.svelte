@@ -418,7 +418,10 @@
 
       {#if hasProductGrid && !price.priceUnavailable}
         <!-- An order is totalled where it is paid, stuck to the bottom from the first item. -->
-        <div class="sticky bottom-0 z-50 mt-6 pb-3">
+        <div
+          data-order-bar-wrap
+          class="sticky bottom-0 z-50 mt-6 pb-[max(0.75rem,var(--safe-area-inset-bottom,0px))]"
+        >
           <ProductGridOrderBar
             lines={price.gridLines}
             totalCents={total}

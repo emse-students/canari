@@ -248,6 +248,60 @@ EXISTS (SELECT 1 FROM spaces gov_s
 `isBdeAssociationSql` keeps its meaning ("governs at least one space") for the routes that name no
 association; `BDE_GOVERNED_CAMPUSES_SQL` becomes `GOVERNED_SPACES_SQL` (2.6).
 
+**WP-D2 and WP-R4, as built (2026-11-07, after the owner confirmed the parents of migration 130).**
+`holdsBdeFlagOverSql` keeps its name, its arguments and every caller, and reads the parent:
+
+```sql
+EXISTS (SELECT 1 FROM associations gov_child
+  JOIN associations gov_bde ON gov_bde.id IN (gov_child."parentAssociationId", gov_child.id)
+      AND gov_bde.type = 'association' AND gov_child.type <> 'institution'
+      AND EXISTS (SELECT 1 FROM spaces bde_space WHERE bde_space."bdeAssociationId" = gov_bde.id)
+      AND (gov_bde.id = gov_child.id
+        OR NOT EXISTS (SELECT 1 FROM spaces bde_space WHERE bde_space."bdeAssociationId" = gov_child.id))
+  JOIN association_members gov_m ON gov_m."associationId" = gov_bde.id
+  WHERE gov_child.id = ${association}
+    AND gov_m."userId" = ${user} AND (gov_m.permissions & ${flag}) <> 0)
+```
+
+- **One difference from the sketch above, on purpose:** the entity ITSELF is a candidate governor
+  when it is a BDE, so a BDE's own officers keep governing the BDE (its super-admin tier, its own
+  content's moderation), as they did. A BDE has no parent, and the last clause refuses the parent
+  path for a child that governs a space, so no other BDE ever joins (G10) even through a
+  hand-written row.
+- **The `type` tests do not trust the triggers of migration 131**: a hand-written parent on an
+  institution, or an institution named as a parent, governs nothing (E5, G9) - pinned in
+  `bde.integration.spec.ts` and `bde-moderation.integration.spec.ts`.
+- **What follows from the predicate alone, every consumer unchanged**: `MANAGE_ASSO`'s super-admin
+  tier (`isAssociationSuperAdminOf` -> `mayAct`, `mayActOnAny`, `GlobalAdminOrAssociationRoleGuard`,
+  `GET me/bde-reach`'s `manageAsso`, the payment-delegation audit line), the delete route (**E3**: the
+  parent's `MANAGE_ASSO` holders delete a child; an institution is still refused
+  `INSTITUTION_DELETE_ADMIN_ONLY`, and an entity with children or spaces `DEPENDENCY_DELETE_ADMIN_ONLY`),
+  the last-admin bypass of the member routes (`VALIDATE_EVENTS` in the parent), and **WP-R4**: every
+  MODERATE reading of content published in an association's name (`bdeModeratesPublisherSql` -> posts,
+  comments, lives, live chat lines, reports, the comment bin's publisher set). Personal content stays
+  per space (B5), pins stay per space (`posts/space-pins.ts` never read this predicate: a pin is a
+  promotion, not moderation), and the AGENDA stays per space (`holdsBdeAgendaRightOverSql`, until WP-E).
+- **Audience writes (G8, D1)**: `SpacesService.starBounds` reads three facts at `MANAGE_ASSO` - the
+  READ bound (`BDE_SPACE_STANDINGS_SQL`, every BDE the star holds the flag in: its campus), whether it
+  governs the entity (the predicate), and the WRITE bound (`ENTITY_GOVERNOR_SPACE_STANDINGS_SQL`: the
+  spaces of the entity's own parent). A star writes only its child, and only inside its parent's
+  spaces - never inside another BDE it also manages. A parent reads its child wherever it reaches;
+  `editable` is false for every rule of an entity the reader does not govern.
+- **A refused moderation act on an entity with no governing parent** is classified
+  `MODERATION_RESERVED_TO_PLATFORM_ADMIN` (`reservedPublisherSql`), since nobody else may act on it.
+- **`setParent` is a privilege change now**: moving a child names at WARN the child's member rows
+  held by the FORMER parent's `MANAGE_ASSO` holders (`FORMER_PARENT_SEATS_SQL`) - rows they may
+  have written for themselves while governing it, which the move does not revoke (neither did the
+  reach rule). Revoking is the platform admin's decision, never a side effect.
+- **No migration.** `EXPLAIN (ANALYZE)` on a production-shaped fixture (97 entities, 74 parented,
+  ~3000 member rows): one child 0.25 ms, every association a user governs 0.8 ms, 20 publishers
+  0.6 ms - nested loops over a primary key and `association_members ("associationId")`, the spaces
+  table hashed once; the plans are in the pull request.
+- **Production at merge (read-only, coordinator, 2026-11-07)**: 74 children (30 associations, 44
+  lists), every parent an association governing a space; 19 associations without a parent - the BDEs
+  among them keep governing themselves, the others are the platform admin's alone from this release.
+
+
 ### 2.5 Correlated, never coupled (D1)
 
 - **Defaults derive from the parent.** At creation the parent is the creating BDE (B1); a creator
@@ -664,11 +718,11 @@ merge on their own.
 | WP | What | Ships alone because | Data change |
 | --- | --- | --- | --- |
 | **WP-R0** | The institution half is **#2949** (E5, at the predicate level). What remains: the moderator's EDIT removed (G3, P7) | one capability | none |
-| **WP-R1** | Audience bounds per SPACE. **Built in #2949** with `BDE_SPACE_STANDINGS_SQL` and `ruleInsideGovernedSpaces` ("Lire tout, modifier dans ses espaces", owner 2026-11-03); there is no `GOVERNED_SPACES_SQL`. **The residual, in full:** governance is still read from REACH (`bdeFlagOverReachSql`), so a whole-campus rule on a campus two BDEs share (saint-etienne) makes BOTH BDEs uncapped super-admins of that association TODAY - only another BDE and an institution are excluded. And a whole-campus rule a star wrote while it governed every opened space of its campus makes ANOTHER BDE super-admin of that entity as soon as the platform admin opens a new space there and gives it that BDE: the bound is judged at the write, the reach at every request. WP-D2's governance by parent is what closes both | server checks; closes P3 | none |
+| **WP-R1** | Audience bounds per SPACE. **Built in #2949** with `BDE_SPACE_STANDINGS_SQL` and `ruleInsideGovernedSpaces` ("Lire tout, modifier dans ses espaces", owner 2026-11-03); there is no `GOVERNED_SPACES_SQL`. **The residual, in full:** governance is still read from REACH (`bdeFlagOverReachSql`), so a whole-campus rule on a campus two BDEs share (saint-etienne) makes BOTH BDEs uncapped super-admins of that association TODAY - only another BDE and an institution are excluded. And a whole-campus rule a star wrote while it governed every opened space of its campus makes ANOTHER BDE super-admin of that entity as soon as the platform admin opens a new space there and gives it that BDE: the bound is judged at the write, the reach at every request. WP-D2's governance by parent is what closes both - **closed by WP-D2 (2026-11-07, 2.4)** | server checks; closes P3 | none |
 | **WP-D1** - **built (2.8)**; migrations 129-131 held for the owner | `parentAssociationId` generalised to associations; a separate display-only label column for the BDS or BDA link (G3); the parents list validated by the owner (G1); the two-level triggers (2.2); a space governor may be an institution; `dependency_journal`; the Dependencies panel beside the Audience panel; default parent and parent-derived default audience; `setBde`/`setAudiences` decoupled | additive; nothing reads the parent for governance yet; closes P2, P4, P10 | **schema + triggers: owner's yes; refused while the 2.7 count is above zero** |
 | **WP-D1b** | An admin interface to manage the existing campuses and each campus's formations (G5): list, create, rename and retire a campus or a formation, including a formation attached to two campuses. A space is a formation x campus, so what a cross-campus formation means for its spaces (one space per campus, a BDE per space as today) MUST be designed before it is built; reversible choices are taken and written down here, an irreversible one goes to the owner. Built inside WP-D1 as its own step, AFTER the parents list is applied | WP-D1's parents list comes first; the interface edits `spaces` and the formation and campus lists only | needs the spaces model: owner's yes if a schema change |
-| **WP-D2** | `holdsBdeFlagOverSql` on the parent (2.4); no parent = admin; parent-bounded audience writes (G8: a BDE reads every audience on its campus and writes only inside its governed spaces; a wider rule is the admin's); deletion of an association or list by its parent BDE (E3) | ships when the owner says the parents are set; closes P1, P5, P9 | none |
-| **WP-R4** | `MODERATE` scoped (2.4); no BDE moderates an institution's content, only the platform admin (G9) | needs WP-D2; closes P6 | none |
+| **WP-D2** - **built (2.4, 2026-11-07)** | `holdsBdeFlagOverSql` on the parent (2.4); no parent = admin; parent-bounded audience writes (G8: a BDE reads every audience on its campus and writes only inside its governed spaces; a wider rule is the admin's); deletion of an association or list by its parent BDE (E3) | ships when the owner says the parents are set; closes P1, P5, P9 | none |
+| **WP-R4** - **built with WP-D2 (2.4, 2026-11-07)**; the moderator's edit was already removed (G3) | `MODERATE` scoped (2.4); no BDE moderates an institution's content, only the platform admin (G9) | needs WP-D2; closes P6 | none |
 | **WP-I** | Institution item audience (section 3) | additive; closes P12 | **two tables: owner's yes** |
 | **WP-E** | Events per slice (section 4) and partnerships under it (section 5): the decisions table, the space-governor predicate, both agendas and the `.ics`, per-slice notifications (the validators concerned, and the organiser and partners with the reason, F7), D4's re-opening (replacing WP-Q2's whole-event demotion), `EXPLAIN` | needs WP-D1 (space governors) and, for institutions, WP-I; closes P11, P13 | **one table + the event migration of 4.3: owner's yes** |
 | **WP-R5** | Parent presets; `openedAt` and "OPEN spaces" removed; the stale WP6e line on lists; **the `MANAGE_ASSO` comment (`association-member.entity.ts:20-24`) corrected to say it includes deleting an association or list the BDE governs (E3)** | cosmetics | dropping `openedAt`: owner's yes |
@@ -988,9 +1042,9 @@ F4, question 3 is F5, question 4 is F6 (section 0).
   screen of its own yet: the pending state reaches the governor on the post's own menu.
 - **Migrations**: 127 (`post_space_pins`, additive) and 128 (the move of the global pin, HELD for
   the owner's hand-merge; run on both estates by `v1.6.3`, its one flagged post carried).
-  `posts.pinned` is read by nothing and, since 2026-11-04, unmapped from the entity; its drop waits
-  for production to serve that unmapping, since an older image still names it in every INSERT
-  ([legacy-compatibility](legacy-compatibility.md#removable-at-floor-127)). 128 NOTICEs every pin it does not carry: each
+  `posts.pinned` was read by nothing, then unmapped from the entity (2026-11-04), then dropped by
+  134 (held: a DROP) in a LATER release, since an older image still named it in every INSERT
+  ([durable-rules](durable-rules.md#release-and-ci---cicd)). 128 NOTICEs every pin it does not carry: each
   governed space where the post is visible but that had no room, and each flagged post pinned
   nowhere (visible in no governed space, or not live at run time - hidden, scheduled, an expired
   reel); nothing re-runs it, so the run's log is the re-pin-by-hand list.
@@ -1088,7 +1142,7 @@ n'importe quel post sur l'espace dont il est responsable"*:
 - **Old clients.** They read `pinned` and send a body-less `pin`. `pinned` keeps the meaning above; a
   body-less pin is accepted when exactly one governed space fits and is otherwise refused with a
   typed `space_required` 409. `posts.pinned` stops being read at once; the column is unmapped, then
-  dropped in a later release ([legacy-compatibility](legacy-compatibility.md#removable-at-floor-127)).
+  dropped in a later release (migration 134).
 - Tests: unit; integration with two BDEs on one campus (an ISMIN pin is not on top for ICM readers);
   the 4th pin refused; two concurrent pins at 2 of 3 leave exactly 3; an institution post pinnable
   (G9 intact); unpin; a no-space account with a campus-wide read grant sees an ISMIN-space pin first,

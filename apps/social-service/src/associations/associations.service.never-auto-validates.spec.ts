@@ -151,6 +151,23 @@ describe('createCalendarEvent - nothing is validated at creation', () => {
     expect(validationOf(saved[0])).toEqual(PENDING);
   });
 
+  it("a parent BDE's officer GOVERNS its child (WP-D2) and still only proposes, with no deposit reach", async () => {
+    // Governance (MANAGE_ASSO in the parent, which admits the officer through the role guard) is not
+    // the agenda right: `isBde` is the controller's AGENDA verdict, absent here, so a named target
+    // is ignored and the row lands, pending, on the association the route names.
+    const { service, saved } = makeService();
+
+    await service.createCalendarEvent(
+      'asso-1',
+      { ...CREATE, targetAssocId: 'other-asso' } as never,
+      'parent-officer',
+      {}
+    );
+
+    expect(saved[0].associationId).toBe('asso-1');
+    expect(validationOf(saved[0])).toEqual(PENDING);
+  });
+
   it('a BDE break is a proposal too - the kind gate is not a validation gate', async () => {
     const { service, saved } = makeService();
 
