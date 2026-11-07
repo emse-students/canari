@@ -1,6 +1,8 @@
 # Live replays - a finished live kept three days and shown as a CanaReel (design, 2026-11-07)
 
-**State: DESIGNED, nothing built.** The owner's decisions of 2026-11-07 are verbatim in
+**State: DESIGNED, every question answered by the owner the same day (2026-11-07,
+[the decisions](#decisions-of-2026-11-07---the-owners-answers-and-the-leads)), nothing built.** The
+owner's first decisions of 2026-11-07 are verbatim in
 [backlog](../../backlog.d/live-replays-kept-three-days-as-canareels.md): a finished live is kept and
 watchable for **3 days**, then deleted; it is **always** kept, and *"il doit apparaitre comme un Reel
 dans les feed et l'onglet CanaReel"*, to the audience that could see the live; a live cut by
@@ -20,7 +22,54 @@ stored ciphertext segments with the live key the replay route serves, and the ex
 deletes everything at `replayExpiresAt` with the existing purge (prefix delete, listing proof, row
 delete, the posts row going by cascade).** No transcoding, no re-encryption, no new media object.
 
+## Decisions of 2026-11-07 - the owner's answers, and the lead's
+
+The owner answered R1-R8 (section 8) on 2026-11-07. Quoted words are his.
+
+| # | Question | Decision |
+| --- | --- | --- |
+| R1 | Replay held per account | **2 h of replay per account** (the recommended option): the trim keeps a live's newest 2 h, and a new replay deletes the account's oldest replays first |
+| R2 | Reactions and comments under a replay | **As on a Reel** |
+| R3 | A "replay available" notification | **None** |
+| R4 | A moderation deletion of a replay | **Not a cut**: deleted like a Reel, no strike; a cut from the live's report still counts |
+| R5 | The time-left label | **Shown on replays, AND on CanaReels during their last 7 days** |
+| R6 | What expires in CanaReels | **REVISED by the owner, "intention only" rejected.** A CanaReel expires after **90 days** - the number of chat media's idle retention, one number everywhere - which also replaces the 30 days of camera reels. It covers camera reels AND **any posted video that is vertical OR 90 s or shorter**: *"verticale ou 90s max. Parce qu'il y a du post éphémère horizontal aussi"*. Photos, and videos both horizontal AND longer than 90 s (the classic aftermovie), stay until deleted. Replays keep their 3 days. His concern about volume was answered by the measurement of section 1 |
+| R7 | Whose limit an association's live counts in | **The person who films** |
+| R8 | Where the 3 days start | **The end of the live** |
+
+**Lead decisions, reversible** (the owner's delegation; each can be undone without loss):
+
+- **L-R1. The author is told before publishing**: the composer shows "expire dans N jours" when a
+  video falls under the R6 rule, from the server's `retentionDays` (the camera's two notes,
+  `reels_publish_expiry_note` and `reels_publish_from_composer_notice`, already take `{days}` from
+  the server).
+- **L-R2. Forward only**: the rule applies to videos posted AFTER it ships. Deleting existing posts
+  retroactively would be irreversible, so it is not done. Existing camera reels move from 30 to 90
+  days, because extending is safe.
+- **L-R3. Orientation and duration are read from the uploaded file's metadata at publish time and
+  stored on the post**, never inferred at read time. Square counts as not vertical.
+- **L-R4. Read narrowly** (lead, reversible, stated so it is not assumed): "a posted video" is a post
+  whose ONLY media is one video - the single-video page of CanaReels. A carousel stays until deleted,
+  and a reel sent in a conversation keeps its own 30 days by age (`media.service.ts:51`), which the
+  owner's answer did not name.
+
 ## 1. Storage
+
+### What production holds, measured read-only on 2026-11-07
+
+Figures only (the owner's question about volume was answered from them):
+
+| What | Figure |
+| --- | --- |
+| The production media store | **755 MB in 1017 objects** |
+| Added per week, the last four weeks | 382 MB, 66 MB, 116 MB, 53 MB |
+| Older than four weeks | 138 MB |
+| Post media (`archive`) | 337 MB |
+| Camera reels | 10, 32 MB |
+| The host filesystem | **68 GB free of 108 GB**, shared with other workloads |
+| Projection at the recent weekly peak | **about 20 GB a year in total** |
+
+This is the measurement section 1 owed; it replaces the 2026-09-23 code-comment figure below.
 
 ### The bytes per hour
 
@@ -47,29 +96,31 @@ broadcasters. Today the trim makes that 80 MiB per live; a replay must have a bo
 
 | Option | What it bounds | Mechanism | Cost |
 | --- | --- | --- | --- |
-| **A. Per account (recommended)** | the replay video one BROADCASTER (the person, also for a live in an association's name, as the strike ladder counts) holds at once: `LIVE_REPLAY_ACCOUNT_MAX_SEGMENTS`, 3600 segments = 2 h of video (2.8 GB Android) | (1) during a live, the existing trim ([lives](../../services/lives.md#what-one-broadcaster-may-store)) keeps the newest `LIVE_REPLAY_ACCOUNT_MAX_SEGMENTS` instead of 20, so a 5 h live keeps its last 2 h; (2) when a live becomes a replay, the account's OLDER replays are deleted whole, oldest first, until the account's retained segments fit - a durable `SUM(storedBytes)`/count over the account's replay rows, under the account's lives rows lock, never a clock | one constant, two uses of mechanisms that exist; never deletes another account's replay |
+| **A. Per account (DECIDED, R1 and R7)** | the replay video one BROADCASTER (the person, also for a live in an association's name, as the strike ladder counts) holds at once: `LIVE_REPLAY_ACCOUNT_MAX_SEGMENTS`, 3600 segments = 2 h of video (2.8 GB Android) | (1) during a live, the existing trim ([lives](../../services/lives.md#what-one-broadcaster-may-store)) keeps the newest `LIVE_REPLAY_ACCOUNT_MAX_SEGMENTS` instead of 20, so a 5 h live keeps its last 2 h; (2) when a live becomes a replay, the account's OLDER replays are deleted whole, oldest first, until the account's retained segments fit - a durable `SUM(storedBytes)`/count over the account's replay rows, under the account's lives rows lock, never a clock | one constant, two uses of mechanisms that exist; never deletes another account's replay |
 | B. Per replay only | one replay | the trim alone | an account starting a new live every 2 h still holds 36 of them |
 | C. A total | the whole store | delete the oldest replay anywhere past a total | a destructive control on everyone's content driven by someone else's; needs the disk figure to set |
 
-**Recommended: A, plus a total that REPORTS and deletes nothing** - the `[LIVE_GC]` line and the
+**Decided: A (R1: 2 h per account; R7: the person who films), plus a total that REPORTS and deletes nothing** - the `[LIVE_GC]` line and the
 admin storage panel carry `replayCount`, `replayBytes`, `replayOverdue` and `oldestOverdueMs` (the
 reels panel's shape, [reels](../../services/reels.md#the-worker-reelretentionscheduler-social-service)),
-and the panel's alarm compares `replayBytes` with the free space measured below. The figure is the
-owner's (question R1).
+and the panel's alarm compares `replayBytes` with the free space measured above. Against the
+measurement: ten accounts each holding their full 2 h are ~28 GB at the Android rate, against 68 GB
+free shared with other workloads and ~20 GB a year projected for everything else - the account cap,
+not the total, is what keeps that true.
 
 **Which part is kept when a live outruns the cap - the newest.** That is what the trim already
 does; keeping the FIRST 2 h would need a second mechanism (stop storing, but the viewers still need
 the live edge). The replay of a 5 h live is its last 2 h, and its card says so by its duration.
 
-### The one read-only measurement owed
+### The read-only measurement - TAKEN 2026-11-07
 
-**The free and total bytes of the filesystem that holds production's media store data, read once
-with `df` by the lead under the read-only rule, the FIGURE written here (never the host, the path or
-the mount).** The only disk figure in the repository is a code comment in
+**Done**: the figures are in [the table above](#what-production-holds-measured-read-only-on-2026-11-07)
+(68 GB free of 108 GB; the store 755 MB), figures only, never the host, the path or the mount. Before
+it, the only disk figure in the repository was a code comment in
 `apps/media-service/src/media/media.service.ts` (above `RETENTION_MS`): "the bucket held 66 MB
 against 73 GB free", measured 2026-09-23 - before the estate moved
-([estate-migration](../../infrastructure/estate-migration.md)), so it is not today's. Nothing touches
-production or the shared host to build this design.
+([estate-migration](../../infrastructure/estate-migration.md)), so it was not today's. Nothing touched
+production or the shared host to build this design beyond that read.
 
 ## 2. Becoming a reel
 
@@ -203,7 +254,7 @@ cannot be edited (it has none; `PATCH` refuses the kind).
 | --- | --- | --- |
 | **Report the replay** | `POST /api/moderation/reports` `contentType: 'post'` on the replay's post id | exactly a reel's: the threshold hides it (`hiddenByModeration`), the queue shows it as a post |
 | **Report the live, after its end** | `contentType: 'live'` | accepted while the live row exists - now three days; the queue's `state` gains `replay` |
-| **Staff deletion** | `DELETE /api/posts/:id` by a moderator | sets `replayExpiresAt = now()` on the live (one statement), so every read refuses it at once; the sweep purges it within 30 s. No strike (question R4) |
+| **Staff deletion** | `DELETE /api/posts/:id` by a moderator | sets `replayExpiresAt = now()` on the live (one statement), so every read refuses it at once; the sweep purges it within 30 s. **No strike (R4, decided: not a cut)** |
 | **Staff cut, of a reported live that became a replay** | `POST /api/lives/:id/cut` | as today for "a live that just ended and is not purged yet": the cut is recorded with its strike and the purge removes the replay at once (`live_cuts` is a "removed" fact) |
 | **The broadcaster deletes their replay** | `DELETE /api/posts/:id` by the author (or a `POST_AS_ASSO` holder of the association) | the same statement as staff deletion |
 | **Account erasure** | `LIVES_ERASURE_STATEMENTS` (`internal/account-erasure.ts`) + `DELETE FROM posts WHERE "authorId"` | the erasure already rewrites the broadcaster of EVERY live row of the account to `DELETED_ACCOUNT`; that is a "removed" fact, so the replay is invisible at once and purged by the next sweep. The posts row goes with the account's posts (and by cascade with the live row) |
@@ -271,7 +322,7 @@ The `live_replay` row is a reel slide in the CanaReels viewer and a reel card in
 picture the first frame of its first retained segment (as a reel shows its first frame,
 [reels](reels.md#a-loading-reel-shows-its-first-frame-never-a-play-glyph-owner-2026-10-31)), with a
 "Rediffusion" mark, the broadcaster's identity, its duration, the time it ended (`timeAgo`), and -
-if the owner says yes (question R5) - **the time left**: "encore 2 j", "encore 5 h". The label is
+**the time left, always on a replay (R5, decided)**: "encore 2 j", "encore 5 h". The label is
 computed from `expiresAt` against the SERVER's now: the list answer carries `serverNow`, stamped
 outside the feed cache (a cached per-row "time left" would be stale), and the client keeps the offset
 to its own clock for display only. A replay past its time is never in an answer, so the label never
@@ -313,7 +364,8 @@ replay's purge, section 3). A live that does not become a replay deletes its cha
 today. Database backups may hold the rows of a live that crossed a nightly dump, as today.
 
 The replay player draws no chat, no reaction stream and no viewer count; its rail has a reel's
-reactions and comments (question R2).
+reactions and comments (R2, decided: as on a Reel). No notification when it becomes available (R3,
+decided); the followers had "X est en direct".
 
 ## 7. Privacy texts that must change
 
@@ -325,7 +377,8 @@ replay switch is turned on**, in the pull request of WP-R5.
 | CGU, section "Directs", "Pas d'enregistrement" | `frontend/src/routes/legal/cgu/+page.svelte` | "Canari n'enregistre pas les directs et n'en propose aucune rediffusion : la vidéo et le chat sont supprimés à la fin du direct" |
 | Privacy policy, section 2 "Directs" | `frontend/src/routes/legal/privacy/+page.svelte` | "Un direct n'est pas enregistré et n'a pas de rediffusion" |
 | Privacy policy, section 6, the "Direct" row | same file | "Supprimés à la fin du direct (...)" - also still says "au bout d'une heure", stale since the owner removed the longest duration (2026-10-31) |
-| Privacy policy, section 6, the CanaReels row | same file | "CanaReels du fil : 30 jours" - gains the replays' 3 days |
+| Privacy policy, section 6, the CanaReels row | same file | "CanaReels du fil : 30 jours" - becomes 90 days, the R6 rule (a vertical video, or one of 90 s or less, posted after the rule ships) and the replays' 3 days |
+| The register row carrying CanaReels' retention, and the [reels](../../services/reels.md#the-numbers-and-where-each-is-the-one-copy) numbers table | wiki | "Kept for 30 days (C6)" - 90 days, and the video posts the rule reaches |
 | Register of processing, row C19 | [register-of-processing](../../compliance/register-of-processing.md) | "no replay, L3"; "nothing outlives the live, and a running live keeps only its newest 20 segments"; the removed viewers and the nginx cache sentences |
 | Register, row C20 | same | "a cut may target an open live or one that just ended and is not purged yet" - now three days |
 | The pre-live screen, shown before every live | `frontend/messages/fr.json` / `en.json`, `live_rule_audience_member`, `live_rule_audience_association` | "et seulement pendant la diffusion. Rien n'en est gardé après la fin." `LIVE_RULES_VERSION` need not rise: these lines are on the screen before EVERY live |
@@ -342,31 +395,71 @@ The CanaReels list is `GET /api/posts?kind=reel&multiMedia=true&withLinks=true`
 
 | Kind | Shown in | Retention and expiry | Where the rule lives | What is deleted, and when | A "time left" label? |
 | --- | --- | --- | --- | --- | --- |
-| **Camera reel** (`kind = 'reel'`) | feed (reel card), CanaReels (reel page) | **30 days** from publication, `expiresAt` set once | `REEL_RETENTION_DAYS` `apps/social-service/src/posts/reel.constants.ts:28`, stamped `posts.service.ts:1168`; hidden past it in every read `posts.service.ts:336` and `posts/space-pins.ts:51` | `ReelRetentionScheduler` hourly (`posts/reel-retention.scheduler.ts:68`, due `:98`, row `:184`): the row with its comments and reactions, its `post_notifications`, its blob (`reel-purge` reason `retention`: the post's hold released, the file kept while a conversation's hold lasts) and its comments' media; a deletion by the author or staff purges at once (`posts.service.ts:2367`) | **Yes**: `expiresAt` is on every row; needs `serverNow` with the list. **Removed by the user's decision of 2026-10-02** (*"ce n'est pas discret"*, [reels](reels.md#saving-before-the-deletion-c6)) |
+| **Camera reel** (`kind = 'reel'`) | feed (reel card), CanaReels (reel page) | **30 days** from publication, `expiresAt` set once. **Becomes 90 days (R6)**, existing reels extended (L-R2) | `REEL_RETENTION_DAYS` `apps/social-service/src/posts/reel.constants.ts:28`, stamped `posts.service.ts:1168`; hidden past it in every read `posts.service.ts:336` and `posts/space-pins.ts:51` | `ReelRetentionScheduler` hourly (`posts/reel-retention.scheduler.ts:68`, due `:98`, row `:184`): the row with its comments and reactions, its `post_notifications`, its blob (`reel-purge` reason `retention`: the post's hold released, the file kept while a conversation's hold lasts) and its comments' media; a deletion by the author or staff purges at once (`posts.service.ts:2367`) | **Yes**: `expiresAt` is on every row; needs `serverNow` with the list. **Removed by the user's decision of 2026-10-02** (*"ce n'est pas discret"*, [reels](reels.md#saving-before-the-deletion-c6)) |
 | **One photo post** | feed (post card), CanaReels (photo page) | **none**: kept until deleted | the list clause `SINGLE_PHOTO_POST_SQL` `full-screen-post-sql.ts:69`; the media class `archive`, never swept (`apps/media-service/src/media/media.service.ts:2663` `isSweepable`) | the author, staff or the account erasure delete the row; the media is RELEASED to `ephemeral` (`post-media-retention.service.ts:280`) and the idle sweep takes it 90 days later (`media.service.ts:42`) | No: nothing expires |
-| **One video post** (not filmed with the Canari camera) | feed (post card), CanaReels (reel page) | **none** | `SINGLE_MEDIA_POST_SQL` `full-screen-post-sql.ts:72`; "a video post never expires" ([reels](../../services/reels.md#reading)) | as a photo post | No |
+| **One video post** (not filmed with the Canari camera) | feed (post card), CanaReels (reel page) | **none**. **Becomes 90 days when vertical OR 90 s or shorter, for a video posted after the rule ships (R6, L-R2, L-R3)**; horizontal AND longer stays | `SINGLE_MEDIA_POST_SQL` `full-screen-post-sql.ts:72`; "a video post never expires" ([reels](../../services/reels.md#reading)) | as a photo post | No |
 | **Carousel** (2-10 photos and videos) | feed (post card), CanaReels (carousel page) | **none** | `MULTI_MEDIA_POST_SQL` `full-screen-post-sql.ts:106` | as a photo post | No |
 | **Any of the three above with a link in its text** | the same | **none** | `LINKED_MEDIA_POST_SQL` `full-screen-post-sql.ts:112` | as a photo post | No |
 | *Outside the tab, for the model:* **reel sent in a conversation** | the conversation (tile, full-screen viewer) | **30 days from upload**, by age, never by reads | `CHAT_REEL_RETENTION_MS` `apps/media-service/src/media/media.service.ts:51`; the client's hint `frontend/src/lib/reels/chatReelWriter.ts:38`, its tombstone `chatReel.ts:25` | media-service deletes the file by age (holds: [reels-in-chat](reels-in-chat.md#153-retention---the-file-lives-as-long-as-its-longest-hold)); the message stays as a tombstone | **Yes**: the sender's `expiresAtMs` is already on the message |
 | *Outside the tab:* **an open live** | the feed's live card (`frontend/src/lib/live/openLives.ts`) | until its end | [lives](../../services/lives.md#the-end-is-the-rows-state-q5) | at the end, after the drain | Not applicable (it is "en direct") |
-| **Live replay** (this design) | feed (reel card), CanaReels (reel page) | **3 days from the END** | `lives."replayExpiresAt"`, section 4 | the live sweep, section 4 | **Yes**, the same way as a reel |
+| **Live replay** (this design) | feed (reel card), CanaReels (reel page) | **3 days from the END** (R8) | `lives."replayExpiresAt"`, section 4 | the live sweep, section 4 | **Yes**, always (R5) |
 
-### The proposed model - one sentence, one column, one label
+### Where the 30-day reel number lives, and what R6 changes
 
-**A CanaReel is anything drawn full screen in the CanaReels viewer. Only what was MADE to be
-ephemeral expires - a camera reel (30 days), a live replay (3 days) and a conversation reel (30
-days); a post of photos or videos is a post and stays until someone deletes it.** In the code:
+| Copy | Where | Today | What changes |
+| --- | --- | --- | --- |
+| The constant | `REEL_RETENTION_DAYS`, `apps/social-service/src/posts/reel.constants.ts:28` | 30 | **90**, read from ONE shared value (below) |
+| Served to clients | `GET /api/posts/reel-limits` `retentionDays`, `reel.constants.ts:65` | 30 | 90, nothing to ship: the client keeps no copy ([reels](../../services/reels.md#the-numbers-and-where-each-is-the-one-copy)) |
+| Stamped on a reel | `posts.service.ts:1168`, `createdAt` + the constant, written once | 30 days | 90 days for new reels; existing reels' `expiresAt` moved by a migration (L-R2) |
+| The publish notes | `reels_publish_expiry_note`, `reels_publish_from_composer_notice` in `frontend/messages/fr.json` / `en.json` | "Visible {days} jours...", `{days}` from the server | unchanged text, 90 follows; a NEW note for a video post under the rule (L-R1) |
+| The warning window | `REEL_EXPIRY_WARNING_DAYS`, `reel.constants.ts:31` | 7, served, read by no client since 2026-10-09 | the label's 7 days (R5) |
+| Chat media idle retention, the number R6 aligns on | `RETENTION_MS`, `apps/media-service/src/media/media.service.ts:42` | 90 days | unchanged; it and `REEL_RETENTION_DAYS` read the same value |
+| A DIFFERENT 30: conversation reels | `CHAT_REEL_RETENTION_DAYS`, `media.service.ts:50`; the client hint `chatReelWriter.ts:38` | 30 days by age | **unchanged** (L-R4) |
+| The texts | privacy section 6, the register, [reels](../../services/reels.md) | "30 jours" | section 7 |
 
-- **One column, one filter**: every post row's `expiresAt` - NULL means permanent - and ONE read
+### The decided model (R5, R6, L-R1 to L-R4)
+
+**A CanaReel is anything drawn full screen in the CanaReels viewer. What expires: a camera reel
+and a posted video that is vertical OR 90 s or shorter - 90 days after publication - and a live
+replay - 3 days after its end. A photo, a carousel and a video both horizontal and longer than 90 s
+stay until someone deletes them.** In the code:
+
+- **ONE number, 90 days, everywhere**: a shared value in `libs/contracts/` (the precedent of
+  `account-reference-columns.json`) read by social-service's `REEL_RETENTION_DAYS` and by
+  media-service's idle `RETENTION_MS`, with a spec in each service asserting it derives from the
+  file - a rule two services must agree on is shared as data, never described twice
+  ([durable-rules](../../durable-rules.md#a-rule-two-estates-must-agree-on-is-shared-as-data-and-asserted---describing-it-in-both-is-how-they-diverge)).
+- **The rule is decided ONCE, at publish, by the server, from what the post carries** (L-R3): a post
+  whose only media is one video carries `durationMs` and `videoVertical` (height > width, the frame
+  size with the rotation baked in, as `prepareVideoForUpload.ts` already reports it; square is not
+  vertical), read by the client from the uploaded file. The server stamps `expiresAt` = publication +
+  90 days when `videoVertical OR durationMs <= 90000`, and never otherwise. **A post that carries no
+  declaration (an older client, a post before the rule) gets no expiry**: a deletion needs a known
+  fact, never a guess. Like a reel's duration it is a DECLARATION (the server reads no ciphertext): a
+  modified client can keep a video by declaring it horizontal and long - it then stays, which is the
+  harmless direction.
+- **Fixed at publish**: on a post that carries an `expiresAt`, an edit may change the text only, as on
+  a reel (lead, reversible) - swapping the video would otherwise re-open a decision taken once.
+- **One column, one filter**: `expiresAt` on every post row - NULL means permanent - and ONE read
   clause `(posts."expiresAt" IS NULL OR posts."expiresAt" > now())` replacing `kind <> 'reel' OR ...`
-  in `posts.service.ts:336` and `space-pins.ts:51` (the CHECK already guarantees a `post` has NULL).
-- **A sweep per storage, one predicate**: the reel worker deletes `kind = 'reel'` blobs, the live
-  sweep deletes `live_replay` prefixes - two storages, two allowlists, the same "due" predicate.
-- **One label, if any**: one component reads `expiresAt` against `serverNow`, the same on a reel, a
-  replay and a conversation reel - or none anywhere. Which is the owner's (question R5); the
-  recommendation is the replay only, because three days surprise and thirty do not.
+  in `posts.service.ts:336` and `space-pins.ts:51`; `posts_kind_shape` re-created so a `post` may
+  carry `expiresAt` with its `durationMs` and `videoVertical`.
+- **A sweep per storage, one predicate**: the reel worker deletes `kind IN ('reel', 'post') AND
+  "expiresAt" <= now()` (its row delete states the same, so a permanent post can never be reached),
+  the blob claimed `reel` at publish like a reel's (and the boot's `archive` pass skips every row
+  with an `expiresAt`, as it skips reels today); the live sweep deletes `live_replay` prefixes - two
+  storages, two allowlists, the same "due" predicate.
+- **One label** (R5): one component reads `expiresAt` against the list's `serverNow` - always on a
+  replay ("encore 2 j", "encore 5 h"), and on a reel or an expiring video post only when it is within
+  `REEL_EXPIRY_WARNING_DAYS` (7) of its end. A conversation reel is not in R5's answer and gets none.
+- **The author knows before** (L-R1): the composer computes the same predicate on the prepared file
+  and shows "expire dans {days} jours" before publishing; the SERVER's stamp is what decides.
 
-### The owner's questions - in French, recommended option first, four at a time
+### The owner's questions - as asked; ANSWERED 2026-11-07
+
+Kept as they were put (in French, the recommended option first, four at a time). The answers are in
+[the decisions](#decisions-of-2026-11-07---the-owners-answers-and-the-leads): R1-R4, R7 and R8 took
+the recommended option; R5 took option (2); R6 was revised by the owner.
 
 **Lot 1 - les replays**
 
@@ -412,14 +505,15 @@ means it carries `-- canari:hold-for-owner`.
 
 | WP | What | Proof | Migration |
 | --- | --- | --- | --- |
-| **WP-R0** | Readings, no code: the disk figure (section 1); the owner's answers R1-R8; on both phones, two recorder generations of one live (a background, a lens change) - are their inits byte-equal (a digest of each init in the broadcaster's summary line, WP-R1 adds it) | the figures written here | none |
+| **WP-R0** | Readings, no code: ~~the disk figure~~ TAKEN 2026-11-07 (section 1); ~~the owner's answers R1-R8~~ ANSWERED 2026-11-07; left: on both phones, two recorder generations of one live (a background, a lens change) - are their inits byte-equal (a digest of each init in the broadcaster's summary line, WP-R1 adds it) | the figures written here | none |
 | **WP-R1** (server) | `live_replays_mode` (platform_config `off`/`on`, default `off`, read at the finish step, fail closed = today's purge); the finish step and the chat deletion at it; the sweep's new selection; the trim's cap per eligible live and the account cap; `GET /api/lives/:id/replay` (the key through `openLiveKey`, first and next index, `replayExpiresAt`) and `GET /api/lives/:id/replay/segments?from=&limit=` (`index`, `name`, `bytes`, `atMs`), both behind `LiveEnabledGuard`, no seat; `replayVisibleToUserSql`; the erasure and the cut re-read; `[LIVE_GC]` and the storage panel's replay counters; the broadcaster's init digest | `lives.integration.spec.ts` on a real PostgreSQL: an ended live becomes a replay once (re-run no-op), its chat is gone and its reported line kept; a cut before or after the finish leaves no replay; an erasure hides it at once; a removed viewer and a blocked one are refused; an expired replay is refused before the sweep runs and purged after it; the account cap deletes the oldest of that account only; switch off = today's purge | social-service: `lives."replayExpiresAt"`, `"finishedAt"`, the partial index - **plain**; core-service: `platform_config.live_replays_mode` - **plain** |
 | **WP-R2** (server) | the `posts` row: `kind = 'live_replay'`, `posts."liveId"` with `ON DELETE CASCADE`, `posts_kind_shape` re-created; the list arm under `withReplays=true` (feed and CanaReels), `GET /api/posts/:id` 404 to a client without it; repost, republication and edit refused; `DELETE /api/posts/:id` sets `replayExpiresAt = now()`; report as a post; comments' media purged before the cascade; the one `expiresAt IS NULL OR > now()` filter | `posts.service.reels.spec.ts` and `full-screen-post-sql.integration.spec.ts` extended: the replay in every arm only with the flag, never to an older request; the predicate is `replayVisibleToUserSql` and not the post rule (a reposter's follower does not see it); an author's and a moderator's delete; the cascade takes the row and the purge takes the comment media | social-service: the `posts` column, FK, index and CHECK re-create - **plain** (`DROP CONSTRAINT` + `ADD CONSTRAINT` is on the allowlist; the CHECK scans `posts` under its lock, so the lock-timeout spec decides whether the author adds the marker) |
-| **WP-R3** (client) | the replay slide and card: a VOD mode of `livePlayer.ts` over the segment list (MSE, init on change, seek by `atMs`, start past index 0), the "Rediffusion" mark, the time-left label per R5, `withReplays=true` sent, the rows dropped while `livesAvailable` is false; Paraglide strings in `fr.json` and `en.json` | unit tests of the VOD list and the seek; the player against a recorded fixture; then a dev reading on both phones (a live of a few minutes with a background, replayed and scrubbed) | none |
+| **WP-R3** (client) | the replay slide and card: a VOD mode of `livePlayer.ts` over the segment list (MSE, init on change, seek by `atMs`, start past index 0), the "Rediffusion" mark, the time-left label (always, R5), reactions and comments as a reel (R2), `withReplays=true` sent, the rows dropped while `livesAvailable` is false; Paraglide strings in `fr.json` and `en.json` | unit tests of the VOD list and the seek; the player against a recorded fixture; then a dev reading on both phones (a live of a few minutes with a background, replayed and scrubbed) | none |
 | **WP-R4** (client) | the save: the streamed join, a new file at an init change, the size shown first, the native staging reused | the join's unit test reusing this page's fixtures (equal inits, a gap, a different init); then a save of a real replay on each phone, played by Photos and the Android gallery | none |
 | **WP-R5** (texts) | section 7's list, and `register-of-processing` C19/C20 in the same pull request | the owner's reread of the CGU and privacy pages (his to merge) | none |
 | **WP-R6** | turn `live_replays_mode` on, dev first: two readings on both phones (a live ended by its broadcaster and one dropped, each replayed, downloaded, deleted by its author, and one left to expire past three days); then production, by the lead once the readings pass and WP-R5 is merged | the readings, written here | none |
-| **WP-R7** (model) | per the owner's R5/R6: the label on reels and conversation reels or not; the one filter of WP-R2 already serves | the label's unit test with a skewed device clock | none |
+| **WP-R7** (server, the R6 rule) | the shared 90-day value in `libs/contracts/` read by `REEL_RETENTION_DAYS` and `RETENTION_MS`; `posts."videoVertical"` and `durationMs` accepted on a one-video post; the stamp at publish (`vertical OR <= 90 s`, nothing without a declaration); edit = text only on an expiring post; the blob claimed `reel`; the worker's predicate `kind IN ('reel', 'post')`; the `archive` boot pass skipping expiring rows; `serverNow` on the list answer, outside the feed cache; existing reels' `expiresAt` moved to `createdAt` + 90 days (L-R2) | `reel-retention.integration.spec.ts` and `posts.service.reels.spec.ts` extended: a vertical long video and a short horizontal one expire, a horizontal long one and an undeclared one never do, a photo never does; the worker never reaches a permanent post; the migration extends only live reels, run twice; both services' specs read 90 from the shared file | social-service: `posts."videoVertical"`, the CHECK re-created, the `UPDATE` that moves live reels' `expiresAt` from 30 to 90 days (it only lengthens, so a re-run is a no-op) - **plain** by the allowlist; the author may still hold it as a data rewrite on `posts` |
+| **WP-R8** (client, the R6 rule and R5) | the composer sends `durationMs` and `videoVertical` from the prepared file and shows "expire dans {days} jours" when the rule applies (L-R1); the label on reels and expiring video posts within 7 days of their end, from `serverNow`; Paraglide strings; the texts of section 7 for the 90 days, with WP-R5 | the label's and the predicate's unit tests (square, rotated, 90 000 ms exactly, a skewed device clock); a dev reading on both phones (a vertical clip shows the note, a long horizontal one does not) | none |
 
 ## 10. What this page does not decide
 
