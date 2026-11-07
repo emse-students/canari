@@ -3840,8 +3840,13 @@ export abstract class BaseMlsService implements IMlsService {
    *
    * `fresh` is for a caller whose round must START AFTER something it already did -
    * {@link republishKeyMaterial}, whose purge a round that counted the pool before it would not
-   * see. That round is chained AFTER the one in flight (it waits for it to settle, never runs beside
-   * it), and is the round later callers join.
+   * see - and the connection sync, whose round must run on the link its socket just proved rather
+   * than inherit the failure of a round started on the link that died. That round is chained AFTER
+   * the one in flight (it waits for it to settle, never runs beside it), its deadline starts only
+   * then, and it is the round later callers join.
+   *
+   * THE SLOT IS PER CLIENT INSTANCE, and an account switch builds a new client
+   * (`mlsHolder.reset` / `retire`), so a round is never joined across accounts or device keys.
    */
   async generateKeyPackage(
     deviceKeyB64: string,
@@ -3865,14 +3870,15 @@ export abstract class BaseMlsService implements IMlsService {
     // A property of a shared object, not a bare `let`: the deadline handler below flips it while the
     // round is suspended at an `await`, a write control-flow analysis (CodeQL 2552) cannot see.
     const roundState = { stale: false };
-    const round = (async (): Promise<DatedKeyPackage> => {
-      if (predecessor) {
-        console.log('[MLS] fresh key package round waits for the round in flight to settle');
-        // Its outcome belongs to its own callers; this round only needs it to be over.
-        await predecessor.then(
-          () => undefined,
-          () => undefined
+    const round = async (): Promise<DatedKeyPackage> => {
+      // NOTHING MINTS FOR A ROUND ITS CALLERS GAVE UP ON. The deadline below starts only once the
+      // predecessor settled, so this cannot fire today; it is the guard that keeps it true if the
+      // order ever changes, because a mint for nobody is the untracked overlap this method removes.
+      if (roundState.stale) {
+        console.error(
+          '[MLS] a key package round was ABANDONED before it started its own work - not minting'
         );
+        throw new Error('key package round abandoned before it started');
       }
       try {
         const published = await this.generateKeyPackageImpl(deviceKeyB64);
@@ -3949,7 +3955,7 @@ export abstract class BaseMlsService implements IMlsService {
         forgetRefusedRotationReloads();
         return republished;
       }
-    })();
+    };
     // THE CALLER STOPS WAITING AFTER A DEADLINE, THE WORK IS NOT CANCELLED (a native `invoke` and a
     // mint under the MLS lock cannot be aborted). Without this a hang anywhere in the round kept
     // the active count above zero for ever, so every join parked and its flight never cleared.
@@ -3967,17 +3973,32 @@ export abstract class BaseMlsService implements IMlsService {
     // The persist and publish steps inside `generateKeyPackageImpl` are platform code and are NOT
     // gated: a late publish under the CURRENT id is harmless (it is what the next round would do),
     // and the id cannot have changed because only a non-stale round rotates.
-    const bounded = raceDeadline(
-      'key-package-round',
-      round,
-      KEY_PACKAGE_ROUND_DEADLINE_MS,
-      (late) =>
+    //
+    // THE DEADLINE BOUNDS THIS ROUND'S OWN WORK, NEVER ITS WAIT. A fresh round's timer starts when
+    // its predecessor has SETTLED, not when it was asked for: a deadline counted from the call let a
+    // predecessor that took 178 s leave its successor 2 s of its own, abandon it while it kept
+    // minting, empty the slot, and let the next plain caller start a third round beside it - the
+    // overlap this method exists to remove. The wait itself needs no clock: the predecessor is a
+    // bounded round too, so it settles within its own deadline, and so on down the chain.
+    const runBounded = (): Promise<DatedKeyPackage> =>
+      raceDeadline('key-package-round', round(), KEY_PACKAGE_ROUND_DEADLINE_MS, (late) =>
         console.warn(
           late.ok
             ? '[MLS] an abandoned key package round FINISHED late (its bundles are persisted and published)'
             : `[MLS] an abandoned key package round FAILED late: ${sanitizeForLog(String(late.error))}`
         )
-    );
+      );
+    let bounded: Promise<DatedKeyPackage>;
+    if (predecessor) {
+      console.log('[MLS] fresh key package round waits for the round in flight to settle');
+      // Its outcome belongs to its own callers; this round only needs it to be over.
+      bounded = predecessor.then(
+        () => runBounded(),
+        () => runBounded()
+      );
+    } else {
+      bounded = runBounded();
+    }
     this.keyPackageRoundInFlight = bounded;
     this.keyPackageRoundsActive++;
     try {

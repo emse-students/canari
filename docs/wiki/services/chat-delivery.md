@@ -360,11 +360,22 @@ or two external joins each reading "absent, no round running" and starting one
 (`persistMlsStructuralCheckpoint` -> `flushEncrypted`), and both resumed on the same tick to publish.
 `generateKeyPackage` now hands a caller the round in flight (`keyPackageRoundInFlight`) instead of
 starting a second; the field is cleared when the round settles, no timer involved.
-`republishKeyMaterial` is the one caller that must not join - its purge happened after a running round
-may have counted the pool - so it asks for a `fresh` round, queued BEHIND the one in flight, never
-beside it. What is left of overlap is the abandonment policy that predates this: a round past
-`KEY_PACKAGE_ROUND_DEADLINE_MS` is abandoned, not cancelled, and the next caller starts a new round
-while the old work may still finish; the server half above makes even that harmless.
+Two callers must not join, and ask for a `fresh` round, queued BEHIND the one in flight, never
+beside it: `republishKeyMaterial`, whose purge happened after a running round may have counted the
+pool, and the connection sync (`syncConnectionAfterWsOpen`, login, reconnect and offline promotion),
+whose round must run on the link its socket just proved - joining, a reconnect inherited the failure of
+the login round dying on the dead link and deferred its welcome_requests to a next connection that
+may never come. The external join's round (`awaitOwnKeyPackagePublished`) joins: any publication
+satisfies it. **A fresh round's deadline bounds its OWN work**: `KEY_PACKAGE_ROUND_DEADLINE_MS` starts
+when its predecessor settles, not when it was asked for (counted from the call, a predecessor taking
+178 s left it 2 s, it was abandoned while still minting, the slot emptied and a third round started
+beside it). The wait needs no clock of its own: the predecessor is itself bounded. Proven in order,
+never in wall time, by `BaseMlsService.keyPackageRoundOrder.test.ts`. The slot is per client instance;
+an account switch builds a new client (`mlsHolder.reset` / `retire`), so no round crosses accounts or
+device keys. **What is left of overlap is only the abandonment policy that predates this:** a round
+past its deadline is abandoned, not cancelled (a native `invoke` cannot be), and the round after it -
+the queued fresh one or the next caller's - starts while the abandoned work may still publish under
+the same id; the server half above makes even that harmless.
 
 ### The shared log keeps mutations, and records what may notify
 
