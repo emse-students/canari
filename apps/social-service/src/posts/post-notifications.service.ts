@@ -313,10 +313,10 @@ export class PostNotificationsService {
       // Co-organisation (D39). `actorName` is the ORGANISING association, `text` the event title.
       case 'coorganise_proposed':
         return coorganiseProposedContent(actorName, text, icon);
-      // A live started (WP-L7). `actorName` is the broadcaster, a person or an association; there
-      // is no text to quote.
+      // A live started (WP-L7). `actorName` is the broadcaster, a person or an association; `text`
+      // is the live's title, empty when it has none (owner, 2026-11-07).
       case 'live_started':
-        return liveStartedContent(actorName, icon);
+        return liveStartedContent(actorName, text, icon);
       // Follow requests (WP-F2). `actorName` is the ASKER for the first and the person who said
       // yes for the second; neither has text to quote.
       case 'follow_request':

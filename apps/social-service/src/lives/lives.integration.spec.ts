@@ -1206,6 +1206,16 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110)', () =
       ]);
     });
 
+    it('carries the title as it stands at the first stored segment (owner, 2026-11-07)', async () => {
+      await follow(BOB);
+      const live = await lives.start(ALICE, { key: KEY, title: 'Soirée' });
+      await lives.setTitle(ALICE, live.id, { title: "Soirée d'intégration" });
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      expect((await pushed()).map((n) => [n.recipientIds, n.text])).toEqual([
+        [[BOB], "Soirée d'intégration"],
+      ]);
+    });
+
     it("A MEMBER'S LIVE RESPECTS SPACES AS A POST DOES: who shares none and does not follow is not told and cannot watch", async () => {
       await follow(BOB);
       // FRANK shares no space with ALICE and only ASKED to follow her: a request opens nothing.
