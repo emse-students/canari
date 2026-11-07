@@ -13,7 +13,7 @@ Decisions, not open questions; this entry is deleted when the last one is carrie
   green pipeline, and reports afterwards.
 - **The engagement chantier ships work package by work package**, each to production after an
   adversarial review, a pass on dev and a phone reading, without waiting for the owner. The
-  decisions themselves are in [engagement](../engagement.md) (decisions 1 to 14).
+  decisions themselves are in the engagement design page (`docs/wiki/engagement.md`, PR #3119, decisions 1 to 14).
 - **The live chat** improves on two axes, readability over the video and liveliness (avatars, the
   host marked, rate-limited "X a rejoint" lines visible to every viewer). It follows the fix of the
   share sheet that opened behind the live viewer.
