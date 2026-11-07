@@ -83,7 +83,15 @@ presence). Le Cercle's `[MIGALLERY]` fetch needs the same treatment in its own r
 
 - It reads the public names from outside; it does not read any connector's own journal.
 
-## The transport decision: `--protocol http2` for a tunnel connector that loses QUIC
+## The 25-minute tunnel outage of 2026-11-05: cause, and the transport change NOT taken
+
+**Cause (owner, 2026-11-07): an independent technical problem outside the project, not our transport.**
+**No transport change is taken**, and the `--protocol http2` recommendation that stood from 2026-11-06 is
+withdrawn: nothing shows QUIC was the cause. The watch is the `upstream` job - a `tunnel-down` issue opens one
+issue per outage. The analysis below is kept as background only.
+
+**Not taken - why:** the facts below are consistent with a network fault upstream of the connector, which no
+choice of transport on our side would have prevented.
 
 **Facts of 2026-11-05.** A connector logged QUIC "timeout: no recent network activity" on all its connections
 for 25 minutes while TCP traffic from the same machine stayed up, and it recovered by itself. The band of
@@ -97,13 +105,5 @@ for 25 minutes while TCP traffic from the same machine stayed up, and it recover
 | Fallback | None needed: there is nothing to fall to. | cloudflared falls back to http2 when QUIC cannot be DIALLED; an ESTABLISHED QUIC session that goes silent is not documented to flip. Treat the fallback as unproven until a lossy window is seen to use it. |
 | Reversibility | One flag (or `protocol: http2` in the connector's config); remove it to return to auto. | - |
 
-**Recommendation: `http2` on the connector that lost QUIC.** It is reversible, it is the transport that stayed
-up, and what it gives up (QUIC on a lossy path) is the property that failed. It is a host change, so an owner
-or DSI action - **decided 2026-11-07: not taken by an agent**, because it edits a service unit on the shared
-host, which is the school IT department's (no install, removal or security setting without their written
-agreement, asked before). What is asked of them, in plain words: *"A tunnel connector lost all its QUIC (UDP)
-connections for 25 minutes on 2026-11-05 while TCP stayed up. We ask to start that connector with the option
-`--protocol http2` (TCP only) and restart it. It is one flag, reversible by removing it, and it opens no port
-and changes no firewall or security setting."* The steps are in
-[the backlog entry](../backlog.d/p2-the-tunnel-connector-lost-every-connection-for-25-minutes.md). Afterwards the
-`upstream` job is the measurement: a `tunnel-down` issue under http2 would refute the transport as the cause.
+If `tunnel-down` issues recur from the same connector, this table is where to restart: `http2` is one flag,
+reversible, on a connector the project owns.

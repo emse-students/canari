@@ -12,8 +12,8 @@ Nothing told anyone. The owner heard it from users.
 
 **Built 2026-11-06:** the report. The `upstream` job of `scheduled.yml` asks the gallery's health route from
 outside and opens one issue per outage, naming the class, the status and since when
-([upstream-reachability](../infrastructure/upstream-reachability.md)). It also covers the tunnel entry
-([tunnel](p2-the-tunnel-connector-lost-every-connection-for-25-minutes.md)).
+([upstream-reachability](../infrastructure/upstream-reachability.md)). It also covers a tunnel with no
+connector (a `tunnel-down` class).
 
 **Built 2026-11-07, Canari side:** no asking of a dependency known to be down. Durable state set by the failure
 that proves it and cleared by the first answer, one probe at a time, one log line per transition
