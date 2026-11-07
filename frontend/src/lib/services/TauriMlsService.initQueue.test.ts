@@ -7,7 +7,10 @@ const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }));
 vi.mock('@tauri-apps/plugin-websocket', () => ({ default: { connect: vi.fn() } }));
-vi.mock('$lib/stores/auth', () => ({ getToken: vi.fn().mockResolvedValue('') }));
+vi.mock('$lib/stores/auth', () => ({
+  getToken: vi.fn().mockResolvedValue(''),
+  signOutGeneration: () => 0,
+}));
 // The failed attempt's teardown runs only in a native runtime.
 vi.mock('$lib/utils/tauriRuntime', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/tauriRuntime')>()),

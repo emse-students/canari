@@ -2164,6 +2164,27 @@ pub(crate) fn acknowledge_quick_reply(reply_id: String, outcome: String) -> Resu
 }
 
 #[cfg(test)]
+mod session_key_tests {
+    use super::session_key_of;
+
+    #[test]
+    fn none_is_the_biometric_sign_in() {
+        assert_eq!(session_key_of(None), Ok(None));
+    }
+
+    #[test]
+    fn an_empty_or_blank_key_is_refused_not_taken_for_a_biometric_sign_in() {
+        assert!(session_key_of(Some("")).is_err());
+        assert!(session_key_of(Some("   ")).is_err());
+    }
+
+    #[test]
+    fn a_key_is_handed_on_trimmed() {
+        assert_eq!(session_key_of(Some(" abc= ")), Ok(Some("abc=")));
+    }
+}
+
+#[cfg(test)]
 mod quick_reply_tests {
     use super::*;
 
@@ -2349,9 +2370,17 @@ mod quick_reply_tests {
 /// The key goes into the platform keystore under `mls_device_key_{user_id}_{device_id}`, never
 /// into the JSON (WP-SEC-1): the background push and the biometric login path
 /// (`load_encrypted_with_keystore` path A) read it there, so a failed write is returned.
+///
+/// **`device_key_b64` IS `None` ON A BIOMETRIC SIGN-IN, AND THE FILE IS WRITTEN ANYWAY** (2026-11-07).
+/// That sign-in opened the state with the key it read FROM this keystore entry, so there is no key
+/// to write and the entry is already right - but the file is still this session's to write. The
+/// call used to be skipped whole in that mode, and a sign-out strips the file to its identity keys
+/// (`keep_device_context_only`, no `baseUrl`): a phone that signed out and back in by fingerprint
+/// kept the stripped file - every push a generic banner - until a PIN sign-in, which biometric unlock
+/// exists to avoid. The file mirrors the SESSION; the key is a separate fact with its own writer.
 #[tauri::command]
 pub(crate) fn store_push_context(
-    device_key_b64: String,
+    device_key_b64: Option<String>,
     user_id: String,
     device_id: String,
     base_url: String,
@@ -2365,12 +2394,54 @@ pub(crate) fn store_push_context(
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
 
+    match session_key_of(device_key_b64.as_deref())? {
+        Some(key) => store_session_device_key(key, &user_id, &device_id, &app)?,
+        None => log::info!(
+            "[PushCtx] store_push_context: no device key (biometric sign-in) - keystore entry left as it is, the session's context written"
+        ),
+    }
+
+    write_session_push_context(
+        &data_dir,
+        &user_id,
+        &device_id,
+        &base_url,
+        &push_token.unwrap_or_default(),
+        locale,
+    )
+}
+
+/// What [`store_push_context`] does with the key it was handed: `None` is the biometric sign-in (no
+/// key in hand, the keystore entry left alone) and is the ONLY such case. A key that is present but
+/// empty is a caller defect - the JS side sends `null` for "no key" - so it is refused, never taken
+/// for a biometric sign-in, which would leave the keystore on whatever key it held before.
+fn session_key_of(device_key_b64: Option<&str>) -> Result<Option<&str>, String> {
+    match device_key_b64 {
+        None => Ok(None),
+        Some(key) if key.trim().is_empty() => {
+            log::error!(
+                "[PushCtx] store_push_context: an EMPTY device key was passed - refused (no key is `null`)"
+            );
+            Err("device_key_b64 is empty - pass null for a session with no key in hand".to_string())
+        }
+        Some(key) => Ok(Some(key.trim())),
+    }
+}
+
+/// The keystore half of [`store_push_context`]: puts this session's device key in the entry the
+/// background push and the biometric login read. Returns an error only when the write FAILED.
+fn store_session_device_key(
+    device_key_b64: &str,
+    user_id: &str,
+    device_id: &str,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
     // Validate before writing: a malformed key would poison the keystore,
     // and the failure would only surface much later as an undecryptable notification.
-    let key_bytes = mls_core::crypto::decode_base64_to_32_bytes(device_key_b64.trim())
+    let key_bytes = mls_core::crypto::decode_base64_to_32_bytes(device_key_b64)
         .map_err(|e| format!("invalid device_key_b64: {e}"))?;
 
-    let alias = crate::commands::at_rest_key::device_key_alias(&user_id, &device_id);
+    let alias = crate::commands::at_rest_key::device_key_alias(user_id, device_id);
     // Through the at-rest guard (`store_guarded`): on a migrated phone the entry already holds this
     // key and is not rewritten; during a re-key the session's OLD key is refused, because rows already
     // sit under the new one whose only copy is this entry. A refusal is not an error here: the push
@@ -2395,15 +2466,7 @@ pub(crate) fn store_push_context(
             ))
         }
     }
-
-    write_session_push_context(
-        &data_dir,
-        &user_id,
-        &device_id,
-        &base_url,
-        &push_token.unwrap_or_default(),
-        locale,
-    )
+    Ok(())
 }
 
 /// Orders every edit of `push_context.json` made in this process: the three writers

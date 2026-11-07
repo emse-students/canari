@@ -119,9 +119,10 @@ class CanariBootReceiver : BroadcastReceiver() {
             Log.d(TAG, "drainPendingOutbox: outbox empty")
             return
         }
-        val pushCtx = MlsContextLoader.loadPushContext(context)
+        val pushCtxRead = MlsContextLoader.readPushContext(context)
+        val pushCtx = pushCtxRead.context
         if (pushCtx == null) {
-            Log.w(TAG, "drainPendingOutbox: push_context.json absent -> abort")
+            Log.w(TAG, "drainPendingOutbox: push_context.json ${pushCtxRead.verdict.describe()} -> abort")
             return
         }
         // Bare service instance: only backs the JNI-bound native calls (never used as a Context).

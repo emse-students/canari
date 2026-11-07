@@ -1872,8 +1872,9 @@ export async function loginImpl(
     // swallows its error. That is a whole biometric session of history quietly not being saved.
     //
     // The local `deviceKeyB64` deliberately stays empty: it means "a key the caller supplied", and
-    // it is what gates the device-key vault write and store_push_context further down. Biometric
-    // mode must keep both skipped - the keystore is the only place this key belongs at rest.
+    // it is what gates the device-key vault write and the KEY half of store_push_context further
+    // down. Biometric mode must keep both skipped - the keystore is the only place this key belongs
+    // at rest. The push context's FILE is still written, with no key (TauriMlsService init).
     if (isBiometric) {
       beginBootSpan('keystore-session-key');
       const sessionKey = await mlsService.resolveSessionDeviceKey();
