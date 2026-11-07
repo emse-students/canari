@@ -317,6 +317,55 @@ id the account already holds can no longer refuse it.
 liveness it measures, and both of those are written by whatever last touched the row, the server
 included.
 
+### A registration writes its row in one statement, and the client sends one (2026-11-07)
+
+**Measured on production, `1.6.6`:** a web device re-enrolling at sign-in (an older id of it retired
+just before, `[DELETE_DEVICE] ... reason=retired`, then `[PURGE_PREKEYS] deleted=0`) sent two
+`POST /api/mls/register-device` for the same user and device that started in the same millisecond.
+`registerDevice` read the `key_package` row, found none in both, inserted twice, and the second insert
+answered **500** on `UNIQUE ("userId", "deviceId")`. Two halves, both fixed.
+
+**Server: the read-then-insert is ONE statement.** `upsertDeviceKeyPackage`
+(`src/utils/device-key-package.ts`) is an `INSERT ... ON CONFLICT ("userId", "deviceId") DO UPDATE`,
+the shape `upsertRevocation` already had: the conflict arm takes the existing row under its lock, so
+two registrations of one device serialise in the database, both succeed, one row remains, and the
+later package is the one kept - what two sequential calls left. It keeps, column by column, what the
+two old branches wrote:
+
+| column | on a re-registration |
+| --- | --- |
+| `keyPackage`, `notAfter` | overwritten, `notAfter` even with `null` (the date belongs to the package) |
+| `deviceName`, `deviceOs`, `deviceAppVersion` | overwritten only when the call carries them (`COALESCE`) |
+| `createdAt` | reset to now - the enrolment's date the device list and `lastResortDeadline` read |
+| `id` | kept; a new id is used only when the row is created |
+
+`isNew` in the `DONE` line comes from `RETURNING (xmax = 0)`. The other writes of the request were
+already atomic: the signature-key history is `ON CONFLICT DO NOTHING` (`DeviceSignatureKeysService.record`)
+and the pending seats are `ON CONFLICT DO NOTHING` under the group's seat lock (`writePendingSeats`).
+**Two checks remain reads before the write, and are NOT this defect:** the cross-account
+`device_id_taken` read and the live-device cap. Both compare DIFFERENT rows (another account's id,
+the account's other devices), which no `ON CONFLICT` on the pair can see; they race only between two
+different devices or two accounts in the same instant, and the second is a forged registration
+(0 shared ids on production, 2026-10-22). Closing them needs a lock or a unique index on `deviceId`
+alone, not this change. Proven against PostgreSQL by `device-key-package.integration.spec.ts`: two
+registrations held behind a second session's uncommitted insert of the same pair both succeed and
+leave one row. Run against the code before the fix, the same spec fails with production's exact
+`duplicate key value violates unique constraint` - the control.
+
+**Client: one key package round at a time.** Two rounds had started side by side - two callers of
+`generateKeyPackage` each finding nothing to wait on: the login's connection sync
+(`sessionAuth` -> `syncConnectionAfterWsOpen`) and the reconnect's (`sessionConnection` -> the same),
+or two external joins each reading "absent, no round running" and starting one
+(`awaitOwnKeyPackagePublished`). Both minted, both awaited the ONE coalesced checkpoint
+(`persistMlsStructuralCheckpoint` -> `flushEncrypted`), and both resumed on the same tick to publish.
+`generateKeyPackage` now hands a caller the round in flight (`keyPackageRoundInFlight`) instead of
+starting a second; the field is cleared when the round settles, no timer involved.
+`republishKeyMaterial` is the one caller that must not join - its purge happened after a running round
+may have counted the pool - so it asks for a `fresh` round, queued BEHIND the one in flight, never
+beside it. What is left of overlap is the abandonment policy that predates this: a round past
+`KEY_PACKAGE_ROUND_DEADLINE_MS` is abandoned, not cancelled, and the next caller starts a new round
+while the old work may still finish; the server half above makes even that harmless.
+
 ### The shared log keeps mutations, and records what may notify
 
 `history:{groupId}` is the only **shared** copy of a conversation: the per-device queue is deleted on

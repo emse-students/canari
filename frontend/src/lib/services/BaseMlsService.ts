@@ -678,13 +678,18 @@ export abstract class BaseMlsService implements IMlsService {
    * before it will activate a membership: a static KeyPackage on the server. See
    * {@link externalJoin} for the production measurement. Per-process, and held only for the span of
    * one {@link generateKeyPackage} call, so it is a fact about NOW and never a "done" flag.
+   *
+   * AND IT IS THE SINGLE FLIGHT: a {@link generateKeyPackage} call that finds it set returns it
+   * rather than starting a second round, so two callers never publish side by side (the two
+   * same-millisecond `register-device` requests of 2026-11-07).
    */
-  private keyPackageRoundInFlight: Promise<unknown> | null = null;
+  private keyPackageRoundInFlight: Promise<DatedKeyPackage> | null = null;
 
   /**
-   * How many key package rounds are running RIGHT NOW. A count, not the field above: rounds overlap
-   * (boot, `republishKeyMaterial`, a join starting one) and the older one settling must not make
-   * the newer one invisible.
+   * How many key package rounds are running RIGHT NOW. A count, not the field above: rounds still
+   * overlap in two cases - a `fresh` round queued behind the one in flight, and a round started after
+   * an older one was ABANDONED at its deadline (whose work may still be running) - and the older one
+   * settling must not make the newer one invisible.
    */
   private keyPackageRoundsActive = 0;
 
@@ -3822,8 +3827,33 @@ export abstract class BaseMlsService implements IMlsService {
    * owner's revocation goes to the one revocation consequence there is - the `onDeviceRevoked`
    * handler, which confirms with the server and runs `wipeRevokedDevice` - and the round fails.
    * Nothing here mints an id.
+   *
+   * ONE ROUND AT A TIME: A CALLER JOINS THE ROUND IN FLIGHT ({@link keyPackageRoundInFlight}).
+   * Measured on production 2026-11-07, `1.6.6`: a web device re-enrolling at sign-in sent two
+   * `register-device` requests in the same millisecond, and the server answered one of them 500.
+   * Two rounds had started side by side - two callers each finding no round to wait on (the login's
+   * connection sync and the reconnect's, or two external joins each reading "absent" and "no round
+   * running") - both minted, both awaited the ONE coalesced checkpoint (`flushEncrypted`), and both
+   * resumed on the same tick to publish. The overlap was the defect, so it is deleted: the second
+   * caller is handed the first one's promise, and one round publishes for both. No timer is
+   * involved; the field is cleared when the round settles.
+   *
+   * `fresh` is for a caller whose round must START AFTER something it already did -
+   * {@link republishKeyMaterial}, whose purge a round that counted the pool before it would not
+   * see. That round is chained AFTER the one in flight (it waits for it to settle, never runs beside
+   * it), and is the round later callers join.
    */
-  async generateKeyPackage(deviceKeyB64: string): Promise<DatedKeyPackage> {
+  async generateKeyPackage(
+    deviceKeyB64: string,
+    opts?: { fresh?: boolean }
+  ): Promise<DatedKeyPackage> {
+    const inFlight = this.keyPackageRoundInFlight;
+    if (inFlight && !opts?.fresh) {
+      console.log('[MLS] key package round already in flight - joining it, not starting a second');
+      return inFlight;
+    }
+    // A FRESH ROUND FOLLOWS THE ONE IN FLIGHT: it starts once that one settles, whatever it answered.
+    const predecessor = inFlight;
     // NAMED FOR ITS SPAN, so an external join issued while it runs can wait for the publication it
     // depends on ({@link externalJoin}). The identity check keeps a later round from clearing its
     // successor, and `finally` means a throw leaves nothing for a join to wait on.
@@ -3836,6 +3866,14 @@ export abstract class BaseMlsService implements IMlsService {
     // round is suspended at an `await`, a write control-flow analysis (CodeQL 2552) cannot see.
     const roundState = { stale: false };
     const round = (async (): Promise<DatedKeyPackage> => {
+      if (predecessor) {
+        console.log('[MLS] fresh key package round waits for the round in flight to settle');
+        // Its outcome belongs to its own callers; this round only needs it to be over.
+        await predecessor.then(
+          () => undefined,
+          () => undefined
+        );
+      }
       try {
         const published = await this.generateKeyPackageImpl(deviceKeyB64);
         // A published round proves this page's identity is accepted: any refused-rotation run ended.
@@ -4389,7 +4427,9 @@ export abstract class BaseMlsService implements IMlsService {
     this.lastKeyMaterialRepublish = now;
     const purged = await this.delivery.deleteAllOneTimePrekeys();
     await this.forgetPurgedPrekeys(purged);
-    await this.generateKeyPackage(deviceKeyB64);
+    // FRESH: a round already in flight may have counted the pool before the purge above, so joining
+    // it could leave the pool empty. This round follows it instead, and counts after the purge.
+    await this.generateKeyPackage(deviceKeyB64, { fresh: true });
   }
 
   /**
