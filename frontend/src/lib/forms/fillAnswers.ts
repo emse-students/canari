@@ -131,11 +131,26 @@ export function firstMissingAnswer(
       return { itemId, kind: 'answer', label: item.label };
     }
   }
-  const grids = items.filter(isProductGrid);
-  if (grids.length > 0 && !grids.some((item) => hasOrderedUnits(selections[item.id]))) {
-    return { itemId: null, kind: 'order' };
-  }
+  if (isOrderEmpty(items, selections)) return { itemId: null, kind: 'order' };
   return null;
+}
+
+/**
+ * Whether `items` (the VISIBLE questions) hold priced grids and not one unit is ordered across them
+ * - the ORDER rule, the server's `PRODUCT_GRID_EMPTY`. False on a form showing no grid. One
+ * predicate for the send's check, the end-of-form gate and the page's "order at least one article".
+ */
+export function isOrderEmpty(items: FormItem[], selections: Selections): boolean {
+  const grids = items.filter(isProductGrid);
+  return grids.length > 0 && !grids.some((item) => hasOrderedUnits(selections[item.id]));
+}
+
+/**
+ * Whether every REQUIRED visible question is answered and the order, if any, holds a unit - the
+ * same rule `firstMissingAnswer` applies, as a yes/no: a grid is never required on its own.
+ */
+export function allRequiredAnswered(items: FormItem[], selections: Selections): boolean {
+  return firstMissingAnswer(items, selections) === null;
 }
 
 /** The sentence for a missing answer, in the reader's language. */

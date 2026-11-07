@@ -582,6 +582,13 @@ describe('FormsService - product grid: the order is the form, across its grids',
     ).toBe('PRODUCT_GRID_CELL_CLOSED');
   });
 
+  it('a visible grid demands an order even when the form also has a base price', async () => {
+    const { service, saved } = makeService({ form: twoGrids({ basePrice: 500 }) });
+    expect(await refusalCode(submit(service, {}))).toBe('PRODUCT_GRID_EMPTY');
+    expect(saved).toHaveLength(0);
+    expect(post).not.toHaveBeenCalled();
+  });
+
   it('a hidden grid neither counts toward the order nor is demanded', async () => {
     const hiddenJacket = jacketItem({ showIf: { promo: { values: [2020] } } });
     const form = baseForm({ items: [gridItem(), hiddenJacket] });

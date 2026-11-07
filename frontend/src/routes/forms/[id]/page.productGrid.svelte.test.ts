@@ -170,9 +170,17 @@ describe('a form of priced grids', () => {
       bar().querySelector<HTMLButtonElement>('button:not([data-order-toggle])')!.click();
     send();
     await settle();
-    expect(document.body.textContent).toContain(m.form_view_error_order_empty());
-    expect(document.querySelector('[role="alert"]')).toBeNull();
+    // Announced, brought into view past the sticky bar, and on no grid card.
+    const alert = document.getElementById('form-order-missing')!;
+    expect(alert.getAttribute('role')).toBe('alert');
+    expect(alert.textContent).toContain(m.form_view_error_order_empty());
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+    expect(document.getElementById('q-hoodie')!.querySelector('[role="alert"]')).toBeNull();
     expect(submitForm).not.toHaveBeenCalled();
+
+    // Gone the moment the order holds a unit, from EITHER grid.
+    await add('Veste XL');
+    expect(document.getElementById('form-order-missing')).toBeNull();
   });
 
   it('sends an order from the second grid alone: the untouched first grid is no fault', async () => {

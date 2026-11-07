@@ -3,7 +3,7 @@
   import { Log } from '$lib/utils/Log';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { Ban, Banknote, Check, CreditCard, RotateCcw } from '@lucide/svelte';
   import { currentUserId } from '$lib/stores/user';
   import {
@@ -16,6 +16,7 @@
     firstMissingAnswer,
     formatAmount,
     initialSelections,
+    isOrderEmpty,
     isItemAnswered,
     missingAnswerMessage,
     visibleAnswers,
@@ -126,9 +127,10 @@
     const missing = firstMissingAnswer(visibleItems, selections);
     missingAnswer = missing;
     if (missing?.itemId === null) {
-      // An empty ORDER is the form's, no card's: said beside the send button.
+      // An empty ORDER is the form's, no card's: said once, announced, and brought into view.
       Log.d('PublicForm', 'submit held: the order across the grids is empty');
-      error = missingAnswerMessage(missing);
+      error = '';
+      await revealOrderMissing();
       return;
     }
     if (missing) {
@@ -174,6 +176,22 @@
     } finally {
       submitting = false;
     }
+  }
+
+  /**
+   * The empty-order sentence, shown after a send refused for it and only while the order is still
+   * empty: it goes the moment a unit is added. The form's, no card's (`MissingAnswer` itemId null).
+   */
+  const orderMissing = $derived(
+    missingAnswer?.itemId === null && isOrderEmpty(visibleItems, selections)
+  );
+
+  /** Says the empty order where it is seen: the sticky bar hides the end of the page. */
+  async function revealOrderMissing() {
+    await tick();
+    document
+      .getElementById('form-order-missing')
+      ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
 
   /** What a question's card says after a refused send: why, while it is still unanswered. */
@@ -344,6 +362,16 @@
         </label>
       </div>
 
+      <!-- The empty order: the form's, announced, gone once a unit is added. -->
+      {#if orderMissing}
+        <p
+          id="form-order-missing"
+          role="alert"
+          class="text-red-err mt-4 text-center text-sm font-medium"
+        >
+          {m.form_view_error_order_empty()}
+        </p>
+      {/if}
       {#if error}
         <p class="text-red-err mt-4 text-center text-sm font-medium">{error}</p>
       {/if}

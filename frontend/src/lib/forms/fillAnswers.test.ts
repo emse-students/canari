@@ -1,6 +1,7 @@
 import { m } from '$lib/paraglide/messages';
 import type { FormItem } from './api';
 import {
+  allRequiredAnswered,
   firstMissingAnswer,
   initialSelections,
   isItemAnswered,
@@ -114,6 +115,13 @@ describe('isItemAnswered and firstMissingAnswer agree', () => {
     const veste1 = { ...named, veste: { 'r:c': 1 } };
     expect(firstMissingAnswer(items, veste1)).toBeNull();
     expect(visibleAnswers(items, veste1)).toEqual({ nom: 'Ada', veste: { 'r:c': 1 } });
+  });
+
+  it('gates the end of the form on the ORDER, never on each grid', () => {
+    const sweat = q({ id: 'sweat', type: 'product_grid', required: true });
+    const veste = q({ id: 'veste', type: 'product_grid', required: true });
+    expect(allRequiredAnswered([sweat, veste], { sweat: {}, veste: {} })).toBe(false);
+    expect(allRequiredAnswered([sweat, veste], { sweat: {}, veste: { 'r:c': 1 } })).toBe(true);
   });
 
   it('asks no order of a form whose grids are all hidden from this person', () => {

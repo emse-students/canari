@@ -1386,6 +1386,12 @@ VISIBLE grids hold no unit between them (`PRODUCT_GRID_EMPTY`, judged once per s
 null). It replaced a per-grid rule written when a form was assumed to hold one grid, under which a
 buyer had to take at least one of EVERY article. A grid hidden by an audience or an answer condition
 neither counts toward the order nor is demanded; a form whose every grid is hidden asks no order.
+A VISIBLE grid always demands the order, even on a form that also charges a base price: a form
+selling a registration WITHOUT an article hides its grids behind a condition, or has none.
+
+**The fill page** says the empty order once (`role="alert"`, `#form-order-missing`, scrolled into
+view past the sticky bar), derived from `isOrderEmpty`, so it goes the moment a unit is added; the
+end-of-form gate (`allRequiredAnswered`) reads the same rule through `firstMissingAnswer`.
 
 **`required` stays STORED `true`, and means nothing to a page that draws grids.** The save still
 refuses `_NOT_REQUIRED`, and the editor sends `required: true` whatever the card holds
