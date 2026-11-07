@@ -161,10 +161,13 @@ describe('submitterName', () => {
 
   it('files a guest under the name they gave, else the e-mail, before the reference', () => {
     const guest = { firstName: null, lastName: null, userId: null, reference: '1A2B-3C4D' };
+    // The typed name never stands alone: the guest word and the reference stay beside it.
     expect(submitterName({ ...guest, guestFirstName: 'Marie', guestLastName: 'Curie' })).toBe(
-      'Marie Curie'
+      `Marie Curie (${m.form_submitter_guest_reference({ reference: '1A2B-3C4D' })})`
     );
-    expect(submitterName({ ...guest, guestEmail: 'marie@x.fr' })).toBe('marie@x.fr');
+    expect(submitterName({ ...guest, reference: null, guestEmail: 'marie@x.fr' })).toBe(
+      `marie@x.fr (${m.form_submitter_guest()})`
+    );
   });
 
   it('prefers the stored name', () => {

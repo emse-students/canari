@@ -4,6 +4,7 @@ import {
   FORM_GUEST_IDENTITY_NOT_ASKED,
   formRefusal,
 } from './answer-bounds';
+import { guestReference } from './guest-receipt';
 
 /**
  * A GUEST'S NAME AND E-MAIL, ONLY WHEN THE FORM ASKS (owner, 2026-11-06).
@@ -35,6 +36,8 @@ export interface GuestIdentityInput {
   guestLastName?: string;
   guestFirstName?: string;
   guestEmail?: string;
+  /** The payment-step address: read only to refuse a SECOND address when the e-mail is asked. */
+  payerEmail?: string;
 }
 
 /** What is stored on the answer: the value typed, trimmed, for an asked field; null otherwise. */
@@ -113,6 +116,17 @@ export function guestIdentityFor(
     }
     return NO_GUEST_IDENTITY;
   }
+  // ONE ADDRESS, TYPED ONCE: when the form asks the e-mail, it IS the payer address, so a second
+  // one beside it is refused rather than silently dropped (the page never sends both).
+  if (asked.includes('email') && typeof input.payerEmail === 'string' && input.payerEmail !== '') {
+    logger.warn(
+      `[FORMS] guest answer refused: a payer address beside the asked e-mail form=${formId.slice(0, 8)}`
+    );
+    throw formRefusal(
+      FORM_GUEST_IDENTITY_NOT_ASKED,
+      'This form takes the payer address from the guest e-mail it asks: send no second one.'
+    );
+  }
   const identity: GuestIdentity = { ...NO_GUEST_IDENTITY };
   for (const field of GUEST_IDENTITY_FIELDS) {
     const property = PROPERTY[field];
@@ -141,13 +155,29 @@ export function guestIdentityFor(
 
 /**
  * The address Lydia's request goes to for a guest: the e-mail the form asked, when it asked one (one
- * address, typed once), else the one typed at the payment step, never stored.
+ * address, typed once - `guestIdentityFor` has refused a second one beside it), else the one typed
+ * at the payment step, never stored.
  */
 export function guestPayerEmail(
   identity: GuestIdentity,
   payerEmail: string | undefined
 ): string | undefined {
   return identity.guestEmail ?? payerEmail;
+}
+
+/**
+ * How a guest's answer is labelled wherever it sits beside members' (an export cell, a buyer): the
+ * guest word and the reference ALWAYS, so a typed name can never pass for an account's name, and
+ * the name the guest gave in front of them when the form asked - "Marie Curie (Invité 1A2B-3C4D)".
+ * `guestWord` is the client's ("Invité"): this service owns no word.
+ */
+export function guestLabel(
+  row: { id: string; guestFirstName?: string | null; guestLastName?: string | null },
+  guestWord: string
+): string {
+  const tag = `${guestWord} ${guestReference(row.id)}`;
+  const name = guestDisplayName(row);
+  return name ? `${name} (${tag})` : tag;
 }
 
 /**

@@ -498,6 +498,8 @@ export interface ExportLabels {
   fileDeleted: string;
   /** Header of a guest's e-mail column, written when the form asks guests for it. */
   email: string;
+  /** Header of the guest marker column (each guest row's reference), written when a row has no account. */
+  guest: string;
   /**
    * The words of a priced grid's "Articles" and "Totaux" sheets (`product-grid-export.ts`). Sent
    * with every export: the server refuses a grid form's export without them
@@ -538,6 +540,7 @@ export function exportLabels(): ExportLabels {
     file: m.form_answer_file(),
     fileDeleted: m.form_answer_file_deleted(),
     email: m.form_guest_identity_email(),
+    guest: m.form_submitter_guest(),
     productGrid: {
       articlesSheet: m.form_export_grid_articles_sheet(),
       totalsSheet: m.form_export_grid_totals_sheet(),

@@ -3167,6 +3167,14 @@ export class FormsService {
       headers.push({ header: labels.firstName, key: 'firstName', width: 20 });
       headers.push({ header: labels.lastName, key: 'lastName', width: 20 });
     }
+    // A GUEST MARKER beside the name columns, whenever a row has no account: its cell holds the
+    // reference the guest was given, so a name a guest TYPED (written in the name columns below)
+    // never reads as an account's name. Its header is the client's word ("Invité").
+    const guestColumn = !form.anonymous && submissions.some((s) => !s.userId);
+    if (guestColumn) {
+      if (!labels.guest) throw new BadRequestException('export label "guest" is required');
+      headers.push({ header: labels.guest, key: 'guest', width: 16 });
+    }
     // A guest's e-mail, when the form asks for it now or an answer carries one from when it did
     // (`guest-identity.ts`): a column of its own. The word is the client's, like every other here.
     const emailColumn =
@@ -3212,6 +3220,7 @@ export class FormsService {
         row.firstName = (sub.userId ? names.firstName : sub.guestFirstName) ?? '';
         row.lastName = (sub.userId ? names.lastName : sub.guestLastName) ?? '';
       }
+      if (guestColumn) row.guest = sub.userId ? '' : guestReference(sub.id);
       if (emailColumn) row.guestEmail = sub.guestEmail ?? '';
       if (form.requiresPayment) {
         row.total = (sub.totalPaid || 0) / 100;

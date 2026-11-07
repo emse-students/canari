@@ -1,8 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import type * as ExcelJS from 'exceljs';
 import type { ExportLabels, ProductGridExportLabels } from './export-labels';
-import { guestDisplayName } from './guest-identity';
-import { guestReference } from './guest-receipt';
+import { guestLabel } from './guest-identity';
 import { productGridItems } from './product-grid';
 import {
   PRODUCT_GRID_AWAITING_CASH_STATUSES,
@@ -121,11 +120,11 @@ export function addProductGridSheets(
   for (const sub of submissions) {
     if (!sub.lines?.length) continue;
     const person = sub.userId ? names.get(sub.userId) : undefined;
-    // A guest is named by what they typed when the form asked (`guest-identity.ts`), else by the
-    // reference they were given.
+    // A guest keeps the guest word and the reference, with the name they typed in front when the
+    // form asked (`guestLabel`): a typed name never reads as an account's.
     const buyer = sub.userId
       ? [person?.firstName, person?.lastName].filter(Boolean).join(' ')
-      : (guestDisplayName(sub) ?? `${words.guest} ${guestReference(sub.id)}`);
+      : guestLabel(sub, words.guest);
     for (const line of sub.lines) {
       articles.addRow({
         date: sub.createdAt instanceof Date ? sub.createdAt : new Date(sub.createdAt),

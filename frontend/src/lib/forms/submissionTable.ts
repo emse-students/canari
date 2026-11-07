@@ -159,8 +159,16 @@ export function submitterName(sub: {
   // with no account HERE is a guest's, from a public form's link. Named by what the guest typed when
   // the form asked (owner, 2026-11-06: the name, else the e-mail); otherwise said, rather than left
   // blank - and a guest who PAID is filed under the reference they were given, which they quote.
+  // A typed name is never shown bare: it keeps the guest word and the reference beside it, so it
+  // cannot pass for an account's name (review of #3096).
   const given = guestShownName(sub);
-  if (given) return given;
+  if (given) {
+    return `${given} (${
+      sub.reference
+        ? m.form_submitter_guest_reference({ reference: sub.reference })
+        : m.form_submitter_guest()
+    })`;
+  }
   return sub.reference
     ? m.form_submitter_guest_reference({ reference: sub.reference })
     : m.form_submitter_guest();

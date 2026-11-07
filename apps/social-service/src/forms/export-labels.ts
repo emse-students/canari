@@ -42,6 +42,13 @@ export interface ExportLabels {
    */
   email?: string;
   /**
+   * Header of the guest marker column: written on a non-anonymous form holding at least one answer
+   * with no account, each guest row carrying its reference (`guestReference`), so a name a guest
+   * typed is never read as an account's. Optional HERE, required by `exportSubmissions` when the
+   * column is written.
+   */
+  guest?: string;
+  /**
    * The words of the priced grid's two sheets (`product-grid-export.ts`). Optional HERE for the same
    * reason as `file`: only a form with a `product_grid` question needs them, and its export is refused
    * `EXPORT_LABELS_PRODUCT_GRID_MISSING` without them.
@@ -130,7 +137,7 @@ export function parseExportLabels(raw: string | undefined): ExportLabels {
     if (typeof label !== 'string')
       throw new BadRequestException(`export label for status "${status}" is not a string`);
 
-  for (const key of ['file', 'fileDeleted', 'email'] as const)
+  for (const key of ['file', 'fileDeleted', 'email', 'guest'] as const)
     if (labels[key] !== undefined && (typeof labels[key] !== 'string' || labels[key] === ''))
       throw new BadRequestException(`export label "${key}" must be a non-empty string`);
 

@@ -152,8 +152,25 @@ describe('guest identity on a public form', () => {
 
     it('sends Lydia the asked e-mail, else the one typed at the payment step', () => {
       const asked = { ...NO_GUEST_IDENTITY, guestEmail: 'marie@x.fr' };
-      expect(guestPayerEmail(asked, 'other@x.fr')).toBe('marie@x.fr');
+      expect(guestPayerEmail(asked, undefined)).toBe('marie@x.fr');
       expect(guestPayerEmail(NO_GUEST_IDENTITY, 'other@x.fr')).toBe('other@x.fr');
+    });
+
+    // One address, typed once: a second one beside the asked e-mail is refused, never dropped.
+    // Control: drop the check in `guestIdentityFor` and the second address is silently ignored.
+    it('refuses a payment-step address beside the asked e-mail', () => {
+      expect(() =>
+        guestIdentityFor(
+          ['email'],
+          { guestEmail: 'marie@x.fr', payerEmail: 'other@x.fr' },
+          'guest',
+          'f1'
+        )
+      ).toThrow(BadRequestException);
+      // Without the asked e-mail, the payment-step address is the only one, and is taken.
+      expect(guestIdentityFor([], { payerEmail: 'other@x.fr' }, 'guest', 'f1')).toEqual(
+        NO_GUEST_IDENTITY
+      );
     });
 
     it('names a guest by what they gave, or not at all', () => {
@@ -249,6 +266,26 @@ describe('guest identity on a public form', () => {
       ).rejects.toThrow(/anonymous form cannot ask a guest/);
     });
 
+    // The UPDATE path (review of #3096): an edit is judged on the guest fields it WILL have - the
+    // sent ones, else the stored ones - against the anonymity the form keeps.
+    it('refuses an edit of an anonymous form that asks guests, sent or kept', async () => {
+      const anonymous = baseForm({ anonymous: true, isPublic: true, guestFields: null });
+      const sent = makeService(anonymous);
+      jest.spyOn(sent.service, 'assertFormManager').mockResolvedValue(anonymous as any);
+      await expect(
+        sent.service.update('f1', { guestFields: ['email'] } as any, 'u-owner', true)
+      ).rejects.toThrow(/anonymous form cannot ask a guest/);
+
+      // A stored list the edit leaves out is still judged: the form would keep asking.
+      const kept = baseForm({ anonymous: true, isPublic: true, guestFields: ['lastName'] });
+      const keptService = makeService(kept);
+      jest.spyOn(keptService.service, 'assertFormManager').mockResolvedValue(kept as any);
+      await expect(
+        keptService.service.update('f1', { anonymous: true, title: 'x' } as any, 'u-owner', true)
+      ).rejects.toThrow(/anonymous form cannot ask a guest/);
+      expect(keptService.formRepo.save).not.toHaveBeenCalled();
+    });
+
     it('keeps the stored list when an edit leaves it out, and clears it when sent empty', async () => {
       const stored = baseForm({ guestFields: ['email'] });
       const { service, formRepo } = makeService(stored);
@@ -333,6 +370,7 @@ describe('guest identity on a public form', () => {
       status: 'Statut',
       statuses: { free: 'Gratuit' },
       email: 'E-mail',
+      guest: 'Invite',
     };
 
     function exportService(form: Record<string, unknown>, submissions: Record<string, unknown>[]) {
@@ -360,7 +398,7 @@ describe('guest identity on a public form', () => {
     }
 
     const row = (over: Record<string, unknown>) => ({
-      id: 's1',
+      id: '1a2b3c4d-0000-4000-8000-000000000001',
       userId: null,
       answers: {},
       totalPaid: 0,
@@ -384,14 +422,35 @@ describe('guest identity on a public form', () => {
         row({ id: 's2', userId: 'u1' }),
       ]);
       const [headers, guest, member] = await sheet(service);
-      expect(headers).toEqual(['Date', 'Prenom', 'Nom', 'E-mail', 'Menu']);
-      expect(guest.slice(1, 4)).toEqual(['Marie', 'Curie', 'marie@x.fr']);
-      expect(member.slice(1, 3)).toEqual(['Ada', 'L']);
+      expect(headers).toEqual(['Date', 'Prenom', 'Nom', 'Invite', 'E-mail', 'Menu']);
+      expect(guest.slice(1, 5)).toEqual(['Marie', 'Curie', '1A2B-3C4D', 'marie@x.fr']);
+      // A member's row has no guest marker: the typed name and an account's name are told apart.
+      expect(member.slice(1, 4)).toEqual(['Ada', 'L', '']);
+    });
+
+    // P2-1 of the review of #3096: a name a guest TYPED must never read as an account's name.
+    // Control: drop the guest column and the guest row reads exactly like a member's.
+    it('marks every guest row with its reference, even with no name asked', async () => {
+      const service = exportService(baseForm(), [row({}), row({ id: 's2', userId: 'u1' })]);
+      const [headers, guest] = await sheet(service);
+      expect(headers).toEqual(['Date', 'Prenom', 'Nom', 'Invite', 'Menu']);
+      expect(guest[3]).toBe('1A2B-3C4D');
+    });
+
+    it('draws no guest column when every answer has an account', async () => {
+      const service = exportService(baseForm(), [row({ userId: 'u1' })]);
+      expect((await sheet(service))[0]).toEqual(['Date', 'Prenom', 'Nom', 'Menu']);
+    });
+
+    it('refuses an export that would write the guest column without its word', async () => {
+      const { guest: _guest, ...without } = LABELS;
+      const service = exportService(baseForm(), [row({})]);
+      await expect(service.exportSubmissions('f1', without)).rejects.toThrow(/"guest"/);
     });
 
     it('draws no e-mail column on a form that never asked one', async () => {
-      const service = exportService(baseForm(), [row({})]);
-      expect((await sheet(service))[0]).toEqual(['Date', 'Prenom', 'Nom', 'Menu']);
+      const service = exportService(baseForm(), [row({ guestLastName: 'Curie' })]);
+      expect((await sheet(service))[0]).not.toContain('E-mail');
     });
 
     it('keeps the column for answers given while the form asked, after it stopped', async () => {
@@ -405,7 +464,7 @@ describe('guest identity on a public form', () => {
       await expect(service.exportSubmissions('f1', without)).rejects.toThrow(/"email"/);
     });
 
-    it('names a guest buyer on the grid sheet by what they gave, else by the reference', () => {
+    it('names a guest buyer on the grid sheet by name AND reference, else by the reference', () => {
       const workbook = new ExcelJS.Workbook();
       const line = {
         itemId: 'g',
@@ -452,7 +511,7 @@ describe('guest identity on a public form', () => {
         ] as any,
         [
           {
-            id: 'aaaaaaaa-1',
+            id: 'aaaabbbb-0000-4000-8000-000000000001',
             userId: null,
             paymentStatus: 'paid',
             createdAt: new Date(),
@@ -461,7 +520,7 @@ describe('guest identity on a public form', () => {
             guestLastName: 'Curie',
           },
           {
-            id: 'bbbbbbbb-2',
+            id: 'ccccdddd-0000-4000-8000-000000000002',
             userId: null,
             paymentStatus: 'paid',
             createdAt: new Date(),
@@ -476,8 +535,8 @@ describe('guest identity on a public form', () => {
       workbook.getWorksheet('articlesSheet')!.eachRow((r, n) => {
         if (n > 1) buyers.push((r.values as unknown[])[2]);
       });
-      expect(buyers[0]).toBe('Marie Curie');
-      expect(String(buyers[1])).toMatch(/^Invite /);
+      expect(buyers[0]).toBe('Marie Curie (Invite AAAA-BBBB)');
+      expect(buyers[1]).toBe('Invite CCCC-DDDD');
     });
   });
 });

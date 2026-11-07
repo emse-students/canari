@@ -680,17 +680,24 @@ formulaire payant : retrouver qui a commandé").
 | Lengths: a name 100 characters, the e-mail 254 and shaped like one | `GuestSubmitFormDto`, `libs/contracts/form-answers.json` (`maxGuestNameLength`, `maxGuestEmailLength`) |
 | A member is never asked, and a member's answer carrying any of them is REFUSED, not stripped (the member DTO declares them so the global `whitelist` cannot drop them silently) | `SubmitFormDto`, `guestIdentityFor(..., 'member')` |
 | An anonymous form cannot ask them (refused at save) | `assertAnonymousConfigValid` |
-| **The e-mail is never asked twice**: when asked, it is the address Lydia's request goes to (`guestPayerEmail`) and the payment step asks nothing; when not asked, the payer address is asked at the payment step and never stored, as before (PP2) | server `guestPayerEmail`; page `payerPromptNeeded`, the "Utilisé aussi pour le reçu Lydia" note under the field while the answer pays online |
+| **The e-mail is never asked twice**: when asked, it is the address Lydia's request goes to (`guestPayerEmail`) and the payment step asks nothing - a second `payerEmail` beside it is REFUSED (400 `FORM_GUEST_IDENTITY_NOT_ASKED`), never dropped; when not asked, the payer address is asked at the payment step and never stored, as before (PP2) | server `guestPayerEmail`; page `payerPromptNeeded`, the "Utilisé aussi pour le reçu Lydia" note under the field while the answer pays online |
 | Stored on the answer: `submissions.guestLastName`, `guestFirstName` (varchar 100), `guestEmail` (varchar 254), all nullable; null on every member's answer | migration 138 |
 | The fill page draws a "Vos coordonnées" block after the questions, only when the form asks one; a held send scrolls to it; "answer again" empties it (a shared device at an event) | `GuestIdentityFields.svelte`, `routes/f/[id]/+page.svelte` |
-| Responses: a guest's row is named by the name it gave, else the e-mail, else the reference; the "Invité" badge stays | `submitterName` / `guestShownName` (`submissionTable.ts`), `FormSubmissionsTable.svelte`; the manager allowlist (`submission.projection.ts`) carries the three fields |
-| Export: a guest's names fill the first/last name columns; an "E-mail" column is written when the form asks it, or an answer carries one from when it did (the word comes from the client, `labels.email`); the grid sheet's buyer is the guest's name, else "Invité" and the reference | `exportSubmissions`, `addProductGridSheets` |
+| Responses: a guest's row shows the name it gave (else the e-mail) BESIDE its reference and the "Invité" badge - never the name alone, which would pass for an account's | `submitterName` / `guestShownName` (`submissionTable.ts`), `FormSubmissionsTable.svelte`; the manager allowlist (`submission.projection.ts`) carries the three fields |
+| Export: a guest's names fill the first/last name columns, and a guest marker column (`labels.guest`, "Invité") holds each guest row's reference, written whenever a row has no account; an "E-mail" column is written when the form asks it, or an answer carries one from when it did (`labels.email`); the grid sheet's buyer is "Marie Curie (Invité 1A2B-3C4D)", else "Invité 1A2B-3C4D" (`guestLabel`) | `exportSubmissions`, `addProductGridSheets` |
 
 **Erasure and retention.** `submissions.guestEmail` is `kept` in `ACCOUNT_ERASURE_COVERAGE`: it is
 written only on rows with no account, so no account's erasure can reach it (the names are not
 account-shaped columns). They live as long as the answer - the submissions rule, which is still
-**none (OPEN)** in register row C8; a guest's own request is answered by hand
-([data-subject-requests](../../compliance/data-subject-requests.md)). Register C8 and the privacy
+**none (OPEN)** in register row C8; a guest's own request is answered by hand, the row
+anonymised rather than deleted ([data-subject-requests](../../compliance/data-subject-requests.md#a-guest-with-no-account-a-public-forms-answer-register-c8)).
+
+**Older clients (P3-4 of the review of #3096).** The export's word list gained `email` and `guest`
+(the guest marker column, each guest row's reference beside the name it typed, so a typed name
+never reads as an account's). As with `file` before it, the server refuses an export that would
+write one of those columns without its word - so a store build older than `1.6.6` gets a 400 when
+it exports a form holding a guest's answer (the `guest` column) or asking the e-mail. Updating the
+app is the fix; no default word is substituted ([`export-labels.ts`](../../../../apps/social-service/src/forms/export-labels.ts)). Register C8 and the privacy
 policy say so. Tests: `forms.service.guest-identity.spec.ts`, `guest-identity.integration.spec.ts`
 (migration 138 applied twice, the stored columns, the Lydia address), `guestIdentity.test.ts`,
 `GuestIdentitySettings.svelte.test.ts`, `routes/f/[id]/page.guestIdentity.svelte.test.ts`,
