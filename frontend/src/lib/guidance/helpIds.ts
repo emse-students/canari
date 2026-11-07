@@ -21,6 +21,8 @@ export const HELP_IDS = [
   'hint-asso-manage-hub',
   'hint-booking-spaces',
   'hint-booking-week',
+  'prompt-profile-photo',
+  'prompt-profile-photo-reminder',
 ] as const;
 
 /**

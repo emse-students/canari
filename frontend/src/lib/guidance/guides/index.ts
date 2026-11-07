@@ -5,6 +5,7 @@ import { bookingSpacesHint } from './bookingSpacesHint';
 import { bookingWeekHint } from './bookingWeekHint';
 import { chatsHint } from './chatsHint';
 import { postAsHint } from './postAsHint';
+import { profilePhotoPrompt, profilePhotoReminder } from './profilePhotoPrompt';
 import { createEventHint } from './createEventHint';
 import { createFormHint } from './createFormHint';
 import { createPostHint } from './createPostHint';
@@ -20,6 +21,10 @@ import { welcomeTour } from './welcomeTour';
  */
 export const GUIDES: readonly GuideDefinition[] = [
   welcomeTour,
+  // Right after the tour: an existing account is offered it at its first visit after the update,
+  // before the contextual hints (one help per visit, so those wait for the next).
+  profilePhotoPrompt,
+  profilePhotoReminder,
   createPostHint,
   feedTabsHint,
   reelsHint,

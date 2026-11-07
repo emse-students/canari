@@ -30,6 +30,7 @@
   import { resolveGuideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import { observeElementMoves } from '$lib/guidance/guideAnchorFollow';
   import { seenHelps } from '$lib/guidance/seenHelps.svelte';
+  import { ownProfilePhoto } from '$lib/guidance/ownProfilePhoto.svelte';
   import { quietBlocker } from '$lib/guidance/guideQuiet';
   import { placeBubble, ringRadius, type BubblePosition } from '$lib/guidance/guidePlacement';
   import type { GuideRect } from '$lib/guidance/guideAnchors.svelte';
@@ -113,7 +114,10 @@
   // The account's seen set: the local copy at once, the server's as soon as there is an account.
   $effect(() => {
     const userId = currentUserId();
-    if (userId) void seenHelps.load(userId);
+    if (userId) {
+      void seenHelps.load(userId);
+      void ownProfilePhoto.load(userId);
+    }
   });
 
   // THE SCHEDULER: re-asked on every change of the quiet state, the route, the seen set and the
@@ -481,14 +485,25 @@
             {m.guide_previous()}
           </button>
         {/if}
-        <button
-          type="button"
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-lg px-4 py-2 text-sm font-bold transition-colors"
-          onclick={() => guideEngine.next()}
-          data-guide-next
-        >
-          {last ? m.guide_done() : m.guide_next()}
-        </button>
+        {#if view.step.action}
+          <button
+            type="button"
+            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-lg px-4 py-2 text-sm font-bold transition-colors"
+            onclick={() => guideEngine.act()}
+            data-guide-action
+          >
+            {view.step.action.label()}
+          </button>
+        {:else}
+          <button
+            type="button"
+            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-lg px-4 py-2 text-sm font-bold transition-colors"
+            onclick={() => guideEngine.next()}
+            data-guide-next
+          >
+            {last ? m.guide_done() : m.guide_next()}
+          </button>
+        {/if}
       </div>
     </div>
   </div>

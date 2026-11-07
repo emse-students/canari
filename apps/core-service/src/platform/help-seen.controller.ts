@@ -35,12 +35,17 @@ export class HelpSeenController {
 
   constructor(private readonly helps: HelpSeenService) {}
 
-  /** The seen set, always as an envelope so "none" is a statement and not an empty body. */
+  /**
+   * The seen set, always as an envelope so "none" is a statement and not an empty body, with the age
+   * in seconds of each recorded help (server clock, see `HelpSeenService.seenWithAges`).
+   */
   @Get()
   @UseGuards(NginxAuthGuard, AccountThrottlerGuard)
   @Throttle({ default: { limit: HELP_SEEN_LIMIT_PER_MINUTE, ttl: 60_000 } })
-  async list(@Headers('x-user-id') xUserId: string): Promise<{ seen: HelpId[] }> {
-    return { seen: await this.helps.seenBy(xUserId.trim().toLowerCase()) };
+  async list(
+    @Headers('x-user-id') xUserId: string
+  ): Promise<{ seen: HelpId[]; ageSeconds: Partial<Record<HelpId, number>> }> {
+    return this.helps.seenWithAges(xUserId.trim().toLowerCase());
   }
 
   /**

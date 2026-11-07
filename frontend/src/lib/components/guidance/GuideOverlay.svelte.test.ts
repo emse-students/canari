@@ -55,10 +55,15 @@ vi.mock('$lib/guidance/seenHelps.svelte', () => ({
   seenHelps: {
     ready: true,
     has: (id: string) => seen.ids.has(id),
+    ageSeconds: () => null,
     markSeen,
     load: async () => {},
   },
   resetSeenHelps: () => {},
+}));
+// The account has a photo here, so the profile-photo prompt never competes with the tour under test.
+vi.mock('$lib/guidance/ownProfilePhoto.svelte', () => ({
+  ownProfilePhoto: { hasPhoto: true, load: async () => {} },
 }));
 
 let cleanup: (() => void)[] = [];
