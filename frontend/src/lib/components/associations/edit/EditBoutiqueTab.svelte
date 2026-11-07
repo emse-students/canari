@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { onMount } from 'svelte';
   import {
     listAssociationProductsForManage,
@@ -295,14 +296,10 @@
         {wordingFor(asso.type).boutiqueSubtitle()}
       </p>
     </div>
-    <button
-      type="button"
-      onclick={() => (showProductForm = !showProductForm)}
-      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors"
-    >
+    <Button onclick={() => (showProductForm = !showProductForm)}>
       <Plus size={16} />
       {m.asso_boutique_new_product_button()}
-    </button>
+    </Button>
   </div>
 
   {#if productsError}
@@ -500,13 +497,9 @@
       </div>
 
       <div class="flex items-center gap-3 pt-2">
-        <button
-          type="submit"
-          disabled={savingProduct || !newProductName.trim()}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
-        >
+        <Button type="submit" disabled={savingProduct || !newProductName.trim()}>
           {savingProduct ? m.asso_boutique_creating() : m.asso_boutique_create_button()}
-        </button>
+        </Button>
         <button
           type="button"
           onclick={resetProductForm}
@@ -588,10 +581,10 @@
                 {/if}
               </div>
               <div class="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="compact"
                   onclick={() => toggleProductSettings(product)}
-                  class="border-cn-border inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-(--cn-surface)"
                 >
                   {m.asso_boutique_limits_button()}
                   <ChevronDown
@@ -600,16 +593,16 @@
                       ? 'rotate-180'
                       : ''}"
                   />
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="compact"
                   onclick={() => handleToggleProduct(product)}
-                  class="border-cn-border rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-(--cn-surface)"
                 >
                   {product.isActive
                     ? m.asso_boutique_deactivate_button()
                     : m.asso_boutique_activate_button()}
-                </button>
+                </Button>
                 <button
                   type="button"
                   onclick={() => handleDeleteProduct(product)}
@@ -757,15 +750,16 @@
                       class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
                     />
                   </div>
-                  <button
+                  <Button
+                    size="compact"
+                    class="w-fit sm:col-span-2"
                     type="submit"
                     disabled={savingProductSettings === product.id || gridProblem !== null}
-                    class="bg-cn-yellow text-cn-ink w-fit rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50 sm:col-span-2"
                   >
                     {savingProductSettings === product.id
                       ? m.asso_boutique_saving_limits_label()
                       : m.asso_boutique_save_limits_button()}
-                  </button>
+                  </Button>
                 </form>
               </div>
             {/if}

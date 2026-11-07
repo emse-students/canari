@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import { m } from '$lib/paraglide/messages';
   import { resolveAssociationRefund, type AssociationRefund } from '$lib/associations/api';
@@ -83,46 +84,29 @@
         {outcome.text}
       </p>
       <div class="flex justify-end">
-        <button
-          type="button"
-          onclick={onClose}
-          class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold"
-        >
+        <Button variant="secondary" onclick={onClose}>
           {m.asso_refund_close()}
-        </button>
+        </Button>
       </div>
     {:else if action === 'record'}
       <div class="flex flex-wrap justify-end gap-2">
-        <button
-          type="button"
-          disabled={busy}
-          onclick={() => declare(true)}
-          data-testid="refund-record"
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
-        >
+        <Button disabled={busy} onclick={() => declare(true)} data-testid="refund-record">
           {m.asso_refund_record_confirm()}
-        </button>
+        </Button>
       </div>
     {:else}
       <div class="flex flex-wrap justify-end gap-2">
-        <button
-          type="button"
+        <Button
+          variant="secondary"
           disabled={busy}
           onclick={() => declare(false)}
           data-testid="refund-check-no"
-          class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"
         >
           {m.asso_refund_check_no()}
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          onclick={() => declare(true)}
-          data-testid="refund-check-yes"
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
-        >
+        </Button>
+        <Button disabled={busy} onclick={() => declare(true)} data-testid="refund-check-yes">
           {m.asso_refund_check_yes()}
-        </button>
+        </Button>
       </div>
     {/if}
   </div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import AddEventToCalendarButton from '$lib/components/calendar/AddEventToCalendarButton.svelte';
   import { Download, Pencil } from '@lucide/svelte';
@@ -215,41 +216,25 @@
         </span>
       {/if}
       {#if mayWithdraw}
-        <button
-          type="button"
-          onclick={withdraw}
-          class="border-cn-border text-text-main hover:border-red-err/40 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors"
-        >
+        <Button variant="secondary" onclick={withdraw}>
           {m.bookings_withdraw_action()}
-        </button>
+        </Button>
       {/if}
       {#if mayCancel && onEdit}
-        <button
-          type="button"
-          onclick={onEdit}
-          class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors"
-        >
+        <Button variant="secondary" onclick={onEdit}>
           <Pencil size={16} aria-hidden="true" />
           {m.bookings_edit_action()}
-        </button>
+        </Button>
       {/if}
       {#if mayCancel}
-        <button
-          type="button"
-          onclick={cancel}
-          class="border-red-err/30 text-red-err hover:bg-red-err/10 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors"
-        >
+        <Button variant="secondary" onclick={cancel}>
           {m.bookings_cancel_action()}
-        </button>
+        </Button>
       {/if}
       {#if unit.state === 'blocked' && unit.blockId && unit.endMs > nowMs}
-        <button
-          type="button"
-          onclick={lift}
-          class="border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors"
-        >
+        <Button variant="secondary" onclick={lift}>
           {m.bookings_block_lift_action()}
-        </button>
+        </Button>
       {/if}
     </div>
   </div>

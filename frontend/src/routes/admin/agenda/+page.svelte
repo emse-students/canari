@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
@@ -202,24 +203,19 @@
             <!-- Per event, from the server: the BDE of THIS event association's space decides it
                  (WP6c step 2), so the queue may hold rows this viewer sees but does not judge. -->
             {#if ev.canValidate}
-              <button
-                type="button"
-                onclick={() => validate(ev)}
-                disabled={actingId === ev.id}
-                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold disabled:opacity-50"
-              >
+              <Button size="compact" onclick={() => validate(ev)} disabled={actingId === ev.id}>
                 <Check size={14} />
                 {m.common_validate_button()}
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="secondary"
+                size="compact"
                 onclick={() => openRejectModal(ev)}
                 disabled={actingId === ev.id}
-                class="border-amber-warn/40 text-amber-warn hover:bg-amber-warn/10 inline-flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50"
               >
                 <X size={14} />
                 {m.admin_agenda_reject_button()}
-              </button>
+              </Button>
             {/if}
             <a
               href="/associations/{encodeURIComponent(ev.associationSlug)}"
@@ -228,15 +224,15 @@
               <ExternalLink size={14} />
               {m.admin_agenda_association_link_label()}
             </a>
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="compact"
               onclick={() => remove(ev)}
               disabled={actingId === ev.id}
-              class="border-red-err/30 text-red-err hover:bg-red-err/10 inline-flex items-center gap-1 rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50"
             >
               <Trash2 size={14} />
               {m.common_delete_button()}
-            </button>
+            </Button>
           </div>
         </li>
       {/each}
@@ -283,26 +279,20 @@
       />
     </div>
     <div class="flex justify-end gap-2">
-      <button
-        type="button"
+      <Button
+        variant="secondary"
         onclick={() => {
           rejectTarget = null;
         }}
-        class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold"
       >
         {m.common_cancel_button()}
-      </button>
-      <button
-        type="button"
-        onclick={confirmReject}
-        disabled={rejecting}
-        class="border-amber-warn/40 text-amber-warn hover:bg-amber-warn/10 inline-flex items-center gap-1.5 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50"
-      >
+      </Button>
+      <Button variant="secondary" onclick={confirmReject} disabled={rejecting}>
         <X size={14} />
         {rejecting
           ? m.admin_agenda_reject_confirm_progress()
           : m.admin_agenda_reject_confirm_button()}
-      </button>
+      </Button>
     </div>
   {/if}
 </ModalOverlay>

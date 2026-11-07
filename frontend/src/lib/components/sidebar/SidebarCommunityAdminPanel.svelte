@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { uploadFailureText } from '$lib/utils/mediaRequestLimits';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import {
@@ -866,15 +867,15 @@
                     triggerClass="bg-cn-surface text-text-main border-cn-border focus-visible:ring-cn-yellow/40 flex items-center justify-between gap-1 rounded-lg border px-3 py-2 text-left text-sm outline-none focus-visible:ring-2"
                     onValueChange={(v) => (inviteRole = asCanonicalRole(v) ?? inviteRole)}
                   />
-                  <button
-                    class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-lg px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-50"
+                  <Button
+                    size="compact"
                     onclick={handleGenerateInvitation}
                     disabled={inviteLoading}
                   >
                     {inviteLoading
                       ? m.common_sending_label()
                       : m.chat_community_generate_invite_button()}
-                  </button>
+                  </Button>
                 </div>
               </div>
             {/if}
@@ -999,34 +1000,31 @@
                     value={shareLink}
                     class="border-cn-border bg-cn-surface text-text-main min-w-0 flex-1 rounded-xl border px-3 py-2 text-sm"
                   />
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="compact"
+                    class="shrink-0"
                     onclick={() => void loadShareLink(true)}
                     disabled={shareLoading}
-                    class="border-cn-border hover:bg-cn-bg shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold disabled:opacity-50"
                   >
                     {m.chat_regenerate_link_button()}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="compact"
+                    class="shrink-0"
                     onclick={() => (shareQrOpen = true)}
                     aria-label={m.qr_button()}
-                    class="border-cn-border hover:bg-cn-bg flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold"
                   >
                     <QrCode size={14} />
                     {m.qr_button()}
-                  </button>
+                  </Button>
                 </div>
                 <p class="text-text-muted text-xs">{shareBounds}</p>
               {:else}
-                <button
-                  type="button"
-                  onclick={() => void loadShareLink(false)}
-                  disabled={shareLoading}
-                  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
-                >
+                <Button onclick={() => void loadShareLink(false)} disabled={shareLoading}>
                   {shareLoading ? m.common_loading_label() : m.chat_generate_invite_link_button()}
-                </button>
+                </Button>
               {/if}
               {#if shareError}
                 <p class="text-red-err text-xs font-medium">{shareError}</p>

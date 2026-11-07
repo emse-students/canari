@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { onMount } from 'svelte';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
@@ -233,14 +234,9 @@
             {m.asso_deleg_status_pending_desc({ parent: delegation.parentName ?? '' })}
           </p>
         </div>
-        <button
-          type="button"
-          onclick={() => void handleCancel()}
-          disabled={cancelling}
-          class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"
-        >
+        <Button variant="secondary" onclick={() => void handleCancel()} disabled={cancelling}>
           {cancelling ? m.asso_deleg_cancelling() : m.asso_deleg_cancel_button()}
-        </button>
+        </Button>
       {:else if delegation?.status === 'approved'}
         <div
           class="space-y-1 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100"
@@ -256,14 +252,9 @@
             {m.asso_deleg_parent_not_ready()}
           </p>
         {/if}
-        <button
-          type="button"
-          onclick={() => void handleCancel()}
-          disabled={cancelling}
-          class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"
-        >
+        <Button variant="secondary" onclick={() => void handleCancel()} disabled={cancelling}>
           {cancelling ? m.asso_deleg_cancelling() : m.asso_deleg_cancel_button()}
-        </button>
+        </Button>
       {:else}
         <div class="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
           <div>
@@ -280,14 +271,9 @@
               variant="field"
             />
           </div>
-          <button
-            type="button"
-            onclick={() => void handleRequest()}
-            disabled={requesting || !selectedParentId}
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
-          >
+          <Button onclick={() => void handleRequest()} disabled={requesting || !selectedParentId}>
             {requesting ? m.asso_deleg_requesting() : m.asso_deleg_request_button()}
-          </button>
+          </Button>
         </div>
       {/if}
     </section>
@@ -333,29 +319,28 @@
                   </div>
                   <div class="flex flex-wrap items-center gap-2">
                     {#if child.status === 'pending'}
-                      <button
-                        type="button"
+                      <Button
+                        size="compact"
                         onclick={() => void handleApprove(child.associationId)}
                         disabled={busyChildIds.has(child.associationId) || !canReceiveDelegation}
-                        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold disabled:opacity-50"
                       >
                         <Check size={14} />
                         {m.asso_deleg_approve_button()}
-                      </button>
-                      <button
-                        type="button"
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="compact"
                         onclick={() => void handleReject(child.associationId)}
                         disabled={busyChildIds.has(child.associationId)}
-                        class="border-cn-border text-text-muted hover:text-red-err inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                       >
                         <X size={14} />
                         {m.asso_deleg_reject_button()}
-                      </button>
+                      </Button>
                     {:else}
-                      <button
-                        type="button"
+                      <Button
+                        variant="secondary"
+                        size="compact"
                         onclick={() => void toggleAccounting(child.associationId)}
-                        class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold"
                       >
                         {#if expandedChildId === child.associationId}
                           <ChevronUp size={14} />
@@ -364,25 +349,25 @@
                           <ChevronDown size={14} />
                           {m.asso_deleg_view_accounting()}
                         {/if}
-                      </button>
-                      <button
-                        type="button"
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="compact"
                         onclick={() => void handleExportChild(child.associationId)}
                         disabled={busyChildIds.has(child.associationId)}
-                        class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                       >
                         <Download size={14} />
                         {m.asso_deleg_export_button()}
-                      </button>
-                      <button
-                        type="button"
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="compact"
                         onclick={() => void handleReject(child.associationId)}
                         disabled={busyChildIds.has(child.associationId)}
-                        class="border-cn-border text-text-muted hover:text-red-err inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                       >
                         <X size={14} />
                         {m.asso_deleg_revoke_button()}
-                      </button>
+                      </Button>
                     {/if}
                   </div>
                 </div>

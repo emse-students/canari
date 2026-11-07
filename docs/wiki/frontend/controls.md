@@ -101,6 +101,10 @@ It runs inside `bun run test` / `make test-frontend`. No workflow was added for 
 | text `<input>` | 105 | 104 |
 | **All** | **1038** | **1018** |
 
+Batch 2 (24 files, a codemod for the unambiguous text buttons: yellow fill, red fill, bordered or
+neutral-fill, plain text; never a list row, a tab or a chip): 276 files / 1018 controls became 271
+files / 873. The current number is always the sum of `rawControlsRatchet.json`.
+
 Of the 926 buttons, by their classes (heuristic, one bucket each): 132 are `ui-icon-button` (the
 44 px / 38 px square of the headers and overlays - these keep working and are migrated to
 `Button icon` last, since the owner's 40 px replaces both sizes), 84 a hand-drawn yellow fill, 57 a

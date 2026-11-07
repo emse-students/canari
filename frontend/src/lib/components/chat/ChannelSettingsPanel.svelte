@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import { Log } from '$lib/utils/Log';
   import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
@@ -600,15 +601,13 @@
               />
             </div>
             {#if canManage}
-              <button
-                type="button"
+              <Button
                 onclick={handleRenameChannel}
                 disabled={!channelNameInput.trim() ||
                   channelNameInput.trim() === selectedChannel?.name}
-                class="text-cn-ink rounded-xl bg-amber-500 px-6 py-3 text-sm font-bold shadow-md shadow-amber-500/20 transition-all hover:bg-amber-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
               >
                 {m.chat_rename_channel_button()}
-              </button>
+              </Button>
             {/if}
           </div>
         </div>
@@ -644,24 +643,16 @@
                community, so there is no per-member access to give up. Leaving is a community-level
                action there (the community panel's own "leave"). -->
             {#if selectedChannel?.isPrivate}
-              <button
-                type="button"
-                onclick={handleLeaveChannel}
-                class="flex w-full items-center justify-center gap-3 rounded-xl border border-orange-500/20 bg-orange-500/10 px-4 py-3.5 text-sm font-bold text-orange-600 transition-all active:scale-[0.98] dark:text-orange-400"
-              >
+              <Button variant="secondary" class="w-full" onclick={handleLeaveChannel}>
                 <LogOut size={18} strokeWidth={2.5} />
                 {m.chat_leave_channel_button()}
-              </button>
+              </Button>
             {/if}
             {#if canManage}
-              <button
-                type="button"
-                onclick={handleDeleteChannel}
-                class="flex w-full items-center justify-center gap-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3.5 text-sm font-bold text-red-600 transition-all active:scale-[0.98] dark:text-red-400"
-              >
+              <Button variant="secondary" class="w-full" onclick={handleDeleteChannel}>
                 <Trash2 size={18} strokeWidth={2.5} />
                 {m.chat_delete_channel_button()}
-              </button>
+              </Button>
             {/if}
           </div>
         {/if}
@@ -862,11 +853,10 @@
                           excludeIds={accessAllowedUserIds}
                         />
                       </div>
-                      <button
-                        type="button"
+                      <Button
+                        class="mt-0"
                         onclick={() => void addAllowedUser()}
                         disabled={!addingUserId.trim() || memberAdding}
-                        class="text-cn-ink mt-0 flex items-center gap-1.5 rounded-xl bg-amber-500 px-3 py-2.5 text-sm font-bold shadow-md shadow-amber-500/20 transition-all hover:bg-amber-400 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {#if memberAdding}
                           <Loader size={14} class="animate-spin" />
@@ -874,7 +864,7 @@
                           <Check size={14} strokeWidth={3} />
                         {/if}
                         {m.common_add_button()}
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 {/if}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { onDestroy } from 'svelte';
   import {
     listCotisants,
@@ -712,14 +713,9 @@
         {#if activateError}
           <p class="text-red-err text-sm">{activateError}</p>
         {/if}
-        <button
-          type="button"
-          onclick={() => void handleActivate()}
-          disabled={activating}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
-        >
+        <Button onclick={() => void handleActivate()} disabled={activating}>
           {activating ? m.common_saving_label() : m.asso_cotisations_activate_button()}
-        </button>
+        </Button>
       </div>
     {:else}
       <div class="border-cn-border bg-cn-surface rounded-2xl border p-6 shadow-sm">
@@ -735,14 +731,10 @@
       <div class="flex flex-wrap items-start justify-between gap-3">
         <h3 class="text-text-main text-sm font-bold">{m.asso_cotisations_config_title()}</h3>
         {#if canManageProducts && !editingConfig}
-          <button
-            type="button"
-            onclick={startEditConfig}
-            class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold"
-          >
+          <Button variant="secondary" size="compact" onclick={startEditConfig}>
             <Pencil size={14} />
             {m.asso_cotisations_config_edit_button()}
-          </button>
+          </Button>
         {/if}
       </div>
 
@@ -771,22 +763,16 @@
           <p class="text-red-err text-sm">{configError}</p>
         {/if}
         <div class="flex gap-2">
-          <button
-            type="button"
-            onclick={() => void handleSaveConfig()}
-            disabled={configSaving}
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
-          >
+          <Button onclick={() => void handleSaveConfig()} disabled={configSaving}>
             {configSaving ? m.common_saving_label() : m.common_save_button()}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="secondary"
             onclick={() => (editingConfig = false)}
             disabled={configSaving}
-            class="border-cn-border text-text-muted hover:text-text-main rounded-xl border px-4 py-2 text-sm font-semibold"
           >
             {m.common_cancel_button()}
-          </button>
+          </Button>
         </div>
       {:else}
         <p class="text-text-main text-sm">
@@ -814,14 +800,14 @@
               {/if}
             </div>
             {#if !tiersLoading && tierProducts.length > 0 && tierCreationSupported}
-              <button
-                type="button"
+              <Button
+                variant="secondary"
+                size="compact"
                 onclick={() => (showAddTierForm = !showAddTierForm)}
-                class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold"
               >
                 <Plus size={14} />
                 {m.asso_cotisations_tier_add_button()}
-              </button>
+              </Button>
             {/if}
           </div>
 
@@ -906,10 +892,10 @@
                           {m.asso_cotisations_tier_active_label()}
                         </span>
                       </label>
-                      <button
-                        type="button"
+                      <Button
+                        variant="secondary"
+                        size="compact"
                         onclick={() => toggleTierEdit(product)}
-                        class="border-cn-border inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-(--cn-surface)"
                       >
                         <Pencil size={12} />
                         <ChevronDown
@@ -918,7 +904,7 @@
                             ? 'rotate-180'
                             : ''}"
                         />
-                      </button>
+                      </Button>
                       <!-- The last tier is not deletable: cotisation would break with none left. -->
                       {#if tierProducts.length > 1}
                         <button
@@ -1030,15 +1016,16 @@
                             />
                           {/if}
                         </div>
-                        <button
+                        <Button
+                          size="compact"
+                          class="w-fit sm:col-span-2"
                           type="submit"
                           disabled={savingTierId === product.id || gridProblem !== null}
-                          class="bg-cn-yellow text-cn-ink w-fit rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50 sm:col-span-2"
                         >
                           {savingTierId === product.id
                             ? m.common_saving_label()
                             : m.common_save_button()}
-                        </button>
+                        </Button>
                       </form>
                     </div>
                   {/if}
@@ -1099,13 +1086,9 @@
                 bind:riseEuros={newTierMemberPriceEuros}
               />
               <div class="flex items-center gap-3 pt-1">
-                <button
-                  type="submit"
-                  disabled={addingTier || !newTierName.trim()}
-                  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
-                >
+                <Button type="submit" disabled={addingTier || !newTierName.trim()}>
                   {addingTier ? m.common_saving_label() : m.asso_cotisations_tier_create_button()}
-                </button>
+                </Button>
                 <button
                   type="button"
                   onclick={resetAddTierForm}
@@ -1115,14 +1098,10 @@
               </div>
             </form>
           {:else if tierProducts.length === 1 && !tiersLoading}
-            <button
-              type="button"
-              onclick={() => (showAddTierForm = true)}
-              class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold"
-            >
+            <Button variant="secondary" onclick={() => (showAddTierForm = true)}>
               <Plus size={15} />
               {m.asso_cotisations_tier_add_button()}
-            </button>
+            </Button>
           {/if}
         </div>
       {/if}
@@ -1133,15 +1112,15 @@
       <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h3 class="text-text-main text-sm font-bold">{m.asso_cotisations_roster_title()}</h3>
         {#if canManageMembers}
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            class="shrink-0"
             onclick={() => void handleExport()}
             disabled={exporting}
-            class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex shrink-0 items-center gap-2 rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"
           >
             <Download size={15} />
             {exporting ? m.common_generating_label() : m.asso_cotisations_export_button()}
-          </button>
+          </Button>
         {/if}
       </div>
       {#if exportError}
@@ -1227,14 +1206,15 @@
                       </p>
                     </div>
                     {#if canManageMembers}
-                      <button
-                        type="button"
+                      <Button
+                        variant="secondary"
+                        size="compact"
+                        class="shrink-0"
                         onclick={() => void handleRevoke(item)}
-                        class="border-red-err/30 text-red-err hover:bg-red-err/10 inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold"
                       >
                         <Trash2 size={14} />
                         {m.asso_cotisations_revoke_button()}
-                      </button>
+                      </Button>
                     {/if}
                   </li>
                 {/each}
@@ -1295,13 +1275,9 @@
               />
             </div>
           {/if}
-          <button
-            type="submit"
-            disabled={adding || !addUserId.trim()}
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shrink-0 self-end rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
-          >
+          <Button class="shrink-0 self-end" type="submit" disabled={adding || !addUserId.trim()}>
             {adding ? m.common_saving_label() : m.common_add_button()}
-          </button>
+          </Button>
         </form>
         {#if addError}
           <p class="text-red-err text-sm">{addError}</p>

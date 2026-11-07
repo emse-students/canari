@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
@@ -448,16 +449,16 @@
           {m.admin_platform_payment_provider_hint()}
         </p>
         {#if savedProvider !== 'disabled'}
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            class="mt-1"
             id="release-withheld"
             disabled={saving || releasing}
             onclick={() => void releaseWithheld()}
-            class="border-cn-border text-text-main hover:bg-cn-yellow/10 mt-1 inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50"
           >
             <PackageCheck size={16} />
             {m.admin_platform_release_button()}
-          </button>
+          </Button>
           <p class="text-text-muted text-xs">{m.admin_platform_release_hint()}</p>
         {/if}
       </div>
@@ -550,23 +551,14 @@
       {/if}
 
       <div class="flex flex-wrap gap-2">
-        <button
-          type="submit"
-          disabled={saving}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
-        >
+        <Button type="submit" disabled={saving}>
           <Save size={16} />
           {saving ? m.common_saving_label() : m.common_save_button()}
-        </button>
-        <button
-          type="button"
-          disabled={loading || saving}
-          onclick={() => void loadConfig()}
-          class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50"
-        >
+        </Button>
+        <Button variant="secondary" disabled={loading || saving} onclick={() => void loadConfig()}>
           <RefreshCw size={16} />
           {m.common_reload_button()}
-        </button>
+        </Button>
       </div>
     </form>
 
@@ -688,24 +680,19 @@
       {/if}
 
       <div class="flex flex-wrap gap-2">
-        <button
-          type="submit"
-          disabled={announcementSaving || !announcementComplete}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
-        >
+        <Button type="submit" disabled={announcementSaving || !announcementComplete}>
           <Save size={16} />
           {announcementSaving ? m.common_saving_label() : m.admin_announcement_publish_button()}
-        </button>
+        </Button>
         {#if announcement}
-          <button
-            type="button"
+          <Button
+            variant="secondary"
             disabled={announcementSaving}
             onclick={() => void retireAnnouncement()}
-            class="border-cn-border inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-bold text-red-500 hover:bg-red-500/10 disabled:opacity-50"
           >
             <Trash2 size={16} />
             {m.admin_announcement_retire_button()}
-          </button>
+          </Button>
         {/if}
       </div>
     </form>

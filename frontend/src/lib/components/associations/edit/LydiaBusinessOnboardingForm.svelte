@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { untrack } from 'svelte';
   import {
     startLydiaOnboarding,
@@ -255,24 +256,24 @@
     {#if canValidate || view?.adminCanDisconnect}
       <div class="flex flex-wrap items-center gap-2">
         {#if canValidate}
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="compact"
             onclick={() => void handleValidate()}
             disabled={validating}
-            class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
           >
             {validating ? m.asso_lydia_validate_loading() : m.asso_lydia_validate_button()}
-          </button>
+          </Button>
         {/if}
         {#if view?.adminCanDisconnect}
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="compact"
             onclick={() => void handleDisconnect()}
             disabled={disconnecting}
-            class="border-red-err/30 text-red-err hover:bg-red-err/10 inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
           >
             {disconnecting ? m.asso_lydia_disconnect_loading() : m.asso_lydia_disconnect_button()}
-          </button>
+          </Button>
         {/if}
       </div>
     {/if}
@@ -286,16 +287,16 @@
             {m.asso_lydia_resp_in_flight_admin()}
           </p>
         {/if}
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="compact"
           onclick={() => void handleClearInFlight()}
           disabled={clearing}
-          class="border-cn-border text-text-main hover:bg-cn-bg rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
         >
           {clearing
             ? m.asso_lydia_in_flight_clear_loading()
             : m.asso_lydia_in_flight_clear_button()}
-        </button>
+        </Button>
       </div>
     {/if}
   {/snippet}
@@ -330,16 +331,16 @@
           onRefused={loadAccount}
         />
       {:else}
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="compact"
           onclick={() => {
             resending = true;
             resent = false;
           }}
-          class="border-cn-border text-text-main hover:bg-cn-bg rounded-lg border px-3 py-1.5 text-xs font-semibold"
         >
           {responsableResendText().button}
-        </button>
+        </Button>
       {/if}
       {#if resent}
         <p class="text-green-ok text-xs" role="status">{m.asso_lydia_resp_resent()}</p>
@@ -349,13 +350,9 @@
 
   {#if accountFailed}
     <p class="text-red-err text-sm" role="alert">{m.asso_lydia_account_error()}</p>
-    <button
-      type="button"
-      onclick={() => void loadAccount()}
-      class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border px-4 py-2.5 text-sm font-bold"
-    >
+    <Button variant="secondary" onclick={() => void loadAccount()}>
       {m.asso_payments_provider_retry()}
-    </button>
+    </Button>
   {:else if !account || !view}
     <p class="text-text-muted text-sm">{m.asso_lydia_account_loading()}</p>
   {:else if view.active}
@@ -459,14 +456,9 @@
                   disabled={submitting}
                 />
 
-                <button
-                  type="button"
-                  onclick={() => void handleSubmit()}
-                  disabled={submitting || missingFields}
-                  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
-                >
+                <Button onclick={() => void handleSubmit()} disabled={submitting || missingFields}>
                   {submitting ? m.asso_lydia_submitting_label() : m.asso_lydia_submit_button()}
-                </button>
+                </Button>
               {/if}
             {:else if step.id === 'responsable'}
               {#if account.responsable}
