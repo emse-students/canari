@@ -8,8 +8,7 @@ proof - an earlier boot's marker stamped below the reading is left to `kill(pid,
 cap. Both twins of the old sysctl are deleted
 ([mobile](../frontend/mobile.md#what-the-extension-did-in-the-apps-log-2026-11-01)).
 
-**Owed on the iPhone 12:** a cold launch of the extension no longer logs
-`kern.bootsessionuuid unreadable`; and after a reboot with a marker left behind (a push run killed
-mid-decrypt), the next drain's `[NSE_OUTCOME]` carries it as `killed`, or - if its stamp was below
-the new uptime and `kill(pid, 0)` cannot prove the pid gone - the marker is still waiting, which is
-what decides whether the one-sided proof is enough. Closes when read.
+**Owed on the iPhone 12, on any build `>= 1.6.6-alpha.2`:** rows R3a (no sandbox refusal) and R3b
+(a marker from before a reboot) of
+[device-verification](../device-verification.md#ios-3075-the-ios-follow-ups-of-3075---owed-on-the-iphone-12);
+R3b decides whether the one-sided proof is enough. Closes when read.

@@ -313,6 +313,27 @@ carry over because #3018's and #3008's files are unchanged (owner, 2026-11-05).
 **Sideloaded bench APK.** It is signed by the upload key, so dev refuses its restore key (see
 [account-restore](account-restore.md)).
 
+## IOS-3075. The iOS follow-ups of #3075 - owed on the iPhone 12
+
+Built and merged by #3075 (2026-11-06); **the first build carrying them is `1.6.6-alpha.2`**, and the
+stable `1.6.6` ships them. Compiled only: the Rust half is tested on the host (`cargo test --lib --
+nse_outcomes push`), the Swift and Objective-C halves have never compiled here, only in the release
+workflow. Read on the iPhone 12 (`canari-test-gamma`, then a second bench account for R2) with
+`python -m pymobiledevice3 syslog live` running, on any TestFlight build `>= 1.6.6-alpha.2`. Each
+row closes its [backlog.d](backlog.d/README.md) entry, linked in the row.
+
+| Row | Do | PASS when | FAIL when |
+| --- | --- | --- | --- |
+| R1a. Swift lines in clear, the extension ([entry](backlog.d/p2-swift-nslog-lines-are-unreadable-on-a-store-build.md)) | Kill the app (`bun tools/ios-device/ios.mjs terminate`), send gamma a DM from the harness Chrome | The syslog shows `[CanariNSE] outcome=decrypted cause=... stage=... peakMB=...` with every value readable | The `[CanariNSE]` line reads `<private>` |
+| R1b. Swift lines in clear, a plugin ([entry](backlog.d/p2-swift-nslog-lines-are-unreadable-on-a-store-build.md)) | Sign out, tap "Se connecter" | The syslog shows `[CustomTabsPlugin] openCustomTab: presenting a session`, then `session completed - re-dispatching the callback to the app scheme`, subsystem `fr.emse.canari`, category `customtabs` | Either line is `<private>`, or the plugin line is under `Canari{Foundation}` (an `NSLog` left) |
+| R2. `push_context.json` follows an account switch ([entry](backlog.d/p3-push-context-is-mirrored-to-the-app-group-only-at-lifecycle-events.md)) | Signed in as A with the app in the FOREGROUND, switch to account B, stay in the foreground, then `ios.mjs terminate` (no swipe, no background first); send B a DM | B's banner carries the message text, and the extension's line reads `outcome=decrypted` | The banner is the generic "Nouveau message de ..." or the line is `outcome=fallback` with a cause naming the context or the device - the extension still read A's context |
+| R3a. No more sandbox refusal ([entry](backlog.d/p3-the-nse-cannot-read-its-boot-session.md)) | Any push to the killed app (R1a's is enough) | No `kern.bootsessionuuid unreadable` line in the syslog | The line is there: the build does not carry #3075 |
+| R3b. A marker from before a reboot ([entry](backlog.d/p3-the-nse-cannot-read-its-boot-session.md)) | Kill the app, send a DM, and power the phone off while the banner is still being made (a large photo makes the window longer); power on, unlock, open the app | The app's log has an `[NSE_OUTCOME] {...}` line with `"outcome":"killed"` for that run: the marker's `up` was ahead of the new uptime | Neither `killed` nor any line for that run AND no later drain counts it: the marker waits (stamped below the new uptime and `kill(pid, 0)` answered `EPERM`, logged `[NSE_OUTCOME] pid liveness not provable`) - which says the one-sided proof is not enough, and a new entry is owed |
+
+R3b is a race the bench cannot force: a run that FINISHED before the power-off leaves no marker
+(its line reads `decrypted` or `fallback` at the next drain), which is no verdict - repeat until a
+drain reports either a `killed` line or the `pid liveness not provable` warning.
+
 ## The layout pass of 2026-09-09, and the sixth check that ran later the same day
 
 Six fixes shipped in `v0.16.6-alpha.5`'s ancestors on the strength of a browser emulated at 393px.
