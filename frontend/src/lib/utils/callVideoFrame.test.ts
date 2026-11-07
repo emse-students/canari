@@ -6,6 +6,8 @@ import {
   framesAsVp8,
   isCallVideoCodec,
   isVp8KeyFrame,
+  negotiatedCodecMismatch,
+  negotiatedMediaCodec,
   vp8CodecPreferences,
 } from './callVideoFrame';
 
@@ -59,6 +61,30 @@ describe('framesAsVp8 - the transform codec decides, not the engine (2026-11-07)
 
   it('FAILS CLOSED when the engine NAMES another codec than the transform: a negotiation gone wrong', () => {
     expect(framesAsVp8('video/VP8', 'video/H264')).toBe(false);
+  });
+});
+
+describe('the negotiated codec against the transform codec (report only, 2026-11-07)', () => {
+  it('reads the media codec a side negotiated, past the wrappers', () => {
+    expect(negotiatedMediaCodec([{ mimeType: 'video/rtx' }, { mimeType: 'video/VP8' }])).toBe(
+      'video/VP8'
+    );
+    expect(negotiatedMediaCodec([])).toBeUndefined();
+    expect(negotiatedMediaCodec(undefined)).toBeUndefined();
+  });
+
+  it('says nothing for VP8 under a VP8 transform, nor for a side not negotiated yet', () => {
+    expect(negotiatedCodecMismatch('video/vp8', 'video/VP8')).toBeNull();
+    expect(negotiatedCodecMismatch('video/vp8', undefined)).toBeNull();
+  });
+
+  it('names H.264 negotiated under a VP8 transform, and VP8 under a transform with no codec', () => {
+    expect(negotiatedCodecMismatch('video/vp8', 'video/H264')).toBe(
+      'negotiated video/H264, transform frames video/vp8'
+    );
+    expect(negotiatedCodecMismatch(undefined, 'video/VP8')).toBe(
+      'negotiated video/VP8, transform frames no codec (whole)'
+    );
   });
 });
 

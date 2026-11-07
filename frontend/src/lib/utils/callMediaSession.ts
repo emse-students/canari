@@ -22,10 +22,9 @@ export interface CallMediaSessionParams {
   artist: string;
   muted: boolean;
   /**
-   * The OS's hang-up, or `null` where the engine is KNOWN to have no `hangup` action, so it is not
-   * asked: WebKit (the iOS app) throws on it, measured on the iPhone 12 on every call until
-   * 2026-11-07 - and there the system's call controls are CallKit's, never the Media Session's.
-   * Asking anyway only to log the refusal was learning by failing what was already known.
+   * The OS's hang-up, or `null` in the iOS app: CallKit owns hang-up there, so the Media Session's
+   * `hangup` is neither set nor cleared (`clearCallMediaSession`). Its WebKit also throws on the
+   * action (the iPhone 12 logged it on every call until 2026-11-07).
    */
   onHangup: (() => void) | null;
   onToggleMicrophone: () => void;
@@ -106,11 +105,16 @@ export function applyCallMediaSession(
   return true;
 }
 
-/** Takes the call off the OS media session (the call ended or the surface unmounted). */
-export function clearCallMediaSession(host: MediaSessionHost): void {
+/**
+ * Takes the call off the OS media session (the call ended or the surface unmounted). `withHangup`
+ * is false where `hangup` was never set - the iOS app, where CallKit owns hang-up
+ * (`CallMediaSessionParams.onHangup`) - so it is not cleared there either.
+ */
+export function clearCallMediaSession(host: MediaSessionHost, withHangup = true): void {
   const session = host.mediaSession;
   if (!session) return;
-  for (const action of ['hangup', 'togglemicrophone'] as CallAction[]) {
+  const actions: CallAction[] = withHangup ? ['hangup', 'togglemicrophone'] : ['togglemicrophone'];
+  for (const action of actions) {
     try {
       session.setActionHandler(action as MediaSessionAction, null);
     } catch {
