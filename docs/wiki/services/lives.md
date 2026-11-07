@@ -95,7 +95,10 @@ they close. What must be true before lives open in production, and in what order
 | Stored bytes per live | **No total budget (owner, 2026-10-31); a running live keeps its newest `LIVE_RETAINED_SEGMENTS` = 20 segments only** (trim, [below](#what-one-broadcaster-may-store)): at most 20 x 4 MiB = 80 MiB whatever its duration. `lives."storedBytes"` counts the retained bytes | `LIVE_RETAINED_SEGMENTS`, `LIVE_TRIM_BATCH`, same file | `byteBudget` is no longer served |
 | Segment rate | segment `index` accepted only while `index < 15 + floor(age / 1 s)` | `LIVE_SEGMENT_BURST`, `LIVE_SEGMENT_MIN_DURATION_MS` | same route |
 | Starts per account | 6 in a rolling hour; ONE open at a time (the partial unique index) | `LIVE_STARTS_PER_HOUR`, `LIVE_START_WINDOW_MS` | same route (`startsPerHour`) |
-| Ingests storing at once, per instance | 4 (the database pool is 10) | `LIVE_INGEST_MAX_CONCURRENT` | - |
+| Ingests storing at once, per instance | 4 (the database pool is 10), a preview image counted with the segments | `LIVE_INGEST_MAX_CONCURRENT` | - |
+| A live's title (owner, 2026-11-07) | optional, 1-80 characters (code points), one line | `LIVE_TITLE_MAX_CHARS` (and the `lives_title_length` CHECK) | same route (`titleMaxChars`) |
+| A preview image | at most 256 KiB sealed, at most one per 5 s (database clock), the broadcaster sends one every 5 segments | `LIVE_POSTER_MAX_BYTES`, `LIVE_POSTER_MIN_INTERVAL_MS`, `LIVE_POSTER_EVERY_SEGMENTS` | same route (`posterMaxBytes`, `posterEverySegments`) |
+| How often a feed card on screen re-reads the list | 15 s | `LIVE_CARD_REFRESH_MS` | same route (`cardRefreshMs`) |
 | Store timeout / reservation age | 30 s / 35 s | `LIVE_STORE_TIMEOUT_MS`, `LIVE_RESERVATION_TTL_MS` | - |
 | Viewer cap of the HOST, all lives together (**the user wants NO cap, 2026-10-20; the cap stays until the [plan](../frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20) is measured; no VISIBLE ceiling, 2026-10-21: [live-scaling](../frontend/modules/live-scaling.md)**) | 24 = floor(90 Mb/s `LIVE_HOST_EGRESS_BPS` x 0.8 `LIVE_EGRESS_SHARE` / 3 Mb/s `LIVE_VIEWER_BITRATE_BPS`) | `LIVE_VIEWER_CAP`, same file | same route (`viewerCap`) |
 | Seat lease | 30 s after the last key read or manifest poll | `LIVE_SEAT_LEASE_MS` | same route (`seatLeaseMs`) |
@@ -121,10 +124,12 @@ Refusals are typed: the body's `code` is the discriminator, never the message.
 | Route | Who | Answers |
 | --- | --- | --- |
 | `GET /api/lives/limits` | any member | the numbers above |
-| `GET /api/lives` | any member | the open lives the caller may watch ([the rule of a post](#who-may-watch-the-rule-of-a-post)), newest first, at most 50, **no key** |
+| `GET /api/lives` | any member | the open lives the caller may watch ([the rule of a post](#who-may-watch-the-rule-of-a-post)), newest first, at most 50, **takes NO seat**. Each item: `{ id, broadcasterId, associationId, startedAt, title, viewers, poster, key }` - `viewers` the seat count (null when Redis does not answer), `poster` `{ name, ageMs }` or null, and `key` served ONLY with a poster ([titles and the preview](#titles-and-the-preview-image-owner-2026-11-07)) |
+| `PATCH /api/lives/:id` `{ title }` | the broadcaster, on air | `{ id, title }`. `400 LIVE_TITLE_INVALID` (with `maxChars`; also a missing field), `403 LIVE_MUTED`, `404 LIVE_NOT_FOUND` (another member's live too), `410 LIVE_ENDED` |
+| `PUT /api/lives/:id/poster` raw `application/octet-stream` | the broadcaster, on air | `{ name, posterAt }`. `413 LIVE_POSTER_TOO_LARGE` (over 256 KiB), `400 LIVE_POSTER_EMPTY`, `429 LIVE_POSTER_TOO_FAST` (under 5 s since the last), `409 LIVE_POSTER_IN_PROGRESS` / `LIVE_POSTER_RESERVATION_LOST`, `503 LIVE_STORE_UNAVAILABLE`, `503 LIVE_INGEST_BUSY`, `410 LIVE_ENDED` |
 | `GET /api/lives/rules` | any member | `{ version, acceptedVersion, acceptedAt }`: the first-live rules the caller must have accepted, and what they did accept ([moderation](#moderation-wp-l8-server-half)) |
 | `GET /api/lives/standing` | any member | the CALLER's own `{ cutsOnRecord, suspendedUntil, withdrawnAt }` ([the ladder](#the-strike-ladder-wp-l8b)), so the pre-live screen can say why a start would be refused before it is pressed |
-| `POST /api/lives` `{ key, associationId?, acceptedRulesVersion? }` | any member (L1) | `201` the live with its key. `400 LIVE_KEY_INVALID` (not 64 lower-case hex), `400 LIVE_ASSOCIATION_INVALID`, `403 LIVE_MUTED`, `403 LIVE_ASSOCIATION_FORBIDDEN` (no `POST_AS_ASSO` there), `403 LIVE_RULES_NOT_ACCEPTED` (with `rulesVersion`), `403 LIVE_BROADCAST_WITHDRAWN`, `403 LIVE_BROADCAST_SUSPENDED` (with `suspendedUntil`), `409 LIVE_ALREADY_OPEN`, `429 LIVE_START_RATE` (6 starts in the hour), `503 LIVE_KEY_SEALING_UNAVAILABLE` (no secret to seal the key: nothing written, [the key at rest](#the-live-key-at-rest)) |
+| `POST /api/lives` `{ key, associationId?, acceptedRulesVersion?, title? }` | any member (L1) | `201` the live with its key and title. `400 LIVE_KEY_INVALID` (not 64 lower-case hex), `400 LIVE_TITLE_INVALID` (with `maxChars`, checked before anything is written), `400 LIVE_ASSOCIATION_INVALID`, `403 LIVE_MUTED`, `403 LIVE_ASSOCIATION_FORBIDDEN` (no `POST_AS_ASSO` there), `403 LIVE_RULES_NOT_ACCEPTED` (with `rulesVersion`), `403 LIVE_BROADCAST_WITHDRAWN`, `403 LIVE_BROADCAST_SUSPENDED` (with `suspendedUntil`), `409 LIVE_ALREADY_OPEN`, `429 LIVE_START_RATE` (6 starts in the hour), `503 LIVE_KEY_SEALING_UNAVAILABLE` (no secret to seal the key: nothing written, [the key at rest](#the-live-key-at-rest)) |
 | `GET /api/lives/:id` | a member who may watch | `{ id, broadcasterId, associationId, startedAt, lastSegmentAt, nextIndex, key }`, `no-store`. Takes a SEAT ([below](#the-viewer-cap-wp-l4)): `503 LIVE_FULL` (with `viewerCap`) past the cap, `503 LIVE_SEATS_UNAVAILABLE` when the seat count does not answer, `503 LIVE_KEY_UNAVAILABLE` when the stored key does not open ([the key at rest](#the-live-key-at-rest)) |
 | `GET /api/lives/:id/manifest?from=<index>` | same | `{ liveId, nextIndex, lastSegmentAt, serverNow, segments: [{ index, name, bytes }], viewers }` - the newest 10, or from `from` on; `viewers` is [how many watch](#the-viewer-count-2026-10-21), a number and never a name; `no-store` (the live edge: the shortest cache is none, and the answer is per viewer); renews the seat, same two 503s |
 | `DELETE /api/lives/:id/seat` | any member | `204`: the caller's seat on that live goes back to the cap now. Idempotent, no watch check (a viewer may always give back what it holds); `503 LIVE_SEATS_UNAVAILABLE` |
@@ -540,6 +545,64 @@ trimming, expiry, per-live), `lives.integration.spec.ts` "the arrival lines" (on
 broadcaster or oneself, the 3 + N rule, a block either way, a removal, an outage, the purge, a withheld
 reader), `lives.controller.spec.ts` (the fields ride the block and never reach a withheld reader).
 Client: [live](../frontend/modules/live.md#the-chat-readable-over-the-video-and-the-host-mark-2026-11-07).
+
+## Titles and the preview image (owner, 2026-11-07)
+
+**The decisions** ([backlog](../backlog.d/live-titles-and-a-preview-on-the-feed-card.md)): a live
+carries an optional title (at most 80 characters, entered before the start, editable on air; none
+reads "X est en live"); the feed shows a refreshed still of the stream, sealed under the live key,
+with the EN DIRECT badge, the viewer count and the title, as ONE large card or a carousel of cards;
+the preview takes no viewer seat and adds no per-viewer poll; the follower push carries the title.
+
+**The title.** `lives."title"` (`varchar(80)`, NULL for none). `parseLiveTitle` is the one rule:
+absent or `null` is none; a non-string is `400 LIVE_TITLE_INVALID`; the string is trimmed, blank is
+none, and a control character (a line break included) or more than 80 CODE POINTS is refused - the
+`lives_title_length` CHECK (`char_length` 1-80) says the same, so a write that skipped the parser
+still could not store an empty or longer title. The server sees it in clear, like a post's text:
+it is what the card, the list and the push show to people who are not seated. Logged by length only.
+The edit (`PATCH`) takes the row `FOR UPDATE` (the same lock the end and a segment take), refuses
+a muted account, another member's live (`404`, as for a segment) and an ended one (`410`). An
+erasure of the broadcaster sets it to NULL with the rest of the row's identity.
+
+**The preview image: where it lives.** An object under the live's own prefix, `live/<liveId>/<uuid>`,
+beside the segments - so it is served by the same public route and the same nginx cache
+([above](#serving-a-segment-from-the-nginx-cache-wp-l4)), deleted by the same end-of-live purge
+(a CUT live is purged like any ended one, so its preview goes with it), and swept by the same
+orphan reaper. Media-service and nginx did not change. The row names the current one
+(`"posterName"`, `"posterAt"`); the previous object is deleted best effort when a new one is
+confirmed (a failure logs a `warn` and the purge takes it at the end).
+
+**Storing it** follows a segment's reserve / store / confirm: `"posterPendingName"` and
+`"posterPendingAt"` reserve the slot under the row lock, the bytes go to the store outside any
+transaction, and the confirm re-takes the lock and either names the new poster, finds the live ended
+(the object is deleted, `410`), or finds its reservation taken over as abandoned (`409
+LIVE_POSTER_RESERVATION_LOST`). `purgeEnded` treats a live `"posterPendingAt"` like a segment in
+flight and waits. The rate bound reads `"posterAt"` against `now()` - the DATABASE clock, never the
+device's: under 5 s since the last poster is `429 LIVE_POSTER_TOO_FAST`. A poster shares the
+ingest semaphore with segments, so a preview can never add a fifth concurrent store.
+
+**The key without a seat.** `GET /api/lives` already answers exactly the audience that may watch
+(the post rule, blocks both ways, the live's removed viewers - the same predicate as the seated
+`GET /api/lives/:id`). For each item it now also serves the key, but ONLY when a poster exists: the
+key is what opens the preview, and a live with nothing to open needs none. No seat is taken, so the
+24-seat cap is untouched; nothing new is told to anyone who could not already take a seat and read
+the same key. The viewer count is ONE Redis script for the whole page (`watchingMany`,
+`COUNT_MANY_LIVE_SEATS_LUA`): one round trip, and `null` for every item if Redis does not answer
+(the list still answers). `poster.ageMs` is computed by PostgreSQL (`now() - "posterAt"`), so the
+client never compares a server stamp with its own clock. A stored key that does not open
+(`LiveKeyUnavailableError`) leaves THAT item with no picture and logs a `warn`; the list answers.
+
+**What it costs, against the manifest poll.** A seated viewer polls the manifest about once a second
+(60 requests a minute, each a database read and a Redis renew). A card on screen re-reads the list
+every `cardRefreshMs` = 15 s (4 a minute: one query for the whole page plus one Redis script) and
+fetches at most the newest poster of each live it shows - one new object every 5 segments (about
+10 s with 2 s segments), a cache hit for every card after the first. Off screen, in a hidden page or
+with no live on air, the card reads nothing on a timer; it is otherwise read when the feed reads its
+first page, as before. The broadcaster adds one `PUT` of at most 256 KiB every ~10 s to the segment
+it already sends every 2 s (up to 4 MiB each).
+
+`139_live_title_and_poster.sql` adds the five columns and three CHECKs (`NOT VALID`, then validated
+after the commit, `lock_timeout` 5 s), additive and idempotent; applied twice by the integration spec.
 
 ## The key (Q4): served like a post CEK, removal enforced by the server
 
@@ -1143,11 +1206,11 @@ client half - the LIVE card in the feed and the app route the tap opens - is NOT
 | **Mutes** | `association_push_mutes`: `live_started` is in `MUTABLE_PUSH_TYPES`, applied by `PostNotificationsService` like an association's post ([social-service](social-service.md)). A member's live has no association, so no mute applies. |
 | **Notification levels** | The push's `contentKey` `social_live_started` is filed under the reader's **`posts`** category in chat-delivery (`push-category.ts`): the switch that silences the posts of the people you follow silences their lives too. No new category (it would need a settings row on the client). |
 | **The pipeline** | `PostNotificationsService.pushNotice`: the same content mapping, icon rule (the association's logo, the member's face), mute and bounded per-recipient fan-out as `createNotifications`, sharing one private `fanOutPush`, but **no `post_notifications` row** - a live is deleted at its end (L3), so a bell row would be a 404 for ever after. |
-| **Language** | Composed ON THE DEVICE from `contentKey`, as every social push since 2026-08-19: `notif_social_live_started_*` (Android, fr + en) and `notif.social.live_started.*` (iOS app and NSE, fr + en) - FR "X est en live" / "Appuyez pour regarder", EN "X is live" / "Tap to watch". The server's French `title`/`body` ride along for builds older than the key. Pinned by `push-content.spec.ts` and `nativeStrings.test.ts`. |
-| **Payload** | `{ type: 'social', liveId, associationId?, deepLink: 'fr.emse.canari://live/<liveId>', contentKey, actorName, contentArg: '', iconUserId or iconMediaId }` - `socialDeepLink` writes the link. |
+| **Language** | Composed ON THE DEVICE from `contentKey`, as every social push since 2026-08-19: `notif_social_live_started_*` (Android, fr + en) and `notif.social.live_started.*` (iOS app and NSE, fr + en) - FR "X est en live" / "Appuyez pour regarder", EN "X is live" / "Tap to watch" - **the body is the live's TITLE when it has one** (owner, 2026-11-07: `contentArg`, which both natives already show as the body when non-empty; the title read by the announcer at the first stored segment, so an edit before it counts). The server's French `title`/`body` ride along for builds older than the key. Pinned by `push-content.spec.ts` and `nativeStrings.test.ts`. |
+| **Payload** | `{ type: 'social', liveId, associationId?, deepLink: 'fr.emse.canari://live/<liveId>', contentKey, actorName, contentArg: <the title, or ''>, iconUserId or iconMediaId }` - `socialDeepLink` writes the link. |
 | **The switch** | Nothing is sent unless `LIVE_ENABLED` is `true` (checked by the announcer itself, on top of the ingest route's own guard): open on both estates since the production flip of 2026-10-30, and the ingest that claims also sits behind `lives_mode`. |
 
-Observed by `[LIVE_ANNOUNCE] <liveId> by <broadcaster> kind=member or association followers=<n>`.
+Observed by `[LIVE_ANNOUNCE] <liveId> by <broadcaster> kind=member or association titled=<true/false> followers=<n>`.
 
 **The tap, and what the client still owes (WP-L7's other half, with WP-L5):** `appRouteForDeepLink`
 (`frontend/src/lib/mobile/deepLinkRoutes.ts`) owns the `live` host and sends it to the FEED
