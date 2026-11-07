@@ -133,6 +133,7 @@
 - [Association permissions](association-permissions.md) — The eleven flags measured from their call sites, the one predicate answering "may this user act here", and the two tiers above a member
 - [Cotisations](cotisations.md) — Membership dues: cotisant tags, boutique products, form member pricing
 - [Carte de la Vie Asso](carte-vie-asso.md) — Editable poster generator (drag & drop canvas, PDF export)
+- [Engagement](engagement.md) - the owner's decisions of 2026-11-07: who a live and a post notify, follow suggestions (the query, measured), the per-account bell, the daily push cap, what each surface reveals, WP-1..WP-10
 
 ### Compliance (GDPR)
 

@@ -62,8 +62,9 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   // D38b: an association asks an author to republish their personal post - a post matter.
   social_repost_personal_requested: 'posts',
   social_coorganise_proposed: 'events',
-  // A live started by a member or an association the reader follows (WP-L7): a publication of the
-  // people the reader follows, so the switch that silences their posts silences their lives too.
+  // A live started by a member the reader follows, or by an association whose audience includes the
+  // reader (WP-L7; widened 2026-11-07, docs/wiki/engagement.md): a publication like that account's
+  // posts, so the switch that silences those posts silences its lives too.
   social_live_started: 'posts',
   // A follow request and its acceptance (WP-F4): a category of their own, which the settings screen
   // draws a switch for. Off, the request still waits in the inbox - only the push is not sent.

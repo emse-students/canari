@@ -82,10 +82,12 @@ Checkboxes, radios, files, ranges, colours and the date family are never counted
   file.
   Widening the scan re-measured the baseline once: `ChatArea.svelte` 11 to 13 (two buttons the old
   scan could not see), nothing else moved.
-- **Honest limit.** Nothing in the test compares the list with `main`: a PR that edits the JSON by
-  hand can raise a number or add a file and pass. Only the regeneration command refuses an
-  increase, so a diff touching `rawControlsRatchet.json` is reviewed like a lockfile: every changed
-  number must go DOWN.
+- **Compared with the base.** The test cannot see `main`, so `.github/scripts/ratchet-not-raised.mjs`
+  does: it fails when any count in the JSON is higher than on the base commit, or an entry is new.
+  CI runs it in the `test-ci-scripts` job against `HEAD^1`; locally
+  `bun .github/scripts/ratchet-not-raised.mjs` compares with `git merge-base HEAD origin/main`.
+  Its logic is tested by `.github/scripts/tests/ratchet-not-raised.test.mjs` (`make test-ci-scripts`).
+  No new workflow. A diff touching the JSON must still only lower numbers.
 - Lowering: `CANARI_RATCHET_WRITE=1 bun x vitest run src/lib/styles/controlsGuard.test.ts` (from
   `frontend/`). It refuses a number that went up and an entry that is new.
 
