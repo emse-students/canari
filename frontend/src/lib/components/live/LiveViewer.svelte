@@ -392,7 +392,7 @@
 
     {#if !terminal}
       <div
-        class="from-cn-scrim/60 pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-2 bg-linear-to-t to-transparent p-3 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)]"
+        class="from-cn-scrim/60 via-cn-scrim/30 pointer-events-none absolute inset-x-0 bottom-0 flex items-end gap-2 bg-linear-to-t to-transparent p-3 pt-24 pb-[calc(var(--safe-area-inset-bottom,0px)+0.75rem)]"
       >
         <div class="min-w-0 flex-1">
           {#if chatOpen && !chatWithheld}
@@ -401,6 +401,7 @@
               canWrite={chatCanWrite}
               maxChars={chatMaxChars}
               canModerate={chatCanModerate}
+              hostId={live.broadcasterId}
               send={sendChat}
               retry={(id) => void chat?.retry(id)}
               discard={(id) => chat?.discard(id)}

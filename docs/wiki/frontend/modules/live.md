@@ -971,6 +971,14 @@ a text or a ciphertext.
 `LiveViewer.svelte.test.ts`'s chat cases, `LiveBroadcaster.svelte.test.ts`'s on-air chat, `liveBroadcast.svelte.test.ts`'s `chatHeardEnd`). **Owed**: the crypto review of the chat seal, and a phone
 reading of the panel, the bar and the floats on the Mi 9T and the iPhone 12 ([backlog](../../backlog.md)).
 
+## The chat readable over the video, and the host mark (2026-11-07)
+
+The owner's two axes of 2026-11-07: readable over the picture, and more alive.
+
+- **Built, readable.** The bottom block of the viewer carries a taller dark gradient (`via-cn-scrim/30`, `pt-24`, tokens only); a line is medium weight with a double shadow (a tight edge and a soft halo); the oldest lines already fade out at the top of the list (mask). Each line already showed the author's avatar and name; a test now pins it.
+- **Built, the host marked.** `LiveChatPanel` takes `hostId` (the viewer passes `live.broadcasterId`): that account's lines carry a "Host" pill (`live_chat_host`). Nothing new is disclosed: the broadcaster's id is already in the live's list item, and the chat shows authors to its whole audience.
+- **Arrival lines: DECIDED 2026-11-07 (owner), built in its own pull request.** "X a rejoint" lines are visible to every viewer, rate-limited (option (c)); the owner answered knowing it shows everyone who joined. It deliberately reverses the standing rule of [lives](../../services/lives.md) ("a count, never an identity"), recorded as decision 12 of the owner's 2026-11-07 list (`docs/wiki/backlog.d/owner-decisions-of-2026-11-07.md`). This page's readability and host-mark work does not depend on it.
+
 ## The first rig readings, and what they hold against the `lives_mode` flip (LIVE-WEB, 2026-10-27)
 
 Production serves `lives.mode = off`, dev `on`. A finding here **blocks the FLIP of `lives_mode` on
