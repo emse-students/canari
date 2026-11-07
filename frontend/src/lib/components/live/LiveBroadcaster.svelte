@@ -51,6 +51,8 @@
   import { shareLiveLink } from '$lib/live/shareLive';
   import { grabPosterFrame } from '$lib/live/livePoster';
   import { clampLiveTitleInput, liveTitleLength } from '$lib/live/liveTitle';
+  import Button from '$lib/components/ui/Button.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
   import LiveBadge from './LiveBadge.svelte';
   import LiveIdentity from './LiveIdentity.svelte';
   import LiveBroadcasterChat from './LiveBroadcasterChat.svelte';
@@ -352,16 +354,17 @@
           {#if titleMax}
             <!-- The title, editable on air (owner, 2026-11-07): what the feed card shows. -->
             {#if titleDraft === null}
-              <button
-                type="button"
-                class="bg-cn-scrim/40 inline-flex max-w-64 items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold outline-none focus-visible:ring-2 focus-visible:ring-white"
+              <Button
+                variant="secondary"
+                size="compact"
+                class="max-w-64"
                 aria-label={m.live_title_edit_label()}
                 onclick={openTitleEditor}
                 data-live-title-chip
               >
                 <Pencil size={12} strokeWidth={2.5} aria-hidden="true" />
                 <span class="truncate">{broadcast.title || m.live_title_add()}</span>
-              </button>
+              </Button>
             {:else}
               <form
                 class="flex max-w-72 flex-col gap-1.5 rounded-lg bg-black/60 p-2"
@@ -371,9 +374,8 @@
                 }}
                 data-live-title-editor
               >
-                <input
-                  type="text"
-                  class="rounded-lg bg-white/15 px-2 py-1.5 text-sm text-white outline-none placeholder:text-white/60 focus-visible:ring-2 focus-visible:ring-white"
+                <Input
+                  density="compact"
                   aria-label={m.live_title_edit_label()}
                   placeholder={m.live_title_placeholder()}
                   value={titleDraft}
@@ -389,16 +391,14 @@
                     })}</span
                   >
                   <span class="flex gap-1.5">
-                    <button
-                      type="button"
-                      class="rounded-full bg-white/15 px-3 py-1 font-semibold"
-                      onclick={() => (titleDraft = null)}>{m.common_cancel_button()}</button
+                    <Button variant="secondary" size="compact" onclick={() => (titleDraft = null)}
+                      >{m.common_cancel_button()}</Button
                     >
-                    <button
+                    <Button
                       type="submit"
-                      class="rounded-full bg-white px-3 py-1 font-semibold text-black disabled:opacity-50"
+                      size="compact"
                       disabled={broadcast.titleSaving}
-                      data-live-title-save>{m.common_save_button()}</button
+                      data-live-title-save>{m.common_save_button()}</Button
                     >
                   </span>
                 </span>
@@ -516,9 +516,7 @@
               >{m.live_title_counter({ count: liveTitleLength(broadcast.title), max })}</span
             >
           </span>
-          <input
-            type="text"
-            class="rounded-lg bg-white/15 px-3 py-2 text-white outline-none placeholder:text-white/60 focus-visible:ring-2 focus-visible:ring-white"
+          <Input
             placeholder={m.live_title_placeholder()}
             value={broadcast.title}
             oninput={(e) => (broadcast.title = clampTitleField(e.currentTarget, max))}
