@@ -406,7 +406,9 @@ export class UsersController {
       return;
     }
     if (outcome.kind === 'unavailable') {
-      log('unavailable', 502);
+      // Answered from the known-down state: no `[AVATAR]` line per face - the service logged the
+      // outage once when it began and logs its return with the count of requests it spared.
+      if (!outcome.shortCircuited) log('unavailable', 502);
       res.set({ 'Cache-Control': 'no-store' });
       res.status(502).end();
       return;

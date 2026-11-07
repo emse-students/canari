@@ -8,6 +8,9 @@ fault. Names behind that connector answered Cloudflare 1033 and nothing reported
 `tunnel-down`) and the transport analysis, with its recommendation:
 [upstream-reachability](../infrastructure/upstream-reachability.md#the-transport-decision---protocol-http2-for-a-tunnel-connector-that-loses-quic).
 
+**Decision 2026-11-07:** `http2` stays the recommendation, but it edits a unit on the shared host (the school IT
+department's), so an agent does not take it; the request to put to them is worded in the wiki page above.
+
 **Owed, a host action for the owner or the DSI (an agent changes no unit on the host):**
 
 1. Run the connector that lost QUIC with `--protocol http2` (the flag on its `ExecStart`, or

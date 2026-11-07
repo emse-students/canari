@@ -94,8 +94,11 @@ describe('avatar presence', () => {
 
     expect(await controller(avatars).avatarPresence('a')).toEqual({ withPhoto: null });
     expect(await controller(avatars).avatarPresence('a')).toEqual({ withPhoto: null });
-    expect(logged).toHaveBeenCalledTimes(2);
+    // The 404 is an answer (the gallery is up); the timeout is the outage's first sign, so it adds the
+    // one `DOWN` transition line to its own.
+    expect(logged).toHaveBeenCalledTimes(3);
     expect(String(logged.mock.calls[0][0])).toContain('clients will ask each avatar');
+    expect(logged.mock.calls.filter((c) => String(c[0]).includes('is DOWN'))).toHaveLength(1);
   });
 
   it('refuses a list longer than the profile batch rather than answering part of it', async () => {
