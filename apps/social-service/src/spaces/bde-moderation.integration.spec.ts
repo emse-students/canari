@@ -3,7 +3,7 @@
  * 072 for the spaces, hand-made minimal tables for the rest.
  *
  * `bde-moderation.ts` decides what a BDE `MODERATE` holder may act on: an association's post or live
- * when the association is reached by a space it governs, a person's when that person belongs to one
+ * when the BDE is the association's PARENT (WP-R4 on WP-D2), a person's when that person belongs to one
  * of its spaces, a report by what it is about. The unit specs give these answers as fixtures; this
  * file proves the SQL itself.
  *
@@ -51,7 +51,18 @@ const A = {
   // 2026-11-02/03), so no BDE moderates its content - the platform admin's alone.
   instSe: '00000000-0000-4000-8000-0000000000d1', // institution, rule (NULL, saint-etienne)
   listSe: '00000000-0000-4000-8000-0000000000e1', // a campaign LIST, rule (ICM, saint-etienne)
+  // bdeSe's CHILD whose audience reaches only gardanne (bdeGa's spaces): moderated by its parent,
+  // never by the BDE of the spaces it reaches (WP-R4).
+  clubAway: '00000000-0000-4000-8000-0000000000e2', // rule (ICM, gardanne), parent bdeSe
 } as const;
+
+/** The governing parents (WP-D2); clubNone, the BDEs and the institution depend on nobody. */
+const PARENT: [string, string][] = [
+  [A.clubSe, A.bdeSe],
+  [A.clubGa, A.bdeGa],
+  [A.listSe, A.bdeSe],
+  [A.clubAway, A.bdeSe],
+];
 
 const P = {
   clubSePost: '10000000-0000-4000-8000-000000000001',
@@ -66,6 +77,7 @@ const P = {
   bdeSePost: '10000000-0000-4000-8000-000000000008',
   bdeGaPost: '10000000-0000-4000-8000-000000000009',
   listSePost: '10000000-0000-4000-8000-00000000000b',
+  clubAwayPost: '10000000-0000-4000-8000-00000000000d',
 } as const;
 
 const L = {
@@ -191,7 +203,8 @@ maybe('BDE moderation scope against PostgreSQL', () => {
     await client.query(`SET search_path TO ${schema}, public`);
     await client.query(`
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
-        "isBDE" boolean NOT NULL DEFAULT false, type varchar NOT NULL DEFAULT 'association');
+        "isBDE" boolean NOT NULL DEFAULT false, type varchar NOT NULL DEFAULT 'association',
+        "parentAssociationId" uuid);
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL, permissions integer NOT NULL DEFAULT 0);
       CREATE TABLE association_calendar_events (id serial PRIMARY KEY, "associationId" uuid NOT NULL);
@@ -218,6 +231,12 @@ maybe('BDE moderation scope against PostgreSQL', () => {
         [id, key, key === 'bdeSe', type]
       );
     }
+    for (const [child, parent] of PARENT) {
+      await client.query(`UPDATE associations SET "parentAssociationId" = $2 WHERE id = $1`, [
+        child,
+        parent,
+      ]);
+    }
     await client.query(migration('071_spaces.sql'));
     await client.query(migration('072_drop_is_bde.sql'));
     await client.query(`DELETE FROM association_audiences`);
@@ -229,6 +248,7 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       [A.clubGa, null, 'gardanne'],
       [A.instSe, null, 'saint-etienne'],
       [A.listSe, 'ICM', 'saint-etienne'],
+      [A.clubAway, 'ICM', 'gardanne'],
     ];
     for (const [asso, formation, campus] of rules) {
       await client.query(
@@ -303,6 +323,7 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       [P.bdeSePost, 'seMod', A.bdeSe, []],
       [P.bdeGaPost, 'gaMod', A.bdeGa, []],
       [P.listSePost, 'seStudent', A.listSe, []],
+      [P.clubAwayPost, 'gaStudent', A.clubAway, []],
     ];
     for (const [id, author, asso, comments] of postRows) {
       await client.query(
@@ -333,9 +354,33 @@ maybe('BDE moderation scope against PostgreSQL', () => {
 
   it('a BDE moderates the posts of its governed spaces, association and personal alike', async () => {
     expect(await posts('seMod')).toEqual(
-      [P.clubSePost, P.seStudentPost, P.bdeSePost, P.listSePost].sort()
+      [P.clubSePost, P.seStudentPost, P.bdeSePost, P.listSePost, P.clubAwayPost].sort()
     );
     expect(await posts('gaMod')).toEqual([P.clubGaPost, P.gaStudentPost, P.bdeGaPost].sort());
+  });
+
+  it("moderates a CHILD's posts wherever its audience reaches, and not the BDE of those spaces (WP-R4)", async () => {
+    // clubAway depends on bdeSe and addresses only gardanne, which bdeGa governs.
+    expect(await posts('seMod')).toContain(P.clubAwayPost);
+    expect(await posts('gaMod')).not.toContain(P.clubAwayPost);
+    // A refusal is classified by who CAN act: gaMod's refusal on clubAway is out of scope (its
+    // parent moderates it), one on a parentless club is the platform admin's (B2).
+    const reserved = async (post: string) =>
+      (await client.query(MODERATION_RESERVED_SQL, ['post', post, null])).rows[0]
+        .reserved as boolean;
+    expect(await reserved(P.clubAwayPost)).toBe(false);
+    expect(await reserved(P.clubNonePost)).toBe(true);
+    // A hand-written parent on the INSTITUTION (migration 131 refuses one) moderates nothing (G9).
+    await client.query('BEGIN');
+    try {
+      await client.query(`UPDATE associations SET "parentAssociationId" = $2 WHERE id = $1`, [
+        A.instSe,
+        A.bdeSe,
+      ]);
+      expect(await posts('seMod')).not.toContain(P.instSePost);
+    } finally {
+      await client.query('ROLLBACK');
+    }
   });
 
   it('answers the same for a post id spelled in uppercase (`mayModeratePost`)', async () => {

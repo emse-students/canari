@@ -784,8 +784,10 @@ export class AssociationsController {
    * that does not come back, which is why the caller reaches `remove` rather than the service
    * being trusted to identify them.
    *
-   * SCOPED SINCE WP6c STEP 2: the BDE must GOVERN this association (`isAssociationSuperAdminOf`, a
-   * space it reaches); `MANAGE_ASSO` in the BDE of another space no longer ends it.
+   * SCOPED TO THE PARENT SINCE WP-D2 (E3, owner 2026-11-02): the BDE must GOVERN this association
+   * (`isAssociationSuperAdminOf`: `MANAGE_ASSO` in its parent BDE); another BDE, whatever spaces the
+   * association's audience reaches, does not end it, and an association with no parent is the
+   * platform admin's to delete.
    *
    * AN INSTITUTION IS THE GLOBAL ADMIN'S TO DELETE (owner, 2026-11-02), as it is theirs to create
    * (D20): a BDE that governs one is refused 403 `INSTITUTION_DELETE_ADMIN_ONLY`, and keeps
@@ -804,7 +806,7 @@ export class AssociationsController {
           `[PERM] delete association refused: no BDE MANAGE_ASSO over ${sanitizeLog(id)}`
         );
         throw new ForbiddenException(
-          "Global admin or MANAGE_ASSO in the BDE of the association's space required"
+          "Global admin or MANAGE_ASSO in the association's parent BDE required"
         );
       }
       const target = await this.service.findById(id);

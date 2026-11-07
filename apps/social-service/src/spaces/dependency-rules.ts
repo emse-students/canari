@@ -39,8 +39,9 @@ export const SPACE_GOVERNOR_TYPE = 'SPACE_GOVERNOR_TYPE';
 
 /**
  * Why a dependency is shown as a MISMATCH on the Dependencies panel (reform 2.5: information, never
- * refused): the parent row is gone; the parent governs no space (the predicate of WP-D2 will treat
- * it as no parent); the entity reaches a space its parent does not govern; its parent governs none
+ * refused): the parent row is gone; the parent governs no space (the governance predicate of WP-D2,
+ * `holdsBdeFlagOverSql`, treats it as no parent); the entity reaches a space its parent does not
+ * govern; its parent governs none
  * of the spaces it reaches.
  */
 export type DependencyMismatch =

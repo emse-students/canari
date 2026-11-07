@@ -85,7 +85,9 @@ describe('"Lire tout, modifier dans ses espaces" (owner, 2026-11-03)', () => {
 
   it('adds inside its spaces, leaves the wider rule, and may not touch it', () => {
     const write = (governs: boolean, submitted: typeof wide) =>
-      codeOf(() => assertBdeMayWriteAudience('association', icmStar, governs, wide, submitted));
+      codeOf(() =>
+        assertBdeMayWriteAudience('association', icmStar, icmStar, governs, wide, submitted)
+      );
     expect(write(true, [...wide, icm])).toBeNull();
     expect(write(true, [icm])).toBe('AUDIENCE_RULE_BEYOND_BDE_SPACES');
     expect(write(true, [])).toBe('AUDIENCE_RULE_BEYOND_BDE_SPACES');
@@ -94,5 +96,31 @@ describe('"Lire tout, modifier dans ses espaces" (owner, 2026-11-03)', () => {
     );
     // Not governing the entity: nothing, its own space included - no takeover by addition.
     expect(write(false, [...wide, icm])).toBe('AUDIENCE_OUTSIDE_BDE_CAMPUS');
+  });
+
+  it("writes inside its PARENT's spaces only, never another BDE the same person manages (WP-D2)", () => {
+    // The star holds MANAGE_ASSO in two BDEs: ICM's (the entity's parent) and FSSS's. It READS
+    // across both, and WRITES inside the parent's spaces alone (G8, D1).
+    const reader = [se('ICM', true), se('ISMIN', false), se('FSSS', true)];
+    const parent = [se('ICM', true), se('ISMIN', false), se('FSSS', false)];
+    const fsss = { formation: 'FSSS', campus: 'saint-etienne' };
+    const write = (submitted: (typeof icm)[]) =>
+      codeOf(() => assertBdeMayWriteAudience('list', reader, parent, true, [icm], submitted));
+    expect(write([icm])).toBeNull();
+    expect(write([icm, fsss])).toBe('AUDIENCE_RULE_BEYOND_BDE_SPACES');
+  });
+
+  it('lets a parent read its child wherever its rules lie, and no one else beyond its campus', () => {
+    const gardanne = [{ formation: null, campus: 'gardanne' }];
+    expect(codeOf(() => assertBdeMayReadAudience('association', icmStar, gardanne, true))).toBe(
+      null
+    );
+    expect(codeOf(() => assertBdeMayReadAudience('association', icmStar, gardanne, false))).toBe(
+      'AUDIENCE_OUTSIDE_BDE_CAMPUS'
+    );
+    // Even "governing" an institution reads nothing: it is the platform admin's (G9).
+    expect(codeOf(() => assertBdeMayReadAudience('institution', icmStar, gardanne, true))).toBe(
+      'AUDIENCE_INSTITUTION_ADMIN_ONLY'
+    );
   });
 });

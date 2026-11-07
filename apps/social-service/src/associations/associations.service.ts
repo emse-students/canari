@@ -2667,10 +2667,11 @@ export class AssociationsService {
   }
 
   /**
-   * THE SCOPED BDE QUESTION (WP6c step 2): does `userId` hold `flag` in the BDE of a space that
-   * association `associationId` reaches? `holdsBdeFlagOverSql` is the one definition; this asks it
-   * for one pair. An association reaching no space is governed by no BDE, so this is false and only
-   * a global admin (whom the callers check first) acts on it.
+   * THE GOVERNANCE QUESTION (WP-D2): does `userId` hold `flag` in the BDE that governs association
+   * `associationId` - its parent, or itself when it is a BDE? `holdsBdeFlagOverSql` is the one
+   * definition; this asks it for one pair. An association with no parent (or whose parent governs
+   * no space) is governed by no BDE, so this is false and only a global admin (whom the callers
+   * check first) acts on it.
    */
   async holdsBdeFlagOver(
     userId: string,
@@ -2900,16 +2901,18 @@ export class AssociationsService {
    *
    * ONLY FOR THE ROUTES THAT NAME NO ASSOCIATION (creating one, the categories, the carte, the
    * document-reviewer grants): there is no association to scope them to. Administering a GIVEN
-   * association asks `isAssociationSuperAdminOf`, scoped to the spaces it reaches (WP6c step 2).
+   * association asks `isAssociationSuperAdminOf`, scoped to that association's parent (WP-D2).
    */
   async isAssociationSuperAdmin(userId: string): Promise<boolean> {
     return this.callerHasAnyBdeFlag(userId, AssociationPermissionFlag.MANAGE_ASSO);
   }
 
   /**
-   * Is `userId` a super-admin OF association `associationId`: `MANAGE_ASSO` in the BDE of a space
-   * that association reaches? Such a user administers it (members, documents, forms, products) as
-   * if a full local admin, minus `SUPER_ADMIN_EXCLUDED_FLAGS`. A BDE of another space does not.
+   * Is `userId` a super-admin OF association `associationId`: `MANAGE_ASSO` in its PARENT BDE (or
+   * in itself when it is a BDE) - `holdsBdeFlagOverSql`, WP-D2? Such a user administers it (members,
+   * documents, forms, products, and deletion - E3) as if a full local admin, minus
+   * `SUPER_ADMIN_EXCLUDED_FLAGS`. Another BDE does not, whatever spaces the audience reaches; nobody
+   * but the platform admin governs an entity with no parent, or an institution.
    */
   async isAssociationSuperAdminOf(userId: string, associationId: string): Promise<boolean> {
     return this.holdsBdeFlagOver(userId, associationId, AssociationPermissionFlag.MANAGE_ASSO);
@@ -3133,8 +3136,8 @@ export class AssociationsService {
    * `associationId`?
    *
    * Three tiers, widest first: the platform administrator, who holds every association right
-   * whether or not they are a member; the super-admin OF THIS association (`MANAGE_ASSO` in the BDE
-   * of a space it reaches - `isAssociationSuperAdminOf`), minus `SUPER_ADMIN_EXCLUDED_FLAGS`; then
+   * whether or not they are a member; the super-admin OF THIS association (`MANAGE_ASSO` in its
+   * parent BDE - `isAssociationSuperAdminOf`, WP-D2), minus `SUPER_ADMIN_EXCLUDED_FLAGS`; then
    * the association's own member bitmask.
    *
    * It exists because the same question had four different answers in this codebase - the guard

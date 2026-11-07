@@ -10,98 +10,86 @@ import { AssociationPermissionFlag } from '../associations/entities/association-
  *
  * It answers "is a BDE SOMEWHERE", which is what the doors of the BDE surfaces ask (the moderation
  * queue opens to a MODERATE holder anywhere, then narrows to its scope) and what the routes naming no
- * association ask. A power exercised ON an association asks
- * `holdsBdeFlagOverSql` instead, which is scoped to the spaces that association reaches.
+ * association ask. A power exercised ON an association asks `holdsBdeFlagOverSql` instead, which
+ * names the one BDE that governs that association (its parent, WP-D2).
  */
 export function isBdeAssociationSql(alias: string): string {
   return `EXISTS (SELECT 1 FROM spaces bde_space WHERE bde_space."bdeAssociationId" = ${alias}.id)`;
 }
 
 /**
- * THE SCOPED BDE PREDICATE (WP6c step 2): user `user` holds `flag` in the BDE of a space that
- * association `association` reaches.
+ * THE BDE THAT GOVERNS ENTITY `child` (an alias of `associations`), joined as alias `bde`: its
+ * governing PARENT (`parentAssociationId`, WP-D2), or the entity ITSELF when it is a BDE - and only
+ * when that association is of type `association` and governs at least one space.
+ *
+ * - **No parent, not a BDE**: nothing joins, so nobody but the platform admin governs it (B2).
+ * - **A parent that governs no space**: nothing joins either - a parent left without a space
+ *   governs nobody (reform 2.2; the Dependencies panel shows it as a mismatch).
+ * - **A BDE** has no parent ("un BDE n'est gere par personne", D2, G10) and is governed through a
+ *   membership in ITSELF only - never by another BDE whose audience overlaps it.
+ * - **An institution** has no parent (the triggers of migration 131 refuse one) and governs itself
+ *   as an institution, never as a BDE: the `type` tests exclude both paths even for a hand-written
+ *   row, so no BDE ever governs an institution (E5, G9).
+ *
+ * Two levels (D2) make this ONE join on a primary key, never a recursion.
+ */
+export function governingBdeJoinSql(child: string, bde: string): string {
+  return `JOIN associations ${bde} ON ${bde}.id IN (${child}."parentAssociationId", ${child}.id)
+      AND ${bde}.type = 'association' AND ${child}.type <> 'institution'
+      AND ${isBdeAssociationSql(bde)}`;
+}
+
+/**
+ * THE GOVERNANCE PREDICATE (WP-D2, owner 2026-11-07, reform 2.4): user `user` holds `flag` in the
+ * BDE that GOVERNS association `association` - its parent, or itself when it is a BDE
+ * (`governingBdeJoinSql`).
  *
  * Every argument is a SQL expression (a placeholder like `$1`, or a column like `e."associationId"`),
  * so the same text filters a list, answers one question, or picks recipients.
  *
- * "The spaces an association reaches" are the spaces its `association_audiences` rules reach - the
- * same rules the readers are resolved from (`reader-spaces.ts`), so the BDE that governs an
- * association is the BDE of the people it addresses. An association reaching SEVERAL spaces is
- * governed by the BDE of ANY of them; one reaching NO space (no rule) is governed by nobody here,
- * which leaves it to a global admin. A BDE always reaches the spaces it governs (the spaces page
- * holds that), so a BDE governs its own association.
+ * IT USED TO BE READ FROM REACH: the BDE of ANY space the association's audience reached governed it
+ * (WP6c step 2). On a campus two BDEs share, a whole-campus rule made BOTH BDEs uncapped super-admins
+ * of the entity, and a rule written while one BDE governed every space of a campus handed the entity
+ * to another BDE the day the platform admin opened a new space there (reform P1, the WP-R1
+ * residual). Governance is now the dependency axis alone: the audience decides who READS, the parent
+ * who GOVERNS (D1, "correlated, never coupled") - so an audience edit can neither take an entity over
+ * nor hand it away.
  *
- * Decided by the user (profiles-and-access, 6c): MANAGE_ASSO is read through this, and VALIDATE_EVENTS
- * through its agenda twin below. MODERATE is read through this too since 2026-11-02 (owner), by
- * `bde-moderation.ts` for content in an association's name - so an institution's content is the
- * platform admin's to moderate, as its management is - which adds the personal content and the
- * people this predicate cannot express, on the same per-space standing (`bdeStandingInSpaceSql`).
+ * Read for MANAGE_ASSO (`isAssociationSuperAdminOf`, hence `mayAct`, `mayActOnAny`, the role guard
+ * and the delete route - E3: a parent BDE deletes an association or list that depends on it), for
+ * MODERATE over content published in an association's name (`bde-moderation.ts`, WP-R4: the parent's
+ * moderators moderate their children's posts, comments and lives; G9: no BDE an institution's), for
+ * the BDE star's audience writes (`spaces.service.ts`), and for the last-admin bypass of the member
+ * routes. A BDE's own officers keep governing the BDE itself, as they did.
  *
- * AN INSTITUTION HAS NO GOVERNING BDE, EVER (owner, 2026-11-02: "une institution n'a personne au
- * dessus"; 2026-11-03: "Aucun BDE n'a les droits de gestion sur une institution"). Its audience may
- * reach a BDE's space, and that must confer no MANAGEMENT: no super-admin tier (archive, members,
- * profile, audience, delete). Only its own members, within their flags, and the platform admin
- * manage it. Written HERE, once, so every management caller - `mayAct`, `mayActOnAny`, the delete
- * route - inherits it.
- *
- * A BDE IS MANAGED BY NOBODY BUT ITSELF (owner, 2026-11-03: "Un BDE n'est géré par personne"). One
- * campus holds two BDEs, and one BDE's whole-campus rule reaches the other's spaces, so the space
- * rule alone made each BDE the super-admin of the other - uncapped, it could seat itself there. A
- * target that is the BDE of any space is therefore managed only through a membership in THAT BDE.
- *
- * THE AGENDA IS NOT MANAGEMENT. "c'est le BDE qui a tous les droits sur l'agenda des formations dont
- * il est le BDE" (owner, 2026-11-03): validating, rejecting and every other agenda right follow the
- * spaces an event TARGETS, whoever organises it - an institution's event included. That is
- * `holdsBdeAgendaRightOverSql`, the same space rule without the management exclusions.
+ * THE AGENDA IS NOT GOVERNANCE. "c'est le BDE qui a tous les droits sur l'agenda des formations dont
+ * il est le BDE" (owner, 2026-11-03): validating and every other agenda right follow the spaces an
+ * event TARGETS, whoever organises it - an institution's event included. That is
+ * `holdsBdeAgendaRightOverSql`, still read per space until WP-E.
  */
 export function holdsBdeFlagOverSql(user: string, association: string, flag: string): string {
-  return bdeFlagOverReachSql(user, association, flag, true);
+  return `EXISTS (SELECT 1 FROM associations gov_child
+    ${governingBdeJoinSql('gov_child', 'gov_bde')}
+    JOIN association_members gov_m ON gov_m."associationId" = gov_bde.id
+    WHERE gov_child.id = ${association}
+      AND gov_m."userId" = ${user} AND (gov_m.permissions & ${flag}) <> 0)`;
 }
 
 /**
  * THE AGENDA PREDICATE (owner, 2026-11-03): user `user` holds `VALIDATE_EVENTS` in the BDE of a
  * space the events of association `association` target - and so validates, rejects, edits, deposits
  * on and declares a break for them. Until per-event targeting (WP-E) an event targets the spaces its
- * organiser's audience rules reach, so this is the scoped rule of `holdsBdeFlagOverSql` read for
- * the agenda: an INSTITUTION's event is validated by the BDE of the spaces it targets (or the
- * platform admin), even though no BDE manages the institution itself. The flag is fixed here, so
- * no caller can lift the institution exclusion for a management right through this door.
+ * organiser's audience rules reach: an INSTITUTION's event is validated by the BDE of the spaces it
+ * targets (or the platform admin), though no BDE governs the institution itself. The flag is fixed
+ * here, so no caller can read a management right through this door. It is NOT the governance
+ * predicate above and never was: the agenda follows the spaces, governance the parent.
  */
 export function holdsBdeAgendaRightOverSql(user: string, association: string): string {
-  return bdeFlagOverReachSql(
-    user,
-    association,
-    String(AssociationPermissionFlag.VALIDATE_EVENTS),
-    false
-  );
-}
-
-/**
- * The space rule both predicates share. `management` adds the two exclusions of management - an
- * institution, and another BDE - which the agenda does not have.
- */
-function bdeFlagOverReachSql(
-  user: string,
-  association: string,
-  flag: string,
-  management: boolean
-): string {
-  const target = management
-    ? `
-    JOIN associations bde_target ON bde_target.id = ${association}`
-    : '';
-  const notInstitution = management
-    ? `
-      AND ${governorIsAnAssociationSql('bde_member."associationId"')}
-      AND bde_target.type <> 'institution'
-      AND (bde_member."associationId" = bde_target.id OR NOT EXISTS (SELECT 1 FROM spaces bde_of_target
-        WHERE bde_of_target."bdeAssociationId" = bde_target.id))`
-    : '';
+  const flag = String(AssociationPermissionFlag.VALIDATE_EVENTS);
   return `EXISTS (SELECT 1 FROM association_members bde_member
     JOIN spaces bde_governed ON ${bdeStandingInSpaceSql('bde_member', 'bde_governed', user, flag)}
-    JOIN association_audiences bde_reach ON bde_reach."associationId" = ${association}${target}
-    WHERE TRUE${notInstitution}
-      AND ${ruleReachesSpaceSql('bde_reach', 'bde_governed')})`;
+    JOIN association_audiences bde_reach ON bde_reach."associationId" = ${association}
+    WHERE ${ruleReachesSpaceSql('bde_reach', 'bde_governed')})`;
 }
 
 /**
@@ -110,9 +98,9 @@ function bdeFlagOverReachSql(
  * A space's governor may be an INSTITUTION since WP-D1 (owner D3, reform 2.3: a formation with no BDE
  * placed under the School). That governor answers for the space's AGENDA and its students' personal
  * content - the per-space standing below, unchanged - but it is "still not a BDE for D2": it never
- * becomes a parent and MANAGES nothing. So every MANAGEMENT reading of a space's governor (the
- * super-admin tier over an association, a BDE star's audience powers, a creator's default audience,
- * the MANAGE_ASSO door of the routes naming no association) adds this, and only those.
+ * becomes a parent and MANAGES nothing. So every MANAGEMENT reading of a space's governor (a BDE
+ * star's audience read standings, the MANAGE_ASSO door of the routes naming no association) adds
+ * this, and only those; the governance predicate tests the same type in `governingBdeJoinSql`.
  */
 export function governorIsAnAssociationSql(governor: string): string {
   return `EXISTS (SELECT 1 FROM associations gov_kind WHERE gov_kind.id = ${governor} AND gov_kind.type = 'association')`;
@@ -137,17 +125,36 @@ export function bdeStandingInSpaceSql(
 
 /**
  * Every opened space, with whether a BDE in which user `$1` holds flag `$2` governs it. Answers
- * `formation`, `campus`, `governed`. The borders of a BDE star's audience powers PER SPACE
- * (`audience-policy.ts` `ruleInsideGovernedSpaces`), and of a creator's default audience
- * (`creatorDefaultRules`). A campus-level bound let a star write over a space another BDE of the
- * same campus governs. Read only with MANAGE_ASSO, so a space an INSTITUTION governs is never
- * "governed" here (`governorIsAnAssociationSql`).
+ * `formation`, `campus`, `governed`. The READ border of a BDE star's audience powers ("Lire tout",
+ * `audience-policy.ts` `assertBdeMayReadAudience`): every BDE the star holds the flag in counts.
+ * The WRITE border is narrower - the spaces of the entity's own governing BDE
+ * (`ENTITY_GOVERNOR_SPACE_STANDINGS_SQL`). Read only with MANAGE_ASSO, so a space an INSTITUTION
+ * governs is never "governed" here (`governorIsAnAssociationSql`).
  */
 export const BDE_SPACE_STANDINGS_SQL = `SELECT bde_space.formation, bde_space.campus,
     EXISTS (SELECT 1 FROM association_members bde_star
       WHERE ${bdeStandingInSpaceSql('bde_star', 'bde_space', '$1', '$2')}
         AND ${governorIsAnAssociationSql('bde_star."associationId"')}) AS "governed"
   FROM spaces bde_space ORDER BY bde_space.campus, bde_space.formation`;
+
+/**
+ * Every opened space, with whether THE BDE GOVERNING association `$1` (`governingBdeJoinSql`: its
+ * parent, or itself when it is a BDE) governs it AND user `$2` holds flag `$3` there. Answers
+ * `formation`, `campus`, `governed`.
+ *
+ * THE WRITE BORDER OF A BDE STAR'S AUDIENCE POWERS (WP-D2, G8 "modifier dans ses espaces", D1 "Oui
+ * pour le parent"): a parent writes its child's audience inside the parent's OWN spaces - never
+ * inside the spaces of another BDE the same person also holds MANAGE_ASSO in. Every opened space is
+ * listed, governed or not, because a whole-campus rule is judged against all of its campus
+ * (`ruleInsideGovernedSpaces`).
+ */
+export const ENTITY_GOVERNOR_SPACE_STANDINGS_SQL = `SELECT eg_space.formation, eg_space.campus,
+    EXISTS (SELECT 1 FROM associations eg_child
+      ${governingBdeJoinSql('eg_child', 'eg_bde')}
+      JOIN association_members eg_m ON eg_m."associationId" = eg_bde.id
+      WHERE eg_child.id = $1
+        AND ${bdeStandingInSpaceSql('eg_m', 'eg_space', '$2', '$3')}) AS "governed"
+  FROM spaces eg_space ORDER BY eg_space.campus, eg_space.formation`;
 
 /** Does user `$1` hold flag `$3` in a BDE governing association `$2`? Answers `holds`. */
 export const HOLDS_BDE_FLAG_OVER_SQL = `SELECT ${holdsBdeFlagOverSql('$1', '$2', '$3')} AS "holds"`;
