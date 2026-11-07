@@ -1,4 +1,4 @@
-## Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07, design not written)
+## Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07, designed)
 
 Asked by the owner on 2026-11-07, every question answered the same day:
 
@@ -17,11 +17,10 @@ Asked by the owner on 2026-11-07, every question answered the same day:
 What this reverses: today a live keeps only its newest 20 segments and is deleted at its end - "no
 replay", L3 and Q10 in [lives](../services/lives.md#deletion-at-the-end-plus-a-sweep-q10-l3).
 
-What the design owes, measured and not guessed: the bytes per hour from the measured bitrates in
-[lives](../services/lives.md) (about 1.4 GB per hour for an Android broadcaster) against one
-read-only disk measurement; whether the stored fragments concatenate into one playable file with no
-transcoding, on both platforms; how a per-live key meets the reel pipeline's per-file encryption;
-the audience, report, staff and broadcaster deletion; a durable-state sweep at three days; the
-privacy texts (CGU, privacy page, register C19 "supprimé peu après sa fin"); the work packages,
-each migration marked plain or held. A first design run was stopped at the pause of 2026-11-07
-before it wrote anything.
+**Designed 2026-11-07: [live-replays](../frontend/modules/live-replays.md)**, the only copy - the
+storage (~1.4 GB per broadcast hour, a cap per account recommended), the measured segment join (one
+playable fMP4 while the inits are equal, not across a changed init), a VOD list over the stored
+ciphertext rather than a reel file, the audience and the one deletion path, the three days as durable
+state, the download, the chat deleted at the end, the privacy texts, the CanaReel audit and the
+owner's eight questions (R1-R8), and the work packages WP-R0 to WP-R7. Owed next: WP-R0 (the
+read-only disk figure, the owner's answers, the init reading on both phones), then WP-R1.

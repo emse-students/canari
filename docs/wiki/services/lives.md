@@ -709,6 +709,8 @@ Decided 2026-10-18 on review (nothing limited it before). Four bounds, each a ty
 
 ## Deletion: at the end, plus a sweep (Q10, L3)
 
+**Replays are DESIGNED, not built (owner, 2026-11-07):** an eligible live is to be kept three days and shown as a CanaReel, which changes this section, the trim and the chat's retention - [live-replays](../frontend/modules/live-replays.md). Until it is built, what follows is what the code does.
+
 There is no replay. At the broadcaster's end the segments and the row are deleted at once **unless a
 viewer still holds a seat**; every other end, and any purge that failed or waited, is finished by
 `LiveRetentionScheduler` (every 30 s).
@@ -1314,6 +1316,7 @@ of those rows is the sweep's, not this file's. Applied twice by the integration 
 ## See also
 
 - [live](../frontend/modules/live.md) - the plan, the decisions, the work packages
+- [live-replays](../frontend/modules/live-replays.md) - the design that keeps a finished live three days as a CanaReel
 - [reels](reels.md) - the server model this copies (state is the row, blobs then row, a `try` per item)
 - [media-streaming-upload](media-streaming-upload.md) - the 8 MiB body invariant the segment bound sits under
 - [account-erasure](../account-erasure.md)
