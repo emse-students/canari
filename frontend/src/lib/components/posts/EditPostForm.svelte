@@ -606,7 +606,7 @@
         </button>
         <Button
           type="button"
-          class="shrink-0 px-5 py-2 text-sm !font-bold"
+          class="shrink-0"
           disabled={saving ||
             (!markdown.trim() && existingMedia.length === 0 && newFiles.length === 0)}
           loading={saving}

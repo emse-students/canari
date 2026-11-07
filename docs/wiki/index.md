@@ -55,6 +55,7 @@
 - [Frontend architecture](frontend/architecture.md) — SvelteKit 5, stores, routing, Paraglide i18n
 - [Guided help](frontend/guided-help.md) - the welcome tour and first-time hints: one engine, how to declare a help, a missing target decided by an event, the quiet state, and the per-account seen store
 - [Design reference](frontend/design-reference.md) - Messenger and Facebook MEASURED, Canari's 36 font sizes measured beside them, and the scale that replaces them
+- [Controls](frontend/controls.md) - one 40 px height, one grey edge, three mandatory components (Button, Input, Select) and the ratchet test that fails a screen drawing its own
 - [SEO and link previews](frontend/seo.md) — why a login-gated SPA needs server-rendered heads, the sitemap and robots routes, and what each decision follows from
 - [Local-first UI](frontend/local-first-ui.md) - the rule that no interaction servable from local state may await the network, what a shaped link measured on the phone, and the ledger of what is fixed
 - [Offline and weak network](frontend/offline-and-weak-network.md) - what each send and load path does offline and on Slow 3G / 2G, measured on the sandbox pair, the root causes with file:line, and the ordered work packages (salon outbox, deadlines, boot chain)

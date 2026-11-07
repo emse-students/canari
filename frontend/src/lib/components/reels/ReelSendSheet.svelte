@@ -323,7 +323,7 @@
     <div class="flex justify-end">
       <Button
         type="button"
-        class="shrink-0 px-6 py-2 text-sm font-bold"
+        class="shrink-0"
         disabled={count === 0 || sending}
         onclick={send}
         data-reel-send-submit

@@ -76,7 +76,7 @@
     placeholder = '',
     minuteStep = 5,
     variant = 'field',
-    density = 'compact',
+    density = 'default',
     invalid = false,
     triggerClass = '',
     trigger,

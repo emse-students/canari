@@ -8,13 +8,13 @@
  */
 
 /** Border/focus colours, split out because only these differ between valid and invalid. */
-const EDGE_OK = 'border-cn-border focus:border-cn-yellow';
+const EDGE_OK = 'focus:border-cn-yellow';
 const EDGE_INVALID = 'border-red-err focus:border-red-err';
 
 /** Everything that depends on neither validity nor density. */
 const BASE =
-  'text-text-main placeholder:text-text-muted/50 disabled:bg-cn-border/20 w-full rounded-2xl ' +
-  'border-2 bg-(--cn-surface) transition-all outline-none ' +
+  'ui-control text-text-main placeholder:text-text-muted/50 disabled:bg-cn-border/20 w-full ' +
+  'bg-(--cn-surface) transition-colors outline-none ' +
   'focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)] disabled:opacity-50';
 
 /**
@@ -29,8 +29,8 @@ const BASE =
 export type ControlDensity = 'default' | 'compact';
 
 const DENSITY: Record<ControlDensity, string> = {
-  default: 'px-4 py-3 text-base',
-  compact: 'px-3 py-2 text-sm',
+  default: 'text-base',
+  compact: 'ui-control--compact text-sm',
 };
 
 /** Returns the full class string for a text input or a select. */

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import { LoaderCircle, TriangleAlert, KeyRound } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -235,12 +236,7 @@
     69 px that were already missing.
   -->
   {#snippet footer()}
-    <button
-      type="submit"
-      form={FORM_ID}
-      disabled={isLoading}
-      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-bold shadow-lg transition-all hover:-translate-y-0.5 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:translate-y-0"
-    >
+    <Button class="w-full" type="submit" form={FORM_ID} disabled={isLoading}>
       {#if isLoading}
         <LoaderCircle size={16} class="animate-spin" />
         {isRecover ? m.auth_changepin_recovering() : m.auth_changepin_changing()}
@@ -248,6 +244,6 @@
         <KeyRound size={16} strokeWidth={2.5} />
         {submitLabel}
       {/if}
-    </button>
+    </Button>
   {/snippet}
 </Modal>

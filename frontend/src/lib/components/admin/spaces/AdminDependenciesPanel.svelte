@@ -121,13 +121,9 @@
         </span>
       {/if}
       {#if editable && editing !== entity.id}
-        <button
-          type="button"
-          class="text-cn-dark ml-auto text-xs font-semibold underline-offset-2 hover:underline"
-          onclick={() => open(entity)}
-        >
+        <Button variant="ghost" size="compact" class="ml-auto" onclick={() => open(entity)}>
           {m.admin_dependencies_change()}
-        </button>
+        </Button>
       {/if}
     </div>
     {#each entity.mismatches as mismatch (mismatch)}
@@ -165,7 +161,7 @@
         <Button loading={saving} disabled={saving} onclick={() => save(entity)}>
           {m.common_save_button()}
         </Button>
-        <Button variant="outline" disabled={saving} onclick={() => (editing = null)}>
+        <Button variant="secondary" disabled={saving} onclick={() => (editing = null)}>
           {m.common_cancel_button()}
         </Button>
       </div>
