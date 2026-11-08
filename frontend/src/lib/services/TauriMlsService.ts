@@ -625,25 +625,35 @@ export class TauriMlsService extends BaseMlsService {
     // "Trying to work with closed connection" (Mi 9T, 2026-10-06, on every background). The
     // rejection is the fact, known here: release only a socket whose send was accepted.
     // THE CLOSE THAT ARRIVES IN THE WINDOW IS A FACT TOO. The main listener is gone (above), so a
-    // `Close` delivered while the `disconnect` frame is in flight - the peer ending the connection
-    // as we ask it to - would otherwise be unknown here, and the native release that follows could
-    // only answer "Trying to work with closed connection". A short-lived watcher records it.
+    // `Close` delivered while the `disconnect` frame is in flight or the native release runs - the
+    // peer ending the connection as we ask it to - would otherwise be unknown here. A short-lived
+    // watcher records it and stays until the release has settled, on every path.
     let closedNatively = false;
     const unwatch = ws.addListener((msg: WsMessage) => {
       if (msg.type === 'Close') closedNatively = true;
     });
     void ws.send(JSON.stringify({ type: 'disconnect' })).then(
       () => {
-        unwatch();
         if (closedNatively) {
+          unwatch();
           console.log(
             '[WS] pauseSocket: the socket closed while the disconnect was sent - nothing to release.'
           );
           return;
         }
-        ws.disconnect().catch((e: unknown) => {
-          console.warn(`[WS] pauseSocket: native disconnect failed: ${String(e)}`);
-        });
+        ws.disconnect().then(
+          () => unwatch(),
+          (e: unknown) => {
+            unwatch();
+            if (closedNatively) {
+              console.log(
+                `[WS] pauseSocket: the peer had already closed the socket (${String(e)}) - released.`
+              );
+              return;
+            }
+            console.warn(`[WS] pauseSocket: native disconnect failed: ${String(e)}`);
+          }
+        );
       },
       (e: unknown) => {
         unwatch();

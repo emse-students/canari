@@ -27,8 +27,6 @@ import { getLocale } from '$lib/i18n';
 import { CALLS_NATIVE_RING_COMPILED, PUSH_WAKE_DECLARED } from '$lib/features';
 import { voipRegistrationField } from '$lib/mobile/voipRegistration';
 import { readApiJson } from '$lib/utils/apiJson';
-import { trackedFetch } from '$lib/utils/trackedFetch';
-import { DEADLINE_MS } from '$lib/utils/requestDeadline';
 
 /** Push gateway platform tag sent to the backend (mirrors the server's PushPlatform). */
 type PushPlatform = 'android' | 'ios';
@@ -525,10 +523,11 @@ function pushPlatform(): PushPlatform | null {
 }
 
 /**
- * How long a sign-out waits for the server's push deregistration before it goes on without it: the
- * write class's base, the same bound as the revocation that follows it.
+ * How long a sign-out waits for the server's push deregistration. SHORT ON PURPOSE: it runs BEFORE
+ * the revocation and blocks it, so on a stalled link it adds to the revocation's own deadline - the
+ * server ends the device's token with the session anyway, so this call is not worth a long wait.
  */
-export const PUSH_DEREGISTRATION_DEADLINE_MS = DEADLINE_MS.write;
+export const PUSH_DEREGISTRATION_DEADLINE_MS = 6_000;
 
 /**
  * Deregisters this device's push token on the SERVER while the session's credential is still valid.
@@ -558,8 +557,10 @@ export async function stopPushService(
 
   let response: Response;
   try {
-    response = await trackedFetch(
-      fetch,
+    // A PLAIN `fetch` UNDER ITS OWN SIGNAL, not `trackedFetch`: that one reports a deadline expiry to the
+    // connectivity store, and two consecutive expiries mark the server unreachable - a sign-out's
+    // deregistration timing out is not evidence about the link (`trackedFetch` has no opt-out).
+    response = await fetch(
       `${apiBaseUrl}/api/mls/push/unregister/${encodeURIComponent(deviceId)}`,
       {
         method: 'DELETE',
@@ -571,8 +572,8 @@ export async function stopPushService(
           // `clearAuth` drops it on its next line - an `await` added above this read would send ''.
           'x-user-id': currentUserId() ?? '',
         },
-      },
-      { requestClass: 'write', deadlineMs: PUSH_DEREGISTRATION_DEADLINE_MS }
+        signal: AbortSignal.timeout(PUSH_DEREGISTRATION_DEADLINE_MS),
+      }
     );
   } catch (err) {
     // A TRANSPORT FAILURE OR THE DEADLINE, never a status (a status is an answer, handled below). It
