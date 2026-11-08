@@ -1,4 +1,4 @@
-import { containsEmoji, graphemes, isEmojiOnlyText } from './emoji';
+import { containsEmoji, isEmojiOnlyText } from './emoji';
 
 describe('containsEmoji', () => {
   it('finds a plain emoji among text', () => {
@@ -68,37 +68,107 @@ describe('isEmojiOnlyText', () => {
   });
 });
 
+/**
+ * Replaces `Intl.Segmenter` (and nothing else of `Intl`) with a counting one, and loads a FRESH
+ * `./emoji`, whose page-wide segmenter is built on first use: `built` counts constructions, `pulled`
+ * the segments handed out through every iterator.
+ */
+async function withCountingSegmenter(
+  run: (emoji: typeof import('./emoji'), counts: { built: number; pulled: number }) => void
+): Promise<void> {
+  const Real = Intl.Segmenter;
+  const counts = { built: 0, pulled: 0 };
+  class Counting extends Real {
+    constructor(...args: ConstructorParameters<typeof Real>) {
+      super(...args);
+      counts.built += 1;
+    }
+    segment(input: string): Intl.Segments {
+      const segments = super.segment(input);
+      return {
+        containing: (index?: number) => segments.containing(index),
+        *[Symbol.iterator]() {
+          for (const s of segments) {
+            counts.pulled += 1;
+            yield s;
+          }
+        },
+      } as Intl.Segments;
+    }
+  }
+  const own = Object.getOwnPropertyDescriptor(Intl, 'Segmenter')!;
+  Object.defineProperty(Intl, 'Segmenter', { ...own, value: Counting });
+  try {
+    vi.resetModules();
+    run(await import('./emoji'), counts);
+  } finally {
+    Object.defineProperty(Intl, 'Segmenter', own);
+    vi.resetModules();
+  }
+}
+
 describe('the grapheme split', () => {
-  it('is lazy: a caller that stops early reads one grapheme of a long text', () => {
-    const split = graphemes(`${'👍🏽'.repeat(10_000)}`);
-    expect(split.next().value).toBe('👍🏽');
+  it('pulls segments only as they are read', async () => {
+    await withCountingSegmenter(({ graphemes }, counts) => {
+      const split = graphemes('👍🏽'.repeat(10_000));
+      expect(split.next().value).toBe('👍🏽');
+      expect(counts.pulled).toBe(1);
+    });
+  });
+
+  it('stops at the first grapheme that is not an emoji, whatever the length', async () => {
+    await withCountingSegmenter(({ isEmojiOnlyText }, counts) => {
+      expect(isEmojiOnlyText(`banc ouverture ${'x'.repeat(50_000)}`, 5)).toBe(false);
+      expect(counts.pulled).toBe(1);
+      counts.pulled = 0;
+      expect(isEmojiOnlyText(`😀😀${'x'.repeat(50_000)}`, 5)).toBe(false);
+      expect(counts.pulled).toBe(3);
+    });
+  });
+
+  it('stops at the grapheme past maxCount', async () => {
+    await withCountingSegmenter(({ isEmojiOnlyText }, counts) => {
+      expect(isEmojiOnlyText('😀'.repeat(50_000), 5)).toBe(false);
+      expect(counts.pulled).toBe(6);
+    });
   });
 
   it('builds ONE segmenter for every call, never one per bubble', async () => {
-    const Real = Intl.Segmenter;
-    let built = 0;
-    class Counting extends Real {
-      constructor(...args: ConstructorParameters<typeof Real>) {
-        super(...args);
-        built += 1;
-      }
-    }
-    vi.stubGlobal('Intl', { ...Intl, Segmenter: Counting });
-    try {
-      vi.resetModules();
-      const fresh = await import('./emoji');
+    await withCountingSegmenter(({ isEmojiOnlyText }, counts) => {
       for (const text of ['😀', 'banc ouverture 1', '👨‍👩‍👧‍👦', 'gg 😀', '🇫🇷🇫🇷']) {
-        fresh.isEmojiOnlyText(text, 5);
+        isEmojiOnlyText(text, 5);
       }
-      expect(built).toBe(1);
-    } finally {
-      vi.unstubAllGlobals();
-    }
+      expect(counts.built).toBe(1);
+    });
   });
 
-  it('answers a long ordinary message the way a short one is answered', () => {
-    expect(isEmojiOnlyText(`banc ouverture ${'x'.repeat(50_000)}`, 5)).toBe(false);
-    expect(isEmojiOnlyText(`😀${'x'.repeat(50_000)}`, 5)).toBe(false);
-    expect(isEmojiOnlyText('😀'.repeat(50_000), 5)).toBe(false);
+  it('leaves the rest of Intl alone while it counts', async () => {
+    await withCountingSegmenter(() => {
+      expect(new Intl.DateTimeFormat('en-US').format(new Date(2026, 0, 2))).toBe('1/2/2026');
+      expect(typeof Intl.getCanonicalLocales).toBe('function');
+    });
+    expect(Intl.Segmenter.name).not.toBe('Counting');
+  });
+});
+
+describe('isEmojiOnlyText at the count boundary, multi-code-point graphemes', () => {
+  const family = '👨‍👩‍👧‍👦';
+  const flag = '🇫🇷';
+  const keycap = '1️⃣';
+
+  it('counts a ZWJ family as one: five pass, six do not', () => {
+    expect(isEmojiOnlyText(family.repeat(5), 5)).toBe(true);
+    expect(isEmojiOnlyText(family.repeat(6), 5)).toBe(false);
+  });
+
+  it('counts a flag as one: five pass, six do not', () => {
+    expect(isEmojiOnlyText(flag.repeat(5), 5)).toBe(true);
+    expect(isEmojiOnlyText(flag.repeat(6), 5)).toBe(false);
+  });
+
+  it('never counts a keycap: neither Extended_Pictographic nor a regional indicator (unchanged rule)', () => {
+    expect(isEmojiOnlyText(keycap, 5)).toBe(false);
+    expect(isEmojiOnlyText(keycap.repeat(5), 5)).toBe(false);
+    expect(isEmojiOnlyText(keycap.repeat(6), 5)).toBe(false);
   });
 });

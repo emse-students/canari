@@ -90,15 +90,42 @@ describe('formatDayLabel', () => {
 });
 
 describe('calendarDay', () => {
-  it("answers the browser's own zone from the Date getters, as Intl does", () => {
-    const zone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
-    for (const d of [
-      new Date(2026, 0, 1, 0, 0),
-      new Date(2026, 2, 29, 2, 30),
-      new Date(2026, 9, 25, 23, 59),
-      new Date(2025, 11, 31, 12, 0),
-    ]) {
-      expect(calendarDay(d)).toBe(calendarDay(d, zone));
+  /**
+   * The getters path is only exercised away from UTC, which is what CI runs in: this case moves the
+   * process to Paris (Node re-reads `TZ` on assignment, on Linux and Windows alike), PROVES the move
+   * took, and compares the getters with `Intl` asked for Paris explicitly - plus the day each instant
+   * must land on, written out.
+   */
+  it("answers the browser's own zone from the Date getters, in a zone that is not UTC", () => {
+    const before = process.env.TZ;
+    process.env.TZ = 'Europe/Paris';
+    try {
+      expect(new Date(Date.UTC(2026, 0, 15, 12)).getTimezoneOffset()).toBe(-60);
+      const day = (y: number, m: number, d: number) => Date.UTC(y, m, d) / 86_400_000;
+      const cases: [number, number][] = [
+        // 00:30 on 1 January 2026 in Paris, still 2025 in UTC: the year edge.
+        [Date.UTC(2025, 11, 31, 23, 30), day(2026, 0, 1)],
+        // 23:30 on 31 December 2025 in Paris.
+        [Date.UTC(2025, 11, 31, 22, 30), day(2025, 11, 31)],
+        // 00:30 on 29 March 2026, the night the clocks skip 02:00 -> 03:00.
+        [Date.UTC(2026, 2, 28, 23, 30), day(2026, 2, 29)],
+        // 03:30 CEST on 29 March, just after the gap.
+        [Date.UTC(2026, 2, 29, 1, 30), day(2026, 2, 29)],
+        // 23:30 CEST on 29 March: a day of 23 hours still ends on the 29th.
+        [Date.UTC(2026, 2, 29, 21, 30), day(2026, 2, 29)],
+        // 00:30 CEST on 25 October, the night 03:00 -> 02:00 repeats an hour.
+        [Date.UTC(2026, 9, 24, 22, 30), day(2026, 9, 25)],
+        // 23:30 CET on 25 October: a day of 25 hours.
+        [Date.UTC(2026, 9, 25, 22, 30), day(2026, 9, 25)],
+      ];
+      for (const [instant, expected] of cases) {
+        const d = new Date(instant);
+        expect(calendarDay(d)).toBe(expected);
+        expect(calendarDay(d)).toBe(calendarDay(d, 'Europe/Paris'));
+      }
+    } finally {
+      if (before === undefined) delete process.env.TZ;
+      else process.env.TZ = before;
     }
   });
 });
