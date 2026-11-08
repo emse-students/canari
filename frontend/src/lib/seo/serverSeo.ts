@@ -195,7 +195,7 @@ async function postSeo(postId: string, path: string): Promise<Partial<SeoMeta> |
       }),
       buildBreadcrumbJsonLd([
         { name: SITE.name, path: '/' },
-        { name: 'Publications', path: '/posts' },
+        { name: m.seo_posts_breadcrumb(), path: '/posts' },
         { name: title, path },
       ]),
     ],
@@ -218,7 +218,7 @@ async function formSeo(formId: string): Promise<Partial<SeoMeta> | null> {
     title: form.title.trim(),
     description: form.description?.trim()
       ? truncateForMeta(markdownToPlainText(form.description), 200)
-      : `Formulaire ${SITE.name} : inscription ou réponse en ligne.`,
+      : m.seo_form_fallback_description({ site: SITE.name }),
     image: publicMediaUrl(form.imageUrl),
   };
 }
@@ -241,7 +241,9 @@ async function associationSeo(slug: string, path: string): Promise<Partial<SeoMe
 
   const members =
     asso.memberCount != null
-      ? `${asso.memberCount} membre${asso.memberCount > 1 ? 's' : ''}.`
+      ? asso.memberCount > 1
+        ? m.seo_association_members_other({ count: asso.memberCount })
+        : m.seo_association_members_one({ count: asso.memberCount })
       : null;
 
   // The bio is the association's own prose and the richest text this page will ever carry; the
@@ -249,10 +251,7 @@ async function associationSeo(slug: string, path: string): Promise<Partial<SeoMe
   const ownText = asso.description?.trim() || markdownToPlainText(asso.bioMarkdown ?? '');
   const description = ownText
     ? truncateForMeta(ownText, 200)
-    : [
-        `${asso.name} sur ${SITE.name} : actualités, agenda et formulaires de l'association.`,
-        members,
-      ]
+    : [m.seo_association_generated_description({ name: asso.name, site: SITE.name }), members]
         .filter(Boolean)
         .join(' ');
   const image = publicMediaUrl(asso.logoUrl);
@@ -264,7 +263,7 @@ async function associationSeo(slug: string, path: string): Promise<Partial<SeoMe
     title: `${asso.name} - ${SITE.institutionName}`,
     description,
     image,
-    imageAlt: `Logo ${asso.name}`,
+    imageAlt: m.seo_logo_alt({ name: asso.name }),
     jsonLd: [
       buildAssociationJsonLd({
         url,
@@ -275,7 +274,7 @@ async function associationSeo(slug: string, path: string): Promise<Partial<SeoMe
       }),
       buildBreadcrumbJsonLd([
         { name: SITE.name, path: '/' },
-        { name: 'Associations', path: '/associations' },
+        { name: m.assoc_list_heading(), path: '/associations' },
         { name: asso.name, path },
       ]),
     ],
@@ -392,7 +391,7 @@ function staticPageJsonLd(path: string): JsonLdNode[] | null {
       ...buildSiteJsonLd(),
       buildBreadcrumbJsonLd([
         { name: SITE.name, path: '/' },
-        { name: 'Associations', path: '/associations' },
+        { name: m.assoc_list_heading(), path: '/associations' },
       ]),
     ];
   }
