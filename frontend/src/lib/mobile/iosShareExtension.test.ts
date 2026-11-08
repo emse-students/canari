@@ -439,7 +439,7 @@ describe('the conversation suggestions (lot S5, the iOS twin of Android sharing 
     // ONE delete, the group's: never `deleteAll`, which would take what the system learned of the
     // app beyond the suggestions.
     expect(suggestions).not.toContain('deleteAll');
-    expect(suggestions.match(/INInteraction\.delete\(with: groupIdentifier\)/g)?.length).toBe(1);
+    expect(suggestions.match(/INInteraction\.delete\(with: groupIdentifier\b/g)?.length).toBe(1);
     const publish = capture(
       suggestions,
       /static func publish\(([\s\S]*?)\n {2}\/\/\/ Deletes every/

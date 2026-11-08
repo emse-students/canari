@@ -212,6 +212,13 @@ and the picker still opens**. What differs is only what the platform holds.
   ones. The platform neither lists nor counts donations, so `present` is the number it accepted,
   `leftover` is always 0, and a clear answers how many the last publish left (`UserDefaults`). One
   serial queue orders a sign-out's clear after a publish in flight.
+- **ON by default on iOS too - owner decision, 2026-11-08.** A donated `INSendMessageIntent` with a
+  `speakableGroupName` feeds Siri suggestions BEYOND the share sheet: the names may appear in
+  Spotlight, the Siri suggestions widget and possibly the lock screen (while Canari's "Show on Lock
+  Screen" is on in iOS Settings). The owner kept the Android default (ON) and asked that it be said
+  plainly: the setting's own text (`settings_share_suggestions_desc`), the privacy policy's iPhone
+  row and register row C22 name those places and say that the setting turns it off. Turning it off
+  deletes the donation group (`clear_share_targets`). No behaviour differs from Android's.
 - **What is never donated**: a message. The intent's `content`, `recipients`, `sender` and
   `attachments` are all nil - a conversation's NAME and its id are all the system receives (no
   avatar either: the plugin has no file of it, as on Android). The native lines log counts and
@@ -562,15 +569,29 @@ Android leaves - from there, steps 3 to 6 above are the same code.
   cancel path (a long video shared, then the sheet left at once). The project itself is linted by
   Xcode at the start of every `ios.yml` run (`plutil -lint`, `xcodebuild -list`) and parsed whole by
   the vitest, after a pbxproj with two unclosed objects passed every Windows check.
-- **S5 on the iPhone - first a CI compile** (`ios.yml`: the plugin's `ShareSuggestions.swift`, the
-  extension's `import Intents`, the two Intents links), then: after a few conversations, they appear
-  in the share sheet's suggestion row of Photos and Safari (Apple ranks donations itself - whether a
-  recency list with no message sent is ranked at all is THE question); picking one opens Canari's
-  picker with it preselected, cold and warm, with the PIN gate up; a suggestion picked after a
-  sign-out and a second account preselects nothing (the `[SHARE] ... ignored` line); the toggle off
-  and a sign-out remove them from the sheet; the logs - `[ShareSuggestions]` and `[GalleryPlugin]`
-  lines (`GalleryLog`, Console category `gallery`, each donate or delete error by its code), Console category `share` for the
-  extension's `suggestion=true`, and the page's `[SHARE]` lines.
+- **S5 on the iPhone - first a CI compile** (`compile-ios-app` in `ci.yml` on the pull request, then
+  `ios.yml`: the plugin's `ShareSuggestions.swift`, the extension's `import Intents`, the two Intents
+  links), then:
+  - after a few conversations, they appear in the share sheet's suggestion row of Photos and
+    Safari. Apple ranks donations itself - whether a recency list with no message sent is ranked at
+    all is THE question. **Read a "never appears" with this in mind: `publish()` deletes the whole
+    donation group before every donation**, so each publish resets whatever frequency or recency
+    signal Apple had accumulated for those conversations; an empty row may be that reset, not a
+    refusal of recency lists;
+  - **where else the names show** (`speakableGroupName` feeds Siri suggestions, not only the sheet):
+    the lock screen (with Canari's "Show on Lock Screen" in Settings > Siri on and off), Spotlight
+    (a search and the empty-search suggestions), and the Siri suggestions widget - each read, and
+    each gone once the setting is turned off;
+  - picking one opens Canari's picker with it preselected, cold and warm, with the PIN gate up;
+  - a suggestion picked after a sign-out and a second account preselects nothing (the
+    `[SHARE] ... ignored` line);
+  - the toggle off and a sign-out remove them from the sheet;
+  - **a kill right after a sign-out** (before the queued clear reaches Swift) leaves the previous
+    account's names in the sheet and Siri's suggestions until the next sign-in's publish (or the
+    next clear) replaces them - expected from the code, to be seen and timed;
+  - the logs - `[ShareSuggestions]` and `[GalleryPlugin]` lines (`GalleryLog`, Console category
+    `gallery`, each donate or delete error by its code), Console category `share` for the
+    extension's `suggestion=true`, and the page's `[SHARE]` lines.
 
 ## One copy helper, one share-failure path (2026-10-30)
 
