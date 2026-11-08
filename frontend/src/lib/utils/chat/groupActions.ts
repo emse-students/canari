@@ -33,7 +33,7 @@ import {
 } from '$lib/mls-client/commitSubmission';
 import { readConfirmedTree } from './confirmedTree';
 import { anyHistoryWithheldIn, historyWithheldFrom } from './historyWithheld';
-import { getTabLeadership } from '$lib/mls-client/tabLeader';
+import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
 
 /**
@@ -424,7 +424,7 @@ export async function removeMemberAndBroadcast(params: {
     );
 
   // 0. Known from leadership, a fact here - never learnt from a commit refused after the record.
-  if (getTabLeadership() === 'follower') {
+  if (refusesCommitsHere()) {
     console.warn(`[REMOVE_MEMBER] ${short}… removal asked of a follower tab - nothing recorded`);
     throw new FollowerTabCommitError(groupId);
   }

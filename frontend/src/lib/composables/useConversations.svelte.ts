@@ -75,6 +75,7 @@ import {
   inviteMembersToGroup,
   replanLostInvitation,
   startNewConversation as startConversation,
+  delegationCreationRefusal,
   type ConversationOutcome,
 } from '$lib/utils/chat/groupCreation';
 import type { OwedInvitationReplanner } from '$lib/mls-client/owedInvitations';
@@ -97,10 +98,20 @@ import {
 import { readLandingPreview } from '$lib/utils/chat/landingPreview';
 import {
   reportBulkAdditionOutcome,
+  reportDelegationRefusal,
   reportFollowerTabRefusal,
   reportLostInvitation,
+  reportMemberRemovalEnding,
   reportMemberRemovalFailure,
 } from '$lib/utils/chat/conversationRefusalMessage';
+import { getTabLeadership } from '$lib/mls-client/tabLeader';
+import {
+  delegateCommitToLeader,
+  type DelegatedCommitExecutors,
+  type DelegatedOutcome,
+  type DelegatedRemovalResult,
+} from '$lib/utils/chat/tabCommitDelegation';
+import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { MemberRemovalNotCommittedError } from '$lib/utils/chat/memberRemovalError';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import { comparePageKeys, oldestPageKey } from '$lib/db/messagePayload';
@@ -578,6 +589,18 @@ export function useConversations() {
     // This is the same predicate the send path already uses for the same reason
     // (`sendChatMessage`'s "only hard block"): what is on disk is all there will ever be.
     if (conversations.get(contactName)?.lifecycle === 'removed') {
+      await renderStoredPage(contactName, id, ctx);
+      return;
+    }
+
+    // A FOLLOWER TAB DOES NOT DECRYPT A GROUP ITS MLS COPY DOES NOT HOLD - one the leader created
+    // or joined for it after this tab loaded (`tabCommitDelegation.ts`). Its copy was loaded once and
+    // will never hold that group, so a replay here could only fail every frame; the leader decrypts,
+    // stores and relays (`message_added`), and this tab draws what the leader stored.
+    if (getTabLeadership() === 'follower' && !holdsGroupState(ctx.ensureMls(), id)) {
+      ctx.log(
+        `[HISTORY] ${id.slice(0, 8)}... not held by this follower tab's copy - the leader's stored page is drawn, nothing replayed`
+      );
       await renderStoredPage(contactName, id, ctx);
       return;
     }
@@ -2213,6 +2236,14 @@ export function useConversations() {
     nameRaw: string,
     ctx: ConversationContext
   ): Promise<ConversationOutcome> {
+    // A FOLLOWER TAB HANDS THE CREATION TO THE LEADER, which alone may commit (`tabCommitDelegation`).
+    if (getTabLeadership() === 'follower') {
+      return createThroughLeader(
+        () => delegateCommitToLeader({ kind: 'create-group', name: nameRaw }),
+        ctx,
+        false
+      );
+    }
     return createGroup(nameRaw, {
       mlsService: ctx.ensureMls(),
       storage: ctx.storage,
@@ -2224,6 +2255,156 @@ export function useConversations() {
       saveConversation: (name) => saveConversation(name, ctx),
       log: ctx.log,
     });
+  }
+
+  /**
+   * A creation a FOLLOWER tab handed to the leader (`tabCommitDelegation.ts`): the leader created the
+   * conversation in its own map and store, and this tab draws it from the store - which both tabs
+   * share - then selects it unless `silent`. A refusal of the hand-over is a creation refusal like
+   * any other, said by the modal (`delegationCreationRefusal`).
+   *
+   * THIS TAB'S MLS COPY DOES NOT HOLD THE NEW GROUP, and never will before a reload: it was loaded
+   * once. That is the condition every follower is already in for a group the leader joined after the
+   * load, and it is safe because a follower neither encrypts (its sends go through the leader's
+   * outbox) nor decrypts a group it does not hold ({@link loadHistoryForConversation}).
+   */
+  async function createThroughLeader(
+    delegate: () => Promise<DelegatedOutcome<'create-group'> | DelegatedOutcome<'start-direct'>>,
+    ctx: ConversationContext,
+    silent: boolean
+  ): Promise<ConversationOutcome> {
+    const answer = await delegate();
+    if (answer.status === 'refused') {
+      ctx.log(`[TAB-COMMIT] a creation handed to the leader tab was refused (${answer.reason})`);
+      return { ok: false, reason: delegationCreationRefusal(answer.reason) };
+    }
+    const outcome = answer.value;
+    if (!outcome.ok || outcome.key === null) return outcome;
+    await adoptConversationFromStore(outcome.key, ctx);
+    if (!silent && conversations.has(outcome.key)) selectConversationWithCtx(outcome.key, ctx);
+    return outcome;
+  }
+
+  /**
+   * Draws a conversation the LEADER tab created for this one, from the store the leader wrote it to
+   * before answering (its executor saves it first, see {@link delegatedCommitExecutors}). A row this
+   * map already holds (a relay, a restore) is left as it is.
+   */
+  async function adoptConversationFromStore(key: string, ctx: ConversationContext): Promise<void> {
+    if (conversations.has(key)) return;
+    if (!ctx.storage) {
+      console.warn(
+        `[TAB-COMMIT] ${key.slice(0, 8)}... created by the leader tab, but this tab has no store open - not drawn`
+      );
+      return;
+    }
+    const read = await readLandingPreview({
+      storage: ctx.storage,
+      deviceKeyB64: ctx.deviceKeyB64,
+      userId: ctx.userId,
+      targetId: key,
+    });
+    if (typeof read === 'string') {
+      // The leader saved it before answering, so this is a defect upstream, said as one.
+      console.error(
+        `[TAB-COMMIT] ${key.slice(0, 8)}... created by the leader tab is not readable from the store (${read}) - not drawn`
+      );
+      return;
+    }
+    if (conversations.has(key)) return;
+    conversations.set(key, read.row);
+    ctx.log(`[TAB-COMMIT] ${key.slice(0, 8)}... created by the leader tab, drawn from the store`);
+  }
+
+  /** The conversation key whose row carries group `groupId`, if this map holds one. */
+  function conversationKeyOfGroup(groupId: string): string | null {
+    if (conversations.get(groupId)?.id === groupId) return groupId;
+    for (const [key, convo] of conversations) if (convo.id === groupId) return key;
+    return null;
+  }
+
+  /**
+   * THE LEADER HALF of the gestures a follower tab hands over (`tabCommitDelegation.ts`): each runs
+   * the very path this tab's own gesture runs, on this tab's authoritative state, and answers by
+   * value. Nothing here selects or opens anything - the member is looking at the OTHER tab.
+   *
+   * `ctxOf` is read at each execution, never at registration: the session (store, device key) is
+   * not up when the executors are registered. Nothing here WAITS for it: the server runs a request
+   * only once this tab's session is live (`setDelegationReadiness`), and answers it otherwise.
+   */
+  function delegatedCommitExecutors(
+    ctxOf: () => ConversationContext
+  ): Pick<DelegatedCommitExecutors, 'create-group' | 'start-direct' | 'invite' | 'remove'> {
+    /** A created conversation is in the STORE before the follower is told to read it from there. */
+    const savedFirst = async (
+      outcome: ConversationOutcome,
+      ctx: ConversationContext
+    ): Promise<ConversationOutcome> => {
+      if (outcome.ok && outcome.key !== null) await saveConversation(outcome.key, ctx);
+      return outcome;
+    };
+    const depsOf = (ctx: ConversationContext) => ({
+      mlsService: ctx.ensureMls(),
+      storage: ctx.storage,
+      userId: ctx.userId,
+      deviceKeyB64: ctx.deviceKeyB64,
+      historyBaseUrl: ctx.historyBaseUrl,
+      conversations,
+      selectConversation: () => {},
+      saveConversation: (name: string) => saveConversation(name, ctx),
+      log: ctx.log,
+    });
+    return {
+      'create-group': async ({ name }) => {
+        const ctx = ctxOf();
+        return savedFirst(await createGroup(name, depsOf(ctx)), ctx);
+      },
+      'start-direct': async ({ contact }) => {
+        const ctx = ctxOf();
+        return savedFirst(await startConversation(contact, { ...depsOf(ctx), silent: true }), ctx);
+      },
+      invite: async ({ groupId, memberIds }) => {
+        const ctx = ctxOf();
+        const key = conversationKeyOfGroup(groupId);
+        const convo = key ? conversations.get(key) : undefined;
+        if (!convo) {
+          console.warn(
+            `[TAB-COMMIT] invite into ${groupId.slice(0, 8)}...: the leader tab holds no such conversation - nothing added`
+          );
+          return { kind: 'not-added', reason: 'failed' };
+        }
+        return inviteMembersToGroup(memberIds, convo, {
+          ...depsOf(ctx),
+          addMessageToChat: ctx.addMessageToChat,
+        });
+      },
+      remove: async ({ groupId, memberId }): Promise<DelegatedRemovalResult> => {
+        const ctx = ctxOf();
+        const key = conversationKeyOfGroup(groupId);
+        if (!key) {
+          console.warn(
+            `[TAB-COMMIT] remove from ${groupId.slice(0, 8)}...: the leader tab holds no such conversation - nothing recorded`
+          );
+          return 'not-removed';
+        }
+        try {
+          return await removeMemberAndBroadcast({
+            mlsService: ctx.ensureMls(),
+            groupId,
+            memberId,
+            userId: ctx.userId,
+            deviceKeyB64: ctx.deviceKeyB64,
+            ownNotice: { contactName: key, addMessageToChat: ctx.addMessageToChat },
+          });
+        } catch (e) {
+          // Classified by TYPE, as the gesture in this tab does (`handleRemoveMember`).
+          ctx.log(`[TAB-COMMIT] removal of ${memberId.slice(0, 8)} not complete: ${String(e)}`);
+          return e instanceof MemberRemovalNotCommittedError
+            ? 'recorded-not-committed'
+            : 'not-removed';
+        }
+      },
+    };
   }
 
   /** Invites one or more users (by ID) to the currently selected group, then refreshes the member list. No-op for DMs or channels. */
@@ -2240,6 +2421,26 @@ export function useConversations() {
     // (device fetch + bulk commit + welcomes) takes several seconds.
     pendingInvites = { groupId: convo.id, ids: normalized };
     try {
+      // A FOLLOWER TAB HANDS THE INVITATION TO THE LEADER (`tabCommitDelegation.ts`) and reports
+      // the leader's answer exactly as its own.
+      if (getTabLeadership() === 'follower') {
+        const answer = await delegateCommitToLeader({
+          kind: 'invite',
+          groupId: convo.id,
+          memberIds: normalized,
+        });
+        if (answer.status === 'refused') {
+          reportDelegationRefusal(answer.reason);
+          return;
+        }
+        void reportBulkAdditionOutcome(answer.value).catch((e: unknown) =>
+          console.warn(
+            `[GROUP] the outcome of an invitation could not be told: ${String(e).slice(0, 120)}`
+          )
+        );
+        await loadGroupMembers(convo.id, ctx, { fresh: true });
+        return;
+      }
       const outcome = await inviteMembersToGroup(normalized, convo, {
         mlsService: ctx.ensureMls(),
         storage: ctx.storage,
@@ -2368,6 +2569,13 @@ export function useConversations() {
     ctx: ConversationContext,
     opts?: { silent?: boolean }
   ): Promise<ConversationOutcome> {
+    if (getTabLeadership() === 'follower') {
+      return createThroughLeader(
+        () => delegateCommitToLeader({ kind: 'start-direct', contact: contactNameRaw }),
+        ctx,
+        opts?.silent ?? false
+      );
+    }
     return startConversation(contactNameRaw, {
       mlsService: ctx.ensureMls(),
       storage: ctx.storage,
@@ -2613,24 +2821,10 @@ export function useConversations() {
     // commit is owed (`MemberRemovalNotCommittedError`): the person is out either way. Outside the
     // `try`, so a failed reread is never reported as a failed removal.
     let recorded: boolean;
-    try {
-      // `already-out` is a complete removal too (another commit took their leaves): no error.
-      const outcome = await removeMemberAndBroadcast({
-        mlsService: ctx.ensureMls(),
-        groupId: convo.id,
-        memberId,
-        userId: ctx.userId,
-        deviceKeyB64: ctx.deviceKeyB64,
-        ownNotice: { contactName: key, addMessageToChat: ctx.addMessageToChat },
-      });
-      recorded = true;
-      ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} removed from the group (${outcome})`);
-    } catch (e) {
-      // NEVER A LOG LINE ALONE: every ending reaches the person who asked, classified by TYPE.
-      ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} not fully removed: ${String(e)}`);
-      // Recorded or not is the error's TYPE; the sentence is the follower tab's when that is why.
-      recorded = e instanceof MemberRemovalNotCommittedError;
-      if (!reportFollowerTabRefusal(e)) reportMemberRemovalFailure(e);
+    if (getTabLeadership() === 'follower') {
+      recorded = await removeThroughLeader(convo.id, memberId, ctx);
+    } else {
+      recorded = await removeHere(convo.id, key, memberId, ctx);
     }
     if (!recorded) return;
     membershipCache.delete(convo.id);
@@ -2640,9 +2834,62 @@ export function useConversations() {
     );
   }
 
+  /** {@link handleRemoveMember} in the LEADER tab: whether the server recorded the removal. */
+  async function removeHere(
+    groupId: string,
+    key: string,
+    memberId: string,
+    ctx: ConversationContext
+  ): Promise<boolean> {
+    try {
+      // `already-out` is a complete removal too (another commit took their leaves): no error.
+      const outcome = await removeMemberAndBroadcast({
+        mlsService: ctx.ensureMls(),
+        groupId,
+        memberId,
+        userId: ctx.userId,
+        deviceKeyB64: ctx.deviceKeyB64,
+        ownNotice: { contactName: key, addMessageToChat: ctx.addMessageToChat },
+      });
+      ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} removed from the group (${outcome})`);
+      return true;
+    } catch (e) {
+      // NEVER A LOG LINE ALONE: every ending reaches the person who asked, classified by TYPE.
+      ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} not fully removed: ${String(e)}`);
+      // A tab demoted between the role read and the commit is refused by the service: said as such.
+      if (!reportFollowerTabRefusal(e)) reportMemberRemovalFailure(e);
+      // Recorded or not is the error's TYPE.
+      return e instanceof MemberRemovalNotCommittedError;
+    }
+  }
+
+  /**
+   * {@link handleRemoveMember} in a FOLLOWER tab: handed to the leader (`tabCommitDelegation.ts`),
+   * whose answer is told exactly as this tab's own removal would be. Whether the server recorded it.
+   */
+  async function removeThroughLeader(
+    groupId: string,
+    memberId: string,
+    ctx: ConversationContext
+  ): Promise<boolean> {
+    const answer = await delegateCommitToLeader({ kind: 'remove', groupId, memberId });
+    if (answer.status === 'refused') {
+      ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} not removed: ${answer.reason}`);
+      reportDelegationRefusal(answer.reason);
+      return false;
+    }
+    ctx.log(`[REMOVE_MEMBER] ${memberId.slice(0, 8)} removal by the leader tab: ${answer.value}`);
+    if (answer.value === 'committed' || answer.value === 'already-out') return true;
+    const ending = answer.value === 'recorded-not-committed' ? 'recorded' : 'not-removed';
+    reportMemberRemovalEnding(ending);
+    return ending === 'recorded';
+  }
+
   // ── Exposed API ───────────────────────────────────────────────────────────
 
   return {
+    /** The leader half of a follower tab's gestures - registered by the session (`tabCommitDelegation`). */
+    delegatedCommitExecutors,
     /** Reactive SvelteMap of all conversations keyed by conversation name. */
     conversations,
     /** True once the initial IndexedDB restore finished; the map is then authoritative. */

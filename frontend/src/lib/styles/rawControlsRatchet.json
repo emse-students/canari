@@ -389,11 +389,6 @@
     "select": 0,
     "input": 0
   },
-  "src/lib/components/chat/TabFollowerBanner.svelte": {
-    "button": 1,
-    "select": 0,
-    "input": 0
-  },
   "src/lib/components/chat/VoiceRecorder.svelte": {
     "button": 3,
     "select": 0,

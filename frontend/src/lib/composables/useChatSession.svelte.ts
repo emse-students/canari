@@ -25,7 +25,6 @@ import {
   setSessionCaughtUp,
 } from '$lib/stores/pendingCallAccept';
 import { isTauriRuntime } from '$lib/utils/openExternal';
-import { requestLeadershipTakeover } from '$lib/utils/chat/connection';
 
 import type { MlsFatalErrorKind, SessionContext } from './session/sessionTypes';
 export type { ChatSessionCallbacks } from './session/sessionTypes';
@@ -62,6 +61,10 @@ import { exportBackupImpl, importBackupImpl } from './session/sessionBackup';
 import { createMlsHolder } from './session/mlsHolder';
 import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import { setMlsReady } from './session/mlsReadiness';
+import {
+  sessionDelegationReadiness,
+  setDelegationReadiness,
+} from '$lib/utils/chat/tabCommitDelegation';
 import { processDeviceInvitationsLocally } from './session/sessionAuth';
 
 /** Creates and returns the reactive chat session store covering login, MLS init, WebSocket, biometrics, device sync and backup. */
@@ -197,6 +200,7 @@ export function useChatSession() {
       isLoggedIn = v;
       // The one writer of the flag is the one writer of the awaitable form (`mlsReadiness.ts`).
       setMlsReady(v);
+      publishDelegationReadiness();
     },
     isWsConnected: () => isWsConnected,
     setIsWsConnected: (v) => {
@@ -228,6 +232,7 @@ export function useChatSession() {
     getIsLoginInProgress: () => isLoginInProgress,
     setIsLoginInProgress: (v) => {
       isLoginInProgress = v;
+      publishDelegationReadiness();
     },
     isWipingRevokedDevice: () => isWipingRevokedDevice,
     setWipingRevokedDevice: (v) => {
@@ -263,12 +268,38 @@ export function useChatSession() {
     setTabLeaderSessionCb: (cb) => {
       tabLeaderSessionCb = cb;
     },
+    reloadForPromotion: (log) => reloadForPromotion(log),
 
     // Constants
     RECONNECT_DELAYS,
   };
 
   // ── Handler promotion tab leader ──────────────────────────────────────────
+
+  /**
+   * Reloads a page promoted to leader, so the state is read as it now stands. Returns whether a
+   * reload was scheduled (none outside a browser).
+   */
+  function reloadForPromotion(log: (message: string) => void): boolean {
+    if (typeof window === 'undefined') {
+      log('[TAB] Promoted outside a browser - nothing to reload.');
+      return false;
+    }
+    // The reload releases the lock this tab was just granted; the mark is what lets the page it
+    // starts take it back rather than queue behind the tab it took over from.
+    markPromotionReload();
+    setTimeout(() => window.location.reload(), 50);
+    return true;
+  }
+
+  /**
+   * Tells a follower tab's handed-over commits what this session can do (`tabCommitDelegation.ts`),
+   * from the two flags this composable is the one writer of - so the readiness follows every login
+   * start and every end (success, early return, failure, sign-out), whoever flips the flag.
+   */
+  function publishDelegationReadiness(): void {
+    setDelegationReadiness(sessionDelegationReadiness(isLoggedIn, isLoginInProgress));
+  }
 
   // This tab has just been handed leadership: the previous leader advanced the MLS ratchet on disk
   // for as long as it lived, while this tab's in-memory client still holds the snapshot it loaded.
@@ -278,19 +309,16 @@ export function useChatSession() {
   // second of startup, and the outbox is durable, so nothing queued is lost. A hot
   // `reloadStateFromDisk` on the web service would be cheaper but has to swap the live WASM client
   // under any in-flight operation - see WP-MULTITAB-1 in CLAUDE.md.
+  //
+  // A PROMOTION DURING A LOGIN (before `isLoggedIn`) is not ignored: the login reads the same fact
+  // (`promotedSinceLoad`) right before going live and takes {@link reloadForPromotion} itself, so
+  // no copy loaded as a follower ever goes live as the leader.
   setTabLeaderPromotedHandler(() => {
     const cb = tabLeaderSessionCb;
     if (!cb || !isLoggedIn || !getIsTabLeader()) return;
     isTabLeaderState = true;
     cb.log('[TAB] Leader promoted - reloading to pick up the MLS state left by the old leader.');
-    if (typeof window !== 'undefined') {
-      // The reload releases the lock this tab was just granted; the mark is what lets the page it
-      // starts take it back rather than queue behind the tab it took over from.
-      markPromotionReload();
-      setTimeout(() => window.location.reload(), 50);
-      return;
-    }
-    void attemptReconnectImpl(ctx, cb);
+    if (!reloadForPromotion(cb.log)) void attemptReconnectImpl(ctx, cb);
   });
 
   // This tab just yielded leadership to another tab: reload to cleanly close the
@@ -362,6 +390,7 @@ export function useChatSession() {
     /** Allows ChatBackgroundService to set the flag early (before loginImpl) to close the layout race window. */
     set isLoginInProgress(v: boolean) {
       isLoginInProgress = v;
+      publishDelegationReadiness();
     },
     /** True while startup messaging sync runs after MLS unlock (overlay on /chat). */
     get isMessagingInitializing() {
@@ -386,14 +415,6 @@ export function useChatSession() {
     /** True when this tab is the MLS leader (holds the WebSocket). False for follower tabs. */
     get isTabLeader() {
       return isTabLeaderState;
-    },
-    /**
-     * Asks the leader tab to release its leadership so this tab can take over.
-     * No-op if this tab is already the leader.
-     */
-    requestTabTakeover() {
-      if (isTabLeaderState) return;
-      requestLeadershipTakeover();
     },
     /** Active IndexedDB storage instance (null before login). */
     get storage() {

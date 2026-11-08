@@ -157,6 +157,7 @@ import {
   type GatewaySocketOpen,
 } from '$lib/mls-client/gatewaySocketOpen';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
+import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import {
   checkpointWroteNothing,
   fromBase64,
@@ -213,6 +214,7 @@ import {
   AcceptedCommitNotMergedError,
   CommitStageNotSavedError,
   FollowerTabCommitError,
+  FollowerTabKeyPackageError,
   PreviousCommitUnresolvedError,
   StagedCommitPendingError,
   composeSubmission,
@@ -3852,6 +3854,13 @@ export abstract class BaseMlsService implements IMlsService {
     deviceKeyB64: string,
     opts?: { fresh?: boolean }
   ): Promise<DatedKeyPackage> {
+    // ONLY THE LEADER'S COPY MINTS, as only it commits (`refusesCommitsHere`): every key package
+    // published is minted here, and a private half held by a follower's copy - or by a promoted tab
+    // before its reload - is one no kept state could open a Welcome with.
+    if (refusesCommitsHere()) {
+      console.warn('[MLS] key package refused: this tab holds no leader copy of the MLS state');
+      throw new FollowerTabKeyPackageError();
+    }
     const inFlight = this.keyPackageRoundInFlight;
     if (inFlight && !opts?.fresh) {
       console.log('[MLS] key package round already in flight - joining it, not starting a second');
@@ -4443,6 +4452,14 @@ export abstract class BaseMlsService implements IMlsService {
    * published material.
    */
   async republishKeyMaterial(deviceKeyB64: string): Promise<void> {
+    // REFUSED BEFORE THE PURGE, not at the mint: on a copy that may not mint (`refusesCommitsHere`),
+    // the purge and the local forget below would empty the pool and then fail to refill it.
+    if (refusesCommitsHere()) {
+      console.warn(
+        '[MLS] key material republish refused: this tab holds no leader copy of the MLS state'
+      );
+      throw new FollowerTabKeyPackageError();
+    }
     const now = Date.now();
     if (now - this.lastKeyMaterialRepublish < 30_000) return;
     this.lastKeyMaterialRepublish = now;
@@ -5313,7 +5330,7 @@ export abstract class BaseMlsService implements IMlsService {
    * caller, so no caller can create one around it.
    */
   async createGroup(groupId: string): Promise<void> {
-    if (getTabLeadership() === 'follower') {
+    if (refusesCommitsHere()) {
       console.warn(
         `[MLS] createGroup ${groupId.slice(0, 8)}... refused on a follower tab - only the leader creates groups`
       );
@@ -5463,7 +5480,7 @@ export abstract class BaseMlsService implements IMlsService {
   }> {
     // A FOLLOWER TAB DOES NOT COMMIT (`FollowerTabCommitError`): its state is a copy no disk and no
     // other tab will follow, so a commit it sent stranded the leader behind the group.
-    if (getTabLeadership() === 'follower') {
+    if (refusesCommitsHere()) {
       console.warn(
         `[COMMIT] ${groupId.slice(0, 8)}... commit refused on a follower tab - only the leader commits`
       );
@@ -7577,7 +7594,7 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<ExternalJoinOutcome> {
     // AN EXTERNAL JOIN IS A COMMIT, so a follower tab refuses it as {@link runCommitTransaction}
     // does: the tree it would join into is a copy no disk and no other tab will follow.
-    if (getTabLeadership() === 'follower') {
+    if (refusesCommitsHere()) {
       console.warn(
         `[MLS] externalJoin ${groupId.slice(0, 8)}... refused on a follower tab - only the leader commits`
       );
@@ -8362,7 +8379,7 @@ export abstract class BaseMlsService implements IMlsService {
   async refreshOwnLeaf(groupId: string): Promise<void> {
     // THE ROLE BEFORE THE BASE: a follower tab never commits (`runCommitTransaction` refuses it), so
     // fetching the published base first only cost a request per epoch before the same refusal.
-    if (getTabLeadership() === 'follower') {
+    if (refusesCommitsHere()) {
       console.log(
         `[LEAF_REFRESH] ${groupId.slice(0, 8)}... not refreshed on a follower tab - the leader refreshes`
       );

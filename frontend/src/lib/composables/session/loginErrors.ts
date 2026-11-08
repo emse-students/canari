@@ -189,6 +189,18 @@ export class LoginStoppedBySignOutError extends Error {
   }
 }
 
+/**
+ * Thrown by a login whose tab was PROMOTED to leader after it loaded the MLS state as a follower
+ * (`promotedSinceLoad`): it does not go live on that copy, it reloads the page instead, which reads
+ * the state as the old leader left it. An ordinary outcome, not a failure: nothing is shown.
+ */
+export class LoginStoppedForPromotionError extends Error {
+  constructor() {
+    super('login stopped before going live - this tab was promoted to leader on a follower copy');
+    this.name = 'LoginStoppedForPromotionError';
+  }
+}
+
 /** What stops a login in flight: a sign-out, or a lost MLS session (`endLostSessionImpl`). */
 export type LoginStop = 'sign-out' | 'lost session';
 

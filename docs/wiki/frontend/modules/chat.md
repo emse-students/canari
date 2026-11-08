@@ -1283,6 +1283,141 @@ deferral line, one decision line. It is never reset because the election does no
 decided, the `undecided` guard returns before the promise is read at all. Nothing about correctness
 changed here; every waiter always resumed. What twenty lines cost is the reader.
 
+### A follower tab's commits are run by the leader (2026-11-08)
+
+**Decided by the owner on 2026-11-08: the permanent "Messagerie chiffrée active dans un autre
+onglet." banner is gone, and every gesture a follower tab refused is possible from it.** A follower
+still never commits - its MLS state is a copy loaded once ([mls-protocol](../../protocols/mls-protocol.md#a-follower-tab-hands-its-commits-to-the-leader-2026-11-08))
+and `FollowerTabCommitError` stays at the service as the guard - but it no longer stops there: it
+HANDS THE GESTURE to the leader, exactly as it hands its sends (above). `tabCommitDelegation.ts`.
+
+| Gesture in a follower tab | Handed over as | Run by the leader as |
+| --- | --- | --- |
+| create a group | `create-group` | `createNewGroup`, saved to the store before answering |
+| start a direct conversation | `start-direct` | `startNewConversation` (silent), saved before answering |
+| invite into a group | `invite` | `inviteMembersToGroup` - the follower reports the `BulkAdditionOutcome` as its own |
+| remove a member | `remove` | `removeMemberAndBroadcast`, its thrown type turned into data (`recorded-not-committed`, `not-removed`) |
+| create a community, join a salon | `enter-community-key-group` | `ensureCommunityDistributionGroup` |
+| create or join a salon | `enter-salon-group` | `enterPrivateSalonGroup`, with access |
+
+**The role is read BEFORE anything is asked** (`getTabLeadership() === 'follower'` at the gesture),
+never learnt from a commit the service refuses - the refusal is still handled, for a tab demoted
+between that read and its commit, and says "do it from the other tab".
+
+**The transport is the outbox's: a durable record, and only a signal on the channel.** The follower
+takes the record's REQUESTER LOCK (a Web Lock it holds while it waits), writes the record as
+`pending` to its account's IndexedDB (`CanariDBTabCommit_<userId>`, `tabCommitStore.ts`), and posts
+`tab_commit_requested` only once that write has COMMITTED; the leader drains every record, decides
+each under its RUN LOCK (a Web Lock), marks it `running`, runs the executor, writes `done` with the
+outcome and posts `tab_commit_settled`; the follower reads the outcome and deletes the record. Every
+state change is a read-check-write in ONE IndexedDB transaction, re-read under the run lock: a
+`pending` is claimed once, a `done` is never overwritten. A signal lost to a tab not yet listening
+costs the next drain: the leader drains when its executors register, when its session leaves
+`starting` (`setDelegationReadiness`), and on every signal.
+
+**Why IndexedDB and not `localStorage`** (review of #3160): a `localStorage` write is not ordered with
+a `BroadcastChannel` message or a Web Lock across renderer processes, so the signal could beat the
+record, and a drain's read-then-write could overwrite a `done` another document had just written.
+**Private like the account's other data**: one database per account, listed in
+`accountIndexedDbNames` so the account wipe deletes it, and a sign-out ends this tab's requests and
+deletes their records (`abandonDelegatedCommits`, from `forgetAccount`). The account wipe closes the
+account's store first and marks it wiped for the document (`forgetTabCommitAccount`): a drain drops
+that account and its store refuses to open (`TabCommitAccountWipedError`), because an
+`indexedDB.open` would re-create the database the wipe just deleted; signed in here again (a revoked
+device's account still exists), it is readmitted. The records are NOT sealed
+under the device key, like the publish queue's: a record carries what the gesture carries - a group
+name, user ids - which the conversation rows of `CanariDB_<userId>` already hold in the clear, it
+lives only until the answer is read, and a seal would strand every request in flight across a PIN
+change.
+
+**Only a state LOADED as the leader runs a request** (`stateAuthority.ts`). A follower PROMOTED IN
+PLACE leads from that instant, but its copy is the one it loaded as a follower, behind everything the
+old leader committed, until its promotion reload. So the login notes the role the state is loaded
+with (`noteMlsStateLoaded`, right after the election in `sessionAuth`), and: a document runs a
+follower's request only if it leads AND loaded as the leader (`servesFollowerCommits`); a leader
+whose login has not loaded a state yet may only ANSWER one (a refusal, a death -
+`answersFollowerCommits`); a promoted-in-place document does neither, and its reloaded successor
+does both. The service guards read the same fact (`refusesCommitsHere`), so a promoted-in-place
+document refuses its OWN commits too until its reload - an external join built on a stale copy would
+leave a leaf on the server whose private state exists nowhere - and so does every key package
+(`generateKeyPackage`, `FollowerTabKeyPackageError`): its private half would live only in that copy.
+**A promotion DURING the login** (after the state was loaded as a follower, before `isLoggedIn`) is
+not lost to the promotion handler, which reloads only a live session: the login reads
+`promotedSinceLoad()` synchronously before going live and, when it holds, throws
+`LoginStoppedForPromotionError`, releases its client and reloads through the handler's own path
+(`reloadForPromotion`) - so no pull, ACK or key package ever runs on that copy, and the reloaded page
+serves (`signOutDuringLogin.test.ts`, "a tab promoted to leader during its login").
+
+**The leader closing mid-request cannot double-commit.** A record found `running` whose run lock is
+FREE was claimed by a document that ended without settling it: the browser releases a lock when its
+document goes, so the free lock is the proof of death, no heartbeat, no clock (the `salonUnsent.ts`
+rule). It is answered `leader-gone` and **never run again**: the dead leader may have reached the
+server - a removal recorded, an Add staged or sent - and its kept-commit machinery settles that at
+the next connection; running the gesture a second time is how a removal or an Add would be committed
+twice. The member is told the main tab closed and to check before retrying
+(`chat_error_main_tab_gone`). A record still `pending` - no leader started it - is run by whichever
+leader drains next, the one a handover elects included. A request whose run lock is HELD is waited
+for on the lock itself (a stolen lock's old leader still finishing), never judged.
+
+**A request is ANSWERED while its follower lives - and a request nobody waits for is never run.** The
+leader's readiness decides how. It is set by the ONE writer of the session's two flags
+(`useChatSession`'s `setIsLoggedIn` and both `setIsLoginInProgress` setters, through
+`sessionDelegationReadiness`), so it follows every login start and every end - success, early
+return, failure, sign-out - whoever flips the flag; a component effect could not, since
+`isLoginInProgress` is a plain boolean no effect re-runs on (`delegationReadinessWiring.test.ts`): `ready` (a live session) runs it; `unavailable` (the PIN keypad up, or nobody signed in) answers
+`leader-unavailable` at once and runs nothing (`chat_error_main_tab_unavailable`: unlock the main tab,
+or do it there); `starting` (a login actually running) keeps it `pending` until the login ends in one
+of the other two. Nothing waits on `whenMlsReady` any more, so no request blocks the drain behind it;
+instead the readiness, the load fact and the account are read AGAIN after the claim, right before the
+executor runs, so a sign-out landing between the decision and the run answers `leader-unavailable`
+and builds no MLS client for a session that is ending.
+A kind no executor in the leader runs is answered `not-delegable`. A `pending` record whose REQUESTER
+LOCK is free - its tab closed, or signed out - is deleted under the run lock and never run, with a
+line saying so: the gesture is nobody's any more, and a same-account sign-in afterwards never runs a
+previous session's request. **What this does not cover, honestly:** a leader tab that the browser has
+FROZEN in the background (Chrome's tab freezing, a discarded tab) runs no JavaScript, so it neither
+answers nor releases its locks while frozen; the follower's request waits until the browser thaws
+that tab or the member brings it forward, and no clock is added to cut the wait short - a timeout
+there would be a guess about a live document. **And right after a deploy**, a leader tab still
+running the build before #3160 does not listen for `tab_commit_requested` at all: a new follower's
+request waits until that tab reloads (and is then run, or deleted unrun if its follower has gone).
+
+**The other refusals, all typed and said with Paraglide.** `not-delegable`: the engine has no Web
+Locks, or the leader tab is signed in to ANOTHER account (the leader lock is per browser) - said with
+the old `chat_error_follower_tab` sentence, which is exactly the instruction left; a leader signed out
+answers `leader-unavailable`. `failed`: an executor threw instead of answering by value - the visible
+end of a defect, logged ONCE, at error, in the leader (`chat_error_main_tab_failed`). A creation says
+every one in its modal (`leader-gone` and `leader-unavailable` are `ConversationRefusal`s). A
+gesture with two entries (joining a salon: the community's key group, then the salon's) stops at the
+first refusal, so the member is told once.
+
+**Engines without Web Locks.** Every browser this app supports has them (Chrome 69, Firefox 96,
+Safari 15.4); the desktop and mobile shells are one document, always the leader, so they never
+delegate. An engine without them cannot prove a leader dead, so a follower there hands nothing over
+and answers `not-delegable` - and has no takeover either, since "Prendre la main" is gone. That is
+accepted: such an engine is a browser older than 2022, and its tab election falls back to the
+heartbeat path whose followers already could not commit.
+
+**"Prendre la main" is gone with the banner** (`requestLeadershipTakeover`, `requestTabTakeover`,
+`releaseLeadership` and the `request_takeover` listeners): nothing needs the lead taken by hand any
+more. A demotion still happens when a tab reloading after its promotion steals the lock
+(`onLeaderLockRejected`, unchanged).
+
+Guarded by `tabCommitDelegation.test.ts`, which models what the guarantees live in rather than
+stubbing it - per-account databases whose writes become visible to another document only once
+committed, turns later; locks owned by documents and released when a document dies; a channel that
+never delivers to its poster and delivers to the others a turn later: every gesture run once and
+answered; a repeated signal and concurrent drains run once; two documents that both believe they
+lead run once between them; a request asked before any leader is run by the one that comes; a
+promoted-in-place document runs nothing and its reloaded successor runs the request; a starting
+leader keeps it and runs it once ready; a locked or not-yet-loaded leader answers
+`leader-unavailable`; a leader killed mid-request answers `leader-gone` and runs nothing again; a
+request held by a live document is waited for; a pending request whose tab closed is deleted, not
+run; a signed-out session's request is never run for the next one; another account and a signed-out
+leader refuse; a throwing executor is said once, at error. `stateAuthority.test.ts` for the load
+fact, `followerTabKeyGroup.test.ts` for the key-group gestures.
+**Owed: the two-tab readings on dev** ([backlog](../../backlog.d/p2-follower-tab-commits-run-by-the-leader-readings-owed.md)).
+
 ### The flusher resolves its token, and does not run while offline
 
 Two rules about *when* the queue is allowed to try, both learned from the offline-unlock work
