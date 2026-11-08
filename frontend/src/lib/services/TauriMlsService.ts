@@ -645,13 +645,19 @@ export class TauriMlsService extends BaseMlsService {
           () => unwatch(),
           (e: unknown) => {
             unwatch();
-            if (closedNatively) {
-              console.log(
-                `[WS] pauseSocket: the peer had already closed the socket (${String(e)}) - released.`
-              );
-              return;
-            }
-            console.warn(`[WS] pauseSocket: native disconnect failed: ${String(e)}`);
+            // THE REFUSAL IS THE ANSWER TO OUR OWN FRAME, WHETHER OR NOT ITS `Close` HAS ARRIVED.
+            // The gateway answers `disconnect` by ending the connection (`handle_disconnect`: the
+            // recv loop breaks), and the plugin forgets a connection the instant the peer's Close
+            // reaches Rust - BEFORE it delivers that `Close` to this page. So `disconnect()` can
+            // be refused ("closed connection") ahead of the `Close` message the watcher waits
+            // for: the plugin gives no earlier signal, and the sign-out reading of 2026-11-08 (Mi 9T,
+            // 77 ms between the accepted frame and the refusal) lost exactly that race. The frame
+            // was ACCEPTED, so the socket is released by the gateway, which is what was asked.
+            console.log(
+              closedNatively
+                ? `[WS] pauseSocket: the peer had already closed the socket (${String(e)}) - released.`
+                : `[WS] pauseSocket: the gateway closed the socket on our disconnect frame before the native release ran (${String(e)}) - released.`
+            );
           }
         );
       },
