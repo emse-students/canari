@@ -16,6 +16,7 @@
     type Submission,
   } from '$lib/forms/api';
   import { Plus, FileText, Pencil, Link, QrCode, Trash2, ChevronUp, Users } from '@lucide/svelte';
+  import { formSharePath } from '$lib/forms/shareLink';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { publicAppUrl } from '$lib/utils/publicAppUrl';
   import QrCodeModal from '$lib/components/shared/QrCodeModal.svelte';
@@ -28,13 +29,8 @@
   /** The form whose QR code is open, or null. Both share controls point at the same path. */
   let qrForm = $state<Form | null>(null);
 
-  /** The one place this screen says where a form lives, so the two share controls cannot drift. */
-  function formPath(id: string): string {
-    return `/forms/${id}`;
-  }
-
-  function copyFormLink(id: string) {
-    void copyPublicShareLink(formPath(id));
+  function copyFormLink(form: Form) {
+    void copyPublicShareLink(formSharePath(form));
   }
 
   let forms = $state<Form[]>([]);
@@ -257,7 +253,7 @@
                 <Pencil size={16} />
               </a>
               <button
-                onclick={() => copyFormLink(form.id)}
+                onclick={() => copyFormLink(form)}
                 class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
                 title={m.form_list_share_button()}
               >
@@ -339,7 +335,7 @@
 {#if qrForm}
   <QrCodeModal
     open
-    url={publicAppUrl(formPath(qrForm.id))}
+    url={publicAppUrl(formSharePath(qrForm))}
     label={qrForm.title}
     owner={qrForm.associationName}
     intro={m.form_qr_intro()}

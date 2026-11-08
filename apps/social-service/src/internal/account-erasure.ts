@@ -67,7 +67,13 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'member_repost_notices.recipientId': { action: 'delete' },
   'user_follow_notices.followedUserId': { action: 'delete' },
   'association_follows.followerUserId': { action: 'delete' },
+  // The old per-association mute (migration 080), read by nothing since migration 143 copied it
+  // into `account_bells` - deleted until its held drop.
   'association_push_mutes.userId': { action: 'delete' },
+  // The reader's bells (migration 142), and every reader's bell ON this person: the second names
+  // the erased account as a `user` target, and would otherwise outlive it.
+  'account_bells.userId': { action: 'delete' },
+  'account_bells.targetId': { action: 'delete' },
   'user_tags.userId': { action: 'delete' },
   'user_moderation.userId': { action: 'delete' },
   'form_respondents.userId': { action: 'delete' },
@@ -528,6 +534,13 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     sql: `DELETE FROM association_follows WHERE "followerUserId" = $1`,
   },
   { label: 'push_mutes', sql: `DELETE FROM association_push_mutes WHERE "userId" = $1` },
+  // Every bell naming the account, as reader or as target. No `"targetKind" = 'user'` term: the
+  // other kind's target is an association uuid, never an account id, and the term would leave a row
+  // whose kind the erasure cannot vouch for.
+  {
+    label: 'account_bells',
+    sql: `DELETE FROM account_bells WHERE "userId" = $1 OR "targetId" = $1`,
+  },
   // Anonymised, in `ERASURE_TIER_ORDER` (checkouts, records, then the tags): the order a settlement
   // (checkout row, record, tag) and a closing (record, tag) take. An erasure that runs first is seen
   // by both: the settlement of an erased buyer's checkout records `paid_not_granted` and grants
@@ -797,8 +810,9 @@ export const ERASURE_PROPOSAL_STATEMENTS: readonly ErasureStatement[] = [
  * THE ERASURE'S FIRST STATEMENT: every association whose rows it will write, locked in id order.
  *
  * An association delete (`AssociationsService.remove`) takes its association `FOR UPDATE` FIRST,
- * then deletes what hangs off it: its events, its forms, its members, then the row's cascade (role
- * history, push mutes, proposals, republications, booking spaces and everything under them). The
+ * then deletes what hangs off it: its events, its forms, its members, the readers' bells on it, then
+ * the row's cascade (role history, push mutes, proposals, republications, booking spaces and
+ * everything under them). The
  * erasure writes those same rows, and used to reach the association only at
  * `UPDATE associations SET "createdBy"`. So an erasure holding the account's member row of X, and a
  * delete of X holding X and its events, waited on each other (`40P01`, reproduced on PostgreSQL 18).
@@ -826,6 +840,7 @@ export const ERASURE_ASSOCIATION_LOCK_SQL = `SELECT a.id FROM associations a
     UNION SELECT "associationId"::text FROM association_members WHERE "userId" = $1
     UNION SELECT association_id::text FROM association_role_history WHERE user_id = $1
     UNION SELECT "associationId"::text FROM association_push_mutes WHERE "userId" = $1
+    UNION SELECT "targetId" FROM account_bells WHERE "userId" = $1 AND "targetKind" = 'association'
     UNION SELECT "associationId"::text FROM association_calendar_events
            WHERE "createdBy" = $1 OR "validatedBy" = $1 OR "rejectedBy" = $1
     UNION SELECT "associationId"::text FROM forms WHERE "ownerId" = $1

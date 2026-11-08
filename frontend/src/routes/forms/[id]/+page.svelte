@@ -67,6 +67,7 @@
     Ban,
     QrCode,
   } from '@lucide/svelte';
+  import { formSharePath } from '$lib/forms/shareLink';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { publicAppUrl } from '$lib/utils/publicAppUrl';
   import QrCodeModal from '$lib/components/shared/QrCodeModal.svelte';
@@ -203,7 +204,7 @@
    * form is shared by its GUEST address, the one that opens without an account; a member opening
    * that link is sent back here.
    */
-  const formPath = $derived(form?.isPublic ? `/f/${formId}` : `/forms/${formId}`);
+  const formPath = $derived(form ? formSharePath(form) : `/forms/${formId}`);
   let qrOpen = $state(false);
 
   function copyFormLink() {

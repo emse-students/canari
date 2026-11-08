@@ -9,8 +9,8 @@ use tauri::{
 #[cfg(target_os = "ios")]
 tauri::ios_plugin_binding!(init_plugin_gallery);
 
-/// Registers the platform class: Kotlin `GalleryPlugin` (MediaStore) on Android, Swift
-/// `GalleryPlugin` (PHPhotoLibrary) on iOS.
+/// Registers the platform class: Kotlin `GalleryPlugin` (MediaStore, sharing shortcuts) on Android,
+/// Swift `GalleryPlugin` (PHPhotoLibrary, `INSendMessageIntent` donations) on iOS.
 pub fn init<R: Runtime, C: DeserializeOwned>(
     _app: &AppHandle<R>,
     api: PluginApi<R, C>,

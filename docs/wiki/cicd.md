@@ -232,8 +232,8 @@ which is how three chains came to each re-derive the same fact:
 
 1. `enumerate-services` names all eight services (no diff: every service is built every release)
 2. Builds the frontend against that estate's `VITE_*` set, then every image → GHCR, each tagged `v<version>`
-3. Self-hosted runner: sync `.env`, `docker compose pull`, then every service replaced one at a time by `infrastructure/lib/rolling.sh` ([below](#a-deploy-replaces-nothing-a-member-is-talking-to)) - production by `--tag v<version>`, so re-running an old release's deploy is a ROLLBACK - across the replica lists too, because they rest naming each service by DNS ([why](#a-rollback-across-the-replica-lists))
-4. Database migrations, then health checks
+3. Self-hosted runner: sync `.env`, `docker compose pull`, then the database and its migrations BEFORE any application service (`deploy-environment.sh`: a service never meets a schema older than its code)
+4. Every service replaced one at a time by `infrastructure/lib/rolling.sh` ([below](#a-deploy-replaces-nothing-a-member-is-talking-to)) - production by `--tag v<version>`, so re-running an old release's deploy is a ROLLBACK - across the replica lists too, because they rest naming each service by DNS ([why](#a-rollback-across-the-replica-lists)); then health checks
 5. MiConnect's blueprints: a pre-release DRY-RUNS them against the production MiConnect, and a
    stable APPLIES them before `prod-released` moves. The same runner lives on MiConnect's host, so
    `apply-blueprints.sh` reaches the worker container directly. The fresh-instance gate before both
@@ -2753,7 +2753,7 @@ are builder stages and the local compose file, which reach no estate.
 | in the `dependencies` half, so it gates `CI passed` and runs nightly | same footing as the audits: a database that moves without a commit; exit `2` (database or registry unreachable) is priced by `registry_outage_is_failure` |
 | the allowlist is `.github/image-scan-allowlist.yaml`, Trivy's own format | one entry per advisory, each with a `statement`; `image-scan-allowlist.test.mjs` refuses a missing statement, an unknown key and any `expired_at` - an entry retires on evidence, never on a date |
 | **every entry retires itself** | each image is rescanned WITHOUT the allowlist and `ignored-advisories-still-reported.sh` (media-service's check) fails on an id nothing reports any more. A pull request that moves a pin deletes the entries it made unnecessary in the same commit |
-| Trivy from its release tarball, not `aquasecurity/trivy-action` | a tag can move, a checksum cannot. **Nothing watches the pin**: move it by changing `TRIVY_VERSION` and `TRIVY_SHA256` together, the checksum read from that release's `trivy_<v>_checksums.txt` |
+| Trivy from its release tarball, not `aquasecurity/trivy-action` | a tag can move, a checksum cannot. **Nothing watches the pin**: move it by changing `TRIVY_VERSION` and `TRIVY_SHA256` together, the checksum read from that release's `trivy_<v>_checksums.txt`. **The verified archive is cached** (`actions/cache`, keyed on version AND digest; ShellCheck the same, keyed on `.shellcheck-version` and its digest): GitHub's release downloads answered 504 for hours on 2026-11-08 under an "operational" status page and failed every pull request; the digest is still checked on every run, so a cache hit can only be the pinned archive |
 
 **What the first measurement found (Trivy 0.75.0, 2026-10-23), and what each became:**
 

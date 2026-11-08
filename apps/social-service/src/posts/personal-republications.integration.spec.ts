@@ -62,6 +62,7 @@ const maybe = URL ? describe : describe.skip;
 const LOCK_ONLY = new Set([
   'association_role_history',
   'association_push_mutes',
+  'account_bells',
   'association_calendar_events',
   'forms',
   'form_respondents',
@@ -290,6 +291,7 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
     await q(`
       CREATE TABLE association_role_history (association_id uuid, user_id varchar);
       CREATE TABLE association_push_mutes ("associationId" uuid, "userId" varchar);
+      CREATE TABLE account_bells ("userId" varchar, "targetKind" varchar, "targetId" varchar);
       CREATE TABLE association_calendar_events ("associationId" uuid, "createdBy" varchar,
         "validatedBy" varchar, "rejectedBy" varchar);
       CREATE TABLE forms (id uuid PRIMARY KEY, "associationId" uuid, "ownerId" varchar);

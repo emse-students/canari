@@ -974,11 +974,6 @@
     "select": 0,
     "input": 1
   },
-  "src/lib/components/settings/SettingsMutedAssociations.svelte": {
-    "button": 1,
-    "select": 0,
-    "input": 0
-  },
   "src/lib/components/settings/SettingsNotificationsSection.svelte": {
     "button": 1,
     "select": 0,

@@ -4,10 +4,7 @@ import { Repository } from 'typeorm';
 import { PostNotification } from './entities/post-notification.entity';
 import { Post } from './entities/post.entity';
 import { PushService } from '../push/push.service';
-import {
-  AssociationPushMutesService,
-  MUTABLE_PUSH_TYPES,
-} from '../follows/association-push-mutes.service';
+import { AccountBellsService, bellTargetOf } from '../follows/account-bells.service';
 import {
   mentionContent,
   replyContent,
@@ -240,7 +237,7 @@ const withIcon = (content: PushContent, icon?: PushIcon): PushContent =>
     : content;
 
 /**
- * The rows of a notice are SAVED and only its push failed (the mute lookup is fail-closed).
+ * The rows of a notice are SAVED and only its push failed (the bell lookup is fail-closed).
  * Typed so a caller that must know whether somebody HAS the in-app row - to avoid telling the same
  * person twice - can tell this apart from a failure that wrote nothing, without reading a message.
  */
@@ -265,7 +262,7 @@ export class PostNotificationsService {
     @InjectRepository(PostNotification) private readonly notifRepo: Repository<PostNotification>,
     @InjectRepository(Post) private readonly postRepo: Repository<Post>,
     private readonly push: PushService,
-    private readonly pushMutes: AssociationPushMutesService
+    private readonly bells: AccountBellsService
   ) {}
 
   /**
@@ -654,12 +651,12 @@ export class PostNotificationsService {
 
   /**
    * A push for a notice the bell does NOT keep - one per recipient, through the same mapping, icon
-   * rule, mute and bounded fan-out as {@link createNotifications}, and no `post_notifications` row.
+   * rule, bell and bounded fan-out as {@link createNotifications}, and no `post_notifications` row.
    *
    * For a notice about something that does not outlive its moment: a live (WP-L7) is deleted when it
    * ends (L3), so a bell row naming it would point at a 404 for ever after. The LIVE card at the top
    * of the feed is its in-app surface (L5). Returns how many recipients were addressed, before the
-   * mute (which only the push consults, exactly as for a post).
+   * bell (which only the push consults, exactly as for a post).
    */
   async pushNotice(data: {
     recipientIds: string[];
@@ -678,9 +675,9 @@ export class PostNotificationsService {
   }
 
   /**
-   * The push half of a notice: the picture, the content, the mute, then the bounded fan-out. Shared
+   * The push half of a notice: the picture, the content, the bell, then the bounded fan-out. Shared
    * by {@link createNotifications} and {@link pushNotice} so neither can drift from the other's
-   * mapping or mute. Throws only when the mute lookup fails (fail closed, see below).
+   * mapping or bell. Throws only when the bell lookup fails (fail closed, see below).
    */
   private async fanOutPush(
     data: {
@@ -729,29 +726,29 @@ export class PostNotificationsService {
       );
       return;
     }
-    // THE MUTE, applied HERE and server-side: any in-app row is already written (a mute silences
-    // the PUSH, never the bell or the feed), and only a type that reaches a READER of the
-    // association is eligible - managers' operational pushes are never muted (`MUTABLE_PUSH_TYPES`).
+    // THE BELL, applied HERE and server-side (engagement WP-3): any in-app row is already written (a
+    // bell reduces the PUSH, never the bell list or the feed), and only a type a bell can reduce is
+    // eligible (`BELL_PUSH_KINDS`) - mentions, replies, managers' operational pushes never are. The
+    // account is the association when the push carries one, the person acting otherwise.
     let pushRecipients = recipients;
-    if (data.associationId && MUTABLE_PUSH_TYPES.has(data.type)) {
+    const bell = bellTargetOf(data);
+    if (bell) {
       // FAIL CLOSED, LOUDLY: if the lookup fails the push is NOT sent to everyone (that would
-      // override a stated privacy choice) and not silently dropped either - the error is logged
-      // here and rethrown, so the caller's own warning names the post (or live) that was not
-      // pushed. A post's in-app rows are already written, so the bell still carries it.
-      const muted = await this.pushMutes
-        .mutedAmong(data.associationId, recipients)
-        .catch((e: unknown) => {
-          this.logger.error(
-            `[NOTIFY] mute lookup failed for association=${data.associationId?.slice(0, 8)} - ` +
-              `push NOT sent to ${recipients.length} recipient(s): ${String(e)}`
-          );
-          throw e;
-        });
-      if (muted.size > 0) {
-        pushRecipients = recipients.filter((id) => !muted.has(id));
+      // override a stated choice) and not silently dropped either - the error is logged here and
+      // rethrown, so the caller's own warning names the post (or live) that was not pushed. A
+      // post's in-app rows are already written, so the bell list still carries it.
+      const withheld = await this.bells.withheldAmong(bell, recipients).catch((e: unknown) => {
+        this.logger.error(
+          `[NOTIFY] bell lookup failed for ${bell.kind}=${bell.id.slice(0, 8)} - ` +
+            `push NOT sent to ${recipients.length} recipient(s): ${String(e)}`
+        );
+        throw e;
+      });
+      if (withheld.size > 0) {
+        pushRecipients = recipients.filter((id) => !withheld.has(id));
         this.logger.log(
-          `[NOTIFY] type=${data.type} association=${data.associationId.slice(0, 8)} ` +
-            `push withheld from ${muted.size} muted of ${recipients.length}`
+          `[NOTIFY] type=${data.type} ${bell.kind}=${bell.id.slice(0, 8)} ` +
+            `push withheld by the bell from ${withheld.size} of ${recipients.length}`
         );
       }
     }

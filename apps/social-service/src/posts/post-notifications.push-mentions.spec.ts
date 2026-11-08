@@ -43,7 +43,7 @@ describe('PostNotificationsService - mentions in a push', () => {
       notifRepo as never,
       postRepo as never,
       push as never,
-      { mutedAmong: () => Promise.resolve(new Set<string>()) } as never
+      { withheldAmong: () => Promise.resolve(new Set<string>()) } as never
     );
   }
 

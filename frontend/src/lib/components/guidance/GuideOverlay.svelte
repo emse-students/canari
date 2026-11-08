@@ -326,7 +326,15 @@
   $effect(() => {
     const current = view;
     const bubble = bubbleEl;
-    if (!current || !bubble || !visible) return;
+    if (!current || !bubble || !visible) {
+      // A dismissed step leaves nothing for a screen reader to find: the live region stays mounted
+      // for the next announcement, so its TEXT is what must go (read on the iPhone 12, 2026-11-08:
+      // "Étape 1 sur 1" stayed in the accessibility tree of every page after the card was closed).
+      untrack(() => {
+        announcement = '';
+      });
+      return;
+    }
     untrack(() => {
       announcement = m.guide_step_announce({
         position: current.position,

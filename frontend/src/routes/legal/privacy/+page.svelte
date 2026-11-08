@@ -351,7 +351,12 @@
         <dd>
           Pour chaque appareil : un identifiant, son nom et son système, la version de
           l'application, ses clés publiques de chiffrement et le jeton de notification attribué par
-          Google (FCM) ou Apple (APNs), avec la langue de l'appareil.
+          Google (FCM) ou Apple (APNs), avec la langue de l'appareil. Si vous réglez la cloche d'un
+          compte - une association, ou une personne que vous suivez - sur « Lives seulement » ou «
+          Rien », le serveur garde ce choix (le compte concerné et le niveau) pour ne vous envoyer
+          que ce que vous avez choisi ; ce compte n'en est pas informé, et ses publications restent
+          dans votre fil et dans vos notifications. Suivre ce compte à nouveau rétablit «
+          Publications et lives ».
         </dd>
       </div>
       <div>
@@ -877,6 +882,14 @@
             <td>90 jours</td>
           </tr>
           <tr>
+            <td>Réglage de la cloche d'un compte (« Lives seulement » ou « Rien »)</td>
+            <td>
+              Jusqu'à ce que vous le remettiez sur « Publications et lives », que vous suiviez à
+              nouveau ce compte, ou à la suppression de votre compte, de celui de la personne ou de
+              l'association
+            </td>
+          </tr>
+          <tr>
             <td>Signalements</td>
             <td>90 jours après leur traitement</td>
           </tr>
@@ -984,6 +997,17 @@
               pas être retiré par l'application : il est désactivé, et c'est le lanceur qui décide
               s'il reste affiché</td
             >
+          </tr>
+          <tr>
+            <td>Suggestions de partage (application iPhone)</td>
+            <td>
+              Les noms de vos conversations récentes, et leur identifiant interne, sont confiés à
+              iOS pour les proposer dans son menu Partager - jamais le contenu d'un message. iOS
+              peut aussi afficher ces noms dans les suggestions de Siri : Spotlight, le widget de
+              suggestions et, selon vos réglages iOS, l'écran verrouillé. Activé par défaut,
+              désactivable dans Paramètres &gt; Préférences &gt; Suggestions dans le partage
+            </td>
+            <td>Effacés à la déconnexion et à la désactivation du réglage</td>
           </tr>
           <tr>
             <td>Identifiant aléatoire <code>klipy_cid</code></td>

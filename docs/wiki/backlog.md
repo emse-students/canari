@@ -1711,8 +1711,9 @@ Group) and its `CanariShare` profiles exist: a Share Extension writes into the A
 carries the share out of it into the Android layout. Nothing on Windows compiles it, so CI's archive
 is its first compile and the iPhone readings listed under Owed on
 [sharing](frontend/sharing.md#owed) are its first proof - including the secret
-`APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. Next: the iOS
-suggestions (`INSendMessageIntent`).
+`APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. **The iOS
+suggestions (`INSendMessageIntent`, the S5 twin) are BUILT (2026-10-27, rebuilt on main 2026-11-08)**,
+owed the iPhone readings ([sharing](frontend/sharing.md#share-suggestions-ios---lot-s5)).
 
 ## P3 - Three loose ends of the per-conversation drafts (review of #2614, 2026-10-27)
 
@@ -2452,7 +2453,7 @@ browser salon notification clicked through `/chat`. Open:
 2. **P3 - the Android manifest and `tauri.conf.json` declare five hosts; the page hosts a push writes (`posts`,
    `calendar`, `admin-agenda`, `proposals`) rely on the explicit intent of the notification.** Read it once on the Mi 9T.
 
-The two questions of the audit are answered (2026-10-08): a follow keeps its meaning, a per-association mute exists, read-grant holders stay unannounced - [social-service](services/social-service.md#follow-mute-and-read-grants-three-different-facts-decided-by-the-user-2026-10-08).
+The two questions of the audit are answered (2026-10-08): a follow keeps its meaning, a per-association mute exists, read-grant holders stay unannounced - [social-service](services/social-service.md#follow-bell-and-read-grants-three-different-facts-decided-by-the-user-2026-10-08-the-mute-became-the-bell-engagement-wp-3-2026-11-08).
 
 ## CI and the chain that runs unattended
 

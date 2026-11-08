@@ -49,6 +49,7 @@
   } from '$lib/associations/api';
   import {
     isAssociationIdentity,
+    listLiveAssociations,
     listPostAsAssociations,
     postIdentityFields,
   } from '$lib/posts/postIdentity';
@@ -168,6 +169,8 @@
   // --- Association identity ---
   /** Associations the user may post as (`listPostAsAssociations`). */
   let postAsAssociations = $state<Association[]>([]);
+  /** Ids of the associations a live may be started as (`listLiveAssociations`), a subset of the above. */
+  let liveAssociationIds = $state<ReadonlySet<string>>(new Set());
   /** Who is publishing - `''`, anonymous or an association (`PostIdentityPicker`). */
   let selectedAssociationId = $state('');
   let selectedLinkedCalendarEventId = $state('');
@@ -184,20 +187,28 @@
    * so the chip is not offered while "anonymous" is chosen, nor while the chosen association is not
    * in the list read (a restored draft's): the live would otherwise go out under the wrong name.
    */
-  const liveAssociation = $derived(
+  const chosenAssociation = $derived(
     isAssociationSelected
       ? (postAsAssociations.find((a) => a.id === selectedAssociationId) ?? null)
       : null
   );
+  /**
+   * The chosen association, only where the SERVER's live start would accept it
+   * (`listLiveAssociations`): a global admin posts as any association but may not broadcast as one
+   * they hold no `POST_AS_ASSO` in, and `POST /api/lives` answers `403 LIVE_ASSOCIATION_FORBIDDEN`.
+   */
+  const liveAssociation = $derived(
+    chosenAssociation && liveAssociationIds.has(chosenAssociation.id) ? chosenAssociation : null
+  );
 
   /**
    * "Entre étudiants" (owner, 2026-11-04): OFF by default, offered only while the identity chosen is
-   * an association or a list the member may post as - the same entity read as `liveAssociation`, so
+   * an association or a list the member may post as - the same entity read as `chosenAssociation`, so
    * a restored draft naming an association no longer listed offers nothing and sends nothing.
    */
   let studentsOnly = $state(false);
   const studentsOnlyAssociation = $derived(
-    liveAssociation && studentsOnlyOffered(liveAssociation.type) ? liveAssociation : null
+    chosenAssociation && studentsOnlyOffered(chosenAssociation.type) ? chosenAssociation : null
   );
 
   /**
@@ -424,6 +435,7 @@
 
     try {
       postAsAssociations = await listPostAsAssociations();
+      liveAssociationIds = new Set((await listLiveAssociations()).map((a) => a.id));
     } catch (e) {
       console.error('Failed to load associations', e);
     }
