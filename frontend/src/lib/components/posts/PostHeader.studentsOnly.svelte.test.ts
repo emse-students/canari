@@ -5,6 +5,16 @@
  * included, and the header draws it from that field alone.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
+// The follow chip's state is its own spec (`FollowChip.svelte.test.ts`); here it must not reach the network.
+vi.mock('$lib/follows/followState.svelte', () => ({
+  ensureAssociationsLoaded: () => {},
+  ensureBlocksLoaded: () => {},
+  ensurePersonStatus: () => {},
+  personChipState: () => 'hidden',
+  isAssociationFollowed: () => true,
+  tapPerson: () => Promise.resolve(),
+  tapAssociation: () => Promise.resolve(),
+}));
 import { flushSync, mount, unmount } from 'svelte';
 import PostHeader from './PostHeader.svelte';
 import type { PostEntity } from '$lib/posts/api';

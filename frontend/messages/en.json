@@ -5826,5 +5826,6 @@
   "form_draft_copy_dropped": "The edits to \"{title}\" kept on this device could not be saved: the form was changed elsewhere or no longer exists.",
   "form_edit_load_action": "Loading the form",
   "form_create_key_reused": "This draft was already created for another association. Reload the page and continue from \"My forms\".",
-  "form_create_key_gone": "This draft was deleted in the meantime."
+  "form_create_key_gone": "This draft was deleted in the meantime.",
+  "follow_chip_follow_named": "Follow {name}"
 }

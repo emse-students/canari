@@ -4,6 +4,7 @@
   import PostAuthorAvatar from './PostAuthorAvatar.svelte';
   import RevealedAuthorLine from './RevealedAuthorLine.svelte';
   import StudentsOnlyChip from './StudentsOnlyChip.svelte';
+  import FollowChip from '$lib/components/follows/FollowChip.svelte';
   import { Clock, Repeat2, Send } from '@lucide/svelte';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
@@ -122,4 +123,14 @@
       </div>
     {/if}
   </div>
+  <!--
+    "Suivre" for whoever published this, when the reader does not follow them yet (engagement WP-2).
+    An association post offers the association; a personal post offers its author; an anonymous post
+    offers nothing - there is nobody to follow, and a revealed author is never turned into a button.
+  -->
+  {#if post.association}
+    <FollowChip kind="association" targetId={post.association.id} name={post.association.name} />
+  {:else if post.authorId && !post.anonymous}
+    <FollowChip kind="user" targetId={post.authorId} name={getPostAuthorName()} />
+  {/if}
 </div>

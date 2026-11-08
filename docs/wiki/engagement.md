@@ -6,7 +6,7 @@ design that answers each one, what each surface reveals and to whom, and the wor
 The queue entry is [backlog.d](backlog.d/engagement-chantier.md).
 
 **State: WP-1 and WP-1b BUILT (the association live audience, and its 6-hour bound); WP-3 BUILT
-(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); everything else DESIGNED, not built.**
+(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built)); everything else DESIGNED, not built.**
 
 Context it must respect, and which nothing here changes:
 
@@ -729,7 +729,7 @@ then WP-9). Shipping it earlier would guard nothing.
 | --- | --- | --- | --- |
 | **WP-1** (BUILT, #3119) | An association's live reaches everyone who can see it | `lives/live-announcer.ts` | `lives.integration.spec.ts` on PostgreSQL ([above](#wp-1---an-associations-live-reaches-everyone-who-can-see-it-built)) |
 | **WP-1b** (BUILT, #3119) | One announced live per association per 6 hours (L16) | `lives/lives.service.ts` (the claim) | [above](#wp-1b---one-announced-live-per-association-per-6-hours-built-in-the-same-pull-request) |
-| **WP-2** | Suivre everywhere a person or entity is named: post headers of an account the viewer does not follow, search results, association cards (today only the profile and the association page carry it) | `frontend/src/lib/follows/api.ts` | component tests per surface; a phone reading of a follow request from a post header |
+| **WP-2** (BUILT, [below](#wp-2---suivre-everywhere-built)) | Suivre everywhere a person or entity is named: post headers of an account the viewer does not follow, search results, association cards (today only the profile and the association page carry it) | `frontend/src/lib/follows/api.ts` | component tests per surface; a phone reading of a follow request from a post header |
 | **WP-3** (BUILT, [below](#wp-3---the-bell-built)) | The bell (decisions 3d, 5a, 10): `account_bells` (`lives` and `none` only, L3), the HELD copy of `association_push_mutes`, the old mute endpoints writing `account_bells` (L8), a follow deleting the row in the creating statement, the seam in `fanOutPush`, the profile control, the association mute UI moved onto it | `follows/association-push-mutes.service.ts` | integration spec of the level table above; a new follow resets a reduced bell and a RETRIED follow does not; following a muted association again unmutes it; a mute set through the old endpoint after the copy is honoured; the existing mute specs still green against the new store |
 | **WP-4** | Openings for followers (5d): `opening_reminders`, the HELD copy of `form_reminders`, follower rows at publication, "Me prévenir" upsert, booking and event openings; never capped | `forms/forms-reminder.scheduler.ts` | integration spec: a follower who also asked gets ONE push, a follower gets the opening and no heads-up, a non-follower who asked gets both |
 | **WP-5** | The suggestion query, its faces, entities, `follow_suggestion_dismissals`, `GET /api/suggestions`, `POST /api/suggestions/dismiss`, the erasure | `follows/` | integration spec of every exclusion of decision 2 and every face rule of decision 4; EXPLAIN on dev |
@@ -739,6 +739,23 @@ then WP-9). Shipping it earlier would guard nothing.
 | **WP-9** | Friends' activity (5b) with the ledger `post_engagement_notices` and the activity setting (decision 9: `user_activity_settings`, no row = ON, the Settings switch) | `posts/comment-write.ts`, the reaction write | integration spec, one case per rule of the disclosure list, rule 0 included, and for rule 8 one case EACH: an `anonymous` comment, a comment written as an association, and a `removedByModeration` comment, none of which notifies |
 | **WP-10** | Campus trends (5c) | the reaction write | [R1](#r1---the-trend-threshold) read FIRST and written back; integration spec: exactly one stamp at the crossing write, none after 24 hours, the space-only audience |
 
+### WP-2 - Suivre everywhere (BUILT)
+
+Frontend only; no server change. One component, `components/follows/FollowChip.svelte`, drawn in
+three places: the post header (`PostHeader`: the association of an association post, the author of
+a personal post, nothing on an anonymous one, a revealed author included), the directory rows, and
+`AssociationTile` (the chip is a sibling of the tile's link, never inside it).
+
+**The "do I follow this" fact is not carried by any payload, and none needed to be.**
+`follows/followState.svelte.ts` is the shared, reactive ledger: a person is read lazily ONCE per
+distinct id through the existing `follow-status` call (at most 4 in flight; a feed of fifty posts by
+ten authors costs ten reads), the followed associations are ONE read of `me/following`, the blocks
+one cached `listBlockedUsers`. A chip draws nothing while its answer is unknown, and never for
+yourself, a blocked account, a person already followed or an association already followed. A tap
+on a person asks (the chip reads "Demande envoyee", a second tap withdraws) with the profile's own
+pure rules (`followButton.ts`: action, optimistic status, refusal sentence); a refusal puts the
+state back and toasts. An association follows at once and the chip goes away. A bulk "who I follow"
+read would replace the per-author reads if a later surface (the carousel of WP-6) needs it.
 ### Which migrations are held
 
 The [held-migration rule](cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01) holds a

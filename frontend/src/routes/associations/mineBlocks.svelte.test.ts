@@ -6,6 +6,16 @@
  * row (the member's own one badged), as before.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
+// The follow chip's state is its own spec (`FollowChip.svelte.test.ts`); here it must not reach the network.
+vi.mock('$lib/follows/followState.svelte', () => ({
+  ensureAssociationsLoaded: () => {},
+  ensureBlocksLoaded: () => {},
+  ensurePersonStatus: () => {},
+  personChipState: () => 'hidden',
+  isAssociationFollowed: () => true,
+  tapPerson: () => Promise.resolve(),
+  tapAssociation: () => Promise.resolve(),
+}));
 import { mount, tick, unmount } from 'svelte';
 
 const data = vi.hoisted(() => ({ mine: [] as unknown[], dir: {} as Record<string, unknown[]> }));

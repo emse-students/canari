@@ -5826,5 +5826,6 @@
   "form_draft_copy_dropped": "Les modifications de « {title} » gardées sur cet appareil n'ont pas pu être enregistrées : le formulaire a été modifié ailleurs ou n'existe plus.",
   "form_edit_load_action": "Chargement du formulaire",
   "form_create_key_reused": "Ce brouillon a déjà été créé pour une autre association. Rechargez la page pour repartir de « Mes formulaires ».",
-  "form_create_key_gone": "Ce brouillon a été supprimé entre-temps."
+  "form_create_key_gone": "Ce brouillon a été supprimé entre-temps.",
+  "follow_chip_follow_named": "Suivre {name}"
 }
