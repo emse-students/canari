@@ -184,6 +184,14 @@ describe('HandoffService', () => {
       expect(lines.some((l) => l.includes('unreadable') && l.includes('CLOSED'))).toBe(true);
     });
 
+    it('with a SEC1 EC key (what `openssl genpkey -outform DER` writes): the format is named', () => {
+      process.env.HANDOFF_SIGNING_KEY = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+        .privateKey.export({ format: 'der', type: 'sec1' })
+        .toString('base64');
+      notOffered(new HandoffService(SITES));
+      expect(lines.some((l) => l.includes('PKCS#8 DER private key, base64'))).toBe(true);
+    });
+
     it('with no issuer to sign as', () => {
       process.env.FRONTEND_URL = '';
       notOffered(new HandoffService(SITES));

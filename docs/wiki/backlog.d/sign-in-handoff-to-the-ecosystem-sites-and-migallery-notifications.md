@@ -34,14 +34,14 @@ tests, are in [sessions](../sessions.md#the-sign-in-handoff-to-the-miconnect-sit
 the mint `POST /api/auth/handoff`, the JWKS `GET /api/auth/handoff/jwks`, the registry
 `libs/contracts/ecosystem-sites.json`, the vectors `libs/contracts/handoff-token.cases.json`
 (written by `bun tools/handoff-vectors/generate.ts`), the one opener `openEcosystemSite`, and the
-secret `HANDOFF_SIGNING_KEY`. **Every site's `handoff` flag is OFF**, so nothing changes for a user
+secret `HANDOFF_SIGNING_KEY` (production secret provisioned by the lead on 2026-11-08, PKCS#8 verified). **Every site's `handoff` flag is OFF**, so nothing changes for a user
 until a site's own redemption is live and its flag is turned on.
 
 **Taken here as the reversible recommended options (lead's brief, 2026-11-08):**
 
 - **F1 ships: the token carries `sub` only.** F3 waits for the H0 spike and the read-only MiConnect
   account (section 9); adding `claims` later is additive for a site that ignores an unknown member.
-  **MiGallery's flag stays OFF until H0 answers**, because F1 leaves a promo or formation changed in
+  **MiGallery's flag stays OFF until the H0 check confirms the MiConnect reads (F3)** (owner, 2026-11-08), because F1 leaves a promo or formation changed in
   MiConnect stale on MiGallery until its next OIDC sign-in (section 4).
 - **No migration on Canari.** The mint is stateless; single use is the site's ledger.
 - **A rotation is a hard cut**, not "publish the new key beside the old one": one variable, the

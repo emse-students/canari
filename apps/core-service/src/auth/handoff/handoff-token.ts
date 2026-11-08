@@ -64,14 +64,25 @@ export interface HandoffPublicJwk {
 
 /**
  * Reads `HANDOFF_SIGNING_KEY`: the base64 of a PKCS#8 DER P-256 private key, one line
- * (`openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -outform DER | base64 -w0`).
+ * (`openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 | openssl pkcs8 -topk8 -nocrypt -outform DER | base64 -w0`).
  * ONE spelling: a PEM, another curve or another key type throws, so a wrong value is seen at boot
  * rather than signing with something no site expects.
  */
 export function loadHandoffSigningKey(raw: string): KeyObject {
   const der = Buffer.from(raw.trim(), 'base64');
   if (der.length === 0) throw new Error('HANDOFF_SIGNING_KEY is empty');
-  const key = createPrivateKey({ key: der, format: 'der', type: 'pkcs8' });
+  let key: KeyObject;
+  try {
+    key = createPrivateKey({ key: der, format: 'der', type: 'pkcs8' });
+  } catch {
+    // Named, because the commonest wrong value is a SEC1 `ECPrivateKey` (what `openssl genpkey
+    // -outform DER` writes for an EC key), which only differs from PKCS#8 in its ASN.1 wrapper.
+    throw new Error(
+      'HANDOFF_SIGNING_KEY is not a PKCS#8 DER private key, base64 (a SEC1 EC key or a PEM is ' +
+        'refused): openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 | openssl ' +
+        'pkcs8 -topk8 -nocrypt -outform DER | base64 -w0'
+    );
+  }
   if (key.asymmetricKeyType !== 'ec' || key.asymmetricKeyDetails?.namedCurve !== 'prime256v1') {
     throw new Error('HANDOFF_SIGNING_KEY is not a P-256 (prime256v1) EC private key');
   }
