@@ -24,9 +24,14 @@ vi.mock('$app/paths', () => ({ resolve: (p: string) => (p.startsWith('/') ? p : 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalSession: { isLoggedIn: false, isLoginInProgress: false },
 }));
-vi.mock('$lib/forms/api', () => ({ getPublicForm }));
+vi.mock('$lib/forms/api', async (orig) => ({
+  PublicFormUnavailableError: (await orig<typeof import('$lib/forms/api')>())
+    .PublicFormUnavailableError,
+  getPublicForm,
+}));
 
 import { load } from './+layout';
+import { PublicFormUnavailableError } from '$lib/forms/api';
 
 /** Runs the root load on the path and fires the boot's "no session" callback. */
 async function noSessionOutcome(path: string) {
@@ -48,7 +53,7 @@ describe('root guard on a form member link, signed out', () => {
   });
 
   it('goes to login, carrying the page, when the form is not public', async () => {
-    getPublicForm.mockRejectedValue(new Error('404'));
+    getPublicForm.mockRejectedValue(new PublicFormUnavailableError(true));
     await noSessionOutcome(`/forms/${ID}`);
     expect(goto).toHaveBeenCalledWith(`/login?returnTo=${encodeURIComponent(`/forms/${ID}`)}`, {
       replace: true,

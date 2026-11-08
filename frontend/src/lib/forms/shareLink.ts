@@ -1,4 +1,4 @@
-import { getPublicForm, type Form } from '$lib/forms/api';
+import { getPublicForm, PublicFormUnavailableError, type Form } from '$lib/forms/api';
 import { Log } from '$lib/utils/Log';
 import type { AppPath } from '$lib/utils/internalPath';
 
@@ -39,7 +39,14 @@ export async function guestPathForMemberLink(path: string): Promise<AppPath | nu
     Log.d('FormLink', `signed-out visitor on member link, form=${id} is public -> guest page`);
     return `/f/${id}`;
   } catch (e) {
-    Log.d('FormLink', `signed-out visitor on member link, form=${id} not served as public: ${e}`);
+    if (e instanceof PublicFormUnavailableError && e.notFound) {
+      // An ANSWER: the server does not serve this form as public, so the member link is right.
+      Log.d('FormLink', `signed-out visitor on member link, form=${id} not public -> login`);
+    } else {
+      // NOT an answer (transport failure, 5xx): the visitor may hold a public form's link and is
+      // still sent to login, so it is said at a level that accuses.
+      console.warn(`[FormLink] public read of form=${id} failed, sent to login unanswered:`, e);
+    }
     return null;
   }
 }

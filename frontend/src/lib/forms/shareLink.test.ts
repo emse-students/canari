@@ -1,9 +1,14 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 const getPublicForm = vi.hoisted(() => vi.fn());
-vi.mock('$lib/forms/api', () => ({ getPublicForm }));
+vi.mock('$lib/forms/api', async (orig) => ({
+  PublicFormUnavailableError: (await orig<typeof import('$lib/forms/api')>())
+    .PublicFormUnavailableError,
+  getPublicForm,
+}));
 
 import { formSharePath, guestPathForMemberLink, memberFormIdOfPath } from './shareLink';
+import { PublicFormUnavailableError } from '$lib/forms/api';
 
 const ID = '3f2b8c1e-7a44-4d0e-9a51-0c6d2e8b9f10';
 
@@ -37,8 +42,16 @@ describe('guestPathForMemberLink', () => {
   });
 
   it('answers null when the form is not public (login, as before)', async () => {
-    getPublicForm.mockRejectedValue(new Error('404'));
+    getPublicForm.mockRejectedValue(new PublicFormUnavailableError(true));
     expect(await guestPathForMemberLink(`/forms/${ID}`)).toBeNull();
+  });
+
+  it('says a transport failure at warn and still sends the visitor to login', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    getPublicForm.mockRejectedValue(new PublicFormUnavailableError(false));
+    expect(await guestPathForMemberLink(`/forms/${ID}`)).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 
   it('asks nothing for a path that is not a member form page', async () => {
