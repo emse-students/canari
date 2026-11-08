@@ -97,6 +97,7 @@ vi.mock('$lib/stores/appVersionCheck.svelte', async (orig) => ({
 
 import Page from './+page.svelte';
 import { AUTOSAVE_DELAY_MS } from '$lib/forms/autosave.svelte';
+import { SocialApiError } from '$lib/associations/api';
 
 /** The create key the page minted for its draft, as its first create carried it. */
 const createKey = () =>
@@ -273,6 +274,40 @@ describe('the association of a create sent', () => {
         // The create reached no answer: it may have stored the form all the same.
         expect(api.createForm).toHaveBeenCalledTimes(1);
         expect(shut()).toBe(true);
+      } finally {
+        vi.useRealTimers();
+        assos.list = [];
+      }
+    },
+    MOUNT_BUDGET_MS
+  );
+  it(
+    'opens again after a definite refusal of that create: nothing was stored under it',
+    async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      assos.list = [{ id: 'a1', name: 'BDE' }];
+      api.createForm.mockRejectedValueOnce(new SocialApiError('Forbidden', null, 403));
+      route.page.url = new URL('https://canari.test/forms/create');
+      const app = mount(Page, { target: document.body });
+      mounted.push(() => void unmount(app));
+      await settle();
+      const picker = () => document.querySelector<HTMLElement>('#association-select');
+      const shut = () =>
+        picker()?.hasAttribute('disabled') === true ||
+        picker()?.getAttribute('aria-disabled') === 'true';
+      await vi.waitFor(() => expect(picker()).not.toBeNull());
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        const title = document.querySelector<HTMLInputElement>(
+          `input[placeholder="${m.form_title_placeholder()}"]`
+        )!;
+        title.value = 'Soiree';
+        title.dispatchEvent(new Event('input', { bubbles: true }));
+        await settle();
+        await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+        await settle();
+        expect(api.createForm).toHaveBeenCalledTimes(1);
+        expect(shut()).toBe(false);
       } finally {
         vi.useRealTimers();
         assos.list = [];

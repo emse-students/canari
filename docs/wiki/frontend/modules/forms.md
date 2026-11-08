@@ -305,6 +305,9 @@ re-takes the base fingerprint of a retagged form's revision that was at its base
 **The fingerprint check takes the form's row lock (`FOR UPDATE OF f`) on every publication,
 `overwrite: true` included**, and a DRAFT with no revision is judged as its row stands under that
 lock (`pessimistic_write`), never as the manager check read it before the transaction.
+**Lock order: the `forms` row first, then `form_drafts`**, on every path that holds both - the
+publication and the tier retag; a save or a discard locks `form_drafts` alone. The opposite order
+was a deadlock (`40P01`) between a publication and a retag.
 `recentSaveIds` keeps the last 32 save ids that wrote the revision, across a publication or a
 discard: the ancestry a device copy is judged against (below).
 
@@ -320,8 +323,9 @@ A concurrent autosave waits on the publication's row lock, then finds its base m
 `hasUnpublishedChanges`; the list badges it ("Modifications non publiées") and its "Voir le
 formulaire" opens the preview of those edits. A draft form may still change its anonymity at its
 publication (no answer exists yet); a published one may not, as before. The association stays fixed at
-creation: the create page's picker is shut from the FIRST create sent, answered or not - a create
-whose answer was lost may have stored the form under the association it named. The association's
+creation: the create page's picker is shut from the FIRST create sent while that create may have
+landed (no answer, a 5xx, or `FORM_CREATE_KEY_REUSED`) - a create whose answer was lost may have
+stored the form under the association it named; any other 4xx stored nothing and opens it again. The association's
 "Formulaires" tab marks a draft too (`listFormsByAssociation` serves `status`), and its form card
 stacks the actions under the title on a narrow card (`@container`, `@md:flex-row`): side by side,
 they crushed the title to single letters on a phone (2026-11-08).
@@ -405,7 +409,9 @@ revision dropped.
   not reached the server ("Les modifications ne sont pas encore enregistrées sur le serveur"). **An
   edit typed WHILE the publication runs is kept** (`closed(revision, 'published')`): it becomes the
   first save of the next revision, rather than vanish - blocking the inputs would freeze the manager
-  for a request's length. A discard drops it (`'discarded'`): the manager asked for the edits to go;
+  for a request's length. That includes an edit whose save LEFT during the publication: sent on the
+  old base, its 409 is read by nobody (`#era`), and its document is re-sent on the new revision, its
+  device copy kept until it lands. A discard drops it (`'discarded'`): the manager asked for the edits to go;
 - **"Publier" is shut by the server's own rule, mirrored**: `formChargesMoney` and
   `publishPaymentRefusal` (`publish.ts`) mirror `chargesMoney` and `publishPaymentRefusal` on the
   server (every way to charge, a personal form included), and both sides assert

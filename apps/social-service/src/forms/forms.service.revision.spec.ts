@@ -363,6 +363,22 @@ describe('FormsService - unpublished revisions', () => {
       expect(current().status).toBe(FORM_PUBLISHED);
     });
 
+    it('takes the form row BEFORE the revision row, the order the tier retag takes them in', async () => {
+      const { service, m } = makeService({ form: { status: FORM_DRAFT } });
+      const revisionModule = jest.requireMock('./form-draft-revision');
+      revisionModule.readFormDraft.mockClear();
+      m.findOne.mockClear();
+      await service.publishChanges('f1', 0, OWNER, false);
+      const formLock = m.findOne.mock.invocationCallOrder[0];
+      const draftLock = revisionModule.readFormDraft.mock.calls.findIndex(
+        (call: unknown[]) => call[2] === true
+      );
+      expect(draftLock).toBeGreaterThanOrEqual(0);
+      expect(formLock).toBeLessThan(
+        revisionModule.readFormDraft.mock.invocationCallOrder[draftLock]
+      );
+    });
+
     it('judges a DRAFT with no revision as its row stands under the lock, not as read before', async () => {
       const { service, current, m } = makeService({
         form: { status: FORM_DRAFT },

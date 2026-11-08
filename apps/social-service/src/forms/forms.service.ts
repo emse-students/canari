@@ -1383,8 +1383,12 @@ export class FormsService {
     if (form.deletedAt) throw new NotFoundException('Form not found');
     const citedBefore = questionImageIds(form.items);
     const outcome = await this.formRepo.manager.transaction(async (m) => {
-      const current = await readFormDraft(m, formId, true);
-      if (current.revision !== revision) return { refused: 'conflict' as const };
+      // LOCK ORDER, ONE FOR EVERY PATH HOLDING BOTH: the `forms` row FIRST, then its `form_drafts`
+      // row. This publication takes them so; the tier retag (`ProductsService`) updates `forms`,
+      // then `followRetagInRevisions` updates `form_drafts`; a save (`writeFormDraft`) and a
+      // discard lock `form_drafts` alone (the save's fingerprint subquery reads `forms` without a
+      // lock). Opposite orders deadlock (40P01) - a 500 for whichever loses.
+      //
       // The form is judged as it stands INSIDE this transaction, its row held: a write landing
       // between the manager check above and here (an older build's edit, another publication) is
       // either before this read or waits for the commit. A draft with no revision is published as
@@ -1394,6 +1398,8 @@ export class FormsService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!locked || locked.deletedAt) return { refused: 'gone' as const };
+      const current = await readFormDraft(m, formId, true);
+      if (current.revision !== revision) return { refused: 'conflict' as const };
       const wasDraft = locked.status === FORM_DRAFT;
       if (!current.document && !wasDraft) return { refused: 'empty' as const };
       // Written since the revision started (an older build editing the form directly): publishing

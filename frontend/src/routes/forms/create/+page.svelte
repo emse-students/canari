@@ -24,7 +24,7 @@
     type AudienceCondition,
     type CreateFormPayload,
   } from '$lib/forms/api';
-  import { draftRefusalMessage, publishBlocker } from '$lib/forms/publish';
+  import { draftRefusalMessage, FORM_CREATE_KEY_REUSED, publishBlocker } from '$lib/forms/publish';
   import { serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
   import { deviceCopyOf, formDraftCopyStore, holdFormEditor } from '$lib/forms/draftCopies';
   import { currentUserId } from '$lib/stores/user';
@@ -293,24 +293,35 @@
   /** Set once the server holds the draft (its shell answered). */
   let createdId = $state<string | null>(null);
   /**
-   * Set at the FIRST create sent, answered or not: the association is fixed from then on. A create
-   * whose answer was lost may have stored the form under the association it named, and its replay
-   * must name the same one (the server refuses another, `FORM_CREATE_KEY_REUSED`).
+   * Set at the FIRST create sent, and kept while that create MAY have landed: no answer, a 5xx, or
+   * the server's own word that a form already sits under this key (`FORM_CREATE_KEY_REUSED`). Such a
+   * create may have stored the form under the association it named, and its replay must name the
+   * same one. Any other 4xx is a verdict that nothing was stored: the picker opens again.
    */
   let createSent = $state(false);
 
   async function draftId(): Promise<string> {
     if (createdId) return createdId;
     createSent = true;
-    const created = await createForm({
-      clientCreateId: createKey,
-      draft: true,
-      title,
-      basePrice: 0,
-      currency: 'eur',
-      items: [],
-      associationId: associationId || undefined,
-    });
+    let created;
+    try {
+      created = await createForm({
+        clientCreateId: createKey,
+        draft: true,
+        title,
+        basePrice: 0,
+        currency: 'eur',
+        items: [],
+        associationId: associationId || undefined,
+      });
+    } catch (e) {
+      const status = refusalStatus(e);
+      if (status !== null && status < 500 && refusalCode(e) !== FORM_CREATE_KEY_REUSED) {
+        Log.d('forms-editor', `draft create refused status=${status}: nothing stored, picker open`);
+        createSent = false;
+      }
+      throw e;
+    }
     Log.d('forms-editor', `draft created ${created.id}`);
     createdId = created.id;
     // The device copy is the form's from now on: an editor of it finds it under its id.

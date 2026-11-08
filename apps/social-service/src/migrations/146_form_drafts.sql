@@ -31,9 +31,9 @@
 -- whose answer was lost). It is NEVER the form's id - the server mints that - so a client cannot
 -- choose the id of a form deleted earlier, which posts, links and QR codes may still name. Unique per
 -- owner (the index), absent on every form made before it. The column is a nullable ADD COLUMN with
--- no default (catalog only, no rewrite). The unique index is built NON-concurrently, inside this
--- migration's transaction: it holds a SHARE lock on `forms` (reads go on, writes wait) for the
--- build, and the build is harmless at this size - one row per form, every key NULL until a client
+-- no default (catalog only, no rewrite). The unique index is built NON-concurrently, in its own
+-- statement (the runner pipes this file without `-1`, so each statement commits on its own): it
+-- holds a SHARE lock on `forms` (reads go on, writes wait) for the build, and the build is harmless at this size - one row per form, every key NULL until a client
 -- sends one, and the index is partial (`WHERE "clientCreateId" IS NOT NULL`), so it starts empty.
 --
 -- No personal data beyond what `forms` already holds: the document is the form's own content, and
@@ -52,6 +52,10 @@ CREATE TABLE IF NOT EXISTS form_drafts (
   "baseFingerprint" text,
   "recentSaveIds" uuid[] NOT NULL DEFAULT '{}'
 );
+
+-- A table created by an earlier cut of this migration (on a dev estate) lacks the ancestry: added
+-- here, so a second run converges whatever the first one made.
+ALTER TABLE form_drafts ADD COLUMN IF NOT EXISTS "recentSaveIds" uuid[] NOT NULL DEFAULT '{}';
 
 ALTER TABLE forms ADD COLUMN IF NOT EXISTS "clientCreateId" uuid;
 

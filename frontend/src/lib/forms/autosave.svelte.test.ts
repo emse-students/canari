@@ -277,6 +277,52 @@ describe('FormAutosave', () => {
     expect(device.drop).toHaveBeenCalledTimes(1);
   });
 
+  it('an edit whose save left DURING the publication: carried onto the new revision, never a conflict', async () => {
+    const server = fakeServer();
+    const { copy, device } = fakeDevice();
+    let refuse: (e: unknown) => void = () => {};
+    const save = vi.fn(
+      (base: number, document: CreateFormPayload, saveId: string, leaving: boolean) =>
+        save.mock.calls.length === 1
+          ? new Promise<{ revision: number }>((_r, reject) => (refuse = reject))
+          : server.save(base, document, saveId, leaving)
+    );
+    const autosave = new FormAutosave({ save, revision: 4, hasChanges: true, device, newSaveId });
+    // Typed while "Publier" awaited the server; the 1.5 s timer fires before it answers.
+    autosave.schedule(doc('Typed meanwhile'));
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+    expect(save).toHaveBeenCalledWith(4, doc('Typed meanwhile'), expect.any(String), false);
+    const saveId = save.mock.calls[0][2];
+    // The publication answers first: revision 5, and the copy follows the edit onto it.
+    server.state.revision = 5;
+    autosave.closed(5, 'published');
+    expect(device.drop).not.toHaveBeenCalled();
+    expect(copy.current).toMatchObject({ base: 5, saveId, title: 'Typed meanwhile' });
+    // Then the save sent on revision 4 is refused: nobody reads that answer.
+    refuse(new FormDraftConflictError(5, null));
+    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+    expect(save).toHaveBeenLastCalledWith(5, doc('Typed meanwhile'), saveId, false);
+    await vi.waitFor(() => expect(autosave.status).toBe('saved'));
+    expect([autosave.revision, autosave.hasChanges]).toEqual([6, true]);
+    expect(device.drop).not.toHaveBeenCalled();
+    expect(copy.current).toBeNull();
+  });
+
+  it('a discard during a save on its way: the edit goes, and the refusal that follows is no conflict', async () => {
+    const { device } = fakeDevice();
+    let refuse: (e: unknown) => void = () => {};
+    const save = vi.fn(() => new Promise<{ revision: number }>((_r, reject) => (refuse = reject)));
+    const autosave = new FormAutosave({ save, revision: 4, device, newSaveId });
+    autosave.schedule(doc('Thrown away'));
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+    autosave.closed(5, 'discarded');
+    refuse(new FormDraftConflictError(5, null));
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(autosave.status).toBe('saved');
+    expect(device.drop).toHaveBeenCalledTimes(1);
+  });
+
   it('a save on its way is in the "after" of every copy kept meanwhile', async () => {
     const after: string[][] = [];
     const device: AutosaveDeviceCopy = {

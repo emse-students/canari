@@ -101,7 +101,13 @@ export class FormAutosave {
    * The save on its way and not answered yet: it may land after this page is gone, so every copy
    * kept meanwhile records it in `after` - a page closed now re-bases on it instead of dropping.
    */
-  #sending: string | null = null;
+  #sending: Pending | null = null;
+  /**
+   * Bumped by every publication or discard ({@link closed}): the answer to a save sent on a
+   * revision closed since is read by nobody - it can only be a 409 on the old base, and the save's
+   * document, when still owed, was carried onto the new revision.
+   */
+  #era = 0;
   #timer: ReturnType<typeof setTimeout> | null = null;
   #inFlight: Promise<void> | null = null;
 
@@ -192,7 +198,13 @@ export class FormAutosave {
     this.#unanswered = [];
     if (this.#timer) clearTimeout(this.#timer);
     this.#timer = null;
-    const typedMeanwhile = how === 'published' ? this.#pending : null;
+    // A save whose timer fired DURING the publication is on its way on the old base: it will be
+    // refused, and its answer is ignored (`#era`). Its document is owed all the same - it is the
+    // edit typed meanwhile when nothing newer is pending.
+    const onItsWay = this.#sending;
+    this.#sending = null;
+    this.#era += 1;
+    const typedMeanwhile = how === 'published' ? (this.#pending ?? onItsWay) : null;
     this.#pending = null;
     if (typedMeanwhile) {
       this.#pending = typedMeanwhile;
@@ -239,7 +251,9 @@ export class FormAutosave {
   #keep(pending: Pending): void {
     const after = [
       ...this.#unanswered,
-      ...(this.#sending && !this.#unanswered.includes(this.#sending) ? [this.#sending] : []),
+      ...(this.#sending && !this.#unanswered.includes(this.#sending.saveId)
+        ? [this.#sending.saveId]
+        : []),
     ].filter((id) => id !== pending.saveId);
     this.#device
       ?.keep(this.revision, pending.saveId, pending.document, after)
@@ -273,18 +287,29 @@ export class FormAutosave {
     if (this.#pending) this.#keep(this.#pending);
   }
 
+  /** The answer to a save sent on a revision {@link closed} since: logged, and nothing else. */
+  #staleAnswer(pending: Pending, what: string): void {
+    Log.d(
+      'forms-autosave',
+      `answer to save ${pending.saveId.slice(0, 8)} on a closed revision ignored (${what}): its document was carried over`
+    );
+  }
+
   async #send(pending: Pending, leaving: boolean): Promise<void> {
     // Written before it leaves, on the base it is sent on.
     this.#keep(pending);
-    this.#sending = pending.saveId;
+    this.#sending = pending;
+    const era = this.#era;
     try {
       const saved = await this.#save(this.revision, pending.document, pending.saveId, leaving);
+      if (era !== this.#era) return this.#staleAnswer(pending, 'saved');
       this.#sending = null;
       this.#landed(pending.saveId, saved.revision);
       // An edit typed during the save keeps the line on "Enregistrement..." until it lands too.
       this.status = this.#pending ? 'saving' : 'saved';
       Log.d('forms-autosave', `revision ${saved.revision} saved`);
     } catch (e) {
+      if (era !== this.#era) return this.#staleAnswer(pending, String(e));
       // Answered or not, it is on its way no more: an unanswered one moves to `#unanswered` below.
       this.#sending = null;
       if (e instanceof FormDraftConflictError && e.saveId !== null) {
