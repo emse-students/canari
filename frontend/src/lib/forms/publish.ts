@@ -1,5 +1,14 @@
 import { m } from '$lib/paraglide/messages';
 import type { Form } from './api';
+import { FORM_DRAFT_CONFLICT } from './autosave.svelte';
+
+export { FORM_DRAFT_CONFLICT };
+
+/** The 409 of "Publier les modifications" when no unpublished revision holds any. */
+export const FORM_DRAFT_EMPTY = 'FORM_DRAFT_EMPTY';
+
+/** The 400 of a revision the edit route's validation refuses at its publication. */
+export const FORM_DRAFT_INVALID = 'FORM_DRAFT_INVALID';
 
 /** The 409 refusing to publish a paid form whose association cannot collect yet (`forms.service.ts`). */
 export const FORM_PAYMENTS_NOT_READY = 'FORM_PAYMENTS_NOT_READY';
@@ -60,6 +69,12 @@ export function draftRefusalMessage(code: string | null | undefined): string | n
       return m.form_no_payment_method();
     case FORM_ONLINE_PAYMENT_NOT_OFFERED:
       return m.form_online_payment_not_offered();
+    case FORM_DRAFT_CONFLICT:
+      return m.form_draft_conflict_refusal();
+    case FORM_DRAFT_EMPTY:
+      return m.form_draft_empty_refusal();
+    case FORM_DRAFT_INVALID:
+      return m.form_draft_invalid_refusal();
     default:
       return null;
   }

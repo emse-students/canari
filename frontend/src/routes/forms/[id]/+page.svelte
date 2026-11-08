@@ -13,6 +13,7 @@
   import {
     FormNotFoundError,
     getForm,
+    getFormDraft,
     submitForm as submitFormService,
     checkSubmission,
     type PricingView,
@@ -222,6 +223,23 @@
     void copyPublicShareLink(formPath);
   }
 
+  /**
+   * `f` with its unpublished revision over it, for a preview (owner, 2026-11-08). Only a manager
+   * reads a revision: anyone else's preview is refused it and shows the form as published.
+   */
+  async function withUnpublishedRevision(f: Form): Promise<Form> {
+    try {
+      const revision = await getFormDraft(f.id);
+      return revision.document ? { ...f, ...revision.document } : f;
+    } catch (e) {
+      Log.d(
+        'FormView',
+        `preview of ${f.id}: no revision readable (${refusalStatus(e) ?? 'no answer'})`
+      );
+      return f;
+    }
+  }
+
   onMount(async () => {
     void loadActivePaymentProvider();
     const savedUser = currentUserId();
@@ -249,7 +267,11 @@
       selections = initialSelections(f.items);
       if (isPreview(f)) {
         // Nothing of the reader's own state is asked: a preview sends nothing, and a draft's check
-        // answers as for an absent form (`respondentFormWhere`).
+        // answers as for an absent form (`respondentFormWhere`). What it draws is what the managers
+        // are building: the unpublished revision over the form, when there is one.
+        const shown = await withUnpublishedRevision(f);
+        form = shown;
+        selections = initialSelections(shown.items);
         Log.d('FormView', `preview of ${f.id} (${f.status ?? 'published'})`);
         return;
       }

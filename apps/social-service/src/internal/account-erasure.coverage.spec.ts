@@ -62,6 +62,9 @@ const RAW_TABLES = [
   'post_space_pins',
   // Migration 129's dependency journal: the platform admin who changed a parent or a governor.
   'dependency_journal',
+  // Migration 143's unpublished form revisions: a form id and the form's own content, no account -
+  // they go with their form (ON DELETE CASCADE), as its other content does.
+  'form_drafts',
 ];
 
 const SRC = join(__dirname, '..');

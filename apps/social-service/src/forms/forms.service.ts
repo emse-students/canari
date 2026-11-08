@@ -26,6 +26,29 @@ import {
 } from './payment-offer';
 import { FORM_DRAFT, FORM_PUBLISHED, respondentFormWhere, type FormStatus } from './form-status';
 import {
+  FORM_DRAFT_CONFLICT,
+  FORM_DRAFT_EMPTY,
+  FORM_DRAFT_INVALID,
+  FORM_DRAFT_MALFORMED,
+  closeFormDraft,
+  formsWithUnpublishedChanges,
+  isStorableDraftDocument,
+  readFormDraft,
+  writeFormDraft,
+  type FormDraftState,
+} from './form-draft-revision';
+import { plainToInstance } from 'class-transformer';
+import { validate, type ValidationError } from 'class-validator';
+
+/** Every constraint a validation refused, nested ones (a question, an option) included, as the pipe says them. */
+function validationMessages(errors: ValidationError[], prefix = ''): string[] {
+  return errors.flatMap((e) => {
+    const path = prefix ? `${prefix}.${e.property}` : e.property;
+    const own = Object.values(e.constraints ?? {}).map((c) => (prefix ? `${path}: ${c}` : c));
+    return [...own, ...validationMessages(e.children ?? [], path)];
+  });
+}
+import {
   PENDING_HOLD_CUTOFF_SQL,
   PAYMENT_REQUEST_LIFETIME_SECONDS,
   PREVIOUS_PAYMENT_OPEN,
@@ -832,14 +855,23 @@ export class FormsService {
     return this.withAssociationNames(merged);
   }
 
-  /** Attaches `associationName` to every form that names an association. */
+  /**
+   * Attaches `associationName` to every form that names an association, and
+   * `hasUnpublishedChanges` - whether an unpublished revision holds edits (migration 143): the list
+   * marks it, and its "Voir le formulaire" opens the preview of those edits.
+   */
   private async withAssociationNames(forms: Form[]) {
-    const names = await this.associationsService.namesByIds(
-      forms.map((f) => f.associationId).filter(Boolean)
-    );
+    const [names, changed] = await Promise.all([
+      this.associationsService.namesByIds(forms.map((f) => f.associationId).filter(Boolean)),
+      formsWithUnpublishedChanges(
+        this.formRepo.manager,
+        forms.map((f) => f.id)
+      ),
+    ]);
     return forms.map((form) => ({
       ...form,
       associationName: form.associationId ? (names.get(form.associationId) ?? null) : null,
+      hasUnpublishedChanges: changed.has(form.id),
     }));
   }
 
@@ -983,8 +1015,20 @@ export class FormsService {
     );
   }
 
-  /** Updates a form's metadata and items. Gated by `assertFormManager`. */
-  async update(formId: string, input: CreateFormDto, userId: string, isGlobalAdmin: boolean) {
+  /**
+   * Updates a form's metadata and items. Gated by `assertFormManager`.
+   *
+   * `inTransaction`: the caller's transaction, which this edit's write joins - publishing an
+   * unpublished revision applies it and empties the revision as ONE commit (`publishChanges`). The
+   * caller then owns releasing the question images the edit dropped, after its commit.
+   */
+  async update(
+    formId: string,
+    input: CreateFormDto,
+    userId: string,
+    isGlobalAdmin: boolean,
+    inTransaction?: EntityManager
+  ) {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
 
     // Publishing is its own route, and a published form never goes back to draft: a status sent
@@ -1014,11 +1058,14 @@ export class FormsService {
       }
     }
 
-    // ANONYMITY IS FIXED AT CREATION for the same reason the association link is: turning it on
+    // ANONYMITY IS FIXED AT PUBLICATION for the same reason the association link is: turning it on
     // would promise anonymity to answers already stored with a name, and turning it off would
     // quietly start naming people who were told they were not. A present, different value is
-    // refused; an absent one means "leave it".
-    if (input.anonymous !== undefined && input.anonymous !== form.anonymous) {
+    // refused; an absent one means "leave it". A DRAFT has no answer and has promised nothing yet,
+    // so its builder may still change it (owner, 2026-11-08: a draft is saved as it is typed).
+    const isDraft = form.status === FORM_DRAFT;
+    const anonymous = isDraft ? (input.anonymous ?? form.anonymous) : form.anonymous;
+    if (!isDraft && input.anonymous !== undefined && input.anonymous !== form.anonymous) {
       throw new BadRequestException(
         'A form stays anonymous, or not, as it was created. Create a new form to change it.'
       );
@@ -1040,7 +1087,7 @@ export class FormsService {
     const effective = {
       ...input,
       items,
-      anonymous: form.anonymous,
+      anonymous,
       // The guest fields the form WILL ask: the sent list, else the stored one.
       guestFields: input.guestFields ?? form.guestFields,
       isPublic: input.isPublic ?? form.isPublic,
@@ -1099,6 +1146,7 @@ export class FormsService {
     const citedBefore = questionImageIds(form.items);
     Object.assign(form, {
       ...rest,
+      anonymous,
       // Absent keeps the stored list; a sent one (null and [] included) is stored canonical.
       ...(input.guestFields !== undefined
         ? { guestFields: storedGuestFields(input.guestFields) }
@@ -1118,9 +1166,15 @@ export class FormsService {
     const citedAfter = questionImageIds(form.items);
     // THE STATUS IS NEVER WRITTEN BY AN EDIT: `form` was read before the checks above, and a
     // publication landing meanwhile would be written back as `draft` by a whole-entity save.
-    // Publishing is its own conditional write (`publish`); the edit leaves the column alone.
+    // Publishing is its own conditional write; the edit leaves the column alone.
     const { status, ...written } = form;
     const withStatus = <T extends object>(saved: T) => ({ ...saved, status });
+    if (inTransaction) {
+      if (citedAfter.length > 0) {
+        await this.formItemImages.claimForSave(inTransaction, form.items, formId, userId);
+      }
+      return withStatus(await inTransaction.save(Form, written as Form));
+    }
     if (citedBefore.length === 0 && citedAfter.length === 0) {
       return withStatus(await this.formRepo.save(written as Form));
     }
@@ -1166,6 +1220,152 @@ export class FormsService {
       `[FORMS] publish: ${formId.slice(0, 8)} ${result.affected ? 'published' : 'already published by a concurrent call'}`
     );
     return { id: form.id, status: FORM_PUBLISHED };
+  }
+
+  /**
+   * The unpublished revision of a form, for its editor and its preview (owner, 2026-11-08). Gated by
+   * `assertFormManager`: a respondent never reads a revision.
+   */
+  async getDraft(formId: string, userId: string, isGlobalAdmin: boolean): Promise<FormDraftState> {
+    const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
+    if (form.deletedAt) throw new NotFoundException('Form not found');
+    return readFormDraft(this.formRepo.manager, formId);
+  }
+
+  /**
+   * Saves what the editor holds as the revision after `baseRevision` (the autosave). The document is
+   * stored AS TYPED - a half-built form is what an autosave carries - and judged by the edit's rules
+   * only at its publication. A base another save, a publication or a discard moved is refused
+   * `409 FORM_DRAFT_CONFLICT`, carrying the current revision: never a silent overwrite.
+   */
+  async saveDraft(
+    formId: string,
+    baseRevision: number,
+    document: unknown,
+    userId: string,
+    isGlobalAdmin: boolean
+  ) {
+    const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
+    if (form.deletedAt) throw new NotFoundException('Form not found');
+    if (!isStorableDraftDocument(document)) {
+      throw new BadRequestException({
+        code: FORM_DRAFT_MALFORMED,
+        message: 'A form revision is the editor payload, as one JSON object.',
+      });
+    }
+    const saved = await writeFormDraft(this.formRepo.manager, formId, baseRevision, document);
+    if (!saved) return this.throwDraftConflict(formId, baseRevision, 'save');
+    this.logger.debug(
+      `[FORM_DRAFT] ${formId.slice(0, 8)} saved revision ${saved.revision} (base ${baseRevision})`
+    );
+    return saved;
+  }
+
+  /**
+   * Discards the unpublished revision `revision`: the form stays as published. A revision that moved
+   * since the editor read it is refused (another tab's edits are never thrown away unseen). The
+   * question images only the discarded document cited are released after the commit.
+   */
+  async discardDraft(formId: string, revision: number, userId: string, isGlobalAdmin: boolean) {
+    const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
+    if (form.deletedAt) throw new NotFoundException('Form not found');
+    const outcome = await this.formRepo.manager.transaction(async (m) => {
+      const current = await readFormDraft(m, formId, true);
+      if (current.revision !== revision) return { conflict: true as const };
+      if (!current.document) return { conflict: false as const, revision, images: [] as string[] };
+      const next = await closeFormDraft(m, formId);
+      return {
+        conflict: false as const,
+        revision: next,
+        images: questionImageIds(current.document.items),
+      };
+    });
+    if (outcome.conflict) return this.throwDraftConflict(formId, revision, 'discard');
+    this.logger.log(`[FORM_DRAFT] ${formId.slice(0, 8)} revision ${revision} discarded`);
+    if (outcome.images.length > 0) {
+      await this.formItemImages.releaseUncited(outcome.images, 'form revision discarded');
+    }
+    return { revision: outcome.revision };
+  }
+
+  /**
+   * "Publier les modifications" / "Publier" (owner, 2026-11-08): applies the unpublished revision
+   * `revision` to the form with EXACTLY the edit's rules (the DTO's validation, then `update`), and
+   * empties the revision, in ONE transaction holding the revision's row - so a concurrent autosave
+   * waits, then finds its base moved. A DRAFT form is published in that same transaction, after the
+   * collection rules a draft's saves skipped (`assertPublishable`); one with no revision is
+   * published as it stands. A published form with no revision has nothing to publish (409).
+   */
+  async publishChanges(formId: string, revision: number, userId: string, isGlobalAdmin: boolean) {
+    const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
+    if (form.deletedAt) throw new NotFoundException('Form not found');
+    const wasDraft = form.status === FORM_DRAFT;
+    const citedBefore = questionImageIds(form.items);
+    const outcome = await this.formRepo.manager.transaction(async (m) => {
+      const current = await readFormDraft(m, formId, true);
+      if (current.revision !== revision) return { refused: 'conflict' as const };
+      if (!current.document && !wasDraft) return { refused: 'empty' as const };
+      let saved: Form = form;
+      if (current.document) {
+        const dto = await this.validatedRevision(current.document);
+        saved = (await this.update(formId, dto, userId, isGlobalAdmin, m)) as Form;
+      }
+      if (wasDraft) {
+        await this.assertPublishable(saved);
+        await m
+          .createQueryBuilder()
+          .update(Form)
+          .set({ status: FORM_PUBLISHED })
+          .where('id = :id AND status = :draft', { id: formId, draft: FORM_DRAFT })
+          .execute();
+      }
+      const next = current.document ? await closeFormDraft(m, formId) : current.revision;
+      return { refused: null, revision: next, items: saved.items as unknown };
+    });
+    if (outcome.refused === 'conflict') return this.throwDraftConflict(formId, revision, 'publish');
+    if (outcome.refused === 'empty') {
+      throw new ConflictException({
+        code: FORM_DRAFT_EMPTY,
+        message: 'This form holds no unpublished changes.',
+      });
+    }
+    this.logger.log(
+      `[FORM_DRAFT] ${formId.slice(0, 8)} revision ${revision} published${wasDraft ? ', and the form with it' : ''}`
+    );
+    // Replaced or removed by the published revision: released once nothing cites it, after the commit.
+    const citedAfter = questionImageIds(outcome.items);
+    const dropped = citedBefore.filter((id) => !citedAfter.includes(id));
+    if (dropped.length > 0) await this.formItemImages.releaseUncited(dropped, 'revision published');
+    return { id: formId, status: FORM_PUBLISHED, revision: outcome.revision };
+  }
+
+  /**
+   * A stored revision read as the edit route reads its body: the global pipe's validation
+   * (`whitelist`, `transform`), the `draft` flag dropped (publishing is this route's own job).
+   */
+  private async validatedRevision(document: Record<string, unknown>): Promise<CreateFormDto> {
+    const { draft: _draft, ...body } = document;
+    const dto = plainToInstance(CreateFormDto, body);
+    const errors = await validate(dto, { whitelist: true });
+    if (errors.length > 0) {
+      const messages = validationMessages(errors);
+      this.logger.log(`[FORM_DRAFT] revision refused by validation: ${messages.join('; ')}`);
+      throw new BadRequestException({ code: FORM_DRAFT_INVALID, message: messages });
+    }
+    return dto;
+  }
+
+  /** The typed 409 of a revision moved under its writer, carrying the revision it moved to. */
+  private async throwDraftConflict(formId: string, base: number, what: string): Promise<never> {
+    const current = await readFormDraft(this.formRepo.manager, formId);
+    this.logger.log(
+      `[FORM_DRAFT] ${formId.slice(0, 8)} ${what} on revision ${base} refused: it is at ${current.revision}`
+    );
+    throw new ConflictException({
+      code: FORM_DRAFT_CONFLICT,
+      message: 'This form was changed elsewhere since it was opened.',
+      revision: current.revision,
+    });
   }
 
   /** What a draft owes before it is answerable: the collection rules its saves skipped. */

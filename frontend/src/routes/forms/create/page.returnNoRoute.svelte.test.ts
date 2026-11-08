@@ -21,11 +21,21 @@ vi.mock('$app/navigation', () => nav);
 const api = vi.hoisted(() => ({
   createForm: vi.fn(async (_payload: any) => ({ id: 'f-new' })),
   publishForm: vi.fn(async () => ({ id: 'f-new', status: 'published' })),
+  saveFormDraft: vi.fn(async (_id: string, base: number, _doc: any) => ({
+    revision: base + 1,
+    savedAt: 'now',
+  })),
+  publishFormDraft: vi.fn(async (id: string, revision: number) => ({
+    id,
+    status: 'published',
+    revision: revision + 1,
+  })),
 }));
 vi.mock('$lib/forms/api', async (orig) => ({
   ...(await orig<typeof import('$lib/forms/api')>()),
   createForm: api.createForm,
-  publishForm: api.publishForm,
+  saveFormDraft: api.saveFormDraft,
+  publishFormDraft: api.publishFormDraft,
 }));
 vi.mock('$lib/associations/api', async (orig) => ({
   ...(await orig<typeof import('$lib/associations/api')>()),
@@ -52,6 +62,7 @@ vi.mock('$lib/stores/appVersionCheck.svelte', async (orig) => ({
 }));
 
 import Page from './+page.svelte';
+import { AUTOSAVE_DELAY_MS } from '$lib/forms/autosave.svelte';
 
 /**
  * Mounting the whole builder is the cost of these tests: about 5 s for the first under a loaded
@@ -67,6 +78,8 @@ afterEach(() => {
   nav.goto.mockClear();
   api.createForm.mockClear();
   api.publishForm.mockClear();
+  api.saveFormDraft.mockClear();
+  api.publishFormDraft.mockClear();
   vi.restoreAllMocks();
 });
 
@@ -98,15 +111,72 @@ async function saveReturningTo(returnTo: string, buttonLabel = m.form_publish_bu
   await settle();
 }
 
+describe('the form builder saves as it is typed', () => {
+  it(
+    'creates the draft at the first pause after a title, then saves every edit as its revision',
+    async () => {
+      route.page.url = new URL('https://canari.test/forms/create');
+      const app = mount(Page, { target: document.body });
+      mounted.push(() => void unmount(app));
+      await settle();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        const title = document.querySelector<HTMLInputElement>(
+          `input[placeholder="${m.form_title_placeholder()}"]`
+        )!;
+        title.value = 'Soiree';
+        title.dispatchEvent(new Event('input', { bubbles: true }));
+        await settle();
+        expect(api.createForm).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+        await settle();
+        expect(api.createForm).toHaveBeenCalledTimes(1);
+        expect(api.saveFormDraft).toHaveBeenCalledWith(
+          'f-new',
+          0,
+          expect.objectContaining({ title: 'Soiree' })
+        );
+        expect(document.querySelector('[data-testid="autosave-status"]')?.textContent?.trim()).toBe(
+          m.form_autosave_saved()
+        );
+        title.value = 'Soiree 2';
+        title.dispatchEvent(new Event('input', { bubbles: true }));
+        await settle();
+        await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+        await settle();
+        // The draft exists: no second creation, the next revision on the first.
+        expect(api.createForm).toHaveBeenCalledTimes(1);
+        expect(api.saveFormDraft).toHaveBeenLastCalledWith(
+          'f-new',
+          1,
+          expect.objectContaining({ title: 'Soiree 2' })
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+    MOUNT_BUDGET_MS
+  );
+});
+
 describe('the form builder, once the form is saved', () => {
   it(
     'routes back to a page this build has',
     async () => {
       await saveReturningTo('/associations/bde/edit/forms');
       expect(api.createForm).toHaveBeenCalledTimes(1);
-      // Created as a draft, then published: "Publier" is what leaves the builder.
-      expect(api.createForm).toHaveBeenCalledWith(expect.objectContaining({ draft: true }));
-      expect(api.publishForm).toHaveBeenCalledWith('f-new');
+      // Created as a draft, its revision saved, then published: "Publier" leaves the builder.
+      expect(api.createForm).toHaveBeenCalledWith(
+        expect.objectContaining({ draft: true, title: 'Soiree' })
+      );
+      const [id, , document] = api.saveFormDraft.mock.calls.at(-1)!;
+      expect([id, document.title]).toEqual(['f-new', 'Soiree']);
+      await vi.waitFor(() =>
+        expect(api.publishFormDraft).toHaveBeenCalledWith(
+          'f-new',
+          api.saveFormDraft.mock.calls.length
+        )
+      );
       await vi.waitFor(() =>
         expect(nav.goto).toHaveBeenCalledWith('/associations/bde/edit/forms', {})
       );

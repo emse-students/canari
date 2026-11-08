@@ -183,6 +183,21 @@ export interface Form extends CreateFormPayload {
   submissionCount?: number;
   /** `draft` until a manager publishes it; absent on a server before drafts, which is `published`. */
   status?: FormStatus;
+  /**
+   * Whether an unpublished revision holds edits (the managers' list only, migration 143): the row
+   * says so, and its "Voir le formulaire" opens the preview of those edits.
+   */
+  hasUnpublishedChanges?: boolean;
+}
+
+/**
+ * The unpublished revision of a form (owner, 2026-11-08): the editor's whole payload as last saved,
+ * and its compare-and-set number. Revision 0 and no document: nothing was ever saved.
+ */
+export interface FormDraft {
+  revision: number;
+  document: CreateFormPayload | null;
+  savedAt: string | null;
 }
 
 import { apiFetch } from '$lib/utils/apiFetch';
@@ -279,6 +294,63 @@ export async function updateForm(id: string, payload: CreateFormPayload): Promis
 export async function publishForm(id: string): Promise<{ id: string; status: FormStatus }> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}/publish`, { method: 'POST' });
   if (!res.ok) throw await refusal(res, 'Failed to publish form');
+  return res.json();
+}
+
+/** Reads the unpublished revision of a form (managers only). */
+export async function getFormDraft(id: string): Promise<FormDraft> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/draft`);
+  if (!res.ok) throw await refusal(res, 'Failed to read the form revision');
+  return res.json();
+}
+
+/**
+ * The autosave: stores `document` as the revision after `baseRevision`. Refused 409
+ * `FORM_DRAFT_CONFLICT` when another tab, a publication or a discard moved it first; a transport
+ * failure throws what `fetch` threw (no status: nobody answered).
+ */
+export async function saveFormDraft(
+  id: string,
+  baseRevision: number,
+  document: CreateFormPayload
+): Promise<{ revision: number; savedAt: string }> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/draft`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ baseRevision, document }),
+  });
+  if (!res.ok) throw await refusal(res, 'Failed to save the form revision');
+  return res.json();
+}
+
+/**
+ * "Publier les modifications" (and "Publier" for a draft form): applies revision `revision` with the
+ * edit's own rules, in one transaction. The edit route's refusals come back unchanged.
+ */
+export async function publishFormDraft(
+  id: string,
+  revision: number
+): Promise<{ id: string; status: FormStatus; revision: number }> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/draft/publish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ revision }),
+  });
+  if (!res.ok) throw await refusal(res, 'Failed to publish the form changes');
+  return res.json();
+}
+
+/** "Abandonner les modifications": empties revision `revision`; the form stays as published. */
+export async function discardFormDraft(
+  id: string,
+  revision: number
+): Promise<{ revision: number }> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/draft/discard`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ revision }),
+  });
+  if (!res.ok) throw await refusal(res, 'Failed to discard the form changes');
   return res.json();
 }
 

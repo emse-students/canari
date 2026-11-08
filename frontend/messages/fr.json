@@ -5741,5 +5741,18 @@
   "form_pgrid_tiers_info_aria": "Pourquoi un seul critère ?",
   "form_pgrid_tiers_info": "Une grille ne varie que selon un critère. Pour combiner deux critères, créez deux questions et affichez chacune selon l'autre critère (Condition d'affichage de la question).",
   "form_matrix_row_placeholder": "Ligne",
-  "form_matrix_column_placeholder": "Choix"
+  "form_matrix_column_placeholder": "Choix",
+  "form_autosave_saving": "Enregistrement...",
+  "form_autosave_saved": "Enregistré",
+  "form_autosave_offline": "Non enregistré - hors ligne",
+  "form_autosave_error": "Non enregistré - nouvel essai à la prochaine modification",
+  "form_autosave_conflict": "Modifié ailleurs entre-temps - rechargez la page pour reprendre",
+  "form_publish_changes_button": "Publier les modifications",
+  "form_discard_changes_button": "Abandonner les modifications",
+  "form_unpublished_changes_badge": "Modifications non publiées",
+  "form_unpublished_changes_notice": "Ce formulaire a des modifications non publiées : les répondants voient encore la version publiée.",
+  "form_publish_blocked_unsaved": "Les modifications ne sont pas encore enregistrées sur le serveur",
+  "form_draft_conflict_refusal": "Ce formulaire a été modifié ailleurs entre-temps : rechargez la page pour reprendre.",
+  "form_draft_empty_refusal": "Aucune modification à publier.",
+  "form_draft_invalid_refusal": "Ces modifications ne peuvent pas être publiées en l'état : vérifiez les questions et les réglages."
 }

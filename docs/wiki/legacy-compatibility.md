@@ -478,6 +478,10 @@ draft it opens stays a draft until a current build publishes it. It sends no `al
 a form it edits keeps the stored value. It does not know `FORM_ONLINE_PAYMENT_NOT_OFFERED`: on a
 cash-only form it still draws the online choice, and the server refuses that answer before anything
 is written ([forms](frontend/modules/forms.md#a-form-is-a-draft-until-it-is-published-owner-2026-11-08)).
+An older build also saves an edit straight to the form (`PATCH /forms/:id`), past an unpublished
+revision a current build holds ([forms](frontend/modules/forms.md#edits-are-saved-as-they-are-typed-and-published-together-owner-2026-11-08)):
+publishing that revision later replaces the older build's edit with what the revision holds. Two
+managers on two builds of one form at once is the whole population; the edit route is not shimmed.
 **Removal condition:** once the floor passes the first stable carrying this change, `draft` may become
 the default of a create (a create without it a draft too). Measure before: the `[FORMS] create without draft` lines
 in social-service count the older builds still creating forms.

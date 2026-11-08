@@ -1,0 +1,1 @@
+### Added - a form's edits are saved as they are typed, into an unpublished revision (debounced, at once when the page is hidden), with "Enregistré / Enregistrement... / Non enregistré - hors ligne" under the editor, and published or discarded as one ([forms](docs/wiki/frontend/modules/forms.md#edits-are-saved-as-they-are-typed-and-published-together-owner-2026-11-08)).
