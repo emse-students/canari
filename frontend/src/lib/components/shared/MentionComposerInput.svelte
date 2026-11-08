@@ -23,9 +23,9 @@
   import {
     filesFromTransfer,
     carriesUninsertableMarkup,
-    localFileAddressesFromTransfer,
+    dropEffectFor,
   } from '$lib/utils/composerTransfer';
-  import { showToast } from '$lib/stores/toast.svelte';
+  import { handleComposerDrop } from '$lib/utils/composerDrop';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
   import type { MentionRosterMember } from '$lib/utils/users/mentionRoster';
@@ -481,7 +481,7 @@
    */
   function handleEditorDragOver(event: DragEvent) {
     event.preventDefault();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+    if (event.dataTransfer) event.dataTransfer.dropEffect = dropEffectFor(event.dataTransfer);
   }
 
   /**
@@ -493,36 +493,7 @@
   function handleEditorDrop(event: DragEvent) {
     event.preventDefault();
     event.stopPropagation();
-
-    const files = filesFromTransfer(event.dataTransfer);
-    if (files.length > 0) {
-      if (!onmedia) {
-        Log.d('COMPOSER', `drop carried ${files.length} file(s); this composer takes none`);
-        return;
-      }
-      onmedia(files);
-      return;
-    }
-
-    // A FILE THE ENGINE WITHHELD IS NOT TEXT. Firefox given a file by Nemo receives only its address
-    // and path; inserting that pasted the file's name into the message (reported 2026-09-25).
-    const refused = localFileAddressesFromTransfer(event.dataTransfer);
-    if (refused.length > 0) {
-      console.warn(
-        `[COMPOSER] drop announced ${refused.length} local file(s) but handed over none - the file manager did not give the browser the file`
-      );
-      showToast(m.composer_drop_file_unreadable());
-      return;
-    }
-
-    const text = event.dataTransfer?.getData('text/plain') ?? '';
-    if (text) {
-      insertPlainTextAtCursor(text);
-      return;
-    }
-    if (carriesUninsertableMarkup(event.dataTransfer)) {
-      Log.d('COMPOSER', 'drop carried markup with no file and no text - nothing inserted');
-    }
+    handleComposerDrop(event.dataTransfer, { onFiles: onmedia, onText: insertPlainTextAtCursor });
   }
 
   /**
