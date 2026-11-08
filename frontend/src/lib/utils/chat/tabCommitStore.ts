@@ -55,6 +55,11 @@ export function forgetTabCommitAccount(userId: string): void {
   }
 }
 
+/** Test seam: how many stores hold (or are opening) a connection in this document. */
+export function openTabCommitStoreCountForTests(): number {
+  return openedStores.size;
+}
+
 /** Whether the account's database was wiped in this document and not signed in again since. */
 export function isTabCommitAccountWiped(userId: string): boolean {
   return wipedAccounts.has(userId);
@@ -87,12 +92,14 @@ export interface TabCommitStore<R extends { id: string }> {
 export class IdbTabCommitStore<R extends { id: string }> implements TabCommitStore<R> {
   private db: Promise<IDBDatabase> | null = null;
 
-  constructor(readonly userId: string) {
-    openedStores.add(this);
-  }
+  constructor(readonly userId: string) {}
 
-  /** Closes the connection, if one is open; a later call opens a new one unless the account is wiped. */
+  /**
+   * Closes the connection, if one is open, and leaves the registry: a later call opens a new one
+   * (and registers again) unless the account is wiped.
+   */
   close(): void {
+    openedStores.delete(this);
     const db = this.db;
     this.db = null;
     void db?.then(
@@ -105,6 +112,8 @@ export class IdbTabCommitStore<R extends { id: string }> implements TabCommitSto
     if (wipedAccounts.has(this.userId)) {
       return Promise.reject(new TabCommitAccountWipedError(this.userId));
     }
+    // Registered while it may hold a connection, so a wipe can close it; `close` removes it.
+    openedStores.add(this);
     this.db ??= new Promise<IDBDatabase>((resolve, reject) => {
       const req = indexedDB.open(tabCommitDbName(this.userId), DB_VERSION);
       req.onupgradeneeded = () => {
@@ -120,11 +129,13 @@ export class IdbTabCommitStore<R extends { id: string }> implements TabCommitSto
           console.info('[TAB-COMMIT] store closed: the database is being deleted');
           db.close();
           this.db = null;
+          openedStores.delete(this);
         };
         resolve(db);
       };
       req.onerror = () => {
         this.db = null;
+        openedStores.delete(this);
         reject(req.error);
       };
     });

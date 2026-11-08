@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import {
   forgetTabCommitAccount,
   IdbTabCommitStore,
+  openTabCommitStoreCountForTests,
   readmitTabCommitAccount,
   TabCommitAccountWipedError,
   tabCommitDbName,
@@ -54,7 +55,9 @@ describe('IdbTabCommitStore', () => {
   it("a wiped account's store closes, lets the delete through, and never re-creates the database", async () => {
     const id = user();
     const store = new IdbTabCommitStore<Row>(id);
+    const before = openTabCommitStoreCountForTests();
     await store.put({ id: 'r', state: 'pending' });
+    expect(openTabCommitStoreCountForTests()).toBe(before + 1);
 
     forgetTabCommitAccount(id);
     await deleteDatabase(tabCommitDbName(id));
@@ -64,6 +67,9 @@ describe('IdbTabCommitStore', () => {
       TabCommitAccountWipedError
     );
     expect(await databaseNames()).not.toContain(tabCommitDbName(id));
+
+    // Forgotten, the store left the registry: a wipe holds no reference to it.
+    expect(openTabCommitStoreCountForTests()).toBe(before);
 
     // Signed in here again (a revoked device's account still exists): the store opens, empty.
     readmitTabCommitAccount(id);

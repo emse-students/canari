@@ -4452,6 +4452,14 @@ export abstract class BaseMlsService implements IMlsService {
    * published material.
    */
   async republishKeyMaterial(deviceKeyB64: string): Promise<void> {
+    // REFUSED BEFORE THE PURGE, not at the mint: on a copy that may not mint (`refusesCommitsHere`),
+    // the purge and the local forget below would empty the pool and then fail to refill it.
+    if (refusesCommitsHere()) {
+      console.warn(
+        '[MLS] key material republish refused: this tab holds no leader copy of the MLS state'
+      );
+      throw new FollowerTabKeyPackageError();
+    }
     const now = Date.now();
     if (now - this.lastKeyMaterialRepublish < 30_000) return;
     this.lastKeyMaterialRepublish = now;
