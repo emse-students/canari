@@ -53,7 +53,12 @@ import {
 } from '$lib/mls-client/tabMessageSync';
 import { answersFollowerCommits, servesFollowerCommits } from '$lib/mls-client/stateAuthority';
 import { currentUserId } from '$lib/stores/userState.svelte';
-import { IdbTabCommitStore, type TabCommitStore } from '$lib/utils/chat/tabCommitStore';
+import {
+  IdbTabCommitStore,
+  isTabCommitAccountWiped,
+  readmitTabCommitAccount,
+  type TabCommitStore,
+} from '$lib/utils/chat/tabCommitStore';
 
 /** Every gesture a follower tab hands to the leader. */
 export type DelegatedCommitOp =
@@ -147,6 +152,11 @@ export interface DelegationEnv {
    * successor does.
    */
   answers(): boolean;
+  /**
+   * Whether `account`'s data was wiped in this document (and it is not signed in here again): its
+   * store is dropped and never opened, so a drain cannot re-create the database the wipe deleted.
+   */
+  wiped(account: string): boolean;
   readiness(): DelegationReadiness;
   newId(): string;
   /** `warn` for a line that ACCUSES (a refusal, a death), `error` for a defect; info otherwise. */
@@ -448,6 +458,20 @@ export function createDelegationServer(env: DelegationEnv) {
         r?.state === 'pending' ? { ...r, state: 'running' } : null
       );
       if (claimed?.state !== 'running') return 'settled';
+      // RE-READ AFTER THE CLAIM'S AWAIT, right before the run: a sign-out (or a demotion) landing
+      // between the decision and here must not run the gesture against a session that is ending -
+      // an executor reaching for MLS then would build a client for nobody.
+      if (env.readiness() !== 'ready' || !env.serves() || env.account() !== claimed.account) {
+        env.log(
+          `${tag}: this leader's session ended before the run - leader-unavailable, not run`,
+          'warn'
+        );
+        await settle(store, claimed, 'running', {
+          status: 'refused',
+          reason: 'leader-unavailable',
+        });
+        return 'answered';
+      }
       env.log(`${tag} run for a follower tab`);
       await settle(store, claimed, 'running', await runExecutor(claimed.op));
       return 'served';
@@ -488,8 +512,26 @@ export function createDelegationServer(env: DelegationEnv) {
     const own = env.account();
     if (own) accounts.add(own);
     for (const account of accounts) {
+      if (env.wiped(account)) {
+        accounts.delete(account);
+        env.log(
+          `[TAB-COMMIT] ${account.slice(0, 8)}...'s data was wiped - its requests are no longer read`
+        );
+        continue;
+      }
       const store = env.storeFor(account);
-      for (const record of await store.list()) {
+      let records: DelegationRecord[];
+      try {
+        records = await store.list();
+      } catch (e) {
+        // Isolated per account: one store that cannot be read must not strand the others.
+        env.log(
+          `[TAB-COMMIT] the requests of ${account.slice(0, 8)}... could not be read: ${String(e)}`,
+          'warn'
+        );
+        continue;
+      }
+      for (const record of records) {
         // Isolated per record: one that fails to be served must not strand the ones after it.
         try {
           await serve(locks, store, record);
@@ -560,12 +602,19 @@ let readiness: DelegationReadiness = 'starting';
 function productionEnv(): DelegationEnv {
   return {
     storeFor: (account) => {
+      // Signed in here again after a wipe (a revoked device's account still exists): readmitted.
+      if (account === currentUserId()) readmitTabCommitAccount(account);
       let store = stores.get(account);
       if (!store) {
         store = new IdbTabCommitStore<DelegationRecord>(account);
         stores.set(account, store);
       }
       return store;
+    },
+    wiped: (account) => {
+      if (account === currentUserId() || !isTabCommitAccountWiped(account)) return false;
+      stores.delete(account);
+      return true;
     },
     locks: typeof navigator !== 'undefined' && navigator.locks ? navigator.locks : null,
     post: (event) => {
@@ -624,8 +673,21 @@ export function serveDelegatedCommits(own: Partial<DelegatedCommitExecutors>): (
 }
 
 /**
- * What this tab's session can do with a follower's request (`ChatBackgroundService` sets it from the
- * session): leaving `starting` drains, so every request waiting on the login is answered.
+ * The readiness a session's two flags mean: a live session runs a request, a login RUNNING keeps it
+ * waiting, anything else (the PIN keypad up, nobody signed in) answers it at once.
+ */
+export function sessionDelegationReadiness(
+  isLoggedIn: boolean,
+  isLoginInProgress: boolean
+): DelegationReadiness {
+  return isLoggedIn ? 'ready' : isLoginInProgress ? 'starting' : 'unavailable';
+}
+
+/**
+ * What this tab's session can do with a follower's request, set by the ONE writer of the session's
+ * flags (`useChatSession`: `setIsLoggedIn`, `setIsLoginInProgress`) through
+ * {@link sessionDelegationReadiness}: leaving `starting` drains, so every request waiting on the
+ * login is answered.
  */
 export function setDelegationReadiness(next: DelegationReadiness): void {
   if (readiness === next) return;

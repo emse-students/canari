@@ -1313,14 +1313,18 @@ outcome and posts `tab_commit_settled`; the follower reads the outcome and delet
 state change is a read-check-write in ONE IndexedDB transaction, re-read under the run lock: a
 `pending` is claimed once, a `done` is never overwritten. A signal lost to a tab not yet listening
 costs the next drain: the leader drains when its executors register, when its session leaves
-`starting` (`setDelegationReadiness`, `ChatBackgroundService`), and on every signal.
+`starting` (`setDelegationReadiness`), and on every signal.
 
 **Why IndexedDB and not `localStorage`** (review of #3160): a `localStorage` write is not ordered with
 a `BroadcastChannel` message or a Web Lock across renderer processes, so the signal could beat the
 record, and a drain's read-then-write could overwrite a `done` another document had just written.
 **Private like the account's other data**: one database per account, listed in
 `accountIndexedDbNames` so the account wipe deletes it, and a sign-out ends this tab's requests and
-deletes their records (`abandonDelegatedCommits`, from `forgetAccount`). The records are NOT sealed
+deletes their records (`abandonDelegatedCommits`, from `forgetAccount`). The account wipe closes the
+account's store first and marks it wiped for the document (`forgetTabCommitAccount`): a drain drops
+that account and its store refuses to open (`TabCommitAccountWipedError`), because an
+`indexedDB.open` would re-create the database the wipe just deleted; signed in here again (a revoked
+device's account still exists), it is readmitted. The records are NOT sealed
 under the device key, like the publish queue's: a record carries what the gesture carries - a group
 name, user ids - which the conversation rows of `CanariDB_<userId>` already hold in the clear, it
 lives only until the answer is read, and a seal would strand every request in flight across a PIN
@@ -1335,7 +1339,14 @@ whose login has not loaded a state yet may only ANSWER one (a refusal, a death -
 `answersFollowerCommits`); a promoted-in-place document does neither, and its reloaded successor
 does both. The service guards read the same fact (`refusesCommitsHere`), so a promoted-in-place
 document refuses its OWN commits too until its reload - an external join built on a stale copy would
-leave a leaf on the server whose private state exists nowhere.
+leave a leaf on the server whose private state exists nowhere - and so does every key package
+(`generateKeyPackage`, `FollowerTabKeyPackageError`): its private half would live only in that copy.
+**A promotion DURING the login** (after the state was loaded as a follower, before `isLoggedIn`) is
+not lost to the promotion handler, which reloads only a live session: the login reads
+`promotedSinceLoad()` synchronously before going live and, when it holds, throws
+`LoginStoppedForPromotionError`, releases its client and reloads through the handler's own path
+(`reloadForPromotion`) - so no pull, ACK or key package ever runs on that copy, and the reloaded page
+serves (`signOutDuringLogin.test.ts`, "a tab promoted to leader during its login").
 
 **The leader closing mid-request cannot double-commit.** A record found `running` whose run lock is
 FREE was claimed by a document that ended without settling it: the browser releases a lock when its
@@ -1349,11 +1360,17 @@ leader drains next, the one a handover elects included. A request whose run lock
 for on the lock itself (a stolen lock's old leader still finishing), never judged.
 
 **A request is ANSWERED while its follower lives - and a request nobody waits for is never run.** The
-leader's readiness (`setDelegationReadiness`, set by `ChatBackgroundService` from the session) decides
-how: `ready` (a live session) runs it; `unavailable` (the PIN keypad up, or nobody signed in) answers
+leader's readiness decides how. It is set by the ONE writer of the session's two flags
+(`useChatSession`'s `setIsLoggedIn` and both `setIsLoginInProgress` setters, through
+`sessionDelegationReadiness`), so it follows every login start and every end - success, early
+return, failure, sign-out - whoever flips the flag; a component effect could not, since
+`isLoginInProgress` is a plain boolean no effect re-runs on (`delegationReadinessWiring.test.ts`): `ready` (a live session) runs it; `unavailable` (the PIN keypad up, or nobody signed in) answers
 `leader-unavailable` at once and runs nothing (`chat_error_main_tab_unavailable`: unlock the main tab,
 or do it there); `starting` (a login actually running) keeps it `pending` until the login ends in one
-of the other two. Nothing waits on `whenMlsReady` any more, so no request blocks the drain behind it.
+of the other two. Nothing waits on `whenMlsReady` any more, so no request blocks the drain behind it;
+instead the readiness, the load fact and the account are read AGAIN after the claim, right before the
+executor runs, so a sign-out landing between the decision and the run answers `leader-unavailable`
+and builds no MLS client for a session that is ending.
 A kind no executor in the leader runs is answered `not-delegable`. A `pending` record whose REQUESTER
 LOCK is free - its tab closed, or signed out - is deleted under the run lock and never run, with a
 line saying so: the gesture is nobody's any more, and a same-account sign-in afterwards never runs a
@@ -1361,7 +1378,9 @@ previous session's request. **What this does not cover, honestly:** a leader tab
 FROZEN in the background (Chrome's tab freezing, a discarded tab) runs no JavaScript, so it neither
 answers nor releases its locks while frozen; the follower's request waits until the browser thaws
 that tab or the member brings it forward, and no clock is added to cut the wait short - a timeout
-there would be a guess about a live document.
+there would be a guess about a live document. **And right after a deploy**, a leader tab still
+running the build before #3160 does not listen for `tab_commit_requested` at all: a new follower's
+request waits until that tab reloads (and is then run, or deleted unrun if its follower has gone).
 
 **The other refusals, all typed and said with Paraglide.** `not-delegable`: the engine has no Web
 Locks, or the leader tab is signed in to ANOTHER account (the leader lock is per browser) - said with

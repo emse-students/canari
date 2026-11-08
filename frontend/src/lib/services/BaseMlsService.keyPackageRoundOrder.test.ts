@@ -6,7 +6,10 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
   persistMlsStructuralCheckpoint: vi.fn().mockResolvedValue(true),
   scheduleOutboundMlsPersist: vi.fn(),
 }));
-vi.mock('$lib/mls-client/tabLeader', () => ({ getIsTabLeader: () => true }));
+vi.mock('$lib/mls-client/tabLeader', () => ({
+  getIsTabLeader: () => true,
+  getTabLeadership: () => 'leader',
+}));
 
 import { BaseMlsService } from './BaseMlsService';
 import { KEY_PACKAGE_ROUND_DEADLINE_MS } from '$lib/mls-client/mlsDeliveryApi';

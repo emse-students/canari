@@ -25,6 +25,46 @@ const DB_PREFIX = 'CanariDBTabCommit_';
 const DB_VERSION = 1;
 const REQUESTS = 'requests';
 
+/** Thrown by a store of an account wiped in this document: it never re-creates the database. */
+export class TabCommitAccountWipedError extends Error {
+  constructor(readonly userId: string) {
+    super(
+      `[TAB-COMMIT] the account ${userId.slice(0, 8)}... was wiped here - its store stays closed`
+    );
+    this.name = 'TabCommitAccountWipedError';
+  }
+}
+
+/**
+ * The accounts whose database this document saw wiped, and every store it opened. An
+ * `indexedDB.open` CREATES a database it does not find, so a store of a wiped account would bring
+ * `CanariDBTabCommit_<id>` back the next time a drain read it; it refuses instead, until that
+ * account is signed in here again ({@link readmitTabCommitAccount}).
+ */
+const wipedAccounts = new Set<string>();
+const openedStores = new Set<{ readonly userId: string; close(): void }>();
+
+/**
+ * The account's data is being wiped (`accountLocalWipe.ts`, before its databases are deleted):
+ * every store of it closes, and none opens again in this document.
+ */
+export function forgetTabCommitAccount(userId: string): void {
+  wipedAccounts.add(userId);
+  for (const store of openedStores) {
+    if (store.userId === userId) store.close();
+  }
+}
+
+/** Whether the account's database was wiped in this document and not signed in again since. */
+export function isTabCommitAccountWiped(userId: string): boolean {
+  return wipedAccounts.has(userId);
+}
+
+/** The account is signed in here again (a revoked device's account still exists): its store may open. */
+export function readmitTabCommitAccount(userId: string): void {
+  wipedAccounts.delete(userId);
+}
+
 /** The database for `userId` - also what the account wipe deletes (`accountIndexedDbNames`). */
 export function tabCommitDbName(userId: string): string {
   return DB_PREFIX + userId;
@@ -47,9 +87,24 @@ export interface TabCommitStore<R extends { id: string }> {
 export class IdbTabCommitStore<R extends { id: string }> implements TabCommitStore<R> {
   private db: Promise<IDBDatabase> | null = null;
 
-  constructor(readonly userId: string) {}
+  constructor(readonly userId: string) {
+    openedStores.add(this);
+  }
+
+  /** Closes the connection, if one is open; a later call opens a new one unless the account is wiped. */
+  close(): void {
+    const db = this.db;
+    this.db = null;
+    void db?.then(
+      (open) => open.close(),
+      () => undefined
+    );
+  }
 
   private open(): Promise<IDBDatabase> {
+    if (wipedAccounts.has(this.userId)) {
+      return Promise.reject(new TabCommitAccountWipedError(this.userId));
+    }
     this.db ??= new Promise<IDBDatabase>((resolve, reject) => {
       const req = indexedDB.open(tabCommitDbName(this.userId), DB_VERSION);
       req.onupgradeneeded = () => {

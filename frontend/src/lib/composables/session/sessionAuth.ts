@@ -5,7 +5,7 @@
  * Each function receives `ctx: SessionContext` instead of the closure,
  * and `cb: ChatSessionCallbacks` to interact with conversations / UI.
  */
-import { noteMlsStateLoaded } from '$lib/mls-client/stateAuthority';
+import { noteMlsStateLoaded, promotedSinceLoad } from '$lib/mls-client/stateAuthority';
 import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
@@ -54,6 +54,7 @@ import { describeRefusalCode } from '$lib/utils/refusalCodes';
 import {
   LoginFailure,
   LoginStoppedBySignOutError,
+  LoginStoppedForPromotionError,
   type LoginStop,
   hardwareKeyLoginFailure,
   isExpectedLoginOutcome,
@@ -1948,6 +1949,10 @@ export async function loginImpl(
     // awaits before `setIsLoggedIn(true)`, so from here a sign-out finds a live session and
     // `endSessionImpl` stops it - and every await further down re-reads the generation.
     stopIfSignedOut('auth-token-final');
+    // PROMOTED SINCE THE STATE WAS LOADED AS A FOLLOWER: the promotion handler reloads only a live
+    // session, so a promotion during the login is found HERE, synchronously before going live, and
+    // the page reloads instead - never a live session (pulls, ACKs, key packages) on that copy.
+    if (promotedSinceLoad()) throw new LoginStoppedForPromotionError();
     ctx.setAuthToken(sessionToken);
     ctx.setIsOfflineSession(offlineSession);
 
@@ -2796,6 +2801,15 @@ export async function loginImpl(
       // must be read in the log is that a revoked device may still hold its data.
       cb.log(`[SECURITY] The revoked-device wipe FAILED - local data may remain: ${String(_e)}`);
       console.error('[SECURITY] The revoked-device wipe failed - local data may remain:', _e);
+    }
+    if (_e instanceof LoginStoppedForPromotionError) {
+      withdrawLandingPreview('promoted to leader during the login');
+      cb.log(
+        '[TAB] Promoted to leader during the login, on a state loaded as a follower - reloading before going live.'
+      );
+      releaseLoginStoppedBySignOut(ctx, cb, loginClient, loginHandshake);
+      ctx.reloadForPromotion(cb.log);
+      return;
     }
     if (
       _e instanceof SignOutInProgressError ||

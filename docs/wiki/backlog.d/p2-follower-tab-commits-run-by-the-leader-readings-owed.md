@@ -22,6 +22,8 @@ two tabs of one account in one desktop browser, the console of BOTH read:
    told at once that the main tab is not ready, the leader logs `leader-unavailable`, nothing runs.
 5. **A promotion in place** (close the leader with a request pending from a third tab): the promoted
    tab logs nothing for it before its reload, and its reloaded successor logs `run for a follower tab`.
-6. **IndexedDB holds no `CanariDBTabCommit_` record** after 1 to 5 (DevTools, Application), and the
+6. **A promotion during a login** (reload the follower, close the leader while the follower's PIN
+   unlock runs): the follower logs `reloading before going live` and comes back as the leader.
+7. **IndexedDB holds no `CanariDBTabCommit_` record** after 1 to 5 (DevTools, Application), and the
    database is gone after a sign-out with account deletion.
-7. **No `[TAB-COMMIT]` line at warn or error** on an ordinary pass of 1 and 2.
+8. **No `[TAB-COMMIT]` line at warn or error** on an ordinary pass of 1 and 2.

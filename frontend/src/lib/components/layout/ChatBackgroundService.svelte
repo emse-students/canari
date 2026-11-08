@@ -162,10 +162,7 @@
   import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
   import { mergeFcmMessagesAndAnnounce } from '$lib/utils/chat/fcmMemoryMerge';
   import { subscribeTabMessageUpdates } from '$lib/mls-client/tabMessageSync';
-  import {
-    serveDelegatedCommits,
-    setDelegationReadiness,
-  } from '$lib/utils/chat/tabCommitDelegation';
+  import { serveDelegatedCommits } from '$lib/utils/chat/tabCommitDelegation';
   import { flushActiveMlsStateEncrypted } from '$lib/mls-client/mlsStatePersisterRegistry';
   import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
   import { mergeAnnouncedMessage } from '$lib/utils/chat/salonEcho';
@@ -190,22 +187,6 @@
 
   /** Last call id we started ringing for (dedupes effect re-runs). */
   let lastIncomingRingCallId = $state<string | null>(null);
-
-  /**
-   * What this tab can do with a follower's handed-over commit (`tabCommitDelegation.ts`): run it
-   * once the session is live, answer `leader-unavailable` at once while the keypad is up or nobody
-   * is signed in, and leave it waiting only while a login is actually running - so a follower is
-   * always answered by a leader that lives. Leaving `starting` drains every stored request.
-   */
-  $effect(() => {
-    setDelegationReadiness(
-      globalSession.isLoggedIn
-        ? 'ready'
-        : showPinModal || !globalSession.isLoginInProgress
-          ? 'unavailable'
-          : 'starting'
-    );
-  });
 
   /** Ring + OS notification when an MLS call invite arrives (any route). */
   $effect(() => {

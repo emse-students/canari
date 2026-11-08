@@ -7,6 +7,7 @@ import {
   type DelegationLocks,
   type DelegationReadiness,
   type DelegationRecord,
+  sessionDelegationReadiness,
 } from './tabCommitDelegation';
 import type { TabCommitStore } from './tabCommitStore';
 
@@ -162,7 +163,10 @@ interface Role {
   leader: boolean;
   loaded?: 'leader' | 'follower' | 'unknown';
   account?: string;
-  readiness?: DelegationReadiness;
+  /** A value, or a function asked at each read - a session that ends between two reads. */
+  readiness?: DelegationReadiness | (() => DelegationReadiness);
+  /** The accounts whose data this document saw wiped. */
+  wiped?: Set<string>;
 }
 
 function makeWorld() {
@@ -175,14 +179,16 @@ function tab(doc: string, world: ReturnType<typeof makeWorld>, role: Role) {
   const lines: { message: string; level?: 'warn' | 'error' }[] = [];
   const loaded = () => role.loaded ?? (role.leader ? 'leader' : 'follower');
   const env: DelegationEnv = {
-    storeFor: world.databases.storeFor,
+    storeFor: (account) => world.databases.storeFor(account),
     locks: world.locks.forDocument(doc),
     post: (e) => world.bus.post(doc, e),
     subscribe: (h) => world.bus.subscribe(doc, h),
     account: () => role.account ?? 'alice',
     serves: () => role.leader && loaded() === 'leader',
     answers: () => role.leader && loaded() !== 'follower',
-    readiness: () => role.readiness ?? 'ready',
+    readiness: () =>
+      typeof role.readiness === 'function' ? role.readiness() : (role.readiness ?? 'ready'),
+    wiped: (account) => role.wiped?.has(account) ?? false,
     newId: () => `${doc}-req-${++n}`,
     log: (message, level) => void lines.push({ message, level }),
   };
@@ -574,4 +580,49 @@ describe('the refusals that cannot be avoided', () => {
     const accusing = leader.lines.filter((l) => l.message.includes('a defect'));
     expect(accusing).toEqual([expect.objectContaining({ level: 'error' })]);
   });
+});
+
+describe('round 2 of the review of #3160', () => {
+  it('a session that ends between the claim and the run runs nothing: leader-unavailable', async () => {
+    const w = makeWorld();
+    let reads = 0;
+    // Ready when the record is decided, signed out by the time the claim has committed.
+    const { runs } = servingLeader('L', w, {
+      readiness: () => (++reads === 1 ? 'ready' : 'unavailable'),
+    });
+    const follower = tab('F', w, { leader: false });
+
+    expect(await follower.delegate({ kind: 'remove', groupId: 'g1', memberId: 'bob' })).toEqual({
+      status: 'refused',
+      reason: 'leader-unavailable',
+    });
+    expect(runs).toEqual([]);
+  });
+
+  it("a wiped account's store is dropped and never read again", async () => {
+    const w = makeWorld();
+    const wiped = new Set<string>();
+    const { leader } = servingLeader('L', w, { account: 'carol', wiped });
+    const follower = tab('F', w, { leader: false, account: 'alice' });
+    // Alice's request is heard: the leader now drains Alice's store too.
+    await follower.delegate({ kind: 'create-group', name: 'club' });
+    const read = vi.spyOn(w.databases, 'storeFor');
+
+    wiped.add('alice');
+    await leader.server.drain('after the wipe');
+
+    expect(read.mock.calls.map(([account]) => account)).not.toContain('alice');
+  });
+
+  it.each([
+    [true, false, 'ready'],
+    [true, true, 'ready'],
+    [false, true, 'starting'],
+    [false, false, 'unavailable'],
+  ] as const)(
+    'a session logged in %s, login in progress %s, is %s',
+    (isLoggedIn, isLoginInProgress, readiness) => {
+      expect(sessionDelegationReadiness(isLoggedIn, isLoginInProgress)).toBe(readiness);
+    }
+  );
 });

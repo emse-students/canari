@@ -214,6 +214,7 @@ import {
   AcceptedCommitNotMergedError,
   CommitStageNotSavedError,
   FollowerTabCommitError,
+  FollowerTabKeyPackageError,
   PreviousCommitUnresolvedError,
   StagedCommitPendingError,
   composeSubmission,
@@ -3853,6 +3854,13 @@ export abstract class BaseMlsService implements IMlsService {
     deviceKeyB64: string,
     opts?: { fresh?: boolean }
   ): Promise<DatedKeyPackage> {
+    // ONLY THE LEADER'S COPY MINTS, as only it commits (`refusesCommitsHere`): every key package
+    // published is minted here, and a private half held by a follower's copy - or by a promoted tab
+    // before its reload - is one no kept state could open a Welcome with.
+    if (refusesCommitsHere()) {
+      console.warn('[MLS] key package refused: this tab holds no leader copy of the MLS state');
+      throw new FollowerTabKeyPackageError();
+    }
     const inFlight = this.keyPackageRoundInFlight;
     if (inFlight && !opts?.fresh) {
       console.log('[MLS] key package round already in flight - joining it, not starting a second');

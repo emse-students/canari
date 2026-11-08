@@ -49,6 +49,15 @@ export function answersFollowerCommits(): boolean {
   return getTabLeadership() === 'leader' && loadedAs !== 'follower';
 }
 
+/**
+ * Whether this document leads on a copy it loaded as a FOLLOWER: promoted in place, its reload owed.
+ * The login reads it right before going live (`sessionAuth`), because the promotion handler reloads
+ * only a live session - a promotion DURING the login is this fact, found there.
+ */
+export function promotedSinceLoad(): boolean {
+  return getTabLeadership() === 'leader' && loadedAs === 'follower';
+}
+
 /** Test seam: back to the state of a document that has loaded nothing. */
 export function resetStateAuthorityForTests(): void {
   loadedAs = 'unknown';
