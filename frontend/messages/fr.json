@@ -4460,6 +4460,17 @@
   "reel_sendto_too_long_for_chats": "Cette vidéo dépasse {seconds} s : elle ne peut être que publiée, pas envoyée en conversation.",
   "reel_sendto_blocks_unread": "Impossible de vérifier vos blocages : l'envoi en conversation est indisponible, vous pouvez encore publier.",
   "reel_sendto_failed": "L'envoi n'a pas pu être mis en file.",
+  "reel_sendto_failed_in": "La vidéo n'a pas pu être envoyée dans « {name} » : ouvrez la conversation pour voir pourquoi.",
+  "reel_sendto_failed_in_unnamed": "Une vidéo n'a pas pu être envoyée dans l'une des conversations choisies : ouvrez-la pour voir pourquoi.",
+  "reel_sendto_failed_in_many": "La vidéo n'a pas pu être envoyée dans {count} conversations : ouvrez-les pour voir pourquoi.",
+  "reel_sendto_failed_in_chosen": "La vidéo n'a pas pu être envoyée dans les conversations choisies : ouvrez-les pour voir pourquoi.",
+  "reel_sendto_delete_everywhere_skipped": "Supprimée dans {done} conversations ; {skipped} ne sont plus sur cet appareil et la gardent.",
+  "reel_sendto_everywhere_running": "La suppression de cette vidéo est déjà en cours.",
+  "reel_sendto_same_as_post": "Les conversations recevront la vidéo publiée elle-même.",
+  "reel_sendto_cancel_all": "Annuler partout",
+  "reel_sendto_cancel_all_hint": "Cette vidéo part dans {count} conversations : « Annuler partout » l'arrête dans chacune.",
+  "reel_sendto_delete_everywhere": "Supprimer partout",
+  "reel_sendto_delete_everywhere_hint": "Cette vidéo a été envoyée dans {count} conversations : « Supprimer partout » la supprime de chacune.",
   "reel_sendto_send": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],

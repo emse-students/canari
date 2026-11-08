@@ -2,7 +2,7 @@
  * THE ROWS OF ONE CHAT-REEL TAKE (RC-13): the take names exactly its sends, each send names its take
  * and holds no file, and the declaration is made at the press.
  */
-import { buildChatReelTake } from './chatReelTake';
+import { buildChatReelTake, reelEverywhereActOf } from './chatReelTake';
 import { REEL_TAKE_QUEUE } from '$lib/db/outboxCodec';
 import { CHAT_REEL_RETENTION_MS } from './chatReelWriter';
 import { parseEnvelope } from '$lib/envelope';
@@ -61,5 +61,30 @@ describe('buildChatReelTake', () => {
 
   it('refuses a take nobody is sent to', () => {
     expect(() => build(0)).toThrow();
+  });
+});
+
+describe('reelEverywhereActOf (15.2, 15.7)', () => {
+  const send = (id: string) => ({ id, conversationId: `g-${id}` });
+
+  it('offers nothing for a take naming one message, or none known here (another device)', () => {
+    expect(reelEverywhereActOf(null)).toBeNull();
+    expect(reelEverywhereActOf({ queued: [send('a')], standing: [] })).toBeNull();
+    expect(reelEverywhereActOf({ queued: [], standing: [send('a')] })).toBeNull();
+  });
+
+  it('offers "Annuler partout" while no send has gone', () => {
+    expect(reelEverywhereActOf({ queued: [send('a'), send('b')], standing: [] })).toBe(
+      'cancel-all'
+    );
+  });
+
+  it('offers "Supprimer partout" once one has, queued ones included', () => {
+    expect(reelEverywhereActOf({ queued: [send('a')], standing: [send('b')] })).toBe(
+      'delete-everywhere'
+    );
+    expect(reelEverywhereActOf({ queued: [], standing: [send('a'), send('b')] })).toBe(
+      'delete-everywhere'
+    );
   });
 });

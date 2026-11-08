@@ -47,6 +47,8 @@
     onClosePoll?: (messageId: string) => void;
     /** Callback to delete a message by ID. */
     onDelete?: (messageId: string) => void;
+    /** "Annuler partout" / "Supprimer partout" on the sender's own chat reel (reels-in-chat 15.7). */
+    onDeleteReelEverywhere?: (messageId: string) => void;
     /** Re-sends a salon message whose send failed (WP-OFF-2); the row offers it on `error`. */
     onRetrySend?: (messageId: string) => void;
     /** Gives a failed salon message up: removes its row. */
@@ -111,6 +113,7 @@
     onVotePoll,
     onClosePoll,
     onDelete,
+    onDeleteReelEverywhere,
     onRetrySend,
     onDiscardSend,
     onTakeBackSend,
@@ -359,6 +362,7 @@
               {onVotePoll}
               {onClosePoll}
               onDelete={msg.awaitingServerId ? undefined : onDelete}
+              onDeleteReelEverywhere={msg.awaitingServerId ? undefined : onDeleteReelEverywhere}
               {canModerate}
               onBeginEdit={msg.awaitingServerId ? undefined : onBeginEdit}
               onTogglePin={mayPinMessage(pinStanding) && !msg.awaitingServerId

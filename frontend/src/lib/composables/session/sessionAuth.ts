@@ -264,6 +264,7 @@ import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
 import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
 import { drainNativePushLog } from '$lib/mobile/nativePushLog';
 import { uploadClassFor } from '$lib/reels/chatReelWriter';
+import { reelSendFailedNotice } from '$lib/reels/reelSendTargets';
 import { ACCOUNT_KEY, SESSION_META_STORE } from '$lib/utils/accountLocalKeys';
 import { isDeletedAccountHere, wipeReasonOf } from '$lib/utils/deletedAccountMarker';
 import { registerDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
@@ -499,6 +500,13 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     releaseChatReel: async (mediaId: string) => {
       const { MediaService } = await import('$lib/media');
       return new MediaService().releaseChatReel(mediaId, ownerToken);
+    },
+    // A SEND OF A TAKE FAILED FOR GOOD (15.2): its thread already says why; this tells a member who
+    // pressed "Envoyer a..." on the camera tab, and is no longer in that thread, WHICH one.
+    onReelSendFailed: (failure: import('$lib/utils/chat/outbox').ReelSendFailure) => {
+      const notice = reelSendFailedNotice(cb.conversations, failure, ownerId);
+      cb.log(`[OUTBOX] a reel ${failure.kind} failed for good - one notice: ${notice.form}`);
+      showToast(notice.text, 'error');
     },
   };
 }
