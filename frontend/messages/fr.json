@@ -178,6 +178,7 @@
   "chat_modal_error_creation_failed": "La création a échoué et rien n'a été conservé. Réessayez dans un instant.",
   "chat_error_follower_tab": "Canari est ouvert dans un autre onglet : faites-le depuis cet onglet, ou fermez-le et rechargez celui-ci.",
   "chat_error_main_tab_gone": "L'onglet principal de Canari s'est fermé pendant l'opération : vérifiez son résultat avant de réessayer.",
+  "chat_error_main_tab_unavailable": "L'onglet principal de Canari n'est pas prêt (verrouillé ou déconnecté) : déverrouillez-le, ou faites-le depuis cet onglet.",
   "chat_error_main_tab_failed": "L'onglet principal de Canari n'a pas pu terminer l'opération.",
   "chat_modal_creation_in_progress_label": "Création en cours…",
   "chat_modal_community_name_label": "Nom de la communauté",

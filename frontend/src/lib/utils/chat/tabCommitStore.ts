@@ -1,0 +1,132 @@
+/**
+ * THE DURABLE HALF OF A FOLLOWER TAB'S HANDED-OVER COMMITS (`tabCommitDelegation.ts`).
+ *
+ * ONE DATABASE PER ACCOUNT, `CanariDBTabCommit_<userId>`, like the publish queue's: the `CanariDB`
+ * prefix is what the device wipe enumerates, and {@link tabCommitDbName} is listed in
+ * `accountIndexedDbNames`, so a deleted or revoked account's requests die with it. A sign-out
+ * abandons this tab's own requests and deletes their records (`abandonDelegatedCommits`); a record
+ * another tab left is deleted by the leader's next drain, never run (its requester is gone).
+ *
+ * WHY INDEXEDDB AND NOT `localStorage` (review of #3160). A `localStorage` write is not ordered with
+ * a `BroadcastChannel` message or a Web Lock across renderer processes: the signal could reach the
+ * leader before the record was visible to it, and a drain's read-then-write could overwrite a `done`
+ * another document had just written. Here every write is awaited to its COMMIT before the signal is
+ * posted, and every state change is a read-check-write inside ONE `readwrite` transaction
+ * ({@link TabCommitStore.update}), which IndexedDB serialises across tabs.
+ *
+ * NOT SEALED BY THE DEVICE KEY, deliberately and like the publish queue: a record holds what the
+ * gesture carries - a group's name, user ids - which the conversation rows of `CanariDB_<userId>`
+ * hold in the clear already, and it lives only until the request is answered and read. Sealing would
+ * make a PIN change strand every record in flight.
+ */
+import { idbCommitted, idbRequest } from '$lib/db/outboxBlob';
+
+const DB_PREFIX = 'CanariDBTabCommit_';
+const DB_VERSION = 1;
+const REQUESTS = 'requests';
+
+/** The database for `userId` - also what the account wipe deletes (`accountIndexedDbNames`). */
+export function tabCommitDbName(userId: string): string {
+  return DB_PREFIX + userId;
+}
+
+/** The store {@link import('./tabCommitDelegation').DelegationEnv} reads and writes, injected. */
+export interface TabCommitStore<R extends { id: string }> {
+  get(id: string): Promise<R | null>;
+  list(): Promise<R[]>;
+  put(record: R): Promise<void>;
+  delete(id: string): Promise<void>;
+  /**
+   * Reads the record and writes what `change` makes of it, in ONE transaction: a record, `'delete'`,
+   * or `null` to leave it as it is. Resolves with the record as it stands after the commit.
+   */
+  update(id: string, change: (current: R | null) => R | 'delete' | null): Promise<R | null>;
+}
+
+/** {@link TabCommitStore} over the account's IndexedDB. */
+export class IdbTabCommitStore<R extends { id: string }> implements TabCommitStore<R> {
+  private db: Promise<IDBDatabase> | null = null;
+
+  constructor(readonly userId: string) {}
+
+  private open(): Promise<IDBDatabase> {
+    this.db ??= new Promise<IDBDatabase>((resolve, reject) => {
+      const req = indexedDB.open(tabCommitDbName(this.userId), DB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(REQUESTS)) {
+          db.createObjectStore(REQUESTS, { keyPath: 'id' });
+        }
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        // The account wipe's `deleteDatabase` asks every connection to go: this one does.
+        db.onversionchange = () => {
+          console.info('[TAB-COMMIT] store closed: the database is being deleted');
+          db.close();
+          this.db = null;
+        };
+        resolve(db);
+      };
+      req.onerror = () => {
+        this.db = null;
+        reject(req.error);
+      };
+    });
+    return this.db;
+  }
+
+  async get(id: string): Promise<R | null> {
+    const db = await this.open();
+    const tx = db.transaction(REQUESTS, 'readonly');
+    const record = (await idbRequest(tx.objectStore(REQUESTS).get(id))) as R | undefined;
+    return record ?? null;
+  }
+
+  async list(): Promise<R[]> {
+    const db = await this.open();
+    const tx = db.transaction(REQUESTS, 'readonly');
+    return (await idbRequest(tx.objectStore(REQUESTS).getAll())) as R[];
+  }
+
+  async put(record: R): Promise<void> {
+    const db = await this.open();
+    const tx = db.transaction(REQUESTS, 'readwrite');
+    const done = idbCommitted(tx);
+    tx.objectStore(REQUESTS).put(record);
+    await done;
+  }
+
+  async delete(id: string): Promise<void> {
+    const db = await this.open();
+    const tx = db.transaction(REQUESTS, 'readwrite');
+    const done = idbCommitted(tx);
+    tx.objectStore(REQUESTS).delete(id);
+    await done;
+  }
+
+  async update(id: string, change: (current: R | null) => R | 'delete' | null): Promise<R | null> {
+    const db = await this.open();
+    const tx = db.transaction(REQUESTS, 'readwrite');
+    const done = idbCommitted(tx);
+    const store = tx.objectStore(REQUESTS);
+    let after: R | null = null;
+    const read = store.get(id);
+    read.onsuccess = () => {
+      // INSIDE the transaction: nothing else can write this record between the read and the write.
+      const current = (read.result as R | undefined) ?? null;
+      const next = change(current);
+      if (next === 'delete') {
+        store.delete(id);
+        after = null;
+      } else if (next === null) {
+        after = current;
+      } else {
+        store.put(next);
+        after = next;
+      }
+    };
+    await done;
+    return after;
+  }
+}

@@ -2,6 +2,7 @@ import { closeCachedStore, closeOpenIndexedDbStores } from '$lib/db';
 import { closeOutboxBlobStores } from '$lib/db/outboxBlob';
 import { closeMlsDb } from '$lib/utils/hex';
 import { publishQueueDbName } from '$lib/posts/publishQueue/publishQueueStore';
+import { tabCommitDbName } from '$lib/utils/chat/tabCommitStore';
 import { clearDeviceKey } from '$lib/utils/deviceKeyVault';
 import { deleteIndexedDbByName } from '$lib/utils/indexedDbDelete';
 import { dropUploadReleaseMarksOf } from '$lib/utils/chat/uploadReleaseMarks';
@@ -40,6 +41,8 @@ export function accountIndexedDbNames(userId: string): string[] {
     // The posts waiting to be published, and their media in the clear: a deleted or revoked
     // account's photos must not outlive it on the device.
     publishQueueDbName(userId),
+    // A follower tab's commits handed to the leader: a group's name, user ids, until answered.
+    tabCommitDbName(userId),
   ];
 }
 

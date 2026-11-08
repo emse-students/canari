@@ -157,6 +157,7 @@ import {
   type GatewaySocketOpen,
 } from '$lib/mls-client/gatewaySocketOpen';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
+import { refusesCommitsHere } from '$lib/mls-client/stateAuthority';
 import {
   checkpointWroteNothing,
   fromBase64,
@@ -5313,7 +5314,7 @@ export abstract class BaseMlsService implements IMlsService {
    * caller, so no caller can create one around it.
    */
   async createGroup(groupId: string): Promise<void> {
-    if (getTabLeadership() === 'follower') {
+    if (refusesCommitsHere()) {
       console.warn(
         `[MLS] createGroup ${groupId.slice(0, 8)}... refused on a follower tab - only the leader creates groups`
       );
@@ -5463,7 +5464,7 @@ export abstract class BaseMlsService implements IMlsService {
   }> {
     // A FOLLOWER TAB DOES NOT COMMIT (`FollowerTabCommitError`): its state is a copy no disk and no
     // other tab will follow, so a commit it sent stranded the leader behind the group.
-    if (getTabLeadership() === 'follower') {
+    if (refusesCommitsHere()) {
       console.warn(
         `[COMMIT] ${groupId.slice(0, 8)}... commit refused on a follower tab - only the leader commits`
       );
@@ -7577,7 +7578,7 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<ExternalJoinOutcome> {
     // AN EXTERNAL JOIN IS A COMMIT, so a follower tab refuses it as {@link runCommitTransaction}
     // does: the tree it would join into is a copy no disk and no other tab will follow.
-    if (getTabLeadership() === 'follower') {
+    if (refusesCommitsHere()) {
       console.warn(
         `[MLS] externalJoin ${groupId.slice(0, 8)}... refused on a follower tab - only the leader commits`
       );
@@ -8362,7 +8363,7 @@ export abstract class BaseMlsService implements IMlsService {
   async refreshOwnLeaf(groupId: string): Promise<void> {
     // THE ROLE BEFORE THE BASE: a follower tab never commits (`runCommitTransaction` refuses it), so
     // fetching the published base first only cost a request per epoch before the same refusal.
-    if (getTabLeadership() === 'follower') {
+    if (refusesCommitsHere()) {
       console.log(
         `[LEAF_REFRESH] ${groupId.slice(0, 8)}... not refreshed on a follower tab - the leader refreshes`
       );

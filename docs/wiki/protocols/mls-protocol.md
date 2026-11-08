@@ -3100,14 +3100,20 @@ leader caller gets (`ConversationOutcome`, `BulkAdditionOutcome`, a removal's en
 copy never commits and never holds the group it asked for; it draws what the leader stored, and a
 follower does not replay a group its copy does not hold.
 
-The request is a durable record (`localStorage`, `pending` -> `running` -> `done`) with only a signal
-on `canari-tab-messages`. **A leader that dies mid-request is proven dead by the browser**: it ran
+The request is a durable record (the account's IndexedDB `CanariDBTabCommit_<userId>`, `pending` ->
+`running` -> `done`, every change one read-check-write transaction) with only a signal on
+`canari-tab-messages`, posted once the record has committed. **Only a state LOADED as the leader runs
+one** (`stateAuthority.ts`): a follower promoted in place leads at once but holds a follower's copy
+until its promotion reload, so it runs and answers nothing - and refuses its own commits - and its
+reloaded successor serves. **A leader that dies mid-request is proven dead by the browser**: it ran
 the request holding the record's Web Lock, so a record found `running` with that lock free is
 answered `leader-gone` and never run again - the dead leader may have reached the server, and its
 kept commit is settled at the next connection by the existing machinery; running it twice is the
-double commit. A `pending` record is run by the next leader, the one a handover elects included.
-The mechanism, the refusals that remain (`not-delegable`: no Web Locks, or a leader of another
-account; `failed`), and the guard: [chat](../frontend/modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08).
+double commit. A `pending` record is run by the next leader, the one a handover elects included,
+and deleted unrun once the tab that asked is gone (its requester lock free). A leader that cannot
+serve ANSWERS: `leader-unavailable` at the PIN keypad or signed out, `not-delegable` for a kind it
+has no executor for or a follower of another account. The mechanism, the refusals, the frozen
+background tab it does not cover, and the guard: [chat](../frontend/modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08).
 
 ### A tab queued behind itself and went read-only for ever - FIXED 2026-09-21
 

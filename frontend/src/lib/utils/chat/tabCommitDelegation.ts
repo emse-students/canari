@@ -3,41 +3,46 @@
  *
  * Only the leader tab runs this device's MLS state (`tabLeader.ts`): a follower holds a copy loaded
  * once, which it cannot make durable and which the leader never learns from, so a commit is refused
- * in a follower at the service (`FollowerTabCommitError`). Until this module, that refusal was what
+ * in a follower at the service (`FollowerTabCommitError`). Until this module that refusal was what
  * the member met - creating a conversation, inviting, removing, entering a community's or a salon's
  * key group all said "do it from the other tab". Now the follower HANDS THE GESTURE to the leader,
  * which runs it on its authoritative state exactly as its own gesture, and answers the outcome.
  *
- * THE SHAPE IS THE OUTBOX'S (`outbox.ts`, "Only the leader tab flushes"): the request is a DURABLE
- * RECORD both tabs read, and only a signal crosses `canari-tab-messages`. A record is
+ * WHO SERVES: a document that leads AND loaded its MLS state as the leader
+ * (`servesFollowerCommits`, `stateAuthority.ts`) runs a request; a leader whose login has not loaded
+ * a state yet may only answer one (a refusal, a death - `answersFollowerCommits`). A follower
+ * promoted in place is the leader from that instant, but its copy is a follower's until its
+ * promotion reload: it runs and answers NOTHING, and its reloaded successor does both.
  *
- *   pending  -- written by the follower, the leader's to run;
- *   running  -- claimed by a leader, which holds the record's RUN LOCK (a Web Lock) for as long as it
- *               executes, and writes `done` before releasing it;
+ * THE SHAPE IS THE OUTBOX'S: the request is a DURABLE RECORD in the account's IndexedDB
+ * (`tabCommitStore.ts`), committed before the signal is posted, and only a signal crosses
+ * `canari-tab-messages`. A record is
+ *
+ *   pending  -- written by the follower, which holds the record's REQUESTER LOCK while it waits;
+ *   running  -- claimed by a leader, which holds the record's RUN LOCK while it executes and writes
+ *               `done` before releasing it;
  *   done     -- carries the outcome; the follower that asked deletes it when it reads it.
  *
- * WHAT A LEADER THAT DIES MID-REQUEST LEAVES IS DECIDED BY THE BROWSER, NOT A CLOCK. A record found
+ * Every move between states is a read-check-write in ONE IndexedDB transaction, taken under the run
+ * lock: a `done` is never overwritten, a `pending` is claimed once.
+ *
+ * A LEADER THAT DIES MID-REQUEST IS PROVEN DEAD BY THE BROWSER, NOT A CLOCK. A record found
  * `running` whose run lock is FREE was claimed by a document that ended without settling it - the
- * browser releases a lock when its document goes, so the free lock IS the proof of death (the
- * `salonUnsent.ts` rule). It is answered `leader-gone` and NEVER RUN AGAIN: the dead leader may have
- * reached the server (a record, a staged or sent commit) and its kept-commit machinery settles that
- * at the next connection; running the gesture a second time is how a removal or an Add would be
- * committed twice. A `pending` record, which no leader started, is run by whichever leader drains it
- * next - the one a handover elects included - so a request made just before a leader closed is not
- * lost. The member who got `leader-gone` is told so and checks before retrying.
+ * browser releases a lock when its document goes (the `salonUnsent.ts` rule). It is answered
+ * `leader-gone` and NEVER RUN AGAIN: the dead leader may have reached the server, and its
+ * kept-commit machinery settles that at the next connection; a second run is the double commit.
  *
- * ONE REQUEST, ONE COMMIT. The record is keyed by the request id: a signal repeated, a drain run
- * twice, two documents draining at once (a stolen lock's old leader still finishing) all meet the
- * same record, and only the holder of its run lock, re-reading it under that lock, may move it from
- * `pending`. A `done` record is answered again, never run again.
+ * A REQUEST IS ALWAYS ANSWERED while its follower lives. The leader's readiness decides how
+ * ({@link setDelegationReadiness}): `ready` (a live session) runs it; `unavailable` (the PIN gate, a
+ * sign-out) answers `leader-unavailable` at once, nothing run - the member unlocks the main tab or
+ * retries; `starting` (a login in progress) leaves it `pending` until the login ends in one of the
+ * other two. A kind no executor here runs is answered `not-delegable`. A request whose follower is
+ * gone (its requester lock free) is deleted and never run - the gesture is nobody's any more, and a
+ * request of a session that signed out is gone with it ({@link abandonDelegatedCommits}).
  *
- * WHO CLEANS. The asking follower holds the record's REQUESTER LOCK while it waits and deletes the
- * record when it reads the outcome. A `done` record whose requester lock is free was asked by a
- * document that is gone (a follower promoted and reloaded, a closed tab): a drain deletes it.
- *
- * Two refusals are unavoidable and typed: `not-delegable` (no Web Locks in this engine, so no death
- * could ever be proven; or the leader tab is signed in to ANOTHER account - the lock is per browser,
- * not per account) and `failed` (an executor threw instead of answering, the visible end of a defect).
+ * The refusals, all typed: `leader-gone`, `leader-unavailable`, `not-delegable` (no Web Locks in
+ * this engine, or a leader signed in to ANOTHER account - the lock is per browser), `failed` (an
+ * executor threw instead of answering, the visible end of a defect).
  */
 import type { MemberRemovalOutcome } from '$lib/utils/chat/groupActions';
 import type { BulkAdditionOutcome, ConversationOutcome } from '$lib/utils/chat/groupCreation';
@@ -46,8 +51,9 @@ import {
   subscribeTabCommitEvents,
   type TabCommitEvent,
 } from '$lib/mls-client/tabMessageSync';
-import { getIsTabLeader } from '$lib/mls-client/tabLeader';
+import { answersFollowerCommits, servesFollowerCommits } from '$lib/mls-client/stateAuthority';
 import { currentUserId } from '$lib/stores/userState.svelte';
+import { IdbTabCommitStore, type TabCommitStore } from '$lib/utils/chat/tabCommitStore';
 
 /** Every gesture a follower tab hands to the leader. */
 export type DelegatedCommitOp =
@@ -87,7 +93,7 @@ export interface DelegatedCommitResults {
 }
 
 /** Why the leader did not answer the gesture itself (see the module comment). */
-export type DelegationRefusal = 'leader-gone' | 'not-delegable' | 'failed';
+export type DelegationRefusal = 'leader-gone' | 'leader-unavailable' | 'not-delegable' | 'failed';
 
 /** The outcome a follower receives for one request. */
 export type DelegatedOutcome<K extends DelegatedCommitKind> =
@@ -102,9 +108,9 @@ export type DelegatedCommitExecutors = {
 };
 
 /** One request as stored. */
-interface DelegationRecord {
+export interface DelegationRecord {
   id: string;
-  /** The account of the follower that asked: a leader of another account cannot run it. */
+  /** The account of the follower that asked: the store is that account's. */
   account: string;
   op: DelegatedCommitOp;
   state: 'pending' | 'running' | 'done';
@@ -120,58 +126,35 @@ export interface DelegationLocks {
   ): Promise<T>;
 }
 
+/** What the leader can do with a request right now - see the module comment. */
+export type DelegationReadiness = 'starting' | 'ready' | 'unavailable';
+
 /** Everything the mechanism touches, injected so two tabs can be simulated in one test. */
 export interface DelegationEnv {
-  store: Pick<Storage, 'getItem' | 'setItem' | 'removeItem' | 'key' | 'length'>;
+  /** The store of `account`'s requests. */
+  storeFor(account: string): TabCommitStore<DelegationRecord>;
   /** Null where the engine has no Web Locks: nothing could prove a leader dead, so nothing is delegated. */
   locks: DelegationLocks | null;
   post(event: TabCommitEvent): void;
   subscribe(handler: (event: TabCommitEvent) => void): () => void;
   /** This tab's signed-in account, `''` when none. */
   account(): string;
-  isLeader(): boolean;
+  /** Whether this document RUNS a follower's commits: it leads, on a state it loaded as leader. */
+  serves(): boolean;
+  /**
+   * Whether this document may ANSWER a request without running it (a refusal, a death): it leads and
+   * its copy is not a follower's. A follower promoted in place answers nothing - its reloaded
+   * successor does.
+   */
+  answers(): boolean;
+  readiness(): DelegationReadiness;
   newId(): string;
-  /** `warn` for every line that ACCUSES (a death, a refusal, a failure); info otherwise. */
-  log(message: string, level?: 'warn'): void;
+  /** `warn` for a line that ACCUSES (a refusal, a death), `error` for a defect; info otherwise. */
+  log(message: string, level?: 'warn' | 'error'): void;
 }
 
-const RECORD_PREFIX = 'canari.tab-commit.';
 const RUN_LOCK_PREFIX = 'canari.tab-commit.run.';
 const REQUESTER_LOCK_PREFIX = 'canari.tab-commit.requester.';
-
-function recordKey(id: string): string {
-  return `${RECORD_PREFIX}${id}`;
-}
-
-function readRecord(env: DelegationEnv, key: string): DelegationRecord | null {
-  const raw = env.store.getItem(key);
-  if (raw === null) return null;
-  try {
-    return JSON.parse(raw) as DelegationRecord;
-  } catch (e) {
-    // A record this module cannot read is one no tab will ever answer: removed, and said.
-    env.log(
-      `[TAB-COMMIT] ${key} is not a readable record - removed: ${String(e).slice(0, 80)}`,
-      'warn'
-    );
-    env.store.removeItem(key);
-    return null;
-  }
-}
-
-function writeRecord(env: DelegationEnv, record: DelegationRecord): void {
-  env.store.setItem(recordKey(record.id), JSON.stringify(record));
-}
-
-/** The keys of every stored request, read once - the store is not walked while it is written. */
-function recordKeys(env: DelegationEnv): string[] {
-  const keys: string[] = [];
-  for (let i = 0; i < env.store.length; i++) {
-    const key = env.store.key(i);
-    if (key?.startsWith(RECORD_PREFIX)) keys.push(key);
-  }
-  return keys;
-}
 
 function describe(op: DelegatedCommitOp): string {
   switch (op.kind) {
@@ -190,12 +173,26 @@ function describe(op: DelegatedCommitOp): string {
   }
 }
 
+/** Whether nobody holds `name` - taken and released at once when free. */
+function lockIsFree(locks: DelegationLocks, name: string): Promise<boolean> {
+  return locks.request(name, { ifAvailable: true }, (lock) => lock !== null);
+}
+
+/** A request this document is waiting on. */
+interface InFlight {
+  account: string;
+  op: DelegatedCommitOp;
+  finish(outcome: DelegatedOutcome<DelegatedCommitKind>, keepRecord?: boolean): void;
+}
+
 /**
  * The FOLLOWER half: hands `op` to the leader and resolves with its outcome. It never rejects - every
  * ending is an answer: done, or a typed refusal.
  */
 export function createDelegationClient(env: DelegationEnv) {
-  return function delegate<K extends DelegatedCommitKind>(
+  const inFlight = new Map<string, InFlight>();
+
+  function delegate<K extends DelegatedCommitKind>(
     op: Extract<DelegatedCommitOp, { kind: K }>
   ): Promise<DelegatedOutcome<K>> {
     const locks = env.locks;
@@ -206,8 +203,13 @@ export function createDelegationClient(env: DelegationEnv) {
       );
       return Promise.resolve({ status: 'refused', reason: 'not-delegable' });
     }
+    const account = env.account();
+    if (!account) {
+      env.log(`[TAB-COMMIT] ${describe(op)} not delegated: this tab is signed out`, 'warn');
+      return Promise.resolve({ status: 'refused', reason: 'leader-unavailable' });
+    }
+    const store = env.storeFor(account);
     const id = env.newId();
-    const key = recordKey(id);
     return new Promise<DelegatedOutcome<K>>((resolve) => {
       // THE REQUESTER LOCK IS TAKEN BEFORE THE RECORD EXISTS, so no drain can ever see the record
       // with the lock free while this document is alive and waiting.
@@ -217,36 +219,74 @@ export function createDelegationClient(env: DelegationEnv) {
           {},
           () =>
             new Promise<void>((release) => {
+              let finished = false;
               let unsubscribe = () => {};
-              const settleIfDone = () => {
-                const record = readRecord(env, key);
-                if (record === null) {
-                  // Nothing but this document deletes a record whose requester is alive: a store
-                  // wiped under it (a sign-out) is the only way here.
-                  unsubscribe();
-                  release();
+              const finish = (
+                outcome: DelegatedOutcome<DelegatedCommitKind>,
+                keepRecord = false
+              ) => {
+                if (finished) return;
+                finished = true;
+                inFlight.delete(id);
+                unsubscribe();
+                const removal = keepRecord ? Promise.resolve() : store.delete(id);
+                void removal
+                  .catch((e: unknown) =>
+                    env.log(
+                      `[TAB-COMMIT] ${id.slice(0, 8)}... its answered record could not be deleted - the leader's next drain removes it: ${String(e)}`,
+                      'warn'
+                    )
+                  )
+                  .finally(release);
+                env.log(
+                  `[TAB-COMMIT] ${id.slice(0, 8)}... ${describe(op)} answered: ${outcome.status === 'done' ? 'done' : outcome.reason}`,
+                  outcome.status === 'done' ? undefined : 'warn'
+                );
+                resolve(outcome as DelegatedOutcome<K>);
+              };
+              const check = () => {
+                void store
+                  .get(id)
+                  .then((record) => {
+                    if (finished) return;
+                    if (record === null) {
+                      // Only this document deletes a record whose requester lives: a wipe did.
+                      env.log(
+                        `[TAB-COMMIT] ${id.slice(0, 8)}... the record vanished while waiting`,
+                        'warn'
+                      );
+                      finish({ status: 'refused', reason: 'failed' }, true);
+                      return;
+                    }
+                    if (record.state === 'done' && record.outcome) finish(record.outcome);
+                  })
+                  .catch((e: unknown) =>
+                    env.log(
+                      `[TAB-COMMIT] ${id.slice(0, 8)}... the record could not be read: ${String(e)}`,
+                      'warn'
+                    )
+                  );
+              };
+              inFlight.set(id, { account, op, finish });
+              unsubscribe = env.subscribe((event) => {
+                if (event.type === 'tab_commit_settled' && event.id === id) check();
+              });
+              // THE SIGNAL LEAVES ONLY ONCE THE RECORD IS COMMITTED: whoever hears it can read it.
+              store
+                .put({ id, account, op, state: 'pending' })
+                .then(() => {
                   env.log(
-                    `[TAB-COMMIT] ${id.slice(0, 8)}... ${describe(op)}: the record vanished while waiting - answered failed`,
+                    `[TAB-COMMIT] ${id.slice(0, 8)}... ${describe(op)} handed to the leader tab`
+                  );
+                  env.post({ type: 'tab_commit_requested', id, account });
+                })
+                .catch((e: unknown) => {
+                  env.log(
+                    `[TAB-COMMIT] ${id.slice(0, 8)}... ${describe(op)} could not be stored - nothing handed over: ${String(e)}`,
                     'warn'
                   );
-                  resolve({ status: 'refused', reason: 'failed' });
-                  return;
-                }
-                if (record.state !== 'done' || !record.outcome) return;
-                unsubscribe();
-                env.store.removeItem(key);
-                release();
-                env.log(
-                  `[TAB-COMMIT] ${id.slice(0, 8)}... ${describe(op)} answered by the leader tab: ${record.outcome.status === 'done' ? 'done' : record.outcome.reason}`
-                );
-                resolve(record.outcome as DelegatedOutcome<K>);
-              };
-              unsubscribe = env.subscribe((event) => {
-                if (event.type === 'tab_commit_settled' && event.id === id) settleIfDone();
-              });
-              writeRecord(env, { id, account: env.account(), op, state: 'pending' });
-              env.log(`[TAB-COMMIT] ${id.slice(0, 8)}... ${describe(op)} handed to the leader tab`);
-              env.post({ type: 'tab_commit_requested', id });
+                  finish({ status: 'refused', reason: 'failed' }, true);
+                });
             })
         )
         .catch((e: unknown) => {
@@ -257,11 +297,26 @@ export function createDelegationClient(env: DelegationEnv) {
           resolve({ status: 'refused', reason: 'failed' });
         });
     });
-  };
+  }
+
+  /**
+   * The session that asked is over (a sign-out): every wait ends `leader-unavailable` and its record
+   * is deleted, so nothing of it is run for the next session - of this account or another.
+   */
+  function abandon(reason: string): number {
+    const pending = [...inFlight.values()];
+    for (const request of pending) {
+      env.log(`[TAB-COMMIT] ${describe(request.op)} abandoned: ${reason}`, 'warn');
+      request.finish({ status: 'refused', reason: 'leader-unavailable' });
+    }
+    return pending.length;
+  }
+
+  return { delegate, abandon };
 }
 
 /**
- * The LEADER half: runs the stored requests with the executors registered, one at a time.
+ * The LEADER half: answers the stored requests with the executors registered, one at a time.
  *
  * `drain` is coalescing: a drain asked while one runs runs once more after it, never alongside it.
  */
@@ -270,9 +325,22 @@ export function createDelegationServer(env: DelegationEnv) {
   let draining: Promise<void> | null = null;
   let again = false;
 
-  function settle(record: DelegationRecord, outcome: DelegatedOutcome<DelegatedCommitKind>): void {
-    writeRecord(env, { ...record, state: 'done', outcome });
-    env.post({ type: 'tab_commit_settled', id: record.id });
+  /**
+   * Writes `outcome` into a record still in state `from`, in one transaction, and signals it. A
+   * record in any other state is left alone: a `done` is never overwritten.
+   */
+  async function settle(
+    store: TabCommitStore<DelegationRecord>,
+    record: DelegationRecord,
+    from: 'pending' | 'running',
+    outcome: DelegatedOutcome<DelegatedCommitKind>
+  ): Promise<void> {
+    const after = await store.update(record.id, (current) =>
+      current?.state === from ? { ...current, state: 'done', outcome } : null
+    );
+    if (after?.state === 'done') {
+      env.post({ type: 'tab_commit_settled', id: record.id, account: record.account });
+    }
   }
 
   async function runExecutor(
@@ -281,87 +349,124 @@ export function createDelegationServer(env: DelegationEnv) {
     const execute = executors[op.kind] as
       | ((o: DelegatedCommitOp) => Promise<DelegatedCommitResults[DelegatedCommitKind]>)
       | undefined;
-    if (!execute) return { status: 'refused', reason: 'failed' };
+    if (!execute) return { status: 'refused', reason: 'not-delegable' };
     try {
       return { status: 'done', value: await execute(op) };
     } catch (e) {
       // AN EXECUTOR ANSWERS BY VALUE: a throw reaching here is a gesture whose own classification
-      // missed a case - said at error, and the follower is told it failed.
-      console.error(`[TAB-COMMIT] ${describe(op)} threw in the leader tab:`, e);
+      // missed a case - said once, at error, and the follower is told it failed.
       env.log(
-        `[TAB-COMMIT] ${describe(op)} threw in the leader tab: ${String(e).slice(0, 160)}`,
-        'warn'
+        `[TAB-COMMIT] ${describe(op)} threw in the leader tab: ${String(e).slice(0, 200)}`,
+        'error'
       );
       return { status: 'refused', reason: 'failed' };
     }
   }
 
-  /** A `done` record: answered again while its requester lives, deleted once it is gone. */
-  async function answerOrForget(locks: DelegationLocks, record: DelegationRecord): Promise<void> {
-    const requesterGone = await locks.request(
-      `${REQUESTER_LOCK_PREFIX}${record.id}`,
-      { ifAvailable: true },
-      (lock) => lock !== null
-    );
-    if (requesterGone) {
-      env.store.removeItem(recordKey(record.id));
+  /** A `done` record: signalled again while its requester lives, deleted once it is gone. */
+  async function answerOrForget(
+    locks: DelegationLocks,
+    store: TabCommitStore<DelegationRecord>,
+    record: DelegationRecord
+  ): Promise<void> {
+    if (await lockIsFree(locks, `${REQUESTER_LOCK_PREFIX}${record.id}`)) {
+      await store.delete(record.id);
       env.log(
         `[TAB-COMMIT] ${record.id.slice(0, 8)}... ${describe(record.op)}: its tab is gone - the answered record is removed`
       );
       return;
     }
-    env.post({ type: 'tab_commit_settled', id: record.id });
+    env.post({ type: 'tab_commit_settled', id: record.id, account: record.account });
   }
 
-  async function serve(locks: DelegationLocks, key: string): Promise<void> {
-    const record = readRecord(env, key);
-    if (!record) return;
-    if (record.state === 'done') {
-      await answerOrForget(locks, record);
-      return;
-    }
-    if (record.account !== env.account()) {
-      env.log(
-        `[TAB-COMMIT] ${record.id.slice(0, 8)}... ${describe(record.op)} asked by another account than this leader's - refused, not run`,
-        'warn'
-      );
-      settle(record, { status: 'refused', reason: 'not-delegable' });
-      return;
-    }
-    const verdict = await locks.request(
-      `${RUN_LOCK_PREFIX}${record.id}`,
-      { ifAvailable: true },
-      async (lock): Promise<'busy' | 'settled' | 'abandoned' | 'no-executor' | 'served'> => {
-        if (lock === null) return 'busy';
-        // RE-READ UNDER THE LOCK: whatever was read before it may have been moved by its holder.
-        const current = readRecord(env, key);
-        if (!current || current.state === 'done') return 'settled';
-        if (current.state === 'running') {
-          // Claimed, unsettled, and its run lock free: the document that ran it is gone.
-          env.log(
-            `[TAB-COMMIT] ${current.id.slice(0, 8)}... ${describe(current.op)}: the leader that ran it is gone mid-request - answered leader-gone, NOT run again`,
-            'warn'
-          );
-          settle(current, { status: 'refused', reason: 'leader-gone' });
-          return 'abandoned';
-        }
-        if (!executors[current.op.kind]) return 'no-executor';
-        writeRecord(env, { ...current, state: 'running' });
+  type Verdict = 'busy' | 'settled' | 'waits' | 'answered' | 'orphan' | 'served';
+
+  /** Decides one unanswered record, UNDER ITS RUN LOCK - everything it reads, it reads there. */
+  async function decide(
+    locks: DelegationLocks,
+    store: TabCommitStore<DelegationRecord>,
+    id: string
+  ): Promise<Verdict> {
+    return locks.request(`${RUN_LOCK_PREFIX}${id}`, { ifAvailable: true }, async (lock) => {
+      if (lock === null) return 'busy';
+      const current = await store.get(id);
+      if (!current || current.state === 'done') return 'settled';
+      const tag = `[TAB-COMMIT] ${id.slice(0, 8)}... ${describe(current.op)}`;
+      if (current.state === 'running') {
+        // Claimed, unsettled, and its run lock free: the document that ran it is gone.
         env.log(
-          `[TAB-COMMIT] ${current.id.slice(0, 8)}... ${describe(current.op)} run for a follower tab`
+          `${tag}: the leader that ran it is gone mid-request - leader-gone, NOT run again`,
+          'warn'
         );
-        settle(current, await runExecutor(current.op));
-        return 'served';
+        await settle(store, current, 'running', { status: 'refused', reason: 'leader-gone' });
+        return 'answered';
       }
-    );
-    if (verdict === 'no-executor') {
-      env.log(
-        `[TAB-COMMIT] ${record.id.slice(0, 8)}... ${describe(record.op)} waits: nothing here runs it yet`
+      if (await lockIsFree(locks, `${REQUESTER_LOCK_PREFIX}${id}`)) {
+        // Nobody waits for it any more (a closed tab, a sign-out): the gesture is nobody's.
+        await store.update(id, (r) => (r?.state === 'pending' ? 'delete' : null));
+        env.log(`${tag}: the tab that asked is gone - removed, NOT run`, 'warn');
+        return 'orphan';
+      }
+      const account = env.account();
+      if (current.account !== account) {
+        // The lock is per browser, the session per account: this leader's state is not the asker's.
+        const reason = account ? 'not-delegable' : 'leader-unavailable';
+        env.log(
+          `${tag}: asked by another account than this leader's (${account ? 'signed in elsewhere' : 'signed out'}) - ${reason}, not run`,
+          'warn'
+        );
+        await settle(store, current, 'pending', { status: 'refused', reason });
+        return 'answered';
+      }
+      const readiness = env.readiness();
+      if (readiness === 'starting') {
+        env.log(`${tag} waits: this leader's session is still starting`);
+        return 'waits';
+      }
+      if (readiness === 'unavailable') {
+        env.log(
+          `${tag}: this leader has no session (locked or signed out) - leader-unavailable`,
+          'warn'
+        );
+        await settle(store, current, 'pending', {
+          status: 'refused',
+          reason: 'leader-unavailable',
+        });
+        return 'answered';
+      }
+      if (!env.serves()) {
+        // Ready, but on a copy this document did not load as the leader: never run here.
+        env.log(`${tag} waits: this tab's state was not loaded as the leader's`, 'warn');
+        return 'waits';
+      }
+      if (!executors[current.op.kind]) {
+        env.log(`${tag}: nothing in this leader runs it - not-delegable`, 'warn');
+        await settle(store, current, 'pending', { status: 'refused', reason: 'not-delegable' });
+        return 'answered';
+      }
+      const claimed = await store.update(id, (r) =>
+        r?.state === 'pending' ? { ...r, state: 'running' } : null
       );
+      if (claimed?.state !== 'running') return 'settled';
+      env.log(`${tag} run for a follower tab`);
+      await settle(store, claimed, 'running', await runExecutor(claimed.op));
+      return 'served';
+    });
+  }
+
+  async function serve(
+    locks: DelegationLocks,
+    store: TabCommitStore<DelegationRecord>,
+    record: DelegationRecord
+  ): Promise<void> {
+    if (record.state === 'done') {
+      await answerOrForget(locks, store, record);
+      return;
     }
+    const verdict = await decide(locks, store, record.id);
     if (verdict === 'busy') {
-      // Another document holds the run lock (a demoted leader still finishing it): drained again
-      // the moment that document settles it or ends - the release is the signal, no clock.
+      // Another document holds the run lock (a demoted leader still finishing it): drained again the
+      // moment that document settles it or ends - the release is the signal, no clock.
       env.log(
         `[TAB-COMMIT] ${record.id.slice(0, 8)}... ${describe(record.op)} is being run elsewhere - drained again on its release`
       );
@@ -374,15 +479,26 @@ export function createDelegationServer(env: DelegationEnv) {
     }
   }
 
+  /** The accounts whose requests this document has heard of, its own included. */
+  const accounts = new Set<string>();
+
   async function pass(): Promise<void> {
     const locks = env.locks;
-    if (!locks || !env.isLeader() || !env.account()) return;
-    for (const key of recordKeys(env)) {
-      // Isolated per record: one that fails to be served must not strand the ones after it.
-      try {
-        await serve(locks, key);
-      } catch (e) {
-        env.log(`[TAB-COMMIT] ${key} could not be served: ${String(e).slice(0, 160)}`, 'warn');
+    if (!locks || !env.answers()) return;
+    const own = env.account();
+    if (own) accounts.add(own);
+    for (const account of accounts) {
+      const store = env.storeFor(account);
+      for (const record of await store.list()) {
+        // Isolated per record: one that fails to be served must not strand the ones after it.
+        try {
+          await serve(locks, store, record);
+        } catch (e) {
+          env.log(
+            `[TAB-COMMIT] ${record.id.slice(0, 8)}... could not be served: ${String(e)}`,
+            'warn'
+          );
+        }
       }
     }
   }
@@ -421,8 +537,10 @@ export function createDelegationServer(env: DelegationEnv) {
   /** Listens for the followers' signals; returns the unsubscription. */
   function listen(): () => void {
     return env.subscribe((event) => {
-      if (event.type !== 'tab_commit_requested' || !env.isLeader()) return;
-      void drain(`requested ${event.id.slice(0, 8)}...`);
+      if (event.type !== 'tab_commit_requested') return;
+      // Remembered even when this document does not answer yet: its drain at promotion reads it.
+      accounts.add(event.account);
+      if (env.answers()) void drain(`requested ${event.id.slice(0, 8)}...`);
     });
   }
 
@@ -432,15 +550,23 @@ export function createDelegationServer(env: DelegationEnv) {
 // ── This document's wiring ───────────────────────────────────────────────────────────────────────
 
 /**
- * Handlers in THIS document. A BroadcastChannel never delivers to the context that posted, so a
- * document that asked and was then promoted without a reload would never hear its own leader settle
- * its request: every signal is also handed to this document's own listeners.
+ * Handlers in THIS document. A BroadcastChannel never delivers to the context that posted, so every
+ * signal is also handed to this document's own listeners.
  */
 const localHandlers = new Set<(event: TabCommitEvent) => void>();
+const stores = new Map<string, IdbTabCommitStore<DelegationRecord>>();
+let readiness: DelegationReadiness = 'starting';
 
 function productionEnv(): DelegationEnv {
   return {
-    store: localStorage,
+    storeFor: (account) => {
+      let store = stores.get(account);
+      if (!store) {
+        store = new IdbTabCommitStore<DelegationRecord>(account);
+        stores.set(account, store);
+      }
+      return store;
+    },
     locks: typeof navigator !== 'undefined' && navigator.locks ? navigator.locks : null,
     post: (event) => {
       postTabCommitEvent(event);
@@ -455,15 +581,28 @@ function productionEnv(): DelegationEnv {
       };
     },
     account: () => currentUserId() ?? '',
-    isLeader: getIsTabLeader,
+    serves: servesFollowerCommits,
+    answers: answersFollowerCommits,
+    readiness: () => readiness,
     newId: () => crypto.randomUUID(),
-    log: (message, level) => (level === 'warn' ? console.warn(message) : console.info(message)),
+    log: (message, level) =>
+      level === 'error'
+        ? console.error(message)
+        : level === 'warn'
+          ? console.warn(message)
+          : console.info(message),
   };
 }
 
 let client: ReturnType<typeof createDelegationClient> | null = null;
 let server: ReturnType<typeof createDelegationServer> | null = null;
 let stopListening: (() => void) | null = null;
+
+function ensureServer(): ReturnType<typeof createDelegationServer> {
+  server ??= createDelegationServer(productionEnv());
+  stopListening ??= server.listen();
+  return server;
+}
 
 /**
  * From a FOLLOWER tab: hands `op` to the leader tab and resolves with its outcome - see the module
@@ -473,25 +612,29 @@ export function delegateCommitToLeader<K extends DelegatedCommitKind>(
   op: Extract<DelegatedCommitOp, { kind: K }>
 ): Promise<DelegatedOutcome<K>> {
   client ??= createDelegationClient(productionEnv());
-  return client(op);
+  return client.delegate(op);
 }
 
 /**
- * Registers the executors a module owns, so this tab runs a follower's request of that kind once it
- * leads. Returns their removal. The first registration starts listening for the followers' signals.
+ * Registers the executors a module owns, so this tab runs a follower's request of that kind when it
+ * serves. Returns their removal. The first registration starts listening for the followers' signals.
  */
 export function serveDelegatedCommits(own: Partial<DelegatedCommitExecutors>): () => void {
-  server ??= createDelegationServer(productionEnv());
-  stopListening ??= server.listen();
-  return server.register(own);
+  return ensureServer().register(own);
 }
 
 /**
- * Serves every stored request now - called when this tab's session is up as the leader, which is
- * also how a request left `pending` by a leader that closed is run by the one that follows it.
+ * What this tab's session can do with a follower's request (`ChatBackgroundService` sets it from the
+ * session): leaving `starting` drains, so every request waiting on the login is answered.
  */
-export function drainDelegatedCommits(reason: string): Promise<void> {
-  server ??= createDelegationServer(productionEnv());
-  stopListening ??= server.listen();
-  return server.drain(reason);
+export function setDelegationReadiness(next: DelegationReadiness): void {
+  if (readiness === next) return;
+  readiness = next;
+  if (next !== 'starting') void ensureServer().drain(`this tab is ${next}`);
+}
+
+/** The session signed out: this tab's own requests end, and the leader answers no request until the next one. */
+export function abandonDelegatedCommits(reason: string): number {
+  setDelegationReadiness('unavailable');
+  return client?.abandon(reason) ?? 0;
 }

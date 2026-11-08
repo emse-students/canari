@@ -178,6 +178,7 @@
   "chat_modal_error_creation_failed": "Creation failed and nothing was kept. Try again in a moment.",
   "chat_error_follower_tab": "Canari is open in another tab: do this from that tab, or close it and reload this one.",
   "chat_error_main_tab_gone": "The main Canari tab closed during the operation: check its result before trying again.",
+  "chat_error_main_tab_unavailable": "The main Canari tab is not ready (locked or signed out): unlock it, or do this from that tab.",
   "chat_error_main_tab_failed": "The main Canari tab could not complete the operation.",
   "chat_modal_creation_in_progress_label": "Creating…",
   "chat_modal_community_name_label": "Community name",

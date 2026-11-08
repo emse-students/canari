@@ -22,21 +22,26 @@ import {
  *
  * @param op - the entry, as the leader would run it.
  * @param enterHere - the same entry, run in this tab when it leads.
+ * @returns whether the entry was made; `false` once the member has been told it was not, so a caller
+ * with a second entry stops there rather than saying the same refusal twice.
  */
 export async function enterKeyGroupOnGesture(
   op: Extract<DelegatedCommitOp, { kind: 'enter-community-key-group' | 'enter-salon-group' }>,
   enterHere: () => Promise<void>
-): Promise<void> {
+): Promise<boolean> {
   if (getTabLeadership() === 'follower') {
     const answer = await delegateCommitToLeader(op);
-    if (answer.status === 'refused') reportDelegationRefusal(answer.reason);
-    return;
+    if (answer.status === 'done') return true;
+    reportDelegationRefusal(answer.reason);
+    return false;
   }
   try {
     await enterHere();
+    return true;
   } catch (e) {
     if (!(e instanceof FollowerTabCommitError)) throw e;
     reportFollowerTabRefusal(e);
+    return false;
   }
 }
 

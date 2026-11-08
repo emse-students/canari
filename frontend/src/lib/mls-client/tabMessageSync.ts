@@ -361,13 +361,14 @@ export function publishOutboxEntryCancelled(messageId: string): void {
  * A commit a follower tab hands to the leader (`tabCommitDelegation.ts`), on the same channel.
  *
  * Like the outbox nudge, ONLY THE SIGNAL CROSSES THE CHANNEL: the request and its outcome live in a
- * durable record both tabs read (`localStorage`), so a signal lost to a tab that was not listening
- * yet costs the next drain and nothing else. `tab_commit_requested` goes follower -> leader,
- * `tab_commit_settled` leader -> follower; both carry the request id and nothing else.
+ * durable record (the account's IndexedDB), committed BEFORE the signal is posted, so a signal lost
+ * to a tab that was not listening yet costs the next drain and nothing else.
+ * `tab_commit_requested` goes follower -> leader, `tab_commit_settled` leader -> follower; both carry
+ * the request id and the account whose store holds the record - nothing of the request itself.
  */
 export type TabCommitEvent =
-  | { type: 'tab_commit_requested'; id: string }
-  | { type: 'tab_commit_settled'; id: string };
+  | { type: 'tab_commit_requested'; id: string; account: string }
+  | { type: 'tab_commit_settled'; id: string; account: string };
 
 const COMMIT_EVENT_TYPES = new Set<string>(['tab_commit_requested', 'tab_commit_settled']);
 

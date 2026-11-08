@@ -32,12 +32,14 @@ const SENTENCES: Record<ConversationRefusal, () => string> = {
   'peer-has-no-device': () => m.chat_modal_error_peer_has_no_device(),
   'follower-tab': () => m.chat_error_follower_tab(),
   'leader-gone': () => m.chat_error_main_tab_gone(),
+  'leader-unavailable': () => m.chat_error_main_tab_unavailable(),
   'creation-failed': () => m.chat_modal_error_creation_failed(),
 };
 
 /** What a gesture handed to the main tab came to when the main tab did not answer it itself. */
 const DELEGATION_SENTENCES: Record<DelegationRefusal, () => string> = {
   'leader-gone': () => m.chat_error_main_tab_gone(),
+  'leader-unavailable': () => m.chat_error_main_tab_unavailable(),
   'not-delegable': () => m.chat_error_follower_tab(),
   failed: () => m.chat_error_main_tab_failed(),
 };
@@ -45,7 +47,8 @@ const DELEGATION_SENTENCES: Record<DelegationRefusal, () => string> = {
 /**
  * Tells the member that a gesture this tab handed to the main tab (`tabCommitDelegation.ts`) was not
  * answered by it: it closed while running it (`leader-gone`, checked before retrying - it is never
- * run twice), it cannot be asked (`not-delegable`), or it failed (`failed`). Read from the reason,
+ * run twice), it is locked or signed out (`leader-unavailable`), it cannot be asked
+ * (`not-delegable`), or it failed (`failed`). Read from the reason,
  * never a log.
  */
 export function reportDelegationRefusal(reason: DelegationRefusal): void {

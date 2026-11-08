@@ -112,7 +112,6 @@ import {
   type DelegatedRemovalResult,
 } from '$lib/utils/chat/tabCommitDelegation';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
-import { whenMlsReady } from '$lib/composables/session/mlsReadiness';
 import { MemberRemovalNotCommittedError } from '$lib/utils/chat/memberRemovalError';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import { comparePageKeys, oldestPageKey } from '$lib/db/messagePayload';
@@ -2330,7 +2329,8 @@ export function useConversations() {
    * value. Nothing here selects or opens anything - the member is looking at the OTHER tab.
    *
    * `ctxOf` is read at each execution, never at registration: the session (store, device key) is
-   * not up when the executors are registered.
+   * not up when the executors are registered. Nothing here WAITS for it: the server runs a request
+   * only once this tab's session is live (`setDelegationReadiness`), and answers it otherwise.
    */
   function delegatedCommitExecutors(
     ctxOf: () => ConversationContext
@@ -2356,17 +2356,14 @@ export function useConversations() {
     });
     return {
       'create-group': async ({ name }) => {
-        await whenMlsReady();
         const ctx = ctxOf();
         return savedFirst(await createGroup(name, depsOf(ctx)), ctx);
       },
       'start-direct': async ({ contact }) => {
-        await whenMlsReady();
         const ctx = ctxOf();
         return savedFirst(await startConversation(contact, { ...depsOf(ctx), silent: true }), ctx);
       },
       invite: async ({ groupId, memberIds }) => {
-        await whenMlsReady();
         const ctx = ctxOf();
         const key = conversationKeyOfGroup(groupId);
         const convo = key ? conversations.get(key) : undefined;
@@ -2382,7 +2379,6 @@ export function useConversations() {
         });
       },
       remove: async ({ groupId, memberId }): Promise<DelegatedRemovalResult> => {
-        await whenMlsReady();
         const ctx = ctxOf();
         const key = conversationKeyOfGroup(groupId);
         if (!key) {

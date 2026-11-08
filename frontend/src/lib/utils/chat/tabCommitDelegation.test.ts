@@ -5,30 +5,77 @@ import {
   type DelegatedCommitExecutors,
   type DelegationEnv,
   type DelegationLocks,
+  type DelegationReadiness,
+  type DelegationRecord,
 } from './tabCommitDelegation';
+import type { TabCommitStore } from './tabCommitStore';
 
 /**
  * A FOLLOWER TAB'S COMMIT, DONE BY THE LEADER - two tabs simulated in one realm.
  *
- * What is modelled rather than stubbed, because the guarantees live there: ONE shared store (the
- * origin's `localStorage`), ONE lock manager whose locks belong to a DOCUMENT and are released when
- * that document dies (the browser's proof of death), and ONE channel that never delivers to the
- * document that posted (a `BroadcastChannel`). A stub answering "free" or "held" would pass over the
- * very races this module exists for.
+ * What is modelled rather than stubbed, because the guarantees live there: ONE set of databases (the
+ * origin's IndexedDB, each write visible to another document only once committed, turns later), ONE
+ * lock manager whose locks belong to a DOCUMENT and are released when that document dies (the
+ * browser's proof of death), and ONE channel that never delivers to the document that posted and
+ * delivers to the others a turn later (a `BroadcastChannel`). A stub answering "free" or "held" would
+ * pass over the very races this module exists for.
  */
 
-/** A `Storage` over a Map, shared by every simulated tab. */
-function sharedStore(): DelegationEnv['store'] & { keys(): string[] } {
-  const map = new Map<string, string>();
+/**
+ * The origin's IndexedDB, as this module sees it: one database per ACCOUNT, every transaction
+ * serialised (IndexedDB orders `readwrite` transactions over the same store), each one taking a
+ * different number of turns to commit - and its write VISIBLE to other documents only once it has.
+ * Records are copied in and out, as a structured clone would.
+ */
+function sharedDatabases() {
+  const databases = new Map<string, Map<string, DelegationRecord>>();
+  let turn = 0;
+  /** A commit takes 1 to 4 turns, deterministically varied, so no two paths line up by accident. */
+  const commitDelay = async () => {
+    turn += 1;
+    for (let i = 0; i < 1 + (turn % 4); i++) await new Promise((r) => setTimeout(r, 0));
+  };
+  const clone = <T>(v: T): T => (v === undefined ? v : (JSON.parse(JSON.stringify(v)) as T));
+
+  function storeFor(account: string): TabCommitStore<DelegationRecord> {
+    let db = databases.get(account);
+    if (!db) {
+      db = new Map();
+      databases.set(account, db);
+    }
+    const rows = db;
+    let chain: Promise<unknown> = Promise.resolve();
+    /** One transaction: runs after every earlier one of this database, commits after a delay. */
+    const tx = <T>(body: () => T): Promise<T> => {
+      const run = chain.then(async () => {
+        const result = body();
+        await commitDelay();
+        return result;
+      });
+      chain = run.catch(() => undefined);
+      return run;
+    };
+    return {
+      get: (id) => tx(() => clone(rows.get(id)) ?? null),
+      list: () => tx(() => [...rows.values()].map(clone)),
+      put: (record) => tx(() => void rows.set(record.id, clone(record))),
+      delete: (id) => tx(() => void rows.delete(id)),
+      update: (id, change) =>
+        tx(() => {
+          const next = change(clone(rows.get(id)) ?? null);
+          if (next === 'delete') {
+            rows.delete(id);
+            return null;
+          }
+          if (next !== null) rows.set(id, clone(next));
+          return clone(rows.get(id)) ?? null;
+        }),
+    };
+  }
   return {
-    getItem: (k) => map.get(k) ?? null,
-    setItem: (k, v) => void map.set(k, v),
-    removeItem: (k) => void map.delete(k),
-    key: (i) => [...map.keys()][i] ?? null,
-    get length() {
-      return map.size;
-    },
-    keys: () => [...map.keys()],
+    storeFor,
+    /** Every record of every account, for the assertions. */
+    ids: () => [...databases.values()].flatMap((rows) => [...rows.keys()]),
   };
 }
 
@@ -95,7 +142,7 @@ function channelBus() {
     post(from: string, event: TabCommitEvent) {
       for (const [doc, handlers] of subscribers) {
         if (doc === from) continue;
-        for (const h of handlers) queueMicrotask(() => h(event));
+        for (const h of handlers) setTimeout(() => h(event), 0);
       }
     },
     subscribe(doc: string, handler: (e: TabCommitEvent) => void) {
@@ -110,31 +157,42 @@ function channelBus() {
   };
 }
 
+/** How a simulated document stands: its election, the role its MLS state was LOADED with, its session. */
+interface Role {
+  leader: boolean;
+  loaded?: 'leader' | 'follower' | 'unknown';
+  account?: string;
+  readiness?: DelegationReadiness;
+}
+
+function makeWorld() {
+  return { databases: sharedDatabases(), locks: lockManager(), bus: channelBus() };
+}
+
 /** One simulated tab. */
-function tab(
-  doc: string,
-  world: {
-    store: ReturnType<typeof sharedStore>;
-    locks: ReturnType<typeof lockManager>;
-    bus: ReturnType<typeof channelBus>;
-  },
-  role: { leader: boolean; account?: string }
-) {
+function tab(doc: string, world: ReturnType<typeof makeWorld>, role: Role) {
   let n = 0;
+  const lines: { message: string; level?: 'warn' | 'error' }[] = [];
+  const loaded = () => role.loaded ?? (role.leader ? 'leader' : 'follower');
   const env: DelegationEnv = {
-    store: world.store,
+    storeFor: world.databases.storeFor,
     locks: world.locks.forDocument(doc),
     post: (e) => world.bus.post(doc, e),
     subscribe: (h) => world.bus.subscribe(doc, h),
     account: () => role.account ?? 'alice',
-    isLeader: () => role.leader,
+    serves: () => role.leader && loaded() === 'leader',
+    answers: () => role.leader && loaded() !== 'follower',
+    readiness: () => role.readiness ?? 'ready',
     newId: () => `${doc}-req-${++n}`,
-    log: () => {},
+    log: (message, level) => void lines.push({ message, level }),
   };
+  const client = createDelegationClient(env);
   return {
     env,
     role,
-    client: createDelegationClient(env),
+    lines,
+    delegate: client.delegate,
+    abandon: client.abandon,
     server: createDelegationServer(env),
     kill() {
       world.bus.deafen(doc);
@@ -143,16 +201,12 @@ function tab(
   };
 }
 
-function world() {
-  return { store: sharedStore(), locks: lockManager(), bus: channelBus() };
-}
-
-/** Lets every queued microtask and promise continuation run. */
+/** Lets every pending turn - commits, signals, lock hand-offs - run. */
 async function settle(): Promise<void> {
-  for (let i = 0; i < 30; i++) await Promise.resolve();
+  for (let i = 0; i < 60; i++) await new Promise((r) => setTimeout(r, 0));
 }
 
-/** Executors that record every run, answering at once unless told to hang. */
+/** Executors that record every run, answering at once. */
 function recordingExecutors() {
   const runs: string[] = [];
   const executors: DelegatedCommitExecutors = {
@@ -184,6 +238,15 @@ function recordingExecutors() {
   return { runs, executors };
 }
 
+/** A leader whose session is up, listening, with every executor registered. */
+function servingLeader(doc: string, w: ReturnType<typeof makeWorld>, role: Partial<Role> = {}) {
+  const leader = tab(doc, w, { leader: true, ...role });
+  const recorded = recordingExecutors();
+  leader.server.listen();
+  leader.server.register(recorded.executors);
+  return { leader, runs: recorded.runs };
+}
+
 describe('a follower tab hands its commits to the leader tab', () => {
   it.each([
     [
@@ -209,97 +272,157 @@ describe('a follower tab hands its commits to the leader tab', () => {
       'entered',
     ],
   ])('%o is run ONCE by the leader and its answer reaches the follower', async (op, run, value) => {
-    const w = world();
-    const leader = tab('L', w, { leader: true });
+    const w = makeWorld();
+    const { runs } = servingLeader('L', w);
     const follower = tab('F', w, { leader: false });
-    const { runs, executors } = recordingExecutors();
-    leader.server.listen();
-    leader.server.register(executors);
 
-    const outcome = await follower.client(op as never);
+    const outcome = await follower.delegate(op as never);
+    await settle();
 
     expect(outcome).toEqual({ status: 'done', value });
     expect(runs).toEqual([run]);
     // The follower deleted the answered record: nothing is left behind.
-    expect(w.store.keys()).toEqual([]);
+    expect(w.databases.ids()).toEqual([]);
   });
 
   it('a follower never runs anything itself, whatever it registered', async () => {
-    const w = world();
-    const leader = tab('L', w, { leader: true });
+    const w = makeWorld();
+    const { runs } = servingLeader('L', w);
     const follower = tab('F', w, { leader: false });
-    const onLeader = recordingExecutors();
     const onFollower = recordingExecutors();
-    leader.server.listen();
     follower.server.listen();
-    leader.server.register(onLeader.executors);
     follower.server.register(onFollower.executors);
 
-    await follower.client({ kind: 'invite', groupId: 'g1', memberIds: ['bob'] });
+    await follower.delegate({ kind: 'invite', groupId: 'g1', memberIds: ['bob'] });
 
-    expect(onLeader.runs).toHaveLength(1);
+    expect(runs).toHaveLength(1);
     expect(onFollower.runs).toEqual([]);
   });
 });
 
 describe('one request, one commit', () => {
   it('a repeated signal and repeated drains run the request once', async () => {
-    const w = world();
-    const leader = tab('L', w, { leader: true });
+    const w = makeWorld();
+    const { leader, runs } = servingLeader('L', w);
     const follower = tab('F', w, { leader: false });
-    const { runs, executors } = recordingExecutors();
-    leader.server.listen();
-    leader.server.register(executors);
 
-    const answer = follower.client({ kind: 'remove', groupId: 'g1', memberId: 'bob' });
+    const answer = follower.delegate({ kind: 'remove', groupId: 'g1', memberId: 'bob' });
+    await settle();
     // The follower's signal, repeated - as a retry would - and the leader draining on its own.
-    follower.env.post({ type: 'tab_commit_requested', id: 'F-req-1' });
-    follower.env.post({ type: 'tab_commit_requested', id: 'F-req-1' });
+    follower.env.post({ type: 'tab_commit_requested', id: 'F-req-1', account: 'alice' });
+    follower.env.post({ type: 'tab_commit_requested', id: 'F-req-1', account: 'alice' });
     await Promise.all([leader.server.drain('again'), leader.server.drain('and again')]);
 
     expect(await answer).toEqual({ status: 'done', value: 'committed' });
     await leader.server.drain('after the answer');
+    await settle();
     expect(runs).toEqual(['remove:g1:bob']);
   });
 
   it('two documents that both believe they lead run the request once between them', async () => {
     // A stolen lock's old leader can still be finishing JavaScript when the new one drains.
-    const w = world();
-    const a = tab('A', w, { leader: true });
-    const b = tab('B', w, { leader: true });
+    const w = makeWorld();
+    const a = servingLeader('A', w);
+    const b = servingLeader('B', w);
     const follower = tab('F', w, { leader: false });
-    const onA = recordingExecutors();
-    const onB = recordingExecutors();
-    a.server.register(onA.executors);
-    b.server.register(onB.executors);
 
-    const answer = follower.client({ kind: 'create-group', name: 'club' });
-    await settle();
-    await Promise.all([a.server.drain('a'), b.server.drain('b')]);
+    const answer = follower.delegate({ kind: 'create-group', name: 'club' });
+    await Promise.all([a.leader.server.drain('a'), b.leader.server.drain('b')]);
 
     expect((await answer).status).toBe('done');
-    expect(onA.runs.length + onB.runs.length).toBe(1);
+    await settle();
+    expect(a.runs.length + b.runs.length).toBe(1);
   });
 
   it('a request made before any leader could run it is run by the leader that comes', async () => {
-    const w = world();
+    const w = makeWorld();
     const follower = tab('F', w, { leader: false });
-    const answer = follower.client({ kind: 'create-group', name: 'club' });
+    const answer = follower.delegate({ kind: 'create-group', name: 'club' });
     await settle();
 
     // The leader's session comes up: its executors are registered, and that is what drains.
-    const leader = tab('L', w, { leader: true });
-    const { runs, executors } = recordingExecutors();
-    leader.server.register(executors);
+    const { runs } = servingLeader('L', w);
 
     expect(await answer).toEqual({ status: 'done', value: { ok: true, key: 'g-club' } });
     expect(runs).toEqual(['create-group:club']);
   });
 });
 
+describe('only a state LOADED as the leader runs a request', () => {
+  it('a follower promoted in place runs and answers nothing; its reloaded successor runs it', async () => {
+    const w = makeWorld();
+    // P was a follower; its leader closed, so it leads now - on the copy it loaded as a follower.
+    const promoted = servingLeader('P', w, { loaded: 'follower' });
+    const follower = tab('F', w, { leader: false });
+
+    const answer = follower.delegate({ kind: 'enter-community-key-group', workspaceId: 'w1' });
+    await settle();
+    await promoted.leader.server.drain('asked again');
+    await settle();
+    expect(promoted.runs).toEqual([]);
+    expect(w.databases.ids()).toEqual(['F-req-1']);
+
+    // Its promotion reload: the document goes, its successor loads the state as the leader.
+    promoted.leader.kill();
+    const reloaded = servingLeader('P2', w);
+
+    expect(await answer).toEqual({ status: 'done', value: 'entered' });
+    expect(reloaded.runs).toEqual(['key-group:w1']);
+    expect(promoted.runs).toEqual([]);
+  });
+
+  it('a leader whose session is still starting keeps the request, and runs it once ready', async () => {
+    const w = makeWorld();
+    const { leader, runs } = servingLeader('L', w, { readiness: 'starting' });
+    const follower = tab('F', w, { leader: false });
+
+    const answer = follower.delegate({ kind: 'create-group', name: 'club' });
+    await settle();
+    expect(runs).toEqual([]);
+
+    leader.role.readiness = 'ready';
+    await leader.server.drain('the session is up');
+
+    expect(await answer).toEqual({ status: 'done', value: { ok: true, key: 'g-club' } });
+    expect(runs).toEqual(['create-group:club']);
+  });
+});
+
+describe('a follower is answered by a leader that lives', () => {
+  it.each([
+    ['at the PIN gate, its state not loaded yet', 'unknown'],
+    ['locked again after its session', 'leader'],
+  ] as const)('a leader %s answers leader-unavailable and runs nothing', async (_, loaded) => {
+    const w = makeWorld();
+    const { runs } = servingLeader('L', w, { loaded, readiness: 'unavailable' });
+    const follower = tab('F', w, { leader: false });
+
+    expect(await follower.delegate({ kind: 'create-group', name: 'club' })).toEqual({
+      status: 'refused',
+      reason: 'leader-unavailable',
+    });
+    await settle();
+    expect(runs).toEqual([]);
+    expect(w.databases.ids()).toEqual([]);
+  });
+
+  it('a request no executor in the leader runs is answered not-delegable', async () => {
+    const w = makeWorld();
+    const leader = tab('L', w, { leader: true });
+    leader.server.listen();
+    leader.server.register({ invite: recordingExecutors().executors.invite });
+    const follower = tab('F', w, { leader: false });
+
+    expect(await follower.delegate({ kind: 'remove', groupId: 'g1', memberId: 'bob' })).toEqual({
+      status: 'refused',
+      reason: 'not-delegable',
+    });
+  });
+});
+
 describe('the leader goes away mid-request', () => {
   it('a request whose leader died while running it is answered leader-gone and NEVER run again', async () => {
-    const w = world();
+    const w = makeWorld();
     const oldLeader = tab('L1', w, { leader: true });
     const follower = tab('F', w, { leader: false });
     let started = 0;
@@ -312,22 +435,20 @@ describe('the leader goes away mid-request', () => {
       },
     });
 
-    const answer = follower.client({ kind: 'remove', groupId: 'g1', memberId: 'bob' });
+    const answer = follower.delegate({ kind: 'remove', groupId: 'g1', memberId: 'bob' });
     await settle();
     expect(started).toBe(1);
     oldLeader.kill();
 
     // The handover elects another tab; its session comes up and it drains.
-    const newLeader = tab('L2', w, { leader: true });
-    const { runs, executors } = recordingExecutors();
-    newLeader.server.register(executors);
+    const { runs } = servingLeader('L2', w);
 
     expect(await answer).toEqual({ status: 'refused', reason: 'leader-gone' });
     expect(runs).toEqual([]);
   });
 
   it('a request still running in a live document is waited for, never answered leader-gone', async () => {
-    const w = world();
+    const w = makeWorld();
     const slow = tab('L1', w, { leader: true });
     const follower = tab('F', w, { leader: false });
     let finish: (v: 'committed') => void = () => {};
@@ -336,22 +457,21 @@ describe('the leader goes away mid-request', () => {
       remove: () => new Promise<'committed'>((resolve) => (finish = resolve)),
     });
 
-    const answer = follower.client({ kind: 'remove', groupId: 'g1', memberId: 'bob' });
+    const answer = follower.delegate({ kind: 'remove', groupId: 'g1', memberId: 'bob' });
     await settle();
 
     // A second document that believes it leads drains meanwhile: the run lock is held.
-    const other = tab('L2', w, { leader: true });
-    const { runs, executors } = recordingExecutors();
-    other.server.register(executors);
+    const other = servingLeader('L2', w);
     await settle();
 
     finish('committed');
     expect(await answer).toEqual({ status: 'done', value: 'committed' });
-    expect(runs).toEqual([]);
+    await settle();
+    expect(other.runs).toEqual([]);
   });
 
   it('a follower that asked and then went away leaves no record behind', async () => {
-    const w = world();
+    const w = makeWorld();
     const leader = tab('L', w, { leader: true });
     const follower = tab('F', w, { leader: false });
     let finish: (v: 'entered') => void = () => {};
@@ -360,53 +480,88 @@ describe('the leader goes away mid-request', () => {
       'enter-community-key-group': () => new Promise<'entered'>((resolve) => (finish = resolve)),
     });
 
-    void follower.client({ kind: 'enter-community-key-group', workspaceId: 'w1' });
+    void follower.delegate({ kind: 'enter-community-key-group', workspaceId: 'w1' });
     await settle();
     follower.kill();
     finish('entered');
     await settle();
-    expect(w.store.keys()).toHaveLength(1);
+    expect(w.databases.ids()).toHaveLength(1);
 
     // The next drain finds the answered record with its requester gone, and removes it.
     await leader.server.drain('later');
-    expect(w.store.keys()).toEqual([]);
+    expect(w.databases.ids()).toEqual([]);
+  });
+});
+
+describe('a request nobody waits for is never run', () => {
+  it('a PENDING request whose tab closed is deleted by the leader that comes, and not run', async () => {
+    const w = makeWorld();
+    const follower = tab('F', w, { leader: false });
+    void follower.delegate({ kind: 'create-group', name: 'club' });
+    await settle();
+    follower.kill();
+
+    const { leader, runs } = servingLeader('L', w);
+    await settle();
+
+    expect(runs).toEqual([]);
+    expect(w.databases.ids()).toEqual([]);
+    expect(leader.lines.some((l) => l.level === 'warn' && l.message.includes('NOT run'))).toBe(
+      true
+    );
+  });
+
+  it("a signed-out session's request is answered, deleted, and never run for the next one", async () => {
+    const w = makeWorld();
+    const follower = tab('F', w, { leader: false });
+    const answer = follower.delegate({ kind: 'create-group', name: 'club' });
+    await settle();
+
+    expect(follower.abandon('signed out')).toBe(1);
+    expect(await answer).toEqual({ status: 'refused', reason: 'leader-unavailable' });
+    await settle();
+
+    // The same account signs in again, and a leader comes: nothing of the old session runs.
+    const { runs } = servingLeader('L', w);
+    await settle();
+    expect(runs).toEqual([]);
+    expect(w.databases.ids()).toEqual([]);
   });
 });
 
 describe('the refusals that cannot be avoided', () => {
-  it('a leader of ANOTHER account refuses the request and runs nothing', async () => {
-    const w = world();
-    const leader = tab('L', w, { leader: true, account: 'carol' });
+  it.each([
+    ['signed in to another account', 'carol', 'not-delegable'],
+    ['signed out', '', 'leader-unavailable'],
+  ] as const)('a leader %s refuses the request and runs nothing', async (_, account, reason) => {
+    const w = makeWorld();
+    const { runs } = servingLeader('L', w, { account });
     const follower = tab('F', w, { leader: false, account: 'alice' });
-    const { runs, executors } = recordingExecutors();
-    leader.server.listen();
-    leader.server.register(executors);
 
-    expect(await follower.client({ kind: 'create-group', name: 'club' })).toEqual({
+    expect(await follower.delegate({ kind: 'create-group', name: 'club' })).toEqual({
       status: 'refused',
-      reason: 'not-delegable',
+      reason,
     });
     expect(runs).toEqual([]);
   });
 
   it('an engine without Web Locks hands nothing over: no death could ever be proven', async () => {
-    const w = world();
+    const w = makeWorld();
     const follower = tab('F', w, { leader: false });
     follower.env.locks = null;
     const client = createDelegationClient(follower.env);
 
-    expect(await client({ kind: 'create-group', name: 'club' })).toEqual({
+    expect(await client.delegate({ kind: 'create-group', name: 'club' })).toEqual({
       status: 'refused',
       reason: 'not-delegable',
     });
-    expect(w.store.keys()).toEqual([]);
+    expect(w.databases.ids()).toEqual([]);
   });
 
-  it('an executor that throws instead of answering is settled failed, not left hanging', async () => {
-    const w = world();
+  it('an executor that throws is settled failed, and said ONCE, at error', async () => {
+    const w = makeWorld();
     const leader = tab('L', w, { leader: true });
     const follower = tab('F', w, { leader: false });
-    vi.spyOn(console, 'error').mockImplementation(() => {});
     leader.server.listen();
     leader.server.register({
       invite: async () => {
@@ -414,10 +569,9 @@ describe('the refusals that cannot be avoided', () => {
       },
     });
 
-    expect(await follower.client({ kind: 'invite', groupId: 'g1', memberIds: ['bob'] })).toEqual({
-      status: 'refused',
-      reason: 'failed',
-    });
-    vi.restoreAllMocks();
+    const outcome = await follower.delegate({ kind: 'invite', groupId: 'g1', memberIds: ['bob'] });
+    expect(outcome).toEqual({ status: 'refused', reason: 'failed' });
+    const accusing = leader.lines.filter((l) => l.message.includes('a defect'));
+    expect(accusing).toEqual([expect.objectContaining({ level: 'error' })]);
   });
 });

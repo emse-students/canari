@@ -61,7 +61,7 @@ describe('reportFollowerTabRefusal', () => {
 /**
  * A GESTURE HANDED TO THE MAIN TAB (`tabCommitDelegation.ts`) THAT IT DID NOT ANSWER ITSELF reaches the
  * member by its reason: the main tab closed mid-way (checked before retrying - never run twice), it
- * cannot be asked, or it failed. A creation says it in its modal, through the creation refusals.
+ * is locked or signed out, it cannot be asked, or it failed. A creation says it in its modal, through the creation refusals.
  */
 describe('reportDelegationRefusal', () => {
   beforeEach(() => {
@@ -73,6 +73,14 @@ describe('reportDelegationRefusal', () => {
   it('says the main tab closed, as a warning', () => {
     reportDelegationRefusal('leader-gone');
     expect(showToast).toHaveBeenCalledExactlyOnceWith(m.chat_error_main_tab_gone(), 'warning');
+  });
+
+  it('says the main tab is locked or signed out when it cannot serve', () => {
+    reportDelegationRefusal('leader-unavailable');
+    expect(showToast).toHaveBeenCalledExactlyOnceWith(
+      m.chat_error_main_tab_unavailable(),
+      undefined
+    );
   });
 
   it('says to use the main tab when it cannot be asked', () => {
@@ -87,9 +95,13 @@ describe('reportDelegationRefusal', () => {
 
   it('maps every reason to a creation refusal the modal has a sentence for', () => {
     expect(delegationCreationRefusal('leader-gone')).toBe('leader-gone');
+    expect(delegationCreationRefusal('leader-unavailable')).toBe('leader-unavailable');
     expect(delegationCreationRefusal('not-delegable')).toBe('follower-tab');
     expect(delegationCreationRefusal('failed')).toBe('creation-failed');
     expect(conversationRefusalMessage('leader-gone')).toBe(m.chat_error_main_tab_gone());
+    expect(conversationRefusalMessage('leader-unavailable')).toBe(
+      m.chat_error_main_tab_unavailable()
+    );
   });
 });
 

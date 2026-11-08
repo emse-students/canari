@@ -163,8 +163,8 @@
   import { mergeFcmMessagesAndAnnounce } from '$lib/utils/chat/fcmMemoryMerge';
   import { subscribeTabMessageUpdates } from '$lib/mls-client/tabMessageSync';
   import {
-    drainDelegatedCommits,
     serveDelegatedCommits,
+    setDelegationReadiness,
   } from '$lib/utils/chat/tabCommitDelegation';
   import { flushActiveMlsStateEncrypted } from '$lib/mls-client/mlsStatePersisterRegistry';
   import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
@@ -192,14 +192,18 @@
   let lastIncomingRingCallId = $state<string | null>(null);
 
   /**
-   * A follower's request stored while no leader could run it - asked before this session was up, or
-   * left `pending` by a leader that closed - is run the moment this tab leads a live session
-   * (`tabCommitDelegation.ts`). Idempotent: a request already answered is never run again.
+   * What this tab can do with a follower's handed-over commit (`tabCommitDelegation.ts`): run it
+   * once the session is live, answer `leader-unavailable` at once while the keypad is up or nobody
+   * is signed in, and leave it waiting only while a login is actually running - so a follower is
+   * always answered by a leader that lives. Leaving `starting` drains every stored request.
    */
   $effect(() => {
-    if (!globalSession.isLoggedIn || !globalSession.isTabLeader) return;
-    void drainDelegatedCommits('the session is up in the leader tab').catch((e: unknown) =>
-      appendLog(`[TAB-COMMIT] the drain at session start failed: ${String(e)}`)
+    setDelegationReadiness(
+      globalSession.isLoggedIn
+        ? 'ready'
+        : showPinModal || !globalSession.isLoginInProgress
+          ? 'unavailable'
+          : 'starting'
     );
   });
 

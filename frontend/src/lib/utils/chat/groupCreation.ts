@@ -89,6 +89,11 @@ export type ConversationRefusal =
    * is not known here, and it is NOT run again (`tabCommitDelegation.ts`, `leader-gone`).
    */
   | 'leader-gone'
+  /**
+   * The creation was handed to the main tab, which is locked or signed out: it answered at once and
+   * ran nothing (`tabCommitDelegation.ts`, `leader-unavailable`).
+   */
+  | 'leader-unavailable'
   /** Anything the creation threw. The log carries the detail; the screen cannot use it. */
   | 'creation-failed';
 
@@ -107,6 +112,8 @@ export function delegationCreationRefusal(reason: DelegationRefusal): Conversati
   switch (reason) {
     case 'leader-gone':
       return 'leader-gone';
+    case 'leader-unavailable':
+      return 'leader-unavailable';
     case 'not-delegable':
       return 'follower-tab';
     case 'failed':

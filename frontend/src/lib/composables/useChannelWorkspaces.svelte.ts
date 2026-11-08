@@ -61,7 +61,10 @@ import {
   enterKeyGroupOnGesture,
   leaveKeyGroupToMainTab,
 } from '$lib/utils/graine/followerTabKeyGroup';
-import type { DelegatedCommitExecutors } from '$lib/utils/chat/tabCommitDelegation';
+import {
+  abandonDelegatedCommits,
+  type DelegatedCommitExecutors,
+} from '$lib/utils/chat/tabCommitDelegation';
 import { requestCommunityHistory } from '$lib/utils/graine/repair';
 import { orderByIds } from '$lib/utils/chat/channelOrder';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
@@ -1215,12 +1218,23 @@ export function useChannelWorkspaces() {
     // group, and the community's still carries every public salon of the same community. The join
     // itself is idempotent and coalesced per scope (`ensureDistributionGroupFor`), so a second
     // channel joined in the same session costs one shared promise and no second external commit.
-    // A FOLLOWER TAB HANDS BOTH ENTRIES TO THE LEADER (`enterKeyGroupOnGesture`), in the same order.
+    // A FOLLOWER TAB HANDS BOTH ENTRIES TO THE LEADER (`enterKeyGroupOnGesture`), in the same order,
+    // and a refused community entry ENDS the gesture: the member has been told once, and the salon's
+    // entry would meet the same refusal and say it again.
     if (ensureMls) {
-      await enterKeyGroupOnGesture({ kind: 'enter-community-key-group', workspaceId }, async () => {
-        const mls = await ensureMls();
-        await ensureCommunityDistributionGroup(mls, service, workspaceId, log);
-      });
+      const entered = await enterKeyGroupOnGesture(
+        { kind: 'enter-community-key-group', workspaceId },
+        async () => {
+          const mls = await ensureMls();
+          await ensureCommunityDistributionGroup(mls, service, workspaceId, log);
+        }
+      );
+      if (!entered) {
+        log(
+          `[GRAINE] ${channelId.slice(0, 8)}...: the community's key group was refused - the salon's is not asked`
+        );
+        return;
+      }
     }
     await enterKeyGroupOnGesture(
       { kind: 'enter-salon-group', workspaceId, channelId, isPrivate },
@@ -1265,7 +1279,6 @@ export function useChannelWorkspaces() {
   ): Pick<DelegatedCommitExecutors, 'enter-community-key-group' | 'enter-salon-group'> {
     return {
       'enter-community-key-group': async ({ workspaceId }) => {
-        await whenMlsReady();
         const ctx = ctxOf();
         if (!ctx.ensureMls)
           throw new Error('the leader tab has no MLS client to enter a key group');
@@ -1278,7 +1291,6 @@ export function useChannelWorkspaces() {
         return 'entered';
       },
       'enter-salon-group': async ({ workspaceId, channelId, isPrivate }) => {
-        await whenMlsReady();
         const ctx = ctxOf();
         await enterSalonGroupWithAccess(workspaceId, channelId, isPrivate, ctx.ensureMls, ctx.log);
         return 'entered';
@@ -1418,6 +1430,11 @@ export function useChannelWorkspaces() {
     resetSalonSendGate();
     const abandoned = abandonMlsReadyWaiters('signed out');
     if (abandoned > 0) log(`[WORKSPACE-LOAD] signed out: ${abandoned} key-group wait(s) abandoned`);
+    // A gesture this tab handed to the main tab belongs to the session that just ended: never run
+    // for the next one (`tabCommitDelegation.ts`).
+    const handedOver = abandonDelegatedCommits('signed out');
+    if (handedOver > 0)
+      log(`[TAB-COMMIT] signed out: ${handedOver} handed-over gesture(s) abandoned`);
     if (channelWorkspaces.length > 0) {
       log(`[WORKSPACE-SNAPSHOT] signed out: ${channelWorkspaces.length} community(ies) forgotten`);
     }

@@ -9,7 +9,7 @@ two tabs of one account in one desktop browser, the console of BOTH read:
 
 1. **Each gesture from the follower** (create a group, start a DM, invite, remove, create a community,
    create a private salon, join a salon): the follower logs `handed to the leader tab` and
-   `answered by the leader tab: done`, the leader `run for a follower tab` with the SAME request id;
+   `answered: done`, the leader `run for a follower tab` with the SAME request id;
    the follower draws and selects a created conversation, and its member list follows an invite or
    a removal.
 2. **A conversation created from the follower, then used there**: a message sent from the follower
@@ -18,4 +18,10 @@ two tabs of one account in one desktop browser, the console of BOTH read:
 3. **The leader closed mid-gesture** (close the leader tab right after pressing invite in the
    follower): the follower is told the main tab closed, its log says `leader-gone, NOT run again`
    from the tab that takes the lead, and the group holds ONE Add, never two.
-4. **No `[TAB-COMMIT]` line at warn or error** on an ordinary pass of 1 and 2.
+4. **The leader at its PIN keypad** (lock the leader, then invite from the follower): the follower is
+   told at once that the main tab is not ready, the leader logs `leader-unavailable`, nothing runs.
+5. **A promotion in place** (close the leader with a request pending from a third tab): the promoted
+   tab logs nothing for it before its reload, and its reloaded successor logs `run for a follower tab`.
+6. **IndexedDB holds no `CanariDBTabCommit_` record** after 1 to 5 (DevTools, Application), and the
+   database is gone after a sign-out with account deletion.
+7. **No `[TAB-COMMIT]` line at warn or error** on an ordinary pass of 1 and 2.

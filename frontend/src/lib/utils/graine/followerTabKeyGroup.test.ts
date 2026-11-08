@@ -30,7 +30,7 @@ describe('enterKeyGroupOnGesture', () => {
 
   it('a leader enters here and hands nothing over', async () => {
     const enterHere = vi.fn(async () => {});
-    await enterKeyGroupOnGesture(OP, enterHere);
+    expect(await enterKeyGroupOnGesture(OP, enterHere)).toBe(true);
     expect(enterHere).toHaveBeenCalledOnce();
     expect(delegateCommitToLeader).not.toHaveBeenCalled();
   });
@@ -39,7 +39,7 @@ describe('enterKeyGroupOnGesture', () => {
     leadership.role = 'follower';
     delegateCommitToLeader.mockResolvedValue({ status: 'done', value: 'entered' });
     const enterHere = vi.fn(async () => {});
-    await enterKeyGroupOnGesture(OP, enterHere);
+    expect(await enterKeyGroupOnGesture(OP, enterHere)).toBe(true);
     expect(delegateCommitToLeader).toHaveBeenCalledExactlyOnceWith(OP);
     expect(enterHere).not.toHaveBeenCalled();
     expect(showToast).not.toHaveBeenCalled();
@@ -48,14 +48,17 @@ describe('enterKeyGroupOnGesture', () => {
   it('a follower whose leader closed mid-entry is told so, by the reason', async () => {
     leadership.role = 'follower';
     delegateCommitToLeader.mockResolvedValue({ status: 'refused', reason: 'leader-gone' });
-    await enterKeyGroupOnGesture(OP, async () => {});
+    // `false`: a caller with a second entry stops here, so the member is told once.
+    expect(await enterKeyGroupOnGesture(OP, async () => {})).toBe(false);
     expect(showToast).toHaveBeenCalledExactlyOnceWith(m.chat_error_main_tab_gone(), 'warning');
   });
 
   it('a tab demoted between the role read and the commit is told to use the main tab', async () => {
-    await enterKeyGroupOnGesture(OP, async () => {
-      throw new FollowerTabCommitError('g-1');
-    });
+    expect(
+      await enterKeyGroupOnGesture(OP, async () => {
+        throw new FollowerTabCommitError('g-1');
+      })
+    ).toBe(false);
     expect(showToast).toHaveBeenCalledExactlyOnceWith(m.chat_error_follower_tab());
   });
 

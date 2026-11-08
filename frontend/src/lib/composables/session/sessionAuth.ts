@@ -5,6 +5,7 @@
  * Each function receives `ctx: SessionContext` instead of the closure,
  * and `cb: ChatSessionCallbacks` to interact with conversations / UI.
  */
+import { noteMlsStateLoaded } from '$lib/mls-client/stateAuthority';
 import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
@@ -1748,6 +1749,9 @@ export async function loginImpl(
     endBootSpan('tab-leadership', { leader: tabLeaderNow });
     stopIfSignedOut('tab-leadership');
     ctx.setIsTabLeader(tabLeaderNow);
+    // THE STATE READ BELOW IS READ WITH THIS ROLE: only a document that loads it as the leader holds
+    // the authoritative copy, and only it commits or serves a follower's commits (`stateAuthority`).
+    noteMlsStateLoaded(tabLeaderNow);
     if (!tabLeaderNow) {
       cb.log('[TAB] Follower tab - WebSocket active in another Canari tab.');
     }
