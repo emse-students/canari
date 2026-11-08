@@ -193,7 +193,8 @@ export class LivesController {
   }
 
   /**
-   * The live's PREVIEW IMAGE, raw `application/octet-stream`, sealed under the live key, at most
+   * The live's PREVIEW IMAGE, raw `application/octet-stream`, sealed under the POSTER key (HKDF of
+   * the live key, `live-poster-key.ts`), at most
    * {@link LIVE_POSTER_MAX_BYTES} (owner, 2026-11-07). Broadcaster only; replaces the previous one.
    * Refusals in `LivesService.ingestPoster`; over the bound 413 `LIVE_POSTER_TOO_LARGE`.
    */

@@ -409,8 +409,8 @@ export async function setLiveTitle(liveId: string, title: string | null): Promis
 }
 
 /**
- * `PUT /api/lives/:id/poster` - the live's preview image, sealed under the live key
- * (`sealLivePoster` in `liveCrypto.ts`), raw `application/octet-stream`. Replaces the previous one. Refusals:
+ * `PUT /api/lives/:id/poster` - the live's preview image, sealed under the POSTER key, never the
+ * live key (`sealLivePoster` in `livePosterCrypto.ts`), raw `application/octet-stream`. Replaces the previous one. Refusals:
  * `LIVE_POSTER_TOO_FAST` (`rate-limited`), `LIVE_STORE_UNAVAILABLE` / `LIVE_INGEST_BUSY`
  * (`retry-segment`), `LIVE_POSTER_IN_PROGRESS` / `LIVE_POSTER_TOO_LARGE` (`refused`), `ended`.
  * The sender retries NONE of them: the next preview is a few segments away.

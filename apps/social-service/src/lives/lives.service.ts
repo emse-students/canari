@@ -142,8 +142,8 @@ export interface LiveListItem {
    */
   viewers: number | null;
   /**
-   * The newest preview image: its `name` under `/api/media/public/live/<id>/<name>` (the segments'
-   * cached route) and its AGE, `now() - posterAt` on the database's clock - one clock, so the card
+   * The newest preview image: its `name` under `/api/media/public/live-poster/<id>/<name>` (its own
+   * nginx location and zones, over the segments' cache) and its AGE, `now() - posterAt` on the database's clock - one clock, so the card
    * never compares the server's stamp with the device's. `null` before the first one is stored.
    */
   poster: { name: string; ageMs: number } | null;
@@ -754,9 +754,10 @@ export class LivesService implements OnModuleDestroy {
 
   /**
    * Takes the live's PREVIEW IMAGE from its broadcaster (owner, 2026-11-07): a still frame sealed
-   * under the live key, stored under the live's own prefix (`live/<id>/<random name>`) beside its
-   * segments - so the live's purge deletes it with them, the orphan reaper sees it, and nginx serves
-   * it from the segments' cached location. It REPLACES the previous one, which is deleted once the
+   * under the POSTER key (`derivePosterKey`, HKDF of the live key - never the live key itself), stored
+   * under the live's own prefix (`live/<id>/<random name>`) beside its segments - so the live's purge
+   * deletes it with them and the orphan reaper sees it - and read through its OWN nginx location,
+   * `/api/media/public/live-poster/`, over the segments' cache but in its own zones. It REPLACES the previous one, which is deleted once the
    * new one is recorded (a failed delete leaves it to the purge at the end).
    *
    * The same three steps as a segment, for the same reason (no lock and no pooled connection held
@@ -2166,12 +2167,16 @@ export class LivesService implements OnModuleDestroy {
     );
   }
 
-  /** The live is purged: an outage still open on it is reported with its count, then forgotten. */
   /**
    * A live whose stored key would not open for the FEED LIST, with how many list reads met it since.
    * The list reads every open live on every reader's refresh, so an unreadable key would otherwise
-   * log one ERROR per live per reader per refresh: it is logged ONCE when it starts, its end once
-   * (the next read that opens it, or the live's purge) - durable for the outage, not a clock.
+   * log one ERROR per live per reader per refresh: it is logged once when it starts and once when it
+   * ends (the next read that opens it, or the live's purge) - an outage, not a clock.
+   *
+   * IN MEMORY AND PER REPLICA, not durable: each social-service replica keeps its own map, so an
+   * outage is reported once PER REPLICA that met it, a restart forgets it (the next read on that
+   * replica reports it again), and an entry is closed at purge only on the replica that runs the
+   * purge - on another replica it stays until that replica restarts, one number per live.
    */
   private readonly posterKeyOutages = new Map<string, number>();
 
@@ -2209,6 +2214,7 @@ export class LivesService implements OnModuleDestroy {
     );
   }
 
+  /** The live is purged: an outage still open on it is reported with its count, then forgotten. */
   private closeArrivalOutages(liveId: string): void {
     for (const op of ['note', 'read'] as const) {
       const failed = this.arrivalOutages[op].get(liveId);

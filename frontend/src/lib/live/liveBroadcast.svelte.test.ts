@@ -884,6 +884,27 @@ describe('LiveBroadcast - the title and the preview image (owner, 2026-11-07)', 
     expect(f.deps.putLivePoster).toHaveBeenCalledTimes(2);
   });
 
+  it('a poster key that failed to derive is derived AGAIN at the next turn, not re-thrown for the live', async () => {
+    const f = fakeDeps();
+    f.deps.fetchLiveLimits.mockResolvedValue({
+      ...LIMITS,
+      previewPeriodMs: 10_000, // 5 segments of 2 s
+      posterMaxBytes: 1_000,
+    });
+    f.deps.derivePosterKey.mockRejectedValueOnce(new DOMException('no HKDF', 'NotSupportedError'));
+    const cam = fakeCamera();
+    const b = new LiveBroadcast(cam.session, null, f.deps);
+    await cam.session.start();
+    await b.loadLimits();
+    b.setPosterCapture(async () => new Uint8Array([0xff, 0xd8]));
+    await b.start();
+    for (let i = 0; i < 6; i++) await chunk(f.recorders[0], join(initSegment(), fragment()));
+    // Segment 0's turn met the rejection and sent nothing; segment 5's derived again and sent.
+    await vi.waitFor(() => expect(f.deps.putLivePoster).toHaveBeenCalledTimes(1));
+    expect(f.deps.derivePosterKey).toHaveBeenCalledTimes(2);
+    expect(f.deps.sealPoster).toHaveBeenCalledTimes(1);
+  });
+
   it('captures nothing when the server serves no poster numbers (an older server)', async () => {
     const { b, deps, recorders } = await ready();
     const capture = vi.fn(async () => new Uint8Array([1]));

@@ -99,7 +99,7 @@ they close. What must be true before lives open in production, and in what order
 | A live's title (owner, 2026-11-07) | optional, 1-80 characters (code points), one line | `LIVE_TITLE_MAX_CHARS` (and the `lives_title_length` CHECK) | same route (`titleMaxChars`) |
 | A preview image | at most 256 KiB sealed (about 48 KiB typical), at most one per 8 s (database clock) | `LIVE_POSTER_MAX_BYTES`, `LIVE_POSTER_MIN_INTERVAL_MS`, `LIVE_POSTER_TYPICAL_BYTES` | same route (`posterMaxBytes`) |
 | The preview period: the broadcaster sends one still per period (8 segments), a card on screen re-reads the list once per period | 16 s | `LIVE_PREVIEW_PERIOD_MS` | same route (`previewPeriodMs`) |
-| The preview's egress per address (its own nginx zones, apart from the segments) | 8 Mb/s (4 connections x 250 kB/s) | `LIVE_POSTER_EGRESS_BPS` | - (nginx, asserted by `live-segments-route.test.mjs`) |
+| The preview's egress per ADDRESS (its own nginx zones, apart from the segments; no host-wide cap, [why](#what-the-preview-costs)) | 8 Mb/s (4 connections x 250 kB/s) | `LIVE_POSTER_EGRESS_PER_ADDRESS_BPS` | - (nginx, asserted by `live-segments-route.test.mjs`) |
 | Store timeout / reservation age | 30 s / 35 s | `LIVE_STORE_TIMEOUT_MS`, `LIVE_RESERVATION_TTL_MS` | - |
 | Viewer cap of the HOST, all lives together (**the user wants NO cap, 2026-10-20; the cap stays until the [plan](../frontend/modules/live.md#uncapped-audience---the-plan-2026-10-20) is measured; no VISIBLE ceiling, 2026-10-21: [live-scaling](../frontend/modules/live-scaling.md)**) | 24 = floor(90 Mb/s `LIVE_HOST_EGRESS_BPS` x 0.8 `LIVE_EGRESS_SHARE` / 3 Mb/s `LIVE_VIEWER_BITRATE_BPS`) | `LIVE_VIEWER_CAP`, same file | same route (`viewerCap`) |
 | Seat lease | 30 s after the last key read or manifest poll | `LIVE_SEAT_LEASE_MS` | same route (`seatLeaseMs`) |
@@ -610,7 +610,10 @@ no-store`: it carries keys and a per-reader audience. **A stored key that does n
 (`LiveKeyUnavailableError`) leaves THAT item with no picture (`posterKey: null`) and the list
 answers; it logs at `error` ONCE per live per outage (`[LIVE_KEY] <liveId>: the key does not open`),
 then once when it opens again (with the number of list reads it cost), and the purge reports one
-still open at `warn` - never a line per list read.
+still open at `warn` - never a line per list read. **That outage map is in memory, per replica**
+(`posterKeyOutages`): each social-service replica reports an outage once, a restart forgets it, and
+an entry is closed at purge only on the replica that runs the purge (on another it stays, one number
+per live, until that replica restarts). It is a log de-duplicator, not durable state.
 
 **Who edits the title** (decided by the review coordinator, 2026-11-07, reversible): ONLY the
 broadcaster, for an association's live too - an association's admins do not edit a live they do not
@@ -625,13 +628,23 @@ the page hidden or no live on air. The card keeps the newest opened still of eac
 memory by its NAME (`livePosterView.ts`), so a list naming the same poster, or the card drawn again,
 asks the network nothing; an answered list drops the stills of the lives it no longer names.
 
-**Against the uplink.** The poster path has its OWN nginx zones, so a feed full of readers can never
-spend the seated viewers' budget: `lives_posters` (25 r/s per address, burst 50),
-`lives_posters_conn` (4 connections per address) and `limit_rate` 250 kB/s per connection, so at most
-4 x 2 Mb/s = `LIVE_POSTER_EGRESS_BPS` = 8 Mb/s per address - about 325 readers behind one NAT at
-24.6 kb/s each. `live-segments-route.test.mjs` asserts that product against the constant, and that
-the segments' share plus this budget stays within the host's egress. A reader over it gets a `429`
-(`rate-limited`, logged at `log`): a staler picture, never a seated viewer's refusal.
+**Against the uplink - a PER-ADDRESS bound, not a host cap** (corrected after #3135). The poster
+path has its OWN nginx zones, so a card reader never spends a seated viewer's per-address quota:
+`lives_posters` (25 r/s per address, burst 50), `lives_posters_conn` (4 connections per address) and
+`limit_rate` 250 kB/s per connection, so ONE address pulls at most 4 x 2 Mb/s =
+`LIVE_POSTER_EGRESS_PER_ADDRESS_BPS` = 8 Mb/s - about 325 readers behind one NAT at 24.6 kb/s each.
+Every zone is keyed on `$binary_remote_addr`, exactly as the segments' are, so NOTHING in nginx caps
+the posters host-wide: the global bound of the segments is the seat cap (24 seats x the per-viewer
+rate = the live share), and a poster takes no seat. What bounds the posters host-wide is their size
+and period: N readers on screen cost about N x 24.6 kb/s, so the 18 Mb/s the live share leaves is
+reached near 730 readers with the card on screen AT ONCE - a planning figure on the 48 KiB typical
+poster, to be replaced by the size reading owed on both phones. `live-segments-route.test.mjs` asserts the per-address product against the constant, and that
+the live share plus ONE address's bound fits under the host's egress (a single flooding address
+cannot crowd out the seated viewers); it asserts no host-wide poster figure, because there is none
+to assert. A reader over its address's bound gets a `429` (`rate-limited`, logged at `log`): a
+staler picture, never a seated viewer's refusal. A true host-wide cap (a constant-key
+`limit_conn_zone`) was weighed and not taken: it would cap readers by connections, not bytes, and
+turn one busy feed into stale pictures for everyone, to bound a cost the population already bounds.
 
 **Against the manifest poll.** A seated viewer polls the manifest about once a second (60 requests
 a minute, each a database read and a Redis renew). A card on screen re-reads the list once per
@@ -640,6 +653,12 @@ adds one `PUT` of about 48 KiB every 16 s to the segment it already sends every 
 
 `140_live_title_and_poster.sql` adds the five columns and three CHECKs (`NOT VALID`, then validated
 after the commit, `lock_timeout` 5 s), additive and idempotent; applied twice by the integration spec.
+**Its header comment is stale on two points, and is left so on purpose** (an applied migration is
+never edited - `infrastructure/lib/migrations.sh` warns on a changed checksum): it says the poster is
+sealed under the LIVE key and served from the segments' location `/api/media/public/live/<id>/<name>`.
+Both changed at the review of #3135, before any release applied it: the poster is sealed under the
+derived POSTER key, and read through `/api/media/public/live-poster/<id>/<name>`, its own nginx
+location over the same stored object and cache. The columns it adds are unchanged.
 
 ## The key (Q4): served like a post CEK, removal enforced by the server
 
