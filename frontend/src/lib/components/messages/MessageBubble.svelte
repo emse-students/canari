@@ -33,7 +33,13 @@
   import type { MessageReaction, MessageSendStatus } from '$lib/types';
   import ControlRefusedNotice from './ControlRefusedNotice.svelte';
   import { isOrphanMediaCandidate } from '$lib/utils/chat/orphanMedia';
-  import { isOutboxEntryQueued, storedUnsentReasonOf } from '$lib/utils/chat/outbox';
+  import {
+    isOutboxEntryQueued,
+    outboxReelTakeReachOf,
+    storedUnsentReasonOf,
+  } from '$lib/utils/chat/outbox';
+  import { reelEverywhereActOf } from '$lib/reels/chatReelTake';
+  import Button from '../ui/Button.svelte';
   import {
     isOutboxEnqueueInflight,
     outboxQueueVersion,
@@ -136,6 +142,12 @@
     /** Called when the user confirms message deletion. */
     onDelete?: (messageId: string) => void;
     /**
+     * "Annuler partout" / "Supprimer partout" on the sender's own chat reel (reels-in-chat 15.2,
+     * 15.7): ends every message its take was queued as. Offered in the delete confirmation only when
+     * this device's outbox says the take names two messages or more. Omit to never offer it.
+     */
+    onDeleteReelEverywhere?: (messageId: string) => void;
+    /**
      * Whether the viewer holds `channel.moderate` in this conversation's community, letting
      * them delete other members' messages. False everywhere else (DMs, groups, plain members).
      */
@@ -203,6 +215,7 @@
     onVotePoll,
     onClosePoll,
     onDelete,
+    onDeleteReelEverywhere,
     canModerate = false,
     onBeginEdit,
     pinned = false,
@@ -243,6 +256,32 @@
   let showInfo = $state(false);
   let showMobileActions = $state(false);
   let showDeleteModal = $state(false);
+  /**
+   * The "everywhere" act the delete confirmation offers beside the plain delete (15.2, 15.7), asked
+   * of the outbox when the confirmation OPENS - an event, never polled - for my own reel message
+   * only. `null` (nothing offered) until it answers, and for a take naming one message.
+   */
+  let everywhereAct = $state<'cancel-all' | 'delete-everywhere' | null>(null);
+  let everywhereCount = $state(0);
+  $effect(() => {
+    if (!showDeleteModal || !isOwn || !isReelMessageRow || !onDeleteReelEverywhere) {
+      everywhereAct = null;
+      return;
+    }
+    let stale = false;
+    void outboxReelTakeReachOf(messageId).then((reach) => {
+      if (stale) return;
+      everywhereAct = reelEverywhereActOf(reach);
+      everywhereCount = reach ? reach.queued.length + reach.standing.length : 0;
+      Log.d(
+        'MESSAGE',
+        `delete of reel ${messageId.slice(0, 8)}: ${everywhereAct ?? 'no everywhere act'} (${everywhereCount} message(s) of its take here)`
+      );
+    });
+    return () => {
+      stale = true;
+    };
+  });
   let blobUrl = $state<string | null>(null);
   /**
    * Why the attachment could not be shown, typed at the throw. It replaced two booleans that could
@@ -500,6 +539,11 @@
 
   function confirmDelete() {
     onDelete?.(messageId);
+    showDeleteModal = false;
+  }
+
+  function confirmDeleteEverywhere() {
+    onDeleteReelEverywhere?.(messageId);
     showDeleteModal = false;
   }
 
@@ -1238,7 +1282,21 @@
     <p class="text-text-muted text-sm leading-relaxed">
       {m.msg_supprimer_definitif()}
     </p>
+    {#if everywhereAct}
+      <p class="text-text-muted mt-2 text-sm leading-relaxed" data-reel-everywhere-hint>
+        {everywhereAct === 'cancel-all'
+          ? m.reel_sendto_cancel_all_hint({ count: everywhereCount })
+          : m.reel_sendto_delete_everywhere_hint({ count: everywhereCount })}
+      </p>
+    {/if}
     {#snippet footer()}
+      {#if everywhereAct}
+        <Button variant="danger-outline" onclick={confirmDeleteEverywhere} data-reel-everywhere>
+          {everywhereAct === 'cancel-all'
+            ? m.reel_sendto_cancel_all()
+            : m.reel_sendto_delete_everywhere()}
+        </Button>
+      {/if}
       <button
         onclick={() => (showDeleteModal = false)}
         class="text-text-muted rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors hover:bg-black/5 dark:hover:bg-white/5"

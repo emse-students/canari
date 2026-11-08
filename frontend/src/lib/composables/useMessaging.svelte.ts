@@ -116,7 +116,7 @@ import {
   enqueueOutboxTake,
   isEnqueueQuotaFailure,
   outboxReelSendDeleted,
-  sentOutboxTakeOf,
+  outboxReelTakeReachOf,
   type OutboxSettlement,
 } from '$lib/utils/chat/outbox';
 import { MessagePairWriteError, MessageWrittenError } from '$lib/utils/chat/messageWrittenError';
@@ -2987,17 +2987,20 @@ export function useMessaging() {
   }
 
   /**
-   * "Supprimer partout" (reels-in-chat 15.7): deletes, for everyone, every message the take of
-   * `messageId` went out as - in each conversation, each through the one delete path
-   * ({@link deleteMessage}) - and the last one gives the file's hold back (D-delete-one). A message
-   * no take names is deleted alone. A conversation no longer on this device is skipped and said.
-   * Returns how many messages were deleted.
+   * "Annuler partout" / "Supprimer partout" (reels-in-chat 15.2, 15.7): ends every message the take
+   * of `messageId` was queued as - a send still queued is WITHDRAWN, a send that went is deleted for
+   * everyone - in each conversation, each through the one delete path ({@link deleteMessage}). The
+   * take settles from its rows as they go: the last withdrawal releases its session, the last
+   * deletion gives the file's hold back (D-delete-one). The reach is read ONCE, before anything is
+   * ended: a send that leaves the queue meanwhile is still in the list, and the one delete path turns
+   * its withdrawal into a delete for everyone. A conversation no longer on this device is skipped and
+   * said. Returns how many messages were ended.
    */
   async function handleDeleteReelEverywhere(messageId: string, ctx: MessagingContext) {
-    const record = await sentOutboxTakeOf(messageId);
-    const sends = record?.sends ?? [];
+    const reach = await outboxReelTakeReachOf(messageId);
+    const sends = reach ? [...reach.queued, ...reach.standing] : [];
     ctx.log(
-      `[MEDIA] delete everywhere ${messageId.slice(0, 8)}…: ${sends.length} message(s) of take ${record?.takeId.slice(0, 8) ?? '(none)'}…`
+      `[MEDIA] delete everywhere ${messageId.slice(0, 8)}…: ${reach?.queued.length ?? 0} queued and ${reach?.standing.length ?? 0} sent message(s) of its take`
     );
     let deleted = 0;
     for (const send of sends) {

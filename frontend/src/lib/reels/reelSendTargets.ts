@@ -9,7 +9,11 @@
 import type { Conversation } from '$lib/types';
 import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
-import { shareCandidates, type ShareCandidate } from '$lib/sharing/shareDestinations';
+import {
+  shareCandidates,
+  shareDestinationPresentation,
+  type ShareCandidate,
+} from '$lib/sharing/shareDestinations';
 
 /**
  * Whether the sheet lists `c`: a DM or a group the member belongs to. NOT listed: a salon (RC-8 has
@@ -78,4 +82,23 @@ export type ReelSendPlan = 'none' | 'feed' | 'chats' | 'both';
 export function reelSendPlan(feedTicked: boolean, chatCount: number): ReelSendPlan {
   if (chatCount > 0) return feedTicked ? 'both' : 'chats';
   return feedTicked ? 'feed' : 'none';
+}
+
+/**
+ * The name `reel_sendto_failed_in` gives the conversation a take's send failed in (15.2): the DM
+ * peer or the group's name, as the sheet listed it. `null` when this device no longer holds the
+ * conversation or knows no name for it yet - the notice then names none, never a raw id.
+ */
+export function reelSendFailedName(
+  conversations: Iterable<[string, Conversation]>,
+  conversationId: string,
+  currentUserId: string
+): string | null {
+  for (const [, c] of conversations) {
+    if (c.id !== conversationId) continue;
+    const pres = shareDestinationPresentation(c, currentUserId);
+    const name = pres.displayName.trim();
+    return pres.displayNameResolved && name.length > 0 ? name : null;
+  }
+  return null;
 }

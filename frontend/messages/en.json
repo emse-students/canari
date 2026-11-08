@@ -4460,6 +4460,13 @@
   "reel_sendto_too_long_for_chats": "This video is over {seconds} s: it can only be posted, not sent to a conversation.",
   "reel_sendto_blocks_unread": "Your blocked list could not be read: sending to conversations is unavailable, you can still post.",
   "reel_sendto_failed": "The send could not be queued.",
+  "reel_sendto_failed_in": "The video could not be sent to \"{name}\": open the conversation to see why.",
+  "reel_sendto_failed_in_unnamed": "A video could not be sent to one of the conversations you chose: open it to see why.",
+  "reel_sendto_same_as_post": "The conversations will receive the published video itself.",
+  "reel_sendto_cancel_all": "Cancel everywhere",
+  "reel_sendto_cancel_all_hint": "This video is going to {count} conversations: \"Cancel everywhere\" stops it in each of them.",
+  "reel_sendto_delete_everywhere": "Delete everywhere",
+  "reel_sendto_delete_everywhere_hint": "This video was sent to {count} conversations: \"Delete everywhere\" removes it from each of them, then the file.",
   "reel_sendto_send": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],

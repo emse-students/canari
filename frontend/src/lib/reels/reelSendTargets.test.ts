@@ -3,6 +3,7 @@ import type { Conversation } from '$lib/types';
 import {
   isReelSendListed,
   reelSendCandidates,
+  reelSendFailedName,
   reelSendPlan,
   toggleReelTarget,
 } from './reelSendTargets';
@@ -109,5 +110,17 @@ describe('reelSendPlan', () => {
     expect(reelSendPlan(true, 0)).toBe('feed');
     expect(reelSendPlan(false, 3)).toBe('chats');
     expect(reelSendPlan(true, 3)).toBe('both');
+  });
+});
+
+describe('reelSendFailedName (15.2, reel_sendto_failed_in)', () => {
+  const rows = [convo({ id: 'g1', name: 'Bureau' }), convo({ id: 'g2', name: 'Copains' })];
+
+  it("names the group the send failed in, found by its MLS id, not by the map's key", () => {
+    expect(reelSendFailedName([['some-key', rows[1][1]]], 'g2', ME)).toBe('Copains');
+  });
+
+  it('names nothing for a conversation this device no longer holds - never a raw id', () => {
+    expect(reelSendFailedName(rows, 'gone', ME)).toBeNull();
   });
 });

@@ -1695,6 +1695,9 @@
                   channelsCtx()
                 )
             : (msgId) => void messaging.handleDeleteMessage(msgId, msgCtx())}
+          onDeleteReelEverywhere={isSelectedChannel
+            ? undefined
+            : (msgId) => void messaging.handleDeleteReelEverywhere(msgId, msgCtx())}
           onEdit={isSelectedChannel
             ? (msgId, text) =>
                 void channels.editChannelMessage(

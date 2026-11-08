@@ -303,6 +303,13 @@
         {m.reel_sendto_cap({ count: cap })}
       </p>
     {/if}
+    {#if feedSend && sendKeys.length > 0}
+      <!-- ONE FILE FOR THE FEED AND THE CHATS (15.5, D-onefile): the conversations receive the
+           published video itself, under the post's key - said, never claimed end-to-end. -->
+      <p class="text-text-muted text-2xs mb-2" role="note" data-reel-send-same-as-post>
+        {m.reel_sendto_same_as_post()}
+      </p>
+    {/if}
     {#if sendKeys.length > 0}
       <ul class="mb-2 flex gap-2 overflow-x-auto" data-reel-send-chips>
         {#each sendKeys as key (key)}

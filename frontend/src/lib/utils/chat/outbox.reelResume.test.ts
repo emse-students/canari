@@ -237,6 +237,8 @@ function life(w: World, opts: LifeOptions = {}) {
   const port = w.server.port();
   /** The system lines this life posted into the thread. */
   const notices: string[] = [];
+  /** The conversations a take's send failed for good in, as the session is told (15.2). */
+  const failedIn: string[] = [];
   const mls = {
     getLocalGroups: vi.fn(() => []),
     getGroupMeta: vi.fn(async (id: string) => ({
@@ -348,6 +350,9 @@ function life(w: World, opts: LifeOptions = {}) {
     addMessageToChat: async (_sender, content) => {
       notices.push(content);
     },
+    onReelSendFailed: (conversationId) => {
+      failedIn.push(conversationId);
+    },
     holdChatReel: (mediaId) =>
       live(async () => {
         w.events.push(`hold ${mediaId}`);
@@ -364,6 +369,7 @@ function life(w: World, opts: LifeOptions = {}) {
     mls,
     conversations,
     notices,
+    failedIn,
     kill() {
       alive = false;
       openLives.delete(handle);
@@ -1006,6 +1012,8 @@ describe('one take, several conversations (RC-13)', () => {
     // THE RECORD IS NO QUEUED WORK: no flush reads, drives or counts it.
     expect(await w.storage.getOutboxQueue(KEY)).toEqual([]);
     expect((await w.storage.getReelTakeRecords(KEY)).map((r) => r.id)).toEqual([ID]);
+    // THE MEMBER IS TOLD WHICH CONVERSATION, once, and only the refused one (reel_sendto_failed_in).
+    expect(l.failedIn).toEqual(['g2']);
   });
 
   it('a cancel of ONE send keeps the take: the encoder runs on, and the file goes to the other two', async () => {
@@ -1039,7 +1047,7 @@ describe('one take, several conversations (RC-13)', () => {
     expect(await sentIds(w)).toEqual([SEND_IDS[0], SEND_IDS[2]]);
   });
 
-  it('"Annuler partout" withdraws every queued send, and the last withdrawal releases the take', async () => {
+  it('"Annuler partout": the reach lists every queued send, each withdrawn, and the last withdrawal releases the take', async () => {
     const w = world();
     let aborted = false;
     const l = life(w, {
@@ -1053,7 +1061,10 @@ describe('one take, several conversations (RC-13)', () => {
     });
     await enqueueTake(l, 3);
     await waitForEvent(() => expect(w.prepares).toHaveLength(1));
-    expect(await l.outbox.cancelTakeEverywhere(SEND_IDS[2])).toBe(3);
+    const reach = await l.outbox.reelTakeReachOf(SEND_IDS[2]);
+    expect(reach?.queued.map((s) => s.id)).toEqual(SEND_IDS);
+    expect(reach?.standing).toEqual([]);
+    for (const send of reach!.queued) expect(await l.outbox.cancelPending(send.id)).toBe(true);
     await waitForEvent(() => expect(aborted).toBe(true));
     // KEPT `releasing` while its transfer ran, deleted once it ended with no file.
     await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
@@ -1156,15 +1167,20 @@ describe('one take, several conversations (RC-13)', () => {
     await enqueueTake(l, 3);
     await expectDeliveredOnce(w, l, 3);
     const { media } = await sentReel(w, l);
-    expect((await l.outbox.sentTakeOf(SEND_IDS[1]))?.sends.map((s) => s.id)).toEqual(SEND_IDS);
+    expect((await l.outbox.reelTakeReachOf(SEND_IDS[1]))?.standing.map((s) => s.id)).toEqual(
+      SEND_IDS
+    );
+    expect((await l.outbox.reelTakeReachOf(SEND_IDS[1]))?.queued).toEqual([]);
     await l.outbox.reelSendDeleted(SEND_IDS[0]);
     await l.outbox.reelSendDeleted(SEND_IDS[1]);
-    expect((await l.outbox.sentTakeOf(SEND_IDS[2]))?.sends.map((s) => s.id)).toEqual([SEND_IDS[2]]);
+    expect((await l.outbox.reelTakeReachOf(SEND_IDS[2]))?.standing.map((s) => s.id)).toEqual([
+      SEND_IDS[2],
+    ]);
     expect(w.events.some((e) => e.startsWith('release'))).toBe(false);
     await l.outbox.reelSendDeleted(SEND_IDS[2]);
     expect(w.events).toContain(`release ${media.mediaId}`);
     expect(w.sql.rows.size).toBe(0);
-    expect(await l.outbox.sentTakeOf(SEND_IDS[2])).toBeNull();
+    expect(await l.outbox.reelTakeReachOf(SEND_IDS[2])).toBeNull();
   });
 
   it("OVER TODAY'S BUDGET at the take's upload: media-service's own 429 fails each send for good, its sentence in each thread, never retried", async () => {
@@ -1181,6 +1197,7 @@ describe('one take, several conversations (RC-13)', () => {
     await waitForEvent(() => expect(w.sql.rows.size).toBe(0));
     expect(l.notices).toEqual(Array(3).fill(m.outbox_reel_over_budget()));
     expect(w.server.sent.filter((r) => r.method === 'POST' && r.path === '')).toHaveLength(1);
+    expect([...l.failedIn].sort()).toEqual(GROUPS);
     expect(sends(l)).toBe(0);
   });
 
