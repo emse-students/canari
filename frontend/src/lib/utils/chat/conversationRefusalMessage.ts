@@ -10,6 +10,7 @@ import { FollowerTabCommitError } from '$lib/mls-client/commitSubmission';
 import { showToast } from '$lib/stores/toast.svelte';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { MemberRemovalNotCommittedError } from './memberRemovalError';
+import type { DelegationRefusal } from './tabCommitDelegation';
 
 /**
  * THE ONE PLACE A REFUSAL BECOMES A SENTENCE, AND THE REASON IT IS A TABLE.
@@ -30,8 +31,27 @@ const SENTENCES: Record<ConversationRefusal, () => string> = {
   'block-check-unavailable': () => m.chat_modal_error_block_check_unavailable(),
   'peer-has-no-device': () => m.chat_modal_error_peer_has_no_device(),
   'follower-tab': () => m.chat_error_follower_tab(),
+  'leader-gone': () => m.chat_error_main_tab_gone(),
   'creation-failed': () => m.chat_modal_error_creation_failed(),
 };
+
+/** What a gesture handed to the main tab came to when the main tab did not answer it itself. */
+const DELEGATION_SENTENCES: Record<DelegationRefusal, () => string> = {
+  'leader-gone': () => m.chat_error_main_tab_gone(),
+  'not-delegable': () => m.chat_error_follower_tab(),
+  failed: () => m.chat_error_main_tab_failed(),
+};
+
+/**
+ * Tells the member that a gesture this tab handed to the main tab (`tabCommitDelegation.ts`) was not
+ * answered by it: it closed while running it (`leader-gone`, checked before retrying - it is never
+ * run twice), it cannot be asked (`not-delegable`), or it failed (`failed`). Read from the reason,
+ * never a log.
+ */
+export function reportDelegationRefusal(reason: DelegationRefusal): void {
+  console.warn(`[TAB-COMMIT] the member is told: a gesture handed to the main tab ended ${reason}`);
+  showToast(DELEGATION_SENTENCES[reason](), reason === 'leader-gone' ? 'warning' : undefined);
+}
 
 /**
  * The localized line a creation modal shows when a conversation was refused.
@@ -79,12 +99,18 @@ export function reportFollowerTabRefusal(e: unknown): boolean {
  * @returns `recorded` when the removal stands and only its commit is owed, `not-removed` otherwise.
  */
 export function reportMemberRemovalFailure(e: unknown): 'recorded' | 'not-removed' {
-  if (e instanceof MemberRemovalNotCommittedError) {
-    showToast(m.chat_group_remove_member_keys_pending(), 'warning');
-    return 'recorded';
-  }
-  showToast(m.chat_group_remove_member_failed());
-  return 'not-removed';
+  const ending = e instanceof MemberRemovalNotCommittedError ? 'recorded' : 'not-removed';
+  reportMemberRemovalEnding(ending);
+  return ending;
+}
+
+/**
+ * The sentence of an incomplete removal, by its ending - the ONE place both a removal run here
+ * ({@link reportMemberRemovalFailure}) and one the main tab ran for this tab say it.
+ */
+export function reportMemberRemovalEnding(ending: 'recorded' | 'not-removed'): void {
+  if (ending === 'recorded') showToast(m.chat_group_remove_member_keys_pending(), 'warning');
+  else showToast(m.chat_group_remove_member_failed());
 }
 
 /** Every way an invitation can add nobody, as a sentence - total for the reason the file gives. */

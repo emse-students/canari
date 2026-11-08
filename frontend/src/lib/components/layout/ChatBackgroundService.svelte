@@ -162,6 +162,10 @@
   import { callsAvailableAnswered } from '$lib/utils/callsAvailability';
   import { mergeFcmMessagesAndAnnounce } from '$lib/utils/chat/fcmMemoryMerge';
   import { subscribeTabMessageUpdates } from '$lib/mls-client/tabMessageSync';
+  import {
+    drainDelegatedCommits,
+    serveDelegatedCommits,
+  } from '$lib/utils/chat/tabCommitDelegation';
   import { flushActiveMlsStateEncrypted } from '$lib/mls-client/mlsStatePersisterRegistry';
   import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
   import { mergeAnnouncedMessage } from '$lib/utils/chat/salonEcho';
@@ -186,6 +190,18 @@
 
   /** Last call id we started ringing for (dedupes effect re-runs). */
   let lastIncomingRingCallId = $state<string | null>(null);
+
+  /**
+   * A follower's request stored while no leader could run it - asked before this session was up, or
+   * left `pending` by a leader that closed - is run the moment this tab leads a live session
+   * (`tabCommitDelegation.ts`). Idempotent: a request already answered is never run again.
+   */
+  $effect(() => {
+    if (!globalSession.isLoggedIn || !globalSession.isTabLeader) return;
+    void drainDelegatedCommits('the session is up in the leader tab').catch((e: unknown) =>
+      appendLog(`[TAB-COMMIT] the drain at session start failed: ${String(e)}`)
+    );
+  });
 
   /** Ring + OS notification when an MLS call invite arrives (any route). */
   $effect(() => {
@@ -2043,6 +2059,14 @@
     const stopNativeQuickReply = isIosTauriRuntime() ? listenForNativeQuickReplies() : () => {};
 
     const unsubscribeTabMessages = subscribeTabMessageUpdates(applyTabMessageEvent);
+    // THE LEADER HALF OF A FOLLOWER TAB'S COMMITS (`tabCommitDelegation.ts`): registered in every tab,
+    // run only by the one that leads. The contexts are read at each execution, not here.
+    const stopServingConversationCommits = serveDelegatedCommits(
+      globalConvs.delegatedCommitExecutors(convCtx)
+    );
+    const stopServingKeyGroupCommits = serveDelegatedCommits(
+      globalChannels.delegatedKeyGroupExecutors(channelsCtx)
+    );
 
     // ── FCM cache polling (Tauri/Android only) ────────────────────────────
     // Messages received via FCM while the app is in the foreground are written
@@ -2082,6 +2106,8 @@
       stopNativeCallAccept();
       stopNativeQuickReply();
       unsubscribeTabMessages();
+      stopServingConversationCommits();
+      stopServingKeyGroupCommits();
       if (fcmPollTimer !== null) clearInterval(fcmPollTimer);
       clearInterval(gcTimer);
       stopForegroundHeartbeat?.();

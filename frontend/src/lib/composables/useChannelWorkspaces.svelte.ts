@@ -57,7 +57,11 @@ import {
   ensureCommunityDistributionGroup,
   enterPrivateSalonGroup,
 } from '$lib/utils/graine/distributionGroup';
-import { leaveKeyGroupToMainTab } from '$lib/utils/graine/followerTabKeyGroup';
+import {
+  enterKeyGroupOnGesture,
+  leaveKeyGroupToMainTab,
+} from '$lib/utils/graine/followerTabKeyGroup';
+import type { DelegatedCommitExecutors } from '$lib/utils/chat/tabCommitDelegation';
 import { requestCommunityHistory } from '$lib/utils/graine/repair';
 import { orderByIds } from '$lib/utils/chat/channelOrder';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
@@ -585,9 +589,7 @@ export function useChannelWorkspaces() {
         viewerHasAccess,
         ensureMls: ctx.ensureMls,
         log: ctx.log,
-      }).catch((e: unknown) =>
-        leaveKeyGroupToMainTab(e, `the salon ${actualId}`, { gesture: false, log: ctx.log })
-      );
+      }).catch((e: unknown) => leaveKeyGroupToMainTab(e, `the salon ${actualId}`, ctx.log));
       assertListingSession(session, `the salon ${actualId}`);
       // ENTERED: a send typed into this salon before the walk reached it goes now (`salonSendGate`).
       openSalonSendGate(actualId);
@@ -628,10 +630,7 @@ export function useChannelWorkspaces() {
     // group. Said by the caller (`loadCommunitySalons`), which asks the same question after this.
     if (goneSinceRequest()) return;
     await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log).catch((e: unknown) =>
-      leaveKeyGroupToMainTab(e, `the key group of ${workspaceId}`, {
-        gesture: false,
-        log: ctx.log,
-      })
+      leaveKeyGroupToMainTab(e, `the key group of ${workspaceId}`, ctx.log)
     );
   }
 
@@ -1216,42 +1215,75 @@ export function useChannelWorkspaces() {
     // group, and the community's still carries every public salon of the same community. The join
     // itself is idempotent and coalesced per scope (`ensureDistributionGroupFor`), so a second
     // channel joined in the same session costs one shared promise and no second external commit.
-    // A follower tab may enter neither group: said once to the member, and the join goes on without.
-    try {
-      await enterJoinedChannelGroups(channelId, workspaceId, isPrivate, ensureMls, log);
-    } catch (e) {
-      leaveKeyGroupToMainTab(e, `the salon ${channelId}`, { gesture: true });
+    // A FOLLOWER TAB HANDS BOTH ENTRIES TO THE LEADER (`enterKeyGroupOnGesture`), in the same order.
+    if (ensureMls) {
+      await enterKeyGroupOnGesture({ kind: 'enter-community-key-group', workspaceId }, async () => {
+        const mls = await ensureMls();
+        await ensureCommunityDistributionGroup(mls, service, workspaceId, log);
+      });
     }
+    await enterKeyGroupOnGesture(
+      { kind: 'enter-salon-group', workspaceId, channelId, isPrivate },
+      () => enterSalonGroupWithAccess(workspaceId, channelId, isPrivate, ensureMls, log)
+    );
   }
 
-  /** The two groups {@link enterJoinedChannel} enters, in order. */
-  async function enterJoinedChannelGroups(
-    channelId: string,
+  /**
+   * A salon's own key group, entered by a member who HAS ACCESS - having just joined or created it is
+   * the access, so nothing here can be a salon the viewer merely sees.
+   *
+   * A PRIVATE SALON JOINED IN-SESSION NEEDS ITS GROUP BEFORE THE FIRST SEND, exactly as one loaded
+   * at startup does, and nothing else would fetch it until the next full reload.
+   *
+   * THE LOG IS A PARAMETER BECAUSE IT USED TO BE `console.info`. This is the one of the three
+   * entries with no `ChannelWorkspaceContext` to hand, and reaching for the console meant a salon
+   * joined in-session left nothing in the log every other GRAINE line lands in - including the
+   * declined-salon line a stale-tree diagnosis reads.
+   */
+  async function enterSalonGroupWithAccess(
     workspaceId: string,
+    channelId: string,
     isPrivate: boolean,
     ensureMls: (() => IMlsService | Promise<IMlsService>) | undefined,
     log: (message: string) => void
   ): Promise<void> {
-    if (ensureMls) {
-      const mls = await ensureMls();
-      await ensureCommunityDistributionGroup(mls, service, workspaceId, log);
-    }
-
-    // A PRIVATE SALON JOINED IN-SESSION NEEDS ITS GROUP BEFORE THE FIRST SEND, exactly as one
-    // loaded at startup does, and nothing else would fetch it until the next full reload - the
-    // same window this function was written to close for the channel-to-community map.
-    //
-    // THE LOG IS A PARAMETER BECAUSE IT USED TO BE `console.info`. This is the one of the three
-    // entries with no `ChannelWorkspaceContext` to hand, and reaching for the console meant a salon
-    // joined in-session left nothing in the log every other GRAINE line lands in - including the
-    // declined-salon line a stale-tree diagnosis reads.
     await enterPrivateSalonGroup(service, workspaceId, channelId, {
       isPrivate,
-      // Having just joined IS the access; nothing here can be a salon the viewer merely sees.
       viewerHasAccess: true,
       ensureMls,
       log,
     });
+  }
+
+  /**
+   * THE LEADER HALF of the key-group entries a follower tab hands over (`tabCommitDelegation.ts`):
+   * the same idempotent entries this tab's own gestures run, on its own state. `ctxOf` is read at
+   * each execution: the session is not up when they are registered.
+   */
+  function delegatedKeyGroupExecutors(
+    ctxOf: () => ChannelWorkspaceContext
+  ): Pick<DelegatedCommitExecutors, 'enter-community-key-group' | 'enter-salon-group'> {
+    return {
+      'enter-community-key-group': async ({ workspaceId }) => {
+        await whenMlsReady();
+        const ctx = ctxOf();
+        if (!ctx.ensureMls)
+          throw new Error('the leader tab has no MLS client to enter a key group');
+        await ensureCommunityDistributionGroup(
+          await ctx.ensureMls(),
+          service,
+          workspaceId,
+          ctx.log
+        );
+        return 'entered';
+      },
+      'enter-salon-group': async ({ workspaceId, channelId, isPrivate }) => {
+        await whenMlsReady();
+        const ctx = ctxOf();
+        await enterSalonGroupWithAccess(workspaceId, channelId, isPrivate, ctx.ensureMls, ctx.log);
+        return 'entered';
+      },
+    };
   }
 
   // ---------- API operations ----------
@@ -1689,11 +1721,11 @@ export function useChannelWorkspaces() {
     // unknown conversation. Never fatal - a community that fails to prepare must still appear in the
     // sidebar, and `ensureCommunityDistributionGroup` logs the cause.
     if (workspaceId && ctx.ensureMls) {
-      const mls = await ctx.ensureMls();
-      await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log).catch(
-        (e: unknown) =>
-          leaveKeyGroupToMainTab(e, `the key group of ${workspaceId}`, { gesture: true })
-      );
+      const ensureMls = ctx.ensureMls;
+      await enterKeyGroupOnGesture({ kind: 'enter-community-key-group', workspaceId }, async () => {
+        const mls = await ensureMls();
+        await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log);
+      });
     }
 
     // Immediately load the channels the backend created (e.g. the default "general" channel)
@@ -1795,13 +1827,9 @@ export function useChannelWorkspaces() {
       // The salon was created private, so social-service has already minted its group; this device
       // is the one that initialises the MLS state on it, and it must do so before the first send.
       // Creating it IS the access.
-      await enterPrivateSalonGroup(service, workspaceId, actualId, {
-        isPrivate,
-        viewerHasAccess: true,
-        ensureMls: ctx.ensureMls,
-        log: ctx.log,
-      }).catch((e: unknown) =>
-        leaveKeyGroupToMainTab(e, `the salon ${actualId}`, { gesture: true })
+      await enterKeyGroupOnGesture(
+        { kind: 'enter-salon-group', workspaceId, channelId: actualId, isPrivate },
+        () => enterSalonGroupWithAccess(workspaceId, actualId, isPrivate, ctx.ensureMls, ctx.log)
       );
       openSalonSendGate(actualId);
 
@@ -2622,6 +2650,8 @@ export function useChannelWorkspaces() {
   }
 
   return {
+    /** The leader half of a follower tab's key-group entries (`tabCommitDelegation`). */
+    delegatedKeyGroupExecutors,
     /** Reactive array of workspace entries shown in the sidebar. */
     get channelWorkspaces() {
       return channelWorkspaces;

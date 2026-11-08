@@ -25,7 +25,6 @@ import {
   setSessionCaughtUp,
 } from '$lib/stores/pendingCallAccept';
 import { isTauriRuntime } from '$lib/utils/openExternal';
-import { requestLeadershipTakeover } from '$lib/utils/chat/connection';
 
 import type { MlsFatalErrorKind, SessionContext } from './session/sessionTypes';
 export type { ChatSessionCallbacks } from './session/sessionTypes';
@@ -386,14 +385,6 @@ export function useChatSession() {
     /** True when this tab is the MLS leader (holds the WebSocket). False for follower tabs. */
     get isTabLeader() {
       return isTabLeaderState;
-    },
-    /**
-     * Asks the leader tab to release its leadership so this tab can take over.
-     * No-op if this tab is already the leader.
-     */
-    requestTabTakeover() {
-      if (isTabLeaderState) return;
-      requestLeadershipTakeover();
     },
     /** Active IndexedDB storage instance (null before login). */
     get storage() {

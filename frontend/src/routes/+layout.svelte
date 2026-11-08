@@ -10,7 +10,6 @@
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
   import CallBanner from '$lib/components/layout/CallBanner.svelte';
-  import TabFollowerBanner from '$lib/components/chat/TabFollowerBanner.svelte';
   import Navbar from '$lib/components/navigation/Navbar.svelte';
   import MobileHeader from '$lib/components/navigation/MobileHeader.svelte';
   import AppSidebar from '$lib/components/navigation/AppSidebar.svelte';
@@ -742,16 +741,11 @@
          call in progress is what the reader is doing, and its hang-up must stay at the top of the
          screen, the one edge no native chrome is drawn over (CallBanner). -->
     <CallBanner />
-    <!-- THE LAST TWO JOINED THE COLUMN ON 2026-09-22, and they are the reason it publishes its
-         height. Both were rendered inside the CONTENT column instead, under a comment claiming
-         "pleine largeur, jamais dans la rangee sidebar" - which is the one thing that placement
-         cannot give them, because that column reserves the rail's 6rem gutter. Measured locally in
-         a second tab of one account: the follower banner sat 108px from the left edge and 12px
-         from the right, and it displaced the brand bar 50px down INTO the rail, which is fixed to
-         the window and does not move - so the bar's subtitle was clipped by the rail's card.
-         Strong first, then the two subtle ones: an interrupting fact is never pushed off by a
-         transient. -->
-    <TabFollowerBanner />
+    <!-- THE OFFLINE BANNER JOINED THE COLUMN ON 2026-09-22, and it is the reason the column publishes
+         its height: rendered inside the CONTENT column instead, a banner sits inside the rail's 6rem
+         gutter and displaces the brand bar down INTO the rail, which is fixed to the window (measured
+         then with the follower-tab banner, removed 2026-11-08). Strong first, then the subtle one: an
+         interrupting fact is never pushed off by a transient. -->
     <OfflineBanner />
     <!-- A post being sent in the background (owner, 2026-11-06): one discreet row per queued post. -->
     <PublishQueueBanner />
