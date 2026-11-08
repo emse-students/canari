@@ -343,6 +343,15 @@ export type AssociationCalendarEventStatus = 'pending' | 'validated' | 'rejected
  */
 export type AssociationCalendarEventKind = 'event' | 'break';
 
+/**
+ * Who a reader is told an event is from (owner, 2026-11-08): `association` is the owner as always;
+ * `neutral` is the generic "Campus" label and nothing else - a BDE files it, stays its owner on the
+ * server, and the server masks the owner fields (`associationId` `''`, no name, no logo, no
+ * `createdBy`) for every reader who does not manage that BDE's agenda. The label is drawn from THIS
+ * field, never from the blanks (`eventOwners`).
+ */
+export type AssociationCalendarEventPresentation = 'association' | 'neutral';
+
 /** Lean summary of an association co-owning a calendar event. */
 export interface CalendarEventCoOwner {
   associationId: string;
@@ -374,6 +383,8 @@ export interface AssociationCalendarEvent {
   createdAt: string;
   /** Visual kind: `event` (card) or `break` (full-day background band). */
   kind: AssociationCalendarEventKind;
+  /** `neutral`: shown as "Campus", with no association (see the type). */
+  presentation: AssociationCalendarEventPresentation;
   status: AssociationCalendarEventStatus;
   validatedAt: string | null;
   validatedBy: string | null;
@@ -420,6 +431,8 @@ export interface CreateAssociationCalendarEventPayload {
   targetAssocId?: string;
   /** Associations ASKED to co-organise this event (D39, max 10): each decides. */
   coOwnerIds?: string[];
+  /** A BDE's agenda managers only; a neutral event has no co-organiser and no linked form. */
+  presentation?: AssociationCalendarEventPresentation;
 }
 
 export interface UpdateAssociationCalendarEventPayload {
@@ -429,6 +442,8 @@ export interface UpdateAssociationCalendarEventPayload {
   endsAt?: string;
   /** `event` or `break` (a full-day background band). */
   kind?: AssociationCalendarEventKind;
+  /** Omitted unless the surface may decide it (`canSetPresentation`). */
+  presentation?: AssociationCalendarEventPresentation;
   linkedFormId?: string | null;
   /**
    * The co-organisers the form now names, accepted and pending included (D39): a new one is asked,
@@ -446,7 +461,10 @@ export async function listLinkableValidatedCalendarEvents(
   const now = new Date();
   const from = new Date(now.getFullYear(), now.getMonth() - 12, 1).toISOString();
   const to = new Date(now.getFullYear(), now.getMonth() + 24, 0, 23, 59, 59, 999).toISOString();
-  return listAssociationCalendarEvents(associationId, { from, to });
+  const events = await listAssociationCalendarEvents(associationId, { from, to });
+  // A post is published in the association's name, so it never links a neutral event - the server
+  // refuses one (`CALENDAR_NEUTRAL_LINKED_POST`), and offering it would be offering a refusal.
+  return events.filter((ev) => ev.presentation !== 'neutral');
 }
 
 /** Media API base for resolving `/api/media/…` paths (Tauri needs an absolute URL). */

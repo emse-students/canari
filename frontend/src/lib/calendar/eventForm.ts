@@ -3,6 +3,7 @@ import { m } from '$lib/paraglide/messages';
 import { Log } from '$lib/utils/Log';
 import type {
   AssociationCalendarEventKind,
+  AssociationCalendarEventPresentation,
   CalendarEventCoOrganiserState,
   EventWriteSide,
   CreateAssociationCalendarEventPayload,
@@ -26,6 +27,12 @@ export interface EventFormValues {
   start: string;
   end: string;
   kind: AssociationCalendarEventKind;
+  /**
+   * `neutral`: shown as "Campus", no association (owner, 2026-11-08). Decided only where
+   * `canSetPresentation`; a neutral event carries no co-organiser and no linked form, so the form
+   * hides both pickers and leaves both fields unsent while it is chosen.
+   */
+  presentation: AssociationCalendarEventPresentation;
   /** `''` when no form is linked. */
   linkedFormId: string;
   /** The co-organisers named: accepted, pending, and newly added ones (D39 - each is ASKED). */
@@ -129,6 +136,16 @@ export interface EventFormCapabilities {
   canLinkForm?: boolean;
   /** The event may be filed under another association. The global agenda only. */
   canTargetAnotherAssociation?: boolean;
+  /**
+   * The event may be filed as NEUTRAL ("Campus"): the target is a BDE and the viewer manages its
+   * agenda (PROPOSE_EVENT in it, or its validator, or a platform admin) - the server's own rule.
+   */
+  canSetPresentation?: boolean;
+}
+
+/** Whether the form, as it stands, files a neutral event. */
+export function isNeutralForm(values: EventFormValues, caps: EventFormCapabilities): boolean {
+  return caps.canSetPresentation === true && values.presentation === 'neutral';
 }
 
 /** A refusal the form shows before anything is sent, with the sentence already chosen. */
@@ -166,14 +183,17 @@ export function toCreatePayload(
   values: EventFormValues,
   caps: EventFormCapabilities
 ): CreateAssociationCalendarEventPayload {
+  // A neutral event names no partner and links no form: the hidden pickers' leftovers stay unsent.
+  const neutral = isNeutralForm(values, caps);
   return {
     title: values.title.trim(),
     description: values.description.trim() || undefined,
     startsAt: new Date(values.start).toISOString(),
     endsAt: instant(values.end),
-    coOwnerIds: values.coOwnerIds,
+    coOwnerIds: neutral ? [] : values.coOwnerIds,
     ...(caps.canSetKind ? { kind: values.kind } : {}),
-    ...(caps.canLinkForm && values.linkedFormId.trim()
+    ...(caps.canSetPresentation ? { presentation: values.presentation } : {}),
+    ...(!neutral && caps.canLinkForm && values.linkedFormId.trim()
       ? { linkedFormId: values.linkedFormId.trim() }
       : {}),
   };
@@ -184,6 +204,10 @@ export function toUpdatePayload(
   values: EventFormValues,
   caps: EventFormCapabilities
 ): UpdateAssociationCalendarEventPayload {
+  // Turning an event neutral never withdraws its partners or detaches its form behind the reader's
+  // back: both stay UNSENT, and the server refuses (`CALENDAR_NEUTRAL_NO_PARTNERS` / `_NO_FORM`)
+  // until they are removed by hand, with the pickers the association presentation shows.
+  const neutral = isNeutralForm(values, caps);
   return {
     title: values.title.trim(),
     description: values.description.trim() || undefined,
@@ -193,12 +217,16 @@ export function toUpdatePayload(
       ? { startsAt: new Date(values.start).toISOString(), endsAt: instant(values.end) }
       : {}),
     // Omitted unless the states were read: see `coOwnersLoad`.
-    ...(values.writeSide === 'organiser' && values.coOwnersLoad === 'ready'
+    ...(!neutral && values.writeSide === 'organiser' && values.coOwnersLoad === 'ready'
       ? { coOwnerIds: values.coOwnerIds }
       : {}),
     ...(caps.canSetKind ? { kind: values.kind } : {}),
+    // The presentation is the organiser's (E2), like the date.
+    ...(caps.canSetPresentation && values.writeSide === 'organiser'
+      ? { presentation: values.presentation }
+      : {}),
     // The form link is the organiser's too (D39, E2): a partner's save carries text only.
-    ...(caps.canLinkForm && values.writeSide === 'organiser'
+    ...(!neutral && caps.canLinkForm && values.writeSide === 'organiser'
       ? { linkedFormId: values.linkedFormId.trim() || null }
       : {}),
   };
@@ -228,6 +256,7 @@ export function blankEventFormValues(onDay?: Date | null): EventFormValues {
     start: toDatetimeLocalValue(now.toISOString()),
     end: '',
     kind: 'event',
+    presentation: 'association',
     linkedFormId: '',
     coOwnerIds: [],
     coOwnersLoad: 'ready',
@@ -250,6 +279,7 @@ export function eventFormValuesFrom(ev: SeedableEvent): EventFormValues {
     start: toDatetimeLocalValue(ev.startsAt),
     end: ev.endsAt ? toDatetimeLocalValue(ev.endsAt) : '',
     kind: ev.kind ?? 'event',
+    presentation: ev.presentation ?? 'association',
     linkedFormId: ev.linkedFormId ?? '',
     // The ACCEPTED ones only, which is why the list is not sendable until the states arrive.
     coOwnerIds: (ev.coOwners ?? []).map((co) => co.associationId),
@@ -268,6 +298,7 @@ export interface SeedableEvent {
   startsAt: string;
   endsAt: string | null;
   kind?: AssociationCalendarEventKind;
+  presentation?: AssociationCalendarEventPresentation;
   linkedFormId?: string | null;
   coOwners?: { associationId: string }[];
 }

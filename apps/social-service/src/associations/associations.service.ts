@@ -111,8 +111,19 @@ import { AssociationProduct } from './entities/association-product.entity';
 import {
   AssociationCalendarEvent,
   AssociationCalendarEventKind,
+  AssociationCalendarEventPresentation,
   AssociationCalendarEventStatus,
 } from './entities/association-calendar-event.entity';
+import {
+  assertNeutralPresentationAllowed,
+  EVERY_EVENT_STEWARDSHIP,
+  eventStewardshipOf,
+  isNeutralEvent,
+  NO_EVENT_STEWARDSHIP,
+  presentEventsForReader,
+  type EventStewardship,
+  type PresentableEventRow,
+} from './event-presentation';
 import { AssociationCalendarEventCoOwner } from './entities/association-calendar-event-co-owner.entity';
 import { deriveCotisationTag } from './cotisation-tag.util';
 import {
@@ -2282,6 +2293,7 @@ export class AssociationsService {
       createdBy: e.createdBy,
       createdAt: createdAt.toISOString(),
       kind: e.kind ?? AssociationCalendarEventKind.Event,
+      presentation: e.presentation ?? AssociationCalendarEventPresentation.Association,
       linkedFormId: e.linkedFormId ?? null,
       status: e.status ?? AssociationCalendarEventStatus.Pending,
       validatedAt: e.validatedAt
@@ -2346,6 +2358,18 @@ export class AssociationsService {
         'Agenda event not found, not validated yet, or belongs to another association'
       );
     }
+    // A post is published in its association's name, so linking a neutral event would name the
+    // owner the presentation hides (event-presentation.ts). Typed, for the composer's sentence.
+    if (isNeutralEvent(ev)) {
+      this.logger.debug(`[AGENDA] post link refused: ${sanitizeLog(ev.id.slice(0, 8))} is neutral`);
+      assertNeutralPresentationAllowed({
+        presentation: AssociationCalendarEventPresentation.Neutral,
+        ownerIsBde: true,
+        partnerCount: 0,
+        linkedFormId: null,
+        linkedByPost: true,
+      });
+    }
     return ev.id;
   }
 
@@ -2365,6 +2389,7 @@ export class AssociationsService {
       where: {
         id: post.linkedCalendarEventId,
         status: AssociationCalendarEventStatus.Validated,
+        presentation: AssociationCalendarEventPresentation.Association,
       },
     });
     if (!ev) return null;
@@ -2385,7 +2410,11 @@ export class AssociationsService {
   /** Minimal event payload for post cards (validated events only). */
   async findValidatedCalendarEventSummary(eventId: string) {
     const ev = await this.calendarRepo.findOne({
-      where: { id: eventId, status: AssociationCalendarEventStatus.Validated },
+      where: {
+        id: eventId,
+        status: AssociationCalendarEventStatus.Validated,
+        presentation: AssociationCalendarEventPresentation.Association,
+      },
     });
     if (!ev) return null;
     const asso = await this.assoRepo.findOne({
@@ -2500,7 +2529,7 @@ export class AssociationsService {
     const rows = await qb.getMany();
     const coOwnerMap = await this.batchLoadCoOwners(rows.map((r) => r.id));
     const ownerById = await this.batchLoadEventOwners(rows.map((r) => r.associationId));
-    return rows.map((e) => {
+    const serialized = rows.map((e) => {
       const owner = ownerById.get(e.associationId);
       return {
         ...this.serializeCalendarEvent(e, coOwnerMap.get(e.id) ?? []),
@@ -2510,6 +2539,52 @@ export class AssociationsService {
         associationLogoUrl: owner?.logoUrl ?? null,
       };
     });
+    // THIS association's own agenda: a neutral event of it is not listed to a non-steward at all.
+    return this.presentEventsToViewer(serialized, opts?.viewer, associationId);
+  }
+
+  /**
+   * Which owners' neutral events `viewer` may read unmasked (`event-presentation.ts`): a platform
+   * admin all of them; a signed-in reader those of the associations where they hold
+   * `PROPOSE_EVENT` (who files them) or the BDE agenda right (who validates them); anyone else none.
+   */
+  private async eventStewardshipFor(viewer: CalendarViewer | undefined): Promise<EventStewardship> {
+    if (viewer?.isGlobalAdmin) return EVERY_EVENT_STEWARDSHIP;
+    const userId = viewer?.userId?.trim();
+    if (!userId) return NO_EVENT_STEWARDSHIP;
+    const [proposing, validating] = await Promise.all([
+      this.memberRepo
+        .createQueryBuilder('m')
+        .select('m.associationId', 'associationId')
+        .where('m.userId = :userId', { userId })
+        .andWhere('(m.permissions & :flag) <> 0', {
+          flag: AssociationPermissionFlag.PROPOSE_EVENT,
+        })
+        .getRawMany<{ associationId: string }>(),
+      this.associationsUnderBdeAgendaRight(userId),
+    ]);
+    return eventStewardshipOf([...proposing.map((r) => r.associationId), ...validating]);
+  }
+
+  /**
+   * THE ONE EXIT OF EVERY AGENDA LISTING A READER RECEIVES: neutral events masked or dropped for a
+   * non-steward (`presentEventsForReader`). The stewardship costs two queries, so it is asked only
+   * when the page holds a neutral event - which most never do.
+   */
+  private async presentEventsToViewer<T extends PresentableEventRow>(
+    rows: T[],
+    viewer: CalendarViewer | undefined,
+    listedFor: string | null
+  ): Promise<T[]> {
+    const neutral = rows.filter(isNeutralEvent).length;
+    if (neutral === 0) return rows;
+    const presented = presentEventsForReader(rows, await this.eventStewardshipFor(viewer), {
+      listedFor,
+    });
+    this.logger.debug(
+      `[AGENDA] ${neutral} neutral event(s) presented to ${viewer?.userId ? sanitizeLog(viewer.userId.slice(0, 8)) : 'an anonymous reader'} (${rows.length - presented.length} withheld)`
+    );
+    return presented;
   }
 
   /**
@@ -3308,6 +3383,7 @@ export class AssociationsService {
       .addSelect('e.rejectionReason', 'rejectionReason')
       .addSelect('e.imageUrl', 'imageUrl')
       .addSelect('e.imageMediaId', 'imageMediaId')
+      .addSelect('e.presentation', 'presentation')
       .addSelect('a.name', 'associationName')
       .addSelect('a.slug', 'associationSlug')
       .addSelect('a.color', 'associationColor')
@@ -3315,7 +3391,7 @@ export class AssociationsService {
       .addSelect(opts?.isGlobalAdmin ? 'true' : governs, 'canValidate')
       .getRawMany();
 
-    return rows.map((r: Record<string, unknown>) => {
+    const serialized = rows.map((r: Record<string, unknown>) => {
       const base = this.serializeCalendarEvent({
         id: r.id as string,
         associationId: r.associationId as string,
@@ -3336,6 +3412,7 @@ export class AssociationsService {
         rejectionReason: (r.rejectionReason as string | null) ?? null,
         imageUrl: (r.imageUrl as string | null) ?? null,
         imageMediaId: (r.imageMediaId as string | null) ?? null,
+        presentation: this.rawPresentation(r.presentation),
       });
       return {
         ...base,
@@ -3347,6 +3424,20 @@ export class AssociationsService {
         canValidate: r.canValidate === true,
       };
     });
+    // Any member with a flag sees their association's queue; only its stewards see who files a
+    // neutral event.
+    return this.presentEventsToViewer(
+      serialized,
+      { userId, isGlobalAdmin: opts?.isGlobalAdmin },
+      null
+    );
+  }
+
+  /** A raw `presentation` column: anything but `neutral` is the association's own presentation. */
+  private rawPresentation(raw: unknown): AssociationCalendarEventPresentation {
+    return raw === AssociationCalendarEventPresentation.Neutral
+      ? AssociationCalendarEventPresentation.Neutral
+      : AssociationCalendarEventPresentation.Association;
   }
 
   /**
@@ -3470,6 +3561,7 @@ export class AssociationsService {
       .addSelect('e.validatedBy', 'validatedBy')
       .addSelect('e.imageUrl', 'imageUrl')
       .addSelect('e.imageMediaId', 'imageMediaId')
+      .addSelect('e.presentation', 'presentation')
       .addSelect('a.name', 'associationName')
       .addSelect('a.slug', 'associationSlug')
       .addSelect('a.color', 'associationColor')
@@ -3480,7 +3572,7 @@ export class AssociationsService {
       rows.map((r: Record<string, unknown>) => r.id as string)
     );
 
-    return rows.map((r: Record<string, unknown>) => {
+    const serialized = rows.map((r: Record<string, unknown>) => {
       const base = this.serializeCalendarEvent(
         {
           id: r.id as string,
@@ -3503,6 +3595,7 @@ export class AssociationsService {
           rejectionReason: null,
           imageUrl: (r.imageUrl as string | null) ?? null,
           imageMediaId: (r.imageMediaId as string | null) ?? null,
+          presentation: this.rawPresentation(r.presentation),
         },
         coOwnerMap.get(r.id as string) ?? []
       );
@@ -3514,6 +3607,9 @@ export class AssociationsService {
         associationLogoUrl: (r.associationLogoUrl as string | null) ?? null,
       };
     });
+    // The anonymous `.ics` passes no viewer and so reads every neutral event masked; a filter on one
+    // association is that association's own agenda.
+    return this.presentEventsToViewer(serialized, opts?.viewer, aid);
   }
 
   /**
@@ -3822,7 +3918,7 @@ ${rejectionReason}`
     // A global admin, or a BDE governing the TARGET (the controller scoped `isBde` to it), may
     // create on behalf of another association.
     const targetId = isValidator && dto.targetAssocId ? dto.targetAssocId : associationId;
-    await this.findById(targetId);
+    const owner = await this.findById(targetId);
     const startsAt = new Date(dto.startsAt);
     const endsAt = dto.endsAt ? new Date(dto.endsAt) : null;
     if (Number.isNaN(startsAt.getTime())) {
@@ -3850,6 +3946,17 @@ ${rejectionReason}`
     // reach and its rights stay the organiser's until one accepts. The creator writes as the
     // organiser (the guard, or the BDE / global admin tier for a deposit).
     const askedCount = new Set((dto.coOwnerIds ?? []).filter((id) => id !== targetId)).size;
+    // NEUTRAL (owner, 2026-11-08): the route already asked PROPOSE_EVENT on `:id` (or the deposit
+    // tier on the target) - the right that files the BDE's events; the presentation adds that the
+    // owner is a BDE and that nothing on the event names it. Before the transaction, like the cap.
+    const presentation = dto.presentation ?? AssociationCalendarEventPresentation.Association;
+    assertNeutralPresentationAllowed({
+      presentation,
+      ownerIsBde: owner.isBDE === true,
+      partnerCount: askedCount,
+      linkedFormId,
+      linkedByPost: false,
+    });
     // ONE TRANSACTION, ONE CONNECTION: the form-link detach, the event insert and the partners'
     // proposals commit together or not at all. The event used to be saved BEFORE the sync, so a
     // failing k-th proposal left an event with no proposals behind a 500, and the caller's retry
@@ -3868,6 +3975,7 @@ ${rejectionReason}`
         endsAt,
         createdBy: userId,
         kind,
+        presentation,
         linkedFormId,
         // The three validation columns are written in ONE place, and this is not it. Spelling
         // `null` here rather than leaving them to the entity default is deliberate: a default is
@@ -3897,7 +4005,7 @@ ${rejectionReason}`
     await afterCommit();
     const coOwners: AssociationCalendarEventCoOwner[] = [];
     this.logger.debug(
-      `Event created: ${sanitizeLog(saved.id)} for asso ${sanitizeLog(targetId)} by ${sanitizeLog(userId)} (status=${sanitizeLog(saved.status)}, co-organisers asked=${askedCount})`
+      `Event created: ${sanitizeLog(saved.id)} for asso ${sanitizeLog(targetId)} by ${sanitizeLog(userId)} (status=${sanitizeLog(saved.status)}, presentation=${sanitizeLog(saved.presentation)}, co-organisers asked=${askedCount})`
     );
     // EVERY creation is a proposal, so the calendar managers are told about every one - there is
     // no longer a branch here, because there is no longer a creation that skips the queue.
@@ -4081,6 +4189,10 @@ ${rejectionReason}`
       ev.validatedBy = null;
     }
 
+    // The presentation is the organiser's, and a neutral event is checked as it WILL be (its partners
+    // and its form link after this write) - read-only, so it sits with the refusals below.
+    await this.assertEventPresentationAfterUpdate(manager, ev, dto, associationId, side);
+
     // EVERY REFUSAL BEFORE ANY WRITE: the partner-list check (a partner changing more than its own
     // presence, the cap) is read-only and runs here, ahead of the form link's detach below, so a
     // refused request leaves the event, its form links and its partners exactly as found.
@@ -4129,6 +4241,59 @@ ${rejectionReason}`
       : () => Promise.resolve();
     const saved = await repo.save(ev);
     return { saved, demoted, afterCommit };
+  }
+
+  /**
+   * The presentation half of `applyCalendarEventUpdate` (`event-presentation.ts`): a partner never
+   * changes it, and an event that is or becomes neutral must still be a BDE's, with no co-organiser
+   * (the list this write leaves, or the accepted and pending ones it does not touch), no linked form
+   * after this write, and no post linking it. Read-only; sets `ev.presentation` once it passes.
+   */
+  private async assertEventPresentationAfterUpdate(
+    manager: EntityManager,
+    ev: AssociationCalendarEvent,
+    dto: UpdateAssociationCalendarEventDto,
+    viaAssociationId: string,
+    side: EventWriteSide
+  ): Promise<void> {
+    const current = ev.presentation ?? AssociationCalendarEventPresentation.Association;
+    const next = dto.presentation ?? current;
+    if (next !== current && side === 'partner') {
+      this.logger.debug(
+        `[PERM] partner ${sanitizeLog(viaAssociationId.slice(0, 8))} refused a presentation change on ${sanitizeLog(ev.id.slice(0, 8))}`
+      );
+      throw partnerOrganiserOnlyRefusal('presentation');
+    }
+    if (next !== AssociationCalendarEventPresentation.Neutral) {
+      ev.presentation = next;
+      return;
+    }
+    const [facts] = (await manager.query(
+      `SELECT (SELECT ${isBdeAssociationSql('o')} FROM associations o WHERE o.id = $2)
+                AS "ownerIsBde",
+              (SELECT count(*)::int FROM association_calendar_event_co_owners co
+                WHERE co.event_id = $1)
+            + (SELECT count(*)::int FROM proposals p
+                WHERE p.kind = 'coorganise' AND p."subjectId" = $1 AND p.status = 'pending')
+                AS "partnerCount",
+              EXISTS (SELECT 1 FROM posts WHERE posts."linkedCalendarEventId" = $1)
+                AS "linkedByPost"`,
+      [ev.id, ev.associationId]
+    )) as { ownerIsBde: boolean | null; partnerCount: number; linkedByPost: boolean }[];
+    const partnerCount =
+      dto.coOwnerIds !== undefined
+        ? new Set(dto.coOwnerIds.filter((id) => id !== ev.associationId)).size
+        : facts.partnerCount;
+    const linkedFormId =
+      dto.linkedFormId !== undefined ? dto.linkedFormId || null : (ev.linkedFormId ?? null);
+    assertNeutralPresentationAllowed({
+      presentation: next,
+      ownerIsBde: facts.ownerIsBde === true,
+      partnerCount,
+      linkedFormId,
+      linkedByPost: facts.linkedByPost === true,
+    });
+    ev.presentation = next;
   }
 
   /** Marks a pending calendar event as validated (visible on public agenda and feeds). */

@@ -466,6 +466,10 @@ person.
   with `opensAt = now()` and claimed at the next tick.
 - An event's shotgun is its registration form when it has one (the form's row is the one used); an
   event without a form "opens" when it is published to the agenda.
+- **A NEUTRAL event (owner, 2026-11-08) is not an opening of its BDE**: it notifies no follower of
+  the BDE under the BDE's name. If WP-4 announces it at all, it is to the event's audience as
+  "Nouvel événement sur le campus", with no association - the masking rule of
+  [calendar](frontend/modules/calendar.md#neutral-campus-events-owner-2026-11-08).
 - Categories: `form_open` stays `forms`, a booking opening files under `bookings`, an event opening
   under `events`. **Never capped**, whatever the row's origin (decision 11: shotgun openings are
   outside the cap).
