@@ -2337,21 +2337,29 @@ export class AssociationsService {
   /**
    * Ensures a post may reference a validated agenda event (same association).
    * Returns the event id or null when omitted.
+   *
+   * With `manager` (the post write's transaction, `PostsService.saveWithEventLink`) the event row is
+   * read `FOR SHARE`, which conflicts with the `FOR NO KEY UPDATE` a presentation switch holds
+   * (`withEventLock`): the link and the switch are serialised, so the neutral check below and the
+   * switch's linked-post check can never both pass.
    */
   async resolvePostCalendarEventLink(
     associationId: string | null | undefined,
-    eventId: string | null | undefined
+    eventId: string | null | undefined,
+    manager?: EntityManager
   ): Promise<string | null> {
     if (!eventId?.trim()) return null;
     if (!associationId?.trim()) {
       throw new BadRequestException('associationId is required to link an agenda event');
     }
-    const ev = await this.calendarRepo.findOne({
+    const repo = manager?.getRepository(AssociationCalendarEvent) ?? this.calendarRepo;
+    const ev = await repo.findOne({
       where: {
         id: eventId.trim(),
         associationId: associationId.trim(),
         status: AssociationCalendarEventStatus.Validated,
       },
+      ...(manager ? { lock: { mode: 'pessimistic_read' as const } } : {}),
     });
     if (!ev) {
       throw new BadRequestException(
@@ -2544,26 +2552,25 @@ export class AssociationsService {
   }
 
   /**
-   * Which owners' neutral events `viewer` may read unmasked (`event-presentation.ts`): a platform
-   * admin all of them; a signed-in reader those of the associations where they hold
-   * `PROPOSE_EVENT` (who files them) or the BDE agenda right (who validates them); anyone else none.
+   * Which of `ownerIds` (the owners of the neutral rows on a page) `viewer` may read unmasked
+   * (`event-presentation.ts`): exactly the callers who may WRITE such an event
+   * (`assertMayWriteEvent`), so a steward never edits an event they cannot see. A platform admin
+   * every owner; otherwise `PROPOSE_EVENT` through `mayActOnAny` (the member bitmask AND the BDE
+   * `MANAGE_ASSO` super-admin, the same three tiers as `mayAct`) plus the BDE agenda right (who
+   * validates them); an anonymous reader none. Batched: two queries whatever the page holds.
    */
-  private async eventStewardshipFor(viewer: CalendarViewer | undefined): Promise<EventStewardship> {
+  private async eventStewardshipFor(
+    viewer: CalendarViewer | undefined,
+    ownerIds: string[]
+  ): Promise<EventStewardship> {
     if (viewer?.isGlobalAdmin) return EVERY_EVENT_STEWARDSHIP;
     const userId = viewer?.userId?.trim();
     if (!userId) return NO_EVENT_STEWARDSHIP;
     const [proposing, validating] = await Promise.all([
-      this.memberRepo
-        .createQueryBuilder('m')
-        .select('m.associationId', 'associationId')
-        .where('m.userId = :userId', { userId })
-        .andWhere('(m.permissions & :flag) <> 0', {
-          flag: AssociationPermissionFlag.PROPOSE_EVENT,
-        })
-        .getRawMany<{ associationId: string }>(),
+      this.mayActOnAny(userId, ownerIds, AssociationPermissionFlag.PROPOSE_EVENT),
       this.associationsUnderBdeAgendaRight(userId),
     ]);
-    return eventStewardshipOf([...proposing.map((r) => r.associationId), ...validating]);
+    return eventStewardshipOf([...proposing, ...validating]);
   }
 
   /**
@@ -2578,7 +2585,8 @@ export class AssociationsService {
   ): Promise<T[]> {
     const neutral = rows.filter(isNeutralEvent).length;
     if (neutral === 0) return rows;
-    const presented = presentEventsForReader(rows, await this.eventStewardshipFor(viewer), {
+    const owners = rows.filter(isNeutralEvent).map((r) => r.associationId);
+    const presented = presentEventsForReader(rows, await this.eventStewardshipFor(viewer, owners), {
       listedFor,
     });
     this.logger.debug(
@@ -4286,9 +4294,12 @@ ${rejectionReason}`
         : facts.partnerCount;
     const linkedFormId =
       dto.linkedFormId !== undefined ? dto.linkedFormId || null : (ev.linkedFormId ?? null);
+    // "Only a BDE files a neutral event" is asked of the TRANSITION to neutral: an event already
+    // neutral stays editable by its stewards if its owner has since stopped being a BDE.
+    const becomingNeutral = current !== AssociationCalendarEventPresentation.Neutral;
     assertNeutralPresentationAllowed({
       presentation: next,
-      ownerIsBde: facts.ownerIsBde === true,
+      ownerIsBde: !becomingNeutral || facts.ownerIsBde === true,
       partnerCount,
       linkedFormId,
       linkedByPost: facts.linkedByPost === true,

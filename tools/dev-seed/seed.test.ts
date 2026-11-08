@@ -264,6 +264,15 @@ const CHECK_PREDICATES: Record<string, CheckPredicate> = {
     sql: `NOT "studentsOnly" OR "associationId" IS NOT NULL`,
     holds: (r) => r.studentsOnly !== true || given(r.associationId),
   },
+  // `presentation` defaults to 'association' since migration 144; the seed files no neutral event.
+  association_calendar_events_presentation_check: {
+    sql: "presentation IN ('association', 'neutral')",
+    holds: oneOf('presentation', ['association', 'neutral'], true),
+  },
+  association_calendar_events_neutral_no_form_check: {
+    sql: `presentation <> 'neutral' OR "linkedFormId" IS NULL`,
+    holds: (r) => (r.presentation ?? 'association') !== 'neutral' || !given(r.linkedFormId),
+  },
   // `kind` defaults to 'post'.
   posts_kind_shape: {
     sql: `(kind = 'post' AND "durationMs" IS NULL AND "expiresAt" IS NULL)

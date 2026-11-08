@@ -104,4 +104,13 @@ describe('PostsService.findPostLinkedToCalendarEvent', () => {
     expect(calls[0].sql).toContain('vis_viewer.id = $2');
     expect(calls[0].params).toEqual(['event-1', 'reader-1']);
   });
+
+  it('never returns the post of a neutral event: it joins the event, presented by its association', async () => {
+    // A post card names its association; a neutral event hides it (`event-presentation.ts`).
+    const { service, calls } = makeService([ROW]);
+    await service.findPostLinkedToCalendarEvent('event-1', 'reader-1', false);
+    expect(calls[0].sql).toMatch(
+      /JOIN association_calendar_events linked_ev\s+ON linked_ev\.id = posts\."linkedCalendarEventId" AND linked_ev\.presentation = 'association'/
+    );
+  });
 });

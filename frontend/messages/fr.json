@@ -4691,7 +4691,7 @@
   "calendar_neutral_label": "Campus",
   "calendar_neutral_filed_by": "Déposé par {association}",
   "asso_calendar_event_neutral_label": "Événement neutre",
-  "asso_calendar_event_neutral_hint": "Affiché \"Campus\" sur l'agenda, sans le nom ni le logo de l'association. Seuls les gestionnaires de son agenda et la modération voient qui l'a déposé.",
+  "asso_calendar_event_neutral_hint": "Affiché \"Campus\" sur l'agenda, sans le nom ni le logo de l'association. Seuls les gestionnaires de l'agenda voient quelle association l'a déposé.",
   "calendar_error_neutral_not_a_bde": "Seul un BDE peut déposer un événement neutre.",
   "calendar_error_neutral_no_partners": "Un événement neutre n'a pas de co-organisateur : retirez-les d'abord.",
   "calendar_error_neutral_no_form": "Un événement neutre ne peut pas être lié à un formulaire.",

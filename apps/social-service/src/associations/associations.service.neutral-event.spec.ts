@@ -9,6 +9,7 @@ import {
 } from './entities/association-calendar-event.entity';
 import { AssociationPermissionFlag } from './entities/association-member.entity';
 import { CALENDAR_NEUTRAL_ERROR_CODES } from './event-presentation';
+import { CALENDAR_PARTNER_ORGANISER_ONLY } from './event-write-side';
 import {
   GlobalAdminOrAssociationRoleGuard,
   PERM_FLAG_KEY,
@@ -150,10 +151,28 @@ describe('reading a neutral event', () => {
     };
   }
 
-  /** `proposing` / `validating`: the associations the reader files and validates events for. */
-  function makeService(rows: Overrides[], proposing: string[], validating: string[]) {
+  /**
+   * `proposing` / `validating`: the associations the reader holds PROPOSE_EVENT in and validates
+   * events for; `governing`, those a BDE where they hold MANAGE_ASSO governs (the super-admin tier
+   * of `mayAct`); `memberOf`, associations where they hold some OTHER flag (the pending queue's door).
+   */
+  function makeService(
+    rows: Overrides[],
+    proposing: string[],
+    validating: string[],
+    governing: string[] = [],
+    memberOf: string[] = []
+  ) {
     const qb: Record<string, jest.Mock> = {};
-    for (const method of ['innerJoin', 'where', 'andWhere', 'orderBy', 'select', 'addSelect']) {
+    for (const method of [
+      'innerJoin',
+      'where',
+      'andWhere',
+      'orderBy',
+      'select',
+      'addSelect',
+      'setParameters',
+    ]) {
       qb[method] = jest.fn(() => qb);
     }
     qb.getMany = jest.fn(async () => rows);
@@ -167,17 +186,23 @@ describe('reading a neutral event', () => {
         associationLogoUrl: '/api/media/public/bde-logo',
       }))
     );
-    const memberQb: Record<string, jest.Mock> = {};
-    for (const method of ['select', 'where', 'andWhere'])
-      memberQb[method] = jest.fn(() => memberQb);
-    memberQb.getRawMany = jest.fn(async () =>
-      proposing.map((associationId) => ({ associationId }))
-    );
     const memberRepo = {
       count: jest.fn(async () => 0),
-      createQueryBuilder: jest.fn(() => memberQb),
-      // `associationsUnderBdeAgendaRight` - the associations whose events the reader validates.
-      query: jest.fn(async () => validating.map((id) => ({ id }))),
+      // The member bitmask: `mayActOnAny`'s last tier, and the pending queue's memberships.
+      find: jest.fn(async () => [
+        ...proposing.map((associationId) => ({
+          associationId,
+          permissions: AssociationPermissionFlag.PROPOSE_EVENT,
+        })),
+        ...memberOf.map((associationId) => ({
+          associationId,
+          permissions: AssociationPermissionFlag.MANAGE_MEMBERS,
+        })),
+      ]),
+      // `associationsUnderBdeFlag` (user + flag) and `associationsUnderBdeAgendaRight` (user).
+      query: jest.fn(async (_sql: string, params: unknown[]) =>
+        (params.length === 2 ? governing : validating).map((id) => ({ id }))
+      ),
     };
     const assoRepo = {
       findOne: jest.fn(async () => ({ id: BDE, parentAssociationId: null })),
@@ -248,6 +273,94 @@ describe('reading a neutral event', () => {
         createdBy: 'bde-secretary',
         presentation: NEUTRAL,
       });
+    }
+  });
+
+  it('stays whole for a MANAGE_ASSO-only member of the BDE - the same tiers as who may write it', async () => {
+    // Holds neither PROPOSE_EVENT nor the agenda right, only MANAGE_ASSO in the BDE: `mayAct` lets
+    // them file and edit the BDE's events, so they are shown what they may edit.
+    const service = makeService([neutralRow()], [], [], [BDE]);
+    const [ev] = await service.listCalendarEvents(BDE, undefined, undefined, {
+      viewer: { userId: 'bde-president' },
+    });
+    expect(ev).toMatchObject({ associationId: BDE, associationName: 'BDE', presentation: NEUTRAL });
+  });
+
+  it('is masked in the pending queue for a BDE member who is no steward', async () => {
+    const pending = { ...neutralRow(), status: AssociationCalendarEventStatus.Pending };
+    const service = makeService([pending], [], [], [], [BDE]);
+    const rows = await service.listPendingCalendarEvents('bde-treasurer', {});
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      presentation: NEUTRAL,
+      associationId: '',
+      associationName: '',
+      createdBy: '',
+    });
+    expect(JSON.stringify(rows)).not.toMatch(/bde/i);
+  });
+
+  it('is whole in the pending queue for its validator', async () => {
+    const pending = { ...neutralRow(), status: AssociationCalendarEventStatus.Pending };
+    const service = makeService([pending], [], [BDE]);
+    const [row] = await service.listPendingCalendarEvents('bde-validator', {});
+    expect(row).toMatchObject({ associationId: BDE, createdBy: 'bde-secretary' });
+  });
+});
+
+describe('a MANAGE_ASSO-only member of the BDE may write the neutral event they are shown', () => {
+  it('passes `assertMayWriteEvent` through the super-admin tier', async () => {
+    const service = construct({
+      calendarRepo: { findOne: jest.fn(async () => ({ id: 'ev-1', associationId: BDE })) },
+    });
+    Object.assign(service, {
+      mayValidateEvent: jest.fn(async () => false),
+      holdsBdeFlagOver: jest.fn(
+        async (_u: string, _a: string, flag: number) =>
+          flag === AssociationPermissionFlag.MANAGE_ASSO
+      ),
+      callerHasFlag: jest.fn(async () => false),
+    });
+    await expect(service.assertMayWriteEvent('bde-president', false, BDE, 'ev-1')).resolves.toEqual(
+      { isGlobalAdmin: false, isBde: false, side: 'organiser' }
+    );
+  });
+});
+
+describe('a post and a neutral event', () => {
+  const NEUTRAL_EV = {
+    id: 'ev-1',
+    associationId: BDE,
+    status: AssociationCalendarEventStatus.Validated,
+    presentation: NEUTRAL,
+  };
+
+  it('the composer is refused the link, typed, reading the event FOR SHARE in the post write', async () => {
+    const txRepo = { findOne: jest.fn(async () => NEUTRAL_EV) };
+    const manager = { getRepository: jest.fn(() => txRepo) };
+    const service = construct({ calendarRepo: { findOne: jest.fn() } });
+    await expect(
+      service.resolvePostCalendarEventLink(BDE, 'ev-1', manager as never)
+    ).rejects.toMatchObject({ response: { code: CALENDAR_NEUTRAL_ERROR_CODES.LINKED_POST } });
+    // The lock that conflicts with the presentation switch's `FOR NO KEY UPDATE`.
+    expect(txRepo.findOne).toHaveBeenCalledWith(
+      expect.objectContaining({ lock: { mode: 'pessimistic_read' } })
+    );
+  });
+
+  it('the two forward post readers read an association-presented event only', async () => {
+    const calendarRepo = { findOne: jest.fn(async () => null) };
+    const postRepo = {
+      findOne: jest.fn(async () => ({ id: 'p1', linkedCalendarEventId: 'ev-1' })),
+    };
+    const service = construct({ calendarRepo });
+    Object.assign(service, { postRepo });
+    await expect(service.findCalendarEventByLinkedPost('p1')).resolves.toBeNull();
+    await expect(service.findValidatedCalendarEventSummary('ev-1')).resolves.toBeNull();
+    const queries = calendarRepo.findOne.mock.calls as unknown as [{ where: Overrides }][];
+    expect(queries).toHaveLength(2);
+    for (const [query] of queries) {
+      expect(query.where.presentation).toBe(AssociationCalendarEventPresentation.Association);
     }
   });
 });
@@ -328,6 +441,45 @@ describe('managing a neutral event', () => {
       })
     ).rejects.toMatchObject({ response: { code: CALENDAR_NEUTRAL_ERROR_CODES.LINKED_POST } });
     expect(saved).toHaveLength(0);
+  });
+
+  it('refuses a partner changing how it is presented - the organiser side only', async () => {
+    const { service, saved } = makeService({});
+    await expect(
+      service.updateCalendarEvent(
+        CLUB,
+        'ev-1',
+        { presentation: AssociationCalendarEventPresentation.Association } as never,
+        { callerUserId: 'club-member' }
+      )
+    ).rejects.toMatchObject({ response: { code: CALENDAR_PARTNER_ORGANISER_ONLY } });
+    expect(saved).toHaveLength(0);
+  });
+
+  it('refuses turning the event of an association that is not a BDE neutral', async () => {
+    const { service, saved, manager } = makeService({
+      presentation: AssociationCalendarEventPresentation.Association,
+    });
+    manager.query.mockResolvedValueOnce([
+      { ownerIsBde: false, partnerCount: 0, linkedByPost: false },
+    ]);
+    await expect(
+      service.updateCalendarEvent(BDE, 'ev-1', { presentation: NEUTRAL } as never, {
+        callerUserId: 'bde-secretary',
+      })
+    ).rejects.toMatchObject({ response: { code: CALENDAR_NEUTRAL_ERROR_CODES.NOT_A_BDE } });
+    expect(saved).toHaveLength(0);
+  });
+
+  it('keeps an already neutral event editable once its owner is no longer a BDE', async () => {
+    const { service, saved, manager } = makeService({});
+    manager.query.mockResolvedValueOnce([
+      { ownerIsBde: false, partnerCount: 0, linkedByPost: false },
+    ]);
+    await service.updateCalendarEvent(BDE, 'ev-1', { title: 'Soiree d ete' } as never, {
+      callerUserId: 'bde-secretary',
+    });
+    expect(saved[0]).toMatchObject({ title: 'Soiree d ete', presentation: NEUTRAL });
   });
 
   it('refuses linking a form to it', async () => {

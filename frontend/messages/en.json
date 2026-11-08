@@ -4691,7 +4691,7 @@
   "calendar_neutral_label": "Campus",
   "calendar_neutral_filed_by": "Filed by {association}",
   "asso_calendar_event_neutral_label": "Neutral event",
-  "asso_calendar_event_neutral_hint": "Shown as \"Campus\" on the agenda, without the association's name or logo. Only its agenda managers and moderation see who filed it.",
+  "asso_calendar_event_neutral_hint": "Shown as \"Campus\" on the agenda, without the association's name or logo. Only the agenda's managers see which association filed it.",
   "calendar_error_neutral_not_a_bde": "Only a BDE can file a neutral event.",
   "calendar_error_neutral_no_partners": "A neutral event has no co-organiser: remove them first.",
   "calendar_error_neutral_no_form": "A neutral event cannot be linked to a form.",

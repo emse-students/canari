@@ -777,7 +777,10 @@ sets local state, so it is independent of `agenda.reload()`'s own window.
 The BDE secretary asked to put events on the agenda that are NOT branded BDE. Owner decisions: the
 people who already file the BDE's events choose, when filing, "au nom du BDE" or neutral; a neutral
 event shows a generic label and no association name or logo; who filed it is seen by moderation
-only.
+only. **What "moderation" became, and what the UI says**: the event's STEWARDS (below) - the people
+who may edit or validate it - see the owning association (`Déposé par <BDE>`), never the individual
+creator's name, which no agenda surface shows anyone. The form's hint says exactly that
+(`asso_calendar_event_neutral_hint`: "only the agenda's managers see which association filed it").
 
 **The label is "Campus"** (`calendar_neutral_label`, the same word in both locales). The UI had no
 better existing word: the agenda's filter says "Toutes les associations", which names associations,
@@ -814,18 +817,31 @@ organiser side's only (E2, `partnerOrganiserOnlyRefusal('presentation')`).
 
 Turning an existing event neutral NEVER withdraws its partners or detaches its form silently: the
 form leaves both fields unsent while neutral is chosen, and the server refuses until they are
-removed by hand. The two post readers (`findCalendarEventByLinkedPost`,
-`findValidatedCalendarEventSummary`) also select `presentation = 'association'` only, so a race
-between a link and a switch cannot surface a neutral event under a BDE post.
+removed by hand.
+
+**The link and the switch are serialised, not reconciled.** The post write resolves its link INSIDE
+its own transaction, reading the event row `FOR SHARE` (`PostsService.saveWithEventLink` ->
+`resolvePostCalendarEventLink(..., manager)`); the presentation switch holds the same row
+`FOR NO KEY UPDATE` (`withEventLock`) while it asks whether a post links it. The two locks conflict,
+so whichever commits first is seen by the other and the second is refused with
+`CALENDAR_NEUTRAL_LINKED_POST`. (A check made before the post transaction, as first built, left a
+window where both passed: the switch's EXISTS could not see an uncommitted post.) The three post
+readers then STATE the rule rather than heal a breach of it: the two forward ones
+(`findCalendarEventByLinkedPost`, `findValidatedCalendarEventSummary`) and the reverse one
+(`findPostLinkedToCalendarEvent`, `GET /posts/calendar-link/:eventId`, which joins the event) read
+`presentation = 'association'` only, and the detail modal does not ask the reverse one for a
+neutral event.
 
 ### Who is told the owner - the stewards - and what everybody else receives
 
 `presentEventsToViewer` is the ONE exit of every listing a reader receives: `listCalendarEvents` (an
 association's agenda), `listAggregatedCalendarFeed` (the agenda, the JSON feed, the `.ics`, the
 one-event `.ics`) and `listPendingCalendarEvents` (the queue). A reader is a **steward** of a neutral
-event when they are a platform admin, hold PROPOSE_EVENT in its owner, or hold the BDE agenda right
-over it (`associationsUnderBdeAgendaRight`) - the people who may already edit or validate it, so
-"the creator is visible to moderation only" costs no new predicate. For everybody else, anonymous
+event exactly when they may WRITE it (`assertMayWriteEvent`): a platform admin, PROPOSE_EVENT on its
+owner through `mayActOnAny` (the member bitmask AND the BDE `MANAGE_ASSO` super-admin - the three
+tiers of `mayAct`), or the BDE agenda right over it (`associationsUnderBdeAgendaRight`). So a
+`MANAGE_ASSO`-only BDE member who files a neutral event sees it and edits it; nobody may edit a row
+they are shown masked. "The creator is visible to moderation only" costs no new predicate. For everybody else, anonymous
 readers included:
 
 - the row is **masked**: `associationId` `''`, `associationName` and `associationSlug` `''`,
@@ -835,7 +851,15 @@ readers included:
 - on the OWNER's own agenda (its page, or the global agenda filtered on it, `listedFor`) the row is
   **not listed at all**: a list of "the BDE's events" names the owner as surely as a field.
 
-The stewardship costs two queries, so it is asked only when the page holds a neutral event.
+The stewardship costs two batched queries, so it is asked only when the page holds a neutral event.
+
+**What masking cannot hide, inherent to "the BDE stays the owner"** (accepted with the design, not
+defects): the audience is the BDE's, so (1) a neutral event reaches exactly the readers of the BDE's
+spaces, and a route readable by BDE membership only tells its reader the event is the BDE's; (2) on a
+campus with ONE BDE, the campus `.ics` holding a neutral event says which spaces, hence which BDE,
+it serves; (3) the pending queue (`GET calendar/pending`) lists an association's pending events to
+its own members who may open it, so a BDE member there who is no steward receives a neutral row
+MASKED, yet knows it is the BDE's by the queue it came in.
 
 ### Every surface that names an organiser, checked
 

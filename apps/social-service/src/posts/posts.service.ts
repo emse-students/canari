@@ -1126,12 +1126,8 @@ export class PostsService {
       assertStudentsOnlyOffered(true, await this.associationTypeOf(data.associationId ?? null));
       this.logger.debug('[STUDENTS_ONLY] a post published for students only');
     }
-    if (data.linkedCalendarEventId) {
-      data.linkedCalendarEventId = await this.associationsService.resolvePostCalendarEventLink(
-        data.associationId,
-        data.linkedCalendarEventId
-      );
-    }
+    // The event link is resolved where the row is written (`saveWithEventLink`), under the event's
+    // lock - never here, where a presentation switch could land between the check and the insert.
     if (Array.isArray(data.polls)) {
       data.polls = this.normalizePolls(data.polls);
     }
@@ -1177,9 +1173,9 @@ export class PostsService {
     try {
       // A client id is INSERTED, never saved: `save` would turn into an UPDATE of a row that
       // appeared under that id since the check above, and a create must never overwrite a post.
-      entity = clientId
-        ? await this.insertWithClientId(post, clientId)
-        : await this.postRepo.save(post);
+      entity = await this.saveWithEventLink(post, true, (repo) =>
+        clientId ? this.insertWithClientId(repo, post, clientId) : repo.save(post)
+      );
     } catch (e) {
       // Two requests of one queued post raced past the check: the primary key took the first, and
       // this one is the replay it would have been a moment later. ITS reel claim is the row's that
@@ -1339,10 +1335,40 @@ export class PostsService {
   }
 
   /** INSERTs `post` under the client's id and reads back the row with its database defaults. */
-  private async insertWithClientId(post: Post, clientId: string): Promise<Post> {
+  private async insertWithClientId(
+    repo: Repository<Post>,
+    post: Post,
+    clientId: string
+  ): Promise<Post> {
     post.id = clientId;
-    await this.postRepo.insert(post);
-    return this.postRepo.findOneOrFail({ where: { id: clientId } });
+    await repo.insert(post);
+    return repo.findOneOrFail({ where: { id: clientId } });
+  }
+
+  /**
+   * Writes `post` through `write`, and when `linking` (the write sets the link) and it names an
+   * agenda event, resolves that link INSIDE the write's transaction under the event row's `FOR SHARE` lock (`resolvePostCalendarEventLink`).
+   *
+   * The presentation switch holds the same row `FOR NO KEY UPDATE` (`withEventLock`) while it asks
+   * whether a post links the event, and the two locks conflict: either the post commits first and
+   * the switch sees it (refused, `CALENDAR_NEUTRAL_LINKED_POST`), or the switch commits first and
+   * the link reads the neutral row (refused, the same code). A check made before the transaction
+   * left a window where both passed - a race that heals is still a defect.
+   */
+  private async saveWithEventLink(
+    post: Post,
+    linking: boolean,
+    write: (repo: Repository<Post>) => Promise<Post>
+  ): Promise<Post> {
+    if (!linking || !post.linkedCalendarEventId) return write(this.postRepo);
+    return this.postRepo.manager.transaction(async (manager) => {
+      post.linkedCalendarEventId = await this.associationsService.resolvePostCalendarEventLink(
+        post.associationId,
+        post.linkedCalendarEventId,
+        manager
+      );
+      return write(manager.getRepository(Post));
+    });
   }
 
   /**
@@ -1961,6 +1987,11 @@ export class PostsService {
    * (`resolvePostCalendarEventLink` requires one), so the row this finds is always an association
    * post - `mustHideAnonymousAuthor` never applies to it, but `shapeListRow` still runs, for the
    * same moderation-hidden and capability fields every other read path carries.
+   *
+   * ONLY AN EVENT PRESENTED IN ITS ASSOCIATION'S NAME (`event-presentation.ts`): a post card names
+   * its association, so the post of a neutral event would name the owner the presentation hides.
+   * The link write and the presentation switch exclude each other (`saveWithEventLink`), so no
+   * post links a neutral event; this join is the read's own statement of the same rule.
    */
   async findPostLinkedToCalendarEvent(
     eventId: string,
@@ -1977,6 +2008,8 @@ export class PostsService {
               assoc.id AS "assocJoinId", assoc.name AS "assocName", assoc.slug AS "assocSlug",
               assoc."logoUrl" AS "assocLogoUrl", assoc.type AS "assocType"
        FROM posts
+       JOIN association_calendar_events linked_ev
+         ON linked_ev.id = posts."linkedCalendarEventId" AND linked_ev.presentation = 'association'
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
        WHERE posts."linkedCalendarEventId" = $1
          AND NOT COALESCE(posts."hiddenByModeration", false)
@@ -2213,15 +2246,9 @@ export class PostsService {
 
     if ('attachedFormId' in data) post.attachedFormId = data.attachedFormId ?? null;
 
+    // Resolved by `saveWithEventLink` under the event's lock, where the row is written.
     if ('linkedCalendarEventId' in data) {
-      if (data.linkedCalendarEventId && post.associationId) {
-        post.linkedCalendarEventId = await this.associationsService.resolvePostCalendarEventLink(
-          post.associationId,
-          data.linkedCalendarEventId
-        );
-      } else {
-        post.linkedCalendarEventId = data.linkedCalendarEventId ?? null;
-      }
+      post.linkedCalendarEventId = data.linkedCalendarEventId ?? null;
     }
 
     if ('scheduledAt' in data) {
@@ -2243,7 +2270,9 @@ export class PostsService {
       : [];
     post.mentions = mentionedIds;
 
-    const saved = await this.postRepo.save(post);
+    const saved = await this.saveWithEventLink(post, 'linkedCalendarEventId' in data, (repo) =>
+      repo.save(post)
+    );
     await this.invalidateListCache();
     return this.serveToReader(saved, { viewerId: userId, isGlobalAdmin });
   }

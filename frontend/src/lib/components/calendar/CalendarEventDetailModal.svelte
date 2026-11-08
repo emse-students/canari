@@ -78,7 +78,9 @@
    */
   let linkedPost = $state<LinkedPostSummary | null>(null);
   $effect(() => {
-    const eventId = open ? event?.id : undefined;
+    // A neutral event has no post: a post names its association, which the event hides (the server
+    // refuses the link and the reverse read alike), so nothing is asked.
+    const eventId = open && event && !isNeutralEvent(event) ? event.id : undefined;
     if (!eventId) {
       linkedPost = null;
       return;
