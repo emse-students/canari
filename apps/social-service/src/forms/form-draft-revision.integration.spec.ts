@@ -15,6 +15,7 @@ import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import {
   closeFormDraft,
+  formChangedSinceRevision,
   formsWithUnpublishedChanges,
   readFormDraft,
   writeFormDraft,
@@ -25,6 +26,9 @@ const maybe = URL ? describe : describe.skip;
 
 const FORM = '00000000-0000-4000-8000-0000000a0143';
 const OTHER = '00000000-0000-4000-8000-0000000b0143';
+const THIRD = '00000000-0000-4000-8000-0000000c0143';
+const SAVE_1 = '00000000-0000-4000-8000-00000000a001';
+const SAVE_2 = '00000000-0000-4000-8000-00000000a002';
 
 maybe('form revisions against PostgreSQL (migration 146)', () => {
   const schema = `form_drafts_it_${Math.random().toString(36).slice(2, 10)}`;
@@ -43,8 +47,13 @@ maybe('form revisions against PostgreSQL (migration 146)', () => {
       extra: { options: `-c search_path=${schema},public`, max: 4 },
     });
     await ds.initialize();
-    await q(`CREATE TABLE forms (id uuid PRIMARY KEY)`);
-    await q(`INSERT INTO forms (id) VALUES ($1), ($2)`, [FORM, OTHER]);
+    await q(`CREATE TABLE forms (id uuid PRIMARY KEY, title text, "imageUrl" text,
+      "updatedAt" timestamptz NOT NULL DEFAULT now())`);
+    await q(`INSERT INTO forms (id, title) VALUES ($1, 'Gala'), ($2, 'Gala'), ($3, 'Gala')`, [
+      FORM,
+      OTHER,
+      THIRD,
+    ]);
     const migration = readFileSync(
       join(process.cwd(), 'src', 'migrations', '146_form_drafts.sql'),
       'utf8'
@@ -65,13 +74,14 @@ maybe('form revisions against PostgreSQL (migration 146)', () => {
       revision: 0,
       document: null,
       savedAt: null,
+      saveId: null,
     });
   });
 
   it('lets exactly one of two saves built on the same revision land', async () => {
     const [a, b] = await Promise.all([
-      writeFormDraft(ds.manager, FORM, 0, { title: 'A' }),
-      writeFormDraft(ds.manager, FORM, 0, { title: 'B' }),
+      writeFormDraft(ds.manager, FORM, 0, { title: 'A' }, null),
+      writeFormDraft(ds.manager, FORM, 0, { title: 'B' }, null),
     ]);
     expect([a, b].filter(Boolean)).toHaveLength(1);
     const winner = (a ?? b)!;
@@ -79,10 +89,10 @@ maybe('form revisions against PostgreSQL (migration 146)', () => {
     const stored = await readFormDraft(ds.manager, FORM);
     expect(stored.document).toEqual({ title: a ? 'A' : 'B' });
     // The next save names revision 1; one still naming 0 is refused.
-    expect(await writeFormDraft(ds.manager, FORM, 1, { title: 'C' })).toMatchObject({
+    expect(await writeFormDraft(ds.manager, FORM, 1, { title: 'C' }, null)).toMatchObject({
       revision: 2,
     });
-    expect(await writeFormDraft(ds.manager, FORM, 0, { title: 'stale' })).toBeNull();
+    expect(await writeFormDraft(ds.manager, FORM, 0, { title: 'stale' }, null)).toBeNull();
     expect(await formsWithUnpublishedChanges(ds.manager, [FORM, OTHER])).toEqual(new Set([FORM]));
   });
 
@@ -92,10 +102,10 @@ maybe('form revisions against PostgreSQL (migration 146)', () => {
       expect(await closeFormDraft(m, FORM)).toBe(3);
     });
     expect(await readFormDraft(ds.manager, FORM)).toMatchObject({ revision: 3, document: null });
-    expect(await writeFormDraft(ds.manager, FORM, 2, { title: 'old tab' })).toBeNull();
-    expect(await writeFormDraft(ds.manager, FORM, 0, { title: 'old tab' })).toBeNull();
+    expect(await writeFormDraft(ds.manager, FORM, 2, { title: 'old tab' }, null)).toBeNull();
+    expect(await writeFormDraft(ds.manager, FORM, 0, { title: 'old tab' }, null)).toBeNull();
     expect(await formsWithUnpublishedChanges(ds.manager, [FORM])).toEqual(new Set());
-    expect(await writeFormDraft(ds.manager, FORM, 3, { title: 'D' })).toMatchObject({
+    expect(await writeFormDraft(ds.manager, FORM, 3, { title: 'D' }, null)).toMatchObject({
       revision: 4,
     });
   });
@@ -127,11 +137,46 @@ maybe('form revisions against PostgreSQL (migration 146)', () => {
     });
     // The save starts only once the publication holds the row: it waits, then finds its base moved.
     await locked;
-    const save = writeFormDraft(ds.manager, FORM, 4, { title: 'during' });
+    const save = writeFormDraft(ds.manager, FORM, 4, { title: 'during' }, null);
     release();
     await publication;
     expect(await save).toBeNull();
     expect(await readFormDraft(ds.manager, FORM)).toMatchObject({ revision: 5, document: null });
+  });
+
+  it('keeps the id of the save that wrote the revision, and forgets it when the revision closes', async () => {
+    await writeFormDraft(ds.manager, THIRD, 0, { title: 'A' }, SAVE_1);
+    expect(await readFormDraft(ds.manager, THIRD)).toMatchObject({ revision: 1, saveId: SAVE_1 });
+    await writeFormDraft(ds.manager, THIRD, 1, { title: 'B' }, SAVE_2);
+    expect(await readFormDraft(ds.manager, THIRD)).toMatchObject({ revision: 2, saveId: SAVE_2 });
+    await ds.transaction(async (m) => {
+      await readFormDraft(m, THIRD, true);
+      await closeFormDraft(m, THIRD);
+    });
+    expect(await readFormDraft(ds.manager, THIRD)).toMatchObject({ revision: 3, saveId: null });
+  });
+
+  it('tells a form written outside its revision since the revision started', async () => {
+    // Revision 4 starts on the form as it is: nothing changed since.
+    await writeFormDraft(ds.manager, THIRD, 3, { title: 'C' }, SAVE_1);
+    const changed = () => ds.transaction((m) => formChangedSinceRevision(m, THIRD));
+    expect(await changed()).toBe(false);
+    // The cover image is not the revision's: uploading one is no change.
+    await q(`UPDATE forms SET "imageUrl" = 'x', "updatedAt" = now() WHERE id = $1`, [THIRD]);
+    expect(await changed()).toBe(false);
+    // An older build edits the form directly: changed, and a later save of the revision does not
+    // move its base onto the new content.
+    await q(`UPDATE forms SET title = 'Edited elsewhere' WHERE id = $1`, [THIRD]);
+    expect(await changed()).toBe(true);
+    await writeFormDraft(ds.manager, THIRD, 4, { title: 'D' }, SAVE_2);
+    expect(await changed()).toBe(true);
+    // Closed, then started again: the new revision's base is the form as it is now.
+    await ds.transaction(async (m) => {
+      await readFormDraft(m, THIRD, true);
+      await closeFormDraft(m, THIRD);
+    });
+    await writeFormDraft(ds.manager, THIRD, 6, { title: 'E' }, SAVE_1);
+    expect(await changed()).toBe(false);
   });
 
   it('goes with its form', async () => {

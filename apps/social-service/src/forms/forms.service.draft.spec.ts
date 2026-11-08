@@ -11,6 +11,19 @@ import {
   FORM_PAYMENTS_NOT_READY,
 } from './payment-offer';
 import { FORM_DRAFT, FORM_IS_DRAFT, FORM_PUBLISHED, assertFormNotDraft } from './form-status';
+import { FORM_DRAFT_EMPTY } from './form-draft-revision';
+
+// Publication goes through the revision route; these forms hold no revision (the revision store
+// itself is `forms.service.revision.spec.ts`'s).
+jest.mock('./form-draft-revision', () => ({
+  ...jest.requireActual('./form-draft-revision'),
+  readFormDraft: jest.fn(async () => ({
+    revision: 0,
+    document: null,
+    savedAt: null,
+    saveId: null,
+  })),
+}));
 
 /**
  * A FORM IS A DRAFT UNTIL ITS MANAGER PUBLISHES IT (owner, 2026-11-08).
@@ -90,6 +103,12 @@ describe('FormsService - drafts', () => {
         };
         return qb;
       }),
+    };
+    formRepo.manager = {
+      transaction: jest.fn((fn: (m: unknown) => Promise<unknown>) =>
+        fn({ createQueryBuilder: formRepo.createQueryBuilder, query: jest.fn() })
+      ),
+      query: jest.fn(),
     };
     const submissionRepo: any = {
       count: jest.fn(() => Promise.resolve(0)),
@@ -220,9 +239,10 @@ describe('FormsService - drafts', () => {
   describe('publish', () => {
     it('publishes a free draft', async () => {
       const { service, row } = makeService();
-      await expect(service.publish('f1', OWNER, false)).resolves.toEqual({
+      await expect(service.publishChanges('f1', 0, OWNER, false)).resolves.toEqual({
         id: 'f1',
         status: FORM_PUBLISHED,
+        revision: 0,
       });
       expect(row.status).toBe(FORM_PUBLISHED);
     });
@@ -232,7 +252,7 @@ describe('FormsService - drafts', () => {
         form: { requiresPayment: true, basePrice: 1500 },
         canTakePayments: false,
       });
-      const refusal = service.publish('f1', OWNER, false);
+      const refusal = service.publishChanges('f1', 0, OWNER, false);
       await expect(refusal).rejects.toThrow(ConflictException);
       await expect(refusal).rejects.toMatchObject({ response: { code: FORM_PAYMENTS_NOT_READY } });
       expect(row.status).toBe(FORM_DRAFT);
@@ -243,22 +263,23 @@ describe('FormsService - drafts', () => {
         form: { requiresPayment: true, basePrice: 1500 },
         canTakePayments: true,
       });
-      await service.publish('f1', OWNER, false);
+      await service.publishChanges('f1', 0, OWNER, false);
       expect(row.status).toBe(FORM_PUBLISHED);
     });
 
-    it('is idempotent: a published form answers the same success and writes nothing', async () => {
+    it('a published form with nothing unpublished: refused, typed, and nothing written', async () => {
       const { service, updates } = makeService({ form: { status: FORM_PUBLISHED } });
-      await expect(service.publish('f1', OWNER, false)).resolves.toEqual({
-        id: 'f1',
-        status: FORM_PUBLISHED,
+      await expect(service.publishChanges('f1', 0, OWNER, false)).rejects.toMatchObject({
+        response: { code: FORM_DRAFT_EMPTY },
       });
       expect(updates).toHaveLength(0);
     });
 
     it('is refused to someone who does not manage the form', async () => {
       const { service, row } = makeService();
-      await expect(service.publish('f1', STRANGER, false)).rejects.toThrow(ForbiddenException);
+      await expect(service.publishChanges('f1', 0, STRANGER, false)).rejects.toThrow(
+        ForbiddenException
+      );
       expect(row.status).toBe(FORM_DRAFT);
     });
   });
@@ -271,7 +292,7 @@ describe('FormsService - drafts', () => {
         form: { ...paid, allowCashPayment: true },
         canTakePayments: false,
       });
-      await service.publish('f1', OWNER, false);
+      await service.publishChanges('f1', 0, OWNER, false);
       expect(row.status).toBe(FORM_PUBLISHED);
       // Cash answers the question: readiness is not even asked.
       expect(associations.canTakePaymentsNow).not.toHaveBeenCalled();
@@ -281,7 +302,7 @@ describe('FormsService - drafts', () => {
       const { service, row } = makeService({
         form: { ...paid, allowCashPayment: false, allowOnlinePayment: false },
       });
-      const refusal = service.publish('f1', OWNER, false);
+      const refusal = service.publishChanges('f1', 0, OWNER, false);
       await expect(refusal).rejects.toThrow(BadRequestException);
       await expect(refusal).rejects.toMatchObject({ response: { code: FORM_NO_PAYMENT_METHOD } });
       expect(row.status).toBe(FORM_DRAFT);
@@ -291,11 +312,11 @@ describe('FormsService - drafts', () => {
       const none = makeService({
         form: { ...paid, associationId: null, allowCashPayment: false, allowOnlinePayment: false },
       });
-      await expect(none.service.publish('f1', OWNER, false)).rejects.toMatchObject({
+      await expect(none.service.publishChanges('f1', 0, OWNER, false)).rejects.toMatchObject({
         response: { code: FORM_NO_PAYMENT_METHOD },
       });
       const online = makeService({ form: { ...paid, associationId: null } });
-      await online.service.publish('f1', OWNER, false);
+      await online.service.publishChanges('f1', 0, OWNER, false);
       expect(online.row.status).toBe(FORM_PUBLISHED);
       expect(online.associations.canTakePaymentsNow).not.toHaveBeenCalled();
     });
@@ -429,7 +450,7 @@ describe('FormsService - drafts', () => {
 
     it('the same reads find the form once it is published', async () => {
       const { service } = makeService();
-      await service.publish('f1', OWNER, false);
+      await service.publishChanges('f1', 0, OWNER, false);
       await expect(service.getPublic('f1')).resolves.toMatchObject({ id: 'f1' });
       await expect(
         service.get('f1', { userId: STRANGER, isGlobalAdmin: false })

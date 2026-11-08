@@ -80,7 +80,7 @@
   } from '$lib/associations/activePaymentProvider.svelte';
   import { FORM_COTISATION_HELD } from '$lib/associations/paymentRefusal';
   import { formSubmitRefusalMessage } from '$lib/forms/answerBounds';
-  import { isPreview, offersOnlyCash } from '$lib/forms/publish';
+  import { FORM_PREVIEW_PARAM, isDraftForm, isPreview, offersOnlyCash } from '$lib/forms/publish';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { PAGE_WIDTHS } from '$lib/components/layout/pageWidth';
 
@@ -143,11 +143,13 @@
   let linkedAgendaEvent = $state<AssociationCalendarEvent | null>(null);
   let agendaAssociationSlug = $state('');
   let paymentMethodChoice = $state<'online' | 'cash'>('online');
+  /** Whether the page draws an unpublished revision a manager read (never a respondent's view). */
+  let revisionShown = $state(false);
   /**
    * A PREVIEW (a draft, or "Voir le formulaire" on unpublished changes): the questions are drawn and
    * nothing can be sent - the server would refuse a draft anyway (owner, 2026-11-08).
    */
-  const preview = $derived(isPreview(form));
+  const preview = $derived(isPreview(form, revisionShown));
   /** Online is paused and cash is accepted: the answer is paid in cash, no online choice shown. */
   const cashOnly = $derived(offersOnlyCash(form));
   $effect(() => {
@@ -224,19 +226,19 @@
   }
 
   /**
-   * `f` with its unpublished revision over it, for a preview (owner, 2026-11-08). Only a manager
-   * reads a revision: anyone else's preview is refused it and shows the form as published.
+   * The unpublished revision of `f`, for a preview (owner, 2026-11-08), or `null`. Only a manager
+   * reads a revision: anyone else is refused it, and the page stays the live form.
    */
-  async function withUnpublishedRevision(f: Form): Promise<Form> {
+  async function unpublishedRevision(f: Form): Promise<Partial<Form> | null> {
     try {
       const revision = await getFormDraft(f.id);
-      return revision.document ? { ...f, ...revision.document } : f;
+      return (revision.document as Partial<Form> | null) ?? null;
     } catch (e) {
       Log.d(
         'FormView',
         `preview of ${f.id}: no revision readable (${refusalStatus(e) ?? 'no answer'})`
       );
-      return f;
+      return null;
     }
   }
 
@@ -265,15 +267,21 @@
       const f = await getForm(id);
       form = f;
       selections = initialSelections(f.items);
-      if (isPreview(f)) {
-        // Nothing of the reader's own state is asked: a preview sends nothing, and a draft's check
-        // answers as for an absent form (`respondentFormWhere`). What it draws is what the managers
-        // are building: the unpublished revision over the form, when there is one.
-        const shown = await withUnpublishedRevision(f);
-        form = shown;
-        selections = initialSelections(shown.items);
-        Log.d('FormView', `preview of ${f.id} (${f.status ?? 'published'})`);
-        return;
+      // A draft, or a link asking for the revision ("Voir le formulaire"): what the managers are
+      // building is drawn when THIS reader may read it. The flag alone never shuts a published
+      // form's send - a respondent handed such a link answers as usual.
+      if (isDraftForm(f) || page.url.searchParams.get(FORM_PREVIEW_PARAM) === '1') {
+        const revision = await unpublishedRevision(f);
+        revisionShown = revision !== null;
+        if (isPreview(f, revisionShown)) {
+          // Nothing of the reader's own state is asked: a preview sends nothing, and a draft's
+          // check answers as for an absent form (`respondentFormWhere`).
+          const shown: Form = revision ? { ...f, ...revision } : f;
+          form = shown;
+          selections = initialSelections(shown.items);
+          Log.d('FormView', `preview of ${f.id} (${f.status ?? 'published'})`);
+          return;
+        }
       }
 
       linkedAgendaEvent = null;

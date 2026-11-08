@@ -1,11 +1,17 @@
 import { m } from '$lib/paraglide/messages';
 import type { Form } from './api';
-import { FORM_DRAFT_CONFLICT } from './autosave.svelte';
+import { FORM_DRAFT_CONFLICT } from './draftConflict';
 
 export { FORM_DRAFT_CONFLICT };
 
 /** The 409 of "Publier les modifications" when no unpublished revision holds any. */
 export const FORM_DRAFT_EMPTY = 'FORM_DRAFT_EMPTY';
+
+/**
+ * The 409 of a publication when the form was written outside its revision since the revision started
+ * (an older build editing it directly): publishing would undo that write unseen.
+ */
+export const FORM_CHANGED_SINCE_REVISION = 'FORM_CHANGED_SINCE_REVISION';
 
 /** The 400 of a revision the edit route's validation refuses at its publication. */
 export const FORM_DRAFT_INVALID = 'FORM_DRAFT_INVALID';
@@ -75,6 +81,8 @@ export function draftRefusalMessage(code: string | null | undefined): string | n
       return m.form_draft_empty_refusal();
     case FORM_DRAFT_INVALID:
       return m.form_draft_invalid_refusal();
+    case FORM_CHANGED_SINCE_REVISION:
+      return m.form_changed_since_revision_refusal();
     default:
       return null;
   }

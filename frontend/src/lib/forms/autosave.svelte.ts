@@ -1,9 +1,9 @@
 import { refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
 import { Log } from '$lib/utils/Log';
 import type { CreateFormPayload } from './api';
+import { FORM_DRAFT_CONFLICT, FormDraftConflictError } from './draftConflict';
 
-/** The 409 of a save built on a revision another tab, a publication or a discard moved. */
-export const FORM_DRAFT_CONFLICT = 'FORM_DRAFT_CONFLICT';
+export { FORM_DRAFT_CONFLICT };
 
 /** How long the editor waits after the last keystroke before saving: a burst of typing is one save. */
 export const AUTOSAVE_DELAY_MS = 1500;
@@ -13,7 +13,7 @@ export const AUTOSAVE_DELAY_MS = 1500;
  * - `idle`: nothing typed since the page opened;
  * - `saving`: an edit is waiting for its save, or the save is in flight ("Enregistrement...");
  * - `saved`: the server holds everything typed ("Enregistré");
- * - `offline`: the last save reached no server; the edits wait in this page and are sent again when
+ * - `offline`: the last save reached no server; the edits wait on the device and are sent again when
  *   the link returns, at the next edit, or when the page is hidden ("Non enregistré - hors ligne");
  * - `error`: the server refused the save (not a conflict); retried at the next edit;
  * - `conflict`: another tab or device moved the revision - this page stops saving rather than
@@ -21,25 +21,53 @@ export const AUTOSAVE_DELAY_MS = 1500;
  */
 export type AutosaveStatus = 'idle' | 'saving' | 'saved' | 'offline' | 'error' | 'conflict';
 
-/** Stores `document` as the revision after `baseRevision`; resolves the new revision. */
+/**
+ * Stores `document` as the revision after `baseRevision`, as the save `saveId`; resolves the new
+ * revision. `leaving`: the page is being hidden or left (the request should outlive it).
+ */
 export type SaveRevision = (
   baseRevision: number,
-  document: CreateFormPayload
+  document: CreateFormPayload,
+  saveId: string,
+  leaving: boolean
 ) => Promise<{ revision: number }>;
 
 /**
+ * The device copy of what the server does not hold yet (`draftCopies.ts`), for ONE form: written at
+ * every edit and at every send, deleted once the save that sends it landed. Absent, the edits live
+ * in the page only.
+ */
+export interface AutosaveDeviceCopy {
+  keep(baseRevision: number, saveId: string, document: CreateFormPayload): Promise<void>;
+  /** The save `saveId` landed: its copy goes, unless a newer edit replaced it. */
+  sent(saveId: string): Promise<void>;
+  /** The revision was published, discarded or taken by another writer: nothing of it is owed. */
+  drop(): Promise<void>;
+}
+
+/** One document waiting to be sent, and the id of the save that sends it. */
+interface Pending {
+  document: CreateFormPayload;
+  saveId: string;
+}
+
+/**
  * THE EDITOR'S AUTOSAVE (owner, 2026-11-08): every edit is saved as the form's unpublished revision
- * (`PUT /forms/:id/draft`), debounced, and at once when the page is hidden or left.
+ * (`PUT /forms/:id/draft`), debounced, and at once when the page is hidden, left, or the editor is
+ * torn down by an in-app navigation (no `pagehide` fires then).
  *
  * ONE SAVE IN FLIGHT, ALWAYS THE LATEST DOCUMENT: an edit made while a save runs is sent when it
  * returns, built on the revision that save produced - so two saves of one page never race each
  * other's compare-and-set. A save another writer beat is a `conflict`, and nothing is sent after it.
  *
- * OFFLINE EDITS ARE KEPT IN THIS PAGE ONLY (decided 2026-11-08): they are retried when the browser
- * says the link returned (`online` - a trigger to TRY, never a proof of reachability), at the next
- * edit and when the page is hidden. Closing the page while offline loses them, and the status line
- * says "Non enregistré - hors ligne" until then; nothing is written to device storage, which would
- * outlive the session and the account that typed it.
+ * A SAVE IS NAMED BY ITS CLIENT, and the name rides on the revision it writes: a save whose answer
+ * was lost is found in the 409 of the next one (`FormDraftConflictError.saveId`) and ADOPTED - it
+ * landed - instead of being reported as another writer's.
+ *
+ * OFFLINE EDITS ARE KEPT ON THE DEVICE (owner, 2026-11-08): every document is written to the device
+ * copy before it is sent ({@link AutosaveDeviceCopy}), so closing the tab or the app loses nothing;
+ * the copy is sent again by the editor when it reopens, or by the background resend when the link
+ * returns (`draftResend.ts`). `online` is a trigger to TRY, never a proof of reachability.
  */
 export class FormAutosave {
   status = $state<AutosaveStatus>('idle');
@@ -50,7 +78,11 @@ export class FormAutosave {
 
   #save: SaveRevision;
   #delayMs: number;
-  #pending: CreateFormPayload | null = null;
+  #device: AutosaveDeviceCopy | null;
+  #newSaveId: () => string;
+  #pending: Pending | null = null;
+  /** The id of a sent save nobody answered: it may have landed, and a 409 naming it says it did. */
+  #unanswered: string | null = null;
   #timer: ReturnType<typeof setTimeout> | null = null;
   #inFlight: Promise<void> | null = null;
 
@@ -59,17 +91,22 @@ export class FormAutosave {
     revision?: number;
     hasChanges?: boolean;
     delayMs?: number;
+    device?: AutosaveDeviceCopy | null;
+    newSaveId?: () => string;
   }) {
     this.#save = opts.save;
     this.revision = opts.revision ?? 0;
     this.hasChanges = opts.hasChanges ?? false;
     this.#delayMs = opts.delayMs ?? AUTOSAVE_DELAY_MS;
+    this.#device = opts.device ?? null;
+    this.#newSaveId = opts.newSaveId ?? (() => crypto.randomUUID());
   }
 
-  /** An edit: saved after {@link AUTOSAVE_DELAY_MS} without another one. */
+  /** An edit: kept on the device now, saved after {@link AUTOSAVE_DELAY_MS} without another one. */
   schedule(document: CreateFormPayload): void {
     if (this.status === 'conflict') return;
-    this.#pending = document;
+    this.#pending = { document, saveId: this.#newSaveId() };
+    this.#keep(this.#pending);
     this.status = 'saving';
     if (this.#timer) clearTimeout(this.#timer);
     this.#timer = setTimeout(() => {
@@ -78,8 +115,23 @@ export class FormAutosave {
     }, this.#delayMs);
   }
 
-  /** Saves what is pending NOW (the page is hidden, left, or about to publish). */
-  async flush(): Promise<void> {
+  /**
+   * Resumes a save a closed page left on the device - the SAME save, its id kept, so a copy that had
+   * in fact landed is recognised by the server's answer - and sends it at once.
+   */
+  resume(document: CreateFormPayload, saveId: string): void {
+    if (this.status === 'conflict') return;
+    Log.d('forms-autosave', `resuming the device copy built on revision ${this.revision}`);
+    this.#pending = { document, saveId };
+    this.status = 'saving';
+    void this.flush();
+  }
+
+  /**
+   * Saves what is pending NOW (the page is hidden, left, torn down, or about to publish).
+   * `leaving`: the page may not live to read the answer - the request is asked to outlive it.
+   */
+  async flush(opts: { leaving?: boolean } = {}): Promise<void> {
     if (this.#timer) {
       clearTimeout(this.#timer);
       this.#timer = null;
@@ -87,16 +139,16 @@ export class FormAutosave {
     // One save at a time: an edit made meanwhile is sent when the running one returns.
     while (this.#inFlight) await this.#inFlight;
     if (!this.#pending || this.status === 'conflict') return;
-    const document = this.#pending;
+    const pending = this.#pending;
     this.#pending = null;
     this.status = 'saving';
-    this.#inFlight = this.#send(document);
+    this.#inFlight = this.#send(pending, opts.leaving === true);
     try {
       await this.#inFlight;
     } finally {
       this.#inFlight = null;
     }
-    if (this.#pending && this.status === 'saving') await this.flush();
+    if (this.#pending && this.status === 'saving') await this.flush(opts);
   }
 
   /** Whether everything typed is on the server (nothing pending, nothing in flight, no failure). */
@@ -109,20 +161,24 @@ export class FormAutosave {
     this.revision = revision;
     this.hasChanges = false;
     this.#pending = null;
+    this.#unanswered = null;
     if (this.#timer) clearTimeout(this.#timer);
     this.#timer = null;
     this.status = 'saved';
+    this.#dropCopy('the revision was published or discarded');
   }
 
   /**
-   * Wires the page's own triggers: hidden or left saves at once, and the browser's `online` retries
-   * an edit that reached no server. Returns the cleanup.
+   * Wires the page's own triggers: hidden or left saves at once (asked to outlive the page), the
+   * browser's `online` retries an edit that reached no server. Returns the cleanup, which SAVES what
+   * is pending: an in-app navigation tears the editor down with no `pagehide`, and the save runs on
+   * after the page is gone.
    */
   attach(win: Window = window): () => void {
     const onHidden = () => {
-      if (win.document.visibilityState === 'hidden') void this.flush();
+      if (win.document.visibilityState === 'hidden') void this.flush({ leaving: true });
     };
-    const onLeave = () => void this.flush();
+    const onLeave = () => void this.flush({ leaving: true });
     const onOnline = () => {
       if (this.status === 'offline') void this.flush();
     };
@@ -133,30 +189,84 @@ export class FormAutosave {
       win.document.removeEventListener('visibilitychange', onHidden);
       win.removeEventListener('pagehide', onLeave);
       win.removeEventListener('online', onOnline);
-      if (this.#timer) clearTimeout(this.#timer);
-      this.#timer = null;
+      if (this.#pending)
+        Log.d('forms-autosave', 'editor torn down with an edit pending: saved now');
+      void this.flush();
     };
   }
 
-  async #send(document: CreateFormPayload): Promise<void> {
+  #keep(pending: Pending): void {
+    this.#device
+      ?.keep(this.revision, pending.saveId, pending.document)
+      .catch((e: unknown) =>
+        console.warn(
+          `[forms-autosave] device copy not written - the edit lives in this page only: ${e}`
+        )
+      );
+  }
+
+  #dropCopy(why: string): void {
+    this.#device
+      ?.drop()
+      .catch((e: unknown) =>
+        console.warn(`[forms-autosave] device copy not dropped (${why}): ${e}`)
+      );
+  }
+
+  /** The save `saveId` landed as `revision`: it is the base now, and its device copy goes. */
+  #landed(saveId: string, revision: number): void {
+    this.revision = revision;
+    this.hasChanges = true;
+    if (this.#unanswered === saveId) this.#unanswered = null;
+    this.#device
+      ?.sent(saveId)
+      .catch((e: unknown) => console.warn(`[forms-autosave] device copy not cleared: ${e}`));
+    // An edit typed meanwhile is built on the new revision: its copy says so, or a page closed
+    // before it is sent would leave a copy on a base the server has moved past.
+    if (this.#pending) this.#keep(this.#pending);
+  }
+
+  async #send(pending: Pending, leaving: boolean): Promise<void> {
+    // Written before it leaves, on the base it is sent on.
+    this.#keep(pending);
     try {
-      const saved = await this.#save(this.revision, document);
-      this.revision = saved.revision;
-      this.hasChanges = true;
+      const saved = await this.#save(this.revision, pending.document, pending.saveId, leaving);
+      this.#landed(pending.saveId, saved.revision);
       // An edit typed during the save keeps the line on "Enregistrement..." until it lands too.
       this.status = this.#pending ? 'saving' : 'saved';
       Log.d('forms-autosave', `revision ${saved.revision} saved`);
     } catch (e) {
+      if (e instanceof FormDraftConflictError && e.saveId !== null) {
+        if (e.saveId === pending.saveId) {
+          // This very save landed already (sent again after a lost answer, or by the resend).
+          Log.d('forms-autosave', `save already landed as revision ${e.revision}: adopted`);
+          this.#landed(pending.saveId, e.revision);
+          this.status = this.#pending ? 'saving' : 'saved';
+          return;
+        }
+        if (e.saveId === this.#unanswered) {
+          // The save before it landed and its answer was lost: build on it, send this one again.
+          Log.d('forms-autosave', `an unanswered save landed as revision ${e.revision}: adopted`);
+          this.#landed(e.saveId, e.revision);
+          this.#pending = this.#pending ?? pending;
+          this.status = 'saving';
+          return;
+        }
+      }
       if (refusalCode(e) === FORM_DRAFT_CONFLICT) {
         console.warn(
-          `[forms-autosave] revision ${this.revision} moved elsewhere: autosave stopped`
+          `[forms-autosave] revision ${this.revision} moved elsewhere: autosave stopped, device copy dropped`
         );
         this.status = 'conflict';
+        this.#pending = null;
+        this.#dropCopy('another writer moved the revision');
         return;
       }
       // Kept to send again: the newest edit wins, an older one is never sent after it.
-      this.#pending = this.#pending ?? document;
+      this.#pending = this.#pending ?? pending;
       if (refusalStatus(e) === null) {
+        // Nobody answered: it may have landed, and the next save's 409 will say so.
+        this.#unanswered = pending.saveId;
         console.warn(
           `[forms-autosave] save reached no server, kept for the next try: ${String(e)}`
         );

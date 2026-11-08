@@ -487,10 +487,11 @@ form builder and editor; the server half is `formDrafts: true` in core-service's
 **Why.** A stable ships both stores before production deploys, so for days a phone build that
 creates drafts talks to a social-service that does not know them: its validation strips `draft`,
 creating a PUBLISHED form at once (an empty one, for a builder that creates its draft early), and it
-answers `POST /forms/:id/publish` and the revision routes `404` - every editor would fail to open.
-**What the client does.** It builds forms as drafts only on an estate whose `/api/version` says
-`formDrafts: true`; otherwise - an older server, or no answer yet - it saves as it always did: one
-"Enregistrer" that creates the form published, and an edit saved straight to the form.
+answers the revision routes `404` - every editor would fail to open.
+**What the client does.** It builds forms as drafts, reads and saves revisions, mints form ids and
+resends device copies only on an estate whose `/api/version` says `formDrafts: true`; otherwise - an
+older server, or no answer yet - it saves as it always did: one "Enregistrer" that creates the form
+published, and an edit saved straight to the form (`PATCH /forms/:id`).
 **Removal condition:** when no estate older than the release carrying `formDrafts` is served (both
 estates deployed past it), the client branch for `false` may go; the field stays, always `true`.
 
@@ -508,8 +509,10 @@ cash-only form it still draws the online choice, and the server refuses that ans
 is written ([forms](frontend/modules/forms.md#a-form-is-a-draft-until-it-is-published-owner-2026-11-08)).
 An older build also saves an edit straight to the form (`PATCH /forms/:id`), past an unpublished
 revision a current build holds ([forms](frontend/modules/forms.md#edits-are-saved-as-they-are-typed-and-published-together-owner-2026-11-08)):
-publishing that revision later replaces the older build's edit with what the revision holds. Two
-managers on two builds of one form at once is the whole population; the edit route is not shimmed.
+the revision's base fingerprint then no longer matches, and publishing it is refused
+`409 FORM_CHANGED_SINCE_REVISION` until the manager confirms the overwrite ("Publier quand meme").
+And it sees a DRAFT a current build is building as the empty shell the create page made (a title and
+an association): the questions live in the revision, which an older build never reads.
 **Removal condition:** once the floor passes the first stable carrying this change, `draft` may become
 the default of a create (a create without it a draft too). Measure before: the `[FORMS] create without draft` lines
 in social-service count the older builds still creating forms.

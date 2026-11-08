@@ -2971,7 +2971,6 @@
   "form_save_changes_button": "Enregistrer les modifications",
   "form_status_draft_badge": "Brouillon",
   "form_draft_notice": "Brouillon : personne d'autre que les gestionnaires ne le voit tant qu'il n'est pas publié.",
-  "form_save_draft_button": "Enregistrer le brouillon",
   "form_publish_button": "Publier",
   "form_publishing_label": "Publication…",
   "form_publish_blocked_payments": "Activez le paiement en espèces ou attendez que l'encaissement en ligne soit configuré",
@@ -5813,5 +5812,7 @@
   "form_publish_blocked_unsaved": "Les modifications ne sont pas encore enregistrées sur le serveur",
   "form_draft_conflict_refusal": "Ce formulaire a été modifié ailleurs entre-temps : rechargez la page pour reprendre.",
   "form_draft_empty_refusal": "Aucune modification à publier.",
-  "form_draft_invalid_refusal": "Ces modifications ne peuvent pas être publiées en l'état : vérifiez les questions et les réglages."
+  "form_draft_invalid_refusal": "Ces modifications ne peuvent pas être publiées en l'état : vérifiez les questions et les réglages.",
+  "form_changed_since_revision_refusal": "Ce formulaire a été modifié ailleurs depuis le début de ces modifications (par une version plus ancienne de l'app). Publier remplacerait ces changements : vérifiez-le, puis appuyez sur « Publier quand même ».",
+  "form_publish_overwrite_button": "Publier quand même"
 }

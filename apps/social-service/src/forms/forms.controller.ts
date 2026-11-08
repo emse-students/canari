@@ -25,7 +25,13 @@ import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throt
 
 /** `confirm-payment` calls allowed per user and submission per minute (the return poll is 10). */
 export const CONFIRM_PAYMENT_PER_MINUTE = 12;
-import { CreateFormDto, FormRevisionDto, SaveFormDraftDto, SubmitFormDto } from './dto/form.dto';
+import {
+  CreateFormDto,
+  FormRevisionDto,
+  PublishFormRevisionDto,
+  SaveFormDraftDto,
+  SubmitFormDto,
+} from './dto/form.dto';
 import { FormsService } from './forms.service';
 import { parseExportLabels } from './export-labels';
 import { parseExportFormat } from './product-grid-export';
@@ -111,21 +117,6 @@ export class FormsController {
   }
 
   /**
-   * Publishes a DRAFT form (owner, 2026-11-08). Requires owner, co-owner or MANAGE_FORMS. A paid form
-   * whose association cannot collect yet is refused 409 `FORM_PAYMENTS_NOT_READY`; an already
-   * published one answers the same success.
-   */
-  @UseGuards(NginxAuthGuard)
-  @Post(':id/publish')
-  publish(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Headers('x-user-id') xUserId: string,
-    @Headers('x-global-admin') ga?: string
-  ) {
-    return this.service.publish(id, xUserId, ga === 'true');
-  }
-
-  /**
    * The unpublished revision of a form (owner, 2026-11-08): `{ revision, document, savedAt }`,
    * revision 0 and no document when none was ever saved. Managers only, like the edit route.
    */
@@ -151,13 +142,21 @@ export class FormsController {
     @Body() dto: SaveFormDraftDto,
     @Headers('x-global-admin') ga?: string
   ) {
-    return this.service.saveDraft(id, dto.baseRevision, dto.document, xUserId, ga === 'true');
+    return this.service.saveDraft(
+      id,
+      dto.baseRevision,
+      dto.document,
+      dto.saveId ?? null,
+      xUserId,
+      ga === 'true'
+    );
   }
 
   /**
    * "Publier les modifications" (and "Publier" for a draft form): applies revision `revision` with
    * the edit's rules, atomically. 409 `FORM_DRAFT_CONFLICT` when it moved, `FORM_DRAFT_EMPTY` when a
-   * published form holds no unpublished change.
+   * published form holds no unpublished change, `FORM_CHANGED_SINCE_REVISION` when the form was
+   * written since the revision started and `overwrite` does not confirm publishing over it.
    */
   @UseGuards(NginxAuthGuard)
   @Post(':id/draft/publish')
@@ -165,10 +164,16 @@ export class FormsController {
   publishDraft(
     @Param('id', ParseUUIDPipe) id: string,
     @Headers('x-user-id') xUserId: string,
-    @Body() dto: FormRevisionDto,
+    @Body() dto: PublishFormRevisionDto,
     @Headers('x-global-admin') ga?: string
   ) {
-    return this.service.publishChanges(id, dto.revision, xUserId, ga === 'true');
+    return this.service.publishChanges(
+      id,
+      dto.revision,
+      xUserId,
+      ga === 'true',
+      dto.overwrite === true
+    );
   }
 
   /** "Abandonner les modifications": empties revision `revision`; the form stays as published. */

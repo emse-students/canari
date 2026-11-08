@@ -16,12 +16,15 @@ const route = vi.hoisted(() => ({
   page: { params: {}, url: new URL('https://canari.test/forms/create'), state: {} },
 }));
 vi.mock('$app/state', () => route);
-const nav = vi.hoisted(() => ({ goto: vi.fn(async (_href: string, _opts?: unknown) => {}) }));
+const nav = vi.hoisted(() => ({
+  goto: vi.fn(async (_href: string, _opts?: unknown) => {}),
+  beforeNavigate: vi.fn(),
+}));
 vi.mock('$app/navigation', () => nav);
 const api = vi.hoisted(() => ({
-  createForm: vi.fn(async (_payload: any) => ({ id: 'f-new' })),
-  publishForm: vi.fn(async () => ({ id: 'f-new', status: 'published' })),
-  saveFormDraft: vi.fn(async (_id: string, base: number, _doc: any) => ({
+  // The server stores the form under the id the page minted (`id`), or mints one itself.
+  createForm: vi.fn(async (payload: any) => ({ id: payload.id ?? 'f-new' })),
+  saveFormDraft: vi.fn(async (_id: string, base: number, _doc: any, _saveId?: string) => ({
     revision: base + 1,
     savedAt: 'now',
   })),
@@ -56,6 +59,20 @@ vi.mock('$lib/pricing/criteriaOptions', async (orig) => ({
 }));
 
 const caps = vi.hoisted(() => ({ formDrafts: true as boolean | null }));
+vi.mock('$lib/stores/user', async (orig) => ({
+  ...(await orig<typeof import('$lib/stores/user')>()),
+  currentUserId: () => 'u1',
+}));
+const device = vi.hoisted(() => ({ copies: new Map<string, unknown>() }));
+vi.mock('$lib/forms/draftCopies', () => ({
+  holdFormEditor: () => () => {},
+  deviceCopyOf: (_user: string, formId: string) => ({
+    keep: async (baseRevision: number, saveId: string, document: unknown) =>
+      void device.copies.set(formId, { baseRevision, saveId, document }),
+    sent: async () => void device.copies.delete(formId),
+    drop: async () => void device.copies.delete(formId),
+  }),
+}));
 vi.mock('$lib/stores/appVersionCheck.svelte', async (orig) => ({
   ...(await orig<typeof import('$lib/stores/appVersionCheck.svelte')>()),
   serverFormDrafts: () => caps.formDrafts,
@@ -63,6 +80,9 @@ vi.mock('$lib/stores/appVersionCheck.svelte', async (orig) => ({
 
 import Page from './+page.svelte';
 import { AUTOSAVE_DELAY_MS } from '$lib/forms/autosave.svelte';
+
+/** The id the page minted for its draft, as its first create carried it. */
+const mintedId = () => (api.createForm.mock.calls[0]![0] as { id: string }).id;
 
 /**
  * Mounting the whole builder is the cost of these tests: about 5 s for the first under a loaded
@@ -77,8 +97,8 @@ afterEach(() => {
   document.body.innerHTML = '';
   nav.goto.mockClear();
   api.createForm.mockClear();
-  api.publishForm.mockClear();
   api.saveFormDraft.mockClear();
+  device.copies.clear();
   api.publishFormDraft.mockClear();
   vi.restoreAllMocks();
 });
@@ -131,11 +151,16 @@ describe('the form builder saves as it is typed', () => {
         await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
         await settle();
         expect(api.createForm).toHaveBeenCalledTimes(1);
+        expect(mintedId()).toMatch(/^[0-9a-f-]{36}$/);
         expect(api.saveFormDraft).toHaveBeenCalledWith(
-          'f-new',
+          mintedId(),
           0,
-          expect.objectContaining({ title: 'Soiree' })
+          expect.objectContaining({ title: 'Soiree' }),
+          expect.any(String),
+          { leaving: false }
         );
+        // Landed: nothing is owed on the device.
+        expect(device.copies.size).toBe(0);
         expect(document.querySelector('[data-testid="autosave-status"]')?.textContent?.trim()).toBe(
           m.form_autosave_saved()
         );
@@ -147,10 +172,47 @@ describe('the form builder saves as it is typed', () => {
         // The draft exists: no second creation, the next revision on the first.
         expect(api.createForm).toHaveBeenCalledTimes(1);
         expect(api.saveFormDraft).toHaveBeenLastCalledWith(
-          'f-new',
+          mintedId(),
           1,
-          expect.objectContaining({ title: 'Soiree 2' })
+          expect.objectContaining({ title: 'Soiree 2' }),
+          expect.any(String),
+          { leaving: false }
         );
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+    MOUNT_BUDGET_MS
+  );
+
+  it(
+    'a create whose answer was lost is sent again as the SAME create - never a second draft',
+    async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      api.createForm.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+      route.page.url = new URL('https://canari.test/forms/create');
+      const app = mount(Page, { target: document.body });
+      mounted.push(() => void unmount(app));
+      await settle();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        const title = document.querySelector<HTMLInputElement>(
+          `input[placeholder="${m.form_title_placeholder()}"]`
+        )!;
+        title.value = 'Soiree';
+        title.dispatchEvent(new Event('input', { bubbles: true }));
+        await settle();
+        await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+        await settle();
+        // Kept on the device meanwhile, under the minted id.
+        expect(device.copies.has(mintedId())).toBe(true);
+        window.dispatchEvent(new Event('online'));
+        await vi.advanceTimersByTimeAsync(0);
+        await settle();
+        const ids = api.createForm.mock.calls.map(([p]) => (p as { id: string }).id);
+        expect(ids).toEqual([mintedId(), mintedId()]);
+        expect(api.saveFormDraft).toHaveBeenCalledTimes(1);
+        expect(device.copies.size).toBe(0);
       } finally {
         vi.useRealTimers();
       }
@@ -170,10 +232,10 @@ describe('the form builder, once the form is saved', () => {
         expect.objectContaining({ draft: true, title: 'Soiree' })
       );
       const [id, , document] = api.saveFormDraft.mock.calls.at(-1)!;
-      expect([id, document.title]).toEqual(['f-new', 'Soiree']);
+      expect([id, document.title]).toEqual([mintedId(), 'Soiree']);
       await vi.waitFor(() =>
         expect(api.publishFormDraft).toHaveBeenCalledWith(
-          'f-new',
+          mintedId(),
           api.saveFormDraft.mock.calls.length
         )
       );
@@ -192,7 +254,10 @@ describe('the form builder, once the form is saved', () => {
         await saveReturningTo('/associations/bde/edit/forms', m.form_save_button());
         expect(api.createForm).toHaveBeenCalledTimes(1);
         expect(api.createForm.mock.calls[0]).not.toHaveProperty('0.draft');
-        expect(api.publishForm).not.toHaveBeenCalled();
+        // Nor a client id: an older server's validation would strip it, and it is not needed.
+        expect(api.createForm.mock.calls[0]).not.toHaveProperty('0.id');
+        expect(api.saveFormDraft).not.toHaveBeenCalled();
+        expect(api.publishFormDraft).not.toHaveBeenCalled();
         await vi.waitFor(() =>
           expect(nav.goto).toHaveBeenCalledWith('/associations/bde/edit/forms', {})
         );

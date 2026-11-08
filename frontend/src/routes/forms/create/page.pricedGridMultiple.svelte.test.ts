@@ -16,7 +16,7 @@ const route = vi.hoisted(() => ({
   page: { params: {}, url: new URL('https://canari.test/forms/create'), state: {} },
 }));
 vi.mock('$app/state', () => route);
-vi.mock('$app/navigation', () => ({ goto: vi.fn(async () => {}) }));
+vi.mock('$app/navigation', () => ({ goto: vi.fn(async () => {}), beforeNavigate: vi.fn() }));
 const api = vi.hoisted(() => ({
   createForm: vi.fn(async (_payload: any) => ({ id: 'f-new' })),
   saveFormDraft: vi.fn(async (_id: string, base: number, _doc: any) => ({

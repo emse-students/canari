@@ -12,7 +12,7 @@
     activePaymentProvider,
     loadActivePaymentProvider,
   } from '$lib/associations/activePaymentProvider.svelte';
-  import { goto } from '$app/navigation';
+  import { beforeNavigate, goto } from '$app/navigation';
   import { page } from '$app/state';
   import {
     FormNotFoundError,
@@ -22,6 +22,7 @@
     getSubmissions,
     publishFormDraft,
     saveFormDraft,
+    updateForm,
     uploadFormImage,
     uploadFormItemImage,
     deleteFormImage,
@@ -98,9 +99,20 @@
   } from '$lib/forms/publish';
   import Button from '$lib/components/ui/Button.svelte';
   import { FormAutosave } from '$lib/forms/autosave.svelte';
+  import { deviceCopyOf, formDraftCopyStore, holdFormEditor } from '$lib/forms/draftCopies';
+  import { FORM_CHANGED_SINCE_REVISION } from '$lib/forms/publish';
+  import { serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
+  import { currentUserId } from '$lib/stores/user';
   import { m } from '$lib/paraglide/messages';
 
   const formId = $derived(page.params.id as string);
+
+  /**
+   * Whether this estate stores revisions (`formDrafts` in `/api/version`). An older server has no
+   * revision routes: the editor then saves as it always did, one "Enregistrer" that writes the form
+   * (docs/wiki/legacy-compatibility.md).
+   */
+  const formDrafts = serverFormDrafts() === true;
 
   let form = $state<Form | null>(null);
   let loadError = $state('');
@@ -205,16 +217,27 @@
       return;
     }
     try {
-      const [stored, revision] = await Promise.all([getForm(id), getFormDraft(id)]);
+      const [stored, revision] = await Promise.all([
+        getForm(id),
+        formDrafts ? getFormDraft(id) : Promise.resolve(null),
+      ]);
       form = stored;
-      // The editor opens on what was last TYPED: the unpublished revision when there is one, the
-      // form as published otherwise (owner, 2026-11-08).
-      const f: Form = revision.document ? { ...stored, ...revision.document } : stored;
-      autosave = new FormAutosave({
-        save: (base, document) => saveFormDraft(id, base, document),
-        revision: revision.revision,
-        hasChanges: !!revision.document,
-      });
+      // The editor opens on what was last TYPED: what this device kept and no server holds yet,
+      // else the unpublished revision, else the form as published (owner, 2026-11-08).
+      const copy = revision ? await unsentCopy(id, revision) : null;
+      const typed = copy?.document ?? revision?.document;
+      const f: Form = typed ? ({ ...stored, ...typed } as Form) : stored;
+      const userId = currentUserId();
+      if (revision) {
+        autosave = new FormAutosave({
+          save: (base, document, saveId, leaving) =>
+            saveFormDraft(id, base, document, saveId, { leaving }),
+          revision: revision.revision,
+          hasChanges: !!revision.document,
+          device: userId ? deviceCopyOf(userId, id, () => true) : null,
+        });
+        if (copy) autosave.resume(copy.document, copy.saveId);
+      }
 
       // The form's own association, fetched by id rather than found in a list: the list of
       // associations the user belongs to would miss the one they have since left, and this form
@@ -243,6 +266,42 @@
           : e.message || m.form_edit_load_error();
     }
   });
+
+  /**
+   * What this device kept of `formId` and the server does not hold - a page closed before its save
+   * landed - when it is built on the revision the server holds. One the server holds already (its
+   * save id is the revision's) is cleared; one built on a revision another writer moved past is
+   * dropped, and said.
+   */
+  async function unsentCopy(
+    formId: string,
+    revision: { revision: number; saveId?: string | null }
+  ) {
+    const userId = currentUserId();
+    if (!userId) return null;
+    try {
+      const store = formDraftCopyStore(userId);
+      const copy = await store.get(formId);
+      if (!copy) return null;
+      if (revision.saveId && copy.saveId === revision.saveId) {
+        await store.deleteIfSent(formId, copy.saveId);
+        Log.d('forms-editor', `device copy of ${formId} had landed: cleared`);
+        return null;
+      }
+      if (copy.baseRevision !== revision.revision) {
+        console.warn(
+          `[forms-editor] device copy of ${formId} built on revision ${copy.baseRevision} DROPPED: the server is at ${revision.revision}`
+        );
+        await store.delete(formId);
+        return null;
+      }
+      Log.d('forms-editor', `device copy of ${formId} found: the editor opens on it`);
+      return copy;
+    } catch (e) {
+      console.warn(`[forms-editor] device copy of ${formId} unreadable: ${e}`);
+      return null;
+    }
+  }
 
   /** Fills the editor from `f`: the form as published, or with its unpublished revision over it. */
   function applyContent(f: Form) {
@@ -350,6 +409,8 @@
     })
   );
   let isPublishing = $state(false);
+  /** The form was written outside its revision: the next "Publier" confirms the overwrite. */
+  let overwriteOffered = $state(false);
 
   /**
    * "Publier" / "Publier les modifications" (owner, 2026-11-08): the page's own checks first, in the
@@ -414,8 +475,18 @@
     isSubmitting = true;
     error = '';
     try {
-      await publishRevision();
+      if (formDrafts) {
+        await publishRevision();
+      } else {
+        // An estate older than revisions: the form is written as the editor always wrote it.
+        await updateForm(formId, buildPayload());
+        Log.d('forms-editor', `saved ${formId} (an estate without revisions)`);
+        goto(resolve('/forms'));
+      }
     } catch (e: any) {
+      // Written outside the revision since it started: publishing would undo that unseen. Said,
+      // and "Publier" becomes "Publier quand meme" for the manager who has read it.
+      if (refusalCode(e) === FORM_CHANGED_SINCE_REVISION) overwriteOffered = true;
       // A grid the server alone could refuse (a cotisation tier it does not sell) is drawn under
       // that grid and its card opened, as the page's own check does.
       gridFault = refusedProductGridFault(e, items);
@@ -450,7 +521,8 @@
       return;
     }
     isPublishing = true;
-    const result = await publishFormDraft(formId, autosave.revision);
+    const result = await publishFormDraft(formId, autosave.revision, overwriteOffered);
+    overwriteOffered = false;
     autosave.closed(result.revision);
     Log.d('forms-editor', `published ${formId} at revision ${result.revision}`);
     goto(resolve('/forms'));
@@ -497,11 +569,37 @@
     });
   });
 
-  // Hidden or left: saved at once; back online: an edit that reached no server is sent again.
+  // Hidden, left or torn down: saved at once; back online: an edit that reached no server is sent
+  // again. The cleanup saves too - an in-app navigation fires no `pagehide`.
   $effect(() => {
     if (!autosave) return;
     return autosave.attach(window);
   });
+  // A navigation that keeps this page (another form's editor) tears nothing down: saved here.
+  beforeNavigate(() => {
+    void autosave?.flush();
+  });
+  // While this editor is open, the background resend leaves this form's device copy to it.
+  $effect(() => (formDrafts ? holdFormEditor(formId) : undefined));
+
+  /**
+   * "Voir le formulaire" opens what the respondents would see: the pending edit is saved first, so
+   * the preview draws it. The tab is opened at the press (a popup opened after an await is blocked)
+   * and pointed at the form once the save returns.
+   */
+  async function openView(e: MouseEvent) {
+    if (!form || !autosave || autosave.settled) return;
+    e.preventDefault();
+    const tab = window.open('', '_blank');
+    await autosave.flush();
+    const href = formViewHref(form, autosave.hasChanges);
+    if (tab) {
+      tab.opener = null;
+      tab.location.href = href;
+    } else {
+      console.warn('[forms-editor] the preview tab was not opened (blocked)');
+    }
+  }
 
   let isDiscarding = $state(false);
 
@@ -580,6 +678,7 @@
           href={formViewHref(form, !!autosave?.hasChanges)}
           target="_blank"
           rel="noopener"
+          onclick={openView}
           data-testid="form-view-link"
         >
           <ExternalLink size={16} />
@@ -783,12 +882,18 @@
       {isSubmitting}
       {summary}
       autosaveStatus={autosave?.status ?? null}
-      publish={isDraft || hasUnpublishedChanges
+      saveLabel={m.form_save_changes_button()}
+      onSave={formDrafts ? null : handlePublish}
+      publish={formDrafts && (isDraft || hasUnpublishedChanges)
         ? {
             onPublish: handlePublish,
             blockedReason: blockedReason ?? unsavedReason,
             busy: isPublishing,
-            label: isDraft ? m.form_publish_button() : m.form_publish_changes_button(),
+            label: overwriteOffered
+              ? m.form_publish_overwrite_button()
+              : isDraft
+                ? m.form_publish_button()
+                : m.form_publish_changes_button(),
           }
         : null}
       discard={hasUnpublishedChanges ? { onDiscard: handleDiscard, busy: isDiscarding } : null}

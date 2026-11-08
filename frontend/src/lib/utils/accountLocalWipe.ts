@@ -3,6 +3,7 @@ import { closeOutboxBlobStores } from '$lib/db/outboxBlob';
 import { closeMlsDb } from '$lib/utils/hex';
 import { publishQueueDbName } from '$lib/posts/publishQueue/publishQueueStore';
 import { forgetTabCommitAccount, tabCommitDbName } from '$lib/utils/chat/tabCommitStore';
+import { formDraftCopiesDbName } from '$lib/forms/draftCopies';
 import { clearDeviceKey } from '$lib/utils/deviceKeyVault';
 import { deleteIndexedDbByName } from '$lib/utils/indexedDbDelete';
 import { dropUploadReleaseMarksOf } from '$lib/utils/chat/uploadReleaseMarks';
@@ -43,6 +44,9 @@ export function accountIndexedDbNames(userId: string): string[] {
     publishQueueDbName(userId),
     // A follower tab's commits handed to the leader: a group's name, user ids, until answered.
     tabCommitDbName(userId),
+    // A form's edits no save has landed yet (the editor's device copy): its content and the
+    // account that typed it go together.
+    formDraftCopiesDbName(userId),
   ];
 }
 

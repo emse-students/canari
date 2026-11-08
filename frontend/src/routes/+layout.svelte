@@ -44,6 +44,7 @@
     refreshAppVersionCheck,
     getAppVersionCheck,
     isBelowMinClientVersion,
+    serverFormDrafts,
   } from '$lib/stores/appVersionCheck.svelte';
   import BootGate from '$lib/components/layout/BootGate.svelte';
   import { bootSessionBlocks } from '$lib/stores/bootSession.svelte';
@@ -58,6 +59,7 @@
   import OfflineBanner from '$lib/components/shared/OfflineBanner.svelte';
   import PublishQueueBanner from '$lib/components/posts/PublishQueueBanner.svelte';
   import { startPublishQueue, stopPublishQueue } from '$lib/posts/publishQueue/publishQueue.svelte';
+  import { startFormDraftResend, stopFormDraftResend } from '$lib/forms/draftResend';
   import SlowLinkAnnouncer from '$lib/components/shared/SlowLinkAnnouncer.svelte';
   import OpenInAppBanner from '$lib/components/shared/OpenInAppBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
@@ -283,6 +285,14 @@
     const userId = globalSession.isLoggedIn ? globalSession.userId : null;
     if (userId) startPublishQueue(userId);
     else stopPublishQueue();
+  });
+
+  // -- The forms' device copies: edits a closed editor left unsent reach the server -------------
+  // Once the session is up AND the estate says it stores revisions; again at each `online`.
+  $effect(() => {
+    const userId = globalSession.isLoggedIn ? globalSession.userId : null;
+    if (userId && serverFormDrafts() === true) startFormDraftResend(userId);
+    else stopFormDraftResend();
   });
 
   // -- The banner column's height, published so the floating cards can follow it ------------

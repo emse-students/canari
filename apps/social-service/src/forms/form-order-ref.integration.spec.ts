@@ -256,4 +256,26 @@ maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', ()
       payee = 'vendor';
     }
   );
+
+  // A create under a client-minted id (owner, 2026-11-08): TypeORM keeps the id it is handed on a
+  // generated uuid column, and a second send of the same create stores nothing more.
+  it('stores a form under the id its client minted, once however often the create is sent', async () => {
+    const id = '00000000-0000-4000-8000-0000000d0146';
+    const input = () =>
+      ({
+        id,
+        draft: true,
+        title: 'Gala',
+        basePrice: 0,
+        currency: 'eur',
+        items: [],
+        ownerId: 'owner',
+      }) as any;
+    const [first, second] = await Promise.all([service.create(input()), service.create(input())]);
+    expect(first.id).toBe(id);
+    expect(second.id).toBe(id);
+    expect(await ds.query(`SELECT count(*)::int AS n FROM forms WHERE id = $1`, [id])).toEqual([
+      { n: 1 },
+    ]);
+  });
 });
