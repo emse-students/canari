@@ -86,8 +86,8 @@ const SIZED_BY_A_NEIGHBOUR: Record<string, { count: number; why: string }> = {
     why: 'the download button overlaying a photo, which must not cover it (a video plays as InlineVideo and downloads from the viewer)',
   },
   'lib/components/messages/MessageMobileActions.svelte': {
-    count: 1,
-    why: 'matched to the emoji row of the mobile action sheet',
+    count: 2,
+    why: 'the "+" matched to the emoji row of the mobile action sheet, and the action buttons that share one row equally (flex-1, 44px tall): seven of them must fit 320px, which seven fixed 44px boxes cannot',
   },
   'lib/components/messages/VoiceMessagePlayer.svelte': {
     count: 2,
