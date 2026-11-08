@@ -627,7 +627,7 @@
          PERCENT would resolve against a bubble that is itself sized by its content and balloon it
          over the whole row, so the caption wraps at that width less the bubble's side padding. -->
     <p
-      class="text-sm leading-relaxed wrap-break-word whitespace-pre-wrap select-text {bleed
+      class="text-sm leading-relaxed wrap-break-word whitespace-pre-wrap select-text pointer-coarse:select-none pointer-coarse:[-webkit-touch-callout:none] {bleed
         ? 'mt-1.5 w-[calc(17rem-1.5rem)] max-w-full'
         : 'mt-2'}"
     >

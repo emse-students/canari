@@ -3976,10 +3976,12 @@ sidebar order kept when they answer in reverse, and no retry while a sibling is 
 - **Search**: in-chat search with prev/next navigation and highlight.
 - **Lightbox**: full-screen image/video with pinch-zoom and download.
 - **Radial menu** (mobile): long-press message -> circular action menu
-  (`MessageMobileActions.svelte`). The button row has no width cap of its own and an own message
-  shows one more button than a received one (Edit), which was enough to overflow a narrow phone
-  screen on your own messages specifically - fixed with `max-w-[calc(100vw-2rem)] flex-wrap`
-  instead of a fixed-width, single-line row.
+  (`MessageMobileActions.svelte`). The actions are ICONS ONLY on ONE row (owner, 2026-11-08), built
+  from one `actions` list (name = aria-label + title): 7 at most (own text message), each `flex-1`
+  and 44px tall, 48px wide from 360px and 42px at 320px - never wrapped, never scrolled. The text
+  nodes inside a bubble are `select-text` for a mouse but `pointer-coarse:select-none` (a child's
+  `select-text` beats the bubble's `select-none`, which let iOS select a word under the sheet);
+  "Copier" is the touch way to copy.
 - **Read receipts**: three states — sent / delivered / read — with distinct icons. In a DM the
   reader's head and a double check sit under the sender's own last read message. **In a group or a
   salon, each member's head sits under the LAST message THEY read, whoever wrote it** (user,
