@@ -5797,6 +5797,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_follow_accepted_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_follow_accepted_body) }
             )
+            // A followed person's birthday: the person names the title, the body is the fixed
+            // sentence - the server sends no fragment for this key.
+            "social_birthday" -> Pair(
+                res.getString(R.string.notif_social_birthday_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_birthday_body) }
+            )
             // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences - no
             // actor (which moderator acted is not theirs to read) and no fragment.
             "social_live_cut" -> Pair(

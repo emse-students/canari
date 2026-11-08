@@ -32,6 +32,7 @@
   import { observeElementMoves } from '$lib/guidance/guideAnchorFollow';
   import { seenHelps } from '$lib/guidance/seenHelps.svelte';
   import { ownProfilePhoto } from '$lib/guidance/ownProfilePhoto.svelte';
+  import { ownBirthday } from '$lib/birthdays/birthdaysToday.svelte';
   import { quietBlocker } from '$lib/guidance/guideQuiet';
   import { placeBubble, ringRadius, type BubblePosition } from '$lib/guidance/guidePlacement';
   import type { GuideRect } from '$lib/guidance/guideAnchors.svelte';
@@ -118,6 +119,7 @@
     if (userId) {
       void seenHelps.load(userId);
       void ownProfilePhoto.load(userId);
+      void ownBirthday.load(userId);
     }
   });
 

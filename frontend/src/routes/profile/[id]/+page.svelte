@@ -41,6 +41,7 @@
   import ProfileRoleHistorySection from '$lib/components/profile/ProfileRoleHistorySection.svelte';
   import ProfileParrainageSection from '$lib/components/profile/ProfileParrainageSection.svelte';
   import ProfileMinesweeperBadge from '$lib/components/profile/ProfileMinesweeperBadge.svelte';
+  import ProfileBirthdayLine from '$lib/components/profile/ProfileBirthdayLine.svelte';
   import {
     fetchUserMemberships,
     fetchUserRoleHistory,
@@ -169,8 +170,8 @@
 
   const displayFallbackName = $derived.by(() => {
     if (profile?.displayName) return profile.displayName;
-    if (profile?.id) return getUserDisplayNameSync(profile.id, 'Membre Canari');
-    return 'Membre Canari';
+    if (profile?.id) return getUserDisplayNameSync(profile.id, m.profile_public_default_name());
+    return m.profile_public_default_name();
   });
 
   function handleSendMessage() {
@@ -322,6 +323,7 @@
           </h1>
           <ProfileMinesweeperBadge userId={profile.id} />
           <ProfileChips {profile} />
+          <ProfileBirthdayLine userId={profile.id} />
         </div>
 
         <!-- Actions -->

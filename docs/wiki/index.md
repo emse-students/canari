@@ -134,6 +134,7 @@
 - [Cotisations](cotisations.md) — Membership dues: cotisant tags, boutique products, form member pricing
 - [Carte de la Vie Asso](carte-vie-asso.md) — Editable poster generator (drag & drop canvas, PDF export)
 - [Engagement](engagement.md) - the owner's decisions of 2026-11-07: who a live and a post notify, follow suggestions (the query, measured), the per-account bell, the daily push cap, what each surface reveals, WP-1..WP-10
+- [Birthdays](birthdays.md) - day and month on the profile, who sees the date, the ring on the day for everyone, the followers' morning notice: the data, the rules, the proofs
 
 ### Compliance (GDPR)
 

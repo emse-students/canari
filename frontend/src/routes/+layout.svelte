@@ -59,6 +59,7 @@
   import OfflineBanner from '$lib/components/shared/OfflineBanner.svelte';
   import PublishQueueBanner from '$lib/components/posts/PublishQueueBanner.svelte';
   import { startPublishQueue, stopPublishQueue } from '$lib/posts/publishQueue/publishQueue.svelte';
+  import { followBirthdaysToday } from '$lib/birthdays/birthdaysToday.svelte';
   import { startFormDraftResend, stopFormDraftResend } from '$lib/forms/draftResend';
   import SlowLinkAnnouncer from '$lib/components/shared/SlowLinkAnnouncer.svelte';
   import OpenInAppBanner from '$lib/components/shared/OpenInAppBanner.svelte';
@@ -285,6 +286,13 @@
     const userId = globalSession.isLoggedIn ? globalSession.userId : null;
     if (userId) startPublishQueue(userId);
     else stopPublishQueue();
+  });
+
+  // -- Today's birthdays: the ring every avatar draws (docs/wiki/birthdays.md) -----------------
+  // Asked once the session is up and on every return to the foreground; forgotten at sign-out.
+  $effect(() => {
+    const userId = globalSession.isLoggedIn ? globalSession.userId : null;
+    if (userId) return followBirthdaysToday(userId);
   });
 
   // -- The forms' device copies: edits a closed editor left unsent reach the server -------------

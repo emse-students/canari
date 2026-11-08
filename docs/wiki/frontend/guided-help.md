@@ -447,6 +447,17 @@ visit after the update, ahead of the contextual hints (one help per visit, so th
   button leaving for the browser and the app coming back), and the reminder read once on a dev account
   whose first row is aged by hand.
 
+## The birthday prompt (2026-11-09)
+
+`prompt-birthday` (`guides/birthdayPrompt.ts`) is the same shape as the photo card: ONE centred
+step on `/posts`, declared after the two photo helps (an account missing both meets the photo first,
+the birthday on a later visit), its button opening Profile > Anniversaire. **Shown once, with NO
+reminder** - a birthday is personal data the member may not want to give; the reasoning is on
+[birthdays](../birthdays.md#the-entry-point-and-the-prompt-card). `eligible` reads
+`ownBirthday.hasBirthday` (`birthdays/birthdaysToday.svelte.ts`, loaded by `GuideOverlay.svelte`
+beside the photo fact, set by the settings section on load and save): `null` shows nothing. Pinned
+by `guides/birthdayPrompt.test.ts`.
+
 ## The server store
 
 `help_seen` in core-service (migration `019_help_seen.sql`, additive: a new table), beside

@@ -755,6 +755,8 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     // A follow request and its acceptance (WP-F2): the person names the title, fixed body.
     @"social_follow_request" : @"follow_request",
     @"social_follow_accepted" : @"follow_accepted",
+    // A followed person's birthday: the person names the title, the body is the fixed sentence.
+    @"social_birthday" : @"birthday",
     // A new person asks to join a conversation the reader is in (chat-delivery's own key): the
     // person names the title, the conversation's name is the body.
     @"chat_join_ask" : @"join_ask",

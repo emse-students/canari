@@ -28,6 +28,7 @@ import {
   liveStartedContent,
   followRequestContent,
   followAcceptedContent,
+  birthdayContent,
   liveCutContent,
   liveSuspendedContent,
   liveWithdrawnContent,
@@ -53,6 +54,8 @@ import {
 } from '../spaces/reader-spaces';
 import { isBlockedBetween } from '../common/user-blocks';
 import { readPostOpenVerdict, type OpenablePost } from './post-openable';
+import { birthdayDateVisibleToSql } from '../birthdays/birthday-sql';
+import { BIRTHDAY_NOTIFICATION } from '../birthdays/birthday-notification';
 
 /** The bell's page when the caller names none: what the bell dropdown asks. */
 export const BELL_PAGE_DEFAULT = 30;
@@ -138,6 +141,19 @@ export function commentBorneNotificationSql(n: string, post: string): string {
 }
 
 /**
+ * Bell row `n` is not a birthday notice, or it is one whose recipient may STILL read the member's date
+ * (`birthdayDateVisibleToSql`, docs/wiki/birthdays.md): the row says whose birthday it was, so a
+ * member who hides the date, removes it, removes the follower or blocks them takes it out of that
+ * follower's bell too - the date never outlives its visibility. A push already delivered cannot be
+ * recalled.
+ */
+export function birthdayRowShownSql(n: string): string {
+  return `${n}.type <> '${BIRTHDAY_NOTIFICATION}' OR EXISTS (SELECT 1 FROM profile_birthdays notif_bday
+    WHERE notif_bday."userId" = ${n}."actorId"
+      AND ${birthdayDateVisibleToSql('notif_bday', `${n}."recipientId"`)})`;
+}
+
+/**
  * Bell row `n` may be shown: a row of a type that names no post, or a row of a post-bound type
  * (`POST_BOUND_NOTIFICATION_TYPES`) whose post exists, is not hidden by moderation, and its
  * recipient still sees (`getNotifications` says why) - with its comments, for a comment-borne row
@@ -150,7 +166,7 @@ export function commentBorneNotificationSql(n: string, post: string): string {
  */
 export function bellRowShownSql(n: string): string {
   const types = POST_BOUND_NOTIFICATION_TYPES.map((t) => `'${t}'`).join(', ');
-  return `(${n}.type NOT IN (${types}) OR EXISTS (SELECT 1 FROM posts notif_post
+  return `(${birthdayRowShownSql(n)}) AND (${n}.type NOT IN (${types}) OR EXISTS (SELECT 1 FROM posts notif_post
     WHERE notif_post.id = (CASE WHEN ${n}.type IN (${types})
         AND ${n}."postId" ~* '${UUID_SHAPE}'
       THEN ${n}."postId"::uuid END)
@@ -320,6 +336,9 @@ export class PostNotificationsService {
         return followRequestContent(actorName, icon);
       case 'follow_accepted':
         return followAcceptedContent(actorName, icon);
+      // A followed person's birthday (docs/wiki/birthdays.md). `actorName` is that person; no text.
+      case 'birthday':
+        return birthdayContent(actorName, icon);
       // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences, no actor and
       // no icon - which moderator acted is not theirs to read, and the reason stays on the row.
       case 'live_cut':
@@ -650,13 +669,16 @@ export class PostNotificationsService {
   }
 
   /**
-   * A push for a notice the bell does NOT keep - one per recipient, through the same mapping, icon
-   * rule, bell and bounded fan-out as {@link createNotifications}, and no `post_notifications` row.
+   * A push for a notice whose `post_notifications` row this method does NOT write - one per
+   * recipient, through the same mapping, icon rule, bell and bounded fan-out as
+   * {@link createNotifications}.
    *
    * For a notice about something that does not outlive its moment: a live (WP-L7) is deleted when it
    * ends (L3), so a bell row naming it would point at a 404 for ever after. The LIVE card at the top
-   * of the feed is its in-app surface (L5). Returns how many recipients were addressed, before the
-   * bell (which only the push consults, exactly as for a post).
+   * of the feed is its in-app surface (L5). And for a notice whose rows the caller wrote ITSELF, in
+   * a transaction of its own: the birthday notice commits its rows with its daily claim
+   * (`BirthdayNotifier`), and pushes once that has committed. Returns how many recipients were
+   * addressed, before the bell (which only the push consults, exactly as for a post).
    */
   async pushNotice(data: {
     recipientIds: string[];

@@ -5,6 +5,7 @@
   import Breadcrumb from '$lib/components/navigation/Breadcrumb.svelte';
   import ProfileAssociationsSection from '$lib/components/profile/ProfileAssociationsSection.svelte';
   import ProfileBioSection from '$lib/components/profile/ProfileBioSection.svelte';
+  import ProfileBirthdaySection from '$lib/components/profile/ProfileBirthdaySection.svelte';
   import ProfileCard from '$lib/components/profile/ProfileCard.svelte';
   import ProfileFollowersSection from '$lib/components/profile/ProfileFollowersSection.svelte';
   import ProfileInfoSection from '$lib/components/profile/ProfileInfoSection.svelte';
@@ -44,6 +45,8 @@
   <div class="space-y-6 md:space-y-8">
     {#if section === 'bio'}
       <ProfileBioSection {profile} onSaved={(saved) => (model.profile = saved)} />
+    {:else if section === 'birthday'}
+      <ProfileBirthdaySection />
     {:else if section === 'associations'}
       <ProfileCard
         icon={Building2}

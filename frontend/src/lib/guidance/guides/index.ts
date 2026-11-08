@@ -6,6 +6,7 @@ import { bookingWeekHint } from './bookingWeekHint';
 import { chatsHint } from './chatsHint';
 import { postAsHint } from './postAsHint';
 import { profilePhotoPrompt, profilePhotoReminder } from './profilePhotoPrompt';
+import { birthdayPrompt } from './birthdayPrompt';
 import { createEventHint } from './createEventHint';
 import { createFormHint } from './createFormHint';
 import { createPostHint } from './createPostHint';
@@ -25,6 +26,9 @@ export const GUIDES: readonly GuideDefinition[] = [
   // before the contextual hints (one help per visit, so those wait for the next).
   profilePhotoPrompt,
   profilePhotoReminder,
+  // After the photo prompts: an account missing both meets the photo first, the birthday on a later
+  // visit (one help per visit).
+  birthdayPrompt,
   createPostHint,
   feedTabsHint,
   reelsHint,
