@@ -125,7 +125,7 @@ describe('a transport failure of the enrichment is not a refusal, and is never r
     fetchJson.mockRejectedValueOnce(new UpstreamUnavailableError('http://social/x', 'timeout'));
     const first = await resolveServerSeo(path);
     expect(first.degraded).toBe(true);
-    expect(first.meta.title).toBe('Publication');
+    expect(first.meta.title).toBe(m.seo_post_title());
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('DEGRADED head'));
 
     // The next unfurler retry gets the real card: nothing was cached for the failure.
