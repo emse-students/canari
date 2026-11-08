@@ -1,4 +1,4 @@
--- Migration 142: a form is a DRAFT until a manager publishes it, and a paid form chooses whether it
+-- Migration 145: a form is a DRAFT until a manager publishes it, and a paid form chooses whether it
 -- takes online payment (owner, 2026-11-08).
 --
 -- docs/wiki/frontend/modules/forms.md, "A form is a draft until it is published". A draft is built

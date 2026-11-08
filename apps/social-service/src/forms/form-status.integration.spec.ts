@@ -1,5 +1,5 @@
 /**
- * Migration 142 and the respondent `where` against a REAL PostgreSQL: the unit spec's fake honours
+ * Migration 145 and the respondent `where` against a REAL PostgreSQL: the unit spec's fake honours
  * the clause by construction, so only a database proves the column, its default, its CHECK and the
  * conditional publish write.
  *
@@ -45,7 +45,7 @@ maybe('form status against PostgreSQL', () => {
       "updatedAt" timestamptz NOT NULL DEFAULT now())`);
     await q(`INSERT INTO forms (id) VALUES ($1)`, [OLD]);
     const migration = readFileSync(
-      join(process.cwd(), 'src', 'migrations', '142_forms_status.sql'),
+      join(process.cwd(), 'src', 'migrations', '145_forms_status.sql'),
       'utf8'
     );
     await q(migration);

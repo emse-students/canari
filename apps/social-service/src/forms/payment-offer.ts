@@ -2,7 +2,7 @@
  * HOW A PAID FORM IS PAID, AND WHEN IT MAY BE PUBLISHED (owner, 2026-11-08).
  *
  * A paid form takes ONLINE payment (Lydia, "Paiement Canari") and/or CASH. Each is the editor's
- * choice: `allowOnlinePayment` (migration 142, true for every form before it - online was the only
+ * choice: `allowOnlinePayment` (migration 145, true for every form before it - online was the only
  * way, and not a choice) and `allowCashPayment`.
  *
  * - A paid form is always SAVED, whatever the association's readiness: a draft is built before Lydia.

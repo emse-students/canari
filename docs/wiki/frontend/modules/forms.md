@@ -191,7 +191,7 @@ card the server refuses.
 priced form called `assertPaymentsReady`, so the grid, the prices and the questions had to wait for
 the onboarding. And a new form was answerable the moment it was saved. Both are fixed by one state.
 
-**The state.** `forms.status` (migration 142): `draft` or `published`, default `published`, so every
+**The state.** `forms.status` (migration 145): `draft` or `published`, default `published`, so every
 form written before it - and every form an older container or an older client writes - is published
 as it always was. A new client creates with `draft: true` (`CreateFormDto.draft`, create only; an edit
 sending it is refused `400 FORM_DRAFT_FLAG_ON_EDIT`) and publishes with `POST /forms/:id/publish`
@@ -224,7 +224,7 @@ day).** `payment-offer.ts` is the ONE rule, and the editor mirrors it (`publishB
 `frontend/src/lib/forms/publish.ts`):
 
 - A paid form takes **online** payment (Lydia, "Paiement Canari") and/or **cash**. Online is now the
-  editor's choice too: `forms."allowOnlinePayment"` (migration 142, default true - online was the only
+  editor's choice too: `forms."allowOnlinePayment"` (migration 145, default true - online was the only
   way before, so every existing form keeps it). Off with cash on is a cash-only form.
 - **Saving** a draft never asks about readiness or the association's kind.
 - **Publishing** a paid form (and creating one published at once, an older client; and every edit of a
@@ -257,7 +257,7 @@ button ("Envoi désactivé (aperçu)") and asks nothing of the reader's state (`
 `routes/forms/[id]/+page.svelte`); the server would refuse a draft's submit anyway.
 
 Tests: `forms.service.draft.spec.ts` (create, edit, publish both ways, cash, idempotence, every read
-path, the cash-only submit), `form-status.integration.spec.ts` (migration 142 on PostgreSQL, the
+path, the cash-only submit), `form-status.integration.spec.ts` (migration 145 on PostgreSQL, the
 `where`, the conditional publish), `frontend/src/lib/forms/publish.test.ts`,
 `FormSaveBar.svelte.test.ts`, `FormPaymentSection.svelte.test.ts`, `routes/forms/page.viewLink`,
 `routes/forms/[id]/page.preview`, `routes/forms/[id]/edit/page.draft`.
