@@ -2453,7 +2453,7 @@ browser salon notification clicked through `/chat`. Open:
 2. **P3 - the Android manifest and `tauri.conf.json` declare five hosts; the page hosts a push writes (`posts`,
    `calendar`, `admin-agenda`, `proposals`) rely on the explicit intent of the notification.** Read it once on the Mi 9T.
 
-The two questions of the audit are answered (2026-10-08): a follow keeps its meaning, a per-association mute exists, read-grant holders stay unannounced - [social-service](services/social-service.md#follow-mute-and-read-grants-three-different-facts-decided-by-the-user-2026-10-08).
+The two questions of the audit are answered (2026-10-08): a follow keeps its meaning, a per-association mute exists, read-grant holders stay unannounced - [social-service](services/social-service.md#follow-bell-and-read-grants-three-different-facts-decided-by-the-user-2026-10-08-the-mute-became-the-bell-engagement-wp-3-2026-11-08).
 
 ## CI and the chain that runs unattended
 

@@ -184,6 +184,10 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       ]);
     }
     await admin.query(MIGRATION_114);
+    // An acceptance resets the new follower's bell in its own statement (engagement WP-3, L3).
+    await admin.query(
+      readFileSync(join(__dirname, '..', 'migrations', '142_account_bells.sql'), 'utf8')
+    );
     ds = new DataSource({
       type: 'postgres',
       url: URL,

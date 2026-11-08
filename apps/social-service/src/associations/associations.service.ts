@@ -1390,6 +1390,12 @@ export class AssociationsService {
       await retireForms(manager, { associationId: id });
       await manager.delete(AssociationMember, { associationId: id });
       await this.releaseDependents(manager, id, actorUserId);
+      // The readers' bells on it (migration 142): `targetId` carries no foreign key, since one
+      // column names a person or an association, so nothing cascades them.
+      await manager.query(
+        `DELETE FROM account_bells WHERE "targetKind" = 'association' AND "targetId" = $1`,
+        [id]
+      );
       await manager.delete(Association, id);
     });
     // Released only where no surviving space cites them, the one release rule of every poster.

@@ -9,6 +9,7 @@ import { FOLLOW_REQUESTS_TARGET, NOTIFICATIONS_TARGET } from '../push/push-targe
 import { FOLLOW_ACCEPTED, FOLLOW_PENDING, type FollowStatus } from './follow-status';
 import type { FollowNoticeKind } from './entities/user-follow-notice.entity';
 import { FollowsService, short } from './follows.service';
+import { resetBellOnNewFollowSql } from './account-bells.service';
 import { decodeFollowCursor, encodeFollowCursor } from './follow-cursor';
 import { sameSideOfReviewCohortSql } from '../spaces/reader-spaces';
 
@@ -179,12 +180,18 @@ export class FollowRequestsService {
       );
       throw new ReviewCohortBoundaryException();
     }
+    // THE BELL RIDES ON THE ACCEPTANCE (L3, engagement WP-3): this is the write that makes the
+    // follow come into being, so the new follower's bell on this person is deleted from the row it
+    // RETURNED - posts and lives again. A re-sent acceptance updates nothing and resets nothing.
     const updated = returnedRows<{ id: string }>(
       await this.dataSource.query(
-        `UPDATE user_follows f SET status = $3, "acceptedAt" = now()
-          WHERE f."followedUserId" = $1 AND f."followerUserId" = $2 AND f.status = $4
-            AND ${NO_BLOCK_BETWEEN('$1', '$2')}
-          RETURNING f.id`,
+        `WITH accepted AS (
+           UPDATE user_follows f SET status = $3, "acceptedAt" = now()
+            WHERE f."followedUserId" = $1 AND f."followerUserId" = $2 AND f.status = $4
+              AND ${NO_BLOCK_BETWEEN('$1', '$2')}
+            RETURNING f.id, f."followerUserId" AS reader, f."followedUserId" AS target
+         ), reset AS (${resetBellOnNewFollowSql('accepted', 'user')})
+         SELECT id FROM accepted`,
         [userId, followerUserId, FOLLOW_ACCEPTED, FOLLOW_PENDING]
       )
     );

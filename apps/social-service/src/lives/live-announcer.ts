@@ -29,8 +29,8 @@ import { short } from './live-log';
  * removed: a push never points at a live its reader would get a 404 or a 403 for. Read grants never
  * notify (the PLAIN predicate, as for a post's announcement).
  *
- * `association_push_mutes` is NOT read here: the mute silences the PUSH and is applied by
- * `PostNotificationsService`, the one place that pushes (`MUTABLE_PUSH_TYPES`). The reader's own
+ * The reader's bell (`account_bells`, engagement WP-3) is NOT read here: it reduces the PUSH and is
+ * applied by `PostNotificationsService`, the one place that pushes (`BELL_PUSH_KINDS`). The reader's own
  * category switch ("posts") is applied by chat-delivery, from the push's `contentKey`.
  *
  * Parameters: `$1` the broadcaster, `$2` the live (an association live carries its association on

@@ -192,6 +192,8 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       CREATE TABLE lydia_cashiers ("associationId" uuid, "vendorToken" varchar, "userId" varchar,
         "addedByUserId" varchar, "removedAt" timestamptz);
     `);
+    // The readers' bells, which the association delete and the erasure both write (engagement WP-3).
+    await q(migration('142_account_bells.sql'));
     for (const [id, name] of [
       [A1, 'Organiser'],
       [A2, 'Legacy'],

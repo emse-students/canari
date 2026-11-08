@@ -512,14 +512,19 @@ older builds still tapping a tombstone.
 
 ### No date yet - an association mute set by a build older than the bell (designed 2026-11-07)
 
-**DESIGNED, NOT BUILT - it lands with WP-3 of [engagement](engagement.md) (L8).**
-**Site:** the association push-mute endpoints (`follows/association-push-mutes.service.ts`). WP-3
-moves an association mute into `account_bells` (level `none`) by a held copy, and the bell control
-replaces the mute toggle on the client.
+**BUILT 2026-11-08 with WP-3 of [engagement](engagement.md) (L8).**
+**Site:** the association push-mute routes (`associations.controller.ts`, `push-mute` and
+`me/push-mutes`) and the four legacy methods of `follows/account-bells.service.ts` (`mute`, `unmute`,
+`isMuted`, `listMuted`). WP-3 moved an association mute into `account_bells` (level `none`) by a held
+copy (migration 143), and the bell control replaced the mute toggle on the client.
 **What an older build does.** It still calls the mute and unmute endpoints. Without a shim, a mute it
 set after the copy would land in `association_push_mutes`, which nothing reads any more: lost.
 **The shim.** The old endpoints stay and write `account_bells` (mute = level `none`, unmute = delete
-the row); their reads answer from `account_bells` too. Each site carries a comment pointing here.
+the row); their reads answer from `account_bells` too (`isMuted` is true at `none` only: a bell at
+`lives` reads as not muted to an old build). Each site carries a comment pointing here. **And for an
+older SERVER image during the deploy**, migration 143 installs a trigger mirroring every write on
+`association_push_mutes` into `account_bells`, so a mute an old image writes while the new one rolls
+out is not lost; it goes with the table's held drop, which MUST also `DROP FUNCTION canari_push_mute_to_bell()` (dropping the table removes the trigger, not its function). Since the review of #3156 the new code keeps the old table a SUBSET of the bells at `none`: any write moving an association bell off `none` (a level, the legacy unmute, a new follow) deletes the matching `association_push_mutes` row in the same transaction or statement, so a rollback and the data-subject export read a table that never contradicts the bells.
 **Removal condition:** the floor (`minClientVersion`) at or above the first stable carrying the bell
 control, raised once BOTH stores serve it. Then the old endpoints go, and the held drop of
 `association_push_mutes` follows. Measure before: the endpoints' own debug lines counted per week
