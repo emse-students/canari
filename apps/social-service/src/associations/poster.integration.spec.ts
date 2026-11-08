@@ -21,6 +21,8 @@ import { HttpException, Logger, NotFoundException } from '@nestjs/common';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { PosterService } from './poster.service';
+import { CARTE_SPACE_ASSOCIATIONS_SQL } from './poster-scope';
+import { OFFERED_BY_SPACE_KEY_SQL } from '../spaces/public-space';
 import { PosterProject } from './entities/poster-project.entity';
 import { PosterZone } from './entities/poster-zone.entity';
 import { PosterEntry } from './entities/poster-entry.entity';
@@ -440,6 +442,18 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
     if (ds?.isInitialized) await ds.destroy();
     await db.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
     await db.end();
+  });
+
+  it("the directory's space filter and the carte offer ONE set: the same SQL, by key or by id", async () => {
+    const byId = (await db.query(CARTE_SPACE_ASSOCIATIONS_SQL, [ID.icm])).rows.map((r) => r.id);
+    const byKey = (await db.query(OFFERED_BY_SPACE_KEY_SQL, ['ICM', 'saint-etienne'])).rows.map(
+      (r) => r.id
+    );
+    expect(byKey).toEqual(byId);
+    expect(byKey.length).toBeGreaterThan(0);
+    // a3 addresses FSSS only: not offered to ICM; the archived association never.
+    expect(byKey).not.toContain(ID.a3);
+    expect(byKey).not.toContain(ID.archived);
   });
 
   it('lists to each manager only the maps of the spaces its BDE governs', async () => {

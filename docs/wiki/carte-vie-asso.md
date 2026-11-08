@@ -38,7 +38,9 @@ Decided by the owner on 2026-11-08, built by migration 147:
 - **The space is chosen at creation** and never changes afterwards (an unattached map may be attached
   once). The creation picker lists only the spaces the caller manages.
 - **The map offers every association of its space**: type `association`, not archived, whose
-  audience reaches the space (`ruleReachesSpaceSql`, the same reach the agenda uses). Reach, not
+  audience reaches the space (`ruleReachesSpaceSql`, the same reach the agenda uses). Defined ONCE,
+  `offeredAssociationsSql` in `spaces/public-space.ts`: the portail's association directory
+  (`GET /api/public/associations?space=`) answers the same set. Reach, not
   "governed by the BDE", because one BDE governs several spaces and a map is about one of them.
 - **Each association has a switch, stored in the project** (`poster_entries`, one row per map and
   association: `enabled`, `zoneId`). An association of the space with NO row is NEW - created, or
@@ -539,7 +541,8 @@ a millisecond. It needs a durable record of WHICH layout was published
   `GET /api/public/carte?space=<formation>:<campus>` (for example `ICM:saint-etienne`: the space's
   natural key, the same on every estate, so a consumer names it without knowing an id),
   unauthenticated, 404 when nothing is live for that space, `Cache-Control: public, max-age=300`. A
-  malformed `space` is a typed 400 (`CARTE_PUBLIC_SPACE_INVALID`). **Nothing about any space is
+  malformed `space` is a typed 400 (`PUBLIC_SPACE_INVALID`, the parser shared with the association
+  directory: `spaces/public-space.ts`). **Nothing about any space is
   hard-coded here**: the consumer names its space.
 - **The call without `space` is a legacy shim**: it answers only while exactly one map is live
   anywhere, logged `[LEGACY] GET public/carte with no space`, and otherwise refuses with a typed 400

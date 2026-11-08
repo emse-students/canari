@@ -1,12 +1,5 @@
-import { BadRequestException, Logger } from '@nestjs/common';
 import { bdeStandingInSpaceSql, governorIsAnAssociationSql } from '../spaces/bde';
-import { ruleReachesSpaceSql } from '../spaces/rule-sql';
-import {
-  SPACE_CAMPUSES,
-  SPACE_FORMATIONS,
-  type SpaceCampus,
-  type SpaceFormation,
-} from '../spaces/space.entity';
+import { offeredAssociationsSql, type PublicSpaceKey } from '../spaces/public-space';
 
 /**
  * WHO MAY TOUCH WHICH "CARTE DE LA VIE ASSO", AND WHAT A MAP MAY SHOW (owner, 2026-11-08).
@@ -38,8 +31,6 @@ export const CARTE_ERROR = {
   ASSOCIATION_OUTSIDE_SPACE: 'CARTE_ASSOCIATION_OUTSIDE_SPACE',
   /** A reorder that does not name every zone of the map exactly once. */
   ZONE_ORDER_INCOMPLETE: 'CARTE_ZONE_ORDER_INCOMPLETE',
-  /** `GET /api/public/carte?space=` with a value that names no possible space. */
-  PUBLIC_SPACE_INVALID: 'CARTE_PUBLIC_SPACE_INVALID',
   /** `GET /api/public/carte` with no `space` while not exactly one map is live. */
   PUBLIC_SPACE_REQUIRED: 'CARTE_PUBLIC_SPACE_REQUIRED',
 } as const;
@@ -65,60 +56,10 @@ export const ALL_CARTE_SPACES_SQL = `SELECT cs.id, cs.formation, cs.campus FROM 
   ORDER BY cs.campus, cs.formation`;
 
 /**
- * THE ASSOCIATIONS OF SPACE `$1` A MAP OFFERS: every association of type `association`, not
- * archived, one of whose audience rules reaches the space - "who addresses this space", the same
- * reading every per-space surface makes (`ruleReachesSpaceSql`). Answers `id`.
- *
- * The audience, not the governing parent: a BDE governs several spaces (production: one association
- * governs four), so its children say nothing about WHICH space a map is drawn for, while the audience
- * says exactly who reaches it.
+ * THE ASSOCIATIONS OF SPACE `$1` A MAP OFFERS - the one definition every per-space public read shares
+ * ({@link offeredAssociationsSql}), here for a space named by its id. Answers `id`.
  */
-export const CARTE_SPACE_ASSOCIATIONS_SQL = `SELECT ca.id FROM associations ca
-  WHERE ca.type = 'association' AND NOT ca.archived
-    AND EXISTS (SELECT 1 FROM association_audiences car JOIN spaces cas ON cas.id = $1
-      WHERE car."associationId" = ca.id AND ${ruleReachesSpaceSql('car', 'cas')})
-  ORDER BY ca.id`;
+export const CARTE_SPACE_ASSOCIATIONS_SQL = offeredAssociationsSql('cas.id = $1');
 
-/** A space named in a public URL: its natural key, the pair the anonymous agenda selects by. */
-export interface CarteSpaceKey {
-  formation: SpaceFormation;
-  campus: SpaceCampus;
-}
-
-/**
- * Reads the `space` parameter of `GET /api/public/carte`: `<formation>:<campus>`, exactly as the
- * spaces table stores them (`ICM:saint-etienne`).
- *
- * THE NATURAL KEY, NOT THE UUID: spaces expose nothing publicly except the formation and campus the
- * anonymous agenda already selects by, and the pair is the same on every estate - so the showcase's
- * configuration names its space once, in words, rather than a row id that differs between production
- * and dev.
- *
- * @returns The pair, or null when the parameter is absent or empty (the legacy path decides).
- * @throws BadRequestException `CARTE_PUBLIC_SPACE_INVALID` for anything else: an array (a repeated
- *   parameter), a value without one `:`, or a formation or campus no space can carry.
- */
-export function parseCarteSpaceParam(raw: unknown): CarteSpaceKey | null {
-  if (raw === undefined || raw === null || raw === '') return null;
-  const invalid = () => {
-    // Public input: its shape is logged, never its text.
-    const shape =
-      typeof raw === 'string'
-        ? `string of ${raw.length} chars, ${raw.split(':').length - 1} colon(s)`
-        : Array.isArray(raw)
-          ? `array of ${raw.length}`
-          : typeof raw;
-    new Logger('Carte').warn(`[CARTE] public read refused: malformed space (${shape})`);
-    return new BadRequestException({
-      code: CARTE_ERROR.PUBLIC_SPACE_INVALID,
-      message: 'space must be <formation>:<campus>, e.g. ICM:saint-etienne',
-    });
-  };
-  if (typeof raw !== 'string') throw invalid();
-  const parts = raw.split(':');
-  if (parts.length !== 2) throw invalid();
-  const [formation, campus] = parts;
-  if (!(SPACE_FORMATIONS as readonly string[]).includes(formation)) throw invalid();
-  if (!(SPACE_CAMPUSES as readonly string[]).includes(campus)) throw invalid();
-  return { formation: formation as SpaceFormation, campus: campus as SpaceCampus };
-}
+/** A space named in a public URL (see `spaces/public-space.ts`). */
+export type CarteSpaceKey = PublicSpaceKey;
