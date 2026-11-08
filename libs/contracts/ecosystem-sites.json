@@ -1,12 +1,12 @@
 {
-  "description": "The sibling sites Canari opens (docs/wiki/backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md, owner 2026-11-07/08), in the launcher's order. `origin` is where each answers today. `miconnect` says it signs in through MiConnect, which is the ONLY condition for being in the handoff registry. `handoff` turns the one-time sign-in handoff ON for that site and may be true only once the site's own redemption (`/auth/handoff`) is LIVE in production: before that, Canari would land a token on a page that answers 404. `dests` is the closed allowlist of paths a handoff may land on (`{uuid}` stands for one lowercase UUID segment). core-service's registry (apps/core-service/src/auth/handoff/handoff-sites.ts) and the frontend's (frontend/src/lib/navigation/ecosystemSites.ts) each assert their copy equals this file.",
+  "description": "The sibling sites Canari opens (docs/wiki/backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md, owner 2026-11-07/08), in the launcher's order. `origin` is where each answers today. `miconnect` says it signs in through MiConnect, which is the ONLY condition for being in the handoff registry. `handoff` turns the one-time sign-in handoff ON for that site and may be true only when ALL of these hold: (1) core-service performs F3's MiConnect access check at mint (the user is active AND `check_access?for_user` passes on the target application) - without it a handoff bypasses MiConnect's access decisions; (2) the site's provider `sub_mode` was read as `hashed_user_id`; (3) the site's own redemption (`/auth/handoff`) is LIVE in production, with its handoff sessions marked and its state-changing actions behind a fresh MiConnect sign-in (design note, section 3.7). `dests` is the closed allowlist of paths a handoff may land on (`{uuid}` stands for one lowercase UUID segment); a page whose purpose is an action needing that fresh sign-in is not on it (MiGallery's `/mes-photos/confirmer`). core-service's registry (apps/core-service/src/auth/handoff/handoff-sites.ts) and the frontend's (frontend/src/lib/navigation/ecosystemSites.ts) each assert their copy equals this file.",
   "sites": [
     {
       "id": "migallery",
       "origin": "https://gallery.mitv.fr",
       "miconnect": true,
       "handoff": false,
-      "dests": ["/", "/mes-photos", "/mes-photos/confirmer", "/albums/{uuid}"]
+      "dests": ["/", "/mes-photos", "/albums/{uuid}"]
     },
     {
       "id": "le-cercle",

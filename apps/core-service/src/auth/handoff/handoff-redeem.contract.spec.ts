@@ -69,11 +69,19 @@ function verifyHandoff(token: string, cfg: VerifyConfig): Outcome {
   } catch {
     return { outcome: 'invalid' };
   }
-  if (header.typ !== HANDOFF_TOKEN_TYPE || header.alg !== HANDOFF_TOKEN_ALG) {
+  // `typ` is a media type (RFC 7515 4.1.9): compared case-insensitively, `application/` optional -
+  // exactly what jose's `typ` option does, so the vectors pin the same answer for both.
+  const typ =
+    typeof header.typ === 'string' ? header.typ.toLowerCase().replace(/^application\//, '') : '';
+  if (typ !== HANDOFF_TOKEN_TYPE || header.alg !== HANDOFF_TOKEN_ALG) {
     return { outcome: 'invalid' };
   }
+  // The KEY must fit the algorithm, not only the header: `alg` names ES256, so the JWK must be an
+  // EC P-256 key (and say ES256 if it names an alg). Otherwise a JWKS holding another key type
+  // would be verified under whatever that key's type allows (jose checks this pair itself).
   const jwk = cfg.jwks.keys.find((k) => k.kid === header.kid);
-  if (!jwk) return { outcome: 'invalid' };
+  if (!jwk || jwk.kty !== 'EC' || jwk.crv !== 'P-256') return { outcome: 'invalid' };
+  if (jwk.alg !== undefined && jwk.alg !== HANDOFF_TOKEN_ALG) return { outcome: 'invalid' };
   const key = createPublicKey({ key: jwk as webcrypto.JsonWebKey, format: 'jwk' });
   const signed = verify(
     'sha256',

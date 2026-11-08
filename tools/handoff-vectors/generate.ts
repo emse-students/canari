@@ -98,6 +98,24 @@ const cases = [
     now: IAT + 5,
     expect: 'invalid',
   },
+  // `typ` is a media type: case-insensitive, `application/` optional (RFC 7515 4.1.9), which is
+  // what jose's `typ` option accepts. Pinned as `ok` so a hand-written verifier agrees with jose.
+  {
+    name: 'typ in another case',
+    token: sign({ jti: 'vector-typ-case' }, { typ: 'Canari-Handoff+JWT' }),
+    now: IAT + 5,
+    expect: 'ok',
+    sub: SUB,
+    dest: '/mes-photos',
+  },
+  {
+    name: 'typ with the application/ prefix',
+    token: sign({ jti: 'vector-typ-prefix' }, { typ: 'application/canari-handoff+jwt' }),
+    now: IAT + 5,
+    expect: 'ok',
+    sub: SUB,
+    dest: '/mes-photos',
+  },
   { name: 'alg none', token: algNone, now: IAT + 5, expect: 'invalid' },
   { name: 'HS256 keyed with the public key', token: hs256, now: IAT + 5, expect: 'invalid' },
   {

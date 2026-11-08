@@ -82,7 +82,12 @@ function reportPlainOpen(site: EcosystemSite, err: unknown): void {
 function openInSystemBrowser(url: string, site: EcosystemSite): void {
   void import('@tauri-apps/plugin-opener')
     .then(({ openUrl }) => openUrl(url))
-    .catch((e) => console.warn(`[ecosystemSite] ${site.id} could not be opened`, e));
+    .catch((e: unknown) =>
+      // The class only: the URL may carry a handoff token, and an opener error can quote it.
+      console.warn(
+        `[ecosystemSite] ${site.id} could not be opened, class=${e instanceof Error ? e.name : typeof e}`
+      )
+    );
 }
 
 /**

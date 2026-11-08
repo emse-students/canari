@@ -34,19 +34,42 @@ tests, are in [sessions](../sessions.md#the-sign-in-handoff-to-the-miconnect-sit
 the mint `POST /api/auth/handoff`, the JWKS `GET /api/auth/handoff/jwks`, the registry
 `libs/contracts/ecosystem-sites.json`, the vectors `libs/contracts/handoff-token.cases.json`
 (written by `bun tools/handoff-vectors/generate.ts`), the one opener `openEcosystemSite`, and the
-secret `HANDOFF_SIGNING_KEY` (production secret provisioned by the lead on 2026-11-08, PKCS#8 verified). **Every site's `handoff` flag is OFF**, so nothing changes for a user
-until a site's own redemption is live and its flag is turned on.
+secret `HANDOFF_SIGNING_KEY` (the production secret was provisioned by the lead, with the owner's
+approval, on 2026-11-08; PKCS#8 verified). **Every site's `handoff` flag is OFF**, so nothing
+changes for a user.
+
+**A site's flag goes on only when ALL of these hold** (security review of #3155, 2026-11-08; the
+same list heads `libs/contracts/ecosystem-sites.json`):
+
+1. **F3's access check runs at mint**: core-service asks MiConnect that the user is ACTIVE and that
+   `check_access?for_user` passes on the target application, and mints nothing otherwise. Under F1
+   alone (sub only) a handoff BYPASSES MiConnect's access decisions for every site - a deactivated
+   account, Sky's ICM policy, any future D15 rule - so **F1 is never enough to turn a flag on**.
+   MiGallery's flag stays OFF until the H0 check confirms the MiConnect reads (owner, 2026-11-08).
+2. **The site's provider `sub_mode` was read as `hashed_user_id`** on MiConnect (section 9), so the
+   `sub` Canari signs is the `sub` the site keys its rows by.
+3. **The site's redemption is live with the login-CSRF answers of section 3.7**: handoff sessions
+   marked, every state-changing action behind a fresh MiConnect sign-in, and the interstitial
+   always shown. **Sky and Le Cercle need the same review of their state-changing actions** (Sky's
+   record linking and profile edits, Le Cercle's orders and membership) before their flags go on.
 
 **Taken here as the reversible recommended options (lead's brief, 2026-11-08):**
 
-- **F1 ships: the token carries `sub` only.** F3 waits for the H0 spike and the read-only MiConnect
-  account (section 9); adding `claims` later is additive for a site that ignores an unknown member.
-  **MiGallery's flag stays OFF until the H0 check confirms the MiConnect reads (F3)** (owner, 2026-11-08), because F1 leaves a promo or formation changed in
-  MiConnect stale on MiGallery until its next OIDC sign-in (section 4).
+- **The token carries `sub` only today (the F1 shape).** F3 adds the access check at mint (the
+  condition above) and, later, `claims`, which is additive for a site that ignores an unknown member.
 - **No migration on Canari.** The mint is stateless; single use is the site's ledger.
-- **A rotation is a hard cut**, not "publish the new key beside the old one": one variable, the
-  [Keys](../sessions.md#keys) rule. It costs the tokens of the last 60 s (`invalid`), and the user
-  taps again. Section 3.2's two-key rotation is superseded.
+- **Only a token of a LIVE session mints**: a sid-less (legacy) access token, which names no
+  session whose end could stop it, is refused (`auth.controller.handoff.spec.ts`).
+- **`/mes-photos/confirmer` is OFF the dest allowlist.** Its only purpose is the "C'est moi"
+  actions, which a handoff session must not perform without a fresh MiConnect sign-in (section
+  3.7), so landing there signed in by a handoff buys nothing. A gallery push with faces to confirm
+  lands on `/mes-photos` (section 5.4).
+- **A rotation is a hard cut at Canari, NOT at the sites**: one variable, the
+  [Keys](../sessions.md#keys) rule, but each site caches the JWKS. The JWKS answers
+  `max-age=60`, each site sets `cacheMaxAge` to 60-120 s (section 8), so a rotated-out key stops
+  verifying within two minutes; after a COMPROMISE the operator also restarts each site (or flushes
+  its JWKS cache) right after the deploy, so the old key dies at once. Section 3.2's two-key
+  rotation is superseded.
 - **`not_yet_valid` is its own class** (an `iat` more than 30 s in the future), beside `expired` and
   `too_long` (section 3.6, step 3).
 - **Dev mints nothing** (`DEV_HANDOFF_SIGNING_KEY` unset, manifest `silent`): a dev token is
@@ -54,8 +77,9 @@ until a site's own redemption is live and its flag is turned on.
   info (section 4).
 - **On the web, a popup-blocked tab mints nothing** and the click is said at warn: replacing Canari's
   own tab would drop its socket and MLS state, which the launcher exists to avoid.
-- **The confirmation of section 3.6 consumes nothing**: the redemption answers `confirm` BEFORE the
-  ledger insert, and the user's click sends the same token again (section 8).
+- **The interstitial consumes nothing**: the redemption answers `confirm` BEFORE the ledger insert,
+  ALWAYS (a session or none, section 3.7), and the user's click sends the same token again
+  (section 8).
 
 **Not built yet:** H3 (the vendored verifier in `libs/`; the reference is `verifyHandoff` in
 `handoff-redeem.contract.spec.ts`, and section 8 is the contract), the `/ecosystem/[site]` tap route
@@ -168,8 +192,9 @@ payload { "iss": "https://canari.emse.fr",       // the estate that minted it
 - **The estates do not cross.** Dev mints under `https://dev.canari-emse.fr` with its own key.
   A production site trusts exactly one issuer, so a dev token is `wrong_issuer` there.
 - **The audience registry is server-side and closed.** It lists the three sites: id, origin, and an
-  allowlist of `dest` path patterns (MiGallery: `/`, `/mes-photos`, `/mes-photos/confirmer`,
-  `/albums/<uuid>`; Sky and Le Cercle: `/`). **core-service composes the URL**
+  allowlist of `dest` path patterns (MiGallery: `/`, `/mes-photos`, `/albums/<uuid>` -
+  `/mes-photos/confirmer` was removed by the review of 2026-11-08, section 0; Sky and Le Cercle:
+  `/`). **core-service composes the URL**
   (`<origin>/auth/handoff#<token>`) and the client never supplies an origin. That is what keeps the
   endpoint from becoming an open redirect, and keeps a token from being sent anywhere else. The
   addresses move into a contract file (`libs/contracts/ecosystem-sites.json`) that
@@ -266,11 +291,13 @@ past can go: step 3 refuses its token before it can reach step 5, so deleting th
 the token back in. Only the token's validity bound involves a clock, as for any credential. Whether
 a token has been used is answered by the row alone.
 
-**A browser already signed in as someone else.** If the browser holds a live site session for a
-different `sub`, the redemption does **not** replace it silently. It shows "Vous êtes connecté en
-tant que A - continuer en tant que B ?" and opens B's session only on a click. This covers a Canari
-account switch, and it blocks the login-CSRF in 3.7 whenever a session exists. When no session
-exists, the site shows the new session's name, which the site headers already do.
+**An interstitial, ALWAYS, before anything is written** (amended by the review of 2026-11-08). If
+the browser holds a live site session for a different `sub`, the redemption shows "Vous êtes
+connecté en tant que A - continuer en tant que B ?". If it holds none, it shows "Vous allez être
+connecté en tant que B", with B's name AND photo. Either way B's session opens only on a click, and
+the token is consumed only then. This covers a Canari account switch, and it is half of the
+login-CSRF answer of 3.7 - the other, decisive half being that a handoff session cannot perform a
+state-changing action without a fresh MiConnect sign-in.
 
 #### 3.7 Threats
 
@@ -280,7 +307,8 @@ exists, the site shows the new session's name, which the site headers already do
 | **A link forwarded to someone else** | the token is minted per tap and redeemed by the browser it opens. The URL that remains in history no longer carries it (`replaceState`) and was consumed anyway. **Residual:** an address copied before the page loaded, used by someone else within 60 s, signs them in as the user. No binding to the opening browser is possible, because the system browser shares no secret with the app. This is accepted, and named here |
 | **Open redirect** | Canari composes the URL from a closed registry, so no origin comes from input; `dest` is signed, matches an allowlist at mint, and is validated again by the site |
 | **Phishing** | a token reaches only a registered origin. A phishing page cannot get one, because Canari never builds a URL from input, and a token stolen anyway is bound to one `aud` and expires in 60 s. The landing page loads no third-party script that could read the fragment |
-| **CSRF on the redemption** | JSON with a same-origin `Origin` check. **Login CSRF** (an attacker mints a token for HIS account and gets a victim to open it, so the victim's acts, a selfie enrolment for example, land in the attacker's account) needs the victim to open it within 60 s. It is blocked by the confirmation above when the victim has a session, and remains possible when they have none, as with any bearer link. MiGallery's selfie enrolment already requires an explicit ticked agreement and shows whose account it is |
+| **CSRF on the redemption** | JSON with a same-origin `Origin` check. This stops a cross-site POST, and NOTHING more: the site's OWN landing page posts the token, so the check passes for any token that reaches it |
+| **Login CSRF - the serious one** (review of 2026-11-08, High) | **The attack:** the attacker's server holds HIS Canari session and mints a fresh token on every visit (the throttle allows 20 a minute), then sends any visitor to `<site>/auth/handoff#<token>`. The landing page posts it, `Origin` passes, and a visitor with no site session is signed in AS THE ATTACKER. On MiGallery, a victim then invited to enrol their face (from `/mes-photos`, which Canari itself links) puts their biometric into the attacker's account. **The 60 s lifetime is no defence**: the token is minted per visit. **The answers, in order of weight:** **(a) decisive - a session opened by a handoff is MARKED** (a column on the site's session row), and every state-changing action that matters requires a FRESH MiConnect OIDC sign-in from such a session (a step-up that replaces the mark): on MiGallery the face enrolment, every consent or grant, and the `/mes-photos/confirmer` "C'est moi" actions. An attacker's account can be browsed into, never written to by the victim. **(b) the interstitial of 3.6, always**: "Vous allez être connecté en tant que B", with B's photo, before anything is written, even with no session. It warns, it does not prove: a victim may click through. **(c) recorded, not chosen: binding the token to the opening browser.** The site sets a nonce cookie and sends the browser through a Canari app link carrying the nonce, Canari mints with it, and the site redeems only a token whose nonce equals its cookie. It defeats the attack completely, at a UX cost: every open becomes a round trip site -> app -> browser, which on iOS and Android leaves the browser and comes back through the app's link handling, and fails where the app is not installed or the link is not claimed. Not chosen while (a) holds; it is the answer if a site cannot mark its sessions. **Sky and Le Cercle:** the same review of their state-changing actions is owed before their flags go on (section 0) |
 | **Links inside messages** | **never handed off.** Otherwise a link a stranger wrote would decide which path the victim's own signed-in session opens, and would extend any GET with side effects on that site to users whose cookie had expired. Only Canari's own buttons (the launcher, the profile photo, a push tap) mint |
 | **Minting abuse** | an access token is required, the account is throttled, every mint is logged, and `aud` and `dest` come from closed lists |
 
@@ -388,8 +416,10 @@ so an unread earlier notice is replaced on the device rather than stacked.
   kinds reuse an existing id). So a gallery notice is sent only to devices at or above the release
   that carries both the switch and the tap route, using the `minAppVersion` floor `sendPushToUser`
   already honours.
-- **The tap.** `deepLink` names an in-app route, `/ecosystem/migallery?dest=/mes-photos` (or
-  `/mes-photos/confirmer` when `toConfirm > 0`). The route mints (3.3) and opens. The push opens
+- **The tap.** `deepLink` names an in-app route, `/ecosystem/migallery?dest=/mes-photos`, also when
+  `toConfirm > 0`: `/mes-photos/confirmer` is off the handoff allowlist (section 0), because its "C'est
+  moi" actions need a fresh MiConnect sign-in from a handoff session anyway. The route mints (3.3)
+  and opens. The push opens
   Canari, and Canari opens MiGallery, signed in.
 
 #### 5.5 Content-free push, and privacy - **for the owner**
@@ -425,7 +455,7 @@ so an unread earlier notice is replaced on the device rather than stacked.
 
 | # | Repo | Package | Gate that proves it |
 | --- | --- | --- | --- |
-| H0 | Canari (read-only) | **Spike:** the three Authentik API calls of 3.4 on the running version, with a read-only service account. **The lead creates the account through the MiConnect admin API, with the owner's agreement, and tells the owner when it is done (E)** | a written result here: F3 or F1 |
+| H0 | Canari (read-only) | **Spike:** the three Authentik API calls of 3.4 on the running version, with a read-only service account, and **each site provider's `sub_mode`, read and recorded as `hashed_user_id`** (section 9) before that site's flag can go on. **The lead creates the account through the MiConnect admin API, with the owner's agreement, and tells the owner when it is done (E)** | a written result here: F3 or F1 |
 | H1 | Canari | `libs/contracts/handoff-token.cases.json` (the vectors of section 4) and `libs/contracts/ecosystem-sites.json` (ids, origins, `dest` allowlists, `handoff` flag); `ecosystemSites.ts` reads it | contract tests in core-service and the frontend that read the same file |
 | H2 | Canari core-service | the mint (3.3), the JWKS, `HANDOFF_SIGNING_KEY` (+ `MIGRATION.md`, env manifest), F3's MiConnect read | unit tests: every vector minted or refused as written; a revoked session mints nothing; an `aud` or `dest` outside the registry is refused; the token never appears in a log line (assert on the captured logger) |
 | H3 | Canari `libs/` | `handoff-verify.ts` and the landing page, the source copies; `shape.mjs` claim 6 extended to them for the GitHub repositories | the vectors pass against the module; `bun tools/ecosystem-shape/shape.mjs` exits 0 |
@@ -475,9 +505,13 @@ implement the same contract with their own admission (section 4). The reference 
 | Variable | Production value | What it is |
 | --- | --- | --- |
 | `CANARI_HANDOFF_ISSUER` | the origin of production's `FRONTEND_URL` first entry (the lead reads it on the estate before setting it) | the ONE issuer accepted; a dev token is `wrong_issuer` |
-| `CANARI_HANDOFF_JWKS` | `<issuer>/api/auth/handoff/jwks` | the public keys, through `jose`'s `createRemoteJWKSet` (a refetch on an unknown `kid`) |
+| `CANARI_HANDOFF_JWKS` | `<issuer>/api/auth/handoff/jwks` | the public keys, through `jose`'s `createRemoteJWKSet(url, { cacheMaxAge: 60_000 })` - 60 to 120 s, never jose's 10-minute default, so a rotated-out key stops verifying within two minutes (the JWKS itself answers `max-age=60`); an unknown `kid` refetches |
 
 The audience is a constant in MiGallery's code, `migallery`, never a variable.
+
+**After a key COMPROMISE** (not an ordinary rotation): the operator rotates `HANDOFF_SIGNING_KEY`,
+deploys Canari, then restarts MiGallery's process (or flushes its JWKS cache) at once, so the
+compromised key stops verifying immediately rather than within `cacheMaxAge`.
 
 **The ledger** (SQLite, one table, created like every other MiGallery table):
 
@@ -508,7 +542,7 @@ and it acts on the answer:
 | Answer | The page does |
 | --- | --- |
 | `200 { "outcome": "ok", "dest": "/mes-photos" }` | `location.replace(dest)` |
-| `200 { "outcome": "confirm", "current": "<A's name>", "next": "<B's name or null>" }` | shows "Vous êtes connecté en tant que A - continuer en tant que B ?"; **Continuer** sends `{ "token": token, "confirm": true }` again (the token held in the page's memory only); **Rester** goes to `/` |
+| `200 { "outcome": "confirm", "current": "<A's name or null>", "next": { "name": "<B's name>", "photo": "<B's avatar URL on MiGallery>" } }` | the interstitial, ALWAYS: with `current`, "Vous êtes connecté en tant que A - continuer en tant que B ?"; without, "Vous allez être connecté en tant que B", B's photo beside the name. **Continuer** sends `{ "token": token, "confirm": true }` again (the token held in the page's memory only); **Annuler** goes to `/` and writes nothing |
 | `200 { "outcome": "unknown_user", "dest": "/mes-photos" }` | the ordinary OIDC login with `redirectTo=dest` (an honest first visit) |
 | `4xx { "outcome": "<class>" }` | the ordinary OIDC login, no `redirectTo` |
 | an empty fragment | the ordinary OIDC login |
@@ -528,10 +562,12 @@ named and logged `[HANDOFF] refused class=<outcome> jti=<jti or none>` - **never
 2. On the verified payload: every claim of its type (`dest` a string, `iat` and `exp` numbers),
    else `invalid`; `iat > now + 30` -> `not_yet_valid`; `exp - iat > 60` -> `too_long`.
 3. `dest` through `safeRedirectTarget` (`src/lib/auth-redirect.ts`), else `bad_dest`.
-4. **A live `migallery_session` of ANOTHER user, and no `confirm: true`** -> `200 { outcome:
-   "confirm", current, next }`, and **nothing is written**: the token is not consumed, so the
-   click redeems it within its lifetime (past it, step 1 says `expired` and the page goes to the
-   login).
+4. **No `confirm: true` -> the interstitial, ALWAYS** (a live session of another user or none at
+   all): `200 { outcome: "confirm", current, next }`, `next` read from the `users` row of `sub`
+   (name and photo; an unknown `sub` answers `unknown_user` here instead, step 6). **Nothing is
+   written**: the token is not consumed, so the click redeems it within its lifetime (past it, step 1
+   says `expired` and the page goes to the login). A live session of the SAME user skips the
+   interstitial: nothing changes hands.
 5. **Single use:** `INSERT OR IGNORE INTO handoff_redemptions (jti, sub, exp, redeemed_at)`; no row
    inserted -> `409 { outcome: "replayed" }`, logged at WARN. The insert is the decision: nothing
    reads first and writes afterwards.
@@ -539,32 +575,51 @@ named and logged `[HANDOFF] refused class=<outcome> jti=<jti or none>` - **never
    dest }`, and the page sends the user through OIDC. **F1 writes nothing on the row.** Under F3
    this step becomes the half of the OIDC callback after the claims (`handleUserInDatabase` with the
    token's `claims`, nulls cleared), extracted so both paths call one function.
-7. **The ordinary session**, made by the same function the OIDC callback uses (one `sessions` row,
-   7 days, the `migallery_session` cookie with its usual attributes); a replaced session of another
-   user is deleted first. `200 { outcome: "ok", dest }`, logged
+7. **The ordinary session, MARKED**: made by the same function the OIDC callback uses (one
+   `sessions` row, 7 days, the `migallery_session` cookie with its usual attributes) with one
+   difference, a column `via_handoff = 1` on the row (an additive column, default 0). A replaced
+   session of another user is deleted first. `200 { outcome: "ok", dest }`, logged
    `[HANDOFF] redeemed jti=<jti> sub=<sub>`.
 
+**The step-up - the decisive answer to login CSRF (section 3.7).** A session whose row says
+`via_handoff = 1` may browse, and may NOT perform, until the user has signed in through MiConnect
+in this browser: **the face enrolment (selfie), every consent or its withdrawal, every grant or
+share, and the `/mes-photos/confirmer` "C'est moi" / "Ce n'est pas moi" actions.** Each such route
+checks the mark server-side and answers `403 { code: "STEP_UP_REQUIRED" }`; the page then sends the
+user through the ordinary OIDC login with `redirectTo` = the page. The OIDC callback writes a new
+session WITHOUT the mark (and deletes the marked one), so after one MiConnect sign-in the user acts
+normally. Victim and attacker therefore cannot be confused where it matters: MiConnect itself names
+who is signing in. The list of guarded routes is enumerated in MiGallery's code, and a test fails if
+a state-changing route under `/api` is neither on it nor explicitly exempted (a read-only route, a
+logout).
+
 **What it must not do:** take the token from a query string or a GET; log it; create a new kind of
-session; let a handoff session past the face routes' existing guards (it is an ordinary session,
-and the selfie enrolment's ticked agreement stays).
+session (the mark is a column of the ordinary one); skip the interstitial; let a marked session
+past a guarded route.
 
 **Its tests (H4's gate):** every case of `libs/contracts/handoff-token.cases.json` through steps
 1-3, with `createLocalJWKSet(vectors.jwks)` and jose's `currentDate` set to the case's `now`,
 answering `expect` (`bad_dest` is `safeRedirectTarget` refusing `//evil.example/x`); the `replay`
-sequence against one ledger -> `ok`, then `replayed`; a wrong `Origin` -> `bad_origin`; a live
-session of another `sub` -> `confirm` and no ledger row, then `confirm: true` -> `ok`; an unknown
-`sub` -> `unknown_user`; the token in no log line (asserted on the captured logger). The vectors are
-COPIED from Canari and regenerated only there.
+sequence against one ledger -> `ok`, then `replayed`; a wrong `Origin` -> `bad_origin`; NO session
+-> `confirm` and no ledger row, then `confirm: true` -> `ok`; a live session of another `sub` -> the
+same; an unknown `sub` -> `unknown_user`; the session opened carries `via_handoff = 1`; every guarded
+route answers `STEP_UP_REQUIRED` to a marked session and works after an OIDC sign-in; the
+guarded-route enumeration test; the token in no log line (asserted on the captured logger). The
+vectors are COPIED from Canari and regenerated only there.
 
-**Then Canari turns the flag on:** `"handoff": true` for `migallery` in
-`libs/contracts/ecosystem-sites.json` and its two copies (`handoff-sites.ts`, `ecosystemSites.ts`),
-in a Canari release made after MiGallery's is live; then the phone readings of section 6.
+**Then Canari turns the flag on**, and only when the three conditions of section 0 hold (F3's access
+check at mint, `sub_mode` read as `hashed_user_id`, this redemption live with the mark, the step-up
+and the interstitial): `"handoff": true` for `migallery` in `libs/contracts/ecosystem-sites.json` and
+its two copies (`handoff-sites.ts`, `ecosystemSites.ts`), in a Canari release made after MiGallery's
+is live; then the phone readings of section 6.
 
 ### 9. The read-only MiConnect service account (WP-H0) - for the lead to create
 
-**F1, what ships, needs NO MiConnect access at all**, on Canari or on a site: the site trusts
-Canari's signature for `sub` and admits through its own existing row. **The account exists for F3
-only.** It is read by **core-service at mint time**, never by a site, and its token would be a NEW
+**The code that ships today (sub only) reads nothing from MiConnect, and that is exactly why no
+flag may go on yet** (section 0): without the access check below, a handoff bypasses MiConnect's
+own decisions. **F3's first two reads are therefore the condition for EVERY site's flag**, the
+third (claims) follows. The account is read by **core-service at mint time**, never by a site, and
+its token would be a NEW
 secret (`MICONNECT_READER_TOKEN`, production only like `MICONNECT_EDITOR_TOKEN`; not introduced until
 F3 is built). It is a different account from `miconnect-canari-editor` (WP4), which may write.
 
@@ -575,6 +630,7 @@ F3 is built). It is a different account from `miconnect-canari-editor` (WP4), wh
 | who the user is at MiConnect, and whether they are still active | `GET /api/v3/core/users/?uuid=<users.miconnect_uuid>` -> `pk`, `is_active` | the user API cannot filter on the hashed `sub` ([profiles-and-access](../profiles-and-access.md#four-facts-the-plan-is-shaped-by)) and Canari holds the user's Authentik uuid; a deactivated account mints nothing |
 | whether MiConnect lets this user into the target application | `GET /api/v3/core/applications/<slug>/check_access/?for_user=<pk>` -> `{ passing, messages }` | MiConnect's policy bindings decide who enters (D15, Sky's ICM rule); a refusal mints nothing, as the OIDC flow would have refused |
 | the claims that site's own property mappings compute for this user | `GET /api/v3/providers/oauth2/<provider pk>/preview_user/?for_user=<pk>` -> `{ preview: { ... } }` | fresh claims without Canari duplicating any mapping (the reason F2 was rejected) |
+| **once per site, before its flag goes on** (H0): the provider's subject mode | `GET /api/v3/providers/oauth2/<provider pk>/` -> `sub_mode` | must read `hashed_user_id`, the mode Canari's `users.id` is ([profiles-and-access](../profiles-and-access.md#four-facts-the-plan-is-shaped-by)); any other mode means the site keys its rows by another `sub` and Canari's token would name nobody there, or the wrong person. Recorded here per site |
 
 **The permissions, all read-only, as one RBAC role on the service account:**
 
@@ -586,5 +642,7 @@ F3 is built). It is a different account from `miconnect-canari-editor` (WP4), wh
 
 **Nothing else:** no `add_*`, `change_*` or `delete_*`, no token, flow or event access, no other
 application or provider. The exact codenames, and whether `check_access?for_user` and
-`preview_user` exist on the RUNNING version, are what H0 verifies first, read-only; if one is
-missing, F1 stays and this section records why.
+`preview_user` exist on the RUNNING version, are what H0 verifies first, read-only. If the user
+lookup or `check_access` is missing, **no flag goes on** and this section records why; if only
+`preview_user` is missing, the access check ships without claims (the site keeps its own row, F1's
+admission) and this section records that.

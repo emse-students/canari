@@ -7,8 +7,9 @@ export interface EcosystemSite {
   href: string;
   /**
    * The one-time sign-in handoff is ON for it: Canari, signed in, opens it signed in
-   * ({@link openEcosystemSite}). True only for a site that signs in through MiConnect AND whose
-   * own `/auth/handoff` is live in production; core-service refuses a mint for any other.
+   * ({@link openEcosystemSite}). True only under the conditions of `libs/contracts/ecosystem-sites.json`
+   * (F3's MiConnect access check at mint, the site's `sub_mode`, its redemption live with handoff
+   * sessions stepped up); core-service refuses a mint for any other.
    */
   handoff: boolean;
   /** Bundled 96 px logo under `static/ecosystem/`. */

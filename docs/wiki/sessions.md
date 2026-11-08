@@ -710,8 +710,8 @@ which also holds **the contract a site implements**. This section is what Canari
 - **The mint.** `POST /api/auth/handoff { aud, dest }` -> `{ url, expiresInSeconds }` on
   core-service (`auth/handoff/handoff.service.ts`, the route in `auth.controller.ts`). It needs a
   LIVE access token (`requireAccessToken`, [the session's liveness](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)
-  included), so an ended Canari session mints nothing; the subject is the token's, never the
-  body's. Throttled per account (20 a minute). One audit line per mint,
+  included), so an ended Canari session mints nothing, and a sid-less (legacy) token, which names no
+  session at all, is refused too; the subject is the token's, never the body's. Throttled per account (20 a minute). One audit line per mint,
   `[HANDOFF] minted aud=<site> user=<sub> jti=<jti> dest=<path>`, and **the token itself is never
   logged**.
 - **The token.** A compact JWS, `ES256`, header `typ: canari-handoff+jwt` and `kid` (RFC 7638),
@@ -725,14 +725,22 @@ which also holds **the contract a site implements**. This section is what Canari
   equals the file. The client names a site by id; **core-service composes the URL**
   (`<origin>/auth/handoff#<token>`), so the route is no open redirect. `dest` must equal one path
   of the site's allowlist exactly (`{uuid}` one lowercase UUID segment; no query, no fragment, no
-  normalisation). A site is minted for only while its `handoff` flag is true, and **the flag is set
-  only once the site's own `/auth/handoff` is live in production**; every flag ships false.
+  normalisation). A site is minted for only while its `handoff` flag is true, and **every flag ships
+  false**. A flag goes on only when core-service runs MiConnect's access check at mint (the user
+  active, `check_access` on the target application - without it a handoff bypasses MiConnect's
+  decisions), the site's provider `sub_mode` was read as `hashed_user_id`, and the site's
+  redemption is live with handoff sessions MARKED and stepped up through a MiConnect sign-in before
+  any state-changing action - the answer to login CSRF ([the design note](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md),
+  sections 0 and 3.7).
 - **The fragment.** The token rides after `#`, which no browser sends to a server, so it stays out
   of every access log and `Referer`. The site's landing page removes it at once and redeems it with
   a same-origin POST.
-- **The JWKS.** `GET /api/auth/handoff/jwks`, public, `Cache-Control: public, max-age=300`. A site
-  refetches on an unknown `kid`. **A rotation is a hard cut** (one variable, no "previous key", the
-  rule of [Keys](#keys)): the tokens of the last 60 s are refused `invalid` and the user taps again.
+- **The JWKS.** `GET /api/auth/handoff/jwks`, public, `Cache-Control: public, max-age=60`. A site
+  refetches on an unknown `kid`. **A rotation is a hard cut at Canari** (one variable, no "previous
+  key", the rule of [Keys](#keys)): the tokens of the last 60 s are refused `invalid` and the user
+  taps again. **At a site it is bounded by its cache**: each site sets `cacheMaxAge` to 60-120 s, so
+  a rotated-out key verifies for two minutes at most; after a compromise the operator also restarts
+  each site right after the deploy.
 - **Fails closed.** No key: `HANDOFF_NOT_OFFERED` (404) on both routes, said once at boot. A key
   that is set but unreadable (a PEM, another curve, garbage), or no issuer: said at `error` at boot,
   closed, never weaker. Dev holds no key (manifest `silent`) until a site test instance trusts dev's

@@ -15,7 +15,12 @@ export interface EcosystemSiteContract {
   origin: string;
   /** Signs in through MiConnect: the ONLY condition for being in the handoff registry. */
   miconnect: boolean;
-  /** The handoff is ON for it: true only once its own `/auth/handoff` is live in production. */
+  /**
+   * The handoff is ON for it. True only when F3's MiConnect access check runs at mint (the user
+   * active, `check_access` passing on the target application), the site's provider `sub_mode` was
+   * read as `hashed_user_id`, and its own `/auth/handoff` is live with handoff sessions marked and
+   * stepped up before any state-changing action (the contract file's description).
+   */
   handoff: boolean;
   /** The paths a token may land on; `{uuid}` is one lowercase UUID segment. */
   dests: readonly string[];
@@ -27,7 +32,7 @@ export const ECOSYSTEM_SITES: readonly EcosystemSiteContract[] = [
     origin: 'https://gallery.mitv.fr',
     miconnect: true,
     handoff: false,
-    dests: ['/', '/mes-photos', '/mes-photos/confirmer', '/albums/{uuid}'],
+    dests: ['/', '/mes-photos', '/albums/{uuid}'],
   },
   {
     id: 'le-cercle',

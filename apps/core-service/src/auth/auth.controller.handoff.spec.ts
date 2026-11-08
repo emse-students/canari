@@ -98,6 +98,14 @@ describe('Handoff routes', () => {
     ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
+  it('mints nothing for a sid-less (legacy) access token, which names no live session', async () => {
+    const { controller, sessions } = build();
+    await expect(
+      controller.mintHandoff(req(bearer({ sub: 'user-a' })), { aud: 'migallery' })
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(sessions.isLive).not.toHaveBeenCalled();
+  });
+
   it('mints nothing without a token, or for a refresh token', async () => {
     const { controller } = build();
     await expect(controller.mintHandoff(req(), { aud: 'migallery' })).rejects.toBeInstanceOf(
@@ -128,6 +136,6 @@ describe('Handoff routes', () => {
     expect(jwks.keys).toHaveLength(1);
     expect(jwks.keys[0]).toMatchObject({ kty: 'EC', crv: 'P-256', alg: 'ES256', use: 'sig' });
     expect(jwks.keys[0]).not.toHaveProperty('d');
-    expect(set).toHaveBeenCalledWith('Cache-Control', 'public, max-age=300');
+    expect(set).toHaveBeenCalledWith('Cache-Control', 'public, max-age=60');
   });
 });

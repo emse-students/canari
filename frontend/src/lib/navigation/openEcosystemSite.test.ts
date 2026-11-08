@@ -73,6 +73,16 @@ describe('openEcosystemSite', () => {
       expect(warn).not.toHaveBeenCalled();
     });
 
+    it('says a failed open by its class, never with the URL that carries the token', async () => {
+      apiFetch.mockResolvedValue(json(200, { url: MINTED }));
+      openUrl.mockRejectedValueOnce(new Error(`cannot open ${MINTED}`));
+      openEcosystemSite('migallery');
+      await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+      const said = JSON.stringify(warn.mock.calls);
+      expect(said).toContain('class=Error');
+      expect(said).not.toContain('eyJ.header.sig');
+    });
+
     it('opens a site without the flag plainly, minting nothing', async () => {
       openEcosystemSite('le-cercle');
       await settle();

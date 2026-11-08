@@ -431,6 +431,8 @@ export class AuthController {
   private async requireAccessToken(req: Request): Promise<{
     userId: string;
     isAdmin: boolean;
+    /** `live` when the token names a session that exists; `legacy` when it names none (sid-less). */
+    sessionState: 'live' | 'legacy';
   }> {
     const header = req.headers['authorization'];
     if (!header) throw new UnauthorizedException('Missing Authorization header');
@@ -453,7 +455,7 @@ export class AuthController {
     if (!payload.sub) throw new UnauthorizedException('Token carries no subject');
     const session = await this.sessionOfToken({ sub: payload.sub, sid: payload.sid });
     if (session.state === 'ended') throw new UnauthorizedException('Session has ended');
-    return { userId: payload.sub, isAdmin: !!payload.admin };
+    return { userId: payload.sub, isAdmin: !!payload.admin, sessionState: session.state };
   }
 
   /**
@@ -1313,7 +1315,13 @@ export class AuthController {
   @Throttle({ default: { limit: HANDOFF_MINT_LIMIT_PER_MINUTE, ttl: 60_000 } })
   async mintHandoff(@Req() req: Request, @Body() body: HandoffMintDto): Promise<HandoffMint> {
     this.handoff.assertOffered();
-    const { userId } = await this.requireAccessToken(req);
+    const { userId, sessionState } = await this.requireAccessToken(req);
+    // ONLY A LIVE SESSION MINTS. A sid-less token (`legacy`) names no session whose end could stop
+    // it, so it may read for its last hour but never vouch for the user to another site.
+    if (sessionState !== 'live') {
+      this.logger.warn(`[HANDOFF] refused class=no_session user=${userId}`);
+      throw new UnauthorizedException('A handoff needs a token of a live session');
+    }
     return this.handoff.mint(userId, body?.aud, body?.dest);
   }
 
@@ -1324,7 +1332,7 @@ export class AuthController {
   @Get('handoff/jwks')
   handoffJwks(@Res({ passthrough: true }) res: Response): { keys: HandoffPublicJwk[] } {
     const jwks = this.handoff.jwks();
-    res.set('Cache-Control', 'public, max-age=300');
+    res.set('Cache-Control', 'public, max-age=60');
     return jwks;
   }
 
