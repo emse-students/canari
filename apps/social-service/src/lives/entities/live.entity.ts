@@ -156,6 +156,13 @@ export class Live {
   posterAt: Date | null;
 
   /**
+   * The poster `posterName` REPLACED (migration 141), kept one round: a list read before the
+   * replacement may still name it, so its object must resolve until the NEXT replacement.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  posterPreviousName: string | null;
+
+  /**
    * THE RESERVATION of a poster being stored (migration 140), the segment's `pendingName` for the
    * preview: written before the store, cleared by its confirm, and read by the purge, which leaves
    * the live alone while it is younger than `LIVE_RESERVATION_TTL_MS`.

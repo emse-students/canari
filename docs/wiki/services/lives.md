@@ -568,8 +568,17 @@ erasure of the broadcaster sets it to NULL with the rest of the row's identity.
 **The preview image: where it lives.** An object under the live's own prefix, `live/<liveId>/<uuid>`,
 beside the segments - so it is deleted by the same end-of-live purge (a CUT live is purged like any
 ended one, so its preview goes with it) and swept by the same orphan reaper. Media-service did not
-change. The row names the current one (`"posterName"`, `"posterAt"`); the previous object is deleted
-best effort when a new one is confirmed (a failure logs a `warn` and the purge takes it at the end).
+change. The row names the current one (`"posterName"`, `"posterAt"`) AND the one it replaced
+(`"posterPreviousName"`, migration 141). **The previous poster survives one round** (observed on dev,
+`v1.6.7-alpha.4`: a viewer's `GET /api/lives` named poster N, the broadcaster's PUT confirmed N+1 and
+deleted N, and the viewer's fetch of N met a 404). The confirm swaps the two names in the SAME `UPDATE`
+that names the new poster and deletes only the poster TWO rounds back, so every name a list could have
+returned before a PUT still resolves after it; a live holds at most two poster objects, and the
+end-of-live purge deletes the whole `live/<id>/` prefix, so it takes both (and any pending one). The
+delete is best effort: a failure logs a `warn` NAMING the object (a real leak until the purge) and
+does not fail the PUT. A card whose poster still meets a 404 (its live was purged) is an expected
+outcome: `fetchLivePoster` declares `not-found` expected, so `liveRefusal` logs it at debug and keeps
+the warn for every other refusal (a segment's 404 included).
 **It is READ through its own public path**, `/api/media/public/live-poster/<liveId>/<name>`, which
 nginx maps onto the same upstream object and the same `live_segments` cache (the cache key is the
 upstream path), but counts in its OWN zones - see [what the preview costs](#what-the-preview-costs).

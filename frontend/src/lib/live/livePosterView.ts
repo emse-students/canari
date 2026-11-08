@@ -124,7 +124,9 @@ async function fetchAndOpen(
       return { kind: 'offline' };
     }
     if (isLiveRefusal(e, 'not-found')) {
-      console.debug(`[LIVE] card poster ${liveId}: ${poster.name} already replaced or purged`);
+      console.debug(
+        `[LIVE] card poster ${liveId}: ${poster.name} purged with its live, or replaced twice since the list`
+      );
       return { kind: 'gone' };
     }
     if (isLiveRefusal(e, 'rate-limited')) {

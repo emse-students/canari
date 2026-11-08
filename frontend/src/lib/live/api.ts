@@ -154,11 +154,16 @@ function numberField(body: Record<string, unknown> | null, key: string): number 
  * TYPES A REFUSED RESPONSE AT THE THROW. `refusalFromResponse` reads status and `code` (from a
  * clone); the extras are read from the body here. Logged once, at warn for an outcome a viewer or
  * broadcaster will see, with the route, status, code and kind - never the body.
+ *
+ * `expected` is the set of kinds the CALLER declares an ordinary outcome of its request (a card's
+ * poster that was purged with its live): those are logged ONCE at debug with the reason, every other
+ * kind keeps the warn. It is decided here, at the throw, from the kind - never from a message.
  */
 async function liveRefusal(
   res: Response,
   what: string,
-  segmentFetch = false
+  segmentFetch = false,
+  expected: readonly LiveRefusalKind[] = []
 ): Promise<LiveRefusalError> {
   const base = await refusalFromResponse(res, what);
   let body: Record<string, unknown> | null = null;
@@ -171,9 +176,10 @@ async function liveRefusal(
   const kind = classifyLiveRefusal(base.status, base.code, responseOrigin(res), segmentFetch);
   const endedAt = typeof body?.endedAt === 'string' ? body.endedAt : null;
   const endReason = liveEndReasonOf(body?.endReason);
-  console.warn(
-    `[LIVE] ${what}: ${base.status} ${base.code ?? '-'} -> ${kind}${endReason ? ` (${endReason})` : ''}`
-  );
+  const line = `[LIVE] ${what}: ${base.status} ${base.code ?? '-'} -> ${kind}${endReason ? ` (${endReason})` : ''}`;
+  if (expected.includes(kind))
+    console.debug(`${line} (expected: the caller treats it as an outcome)`);
+  else console.warn(line);
   return new LiveRefusalError(
     base.status,
     base.code,
@@ -561,17 +567,19 @@ export function fetchLivePoster(
   name: string,
   signal?: AbortSignal
 ): Promise<ArrayBuffer> {
-  return fetchLiveObject(livePosterUrl(liveId, name), `Live poster ${name}`, signal);
+  // A poster purged with its live (or replaced twice since the list) is a 404 the card expects.
+  return fetchLiveObject(livePosterUrl(liveId, name), `Live poster ${name}`, signal, ['not-found']);
 }
 
 /** The one GET of a live's public object; `what` names it in the refusal's log. */
 async function fetchLiveObject(
   url: string,
   what: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  expected: readonly LiveRefusalKind[] = []
 ): Promise<ArrayBuffer> {
   const res = await trackedFetch(fetch, url, { method: 'GET', signal });
-  if (!res.ok) throw await liveRefusal(res, what, true);
+  if (!res.ok) throw await liveRefusal(res, what, true, expected);
   return res.arrayBuffer();
 }
 

@@ -91,6 +91,10 @@ const TITLE_AND_POSTER = readFileSync(
   join(__dirname, '..', 'migrations', '140_live_title_and_poster.sql'),
   'utf8'
 );
+const POSTER_PREVIOUS = readFileSync(
+  join(__dirname, '..', 'migrations', '141_live_poster_previous.sql'),
+  'utf8'
+);
 /** The secret live keys are sealed under in this file (migration 110). */
 const KEY_SECRET = 'live-key-it-throwaway-secret-0123456789abcdef';
 
@@ -401,6 +405,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
     await q(KEY_AT_REST);
     await q(TITLE_AND_POSTER);
     await q(TITLE_AND_POSTER);
+    await q(POSTER_PREVIOUS);
+    await q(POSTER_PREVIOUS);
     process.env.LIVE_ENABLED = 'true';
     process.env[LIVE_KEY_ENCRYPTION_SECRET_ENV] = KEY_SECRET;
   });
@@ -3879,9 +3885,20 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await agePoster(live.id);
       const second = await lives.ingestPoster(ALICE, live.id, poster(2));
       expect(second.name).not.toBe(first.name);
-      // The replaced one is gone from the store; ONE poster object remains.
+      // The replaced one SURVIVES one round (a list read before this PUT may still name it): TWO remain.
+      expect(store.objects.has(`live/${live.id}/${first.name}`)).toBe(true);
+      expect(store.countFor(live.id)).toBe(2);
+      // The NEXT replacement deletes it, and keeps the second as the previous: still two.
+      await agePoster(live.id);
+      const third = await lives.ingestPoster(ALICE, live.id, poster(3));
       expect(store.objects.has(`live/${live.id}/${first.name}`)).toBe(false);
-      expect(store.countFor(live.id)).toBe(1);
+      expect(store.objects.has(`live/${live.id}/${second.name}`)).toBe(true);
+      expect(store.objects.has(`live/${live.id}/${third.name}`)).toBe(true);
+      expect(store.countFor(live.id)).toBe(2);
+      expect(
+        await q(`SELECT "posterName", "posterPreviousName" FROM lives WHERE id = $1`, [live.id])
+      ).toEqual([{ posterName: third.name, posterPreviousName: second.name }]);
+      await agePoster(live.id);
       // Another member's live is a 404, as every write.
       expect(await refusal(lives.ingestPoster(BOB, live.id, poster(3)))).toEqual({
         status: HttpStatus.NOT_FOUND,
@@ -3895,6 +3912,25 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       );
       store.failStore = false;
       await expect(lives.ingestPoster(ALICE, live.id, poster(5))).resolves.toBeDefined();
+    });
+
+    it('WARNS naming the object when the displaced poster is refused by the store, and the PUT still succeeds', async () => {
+      const live = await start();
+      const first = await lives.ingestPoster(ALICE, live.id, poster(1));
+      await agePoster(live.id);
+      await lives.ingestPoster(ALICE, live.id, poster(2));
+      await agePoster(live.id);
+      const warn = jest
+        .spyOn((lives as unknown as { logger: { warn(m: string): void } }).logger, 'warn')
+        .mockImplementation(() => {});
+      store.refuseTrimDeletes = true;
+      try {
+        await expect(lives.ingestPoster(ALICE, live.id, poster(3))).resolves.toBeDefined();
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining(first.name));
+      } finally {
+        store.refuseTrimDeletes = false;
+        warn.mockRestore();
+      }
     });
 
     it('serves the title, the count, the poster and the PREVIEW KEY in the list WITHOUT TAKING A SEAT', async () => {
@@ -3985,7 +4021,10 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       const live = await start();
       await lives.ingest(ALICE, live.id, 0, segment(0));
       await lives.ingestPoster(ALICE, live.id, poster(1));
-      expect(store.countFor(live.id)).toBe(2);
+      await agePoster(live.id);
+      await lives.ingestPoster(ALICE, live.id, poster(3));
+      // One segment, the current poster and the previous one: the purge takes all three.
+      expect(store.countFor(live.id)).toBe(3);
       await lives.end(ALICE, live.id);
       await sweeper.sweepOnce();
       expect(store.countFor(live.id)).toBe(0);
