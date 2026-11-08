@@ -31,6 +31,11 @@ interface OpenReading {
   rowsSettled: number;
   /** Every long task (> 50 ms) from the gesture to the end of the settle, `[start, duration]`. */
   longTasks: [number, number][];
+  /**
+   * Every `error` event the window received meanwhile - "ResizeObserver loop completed with
+   * undelivered notifications" is one, which neither `console.*` nor the engine's `Log` reports.
+   */
+  errors: string[];
 }
 
 const ROW_SELECTOR = '[id^="msg-"]';
@@ -60,6 +65,10 @@ const longTasks: [number, number][] = [];
 new PerformanceObserver((list) => {
   for (const e of list.getEntries()) longTasks.push([e.startTime, e.duration]);
 }).observe({ type: 'longtask', buffered: true });
+
+/** Error events since the page loaded; `measure` keeps the ones of its own open. */
+const errorEvents: string[] = [];
+window.addEventListener('error', (e) => errorEvents.push(e.message));
 
 /** One frame. */
 const frame = () => new Promise<number>((r) => requestAnimationFrame(r));
@@ -103,6 +112,7 @@ async function measure(
   gesture: () => () => Promise<void>
 ): Promise<OpenReading> {
   const t0 = performance.now();
+  const errorsBefore = errorEvents.length;
   const teardown = gesture();
   flushSync();
   const mountMs = performance.now() - t0;
@@ -119,6 +129,7 @@ async function measure(
     longTasks: longTasks
       .filter(([s, d]) => s + d >= t0 && s <= end)
       .map(([s, d]) => [Math.round(s - t0), Math.round(d)]),
+    errors: errorEvents.slice(errorsBefore),
   };
   await teardown();
   target.replaceChildren();

@@ -846,7 +846,70 @@ bulk is two synchronous layout reads - `publishComposerHeight`'s first `offsetHe
 (~31 ms), which reads layout again after every flush of the entry.
 Moving those reads to a `ResizeObserver`'s first callback (after layout, as `watchClampOverflow` did
 in #2926) is the next candidate; it touches the thread's anchor mechanism, so it needs the
-media-frame bench beside this one.
+media-frame bench beside this one. **Measured 2026-11-08 and refuted - see the next subsection.**
+
+### The mount's layout reads, moved and measured: the layout is paid anyway (2026-11-08)
+
+**What was tried** (a variant, built and benched, not shipped): `observeThreadGrowth` read nothing
+at setup nor in its `MutationObserver` while `entering` (its baseline marked stale, re-seeded in the
+observer's next callback, the scroller re-observed to guarantee one), and `publishComposerHeight`
+published its first value from its `ResizeObserver`'s first callback instead of the mount.
+
+**The instrument gained what the CPU profile lacks:** `run.mjs` now prints the engine's own
+counters per open (`Performance.getMetrics`: layouts and style recalculations, and their time,
+whoever triggered them) and counts every window `error` event as an engine warning (a
+`ResizeObserver` loop error is one, and neither `console.*` nor the `Log` domain reports it). A CPU
+profile books a forced layout to the JavaScript that read: remove that read and the same layout is
+booked to the NEXT reader - the composer's textarea sizing, the chat chrome's `--chat-header-height`
+publish, and the entry fill's own measure (`fillViewportThenPin`), which must read. The "~60 ms of
+effects" of the profile above is the pane's one necessary layout and style pass, attributed to
+whoever read first.
+
+**Measured** (medians, this workstation, variant vs `origin/main` interleaved run by run; 9 runs per
+arm at CPU x4, 7 at x1; ms from the gesture):
+
+| scene, CPU | open | gesture task | reveal | layouts (ms) | style recalcs (ms) | rows at reveal | warnings |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| pane, x4 | first | 278 -> 269 | 291 -> 283 | 10 (106) -> 10 (105) | 10 (33) -> 10 (32) | 20 -> 20 | 0 -> 0 |
+| pane, x4 | reopen | 69 -> 60 | 78 -> 69 | 9 (11) -> 9 (11) | 9 (28) -> 9 (28) | 20 -> 20 | 0 -> 0 |
+| hub, x4 | first | 201 -> 192 | 206 -> 196 | 13 (130) -> 13 (128) | 13 (42) -> 13 (41) | 20 -> 20 | 0 -> 0 |
+| hub, x4 | reopen | 82 -> 79 | 84 -> 80 | 12 (15) -> 12 (16) | 12 (30) -> 12 (31) | 20 -> 20 | 0 -> 0 |
+| pane, x1 | first | 53 -> 51 | 56 -> 54 | 11 (20) -> 10 (19) | 11 (6) -> 10 (6) | 20 -> 20 | 0 -> 0 |
+| pane, x1 | reopen | 11 -> 10 | 13 -> 14 | 9 (2) -> 9 (2) | 9 (5) -> 9 (5) | 20 -> 20 | 0 -> 0 |
+| hub, x1 | first | 37 -> 36 | 38 -> 36 | 13 (24) -> 13 (23) | 13 (7) -> 13 (7) | 20 -> 20 | 0 -> 0 |
+| hub, x1 | reopen | 15 -> 15 | 15 -> 16 | 12 (3) -> 12 (3) | 12 (5) -> 12 (6) | 20 -> 20 | 0 -> 0 |
+
+**Verdict: no layout and no style recalculation was removed, on any row.** The thread observer's
+half alone moved nothing (a 9-run pane x4 pass: reopen gesture 68 vs 66 ms); the few milliseconds
+of the table are the composer's half, and a ceiling run that dropped BOTH root custom-property
+writes of the mount (`--chat-composer-height`, `--chat-chrome-bottom`) bought one layout and ~8 ms
+of style at x4 (pane reopen 68 -> 62 ms) - the most this lead can be worth. No `ResizeObserver`
+loop error either way: the composer's first write lands in the step that also observes the
+composer band for the first time, a node shallower than the scroller, so the scroller's resize is
+still deliverable in that step.
+
+**Why neither half shipped.**
+- **The composer's first publish stays in the mount: it is an INPUT of the entry fill.**
+  `fillViewportThenPin` reads the scroller's `padding-bottom`, which IS the published height. Read
+  before the publish it is the stylesheet's fallback (`6rem` or `7.5rem` + inset, against 64 px
+  measured on the bench), so the fill believes the content is 30-60 px taller than it will be,
+  stops short, and the reveal can land under `OLDER_TRIGGER_PX` - the one 140-group
+  `loadOlderGroups` task on the reveal that #2914 removed, on exactly the one-line thread of the
+  phone seed. A few ms of desktop gesture do not pay for that.
+- **The thread observer's reads are where the layout is paid, not extra layouts.** Removing them
+  hands the same layout to the fill's measure. Its `MutationObserver` judgement outside an entry
+  must stay synchronous anyway: a prepend (`loadOlderGroups`, a widen step) restores `scrollTop` by
+  absolute assignment after its own `await tick()` in the same task, so a judgement deferred to the
+  layout step always runs after that restore and adds the prepend's height a second time.
+
+**Where the mount's time is, then:** the template pass (Svelte creating the rows, `MessageBubble`
+and `MessageTextBody` first), and the style recalculations that each write of a measured value
+back into a ROOT custom property triggers for the whole document. A next step, if any, is the
+second: publish those values on the nearest element that holds every consumer instead of the
+root - the consumers of each must be enumerated first. **Owed:** nothing on the phones for this
+step (nothing in the app changed). The media-frame bench the paragraph above asks for is not in the
+repository (only its readings are, [media-frame](media-frame.md)); the anchor did not change, so
+none was owed.
 
 ## 7. Not measured, and owed
 

@@ -7,7 +7,8 @@
  *
  * What it answers: how long a salon whose page is already in memory takes to show its last
  * messages, how many rows were mounted to get there, which long tasks it cost, and how many
- * warnings the engine printed on the way - the "salon open" of
+ * warnings the engine printed on the way (and every `error` event, a ResizeObserver loop included),
+ * plus the style recalculations and layouts the engine ran for it - the "salon open" of
  * docs/wiki/frontend/community-open-budget.md, with nothing else on the thread.
  *   --scene pane   `ChatArea` mounted over the salon (default).
  *   --scene hub    the communities hub drawn first (sidebar: ten communities), then the tap on a
@@ -165,6 +166,18 @@ async function evaluate(cx, expression) {
   return r.result.value;
 }
 
+/**
+ * The engine's own counters (`Performance.getMetrics`): how many style recalculations and layouts
+ * ran, and for how long, whoever triggered them - a read inside a script (forced) or the rendering
+ * step (natural). A CPU profile books a forced layout to the JavaScript that read, so moving the read
+ * moves the milliseconds to the next reader without removing any; these counts are what says
+ * whether a change REMOVED work (2026-11-08, community-open-budget).
+ */
+async function engineMetrics(cx) {
+  const { metrics } = await cx.send('Performance.getMetrics');
+  return Object.fromEntries(metrics.map((m) => [m.name, m.value]));
+}
+
 const median = (xs) => {
   const s = xs.filter((x) => typeof x === 'number').sort((a, b) => a - b);
   if (!s.length) return null;
@@ -188,6 +201,7 @@ try {
     await cx.send('Emulation.setCPUThrottlingRate', { rate: CPU });
     await cx.send('Page.enable');
     await cx.send('Log.enable');
+    await cx.send('Performance.enable');
     await cx.send('Page.navigate', { url: pageUrl(arm) });
     for (let i = 0; i < 400; i++) {
       if (await evaluate(cx, 'typeof window.__salonBench === "object"').catch(() => false)) break;
@@ -202,17 +216,27 @@ try {
         await cx.send('Profiler.start');
       }
       cx.warnings.clear();
+      const before = await engineMetrics(cx);
       const r = await evaluate(cx, `window.__salonBench.${ENTRY}(${options})`);
+      const after = await engineMetrics(cx);
+      r.layouts = after.LayoutCount - before.LayoutCount;
+      r.layoutMs = (after.LayoutDuration - before.LayoutDuration) * 1000;
+      r.styles = after.RecalcStyleCount - before.RecalcStyleCount;
+      r.styleMs = (after.RecalcStyleDuration - before.RecalcStyleDuration) * 1000;
       if (profiling) {
         const { profile } = await cx.send('Profiler.stop');
         writeFileSync(join(PROFILE_DIR, `${SCENE}-${which}.cpuprofile`), JSON.stringify(profile));
+      }
+      for (const text of r.errors ?? []) {
+        const key = `error event: ${text.slice(0, 48)}`;
+        cx.warnings.set(key, (cx.warnings.get(key) ?? 0) + 1);
       }
       r.warnings = [...cx.warnings.values()].reduce((a, b) => a + b, 0);
       readings[arm][which].push(r);
       const lt = r.longTasks.map(([s, d]) => `${d}@${s}`).join(' ');
       const said = [...cx.warnings].map(([text, n]) => `${n} x "${text}"`).join('; ');
       console.log(
-        `run ${run} ${arm.padEnd(4)} ${which.padEnd(6)} gesture ${r.mountMs.toFixed(0).padStart(4)} reveal ${String(Math.round(r.revealMs)).padStart(4)} rows ${r.rowsAtReveal}->${r.rowsSettled}  long tasks [${lt}]${said ? `  engine: ${said}` : ''}`
+        `run ${run} ${arm.padEnd(4)} ${which.padEnd(6)} gesture ${r.mountMs.toFixed(0).padStart(4)} reveal ${String(Math.round(r.revealMs)).padStart(4)} rows ${r.rowsAtReveal}->${r.rowsSettled} layouts ${r.layouts} (${r.layoutMs.toFixed(0)} ms) styles ${r.styles} (${r.styleMs.toFixed(0)} ms)  long tasks [${lt}]${said ? `  engine: ${said}` : ''}`
       );
     }
     cx.close();
@@ -237,6 +261,6 @@ for (const [arm, which] of Object.keys(ARMS).flatMap((a) => [
   const rs = readings[arm][which];
   const longest = rs.map((r) => Math.max(0, ...r.longTasks.map(([, d]) => d)));
   console.log(
-    `  ${arm.padEnd(4)} ${which.padEnd(6)} gesture ${median(rs.map((r) => r.mountMs)).toFixed(0)} ms, reveal ${median(rs.map((r) => r.revealMs)).toFixed(0)} ms, longest task ${median(longest)} ms, rows at reveal ${median(rs.map((r) => r.rowsAtReveal))}, settled ${median(rs.map((r) => r.rowsSettled))}, engine warnings ${median(rs.map((r) => r.warnings))}`
+    `  ${arm.padEnd(4)} ${which.padEnd(6)} gesture ${median(rs.map((r) => r.mountMs)).toFixed(0)} ms, reveal ${median(rs.map((r) => r.revealMs)).toFixed(0)} ms, longest task ${median(longest)} ms, rows at reveal ${median(rs.map((r) => r.rowsAtReveal))}, settled ${median(rs.map((r) => r.rowsSettled))}, layouts ${median(rs.map((r) => r.layouts))} (${median(rs.map((r) => r.layoutMs)).toFixed(0)} ms), styles ${median(rs.map((r) => r.styles))} (${median(rs.map((r) => r.styleMs)).toFixed(0)} ms), engine warnings ${median(rs.map((r) => r.warnings))}`
   );
 }
