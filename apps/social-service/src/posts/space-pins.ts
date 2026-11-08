@@ -93,8 +93,8 @@ export const PINNED_FOR_VIEWER_IDS_SQL = `SELECT pf_post.id::text AS id FROM pos
 /**
  * For each of posts `$1`, every space where viewer `$2` may pin it - the post is pinnable there, and
  * `$3` (platform admin) or the BDE standing holds - with its rank there (NULL when not pinned).
- * Answers `postId`, `spaceId`, `formation`, `campus`, `rank`. What `canPin`, the card's space list and
- * a body-less pin or unpin read, so the control offered is the write accepted.
+ * Answers `postId`, `spaceId`, `formation`, `campus`, `rank`. What `canPin` and the card's space list
+ * read, so the control offered is the space a pin or unpin then names.
  *
  * The governed spaces are read FIRST and once (a materialized CTE): every page of every reader asks
  * this, and for the reader who governs nothing - nearly all of them - that set is empty and no post's

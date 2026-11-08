@@ -1055,7 +1055,7 @@ F4, question 3 is F5, question 4 is F6 (section 0).
   serving and keep reading `posts.pinned`, which 128 does not clear, so the global pin stays on top
   until the rollover. One loss is possible, and accepted: a pin or unpin made through the old routes
   in the minutes between 128's run and the rollover writes only `posts.pinned` and is not carried.
-  An OLD client after the rollover reads `pinned` per reader and pins body-less (the rule under
+  An OLD client after the rollover reads `pinned` per reader and pins body-less (until floor `1.6.6`; the rule under
   "Old clients" below), and so does an old web bundle still open in a tab. 128 being held, the loop
   takes the pre-migration backup (`migration_backup`) right before it.
 - **Owner's answer to the review (2026-11-03): a BDE MAY pin, in its own space, a post by ANOTHER

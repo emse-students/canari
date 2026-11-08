@@ -31,7 +31,9 @@ before the raise). An older figure on this page is the floor at the date its ent
 
 "Carried by" is the first stable whose history holds the pull request (`git tag --contains` on its
 squash commit as it sits on `main` - the `mergeCommit` GitHub reports for an older pull request may
-no longer be on `main`, so read the commit by its `(#N)` subject). **A removal REFUSES what an older
+no longer be on `main`, so read the commit by its `(#N)` subject:
+`git log origin/main --format='%H %s' | grep -E "\(#N\)$"`, anchored on the SUBJECT - `git log --grep`
+also matches commit BODIES, so a later commit that merely cites `#N` would be taken for it). **A removal REFUSES what an older
 build sends, so it deploys only to an estate whose floor already reads `1.6.6`.**
 
 | Entry | Carried by | Disposition at `1.6.6` |
