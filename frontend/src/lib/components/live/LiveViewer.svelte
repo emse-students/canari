@@ -303,7 +303,7 @@
     >
       <!-- Instagram Live's corner: who, then LIVE, the time and the audience; the controls and the
            close X at the right. -->
-      <span class="flex min-w-0 flex-1 flex-col items-start gap-1 text-sm">
+      <span class="flex min-w-0 flex-1 flex-col items-stretch gap-1 text-sm">
         <LiveIdentity {live} size="sm" onName={(n) => (name = n)} />
         <span class="flex items-center gap-1.5">
           {#if viewerState.kind !== 'ended'}

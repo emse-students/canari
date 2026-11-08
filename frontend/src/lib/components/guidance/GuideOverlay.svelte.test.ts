@@ -267,6 +267,16 @@ describe('the welcome tour on a phone', () => {
     expect(markSeen).toHaveBeenCalledExactlyOnceWith('welcome-tour');
   });
 
+  it('leaves no step text in the accessibility tree once dismissed', async () => {
+    await setUp();
+    const live = document.querySelector('[data-guide-live]')!;
+    expect(live.textContent).not.toBe('');
+    key('Escape');
+    await sv.tick();
+    expect(bubble()).toBeNull();
+    expect(live.textContent).toBe('');
+  });
+
   it('ends on "Passer", always on screen', async () => {
     await setUp();
     click('[data-guide-next]');

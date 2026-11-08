@@ -200,7 +200,7 @@
       {#each forms as form (form.id)}
         <li class="border-cn-border/70 bg-cn-bg space-y-3 rounded-xl border px-4 py-4">
           <div class="flex flex-wrap items-start justify-between gap-2">
-            <div class="min-w-0 flex-1">
+            <div class="min-w-40 flex-1">
               <p class="text-text-main truncate text-sm font-semibold">{form.title}</p>
               {#if form.description}
                 <p class="text-text-muted mt-0.5 line-clamp-2 text-xs">{form.description}</p>
@@ -221,7 +221,7 @@
                 {/if}
               </p>
             </div>
-            <div class="flex shrink-0 items-center gap-2">
+            <div class="flex max-w-full flex-wrap items-center gap-2">
               <a
                 href="/forms/{form.id}"
                 class="text-cn-yellow text-xs font-semibold hover:underline"

@@ -23,15 +23,6 @@ What they found. None of it is a regression, and none of it blocks:
   then close, then revoke.
 - **P3 - `pauseSocket` on an already-closed socket** when the app goes to the background for the
   file picker. This is lifecycle noise next to "Reconnect request refused - paused".
-- **P3 - the live identity picker offers associations the server then refuses** with
-  `403 LIVE_ASSOCIATION_FORBIDDEN`, for example to a global admin who is not a member. The picker
-  should be asked the same question the server answers.
-- **P3 - clipping on the iPhone:**
-  - the live viewer's report flag is drawn over the association name;
-  - in association management > Formulaires, the action row cuts off "Supprimer";
-  - the Settings device-id footer is cut at the right edge.
-- **P3 - the dismissed profile-photo card leaves its "Étape 1 sur 1" text in the iOS accessibility
-  tree**, on every page. VoiceOver may read it.
 - **P3 - iOS `[CALL-WAKE]`**: WKWebView refuses the screen wake lock (`NotAllowedError`), so the
   screen may dim during a call. The fix is native (`idleTimerDisabled` for the call's lifetime).
 - **To watch:** the quality ladder drops 480p30 -> 180p15 four seconds into a call, while the
