@@ -624,13 +624,29 @@ export class TauriMlsService extends BaseMlsService {
     // plugin has already dropped such a connection, so `disconnect()` on it can only answer
     // "Trying to work with closed connection" (Mi 9T, 2026-10-06, on every background). The
     // rejection is the fact, known here: release only a socket whose send was accepted.
+    // THE CLOSE THAT ARRIVES IN THE WINDOW IS A FACT TOO. The main listener is gone (above), so a
+    // `Close` delivered while the `disconnect` frame is in flight - the peer ending the connection
+    // as we ask it to - would otherwise be unknown here, and the native release that follows could
+    // only answer "Trying to work with closed connection". A short-lived watcher records it.
+    let closedNatively = false;
+    const unwatch = ws.addListener((msg: WsMessage) => {
+      if (msg.type === 'Close') closedNatively = true;
+    });
     void ws.send(JSON.stringify({ type: 'disconnect' })).then(
       () => {
+        unwatch();
+        if (closedNatively) {
+          console.log(
+            '[WS] pauseSocket: the socket closed while the disconnect was sent - nothing to release.'
+          );
+          return;
+        }
         ws.disconnect().catch((e: unknown) => {
           console.warn(`[WS] pauseSocket: native disconnect failed: ${String(e)}`);
         });
       },
       (e: unknown) => {
+        unwatch();
         console.log(
           `[WS] pauseSocket: socket already closed natively (${String(e)}) - nothing to release.`
         );

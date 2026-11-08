@@ -496,6 +496,8 @@ rotated device id, another account, a transport failure, a plain expiry),
 
 ## A session that ends takes its device's push registration with it (2026-10-22)
 
+**Order of a sign-out (2026-11-08).** The server's push deregistration is started by `endSessionImpl` while the credential is valid and AWAITED by `clearAuth` (through the sign-out handler's promise, bounded by the write deadline) before the revocation `POST /api/auth/logout`; then the teardown and the wipe. Run beside the revocation it came back `HTTP 401` (Mi 9T, `1.6.7-alpha.3`). A transport failure is a `[Push]` warning naming what stayed registered and never blocks the sign-out.
+
 **After any sign-out, the device stops being a push destination for the account that left - on
 both sides, and neither depends on the other.**
 

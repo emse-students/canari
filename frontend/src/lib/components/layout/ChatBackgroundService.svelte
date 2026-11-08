@@ -817,9 +817,11 @@
    * four minutes, and only a relaunch recovered. Ending the session here removes the race; releasing
    * the latch here is what lets the next sign-in start, whatever ended the previous one.
    */
-  function handleSignedOut() {
+  function handleSignedOut(): Promise<void> {
     noteUnlockNeedsMember();
-    globalSession.endSession(sessionCb());
+    // Resolves when the server's push deregistration has answered: `clearAuth` awaits it before it
+    // revokes the session.
+    const pushDeregistered = globalSession.endSession(sessionCb());
     // After the teardown, and whether or not there was a live session to tear down: the community
     // list of the leaving account goes, and a listing started on its token stops (F1/F2).
     globalChannels.forgetAccount(appendLog);
@@ -834,6 +836,7 @@
     // ...and the removals this device deferred to an actor, which a release is matched against.
     forgetDeferredRemovals();
     _loginInProgress = false;
+    return pushDeregistered;
   }
 
   /**

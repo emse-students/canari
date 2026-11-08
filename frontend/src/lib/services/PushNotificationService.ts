@@ -27,6 +27,8 @@ import { getLocale } from '$lib/i18n';
 import { CALLS_NATIVE_RING_COMPILED, PUSH_WAKE_DECLARED } from '$lib/features';
 import { voipRegistrationField } from '$lib/mobile/voipRegistration';
 import { readApiJson } from '$lib/utils/apiJson';
+import { trackedFetch } from '$lib/utils/trackedFetch';
+import { DEADLINE_MS } from '$lib/utils/requestDeadline';
 
 /** Push gateway platform tag sent to the backend (mirrors the server's PushPlatform). */
 type PushPlatform = 'android' | 'ios';
@@ -522,6 +524,18 @@ function pushPlatform(): PushPlatform | null {
   return deviceOs === 'android' ? 'android' : deviceOs === 'ios' ? 'ios' : null;
 }
 
+/**
+ * How long a sign-out waits for the server's push deregistration before it goes on without it: the
+ * write class's base, the same bound as the revocation that follows it.
+ */
+export const PUSH_DEREGISTRATION_DEADLINE_MS = DEADLINE_MS.write;
+
+/**
+ * Deregisters this device's push token on the SERVER while the session's credential is still valid.
+ * A sign-out AWAITS this before it revokes the session (`clearAuth`): fired concurrently, the
+ * revocation could land first and the call came back `HTTP 401` (Mi 9T, `1.6.7-alpha.3`). Never
+ * rejects; every failure is logged here and none blocks the sign-out.
+ */
 export async function stopPushService(
   apiBaseUrl: string,
   bearerToken: string,
@@ -542,8 +556,10 @@ export async function stopPushService(
 
   console.info(`[Push] stopPushService device=${deviceId}`);
 
+  let response: Response;
   try {
-    const response = await fetch(
+    response = await trackedFetch(
+      fetch,
       `${apiBaseUrl}/api/mls/push/unregister/${encodeURIComponent(deviceId)}`,
       {
         method: 'DELETE',
@@ -555,13 +571,23 @@ export async function stopPushService(
           // `clearAuth` drops it on its next line - an `await` added above this read would send ''.
           'x-user-id': currentUserId() ?? '',
         },
-      }
+      },
+      { requestClass: 'write', deadlineMs: PUSH_DEREGISTRATION_DEADLINE_MS }
     );
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    sessionStorage.removeItem(FCM_TOKEN_STORAGE_KEY);
   } catch (err) {
-    console.error('[Push] FCM token deregistration failed', err);
+    // A TRANSPORT FAILURE OR THE DEADLINE, never a status (a status is an answer, handled below). It
+    // does not block the sign-out; it is said by what it leaves behind.
+    console.warn(
+      `[Push] FCM token deregistration got no answer - the server still lists device ${deviceId} as a push destination until the session's revocation ends it`,
+      err
+    );
+    return;
   }
+  if (!response.ok) {
+    console.error(
+      `[Push] FCM token deregistration refused: HTTP ${response.status} - the server still lists device ${deviceId} as a push destination`
+    );
+    return;
+  }
+  sessionStorage.removeItem(FCM_TOKEN_STORAGE_KEY);
 }

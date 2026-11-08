@@ -3569,24 +3569,6 @@ export function tearDownLiveSession(
     finalWrite = Promise.resolve();
   }
 
-  // THE SERVER-SIDE DEREGISTRATION OF A LIVE SESSION, and only that. The device deletes its own push
-  // registration at every sign-out regardless (`endPushRegistration`, run by `clearAuth`), and the
-  // server ends the device's push token itself when it ends the session (logout and every
-  // revocation, core-service) - so this call is a third, redundant path, kept for a live session.
-  if (reason === 'logout') {
-    const tokenForPushCleanup = ctx.getAuthToken();
-    const deviceForPushCleanup = ctx.getMyDeviceId();
-    if (isRefreshCredentialProvenDead()) {
-      // A DEAD SESSION ENDING: the server already refused this session's credential, so this call
-      // would only earn a refusal. The device's own deletion still runs from `clearAuth`.
-      cb.log(
-        '[LOGOUT] Server push deregistration skipped - the session is already dead; the device deletes its token.'
-      );
-    } else if (tokenForPushCleanup && deviceForPushCleanup) {
-      void stopPushService(ctx.getHistoryBaseUrl(), tokenForPushCleanup, deviceForPushCleanup);
-    }
-  }
-
   if (ctx.timers.reconnect !== null) {
     clearTimeout(ctx.timers.reconnect);
     ctx.timers.reconnect = null;
@@ -3627,6 +3609,31 @@ export function tearDownLiveSession(
 }
 
 /**
+ * THE SERVER-SIDE PUSH DEREGISTRATION OF A LIVE SESSION, started while its credential is valid.
+ *
+ * The first step of a sign-out; the caller hands the returned promise to `clearAuth`, which awaits
+ * it BEFORE the revocation (then the socket closes, then the session is revoked and wiped). Run
+ * beside the revocation it was refused `HTTP 401` (Mi 9T, `1.6.7-alpha.3`). The device deletes its
+ * own push registration at every sign-out regardless (`endPushRegistration`, run by `clearAuth`),
+ * and the server ends the device's token when it ends the session, so this call only keeps the
+ * server's row from outliving the sign-out by a revocation that fails. NEVER REJECTS.
+ */
+function deregisterPushOfLiveSession(ctx: SessionContext, cb: ChatSessionCallbacks): Promise<void> {
+  const token = ctx.getAuthToken();
+  const deviceId = ctx.getMyDeviceId();
+  if (isRefreshCredentialProvenDead()) {
+    // A DEAD SESSION ENDING: the server already refused this session's credential, so this call
+    // would only earn a refusal. The device's own deletion still runs from `clearAuth`.
+    cb.log(
+      '[LOGOUT] Server push deregistration skipped - the session is already dead; the device deletes its token.'
+    );
+    return Promise.resolve();
+  }
+  if (!token || !deviceId) return Promise.resolve();
+  return stopPushService(ctx.getHistoryBaseUrl(), token, deviceId);
+}
+
+/**
  * Ends the live session on the device because the user signed out - the device half of `clearAuth`.
  *
  * REACHED FROM `clearAuth` ITSELF (through `setSignOutHandler`, wired by the app shell), because
@@ -3643,8 +3650,11 @@ export function tearDownLiveSession(
  * What a PIN protects is untouched - `mls.bin`, the message database and the device-key vault -
  * because a sign-out keeps the local state (user, "deconnecter seulement, garder l'etat"); the
  * identity and the credentials are `clearAuth`'s own work.
+ *
+ * Resolves once the server's push deregistration has answered (never rejects): `clearAuth` awaits it
+ * before it revokes the session.
  */
-export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
+export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): Promise<void> {
   if (!ctx.isLoggedIn()) {
     // A LOGIN IN FLIGHT HOLDS A CLIENT THAT IS NOW THE SIGNED-OUT ACCOUNT'S. The holder lets go of it
     // now, so the next sign-in cannot be handed it (it waits for this retirement, then builds its
@@ -3658,7 +3668,7 @@ export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): v
         '[LOGOUT] Signed out during a login - its MLS client is retired once that login stops.'
       );
       void ctx.retireMls(stopping);
-      return;
+      return Promise.resolve();
     }
     cb.log('[LOGOUT] Signed out with no live session on this device - nothing to stop.');
     // BUT A CLIENT MAY STILL HOLD A STATE THAT WAS OPENED. The PIN gate's recovery opens the state
@@ -3668,9 +3678,14 @@ export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): v
     // the native session ended in the chain the next sign-in waits on. With no client it ends only
     // the native session, which is then already empty.
     void ctx.retireMls(Promise.resolve());
-    return;
+    return Promise.resolve();
   }
   cb.log(`[LOGOUT] Signing out userId=${ctx.getUserId()?.slice(0, 8) ?? 'unknown'}...`);
+  // ORDER OF A SIGN-OUT: (1) the server's push deregistration, started NOW while the credential is
+  // valid and awaited by `clearAuth` before it revokes the session; (2) the socket; (3) the
+  // teardown, the local wipe and, in `clearAuth`, the revocation. Revoking first refused the
+  // deregistration `HTTP 401` and left the socket's native close to run on a dead connection.
+  const pushDeregistered = deregisterPushOfLiveSession(ctx, cb);
   // THE SOCKET GOES BEFORE THE FINAL FLUSH. The gateway does not close it when the server revokes the
   // session, and the teardown below unregisters the state persister: left open, it kept decrypting
   // and ACKing the leaving account's frames, and every MLS advance they made after the flush was in
@@ -3700,6 +3715,7 @@ export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): v
   ctx.setStorage(null);
   ctx.setAuthToken('');
   cb.log('[LOGOUT] Live session stopped.');
+  return pushDeregistered;
 }
 
 /**
