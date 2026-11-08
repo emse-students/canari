@@ -54,7 +54,7 @@ const hsInput = `${b64({ alg: 'HS256', typ: 'canari-handoff+jwt', kid: jwk.kid }
 const hs256 = `${hsInput}.${createHmac('sha256', publicPem).update(hsInput).digest('base64url')}`;
 
 const valid = sign();
-const [vh, vp, vs] = valid.split('.');
+const [vh, , vs] = valid.split('.');
 const tamperedPayload = `${vh}.${b64({ ...claims(), sub: '00000000-0000-4000-8000-000000000000' })}.${vs}`;
 
 const cases = [
