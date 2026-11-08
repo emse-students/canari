@@ -18,6 +18,58 @@ canvas, and rasterised to PDF through the existing snapdom pipeline.
 Gated behind `GlobalAdminOrBdeSuperAdminGuard` (already used for document-reviewers).
 The editor lives under `/admin` as a dashboard card.
 
+**A map belongs to ONE space, and its scope is enforced by the server** (owner, 2026-11-08). A BDE's
+managers - the per-space BDE standing with `MANAGE_ASSO`, the same predicate as every other BDE
+power (`bdeStandingInSpaceSql`, [association-permissions](association-permissions.md)) - list, open,
+edit, publish and delete the maps of the spaces their BDE governs, and create a map only for one of
+those spaces. A global admin reaches every map. Another BDE's map answers **404**, never 403: a
+manager does not learn it exists. A map with no space (one migration 147 could not attach) is
+visible to global admins only, and the editor offers them the attach. The scope lives in
+`associations/poster-scope.ts` (SQL) and `poster.service.ts` (`get` is the one gate every route
+passes).
+
+**A complete redesign of the carte - editor, canvas and model - is wanted later** (owner,
+2026-11-08), not in the per-space change: [backlog](backlog.d/the-carte-complete-redesign.md).
+
+## A carte belongs to one space
+
+Decided by the owner on 2026-11-08, built by migration 147:
+
+- **The space is chosen at creation** and never changes afterwards (an unattached map may be attached
+  once). The creation picker lists only the spaces the caller manages.
+- **The map offers every association of its space**: type `association`, not archived, whose
+  audience reaches the space (`ruleReachesSpaceSql`, the same reach the agenda uses). Reach, not
+  "governed by the BDE", because one BDE governs several spaces and a map is about one of them.
+- **Each association has a switch, stored in the project** (`poster_entries`, one row per map and
+  association: `enabled`, `zoneId`). An association of the space with NO row is NEW - created, or
+  given an audience reaching the space, after the map last saw it: it is offered OFF with a
+  "Nouvelle" badge in the Associations panel and an alert at the top of the editor, and it never
+  reaches the live map until switched on and placed. "Leave them off" writes an OFF row for each,
+  which is what makes the badge go.
+- **Switching an association off keeps its placement**: the saved layout carries the parked bubble
+  (`parkedPlacements`, `lib/carte/mapEntries.ts`) so switching it back on restores it.
+- **Zones are the map's own** (`poster_zones`: label, order), created, renamed, reordered and deleted
+  in the editor's Zones panel; an association sits in at most one zone of the map (no zone = the
+  "Sans zone" group). Deleting a zone moves its associations to no zone.
+- **The editor** is one action bar on one line (name, space, Save, the live pill, update / publish,
+  remove from the portail, PDF export), the Associations and Zones panels above the settings column,
+  and the secondary alerts (memberless associations, overlaps) folded behind one toggle. The canvas
+  and the PDF rendering are unchanged.
+
+**Migration 147, what it did to the existing maps.** Each map got a copy of the five global
+categories as its zones, and each association it placed an entry (zone = its per-bubble override,
+else its category). The live map was attached to the space of formation `ICM` governed by the
+association `bde` - resolved in SQL by that stable slug, not a name - and stayed live; associations
+it showed whose audience does not reach that space were switched OFF, not deleted. Measured on
+production before it ran (read-only): one map, live, 33 placed associations, 31 reaching
+`ICM:saint-etienne`, so 31 ON and 2 OFF. The live DOCUMENT is filtered in the same transaction:
+only the units and directory lines of an association switched ON on the map are kept (an OFF switch
+and no switch are both removed), a directory zone left empty is dropped, nothing else changes, and
+the stored fingerprint is cleared since it no longer describes the document - the 2 are off the
+portail at the deploy, not at the next republish. Any other map is attached when its creator manages exactly
+one space, else left with no space and offline; an ambiguous live map is taken offline with a
+`NOTICE`, never guessed. The migration is held for the owner's approval line.
+
 ## Editing is desktop-only, and viewing is not
 
 Asked for on 2026-08-27: *"j'aimerais rendre l'edition impossible sur mobile, trop complexe, il faut
@@ -51,30 +103,29 @@ the `fetch` spelling since 2026-08-11 and this defect walked past it.
 
 ## Data model
 
-### 1. Thematic category (managed table + one primary category per asso)
+### 1. Zones (per map) - the global category is gone
 
-Categories are **data, not a hardcoded enum**: a small `association_category` table
-(`label`, `slug`, `sortOrder`) editable in admin, so a zone can be added / renamed /
-reordered with no migration or deploy. Each association has one primary category
-(`categoryId` FK, nullable = uncategorised); the poster editor keeps a per-bubble
-`categoryOverride` for visual placement without touching the canonical value.
+Until migration 147 a global `association_categories` table (five rows) and one
+`associations.categoryId` per association decided the poster zone and nothing else. They are
+replaced by the map's own zones (`poster_zones`) and each association's zone in that map
+(`poster_entries.zoneId`), because two spaces' maps do not share a taxonomy and a zone is a choice of
+the map's author, not a property of the association.
 
-Rationale: the printed poster places each asso exactly once (one bubble, one directory
-line), so a single primary category preserves unambiguous placement. Multi-tag was rejected
-because it would duplicate an asso across directory sections and leave its bubble zone
-undefined.
+What each former reader became:
 
-Seed (mirrors the printed poster sections):
+| Reader | Now |
+| --- | --- |
+| The category manager on `/admin/carte` | Removed; the Zones panel of each editor |
+| The category picker in an association's settings | Removed; the zone is chosen in the map's Associations panel |
+| `Association.categoryId` (entity, projection, update rights, DTO) | Removed from the code; an old build's `categoryId` in a PATCH is stripped by the whitelist |
+| `GET /api/associations/categories` | A shim answering `[]`, logged `[LEGACY]` ([legacy-compatibility](legacy-compatibility.md)) |
+| The poster model (`buildPosterModel`) and the directory groups | The map's zones and entries |
+| The per-bubble `categoryOverride` in the layout | Folded into the entry's zone by 147; still parsed, never written |
+| The dev seed (`tools/dev-seed`) | Writes neither the table nor the column any more |
+| The public API, search, the exports, the portail | Never read it - nothing to change |
 
-- `ecole-vie-me` - Ecole, Vie a la Me
-- `cuisine` - Cuisine, Decouverte culinaire
-- `techno-entrepreneuriat` - Technologies, Entreprenariat
-- `culture-arts` - Culture, Arts
-- `sport-humain-societe` - Sport, Humain, Societe
-
-Backend: migration creates the table + seeds the 5 rows, adds `categoryId` FK to the
-association entity, plus an admin category-manager and a category picker on the association
-settings page. The right-hand directory groups by this field.
+The table and the column stay in the schema until a later migration drops them, once a stable that no
+longer reads them is the oldest one served ([backlog](backlog.d/drop-the-global-association-categories.md)).
 
 ### 2. Poster project (persisted layout)
 
@@ -465,9 +516,15 @@ a millisecond. It needs a durable record of WHICH layout was published
 
 ### Rules
 
-- **At most one map is live**, and that is a database invariant, not a convention: a partial unique
-  index on `(publication IS NOT NULL)` forbids a second published row. `publish()` therefore clears
-  the previous map and sets the new one inside ONE transaction, or it would deadlock against itself.
+- **At most one map is live PER SPACE**, and that is a database invariant, not a convention: the
+  partial unique index `idx_poster_projects_live_per_space` on `("spaceId") WHERE publication IS NOT
+  NULL` forbids a second published row for a space, and a CHECK forbids a live map with no space.
+  `publish()` therefore clears the space's previous map and sets the new one inside ONE transaction,
+  or it would deadlock against itself; another space's live map is untouched. Two publishes in one
+  space are serialised on the space's row (`SELECT ... FROM spaces ... FOR NO KEY UPDATE` first in the
+  transaction): the later one replaces the earlier instead of hitting the index with a 500.
+- **Every association the document names - unit AND directory line - must be switched on and of
+  the space**, or the publish is refused `CARTE_UNIT_OUTSIDE_MAP`.
 - **The payload is re-validated server-side**, field by field, even though the publisher is an
   admin - it is about to be served to anonymous visitors. Unknown keys are dropped rather than
   echoed, geometry is clamped, arrays and strings are capped, and the background must be a
@@ -478,13 +535,22 @@ a millisecond. It needs a durable record of WHICH layout was published
 - **A publish saves first.** Publishing editor state the server has not persisted would put a map
   online that no reopen could reproduce.
 - Publishing is a **button in the editor header**, gated like the rest of the editor
-  (`GlobalAdminOrBdeSuperAdminGuard`). The public read is `GET /api/public/carte`, unauthenticated,
-  404 when nothing is live, `Cache-Control: public, max-age=300`.
+  (`GlobalAdminOrBdeSuperAdminGuard`) and by the map's space (Access, above). The public read is
+  `GET /api/public/carte?space=<formation>:<campus>` (for example `ICM:saint-etienne`: the space's
+  natural key, the same on every estate, so a consumer names it without knowing an id),
+  unauthenticated, 404 when nothing is live for that space, `Cache-Control: public, max-age=300`. A
+  malformed `space` is a typed 400 (`CARTE_PUBLIC_SPACE_INVALID`). **Nothing about any space is
+  hard-coded here**: the consumer names its space.
+- **The call without `space` is a legacy shim**: it answers only while exactly one map is live
+  anywhere, logged `[LEGACY] GET public/carte with no space`, and otherwise refuses with a typed 400
+  (`CARTE_PUBLIC_SPACE_REQUIRED`). Its removal condition is in
+  [legacy-compatibility](legacy-compatibility.md).
 
 ### The consumer side
 
 In `../refonte-portail-etu`: `getPublishedCarte()` in `src/lib/canari.ts` (which also gates the
-schema version), fetched by `src/routes/associations/+page.ts` and drawn by
+schema version) asks for the space named by `PUBLIC_CANARI_CARTE_SPACE`; unset, it logs and shows no
+map - there is no fallback to the legacy call. It is fetched by `src/routes/associations/+page.ts` and drawn by
 `src/lib/components/CarteVieAsso.svelte`, above the tiles and on wide screens only. Documented there
 in `docs/wiki/architecture.md`.
 
@@ -727,7 +793,6 @@ removed still ships - fold its value back into a constant, or it rots as plumbin
 
 ## Open questions / gotchas
 
-- Category taxonomy is fixed above; confirm labels/order with the printed poster before P0.
 - Poster projects can grow large (many bubbles + data-URL background) - store background as
   a media reference rather than inline if size becomes an issue.
 - The printed poster's charm is hand-placement; the auto-layout in P1 is a starting grid,

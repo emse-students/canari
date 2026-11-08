@@ -172,6 +172,34 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 
 ## The diary
 
+### Removal at the portail's deploy + one silent week - the public carte read that names no space (2026-11-08)
+
+**Site:** `PosterService.getSoleLegacyPublished` and the no-`space` branch of
+`PublicController.getPublishedCarte` (`apps/social-service/src/associations/poster.service.ts`,
+`apps/social-service/src/public/public.controller.ts`).
+**What it humours:** a portail-etu deployed before it sent `?space=` ([carte](carte-vie-asso.md#rules)).
+While EXACTLY one map is live anywhere it is served, logged `[LEGACY] GET public/carte with no space`;
+otherwise the call is a typed 400 (`CARTE_PUBLIC_SPACE_REQUIRED`), never a guess.
+**The cost while it stands:** a second space publishing a map makes that old showcase lose its map
+(the 400) - the right failure, and the reason the window is short.
+**Removal condition:** the portail-etu deploy that sends `PUBLIC_CANARI_CARTE_SPACE` is in production,
+then a week with no `[LEGACY] GET public/carte` line. Then make `space` required, delete the method,
+its branch, their spec cases and this entry.
+
+### No date yet - `GET /api/associations/categories`, for a build older than the per-map carte zones (2026-11-08)
+
+**Site:** `AssociationCategoriesController`
+(`apps/social-service/src/associations/association-categories.controller.ts`), GET only.
+**What it humours:** an APK or IPA older than migration 147's release loads the global categories in
+its association settings and its carte hub; the shim answers `[]`, logged `[LEGACY] GET
+associations/categories`, so those screens draw empty instead of erroring. Their writes (create,
+rename, delete a category; `categoryId` in a PATCH) are gone: the routes 404 and the whitelist strips
+the field.
+**The cost while it stands:** none beyond the route.
+**Removal condition:** `minClientVersion` covers the first release carrying 147 on BOTH stores. Then
+delete the controller, its `anonymous-surface` and `auth-request-coverage` lines, and this entry -
+together with the drop of the table ([backlog](backlog.d/drop-the-global-association-categories.md)).
+
 ### Revisit 2026-12-31 - a `DEVICE_REVOKED` refusal that does not say who revoked the device
 
 **Site:** `classifyRevokedDeviceRefusal` in `frontend/src/lib/mls-client/mlsDeliveryApi.ts`.

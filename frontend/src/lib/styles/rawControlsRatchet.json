@@ -1145,12 +1145,12 @@
     "input": 0
   },
   "src/routes/admin/carte/+page.svelte": {
-    "button": 6,
+    "button": 1,
     "select": 0,
-    "input": 3
+    "input": 1
   },
   "src/routes/admin/carte/[id]/+page.svelte": {
-    "button": 6,
+    "button": 5,
     "select": 0,
     "input": 1
   },

@@ -43,6 +43,11 @@ const CONTAINER_TYPES = new Set(['jsonb', 'json', 'simple-array', 'simple-json']
  * metadata cannot see them. Asserted against the migrations below, in both directions.
  */
 const RAW_TABLES = [
+  // The global association categories, read by no code since migration 147 (per-map carte zones)
+  // and kept only until their drop: a label, a slug, an order - no account, nothing to erase.
+  // Removed from this list BY the drop migration
+  // (docs/wiki/backlog.d/drop-the-global-association-categories.md).
+  'association_categories',
   'read_grants',
   'read_grant_journal',
   // Migration 132's per-reader switch "voit les commentaires": the reader, who set it.

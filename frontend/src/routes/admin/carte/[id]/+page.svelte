@@ -1,5 +1,6 @@
 <script lang="ts">
   import Button from '$lib/components/ui/Button.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { onMount, tick, untrack } from 'svelte';
@@ -13,11 +14,27 @@
     publishPosterProject,
     unpublishPosterProject,
     listAssociations,
-    listAssociationCategories,
     listMembers,
+    listCarteSpaces,
+    setPosterEntries,
+    createPosterZone,
+    renamePosterZone,
+    deletePosterZone,
+    reorderPosterZones,
+    CARTE_REFUSAL,
+    type Association,
+    type CarteSpace,
+    type PosterEntry,
     type PosterProject,
+    type PosterZone,
     type AssociationMember,
   } from '$lib/associations/api';
+  import { classifyMapAssociations, parkedPlacements } from '$lib/carte/mapEntries';
+  import { carteSpaceLabel } from '$lib/carte/spaceLabel';
+  import { refusalCode } from '$lib/utils/apiRefusal';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
+  import Picker from '$lib/components/ui/Picker.svelte';
+  import type { PickerOption } from '$lib/components/ui/picker';
   import { CARTE_STYLE, DEFAULT_SCRIM_OPACITY } from '$lib/carte/theme';
   import { buildPosterModel, type PosterModel, type PosterLayout } from '$lib/carte/generator';
   import {
@@ -66,6 +83,11 @@
     GlobeLock,
     TriangleAlert,
     RefreshCw,
+    Sparkles,
+    Plus,
+    ChevronUp,
+    ChevronDown,
+    Search,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { portalWhile } from '$lib/actions/portal';
@@ -76,6 +98,35 @@
   let error = $state<string | null>(null);
   let project = $state<PosterProject | null>(null);
   let model = $state<PosterModel | null>(null);
+
+  // -- The map's space, zones and switches (owner, 2026-11-08) --
+  /** The space the map is drawn for; null for a map migration 147 could not attach. */
+  let space = $state<CarteSpace | null>(null);
+  /** The map's own zones, in order. */
+  let zones = $state<PosterZone[]>([]);
+  /** The switch of every association the map has seen. */
+  let entries = $state<PosterEntry[]>([]);
+  /** Every association the map's space offers today; one with no entry is new. */
+  let spaceAssociationIds = $state<string[]>([]);
+  /** Live data of the space's associations, and their rosters, re-read on every open. */
+  let spaceAssociations = $state<Association[]>([]);
+  let membersByAsso = $state<Record<string, AssociationMember[]>>({});
+  /** Saved placements of associations not drawn now (off, or no longer of the space): kept, never dropped. */
+  let parked = $state<PositionedBubble[]>([]);
+  const classified = $derived(classifyMapAssociations(spaceAssociationIds, entries));
+  /** Association ids whose switch write is in flight. */
+  let busyEntries = $state<string[]>([]);
+  /**
+   * Bumped by a refused switch or zone write. The switch flipped itself on the click and its prop
+   * did not change, so only re-drawing the rows puts it back on what the map stores.
+   */
+  let entryRefusals = $state(0);
+  let assoSearch = $state('');
+  /** The spaces an unattached map may be attached to (the platform admin's). */
+  let attachSpaces = $state<CarteSpace[]>([]);
+  let attachSpaceId = $state('');
+  /** Whether the secondary alerts (memberless, overlaps) are unfolded. */
+  let alertsOpen = $state(false);
 
   // ── Layout controls (persisted) ──────────────────────────────────────────────
   let bgDataUrl = $state<string | null>(null);
@@ -104,7 +155,8 @@
       version: 1,
       titleColor,
       background: { dataUrl: bgDataUrl, scrimOpacity },
-      bubbles: positioned,
+      // The parked placements travel too: switching an association off never deletes its placement.
+      bubbles: [...positioned, ...parked],
       directoryVisible,
       decorations,
     };
@@ -116,7 +168,7 @@
       titleColor,
       scrimOpacity,
       directoryVisible,
-      bubbles: positioned,
+      bubbles: [...positioned, ...parked],
       decorations,
       bgVersion,
     })
@@ -258,16 +310,46 @@
     zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round((zoom + delta) * 100) / 100));
   }
 
+  /**
+   * Rebuilds the drawn model from the switches and zones, keeping every placement: those of the
+   * associations drawn now are merged, the others parked (see {@link parkedPlacements}).
+   */
+  function rebuildModel(): void {
+    const shown = spaceAssociations.filter((a) => classified.on.has(a.id));
+    const built = buildPosterModel(
+      shown,
+      zones,
+      classified.zoneOf,
+      membersByAsso,
+      m.carte_zone_uncategorized()
+    );
+    const known = [...positioned, ...parked];
+    positioned = mergeBubbleLayout(known, built);
+    parked = parkedPlacements(known, new Set(shown.map((a) => a.id)));
+    model = built;
+  }
+
   async function loadData() {
     loading = true;
     error = null;
     try {
-      const [proj, categories, associations] = await Promise.all([
+      const [proj, associations] = await Promise.all([
         getPosterProject(projectId),
-        listAssociationCategories(),
         listAssociations('association'),
       ]);
       project = proj;
+      space = proj.space;
+      zones = proj.zones;
+      entries = proj.entries;
+      spaceAssociationIds = proj.spaceAssociationIds;
+      const ofSpace = new Set(proj.spaceAssociationIds);
+      spaceAssociations = associations.filter((a) => ofSpace.has(a.id));
+      Log.d('admin.carte.id.loadData', {
+        projectId,
+        space: proj.space?.id ?? null,
+        offered: proj.spaceAssociationIds.length,
+        listed: spaceAssociations.length,
+      });
 
       // Hydrate persisted chrome from the opaque layout blob (defensive parse).
       const layout = proj.layout as Partial<PosterLayout>;
@@ -280,26 +362,24 @@
         typeof layout.titleColor === 'string' ? layout.titleColor : CARTE_STYLE.titleColor;
       decorations = sanitizeDecorations(layout.decorations);
 
-      // Resolve rosters (for president detection); tolerate per-asso failures.
+      // Rosters of the space's associations only (president detection, directory). A failed
+      // roster is logged and drawn empty - the editor names memberless associations anyway.
       const rosters = await Promise.all(
-        associations.map((a) => listMembers(a.id).catch(() => [] as AssociationMember[]))
+        spaceAssociations.map((a) =>
+          listMembers(a.id).catch((e: unknown) => {
+            Log.d('admin.carte.id.loadData roster failed', { assoId: a.id, e });
+            return [] as AssociationMember[];
+          })
+        )
       );
-      const membersByAsso: Record<string, AssociationMember[]> = {};
-      associations.forEach((a, i) => (membersByAsso[a.id] = rosters[i]));
+      const byAsso: Record<string, AssociationMember[]> = {};
+      spaceAssociations.forEach((a, i) => (byAsso[a.id] = rosters[i]));
+      membersByAsso = byAsso;
 
-      const built = buildPosterModel(
-        associations,
-        categories,
-        membersByAsso,
-        m.carte_zone_uncategorized()
-      );
-      model = built;
-
-      // Reconcile saved positions with the live model (adds new assos, drops removed ones).
-      const savedBubbles = Array.isArray(layout.bubbles)
-        ? (layout.bubbles as PositionedBubble[])
-        : [];
-      positioned = mergeBubbleLayout(savedBubbles, built);
+      // Reconcile saved positions with the live model (adds switched-on assos, parks the rest).
+      positioned = [];
+      parked = Array.isArray(layout.bubbles) ? (layout.bubbles as PositionedBubble[]) : [];
+      rebuildModel();
       // What was just loaded IS what the server holds, so the editor opens with nothing to save.
       // A flag armed here instead would make opening a project write it back - every open rewrote
       // the layout 4 s later, and a new association was reseeded with a RANDOM shape on the way.
@@ -307,6 +387,9 @@
       // What the LIVE map is, as the server recorded it at its publish. `undefined` from a server
       // that predates the column reads the same as null: unknown.
       liveFingerprint = project?.publicationFingerprint ?? null;
+      if (!proj.space) {
+        attachSpaces = await listCarteSpaces();
+      }
     } catch (e) {
       Log.d('admin.carte.id.loadData failed', e);
       error = m.common_load_error();
@@ -314,6 +397,153 @@
       loading = false;
     }
   }
+
+  // -- Switches and zones (stored in the project, written at once) --
+  /** Merges the rows the server wrote into the local switches. */
+  function mergeEntries(written: PosterEntry[]): void {
+    const rewritten = new Set(written.map((row) => row.associationId));
+    entries = [...entries.filter((e) => !rewritten.has(e.associationId)), ...written];
+  }
+
+  /** Writes switches and/or zones, then redraws; an error is shown and the state left as it was. */
+  async function writeEntries(
+    rows: { associationId: string; enabled?: boolean; zoneId?: string | null }[]
+  ): Promise<void> {
+    if (!project || rows.length === 0) return;
+    const ids = rows.map((r) => r.associationId);
+    busyEntries = [...busyEntries, ...ids];
+    error = null;
+    try {
+      mergeEntries(await setPosterEntries(project.id, rows));
+      rebuildModel();
+      void refreshPublishFingerprint();
+      Log.d('admin.carte.id.writeEntries', { count: rows.length });
+    } catch (e) {
+      Log.d('admin.carte.id.writeEntries failed', e);
+      error = m.common_save_error();
+      entryRefusals++;
+    } finally {
+      busyEntries = busyEntries.filter((id) => !ids.includes(id));
+    }
+  }
+
+  /** "Leave them off": every new association becomes seen, switched off. */
+  function dismissNewAssociations(): Promise<void> {
+    return writeEntries(
+      [...classified.fresh].map((associationId) => ({ associationId, enabled: false }))
+    );
+  }
+
+  /** The space's associations as the panel lists them: new first, then by name, filtered by search. */
+  const panelAssociations = $derived(
+    spaceAssociations
+      .filter((a) => {
+        const q = assoSearch.trim().toLocaleLowerCase();
+        return !q || a.name.toLocaleLowerCase().includes(q);
+      })
+      .sort(
+        (x, y) =>
+          Number(classified.fresh.has(y.id)) - Number(classified.fresh.has(x.id)) ||
+          x.name.localeCompare(y.name)
+      )
+  );
+  const zoneOptions = $derived<PickerOption[]>([
+    { value: '', label: m.carte_zone_uncategorized() },
+    ...zones.map((z) => ({ value: z.id, label: z.label })),
+  ]);
+  const freshNames = $derived(
+    spaceAssociations.filter((a) => classified.fresh.has(a.id)).map((a) => a.name)
+  );
+
+  let newZoneLabel = $state('');
+  let zoneBusy = $state(false);
+  /** Bumped by a refused zone write: re-draws the inputs from the stored zones. */
+  let zoneRefusals = $state(0);
+
+  /** Runs one zone write, then redraws the directory groups. */
+  async function zoneWrite(label: string, run: () => Promise<void>): Promise<void> {
+    if (!project || zoneBusy) return;
+    zoneBusy = true;
+    error = null;
+    try {
+      await run();
+      rebuildModel();
+      void refreshPublishFingerprint();
+      Log.d(`admin.carte.id.${label}`, { zones: zones.length });
+    } catch (e) {
+      Log.d(`admin.carte.id.${label} failed`, e);
+      error = m.common_save_error();
+      zoneRefusals++;
+    } finally {
+      zoneBusy = false;
+    }
+  }
+
+  function addZone(): Promise<void> {
+    const label = newZoneLabel.trim();
+    if (!label || !project) return Promise.resolve();
+    const id = project.id;
+    return zoneWrite('addZone', async () => {
+      zones = [...zones, await createPosterZone(id, label)];
+      newZoneLabel = '';
+    });
+  }
+
+  function renameZone(zone: PosterZone, label: string): Promise<void> {
+    const trimmed = label.trim();
+    if (!trimmed || trimmed === zone.label || !project) return Promise.resolve();
+    const id = project.id;
+    return zoneWrite('renameZone', async () => {
+      const updated = await renamePosterZone(id, zone.id, trimmed);
+      zones = zones.map((z) => (z.id === zone.id ? updated : z));
+    });
+  }
+
+  async function deleteZone(zone: PosterZone): Promise<void> {
+    if (!project) return;
+    const confirmed = await showConfirm(m.carte_zone_delete_confirm({ label: zone.label }), {
+      danger: true,
+      confirmLabel: m.common_remove_label(),
+    });
+    if (!confirmed) return;
+    const id = project.id;
+    await zoneWrite('deleteZone', async () => {
+      await deletePosterZone(id, zone.id);
+      zones = zones.filter((z) => z.id !== zone.id);
+      entries = entries.map((e) => (e.zoneId === zone.id ? { ...e, zoneId: null } : e));
+    });
+  }
+
+  function moveZone(index: number, delta: -1 | 1): Promise<void> {
+    const target = index + delta;
+    if (!project || target < 0 || target >= zones.length) return Promise.resolve();
+    const reordered = [...zones];
+    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    const id = project.id;
+    return zoneWrite('moveZone', async () => {
+      zones = await reorderPosterZones(
+        id,
+        reordered.map((z) => z.id)
+      );
+    });
+  }
+
+  /** Attaches a map left without a space by migration 147, then reopens it. */
+  async function attachToSpace(): Promise<void> {
+    if (!project || !attachSpaceId) return;
+    error = null;
+    try {
+      await updatePosterProject(project.id, { spaceId: attachSpaceId });
+      Log.d('admin.carte.id.attachToSpace', { projectId: project.id, spaceId: attachSpaceId });
+      await loadData();
+    } catch (e) {
+      Log.d('admin.carte.id.attachToSpace failed', e);
+      error = m.common_save_error();
+    }
+  }
+  const attachOptions = $derived<PickerOption[]>(
+    attachSpaces.map((sp) => ({ value: sp.id, label: carteSpaceLabel(sp) }))
+  );
 
   // ── Bubble mutations ──────────────────────────────────────────────────────────
   function patchBubble(id: string, patch: Partial<PositionedBubble>) {
@@ -498,7 +728,13 @@
       liveFingerprint = fingerprint;
     } catch (e) {
       Log.d('admin.carte.id.handlePublish failed', e);
-      error = m.common_save_error();
+      const code = refusalCode(e);
+      error =
+        code === CARTE_REFUSAL.UNIT_OUTSIDE_MAP
+          ? m.carte_publish_refused_outside()
+          : code === CARTE_REFUSAL.NOT_ATTACHED
+            ? m.carte_publish_refused_unattached()
+            : m.common_save_error();
     } finally {
       publishing = false;
     }
@@ -592,7 +828,8 @@
     {:else if error && !project}
       <p class="text-sm text-red-500" role="alert">{error}</p>
     {:else if project && model}
-      <header class="flex flex-wrap items-center justify-between gap-3">
+      <!-- ONE action bar on one line (owner, 2026-11-08): it scrolls sideways rather than wrapping. -->
+      <header class="flex items-center gap-2 overflow-x-auto pb-1 whitespace-nowrap">
         {#if !canEdit}
           <h2 class="text-text-main text-lg font-bold">{project.name}</h2>
         {:else if editingName}
@@ -609,19 +846,26 @@
             style="min-width:120px;max-width:400px;width:{Math.max(120, editedName.length * 10)}px;"
           />
         {:else}
-          <button
-            type="button"
-            class="group text-text-main hover:text-cn-yellow flex items-center gap-2 text-lg font-bold transition-colors"
+          <Button
+            variant="ghost"
+            class="group"
             onclick={startRenamingName}
             title={m.admin_carte_rename_project_title()}
           >
-            {project.name}
+            <span class="text-text-main text-lg font-bold">{project.name}</span>
             <Pencil size={14} class="opacity-0 transition-opacity group-hover:opacity-60" />
-          </button>
+          </Button>
         {/if}
-        <div class="flex items-center gap-2">
+        {#if space}
+          <span
+            class="border-cn-border text-text-muted shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-semibold"
+          >
+            {carteSpaceLabel(space)}
+          </span>
+        {/if}
+        <div class="ml-auto flex shrink-0 items-center gap-2">
           {#if canEdit}
-            <Button variant="secondary" onclick={handleSave} disabled={saving}>
+            <Button variant="secondary" size="compact" onclick={handleSave} disabled={saving}>
               {#if saved}
                 <Check size={16} />
                 {m.carte_saved_label()}
@@ -639,15 +883,16 @@
                portail is its own action, and it confirms. -->
           {#if isPublished}
             <span
-              class="inline-flex items-center gap-2 rounded-xl border border-green-600/40 bg-green-600/10 px-3 py-2 text-sm font-bold text-green-700 dark:text-green-400"
+              class="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-green-600/40 bg-green-600/10 px-2.5 py-1 text-xs font-bold text-green-700 dark:text-green-400"
             >
-              <Globe size={16} />
+              <Globe size={13} />
               {m.carte_published_since({ date: publishedOn })}
             </span>
             <!-- The live map is older than what is saved. Nothing republishes on its own: an
                  autosave that reached the portail would put half-arranged layouts online (D2). -->
             {#if publicationStale}
               <Button
+                size="compact"
                 onclick={handlePublish}
                 disabled={publishing}
                 title={m.carte_publish_update_hint()}
@@ -658,6 +903,7 @@
             {/if}
             <Button
               variant="secondary"
+              size="compact"
               onclick={handleUnpublish}
               disabled={publishing}
               title={m.carte_unpublish_hint()}
@@ -668,15 +914,16 @@
           {:else}
             <Button
               variant="secondary"
+              size="compact"
               onclick={handlePublish}
-              disabled={publishing}
+              disabled={publishing || !space}
               title={m.carte_publish_hint()}
             >
               <Globe size={16} />
               {publishing ? m.carte_publishing_label() : m.carte_publish_button()}
             </Button>
           {/if}
-          <Button onclick={handleExport} disabled={exporting}>
+          <Button size="compact" onclick={handleExport} disabled={exporting}>
             <Download size={16} />
             {exporting ? m.carte_exporting_label() : m.carte_export_button()}
           </Button>
@@ -693,47 +940,109 @@
         <p class="text-text-muted text-sm">{m.carte_export_foreground_hint()}</p>
       {/if}
 
-      <!-- Associations whose roster is empty. They stay on the poster (D10) - this is for their
-           bureau to act on, and an empty blob otherwise looks like a broken render. -->
-      {#if canEdit && memberlessNames.length > 0}
+      {#if !space}
         <div
-          class="border-cn-border bg-cn-surface-alt flex items-start gap-3 rounded-2xl border p-4"
+          class="border-cn-border bg-cn-surface-alt flex flex-wrap items-center gap-3 rounded-2xl border p-4"
         >
-          <TriangleAlert size={18} class="text-text-muted mt-0.5 shrink-0" />
-          <div class="min-w-0">
-            <p class="text-text-main text-sm font-bold">
-              {m.carte_no_members_title({ count: memberlessNames.length })}
-            </p>
-            <p class="text-text-muted mt-0.5 text-sm">{m.carte_no_members_body()}</p>
-            <p class="text-text-muted mt-1.5 text-sm">{memberlessNames.join(' - ')}</p>
+          <TriangleAlert size={18} class="text-cn-yellow shrink-0" />
+          <div class="min-w-0 flex-1">
+            <p class="text-text-main text-sm font-bold">{m.carte_unattached_title()}</p>
+            <p class="text-text-muted mt-0.5 text-sm">{m.carte_unattached_body()}</p>
           </div>
+          {#if attachOptions.length > 0}
+            <Picker
+              value={attachSpaceId}
+              options={attachOptions}
+              onValueChange={(v) => (attachSpaceId = v)}
+              label={m.carte_space_pick()}
+              placeholder={m.carte_space_pick()}
+              variant="field"
+            />
+            <Button size="compact" onclick={attachToSpace} disabled={!attachSpaceId}>
+              {m.carte_attach_button()}
+            </Button>
+          {/if}
         </div>
       {/if}
 
-      <!-- Units drawn over each other. Listed and outlined on demand; never moved (D7). -->
-      {#if canEdit && overlaps.length > 0}
+      <!-- New associations of the space: switched off until the author decides (owner, 2026-11-08). -->
+      {#if canEdit && freshNames.length > 0}
         <div
-          class="border-cn-border bg-cn-surface-alt flex items-start gap-3 rounded-2xl border p-4"
+          class="border-cn-yellow/50 bg-cn-yellow/10 flex items-start gap-3 rounded-2xl border p-4"
         >
-          <TriangleAlert size={18} class="text-cn-yellow mt-0.5 shrink-0" />
-          <div class="min-w-0">
+          <Sparkles size={18} class="text-cn-dark mt-0.5 shrink-0" />
+          <div class="min-w-0 flex-1">
             <p class="text-text-main text-sm font-bold">
-              {m.carte_overlaps_title({ count: overlaps.length })}
+              {m.carte_new_assos_title({ count: freshNames.length })}
             </p>
-            <p class="text-text-muted mt-0.5 text-sm">{m.carte_overlaps_body()}</p>
-            <ul class="text-text-muted mt-1.5 space-y-0.5 text-sm">
-              {#each overlaps as pair (pair.a + pair.b)}
-                <li>{m.carte_overlaps_pair({ a: assoName(pair.a), b: assoName(pair.b) })}</li>
-              {/each}
-            </ul>
-            <button
-              type="button"
-              onclick={() => (showOverlaps = !showOverlaps)}
-              class="text-text-main mt-2 text-sm font-bold underline"
-            >
-              {showOverlaps ? m.carte_overlaps_hide() : m.carte_overlaps_show()}
-            </button>
+            <p class="text-text-muted mt-0.5 text-sm">{m.carte_new_assos_body()}</p>
+            <p class="text-text-muted mt-1.5 text-sm">{freshNames.join(' - ')}</p>
           </div>
+          <Button variant="secondary" size="compact" onclick={dismissNewAssociations}>
+            {m.carte_new_assos_dismiss()}
+          </Button>
+        </div>
+      {/if}
+
+      {#if canEdit && (memberlessNames.length > 0 ? 1 : 0) + (overlaps.length > 0 ? 1 : 0) > 0}
+        <div class="space-y-2">
+          <Button
+            variant="ghost"
+            size="compact"
+            onclick={() => (alertsOpen = !alertsOpen)}
+            aria-expanded={alertsOpen}
+          >
+            <TriangleAlert size={14} />
+            {m.carte_alerts_toggle({
+              count: (memberlessNames.length > 0 ? 1 : 0) + (overlaps.length > 0 ? 1 : 0),
+            })}
+            {#if alertsOpen}<ChevronUp size={14} />{:else}<ChevronDown size={14} />{/if}
+          </Button>
+          {#if alertsOpen}
+            <!-- Associations whose roster is empty. They stay on the poster (D10) - this is for their
+           bureau to act on, and an empty blob otherwise looks like a broken render. -->
+            {#if canEdit && memberlessNames.length > 0}
+              <div
+                class="border-cn-border bg-cn-surface-alt flex items-start gap-3 rounded-2xl border p-4"
+              >
+                <TriangleAlert size={18} class="text-text-muted mt-0.5 shrink-0" />
+                <div class="min-w-0">
+                  <p class="text-text-main text-sm font-bold">
+                    {m.carte_no_members_title({ count: memberlessNames.length })}
+                  </p>
+                  <p class="text-text-muted mt-0.5 text-sm">{m.carte_no_members_body()}</p>
+                  <p class="text-text-muted mt-1.5 text-sm">{memberlessNames.join(' - ')}</p>
+                </div>
+              </div>
+            {/if}
+
+            <!-- Units drawn over each other. Listed and outlined on demand; never moved (D7). -->
+            {#if canEdit && overlaps.length > 0}
+              <div
+                class="border-cn-border bg-cn-surface-alt flex items-start gap-3 rounded-2xl border p-4"
+              >
+                <TriangleAlert size={18} class="text-cn-yellow mt-0.5 shrink-0" />
+                <div class="min-w-0">
+                  <p class="text-text-main text-sm font-bold">
+                    {m.carte_overlaps_title({ count: overlaps.length })}
+                  </p>
+                  <p class="text-text-muted mt-0.5 text-sm">{m.carte_overlaps_body()}</p>
+                  <ul class="text-text-muted mt-1.5 space-y-0.5 text-sm">
+                    {#each overlaps as pair (pair.a + pair.b)}
+                      <li>{m.carte_overlaps_pair({ a: assoName(pair.a), b: assoName(pair.b) })}</li>
+                    {/each}
+                  </ul>
+                  <button
+                    type="button"
+                    onclick={() => (showOverlaps = !showOverlaps)}
+                    class="text-text-main mt-2 text-sm font-bold underline"
+                  >
+                    {showOverlaps ? m.carte_overlaps_hide() : m.carte_overlaps_show()}
+                  </button>
+                </div>
+              </div>
+            {/if}
+          {/if}
         </div>
       {/if}
 
@@ -829,6 +1138,151 @@
              column is absent rather than disabled where editing is not offered. -->
         {#if canEdit}
           <div class="space-y-4">
+            {#if space}
+              <!-- Associations: every association of the space, with its switch and its zone. -->
+              <section class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-4">
+                <h3 class="text-text-main text-sm font-bold">{m.carte_assos_heading()}</h3>
+                <div class="flex items-center gap-2">
+                  <Search size={14} class="text-text-muted shrink-0" />
+                  <Input
+                    bind:value={assoSearch}
+                    type="search"
+                    placeholder={m.carte_assos_search()}
+                    aria-label={m.carte_assos_search()}
+                    density="compact"
+                    class="min-w-0 flex-1"
+                  />
+                </div>
+                {#if spaceAssociations.length === 0}
+                  <p class="text-text-muted text-xs">{m.carte_assos_empty()}</p>
+                {:else}
+                  <!-- Re-keyed on a refused write: a switch the server did not take flips back. -->
+                  {#key entryRefusals}
+                    <ul class="max-h-80 space-y-2 overflow-y-auto pr-1">
+                      {#each panelAssociations as asso (asso.id)}
+                        <li class="space-y-1">
+                          <div class="flex items-center gap-2">
+                            <div class="min-w-0 flex-1">
+                              <Toggle
+                                checked={classified.on.has(asso.id)}
+                                label={asso.name}
+                                busy={busyEntries.includes(asso.id)}
+                                onchange={(on) =>
+                                  void writeEntries([{ associationId: asso.id, enabled: on }])}
+                              />
+                            </div>
+                            {#if classified.fresh.has(asso.id)}
+                              <span
+                                class="bg-cn-yellow text-cn-ink shrink-0 rounded-full px-2 py-0.5 text-xs font-bold"
+                              >
+                                {m.carte_asso_new_badge()}
+                              </span>
+                            {/if}
+                          </div>
+                          {#if classified.on.has(asso.id) && zones.length > 0}
+                            <Picker
+                              value={classified.zoneOf[asso.id] ?? ''}
+                              options={zoneOptions}
+                              onValueChange={(v) =>
+                                void writeEntries([{ associationId: asso.id, zoneId: v || null }])}
+                              label={m.carte_asso_zone({ name: asso.name })}
+                              variant="field"
+                              density="compact"
+                            />
+                          {/if}
+                        </li>
+                      {/each}
+                    </ul>
+                  {/key}
+                {/if}
+              </section>
+
+              <!-- Zones: the map's own, created, renamed, ordered and deleted here. -->
+              <section class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-4">
+                <h3 class="text-text-main text-sm font-bold">{m.carte_zones_heading()}</h3>
+                {#if zones.length === 0}
+                  <p class="text-text-muted text-xs">{m.carte_zones_empty()}</p>
+                {:else}
+                  <!-- Re-keyed on a refused write, so a rejected rename shows the stored label again. -->
+                  {#key zoneRefusals}
+                    <ul class="space-y-1">
+                      {#each zones as zone, index (zone.id)}
+                        <li class="flex items-center gap-1">
+                          <div class="flex">
+                            <Button
+                              variant="ghost"
+                              size="compact"
+                              icon
+                              onclick={() => void moveZone(index, -1)}
+                              disabled={index === 0 || zoneBusy}
+                              aria-label={m.carte_category_move_up()}
+                            >
+                              <ChevronUp size={14} />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="compact"
+                              icon
+                              onclick={() => void moveZone(index, 1)}
+                              disabled={index === zones.length - 1 || zoneBusy}
+                              aria-label={m.carte_category_move_down()}
+                            >
+                              <ChevronDown size={14} />
+                            </Button>
+                          </div>
+                          <Input
+                            value={zone.label}
+                            maxlength={120}
+                            aria-label={m.carte_zone_rename({ label: zone.label })}
+                            onblur={(e: FocusEvent & { currentTarget: HTMLInputElement }) =>
+                              void renameZone(zone, e.currentTarget.value)}
+                            disabled={zoneBusy}
+                            density="compact"
+                            class="min-w-0 flex-1"
+                          />
+                          <Button
+                            variant="danger-outline"
+                            size="compact"
+                            icon
+                            onclick={() => void deleteZone(zone)}
+                            disabled={zoneBusy}
+                            aria-label={m.common_remove_label()}
+                          >
+                            <Trash2 size={13} />
+                          </Button>
+                        </li>
+                      {/each}
+                    </ul>
+                  {/key}
+                {/if}
+                <form
+                  class="flex items-center gap-2"
+                  onsubmit={(e) => {
+                    e.preventDefault();
+                    void addZone();
+                  }}
+                >
+                  <Input
+                    bind:value={newZoneLabel}
+                    maxlength={120}
+                    placeholder={m.carte_zone_add_placeholder()}
+                    aria-label={m.carte_zone_add_placeholder()}
+                    density="compact"
+                    class="min-w-0 flex-1"
+                  />
+                  <Button
+                    type="submit"
+                    variant="secondary"
+                    size="compact"
+                    disabled={zoneBusy || !newZoneLabel.trim()}
+                  >
+                    <Plus size={13} />
+                    {m.carte_zone_add_button()}
+                  </Button>
+                </form>
+              </section>
+            {/if}
+
             <section class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface) p-4">
               <div class="flex items-center justify-between gap-2">
                 <h3 class="text-text-main text-sm font-bold">

@@ -25,7 +25,6 @@ export const UPDATE_FIELD_RIGHTS: Record<keyof UpdateAssociationDto, UpdateField
   bioMarkdown: AssociationPermissionFlag.EDIT_PROFILE,
   logoUrl: AssociationPermissionFlag.EDIT_PROFILE,
   color: AssociationPermissionFlag.EDIT_PROFILE,
-  categoryId: AssociationPermissionFlag.EDIT_PROFILE,
   contactEmail: AssociationPermissionFlag.EDIT_PROFILE,
   promo: AssociationPermissionFlag.EDIT_PROFILE,
   name2: AssociationPermissionFlag.EDIT_PROFILE,
