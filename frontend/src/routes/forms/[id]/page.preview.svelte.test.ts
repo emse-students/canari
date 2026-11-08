@@ -44,6 +44,7 @@ const api = vi.hoisted(() => ({
     })
   ),
   submitForm: vi.fn(),
+  revision: { revision: 0, document: null as Record<string, unknown> | null, savedAt: null },
 }));
 vi.mock('$lib/forms/api', async (orig) => ({
   ...(await orig<typeof import('$lib/forms/api')>()),
@@ -61,6 +62,7 @@ vi.mock('$lib/forms/api', async (orig) => ({
     }),
   checkSubmission: api.checkSubmission,
   submitForm: api.submitForm,
+  getFormDraft: () => Promise.resolve(api.revision),
 }));
 
 import Page from './+page.svelte';
@@ -70,6 +72,7 @@ afterEach(() => {
   while (mounted.length) mounted.pop()!();
   document.body.innerHTML = '';
   vi.clearAllMocks();
+  api.revision = { revision: 0, document: null, savedAt: null };
 });
 
 async function open(url: string) {
@@ -107,6 +110,24 @@ describe('the fill page as a preview', () => {
     expect(document.querySelector('[data-testid="form-preview-banner"]')).toBeNull();
     expect(sendButton()).toBeUndefined();
     expect(api.checkSubmission).toHaveBeenCalledTimes(1);
+  });
+
+  it('a published form with unpublished edits: the preview draws the edits, and sends nothing', async () => {
+    api.status = 'published';
+    api.revision = {
+      revision: 3,
+      document: {
+        title: 'Soiree (en cours)',
+        items: [{ id: 'q9', label: 'Allergies', required: false, type: 'short_text' }],
+      },
+      savedAt: null,
+    };
+    await open('https://canari.test/forms/f1?preview=1');
+    expect(document.querySelector('[data-testid="form-preview-banner"]')).not.toBeNull();
+    expect(document.body.textContent).toContain('Allergies');
+    expect(document.body.textContent).not.toContain('Nom');
+    expect(sendButton()!.disabled).toBe(true);
+    expect(api.checkSubmission).not.toHaveBeenCalled();
   });
 
   it('a published form opened without the flag: the live page, no preview', async () => {

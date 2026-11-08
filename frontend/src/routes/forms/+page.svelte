@@ -258,6 +258,13 @@
                   >
                     {m.form_status_draft_badge()}
                   </span>
+                {:else if form.hasUnpublishedChanges}
+                  <span
+                    class="border-cn-border text-text-main inline-flex rounded-full border border-dashed px-2 py-0.5"
+                    data-testid="form-unpublished-badge"
+                  >
+                    {m.form_unpublished_changes_badge()}
+                  </span>
                 {/if}
               </p>
             </div>
@@ -276,7 +283,7 @@
               <Button
                 variant="secondary"
                 icon
-                href={formViewHref(form)}
+                href={formViewHref(form, !!form.hasUnpublishedChanges)}
                 target="_blank"
                 rel="noopener"
                 aria-label={m.form_view_open_button()}

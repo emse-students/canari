@@ -266,7 +266,8 @@ rules (a public form's cash answer needs `cashPaymentExpiryDays`, and holds its 
 
 **"Voir le formulaire"** (the forms list row, the editor's header) opens the respondent view in a new
 tab (`target=_blank rel=noopener`, `formViewHref`): the live page for a published form, a PREVIEW
-(`/forms/:id?preview=1`) for a draft. The preview draws the questions, says it is one, shuts the send
+(`/forms/:id?preview=1`) for a draft or a published form holding unpublished edits - drawn from its
+unpublished revision ([below](#edits-are-saved-as-they-are-typed-and-published-together-owner-2026-11-08)). The preview draws the questions, says it is one, shuts the send
 button ("Envoi désactivé (aperçu)") and asks nothing of the reader's state (`isPreview`,
 `routes/forms/[id]/+page.svelte`); the server would refuse a draft's submit anyway. Only what a
 manager alone can read is a preview: the `preview` flag never shuts the send of a published form, so a
@@ -277,6 +278,70 @@ path, the cash-only submit), `form-status.integration.spec.ts` (migration 145 on
 `where`, the conditional publish), `frontend/src/lib/forms/publish.test.ts`,
 `FormSaveBar.svelte.test.ts`, `FormPaymentSection.svelte.test.ts`, `routes/forms/page.viewLink`,
 `routes/forms/[id]/page.preview`, `routes/forms/[id]/edit/page.draft`.
+
+## Edits are saved as they are typed, and published together (owner, 2026-11-08)
+
+**Why.** An edit of a published form went live at "Enregistrer", and nothing was kept until then: a
+closed tab, a dead battery or a lost connection lost the work, and a half-finished edit could not be
+kept without showing it to respondents.
+
+**Storage: one unpublished revision per form** (`form_drafts`, migration 143,
+`form-draft-revision.ts`). `document` is the editor's whole payload - the body a `PATCH /forms/:id`
+would carry - stored AS TYPED, a half-built form included; the form's own row keeps serving
+respondents. `revision` is a compare-and-set counter that ONLY GROWS: a publication or a discard
+empties `document` (NULL) and bumps it instead of deleting the row, so an editor still holding an old
+number is refused rather than handed a fresh revision on top of a form it never saw. No author column:
+nothing personal is stored beyond the form's own content (no register change).
+
+| Route (managers only, `assertFormManager`) | What it does |
+|---|---|
+| `GET /forms/:id/draft` | `{ revision, document, savedAt }`; revision 0, no document when none was saved |
+| `PUT /forms/:id/draft` `{ baseRevision, document }` | the autosave: ONE statement (base 0 inserts, later bases update only while the row holds them); a moved base is `409 FORM_DRAFT_CONFLICT` carrying the current revision; a non-object or a document over 1 MB is `400 FORM_DRAFT_MALFORMED` |
+| `POST /forms/:id/draft/publish` `{ revision }` | "Publier les modifications": in ONE transaction holding the revision's row, the document is validated as the edit route's body (`CreateFormDto`, `whitelist`), applied by `update` itself (every rule of an edit, payment readiness included), and emptied; a DRAFT form is published in the same transaction after its collection rules (`assertPublishable`). A refusal rolls everything back and the revision stays to be fixed. `409 FORM_DRAFT_CONFLICT` on a moved revision, `409 FORM_DRAFT_EMPTY` when a published form holds no change, `400 FORM_DRAFT_INVALID` with the validation messages |
+| `POST /forms/:id/draft/discard` `{ revision }` | "Abandonner les modifications": empties it; a moved revision is refused, so another tab's edits are never thrown away unseen |
+
+A concurrent autosave waits on the publication's row lock, then finds its base moved
+(`form-draft-revision.integration.spec.ts` proves it on PostgreSQL). `GET /forms` marks each row
+`hasUnpublishedChanges`; the list badges it ("Modifications non publiées") and its "Voir le
+formulaire" opens the preview of those edits. A draft form may still change its anonymity at its
+publication (no answer exists yet); a published one may not, as before. The association stays fixed at
+creation: the create page's picker is shut once the draft exists.
+
+**Question images cited only by a revision are cited.** `isCited` and the hourly reconciliation read
+`form_drafts.document -> 'items'` as well as `forms.items`, so an image added in the editor outlives
+the hour; a discard releases what only the discarded document cited, a publication what the published
+revision dropped.
+
+**The client** (`frontend/src/lib/forms/autosave.svelte.ts`, `FormAutosave`):
+
+- every edit is saved after 1.5 s without another (`AUTOSAVE_DELAY_MS`), and AT ONCE when the page is
+  hidden (`visibilitychange`) or left (`pagehide`);
+- one save in flight, always the latest document: an edit typed meanwhile is sent on the revision that
+  save produced, so one page never races its own compare-and-set;
+- the status line under the summary: "Enregistrement...", "Enregistré", "Non enregistré - hors ligne"
+  (no server answered), "Non enregistré - nouvel essai à la prochaine modification" (a refusal),
+  "Modifié ailleurs entre-temps - rechargez la page pour reprendre" (a conflict: the page stops saving
+  rather than overwrite the other tab);
+- **offline edits stay in the page only (decided 2026-11-08)**: retried when the browser reports the
+  link back (`online` - a trigger to try, never a proof), at the next edit and when the page is
+  hidden. Closing the page while offline loses them, and the line says so until then. Nothing goes to
+  device storage, which would outlive the session and the account that typed it;
+- "Publier" / "Publier les modifications" first saves what is pending, and is shut while an edit has
+  not reached the server ("Les modifications ne sont pas encore enregistrées sur le serveur");
+- the editor opens on the revision when there is one, and takes its "nothing changed" baseline once
+  the question cards have mounted (a card completes its question's defaults when drawn), so opening a
+  form saves nothing;
+- the create page creates the draft at the first pause after a title (a shell: the title and the
+  association), then saves the rest as its revision. A reload of the create page starts a new form;
+  the draft already saved is in "Mes formulaires" with its badge.
+
+Tests: `forms.service.revision.spec.ts` (autosave, stale revision, atomic publish with rollback,
+payment rules, draft-form publication, discard), `form-draft-revision.integration.spec.ts` (migration
+143, one-of-two saves, growth only, rollback, the lock), `form-item-images.integration.spec.ts` (an
+image only a revision cites), `autosave.svelte.test.ts` (debounce, hidden, left, single flight,
+offline then online, conflict), `FormSaveBar.svelte.test.ts` (the status line, publish and discard),
+`routes/forms/[id]/edit/page.draft`, `routes/forms/create/page.returnNoRoute`,
+`routes/forms/page.viewLink`, `routes/forms/[id]/page.preview`.
 
 ## The admin screens
 

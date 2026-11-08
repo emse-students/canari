@@ -67,4 +67,49 @@ describe('FormSaveBar', () => {
     save.click();
     expect(onSave).toHaveBeenCalledTimes(1);
   });
+
+  it('says where the autosave stands, in words, and warns when an edit is not on the server', () => {
+    const cases = [
+      ['saving', m.form_autosave_saving(), false],
+      ['saved', m.form_autosave_saved(), false],
+      ['offline', m.form_autosave_offline(), true],
+      ['error', m.form_autosave_error(), true],
+      ['conflict', m.form_autosave_conflict(), true],
+    ] as const;
+    for (const [status, text, warns] of cases) {
+      const root = render({ onSave: null, autosaveStatus: status });
+      const line = root.querySelector('[data-testid="autosave-status"]')!;
+      expect(line.textContent?.trim()).toBe(text);
+      expect(line.className.includes('text-amber-warn')).toBe(warns);
+      document.body.innerHTML = '';
+    }
+    // Nothing typed yet: no line at all.
+    expect(
+      render({ onSave: null, autosaveStatus: 'idle' }).querySelector(
+        '[data-testid="autosave-status"]'
+      )
+    ).toBeNull();
+  });
+
+  it('a published form with unpublished edits: "Publier les modifications" and "Abandonner", no save button', () => {
+    const onPublish = vi.fn();
+    const onDiscard = vi.fn();
+    const root = render({
+      onSave: null,
+      autosaveStatus: 'saved',
+      publish: {
+        onPublish,
+        blockedReason: null,
+        busy: false,
+        label: m.form_publish_changes_button(),
+      },
+      discard: { onDiscard, busy: false },
+    });
+    expect(buttons(root)).toHaveLength(2);
+    const publish = root.querySelector<HTMLButtonElement>('[data-testid="publish-button"]')!;
+    expect(publish.textContent).toContain(m.form_publish_changes_button());
+    publish.click();
+    root.querySelector<HTMLButtonElement>('[data-testid="discard-changes"]')!.click();
+    expect([onPublish.mock.calls.length, onDiscard.mock.calls.length]).toEqual([1, 1]);
+  });
 });

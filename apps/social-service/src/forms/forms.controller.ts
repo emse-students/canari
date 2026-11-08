@@ -10,6 +10,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Put,
   Query,
   Res,
   UploadedFile,
@@ -24,7 +25,7 @@ import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throt
 
 /** `confirm-payment` calls allowed per user and submission per minute (the return poll is 10). */
 export const CONFIRM_PAYMENT_PER_MINUTE = 12;
-import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
+import { CreateFormDto, FormRevisionDto, SaveFormDraftDto, SubmitFormDto } from './dto/form.dto';
 import { FormsService } from './forms.service';
 import { parseExportLabels } from './export-labels';
 import { parseExportFormat } from './product-grid-export';
@@ -122,6 +123,65 @@ export class FormsController {
     @Headers('x-global-admin') ga?: string
   ) {
     return this.service.publish(id, xUserId, ga === 'true');
+  }
+
+  /**
+   * The unpublished revision of a form (owner, 2026-11-08): `{ revision, document, savedAt }`,
+   * revision 0 and no document when none was ever saved. Managers only, like the edit route.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/draft')
+  getDraft(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.getDraft(id, xUserId, ga === 'true');
+  }
+
+  /**
+   * The editor's autosave: stores the payload as the revision after `baseRevision`, or answers
+   * 409 `FORM_DRAFT_CONFLICT` (with the current revision) when another save moved it first.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Put(':id/draft')
+  saveDraft(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Body() dto: SaveFormDraftDto,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.saveDraft(id, dto.baseRevision, dto.document, xUserId, ga === 'true');
+  }
+
+  /**
+   * "Publier les modifications" (and "Publier" for a draft form): applies revision `revision` with
+   * the edit's rules, atomically. 409 `FORM_DRAFT_CONFLICT` when it moved, `FORM_DRAFT_EMPTY` when a
+   * published form holds no unpublished change.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/draft/publish')
+  @HttpCode(200)
+  publishDraft(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Body() dto: FormRevisionDto,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.publishChanges(id, dto.revision, xUserId, ga === 'true');
+  }
+
+  /** "Abandonner les modifications": empties revision `revision`; the form stays as published. */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/draft/discard')
+  @HttpCode(200)
+  discardDraft(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Body() dto: FormRevisionDto,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.discardDraft(id, dto.revision, xUserId, ga === 'true');
   }
 
   /** Updates a form's metadata and items. Requires owner, co-owner, or MANAGE_FORMS flag. */

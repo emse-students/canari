@@ -230,6 +230,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'forms.priceMatrix': NO_ACCOUNT('prices by tag of a form'),
   'forms.paymentMethods': NO_ACCOUNT('payment methods a form accepts'),
   'forms.submitCondition': NO_ACCOUNT('the audience condition (tags, promos) of a form'),
+  'form_drafts.document': NO_ACCOUNT(
+    "a form's unpublished revision: the editor's payload, the same content as `forms`"
+  ),
   'channel_members.notifLevels': NO_ACCOUNT('channel id -> notification level of one member'),
   'poster_projects.layout': NO_ACCOUNT('the layout of a poster'),
   'poster_projects.publication': NO_ACCOUNT(

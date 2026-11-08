@@ -1,0 +1,133 @@
+import type { EntityManager } from 'typeorm';
+
+/**
+ * THE UNPUBLISHED REVISION OF A FORM (owner, 2026-11-08; migration 143).
+ *
+ * The editor saves what the manager types into `form_drafts.document`, as typed, while the form's
+ * own row keeps serving respondents. "Publier les modifications" applies the document with the
+ * edit's own rules, in one transaction; "Abandonner les modifications" empties it. Each write names
+ * the `revision` it was built on (compare-and-set), and the counter only grows, so a tab holding an
+ * old number is refused instead of overwriting - or resurrecting - what another tab did.
+ */
+
+/** The 409 refusing a save, a publication or a discard built on a revision that has since moved. */
+export const FORM_DRAFT_CONFLICT = 'FORM_DRAFT_CONFLICT';
+
+/** The 409 refusing to publish changes when no unpublished revision holds any. */
+export const FORM_DRAFT_EMPTY = 'FORM_DRAFT_EMPTY';
+
+/** The 400 refusing a revision document the edit route would refuse (its validation messages ride along). */
+export const FORM_DRAFT_INVALID = 'FORM_DRAFT_INVALID';
+
+/** The 400 refusing a document that is not an object, or is larger than a form ever is. */
+export const FORM_DRAFT_MALFORMED = 'FORM_DRAFT_MALFORMED';
+
+/**
+ * The largest document stored, as JSON characters. The editor's whole payload - questions, grids,
+ * descriptions - is a few tens of kilobytes; this only bounds a client gone wrong.
+ */
+export const FORM_DRAFT_MAX_CHARS = 1_000_000;
+
+/** What the editor reads back: revision 0 and no document when nothing was ever saved. */
+export interface FormDraftState {
+  revision: number;
+  document: Record<string, unknown> | null;
+  savedAt: string | null;
+}
+
+type Querier = Pick<EntityManager, 'query'>;
+
+/**
+ * The rows a `RETURNING` statement gave back: TypeORM answers an INSERT with the rows, but an UPDATE
+ * with `[rows, affected]`.
+ */
+function returned<T>(result: unknown): T[] {
+  const r = result as unknown[];
+  return (Array.isArray(r[0]) ? r[0] : r) as T[];
+}
+
+/** Reads the revision of `formId`; `lock` takes the row for the caller's transaction. */
+export async function readFormDraft(
+  m: Querier,
+  formId: string,
+  lock = false
+): Promise<FormDraftState> {
+  const rows = (await m.query(
+    `SELECT revision, document, "savedAt" FROM form_drafts WHERE "formId" = $1${lock ? ' FOR UPDATE' : ''}`,
+    [formId]
+  )) as Array<{ revision: number; document: Record<string, unknown> | null; savedAt: Date }>;
+  const row = rows[0];
+  if (!row) return { revision: 0, document: null, savedAt: null };
+  return {
+    revision: Number(row.revision),
+    document: row.document ?? null,
+    savedAt: new Date(row.savedAt).toISOString(),
+  };
+}
+
+/**
+ * Stores `document` as the revision after `baseRevision`, in ONE statement either way: the first
+ * save of a form (base 0) inserts and does nothing when a row already exists; every later one
+ * updates only while the row still holds `baseRevision`. Returns the new state, or `null` when the
+ * base has moved (the caller answers 409 with the current one).
+ */
+export async function writeFormDraft(
+  m: Querier,
+  formId: string,
+  baseRevision: number,
+  document: Record<string, unknown>
+): Promise<{ revision: number; savedAt: string } | null> {
+  const json = JSON.stringify(document);
+  const result =
+    baseRevision === 0
+      ? await m.query(
+          `INSERT INTO form_drafts ("formId", revision, document, "savedAt")
+             VALUES ($1, 1, $2::jsonb, now())
+           ON CONFLICT ("formId") DO NOTHING
+           RETURNING revision, "savedAt"`,
+          [formId, json]
+        )
+      : await m.query(
+          `UPDATE form_drafts SET revision = revision + 1, document = $2::jsonb, "savedAt" = now()
+            WHERE "formId" = $1 AND revision = $3
+           RETURNING revision, "savedAt"`,
+          [formId, json, baseRevision]
+        );
+  const row = returned<{ revision: number; savedAt: Date }>(result)[0];
+  return row
+    ? { revision: Number(row.revision), savedAt: new Date(row.savedAt).toISOString() }
+    : null;
+}
+
+/**
+ * Empties the revision after it was published or discarded, bumping the counter: an editor still
+ * holding the old number is refused, never handed a fresh revision on top of the new form.
+ * The caller holds the row (`readFormDraft(.., lock)`) in the same transaction.
+ */
+export async function closeFormDraft(m: Querier, formId: string): Promise<number> {
+  const result = await m.query(
+    `UPDATE form_drafts SET document = NULL, revision = revision + 1, "savedAt" = now()
+      WHERE "formId" = $1 RETURNING revision`,
+    [formId]
+  );
+  return Number(returned<{ revision: number }>(result)[0]?.revision ?? 0);
+}
+
+/** Of `formIds`, those holding an unpublished revision: the managers' list marks them. */
+export async function formsWithUnpublishedChanges(
+  m: Querier,
+  formIds: string[]
+): Promise<Set<string>> {
+  if (formIds.length === 0) return new Set();
+  const rows = (await m.query(
+    `SELECT "formId" FROM form_drafts WHERE "formId" = ANY($1::uuid[]) AND document IS NOT NULL`,
+    [formIds]
+  )) as Array<{ formId: string }>;
+  return new Set(rows.map((r) => r.formId));
+}
+
+/** Whether `document` may be stored: a plain object, within {@link FORM_DRAFT_MAX_CHARS}. */
+export function isStorableDraftDocument(document: unknown): document is Record<string, unknown> {
+  if (!document || typeof document !== 'object' || Array.isArray(document)) return false;
+  return JSON.stringify(document).length <= FORM_DRAFT_MAX_CHARS;
+}

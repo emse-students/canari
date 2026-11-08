@@ -5800,5 +5800,18 @@
   "form_pgrid_tiers_info_aria": "Why only one criterion?",
   "form_pgrid_tiers_info": "A grid varies on one criterion only. To combine two criteria, create two questions and show each one according to the other criterion (the question's display condition).",
   "form_matrix_row_placeholder": "Row",
-  "form_matrix_column_placeholder": "Choice"
+  "form_matrix_column_placeholder": "Choice",
+  "form_autosave_saving": "Saving...",
+  "form_autosave_saved": "Saved",
+  "form_autosave_offline": "Not saved - offline",
+  "form_autosave_error": "Not saved - retried at the next change",
+  "form_autosave_conflict": "Changed elsewhere meanwhile - reload the page to continue",
+  "form_publish_changes_button": "Publish changes",
+  "form_discard_changes_button": "Discard changes",
+  "form_unpublished_changes_badge": "Unpublished changes",
+  "form_unpublished_changes_notice": "This form has unpublished changes: respondents still see the published version.",
+  "form_publish_blocked_unsaved": "The changes are not saved on the server yet",
+  "form_draft_conflict_refusal": "This form was changed elsewhere meanwhile: reload the page to continue.",
+  "form_draft_empty_refusal": "No changes to publish.",
+  "form_draft_invalid_refusal": "These changes cannot be published as they are: check the questions and the settings."
 }

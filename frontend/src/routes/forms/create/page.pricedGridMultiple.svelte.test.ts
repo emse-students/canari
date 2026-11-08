@@ -17,11 +17,26 @@ const route = vi.hoisted(() => ({
 }));
 vi.mock('$app/state', () => route);
 vi.mock('$app/navigation', () => ({ goto: vi.fn(async () => {}) }));
-const api = vi.hoisted(() => ({ createForm: vi.fn(async (_payload: any) => ({ id: 'f-new' })) }));
+const api = vi.hoisted(() => ({
+  createForm: vi.fn(async (_payload: any) => ({ id: 'f-new' })),
+  saveFormDraft: vi.fn(async (_id: string, base: number, _doc: any) => ({
+    revision: base + 1,
+    savedAt: 'now',
+  })),
+  publishFormDraft: vi.fn(async (id: string, revision: number) => ({
+    id,
+    status: 'published',
+    revision: revision + 1,
+  })),
+}));
 vi.mock('$lib/forms/api', async (orig) => ({
   ...(await orig<typeof import('$lib/forms/api')>()),
   createForm: api.createForm,
+  saveFormDraft: api.saveFormDraft,
+  publishFormDraft: api.publishFormDraft,
 }));
+/** The payload the builder last saved: what "Publier" publishes (`saveFormDraft`). */
+const lastSaved = () => api.saveFormDraft.mock.calls.at(-1)![2];
 vi.mock('$lib/associations/api', async (orig) => ({
   ...(await orig<typeof import('$lib/associations/api')>()),
   listMyAssociations: async () => [],
@@ -68,6 +83,8 @@ afterEach(() => {
   mounted.splice(0).forEach((f) => f());
   document.body.innerHTML = '';
   api.createForm.mockClear();
+  api.saveFormDraft.mockClear();
+  api.publishFormDraft.mockClear();
   localCheck.skip = false;
 });
 
@@ -126,10 +143,11 @@ async function multipleSwitch(): Promise<HTMLInputElement> {
 }
 
 async function savedAllowMultiple(): Promise<boolean> {
-  byText(m.form_save_draft_button()).click();
-  await settle();
+  byText(m.form_publish_button()).click();
+  await vi.waitFor(() => expect(api.publishFormDraft).toHaveBeenCalledTimes(1));
+  // Created once, as a shell; everything else is the saved revision.
   expect(api.createForm).toHaveBeenCalledTimes(1);
-  return api.createForm.mock.calls[0][0].allowMultipleSubmissions;
+  return lastSaved().allowMultipleSubmissions;
 }
 
 describe('the form builder, "several answers" and a priced grid', () => {
@@ -184,14 +202,14 @@ describe('the form builder, a grid refused by the server alone', () => {
     async () => {
       localCheck.skip = true;
       // A cotisation tier the association does not sell: only the server can know it.
-      api.createForm.mockImplementationOnce(async (payload: any) => {
+      api.publishFormDraft.mockImplementationOnce(async () => {
         throw new SocialApiError(
           'refused',
           'PRODUCT_GRID_TIER_INVALID',
           400,
           null,
           null,
-          payload.items.find((i: any) => i.type === 'product_grid').id
+          lastSaved().items.find((i: any) => i.type === 'product_grid').id
         );
       });
       await open();
@@ -206,7 +224,8 @@ describe('the form builder, a grid refused by the server alone', () => {
       byAria(m.form_builder_collapse_aria()).click();
       await settle();
       expect(document.querySelector('[data-testid="product-grid-editor"]')).toBeNull();
-      byText(m.form_save_draft_button()).click();
+      byText(m.form_publish_button()).click();
+      await vi.waitFor(() => expect(api.publishFormDraft).toHaveBeenCalledTimes(1));
       await settle();
       const sentence = m.form_pgrid_problem_in_question({
         label: 'Sweat',

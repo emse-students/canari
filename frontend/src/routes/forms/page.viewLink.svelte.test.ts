@@ -10,6 +10,14 @@ const api = vi.hoisted(() => ({
   getForms: vi.fn(async () => [
     { id: 'f1', title: 'Gala', items: [], associationName: null, status: 'published' },
     { id: 'f2', title: 'Rallye', items: [], associationName: null, status: 'draft' },
+    {
+      id: 'f3',
+      title: 'Bal',
+      items: [],
+      associationName: null,
+      status: 'published',
+      hasUnpublishedChanges: true,
+    },
   ]),
   getSubmissions: vi.fn(async () => []),
   exportLabels: vi.fn(),
@@ -46,4 +54,16 @@ it('opens the live page or the preview in a new tab, and badges the draft', asyn
   }
   expect(target.querySelector('#form-f2 [data-testid="form-draft-badge"]')).not.toBeNull();
   expect(target.querySelector('#form-f1 [data-testid="form-draft-badge"]')).toBeNull();
+});
+
+it('previews a published form holding unpublished edits, and says it holds them', async () => {
+  const target = document.body.appendChild(document.createElement('div'));
+  const instance = mount(Page, { target });
+  mounted.push(() => unmount(instance));
+  await vi.waitFor(() => expect(target.querySelector('#form-f3')).not.toBeNull());
+  expect(
+    target.querySelector('#form-f3 [data-testid="form-view-link"]')!.getAttribute('href')
+  ).toBe('/forms/f3?preview=1');
+  expect(target.querySelector('#form-f3 [data-testid="form-unpublished-badge"]')).not.toBeNull();
+  expect(target.querySelector('#form-f1 [data-testid="form-unpublished-badge"]')).toBeNull();
 });

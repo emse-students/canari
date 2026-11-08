@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  FORM_DRAFT_CONFLICT,
+  FORM_DRAFT_EMPTY,
+  FORM_DRAFT_INVALID,
   FORM_DRAFT_FLAG_ON_EDIT,
   FORM_IS_DRAFT,
   FORM_PAYMENTS_NOT_READY,
@@ -78,6 +81,9 @@ describe('drafts and their publication', () => {
     expect(draftRefusalMessage(FORM_ONLINE_PAYMENT_NOT_OFFERED)).toBe(
       m.form_online_payment_not_offered()
     );
+    expect(draftRefusalMessage(FORM_DRAFT_CONFLICT)).toBe(m.form_draft_conflict_refusal());
+    expect(draftRefusalMessage(FORM_DRAFT_EMPTY)).toBe(m.form_draft_empty_refusal());
+    expect(draftRefusalMessage(FORM_DRAFT_INVALID)).toBe(m.form_draft_invalid_refusal());
     expect(draftRefusalMessage('SOMETHING_ELSE')).toBeNull();
     expect(draftRefusalMessage(null)).toBeNull();
   });

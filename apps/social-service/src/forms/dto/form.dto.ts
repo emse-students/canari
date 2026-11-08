@@ -9,6 +9,7 @@ import {
   IsInt,
   IsNotEmpty,
   IsNumber,
+  IsObject,
   IsOptional,
   IsString,
   Max,
@@ -352,6 +353,27 @@ export class CreateFormDto {
 }
 
 export class UpdateFormDto extends CreateFormDto {}
+
+/**
+ * An autosave of the editor (owner, 2026-11-08; `form-draft-revision.ts`): the revision it was built
+ * on, and the whole payload as typed. The document is NOT validated here - a half-built form is what
+ * an autosave carries - but as an edit's body when the revision is published.
+ */
+export class SaveFormDraftDto {
+  @IsInt()
+  @Min(0)
+  baseRevision: number;
+
+  @IsObject()
+  document: Record<string, unknown>;
+}
+
+/** Publishing or discarding the unpublished revision the editor holds, by its number. */
+export class FormRevisionDto {
+  @IsInt()
+  @Min(0)
+  revision: number;
+}
 
 /**
  * A guest's answer to a public form: the answers, how they pay when the form charges, and - only

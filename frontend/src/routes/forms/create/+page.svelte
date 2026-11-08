@@ -9,7 +9,7 @@
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import {
     activePaymentProvider,
     loadActivePaymentProvider,
@@ -18,13 +18,15 @@
   import { page } from '$app/state';
   import {
     createForm,
-    publishForm,
+    publishFormDraft,
+    saveFormDraft,
     uploadFormItemImage,
     type AudienceCondition,
     type CreateFormPayload,
   } from '$lib/forms/api';
   import { draftRefusalMessage, publishBlocker } from '$lib/forms/publish';
   import { serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
+  import { FormAutosave } from '$lib/forms/autosave.svelte';
   import { questionImageRefusalMessage } from '$lib/forms/questionImage';
   import { POST_NEW_FORM_ID_KEY, loadPostComposerDraft } from '$lib/posts/postComposerDraft';
   import {
@@ -275,19 +277,101 @@
   let isPublishing = $state(false);
 
   /**
-   * Saves the new form as a DRAFT, then - for "Publier" - publishes it (owner, 2026-11-08). A draft
-   * opens its edit page, where it is finished and published later; a published form leaves the
-   * builder as before. A publication refused after the draft exists lands on that edit page too,
-   * which says why "Publier" is shut.
-   */
-  /**
    * Whether this estate builds forms as drafts (`formDrafts` in `/api/version`). An older server
    * strips `draft` and publishes at once, and has no publish route: the builder then saves as it
    * always did, one "Enregistrer" that publishes (docs/wiki/legacy-compatibility.md).
    */
   const formDrafts = serverFormDrafts() === true;
 
-  async function handleSave(intent: 'draft' | 'publish' = 'draft') {
+  /**
+   * The draft this page is building, created at the first autosave once the form has a title
+   * (owner, 2026-11-08): a shell holding only what is fixed at creation - its association - and its
+   * title; everything else is its unpublished revision, saved as it is typed.
+   */
+  let createdId = $state<string | null>(null);
+
+  async function draftId(): Promise<string> {
+    if (createdId) return createdId;
+    const created = await createForm({
+      draft: true,
+      title,
+      basePrice: 0,
+      currency: 'eur',
+      items: [],
+      associationId: associationId || undefined,
+    });
+    Log.d('forms-editor', `draft created ${created.id}`);
+    createdId = created.id;
+    return created.id;
+  }
+
+  const autosave = new FormAutosave({
+    save: async (base, document) => saveFormDraft(await draftId(), base, document),
+  });
+
+  // Every edit is saved, debounced, once the form has a title to be listed under.
+  let lastSaved: string | null = null;
+  $effect(() => {
+    const document = buildPayload();
+    const json = JSON.stringify(document);
+    const named = !titleMissing;
+    untrack(() => {
+      if (!formDrafts || !named || json === lastSaved) return;
+      lastSaved = json;
+      autosave.schedule(document);
+    });
+  });
+
+  // Hidden or left: saved at once; back online: an edit that reached no server is sent again.
+  $effect(() => (formDrafts ? autosave.attach(window) : undefined));
+
+  /** The new form's payload: what the autosave stores and the publication applies. */
+  function buildPayload(): CreateFormPayload {
+    return {
+      title,
+      description,
+      basePrice: requiresPayment ? Math.round(basePrice * 100) : 0,
+      priceMatrix: matrixPayload(priceMatrix, requiresPayment),
+      submitCondition,
+      ...cotisationPayload(cotisation, requiresPayment),
+      currency: 'eur',
+      items: toFormItemsPayload(items),
+      maxSubmissions,
+      allowMultipleSubmissions,
+      anonymous,
+      isPublic,
+      // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
+      guestFields: isPublic && !anonymous ? askedGuestFields(guestFields) : [],
+      ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
+      requiresPayment,
+      // NEVER conditioned on `requiresPayment` - a free form belongs to the association it was
+      // created for exactly as a paid one does (the comment on `associations` above already said
+      // so; this line contradicted it, and a free form created from an association's own "create
+      // a form" button would otherwise vanish from that association's list the moment it saved).
+      associationId: associationId || undefined,
+      ...(requiresPayment ? { allowCashPayment, allowOnlinePayment } : {}),
+      ...(requiresPayment && allowCashPayment && cashPaymentExpiryDays != null
+        ? { cashPaymentExpiryDays }
+        : {}),
+      ...(formHasFile ? { fileRetentionDays } : {}),
+    };
+  }
+
+  /** Why "Publier" is shut beyond payments: an edit the server does not hold yet. */
+  const unsavedReason = $derived(
+    autosave.status === 'offline' || autosave.status === 'error'
+      ? m.form_publish_blocked_unsaved()
+      : autosave.status === 'conflict'
+        ? m.form_draft_conflict_refusal()
+        : null
+  );
+
+  /**
+   * "Publier" (owner, 2026-11-08): the page's own checks first, in the reader's language; then what
+   * is typed is saved and the draft published with it, in one transaction on the server
+   * (`publishFormDraft`). Refused, the draft stays saved and this page says why.
+   */
+  async function handlePublish() {
     if (titleMissing) {
       error = m.form_error_title_required();
       return;
@@ -344,51 +428,28 @@
     }
     isSubmitting = true;
     error = '';
-    let createdId: string | null = null;
     try {
-      const payload: CreateFormPayload = {
-        ...(formDrafts ? { draft: true } : {}),
-        title,
-        description,
-        basePrice: requiresPayment ? Math.round(basePrice * 100) : 0,
-        priceMatrix: matrixPayload(priceMatrix, requiresPayment),
-        submitCondition,
-        ...cotisationPayload(cotisation, requiresPayment),
-        currency: 'eur',
-        items: toFormItemsPayload(items),
-        maxSubmissions,
-        allowMultipleSubmissions,
-        ...(anonymous ? { anonymous } : {}),
-        isPublic,
-        // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
-        guestFields: isPublic && !anonymous ? askedGuestFields(guestFields) : [],
-        ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
-        requiresPayment,
-        // NEVER conditioned on `requiresPayment` - a free form belongs to the association it was
-        // created for exactly as a paid one does (the comment on `associations` above already said
-        // so; this line contradicted it, and a free form created from an association's own "create
-        // a form" button would otherwise vanish from that association's list the moment it saved).
-        associationId: associationId || undefined,
-        ...(requiresPayment ? { allowCashPayment, allowOnlinePayment } : {}),
-        ...(requiresPayment && allowCashPayment && cashPaymentExpiryDays != null
-          ? { cashPaymentExpiryDays }
-          : {}),
-        ...(formHasFile ? { fileRetentionDays } : {}),
-      };
-      const created = await createForm(payload);
-      createdId = created.id;
-      if (formDrafts && intent === 'draft') {
-        Log.d('forms-editor', `draft created ${created.id}`);
-        goto(resolve('/forms/[id]/edit', { id: created.id }));
-        return;
-      }
-      if (formDrafts) {
+      if (!formDrafts) {
+        // An estate older than drafts: one create that publishes, as this page always did.
+        const created = await createForm(buildPayload());
+        Log.d('forms-editor', `created and published ${created.id} (an estate without drafts)`);
+        createdId = created.id;
+      } else {
+        // What is on the page now is what is published: saved first, whatever the debounce holds.
+        lastSaved = JSON.stringify(buildPayload());
+        autosave.schedule(buildPayload());
+        await autosave.flush();
+        if (!autosave.settled || !createdId) {
+          error = unsavedReason ?? m.form_publish_blocked_unsaved();
+          return;
+        }
         isPublishing = true;
-        await publishForm(created.id);
+        const result = await publishFormDraft(createdId, autosave.revision);
+        autosave.closed(result.revision);
+        Log.d('forms-editor', `created and published ${createdId}`);
       }
-      Log.d('forms-editor', `created and published ${created.id} (drafts=${formDrafts})`);
       if (fromPostComposer) {
-        sessionStorage.setItem(POST_NEW_FORM_ID_KEY, created.id);
+        sessionStorage.setItem(POST_NEW_FORM_ID_KEY, createdId ?? '');
         goto(resolve('/posts'));
       } else {
         gotoAppPath(returnTo).catch((err: unknown) =>
@@ -396,12 +457,6 @@
         );
       }
     } catch (e: any) {
-      if (createdId && formDrafts) {
-        // The draft is stored; only its publication was refused. Its edit page says why.
-        console.warn('[forms] the draft is saved but its publication was refused:', e);
-        goto(resolve('/forms/[id]/edit', { id: createdId }));
-        return;
-      }
       // A grid the server alone could refuse (a cotisation tier it does not sell) is drawn under
       // that grid and its card opened, as the page's own check does.
       gridFault = refusedProductGridFault(e, items);
@@ -469,6 +524,7 @@
             ...associations.map((a) => ({ value: a.id, label: a.name })),
           ]}
           onValueChange={(v) => (associationId = v)}
+          disabled={!!createdId}
         />
       {/if}
 
@@ -546,10 +602,15 @@
     {titleMissing}
     {isSubmitting}
     {summary}
-    saveLabel={formDrafts ? m.form_save_draft_button() : m.form_save_button()}
-    onSave={() => handleSave(formDrafts ? 'draft' : 'publish')}
+    autosaveStatus={formDrafts ? autosave.status : null}
+    saveLabel={m.form_save_button()}
+    onSave={formDrafts ? null : handlePublish}
     publish={formDrafts
-      ? { onPublish: () => handleSave('publish'), blockedReason, busy: isPublishing }
+      ? {
+          onPublish: handlePublish,
+          blockedReason: blockedReason ?? unsavedReason,
+          busy: isPublishing,
+        }
       : null}
   />
 </PageContainer>
