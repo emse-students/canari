@@ -96,6 +96,8 @@ export type ServerVersionInfo = {
   presencePost: boolean;
   /** Whether this estate serves the background publish queue - see {@link AppVersionCheckResult}. */
   publishQueue: boolean;
+  /** Whether this estate builds forms as drafts - see {@link AppVersionCheckResult}. */
+  formDrafts: boolean;
 };
 
 export type AppVersionCheckResult = {
@@ -134,6 +136,14 @@ export type AppVersionCheckResult = {
    * server older than the field.
    */
   publishQueue: boolean;
+  /**
+   * A CAPABILITY of the estate, not a switch: social-service creates a form as a draft, publishes it
+   * by its own route and keeps its unpublished revision. The form editors use drafts only when this
+   * is true, and otherwise save as before: an older server strips `draft` and publishes the form at
+   * once, and answers the revision routes `404` - and a store build reaches phones before production
+   * deploys. `false` for every server older than the field.
+   */
+  formDrafts: boolean;
 };
 
 const DEFAULT_MAINTENANCE: PlatformMaintenanceInfo = { enabled: false, message: null };
@@ -190,6 +200,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     oidcPkce?: unknown;
     presencePost?: unknown;
     publishQueue?: unknown;
+    formDrafts?: unknown;
   };
   const version = typeof obj.version === 'string' ? obj.version.trim() : '';
   if (!version) return null;
@@ -204,6 +215,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     oidcPkce: obj.oidcPkce === true,
     presencePost: obj.presencePost === true,
     publishQueue: obj.publishQueue === true,
+    formDrafts: obj.formDrafts === true,
   };
 }
 
@@ -223,6 +235,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   oidcPkce: boolean;
   presencePost: boolean;
   publishQueue: boolean;
+  formDrafts: boolean;
 } {
   return {
     version: info.version,
@@ -234,6 +247,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     oidcPkce: info.oidcPkce,
     presencePost: info.presencePost,
     publishQueue: info.publishQueue,
+    formDrafts: info.formDrafts,
   };
 }
 /**
@@ -402,6 +416,7 @@ export function buildAppVersionCheckResult(
     oidcPkce: serverInfo?.oidcPkce ?? false,
     presencePost: serverInfo?.presencePost ?? false,
     publishQueue: serverInfo?.publishQueue ?? false,
+    formDrafts: serverInfo?.formDrafts ?? false,
   };
 }
 

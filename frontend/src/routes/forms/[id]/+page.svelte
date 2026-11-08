@@ -13,6 +13,7 @@
   import {
     FormNotFoundError,
     getForm,
+    getFormDraft,
     submitForm as submitFormService,
     checkSubmission,
     type PricingView,
@@ -79,6 +80,7 @@
   } from '$lib/associations/activePaymentProvider.svelte';
   import { FORM_COTISATION_HELD } from '$lib/associations/paymentRefusal';
   import { formSubmitRefusalMessage } from '$lib/forms/answerBounds';
+  import { FORM_PREVIEW_PARAM, isDraftForm, isPreview, offersOnlyCash } from '$lib/forms/publish';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { PAGE_WIDTHS } from '$lib/components/layout/pageWidth';
 
@@ -141,6 +143,18 @@
   let linkedAgendaEvent = $state<AssociationCalendarEvent | null>(null);
   let agendaAssociationSlug = $state('');
   let paymentMethodChoice = $state<'online' | 'cash'>('online');
+  /** Whether the page draws an unpublished revision a manager read (never a respondent's view). */
+  let revisionShown = $state(false);
+  /**
+   * A PREVIEW (a draft, or "Voir le formulaire" on unpublished changes): the questions are drawn and
+   * nothing can be sent - the server would refuse a draft anyway (owner, 2026-11-08).
+   */
+  const preview = $derived(isPreview(form, revisionShown));
+  /** Online is paused and cash is accepted: the answer is paid in cash, no online choice shown. */
+  const cashOnly = $derived(offersOnlyCash(form));
+  $effect(() => {
+    if (cashOnly) paymentMethodChoice = 'cash';
+  });
 
   // ── Submit bar: sits at the end by default, sticks for good once earned ─────
   /** Marks the bar's natural position - placed AFTER the bar (not before), so reaching it means
@@ -211,6 +225,23 @@
     void copyPublicShareLink(formPath);
   }
 
+  /**
+   * The unpublished revision of `f`, for a preview (owner, 2026-11-08), or `null`. Only a manager
+   * reads a revision: anyone else is refused it, and the page stays the live form.
+   */
+  async function unpublishedRevision(f: Form): Promise<Partial<Form> | null> {
+    try {
+      const revision = await getFormDraft(f.id);
+      return (revision.document as Partial<Form> | null) ?? null;
+    } catch (e) {
+      Log.d(
+        'FormView',
+        `preview of ${f.id}: no revision readable (${refusalStatus(e) ?? 'no answer'})`
+      );
+      return null;
+    }
+  }
+
   onMount(async () => {
     void loadActivePaymentProvider();
     const savedUser = currentUserId();
@@ -236,6 +267,22 @@
       const f = await getForm(id);
       form = f;
       selections = initialSelections(f.items);
+      // A draft, or a link asking for the revision ("Voir le formulaire"): what the managers are
+      // building is drawn when THIS reader may read it. The flag alone never shuts a published
+      // form's send - a respondent handed such a link answers as usual.
+      if (isDraftForm(f) || page.url.searchParams.get(FORM_PREVIEW_PARAM) === '1') {
+        const revision = await unpublishedRevision(f);
+        revisionShown = revision !== null;
+        if (isPreview(f, revisionShown)) {
+          // Nothing of the reader's own state is asked: a preview sends nothing, and a draft's
+          // check answers as for an absent form (`respondentFormWhere`).
+          const shown: Form = revision ? { ...f, ...revision } : f;
+          form = shown;
+          selections = initialSelections(shown.items);
+          Log.d('FormView', `preview of ${f.id} (${f.status ?? 'published'})`);
+          return;
+        }
+      }
 
       linkedAgendaEvent = null;
       agendaAssociationSlug = '';
@@ -413,6 +460,10 @@
 
   async function handleSubmit(payerEmail?: string) {
     if (!form || submitting) return;
+    if (preview) {
+      Log.d('FormView', 'submit held: a preview sends nothing');
+      return;
+    }
     if (uploadingFiles.size > 0) {
       // Refused, not queued: an optional file question would otherwise go out empty while the
       // member believes the file is attached.
@@ -562,7 +613,8 @@
   <Button
     variant="primary"
     class="shrink-0"
-    disabled={submitted ||
+    disabled={preview ||
+      submitted ||
       formFull ||
       submitting ||
       isNotOpenYet ||
@@ -572,7 +624,9 @@
     loading={submitting}
     onclick={() => void handleSubmit()}
   >
-    {#if paymentPending}
+    {#if preview}
+      {m.form_preview_submit_disabled()}
+    {:else if paymentPending}
       <Check size={16} class="mr-1.5" />{m.form_view_pending()}
     {:else if submitted}
       <Check size={16} class="mr-1.5" />{m.form_view_sent()}
@@ -657,6 +711,15 @@
       >
     </div>
   {:else if form}
+    {#if preview}
+      <p
+        class="border-amber-warn/30 bg-amber-warn/10 text-text-main mb-4 rounded-2xl border-2 px-4 py-3 text-sm font-medium"
+        data-testid="form-preview-banner"
+        role="status"
+      >
+        {m.form_preview_banner()}
+      </p>
+    {/if}
     <!-- ── Header ── -->
     <FormHeader {form} {submitted} children={tierLabels.length > 0 ? viewerTier : undefined} />
 
@@ -822,7 +885,7 @@
     {/if}
 
     <!-- ── Payment method (cash vs online) ── -->
-    {#if calculateTotal() > 0 && form.allowCashPayment && !submitted}
+    {#if calculateTotal() > 0 && form.allowCashPayment && !submitted && !cashOnly}
       <PaymentMethodChoice bind:method={paymentMethodChoice} />
     {/if}
 

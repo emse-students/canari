@@ -128,6 +128,17 @@ export function serverPublishQueue(): boolean | null {
   return loadCachedServerInfo()?.publishQueue ?? null;
 }
 
+/**
+ * Whether this estate builds forms as drafts (`formDrafts`), as the last `/api/version` answer said -
+ * or `null` when no server has ever answered. The form editors use drafts only when it is `true`,
+ * and save as before otherwise (docs/wiki/legacy-compatibility.md, "a form editor newer than its
+ * server"). The cached answer counts, for the reason {@link serverPresencePost} gives.
+ */
+export function serverFormDrafts(): boolean | null {
+  if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.formDrafts;
+  return loadCachedServerInfo()?.formDrafts ?? null;
+}
+
 /** True when the client is below the server-enforced minimum version. */
 export function isBelowMinClientVersion(): boolean {
   return lastCheck?.belowMinVersion === true;

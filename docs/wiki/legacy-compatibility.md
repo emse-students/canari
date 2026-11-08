@@ -480,6 +480,50 @@ affected: those carry no warning and compare nothing.
 it. Measure before: `[REPOST-P] ... accept refused: audience changed (carried none, ...)` in
 social-service logs counts the older builds that met it.
 
+### No date yet - a form editor newer than its server (2026-11-08)
+
+**Site:** `serverFormDrafts()` (`frontend/src/lib/stores/appVersionCheck.svelte.ts`), read by the
+form builder and editor; the server half is `formDrafts: true` in core-service's `GET /api/version`.
+**Why.** A stable ships both stores before production deploys, so for days a phone build that
+creates drafts talks to a social-service that does not know them: its validation strips `draft`,
+creating a PUBLISHED form at once (an empty one, for a builder that creates its draft early), and it
+answers the revision routes `404` - every editor would fail to open.
+**What the client does.** It builds forms as drafts, reads and saves revisions, mints create keys and
+resends device copies only on an estate whose `/api/version` says `formDrafts: true`; otherwise - an
+older server, or no answer yet - it saves as it always did: one "Enregistrer" that creates the form
+published, and an edit saved straight to the form (`PATCH /forms/:id`).
+**Removal condition:** when no estate older than the release carrying `formDrafts` is served (both
+estates deployed past it), the client branch for `false` may go; the field stays, always `true`.
+
+### No date yet - a form created by a build that does not know drafts (2026-11-08)
+
+**Site:** `FormsService.create` (`apps/social-service/src/forms/forms.service.ts`): a create carrying
+no `draft` is published at once, logged at INFO (`[FORMS] create without draft`); and
+`forms."allowOnlinePayment"` defaults to true for a create or an edit that does not send it.
+**What an older build does.** It creates a published form, as it always did, and a paid one is judged
+at the create (`assertMayCollectNow`) as before - it never sees the draft state. It edits a draft
+like any form (the edit route takes no `draft`, so it cannot publish one) and has no "Publier": a
+draft it opens stays a draft until a current build publishes it. It sends no `allowOnlinePayment`, so
+a form it edits keeps the stored value. It does not know `FORM_ONLINE_PAYMENT_NOT_OFFERED`: on a
+cash-only form it still draws the online choice, and the server refuses that answer before anything
+is written ([forms](frontend/modules/forms.md#a-form-is-a-draft-until-it-is-published-owner-2026-11-08)).
+An older build also saves an edit straight to the form (`PATCH /forms/:id`), past an unpublished
+revision a current build holds ([forms](frontend/modules/forms.md#edits-are-saved-as-they-are-typed-and-published-together-owner-2026-11-08)):
+the revision's base fingerprint then no longer matches, and publishing it is refused
+`409 FORM_CHANGED_SINCE_REVISION` until the manager confirms the overwrite ("Publier quand meme").
+And it sees a DRAFT a current build is building as the empty shell the create page made (a title and
+an association): the questions live in the revision, which an older build never reads.
+**A rollback of production to an older release is the same hazard, server side, and wider.** An
+older social-service does not know `forms.status` (migration 145 is additive and stays): it serves
+EVERY draft on every respondent surface - the list, a post's card, the agenda, `/f/:id` - as an
+open form, an empty shell for a draft the create page made, and it neither reads nor publishes the
+revisions (`form_drafts` stays, unread). A rollback past this change therefore publishes the drafts
+in all but name; before one, count them (`SELECT count(*) FROM forms WHERE status = 'draft'`) and
+weigh closing them by hand against the rollback.
+**Removal condition:** once the floor passes the first stable carrying this change, `draft` may become
+the default of a create (a create without it a draft too). Measure before: the `[FORMS] create without draft` lines
+in social-service count the older builds still creating forms.
+
 ### No date yet - a post whose comments are withheld, drawn by a build that does not know `canSeeComments` (2026-11-04)
 
 **Site:** the served post (`withholdCommentsAndPeople`, `apps/social-service/src/posts/comments-withheld.ts`)

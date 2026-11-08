@@ -86,6 +86,7 @@ describe('parseServerVersionInfo', () => {
       oidcPkce: false,
       presencePost: false,
       publishQueue: false,
+      formDrafts: false,
     });
   });
 
@@ -111,6 +112,14 @@ describe('parseServerVersionInfo', () => {
     expect(parseServerVersionInfo({ version: '1.2.3', publishQueue: 'yes' })?.publishQueue).toBe(
       false
     );
+  });
+
+  it('reads the form drafts capability, absent or non-true as none, and stores it round-trip', () => {
+    const info = parseServerVersionInfo({ version: '1.2.3', formDrafts: true });
+    expect(info?.formDrafts).toBe(true);
+    expect(parseServerVersionInfo(serverVersionInfoToWire(info!))?.formDrafts).toBe(true);
+    expect(parseServerVersionInfo({ version: '1.2.3' })?.formDrafts).toBe(false);
+    expect(parseServerVersionInfo({ version: '1.2.3', formDrafts: 1 })?.formDrafts).toBe(false);
   });
 
   it('stores the presence POST capability in the shape it is read back with', () => {
@@ -215,6 +224,7 @@ describe('buildAppVersionCheckResult', () => {
       oidcPkce: true,
       presencePost: false,
       publishQueue: false,
+      formDrafts: false,
     });
     expect(result.callsMode).toBe('audio');
     expect(result.livesMode).toBe('on');
@@ -235,6 +245,7 @@ describe('buildAppVersionCheckResult', () => {
       oidcPkce: false,
       presencePost: false,
       publishQueue: false,
+      formDrafts: false,
     });
     expect(result.belowMinVersion).toBe(true);
   });
@@ -303,6 +314,7 @@ describe('fetchServerAppVersionReliable', () => {
       oidcPkce: false,
       presencePost: false,
       publishQueue: false,
+      formDrafts: false,
     });
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });

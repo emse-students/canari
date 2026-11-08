@@ -2677,6 +2677,8 @@ export interface AssociationForm {
   basePrice: number;
   currency: string;
   allowCashPayment: boolean;
+  /** `draft` until published; absent from a server before drafts (then published). */
+  status?: 'draft' | 'published';
   createdAt: string;
 }
 

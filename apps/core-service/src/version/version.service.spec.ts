@@ -65,6 +65,12 @@ describe('VersionService', () => {
     expect(out.publishQueue).toBe(true);
   });
 
+  it('says its estate builds forms as drafts, so a form editor uses drafts only when it does', async () => {
+    const out = await service.getVersion();
+
+    expect(out.formDrafts).toBe(true);
+  });
+
   it('reports no build when the environment was not given one', async () => {
     delete process.env.DEPLOY_BUILD;
 

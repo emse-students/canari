@@ -77,6 +77,17 @@ export type AppVersionResponse = {
    * `true` from this release on (docs/wiki/frontend/modules/posts.md#the-background-publish-queue).
    */
   publishQueue: true;
+  /**
+   * A CAPABILITY OF THIS ESTATE'S SOCIAL-SERVICE, published here for the same reason: a form is
+   * created as a DRAFT (`draft: true`, migration 145) and published by its own route, and its edits
+   * are saved as an unpublished revision (`/forms/:id/draft`, migration 146). A client builds forms
+   * that way only on an estate that says so: an older social-service strips `draft` (its validation
+   * whitelists the body) and publishes an empty form at once, and answers the revision routes `404`
+   * - and a store build reaches phones before production deploys. Built from ONE release tag with
+   * social-service. Always `true` from this release on (docs/wiki/legacy-compatibility.md, "a form
+   * editor newer than its server").
+   */
+  formDrafts: true;
 };
 
 /** Resolves deployed app version and platform gates from core-service. */
@@ -102,6 +113,7 @@ export class VersionService {
       oidcPkce: true,
       presencePost: true,
       publishQueue: true,
+      formDrafts: true,
     };
   }
 }

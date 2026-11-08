@@ -146,6 +146,7 @@ import {
 } from './payment-delegation.util';
 import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
+import { FORM_DRAFT, FORM_IS_DRAFT, FORM_PUBLISHED } from '../forms/form-status';
 import { retireForms } from '../forms/retire-forms';
 import {
   AddMemberDto,
@@ -2321,8 +2322,9 @@ export class AssociationsService {
   /** Forms under this association (optional link from calendar event editor). */
   async getCalendarLinkCandidates(associationId: string) {
     await this.findById(associationId);
+    // A draft is never offered: an event cannot link one (`assertFormBelongsToAssociation`).
     const forms = await this.formRepo.find({
-      where: { associationId },
+      where: { associationId, status: FORM_PUBLISHED },
       order: { updatedAt: 'DESC' },
       take: 50,
       select: { id: true, title: true, updatedAt: true },
@@ -2463,11 +2465,20 @@ export class AssociationsService {
   ) {
     const f = await (manager ? manager.getRepository(Form) : this.formRepo).findOne({
       where: { id: formId },
-      select: { id: true, associationId: true },
+      select: { id: true, associationId: true, status: true },
     });
     if (!f) throw new BadRequestException('Linked form not found');
     if (f.associationId !== associationId) {
       throw new BadRequestException('Form must belong to this association');
+    }
+    // An agenda entry is read by the association's audience: a DRAFT linked to it would hand them a
+    // link to a form they cannot open. Published first, linked after (`form-status.ts`).
+    if (f.status === FORM_DRAFT) {
+      this.logger.debug(`[AGENDA] link refused: form ${formId.slice(0, 8)} is a draft`);
+      throw new BadRequestException({
+        code: FORM_IS_DRAFT,
+        message: 'A draft form cannot be linked to an event: publish it first.',
+      });
     }
   }
 
@@ -4790,6 +4801,8 @@ ${rejectionReason}`
         basePrice: true,
         currency: true,
         allowCashPayment: true,
+        // A draft is the managers' alone: the tab marks it, so nobody links it believing it live.
+        status: true,
         createdAt: true,
       },
     });
@@ -6058,6 +6071,25 @@ ${rejectionReason}`
       select: { id: true, type: true },
     });
     return row?.type ?? null;
+  }
+
+  /**
+   * Whether `associationId` can take an online payment NOW, the question `assertPaymentsReady`
+   * answers by throwing, answered as a boolean: its own or its approved delegate's account is ready
+   * AND the platform's provider is on. False for an absent row. What a draft form's publication
+   * reads, so its refusal is the form's ONE typed code whatever the cause underneath.
+   */
+  async canTakePaymentsNow(associationId: string): Promise<boolean> {
+    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+    if (!asso) return false;
+    const target = await this.resolvePaymentTarget(asso);
+    if (!target.ready) {
+      this.logger.log(
+        `[PAYMENTS] association ${sanitizeLog(associationId)} cannot take payments now: ` +
+          `provider=${target.provider} delegated=${target.delegated} cause=${target.readinessCause ?? 'none'}`
+      );
+    }
+    return target.ready;
   }
 
   /**

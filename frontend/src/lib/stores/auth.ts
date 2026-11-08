@@ -35,6 +35,7 @@ import {
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { discardSharedOut } from '$lib/sharing/shareOutCleanup';
 import { eraseAccountShortcuts } from '$lib/sharing/shareTargetsNative';
+import { eraseFormDraftCopies } from '$lib/forms/draftCopies';
 import { eraseIncomingShare } from '$lib/mobile/incomingShareSignOut';
 import { endPushRegistration } from '$lib/services/PushNotificationService';
 import { getClientAppVersion, isMobileTauriRuntime } from '$lib/utils/appVersion';
@@ -1445,6 +1446,8 @@ async function clearAuthUnderway(options: { revokeServerSession: boolean }): Pro
   // on disk until it does. AFTER the handler, which reads the registration marker synchronously for
   // the server-side deregistration of a live session.
   void endPushRegistration();
+  // Whose account is leaving, read before the identity below is forgotten.
+  const leavingUserId = currentUserId();
   // THE LOCAL IDENTITY GOES NOW, BEFORE THE FIRST AWAIT - never after the revocation below. The
   // handler has just set `isLoggedIn` false, and every unlock trigger in the app shell (the user-id
   // effect, `afterNavigate`) starts the unlock on "a saved user, nobody logged in". Left until the
@@ -1472,6 +1475,9 @@ async function clearAuthUnderway(options: { revokeServerSession: boolean }): Pro
   // And the shortcuts the phone holds for THIS account - the share sheet's suggestions and the
   // notifications' conversation shortcuts, names and faces the next account must never see.
   void eraseAccountShortcuts('signed out');
+  // And the forms' edits this device kept for a save that has not landed: the next account must
+  // neither see nor send them (owner, 2026-11-08).
+  void eraseFormDraftCopies(leavingUserId, 'signed out');
   if (!options.revokeServerSession) {
     alog('clear✓ local only - the shared cookie and credential are left to the tab that owns them');
     return;
