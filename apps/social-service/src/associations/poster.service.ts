@@ -574,8 +574,9 @@ export class PosterService {
       // Two publishes in one space are SERIALISED on the space's row: without it both clear "the
       // previous live map" (none yet, or the same one) and the later insert hits the per-space
       // unique index - a 500. Under the lock the later publish sees the earlier one committed, clears
-      // it, and wins: the last publish is the live one.
-      await manager.query('SELECT 1 FROM spaces WHERE id = $1 FOR UPDATE', [spaceId]);
+      // it, and wins: the last publish is the live one. NO KEY: the row is not deleted nor its key
+      // changed, so the foreign keys that reference the space (KEY SHARE) are not blocked by it.
+      await manager.query('SELECT 1 FROM spaces WHERE id = $1 FOR NO KEY UPDATE', [spaceId]);
       const repo = manager.getRepository(PosterProject);
       // Clear the space's previous live map FIRST; the unique index allows one live row per space.
       // Its fingerprint goes with it: a row that is not live describes no published document.

@@ -42,7 +42,7 @@ describe('PosterService - the fingerprint of the document that went live', () =>
         transaction: (run: (m: unknown) => Promise<unknown>) =>
           run({
             getRepository: () => inner,
-            // The per-space lock (`SELECT ... FOR UPDATE`): recorded, answered with nothing.
+            // The per-space lock (`SELECT ... FOR NO KEY UPDATE`): recorded, answered with nothing.
             query: (sql: string, params: unknown[]) => {
               locks.push({ sql, params });
               return Promise.resolve([]);
@@ -142,7 +142,7 @@ describe('PosterService - the fingerprint of the document that went live', () =>
   it('serialises the publish on its space row before clearing the previous live map', async () => {
     await service.publish('p1', { carte: carte(), fingerprint: FP }, ADMIN);
     expect(locks).toEqual([
-      { sql: expect.stringMatching(/FROM spaces .* FOR UPDATE/), params: ['s1'] },
+      { sql: expect.stringMatching(/FROM spaces .* FOR NO KEY UPDATE/), params: ['s1'] },
     ]);
   });
 

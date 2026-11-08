@@ -185,12 +185,14 @@ async function seed(db: Client, opts: { icmGardanne: boolean }): Promise<void> {
       layout([ID.a3]),
       FP,
       ID.bdeDraft,
-      // The document that is live: a1 (of the space) and a3 (FSSS only, switched off by 147), as a
-      // unit and as a directory line each.
+      // The document that is live: a1 (switched ON by 147), a3 (FSSS only, switched OFF) and a4 (of
+      // the space but never placed, so NO switch), as units and directory lines; one zone holds
+      // only a3, one only a4.
       JSON.stringify({
         units: [
           { assoId: ID.a1, x: 1 },
           { assoId: ID.a3, x: 2 },
+          { assoId: ID.a4, x: 3 },
         ],
         directory: {
           heading: 'Annuaire',
@@ -203,6 +205,9 @@ async function seed(db: Client, opts: { icmGardanne: boolean }): Promise<void> {
                 { assoId: ID.a2, line: 'B' },
               ],
             },
+            { label: 'Cuisine', assos: [{ assoId: ID.a3, line: 'C' }] },
+            { label: 'Nouvelles', assos: [{ assoId: ID.a4, line: 'D' }] },
+            { label: 'Fin', assos: [{ assoId: ID.a1, line: 'A2' }] },
           ],
         },
       }),
@@ -263,7 +268,7 @@ maybe('migration 147 on a seeded schema (the map is attachable)', () => {
     await expect(spaceOf(ID.live)).resolves.toEqual({ spaceId: ID.icm, live: true });
   });
 
-  it('removes from the LIVE document every unit and directory line it switched off, and nothing else', async () => {
+  it('keeps in the LIVE document only what is switched ON, drops an emptied zone, and nothing else', async () => {
     const { rows } = await db.query(
       `SELECT publication, "publicationFingerprint" AS fp FROM poster_projects WHERE id = $1`,
       [ID.live]
@@ -275,6 +280,8 @@ maybe('migration 147 on a seeded schema (the map is attachable)', () => {
         zones: [
           { label: 'Culture', assos: [{ assoId: ID.a1, line: 'A' }] },
           { label: 'Sport', assos: [{ assoId: ID.a2, line: 'B' }] },
+          // 'Cuisine' (only OFF) and 'Nouvelles' (only no-switch) are gone; the order holds.
+          { label: 'Fin', assos: [{ assoId: ID.a1, line: 'A2' }] },
         ],
       },
     });

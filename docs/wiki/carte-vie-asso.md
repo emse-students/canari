@@ -63,9 +63,10 @@ association `bde` - resolved in SQL by that stable slug, not a name - and stayed
 it showed whose audience does not reach that space were switched OFF, not deleted. Measured on
 production before it ran (read-only): one map, live, 33 placed associations, 31 reaching
 `ICM:saint-etienne`, so 31 ON and 2 OFF. The live DOCUMENT is filtered in the same transaction:
-the units and directory lines of an association switched off are removed (nothing else), and the
-stored fingerprint is cleared since it no longer describes the document - the 2 are off the portail
-at the deploy, not at the next republish. Any other map is attached when its creator manages exactly
+only the units and directory lines of an association switched ON on the map are kept (an OFF switch
+and no switch are both removed), a directory zone left empty is dropped, nothing else changes, and
+the stored fingerprint is cleared since it no longer describes the document - the 2 are off the
+portail at the deploy, not at the next republish. Any other map is attached when its creator manages exactly
 one space, else left with no space and offline; an ambiguous live map is taken offline with a
 `NOTICE`, never guessed. The migration is held for the owner's approval line.
 
@@ -520,7 +521,7 @@ a millisecond. It needs a durable record of WHICH layout was published
   NULL` forbids a second published row for a space, and a CHECK forbids a live map with no space.
   `publish()` therefore clears the space's previous map and sets the new one inside ONE transaction,
   or it would deadlock against itself; another space's live map is untouched. Two publishes in one
-  space are serialised on the space's row (`SELECT ... FROM spaces ... FOR UPDATE` first in the
+  space are serialised on the space's row (`SELECT ... FROM spaces ... FOR NO KEY UPDATE` first in the
   transaction): the later one replaces the earlier instead of hitting the index with a 500.
 - **Every association the document names - unit AND directory line - must be switched on and of
   the space**, or the publish is refused `CARTE_UNIT_OUTSIDE_MAP`.

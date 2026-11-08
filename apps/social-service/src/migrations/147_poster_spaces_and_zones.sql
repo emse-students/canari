@@ -180,12 +180,14 @@ CROSS JOIN LATERAL (
 WHERE placed.hit
 ON CONFLICT ("posterProjectId", "associationId") DO NOTHING;
 
--- 3b. The LIVE document stops showing what step 3 switched off (owner, 2026-11-08: they are off
--- the portail now, not at the next republish). Only units and directory lines whose association
--- has an OFF switch on that map are removed - nothing else in the document is touched. The stored
--- fingerprint no longer describes the document, so it is cleared: the editor then reads the live
--- map as "unknown" instead of claiming it matches. Idempotent: a re-run finds no OFF association
--- left in the document and updates nothing.
+-- 3b. The LIVE document shows exactly what step 3 switched ON (owner, 2026-11-08: the associations
+-- switched off are off the portail now, not at the next republish). A unit or directory line is
+-- KEPT only when its association has an ON switch on that map - an OFF switch and no switch at all
+-- are both removed - and a directory zone left with no line is dropped, since the editor never
+-- publishes an empty zone and the showcase prints every zone's heading. Order is kept and nothing
+-- else in the document is touched. The stored fingerprint no longer describes the document, so it
+-- is cleared: the editor then reads the live map as "unknown" instead of claiming it matches.
+-- Idempotent: each UPDATE fires only while the document still holds something to remove.
 UPDATE poster_projects p
 SET publication = jsonb_set(
       p.publication,
@@ -194,11 +196,11 @@ SET publication = jsonb_set(
         (
           SELECT jsonb_agg(u.value ORDER BY u.ordinality)
           FROM jsonb_array_elements(p.publication -> 'units') WITH ORDINALITY u
-          WHERE NOT EXISTS (
-            SELECT 1 FROM poster_entries e
-            WHERE e."posterProjectId" = p.id AND NOT e.enabled
-              AND e."associationId"::text = u.value ->> 'assoId'
-          )
+          WHERE EXISTS (
+              SELECT 1 FROM poster_entries e
+              WHERE e."posterProjectId" = p.id AND e.enabled
+                AND e."associationId"::text = u.value ->> 'assoId'
+            )
         ),
         '[]'::jsonb
       )
@@ -209,8 +211,11 @@ WHERE p.publication IS NOT NULL
   AND EXISTS (
     SELECT 1
     FROM jsonb_array_elements(p.publication -> 'units') u
-    JOIN poster_entries e
-      ON e."posterProjectId" = p.id AND NOT e.enabled AND e."associationId"::text = u ->> 'assoId'
+    WHERE NOT EXISTS (
+              SELECT 1 FROM poster_entries e
+              WHERE e."posterProjectId" = p.id AND e.enabled
+                AND e."associationId"::text = u ->> 'assoId'
+            )
   );
 
 UPDATE poster_projects p
@@ -218,29 +223,20 @@ SET publication = jsonb_set(
       p.publication,
       '{directory,zones}',
       (
-        SELECT COALESCE(jsonb_agg(
-          jsonb_set(
-            z.value,
-            '{assos}',
-            COALESCE(
-              (
-                SELECT jsonb_agg(a.value ORDER BY a.ordinality)
-                FROM jsonb_array_elements(
-                  CASE WHEN jsonb_typeof(z.value -> 'assos') = 'array' THEN z.value -> 'assos' ELSE '[]'::jsonb END
-                ) WITH ORDINALITY a
-                WHERE NOT EXISTS (
-                  SELECT 1 FROM poster_entries e
-                  WHERE e."posterProjectId" = p.id AND NOT e.enabled
-                    AND e."associationId"::text = a.value ->> 'assoId'
-                )
-              ),
-              '[]'::jsonb
-            )
-          )
-          ORDER BY z.ordinality
-        ), '[]'::jsonb)
+        SELECT COALESCE(jsonb_agg(jsonb_set(z.value, '{assos}', k.kept) ORDER BY z.ordinality), '[]'::jsonb)
         FROM jsonb_array_elements(p.publication -> 'directory' -> 'zones') WITH ORDINALITY z
-        WHERE jsonb_typeof(z.value) = 'object'
+        CROSS JOIN LATERAL (
+          SELECT jsonb_agg(a.value ORDER BY a.ordinality) AS kept
+          FROM jsonb_array_elements(
+            CASE WHEN jsonb_typeof(z.value -> 'assos') = 'array' THEN z.value -> 'assos' ELSE '[]'::jsonb END
+          ) WITH ORDINALITY a
+          WHERE EXISTS (
+              SELECT 1 FROM poster_entries e
+              WHERE e."posterProjectId" = p.id AND e.enabled
+                AND e."associationId"::text = a.value ->> 'assoId'
+            )
+        ) k
+        WHERE jsonb_typeof(z.value) = 'object' AND k.kept IS NOT NULL
       )
     ),
     "publicationFingerprint" = NULL
@@ -249,11 +245,30 @@ WHERE p.publication IS NOT NULL
   AND EXISTS (
     SELECT 1
     FROM jsonb_array_elements(p.publication -> 'directory' -> 'zones') z
-    CROSS JOIN LATERAL jsonb_array_elements(
-      CASE WHEN jsonb_typeof(z -> 'assos') = 'array' THEN z -> 'assos' ELSE '[]'::jsonb END
-    ) a
-    JOIN poster_entries e
-      ON e."posterProjectId" = p.id AND NOT e.enabled AND e."associationId"::text = a ->> 'assoId'
+    WHERE jsonb_typeof(z) <> 'object'
+      -- a zone with a line to remove, or with no line left to keep
+      OR EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(
+          CASE WHEN jsonb_typeof(z -> 'assos') = 'array' THEN z -> 'assos' ELSE '[]'::jsonb END
+        ) a
+        WHERE NOT EXISTS (
+              SELECT 1 FROM poster_entries e
+              WHERE e."posterProjectId" = p.id AND e.enabled
+                AND e."associationId"::text = a ->> 'assoId'
+            )
+      )
+      OR NOT EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements(
+          CASE WHEN jsonb_typeof(z -> 'assos') = 'array' THEN z -> 'assos' ELSE '[]'::jsonb END
+        ) a
+        WHERE EXISTS (
+              SELECT 1 FROM poster_entries e
+              WHERE e."posterProjectId" = p.id AND e.enabled
+                AND e."associationId"::text = a ->> 'assoId'
+            )
+      )
   );
 
 -- 4. One live map per space.
