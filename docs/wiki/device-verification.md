@@ -647,6 +647,10 @@ locked and the app killed, and a second device calling it with VIDEO.
 3. Repeat with an AUDIO call: `video=0`, audio screen, camera off.
 4. With `calls_mode = audio`, a video ring attempt is refused by the server: no CallKit ring at all.
 
+## The emoji picker paints at once - owed on the iPhone (2026-11-08)
+
+Cause and fix: [emoji](frontend/emoji.md#the-picker-paints-at-once---2026-11-08). On a pre-release, killed app, a conversation with at least one message: open a conversation, wait for it to settle, tap a message's reaction "+" (then the composer's emoji button on a second run). Read: no cell of the first screen of "Smileys et emotions" is blank or grows, "Recents" has no empty tile, the tab bar shows nine icons and no stray glyph, on the FIRST open after a cold launch. Record the first-frame state with a screen capture.
+
 ## The seed mirror labelled by account - owed (2026-11-07)
 
 **Proves** that the Graine seed mirror's account labels are written on hardware by both writers (the
