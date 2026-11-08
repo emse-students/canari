@@ -82,12 +82,17 @@ export function formViewHref(
   return isDraftForm(form) || hasUnpublishedChanges ? `${path}?${FORM_PREVIEW_PARAM}=1` : path;
 }
 
-/** Whether the fill page was opened as a preview: asked by the link, or the form is a draft. */
+/**
+ * Whether the fill page shows a PREVIEW that sends nothing: only what a manager alone can read - a
+ * draft (served to its managers only), or an unpublished revision a manager read
+ * (`revisionShown`). The `preview` flag in a link asks for the revision; it never shuts the send of
+ * a published form by itself, so a respondent handed such a link answers as usual.
+ */
 export function isPreview(
   form: Pick<Form, 'status'> | null | undefined,
-  params: Pick<URLSearchParams, 'get'>
+  revisionShown = false
 ): boolean {
-  return isDraftForm(form) || params.get(FORM_PREVIEW_PARAM) === '1';
+  return isDraftForm(form) || revisionShown;
 }
 
 /**

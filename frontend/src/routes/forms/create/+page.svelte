@@ -24,6 +24,7 @@
     type CreateFormPayload,
   } from '$lib/forms/api';
   import { draftRefusalMessage, publishBlocker } from '$lib/forms/publish';
+  import { serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
   import { questionImageRefusalMessage } from '$lib/forms/questionImage';
   import { POST_NEW_FORM_ID_KEY, loadPostComposerDraft } from '$lib/posts/postComposerDraft';
   import {
@@ -279,6 +280,13 @@
    * builder as before. A publication refused after the draft exists lands on that edit page too,
    * which says why "Publier" is shut.
    */
+  /**
+   * Whether this estate builds forms as drafts (`formDrafts` in `/api/version`). An older server
+   * strips `draft` and publishes at once, and has no publish route: the builder then saves as it
+   * always did, one "Enregistrer" that publishes (docs/wiki/legacy-compatibility.md).
+   */
+  const formDrafts = serverFormDrafts() === true;
+
   async function handleSave(intent: 'draft' | 'publish' = 'draft') {
     if (titleMissing) {
       error = m.form_error_title_required();
@@ -339,7 +347,7 @@
     let createdId: string | null = null;
     try {
       const payload: CreateFormPayload = {
-        draft: true,
+        ...(formDrafts ? { draft: true } : {}),
         title,
         description,
         basePrice: requiresPayment ? Math.round(basePrice * 100) : 0,
@@ -369,14 +377,16 @@
       };
       const created = await createForm(payload);
       createdId = created.id;
-      if (intent === 'draft') {
+      if (formDrafts && intent === 'draft') {
         Log.d('forms-editor', `draft created ${created.id}`);
         goto(resolve('/forms/[id]/edit', { id: created.id }));
         return;
       }
-      isPublishing = true;
-      await publishForm(created.id);
-      Log.d('forms-editor', `created and published ${created.id}`);
+      if (formDrafts) {
+        isPublishing = true;
+        await publishForm(created.id);
+      }
+      Log.d('forms-editor', `created and published ${created.id} (drafts=${formDrafts})`);
       if (fromPostComposer) {
         sessionStorage.setItem(POST_NEW_FORM_ID_KEY, created.id);
         goto(resolve('/posts'));
@@ -386,7 +396,7 @@
         );
       }
     } catch (e: any) {
-      if (createdId) {
+      if (createdId && formDrafts) {
         // The draft is stored; only its publication was refused. Its edit page says why.
         console.warn('[forms] the draft is saved but its publication was refused:', e);
         goto(resolve('/forms/[id]/edit', { id: createdId }));
@@ -536,8 +546,10 @@
     {titleMissing}
     {isSubmitting}
     {summary}
-    saveLabel={m.form_save_draft_button()}
-    onSave={() => handleSave('draft')}
-    publish={{ onPublish: () => handleSave('publish'), blockedReason, busy: isPublishing }}
+    saveLabel={formDrafts ? m.form_save_draft_button() : m.form_save_button()}
+    onSave={() => handleSave(formDrafts ? 'draft' : 'publish')}
+    publish={formDrafts
+      ? { onPublish: () => handleSave('publish'), blockedReason, busy: isPublishing }
+      : null}
   />
 </PageContainer>

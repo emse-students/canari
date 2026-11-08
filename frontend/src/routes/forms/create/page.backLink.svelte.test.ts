@@ -32,6 +32,12 @@ vi.mock('$lib/pricing/criteriaOptions', async (orig) => ({
   fetchFormations: async () => [],
 }));
 
+const caps = vi.hoisted(() => ({ formDrafts: true as boolean | null }));
+vi.mock('$lib/stores/appVersionCheck.svelte', async (orig) => ({
+  ...(await orig<typeof import('$lib/stores/appVersionCheck.svelte')>()),
+  serverFormDrafts: () => caps.formDrafts,
+}));
+
 import Page from './+page.svelte';
 
 /** Mounting the whole builder costs seconds under a loaded suite; the budget says so. */

@@ -101,6 +101,14 @@ describe('the fill page as a preview', () => {
     expect(api.checkSubmission).not.toHaveBeenCalled();
   });
 
+  it('a published form opened WITH the flag by a respondent: still the live page, sendable', async () => {
+    api.status = 'published';
+    await open('https://canari.test/forms/f1?preview=1');
+    expect(document.querySelector('[data-testid="form-preview-banner"]')).toBeNull();
+    expect(sendButton()).toBeUndefined();
+    expect(api.checkSubmission).toHaveBeenCalledTimes(1);
+  });
+
   it('a published form opened without the flag: the live page, no preview', async () => {
     api.status = 'published';
     await open('https://canari.test/forms/f1');
