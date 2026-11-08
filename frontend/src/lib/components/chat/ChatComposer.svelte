@@ -70,7 +70,8 @@
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { downloadDecryptedFile } from '$lib/utils/fileDownload';
-  import { filesFromTransfer, localFileAddressesFromTransfer } from '$lib/utils/composerTransfer';
+  import { dropEffectFor } from '$lib/utils/composerTransfer';
+  import { handleComposerDrop } from '$lib/utils/composerDrop';
   import { m } from '$lib/paraglide/messages';
   import { showToast } from '$lib/stores/toast.svelte';
   import VoiceMessagePlayer from '$lib/components/messages/VoiceMessagePlayer.svelte';
@@ -687,6 +688,7 @@
 
   function handleDragOver(event: DragEvent) {
     event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = dropEffectFor(event.dataTransfer);
     isDragOver = true;
   }
 
@@ -731,20 +733,7 @@
   function handleDrop(event: DragEvent) {
     event.preventDefault();
     isDragOver = false;
-    const files = filesFromTransfer(event.dataTransfer);
-    if (files.length > 0 && onFilesSelected) {
-      onFilesSelected(files);
-      return;
-    }
-    // Same refusal as the editor's own drop: a local file the engine withheld (Firefox + Nemo) is
-    // said out loud rather than silently doing nothing.
-    const refused = localFileAddressesFromTransfer(event.dataTransfer);
-    if (refused.length > 0) {
-      console.warn(
-        `[COMPOSER] drop announced ${refused.length} local file(s) but handed over none - the file manager did not give the browser the file`
-      );
-      showToast(m.composer_drop_file_unreadable());
-    }
+    handleComposerDrop(event.dataTransfer, { onFiles: onFilesSelected });
   }
 
   function fileKey(file: File, index: number): string {

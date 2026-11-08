@@ -87,3 +87,108 @@ export function localFileAddressesFromTransfer(dt: DataTransfer | null | undefin
   }
   return [];
 }
+
+/**
+ * The `http(s)` image addresses a drop announces when it hands over no file - a picture dragged out
+ * of another web page. The browser sends the PAGE's reference to the image (`text/uri-list`, and an
+ * `<img src>` inside `text/html`), never its bytes, so there is no `File` to read: the address is the
+ * only thing a composer can act on, by fetching it.
+ *
+ * `blob:` and `data:` addresses are left out on purpose: a `blob:` URL is only readable by the
+ * origin that minted it (a Messenger tab's, reported 2026-09-18), so asking for it is certain to
+ * fail and the caller would learn that by failing.
+ *
+ * @param dt - the transfer from a `DragEvent.dataTransfer`.
+ * @returns the distinct fetchable addresses, in transfer order; empty when there is none.
+ */
+export function webImageUrlsFromTransfer(dt: DataTransfer | null | undefined): string[] {
+  if (!dt) return [];
+  const found: string[] = [];
+  const add = (raw: string | null | undefined) => {
+    const url = (raw ?? '').trim();
+    if (/^https?:\/\//i.test(url) && !found.includes(url)) found.push(url);
+  };
+
+  (dt.getData('text/uri-list') ?? '')
+    .split(/\r?\n/)
+    .filter((line) => line && !line.startsWith('#'))
+    .forEach(add);
+
+  const html = dt.getData('text/html') ?? '';
+  if (html) {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    doc.querySelectorAll('img').forEach((img) => add(img.getAttribute('src')));
+  }
+  return found;
+}
+
+/**
+ * The drop effect to announce over a composer.
+ *
+ * Forcing `copy` is a defect when the source offered only `move` (`effectAllowed`): an image dragged
+ * out of a web page does, and a browser REFUSES a drop whose effect the source did not allow - the
+ * cursor stays the "move" arrow and `drop` never fires (the reported symptom, 2026-11-08). The
+ * composer never moves anything, so `copy` when it is allowed and otherwise the first effect the
+ * source does allow (`link`, then `move`).
+ *
+ * @param dt - the transfer of a `dragover`.
+ * @returns the value to assign to `dropEffect`.
+ */
+export function dropEffectFor(dt: DataTransfer): 'copy' | 'link' | 'move' {
+  const allowed = dt.effectAllowed;
+  if (allowed === 'none' || allowed === 'uninitialized') return 'copy';
+  const lower = allowed.toLowerCase();
+  if (lower.includes('copy') || lower === 'all') return 'copy';
+  if (lower.includes('link')) return 'link';
+  return 'move';
+}
+
+/** Why an image address could not become a file; carried as a field so nobody reads the message. */
+export type WebImageFailure = 'unreachable' | 'http' | 'not-image';
+
+/** A dropped web image that could not be fetched, classified at the throw. */
+export class WebImageFetchError extends Error {
+  readonly reason: WebImageFailure;
+  readonly url: string;
+  constructor(reason: WebImageFailure, url: string) {
+    super(`web image ${reason}`);
+    this.name = 'WebImageFetchError';
+    this.reason = reason;
+    this.url = url;
+  }
+}
+
+/**
+ * Fetches a dropped web image as a `File`, as the browser's CORS rules allow.
+ *
+ * `unreachable` is what a cross-origin host that sends no CORS headers looks like (the fetch rejects
+ * with an opaque `TypeError`, indistinguishable from being offline) - the caller says so rather than
+ * attaching nothing in silence.
+ *
+ * @param url - an `http(s)` image address from `webImageUrlsFromTransfer`.
+ * @param fetchImpl - injectable for tests.
+ * @throws WebImageFetchError classified by `reason`.
+ */
+export async function fetchWebImageFile(
+  url: string,
+  fetchImpl: typeof fetch = fetch
+): Promise<File> {
+  let response: Response;
+  try {
+    response = await fetchImpl(url, { mode: 'cors', credentials: 'omit' });
+  } catch {
+    throw new WebImageFetchError('unreachable', url);
+  }
+  if (!response.ok) throw new WebImageFetchError('http', url);
+  const blob = await response.blob();
+  const type = (blob.type || response.headers.get('content-type') || '').split(';')[0];
+  if (!type.startsWith('image/')) throw new WebImageFetchError('not-image', url);
+  let name = 'image';
+  try {
+    name = decodeURIComponent(new URL(url).pathname.split('/').filter(Boolean).pop() ?? '') || name;
+  } catch {
+    // an address that does not parse keeps the generic name
+  }
+  if (!/\.[a-z0-9]{2,5}$/i.test(name)) name += `.${type.slice('image/'.length).split('+')[0]}`;
+  return new File([blob], name, { type, lastModified: Date.now() });
+}

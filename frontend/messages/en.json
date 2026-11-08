@@ -303,6 +303,8 @@
   "chat_insert_emoji_label": "Insert {emoji}",
   "chat_composer_group_label": "Text input and file drop area",
   "chat_drag_files_badge": "Drop your files here",
+  "composer_drop_web_image_refused": "That website does not let other sites read its image. Save the image, then attach the file.",
+  "post_drop_overlay": "Drop to attach to your post",
   "composer_drop_file_unreadable": "Your file manager did not hand this file to the browser. Use the attachment button instead.",
   "chat_enlarge_preview_label": "Enlarge preview",
   "chat_remove_file_label": "Remove file",
