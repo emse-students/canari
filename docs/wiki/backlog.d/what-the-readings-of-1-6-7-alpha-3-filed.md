@@ -21,8 +21,6 @@ What they found. None of it is a regression, and none of it blocks:
   sign-out logs one `E [Push] FCM token deregistration failed`, one `refresh 401` and one
   `pauseSocket: native disconnect failed`. The order belongs in the sign-out sequence: deregister,
   then close, then revoke.
-- **P2/P3 - the minimised call bar loses its camera button once the camera is off.** It can only be
-  turned back on from full screen. Seen on both phones.
 - **P3 - `pauseSocket` on an already-closed socket** when the app goes to the background for the
   file picker. This is lifecycle noise next to "Reconnect request refused - paused".
 - **P3 - the live identity picker offers associations the server then refuses** with

@@ -15,11 +15,13 @@
    * minimised (`callView`). The full screen, with the call's one audio sink, is `CallOverlay`.
    *
    * A VIDEO CALL MINIMISED keeps its camera on (as on every phone), so the bar carries the camera
-   * button while it sends - the user browsing the app can cut it without going back - and a
+   * button in BOTH states (owner, 2026-11-08: it used to vanish once the camera was off, leaving
+   * full screen as the only way back) - the user browsing the app can cut it and restore it without
+   * going back - and a
    * thumbnail of the peer's picture when there is one, muted like every `<video>` of a call; the
    * peer's avatar in its place until that picture has a frame (`utils/callVideoElement.ts`).
    */
-  import { Mic, MicOff, Phone, PhoneOff, Video } from '@lucide/svelte';
+  import { Mic, MicOff, Phone, PhoneOff, Video, VideoOff } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { currentUserId } from '$lib/stores/user';
@@ -29,6 +31,8 @@
   import { resolveCallPeers } from '$lib/utils/chat/callPeers';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { appendLog } from '$lib/utils/sessionLog';
+  import { callVideoAvailable } from '$lib/utils/callsAvailability';
+  import { serverCallsMode } from '$lib/stores/appVersionCheck.svelte';
   import { bindCallVideo } from '$lib/utils/callVideoElement';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import type { CallService } from '$lib/services/CallService';
@@ -92,8 +96,9 @@
     return bindCallVideo(el, track, 'bar thumbnail', () => (thumbFrame = true));
   });
 
-  function cameraOff() {
-    appendLog('[Call] camera turned off from the top banner');
+  /** The full screen's own handler (`toggleVideo`): off and back on share one path. */
+  function toggleCamera() {
+    appendLog(`[Call] camera ${call.isVideoOff ? 'turned on' : 'turned off'} from the top banner`);
     void service?.toggleVideo();
   }
 
@@ -176,15 +181,21 @@
         <Phone size={20} class="fill-current" />
       </button>
     {:else if call.callState !== 'ended'}
-      {#if !call.isVideoOff}
+      <!-- Same gate as the full screen: the switch gates turning the camera ON, never OFF. -->
+      {#if callVideoAvailable(serverCallsMode()) || !call.isVideoOff}
         <button
           type="button"
-          class="ui-icon-button text-cn-ink shrink-0 rounded-full bg-white hover:bg-white/90"
-          aria-label={m.call_disable_camera_label()}
+          class="ui-icon-button shrink-0 rounded-full {call.isVideoOff
+            ? 'text-white hover:bg-white/15'
+            : 'text-cn-ink bg-white hover:bg-white/90'}"
+          aria-label={call.isVideoOff
+            ? m.call_enable_camera_label()
+            : m.call_disable_camera_label()}
+          aria-pressed={!call.isVideoOff}
           data-testid="call-banner-camera"
-          onclick={cameraOff}
+          onclick={toggleCamera}
         >
-          <Video size={20} />
+          {#if call.isVideoOff}<VideoOff size={20} />{:else}<Video size={20} />{/if}
         </button>
       {/if}
       <button
