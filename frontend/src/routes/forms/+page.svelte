@@ -37,6 +37,7 @@
   import { productGridQuestions } from '$lib/forms/responsesView';
   import { formViewHref, isDraftForm } from '$lib/forms/publish';
   import Button from '$lib/components/ui/Button.svelte';
+  import { markdownToPlainText } from '$lib/seo/text';
 
   /** The form whose QR code is open, or null. Both share controls point at the same path. */
   let qrForm = $state<Form | null>(null);
@@ -226,11 +227,13 @@
             : 'hover:border-cn-yellow/40'}"
         >
           <!-- Card header -->
-          <div class="flex flex-col gap-3 p-5 sm:flex-row sm:items-center">
+          <div class="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:p-5">
             <div class="min-w-0 flex-1">
               <h2 class="text-text-main truncate font-bold">{form.title}</h2>
               {#if form.description}
-                <p class="text-text-muted mt-0.5 truncate text-sm">{form.description}</p>
+                <p class="text-text-muted mt-0.5 truncate text-sm">
+                  {markdownToPlainText(form.description)}
+                </p>
               {/if}
               <!-- Whose form this is, by NAME. The list covers association forms reachable
                    through MANAGE_FORMS, so a row that only said its title would leave the
@@ -268,13 +271,18 @@
                 {/if}
               </p>
             </div>
-            <!-- Icon-only, all six - a text label on each of six actions demanded more width than
-                 a viewport had to give, and the only flex item without a `min-w-0` floor is the
-                 name above, so it lost that fight first and truncated to almost nothing. -->
-            <div class="flex shrink-0 flex-wrap gap-2">
+            <!-- Icon-only, ONE ROW at every width (owner, 2026-11-08: the seventh button wrapped
+                 alone onto a second row on a phone). Under `sm` the row takes the card's width and
+                 every action shares it equally (`flex-1`, 44px tall, a gap of 6px); from `sm` up the
+                 buttons keep their own box beside the name. `relative` anchors the export menu to the
+                 row on a phone, where a menu hanging from its own button would leave the screen. -->
+            <div
+              class="relative flex w-full items-stretch gap-1.5 sm:w-auto sm:shrink-0 sm:gap-2 [&_.ui-icon-button]:w-full sm:[&_.ui-icon-button]:w-auto [&>*]:min-w-0 [&>*]:flex-1 sm:[&>*]:flex-none"
+            >
               <a
                 href="/forms/{form.id}/edit"
                 class="ui-icon-button bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl transition-colors"
+                aria-label={m.form_list_edit_button()}
                 title={m.form_list_edit_button()}
               >
                 <Pencil size={16} />
@@ -297,6 +305,7 @@
                 <button
                   onclick={() => copyFormLink(form)}
                   class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
+                  aria-label={m.form_list_share_button()}
                   title={m.form_list_share_button()}
                 >
                   <Link size={16} />
@@ -304,6 +313,7 @@
                 <button
                   onclick={() => (qrForm = form)}
                   class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
+                  aria-label={m.qr_button()}
                   title={m.qr_button()}
                 >
                   <QrCode size={16} />
@@ -321,6 +331,7 @@
                 ]
                   ? 'border-cn-yellow/40 bg-cn-yellow/10 text-cn-dark'
                   : 'border-cn-border text-text-main hover:border-cn-yellow/40'}"
+                aria-label={m.form_list_responses_button()}
                 title={m.form_list_responses_button()}
               >
                 {#if expandedForms[form.id]}
@@ -332,7 +343,8 @@
               <button
                 onclick={() => handleDelete(form.id, form.title)}
                 disabled={deletingId === form.id}
-                class="ui-icon-button border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 rounded-xl border-2 transition-colors disabled:opacity-50"
+                class="ui-icon-button border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 rounded-xl border-2 transition-colors disabled:opacity-50 sm:ml-1"
+                aria-label={m.common_delete_button()}
                 title={m.common_delete_button()}
               >
                 <Trash2 size={16} />
