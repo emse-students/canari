@@ -1545,7 +1545,14 @@ export async function hasStoredSession(): Promise<boolean> {
     // On Tauri mobile, localStorage may be wiped after an OS process kill while
     // the HttpOnly refresh cookie survives in the WebView cookie store. Attempt a
     // silent refresh - _doRefresh will restore userId from the JWT sub claim.
-    if (isTauri()) {
+    //
+    // ONLY IN A PROCESS THAT HAS NOT SIGNED OUT. That wipe is the work of an OS process kill, so the
+    // question is only ever open at a cold start. A process that ran `clearAuth` emptied the identity
+    // ON PURPOSE and revoked the credential: asking the server would be a request whose answer is
+    // known (`refresh✗401` ~100 ms after every `logout✓200`, both phones, 2026-11-08).
+    if (isTauri() && _signOutGeneration > 0) {
+      alog('session: signed out in this process - no recovery refresh');
+    } else if (isTauri()) {
       try {
         await refresh();
         uid = currentUserId();
