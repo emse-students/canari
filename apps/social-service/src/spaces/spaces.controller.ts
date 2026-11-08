@@ -31,16 +31,6 @@ export class SpacesController {
   }
 
   /**
-   * The audience rules of every association, for the admin grid of OLDER builds: the current one
-   * reads each page's rules with `GET associations/admin/catalogue`. A shim, retired with the floor
-   * (docs/wiki/legacy-compatibility.md).
-   */
-  @Get('audiences')
-  listAudiences() {
-    return this.service.listAudiences();
-  }
-
-  /**
    * Designates, or clears with `null`, the governor of a space (D22): a BDE or an institution
    * (reform 2.3), journaled with the admin who did it (2.7).
    */

@@ -43,42 +43,6 @@ export const UPDATE_FIELD_RIGHTS: Record<keyof UpdateAssociationDto, UpdateField
 export const ASSOCIATION_FIELD_PLATFORM_ADMIN_ONLY = 'ASSOCIATION_FIELD_PLATFORM_ADMIN_ONLY';
 export const ASSOCIATION_FIELD_RIGHT_MISSING = 'ASSOCIATION_FIELD_RIGHT_MISSING';
 
-/** `''`, `null` and `undefined` all mean "none"; a number-like value compares as a number. */
-function normalised(value: unknown): unknown {
-  if (value === undefined || value === null || value === '') return null;
-  if (typeof value === 'bigint') return Number(value);
-  return value;
-}
-
-/**
- * LEGACY SHIM - remove on or after 2027-05-03 (docs/wiki/legacy-compatibility.md, "a list profile
- * save that resends its unchanged parent").
- *
- * `dto` without every platform-admin field whose value equals the stored one. A store build up to
- * 1.6.2 resends `parentAssociationId: editParentId || null` on EVERY list profile save, so without
- * this each save by a non-admin would be refused for a field it did not change. A field that
- * differs is kept, and refused by the caller as before. The list of what was dropped is returned so
- * the caller logs it.
- */
-export function dropUnchangedPlatformFields(
-  dto: UpdateAssociationDto,
-  stored: Record<string, unknown>
-): { patch: UpdateAssociationDto; dropped: string[] } {
-  const patch = { ...dto } as Record<string, unknown>;
-  const dropped: string[] = [];
-  for (const [field, right] of Object.entries(UPDATE_FIELD_RIGHTS)) {
-    if (right !== PLATFORM_ADMIN_ONLY || !(field in patch)) continue;
-    const sent = normalised(patch[field]);
-    const held = normalised(stored[field]);
-    const same = sent === held || (sent !== null && held !== null && Number(sent) === Number(held));
-    if (same) {
-      delete patch[field];
-      dropped.push(field);
-    }
-  }
-  return { patch: patch as UpdateAssociationDto, dropped };
-}
-
 /**
  * The fields of `dto` grouped by the right each asks. A key the table does not know (none can
  * reach here past the whitelisting ValidationPipe) is returned under `unknown`, so the caller

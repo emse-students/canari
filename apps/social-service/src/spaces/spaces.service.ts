@@ -74,11 +74,6 @@ export interface DependencyActor {
   userId: string;
 }
 
-/** One audience rule of one association, as the admin grid reads them all at once. */
-export interface AssociationRule extends AudienceRule {
-  associationId: string;
-}
-
 /** A normalised audience rule: `null` is "any". */
 export interface AudienceRule {
   formation: SpaceFormation | null;
@@ -198,16 +193,6 @@ export class SpacesService {
         bde: bde ? { id: bde.id, name: bde.name } : null,
       };
     });
-  }
-
-  /** The audience rules of EVERY association, in one read: the grid needs them all to draw itself. */
-  async listAudiences(): Promise<AssociationRule[]> {
-    const rows = await this.audiences.find();
-    return rows.map((r) => ({
-      associationId: r.associationId,
-      formation: r.formation,
-      campus: r.campus,
-    }));
   }
 
   /**

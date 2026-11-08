@@ -1024,14 +1024,15 @@ F4, question 3 is F5, question 4 is F6 (section 0).
 - **Writes**: `SpacePinsService` (`space-pins.service.ts`) behind `SpacePinsController`:
   `PATCH /api/posts/:postId/pin|unpin` with `{ spaceId }`, and the governor's list
   `GET /api/posts/space-pins/:spaceId` (`shown` / `pending`). Refusals are typed bodies:
-  `space_pin_limit`, `space_required`, `post_not_in_space` (409), `space_pin_forbidden` (403),
+  `space_pin_limit`, `post_not_in_space` (409), `space_pin_forbidden` (403),
   `space_not_found` and `post_not_found` (404). **Authorisation comes FIRST** (review F4): the
   space's governance is checked before the space lock, before the post's existence and before its
   reach, so a caller who does not govern the space is told the same `403` whether the post exists or
-  not - an unknown space included (only the platform admin hears `space_not_found`); a body-less
-  request from a caller who governs no space at all is `403` before the post is looked at. The answer's `pinned` is the post's state IN THAT SPACE (what an older
-  client toggles on). A body-less UNPIN follows the body-less pin's rule: the one space where the post
-  is pinned and governed, else `space_required` (the lead's reading of "same for unpin").
+  not - an unknown space included (only the platform admin hears `space_not_found`). The answer's
+  `pinned` is the post's state IN THAT SPACE. **The body names the space, always, since floor
+  `1.6.6`**: a body-less pin or unpin is a `400`; before it, the server pinned in the one space that
+  fit and answered `space_required` otherwise, for builds up to `1.6.2`
+  ([legacy-compatibility](legacy-compatibility.md#entries-166-retires-or-unblocks-the-owners-raise-of-2026-11-08)).
 - **Reads**: every post the server serves carries `pinned` (per reader), `canPin` and `pinSpaces`
   (`{ spaceId, formation, campus, state }`, the menu's entries) - two queries per page in
   `PostsService.pinContext`. The feeds and the search sort by `pinnedForViewerSql`; the post-list
@@ -1140,8 +1141,8 @@ n'importe quel post sur l'espace dont il est responsable"*:
 - `canPin` per post is computed for the viewer (a governed space where the post is visible, and the
   right held). `pinned` in the response means pinned in one of the viewer's spaces.
 - **Old clients.** They read `pinned` and send a body-less `pin`. `pinned` keeps the meaning above; a
-  body-less pin is accepted when exactly one governed space fits and is otherwise refused with a
-  typed `space_required` 409. `posts.pinned` stops being read at once; the column is unmapped, then
+  body-less pin was accepted when exactly one governed space fit and was otherwise refused with a
+  typed `space_required` 409 - until floor `1.6.6`, since when it is a `400`. `posts.pinned` stops being read at once; the column is unmapped, then
   dropped in a later release (migration 134).
 - Tests: unit; integration with two BDEs on one campus (an ISMIN pin is not on top for ICM readers);
   the 4th pin refused; two concurrent pins at 2 of 3 leave exactly 3; an institution post pinnable
