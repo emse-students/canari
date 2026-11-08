@@ -494,13 +494,25 @@ export class LiveBroadcast {
     const every = posterEverySegments(period);
     console.debug(`[LIVE-BROADCAST] a preview every ${every} segment(s) (${period} ms)`);
     // The preview is sealed under the DERIVED poster key - the one the list serves without a seat -
-    // never the live key. Derived once, at the first turn that needs it.
+    // never the live key. Derived once, at the first turn that needs it - and a derivation that
+    // FAILED is not kept: the promise is dropped so the next turn derives again, rather than every
+    // later turn re-throwing the one rejection for the rest of the live.
     let posterKey: Promise<string> | null = null;
     return new LivePosterSender({
       capture: () => this.#posterCapture?.() ?? Promise.resolve(null),
       seal: async (plain) => {
-        posterKey ??= this.#deps.derivePosterKey(keyHex, liveId);
-        return this.#deps.sealPoster(await posterKey, liveId, plain);
+        const derivation = (posterKey ??= this.#deps.derivePosterKey(keyHex, liveId));
+        let key: string;
+        try {
+          key = await derivation;
+        } catch (e) {
+          if (posterKey === derivation) posterKey = null;
+          console.warn(
+            `[LIVE-BROADCAST] the poster key did not derive (${String(e)}) - the next preview derives it again`
+          );
+          throw e;
+        }
+        return this.#deps.sealPoster(key, liveId, plain);
       },
       put: (sealed) => this.#deps.putLivePoster(liveId, sealed),
       everySegments: every,

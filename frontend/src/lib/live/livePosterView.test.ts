@@ -54,6 +54,32 @@ describe('loadLivePoster', () => {
     expect(d.fetch).toHaveBeenCalledTimes(3);
   });
 
+  it('joins a load of the same name already RUNNING: two cards at once make one fetch', async () => {
+    let give!: (b: ArrayBuffer) => void;
+    const d = deps(() => new Promise<ArrayBuffer>((r) => (give = r)));
+    const first = loadLivePoster(LIVE, undefined, d);
+    const second = loadLivePoster({ ...LIVE }, undefined, d);
+    give(new ArrayBuffer(4));
+    const [a, b] = await Promise.all([first, second]);
+    expect(a.kind).toBe('shown');
+    expect(b).toEqual(a);
+    expect(d.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('a joiner still wanting the poster loads its own when the load it joined was aborted', async () => {
+    const abort = new AbortController();
+    let fail!: (e: unknown) => void;
+    const d = deps(async () => new ArrayBuffer(4));
+    d.fetch.mockImplementationOnce(() => new Promise<ArrayBuffer>((_r, j) => (fail = j)));
+    const first = loadLivePoster(LIVE, abort.signal, d);
+    const second = loadLivePoster({ ...LIVE }, undefined, d);
+    abort.abort();
+    fail(new DOMException('aborted', 'AbortError'));
+    await expect(first).resolves.toEqual({ kind: 'aborted' });
+    await expect(second).resolves.toMatchObject({ kind: 'shown' });
+    expect(d.fetch).toHaveBeenCalledTimes(2);
+  });
+
   it('asks nothing without a poster or a key', async () => {
     const d = deps(async () => new ArrayBuffer(4));
     await expect(loadLivePoster({ ...LIVE, poster: null }, undefined, d)).resolves.toEqual({

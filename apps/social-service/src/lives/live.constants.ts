@@ -312,7 +312,7 @@ export const LIVE_TITLE_MAX_CHARS = 80;
 /**
  * THE LARGEST SEALED PREVIEW IMAGE ("poster") the server accepts, in bytes (owner, 2026-11-07: a
  * refreshed still image on the feed card). The broadcaster sends a JPEG 480 px wide at quality 0.7
- * (a 480 x 854 portrait frame is tens of kB), sealed under the live key; 256 KiB leaves room for a
+ * (a 480 x 854 portrait frame is tens of kB), sealed under the poster key (HKDF of the live key); 256 KiB leaves room for a
  * busy frame and is a sixteenth of a segment. Refused 413 `LIVE_POSTER_TOO_LARGE` above it.
  */
 export const LIVE_POSTER_MAX_BYTES = 256 * 1024;
@@ -348,18 +348,22 @@ export const LIVE_POSTER_MIN_INTERVAL_MS = LIVE_PREVIEW_PERIOD_MS / 2;
 export const LIVE_POSTER_TYPICAL_BYTES = 48 * 1024;
 
 /**
- * THE PREVIEW'S EGRESS BUDGET, in bits per second (review of #3135). The viewer cap is a bandwidth
- * budget (`LIVE_HOST_EGRESS_BPS` x `LIVE_EGRESS_SHARE` = 72 Mb/s for seated viewers), and a poster
- * takes no seat, so its bytes get their OWN budget out of the 18 Mb/s the live share leaves: 8 Mb/s.
+ * THE PREVIEW'S EGRESS BOUND PER ADDRESS, in bits per second (review of #3135) - a PER-ADDRESS bound,
+ * NOT a host budget. Posters are served by their OWN nginx location and zones
+ * (`/api/media/public/live-poster/`), so a card reader never spends the segments' per-address quota;
+ * that location bounds ONE address at `limit_conn` x `limit_rate` = this number -
+ * `live-segments-route.test.mjs` recomputes it, and that the live share plus one address's bound fits
+ * the host's uplink.
  *
- * Posters are served by their OWN nginx location and zones (`/api/media/public/live-poster/`), so a
- * card reader never spends the segments' per-address quota; that location bounds ONE address at
- * `limit_conn` x `limit_rate` = this budget - `live-segments-route.test.mjs` recomputes it, as it
- * does the cap. What it buys: one poster of {@link LIVE_POSTER_TYPICAL_BYTES} per
- * {@link LIVE_PREVIEW_PERIOD_MS} per reader is ~24.6 kb/s, so ~325 card readers behind ONE campus
- * address before a 429 - which costs a card a stale picture, never a seated viewer a segment.
+ * Nothing caps posters host-wide: every zone is keyed on the client address, as the segments' are,
+ * and the segments' global bound is the SEAT cap, which a poster does not take. Host-wide, posters
+ * cost readers-on-screen x ~24.6 kb/s (one {@link LIVE_POSTER_TYPICAL_BYTES} poster per
+ * {@link LIVE_PREVIEW_PERIOD_MS}), which reaches the 18 Mb/s the live share leaves near 730 readers at
+ * once (lives.md, "What the preview costs", says why no global cap was added). What this bound buys:
+ * ~325 card readers behind ONE campus address before a 429 - which costs a card a stale picture,
+ * never a seated viewer a segment.
  */
-export const LIVE_POSTER_EGRESS_BPS = 8_000_000;
+export const LIVE_POSTER_EGRESS_PER_ADDRESS_BPS = 8_000_000;
 
 /** The numbers as the API serves them. */
 export function liveLimits(): {

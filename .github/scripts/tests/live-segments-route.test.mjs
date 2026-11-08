@@ -206,8 +206,9 @@ need(
 );
 
 // ── the preview image: its OWN location, zones and egress budget (review of #3135) ─────────────
-// A poster takes no seat, so it must never spend the segments' per-address quota, and its bytes
-// have their own budget: LIVE_POSTER_EGRESS_BPS, outside the live share, inside the host's uplink.
+// A poster takes no seat, so it must never spend the segments' per-address quota. Its zones bound
+// ONE ADDRESS at LIVE_POSTER_EGRESS_PER_ADDRESS_BPS; nothing caps posters host-wide (the seat cap is
+// the segments' global bound, and a poster takes no seat - lives.md, "What the preview costs").
 const posterHead = `location ~ "^/api/media/public/live-poster/(${UUID})/(${UUID})\\\\z" {`;
 const posterAt = NGINX.indexOf(posterHead);
 need(posterAt >= 0, `the poster location is gone or no longer captures two lower-case uuids`);
@@ -244,21 +245,20 @@ need(
 );
 const posterConnN = Number(posterBlock.match(/limit_conn lives_posters_conn (\d+);/)?.[1]);
 const posterRateBps = Number(posterBlock.match(/limit_rate (\d+);/)?.[1]) * 8;
-const posterBudget = num('LIVE_POSTER_EGRESS_BPS');
+const posterBudget = num('LIVE_POSTER_EGRESS_PER_ADDRESS_BPS');
 need(
   Number.isInteger(posterConnN) && posterConnN > 0 && posterRateBps > 0,
   'the poster location has no limit_conn or no limit_rate'
 );
-need(posterBudget > 0, 'live.constants.ts states no LIVE_POSTER_EGRESS_BPS');
+need(posterBudget > 0, 'live.constants.ts states no LIVE_POSTER_EGRESS_PER_ADDRESS_BPS');
 need(
   posterConnN * posterRateBps <= posterBudget,
-  `one address may pull ${posterConnN} x ${posterRateBps} b/s of posters, over the preview budget ${posterBudget}`
+  `one address may pull ${posterConnN} x ${posterRateBps} b/s of posters, over its per-address bound ${posterBudget}`
 );
 need(
   num('LIVE_HOST_EGRESS_BPS') * num('LIVE_EGRESS_SHARE') + posterBudget <= num('LIVE_HOST_EGRESS_BPS'),
-  'the live share plus the preview budget is over the host uplink'
+  'the live share plus ONE address at its poster bound is over the host uplink'
 );
-
 // ── nginx's own location selection, over the parsed server block ────────────────────────────────
 /**
  * The locations of the `server` block, as a tree: `{ mod, arg, re, children, body }`. The conf is

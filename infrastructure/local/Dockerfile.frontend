@@ -252,9 +252,9 @@ limit_req_zone $binary_remote_addr zone=lives_segments:1m rate=30r/s;\n\
 limit_conn_zone $binary_remote_addr zone=lives_segments_conn:1m;\n\
 # A LIVE'S PREVIEW IMAGE has zones of its OWN (review of #3135): a poster takes no seat, so if it\n\
 # shared the segments' per-address quota, 300 feed readers behind one campus address would push the\n\
-# seated viewers' segment fetches into 429s. Its bytes have their own budget, LIVE_POSTER_EGRESS_BPS\n\
+# seated viewers' segment fetches into 429s. Its bound is PER ADDRESS, LIVE_POSTER_EGRESS_PER_ADDRESS_BPS\n\
 # (8 Mb/s, live.constants.ts): limit_conn 4 x limit_rate 250 000 B/s = 8 Mb/s per address, which\n\
-# live-segments-route.test.mjs recomputes. 25 r/s with a 50 burst: ~325 readers behind one address\n\
+# live-segments-route.test.mjs recomputes. Nothing here caps posters host-wide (lives.md says why). 25 r/s with a 50 burst: ~325 readers behind one address\n\
 # each reading one poster per 16 s period is ~20 r/s. Past it a card keeps its older picture.\n\
 limit_req_zone $binary_remote_addr zone=lives_posters:1m rate=25r/s;\n\
 limit_conn_zone $binary_remote_addr zone=lives_posters_conn:1m;\n\

@@ -10,9 +10,12 @@
  *
  * A POSTER IS FETCHED ONCE (review of #3135): the newest opened image of each live is kept here by
  * its NAME, so a list refresh naming the same poster, or a card drawn again (one live becoming a
- * carousel, a tab switch), asks the network nothing. Only a NEW name is fetched. The card drops the
- * entries of the lives no longer listed ({@link forgetLivePostersExcept}), so this holds one image
- * per live on air at most. Never logs the key or the bytes, lengths only.
+ * carousel, a tab switch), asks the network nothing. Only a NEW name is fetched - and a load of that
+ * name already RUNNING is joined, not doubled: two cards mounting at once (the large card giving way
+ * to the carousel) share one fetch. A joiner whose own signal is live, left holding a load the first
+ * caller aborted, starts its own. The card drops the entries of the lives no longer listed
+ * ({@link forgetLivePostersExcept}), so this holds one image per live on air at most. Never logs the
+ * key or the bytes, lengths only.
  */
 import { fetchLivePoster, isLiveRefusal } from './api';
 import { LivePosterOpenError, openLivePoster } from './livePosterCrypto';
@@ -27,7 +30,7 @@ export type LivePosterLoad =
   /** The object was replaced or purged between the list and the fetch: the next list names the new one. */
   | { kind: 'gone' }
   | { kind: 'offline' }
-  /** nginx's per-address preview budget answered 429: the next period asks again. */
+  /** nginx's per-address preview bound answered 429: the next period asks again. */
   | { kind: 'rate-limited' }
   | { kind: 'aborted' }
   /** It did not open under the served key, or the server refused it otherwise. */
@@ -44,6 +47,9 @@ const DEFAULT_DEPS: LivePosterViewDeps = { fetch: fetchLivePoster, open: openLiv
 /** The newest opened poster of each live, by live id: its name and its image. */
 const opened = new Map<string, { name: string; image: Blob }>();
 
+/** The load running for each live, by live id: the name it fetches and its outcome. */
+const running = new Map<string, { name: string; load: Promise<LivePosterLoad> }>();
+
 /** Drops the kept image of every live not in `liveIds` - the card calls it with each new list. */
 export function forgetLivePostersExcept(liveIds: Iterable<string>): void {
   const keep = new Set(liveIds);
@@ -55,14 +61,18 @@ export function forgetLivePostersExcept(liveIds: Iterable<string>): void {
   }
 }
 
-/** Loads and opens the preview a list item names - from the network only when its name is new. */
+/**
+ * Loads and opens the preview a list item names - from the network only when its name is new, and
+ * once even when several cards ask for it at the same time.
+ */
 export async function loadLivePoster(
   live: Pick<LiveListItem, 'id' | 'poster' | 'posterKey'>,
   signal?: AbortSignal,
   deps: LivePosterViewDeps = DEFAULT_DEPS
 ): Promise<LivePosterLoad> {
   const poster = live.poster;
-  if (!poster || !live.posterKey) {
+  const posterKey = live.posterKey;
+  if (!poster || !posterKey) {
     console.debug(`[LIVE] card poster ${live.id}: none listed`);
     return { kind: 'none' };
   }
@@ -71,39 +81,64 @@ export async function loadLivePoster(
     console.debug(`[LIVE] card poster ${live.id}: ${poster.name} already opened - no fetch`);
     return { kind: 'shown', image: kept.image };
   }
-  console.debug(`[LIVE] card poster ${live.id}: loading ${poster.name} (${poster.ageMs} ms old)`);
+  const current = running.get(live.id);
+  if (current?.name === poster.name) {
+    console.debug(`[LIVE] card poster ${live.id}: ${poster.name} already loading - joined`);
+    const outcome = await current.load;
+    if (outcome.kind !== 'aborted' || signal?.aborted) return outcome;
+    console.debug(
+      `[LIVE] card poster ${live.id}: the load it joined was aborted - loading its own`
+    );
+    return loadLivePoster(live, signal, deps);
+  }
+  const load = fetchAndOpen(live.id, poster, posterKey, signal, deps).finally(() => {
+    if (running.get(live.id)?.load === load) running.delete(live.id);
+  });
+  running.set(live.id, { name: poster.name, load });
+  return load;
+}
+
+/** One fetch and open of a named poster; every way it ends is a {@link LivePosterLoad}. */
+async function fetchAndOpen(
+  liveId: string,
+  poster: { name: string; ageMs: number },
+  posterKey: string,
+  signal: AbortSignal | undefined,
+  deps: LivePosterViewDeps
+): Promise<LivePosterLoad> {
+  console.debug(`[LIVE] card poster ${liveId}: loading ${poster.name} (${poster.ageMs} ms old)`);
   try {
-    const sealed = new Uint8Array(await deps.fetch(live.id, poster.name, signal));
-    const plain = await deps.open(live.posterKey, live.id, sealed);
-    console.debug(`[LIVE] card poster ${live.id}: opened, ${plain.byteLength} bytes`);
+    const sealed = new Uint8Array(await deps.fetch(liveId, poster.name, signal));
+    const plain = await deps.open(posterKey, liveId, sealed);
+    console.debug(`[LIVE] card poster ${liveId}: opened, ${plain.byteLength} bytes`);
     const image = new Blob([plain], { type: 'image/jpeg' });
-    opened.set(live.id, { name: poster.name, image });
+    opened.set(liveId, { name: poster.name, image });
     return { kind: 'shown', image };
   } catch (e) {
     if (signal?.aborted) {
-      console.debug(`[LIVE] card poster ${live.id}: aborted`);
+      console.debug(`[LIVE] card poster ${liveId}: aborted`);
       return { kind: 'aborted' };
     }
     if (isTransportFailure(e)) {
-      console.log(`[LIVE] card poster ${live.id}: no answer - the card keeps what it shows`);
+      console.log(`[LIVE] card poster ${liveId}: no answer - the card keeps what it shows`);
       return { kind: 'offline' };
     }
     if (isLiveRefusal(e, 'not-found')) {
-      console.debug(`[LIVE] card poster ${live.id}: ${poster.name} already replaced or purged`);
+      console.debug(`[LIVE] card poster ${liveId}: ${poster.name} already replaced or purged`);
       return { kind: 'gone' };
     }
     if (isLiveRefusal(e, 'rate-limited')) {
-      // The preview's own nginx budget doing its job: a stale picture, never a seated viewer's 429.
+      // The preview's own nginx bound doing its job: a stale picture, never a seated viewer's 429.
       console.log(
-        `[LIVE] card poster ${live.id}: 429 from the preview budget - the card keeps what it shows`
+        `[LIVE] card poster ${liveId}: 429 from the preview bound - the card keeps what it shows`
       );
       return { kind: 'rate-limited' };
     }
     if (e instanceof LivePosterOpenError) {
-      console.warn(`[LIVE] card poster ${live.id}: did not open (${e.reason}) - no picture`);
+      console.warn(`[LIVE] card poster ${liveId}: did not open (${e.reason}) - no picture`);
       return { kind: 'failed' };
     }
-    console.warn(`[LIVE] card poster ${live.id}: refused (${String(e)}) - no picture`);
+    console.warn(`[LIVE] card poster ${liveId}: refused (${String(e)}) - no picture`);
     return { kind: 'failed' };
   }
 }
