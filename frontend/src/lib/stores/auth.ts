@@ -1469,7 +1469,7 @@ async function clearAuthUnderway(options: { revokeServerSession: boolean }): Pro
   void discardSharedOut('signed out');
   // And a share INTO Canari still waiting: it must never land in the account signed in next.
   void eraseIncomingShare('signed out');
-  // And the shortcuts Android holds for THIS account - the share sheet's suggestions and the
+  // And the shortcuts the phone holds for THIS account - the share sheet's suggestions and the
   // notifications' conversation shortcuts, names and faces the next account must never see.
   void eraseAccountShortcuts('signed out');
   if (!options.revokeServerSession) {
