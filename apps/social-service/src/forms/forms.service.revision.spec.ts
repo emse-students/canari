@@ -1,9 +1,11 @@
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
-import { FormsService } from './forms.service';
+import { FORM_ID_FIXED, FormsService } from './forms.service';
 import { FORM_DRAFT, FORM_PUBLISHED } from './form-status';
 import {
+  FORM_CHANGED_SINCE_REVISION,
   FORM_DRAFT_CONFLICT,
   FORM_DRAFT_EMPTY,
+  FORM_ID_TAKEN,
   FORM_DRAFT_INVALID,
   FORM_DRAFT_MALFORMED,
 } from './form-draft-revision';
@@ -19,6 +21,10 @@ import { FORM_PAYMENTS_NOT_READY } from './payment-offer';
  * refusal inside it restores both the form and the revision, as PostgreSQL would.
  */
 const store = new Map<string, { revision: number; document: Record<string, unknown> | null }>();
+/** The client id of the save that wrote each form's current revision. */
+const saveIds = new Map<string, string | null>();
+/** The forms written outside their revision since it started (`formChangedSinceRevision`). */
+const changedSince = new Set<string>();
 
 jest.mock('./form-draft-revision', () => {
   const actual = jest.requireActual('./form-draft-revision');
@@ -27,23 +33,39 @@ jest.mock('./form-draft-revision', () => {
     readFormDraft: jest.fn(async (_m: unknown, formId: string) => {
       const row = store.get(formId);
       return row
-        ? { revision: row.revision, document: row.document, savedAt: 'now' }
-        : { revision: 0, document: null, savedAt: null };
+        ? {
+            revision: row.revision,
+            document: row.document,
+            savedAt: 'now',
+            saveId: saveIds.get(formId) ?? null,
+          }
+        : { revision: 0, document: null, savedAt: null, saveId: null };
     }),
     writeFormDraft: jest.fn(
-      async (_m: unknown, formId: string, base: number, document: Record<string, unknown>) => {
+      async (
+        _m: unknown,
+        formId: string,
+        base: number,
+        document: Record<string, unknown>,
+        saveId: string | null
+      ) => {
         const row = store.get(formId);
         if ((row?.revision ?? 0) !== base) return null;
         const revision = base + 1;
         store.set(formId, { revision, document });
+        saveIds.set(formId, saveId);
         return { revision, savedAt: 'now' };
       }
     ),
     closeFormDraft: jest.fn(async (_m: unknown, formId: string) => {
       const row = store.get(formId)!;
       store.set(formId, { revision: row.revision + 1, document: null });
+      saveIds.set(formId, null);
       return row.revision + 1;
     }),
+    formChangedSinceRevision: jest.fn(async (_m: unknown, formId: string) =>
+      changedSince.has(formId)
+    ),
     formsWithUnpublishedChanges: jest.fn(
       async (_m: unknown, ids: string[]) =>
         new Set(ids.filter((id) => store.get(id)?.document != null))
@@ -111,8 +133,9 @@ describe('FormsService - unpublished revisions', () => {
       return qb;
     };
     const m: any = {
+      // A save writes the columns it is given; one it is not given (the status) keeps its value.
       save: jest.fn(async (_entity: unknown, form: Record<string, unknown>) => {
-        row = { ...form };
+        row = { ...row, ...form };
         return { ...row };
       }),
       createQueryBuilder: jest.fn(queryBuilder),
@@ -120,7 +143,7 @@ describe('FormsService - unpublished revisions', () => {
     };
     const formRepo: any = {
       findOne: jest.fn(async () => ({ ...row })),
-      save: jest.fn(async (x: Record<string, unknown>) => ((row = { ...x }), { ...row })),
+      save: jest.fn(async (x: Record<string, unknown>) => ((row = { ...row, ...x }), { ...row })),
       createQueryBuilder: jest.fn(queryBuilder),
       manager: {
         // A transaction that rolls back on a throw: the form row and the revision are restored.
@@ -166,23 +189,27 @@ describe('FormsService - unpublished revisions', () => {
       { enabled: () => false } as any,
       images
     );
-    return { service, current: () => row, statusWrites, images };
+    return { service, current: () => row, statusWrites, images, formRepo, m };
   }
 
-  beforeEach(() => store.clear());
+  beforeEach(() => {
+    store.clear();
+    saveIds.clear();
+    changedSince.clear();
+  });
 
   describe('autosave', () => {
     it('stores a half-built form as typed: no rule is asked of an autosave', async () => {
       const { service } = makeService();
-      const saved = await service.saveDraft('f1', 0, { title: '' }, OWNER, false);
+      const saved = await service.saveDraft('f1', 0, { title: '' }, null, OWNER, false);
       expect(saved.revision).toBe(1);
       expect(store.get('f1')).toEqual({ revision: 1, document: { title: '' } });
     });
 
     it('refuses a save built on a revision another save moved, typed and carrying the current one', async () => {
       const { service } = makeService();
-      await service.saveDraft('f1', 0, doc(), OWNER, false);
-      const stale = service.saveDraft('f1', 0, doc({ title: 'Other tab' }), OWNER, false);
+      await service.saveDraft('f1', 0, doc(), null, OWNER, false);
+      const stale = service.saveDraft('f1', 0, doc({ title: 'Other tab' }), null, OWNER, false);
       await expect(stale).rejects.toThrow(ConflictException);
       await expect(stale).rejects.toMatchObject({
         response: { code: FORM_DRAFT_CONFLICT, revision: 1 },
@@ -190,16 +217,44 @@ describe('FormsService - unpublished revisions', () => {
       expect(store.get('f1')!.document).toMatchObject({ title: 'Gala 2026' });
     });
 
+    it("a save whose answer was lost: the next one is refused WITH that save's id, so its client adopts it", async () => {
+      const { service } = makeService();
+      await service.saveDraft('f1', 0, doc(), 'aaaaaaaa-0000-4000-8000-000000000001', OWNER, false);
+      // The client never heard the answer, and sends its newer edit on the base it still holds.
+      const resend = service.saveDraft(
+        'f1',
+        0,
+        doc({ title: 'Plus tard' }),
+        'aaaaaaaa-0000-4000-8000-000000000002',
+        OWNER,
+        false
+      );
+      await expect(resend).rejects.toMatchObject({
+        response: {
+          code: FORM_DRAFT_CONFLICT,
+          revision: 1,
+          saveId: 'aaaaaaaa-0000-4000-8000-000000000001',
+        },
+      });
+    });
+
+    it('binds the question images a revision cites to the form, under the saver, in the save', async () => {
+      const { service, images, m } = makeService();
+      const items = [{ ...item, image: { mediaId: 'img-1' } }];
+      await service.saveDraft('f1', 0, doc({ items }), null, OWNER, false);
+      expect(images.claimForSave).toHaveBeenCalledWith(m, items, 'f1', OWNER);
+    });
+
     it('refuses what is not one JSON object', async () => {
       const { service } = makeService();
-      await expect(service.saveDraft('f1', 0, [1, 2], OWNER, false)).rejects.toMatchObject({
+      await expect(service.saveDraft('f1', 0, [1, 2], null, OWNER, false)).rejects.toMatchObject({
         response: { code: FORM_DRAFT_MALFORMED },
       });
     });
 
     it('is a manager route: a stranger can neither save nor read a revision', async () => {
       const { service } = makeService();
-      await expect(service.saveDraft('f1', 0, doc(), STRANGER, false)).rejects.toThrow(
+      await expect(service.saveDraft('f1', 0, doc(), null, STRANGER, false)).rejects.toThrow(
         ForbiddenException
       );
       await expect(service.getDraft('f1', STRANGER, false)).rejects.toThrow(ForbiddenException);
@@ -207,7 +262,7 @@ describe('FormsService - unpublished revisions', () => {
 
     it('marks the forms holding unpublished changes in the managers list', async () => {
       const { service } = makeService();
-      await service.saveDraft('f1', 0, doc(), OWNER, false);
+      await service.saveDraft('f1', 0, doc(), null, OWNER, false);
       const [listed] = (await (service as any).withAssociationNames([baseForm()])) as Array<{
         hasUnpublishedChanges: boolean;
       }>;
@@ -218,7 +273,7 @@ describe('FormsService - unpublished revisions', () => {
   describe('publishing the changes', () => {
     it('applies the revision to the form and empties it, in one transaction', async () => {
       const { service, current } = makeService();
-      await service.saveDraft('f1', 0, doc(), OWNER, false);
+      await service.saveDraft('f1', 0, doc(), null, OWNER, false);
       const result = await service.publishChanges('f1', 1, OWNER, false);
       expect(current().title).toBe('Gala 2026');
       expect(store.get('f1')).toEqual({ revision: 2, document: null });
@@ -227,8 +282,8 @@ describe('FormsService - unpublished revisions', () => {
 
     it('refuses a stale revision and changes nothing', async () => {
       const { service, current } = makeService();
-      await service.saveDraft('f1', 0, doc(), OWNER, false);
-      await service.saveDraft('f1', 1, doc({ title: 'Newer' }), OWNER, false);
+      await service.saveDraft('f1', 0, doc(), null, OWNER, false);
+      await service.saveDraft('f1', 1, doc({ title: 'Newer' }), null, OWNER, false);
       await expect(service.publishChanges('f1', 1, OWNER, false)).rejects.toMatchObject({
         response: { code: FORM_DRAFT_CONFLICT, revision: 2 },
       });
@@ -238,7 +293,7 @@ describe('FormsService - unpublished revisions', () => {
 
     it("judges the revision by the edit route's validation, and keeps it when refused", async () => {
       const { service, current } = makeService();
-      await service.saveDraft('f1', 0, doc({ title: '' }), OWNER, false);
+      await service.saveDraft('f1', 0, doc({ title: '' }), null, OWNER, false);
       const refusal = service.publishChanges('f1', 1, OWNER, false);
       await expect(refusal).rejects.toThrow(BadRequestException);
       await expect(refusal).rejects.toMatchObject({ response: { code: FORM_DRAFT_INVALID } });
@@ -252,6 +307,7 @@ describe('FormsService - unpublished revisions', () => {
         'f1',
         0,
         doc({ requiresPayment: true, basePrice: 1500 }),
+        null,
         OWNER,
         false
       );
@@ -263,6 +319,19 @@ describe('FormsService - unpublished revisions', () => {
       expect(store.get('f1')!.revision).toBe(1);
     });
 
+    it('refuses a revision when the form was written outside it since it started, typed, unless overwritten', async () => {
+      const { service, current } = makeService();
+      await service.saveDraft('f1', 0, doc(), null, OWNER, false);
+      changedSince.add('f1');
+      await expect(service.publishChanges('f1', 1, OWNER, false)).rejects.toMatchObject({
+        response: { code: FORM_CHANGED_SINCE_REVISION },
+      });
+      expect(current().title).toBe('Gala');
+      expect(store.get('f1')!.document).toMatchObject({ title: 'Gala 2026' });
+      await service.publishChanges('f1', 1, OWNER, false, true);
+      expect(current().title).toBe('Gala 2026');
+    });
+
     it('answers a published form with nothing unpublished with a typed refusal', async () => {
       const { service } = makeService();
       await expect(service.publishChanges('f1', 0, OWNER, false)).rejects.toMatchObject({
@@ -272,7 +341,7 @@ describe('FormsService - unpublished revisions', () => {
 
     it('publishes a DRAFT form together with its revision', async () => {
       const { service, current } = makeService({ form: { status: FORM_DRAFT } });
-      await service.saveDraft('f1', 0, doc({ anonymous: true }), OWNER, false);
+      await service.saveDraft('f1', 0, doc({ anonymous: true }), null, OWNER, false);
       await service.publishChanges('f1', 1, OWNER, false);
       expect(current()).toMatchObject({
         status: FORM_PUBLISHED,
@@ -297,6 +366,7 @@ describe('FormsService - unpublished revisions', () => {
         'f1',
         0,
         doc({ requiresPayment: true, basePrice: 1500 }),
+        null,
         OWNER,
         false
       );
@@ -311,7 +381,7 @@ describe('FormsService - unpublished revisions', () => {
   describe('discarding the changes', () => {
     it('empties the revision and leaves the form as published', async () => {
       const { service, current } = makeService();
-      await service.saveDraft('f1', 0, doc(), OWNER, false);
+      await service.saveDraft('f1', 0, doc(), null, OWNER, false);
       expect(await service.discardDraft('f1', 1, OWNER, false)).toEqual({ revision: 2 });
       expect(store.get('f1')).toEqual({ revision: 2, document: null });
       expect(current().title).toBe('Gala');
@@ -319,8 +389,8 @@ describe('FormsService - unpublished revisions', () => {
 
     it('refuses to throw away a revision moved since the editor read it', async () => {
       const { service } = makeService();
-      await service.saveDraft('f1', 0, doc(), OWNER, false);
-      await service.saveDraft('f1', 1, doc({ title: 'Other tab' }), OWNER, false);
+      await service.saveDraft('f1', 0, doc(), null, OWNER, false);
+      await service.saveDraft('f1', 1, doc({ title: 'Other tab' }), null, OWNER, false);
       await expect(service.discardDraft('f1', 1, OWNER, false)).rejects.toMatchObject({
         response: { code: FORM_DRAFT_CONFLICT },
       });
@@ -329,14 +399,52 @@ describe('FormsService - unpublished revisions', () => {
 
     it('a tab still holding the old number cannot start a revision on top of the discarded one', async () => {
       const { service } = makeService();
-      await service.saveDraft('f1', 0, doc(), OWNER, false);
+      await service.saveDraft('f1', 0, doc(), null, OWNER, false);
       await service.discardDraft('f1', 1, OWNER, false);
-      await expect(service.saveDraft('f1', 1, doc(), OWNER, false)).rejects.toMatchObject({
+      await expect(service.saveDraft('f1', 1, doc(), null, OWNER, false)).rejects.toMatchObject({
         response: { code: FORM_DRAFT_CONFLICT, revision: 2 },
       });
-      await expect(service.saveDraft('f1', 0, doc(), OWNER, false)).rejects.toThrow(
+      await expect(service.saveDraft('f1', 0, doc(), null, OWNER, false)).rejects.toThrow(
         ConflictException
       );
+    });
+  });
+
+  describe('a create under a client-minted id', () => {
+    const ID = 'bbbbbbbb-0000-4000-8000-000000000001';
+
+    it('answers the stored form when the same account sends the create again', async () => {
+      const { service, formRepo } = makeService({ form: { id: ID } });
+      const createNew = jest.spyOn(service as any, 'createNew');
+      const again = await service.create({ ...doc(), id: ID, ownerId: OWNER } as any);
+      expect(again).toMatchObject({ id: ID, ownerId: OWNER });
+      expect(createNew).not.toHaveBeenCalled();
+      expect(formRepo.save).not.toHaveBeenCalled();
+    });
+
+    it("refuses an id another account's form holds, typed", async () => {
+      const { service } = makeService({ form: { id: ID } });
+      await expect(
+        service.create({ ...doc(), id: ID, ownerId: STRANGER } as any)
+      ).rejects.toMatchObject({ response: { code: FORM_ID_TAKEN } });
+    });
+
+    it('two sends racing to the insert: the loser answers what the winner stored', async () => {
+      const { service, formRepo } = makeService({ form: { id: ID } });
+      formRepo.findOne.mockResolvedValueOnce(null);
+      jest
+        .spyOn(service as any, 'createNew')
+        .mockRejectedValueOnce(Object.assign(new Error('duplicate key'), { code: '23505' }));
+      expect(await service.create({ ...doc(), id: ID, ownerId: OWNER } as any)).toMatchObject({
+        id: ID,
+      });
+    });
+
+    it('an edit never moves the id: one naming another form is refused', async () => {
+      const { service } = makeService();
+      await expect(
+        service.update('f1', { ...doc(), id: ID } as any, OWNER, false)
+      ).rejects.toMatchObject({ response: { code: FORM_ID_FIXED } });
     });
   });
 });

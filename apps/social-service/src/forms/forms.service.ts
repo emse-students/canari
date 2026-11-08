@@ -17,6 +17,7 @@ import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { Form } from './entities/form.entity';
 import { retireForms } from './retire-forms';
+import { isUniqueViolation } from '../common/pg-errors';
 import {
   FORM_NO_PAYMENT_METHOD,
   FORM_ONLINE_PAYMENT_NOT_OFFERED,
@@ -26,11 +27,14 @@ import {
 } from './payment-offer';
 import { FORM_DRAFT, FORM_PUBLISHED, respondentFormWhere, type FormStatus } from './form-status';
 import {
+  FORM_CHANGED_SINCE_REVISION,
   FORM_DRAFT_CONFLICT,
   FORM_DRAFT_EMPTY,
+  FORM_ID_TAKEN,
   FORM_DRAFT_INVALID,
   FORM_DRAFT_MALFORMED,
   closeFormDraft,
+  formChangedSinceRevision,
   formsWithUnpublishedChanges,
   isStorableDraftDocument,
   readFormDraft,
@@ -329,6 +333,9 @@ type FormItemLike = AnswerQuestion & { id: string; label: string };
 
 /** The durable flags a landed payment's effects are claimed through (migrations 084 and 102). */
 type FulfilmentFlag = 'cotisationGrantedAt' | 'purchaseRecordedAt' | 'organiserNotifiedAt';
+
+/** The 400 refusing an edit whose body names another form's id. */
+export const FORM_ID_FIXED = 'FORM_ID_FIXED';
 
 @Injectable()
 export class FormsService {
@@ -745,6 +752,42 @@ export class FormsService {
 
   /** Creates a form and assigns stable IDs to all items and options that lack them. */
   async create(input: CreateFormDto, isGlobalAdmin = false) {
+    // A client-minted id makes the create idempotent: a retry whose first answer was lost finds
+    // the form it already created, and is handed it unchanged.
+    if (input.id) {
+      const existing = await this.formCreatedAs(input.id, input.ownerId!);
+      if (existing) return existing;
+    }
+    try {
+      return await this.createNew(input, isGlobalAdmin);
+    } catch (err) {
+      // Two sends of one create raced to the insert: the loser reads what the winner stored.
+      if (input.id && isUniqueViolation(err)) {
+        const existing = await this.formCreatedAs(input.id, input.ownerId!);
+        if (existing) return existing;
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * The form a create with the client-minted `id` already stored, when `ownerId` stored it; `null`
+   * when no form holds the id. An id another account's form holds is refused 409 `FORM_ID_TAKEN`.
+   */
+  private async formCreatedAs(id: string, ownerId: string): Promise<Form | null> {
+    const existing = await this.formRepo.findOne({ where: { id } });
+    if (!existing) return null;
+    if (existing.ownerId !== ownerId) {
+      this.logger.warn(
+        `[FORMS] create refused: id ${id.slice(0, 8)} is another account's form (caller ${ownerId.slice(0, 8)})`
+      );
+      throw new ConflictException({ code: FORM_ID_TAKEN, message: 'This form id is taken.' });
+    }
+    this.logger.log(`[FORMS] create ${id.slice(0, 8)} repeated: the stored form is answered`);
+    return existing;
+  }
+
+  private async createNew(input: CreateFormDto, isGlobalAdmin: boolean) {
     if (input.associationId && !isGlobalAdmin) {
       const member = await this.associationsService.isMember(input.ownerId!, input.associationId);
       if (!member) {
@@ -1036,9 +1079,19 @@ export class FormsService {
     if (input.draft !== undefined) {
       throw new BadRequestException({
         code: FORM_DRAFT_FLAG_ON_EDIT,
-        message: 'A form is published through POST /forms/:id/publish, never by an edit.',
+        message: 'A form is published through POST /forms/:id/draft/publish, never by an edit.',
       });
     }
+    // The id is the create's (client-minted for idempotence) and never an edit's: one naming
+    // another form is refused, and the field never reaches the entity written below.
+    if (input.id !== undefined && input.id !== formId) {
+      throw new BadRequestException({
+        code: FORM_ID_FIXED,
+        message: 'A form id is fixed at creation.',
+      });
+    }
+    const { id: _sameId, ...edit } = input;
+    input = edit as CreateFormDto;
 
     // THE ASSOCIATION LINK IS FIXED AT CREATION (user decision, 2026-08-23). A form is either
     // personal or an association's, and which one it is decides who owns it: MANAGE_FORMS on the
@@ -1190,39 +1243,6 @@ export class FormsService {
   }
 
   /**
-   * Publishes a DRAFT form: from now on it is answerable, listed and reachable by its link
-   * (`respondentFormWhere`). Gated by `assertFormManager`.
-   *
-   * A PAID form is refused while its association may not collect now - its kind and delegation
-   * (`assertKindMayPrice`, typed `LIST_DELEGATE_REQUIRED` / `ASSOCIATION_KIND_DOES_NOT_SELL`) and its
-   * Lydia readiness (409 `FORM_PAYMENTS_NOT_READY`): the gate a draft skipped at its saves.
-   *
-   * IDEMPOTENT FROM THE ROW: a form already published answers the same success and writes nothing,
-   * and the write itself is conditional on `status = 'draft'`, so two presses publish once.
-   */
-  async publish(formId: string, userId: string, isGlobalAdmin: boolean) {
-    const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
-    if (form.deletedAt) throw new NotFoundException('Form not found');
-    if (form.status !== FORM_DRAFT) {
-      this.logger.debug(
-        `[FORMS] publish: ${formId.slice(0, 8)} already published, nothing written`
-      );
-      return { id: form.id, status: FORM_PUBLISHED };
-    }
-    await this.assertPublishable(form);
-    const result = await this.formRepo
-      .createQueryBuilder()
-      .update(Form)
-      .set({ status: FORM_PUBLISHED })
-      .where('id = :id AND status = :draft', { id: form.id, draft: FORM_DRAFT })
-      .execute();
-    this.logger.log(
-      `[FORMS] publish: ${formId.slice(0, 8)} ${result.affected ? 'published' : 'already published by a concurrent call'}`
-    );
-    return { id: form.id, status: FORM_PUBLISHED };
-  }
-
-  /**
    * The unpublished revision of a form, for its editor and its preview (owner, 2026-11-08). Gated by
    * `assertFormManager`: a respondent never reads a revision.
    */
@@ -1242,6 +1262,7 @@ export class FormsService {
     formId: string,
     baseRevision: number,
     document: unknown,
+    saveId: string | null,
     userId: string,
     isGlobalAdmin: boolean
   ) {
@@ -1253,7 +1274,13 @@ export class FormsService {
         message: 'A form revision is the editor payload, as one JSON object.',
       });
     }
-    const saved = await writeFormDraft(this.formRepo.manager, formId, baseRevision, document);
+    // A question image the revision cites is bound to this form NOW, under the saver's id: an image
+    // uploaded before the form existed (the create page) is then this form's, and a co-manager
+    // publishing the revision later is not refused it as somebody else's upload.
+    const saved = await this.formRepo.manager.transaction(async (m) => {
+      await this.formItemImages.claimForSave(m, document.items, formId, userId);
+      return writeFormDraft(m, formId, baseRevision, document, saveId);
+    });
     if (!saved) return this.throwDraftConflict(formId, baseRevision, 'save');
     this.logger.debug(
       `[FORM_DRAFT] ${formId.slice(0, 8)} saved revision ${saved.revision} (base ${baseRevision})`
@@ -1296,7 +1323,13 @@ export class FormsService {
    * collection rules a draft's saves skipped (`assertPublishable`); one with no revision is
    * published as it stands. A published form with no revision has nothing to publish (409).
    */
-  async publishChanges(formId: string, revision: number, userId: string, isGlobalAdmin: boolean) {
+  async publishChanges(
+    formId: string,
+    revision: number,
+    userId: string,
+    isGlobalAdmin: boolean,
+    overwrite = false
+  ) {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
     if (form.deletedAt) throw new NotFoundException('Form not found');
     const wasDraft = form.status === FORM_DRAFT;
@@ -1305,6 +1338,11 @@ export class FormsService {
       const current = await readFormDraft(m, formId, true);
       if (current.revision !== revision) return { refused: 'conflict' as const };
       if (!current.document && !wasDraft) return { refused: 'empty' as const };
+      // Written since the revision started (an older build editing the form directly): publishing
+      // would undo that write unseen, so it is refused unless the manager confirmed the overwrite.
+      if (current.document && !overwrite && (await formChangedSinceRevision(m, formId))) {
+        return { refused: 'changed' as const };
+      }
       let saved: Form = form;
       if (current.document) {
         const dto = await this.validatedRevision(current.document);
@@ -1323,6 +1361,16 @@ export class FormsService {
       return { refused: null, revision: next, items: saved.items as unknown };
     });
     if (outcome.refused === 'conflict') return this.throwDraftConflict(formId, revision, 'publish');
+    if (outcome.refused === 'changed') {
+      this.logger.log(
+        `[FORM_DRAFT] ${formId.slice(0, 8)} revision ${revision} not published: the form was written since it started`
+      );
+      throw new ConflictException({
+        code: FORM_CHANGED_SINCE_REVISION,
+        message:
+          'This form was changed outside its unpublished revision since the revision started.',
+      });
+    }
     if (outcome.refused === 'empty') {
       throw new ConflictException({
         code: FORM_DRAFT_EMPTY,
@@ -1330,7 +1378,7 @@ export class FormsService {
       });
     }
     this.logger.log(
-      `[FORM_DRAFT] ${formId.slice(0, 8)} revision ${revision} published${wasDraft ? ', and the form with it' : ''}`
+      `[FORM_DRAFT] ${formId.slice(0, 8)} revision ${revision} published${wasDraft ? ', and the form with it' : ''}${overwrite ? ' (overwrite confirmed)' : ''}`
     );
     // Replaced or removed by the published revision: released once nothing cites it, after the commit.
     const citedAfter = questionImageIds(outcome.items);
@@ -1344,7 +1392,7 @@ export class FormsService {
    * (`whitelist`, `transform`), the `draft` flag dropped (publishing is this route's own job).
    */
   private async validatedRevision(document: Record<string, unknown>): Promise<CreateFormDto> {
-    const { draft: _draft, ...body } = document;
+    const { draft: _draft, id: _id, ...body } = document;
     const dto = plainToInstance(CreateFormDto, body);
     const errors = await validate(dto, { whitelist: true });
     if (errors.length > 0) {
@@ -1365,6 +1413,8 @@ export class FormsService {
       code: FORM_DRAFT_CONFLICT,
       message: 'This form was changed elsewhere since it was opened.',
       revision: current.revision,
+      // The save that wrote it: a client whose answer was lost recognises its own and adopts it.
+      saveId: current.saveId,
     });
   }
 

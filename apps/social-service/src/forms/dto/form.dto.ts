@@ -12,6 +12,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  IsUUID,
   Max,
   Matches,
   MaxLength,
@@ -200,6 +201,15 @@ export class FormItemDto {
 }
 
 export class CreateFormDto {
+  /**
+   * The form's id, minted by the client so that a create whose answer was lost is sent again as
+   * the SAME create (idempotent: the stored form is answered). Absent: the server mints it. An
+   * edit never changes it (`FORM_ID_FIXED`).
+   */
+  @IsUUID()
+  @IsOptional()
+  id?: string;
+
   @IsString()
   @IsNotEmpty()
   title: string;
@@ -366,6 +376,14 @@ export class SaveFormDraftDto {
 
   @IsObject()
   document: Record<string, unknown>;
+
+  /**
+   * The client's id for THIS save, kept on the revision it writes: a client whose answer was lost
+   * finds its own id in the 409 of its next save, and adopts the revision instead of a conflict.
+   */
+  @IsUUID()
+  @IsOptional()
+  saveId?: string;
 }
 
 /** Publishing or discarding the unpublished revision the editor holds, by its number. */
@@ -373,6 +391,16 @@ export class FormRevisionDto {
   @IsInt()
   @Min(0)
   revision: number;
+}
+
+/**
+ * Publishing the revision: `overwrite` confirms publishing over a form written since the revision
+ * started (refused `FORM_CHANGED_SINCE_REVISION` without it).
+ */
+export class PublishFormRevisionDto extends FormRevisionDto {
+  @IsBoolean()
+  @IsOptional()
+  overwrite?: boolean;
 }
 
 /**

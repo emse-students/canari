@@ -2888,7 +2888,6 @@
   "form_save_changes_button": "Save changes",
   "form_status_draft_badge": "Draft",
   "form_draft_notice": "Draft: nobody but its managers sees it until it is published.",
-  "form_save_draft_button": "Save draft",
   "form_publish_button": "Publish",
   "form_publishing_label": "Publishing…",
   "form_publish_blocked_payments": "Accept cash or wait for online payments to be set up",
@@ -5754,5 +5753,7 @@
   "form_publish_blocked_unsaved": "The changes are not saved on the server yet",
   "form_draft_conflict_refusal": "This form was changed elsewhere meanwhile: reload the page to continue.",
   "form_draft_empty_refusal": "No changes to publish.",
-  "form_draft_invalid_refusal": "These changes cannot be published as they are: check the questions and the settings."
+  "form_draft_invalid_refusal": "These changes cannot be published as they are: check the questions and the settings.",
+  "form_changed_since_revision_refusal": "This form was changed elsewhere since these edits started (by an older version of the app). Publishing would replace those changes: check it, then press \"Publish anyway\".",
+  "form_publish_overwrite_button": "Publish anyway"
 }

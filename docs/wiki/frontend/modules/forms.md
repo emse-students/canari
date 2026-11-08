@@ -194,9 +194,10 @@ the onboarding. And a new form was answerable the moment it was saved. Both are 
 **The state.** `forms.status` (migration 145): `draft` or `published`, default `published`, so every
 form written before it - and every form an older container or an older client writes - is published
 as it always was. A new client creates with `draft: true` (`CreateFormDto.draft`, create only; an edit
-sending it is refused `400 FORM_DRAFT_FLAG_ON_EDIT`) and publishes with `POST /forms/:id/publish`
-(manager only, idempotent: the write is `UPDATE ... WHERE status = 'draft'`, and an already published
-form answers the same success). **A form never goes back to draft**: a link, an answer or a reminder
+sending it is refused `400 FORM_DRAFT_FLAG_ON_EDIT`) and publishes with `POST /forms/:id/draft/publish`
+(manager only; the write is `UPDATE ... WHERE status = 'draft'`, in the transaction that applies the
+form's revision - the earlier `POST /forms/:id/publish` was removed before it shipped, one publication
+route). **A form never goes back to draft**: a link, an answer or a reminder
 handed out cannot be taken back. A client that sends no `draft` gets a published form at once, logged
 `create without draft` ([legacy-compatibility](../../legacy-compatibility.md)).
 
@@ -291,13 +292,16 @@ would carry - stored AS TYPED, a half-built form included; the form's own row ke
 respondents. `revision` is a compare-and-set counter that ONLY GROWS: a publication or a discard
 empties `document` (NULL) and bumps it instead of deleting the row, so an editor still holding an old
 number is refused rather than handed a fresh revision on top of a form it never saw. No author column:
-nothing personal is stored beyond the form's own content (no register change).
+nothing personal is stored beyond the form's own content (no register change). Two more columns:
+`saveId`, the client's id for the save that wrote the revision, and `baseFingerprint`, the md5 of the
+form's own content (`forms` minus its ids, dates, status and cover image) when the revision STARTED -
+the first save after none, a publication or a discard.
 
 | Route (managers only, `assertFormManager`) | What it does |
 |---|---|
-| `GET /forms/:id/draft` | `{ revision, document, savedAt }`; revision 0, no document when none was saved |
-| `PUT /forms/:id/draft` `{ baseRevision, document }` | the autosave: ONE statement (base 0 inserts, later bases update only while the row holds them); a moved base is `409 FORM_DRAFT_CONFLICT` carrying the current revision; a non-object or a document over 1 MB is `400 FORM_DRAFT_MALFORMED` |
-| `POST /forms/:id/draft/publish` `{ revision }` | "Publier les modifications": in ONE transaction holding the revision's row, the document is validated as the edit route's body (`CreateFormDto`, `whitelist`), applied by `update` itself (every rule of an edit, payment readiness included), and emptied; a DRAFT form is published in the same transaction after its collection rules (`assertPublishable`). A refusal rolls everything back and the revision stays to be fixed. `409 FORM_DRAFT_CONFLICT` on a moved revision, `409 FORM_DRAFT_EMPTY` when a published form holds no change, `400 FORM_DRAFT_INVALID` with the validation messages |
+| `GET /forms/:id/draft` | `{ revision, document, savedAt, saveId }`; revision 0, no document when none was saved |
+| `PUT /forms/:id/draft` `{ baseRevision, document, saveId }` | the autosave: ONE statement (base 0 inserts, later bases update only while the row holds them); a moved base is `409 FORM_DRAFT_CONFLICT` carrying the current `revision` and the `saveId` that wrote it; a non-object or a document over 1 MB is `400 FORM_DRAFT_MALFORMED`. The question images the document cites are claimed for the form in the same transaction, under the saver (an image uploaded before the form existed is the form's from then on, so a co-manager publishing later is not refused `QUESTION_IMAGE_NOT_YOURS`) |
+| `POST /forms/:id/draft/publish` `{ revision, overwrite? }` | "Publier les modifications": in ONE transaction holding the revision's row, the document is validated as the edit route's body (`CreateFormDto`, `whitelist`), applied by `update` itself (every rule of an edit, payment readiness included), and emptied; a DRAFT form is published in the same transaction after its collection rules (`assertPublishable`). A refusal rolls everything back and the revision stays to be fixed. `409 FORM_DRAFT_CONFLICT` on a moved revision, `409 FORM_DRAFT_EMPTY` when a published form holds no change, `400 FORM_DRAFT_INVALID` with the validation messages, `409 FORM_CHANGED_SINCE_REVISION` when the form's fingerprint no longer matches the revision's base (something wrote the form outside the revision - an older build) unless `overwrite: true` confirms it |
 | `POST /forms/:id/draft/discard` `{ revision }` | "Abandonner les modifications": empties it; a moved revision is refused, so another tab's edits are never thrown away unseen |
 
 A concurrent autosave waits on the publication's row lock, then finds its base moved
@@ -307,6 +311,13 @@ formulaire" opens the preview of those edits. A draft form may still change its 
 publication (no answer exists yet); a published one may not, as before. The association stays fixed at
 creation: the create page's picker is shut once the draft exists.
 
+**An edit never writes the status.** `update` saves the form WITHOUT its `status` column: the row was
+read before the edit's checks, and a publication landing meanwhile would otherwise be written back as
+`draft`. **A create may carry its id** (`CreateFormDto.id`, minted by the client): a second create
+with that id by the same account answers the stored form (idempotent, the insert race included -
+the loser reads the winner's row); another account's id is `409 FORM_ID_TAKEN`; an edit naming
+another id is `400 FORM_ID_FIXED`.
+
 **Question images cited only by a revision are cited.** `isCited` and the hourly reconciliation read
 `form_drafts.document -> 'items'` as well as `forms.items`, so an image added in the editor outlives
 the hour; a discard releases what only the discarded document cited, a publication what the published
@@ -315,31 +326,68 @@ revision dropped.
 **The client** (`frontend/src/lib/forms/autosave.svelte.ts`, `FormAutosave`):
 
 - every edit is saved after 1.5 s without another (`AUTOSAVE_DELAY_MS`), and AT ONCE when the page is
-  hidden (`visibilitychange`) or left (`pagehide`);
+  hidden (`visibilitychange`) or left (`pagehide`) - those two ask the request to outlive the page
+  (`keepalive`) when its body fits the engines' 64 KiB budget (`KEEPALIVE_BODY_MAX`); a larger one is
+  held by the device copy below - and when the editor is torn down by an in-app navigation ("Retour",
+  a link, the back gesture fire no `pagehide`: the `attach` cleanup and `beforeNavigate` save);
+- **a save is named by its client** (`saveId`): a save whose answer was lost is recognised in the next
+  save's 409, which names it, and ADOPTED - it landed - never reported as another tab's conflict;
 - one save in flight, always the latest document: an edit typed meanwhile is sent on the revision that
   save produced, so one page never races its own compare-and-set;
 - the status line under the summary: "Enregistrement...", "Enregistré", "Non enregistré - hors ligne"
   (no server answered), "Non enregistré - nouvel essai à la prochaine modification" (a refusal),
   "Modifié ailleurs entre-temps - rechargez la page pour reprendre" (a conflict: the page stops saving
   rather than overwrite the other tab);
-- **offline edits stay in the page only (decided 2026-11-08)**: retried when the browser reports the
-  link back (`online` - a trigger to try, never a proof), at the next edit and when the page is
-  hidden. Closing the page while offline loses them, and the line says so until then. Nothing goes to
-  device storage, which would outlive the session and the account that typed it;
+- **offline edits are kept ON THE DEVICE (owner, 2026-11-08, replacing the page-only decision of the
+  same day)**: every document is written to `CanariDBFormDrafts_<userId>` (`draftCopies.ts`, one
+  record per form: the base revision, the save id, the document) before it is sent, and deleted once
+  its save landed (`deleteIfSent`: an answer to an older save never deletes a newer edit). The
+  database is the account's: in `accountIndexedDbNames` (the account wipe) and erased at every
+  sign-out (`clearAuthUnderway`). An editor reopened on the form opens on the copy when it is built on
+  the revision the server holds and sends it as the SAME save; one the server already holds (its
+  `saveId`) is cleared; one built on a revision another writer moved past is dropped and logged at
+  WARN. **The background resend** (`draftResend.ts`, started by the layout once the session is up and
+  the estate says `formDrafts`, again at each `online`) sends the copies no editor holds open - a
+  shared Web Lock per form (`holdFormEditor`) tells it, in every tab - creating the form first when
+  the server never saw it (the create page's id). A copy that reached no server, or met a 5xx, stays;
+  a 4xx (another writer's revision, a form gone or no longer the account's) drops it, logged at WARN.
+  A conflict in a live editor drops the copy too: the page says "rechargez", and another writer's
+  revision is never overwritten;
 - "Publier" / "Publier les modifications" first saves what is pending, and is shut while an edit has
   not reached the server ("Les modifications ne sont pas encore enregistrées sur le serveur");
 - the editor opens on the revision when there is one, and takes its "nothing changed" baseline once
   the question cards have mounted (a card completes its question's defaults when drawn), so opening a
   form saves nothing;
-- the create page creates the draft at the first pause after a title (a shell: the title and the
-  association), then saves the rest as its revision. A reload of the create page starts a new form;
-  the draft already saved is in "Mes formulaires" with its badge.
+- the create page mints the form's id (`crypto.randomUUID()`, the client post id pattern) and creates
+  the draft at the first pause after a title (a shell: the title and the association) under it, then
+  saves the rest as its revision: a create whose answer was lost is sent again as the same create.
+  Question images uploaded once the draft exists name it; one uploaded before is bound by the save. A
+  reload of the create page starts a new form; the draft already saved is in "Mes formulaires" with its
+  badge, and edits a closed create page left unsent reach it through the background resend;
+- **an estate older than revisions** (`formDrafts` absent from `/api/version`, or no answer yet): the
+  editor reads no revision and saves as it always did ("Enregistrer les modifications" writes the form),
+  the create page creates the form published ([legacy-compatibility](../../legacy-compatibility.md));
+- **"Voir le formulaire" in the editor saves the pending edit first**: the tab is opened at the press
+  (a popup opened after an await is blocked) and pointed at the preview once the save returned;
+- **a revision refused `FORM_CHANGED_SINCE_REVISION`** says so ("Ce formulaire a ete modifie ailleurs
+  ..."), and "Publier" becomes "Publier quand meme", which sends `overwrite: true`.
 
-Tests: `forms.service.revision.spec.ts` (autosave, stale revision, atomic publish with rollback,
-payment rules, draft-form publication, discard), `form-draft-revision.integration.spec.ts` (migration
-146, one-of-two saves, growth only, rollback, the lock), `form-item-images.integration.spec.ts` (an
-image only a revision cites), `autosave.svelte.test.ts` (debounce, hidden, left, single flight,
-offline then online, conflict), `FormSaveBar.svelte.test.ts` (the status line, publish and discard),
+**Two readiness predicates, kept apart on purpose.** PUBLICATION asks `canTakePaymentsNow` (the
+platform's active provider, through core-service): may this form go live as paid now. A READ asks
+`collectsNow` (the association's kind and accounts, no core-service call) to serve `paymentsPaused`
+on every respondent read. Unifying them would put a core-service call on every respondent read; the
+publication gate is the stricter one, and a form served paused only shows cash.
+
+Tests: `forms.service.revision.spec.ts` (autosave, a lost answer's save id in the 409, images bound
+at the save, stale revision, atomic publish with rollback, a form changed since the revision and its
+overwrite, payment rules, draft-form publication, discard, the idempotent create and its race, the
+fixed id), `form-draft-revision.integration.spec.ts` (migration 146, one-of-two saves, growth only,
+rollback, the lock, the save id, the fingerprint and the cover image it ignores),
+`form-order-ref.integration.spec.ts` (a client-minted id kept by TypeORM, one row for two racing
+creates), `form-item-images.integration.spec.ts` (an image only a revision cites),
+`autosave.svelte.test.ts` (debounce, hidden, left, torn down, single flight, offline then online, a
+lost answer adopted, the device copy, conflict), `draftCopies.test.ts` (the store over
+fake-indexeddb, the sign-out erase, the resend's five outcomes, an editor's hold), `FormSaveBar.svelte.test.ts` (the status line, publish and discard),
 `routes/forms/[id]/edit/page.draft`, `routes/forms/create/page.returnNoRoute`,
 `routes/forms/page.viewLink`, `routes/forms/[id]/page.preview`.
 

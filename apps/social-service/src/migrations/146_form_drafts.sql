@@ -11,6 +11,16 @@
 -- deleting the row, so an editor still holding the old number cannot start a fresh revision on top
 -- of content that is no longer the form's.
 --
+-- `saveId` is the id the client minted for the save that wrote the current revision: a client whose
+-- response was lost re-sends on the old base, is refused 409, and finds ITS OWN id in the refusal -
+-- the save landed, and it adopts the revision instead of reporting a conflict (idempotence from the
+-- row, never from a clock).
+--
+-- `baseFingerprint` is the md5 of the form's own content (`forms` minus its ids, dates, status and
+-- cover image) at the moment the revision STARTED. Publication compares it with the form as it is
+-- now and refuses `409 FORM_CHANGED_SINCE_REVISION` when something else wrote the form meanwhile
+-- (an older build editing it directly), unless the manager confirms the overwrite.
+--
 -- No personal data beyond what `forms` already holds: the document is the form's own content, and
 -- no author column is kept.
 --
@@ -22,5 +32,7 @@ CREATE TABLE IF NOT EXISTS form_drafts (
   "formId" uuid PRIMARY KEY REFERENCES forms(id) ON DELETE CASCADE,
   revision integer NOT NULL CHECK (revision >= 1),
   document jsonb,
-  "savedAt" timestamptz NOT NULL DEFAULT now()
+  "savedAt" timestamptz NOT NULL DEFAULT now(),
+  "saveId" uuid,
+  "baseFingerprint" text
 );

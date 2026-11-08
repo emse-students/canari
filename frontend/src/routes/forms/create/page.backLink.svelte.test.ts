@@ -13,7 +13,7 @@ const route = vi.hoisted(() => ({
   page: { params: {}, url: new URL('https://canari.test/forms/create'), state: {} },
 }));
 vi.mock('$app/state', () => route);
-vi.mock('$app/navigation', () => ({ goto: vi.fn(async () => {}) }));
+vi.mock('$app/navigation', () => ({ goto: vi.fn(async () => {}), beforeNavigate: vi.fn() }));
 vi.mock('$lib/associations/api', async (orig) => ({
   ...(await orig<typeof import('$lib/associations/api')>()),
   listMyAssociations: async () => [],

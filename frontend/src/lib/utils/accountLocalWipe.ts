@@ -2,6 +2,7 @@ import { closeCachedStore, closeOpenIndexedDbStores } from '$lib/db';
 import { closeOutboxBlobStores } from '$lib/db/outboxBlob';
 import { closeMlsDb } from '$lib/utils/hex';
 import { publishQueueDbName } from '$lib/posts/publishQueue/publishQueueStore';
+import { formDraftCopiesDbName } from '$lib/forms/draftCopies';
 import { clearDeviceKey } from '$lib/utils/deviceKeyVault';
 import { deleteIndexedDbByName } from '$lib/utils/indexedDbDelete';
 import { dropUploadReleaseMarksOf } from '$lib/utils/chat/uploadReleaseMarks';
@@ -40,6 +41,9 @@ export function accountIndexedDbNames(userId: string): string[] {
     // The posts waiting to be published, and their media in the clear: a deleted or revoked
     // account's photos must not outlive it on the device.
     publishQueueDbName(userId),
+    // A form's edits no save has landed yet (the editor's device copy): its content and the
+    // account that typed it go together.
+    formDraftCopiesDbName(userId),
   ];
 }
 

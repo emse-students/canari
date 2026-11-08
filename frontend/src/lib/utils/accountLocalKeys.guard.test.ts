@@ -121,6 +121,8 @@ describe('the per-account key list is the one list', () => {
       '`CanariDBMls_` + id, a database name - deleted by accountIndexedDbNames',
     'lib/posts/publishQueue/publishQueueStore.ts:DB_PREFIX + userId':
       '`CanariDBPublish_` + id, a database name - deleted by accountIndexedDbNames',
+    'lib/forms/draftCopies.ts:DB_PREFIX + userId':
+      '`CanariDBFormDrafts_` + id, a database name - deleted by accountIndexedDbNames and at sign-out',
   };
 
   it('rule 4 - nor does a string concatenation (a literal or a CONSTANT, then + a user id)', () => {

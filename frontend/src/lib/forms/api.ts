@@ -157,9 +157,14 @@ export interface CreateFormPayload {
   cotisationVariantKey?: string | null;
   /**
    * CREATE ONLY: `true` stores the form as a DRAFT, seen by its managers alone until
-   * {@link publishForm}. The server refuses it on an edit.
+   * {@link publishFormDraft}. The server refuses it on an edit.
    */
   draft?: boolean;
+  /**
+   * CREATE ONLY: the form's id, minted here so that a create whose answer was lost is sent again as
+   * the same create (the server answers the stored form). Absent: the server mints it.
+   */
+  id?: string;
 }
 
 /** A form's life (`form-status.ts` on the server): `draft` until published, then for good. */
@@ -198,6 +203,8 @@ export interface FormDraft {
   revision: number;
   document: CreateFormPayload | null;
   savedAt: string | null;
+  /** The client id of the save that wrote this revision: a device copy naming it has landed. */
+  saveId?: string | null;
 }
 
 import { apiFetch } from '$lib/utils/apiFetch';
@@ -209,6 +216,7 @@ import { amountBoundsOf, SocialApiError } from '$lib/associations/api';
 import { Log } from '$lib/utils/Log';
 import { assertWithinRequestBudget } from '$lib/utils/mediaRequestLimits';
 import { prepareQuestionImage } from './questionImage';
+import { FORM_DRAFT_CONFLICT, FormDraftConflictError } from './draftConflict';
 
 /**
  * A refused call, typed at the THROW: the status always, the server's stable `code` when the body
@@ -287,16 +295,6 @@ export async function updateForm(id: string, payload: CreateFormPayload): Promis
   return res.json();
 }
 
-/**
- * Publishes a DRAFT form: answerable, listed and reachable by its link from now on. Idempotent on
- * the server. Refused 409 `FORM_PAYMENTS_NOT_READY` while a paid form's association cannot collect.
- */
-export async function publishForm(id: string): Promise<{ id: string; status: FormStatus }> {
-  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/publish`, { method: 'POST' });
-  if (!res.ok) throw await refusal(res, 'Failed to publish form');
-  return res.json();
-}
-
 /** Reads the unpublished revision of a form (managers only). */
 export async function getFormDraft(id: string): Promise<FormDraft> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}/draft`);
@@ -305,20 +303,55 @@ export async function getFormDraft(id: string): Promise<FormDraft> {
 }
 
 /**
- * The autosave: stores `document` as the revision after `baseRevision`. Refused 409
- * `FORM_DRAFT_CONFLICT` when another tab, a publication or a discard moved it first; a transport
- * failure throws what `fetch` threw (no status: nobody answered).
+ * The largest body sent with `keepalive` (the page is being left): engines cap the bodies of all
+ * keepalive requests in flight at 64 KiB together. A larger revision is not lost - the device copy
+ * holds it until the next send (`draftCopies.ts`).
+ */
+export const KEEPALIVE_BODY_MAX = 60_000;
+
+/**
+ * The autosave: stores `document` as the revision after `baseRevision`, under the client's `saveId`.
+ * Refused {@link FormDraftConflictError} when another tab, a publication or a discard moved it first;
+ * a transport failure throws what `fetch` threw (no status: nobody answered). `leaving`: the page is
+ * being hidden or left, so the request is asked to outlive it (`keepalive`) when its body fits.
  */
 export async function saveFormDraft(
   id: string,
   baseRevision: number,
-  document: CreateFormPayload
+  document: CreateFormPayload,
+  saveId: string,
+  opts: { leaving?: boolean } = {}
 ): Promise<{ revision: number; savedAt: string }> {
+  const body = JSON.stringify({ baseRevision, document, saveId });
+  const keepalive = opts.leaving === true && body.length <= KEEPALIVE_BODY_MAX;
+  if (opts.leaving && !keepalive) {
+    Log.d(
+      'FORMS',
+      `revision of ${id} too large to outlive the page (${body.length}); the device copy holds it`
+    );
+  }
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}/draft`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ baseRevision, document }),
+    body,
+    ...(keepalive ? { keepalive } : {}),
   });
+  if (res.status === 409) {
+    const answer = await res.json().catch(() => ({}));
+    if (answer.code === FORM_DRAFT_CONFLICT && typeof answer.revision === 'number') {
+      Log.i('FORMS', `revision save of ${id} refused: it is at ${answer.revision}`);
+      throw new FormDraftConflictError(
+        answer.revision,
+        typeof answer.saveId === 'string' ? answer.saveId : null
+      );
+    }
+    Log.i('FORMS', `revision save of ${id}: refused status=409 code=${answer.code ?? 'none'}`);
+    throw new SocialApiError(
+      `Failed to save the form revision (409)`,
+      typeof answer.code === 'string' ? answer.code : null,
+      409
+    );
+  }
   if (!res.ok) throw await refusal(res, 'Failed to save the form revision');
   return res.json();
 }
@@ -329,12 +362,13 @@ export async function saveFormDraft(
  */
 export async function publishFormDraft(
   id: string,
-  revision: number
+  revision: number,
+  overwrite = false
 ): Promise<{ id: string; status: FormStatus; revision: number }> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}/draft/publish`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ revision }),
+    body: JSON.stringify(overwrite ? { revision, overwrite } : { revision }),
   });
   if (!res.ok) throw await refusal(res, 'Failed to publish the form changes');
   return res.json();

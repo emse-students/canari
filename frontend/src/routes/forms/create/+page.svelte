@@ -14,7 +14,7 @@
     activePaymentProvider,
     loadActivePaymentProvider,
   } from '$lib/associations/activePaymentProvider.svelte';
-  import { goto } from '$app/navigation';
+  import { beforeNavigate, goto } from '$app/navigation';
   import { page } from '$app/state';
   import {
     createForm,
@@ -26,6 +26,8 @@
   } from '$lib/forms/api';
   import { draftRefusalMessage, publishBlocker } from '$lib/forms/publish';
   import { serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
+  import { deviceCopyOf, holdFormEditor } from '$lib/forms/draftCopies';
+  import { currentUserId } from '$lib/stores/user';
   import { FormAutosave } from '$lib/forms/autosave.svelte';
   import { questionImageRefusalMessage } from '$lib/forms/questionImage';
   import { POST_NEW_FORM_ID_KEY, loadPostComposerDraft } from '$lib/posts/postComposerDraft';
@@ -288,11 +290,18 @@
    * (owner, 2026-11-08): a shell holding only what is fixed at creation - its association - and its
    * title; everything else is its unpublished revision, saved as it is typed.
    */
+  /**
+   * The new form's id, minted HERE (the client post id pattern): a create whose answer was lost is
+   * sent again as the same create, and the server answers the form it stored - never a second draft.
+   */
+  const newFormId = crypto.randomUUID();
+  /** Set once the server holds the draft (its shell answered). */
   let createdId = $state<string | null>(null);
 
   async function draftId(): Promise<string> {
     if (createdId) return createdId;
     const created = await createForm({
+      id: newFormId,
       draft: true,
       title,
       basePrice: 0,
@@ -305,8 +314,13 @@
     return created.id;
   }
 
+  const userId = currentUserId();
   const autosave = new FormAutosave({
-    save: async (base, document) => saveFormDraft(await draftId(), base, document),
+    save: async (base, document, saveId, leaving) =>
+      saveFormDraft(await draftId(), base, document, saveId, { leaving }),
+    // Kept on the device until a save lands: a page closed first loses nothing, and the background
+    // resend creates the draft and sends it (`draftResend.ts`).
+    device: formDrafts && userId ? deviceCopyOf(userId, newFormId, () => createdId !== null) : null,
   });
 
   // Every edit is saved, debounced, once the form has a title to be listed under.
@@ -322,8 +336,14 @@
     });
   });
 
-  // Hidden or left: saved at once; back online: an edit that reached no server is sent again.
+  // Hidden, left or torn down: saved at once; back online: an edit that reached no server is sent
+  // again. The cleanup saves too - an in-app navigation fires no `pagehide`.
   $effect(() => (formDrafts ? autosave.attach(window) : undefined));
+  beforeNavigate(() => {
+    if (formDrafts) void autosave.flush();
+  });
+  // While this page is open, the background resend leaves its device copy to it.
+  $effect(() => (formDrafts ? holdFormEditor(newFormId) : undefined));
 
   /** The new form's payload: what the autosave stores and the publication applies. */
   function buildPayload(): CreateFormPayload {
@@ -429,11 +449,12 @@
     isSubmitting = true;
     error = '';
     try {
+      let publishedId: string;
       if (!formDrafts) {
         // An estate older than drafts: one create that publishes, as this page always did.
         const created = await createForm(buildPayload());
         Log.d('forms-editor', `created and published ${created.id} (an estate without drafts)`);
-        createdId = created.id;
+        publishedId = created.id;
       } else {
         // What is on the page now is what is published: saved first, whatever the debounce holds.
         lastSaved = JSON.stringify(buildPayload());
@@ -447,9 +468,10 @@
         const result = await publishFormDraft(createdId, autosave.revision);
         autosave.closed(result.revision);
         Log.d('forms-editor', `created and published ${createdId}`);
+        publishedId = createdId;
       }
       if (fromPostComposer) {
-        sessionStorage.setItem(POST_NEW_FORM_ID_KEY, createdId ?? '');
+        sessionStorage.setItem(POST_NEW_FORM_ID_KEY, publishedId);
         goto(resolve('/posts'));
       } else {
         gotoAppPath(returnTo).catch((err: unknown) =>
@@ -566,7 +588,7 @@
       onPricedGridGone={() =>
         applyMultipleSubmissions(multipleSubmissionsAfterGridGone(multipleSubmissions(), items))}
       {reveal}
-      imageUploadFn={async (file) => (await uploadFormItemImage(null, file)).imageUrl}
+      imageUploadFn={async (file) => (await uploadFormItemImage(createdId, file)).imageUrl}
     />
   </div>
 
