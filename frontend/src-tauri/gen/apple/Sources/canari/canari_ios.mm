@@ -527,6 +527,29 @@ static void CanariObserveCallIdleTimer(void) {
   NSLog(@"[CanariIOS] listening for the screen idle timer");
 }
 
+/// THE ONE REGISTRATION POINT of the call's page handlers (`canariProximity`, `canariIdleTimer`),
+/// called wherever the WebView may have just come to exist: at the scene's connection (a PushKit
+/// launch of a killed app connects the scene and loads the page IN THE BACKGROUND, with no
+/// `didBecomeActive` before the call is answered on CallKit - a handler registered only at the
+/// activation was absent when the call screen posted its hold), at the end of a page load, and at
+/// every activation. Each handler keeps its own `static handler != nil` guard, so a second call
+/// registers nothing twice. The first point that found the WebView is logged once.
+static void CanariRegisterCallPageHandlers(NSString *where) {
+  static BOOL registered = NO;
+  if (CanariFindWebView() == nil) {
+    if (!registered) {
+      NSLog(@"[CanariIOS] call page handlers: no WebView yet at %@", where);
+    }
+    return;
+  }
+  CanariObserveCallProximity();
+  CanariObserveCallIdleTimer();
+  if (!registered) {
+    registered = YES;
+    NSLog(@"[CanariIOS] call page handlers registered at %@", where);
+  }
+}
+
 /// Publishes the home indicator's inset to the page as `--safe-area-inset-bottom` - the iOS peer of
 /// what Android's window insets give the same 35 consumers (`app.html` names that variable "the one
 /// place this is decided").
@@ -555,6 +578,7 @@ static void CanariObserveCallIdleTimer(void) {
                         change:(NSDictionary *)change
                        context:(void *)context {
   if ([keyPath isEqualToString:@"loading"] && ![(WKWebView *)object isLoading]) {
+    CanariRegisterCallPageHandlers(@"page load");
     CanariPublishSafeAreaInsets();
     CanariPublishDynamicType();
     CanariPublishForeground(nil);
@@ -977,8 +1001,7 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariApplyEdgeToEdge();
   CanariObserveDocumentScrollRange();
   CanariObserveTheme();
-  CanariObserveCallProximity();
-  CanariObserveCallIdleTimer();
+  CanariRegisterCallPageHandlers(@"activation");
   CanariHideKeyboardAccessoryBar();
   CanariPublishSafeAreaInsets();
   CanariPublishDynamicType();
@@ -1054,6 +1077,9 @@ static CanariSceneWillConnectIMP CanariOrigSceneWillConnect = NULL;
 static void CanariSceneWillConnect(id self, SEL _cmd, UIScene *scene, UISceneSession *session,
                                    UISceneConnectionOptions *options) {
   CanariOrigSceneWillConnect(self, _cmd, scene, session, options);
+  // The scene now holds its window, on a background launch too; whether the WebView is in it yet
+  // is logged (`registered at scene connection`, or `no WebView yet` and a later point).
+  CanariRegisterCallPageHandlers(@"scene connection");
   NSSet<UIOpenURLContext *> *urls = options.URLContexts;
   NSUInteger webActivities = 0;
   for (NSUserActivity *activity in options.userActivities) {

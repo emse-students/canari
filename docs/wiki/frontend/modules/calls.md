@@ -2433,18 +2433,40 @@ broadcast takes the same holder as owner `live` ([live](live.md#the-screen-stays
   the process alive mid-call. A kill or a crash of the app needs nothing: the property belongs to
   the running process. iOS ignores it while the app is not in the foreground, so a call ended in
   the background is released by the effect when the page runs again, before the screen is seen.
-- **An ask with no handler** (a build without it) logs `[CALL-WAKE] ERROR no canariIdleTimer
-  handler`; a release with none is silent.
+- **The handlers are registered where the WebView comes to exist, not at the activation alone
+  (review of #3151).** A video call answered on CallKit from a KILLED app is a PushKit launch: the
+  scene connects and the page loads in the background, and no `didBecomeActive` comes before the
+  call screen posts its hold - registered only at the activation, `canariIdleTimer` was absent
+  then, and so was `canariProximity` for an audio call. Both are now registered by ONE function,
+  `CanariRegisterCallPageHandlers(where)`, called at the scene's connection (after tao's own
+  `scene:willConnectToSession:`), at the end of every page load and at every activation; each
+  handler keeps its `static handler != nil` guard, and the first point that found the WebView is
+  logged (`[CanariIOS] call page handlers registered at <where>`, or `no WebView yet at <where>`).
+- **An ask with no handler yet** logs `[CALL-WAKE] ERROR no canariIdleTimer handler yet` and is
+  NOT recorded as posted, so the next trigger (the effect re-running, a return to the screen)
+  posts it again once the handler exists; a release with none is silent.
 - **Tests** (`screenAwake.test.ts`): a call and a live overlapping, released in both orders, and
   one owner released twice, against the set rule; the `.mm` is pinned to that rule (the set, add,
-  remove, reset, `owners.count > 0`). The Objective-C itself first runs on the phone.
+  remove, reset, `owners.count > 0`); a hold made before the handler exists is delivered by the
+  next trigger; the `.mm` registers both handlers at the one point and nowhere else, the scene's
+  connection after tao's. The Objective-C itself first runs on the phone.
 
 **Owed on the iPhone 12** (a pre-release with this change): a video call both ways, left untouched
 past the auto-lock delay - the screen stays on; the `[CALL-WAKE] iOS idle timer held` and
 `[CanariIOS] idle timer (hold call): owners=[call] disabled=1` lines, and no `the screen lock was
 refused`; at the hang-up, `released` and `disabled=0`, and the screen dims again at the auto-lock
 delay; a call ended from the other phone while the iPhone is in the background, then the app
-reopened - the screen dims on time.
+reopened - the screen dims on time. And, for the registration point:
+- **the app killed, a VIDEO call received, answered on CallKit**, left past the auto-lock delay -
+  the screen stays on; the syslog's `call page handlers registered at scene connection` (or at
+  `page load`) comes BEFORE the call's `idle timer (hold call)` line;
+- **the same with an AUDIO call**, the phone at the ear on the receiver - the screen goes dark
+  against the cheek (`call proximity (the page asked): ... now=1`);
+- **an ASSUMPTION, unverified**: nothing in the app handles
+  `webViewWebContentProcessDidTerminate:`, so after a WebContent kill mid-call the release relies
+  on WKWebView reloading the page (whose boot posts `{reset: true}`). Owed: a WebContent kill during
+  a video call (a memory-heavy page in the background, or the debugger's kill) - the screen dims on
+  time afterwards, and `idle timer (reset)` appears.
 
 ## The quality ladder (2026-10-21) - 720p, and an automatic drop
 

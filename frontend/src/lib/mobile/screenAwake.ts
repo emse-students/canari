@@ -56,18 +56,20 @@ function idleTimerHandler(): { postMessage: (m: IdleTimerMessage) => void } | un
 /** Tells the iOS shell that `owner` holds the screen on, or no longer does; logs every change. */
 export function setIosIdleTimerHeld(owner: ScreenAwakeOwner, held: boolean, why: string): void {
   if (posted.get(owner) === held) return;
-  posted.set(owner, held);
   const tag = TAGS[owner];
   const handler = idleTimerHandler();
   if (!handler) {
-    // Only an ASK that cannot be honoured is a defect; releasing nothing is not.
+    // NOT RECORDED: nothing reached native, so the next trigger (a return to the screen, the
+    // effect re-running) must post again once the handler exists. Only an ASK that cannot be
+    // honoured is a defect; releasing nothing is not.
     if (held) {
       appendLog(
-        `[${tag}] ERROR no canariIdleTimer handler in this iOS build - the screen may dim (${why})`
+        `[${tag}] ERROR no canariIdleTimer handler yet - the screen may dim until it is registered (${why})`
       );
     }
     return;
   }
+  posted.set(owner, held);
   appendLog(`[${tag}] iOS idle timer ${held ? 'held' : 'released'} (${why})`);
   handler.postMessage({ owner, hold: held });
 }

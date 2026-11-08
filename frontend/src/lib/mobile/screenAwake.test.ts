@@ -128,10 +128,41 @@ describe('setIosIdleTimerHeld', () => {
     expect(logs.some((l) => l.includes('[CALL-WAKE] ERROR no canariIdleTimer handler'))).toBe(true);
   });
 
+  it('a hold with no handler yet is not recorded: the next trigger delivers it once it exists', async () => {
+    const call = screenAwakeHolder('call', true);
+    await call.hold();
+    expect(logs.some((l) => l.includes('[CALL-WAKE] ERROR no canariIdleTimer handler yet'))).toBe(
+      true
+    );
+    const native = stubNativeSet();
+    await call.hold(); // e.g. the return to the screen, or the effect re-running
+    expect(native.postMessage.mock.calls).toEqual([[{ owner: 'call', hold: true }]]);
+    expect(native.disabled()).toBe(true);
+  });
+
+  it('native registers both call handlers at ONE point, called where the WebView comes to exist', () => {
+    const source = mm();
+    const register = source.slice(
+      source.indexOf('static void CanariRegisterCallPageHandlers(NSString *where) {')
+    );
+    const body = register.slice(0, register.indexOf('\n}\n'));
+    expect(body).toContain('CanariObserveCallProximity();');
+    expect(body).toContain('CanariObserveCallIdleTimer();');
+    // The scene's connection (a PushKit launch of a killed app, never activated), a page load, and
+    // every activation - and nowhere else is either handler registered.
+    const connect = source.slice(source.indexOf('static void CanariSceneWillConnect('));
+    expect(connect.indexOf('CanariRegisterCallPageHandlers(@"scene connection");')).toBeGreaterThan(
+      connect.indexOf('CanariOrigSceneWillConnect(self, _cmd, scene, session, options);')
+    );
+    expect(source).toContain('CanariRegisterCallPageHandlers(@"page load");');
+    expect(source).toContain('CanariRegisterCallPageHandlers(@"activation");');
+    expect(source.match(/^\s*CanariObserveCallProximity\(\);/gm)?.length).toBe(1);
+    expect(source.match(/^\s*CanariObserveCallIdleTimer\(\);/gm)?.length).toBe(1);
+  });
+
   it('the handler name is the one canari_ios.mm registers', () => {
     const source = mm();
     expect(source).toContain('addScriptMessageHandler:handler name:@"canariIdleTimer"');
-    expect(source).toContain('CanariObserveCallIdleTimer();');
   });
 });
 
