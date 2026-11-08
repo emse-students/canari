@@ -1,3 +1,3 @@
 version: 1.6.8
 
-Corrigé : la déconnexion retire bien le téléphone des notifications, l'aperçu d'un live ne manque plus une image, et le bouton caméra reste dans la barre d'appel réduite pour rallumer la caméra. Les salons déjà ouverts se rouvrent plus vite.
+Nouveau : une cloche pour suivre de près une association ou une personne, des événements « Campus » dans l'agenda, des formulaires en brouillon enregistrés au fil de la frappe, une carte des associations par campus. Corrigé : la déconnexion, l'écran qui s'éteignait pendant un appel vidéo, la page d'un lieu à réserver qui débordait, et plusieurs rognages. Les salons déjà ouverts se rouvrent plus vite.
