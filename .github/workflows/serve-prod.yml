@@ -161,6 +161,8 @@ jobs:
           GARAGE_SECRET_ACCESS_KEY: ${{ secrets.GARAGE_SECRET_ACCESS_KEY }}
           MIGALLERY_API_KEY: ${{ secrets.MIGALLERY_API_KEY }}
           MICONNECT_EDITOR_TOKEN: ${{ secrets.MICONNECT_EDITOR_TOKEN }}
+          # Signs the one-time sign-in handoff to the MiConnect sites (ES256, base64 PKCS#8 DER).
+          HANDOFF_SIGNING_KEY: ${{ secrets.HANDOFF_SIGNING_KEY }}
           GOOGLE_SAFE_BROWSING_API_KEY: ${{ secrets.GOOGLE_SAFE_BROWSING_API_KEY }}
           KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
           ANDROID_APP_LINK_SHA256: ${{ secrets.ANDROID_APP_LINK_SHA256 }}

@@ -92,6 +92,7 @@ CLOUDFLARE_TURN_MONTHLY_BUDGET_GB	silent	silent	secret:CLOUDFLARE_TURN_MONTHLY_B
 CLOUDFLARE_TURN_ANALYTICS_TOKEN	warn	warn	secret:CLOUDFLARE_TURN_ANALYTICS_TOKEN	no TURN relay - ice-servers answers STUN only (TURN_METER_UNAVAILABLE), a call behind NAT cannot connect
 MIGALLERY_API_KEY	warn	warn	secret:MIGALLERY_API_KEY	the avatar service does not work
 MICONNECT_EDITOR_TOKEN	warn	skip	secret:MICONNECT_EDITOR_TOKEN	an admin's profile edit is refused (typed: not configured) - production only, because dev and production share ONE MiConnect
+HANDOFF_SIGNING_KEY	warn	silent	secret:HANDOFF_SIGNING_KEY	no sign-in handoff is minted (POST /api/auth/handoff answers HANDOFF_NOT_OFFERED), so every MiConnect site Canari opens is opened plainly and may ask for a MiConnect sign-in again; silent on dev, where no site trusts the dev issuer yet
 GOOGLE_SAFE_BROWSING_API_KEY	warn	warn	secret:GOOGLE_SAFE_BROWSING_API_KEY	links are not checked against Safe Browsing
 KLIPY_API_KEY	warn	warn	secret:KLIPY_API_KEY	the GIF picker answers that GIF search is not configured
 ANDROID_APP_LINK_SHA256	warn	warn	secret:ANDROID_APP_LINK_SHA256	account restore on a new Android phone is unavailable (every /api/auth/restore route answers 503)

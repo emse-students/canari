@@ -39,12 +39,14 @@ describe('the live poster seal, v1', () => {
     const sealed = await sealLivePoster(KEY, LIVE, JPEG);
     const flipped = sealed.slice();
     flipped[20] ^= 1;
+    // Each attempt is STARTED inside its own `expect`: started together, a rejection that settles
+    // while an earlier one is awaited has no handler yet and Vitest reports it as unhandled.
     for (const attempt of [
-      openLivePoster(OTHER_KEY, LIVE, sealed),
-      openLivePoster(KEY, OTHER_LIVE, sealed),
-      openLivePoster(KEY, LIVE, flipped),
+      () => openLivePoster(OTHER_KEY, LIVE, sealed),
+      () => openLivePoster(KEY, OTHER_LIVE, sealed),
+      () => openLivePoster(KEY, LIVE, flipped),
     ]) {
-      await expect(attempt).rejects.toMatchObject({ reason: 'unauthentic' });
+      await expect(attempt()).rejects.toMatchObject({ reason: 'unauthentic' });
     }
     await expect(openLivePoster(KEY, LIVE, new Uint8Array(10))).rejects.toBeInstanceOf(
       LivePosterOpenError
