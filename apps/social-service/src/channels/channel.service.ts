@@ -63,6 +63,8 @@ import {
   PIN_REQUIRES_MODERATION,
   REMOVAL_EXCEEDS_ACTOR,
   ROLE_CHANGE_EXCEEDS_ACTOR,
+  ROLE_LABEL_INVALID,
+  ROLE_RENAME_REQUIRES_ADMIN,
   roleGrantsChannelManagement,
   roleGrantsModeration,
   roleGrantsRoleManagement,
@@ -285,6 +287,38 @@ export function validateChannelName(raw: unknown): string {
   if (/\p{Cc}/u.test(name))
     throw new BadRequestException('Channel name cannot contain control characters');
   return name;
+}
+
+/** Longest role display name, counted in characters a person sees (code points). Mirrored by the client's input. */
+export const MAX_ROLE_LABEL_LENGTH = 40;
+
+/**
+ * A role's DISPLAY name, as the community typed it: trimmed and nothing else, stored as typed (case,
+ * accents, emoji). `null` for "no name of its own" - an absent or blank value resets the role to the
+ * localized default - and a typed 400 `ROLE_LABEL_INVALID` for a value that is not text, a name too
+ * long, or one holding a control or bidi-override character (which could make a name read as
+ * another). It is a LABEL: no decision reads it, so no spelling of it can grant or hide anything.
+ */
+export function validateRoleLabel(raw: unknown): string | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'string') {
+    throw new BadRequestException({ code: ROLE_LABEL_INVALID, message: 'Role name must be text.' });
+  }
+  const label = raw.trim();
+  if (!label) return null;
+  if (Array.from(label).length > MAX_ROLE_LABEL_LENGTH) {
+    throw new BadRequestException({
+      code: ROLE_LABEL_INVALID,
+      message: `Role name too long (max ${MAX_ROLE_LABEL_LENGTH} characters).`,
+    });
+  }
+  if (/[\p{Cc}‪-‮⁦-⁩]/u.test(label)) {
+    throw new BadRequestException({
+      code: ROLE_LABEL_INVALID,
+      message: 'Role name cannot contain control characters.',
+    });
+  }
+  return label;
 }
 
 /** The community's own order: the arranged position, then age, then id so it is total. */
@@ -6672,13 +6706,30 @@ export class ChannelService implements OnApplicationBootstrap {
    * administrators, and this discloses nothing a member could not already read.
    */
   private async announceRolePermissions(role: ChannelRole): Promise<void> {
+    const members = await this.announceRoleToCommunity(role);
+    await this.announceStandingToHolders(role, members);
+  }
+
+  /**
+   * The ONE `workspace.role.permissions` publish, to the whole membership, carrying the role's
+   * WHOLE public state - what it grants and the community's own name for it (`label`, null for
+   * none) - so a client applies one event whichever of the two changed and never has to guess the
+   * other. Returns the members it was sent to. A rename sends this and nothing more: it changes no
+   * one's standing.
+   */
+  private async announceRoleToCommunity(role: ChannelRole): Promise<ChannelMember[]> {
     const members = await this.memberRepo.find({ where: { workspaceId: role.workspaceId } });
     await this.redis.publishChannelEvent(
       'workspace.role.permissions',
-      { workspaceId: role.workspaceId, roleId: role.id, permissions: role.permissions },
+      {
+        workspaceId: role.workspaceId,
+        roleId: role.id,
+        permissions: role.permissions,
+        label: role.displayLabel ?? null,
+      },
       members.map((m) => m.userId)
     );
-    await this.announceStandingToHolders(role, members);
+    return members;
   }
 
   /**
@@ -6742,6 +6793,58 @@ export class ChannelService implements OnApplicationBootstrap {
         `[ROLE] permissions saved but holders not told role=${role.id} holders=${holders.length}: ${e instanceof Error ? e.message : String(e)}`
       );
     }
+  }
+
+  /**
+   * Gives a role the community's own display name, or resets it (`rawLabel` null / blank).
+   *
+   * LABEL ONLY (owner, 2026-11-08): `name` - the role's identity, which every permission decision
+   * and every role lookup reads - is untouched, so no spelling of a label can change what anyone may
+   * do. Only an administrator (`workspace.manage`) renames, decided under the community removal lock
+   * so a demotion committing meanwhile is honoured; a refusal is a typed 403
+   * `ROLE_RENAME_REQUIRES_ADMIN`. The new name is announced to the whole community.
+   */
+  async setRoleDisplayLabel(roleId: string, actorUserId: string, rawLabel: unknown) {
+    const label = validateRoleLabel(rawLabel);
+    const role = await this.roleRepo.findOne({ where: { id: roleId } });
+    if (!role) throw new NotFoundException('Role not found');
+    const workspaceId = role.workspaceId;
+
+    const saved = await this.withCommunityRemovalLock(workspaceId, async (em) => {
+      const actor = await em
+        .getRepository(ChannelMember)
+        .findOne({ where: { workspaceId, userId: actorUserId } });
+      const held = actor ? await this.permissionsOfMember(actor, em) : [];
+      if (!held.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)) {
+        this.logger.warn(
+          `[ROLE] REFUSED rename role=${roleId} - not an administrator workspace=${workspaceId} by=${actorUserId.slice(0, 8)}`
+        );
+        throw new ForbiddenException({
+          code: ROLE_RENAME_REQUIRES_ADMIN,
+          message: 'Only an administrator may rename a role.',
+        });
+      }
+      const roles = em.getRepository(ChannelRole);
+      const locked = await roles.findOne({
+        where: { id: roleId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!locked) throw new NotFoundException('Role not found');
+      locked.displayLabel = label;
+      return roles.save(locked);
+    });
+
+    this.logger.log(
+      `[ROLE] renamed role=${roleId} workspace=${workspaceId} label=${label === null ? 'default' : `${Array.from(label).length} chars`} by=${actorUserId.slice(0, 8)}`
+    );
+    try {
+      await this.announceRoleToCommunity(saved);
+    } catch (e) {
+      this.logger.warn(
+        `[ROLE] renamed but the community was not told role=${roleId}: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+    return { roleId: saved.id, roleName: saved.name, label: saved.displayLabel ?? null };
   }
 
   /**

@@ -2359,6 +2359,19 @@ A purged community goes through `dropCommunityLocally` in `ChatBackgroundService
 chat panel afterwards needs to know whether what was on screen belonged to the community that
 just vanished.
 
+### A community's own names for its three roles (owner, 2026-11-08)
+
+The "Roles" tab of the community settings (`SidebarCommunityAdminPanel`) opens with `CommunityRoleNames`,
+one field per role (admin, moderator, member), mounted only when the server said `viewerCanManage`.
+The default name is the placeholder; saving a blank field resets it. **Labels only**: the three roles,
+their permissions and their holders are untouched, and the stored role `name` stays the identity the
+client folds through `canonicalRoleOf` - a label is never read for a decision. Every place a role name
+is drawn (member badges, invite and role pickers, the permission grid headers) goes through the ONE
+resolver `resolveRoleLabel` (`utils/chat/communityRoleLabel.ts`), fed by `globalChannels.roleLabels`
+(by role id), which the listing fills and the `workspace.role.permissions` event (it carries `label`)
+keeps current for every member without a reload. Server side, column choice and refusals:
+[social-service](../../services/social-service.md#a-community-may-name-its-three-roles-owner-2026-11-08).
+
 ### Leaving: a private channel, or the whole community - never a public channel
 
 `ChannelSettingsModal` offers "Quitter le salon" only when `selectedChannel.isPrivate`. A public

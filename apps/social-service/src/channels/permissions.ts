@@ -176,6 +176,18 @@ export const INVITE_ROLE_NOT_GRANTABLE = 'INVITE_ROLE_NOT_GRANTABLE';
 export const ROLE_CHANGE_EXCEEDS_ACTOR = 'ROLE_CHANGE_EXCEEDS_ACTOR';
 
 /**
+ * The refusal code (403) of a role rename by a member who does not hold `workspace.manage`: only a
+ * community's administrators name its roles. A CODE, so a client maps it from the type.
+ */
+export const ROLE_RENAME_REQUIRES_ADMIN = 'ROLE_RENAME_REQUIRES_ADMIN';
+
+/**
+ * The refusal code (400) of a role display name that is too long, holds a control or bidi-override
+ * character, or is not text. An EMPTY name is not refused: it resets the role to its default.
+ */
+export const ROLE_LABEL_INVALID = 'ROLE_LABEL_INVALID';
+
+/**
  * The refusal code (409) of a membership write whose row is no longer the one it judged: its roles
  * or permissions changed since the read, or the membership is gone. Nothing was written; reading
  * the member again and retrying is the answer. Thrown by community and association role changes.

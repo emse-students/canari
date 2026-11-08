@@ -1285,7 +1285,11 @@
           showToast(m.channel_removed_from_channel({ channel: event.channelName || '' }), 'info');
         }
       },
-      onRolePermissionsChanged: (event: { roleId: string; permissions: string[] }) => {
+      onRolePermissionsChanged: (event: {
+        roleId: string;
+        permissions: string[];
+        label?: string | null;
+      }) => {
         globalChannels.handleRolePermissionsChanged(event);
         appendLog(
           `[ROLE] ${event.roleId.slice(0, 8)} now grants ${event.permissions.length} permission(s)`

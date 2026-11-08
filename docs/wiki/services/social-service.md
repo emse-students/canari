@@ -293,6 +293,41 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
   shows in the member list as "Membre" while holding whatever permissions it was given - a display
   fault waiting for the day somebody uses the route.
 
+#### A community may name its three roles (owner, 2026-11-08)
+
+The three roles stay fixed (identity, permissions); each community may give them **display names**
+("Presidence", "Bureau", "Musicien"). LABELS ONLY.
+
+- **Storage: a separate nullable column, `channel_roles."displayLabel"` (migration 150, varchar 40),
+  never the existing `name`.** `name` is the role's IDENTITY ('Administrateur', 'Moderateur',
+  'Membre'): `mapRoleInputToWorkspaceRoleName`, invitations, assignment and every client of
+  `minClientVersion` 1.6.6 resolve a role from it, and `normalizeRoleLabelToCanonical` folds an
+  unknown name to `member`. Writing a free-text label into `name` would show an administrator as
+  "Membre" on an old client (and break the by-name lookups). With its own column an old client ignores the
+  field it does not know and sees exactly what it saw before; the listing (`roles`) simply carries
+  `displayLabel` beside `name`. NULL = no name of its own, every client shows the localized default
+  (`chat_role_admin` / `chat_role_moderator` / `chat_role_member`).
+- **Write: `PATCH /channels/roles/:roleId/label` `{ label: string | null }`** (`setRoleDisplayLabel`).
+  Only an administrator (`workspace.manage`, read under the community removal lock so a demotion
+  committing meanwhile is honoured); anyone else is refused 403 `ROLE_RENAME_REQUIRES_ADMIN`. The
+  client receives no role name to decide on: it mounts the editor from `viewerCanManage`, the existing
+  decision flag. `validateRoleLabel`: trimmed, at most 40 code points, no control or bidi-override
+  character (400 `ROLE_LABEL_INVALID`); a blank or null value RESETS. One name per role.
+- **Live update: the existing `workspace.role.permissions` event** now carries the role's whole public
+  state - `permissions` AND `label` (string, or null for the default) - to the whole membership
+  (`announceRoleToCommunity`, the one publish a permission edit and a rename share). A rename sends it
+  and nothing else (no standing changes, so no `workspace.role.changed`). Absent `label` (an older
+  server) leaves the name where it was.
+- **Nothing keys on a label.** Consumers audited: the roster rows and `normalizeRoleLabelToCanonical`
+  read `name`; permission checks read `permissions`; invite and assignment lookups read `name`; the
+  client folds `name` (never the label) through `canonicalRoleOf`; `mapRoleInputToWorkspaceRoleName`
+  receives the canonical English/French input of the client. The ONE client resolver is
+  `resolveRoleLabel` (`utils/chat/communityRoleLabel.ts`): the member list badges, the invite and
+  role pickers, the permission grid headers and the editor placeholders all call it, from the store
+  (`globalChannels.roleLabels`, keyed by role id) that the announcement keeps current. No push or
+  notification text names a role. Tests: `role-label.integration.spec.ts` (PostgreSQL),
+  `role-label.spec.ts`.
+
 #### Message moderation (`channel.moderate`)
 
 The role matrix advertises this permission as "pin or unpin any message, delete other members'
