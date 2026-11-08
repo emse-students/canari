@@ -8,5 +8,6 @@ the previous release still boots, and a build older than 147 still gets `[]` fro
 
 **Owed:** one held migration dropping the FK, the column and the table, once the oldest release
 production may roll back to no longer maps them (the precedent is migration 134), together with the
-GET shim's removal. Also delete the rows the dev seed writes (`tools/dev-seed/seed.ts`,
-`infrastructure/dev/seed.sql`).
+GET shim's removal, and `association_categories` taken out of `RAW_TABLES` in
+`account-erasure.coverage.spec.ts` (listed there only because the table outlives its entity). The
+dev seed already writes neither.

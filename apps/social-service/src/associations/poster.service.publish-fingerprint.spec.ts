@@ -40,7 +40,14 @@ describe('PosterService - the fingerprint of the document that went live', () =>
         // The associations space `s1` offers (`CARTE_SPACE_ASSOCIATIONS_SQL`).
         query: () => Promise.resolve([{ id: 'a1' }]),
         transaction: (run: (m: unknown) => Promise<unknown>) =>
-          run({ getRepository: () => inner }) as Promise<PosterProject>,
+          run({
+            getRepository: () => inner,
+            // The per-space lock (`SELECT ... FOR UPDATE`): recorded, answered with nothing.
+            query: (sql: string, params: unknown[]) => {
+              locks.push({ sql, params });
+              return Promise.resolve([]);
+            },
+          }) as Promise<PosterProject>,
       },
     };
   }
@@ -98,7 +105,10 @@ describe('PosterService - the fingerprint of the document that went live', () =>
     };
   }
 
+  let locks: { sql: string; params: unknown[] }[] = [];
+
   beforeEach(() => {
+    locks = [];
     updates = [];
     saved = undefined as unknown as PosterProject;
     entries = [{ associationId: 'a1', enabled: true }];
@@ -126,6 +136,37 @@ describe('PosterService - the fingerprint of the document that went live', () =>
     await expect(
       service.publish('p1', { carte: carte(), fingerprint: FP }, ADMIN)
     ).rejects.toMatchObject({ response: { code: 'CARTE_UNIT_OUTSIDE_MAP' } });
+    expect(updates).toEqual([]);
+  });
+
+  it('serialises the publish on its space row before clearing the previous live map', async () => {
+    await service.publish('p1', { carte: carte(), fingerprint: FP }, ADMIN);
+    expect(locks).toEqual([
+      { sql: expect.stringMatching(/FROM spaces .* FOR UPDATE/), params: ['s1'] },
+    ]);
+  });
+
+  // A roster line is as public as a unit: a switched-off association is no more in the directory.
+  it('refuses a directory line naming an association the map does not show', async () => {
+    const doc = {
+      ...carte(),
+      directory: {
+        zones: [
+          {
+            label: 'Z',
+            assos: [
+              { assoId: 'a1', line: 'x' },
+              { assoId: 'a9', line: 'y' },
+            ],
+          },
+        ],
+      },
+    };
+    await expect(
+      service.publish('p1', { carte: doc, fingerprint: FP }, ADMIN)
+    ).rejects.toMatchObject({
+      response: { code: 'CARTE_UNIT_OUTSIDE_MAP' },
+    });
     expect(updates).toEqual([]);
   });
 

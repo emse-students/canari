@@ -175,7 +175,7 @@ async function seed(db: Client, opts: { icmGardanne: boolean }): Promise<void> {
     });
   await db.query(
     `INSERT INTO poster_projects (id, name, layout, "createdBy", publication, "publishedAt", "publicationFingerprint") VALUES
-      ($1, 'Carte live', $2::jsonb, 'bde-manager', '{"units":[]}'::jsonb, now(), $5),
+      ($1, 'Carte live', $2::jsonb, 'bde-manager', $7::jsonb, now(), $5),
       ($3, 'Carte FSSS', $4::jsonb, 'fsss-manager', NULL, NULL, NULL),
       ($6, 'Brouillon', '{}'::jsonb, 'bde-manager', NULL, NULL, NULL)`,
     [
@@ -185,6 +185,27 @@ async function seed(db: Client, opts: { icmGardanne: boolean }): Promise<void> {
       layout([ID.a3]),
       FP,
       ID.bdeDraft,
+      // The document that is live: a1 (of the space) and a3 (FSSS only, switched off by 147), as a
+      // unit and as a directory line each.
+      JSON.stringify({
+        units: [
+          { assoId: ID.a1, x: 1 },
+          { assoId: ID.a3, x: 2 },
+        ],
+        directory: {
+          heading: 'Annuaire',
+          zones: [
+            { label: 'Culture', assos: [{ assoId: ID.a1, line: 'A' }] },
+            {
+              label: 'Sport',
+              assos: [
+                { assoId: ID.a3, line: 'C' },
+                { assoId: ID.a2, line: 'B' },
+              ],
+            },
+          ],
+        },
+      }),
     ]
   );
 }
@@ -242,6 +263,25 @@ maybe('migration 147 on a seeded schema (the map is attachable)', () => {
     await expect(spaceOf(ID.live)).resolves.toEqual({ spaceId: ID.icm, live: true });
   });
 
+  it('removes from the LIVE document every unit and directory line it switched off, and nothing else', async () => {
+    const { rows } = await db.query(
+      `SELECT publication, "publicationFingerprint" AS fp FROM poster_projects WHERE id = $1`,
+      [ID.live]
+    );
+    expect(rows[0].publication).toEqual({
+      units: [{ assoId: ID.a1, x: 1 }],
+      directory: {
+        heading: 'Annuaire',
+        zones: [
+          { label: 'Culture', assos: [{ assoId: ID.a1, line: 'A' }] },
+          { label: 'Sport', assos: [{ assoId: ID.a2, line: 'B' }] },
+        ],
+      },
+    });
+    // The fingerprint described the document before; it is unknown now, never a false match.
+    expect(rows[0].fp).toBeNull();
+  });
+
   it("attaches another map to the one space its creator manages, and leaves a two-space creator's map unattached", async () => {
     await expect(spaceOf(ID.fsssMap)).resolves.toEqual({ spaceId: ID.fsssSpace, live: false });
     await expect(spaceOf(ID.bdeDraft)).resolves.toEqual({ spaceId: null, live: false });
@@ -283,9 +323,13 @@ maybe('migration 147 on a seeded schema (the map is attachable)', () => {
                   (SELECT count(*) FILTER (WHERE "spaceId" IS NOT NULL) FROM poster_projects) AS s`
         )
       ).rows[0];
+    const live = async () =>
+      (await db.query(`SELECT publication FROM poster_projects WHERE id = $1`, [ID.live])).rows[0];
     const before = await count();
+    const liveBefore = await live();
     await db.query(MIGRATION_147);
     await expect(count()).resolves.toEqual(before);
+    await expect(live()).resolves.toEqual(liveBefore);
   });
   it('allows one live map per space, and none without a space', async () => {
     await db.query(
@@ -459,6 +503,30 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
     await expect(
       service.getPublished({ formation: 'ISMIN', campus: 'saint-etienne' })
     ).resolves.toBeNull();
+  });
+
+  it('serialises two publishes in one space: both succeed, one map is live', async () => {
+    const one = await service.create({ name: 'Concurrente A', spaceId: ID.icm }, BDE);
+    const two = await service.create({ name: 'Concurrente B', spaceId: ID.icm }, BDE);
+    // Started together, on two pooled connections: without the space lock the later of the two
+    // inserts hits the per-space unique index (a 500); with it, the later one replaces the earlier.
+    await expect(
+      Promise.all([
+        refusal(service.publish(one.id, { carte: carte([ID.a1]), fingerprint: FP }, BDE)),
+        refusal(service.publish(two.id, { carte: carte([ID.a1]), fingerprint: FP }, BDE)),
+      ])
+    ).resolves.toEqual(['written', 'written']);
+    const { rows } = await db.query(
+      `SELECT id FROM poster_projects WHERE publication IS NOT NULL AND "spaceId" = $1`,
+      [ID.icm]
+    );
+    expect(rows).toHaveLength(1);
+    expect([one.id, two.id]).toContain(rows[0].id);
+    // Back to the state the next test expects: 'Carte 2027' is the ICM live map.
+    await service.remove(one.id, BDE);
+    await service.remove(two.id, BDE);
+    const again = (await service.list(BDE)).find((p) => p.name === 'Carte 2027');
+    await service.publish(again!.id, { carte: carte([ID.a1]), fingerprint: FP }, BDE);
   });
 
   it('[LEGACY] serves the no-space read only while exactly one map is live', async () => {

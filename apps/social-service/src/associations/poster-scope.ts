@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import { bdeStandingInSpaceSql, governorIsAnAssociationSql } from '../spaces/bde';
 import { ruleReachesSpaceSql } from '../spaces/rule-sql';
 import {
@@ -100,11 +100,20 @@ export interface CarteSpaceKey {
  */
 export function parseCarteSpaceParam(raw: unknown): CarteSpaceKey | null {
   if (raw === undefined || raw === null || raw === '') return null;
-  const invalid = () =>
-    new BadRequestException({
+  const invalid = () => {
+    // Public input: its shape is logged, never its text.
+    const shape =
+      typeof raw === 'string'
+        ? `string of ${raw.length} chars, ${raw.split(':').length - 1} colon(s)`
+        : Array.isArray(raw)
+          ? `array of ${raw.length}`
+          : typeof raw;
+    new Logger('Carte').warn(`[CARTE] public read refused: malformed space (${shape})`);
+    return new BadRequestException({
       code: CARTE_ERROR.PUBLIC_SPACE_INVALID,
       message: 'space must be <formation>:<campus>, e.g. ICM:saint-etienne',
     });
+  };
   if (typeof raw !== 'string') throw invalid();
   const parts = raw.split(':');
   if (parts.length !== 2) throw invalid();

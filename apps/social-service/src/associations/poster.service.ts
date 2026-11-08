@@ -502,10 +502,11 @@ export class PosterService {
   }
 
   /**
-   * Whether every unit of a publication is an association this map SHOWS: switched on, and offered
-   * by its space today. The document is built by the editor, so this is the server holding the
-   * rule rather than trusting the builder - a switched-off association, or one of another space,
-   * never reaches the anonymous showcase through this map.
+   * Whether every association a publication names - each unit AND each directory line - is one
+   * this map SHOWS: switched on, and offered by its space today. The document is built by the
+   * editor, so this is the server holding the rule rather than trusting the builder - a
+   * switched-off association, or one of another space, never reaches the anonymous showcase through
+   * this map, neither as a unit nor as a roster line.
    */
   private async refuseUnitsOutsideMap(
     project: PosterProject,
@@ -524,12 +525,15 @@ export class PosterService {
         (e) => e.associationId
       )
     );
-    const outside = publication.units.filter((u) => !offered.has(u.assoId) || !on.has(u.assoId));
-    if (outside.length === 0) return null;
+    const shown = (assoId: string) => offered.has(assoId) && on.has(assoId);
+    const outside = publication.units.filter((u) => !shown(u.assoId));
+    const lines = (publication.directory?.zones ?? []).flatMap((z) => z.assos);
+    const outsideLines = lines.filter((a) => !shown(a.assoId));
+    if (outside.length === 0 && outsideLines.length === 0) return null;
     return {
       code: CARTE_ERROR.UNIT_OUTSIDE_MAP,
       message: 'The published document names an association this map does not show.',
-      detail: `${outside.length} of ${publication.units.length} units off or outside the space`,
+      detail: `${outside.length} of ${publication.units.length} units and ${outsideLines.length} of ${lines.length} directory lines off or outside the space`,
     };
   }
 
@@ -567,6 +571,11 @@ export class PosterService {
     }
     const spaceId = project.spaceId as string;
     return this.posterRepo.manager.transaction(async (manager) => {
+      // Two publishes in one space are SERIALISED on the space's row: without it both clear "the
+      // previous live map" (none yet, or the same one) and the later insert hits the per-space
+      // unique index - a 500. Under the lock the later publish sees the earlier one committed, clears
+      // it, and wins: the last publish is the live one.
+      await manager.query('SELECT 1 FROM spaces WHERE id = $1 FOR UPDATE', [spaceId]);
       const repo = manager.getRepository(PosterProject);
       // Clear the space's previous live map FIRST; the unique index allows one live row per space.
       // Its fingerprint goes with it: a row that is not live describes no published document.
@@ -629,24 +638,34 @@ export class PosterService {
   /**
    * [LEGACY] The live map for a showcase that names no space - a portail-etu deployed before it
    * sent `?space=` (docs/wiki/legacy-compatibility.md). Answered only while EXACTLY ONE map is live
-   * across every space, which is the only case where "the" map still means one thing; logged at
-   * WARN on every hit, so its silence is measurable before the branch is removed.
+   * across every space, which is the only case where "the" map still means one thing.
+   *
+   * Every hit is logged at WARN, the refused ones included: the line ACCUSES the caller of not naming
+   * its space, whatever the answer, and the shim's removal condition is a week of its silence - a
+   * refused hit left unlogged would make an old showcase invisible exactly when it is losing its
+   * map. Only the ids are read to count; the one document is loaded only when it is served.
    *
    * @returns The single live map, or null when zero or several are live - the caller answers that
    *   with a typed 400 rather than picking one.
    */
   async getSoleLegacyPublished(): Promise<PublishedCarteResponse | null> {
-    const live = await this.posterRepo.find({ where: { publication: Not(IsNull()) }, take: 2 });
-    if (live.length !== 1 || !live[0].publishedAt) {
+    const live = await this.posterRepo.find({
+      select: { id: true },
+      where: { publication: Not(IsNull()) },
+      take: 2,
+    });
+    const sole =
+      live.length === 1 ? await this.posterRepo.findOne({ where: { id: live[0].id } }) : null;
+    if (!sole?.publication || !sole.publishedAt) {
       this.logger.warn(
         `[LEGACY] GET public/carte with no space while ${live.length === 2 ? 'several maps are' : 'no map is'} live - refused`
       );
       return null;
     }
     this.logger.warn(
-      `[LEGACY] GET public/carte with no space - served the only live map ${live[0].id}; the showcase should send ?space=`
+      `[LEGACY] GET public/carte with no space - served the only live map ${sole.id}; the showcase should send ?space=`
     );
-    return this.toPublished(live[0]);
+    return this.toPublished(sole);
   }
 }
 

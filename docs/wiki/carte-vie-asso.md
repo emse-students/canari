@@ -62,7 +62,10 @@ else its category). The live map was attached to the space of formation `ICM` go
 association `bde` - resolved in SQL by that stable slug, not a name - and stayed live; associations
 it showed whose audience does not reach that space were switched OFF, not deleted. Measured on
 production before it ran (read-only): one map, live, 33 placed associations, 31 reaching
-`ICM:saint-etienne`, so 31 ON and 2 OFF. Any other map is attached when its creator manages exactly
+`ICM:saint-etienne`, so 31 ON and 2 OFF. The live DOCUMENT is filtered in the same transaction:
+the units and directory lines of an association switched off are removed (nothing else), and the
+stored fingerprint is cleared since it no longer describes the document - the 2 are off the portail
+at the deploy, not at the next republish. Any other map is attached when its creator manages exactly
 one space, else left with no space and offline; an ambiguous live map is taken offline with a
 `NOTICE`, never guessed. The migration is held for the owner's approval line.
 
@@ -117,7 +120,7 @@ What each former reader became:
 | `GET /api/associations/categories` | A shim answering `[]`, logged `[LEGACY]` ([legacy-compatibility](legacy-compatibility.md)) |
 | The poster model (`buildPosterModel`) and the directory groups | The map's zones and entries |
 | The per-bubble `categoryOverride` in the layout | Folded into the entry's zone by 147; still parsed, never written |
-| The dev seed (`tools/dev-seed`) | Still writes the rows, harmless until the drop |
+| The dev seed (`tools/dev-seed`) | Writes neither the table nor the column any more |
 | The public API, search, the exports, the portail | Never read it - nothing to change |
 
 The table and the column stay in the schema until a later migration drops them, once a stable that no
@@ -516,7 +519,11 @@ a millisecond. It needs a durable record of WHICH layout was published
   partial unique index `idx_poster_projects_live_per_space` on `("spaceId") WHERE publication IS NOT
   NULL` forbids a second published row for a space, and a CHECK forbids a live map with no space.
   `publish()` therefore clears the space's previous map and sets the new one inside ONE transaction,
-  or it would deadlock against itself; another space's live map is untouched.
+  or it would deadlock against itself; another space's live map is untouched. Two publishes in one
+  space are serialised on the space's row (`SELECT ... FROM spaces ... FOR UPDATE` first in the
+  transaction): the later one replaces the earlier instead of hitting the index with a 500.
+- **Every association the document names - unit AND directory line - must be switched on and of
+  the space**, or the publish is refused `CARTE_UNIT_OUTSIDE_MAP`.
 - **The payload is re-validated server-side**, field by field, even though the publisher is an
   admin - it is about to be served to anonymous visitors. Unknown keys are dropped rather than
   echoed, geometry is clamped, arrays and strings are capped, and the background must be a

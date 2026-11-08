@@ -152,7 +152,6 @@ describe('references inside the set resolve', () => {
   const associations = ids('associations');
   const fks: [string, string, Set<unknown>, boolean][] = [
     ['associations', 'createdBy', users, false],
-    ['associations', 'categoryId', ids('association_categories'), true],
     ['association_audiences', 'associationId', associations, false],
     ['spaces', 'bdeAssociationId', associations, true],
     ['association_members', 'associationId', associations, false],
@@ -183,7 +182,6 @@ describe('references inside the set resolve', () => {
       void table;
     }
     expect(ids('associations', 'slug').size).toBe(rows.associations.length);
-    expect(ids('association_categories', 'slug').size).toBe(rows.association_categories.length);
     const pairs = (t: string, a: string, b: string) =>
       new Set(rows[t].map((r) => `${r[a]}|${r[b]}`));
     expect(pairs('association_members', 'associationId', 'userId').size).toBe(

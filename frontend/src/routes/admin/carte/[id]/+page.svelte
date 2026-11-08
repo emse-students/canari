@@ -115,6 +115,11 @@
   const classified = $derived(classifyMapAssociations(spaceAssociationIds, entries));
   /** Association ids whose switch write is in flight. */
   let busyEntries = $state<string[]>([]);
+  /**
+   * Bumped by a refused switch or zone write. The switch flipped itself on the click and its prop
+   * did not change, so only re-drawing the rows puts it back on what the map stores.
+   */
+  let entryRefusals = $state(0);
   let assoSearch = $state('');
   /** The spaces an unattached map may be attached to (the platform admin's). */
   let attachSpaces = $state<CarteSpace[]>([]);
@@ -415,6 +420,7 @@
     } catch (e) {
       Log.d('admin.carte.id.writeEntries failed', e);
       error = m.common_save_error();
+      entryRefusals++;
     } finally {
       busyEntries = busyEntries.filter((id) => !ids.includes(id));
     }
@@ -450,6 +456,8 @@
 
   let newZoneLabel = $state('');
   let zoneBusy = $state(false);
+  /** Bumped by a refused zone write: re-draws the inputs from the stored zones. */
+  let zoneRefusals = $state(0);
 
   /** Runs one zone write, then redraws the directory groups. */
   async function zoneWrite(label: string, run: () => Promise<void>): Promise<void> {
@@ -464,6 +472,7 @@
     } catch (e) {
       Log.d(`admin.carte.id.${label} failed`, e);
       error = m.common_save_error();
+      zoneRefusals++;
     } finally {
       zoneBusy = false;
     }
@@ -1146,41 +1155,44 @@
                 {#if spaceAssociations.length === 0}
                   <p class="text-text-muted text-xs">{m.carte_assos_empty()}</p>
                 {:else}
-                  <ul class="max-h-80 space-y-2 overflow-y-auto pr-1">
-                    {#each panelAssociations as asso (asso.id)}
-                      <li class="space-y-1">
-                        <div class="flex items-center gap-2">
-                          <div class="min-w-0 flex-1">
-                            <Toggle
-                              checked={classified.on.has(asso.id)}
-                              label={asso.name}
-                              busy={busyEntries.includes(asso.id)}
-                              onchange={(on) =>
-                                void writeEntries([{ associationId: asso.id, enabled: on }])}
-                            />
+                  <!-- Re-keyed on a refused write: a switch the server did not take flips back. -->
+                  {#key entryRefusals}
+                    <ul class="max-h-80 space-y-2 overflow-y-auto pr-1">
+                      {#each panelAssociations as asso (asso.id)}
+                        <li class="space-y-1">
+                          <div class="flex items-center gap-2">
+                            <div class="min-w-0 flex-1">
+                              <Toggle
+                                checked={classified.on.has(asso.id)}
+                                label={asso.name}
+                                busy={busyEntries.includes(asso.id)}
+                                onchange={(on) =>
+                                  void writeEntries([{ associationId: asso.id, enabled: on }])}
+                              />
+                            </div>
+                            {#if classified.fresh.has(asso.id)}
+                              <span
+                                class="bg-cn-yellow text-cn-ink shrink-0 rounded-full px-2 py-0.5 text-xs font-bold"
+                              >
+                                {m.carte_asso_new_badge()}
+                              </span>
+                            {/if}
                           </div>
-                          {#if classified.fresh.has(asso.id)}
-                            <span
-                              class="bg-cn-yellow text-cn-ink shrink-0 rounded-full px-2 py-0.5 text-xs font-bold"
-                            >
-                              {m.carte_asso_new_badge()}
-                            </span>
+                          {#if classified.on.has(asso.id) && zones.length > 0}
+                            <Picker
+                              value={classified.zoneOf[asso.id] ?? ''}
+                              options={zoneOptions}
+                              onValueChange={(v) =>
+                                void writeEntries([{ associationId: asso.id, zoneId: v || null }])}
+                              label={m.carte_asso_zone({ name: asso.name })}
+                              variant="field"
+                              density="compact"
+                            />
                           {/if}
-                        </div>
-                        {#if classified.on.has(asso.id) && zones.length > 0}
-                          <Picker
-                            value={classified.zoneOf[asso.id] ?? ''}
-                            options={zoneOptions}
-                            onValueChange={(v) =>
-                              void writeEntries([{ associationId: asso.id, zoneId: v || null }])}
-                            label={m.carte_asso_zone({ name: asso.name })}
-                            variant="field"
-                            density="compact"
-                          />
-                        {/if}
-                      </li>
-                    {/each}
-                  </ul>
+                        </li>
+                      {/each}
+                    </ul>
+                  {/key}
                 {/if}
               </section>
 
@@ -1190,50 +1202,53 @@
                 {#if zones.length === 0}
                   <p class="text-text-muted text-xs">{m.carte_zones_empty()}</p>
                 {:else}
-                  <ul class="space-y-1">
-                    {#each zones as zone, index (zone.id)}
-                      <li class="flex items-center gap-1">
-                        <div class="flex flex-col">
-                          <button
-                            type="button"
-                            onclick={() => void moveZone(index, -1)}
-                            disabled={index === 0 || zoneBusy}
-                            aria-label={m.carte_category_move_up()}
-                            class="text-text-muted hover:text-text-main disabled:opacity-30"
+                  <!-- Re-keyed on a refused write, so a rejected rename shows the stored label again. -->
+                  {#key zoneRefusals}
+                    <ul class="space-y-1">
+                      {#each zones as zone, index (zone.id)}
+                        <li class="flex items-center gap-1">
+                          <div class="flex flex-col">
+                            <button
+                              type="button"
+                              onclick={() => void moveZone(index, -1)}
+                              disabled={index === 0 || zoneBusy}
+                              aria-label={m.carte_category_move_up()}
+                              class="text-text-muted hover:text-text-main disabled:opacity-30"
+                            >
+                              <ChevronUp size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onclick={() => void moveZone(index, 1)}
+                              disabled={index === zones.length - 1 || zoneBusy}
+                              aria-label={m.carte_category_move_down()}
+                              class="text-text-muted hover:text-text-main disabled:opacity-30"
+                            >
+                              <ChevronDown size={14} />
+                            </button>
+                          </div>
+                          <input
+                            value={zone.label}
+                            maxlength={120}
+                            aria-label={m.carte_zone_rename({ label: zone.label })}
+                            onblur={(e) => void renameZone(zone, e.currentTarget.value)}
+                            disabled={zoneBusy}
+                            class="text-text-main hover:border-cn-border focus:border-cn-border min-w-0 flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm font-semibold focus:outline-none"
+                          />
+                          <Button
+                            variant="danger-outline"
+                            size="compact"
+                            icon
+                            onclick={() => void deleteZone(zone)}
+                            disabled={zoneBusy}
+                            aria-label={m.common_remove_label()}
                           >
-                            <ChevronUp size={14} />
-                          </button>
-                          <button
-                            type="button"
-                            onclick={() => void moveZone(index, 1)}
-                            disabled={index === zones.length - 1 || zoneBusy}
-                            aria-label={m.carte_category_move_down()}
-                            class="text-text-muted hover:text-text-main disabled:opacity-30"
-                          >
-                            <ChevronDown size={14} />
-                          </button>
-                        </div>
-                        <input
-                          value={zone.label}
-                          maxlength={120}
-                          aria-label={m.carte_zone_rename({ label: zone.label })}
-                          onblur={(e) => void renameZone(zone, e.currentTarget.value)}
-                          disabled={zoneBusy}
-                          class="text-text-main hover:border-cn-border focus:border-cn-border min-w-0 flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm font-semibold focus:outline-none"
-                        />
-                        <Button
-                          variant="danger-outline"
-                          size="compact"
-                          icon
-                          onclick={() => void deleteZone(zone)}
-                          disabled={zoneBusy}
-                          aria-label={m.common_remove_label()}
-                        >
-                          <Trash2 size={13} />
-                        </Button>
-                      </li>
-                    {/each}
-                  </ul>
+                            <Trash2 size={13} />
+                          </Button>
+                        </li>
+                      {/each}
+                    </ul>
+                  {/key}
                 {/if}
                 <form
                   class="flex items-center gap-2"
