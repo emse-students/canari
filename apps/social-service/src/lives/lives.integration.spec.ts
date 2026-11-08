@@ -3914,6 +3914,16 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await expect(lives.ingestPoster(ALICE, live.id, poster(5))).resolves.toBeDefined();
     });
 
+    it('deletes nothing and does not throw when a poster exists with no previous name (a row written by the previous release)', async () => {
+      const live = await start();
+      const first = await lives.ingestPoster(ALICE, live.id, poster(1));
+      await q(`UPDATE lives SET "posterPreviousName" = NULL WHERE id = $1`, [live.id]);
+      await agePoster(live.id);
+      await expect(lives.ingestPoster(ALICE, live.id, poster(2))).resolves.toBeDefined();
+      expect(store.objects.has(`live/${live.id}/${first.name}`)).toBe(true);
+      expect(store.countFor(live.id)).toBe(2);
+    });
+
     it('WARNS naming the object when the displaced poster is refused by the store, and the PUT still succeeds', async () => {
       const live = await start();
       const first = await lives.ingestPoster(ALICE, live.id, poster(1));

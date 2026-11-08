@@ -157,7 +157,8 @@ function numberField(body: Record<string, unknown> | null, key: string): number 
  *
  * `expected` is the set of kinds the CALLER declares an ordinary outcome of its request (a card's
  * poster that was purged with its live): those are logged ONCE at debug with the reason, every other
- * kind keeps the warn. It is decided here, at the throw, from the kind - never from a message.
+ * kind keeps the warn. A `not-found` is expected ONLY from the GATEWAY (media-service's own JSON
+ * 404): an edge or nginx 404 with no JSON body means a broken route and keeps the warn. It is decided here, at the throw, from the kind - never from a message.
  */
 async function liveRefusal(
   res: Response,
@@ -177,7 +178,7 @@ async function liveRefusal(
   const endedAt = typeof body?.endedAt === 'string' ? body.endedAt : null;
   const endReason = liveEndReasonOf(body?.endReason);
   const line = `[LIVE] ${what}: ${base.status} ${base.code ?? '-'} -> ${kind}${endReason ? ` (${endReason})` : ''}`;
-  if (expected.includes(kind))
+  if (expected.includes(kind) && responseOrigin(res) === 'gateway')
     console.debug(`${line} (expected: the caller treats it as an outcome)`);
   else console.warn(line);
   return new LiveRefusalError(

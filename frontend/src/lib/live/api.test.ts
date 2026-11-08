@@ -252,18 +252,26 @@ describe('the routes', () => {
 
 describe('a poster fetch declares not-found expected', () => {
   it('logs a poster 404 at debug, not warn, and still throws the typed refusal', async () => {
-    trackedFetch.mockResolvedValue(new Response('', { status: 404 }));
+    trackedFetch.mockResolvedValue(json(404, { statusCode: 404, message: 'Not Found' }));
     const e = await refusal(fetchLivePoster(LIVE, 'abc'));
     expect(e.kind).toBe('not-found');
     expect(console.warn).not.toHaveBeenCalled();
     expect(console.debug).toHaveBeenCalledWith(expect.stringContaining('expected'));
   });
 
+  it('keeps the WARN for a poster 404 that is not the gateways (an edge page or bare nginx 404)', async () => {
+    trackedFetch.mockResolvedValueOnce(new Response('', { status: 404 }));
+    await refusal(fetchLivePoster(LIVE, 'abc'));
+    trackedFetch.mockResolvedValueOnce(html(404));
+    await refusal(fetchLivePoster(LIVE, 'abc'));
+    expect(console.warn).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps the warn for every other poster refusal, and for a segment 404', async () => {
     trackedFetch.mockResolvedValueOnce(new Response('', { status: 429 }));
     await refusal(fetchLivePoster(LIVE, 'abc'));
     expect(console.warn).toHaveBeenCalledTimes(1);
-    trackedFetch.mockResolvedValueOnce(new Response('', { status: 404 }));
+    trackedFetch.mockResolvedValueOnce(json(404, { statusCode: 404 }));
     await refusal(fetchLiveSegment(LIVE, 'abc'));
     expect(console.warn).toHaveBeenCalledTimes(2);
   });

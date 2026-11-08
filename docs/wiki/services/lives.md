@@ -572,8 +572,10 @@ change. The row names the current one (`"posterName"`, `"posterAt"`) AND the one
 (`"posterPreviousName"`, migration 141). **The previous poster survives one round** (observed on dev,
 `v1.6.7-alpha.4`: a viewer's `GET /api/lives` named poster N, the broadcaster's PUT confirmed N+1 and
 deleted N, and the viewer's fetch of N met a 404). The confirm swaps the two names in the SAME `UPDATE`
-that names the new poster and deletes only the poster TWO rounds back, so every name a list could have
-returned before a PUT still resolves after it; a live holds at most two poster objects, and the
+that names the new poster and deletes only the poster TWO rounds back, so every name a list returned before
+the LATEST PUT still resolves after it (a list read before the PUT before it, whose fetch lands after
+this one, still 404s: that window is at least `LIVE_POSTER_MIN_INTERVAL_MS`, 8 s, wide, and the rare 404
+is the expected gateway not-found below); a live holds at most two poster objects, and the
 end-of-live purge deletes the whole `live/<id>/` prefix, so it takes both (and any pending one). The
 delete is best effort: a failure logs a `warn` NAMING the object (a real leak until the purge) and
 does not fail the PUT. A card whose poster still meets a 404 (its live was purged) is an expected

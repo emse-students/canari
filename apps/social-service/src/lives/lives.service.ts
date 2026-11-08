@@ -817,7 +817,9 @@ export class LivesService implements OnModuleDestroy {
       throw new ConflictException({ code: 'LIVE_POSTER_RESERVATION_LOST' });
     }
     if (outcome.displaced !== null) {
-      // The poster two rounds back: no list can still name it (the previous one stays readable).
+      // The poster two rounds back. The latest PUT is covered (the previous one stays readable); a list
+      // read before the PUT BEFORE it, fetched after this one, can still meet a 404 - a window bounded
+      // below by LIVE_POSTER_MIN_INTERVAL_MS, and the expected gateway not-found on the client.
       await this.deletePosterObject(liveId, outcome.displaced, 'displaced');
     }
     this.logger.debug(`[LIVE_POSTER] ${liveId}: poster ${name} stored (${data.length} B)`);

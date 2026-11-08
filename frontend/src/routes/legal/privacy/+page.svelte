@@ -148,24 +148,25 @@
           nombre de spectateurs est affiché à vous et à ceux qui regardent. Pendant le direct, votre
           application envoie environ toutes les 16 secondes une image fixe de la vidéo, chiffrée
           avec une clé dérivée de celle du direct qui n'ouvre que cette image, et qui remplace la
-          précédente : la carte du direct en haut du fil la montre, avec le titre et le nombre de
-          spectateurs, aux membres autorisés à regarder, sans qu'ils rejoignent le direct. À votre
-          arrivée sur un direct, le serveur retient que vous êtes arrivé (votre compte, jusqu'à la
-          suppression du direct, peu après sa fin), et une ligne « X a rejoint », avec votre nom,
-          apparaît dans le chat pour les autres spectateurs et pour la personne qui diffuse, sauf
-          pour un compte avec lequel un blocage existe dans un sens ou dans l'autre, sauf pour les
-          spectateurs que la personne qui diffuse a retirés, et sauf si le chat vous est masqué ; au
-          plus trois noms à la fois, le reste est compté. Aucune fonction de Canari ne montre la
-          liste de ceux qui regardent à un instant donné. Les messages du chat sont chiffrés avec la
-          même clé ; leur auteur est connu du serveur et son nom est affiché aux autres spectateurs.
-          Les réactions (cœur, rire, bravo, feu, poussin) ne sont pas chiffrées : le serveur
-          enregistre qui réagit et compte les réactions. Un direct n'est pas enregistré et n'a pas
-          de rediffusion. Avant votre premier direct, vous acceptez les règles de publication : la
-          version acceptée et sa date sont conservées. Pour limiter les abus, le serveur garde aussi
-          l'heure de chacun de vos démarrages pendant une heure. Les journaux techniques notent les
-          débuts et fins de direct, les coupures et les retraits de spectateurs, avec le début de
-          l'identifiant du compte concerné, et, comme pour toute requête, le serveur web journalise
-          l'adresse IP de chaque lecture.
+          précédente (celle-ci est supprimée au remplacement suivant) : la carte du direct en haut
+          du fil la montre, avec le titre et le nombre de spectateurs, aux membres autorisés à
+          regarder, sans qu'ils rejoignent le direct. À votre arrivée sur un direct, le serveur
+          retient que vous êtes arrivé (votre compte, jusqu'à la suppression du direct, peu après sa
+          fin), et une ligne « X a rejoint », avec votre nom, apparaît dans le chat pour les autres
+          spectateurs et pour la personne qui diffuse, sauf pour un compte avec lequel un blocage
+          existe dans un sens ou dans l'autre, sauf pour les spectateurs que la personne qui diffuse
+          a retirés, et sauf si le chat vous est masqué ; au plus trois noms à la fois, le reste est
+          compté. Aucune fonction de Canari ne montre la liste de ceux qui regardent à un instant
+          donné. Les messages du chat sont chiffrés avec la même clé ; leur auteur est connu du
+          serveur et son nom est affiché aux autres spectateurs. Les réactions (cœur, rire, bravo,
+          feu, poussin) ne sont pas chiffrées : le serveur enregistre qui réagit et compte les
+          réactions. Un direct n'est pas enregistré et n'a pas de rediffusion. Avant votre premier
+          direct, vous acceptez les règles de publication : la version acceptée et sa date sont
+          conservées. Pour limiter les abus, le serveur garde aussi l'heure de chacun de vos
+          démarrages pendant une heure. Les journaux techniques notent les débuts et fins de direct,
+          les coupures et les retraits de spectateurs, avec le début de l'identifiant du compte
+          concerné, et, comme pour toute requête, le serveur web journalise l'adresse IP de chaque
+          lecture.
         </dd>
       </div>
       <div>
@@ -740,14 +741,15 @@
               retirés
             </td>
             <td>
-              L'image d'aperçu est remplacée par la suivante environ toutes les 16 secondes. Tout
-              est supprimé à la fin du direct (par vous, après 60 secondes sans vidéo, par une
-              coupure de la modération ou à la suppression de votre compte). Après une coupure, la
-              vidéo est supprimée aussitôt ; après la suppression du compte, dans les 30 secondes ;
-              à une autre fin, elle l'est une fois que les derniers spectateurs ont fini de la
-              recevoir, en principe dans la minute. Une suppression qui échoue est reprise toutes
-              les 30 secondes. Un segment mis en cache par notre serveur web ou par l'appareil d'un
-              spectateur : deux minutes au plus après sa dernière lecture
+              L'image d'aperçu est remplacée environ toutes les 16 secondes, et la précédente est
+              conservée jusqu'au remplacement suivant : une image d'aperçu vit donc environ 32
+              secondes. Tout est supprimé à la fin du direct (par vous, après 60 secondes sans
+              vidéo, par une coupure de la modération ou à la suppression de votre compte). Après
+              une coupure, la vidéo est supprimée aussitôt ; après la suppression du compte, dans
+              les 30 secondes ; à une autre fin, elle l'est une fois que les derniers spectateurs
+              ont fini de la recevoir, en principe dans la minute. Une suppression qui échoue est
+              reprise toutes les 30 secondes. Un segment mis en cache par notre serveur web ou par
+              l'appareil d'un spectateur : deux minutes au plus après sa dernière lecture
             </td>
           </tr>
           <tr>
