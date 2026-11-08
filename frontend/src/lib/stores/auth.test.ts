@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { flushMacrotask } from '../../test/flush';
 import { AnswerBodyLostError, NotFromApiError } from '$lib/utils/apiJson';
 import {
   isSessionQuestionOpen,
@@ -425,12 +426,12 @@ describe('the sign-out handler', () => {
     setToken(liveToken());
     fetchMock.mockResolvedValue(new Response('', { status: 200 }));
     const seen: { requests: number; socketCookie: boolean }[] = [];
-    setSignOutHandler(() =>
+    setSignOutHandler(() => {
       seen.push({
         requests: fetchMock.mock.calls.length,
         socketCookie: document.cookie.includes('canari_ws_token=h'),
-      })
-    );
+      });
+    });
 
     await clearAuth();
     setSignOutHandler(null);
@@ -438,6 +439,33 @@ describe('the sign-out handler', () => {
     // Once, with nothing torn down yet: the teardown deregisters the push token with that credential.
     expect(seen).toEqual([{ requests: 0, socketCookie: true }]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for the handlers own work (the push deregistration) before it revokes the session', async () => {
+    const { setSignOutHandler } = await import('$lib/stores/auth');
+    setToken(liveToken());
+    const order: string[] = [];
+    let release!: () => void;
+    const deregistration = new Promise<void>((resolve) => {
+      release = resolve;
+    }).then(() => {
+      order.push('push deregistered');
+    });
+    fetchMock.mockImplementation(async (url: unknown) => {
+      order.push(`fetch ${String(url)}`);
+      return new Response('', { status: 200 });
+    });
+    setSignOutHandler(() => deregistration);
+
+    const signingOut = clearAuth();
+    // The revocation must not have been sent while the deregistration is still pending.
+    await flushMacrotask();
+    expect(order).toEqual([]);
+    release();
+    await signingOut;
+    setSignOutHandler(null);
+
+    expect(order).toEqual(['push deregistered', expect.stringContaining('/api/auth/logout')]);
   });
 
   it('does not stop the sign-out when the handler throws', async () => {

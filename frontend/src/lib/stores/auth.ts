@@ -388,7 +388,7 @@ export function revokedDeviceOfEndedSession(): RevokedDeviceIdentity | null {
 }
 
 /** The app's reaction to a sign-out, registered by the app shell; see {@link setSignOutHandler}. */
-let _signOutHandler: (() => void) | null = null;
+let _signOutHandler: (() => void | Promise<void>) | null = null;
 
 /**
  * Registers what the app must stop when the session is ended on purpose - the live chat session.
@@ -405,8 +405,12 @@ let _signOutHandler: (() => void) | null = null;
  * Called FIRST in {@link clearAuth}, synchronously, while the access token still exists: the
  * teardown deregisters a live session's push token with it. The DEVICE's half of ending the push
  * registration is not the handler's - `clearAuth` runs it itself, so it holds with no handler.
+ *
+ * It may return a promise (the server's push deregistration, which must answer while the credential
+ * is still valid): `clearAuth` awaits it AFTER the local identity is dropped and BEFORE the
+ * revocation, so the deregistration is never refused for a session it raced.
  */
-export function setSignOutHandler(fn: (() => void) | null): void {
+export function setSignOutHandler(fn: (() => void | Promise<void>) | null): void {
   _signOutHandler = fn;
 }
 
@@ -1425,9 +1429,10 @@ async function clearAuthCounted(options: { revokeServerSession: boolean }): Prom
 async function clearAuthUnderway(options: { revokeServerSession: boolean }): Promise<void> {
   // THE LIVE SESSION ENDS BEFORE ANYTHING IT USES IS GONE - see `setSignOutHandler`. A throw here is
   // a session left running for a signed-out user, so it is accused by name, and the sign-out goes on.
+  let handlerSettled: void | Promise<void> = undefined;
   if (_signOutHandler) {
     try {
-      _signOutHandler();
+      handlerSettled = _signOutHandler();
     } catch (e) {
       console.error(`[A] sign-out handler failed - the live session may still be running: ${e}`);
     }
@@ -1488,6 +1493,14 @@ async function clearAuthUnderway(options: { revokeServerSession: boolean }): Pro
   // bounded because on a stalled link it used to hold the sign-out, with no feedback, for as long as
   // the engine tolerates. Past the deadline the local sign-out goes on - that is what signing out
   // IS - and the line says the server did not revoke, because the session row then lives on.
+  //
+  // BUT NOT BEFORE THE HANDLER'S OWN WORK has answered: the push deregistration it started needs the
+  // session alive, so the revocation waits for it (bounded by its own deadline, never rejecting).
+  try {
+    await handlerSettled;
+  } catch (e) {
+    console.error(`[A] sign-out handler's async work failed - going on to the revocation: ${e}`);
+  }
   const carried = usesBodyRefreshTransport() ? await readNativeRefreshToken() : null;
   const t0 = Date.now();
   try {
