@@ -146,7 +146,7 @@
    * A PREVIEW (a draft, or "Voir le formulaire" on unpublished changes): the questions are drawn and
    * nothing can be sent - the server would refuse a draft anyway (owner, 2026-11-08).
    */
-  const preview = $derived(isPreview(form, page.url.searchParams));
+  const preview = $derived(isPreview(form));
   /** Online is paused and cash is accepted: the answer is paid in cash, no online choice shown. */
   const cashOnly = $derived(offersOnlyCash(form));
   $effect(() => {
@@ -247,7 +247,7 @@
       const f = await getForm(id);
       form = f;
       selections = initialSelections(f.items);
-      if (isPreview(f, page.url.searchParams)) {
+      if (isPreview(f)) {
         // Nothing of the reader's own state is asked: a preview sends nothing, and a draft's check
         // answers as for an absent form (`respondentFormWhere`).
         Log.d('FormView', `preview of ${f.id} (${f.status ?? 'published'})`);

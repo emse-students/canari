@@ -19,7 +19,7 @@ vi.mock('$app/state', () => route);
 const nav = vi.hoisted(() => ({ goto: vi.fn(async (_href: string, _opts?: unknown) => {}) }));
 vi.mock('$app/navigation', () => nav);
 const api = vi.hoisted(() => ({
-  createForm: vi.fn(async () => ({ id: 'f-new' })),
+  createForm: vi.fn(async (_payload: any) => ({ id: 'f-new' })),
   publishForm: vi.fn(async () => ({ id: 'f-new', status: 'published' })),
 }));
 vi.mock('$lib/forms/api', async (orig) => ({
@@ -45,6 +45,12 @@ vi.mock('$lib/pricing/criteriaOptions', async (orig) => ({
   fetchFormations: async () => [],
 }));
 
+const caps = vi.hoisted(() => ({ formDrafts: true as boolean | null }));
+vi.mock('$lib/stores/appVersionCheck.svelte', async (orig) => ({
+  ...(await orig<typeof import('$lib/stores/appVersionCheck.svelte')>()),
+  serverFormDrafts: () => caps.formDrafts,
+}));
+
 import Page from './+page.svelte';
 
 /**
@@ -60,6 +66,7 @@ afterEach(() => {
   document.body.innerHTML = '';
   nav.goto.mockClear();
   api.createForm.mockClear();
+  api.publishForm.mockClear();
   vi.restoreAllMocks();
 });
 
@@ -71,7 +78,7 @@ async function settle() {
   }
 }
 
-async function saveReturningTo(returnTo: string) {
+async function saveReturningTo(returnTo: string, buttonLabel = m.form_publish_button()) {
   route.page.url = new URL(
     `https://canari.test/forms/create?returnTo=${encodeURIComponent(returnTo)}`
   );
@@ -85,7 +92,7 @@ async function saveReturningTo(returnTo: string) {
   title.dispatchEvent(new Event('input', { bubbles: true }));
   await settle();
   const save = [...document.querySelectorAll('button')].find((b) =>
-    b.textContent?.includes(m.form_publish_button())
+    b.textContent?.includes(buttonLabel)
   )!;
   save.click();
   await settle();
@@ -103,6 +110,25 @@ describe('the form builder, once the form is saved', () => {
       await vi.waitFor(() =>
         expect(nav.goto).toHaveBeenCalledWith('/associations/bde/edit/forms', {})
       );
+    },
+    MOUNT_BUDGET_MS
+  );
+
+  it(
+    'an estate older than drafts: one save that publishes, no draft flag, no publish route',
+    async () => {
+      caps.formDrafts = false;
+      try {
+        await saveReturningTo('/associations/bde/edit/forms', m.form_save_button());
+        expect(api.createForm).toHaveBeenCalledTimes(1);
+        expect(api.createForm.mock.calls[0]).not.toHaveProperty('0.draft');
+        expect(api.publishForm).not.toHaveBeenCalled();
+        await vi.waitFor(() =>
+          expect(nav.goto).toHaveBeenCalledWith('/associations/bde/edit/forms', {})
+        );
+      } finally {
+        caps.formDrafts = true;
+      }
     },
     MOUNT_BUDGET_MS
   );

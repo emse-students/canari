@@ -58,9 +58,10 @@ describe('drafts and their publication', () => {
     expect(formViewHref({ id: 'f1' })).toBe('/forms/f1');
     expect(formViewHref({ id: 'f1', status: 'draft' })).toBe('/forms/f1?preview=1');
     expect(formViewHref({ id: 'f1', status: 'published' }, true)).toBe('/forms/f1?preview=1');
-    expect(isPreview({ status: 'published' }, new URLSearchParams('preview=1'))).toBe(true);
-    expect(isPreview({ status: 'draft' }, new URLSearchParams())).toBe(true);
-    expect(isPreview({ status: 'published' }, new URLSearchParams())).toBe(false);
+    expect(isPreview({ status: 'draft' })).toBe(true);
+    // A published form is a preview only when a manager's revision is what is shown.
+    expect(isPreview({ status: 'published' })).toBe(false);
+    expect(isPreview({ status: 'published' }, true)).toBe(true);
   });
 
   it('offers cash only while online is paused and cash is accepted', () => {

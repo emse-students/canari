@@ -195,22 +195,6 @@ function makeId(prefix: string): string {
 }
 
 /**
- * True when the form collects money for an association recipient: it names one AND it charges, by
- * the ONE predicate that counts every price source - a choice option's supplement included
- * (`chargesMoney`). It used to count the base price, the switch and the grid only, so a form priced
- * by a supplement alone read "free" here: never paused, never asked for a ready association
- * (owner review of #2967, 2026-11-03).
- */
-function formRequiresStripeReadyAssociation(
-  input: Pick<CreateFormDto, 'basePrice' | 'priceMatrix' | 'requiresPayment' | 'items'> & {
-    associationId?: string;
-  }
-): boolean {
-  if (!input.associationId?.trim()) return false;
-  return chargesMoney(input as CreateFormDto);
-}
-
-/**
  * Whether a form can charge a submitter: payment switched on, a base price, a grid cell above 0, or
  * a choice option with a supplement - each of which `submit` turns into a total above 0.
  */
@@ -392,12 +376,14 @@ export class FormsService {
     what: string
   ): Promise<void> {
     const id = associationId?.trim() || undefined;
-    if (!formRequiresStripeReadyAssociation({ ...form, associationId: id })) return;
+    if (!chargesMoney(form)) return;
+    // A PERSONAL paid form collects through the platform's own account: no association readiness
+    // to ask, but it still needs a way to be paid (online, or cash) like any other paid form.
     const code = await publishPaymentRefusal(form, () =>
-      this.associationsService.canTakePaymentsNow(id!)
+      id ? this.associationsService.canTakePaymentsNow(id) : Promise.resolve(true)
     );
     if (!code) return;
-    this.logger.log(`[FORMS] ${what} refused: ${code} (association ${id!.slice(0, 8)})`);
+    this.logger.log(`[FORMS] ${what} refused: ${code} (association ${id?.slice(0, 8) ?? 'none'})`);
     if (code === FORM_NO_PAYMENT_METHOD) {
       throw new BadRequestException({
         code,
@@ -900,9 +886,12 @@ export class FormsService {
    * submit is refused (`assertPaymentsReady`, `FORM_ONLINE_PAYMENT_NOT_OFFERED`). A free form never is.
    */
   private async paymentsPaused(form: Form): Promise<boolean> {
-    if (!formRequiresStripeReadyAssociation(form as unknown as CreateFormDto)) return false;
+    if (!chargesMoney(form as unknown as CreateFormDto)) return false;
+    // A personal paid form collects through the platform: only its editor's choice pauses online.
     const offered = await onlineOffered(form, () =>
-      this.associationsService.collectsNow(form.associationId)
+      form.associationId
+        ? this.associationsService.collectsNow(form.associationId)
+        : Promise.resolve(true)
     );
     if (!offered) this.logger.debug(`[Forms] form ${form.id.slice(0, 8)} served paused: payments`);
     return !offered;
@@ -1127,16 +1116,23 @@ export class FormsService {
       })),
     });
     const citedAfter = questionImageIds(form.items);
-    if (citedBefore.length === 0 && citedAfter.length === 0) return this.formRepo.save(form);
+    // THE STATUS IS NEVER WRITTEN BY AN EDIT: `form` was read before the checks above, and a
+    // publication landing meanwhile would be written back as `draft` by a whole-entity save.
+    // Publishing is its own conditional write (`publish`); the edit leaves the column alone.
+    const { status, ...written } = form;
+    const withStatus = <T extends object>(saved: T) => ({ ...saved, status });
+    if (citedBefore.length === 0 && citedAfter.length === 0) {
+      return withStatus(await this.formRepo.save(written as Form));
+    }
     const saved = await this.formRepo.manager.transaction(async (m) => {
       await this.formItemImages.claimForSave(m, form.items, formId, userId);
-      return m.save(Form, form);
+      return m.save(Form, written as Form);
     });
     // Replaced or removed: released once no question of any form cites it (a duplicated question
     // still does). After the commit, so the release re-reads the citations this save wrote.
     const dropped = citedBefore.filter((id) => !citedAfter.includes(id));
     if (dropped.length > 0) await this.formItemImages.releaseUncited(dropped, 'question edited');
-    return saved;
+    return withStatus(saved);
   }
 
   /**

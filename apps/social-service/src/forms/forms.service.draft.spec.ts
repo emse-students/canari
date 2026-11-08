@@ -189,6 +189,19 @@ describe('FormsService - drafts', () => {
       ).rejects.toThrow(ConflictException);
     });
 
+    it('never writes the status: a publication landing during an edit is not written back as draft', async () => {
+      const { service, formRepo } = makeService();
+      await service.update(
+        'f1',
+        createInput({ title: 'Gala 2', associationId: undefined }),
+        OWNER,
+        false
+      );
+      const written = formRepo.save.mock.calls.at(-1)[0];
+      expect(written).not.toHaveProperty('status');
+      expect(written.title).toBe('Gala 2');
+    });
+
     it('refuses a `draft` flag on an edit, typed', async () => {
       const { service } = makeService({ form: { status: FORM_PUBLISHED } });
       const refusal = service.update(
@@ -272,6 +285,40 @@ describe('FormsService - drafts', () => {
       await expect(refusal).rejects.toThrow(BadRequestException);
       await expect(refusal).rejects.toMatchObject({ response: { code: FORM_NO_PAYMENT_METHOD } });
       expect(row.status).toBe(FORM_DRAFT);
+    });
+
+    it('holds a PERSONAL paid form to the same rule: no way to pay is refused, online needs no association', async () => {
+      const none = makeService({
+        form: { ...paid, associationId: null, allowCashPayment: false, allowOnlinePayment: false },
+      });
+      await expect(none.service.publish('f1', OWNER, false)).rejects.toMatchObject({
+        response: { code: FORM_NO_PAYMENT_METHOD },
+      });
+      const online = makeService({ form: { ...paid, associationId: null } });
+      await online.service.publish('f1', OWNER, false);
+      expect(online.row.status).toBe(FORM_PUBLISHED);
+      expect(online.associations.canTakePaymentsNow).not.toHaveBeenCalled();
+    });
+
+    it('serves a PERSONAL cash-only paid form as paused online', async () => {
+      const cashOnly = makeService({
+        form: {
+          ...paid,
+          associationId: null,
+          status: FORM_PUBLISHED,
+          allowCashPayment: true,
+          allowOnlinePayment: false,
+        },
+      });
+      await expect(cashOnly.service.getPublic('f1')).resolves.toMatchObject({
+        paymentsPaused: true,
+      });
+      const online = makeService({
+        form: { ...paid, associationId: null, status: FORM_PUBLISHED },
+      });
+      await expect(online.service.getPublic('f1')).resolves.toMatchObject({
+        paymentsPaused: false,
+      });
     });
 
     it('lets an older client create a paid form PUBLISHED with cash while online is not ready', async () => {

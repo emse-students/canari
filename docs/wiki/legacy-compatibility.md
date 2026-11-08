@@ -480,6 +480,20 @@ affected: those carry no warning and compare nothing.
 it. Measure before: `[REPOST-P] ... accept refused: audience changed (carried none, ...)` in
 social-service logs counts the older builds that met it.
 
+### No date yet - a form editor newer than its server (2026-11-08)
+
+**Site:** `serverFormDrafts()` (`frontend/src/lib/stores/appVersionCheck.svelte.ts`), read by the
+form builder and editor; the server half is `formDrafts: true` in core-service's `GET /api/version`.
+**Why.** A stable ships both stores before production deploys, so for days a phone build that
+creates drafts talks to a social-service that does not know them: its validation strips `draft`,
+creating a PUBLISHED form at once (an empty one, for a builder that creates its draft early), and it
+answers `POST /forms/:id/publish` and the revision routes `404` - every editor would fail to open.
+**What the client does.** It builds forms as drafts only on an estate whose `/api/version` says
+`formDrafts: true`; otherwise - an older server, or no answer yet - it saves as it always did: one
+"Enregistrer" that creates the form published, and an edit saved straight to the form.
+**Removal condition:** when no estate older than the release carrying `formDrafts` is served (both
+estates deployed past it), the client branch for `false` may go; the field stays, always `true`.
+
 ### No date yet - a form created by a build that does not know drafts (2026-11-08)
 
 **Site:** `FormsService.create` (`apps/social-service/src/forms/forms.service.ts`): a create carrying

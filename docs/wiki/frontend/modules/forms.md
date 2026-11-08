@@ -239,6 +239,20 @@ day).** `payment-offer.ts` is the ONE rule, and the editor mirrors it (`publishB
   n'est pas encore configuré : les réponses seront payées en espèces pour l'instant") and no "Créer un
   formulaire gratuit à la place".
 
+**A personal paid form** (no association) collects through the platform's own account: it is held
+to the same rule - `FORM_NO_PAYMENT_METHOD` when neither way is accepted, served `paymentsPaused` when
+its editor took online off - with no association readiness to ask.
+
+**Two readiness predicates, deliberately.** Publication asks `canTakePaymentsNow`
+(`resolvePaymentTarget`: can money be taken now, the platform's provider switch included); every read
+serves `collectsNow` (may this association collect - its kind - and are its accounts ready; the
+platform switch is the client's own read of `payments/provider`, so a member read never waits on
+core-service). They agree on the accounts; publication also checks the kind through
+`assertKindMayPrice`. Merging them would make every form read call core-service.
+
+**The client asks the estate first.** The builder creates drafts only where `/api/version` says
+`formDrafts: true`, and saves as before otherwise ([legacy-compatibility](../../legacy-compatibility.md)).
+
 **A published paid form while online is not ready.** It stays published and readable (unchanged
 behaviour, measured before this change): every read serves `paymentsPaused`, now
 `charges && !(allowOnlinePayment && collectsNow)`. A respondent of a form that takes cash is offered
@@ -254,7 +268,9 @@ rules (a public form's cash answer needs `cashPaymentExpiryDays`, and holds its 
 tab (`target=_blank rel=noopener`, `formViewHref`): the live page for a published form, a PREVIEW
 (`/forms/:id?preview=1`) for a draft. The preview draws the questions, says it is one, shuts the send
 button ("Envoi désactivé (aperçu)") and asks nothing of the reader's state (`isPreview`,
-`routes/forms/[id]/+page.svelte`); the server would refuse a draft's submit anyway.
+`routes/forms/[id]/+page.svelte`); the server would refuse a draft's submit anyway. Only what a
+manager alone can read is a preview: the `preview` flag never shuts the send of a published form, so a
+respondent handed such a link answers as usual.
 
 Tests: `forms.service.draft.spec.ts` (create, edit, publish both ways, cash, idempotence, every read
 path, the cash-only submit), `form-status.integration.spec.ts` (migration 145 on PostgreSQL, the
