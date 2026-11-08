@@ -758,16 +758,22 @@ export function followAcceptedContent(accepterName: string, icon?: PushIcon): Pu
 /**
  * A member or an association the recipient follows started a live (WP-L7, decision L10). `actorName`
  * is the BROADCASTER - the association's name for a live broadcast as one, the member's otherwise;
- * `arg` is always empty: a live has no text to quote, so the body is the fixed sentence.
+ * `arg` is the live's TITLE (owner, 2026-11-07), empty when it has none - the body is then the fixed
+ * sentence. Both natives already read a non-empty `arg` as the body (`actorTitled` on iOS, the
+ * `arg.ifEmpty` on Android), so "BDE est en live" stays the title and the live's title its body.
  */
-export function liveStartedContent(broadcasterName: string, icon?: PushIcon): PushContent {
+export function liveStartedContent(
+  broadcasterName: string,
+  title: string,
+  icon?: PushIcon
+): PushContent {
   return {
     key: 'social_live_started',
     icon,
     actorName: broadcasterName,
-    arg: '',
+    arg: title,
     legacyTitle: `${broadcasterName} est en live`,
-    legacyBody: 'Appuyez pour regarder',
+    legacyBody: title || 'Appuyez pour regarder',
   };
 }
 

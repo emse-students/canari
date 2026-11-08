@@ -39,10 +39,15 @@ import {
   isLiveRefusal,
   LiveRefusalError,
   LiveSegmentUploader,
+  putLivePoster,
+  setLiveTitle,
   startLive,
   type LiveSegmentUploaderOptions,
 } from './api';
 import { sealLiveSegment } from './liveCrypto';
+import { LivePosterSender, posterEverySegments } from './livePoster';
+import { deriveLivePosterKey, sealLivePoster } from './livePosterCrypto';
+import { liveTitleToSend } from './liveTitle';
 import {
   ScreenWakeLock,
   createMixContext,
@@ -61,7 +66,13 @@ import {
   LIVE_RECORDER_STOP_BOUND_MS,
   LIVE_SEGMENT_MS,
 } from './constants';
-import type { LiveEndResult, LiveLimits, LiveRulesStatus, LiveView } from './types';
+import type {
+  LiveEndResult,
+  LiveLimits,
+  LiveRulesStatus,
+  LiveTitleResult,
+  LiveView,
+} from './types';
 
 /** What a live broadcasts: the camera, or - on a desktop browser - the screen. */
 export type LiveSource = 'camera' | 'screen';
@@ -126,8 +137,21 @@ export interface LiveBroadcastDeps {
   startLive: (
     keyHex: string,
     associationId?: string,
-    acceptedRulesVersion?: number
+    acceptedRulesVersion?: number,
+    title?: string | null
   ) => Promise<LiveView>;
+  /** `PATCH /api/lives/:id`: the title edited on air (owner, 2026-11-07). */
+  setLiveTitle: (liveId: string, title: string | null) => Promise<LiveTitleResult>;
+  /** `PUT /api/lives/:id/poster`: one sealed preview image. */
+  putLivePoster: (liveId: string, sealed: Uint8Array<ArrayBuffer>) => Promise<unknown>;
+  /** The poster key of a live, from its live key (`livePosterCrypto.ts`, HKDF). */
+  derivePosterKey: (liveKeyHex: string, liveId: string) => Promise<string>;
+  /** Seals a preview image under the POSTER key (`livePosterCrypto.ts`), never the live key. */
+  sealPoster: (
+    posterKeyHex: string,
+    liveId: string,
+    plain: Uint8Array
+  ) => Promise<Uint8Array<ArrayBuffer>>;
   fetchLive: (liveId: string) => Promise<LiveView>;
   endLive: (liveId: string) => Promise<LiveEndResult>;
   createUploader: (liveId: string, options: LiveSegmentUploaderOptions) => LiveUploaderLike;
@@ -161,6 +185,10 @@ export function defaultLiveBroadcastDeps(): LiveBroadcastDeps {
     fetchLiveLimits,
     fetchLiveRules,
     startLive,
+    setLiveTitle,
+    putLivePoster,
+    derivePosterKey: deriveLivePosterKey,
+    sealPoster: sealLivePoster,
     fetchLive,
     endLive,
     createUploader: (liveId, options) => new LiveSegmentUploader(liveId, options),
@@ -237,6 +265,18 @@ export class LiveBroadcast {
   #screenGoneWhileStarting = false;
   /** The camera's opener, kept while the screen's stands in for it. */
   #cameraOpener: CameraOpener | null = null;
+  /**
+   * The TITLE (owner, 2026-11-07): the draft typed on the launch screen, sent with the start; on
+   * air, the title the server last confirmed. Empty is "no title".
+   */
+  title = $state('');
+  /** True while an on-air title edit is with the server. */
+  titleSaving = $state(false);
+  /** Why the last on-air title edit was not taken, or null. */
+  titleProblem = $state<'invalid' | 'offline' | 'failed' | null>(null);
+  /** Grabs the frame the screen shows, for the preview image; set by the screen that owns the video. */
+  #posterCapture: (() => Promise<Uint8Array | null>) | null = null;
+  #posterSender: LivePosterSender | null = null;
 
   readonly #deps: LiveBroadcastDeps;
   #keyHex: string | null = null;
@@ -371,7 +411,8 @@ export class LiveBroadcast {
       live = await this.#deps.startLive(
         keyHex,
         this.associationId ?? undefined,
-        this.rulesAcceptedHere ? this.rules?.version : undefined
+        this.rulesAcceptedHere ? this.rules?.version : undefined,
+        liveTitleToSend(this.title)
       );
     } catch (e) {
       this.#screenGoneWhileStarting = false;
@@ -393,6 +434,8 @@ export class LiveBroadcast {
     }
     this.#keyHex = keyHex;
     this.liveId = live.id;
+    // What the server holds (an older server ignores the field and answers none).
+    this.title = live.title ?? '';
     this.#startedAt = this.#deps.now();
     this.#lastStoredAt = this.#startedAt;
     this.#uploader = this.#deps.createUploader(live.id, {
@@ -410,18 +453,90 @@ export class LiveBroadcast {
       onStopped: (error) => this.#uploaderStopped(error),
     });
     const limits = this.limits!;
+    this.#posterSender = this.#createPosterSender(live.id, keyHex, limits);
     this.#pipeline = new LiveSegmentPipeline({
       seal: (index, plain) => this.#deps.seal(this.#keyHex!, live.id, index, plain),
       nextIndex: () => this.#uploader!.nextIndex,
       enqueue: (index, sealed) => {
         this.#uploader!.enqueue(index, sealed);
         this.#noteBacklog();
+        // The preview rides the segment cadence (never awaited: the video does not wait for it).
+        void this.#posterSender?.onSegment(index);
       },
       maxSegmentBytes: limits.segmentMaxBytes,
       now: this.#deps.now,
       onBroken: (generation) => this.#pipelineBroken(generation),
     });
     this.#goOnAir();
+  }
+
+  /**
+   * The screen hands the machine what grabs its preview frame (the `<video>` is the screen's), or
+   * null when that element goes. Read at each poster turn, so a capture set after the start counts.
+   */
+  setPosterCapture(capture: (() => Promise<Uint8Array | null>) | null): void {
+    console.debug(`[LIVE-BROADCAST] preview capture ${capture ? 'set' : 'cleared'}`);
+    this.#posterCapture = capture;
+  }
+
+  /**
+   * The preview sender of a live just started, or null when the server serves no poster numbers (a
+   * server before them, which would 404 the route): then nothing is captured at all.
+   */
+  #createPosterSender(liveId: string, keyHex: string, limits: LiveLimits): LivePosterSender | null {
+    const period = limits.previewPeriodMs;
+    const maxBytes = limits.posterMaxBytes;
+    if (!period || !maxBytes) {
+      console.debug('[LIVE-BROADCAST] the server serves no poster numbers - no preview image');
+      return null;
+    }
+    // The server's ONE period, in this client's segments (2 s each): the card reads once per period.
+    const every = posterEverySegments(period);
+    console.debug(`[LIVE-BROADCAST] a preview every ${every} segment(s) (${period} ms)`);
+    // The preview is sealed under the DERIVED poster key - the one the list serves without a seat -
+    // never the live key. Derived once, at the first turn that needs it.
+    let posterKey: Promise<string> | null = null;
+    return new LivePosterSender({
+      capture: () => this.#posterCapture?.() ?? Promise.resolve(null),
+      seal: async (plain) => {
+        posterKey ??= this.#deps.derivePosterKey(keyHex, liveId);
+        return this.#deps.sealPoster(await posterKey, liveId, plain);
+      },
+      put: (sealed) => this.#deps.putLivePoster(liveId, sealed),
+      everySegments: every,
+      maxBytes,
+    });
+  }
+
+  /**
+   * The member edits the title ON AIR (owner, 2026-11-07): sent to the server, and `title` becomes
+   * what it confirmed. Answers whether it was taken; a refusal or no answer keeps the previous title
+   * and says why in {@link titleProblem}. An ended live is the uploader's verdict to hear, not this.
+   */
+  async saveTitle(draft: string): Promise<boolean> {
+    if ((this.phase !== 'live' && this.phase !== 'away') || !this.liveId || this.titleSaving) {
+      console.warn(`[LIVE-BROADCAST] title edit ignored in ${this.phase}`);
+      return false;
+    }
+    const next = liveTitleToSend(draft);
+    this.titleSaving = true;
+    this.titleProblem = null;
+    try {
+      const done = await this.#deps.setLiveTitle(this.liveId, next);
+      this.title = done.title ?? '';
+      console.log(`[LIVE-BROADCAST] title ${done.title === null ? 'cleared' : 'saved'}`);
+      return true;
+    } catch (e) {
+      this.titleProblem = isTransportFailure(e)
+        ? 'offline'
+        : e instanceof LiveRefusalError && e.code === 'LIVE_TITLE_INVALID'
+          ? 'invalid'
+          : 'failed';
+      console.warn(`[LIVE-BROADCAST] title not saved (${this.titleProblem})`, e);
+      return false;
+    } finally {
+      this.titleSaving = false;
+    }
   }
 
   /**
@@ -871,6 +986,7 @@ export class LiveBroadcast {
     this.#trackWatch = null;
     this.#pipeline?.close();
     this.#uploader?.stop();
+    this.#posterSender?.stop();
     this.camera.stop();
     this.#deps.wakeLock.release();
   }

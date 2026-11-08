@@ -301,6 +301,66 @@ export const LIVE_REACTION_TAPS_PER_WINDOW = 10;
 /** The most bursts one poll sums after its cursor; the rest come with the next poll. */
 export const LIVE_REACTION_PAGE = 500;
 
+/**
+ * THE LONGEST LIVE TITLE, in characters (Unicode code points - what PostgreSQL's `varchar(80)` and
+ * `char_length` count): owner, 2026-11-07. The title is OPTIONAL, entered on the launch screen and
+ * editable while on air; without one the card reads "X est en direct" as before. Plain text the
+ * server stores and serves, like a post's text (lives.md, "Titles and the preview").
+ */
+export const LIVE_TITLE_MAX_CHARS = 80;
+
+/**
+ * THE LARGEST SEALED PREVIEW IMAGE ("poster") the server accepts, in bytes (owner, 2026-11-07: a
+ * refreshed still image on the feed card). The broadcaster sends a JPEG 480 px wide at quality 0.7
+ * (a 480 x 854 portrait frame is tens of kB), sealed under the live key; 256 KiB leaves room for a
+ * busy frame and is a sixteenth of a segment. Refused 413 `LIVE_POSTER_TOO_LARGE` above it.
+ */
+export const LIVE_POSTER_MAX_BYTES = 256 * 1024;
+
+/**
+ * THE ONE PERIOD OF THE PREVIEW, in ms (review of #3135: two cadences, 10 s sent and 15 s read,
+ * left a third of the posters unseen). BOTH ends read it from the limits:
+ *
+ * - the BROADCASTER sends a poster every `round(previewPeriodMs / segment length)` segments (8 with
+ *   its 2 s segments), counted on the durable segment index, never on a timer - no segment, no
+ *   poster, and a paused camera leaves the last image with its age;
+ * - a FEED CARD on screen, in a visible page, re-reads `GET /api/lives` once per period, so each
+ *   poster sent is the one the next read names.
+ *
+ * Served, never compiled into a client, so the load can be shaped without a release. It is a cost
+ * knob and nothing else: wrong, the picture is staler or the list read more often; nothing is
+ * decided from it.
+ */
+export const LIVE_PREVIEW_PERIOD_MS = 16_000;
+
+/**
+ * THE SHORTEST GAP BETWEEN TWO STORED POSTERS of one live, in ms, decided on the row's `posterAt`
+ * (the database's clock): a poster sooner than this is 429 `LIVE_POSTER_TOO_FAST`. Half the
+ * {@link LIVE_PREVIEW_PERIOD_MS}: never met by an honest broadcaster, and a dishonest one is bounded
+ * at 7.5 stores a minute.
+ */
+export const LIVE_POSTER_MIN_INTERVAL_MS = LIVE_PREVIEW_PERIOD_MS / 2;
+
+/**
+ * WHAT A POSTER TYPICALLY WEIGHS, in bytes - a planning figure (a 480 x 854 JPEG at quality 0.7 is
+ * tens of kB), to be replaced by the reading owed on both phones. It sizes the budget below.
+ */
+export const LIVE_POSTER_TYPICAL_BYTES = 48 * 1024;
+
+/**
+ * THE PREVIEW'S EGRESS BUDGET, in bits per second (review of #3135). The viewer cap is a bandwidth
+ * budget (`LIVE_HOST_EGRESS_BPS` x `LIVE_EGRESS_SHARE` = 72 Mb/s for seated viewers), and a poster
+ * takes no seat, so its bytes get their OWN budget out of the 18 Mb/s the live share leaves: 8 Mb/s.
+ *
+ * Posters are served by their OWN nginx location and zones (`/api/media/public/live-poster/`), so a
+ * card reader never spends the segments' per-address quota; that location bounds ONE address at
+ * `limit_conn` x `limit_rate` = this budget - `live-segments-route.test.mjs` recomputes it, as it
+ * does the cap. What it buys: one poster of {@link LIVE_POSTER_TYPICAL_BYTES} per
+ * {@link LIVE_PREVIEW_PERIOD_MS} per reader is ~24.6 kb/s, so ~325 card readers behind ONE campus
+ * address before a 429 - which costs a card a stale picture, never a seated viewer a segment.
+ */
+export const LIVE_POSTER_EGRESS_BPS = 8_000_000;
+
 /** The numbers as the API serves them. */
 export function liveLimits(): {
   segmentMaxBytes: number;
@@ -323,6 +383,9 @@ export function liveLimits(): {
   reactionTapsPerWindow: number;
   strikeWindowMs: number;
   suspensionMs: number;
+  titleMaxChars: number;
+  posterMaxBytes: number;
+  previewPeriodMs: number;
 } {
   return {
     segmentMaxBytes: LIVE_SEGMENT_MAX_BYTES,
@@ -345,5 +408,8 @@ export function liveLimits(): {
     reactionTapsPerWindow: LIVE_REACTION_TAPS_PER_WINDOW,
     strikeWindowMs: LIVE_STRIKE_WINDOW_MS,
     suspensionMs: LIVE_SUSPENSION_MS,
+    titleMaxChars: LIVE_TITLE_MAX_CHARS,
+    posterMaxBytes: LIVE_POSTER_MAX_BYTES,
+    previewPeriodMs: LIVE_PREVIEW_PERIOD_MS,
   };
 }

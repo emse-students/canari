@@ -26,6 +26,7 @@ import {
 } from './live.constants';
 import {
   COUNT_LIVE_SEATS_LUA,
+  COUNT_MANY_LIVE_SEATS_LUA,
   FORGET_ARRIVALS_LUA,
   LIVE_SEATS_KEY,
   LiveSeats,
@@ -103,6 +104,43 @@ describe('the viewer cap, as the service types it', () => {
     ]) {
       const { seats } = seatsAnswering(reply);
       await expect(seats.watching(LIVE)).resolves.toBeNull();
+    }
+  });
+
+  it("reads the feed card's counts of several lives with ONE script, in the order asked", async () => {
+    const OTHER = '22222222-2222-4222-8222-222222222222';
+    const { seats, calls } = seatsAnswering(async () => [3, 0]);
+    const counts = await seats.watchingMany([LIVE, OTHER]);
+    expect([...counts!.entries()]).toEqual([
+      [LIVE, 3],
+      [OTHER, 0],
+    ]);
+    expect(calls).toEqual([
+      {
+        script: COUNT_MANY_LIVE_SEATS_LUA,
+        keys: [LIVE_SEATS_KEY],
+        args: [LIVE_SEAT_LEASE_MS, `${LIVE}:`, `${OTHER}:`],
+      },
+    ]);
+    // An empty list asks nothing.
+    const quiet = seatsAnswering(async () => []);
+    expect((await quiet.seats.watchingMany([]))?.size).toBe(0);
+    expect(quiet.calls).toHaveLength(0);
+  });
+
+  it('answers no counts for the list, never wrong ones, when Redis fails or answers nonsense', async () => {
+    for (const reply of [
+      async () => {
+        throw new Error('ECONNREFUSED');
+      },
+      async () => 'OK',
+      async () => [1],
+      async () => [1, -1],
+    ]) {
+      const { seats } = seatsAnswering(reply);
+      await expect(
+        seats.watchingMany([LIVE, '22222222-2222-4222-8222-222222222222'])
+      ).resolves.toBeNull();
     }
   });
 
@@ -275,6 +313,28 @@ maybe('the seat script against a real Redis', () => {
     expect(await takeReply(seatMember(LIVE, 'c'), 5)).toEqual([1, 2, 1]);
     // A refusal at the cap carries no count.
     expect(await takeReply(seatMember(LIVE, 'd'), 2)).toEqual([0, 2]);
+  });
+
+  it("counts several lives in one read, each as the broadcaster's read counts it", async () => {
+    const OTHER = '22222222-2222-4222-8222-222222222222';
+    const NONE = '33333333-3333-4333-8333-333333333333';
+    await takeReply(seatMember(LIVE, 'a'), 5);
+    await takeReply(seatMember(LIVE, 'b'), 5);
+    await takeReply(seatMember(OTHER, 'a'), 5);
+    // A lapsed seat is not counted, and the read writes nothing.
+    await redis.zadd(key, 0, seatMember(OTHER, 'z'));
+    const reply = (await redis.eval(
+      COUNT_MANY_LIVE_SEATS_LUA,
+      1,
+      key,
+      30_000,
+      seatMember(LIVE, ''),
+      seatMember(OTHER, ''),
+      seatMember(NONE, '')
+    )) as number[];
+    expect(reply).toEqual([2, 1, 0]);
+    expect(reply[0]).toBe(await watching(LIVE));
+    expect(await redis.zscore(key, seatMember(OTHER, 'z'))).toBe('0');
   });
 
   /**

@@ -73,6 +73,22 @@ local fresh = redis.call('ZRANGEBYSCORE', KEYS[1], after, '+inf')
 return countPrefix(fresh, ARGV[2])
 `;
 
+/**
+ * HOW MANY SEATS EACH OF SEVERAL LIVES HOLDS, READ ONLY, IN ONE CALL - the feed card's viewer counts
+ * (owner, 2026-11-07), one script for the whole list instead of one per live. KEYS[1] the seats set;
+ * ARGV[1] the lease in ms; ARGV[2..] one member prefix per live. Reply: one count per prefix, in the
+ * order asked. The fresh members are read ONCE, so every count is of the same instant.
+ */
+export const COUNT_MANY_LIVE_SEATS_LUA = `${COUNT_PREFIX_LUA}
+local t = redis.call('TIME')
+local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+local after = string.format('(%.0f', now - tonumber(ARGV[1]))
+local fresh = redis.call('ZRANGEBYSCORE', KEYS[1], after, '+inf')
+local reply = {}
+for i = 2, #ARGV do reply[#reply + 1] = countPrefix(fresh, ARGV[i]) end
+return reply
+`;
+
 /** Gives one seat back. KEYS[1] the seats set; ARGV[1] the member. Reply: 1 if it was held. */
 export const RELEASE_SEAT_LUA = `return redis.call('ZREM', KEYS[1], ARGV[1])`;
 
@@ -243,6 +259,39 @@ export class LiveSeats {
       this.logger.debug(`[LIVE_SEAT] ${liveId}: ${count} watching (broadcaster's read)`);
     }
     return count;
+  }
+
+  /**
+   * How many viewers hold a seat on each of `liveIds`, read without taking one - the counts the feed
+   * card shows (owner, 2026-11-07). ONE script for the whole list ({@link COUNT_MANY_LIVE_SEATS_LUA}).
+   * A count and nothing else: no account id leaves Redis for it.
+   *
+   * `null` when Redis does not answer or answers what this code did not write, logged as an `error`:
+   * the card is a list of lives, which a display number must not take down - it then shows no count
+   * rather than a wrong one, and the same outage refuses every seat (`LIVE_SEATS_UNAVAILABLE`).
+   */
+  async watchingMany(liveIds: string[]): Promise<Map<string, number> | null> {
+    if (liveIds.length === 0) return new Map();
+    let reply: unknown;
+    try {
+      reply = await this.redis.evalScript(
+        COUNT_MANY_LIVE_SEATS_LUA,
+        [LIVE_SEATS_KEY],
+        [LIVE_SEAT_LEASE_MS, ...liveIds.map((id) => seatMember(id, ''))]
+      );
+    } catch (e) {
+      this.logger.error(
+        `[LIVE_SEAT] the counts of ${liveIds.length} live(s) (list) did not answer: ${String(e)}`
+      );
+      return null;
+    }
+    const counts = Array.isArray(reply) ? reply.map(Number) : [];
+    if (counts.length !== liveIds.length || counts.some((n) => !Number.isInteger(n) || n < 0)) {
+      this.logger.error(`[LIVE_SEAT] list counts: unreadable reply ${JSON.stringify(reply)}`);
+      return null;
+    }
+    this.logger.debug(`[LIVE_SEAT] counts read for ${liveIds.length} live(s) (list)`);
+    return new Map(liveIds.map((id, i) => [id, counts[i]]));
   }
 
   /**

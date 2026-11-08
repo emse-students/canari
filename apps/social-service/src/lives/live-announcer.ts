@@ -148,12 +148,20 @@ export class LiveAnnouncer {
       actorName = name;
     }
 
+    // The title as it stands at the first stored segment (owner, 2026-11-07): read here rather than
+    // carried by the claim, so the claim's transaction is unchanged. None is an empty body.
+    const titled: { title: string | null }[] = await this.db.query(
+      `SELECT title FROM lives WHERE id = $1`,
+      [liveId]
+    );
+    const title = titled[0]?.title ?? '';
+
     const addressed = await this.notifications.pushNotice({
       recipientIds,
       type: 'live_started',
       actorId: live.broadcasterId,
       actorName,
-      text: '',
+      text: title,
       ...(asAssociation ? { associationId: live.associationId as string } : {}),
       associationLogoMediaId,
       pushData: {
@@ -168,7 +176,7 @@ export class LiveAnnouncer {
       // `followers=` names the AUDIENCE size for both kinds (an association live reaches everyone who
       // sees it); the field keeps its name because the harness (`srvlog.mjs`) reads it.
       `[LIVE_ANNOUNCE] ${liveId} by ${short(live.broadcasterId)} ` +
-        `kind=${asAssociation ? 'association' : 'member'} followers=${addressed}`
+        `kind=${asAssociation ? 'association' : 'member'} followers=${addressed} titled=${title !== ''}`
     );
     return addressed;
   }

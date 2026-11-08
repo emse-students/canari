@@ -397,7 +397,8 @@ export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
  * The lives part of the erasure (docs/wiki/services/lives.md, "A deleted account").
  *
  * - A live the account broadcast is ENDED (reason `erased`, unless it had already ended) and its
- *   broadcaster becomes {@link DELETED_ACCOUNT}, in ONE statement: an open live never carries the
+ *   broadcaster becomes {@link DELETED_ACCOUNT} and its TITLE (what the member wrote, migration 140)
+ *   is cleared, in ONE statement: an open live never carries the
  *   tombstone, and the partial unique index (one OPEN live per broadcaster) never sees two. The live
  *   sweep deletes the segments and then the row within one run; nothing of it is served meanwhile,
  *   because every read of an ended live is a 410.
@@ -422,6 +423,7 @@ export const LIVES_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
     label: 'lives_broadcaster',
     sql: `UPDATE lives
              SET "broadcasterId" = $2,
+                 "title" = NULL,
                  "endReason" = COALESCE("endReason", 'erased'),
                  "endedAt" = COALESCE("endedAt", now())
            WHERE "broadcasterId" = $1`,

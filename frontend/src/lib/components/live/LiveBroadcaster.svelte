@@ -21,6 +21,7 @@
     MessageCircle,
     MessageCircleOff,
     Monitor,
+    Pencil,
     Radio,
     RefreshCcw,
     ShieldAlert,
@@ -48,6 +49,10 @@
   import { liveRecordingGap, type LiveRecordingGap } from '$lib/live/liveRecorder';
   import { currentUserId } from '$lib/stores/userState.svelte';
   import { shareLiveLink } from '$lib/live/shareLive';
+  import { grabPosterFrame } from '$lib/live/livePoster';
+  import { clampLiveTitleInput, liveTitleLength } from '$lib/live/liveTitle';
+  import Button from '$lib/components/ui/Button.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
   import LiveBadge from './LiveBadge.svelte';
   import LiveIdentity from './LiveIdentity.svelte';
   import LiveBroadcasterChat from './LiveBroadcasterChat.svelte';
@@ -144,6 +149,46 @@
     video.muted = true;
     video.srcObject = camera.stream;
   });
+
+  // The preview still (owner, 2026-11-07) is grabbed from THIS element, the one the member sees:
+  // the camera or the shared screen alike. The broadcast asks for it on its segment cadence.
+  $effect(() => {
+    const el = video;
+    broadcast.setPosterCapture(el ? () => grabPosterFrame(el) : null);
+    return () => broadcast.setPosterCapture(null);
+  });
+
+  /** The on-air title editor: null when closed, the draft while open. */
+  let titleDraft = $state<string | null>(null);
+  const titleMax = $derived(broadcast.limits?.titleMaxChars ?? null);
+
+  const TITLE_TEXT: Record<'invalid' | 'offline' | 'failed', () => string> = {
+    invalid: () => m.live_title_invalid({ max: titleMax ?? 0 }),
+    offline: m.live_title_offline,
+    failed: m.live_title_failed,
+  };
+
+  /**
+   * A title field after a keystroke: one line, cut at the bound - written back into the element too,
+   * because a cut that leaves the state unchanged would not redraw the field.
+   */
+  function clampTitleField(input: HTMLInputElement, max: number): string {
+    const next = clampLiveTitleInput(input.value, max);
+    if (next !== input.value) input.value = next;
+    return next;
+  }
+
+  function openTitleEditor() {
+    console.debug('[LIVE-SCREEN] title editor opened');
+    titleDraft = broadcast.title;
+  }
+
+  async function saveTitleDraft() {
+    if (titleDraft === null) return;
+    const taken = await broadcast.saveTitle(titleDraft);
+    console.debug(`[LIVE-SCREEN] title edit ${taken ? 'taken' : 'not taken'}`);
+    if (taken) titleDraft = null;
+  }
 
   $effect(() => {
     if (!onAir) return;
@@ -306,6 +351,65 @@
             >
             <LiveViewerCount count={viewers} />
           </span>
+          {#if titleMax}
+            <!-- The title, editable on air (owner, 2026-11-07): what the feed card shows. -->
+            {#if titleDraft === null}
+              <Button
+                variant="secondary"
+                size="compact"
+                class="max-w-64"
+                aria-label={m.live_title_edit_label()}
+                onclick={openTitleEditor}
+                data-live-title-chip
+              >
+                <Pencil size={12} strokeWidth={2.5} aria-hidden="true" />
+                <span class="truncate">{broadcast.title || m.live_title_add()}</span>
+              </Button>
+            {:else}
+              <form
+                class="flex max-w-72 flex-col gap-1.5 rounded-lg bg-black/60 p-2"
+                onsubmit={(e) => {
+                  e.preventDefault();
+                  void saveTitleDraft();
+                }}
+                data-live-title-editor
+              >
+                <Input
+                  density="compact"
+                  aria-label={m.live_title_edit_label()}
+                  placeholder={m.live_title_placeholder()}
+                  value={titleDraft}
+                  oninput={(e) => (titleDraft = clampTitleField(e.currentTarget, titleMax))}
+                  disabled={broadcast.titleSaving}
+                  data-live-title-input
+                />
+                <span class="flex items-center justify-between gap-2 text-xs">
+                  <span class="text-white/70 tabular-nums"
+                    >{m.live_title_counter({
+                      count: liveTitleLength(titleDraft),
+                      max: titleMax,
+                    })}</span
+                  >
+                  <span class="flex gap-1.5">
+                    <Button variant="secondary" size="compact" onclick={() => (titleDraft = null)}
+                      >{m.common_cancel_button()}</Button
+                    >
+                    <Button
+                      type="submit"
+                      size="compact"
+                      disabled={broadcast.titleSaving}
+                      data-live-title-save>{m.common_save_button()}</Button
+                    >
+                  </span>
+                </span>
+              </form>
+            {/if}
+            {#if broadcast.titleProblem}
+              <span class="max-w-72 text-xs text-white/80" data-live-title-problem
+                >{TITLE_TEXT[broadcast.titleProblem]()}</span
+              >
+            {/if}
+          {/if}
         {/if}
         {#if onAir && broadcast.health === 'retrying'}
           <span
@@ -403,6 +507,24 @@
           ? m.live_prelive_as_association({ name: associationName })
           : m.live_prelive_as_member()}
       </p>
+      {#if titleMax}
+        {@const max = titleMax}
+        <label class="flex flex-col gap-1 text-sm" data-live-title-field>
+          <span class="flex items-center justify-between gap-2">
+            <span class="font-semibold">{m.live_title_label()}</span>
+            <span class="text-xs text-white/70 tabular-nums"
+              >{m.live_title_counter({ count: liveTitleLength(broadcast.title), max })}</span
+            >
+          </span>
+          <Input
+            placeholder={m.live_title_placeholder()}
+            value={broadcast.title}
+            oninput={(e) => (broadcast.title = clampTitleField(e.currentTarget, max))}
+            disabled={broadcast.phase !== 'preview'}
+            data-live-title-input
+          />
+        </label>
+      {/if}
       {#if broadcast.canShareScreen}
         <div
           class="flex flex-col gap-2"

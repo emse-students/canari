@@ -141,7 +141,22 @@ export function fakeDeps() {
       acceptedVersion: 1,
       acceptedAt: '2026-10-19T09:00:00.000Z',
     })),
-    startLive: vi.fn(async () => liveView()),
+    startLive: vi.fn(
+      async (_k: string, _a?: string, _r?: number, title?: string | null): Promise<LiveView> => ({
+        ...liveView(),
+        title: title ?? null,
+      })
+    ),
+    setLiveTitle: vi.fn(async (id: string, title: string | null) => ({ id, title })),
+    putLivePoster: vi.fn(async (_id: string, _sealed: Uint8Array<ArrayBuffer>) => ({
+      name: 'p',
+      posterAt: '2026-10-19T10:00:00.000Z',
+    })),
+    derivePosterKey: vi.fn(async (_k: string, _l: string) => 'pk'.repeat(32)),
+    sealPoster: vi.fn(
+      async (_k: string, _l: string, plain: Uint8Array) =>
+        new Uint8Array(plain) as Uint8Array<ArrayBuffer>
+    ),
     fetchLive: vi.fn(async () => liveView()),
     endLive: vi.fn(async () => ({
       id: LIVE_ID,

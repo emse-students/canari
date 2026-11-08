@@ -37,6 +37,7 @@ import { LIVE_KEY_ENCRYPTION_SECRET_ENV } from './live-key-at-rest';
 import { LiveRetentionScheduler } from './live-retention.scheduler';
 import { LiveReportAgeScheduler } from './live-report-age.scheduler';
 import { LiveAnnouncer, liveAudienceSql } from './live-announcer';
+import { derivePosterKey } from './live-poster-key';
 import { seatMember, type LiveSeats } from './live-seats';
 import type { LivePurgeResult, LiveSegmentStore, LiveTrimResult } from './live-segment-store';
 import {
@@ -84,6 +85,10 @@ const KEY_AT_REST = readFileSync(
 );
 const ASSOCIATION_LAST_LIVE = readFileSync(
   join(__dirname, '..', 'migrations', '139_association_last_live_announced_at.sql'),
+  'utf8'
+);
+const TITLE_AND_POSTER = readFileSync(
+  join(__dirname, '..', 'migrations', '140_live_title_and_poster.sql'),
   'utf8'
 );
 /** The secret live keys are sealed under in this file (migration 110). */
@@ -210,6 +215,14 @@ class MemorySeats {
   async watching(liveId: string): Promise<number | null> {
     this.watchingCalls++;
     return this.count(liveId);
+  }
+
+  /** Makes the list's counts fail, as a Redis outage does (`watchingMany` answers null). */
+  countsDown = false;
+
+  async watchingMany(liveIds: string[]): Promise<Map<string, number> | null> {
+    if (this.countsDown) return null;
+    return new Map(liveIds.map((id) => [id, this.count(id)]));
   }
 
   private count(liveId: string): number {
@@ -386,6 +399,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
     await q(LADDER);
     await q(KEY_AT_REST);
     await q(KEY_AT_REST);
+    await q(TITLE_AND_POSTER);
+    await q(TITLE_AND_POSTER);
     process.env.LIVE_ENABLED = 'true';
     process.env[LIVE_KEY_ENCRYPTION_SECRET_ENV] = KEY_SECRET;
   });
@@ -1331,6 +1346,16 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         }
         expect((await pushed()).map((n) => n.pushData?.liveId)).toEqual([live.id]);
       });
+    });
+
+    it('carries the title as it stands at the first stored segment (owner, 2026-11-07)', async () => {
+      await follow(BOB);
+      const live = await lives.start(ALICE, { key: KEY, title: 'Soirée' });
+      await lives.setTitle(ALICE, live.id, { title: "Soirée d'intégration" });
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      expect((await pushed()).map((n) => [n.recipientIds, n.text])).toEqual([
+        [[BOB], "Soirée d'intégration"],
+      ]);
     });
 
     it("A MEMBER'S LIVE RESPECTS SPACES AS A POST DOES: who shares none and does not follow is not told and cannot watch", async () => {
@@ -3783,6 +3808,226 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         oldestWallMs: null,
         oldestWorkingMs: null,
       });
+    });
+  });
+
+  describe('the title and the preview image (owner, 2026-11-07, migration 140)', () => {
+    const poster = (n: number) => Buffer.from(`sealed poster ${n}`);
+    /** Moves the stored poster's stamp back by SQL, past the poster interval, on the db's clock. */
+    const agePoster = (liveId: string) =>
+      q(`UPDATE lives SET "posterAt" = "posterAt" - interval '9 seconds' WHERE id = $1`, [liveId]);
+
+    it('takes a title of 1 to 80 characters at the start, blank as none, and refuses the rest', async () => {
+      const eighty = 'é'.repeat(80); // 80 code points, 160 UTF-8 bytes: the bound counts characters
+      const live = await lives.start(ALICE, { key: KEY, title: `  ${eighty}  ` });
+      expect(live.title).toBe(eighty);
+      await lives.end(ALICE, live.id);
+      for (const title of ['é'.repeat(81), 'a\nb', 42, { x: 1 }]) {
+        expect(await refusal(lives.start(ALICE, { key: KEY, title }))).toEqual({
+          status: HttpStatus.BAD_REQUEST,
+          code: 'LIVE_TITLE_INVALID',
+        });
+      }
+      const blank = await lives.start(ALICE, { key: KEY, title: '   ' });
+      expect(blank.title).toBeNull();
+      // The database holds the bound a second time.
+      expect(
+        (await refusal(q(`UPDATE lives SET title = '' WHERE id = $1`, [blank.id]))).status
+      ).toBe(-1);
+    });
+
+    it('lets the BROADCASTER edit or clear the title while on air, and nobody else', async () => {
+      const live = await lives.start(ALICE, { key: KEY, title: 'Avant' });
+      await expect(lives.setTitle(ALICE, live.id, { title: 'Après' })).resolves.toEqual({
+        id: live.id,
+        title: 'Après',
+      });
+      expect((await lives.listOpen(BOB))[0].title).toBe('Après');
+      await expect(lives.get(BOB, live.id)).resolves.toMatchObject({ title: 'Après' });
+      await expect(lives.setTitle(ALICE, live.id, { title: null })).resolves.toMatchObject({
+        title: null,
+      });
+      expect(await refusal(lives.setTitle(BOB, live.id, { title: 'x' }))).toEqual({
+        status: HttpStatus.NOT_FOUND,
+        code: 'LIVE_NOT_FOUND',
+      });
+      expect((await refusal(lives.setTitle(ALICE, live.id, {}))).code).toBe('LIVE_TITLE_INVALID');
+      expect((await refusal(lives.setTitle(ALICE, live.id, { title: 'é'.repeat(81) }))).code).toBe(
+        'LIVE_TITLE_INVALID'
+      );
+      muted.add(ALICE);
+      expect((await refusal(lives.setTitle(ALICE, live.id, { title: 'x' }))).code).toBe(
+        'LIVE_MUTED'
+      );
+      muted.clear();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.get(BOB, live.id); // a seat, so the end drains instead of deleting at once
+      await lives.end(ALICE, live.id);
+      expect((await refusal(lives.setTitle(ALICE, live.id, { title: 'x' }))).status).toBe(
+        HttpStatus.GONE
+      );
+    });
+
+    it('stores a poster under the live, replaces the previous one, and bounds the rate on the db clock', async () => {
+      const live = await start();
+      const first = await lives.ingestPoster(ALICE, live.id, poster(1));
+      expect(store.objects.get(`live/${live.id}/${first.name}`)).toEqual(poster(1));
+      expect(await refusal(lives.ingestPoster(ALICE, live.id, poster(2)))).toEqual({
+        status: HttpStatus.TOO_MANY_REQUESTS,
+        code: 'LIVE_POSTER_TOO_FAST',
+      });
+      await agePoster(live.id);
+      const second = await lives.ingestPoster(ALICE, live.id, poster(2));
+      expect(second.name).not.toBe(first.name);
+      // The replaced one is gone from the store; ONE poster object remains.
+      expect(store.objects.has(`live/${live.id}/${first.name}`)).toBe(false);
+      expect(store.countFor(live.id)).toBe(1);
+      // Another member's live is a 404, as every write.
+      expect(await refusal(lives.ingestPoster(BOB, live.id, poster(3)))).toEqual({
+        status: HttpStatus.NOT_FOUND,
+        code: 'LIVE_NOT_FOUND',
+      });
+      // A store that fails records nothing and releases the reservation.
+      await agePoster(live.id);
+      store.failStore = true;
+      expect((await refusal(lives.ingestPoster(ALICE, live.id, poster(4)))).code).toBe(
+        'LIVE_STORE_UNAVAILABLE'
+      );
+      store.failStore = false;
+      await expect(lives.ingestPoster(ALICE, live.id, poster(5))).resolves.toBeDefined();
+    });
+
+    it('serves the title, the count, the poster and the PREVIEW KEY in the list WITHOUT TAKING A SEAT', async () => {
+      const live = await lives.start(ALICE, { key: KEY, title: 'Soirée' });
+      await lives.get(CAROL, live.id); // one viewer seated
+      // Before any poster: no picture, so no key either.
+      expect((await lives.listOpen(BOB))[0]).toMatchObject({
+        title: 'Soirée',
+        viewers: 1,
+        poster: null,
+        posterKey: null,
+      });
+      const stored = await lives.ingestPoster(ALICE, live.id, poster(1));
+      const [item] = await lives.listOpen(BOB);
+      expect(item).toMatchObject({
+        viewers: 1,
+        posterKey: derivePosterKey(KEY, live.id),
+        poster: { name: stored.name },
+      });
+      // The PREVIEW key, never the live key: the seated route stays the only one serving that.
+      expect(item).not.toHaveProperty('key');
+      expect(item.posterKey).not.toBe(KEY);
+      expect(item.poster!.ageMs).toBeGreaterThanOrEqual(0);
+      expect(item.poster!.ageMs).toBeLessThan(60_000);
+      await agePoster(live.id);
+      expect((await lives.listOpen(BOB))[0].poster!.ageMs).toBeGreaterThanOrEqual(9_000);
+      // BOB's reads took no seat: CAROL's is the only one.
+      expect([...seats.held]).toEqual([seatMember(live.id, CAROL)]);
+      // A count that does not answer is no count - never a wrong one, never a failed list.
+      seats.countsDown = true;
+      expect((await lives.listOpen(BOB))[0]).toMatchObject({
+        viewers: null,
+        posterKey: derivePosterKey(KEY, live.id),
+      });
+      seats.countsDown = false;
+    });
+
+    it('a key that does not open costs THAT card its picture, logged ONCE per outage, not per read', async () => {
+      const a = await start(ALICE);
+      const b = await start(BOB);
+      await lives.ingestPoster(BOB, b.id, poster(1));
+      const sealed: { liveKeyCiphertext: string }[] = await q(
+        `SELECT "liveKeyCiphertext" FROM lives WHERE id = $1`,
+        [b.id]
+      );
+      await q(
+        `UPDATE lives SET "liveKeyCiphertext" = (SELECT "liveKeyCiphertext" FROM lives WHERE id = $1)
+          WHERE id = $2`,
+        [a.id, b.id]
+      );
+      const errors = jest.spyOn(Logger.prototype, 'error');
+      try {
+        for (let i = 0; i < 3; i++) {
+          const items = await lives.listOpen(CAROL);
+          expect(items.find((x) => x.id === b.id)).toMatchObject({ poster: null, posterKey: null });
+        }
+        const keyErrors = () =>
+          errors.mock.calls.filter((c) => String(c[0]).includes(`[LIVE_KEY] ${b.id}`));
+        expect(keyErrors()).toHaveLength(1);
+        // The key opens again: the outage ends, and the card has its picture back.
+        await q(`UPDATE lives SET "liveKeyCiphertext" = $2 WHERE id = $1`, [
+          b.id,
+          sealed[0].liveKeyCiphertext,
+        ]);
+        const back = (await lives.listOpen(CAROL)).find((x) => x.id === b.id);
+        expect(back?.posterKey).toBe(derivePosterKey(KEY, b.id));
+        expect(keyErrors()).toHaveLength(1);
+      } finally {
+        errors.mockRestore();
+      }
+    });
+
+    it('REFUSES the list, so the key and the poster, to a blocked account either way and to a removed viewer', async () => {
+      const live = await start();
+      await lives.ingestPoster(ALICE, live.id, poster(1));
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [ALICE, BOB]);
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [CAROL, ALICE]);
+      await lives.removeViewer(ALICE, live.id, DAVE);
+      for (const who of [BOB, CAROL, DAVE]) await expect(lives.listOpen(who)).resolves.toEqual([]);
+      // An account the live is not visible to (no shared space, no follow) is not served it either.
+      await expect(lives.listOpen(FRANK)).resolves.toEqual([]);
+      await expect(lives.listOpen(EVE)).resolves.toEqual([
+        expect.objectContaining({ id: live.id, posterKey: derivePosterKey(KEY, live.id) }),
+      ]);
+    });
+
+    it('deletes the poster with the live at its end, and at once after a cut', async () => {
+      const live = await start();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.ingestPoster(ALICE, live.id, poster(1));
+      expect(store.countFor(live.id)).toBe(2);
+      await lives.end(ALICE, live.id);
+      await sweeper.sweepOnce();
+      expect(store.countFor(live.id)).toBe(0);
+      expect(await q(`SELECT id FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+
+      const cutOne = await start();
+      await lives.ingestPoster(ALICE, cutOne.id, poster(2));
+      await lives.cut('9'.repeat(64), cutOne.id, { reason: 'spam' });
+      expect(store.countFor(cutOne.id)).toBe(0);
+      await expect(lives.listOpen(BOB)).resolves.toEqual([]);
+    });
+
+    it('keeps the live from its purge while a poster is storing, and records nothing once it ended', async () => {
+      const live = await start();
+      const hold = store.holdNextStore();
+      const storing = lives.ingestPoster(ALICE, live.id, poster(1));
+      await hold.entered;
+      await lives.end(ALICE, live.id);
+      // The end's purge left it: a poster is in flight.
+      expect(await q(`SELECT id FROM lives WHERE id = $1`, [live.id])).toHaveLength(1);
+      hold.release();
+      expect((await refusal(storing)).status).toBe(HttpStatus.GONE);
+      // The poster's own confirm purged the live: nothing outlives it.
+      expect(store.countFor(live.id)).toBe(0);
+      expect(await q(`SELECT id FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+    });
+
+    it('clears the title of an erased broadcaster in the erasure statement itself', async () => {
+      const live = await lives.start(ALICE, { key: KEY, title: 'Mon direct' });
+      await ds.transaction((m) =>
+        runErasureStatements(
+          {
+            write: async (sql, params) => ((await m.query(sql, params)) as [unknown, number])[1],
+            read: async <T>(sql: string, params: unknown[]) => (await m.query(sql, params)) as T[],
+          },
+          LIVES_ERASURE_STATEMENTS,
+          ALICE
+        )
+      );
+      expect(await q(`SELECT title FROM lives WHERE id = $1`, [live.id])).toEqual([
+        { title: null },
+      ]);
     });
   });
 });
