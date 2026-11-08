@@ -911,6 +911,37 @@ step (nothing in the app changed). The media-frame bench the paragraph above ask
 repository (only its readings are, [media-frame](media-frame.md)); the anchor did not change, so
 none was owed.
 
+### The budget reading on `1.6.8-alpha.1`, 2026-11-08: the reopen halved, the first open did not move
+
+**Bench.** Mi 9T, the dev pre-release `1.6.8-alpha.1 (100600801)`, sideloaded; it carries the two
+cuts of 2026-11-07 (#3117: the reveal paints 20 rows, `flipShown`) and the Feed-card cuts of the tab
+tap. Same dev estate, rig account, `BancOuverture-1` seed and protocol as the `1.6.3-alpha.2`
+reading; no network shim, CPU 1x. Evidence: `<harness-dir>/a1-bench/co-168a1/` (`runs.ndjson`).
+
+| condition | build | n | tap>rail+salons | salon>pane | salon>msgs | switch>salons | reopen>msgs |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| cold, Wi-Fi, 1x | `1.6.3-alpha.2` | 4 | 529 / 669 | 414 / 455 | 918 / 966 | 174 / 206 | 330 / 365 |
+| cold, Wi-Fi, 1x | `1.6.8-alpha.1` | 6 | **452** / 806 | 601 / 616 | 1041 / 1090 | 154 / 165 | 314 / 335 |
+| warm, Wi-Fi, 1x | `1.6.8-alpha.1` | 3 | 284 / 343 | 267 / 317 | 317 / 605 | 170 / 205 | 330 / 352 |
+
+(median / worst.) `click>` columns, cold: rail 314, salon msgs 958, reopen msgs 229; warm: rail 168,
+salon msgs 230, reopen msgs 241. Long tasks, cold median: hub 172, salon open 464 (was 537), cached
+reopen **168 (was 332)**; warm: 111, 165, 172. Probe ms, cold: 4.3 / 9.8 / 10.4. 35-38 API calls,
+224 kB, one IPC call per cold run. **`Invalid keyframe` lines: 0 on all nine runs** (about 480 a
+run before `flipShown`).
+
+**Verdict.** The cached reopen's long task halved, as the desktop bench predicted, and the console
+storm is gone. The first open did not follow: cold `salon>pane` reads 601 against 414 and
+`salon>msgs` 1041 against 918, beyond the spread of these runs, while the salon-open long task fell
+(537 -> 464). So this build spends the first open's time OUTSIDE its longest task, or before the pane
+is drawn. **Owed next:** a `--chain` / `--profile-salon` run of the cold first open on this build,
+to name where the ~190 ms before the pane went, before any further change to the mount. The 200 ms
+budget is still met on no row.
+
+**And on the iPhone 12:** a fling started at the earliest moment after the reveal, while the widen
+may still be stepping, kept its momentum 3 times out of 3 (plus one at +150 ms) and carried a
+192-message salon to its top, so the widen's `scrollTop` writes do not cancel a fling there.
+
 ## 7. Not measured, and owed
 
 - **A CPU profile of the warm resume at 4x** (blocker 5's 2 s before the tap is handled):

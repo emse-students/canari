@@ -5,7 +5,7 @@
  * media ref, so the key). An ordinary video in the same bubble keeps both behaviours it always had.
  * The rendering of the tile itself is `MessageMediaRenderer.reel.svelte.test.ts`.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
@@ -24,19 +24,32 @@ vi.mock('$lib/media', async (orig) => ({
   },
 }));
 
+/** The take's reach the outbox answers for "Annuler partout" / "Supprimer partout" (15.2, 15.7). */
+const reachMock = vi.fn();
+vi.mock('$lib/utils/chat/outbox', async (orig) => ({
+  ...(await orig<typeof import('$lib/utils/chat/outbox')>()),
+  outboxReelTakeReachOf: (...args: unknown[]) => reachMock(...args),
+}));
+
 vi.mock('$lib/components/reels/ReelViewer.svelte', async () => ({
   default: (await import('../reels/ReelViewerStub.test-helper.svelte')).default,
 }));
 
 import MessageBubble from './MessageBubble.svelte';
+import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import { serializeEnvelope, mkMediaEnvelope } from '$lib/envelope';
 import type { MediaRef } from '$lib/media';
 import { m } from '$lib/paraglide/messages';
 
 const mounted: (() => void)[] = [];
 
+// The delete confirmation's outro is cancelled by the teardown (see the helper).
+afterAll(adoptTransitionAnimations());
+
 beforeEach(() => {
   downloads.length = 0;
+  reachMock.mockReset();
+  reachMock.mockResolvedValue(null);
   // Every row is "near the viewport" at once, so the only thing left to hold a download back is the
   // bubble's own rule - which is what these tests are about.
   vi.stubGlobal(
@@ -142,6 +155,80 @@ describe('MessageBubble - a reel message', () => {
     expect(
       document.querySelector<HTMLElement>('[data-reel-tombstone]')!.dataset.reelTombstone
     ).toBe('deleted');
+  });
+});
+
+/** Opens the delete confirmation from the desktop menu, and lets the reach question answer. */
+async function openDelete(): Promise<void> {
+  const item = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((el) =>
+    el.textContent?.includes(m.common_delete_button())
+  );
+  if (!item) menuLabels();
+  [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+    .find((el) => el.textContent?.includes(m.common_delete_button()))!
+    .click();
+  for (let i = 0; i < 4; i++) {
+    await Promise.resolve();
+    await tick();
+  }
+  flushSync();
+}
+
+const send = (n: number) => ({ id: `s-${n}`, conversationId: `g-${n}` });
+
+describe('MessageBubble - my reel sent to several conversations (15.2, 15.7)', () => {
+  const own = { isOwn: true, senderId: 'u-me', onDelete: vi.fn() };
+
+  it('offers "Supprimer partout" in the delete confirmation once a send went, and hands the message up', async () => {
+    reachMock.mockResolvedValue({
+      takeId: 't',
+      queued: [send(3)],
+      standing: [send(1), send(2)],
+    });
+    const onDeleteReelEverywhere = vi.fn();
+    render(video({ intent: 'reel-message' }), vi.fn(), { ...own, onDeleteReelEverywhere });
+    await openDelete();
+    expect(reachMock).toHaveBeenCalledWith('m1');
+    const button = document.querySelector<HTMLButtonElement>('[data-reel-everywhere]')!;
+    expect(button.textContent).toContain(m.reel_sendto_delete_everywhere());
+    expect(document.querySelector('[data-reel-everywhere-hint]')!.textContent).toContain(
+      m.reel_sendto_delete_everywhere_hint({ count: 3 })
+    );
+    button.click();
+    // A second tap during the confirmation's outro ends nothing: the press is taken once.
+    button.click();
+    flushSync();
+    expect(onDeleteReelEverywhere).toHaveBeenCalledTimes(1);
+    expect(onDeleteReelEverywhere).toHaveBeenCalledWith('m1');
+  });
+
+  it('offers "Annuler partout" while no send has gone', async () => {
+    reachMock.mockResolvedValue({ takeId: 't', queued: [send(1), send(2)], standing: [] });
+    render(video({ intent: 'reel-message' }), vi.fn(), {
+      ...own,
+      onDeleteReelEverywhere: vi.fn(),
+    });
+    await openDelete();
+    expect(document.querySelector('[data-reel-everywhere]')!.textContent).toContain(
+      m.reel_sendto_cancel_all()
+    );
+  });
+
+  it('offers nothing more for a take naming one message, nor on another device (no reach)', async () => {
+    reachMock.mockResolvedValue({ takeId: 't', queued: [], standing: [send(1)] });
+    render(video({ intent: 'reel-message' }), vi.fn(), {
+      ...own,
+      onDeleteReelEverywhere: vi.fn(),
+    });
+    await openDelete();
+    expect(document.querySelector('[data-reel-everywhere]')).toBeNull();
+  });
+
+  it("never asks for an ordinary video's reach", async () => {
+    render(video(), vi.fn(), { ...own, onDeleteReelEverywhere: vi.fn() });
+    await openDelete();
+    expect(reachMock).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-reel-everywhere]')).toBeNull();
   });
 });
 
