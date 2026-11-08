@@ -1,3 +1,3 @@
-version: 1.6.6
+version: 1.6.7
 
-Nouveau : les formulaires repensés - un assistant pour ajouter une question, une grille d'articles (tailles, couleurs, prix selon le profil), des images dans les questions, un écran Réponses avec totaux et export, des formulaires publics payants. Les publications partent en arrière-plan ; CanaReels montre aussi les vidéos, les carrousels et les liens. Corrigé : le gras en Markdown, le clavier du compositeur, le son des vidéos, l'ouverture sans réseau.
+Nouveau : les lives d'association ont un titre, modifiable pendant la diffusion, et un aperçu sur le fil ; tous ceux qui voient l'association sont prévenus. Une invitation à ajouter sa photo de profil via MiGallery. Des boutons unifiés dans toute l'app. Corrigé : la vidéo des appels entre deux téléphones différents, les notifications illisibles après une reconnexion, l'envoi d'un fichier .txt ; la mention « Vu » arrive tout de suite.

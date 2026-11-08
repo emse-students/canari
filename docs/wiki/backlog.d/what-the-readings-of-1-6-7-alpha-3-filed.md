@@ -1,0 +1,41 @@
+## P2/P3 - what the bench readings of `v1.6.7-alpha.3` filed (2026-11-08)
+
+Read on dev on the Mi 9T (sideloaded build) and the iPhone 12 (TestFlight build 100600703). Every
+reading the release owed PASSED, and the stable ships on them:
+
+- video calls both ways, E2E with `decrypt-failed=0` and `not-vp8=0` ([calls](../frontend/modules/calls.md));
+- a push decrypted after sign-out, then sign-in, then the app killed, on both platforms. The Mi 9T
+  was killed with HOME + `am kill`; a force-stop cancels FCM;
+- the read mark sent at once ([read-receipt-privacy](../read-receipt-privacy.md));
+- a `.txt` attached on both phones;
+- the profile-photo card;
+- a live's title, its feed preview, the push body, and the title edited on air.
+
+The dark bench room made every frame black, so the PICTURE itself was not judged, only the media
+path.
+
+What they found. None of it is a regression, and none of it blocks:
+
+- **P2 - a sign-out revokes the session BEFORE it deregisters the FCM token and closes the socket.**
+  The deregistration then gets a `401`, the server probably keeps the push token, and every
+  sign-out logs one `E [Push] FCM token deregistration failed`, one `refresh 401` and one
+  `pauseSocket: native disconnect failed`. The order belongs in the sign-out sequence: deregister,
+  then close, then revoke.
+- **P2/P3 - the minimised call bar loses its camera button once the camera is off.** It can only be
+  turned back on from full screen. Seen on both phones.
+- **P3 - `pauseSocket` on an already-closed socket** when the app goes to the background for the
+  file picker. This is lifecycle noise next to "Reconnect request refused - paused".
+- **P3 - the live identity picker offers associations the server then refuses** with
+  `403 LIVE_ASSOCIATION_FORBIDDEN`, for example to a global admin who is not a member. The picker
+  should be asked the same question the server answers.
+- **P3 - clipping on the iPhone:**
+  - the live viewer's report flag is drawn over the association name;
+  - in association management > Formulaires, the action row cuts off "Supprimer";
+  - the Settings device-id footer is cut at the right edge.
+- **P3 - the dismissed profile-photo card leaves its "Étape 1 sur 1" text in the iOS accessibility
+  tree**, on every page. VoiceOver may read it.
+- **P3 - iOS `[CALL-WAKE]`**: WKWebView refuses the screen wake lock (`NotAllowedError`), so the
+  screen may dim during a call. The fix is native (`idleTimerDisabled` for the call's lifetime).
+- **To watch:** the quality ladder drops 480p30 -> 180p15 four seconds into a call, while the
+  bandwidth estimate is still ramping, and recovers within 30 s. One ICE restart followed the
+  iPhone camera coming back, and it healed in 5.5 s.
