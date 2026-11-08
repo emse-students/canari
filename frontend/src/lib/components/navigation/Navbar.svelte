@@ -1,7 +1,7 @@
 <script lang="ts">
   import StatusPill from '../shared/StatusPill.svelte';
   import { isHeaderConnected } from '$lib/utils/chat/headerConnection';
-  import { connectivity } from '$lib/stores/connectivity.svelte';
+  import { leaderSocketConnected } from '$lib/mls-client/tabLeaderLink.svelte';
   import CanariBrand from './CanariBrand.svelte';
   import EcosystemLauncher from './EcosystemLauncher.svelte';
   import SessionActionButtons from './SessionActionButtons.svelte';
@@ -64,7 +64,7 @@
           isWsConnected: globalSession.isWsConnected,
           isLoggedIn: globalSession.isLoggedIn,
           isTabLeader: globalSession.isTabLeader,
-          isOffline: connectivity.isOffline,
+          leaderConnected: leaderSocketConnected(),
         })}
       />
       {#if globalSession.isLoggedIn}

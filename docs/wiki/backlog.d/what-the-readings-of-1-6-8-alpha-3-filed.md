@@ -10,12 +10,15 @@ Low certainty: it was seen once, and the code does not reproduce it.
 What the code shows ([live](../frontend/modules/live.md)): the alert is `server-while-away`, which
 only the phase `away` produces (`reacquire` finding the live ended, or the uploader hearing the
 server's end while away), so it cannot come from the End path (phase `ending`, cause `broadcaster`).
-The one defect found on the End path was an unbounded wait on the server's answer to End, which
-holds the screen in "ending" for as long as a backgrounded iPhone holds the request: it is now
-bounded (`LIVE_END_ANSWER_BOUND_MS`) and the screen settles on the member's End.
+The one defect found on the End path was an await on the server's answer before the screen
+settled, which kept the screen in "ending" for as long as a backgrounded iPhone held the request.
+The member's tap is now the decision: the screen settles at once, and the end is delivered after
+(`#deliverEnd`, idempotent on the server, retried on the link coming back until ANSWERED - a status
+code is an answer, only a transport failure retries; lost with the page, where the server ends the
+live by absence).
 
 What would decide it, if it is seen again: the line `[LIVE-SCREEN] end asked in <phase>` and the
 line `[LIVE-SCREEN] end returned in <phase> (<cause>)`. An `end asked in away` followed by no
 `returned` line means the confirmation never resolved (the tap did not reach `broadcast.end()`);
-`returned in ending` is impossible after the bound; `returned in ended (broadcaster)` followed later
+`returned in ending` is impossible now; `returned in ended (broadcaster)` followed later
 by `ended (server-while-away)` would mean a second live. Until then it needs a reproduction.

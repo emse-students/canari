@@ -13,7 +13,6 @@ import { CameraAccessError } from '$lib/reels/cameraAccess';
 import { fragment, initSegment, join, readTimes } from './fmp4.test-helper';
 import {
   LIVE_BACKLOG_MARGIN_SEGMENTS,
-  LIVE_END_ANSWER_BOUND_MS,
   LIVE_RECORDER_STOP_BOUND_MS,
   LIVE_SEGMENT_MS,
 } from './constants';
@@ -381,17 +380,25 @@ describe('LiveBroadcast - on air', () => {
     expect(b.phase).toBe('ended');
   });
 
-  it("End whose server answer never comes: the screen settles on the member's End after the bound", async () => {
-    const { b, deps, fireTimers } = await ready();
+  it('End settles the screen BEFORE the request resolves, and an unanswered end is retried when the link is back, then answered once', async () => {
+    const { b, deps, reconnect, reconnectListeners } = await ready();
     await b.start();
-    deps.endLive.mockImplementation(() => new Promise(() => {}));
-    const ending = b.end();
-    await vi.waitFor(() => expect(deps.endLive).toHaveBeenCalledTimes(1));
-    expect(b.phase).toBe('ending');
-    fireTimers(LIVE_END_ANSWER_BOUND_MS);
-    await ending;
+    let fail!: (e: unknown) => void;
+    deps.endLive.mockImplementationOnce(() => new Promise((_, rej) => (fail = rej)) as never);
+    await b.end();
+    // Settled with the request still pending.
     expect(b.phase).toBe('ended');
     expect(b.endCause).toBe('broadcaster');
+    expect(deps.endLive).toHaveBeenCalledTimes(1);
+    // A transport failure is no answer: it waits for the link, it does not retry on a clock.
+    fail(new TypeError('offline'));
+    await vi.waitFor(() => expect(reconnectListeners.size).toBe(1));
+    expect(deps.endLive).toHaveBeenCalledTimes(1);
+    reconnect();
+    await vi.waitFor(() => expect(reconnectListeners.size).toBe(0));
+    expect(deps.endLive).toHaveBeenCalledTimes(2);
+    reconnect();
+    expect(deps.endLive).toHaveBeenCalledTimes(2);
   });
 
   it('leaving while the end waits for the network ends the live once, and the wait does nothing after', async () => {
