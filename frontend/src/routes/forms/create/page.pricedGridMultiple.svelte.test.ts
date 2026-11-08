@@ -120,7 +120,7 @@ async function multipleSwitch(): Promise<HTMLInputElement> {
 }
 
 async function savedAllowMultiple(): Promise<boolean> {
-  byText(m.form_save_button()).click();
+  byText(m.form_save_draft_button()).click();
   await settle();
   expect(api.createForm).toHaveBeenCalledTimes(1);
   return api.createForm.mock.calls[0][0].allowMultipleSubmissions;
@@ -200,7 +200,7 @@ describe('the form builder, a grid refused by the server alone', () => {
       byAria(m.form_builder_collapse_aria()).click();
       await settle();
       expect(document.querySelector('[data-testid="product-grid-editor"]')).toBeNull();
-      byText(m.form_save_button()).click();
+      byText(m.form_save_draft_button()).click();
       await settle();
       const sentence = m.form_pgrid_problem_in_question({
         label: 'Sweat',

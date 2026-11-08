@@ -123,6 +123,7 @@ maybe('a guest who pays, against PostgreSQL (migrations 103, 104 and 105)', () =
 
     const associationsService: any = {
       assertPaymentsReady: async () => undefined,
+      canTakePaymentsNow: async () => true,
       getPaymentAccountId: async () => 'vendor',
       getActivePaymentProvider: async () => 'lydia',
       mayAct: async () => false,

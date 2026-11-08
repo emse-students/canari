@@ -18,6 +18,7 @@
     FormNotFoundError,
     getForm,
     getSubmissions,
+    publishForm,
     updateForm,
     uploadFormImage,
     uploadFormItemImage,
@@ -85,8 +86,15 @@
     formConflictMessage,
   } from '$lib/forms/formOptionConflict';
   import { Log } from '$lib/utils/Log';
-  import { CircleAlert, FileText, ImagePlus, Users, X } from '@lucide/svelte';
+  import { CircleAlert, ExternalLink, FileText, ImagePlus, Users, X } from '@lucide/svelte';
   import { askedGuestFields } from '$lib/forms/guestIdentity';
+  import {
+    draftRefusalMessage,
+    formViewHref,
+    isDraftForm,
+    publishBlocker,
+  } from '$lib/forms/publish';
+  import Button from '$lib/components/ui/Button.svelte';
   import { m } from '$lib/paraglide/messages';
 
   const formId = $derived(page.params.id as string);
@@ -109,6 +117,8 @@
   let basePrice = $state(0);
   let requiresPayment = $state(false);
   let allowCashPayment = $state(false);
+  /** Online payment accepted (owner, 2026-11-08); off with cash on is a cash-only form. */
+  let allowOnlinePayment = $state(true);
   let cashPaymentExpiryDays = $state<number | undefined>(undefined);
   let fileRetentionDays = $state(FILE_RETENTION_DEFAULT_DAYS);
   let cotisation = $state(emptyCotisationSettings());
@@ -218,6 +228,7 @@
       maxSubmissions = f.maxSubmissions;
       opensAt = isoToDatetimeLocal(f.opensAt);
       allowCashPayment = f.allowCashPayment ?? false;
+      allowOnlinePayment = f.allowOnlinePayment ?? true;
       allowMultipleSubmissions = f.allowMultipleSubmissions ?? false;
       anonymous = f.anonymous ?? false;
       isPublic = f.isPublic ?? false;
@@ -298,7 +309,25 @@
     errorBanner?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
 
-  async function handleSave() {
+  /** A draft is saved and published from here; a published form is saved as before. */
+  const isDraft = $derived(isDraftForm(form));
+  /** Why "Publier" is shut: a paid form whose association cannot collect yet. */
+  const blockedReason = $derived(
+    publishBlocker({
+      requiresPayment,
+      associationId: association?.id,
+      associationCanBePaid,
+      allowCashPayment,
+      allowOnlinePayment,
+    })
+  );
+  let isPublishing = $state(false);
+
+  /**
+   * Saves the edit, then - for "Publier" - publishes the draft (owner, 2026-11-08). A draft saved
+   * without publishing stays on this page, so the manager keeps building it.
+   */
+  async function handleSave(intent: 'save' | 'publish' = 'save') {
     if (titleMissing) {
       error = m.form_error_title_required();
       return;
@@ -374,13 +403,22 @@
         requiresPayment,
         // `associationId` is deliberately absent: it is fixed at creation and the API refuses a
         // value that differs from the stored one. Absent means "leave it".
-        ...(requiresPayment ? { allowCashPayment } : {}),
+        ...(requiresPayment ? { allowCashPayment, allowOnlinePayment } : {}),
         ...(requiresPayment && allowCashPayment && cashPaymentExpiryDays != null
           ? { cashPaymentExpiryDays }
           : {}),
         ...(formHasFile ? { fileRetentionDays } : {}),
       };
-      await updateForm(formId, payload);
+      const saved = await updateForm(formId, payload);
+      if (intent === 'publish') {
+        isPublishing = true;
+        await publishForm(formId);
+        Log.d('forms-editor', `published ${formId}`);
+      } else if (isDraftForm(saved ?? form)) {
+        // The draft stays open: it is saved, not finished.
+        Log.d('forms-editor', `draft saved ${formId}`);
+        return;
+      }
       goto(resolve('/forms'));
     } catch (e: any) {
       // A grid the server alone could refuse (a cotisation tier it does not sell) is drawn under
@@ -392,10 +430,12 @@
         questionImageRefusalMessage(e) ??
         formCodeMessage(refusalCode(e)) ??
         conflictCodeMessage(refusalCode(e)) ??
+        draftRefusalMessage(refusalCode(e)) ??
         providerRefusalMessage(e) ??
         e.message;
     } finally {
       isSubmitting = false;
+      isPublishing = false;
     }
   }
 
@@ -436,7 +476,23 @@
     subtitle={form?.title}
     backHref="/forms"
     backLabel={m.common_back()}
-  />
+  >
+    {#snippet actions()}
+      {#if form}
+        <!-- The respondent view, in a new tab: a preview while anything is unpublished. -->
+        <Button
+          variant="secondary"
+          href={formViewHref(form)}
+          target="_blank"
+          rel="noopener"
+          data-testid="form-view-link"
+        >
+          <ExternalLink size={16} />
+          {m.form_view_open_button()}
+        </Button>
+      {/if}
+    {/snippet}
+  </PageHeader>
 
   {#if loadError}
     <div
@@ -452,6 +508,17 @@
       ></div>
     </div>
   {:else}
+    {#if isDraft}
+      <p
+        class="border-cn-border text-text-muted mb-4 flex items-center gap-2 rounded-2xl border-2 border-dashed px-4 py-3 text-sm"
+        data-testid="form-draft-notice"
+      >
+        <span class="bg-cn-border/40 text-text-main rounded-full px-2 py-0.5 text-xs font-bold">
+          {m.form_status_draft_badge()}
+        </span>
+        {m.form_draft_notice()}
+      </p>
+    {/if}
     {#if error}
       <div
         bind:this={errorBanner}
@@ -546,6 +613,7 @@
       {isPublic}
       bind:basePrice
       bind:allowCashPayment
+      bind:allowOnlinePayment
       bind:cashPaymentExpiryDays
       bind:priceMatrix
       {tiers}
@@ -608,8 +676,11 @@
       {titleMissing}
       {isSubmitting}
       {summary}
-      saveLabel={m.form_save_changes_button()}
-      onSave={handleSave}
+      saveLabel={isDraft ? m.form_save_draft_button() : m.form_save_changes_button()}
+      onSave={() => handleSave('save')}
+      publish={isDraft
+        ? { onPublish: () => handleSave('publish'), blockedReason, busy: isPublishing }
+        : null}
     />
   {/if}
 </PageContainer>

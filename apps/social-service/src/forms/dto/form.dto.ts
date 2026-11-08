@@ -295,6 +295,16 @@ export class CreateFormDto {
   isPublic?: boolean;
 
   /**
+   * CREATE ONLY: `true` stores the form as a DRAFT, seen by its managers alone until
+   * `POST /forms/:id/publish` (`form-status.ts`). Absent is a client that predates drafts: its form
+   * is published at once, as it always was. Refused on an edit - publishing is its own route, and a
+   * published form never goes back to draft.
+   */
+  @IsBoolean()
+  @IsOptional()
+  draft?: boolean;
+
+  /**
    * What a public form asks a guest about who they are (`guest-identity.ts`): any of `lastName`,
    * `firstName`, `email`, each required of the guest once asked. Absent keeps the stored value; an
    * empty list or null asks nothing (stored as null).
@@ -315,6 +325,14 @@ export class CreateFormDto {
   @IsBoolean()
   @IsOptional()
   allowCashPayment?: boolean;
+
+  /**
+   * Whether online payment is accepted (`payment-offer.ts`). Absent keeps the stored value - true
+   * for a new form, which is what every client before the choice meant.
+   */
+  @IsBoolean()
+  @IsOptional()
+  allowOnlinePayment?: boolean;
 
   /** Days before an unvalidated cash submission expires. */
   @IsInt()

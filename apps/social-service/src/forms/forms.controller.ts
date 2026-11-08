@@ -98,11 +98,30 @@ export class FormsController {
     return { linkedEvent: withOneEventIcsSig(linkedEvent) };
   }
 
-  /** Returns a single form by its ID. */
+  /** Returns a single form by its ID; a DRAFT only to its managers (a 404 to anyone else). */
   @UseGuards(NginxAuthGuard)
   @Get(':id')
-  get(@Param('id', ParseUUIDPipe) id: string) {
-    return this.service.get(id);
+  get(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.get(id, { userId: xUserId, isGlobalAdmin: ga === 'true' });
+  }
+
+  /**
+   * Publishes a DRAFT form (owner, 2026-11-08). Requires owner, co-owner or MANAGE_FORMS. A paid form
+   * whose association cannot collect yet is refused 409 `FORM_PAYMENTS_NOT_READY`; an already
+   * published one answers the same success.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/publish')
+  publish(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.publish(id, xUserId, ga === 'true');
   }
 
   /** Updates a form's metadata and items. Requires owner, co-owner, or MANAGE_FORMS flag. */

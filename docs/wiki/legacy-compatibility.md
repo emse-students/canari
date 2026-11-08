@@ -480,6 +480,22 @@ affected: those carry no warning and compare nothing.
 it. Measure before: `[REPOST-P] ... accept refused: audience changed (carried none, ...)` in
 social-service logs counts the older builds that met it.
 
+### No date yet - a form created by a build that does not know drafts (2026-11-08)
+
+**Site:** `FormsService.create` (`apps/social-service/src/forms/forms.service.ts`): a create carrying
+no `draft` is published at once, logged at INFO (`[FORMS] create without draft`); and
+`forms."allowOnlinePayment"` defaults to true for a create or an edit that does not send it.
+**What an older build does.** It creates a published form, as it always did, and a paid one is judged
+at the create (`assertMayCollectNow`) as before - it never sees the draft state. It edits a draft
+like any form (the edit route takes no `draft`, so it cannot publish one) and has no "Publier": a
+draft it opens stays a draft until a current build publishes it. It sends no `allowOnlinePayment`, so
+a form it edits keeps the stored value. It does not know `FORM_ONLINE_PAYMENT_NOT_OFFERED`: on a
+cash-only form it still draws the online choice, and the server refuses that answer before anything
+is written ([forms](frontend/modules/forms.md#a-form-is-a-draft-until-it-is-published-owner-2026-11-08)).
+**Removal condition:** once the floor passes the first stable carrying this change, `draft` may become
+the default of a create (a create without it a draft too). Measure before: the `[FORMS] create without draft` lines
+in social-service count the older builds still creating forms.
+
 ### No date yet - a post whose comments are withheld, drawn by a build that does not know `canSeeComments` (2026-11-04)
 
 **Site:** the served post (`withholdCommentsAndPeople`, `apps/social-service/src/posts/comments-withheld.ts`)
