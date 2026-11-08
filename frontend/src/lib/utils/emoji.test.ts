@@ -1,4 +1,4 @@
-import { containsEmoji, isEmojiOnlyText } from './emoji';
+import { containsEmoji, graphemes, isEmojiOnlyText } from './emoji';
 
 describe('containsEmoji', () => {
   it('finds a plain emoji among text', () => {
@@ -65,5 +65,40 @@ describe('isEmojiOnlyText', () => {
 
   it('rejects one more than the max count', () => {
     expect(isEmojiOnlyText('😀😀😀😀😀😀', 5)).toBe(false);
+  });
+});
+
+describe('the grapheme split', () => {
+  it('is lazy: a caller that stops early reads one grapheme of a long text', () => {
+    const split = graphemes(`${'👍🏽'.repeat(10_000)}`);
+    expect(split.next().value).toBe('👍🏽');
+  });
+
+  it('builds ONE segmenter for every call, never one per bubble', async () => {
+    const Real = Intl.Segmenter;
+    let built = 0;
+    class Counting extends Real {
+      constructor(...args: ConstructorParameters<typeof Real>) {
+        super(...args);
+        built += 1;
+      }
+    }
+    vi.stubGlobal('Intl', { ...Intl, Segmenter: Counting });
+    try {
+      vi.resetModules();
+      const fresh = await import('./emoji');
+      for (const text of ['😀', 'banc ouverture 1', '👨‍👩‍👧‍👦', 'gg 😀', '🇫🇷🇫🇷']) {
+        fresh.isEmojiOnlyText(text, 5);
+      }
+      expect(built).toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('answers a long ordinary message the way a short one is answered', () => {
+    expect(isEmojiOnlyText(`banc ouverture ${'x'.repeat(50_000)}`, 5)).toBe(false);
+    expect(isEmojiOnlyText(`😀${'x'.repeat(50_000)}`, 5)).toBe(false);
+    expect(isEmojiOnlyText('😀'.repeat(50_000), 5)).toBe(false);
   });
 });

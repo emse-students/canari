@@ -1,4 +1,12 @@
-import { formatDayLabel, formatTime24, isToday, readStoredTimestampMs, toValidDate } from './dates';
+import {
+  calendarDay,
+  dayLabeler,
+  formatDayLabel,
+  formatTime24,
+  isToday,
+  readStoredTimestampMs,
+  toValidDate,
+} from './dates';
 
 describe('readStoredTimestampMs', () => {
   it('parses numeric and string epoch ms from SQLite', () => {
@@ -78,5 +86,37 @@ describe('formatDayLabel', () => {
     expect(en(new Date(2026, 8, 28, 9, 0))).toBe('Monday');
     expect(en(new Date(2026, 8, 23, 9, 0))).toBe('September 23');
     expect(en(new Date(2025, 4, 5, 9, 0))).toBe('May 5, 2025');
+  });
+});
+
+describe('calendarDay', () => {
+  it("answers the browser's own zone from the Date getters, as Intl does", () => {
+    const zone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+    for (const d of [
+      new Date(2026, 0, 1, 0, 0),
+      new Date(2026, 2, 29, 2, 30),
+      new Date(2026, 9, 25, 23, 59),
+      new Date(2025, 11, 31, 12, 0),
+    ]) {
+      expect(calendarDay(d)).toBe(calendarDay(d, zone));
+    }
+  });
+});
+
+describe('dayLabeler', () => {
+  const now = new Date(2026, 8, 30, 15, 0);
+  const labels = { today: "Aujourd'hui", yesterday: 'Hier' };
+
+  it('names every day of a long pass as a fresh labeler names it alone (no shape leaks)', () => {
+    for (const locale of ['fr', 'en']) {
+      const label = dayLabeler(locale, labels, now);
+      // Weekdays, then day-month, then a previous year, then the future: every shape, interleaved.
+      for (let back = -3; back < 400; back += 1) {
+        const d = new Date(2026, 8, 30 - back, 9, 0);
+        expect(label(d)).toBe(dayLabeler(locale, labels, now)(d));
+      }
+    }
+    expect(dayLabeler('fr', labels, now)(new Date(2025, 4, 5, 9, 0))).toBe('5 mai 2025');
+    expect(dayLabeler('fr', labels, now)(new Date(2026, 8, 23, 9, 0))).toBe('23 septembre');
   });
 });
