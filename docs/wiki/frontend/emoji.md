@@ -172,7 +172,7 @@ open is warm; the defect is the first open of a session.
 (`FIRST_SCREEN_EMOJI_COUNT` = 64 cells of the first category, about 7 rows) is `loading="eager"` and
 `decoding="sync"`, everything below stays lazy; the tab icons are pictures of their own, eager and
 synchronously decoded; the alt text is `text-transparent`, so a picture on its way never shows the
-emoji as a glyph; and `ChatComposer` calls `warmEmojiPicker` (`emojiPreload.ts`) on mount, which loads the
+emoji as a glyph; and `ChatComposer` calls `warmEmojiPicker` (`emojiPreload.ts`) once it has painted and the thread is idle (`whenIdleAfterPaint`: never at mount, which is the community-open window; a scheduling choice, nothing breaks if it runs later), at `fetchPriority = low`, which loads the
 catalogue the picker needs anyway and fetches and decodes the recents, nine tab icons and the 64-cell
 first screen (about 80 files of ~3 kB, 250 kB at most, once per session; the browser cache then holds
 them for a year). Pinned by `emojiPreload.test.ts` (a source pin for the grid, said honestly: no gate

@@ -28,6 +28,7 @@ export function warmEmojiPictures(sources: readonly (string | null)[]): void {
     warmed.add(src);
     const img = new Image();
     img.decoding = 'async';
+    img.fetchPriority = 'low';
     img.src = src;
     held.push(img);
     void img.decode().catch((e) => console.debug('[EMOJI] warm-up decode failed', src, e));
@@ -49,7 +50,24 @@ export function tabIconEmoji(entries: readonly EmojiEntry[]): string[] {
 }
 
 /**
- * Called when a composer mounts, so the picker opens onto pictures that are already in the cache
+ * Runs `task` once the page has painted a frame and the main thread is idle. A SCHEDULING CHOICE,
+ * NOT A LOAD-BEARING TIMER: no signal marks "the salon's first render is done" (the community-open
+ * bench reads its marks from the outside), and nothing breaks if this runs later or never - the
+ * picker then paints its own eager first screen. WKWebView has no `requestIdleCallback`, so it
+ * falls back to the task after one painted frame.
+ */
+export function whenIdleAfterPaint(task: () => void): void {
+  if (typeof window === 'undefined') return;
+  const run = () => {
+    if ('requestIdleCallback' in window) window.requestIdleCallback(task);
+    else setTimeout(task, 0);
+  };
+  requestAnimationFrame(() => requestAnimationFrame(run));
+}
+
+/**
+ * Called by a composer AFTER its first paint (never at mount: that is the community-open window,
+ * a P1 budget), so the picker opens onto pictures that are already in the cache
  * instead of fetching 70-odd SVGs on the tap that opens it (the iPhone showed blank and growing
  * cells, 2026-11-08). Bounded: the catalogue is the one the picker loads anyway, and the pictures
  * are the first screen, the tab icons and the recents - about 80 files of ~3 kB, once per session.

@@ -60,7 +60,7 @@
   import { rememberedKeyboardHeight } from '$lib/stores/keyboardHeightMemory';
   import { abandonHistoryOverlay, pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
   import ComposerEmojiPicker from './ComposerEmojiPicker.svelte';
-  import { warmEmojiPicker } from '$lib/utils/emojiPreload';
+  import { warmEmojiPicker, whenIdleAfterPaint } from '$lib/utils/emojiPreload';
   import {
     emojiPickerDataSource,
     getPreferredSkinTone,
@@ -847,9 +847,11 @@
     });
   });
 
-  /** The emoji picker's first screen is fetched now, so opening it (here or on a reaction) paints at once. */
+  /** The emoji picker's first screen is fetched once the composer has painted and the thread is idle, so opening it (here or on a reaction) paints at once. */
   onMount(() => {
-    void warmEmojiPicker(emojiPickerDataSource(), getPreferredSkinTone(), getRecentEmojis());
+    whenIdleAfterPaint(() => {
+      void warmEmojiPicker(emojiPickerDataSource(), getPreferredSkinTone(), getRecentEmojis());
+    });
   });
 
   /** Publishes composer stack height for message list padding (--chat-composer-height). */
