@@ -192,7 +192,7 @@ describe('FormAutosave', () => {
     expect(server.save).toHaveBeenCalledTimes(1);
   });
 
-  it('stops at a conflict rather than overwrite another tab, and sends nothing after it', async () => {
+  it('stops at a conflict rather than overwrite another tab, sends nothing after it, and keeps the device copy of the edits still on screen', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const server = fakeServer();
     server.state.revision = 3; // Another tab saved meanwhile.
@@ -202,7 +202,8 @@ describe('FormAutosave', () => {
     autosave.schedule(doc('Mine'));
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
     expect(autosave.status).toBe('conflict');
-    expect(copy.current).toBeNull();
+    expect(copy.current).toMatchObject({ base: 1, title: 'Mine' });
+    expect(device.drop).not.toHaveBeenCalled();
     autosave.schedule(doc('Mine again'));
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
     expect(server.save).toHaveBeenCalledTimes(1);

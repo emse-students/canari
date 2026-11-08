@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { m } from '$lib/paraglide/messages';
 import { AUTOSAVE_DELAY_MS } from '$lib/forms/autosave.svelte';
+import { dismissToast, toastStore } from '$lib/stores/toast.svelte';
 
 const route = vi.hoisted(() => ({
   page: { params: { id: 'f1' }, url: new URL('https://canari.test/forms/f1/edit'), state: {} },
@@ -70,25 +71,46 @@ vi.mock('$lib/stores/user', async (orig) => ({
 const device = vi.hoisted(() => ({
   copies: new Map<
     string,
-    { formId: string; baseRevision: number; saveId: string; document: any }
+    {
+      key: string;
+      formId: string;
+      clientCreateId: string | null;
+      baseRevision: number;
+      saveId: string;
+      after: string[];
+      document: any;
+    }
   >(),
 }));
-vi.mock('$lib/forms/draftCopies', () => ({
+vi.mock('$lib/forms/draftCopies', async (orig) => ({
+  // `copyAgainst` is the real one: what the editor does with a copy is what these tests pin.
+  ...(await orig<typeof import('$lib/forms/draftCopies')>()),
   holdFormEditor: () => () => {},
   formDraftCopyStore: () => ({
     get: async (id: string) => device.copies.get(id) ?? null,
-    delete: async (id: string) => void device.copies.delete(id),
-    deleteIfSent: async (id: string, saveId: string) =>
-      device.copies.get(id)?.saveId === saveId && device.copies.delete(id),
+    delete: async (keys: string[]) => keys.forEach((k) => device.copies.delete(k)),
+    deleteIfSent: async (keys: string[], saveId: string) =>
+      keys.some((k) => device.copies.get(k)?.saveId === saveId && device.copies.delete(k)),
   }),
-  deviceCopyOf: (_user: string, formId: string) => ({
-    keep: async (baseRevision: number, saveId: string, document: unknown) =>
-      void device.copies.set(formId, { formId, baseRevision, saveId, document }),
-    sent: async (saveId: string) => {
-      if (device.copies.get(formId)?.saveId === saveId) device.copies.delete(formId);
-    },
-    drop: async () => void device.copies.delete(formId),
-  }),
+  deviceCopyOf: (_user: string, ids: () => { formId: string | null }) => {
+    const formId = () => ids().formId!;
+    return {
+      keep: async (baseRevision: number, saveId: string, document: unknown, after: string[]) =>
+        void device.copies.set(formId(), {
+          key: formId(),
+          formId: formId(),
+          clientCreateId: null,
+          baseRevision,
+          saveId,
+          after,
+          document,
+        }),
+      sent: async (saveId: string) => {
+        if (device.copies.get(formId())?.saveId === saveId) device.copies.delete(formId());
+      },
+      drop: async () => void device.copies.delete(formId()),
+    };
+  },
 }));
 vi.mock('$lib/associations/activePaymentProvider.svelte', () => ({
   activePaymentProvider: { current: 'lydia' },
@@ -120,6 +142,7 @@ afterEach(() => {
   api.revision = { revision: 0, document: null, savedAt: null, saveId: null };
   caps.formDrafts = true;
   device.copies.clear();
+  toastStore.toasts.forEach((t) => dismissToast(t.id));
 });
 
 async function settle() {
@@ -335,7 +358,10 @@ describe('the editor', () => {
         saveId: 'landed-save',
       };
       device.copies.set('f1', {
+        key: 'f1',
         formId: 'f1',
+        clientCreateId: null,
+        after: [],
         baseRevision: 2,
         saveId: 'landed-save',
         document: { title: 'Landed', basePrice: 0, currency: 'eur', items: [] },
@@ -343,6 +369,71 @@ describe('the editor', () => {
       await open();
       expect(device.copies.has('f1')).toBe(false);
       expect(api.saveFormDraft).not.toHaveBeenCalled();
+    },
+    MOUNT_BUDGET_MS
+  );
+
+  it(
+    'a copy whose predecessor landed unanswered (lost answer, more typing, app closed) is re-based and sent',
+    async () => {
+      api.status = 'published';
+      // The server holds what save s1 wrote; its answer never reached the closed page.
+      api.revision = {
+        revision: 3,
+        document: { title: 'One', basePrice: 0, currency: 'eur', items: [] },
+        savedAt: null,
+        saveId: 's1',
+      };
+      device.copies.set('f1', {
+        key: 'f1',
+        formId: 'f1',
+        clientCreateId: null,
+        after: ['s1'],
+        baseRevision: 2,
+        saveId: 's2',
+        document: { title: 'One then two', basePrice: 0, currency: 'eur', items: [] },
+      });
+      await open();
+      await vi.waitFor(() =>
+        expect(api.saveFormDraft).toHaveBeenCalledWith(
+          'f1',
+          3,
+          expect.objectContaining({ title: 'One then two' }),
+          's2',
+          { leaving: false }
+        )
+      );
+      expect(toastStore.toasts).toEqual([]);
+    },
+    MOUNT_BUDGET_MS
+  );
+
+  it(
+    'a copy another writer moved past is dropped, and the member is told which form',
+    async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      api.status = 'published';
+      api.revision = {
+        revision: 5,
+        document: { title: 'Theirs', basePrice: 0, currency: 'eur', items: [] },
+        savedAt: null,
+        saveId: 'other-device',
+      };
+      device.copies.set('f1', {
+        key: 'f1',
+        formId: 'f1',
+        clientCreateId: null,
+        after: [],
+        baseRevision: 2,
+        saveId: 'mine',
+        document: { title: 'Gala mine', basePrice: 0, currency: 'eur', items: [] },
+      });
+      await open();
+      await vi.waitFor(() => expect(device.copies.has('f1')).toBe(false));
+      expect(api.saveFormDraft).not.toHaveBeenCalled();
+      expect(toastStore.toasts.map((t) => t.message)).toContain(
+        m.form_draft_copy_dropped({ title: 'Gala mine' })
+      );
     },
     MOUNT_BUDGET_MS
   );

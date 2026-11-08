@@ -3,7 +3,7 @@
   import { kindHasSection } from '$lib/associations/editSections';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { formCodeMessage, formItemsProblem } from '$lib/forms/answerBounds';
-  import { refusalCode } from '$lib/utils/apiRefusal';
+  import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { safeInternalPath } from '$lib/utils/internalPath';
   import { gotoAppPath } from '$lib/navigation/gotoAppPath';
   import { resolve } from '$app/paths';
@@ -26,7 +26,7 @@
   } from '$lib/forms/api';
   import { draftRefusalMessage, publishBlocker } from '$lib/forms/publish';
   import { serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
-  import { deviceCopyOf, holdFormEditor } from '$lib/forms/draftCopies';
+  import { deviceCopyOf, formDraftCopyStore, holdFormEditor } from '$lib/forms/draftCopies';
   import { currentUserId } from '$lib/stores/user';
   import { FormAutosave } from '$lib/forms/autosave.svelte';
   import { questionImageRefusalMessage } from '$lib/forms/questionImage';
@@ -291,17 +291,18 @@
    * title; everything else is its unpublished revision, saved as it is typed.
    */
   /**
-   * The new form's id, minted HERE (the client post id pattern): a create whose answer was lost is
-   * sent again as the same create, and the server answers the form it stored - never a second draft.
+   * The create's idempotency key, minted HERE (the client post id pattern): a create whose answer
+   * was lost is sent again as the same create, and the server answers the form it stored - never a
+   * second draft. Never the form's id: the server mints that.
    */
-  const newFormId = crypto.randomUUID();
+  const createKey = crypto.randomUUID();
   /** Set once the server holds the draft (its shell answered). */
   let createdId = $state<string | null>(null);
 
   async function draftId(): Promise<string> {
     if (createdId) return createdId;
     const created = await createForm({
-      id: newFormId,
+      clientCreateId: createKey,
       draft: true,
       title,
       basePrice: 0,
@@ -311,6 +312,14 @@
     });
     Log.d('forms-editor', `draft created ${created.id}`);
     createdId = created.id;
+    // The device copy is the form's from now on: an editor of it finds it under its id.
+    if (formDrafts && userId) {
+      await formDraftCopyStore(userId)
+        .rekey(createKey, created.id)
+        .catch((e: unknown) =>
+          console.warn(`[forms-editor] device copy not re-keyed to ${created.id}: ${e}`)
+        );
+    }
     return created.id;
   }
 
@@ -320,7 +329,10 @@
       saveFormDraft(await draftId(), base, document, saveId, { leaving }),
     // Kept on the device until a save lands: a page closed first loses nothing, and the background
     // resend creates the draft and sends it (`draftResend.ts`).
-    device: formDrafts && userId ? deviceCopyOf(userId, newFormId, () => createdId !== null) : null,
+    device:
+      formDrafts && userId
+        ? deviceCopyOf(userId, () => ({ formId: createdId, clientCreateId: createKey }))
+        : null,
   });
 
   // Every edit is saved, debounced, once the form has a title to be listed under.
@@ -343,7 +355,8 @@
     if (formDrafts) void autosave.flush();
   });
   // While this page is open, the background resend leaves its device copy to it.
-  $effect(() => (formDrafts ? holdFormEditor(newFormId) : undefined));
+  $effect(() => (formDrafts ? holdFormEditor(createKey) : undefined));
+  $effect(() => (formDrafts && createdId ? holdFormEditor(createdId) : undefined));
 
   /** The new form's payload: what the autosave stores and the publication applies. */
   function buildPayload(): CreateFormPayload {
@@ -490,7 +503,8 @@
         conflictCodeMessage(refusalCode(e)) ??
         draftRefusalMessage(refusalCode(e)) ??
         providerRefusalMessage(e) ??
-        e.message;
+        describeApiRefusal(refusalStatus(e), m.form_action_publish()) ??
+        m.form_publish_failed();
     } finally {
       isSubmitting = false;
       isPublishing = false;

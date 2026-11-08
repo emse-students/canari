@@ -3,7 +3,7 @@
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { questionImageRefusalMessage } from '$lib/forms/questionImage';
   import { formCodeMessage, formItemsProblem } from '$lib/forms/answerBounds';
-  import { refusalCode } from '$lib/utils/apiRefusal';
+  import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -99,7 +99,13 @@
   } from '$lib/forms/publish';
   import Button from '$lib/components/ui/Button.svelte';
   import { FormAutosave } from '$lib/forms/autosave.svelte';
-  import { deviceCopyOf, formDraftCopyStore, holdFormEditor } from '$lib/forms/draftCopies';
+  import {
+    copyAgainst,
+    deviceCopyOf,
+    formDraftCopyStore,
+    holdFormEditor,
+  } from '$lib/forms/draftCopies';
+  import { tellCopyDropped } from '$lib/forms/draftResend';
   import { FORM_CHANGED_SINCE_REVISION } from '$lib/forms/publish';
   import { serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
   import { currentUserId } from '$lib/stores/user';
@@ -234,9 +240,11 @@
             saveFormDraft(id, base, document, saveId, { leaving }),
           revision: revision.revision,
           hasChanges: !!revision.document,
-          device: userId ? deviceCopyOf(userId, id, () => true) : null,
+          device: userId
+            ? deviceCopyOf(userId, () => ({ formId: id, clientCreateId: null }))
+            : null,
         });
-        if (copy) autosave.resume(copy.document, copy.saveId);
+        if (copy) autosave.resume(copy.document, copy.saveId, copy.after);
       }
 
       // The form's own association, fetched by id rather than found in a list: the list of
@@ -259,19 +267,22 @@
       } catch {
         // The formation criterion offers nothing, and says so. Every other criterion still works.
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
+      console.warn(`[forms-editor] form ${id} not loaded: ${e}`);
       loadError =
         e instanceof FormNotFoundError
           ? m.form_view_not_found()
-          : e.message || m.form_edit_load_error();
+          : (describeApiRefusal(refusalStatus(e), m.form_edit_load_action()) ??
+            m.form_edit_load_error());
     }
   });
 
   /**
    * What this device kept of `formId` and the server does not hold - a page closed before its save
-   * landed - when it is built on the revision the server holds. One the server holds already (its
-   * save id is the revision's) is cleared; one built on a revision another writer moved past is
-   * dropped, and said.
+   * landed - when it is built on the revision the server holds, or on one a save it records as sent
+   * before it wrote (`after`: re-based then, a predecessor whose answer was lost). One the server
+   * holds already (its save id is the revision's) is cleared; one built on a revision another
+   * writer moved past is dropped, and the member TOLD.
    */
   async function unsentCopy(
     formId: string,
@@ -283,20 +294,28 @@
       const store = formDraftCopyStore(userId);
       const copy = await store.get(formId);
       if (!copy) return null;
-      if (revision.saveId && copy.saveId === revision.saveId) {
-        await store.deleteIfSent(formId, copy.saveId);
+      const against = copyAgainst(copy, revision);
+      if (against.verdict === 'landed') {
+        await store.deleteIfSent([formId], copy.saveId);
         Log.d('forms-editor', `device copy of ${formId} had landed: cleared`);
         return null;
       }
-      if (copy.baseRevision !== revision.revision) {
+      if (against.verdict === 'stale') {
         console.warn(
           `[forms-editor] device copy of ${formId} built on revision ${copy.baseRevision} DROPPED: the server is at ${revision.revision}`
         );
-        await store.delete(formId);
+        await store.delete([formId]);
+        tellCopyDropped(copy);
         return null;
       }
+      if (against.copy.baseRevision !== copy.baseRevision) {
+        Log.d(
+          'forms-editor',
+          `device copy of ${formId} re-based on revision ${revision.revision}, written by its predecessor`
+        );
+      }
       Log.d('forms-editor', `device copy of ${formId} found: the editor opens on it`);
-      return copy;
+      return against.copy;
     } catch (e) {
       console.warn(`[forms-editor] device copy of ${formId} unreadable: ${e}`);
       return null;
@@ -498,7 +517,8 @@
         conflictCodeMessage(refusalCode(e)) ??
         draftRefusalMessage(refusalCode(e)) ??
         providerRefusalMessage(e) ??
-        e.message;
+        describeApiRefusal(refusalStatus(e), m.form_action_publish()) ??
+        m.form_publish_failed();
     } finally {
       isSubmitting = false;
       isPublishing = false;
@@ -615,7 +635,10 @@
       applyContent(form);
       Log.d('forms-editor', `revision of ${formId} discarded`);
     } catch (e: any) {
-      error = draftRefusalMessage(refusalCode(e)) ?? e.message;
+      error =
+        draftRefusalMessage(refusalCode(e)) ??
+        describeApiRefusal(refusalStatus(e), m.form_action_discard()) ??
+        m.form_discard_failed();
     } finally {
       isDiscarding = false;
     }
@@ -641,8 +664,9 @@
     try {
       const updated = await uploadFormImage(formId, file);
       imageUrl = updated.imageUrl ?? null;
-    } catch (err: any) {
-      imageError = err.message || 'Error';
+    } catch (err: unknown) {
+      console.warn(`[forms-editor] form image not uploaded: ${err}`);
+      imageError = m.form_builder_image_upload_failed();
     } finally {
       uploadingImage = false;
       input.value = '';
@@ -654,8 +678,9 @@
     try {
       await deleteFormImage(formId);
       imageUrl = null;
-    } catch (err: any) {
-      imageError = err.message || 'Error';
+    } catch (err: unknown) {
+      console.warn(`[forms-editor] form image not removed: ${err}`);
+      imageError = m.form_image_remove_failed();
     } finally {
       uploadingImage = false;
     }

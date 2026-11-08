@@ -5814,5 +5814,13 @@
   "form_draft_empty_refusal": "Aucune modification à publier.",
   "form_draft_invalid_refusal": "Ces modifications ne peuvent pas être publiées en l'état : vérifiez les questions et les réglages.",
   "form_changed_since_revision_refusal": "Ce formulaire a été modifié ailleurs depuis le début de ces modifications (par une version plus ancienne de l'app). Publier remplacerait ces changements : vérifiez-le, puis appuyez sur « Publier quand même ».",
-  "form_publish_overwrite_button": "Publier quand même"
+  "form_publish_overwrite_button": "Publier quand même",
+  "form_action_publish": "Publication du formulaire",
+  "form_action_discard": "Abandon des modifications",
+  "form_publish_failed": "Le formulaire n'a pas pu être publié. Réessayez.",
+  "form_discard_failed": "Les modifications n'ont pas pu être abandonnées. Réessayez.",
+  "form_image_remove_failed": "L'image n'a pas pu être supprimée. Réessayez.",
+  "form_draft_copy_untitled": "Formulaire sans titre",
+  "form_draft_copy_dropped": "Les modifications de « {title} » gardées sur cet appareil n'ont pas pu être enregistrées : le formulaire a été modifié ailleurs ou n'existe plus.",
+  "form_edit_load_action": "Chargement du formulaire"
 }

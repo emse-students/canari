@@ -161,10 +161,11 @@ export interface CreateFormPayload {
    */
   draft?: boolean;
   /**
-   * CREATE ONLY: the form's id, minted here so that a create whose answer was lost is sent again as
-   * the same create (the server answers the stored form). Absent: the server mints it.
+   * CREATE ONLY: the create's idempotency key, minted here so that a create whose answer was lost is
+   * sent again as the same create (the server answers the form it stored). Never the form's id: the
+   * server mints that. Refused on an edit.
    */
-  id?: string;
+  clientCreateId?: string;
 }
 
 /** A form's life (`form-status.ts` on the server): `draft` until published, then for good. */

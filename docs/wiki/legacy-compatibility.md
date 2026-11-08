@@ -488,7 +488,7 @@ form builder and editor; the server half is `formDrafts: true` in core-service's
 creates drafts talks to a social-service that does not know them: its validation strips `draft`,
 creating a PUBLISHED form at once (an empty one, for a builder that creates its draft early), and it
 answers the revision routes `404` - every editor would fail to open.
-**What the client does.** It builds forms as drafts, reads and saves revisions, mints form ids and
+**What the client does.** It builds forms as drafts, reads and saves revisions, mints create keys and
 resends device copies only on an estate whose `/api/version` says `formDrafts: true`; otherwise - an
 older server, or no answer yet - it saves as it always did: one "Enregistrer" that creates the form
 published, and an edit saved straight to the form (`PATCH /forms/:id`).
@@ -513,6 +513,13 @@ the revision's base fingerprint then no longer matches, and publishing it is ref
 `409 FORM_CHANGED_SINCE_REVISION` until the manager confirms the overwrite ("Publier quand meme").
 And it sees a DRAFT a current build is building as the empty shell the create page made (a title and
 an association): the questions live in the revision, which an older build never reads.
+**A rollback of production to an older release is the same hazard, server side, and wider.** An
+older social-service does not know `forms.status` (migration 145 is additive and stays): it serves
+EVERY draft on every respondent surface - the list, a post's card, the agenda, `/f/:id` - as an
+open form, an empty shell for a draft the create page made, and it neither reads nor publishes the
+revisions (`form_drafts` stays, unread). A rollback past this change therefore publishes the drafts
+in all but name; before one, count them (`SELECT count(*) FROM forms WHERE status = 'draft'`) and
+weigh closing them by hand against the rollback.
 **Removal condition:** once the floor passes the first stable carrying this change, `draft` may become
 the default of a create (a create without it a draft too). Measure before: the `[FORMS] create without draft` lines
 in social-service count the older builds still creating forms.

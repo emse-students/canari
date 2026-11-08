@@ -202,13 +202,13 @@ export class FormItemDto {
 
 export class CreateFormDto {
   /**
-   * The form's id, minted by the client so that a create whose answer was lost is sent again as
-   * the SAME create (idempotent: the stored form is answered). Absent: the server mints it. An
-   * edit never changes it (`FORM_ID_FIXED`).
+   * CREATE ONLY: the create's idempotency key, minted by the client so that a create whose answer
+   * was lost is sent again as the SAME create (the stored form is answered). Never the form's id:
+   * the server mints that. An edit sending it is refused (`FORM_CREATE_KEY_ON_EDIT`).
    */
-  @IsUUID()
+  @IsUUID('4')
   @IsOptional()
-  id?: string;
+  clientCreateId?: string;
 
   @IsString()
   @IsNotEmpty()
@@ -381,7 +381,7 @@ export class SaveFormDraftDto {
    * The client's id for THIS save, kept on the revision it writes: a client whose answer was lost
    * finds its own id in the 409 of its next save, and adopts the revision instead of a conflict.
    */
-  @IsUUID()
+  @IsUUID('4')
   @IsOptional()
   saveId?: string;
 }

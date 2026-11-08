@@ -22,8 +22,10 @@ const nav = vi.hoisted(() => ({
 }));
 vi.mock('$app/navigation', () => nav);
 const api = vi.hoisted(() => ({
-  // The server stores the form under the id the page minted (`id`), or mints one itself.
-  createForm: vi.fn(async (payload: any) => ({ id: payload.id ?? 'f-new' })),
+  // The server mints the form's id; a create sent again under the same key answers the same form.
+  createForm: vi.fn(async (payload: any) => ({
+    id: payload.clientCreateId ? `f-of-${payload.clientCreateId}` : 'f-new',
+  })),
   saveFormDraft: vi.fn(async (_id: string, base: number, _doc: any, _saveId?: string) => ({
     revision: base + 1,
     savedAt: 'now',
@@ -66,12 +68,26 @@ vi.mock('$lib/stores/user', async (orig) => ({
 const device = vi.hoisted(() => ({ copies: new Map<string, unknown>() }));
 vi.mock('$lib/forms/draftCopies', () => ({
   holdFormEditor: () => () => {},
-  deviceCopyOf: (_user: string, formId: string) => ({
-    keep: async (baseRevision: number, saveId: string, document: unknown) =>
-      void device.copies.set(formId, { baseRevision, saveId, document }),
-    sent: async () => void device.copies.delete(formId),
-    drop: async () => void device.copies.delete(formId),
+  formDraftCopyStore: () => ({
+    rekey: async (from: string, to: string) => {
+      const copy = device.copies.get(from);
+      if (!copy) return;
+      device.copies.delete(from);
+      device.copies.set(to, copy);
+    },
   }),
+  deviceCopyOf: (
+    _user: string,
+    ids: () => { formId: string | null; clientCreateId: string | null }
+  ) => {
+    const keys = () => [ids().formId, ids().clientCreateId].filter((k): k is string => !!k);
+    return {
+      keep: async (baseRevision: number, saveId: string, document: unknown) =>
+        void device.copies.set(keys()[0]!, { baseRevision, saveId, document }),
+      sent: async () => keys().forEach((k) => device.copies.delete(k)),
+      drop: async () => keys().forEach((k) => device.copies.delete(k)),
+    };
+  },
 }));
 vi.mock('$lib/stores/appVersionCheck.svelte', async (orig) => ({
   ...(await orig<typeof import('$lib/stores/appVersionCheck.svelte')>()),
@@ -81,8 +97,11 @@ vi.mock('$lib/stores/appVersionCheck.svelte', async (orig) => ({
 import Page from './+page.svelte';
 import { AUTOSAVE_DELAY_MS } from '$lib/forms/autosave.svelte';
 
-/** The id the page minted for its draft, as its first create carried it. */
-const mintedId = () => (api.createForm.mock.calls[0]![0] as { id: string }).id;
+/** The create key the page minted for its draft, as its first create carried it. */
+const createKey = () =>
+  (api.createForm.mock.calls[0]![0] as { clientCreateId: string }).clientCreateId;
+/** The id the server minted for that create. */
+const serverId = () => `f-of-${createKey()}`;
 
 /**
  * Mounting the whole builder is the cost of these tests: about 5 s for the first under a loaded
@@ -151,9 +170,9 @@ describe('the form builder saves as it is typed', () => {
         await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
         await settle();
         expect(api.createForm).toHaveBeenCalledTimes(1);
-        expect(mintedId()).toMatch(/^[0-9a-f-]{36}$/);
+        expect(createKey()).toMatch(/^[0-9a-f-]{36}$/);
         expect(api.saveFormDraft).toHaveBeenCalledWith(
-          mintedId(),
+          serverId(),
           0,
           expect.objectContaining({ title: 'Soiree' }),
           expect.any(String),
@@ -172,7 +191,7 @@ describe('the form builder saves as it is typed', () => {
         // The draft exists: no second creation, the next revision on the first.
         expect(api.createForm).toHaveBeenCalledTimes(1);
         expect(api.saveFormDraft).toHaveBeenLastCalledWith(
-          mintedId(),
+          serverId(),
           1,
           expect.objectContaining({ title: 'Soiree 2' }),
           expect.any(String),
@@ -204,13 +223,15 @@ describe('the form builder saves as it is typed', () => {
         await settle();
         await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
         await settle();
-        // Kept on the device meanwhile, under the minted id.
-        expect(device.copies.has(mintedId())).toBe(true);
+        // Kept on the device meanwhile, under the create key.
+        expect(device.copies.has(createKey())).toBe(true);
         window.dispatchEvent(new Event('online'));
         await vi.advanceTimersByTimeAsync(0);
         await settle();
-        const ids = api.createForm.mock.calls.map(([p]) => (p as { id: string }).id);
-        expect(ids).toEqual([mintedId(), mintedId()]);
+        const keys = api.createForm.mock.calls.map(
+          ([p]) => (p as { clientCreateId: string }).clientCreateId
+        );
+        expect(keys).toEqual([createKey(), createKey()]);
         expect(api.saveFormDraft).toHaveBeenCalledTimes(1);
         expect(device.copies.size).toBe(0);
       } finally {
@@ -232,10 +253,10 @@ describe('the form builder, once the form is saved', () => {
         expect.objectContaining({ draft: true, title: 'Soiree' })
       );
       const [id, , document] = api.saveFormDraft.mock.calls.at(-1)!;
-      expect([id, document.title]).toEqual([mintedId(), 'Soiree']);
+      expect([id, document.title]).toEqual([serverId(), 'Soiree']);
       await vi.waitFor(() =>
         expect(api.publishFormDraft).toHaveBeenCalledWith(
-          mintedId(),
+          serverId(),
           api.saveFormDraft.mock.calls.length
         )
       );

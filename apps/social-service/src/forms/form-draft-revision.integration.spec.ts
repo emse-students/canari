@@ -15,8 +15,10 @@ import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import {
   closeFormDraft,
+  followRetagInRevisions,
   formChangedSinceRevision,
   formsWithUnpublishedChanges,
+  revisionsAtBase,
   readFormDraft,
   writeFormDraft,
 } from './form-draft-revision';
@@ -48,6 +50,7 @@ maybe('form revisions against PostgreSQL (migration 146)', () => {
     });
     await ds.initialize();
     await q(`CREATE TABLE forms (id uuid PRIMARY KEY, title text, "imageUrl" text,
+      "associationId" uuid, "cotisationVariantKey" text, "ownerId" text,
       "updatedAt" timestamptz NOT NULL DEFAULT now())`);
     await q(`INSERT INTO forms (id, title) VALUES ($1, 'Gala'), ($2, 'Gala'), ($3, 'Gala')`, [
       FORM,
@@ -177,6 +180,43 @@ maybe('form revisions against PostgreSQL (migration 146)', () => {
     });
     await writeFormDraft(ds.manager, THIRD, 6, { title: 'E' }, SAVE_1);
     expect(await changed()).toBe(false);
+  });
+
+  it('a tier retag reaches the revision, and is no change "outside" it', async () => {
+    const ASSO = '00000000-0000-4000-8000-0000000e0146';
+    const RETAGGED = '00000000-0000-4000-8000-0000000f0146';
+    await q(
+      `INSERT INTO forms (id, title, "associationId", "cotisationVariantKey") VALUES ($1, 'Adhésion', $2, 'old')`,
+      [RETAGGED, ASSO]
+    );
+    await writeFormDraft(
+      ds.manager,
+      RETAGGED,
+      0,
+      { title: 'Adhésion', cotisationVariantKey: 'old' },
+      SAVE_1
+    );
+    await ds.transaction(async (m) => {
+      const atBase = await revisionsAtBase(m, ASSO);
+      expect(atBase).toEqual([RETAGGED]);
+      await m.query(`UPDATE forms SET "cotisationVariantKey" = 'new' WHERE id = $1`, [RETAGGED]);
+      await followRetagInRevisions(m, [RETAGGED], atBase, 'old', 'new');
+    });
+    expect((await readFormDraft(ds.manager, RETAGGED)).document).toMatchObject({
+      cotisationVariantKey: 'new',
+    });
+    expect(await ds.transaction((m) => formChangedSinceRevision(m, RETAGGED))).toBe(false);
+    // Back to the base tier: the key becomes JSON null, never a vanished document.
+    await ds.transaction(async (m) => {
+      const atBase = await revisionsAtBase(m, ASSO);
+      await m.query(`UPDATE forms SET "cotisationVariantKey" = NULL WHERE id = $1`, [RETAGGED]);
+      await followRetagInRevisions(m, [RETAGGED], atBase, 'new', null);
+    });
+    expect((await readFormDraft(ds.manager, RETAGGED)).document).toEqual({
+      title: 'Adhésion',
+      cotisationVariantKey: null,
+    });
+    expect(await ds.transaction((m) => formChangedSinceRevision(m, RETAGGED))).toBe(false);
   });
 
   it('goes with its form', async () => {

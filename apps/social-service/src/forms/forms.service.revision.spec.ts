@@ -1,11 +1,10 @@
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
-import { FORM_ID_FIXED, FormsService } from './forms.service';
+import { FORM_CREATE_KEY_ON_EDIT, FormsService } from './forms.service';
 import { FORM_DRAFT, FORM_PUBLISHED } from './form-status';
 import {
   FORM_CHANGED_SINCE_REVISION,
   FORM_DRAFT_CONFLICT,
   FORM_DRAFT_EMPTY,
-  FORM_ID_TAKEN,
   FORM_DRAFT_INVALID,
   FORM_DRAFT_MALFORMED,
 } from './form-draft-revision';
@@ -410,41 +409,63 @@ describe('FormsService - unpublished revisions', () => {
     });
   });
 
-  describe('a create under a client-minted id', () => {
-    const ID = 'bbbbbbbb-0000-4000-8000-000000000001';
+  describe('a create under a client idempotency key', () => {
+    const KEY = 'bbbbbbbb-0000-4000-8000-000000000001';
 
     it('answers the stored form when the same account sends the create again', async () => {
-      const { service, formRepo } = makeService({ form: { id: ID } });
+      const { service, formRepo } = makeService({ form: { clientCreateId: KEY } });
       const createNew = jest.spyOn(service as any, 'createNew');
-      const again = await service.create({ ...doc(), id: ID, ownerId: OWNER } as any);
-      expect(again).toMatchObject({ id: ID, ownerId: OWNER });
+      const again = await service.create({ ...doc(), clientCreateId: KEY, ownerId: OWNER } as any);
+      expect(again).toMatchObject({ id: 'f1', ownerId: OWNER });
+      expect(formRepo.findOne).toHaveBeenCalledWith({
+        where: { ownerId: OWNER, clientCreateId: KEY },
+      });
       expect(createNew).not.toHaveBeenCalled();
-      expect(formRepo.save).not.toHaveBeenCalled();
     });
 
-    it("refuses an id another account's form holds, typed", async () => {
-      const { service } = makeService({ form: { id: ID } });
-      await expect(
-        service.create({ ...doc(), id: ID, ownerId: STRANGER } as any)
-      ).rejects.toMatchObject({ response: { code: FORM_ID_TAKEN } });
+    it("never looks at another account's forms: the same key from a stranger is a new create", async () => {
+      const { service, formRepo } = makeService({ form: { clientCreateId: KEY } });
+      formRepo.findOne.mockResolvedValueOnce(null);
+      const createNew = jest
+        .spyOn(service as any, 'createNew')
+        .mockResolvedValueOnce({ id: 'minted-by-the-server' });
+      const made = await service.create({
+        ...doc(),
+        clientCreateId: KEY,
+        ownerId: STRANGER,
+      } as any);
+      expect(formRepo.findOne).toHaveBeenCalledWith({
+        where: { ownerId: STRANGER, clientCreateId: KEY },
+      });
+      expect(createNew).toHaveBeenCalledTimes(1);
+      expect(made).toEqual({ id: 'minted-by-the-server' });
     });
 
     it('two sends racing to the insert: the loser answers what the winner stored', async () => {
-      const { service, formRepo } = makeService({ form: { id: ID } });
+      const { service, formRepo } = makeService({ form: { clientCreateId: KEY } });
       formRepo.findOne.mockResolvedValueOnce(null);
       jest
         .spyOn(service as any, 'createNew')
         .mockRejectedValueOnce(Object.assign(new Error('duplicate key'), { code: '23505' }));
-      expect(await service.create({ ...doc(), id: ID, ownerId: OWNER } as any)).toMatchObject({
-        id: ID,
-      });
+      expect(
+        await service.create({ ...doc(), clientCreateId: KEY, ownerId: OWNER } as any)
+      ).toMatchObject({ id: 'f1' });
     });
 
-    it('an edit never moves the id: one naming another form is refused', async () => {
+    it('an edit never carries the key', async () => {
       const { service } = makeService();
       await expect(
-        service.update('f1', { ...doc(), id: ID } as any, OWNER, false)
-      ).rejects.toMatchObject({ response: { code: FORM_ID_FIXED } });
+        service.update('f1', { ...doc(), clientCreateId: KEY } as any, OWNER, false)
+      ).rejects.toMatchObject({ response: { code: FORM_CREATE_KEY_ON_EDIT } });
     });
+  });
+
+  it('an overwrite still takes the form row: the changed-since read runs whatever the answer', async () => {
+    const { service } = makeService();
+    const revisionModule = jest.requireMock('./form-draft-revision');
+    await service.saveDraft('f1', 0, doc(), null, OWNER, false);
+    revisionModule.formChangedSinceRevision.mockClear();
+    await service.publishChanges('f1', 1, OWNER, false, true);
+    expect(revisionModule.formChangedSinceRevision).toHaveBeenCalledTimes(1);
   });
 });

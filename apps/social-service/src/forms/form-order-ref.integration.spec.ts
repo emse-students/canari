@@ -257,13 +257,13 @@ maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', ()
     }
   );
 
-  // A create under a client-minted id (owner, 2026-11-08): TypeORM keeps the id it is handed on a
-  // generated uuid column, and a second send of the same create stores nothing more.
-  it('stores a form under the id its client minted, once however often the create is sent', async () => {
-    const id = '00000000-0000-4000-8000-0000000d0146';
+  // A create under a client idempotency key (owner, 2026-11-08): the server mints the id, and a
+  // second send of the same create - racing the first - stores nothing more.
+  it('stores a form once however often its create is sent, under an id the server minted', async () => {
+    const key = '00000000-0000-4000-8000-0000000d0146';
     const input = () =>
       ({
-        id,
+        clientCreateId: key,
         draft: true,
         title: 'Gala',
         basePrice: 0,
@@ -272,10 +272,13 @@ maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', ()
         ownerId: 'owner',
       }) as any;
     const [first, second] = await Promise.all([service.create(input()), service.create(input())]);
-    expect(first.id).toBe(id);
-    expect(second.id).toBe(id);
-    expect(await ds.query(`SELECT count(*)::int AS n FROM forms WHERE id = $1`, [id])).toEqual([
-      { n: 1 },
-    ]);
+    expect(first.id).toBe(second.id);
+    expect(first.id).not.toBe(key);
+    expect(
+      await ds.query(`SELECT count(*)::int AS n FROM forms WHERE "clientCreateId" = $1`, [key])
+    ).toEqual([{ n: 1 }]);
+    // Another owner's create under the same key is its own form.
+    const other = await service.create({ ...input(), ownerId: 'someone-else' });
+    expect(other.id).not.toBe(first.id);
   });
 });

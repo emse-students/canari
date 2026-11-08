@@ -3,101 +3,206 @@
  * and the background resend that sends what a closed editor left (owner, 2026-11-08).
  *
  * Pinned: an answer to an older save never deletes a newer edit; a copy whose form the server never
- * saw is created first, then saved as the save it already is; a copy that had landed is recognised
- * from the 409 naming it; one that reached no server stays and stops the pass; one another writer
- * superseded is dropped; a form open in an editor is left to that editor; sign-out erases it all.
+ * answered is created first under its create key, re-keyed, then saved as the save it already is; a
+ * copy that had landed is recognised from the 409 naming it; one whose PREDECESSOR landed unanswered
+ * is re-based and sent - the whole sequence (lost answer, more typing, app closed) loses nothing; one
+ * that reached no server stays and stops the pass; one another writer superseded is dropped and the
+ * member told; a form open in an editor is left to that editor; sign-out erases it all, and a store
+ * captured before it can neither recreate the database nor send under the next account.
  */
 import 'fake-indexeddb/auto';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  FormDraftCopyAccountGoneError,
   FormDraftCopyStore,
+  copyAgainst,
+  deviceCopyOf,
   eraseFormDraftCopies,
+  formDraftCopiesDbName,
   formDraftCopyStore,
   holdFormEditor,
   resendFormDraftCopies,
   type FormDraftCopy,
   type ResendDeps,
 } from './draftCopies';
+import { FormAutosave } from './autosave.svelte';
+import { FormDraftConflictError } from './draftConflict';
+import { setCurrentUserId } from '$lib/stores/userState.svelte';
 import type { CreateFormPayload } from './api';
 
 let n = 0;
 const user = () => `user-${++n}`;
+/** A store whose account counts as signed in (the session is not what these tests are about). */
+const storeOf = (u = user()) => new FormDraftCopyStore(u, () => true);
+
+const doc = (title: string) =>
+  ({ title, basePrice: 0, currency: 'eur', items: [] }) as CreateFormPayload;
 
 const copyOf = (formId: string, over: Partial<FormDraftCopy> = {}): FormDraftCopy => ({
+  key: formId,
   formId,
+  clientCreateId: null,
   baseRevision: 2,
   saveId: `${formId}-save`,
-  document: { title: formId, basePrice: 0, currency: 'eur', items: [] } as CreateFormPayload,
-  created: true,
+  after: [],
+  document: doc(formId),
   ...over,
 });
 
 class Refused extends Error {
-  constructor(
-    readonly status: number,
-    readonly conflictSaveId?: string | null
-  ) {
+  constructor(readonly status: number) {
     super(`refused ${status}`);
   }
 }
 
-function deps(store: FormDraftCopyStore, over: Partial<ResendDeps> = {}): ResendDeps {
+function deps(store: ResendDeps['store'], over: Partial<ResendDeps> = {}): ResendDeps {
   return {
     store,
     formDrafts: () => true,
-    createDraft: vi.fn(async () => undefined),
+    signedIn: () => true,
+    createDraft: vi.fn(async (c: FormDraftCopy) => ({ id: `form-of-${c.key}` })),
     save: vi.fn(async () => undefined),
-    statusOf: (e) => (e instanceof Refused ? e.status : null),
-    conflictSaveId: (e) => (e instanceof Refused ? e.conflictSaveId : undefined),
+    statusOf: (e) =>
+      e instanceof FormDraftConflictError ? 409 : e instanceof Refused ? e.status : null,
+    conflictOf: (e) =>
+      e instanceof FormDraftConflictError ? { revision: e.revision, saveId: e.saveId } : undefined,
+    dropped: vi.fn(),
     ...over,
   };
 }
 
+async function databaseNames(): Promise<string[]> {
+  return (await indexedDB.databases()).map((d) => d.name ?? '');
+}
+
+afterEach(() => {
+  setCurrentUserId(null);
+  vi.restoreAllMocks();
+});
+
 describe('FormDraftCopyStore', () => {
   it('the answer to an older save never deletes the edit typed after it', async () => {
-    const store = new FormDraftCopyStore(user());
+    const store = storeOf();
     await store.put(copyOf('f1', { saveId: 'older' }));
     await store.put(copyOf('f1', { saveId: 'newer' }));
-    expect(await store.deleteIfSent('f1', 'older')).toBe(false);
+    expect(await store.deleteIfSent(['f1'], 'older')).toBe(false);
     expect((await store.get('f1'))?.saveId).toBe('newer');
-    expect(await store.deleteIfSent('f1', 'newer')).toBe(true);
+    expect(await store.deleteIfSent(['f1'], 'newer')).toBe(true);
     expect(await store.get('f1')).toBeNull();
+  });
+
+  it('a create answered re-keys its copy under the form, in one write', async () => {
+    const store = storeOf();
+    await store.put(copyOf('k1', { formId: null, clientCreateId: 'k1' }));
+    await store.rekey('k1', 'f1');
+    expect(await store.get('k1')).toBeNull();
+    expect(await store.get('f1')).toMatchObject({ key: 'f1', formId: 'f1', clientCreateId: 'k1' });
+    // A later keep under the form's id replaces it, and never leaves the create key's row behind.
+    await store.put(copyOf('f1', { clientCreateId: 'k1', saveId: 'later' }));
+    expect((await store.list()).map((c) => c.key)).toEqual(['f1']);
   });
 
   it('sign-out erases the account copies, and only that account', async () => {
     const leaving = user();
     const staying = user();
+    setCurrentUserId(leaving);
     await formDraftCopyStore(leaving).put(copyOf('f1'));
-    await new FormDraftCopyStore(staying).put(copyOf('f2'));
+    await storeOf(staying).put(copyOf('f2'));
     vi.spyOn(console, 'warn').mockImplementation(() => {});
+    setCurrentUserId(null);
     await eraseFormDraftCopies(leaving, 'signed out');
-    expect(await new FormDraftCopyStore(leaving).list()).toEqual([]);
-    expect((await new FormDraftCopyStore(staying).list()).map((c) => c.formId)).toEqual(['f2']);
+    expect(await databaseNames()).not.toContain(formDraftCopiesDbName(leaving));
+    expect((await storeOf(staying).list()).map((c) => c.formId)).toEqual(['f2']);
+  });
+
+  it('a store captured before the sign-out cannot recreate the erased database', async () => {
+    const leaving = user();
+    setCurrentUserId(leaving);
+    // Captured at mount, as the editor's device copy is.
+    const captured = formDraftCopyStore(leaving);
+    await captured.put(copyOf('f1'));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    setCurrentUserId(null);
+    await eraseFormDraftCopies(leaving, 'signed out');
+    // The editor's teardown flush, on its way to /login: a late put.
+    await expect(captured.put(copyOf('f1', { saveId: 'late' }))).rejects.toBeInstanceOf(
+      FormDraftCopyAccountGoneError
+    );
+    // And after the next account signed in: refused all the same.
+    setCurrentUserId(user());
+    await expect(captured.list()).rejects.toBeInstanceOf(FormDraftCopyAccountGoneError);
+    expect(await databaseNames()).not.toContain(formDraftCopiesDbName(leaving));
+  });
+});
+
+describe('copyAgainst - what an opening editor does with a copy', () => {
+  it('its own save wrote the revision: landed', () => {
+    expect(copyAgainst(copyOf('f'), { revision: 3, saveId: 'f-save' }).verdict).toBe('landed');
+  });
+
+  it('built on the revision the server holds: used as it is', () => {
+    expect(copyAgainst(copyOf('f'), { revision: 2, saveId: 'x' })).toEqual({
+      verdict: 'use',
+      copy: copyOf('f'),
+    });
+  });
+
+  it('a predecessor it records wrote the revision: re-based on it', () => {
+    const copy = copyOf('f', { after: ['s1'] });
+    expect(copyAgainst(copy, { revision: 3, saveId: 's1' })).toEqual({
+      verdict: 'use',
+      copy: { ...copy, baseRevision: 3, after: [] },
+    });
+  });
+
+  it('another writer moved the revision: stale', () => {
+    expect(
+      copyAgainst(copyOf('f', { after: ['s1'] }), { revision: 3, saveId: 'other' }).verdict
+    ).toBe('stale');
   });
 });
 
 describe('resendFormDraftCopies', () => {
-  it('creates the form the server never saw, then saves the copy as the save it already is', async () => {
-    const store = new FormDraftCopyStore(user());
-    await store.put(copyOf('new', { created: false, baseRevision: 0 }));
+  it('creates the form the server never answered under its create key, then saves the copy as the save it already is', async () => {
+    const store = storeOf();
+    await store.put(copyOf('k1', { formId: null, clientCreateId: 'k1', baseRevision: 0 }));
     const d = deps(store);
     await resendFormDraftCopies(d);
     expect(d.createDraft).toHaveBeenCalledTimes(1);
-    expect(d.save).toHaveBeenCalledWith(expect.objectContaining({ saveId: 'new-save' }));
+    expect(d.save).toHaveBeenCalledWith(
+      expect.objectContaining({ formId: 'form-of-k1', saveId: 'k1-save' })
+    );
     expect(await store.list()).toEqual([]);
   });
 
   it('a copy that had landed: the 409 names it, and it goes', async () => {
-    const store = new FormDraftCopyStore(user());
+    const store = storeOf();
     await store.put(copyOf('f1'));
-    const d = deps(store, { save: vi.fn(async () => Promise.reject(new Refused(409, 'f1-save'))) });
+    const d = deps(store, {
+      save: vi.fn(async () => Promise.reject(new FormDraftConflictError(3, 'f1-save'))),
+    });
     await resendFormDraftCopies(d);
     expect(await store.list()).toEqual([]);
+    expect(d.dropped).not.toHaveBeenCalled();
+  });
+
+  it('a predecessor that landed unanswered: the copy is re-based on its revision and sent', async () => {
+    const store = storeOf();
+    await store.put(copyOf('f1', { after: ['s1'] }));
+    const save = vi.fn(async (c: FormDraftCopy) => {
+      if (c.baseRevision !== 3) throw new FormDraftConflictError(3, 's1');
+    });
+    const d = deps(store, { save });
+    await resendFormDraftCopies(d);
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ baseRevision: 3, after: [] }));
+    expect(await store.list()).toEqual([]);
+    expect(d.dropped).not.toHaveBeenCalled();
   });
 
   it('reaching no server keeps the copy and stops the pass', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const store = new FormDraftCopyStore(user());
+    const store = storeOf();
     await store.put(copyOf('a'));
     await store.put(copyOf('b'));
     const save = vi.fn(async () => Promise.reject(new TypeError('Failed to fetch')));
@@ -106,21 +211,43 @@ describe('resendFormDraftCopies', () => {
     expect((await store.list()).map((c) => c.formId).sort()).toEqual(['a', 'b']);
   });
 
-  it("another writer's revision, or a form gone: the copy is dropped, and said", async () => {
+  it("another writer's revision, or a form gone: the copy is dropped, logged, and the member told", async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const store = new FormDraftCopyStore(user());
+    const store = storeOf();
     await store.put(copyOf('moved'));
     await store.put(copyOf('gone'));
     const save = vi.fn(async (c: FormDraftCopy) =>
-      Promise.reject(c.formId === 'moved' ? new Refused(409, 'other-tab') : new Refused(404))
+      Promise.reject(
+        c.formId === 'moved' ? new FormDraftConflictError(5, 'other-tab') : new Refused(404)
+      )
     );
-    await resendFormDraftCopies(deps(store, { save }));
+    const d = deps(store, { save });
+    await resendFormDraftCopies(d);
     expect(await store.list()).toEqual([]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('DROPPED'));
+    expect(d.dropped).toHaveBeenCalledTimes(2);
+  });
+
+  it('an account switch mid-pass: nothing further is sent nor written', async () => {
+    const store = storeOf();
+    await store.put(copyOf('a'));
+    await store.put(copyOf('b'));
+    let signedIn = true;
+    const put = vi.spyOn(store, 'put');
+    const del = vi.spyOn(store, 'deleteIfSent');
+    const save = vi.fn(async () => {
+      // The session ended while the first request was in flight; another account signs in.
+      signedIn = false;
+    });
+    await resendFormDraftCopies(deps(store, { save, signedIn: () => signedIn }));
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(put).not.toHaveBeenCalled();
+    expect(del).not.toHaveBeenCalled();
+    expect(await store.list()).toHaveLength(2);
   });
 
   it('leaves a form open in an editor to that editor', async () => {
-    const store = new FormDraftCopyStore(user());
+    const store = storeOf();
     await store.put(copyOf('open'));
     const release = holdFormEditor('open');
     const d = deps(store);
@@ -132,11 +259,84 @@ describe('resendFormDraftCopies', () => {
   });
 
   it('waits while the estate does not say it stores revisions', async () => {
-    const store = new FormDraftCopyStore(user());
+    const store = storeOf();
     await store.put(copyOf('f1'));
     const d = deps(store, { formDrafts: () => false });
     await resendFormDraftCopies(d);
     expect(d.save).not.toHaveBeenCalled();
     expect(await store.list()).toHaveLength(1);
+  });
+});
+
+describe('a save whose answer was lost, more typing, the app closed', () => {
+  /** A server holding one revision, compare-and-set like `PUT /forms/:id/draft`. */
+  function server() {
+    const state = {
+      revision: 2,
+      saveId: null as string | null,
+      document: null as unknown,
+      lose: true,
+    };
+    const write = (base: number, document: CreateFormPayload, saveId: string) => {
+      if (base !== state.revision) throw new FormDraftConflictError(state.revision, state.saveId);
+      state.revision += 1;
+      state.saveId = saveId;
+      state.document = document;
+      return { revision: state.revision };
+    };
+    return { state, write };
+  }
+
+  /** The editor up to the close: S1 lands with its answer lost, then D2 is typed and never sent. */
+  async function typeThenClose(userId: string) {
+    const srv = server();
+    const ids = ['s1', 's2'];
+    const autosave = new FormAutosave({
+      revision: 2,
+      delayMs: 60_000,
+      newSaveId: () => ids.shift()!,
+      device: deviceCopyOf(userId, () => ({ formId: 'f1', clientCreateId: null })),
+      save: async (base, document, saveId) => {
+        const out = srv.write(base, document, saveId);
+        if (srv.state.lose) throw new TypeError('Failed to fetch');
+        return out;
+      },
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    autosave.schedule(doc('one'));
+    await autosave.flush();
+    expect(autosave.status).toBe('offline');
+    autosave.schedule(doc('two'));
+    // The app is closed here: nothing more is sent; what the device holds is all that is left.
+    const store = formDraftCopyStore(userId);
+    await vi.waitFor(async () => expect((await store.get('f1'))?.saveId).toBe('s2'));
+    srv.state.lose = false;
+    return { srv, store };
+  }
+
+  it('reopened in the editor: the copy is re-based on its predecessor, nothing is dropped', async () => {
+    const u = user();
+    setCurrentUserId(u);
+    const { srv, store } = await typeThenClose(u);
+    const copy = (await store.get('f1'))!;
+    expect(copy).toMatchObject({ baseRevision: 2, saveId: 's2', after: ['s1'] });
+    const against = copyAgainst(copy, { revision: srv.state.revision, saveId: srv.state.saveId });
+    expect(against).toMatchObject({
+      verdict: 'use',
+      copy: { baseRevision: 3, document: doc('two') },
+    });
+  });
+
+  it('sent by the resend: the 409 naming the predecessor re-bases it, and the typing lands', async () => {
+    const u = user();
+    setCurrentUserId(u);
+    const { srv, store } = await typeThenClose(u);
+    const d = deps(store, {
+      save: async (c) => srv.write(c.baseRevision, c.document, c.saveId),
+    });
+    await resendFormDraftCopies(d);
+    expect(srv.state).toMatchObject({ revision: 4, saveId: 's2', document: doc('two') });
+    expect(await store.list()).toEqual([]);
+    expect(d.dropped).not.toHaveBeenCalled();
   });
 });

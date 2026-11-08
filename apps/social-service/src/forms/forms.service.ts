@@ -30,7 +30,6 @@ import {
   FORM_CHANGED_SINCE_REVISION,
   FORM_DRAFT_CONFLICT,
   FORM_DRAFT_EMPTY,
-  FORM_ID_TAKEN,
   FORM_DRAFT_INVALID,
   FORM_DRAFT_MALFORMED,
   closeFormDraft,
@@ -334,8 +333,8 @@ type FormItemLike = AnswerQuestion & { id: string; label: string };
 /** The durable flags a landed payment's effects are claimed through (migrations 084 and 102). */
 type FulfilmentFlag = 'cotisationGrantedAt' | 'purchaseRecordedAt' | 'organiserNotifiedAt';
 
-/** The 400 refusing an edit whose body names another form's id. */
-export const FORM_ID_FIXED = 'FORM_ID_FIXED';
+/** The 400 refusing a create's idempotency key on an edit. */
+export const FORM_CREATE_KEY_ON_EDIT = 'FORM_CREATE_KEY_ON_EDIT';
 
 @Injectable()
 export class FormsService {
@@ -752,39 +751,35 @@ export class FormsService {
 
   /** Creates a form and assigns stable IDs to all items and options that lack them. */
   async create(input: CreateFormDto, isGlobalAdmin = false) {
-    // A client-minted id makes the create idempotent: a retry whose first answer was lost finds
-    // the form it already created, and is handed it unchanged.
-    if (input.id) {
-      const existing = await this.formCreatedAs(input.id, input.ownerId!);
+    // A client-minted key makes the create idempotent: a retry whose first answer was lost finds the
+    // form it already created, and is handed it unchanged. The key is the OWNER's (unique per
+    // owner): nothing another account stored is ever looked up, so it answers no existence question.
+    const key = input.clientCreateId;
+    if (key) {
+      const existing = await this.formCreatedWith(input.ownerId!, key);
       if (existing) return existing;
     }
     try {
       return await this.createNew(input, isGlobalAdmin);
     } catch (err) {
       // Two sends of one create raced to the insert: the loser reads what the winner stored.
-      if (input.id && isUniqueViolation(err)) {
-        const existing = await this.formCreatedAs(input.id, input.ownerId!);
+      if (key && isUniqueViolation(err)) {
+        const existing = await this.formCreatedWith(input.ownerId!, key);
         if (existing) return existing;
       }
       throw err;
     }
   }
 
-  /**
-   * The form a create with the client-minted `id` already stored, when `ownerId` stored it; `null`
-   * when no form holds the id. An id another account's form holds is refused 409 `FORM_ID_TAKEN`.
-   */
-  private async formCreatedAs(id: string, ownerId: string): Promise<Form | null> {
-    const existing = await this.formRepo.findOne({ where: { id } });
-    if (!existing) return null;
-    if (existing.ownerId !== ownerId) {
-      this.logger.warn(
-        `[FORMS] create refused: id ${id.slice(0, 8)} is another account's form (caller ${ownerId.slice(0, 8)})`
+  /** The form `ownerId`'s create keyed `clientCreateId` already stored, or `null`. */
+  private async formCreatedWith(ownerId: string, clientCreateId: string): Promise<Form | null> {
+    const existing = await this.formRepo.findOne({ where: { ownerId, clientCreateId } });
+    if (existing) {
+      this.logger.log(
+        `[FORMS] create ${clientCreateId.slice(0, 8)} repeated: form ${existing.id.slice(0, 8)} answered`
       );
-      throw new ConflictException({ code: FORM_ID_TAKEN, message: 'This form id is taken.' });
     }
-    this.logger.log(`[FORMS] create ${id.slice(0, 8)} repeated: the stored form is answered`);
-    return existing;
+    return existing ?? null;
   }
 
   private async createNew(input: CreateFormDto, isGlobalAdmin: boolean) {
@@ -1082,16 +1077,14 @@ export class FormsService {
         message: 'A form is published through POST /forms/:id/draft/publish, never by an edit.',
       });
     }
-    // The id is the create's (client-minted for idempotence) and never an edit's: one naming
-    // another form is refused, and the field never reaches the entity written below.
-    if (input.id !== undefined && input.id !== formId) {
+    // The create's idempotency key is the create's alone: an edit sending one is refused rather
+    // than written over the stored key (a dropped field is a save that did something else).
+    if (input.clientCreateId !== undefined) {
       throw new BadRequestException({
-        code: FORM_ID_FIXED,
-        message: 'A form id is fixed at creation.',
+        code: FORM_CREATE_KEY_ON_EDIT,
+        message: 'clientCreateId is sent with a create only.',
       });
     }
-    const { id: _sameId, ...edit } = input;
-    input = edit as CreateFormDto;
 
     // THE ASSOCIATION LINK IS FIXED AT CREATION (user decision, 2026-08-23). A form is either
     // personal or an association's, and which one it is decides who owns it: MANAGE_FORMS on the
@@ -1340,9 +1333,10 @@ export class FormsService {
       if (!current.document && !wasDraft) return { refused: 'empty' as const };
       // Written since the revision started (an older build editing the form directly): publishing
       // would undo that write unseen, so it is refused unless the manager confirmed the overwrite.
-      if (current.document && !overwrite && (await formChangedSinceRevision(m, formId))) {
-        return { refused: 'changed' as const };
-      }
+      // The form's row is taken here whatever the answer is used for: an overwrite publishes over
+      // the form as it stands NOW, not as a write landing between this read and the update.
+      const changed = current.document ? await formChangedSinceRevision(m, formId) : false;
+      if (changed && !overwrite) return { refused: 'changed' as const };
       let saved: Form = form;
       if (current.document) {
         const dto = await this.validatedRevision(current.document);
@@ -1392,7 +1386,7 @@ export class FormsService {
    * (`whitelist`, `transform`), the `draft` flag dropped (publishing is this route's own job).
    */
   private async validatedRevision(document: Record<string, unknown>): Promise<CreateFormDto> {
-    const { draft: _draft, id: _id, ...body } = document;
+    const { draft: _draft, clientCreateId: _key, ...body } = document;
     const dto = plainToInstance(CreateFormDto, body);
     const errors = await validate(dto, { whitelist: true });
     if (errors.length > 0) {

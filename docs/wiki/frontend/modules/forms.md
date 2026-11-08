@@ -177,8 +177,8 @@ codes. `formSubmitRefusalMessage` (both fill pages) maps a form code, then a pay
 never `e.message`. The contract's `codes` list is asserted on both sides, and the client test fails
 on a code with no sentence. What still carries no code: the `ValidationPipe`'s own 400 (a malformed
 body the page cannot produce) and a file answer naming no uploaded file (`fileAnswersOf`), both
-worded by the generic line. The create and edit pages map the save codes the same way but still
-fall back to `e.message` for the uncoded save refusals.
+worded by the generic line. The create and edit pages map the save codes the same way, then the
+status, then a generic sentence of their own - never `e.message` either.
 
 **A question type this build does not know** (the coming `product_grid`) is drawn as "Mettez à jour
 l'application pour répondre à cette question" (`FormQuestion.svelte`'s `{:else}`), and a required
@@ -294,8 +294,14 @@ empties `document` (NULL) and bumps it instead of deleting the row, so an editor
 number is refused rather than handed a fresh revision on top of a form it never saw. No author column:
 nothing personal is stored beyond the form's own content (no register change). Two more columns:
 `saveId`, the client's id for the save that wrote the revision, and `baseFingerprint`, the md5 of the
-form's own content (`forms` minus its ids, dates, status and cover image) when the revision STARTED -
-the first save after none, a publication or a discard.
+form's own content (`forms` minus its ids, the create key, dates, status and cover image) when the
+revision STARTED - the first save after none, a publication or a discard. **A tier retag follows the
+revisions** (`products.service.ts`, `followRetagInRevisions`): the retag that rewrites
+`forms."cotisationVariantKey"` rewrites the same key in the open revision of every form it rewrote
+(where the revision still names the old key), in the same transaction, and re-takes the base
+fingerprint of a revision that was at its base - a retag is no "change outside the revision", and a revision published later does not grant the
+old key. **The fingerprint check takes the form's row lock (`FOR UPDATE OF f`) on every publication,
+`overwrite: true` included**: the lock orders the publication against a concurrent write either way.
 
 | Route (managers only, `assertFormManager`) | What it does |
 |---|---|
@@ -313,10 +319,15 @@ creation: the create page's picker is shut once the draft exists.
 
 **An edit never writes the status.** `update` saves the form WITHOUT its `status` column: the row was
 read before the edit's checks, and a publication landing meanwhile would otherwise be written back as
-`draft`. **A create may carry its id** (`CreateFormDto.id`, minted by the client): a second create
-with that id by the same account answers the stored form (idempotent, the insert race included -
-the loser reads the winner's row); another account's id is `409 FORM_ID_TAKEN`; an edit naming
-another id is `400 FORM_ID_FIXED`.
+`draft`. **A create may carry an idempotency key, never an id** (`CreateFormDto.clientCreateId`, a
+UUID v4 minted by the client; `forms."clientCreateId"`, unique per owner, migration 146): a second
+create with that key by the same account answers the stored form (the insert race included - the
+loser reads the winner's row); the SERVER mints every form id. A client choosing the id was refused
+in review (2026-11-08): `posts."attachedFormId"`, `/f/:id` links, QR codes and posters may still
+name a HARD-deleted form, and a create under that id would have put another account's form behind
+them - and the "id taken" answer was an existence oracle. A key is looked up only among the
+caller's own forms, so it answers nothing about anyone else's. An edit sending a key is
+`400 FORM_CREATE_KEY_ON_EDIT`.
 
 **Question images cited only by a revision are cited.** `isCited` and the hourly reconciliation read
 `form_drafts.document -> 'items'` as well as `forms.items`, so an image added in the editor outlives
@@ -340,27 +351,42 @@ revision dropped.
   rather than overwrite the other tab);
 - **offline edits are kept ON THE DEVICE (owner, 2026-11-08, replacing the page-only decision of the
   same day)**: every document is written to `CanariDBFormDrafts_<userId>` (`draftCopies.ts`, one
-  record per form: the base revision, the save id, the document) before it is sent, and deleted once
-  its save landed (`deleteIfSent`: an answer to an older save never deletes a newer edit). The
-  database is the account's: in `accountIndexedDbNames` (the account wipe) and erased at every
-  sign-out (`clearAuthUnderway`). An editor reopened on the form opens on the copy when it is built on
-  the revision the server holds and sends it as the SAME save; one the server already holds (its
-  `saveId`) is cleared; one built on a revision another writer moved past is dropped and logged at
-  WARN. **The background resend** (`draftResend.ts`, started by the layout once the session is up and
-  the estate says `formDrafts`, again at each `online`) sends the copies no editor holds open - a
-  shared Web Lock per form (`holdFormEditor`) tells it, in every tab - creating the form first when
-  the server never saw it (the create page's id). A copy that reached no server, or met a 5xx, stays;
-  a 4xx (another writer's revision, a form gone or no longer the account's) drops it, logged at WARN.
-  A conflict in a live editor drops the copy too: the page says "rechargez", and another writer's
-  revision is never overwritten;
+  record per form, keyed by the form's id, or by the create key until a create of it is answered:
+  the base revision, the save id, the document, and `after`, the saves sent before it that nobody
+  answered) before it is sent, and deleted once its save landed (`deleteIfSent`: an answer to an
+  older save never deletes a newer edit). The database is the account's: in `accountIndexedDbNames`
+  (the account wipe) and erased at every sign-out (`clearAuthUnderway`) - **an INVOLUNTARY sign-out
+  (an expired session, a revoked device) erases the unsent edits as well**: the next account on the
+  device must neither see nor send them, and the session that typed them is gone. The store REFUSES
+  every operation once its account is not the one signed in (`FormDraftCopyAccountGoneError`): a
+  store captured earlier - an editor's teardown save on its way to `/login`, a resend pass in flight -
+  can neither recreate the erased database nor read it into the next session. **A lost answer
+  survives the page**: a save sent and never answered, more typing, the app closed - the copy of the
+  typing records the unanswered save in `after`, and whoever sends it next re-bases it on the revision
+  that save wrote (`copyAgainst` on reopen, the resend on the 409 naming it) instead of dropping it.
+  An editor reopened on the form opens on the copy when it is built on the revision the server holds
+  (directly or through `after`) and sends it as the SAME save; one the server already holds (its
+  `saveId`) is cleared; one built on a revision another writer moved past is dropped, logged at WARN,
+  **and the member TOLD by a toast naming the form** ("Les modifications de « ... » gardées sur cet
+  appareil n'ont pas pu être enregistrées ..."). **The background resend** (`draftResend.ts`, started
+  by the layout once the session is up and the estate says `formDrafts`, again at each `online`)
+  sends the copies no editor holds open - a shared Web Lock per form (`holdFormEditor`) tells it, in
+  every tab - creating the form first under its create key when no create of it was answered, then
+  re-keying the copy to the form's id. It reads `currentUserId()` before every request and every
+  write, and ends the pass at the first change: a copy is never sent under another account's token.
+  A copy that reached no server, or met a 5xx, stays; a 4xx (another writer's revision, a form gone
+  or no longer the account's) drops it, logged at WARN, with the same toast. A conflict in a live
+  editor KEEPS the copy while its edits are on screen: the page says "rechargez", nothing more is
+  sent, and the reopened editor or the resend tells the member when it finds the copy unsendable;
 - "Publier" / "Publier les modifications" first saves what is pending, and is shut while an edit has
   not reached the server ("Les modifications ne sont pas encore enregistrées sur le serveur");
 - the editor opens on the revision when there is one, and takes its "nothing changed" baseline once
   the question cards have mounted (a card completes its question's defaults when drawn), so opening a
   form saves nothing;
-- the create page mints the form's id (`crypto.randomUUID()`, the client post id pattern) and creates
-  the draft at the first pause after a title (a shell: the title and the association) under it, then
-  saves the rest as its revision: a create whose answer was lost is sent again as the same create.
+- the create page mints the create's key (`crypto.randomUUID()`, the client post id pattern) and
+  creates the draft at the first pause after a title (a shell: the title and the association) under
+  it, then saves the rest as its revision: a create whose answer was lost is sent again as the same
+  create, and the server answers the form it minted.
   Question images uploaded once the draft exists name it; one uploaded before is bound by the save. A
   reload of the create page starts a new form; the draft already saved is in "Mes formulaires" with its
   badge, and edits a closed create page left unsent reach it through the background resend;
@@ -370,7 +396,11 @@ revision dropped.
 - **"Voir le formulaire" in the editor saves the pending edit first**: the tab is opened at the press
   (a popup opened after an await is blocked) and pointed at the preview once the save returned;
 - **a revision refused `FORM_CHANGED_SINCE_REVISION`** says so ("Ce formulaire a ete modifie ailleurs
-  ..."), and "Publier" becomes "Publier quand meme", which sends `overwrite: true`.
+  ..."), and "Publier" becomes "Publier quand meme", which sends `overwrite: true`;
+- **no refusal is worded by `e.message`** on either page: a publication, a discard, a load and an
+  image upload or removal map their codes, then the status (`describeApiRefusal`), then a generic
+  sentence of their own (`form_publish_failed`, `form_discard_failed`, `form_edit_load_error`,
+  `form_builder_image_upload_failed`, `form_image_remove_failed`).
 
 **Two readiness predicates, kept apart on purpose.** PUBLICATION asks `canTakePaymentsNow` (the
 platform's active provider, through core-service): may this form go live as paid now. A READ asks
@@ -380,14 +410,16 @@ publication gate is the stricter one, and a form served paused only shows cash.
 
 Tests: `forms.service.revision.spec.ts` (autosave, a lost answer's save id in the 409, images bound
 at the save, stale revision, atomic publish with rollback, a form changed since the revision and its
-overwrite, payment rules, draft-form publication, discard, the idempotent create and its race, the
-fixed id), `form-draft-revision.integration.spec.ts` (migration 146, one-of-two saves, growth only,
-rollback, the lock, the save id, the fingerprint and the cover image it ignores),
-`form-order-ref.integration.spec.ts` (a client-minted id kept by TypeORM, one row for two racing
-creates), `form-item-images.integration.spec.ts` (an image only a revision cites),
+overwrite and its lock, payment rules, draft-form publication, discard, the create key - repeated,
+raced, another owner's, refused on an edit), `form-draft-revision.integration.spec.ts` (migration
+146, one-of-two saves, growth only, rollback, the lock, the save id, the fingerprint and the cover
+image it ignores, a tier retag reaching the revision), `form-order-ref.integration.spec.ts` (two
+racing creates under one key: one row, a server-minted id; another owner's same key: another form), `form-item-images.integration.spec.ts` (an image only a revision cites),
 `autosave.svelte.test.ts` (debounce, hidden, left, torn down, single flight, offline then online, a
-lost answer adopted, the device copy, conflict), `draftCopies.test.ts` (the store over
-fake-indexeddb, the sign-out erase, the resend's five outcomes, an editor's hold), `FormSaveBar.svelte.test.ts` (the status line, publish and discard),
+lost answer adopted, the device copy, conflict keeping it), `draftCopies.test.ts` (the store over
+fake-indexeddb, the re-key, the sign-out erase and a late put refused, `copyAgainst`, the resend's
+outcomes including a predecessor re-based and an account switch mid-pass, an editor's hold, and the
+whole lost-answer-then-typing-then-close sequence), `FormSaveBar.svelte.test.ts` (the status line, publish and discard),
 `routes/forms/[id]/edit/page.draft`, `routes/forms/create/page.returnNoRoute`,
 `routes/forms/page.viewLink`, `routes/forms/[id]/page.preview`.
 

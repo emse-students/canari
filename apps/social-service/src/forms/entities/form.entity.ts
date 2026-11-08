@@ -13,6 +13,11 @@ import {
 
 /** TypeORM entity representing a dynamic form, optionally linked to an association and an online payment. */
 @Entity('forms')
+// Migration 146's index, declared so a schema built from the entities (the integration specs) has it.
+@Index('forms_owner_client_create_id', ['ownerId', 'clientCreateId'], {
+  unique: true,
+  where: '"clientCreateId" IS NOT NULL',
+})
 export class Form {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -162,6 +167,13 @@ export class Form {
   /** Public URL of the form header/banner image (served via media-service). */
   @Column({ type: 'varchar', length: 500, nullable: true })
   imageUrl: string | null;
+
+  /**
+   * The idempotency key of the create that stored this form (migration 146): minted by the client,
+   * unique per owner, never the form's id. A create sent again with it answers this form.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  clientCreateId: string | null;
 
   /** Internal media-service ID for the banner image (used for cleanup on update). */
   @Column({ type: 'varchar', length: 255, nullable: true })

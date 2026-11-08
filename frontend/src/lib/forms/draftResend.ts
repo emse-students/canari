@@ -6,8 +6,16 @@
  */
 import { createForm, saveFormDraft } from './api';
 import { FormDraftConflictError } from './draftConflict';
-import { formDraftCopyStore, resendFormDraftCopies, type ResendDeps } from './draftCopies';
+import {
+  formDraftCopyStore,
+  resendFormDraftCopies,
+  type FormDraftCopy,
+  type ResendDeps,
+} from './draftCopies';
+import { m } from '$lib/paraglide/messages';
 import { serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
+import { showToast } from '$lib/stores/toast.svelte';
+import { currentUserId } from '$lib/stores/userState.svelte';
 import { refusalStatus } from '$lib/utils/apiRefusal';
 
 let running: { userId: string; onOnline: () => void } | null = null;
@@ -17,11 +25,12 @@ function depsFor(userId: string): ResendDeps {
   return {
     store: formDraftCopyStore(userId),
     formDrafts: () => serverFormDrafts() === true,
+    signedIn: () => currentUserId() === userId,
     // The shell a create page makes first: what is fixed at creation, and the title it is listed
-    // under. The rest is the revision the save below stores.
+    // under - the SAME create, by its key. The rest is the revision the save below stores.
     createDraft: (copy) =>
       createForm({
-        id: copy.formId,
+        clientCreateId: copy.clientCreateId ?? undefined,
         draft: true,
         title: copy.document.title,
         basePrice: 0,
@@ -31,8 +40,19 @@ function depsFor(userId: string): ResendDeps {
       }),
     save: (copy) => saveFormDraft(copy.formId, copy.baseRevision, copy.document, copy.saveId),
     statusOf: refusalStatus,
-    conflictSaveId: (e) => (e instanceof FormDraftConflictError ? e.saveId : undefined),
+    conflictOf: (e) =>
+      e instanceof FormDraftConflictError ? { revision: e.revision, saveId: e.saveId } : undefined,
+    dropped: tellCopyDropped,
   };
+}
+
+/**
+ * Tells the member that the edits a closed editor left on this device could not be sent - the form
+ * changed elsewhere, or is gone - and names the form: an edit lost in silence is found by hand.
+ */
+export function tellCopyDropped(copy: Pick<FormDraftCopy, 'document'>): void {
+  const title = copy.document.title?.trim() || m.form_draft_copy_untitled();
+  showToast(m.form_draft_copy_dropped({ title }), 'warning', 10_000);
 }
 
 /** One pass for the running account; its failures are logged, never thrown. */

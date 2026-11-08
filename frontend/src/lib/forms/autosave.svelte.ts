@@ -38,10 +38,19 @@ export type SaveRevision = (
  * in the page only.
  */
 export interface AutosaveDeviceCopy {
-  keep(baseRevision: number, saveId: string, document: CreateFormPayload): Promise<void>;
+  /**
+   * `after`: the saves sent before this one that nobody answered - a revision one of them wrote is
+   * this document's base, so a page closed now is re-based on it when reopened, never dropped.
+   */
+  keep(
+    baseRevision: number,
+    saveId: string,
+    document: CreateFormPayload,
+    after: string[]
+  ): Promise<void>;
   /** The save `saveId` landed: its copy goes, unless a newer edit replaced it. */
   sent(saveId: string): Promise<void>;
-  /** The revision was published, discarded or taken by another writer: nothing of it is owed. */
+  /** The revision was published or discarded: nothing of it is owed. */
   drop(): Promise<void>;
 }
 
@@ -62,7 +71,9 @@ interface Pending {
  *
  * A SAVE IS NAMED BY ITS CLIENT, and the name rides on the revision it writes: a save whose answer
  * was lost is found in the 409 of the next one (`FormDraftConflictError.saveId`) and ADOPTED - it
- * landed - instead of being reported as another writer's.
+ * landed - instead of being reported as another writer's. The device copy records those unanswered
+ * saves (`after`), so the adoption survives the page: reopened, or sent by the resend, a copy whose
+ * predecessor wrote the revision is re-based on it.
  *
  * OFFLINE EDITS ARE KEPT ON THE DEVICE (owner, 2026-11-08): every document is written to the device
  * copy before it is sent ({@link AutosaveDeviceCopy}), so closing the tab or the app loses nothing;
@@ -81,8 +92,11 @@ export class FormAutosave {
   #device: AutosaveDeviceCopy | null;
   #newSaveId: () => string;
   #pending: Pending | null = null;
-  /** The id of a sent save nobody answered: it may have landed, and a 409 naming it says it did. */
-  #unanswered: string | null = null;
+  /**
+   * The sent saves nobody answered since the last answer: any may have landed, and a 409 naming one
+   * says it did. Emptied by the next answer - the server's revision is known again.
+   */
+  #unanswered: string[] = [];
   #timer: ReturnType<typeof setTimeout> | null = null;
   #inFlight: Promise<void> | null = null;
 
@@ -119,9 +133,10 @@ export class FormAutosave {
    * Resumes a save a closed page left on the device - the SAME save, its id kept, so a copy that had
    * in fact landed is recognised by the server's answer - and sends it at once.
    */
-  resume(document: CreateFormPayload, saveId: string): void {
+  resume(document: CreateFormPayload, saveId: string, after: string[] = []): void {
     if (this.status === 'conflict') return;
     Log.d('forms-autosave', `resuming the device copy built on revision ${this.revision}`);
+    this.#unanswered = [...after];
     this.#pending = { document, saveId };
     this.status = 'saving';
     void this.flush();
@@ -161,7 +176,7 @@ export class FormAutosave {
     this.revision = revision;
     this.hasChanges = false;
     this.#pending = null;
-    this.#unanswered = null;
+    this.#unanswered = [];
     if (this.#timer) clearTimeout(this.#timer);
     this.#timer = null;
     this.status = 'saved';
@@ -196,8 +211,9 @@ export class FormAutosave {
   }
 
   #keep(pending: Pending): void {
+    const after = this.#unanswered.filter((id) => id !== pending.saveId);
     this.#device
-      ?.keep(this.revision, pending.saveId, pending.document)
+      ?.keep(this.revision, pending.saveId, pending.document, after)
       .catch((e: unknown) =>
         console.warn(
           `[forms-autosave] device copy not written - the edit lives in this page only: ${e}`
@@ -217,7 +233,9 @@ export class FormAutosave {
   #landed(saveId: string, revision: number): void {
     this.revision = revision;
     this.hasChanges = true;
-    if (this.#unanswered === saveId) this.#unanswered = null;
+    // An answer: the server's revision is known, and no earlier unanswered save can land after it
+    // (its base is behind).
+    this.#unanswered = [];
     this.#device
       ?.sent(saveId)
       .catch((e: unknown) => console.warn(`[forms-autosave] device copy not cleared: ${e}`));
@@ -244,29 +262,32 @@ export class FormAutosave {
           this.status = this.#pending ? 'saving' : 'saved';
           return;
         }
-        if (e.saveId === this.#unanswered) {
-          // The save before it landed and its answer was lost: build on it, send this one again.
+        if (this.#unanswered.includes(e.saveId)) {
+          // A save before it landed and its answer was lost: build on it, send this one again.
           Log.d('forms-autosave', `an unanswered save landed as revision ${e.revision}: adopted`);
-          this.#landed(e.saveId, e.revision);
           this.#pending = this.#pending ?? pending;
+          this.#landed(e.saveId, e.revision);
           this.status = 'saving';
           return;
         }
       }
       if (refusalCode(e) === FORM_DRAFT_CONFLICT) {
+        // The device copy is KEPT: the edits are still on screen, and a reopened editor or the
+        // resend tells the member when it finds them unsendable.
         console.warn(
-          `[forms-autosave] revision ${this.revision} moved elsewhere: autosave stopped, device copy dropped`
+          `[forms-autosave] revision ${this.revision} moved elsewhere: autosave stopped, device copy kept`
         );
         this.status = 'conflict';
         this.#pending = null;
-        this.#dropCopy('another writer moved the revision');
         return;
       }
       // Kept to send again: the newest edit wins, an older one is never sent after it.
       this.#pending = this.#pending ?? pending;
       if (refusalStatus(e) === null) {
-        // Nobody answered: it may have landed, and the next save's 409 will say so.
-        this.#unanswered = pending.saveId;
+        // Nobody answered: it may have landed, and the next save's 409 will say so. The copy of
+        // what is pending records it, so a page closed before that 409 still knows.
+        if (!this.#unanswered.includes(pending.saveId)) this.#unanswered.push(pending.saveId);
+        if (this.#pending !== pending) this.#keep(this.#pending);
         console.warn(
           `[forms-autosave] save reached no server, kept for the next try: ${String(e)}`
         );

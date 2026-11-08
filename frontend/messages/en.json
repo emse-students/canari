@@ -5814,5 +5814,13 @@
   "form_draft_empty_refusal": "No changes to publish.",
   "form_draft_invalid_refusal": "These changes cannot be published as they are: check the questions and the settings.",
   "form_changed_since_revision_refusal": "This form was changed elsewhere since these edits started (by an older version of the app). Publishing would replace those changes: check it, then press \"Publish anyway\".",
-  "form_publish_overwrite_button": "Publish anyway"
+  "form_publish_overwrite_button": "Publish anyway",
+  "form_action_publish": "Publishing the form",
+  "form_action_discard": "Discarding the edits",
+  "form_publish_failed": "The form could not be published. Try again.",
+  "form_discard_failed": "The edits could not be discarded. Try again.",
+  "form_image_remove_failed": "The image could not be removed. Try again.",
+  "form_draft_copy_untitled": "Untitled form",
+  "form_draft_copy_dropped": "The edits to \"{title}\" kept on this device could not be saved: the form was changed elsewhere or no longer exists.",
+  "form_edit_load_action": "Loading the form"
 }

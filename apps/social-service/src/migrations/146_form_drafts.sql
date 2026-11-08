@@ -21,6 +21,12 @@
 -- now and refuses `409 FORM_CHANGED_SINCE_REVISION` when something else wrote the form meanwhile
 -- (an older build editing it directly), unless the manager confirms the overwrite.
 --
+-- `forms."clientCreateId"` is the idempotency key of a create: the client mints it, and a second
+-- create carrying it for the same owner answers the stored form instead of storing another (a create
+-- whose answer was lost). It is NEVER the form's id - the server mints that - so a client cannot
+-- choose the id of a form deleted earlier, which posts, links and QR codes may still name. Unique per
+-- owner (the index), absent on every form made before it.
+--
 -- No personal data beyond what `forms` already holds: the document is the form's own content, and
 -- no author column is kept.
 --
@@ -36,3 +42,8 @@ CREATE TABLE IF NOT EXISTS form_drafts (
   "saveId" uuid,
   "baseFingerprint" text
 );
+
+ALTER TABLE forms ADD COLUMN IF NOT EXISTS "clientCreateId" uuid;
+
+CREATE UNIQUE INDEX IF NOT EXISTS forms_owner_client_create_id
+  ON forms ("ownerId", "clientCreateId") WHERE "clientCreateId" IS NOT NULL;

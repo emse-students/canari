@@ -26,9 +26,6 @@ export const FORM_DRAFT_INVALID = 'FORM_DRAFT_INVALID';
  */
 export const FORM_CHANGED_SINCE_REVISION = 'FORM_CHANGED_SINCE_REVISION';
 
-/** The 409 refusing a create whose client-minted id is another account's form. */
-export const FORM_ID_TAKEN = 'FORM_ID_TAKEN';
-
 /** The 400 refusing a document that is not an object, or is larger than a form ever is. */
 export const FORM_DRAFT_MALFORMED = 'FORM_DRAFT_MALFORMED';
 
@@ -52,7 +49,7 @@ export interface FormDraftState {
  * its cover image (uploaded on its own route, never part of a revision). `to_jsonb` of a row prints
  * its keys in one canonical order, and a column added later is covered without touching this.
  */
-const FORM_FINGERPRINT_SQL = `md5((to_jsonb(f) - ARRAY['id', 'ownerId', 'createdAt', 'updatedAt', 'deletedAt', 'closedAt', 'status', 'imageUrl', 'imageMediaId'])::text)`;
+const FORM_FINGERPRINT_SQL = `md5((to_jsonb(f) - ARRAY['id', 'ownerId', 'clientCreateId', 'createdAt', 'updatedAt', 'deletedAt', 'closedAt', 'status', 'imageUrl', 'imageMediaId'])::text)`;
 
 type Querier = Pick<EntityManager, 'query'>;
 
@@ -180,4 +177,52 @@ export async function formsWithUnpublishedChanges(
 export function isStorableDraftDocument(document: unknown): document is Record<string, unknown> {
   if (!document || typeof document !== 'object' || Array.isArray(document)) return false;
   return JSON.stringify(document).length <= FORM_DRAFT_MAX_CHARS;
+}
+
+/**
+ * Of the forms of `associationId`, those whose open revision is still built on the form as it is
+ * (their base fingerprint matches). Read BEFORE a write the revision must follow (the tier retag), so
+ * that write can move the base along: the revision did not miss it, it was carried into it.
+ */
+export async function revisionsAtBase(m: Querier, associationId: string): Promise<string[]> {
+  const rows = (await m.query(
+    `SELECT f.id FROM forms f JOIN form_drafts d ON d."formId" = f.id
+      WHERE f."associationId" = $1 AND d.document IS NOT NULL
+        AND d."baseFingerprint" = ${FORM_FINGERPRINT_SQL}`,
+    [associationId]
+  )) as Array<{ id: string }>;
+  return rows.map((r) => r.id);
+}
+
+/**
+ * THE TIER RETAG REACHES THE REVISIONS TOO (`ProductsService`, owner 2026-11-01): the forms it
+ * re-pointed from `oldKey` to `newKey` may hold an unpublished revision naming `oldKey`, which a
+ * publication would write back - so that revision is re-pointed in the same transaction. And a
+ * revision that was built on the form as it stood (`atBase`, read by {@link revisionsAtBase} before
+ * the retag) takes the retagged form as its base: the retag is no edit made "outside" it, and must
+ * not refuse its publication as one.
+ */
+export async function followRetagInRevisions(
+  m: Querier,
+  formIds: string[],
+  atBase: string[],
+  oldKey: string | null,
+  newKey: string | null
+): Promise<void> {
+  if (formIds.length === 0) return;
+  await m.query(
+    `UPDATE form_drafts
+        SET document = jsonb_set(document, '{cotisationVariantKey}', COALESCE(to_jsonb($3::text), 'null'::jsonb))
+      WHERE "formId" = ANY($1::uuid[]) AND document IS NOT NULL
+        AND document ? 'cotisationVariantKey'
+        AND (document ->> 'cotisationVariantKey') IS NOT DISTINCT FROM $2::text`,
+    [formIds, oldKey, newKey]
+  );
+  const rebased = formIds.filter((id) => atBase.includes(id));
+  if (rebased.length === 0) return;
+  await m.query(
+    `UPDATE form_drafts d SET "baseFingerprint" = ${FORM_FINGERPRINT_SQL}
+       FROM forms f WHERE f.id = d."formId" AND d."formId" = ANY($1::uuid[])`,
+    [rebased]
+  );
 }
