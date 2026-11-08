@@ -819,6 +819,23 @@ be sent (`awayProblem = 'unsendable'`) and a Retry that starts a fresh recorder.
 "on air" with nothing sent. **That a new recorder restarts its media time at zero is an ASSUMPTION** WP-L1 did not measure:
 LIVE-B1 row 8 reads it.
 
+### The screen stays on while broadcasting on the iPhone (2026-11-08)
+
+The broadcaster holds the screen from on-air to the end (`liveBroadcast.svelte.ts`: `hold()` when
+the recorder starts, `release()` on every stop and finish). WKWebView refuses the Screen Wake Lock,
+so the holder is chosen by platform: `screenAwakeHolder('live')` (`mobile/screenAwake.ts`) - the
+iOS app's idle timer through the `canariIdleTimer` handler, `ScreenWakeLock` tagged `LIVE-WAKE`
+elsewhere. Native keeps a SET of owners (`call`, `live`), so a call ending during a live never lets
+the screen sleep under the broadcast, and the other way round; the mechanism, the page-load reset
+and the tests are in [calls](calls.md#the-screen-stays-on-during-an-iphone-video-call-2026-11-08).
+The viewer takes no hold on any platform, before or after this change; whether the screen
+dims while WATCHING on the iPhone is not read.
+
+**Owed on the iPhone 12:** a live broadcast left untouched past the auto-lock delay - the screen
+stays on; `[LIVE-WAKE] iOS idle timer held` and `owners=[live] disabled=1`; at the end `released`
+and `disabled=0`; and a video call received during a live (if the bench allows it) - hanging up
+leaves `owners=[live] disabled=1`.
+
 ### Upload health and the end
 
 `LiveSegmentUploader` gained `onRetry(index, attempt, error)`: a retried send shows a quiet

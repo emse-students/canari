@@ -69,7 +69,7 @@
   import { primeCallVoice, startCallVoice } from '$lib/utils/callVoice';
   import { CallRingback } from '$lib/utils/callRingback';
   import { untrack } from 'svelte';
-  import { callScreenAwake } from '$lib/mobile/iosCallIdleTimer';
+  import { screenAwakeHolder } from '$lib/mobile/screenAwake';
 
   let {
     callService,
@@ -501,7 +501,7 @@
    * releases it on every hide. The iOS app holds it natively (`idleTimerDisabled`): WKWebView
    * refuses the Screen Wake Lock, so the platform picks the holder, not a refusal.
    */
-  const wakeLock = callScreenAwake();
+  const wakeLock = screenAwakeHolder('call');
   $effect(() => {
     if (!videoShowing || isEnded) return;
     void wakeLock.hold();

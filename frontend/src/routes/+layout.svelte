@@ -26,7 +26,7 @@
   } from '$lib/mobile/androidCallService';
   import { showToast } from '$lib/stores/toast.svelte';
   import { releaseIosProximityOfPreviousPage } from '$lib/mobile/iosCallProximity';
-  import { releaseIosIdleTimerOfPreviousPage } from '$lib/mobile/iosCallIdleTimer';
+  import { releaseIosIdleTimerOfPreviousPage } from '$lib/mobile/screenAwake';
   import {
     clearEdgeExclusionsForNewDocument,
     excludeLeftEdgeOver,
@@ -167,7 +167,8 @@
     if (isAndroidTauriRuntime()) {
       releaseCallServiceOfPreviousPage(window);
     }
-    // Its iOS twins: the proximity sensor and the idle timer a reloaded page may have left set.
+    // Its iOS twins: the proximity sensor and the idle timer (a call's or a live's) a reloaded page
+    // may have left set.
     if (isIosTauriRuntime()) releaseIosProximityOfPreviousPage();
     if (isIosTauriRuntime()) releaseIosIdleTimerOfPreviousPage();
     themeStore.init();

@@ -2411,33 +2411,40 @@ with its sentence.
 
 WKWebView refuses the Screen Wake Lock (`NotAllowedError: Permission was denied`), so on the iOS
 app the call screen holds the screen through the idle timer instead, and never asks the engine.
-The PLATFORM picks the holder at the decision (`callScreenAwake()` in `mobile/iosCallIdleTimer.ts`,
-`isIosTauriRuntime()`), never a classified refusal. Android's WebView and the browsers keep
-`ScreenWakeLock` (`CALL-WAKE screen held on` on the Mi 9T, 2026-11-02).
+The PLATFORM picks the holder at the decision (`screenAwakeHolder('call')` in
+`mobile/screenAwake.ts`, `isIosTauriRuntime()`), never a classified refusal. Android's WebView and
+the browsers keep `ScreenWakeLock` (`CALL-WAKE screen held on` on the Mi 9T, 2026-11-02). A live
+broadcast takes the same holder as owner `live` ([live](live.md#the-screen-stays-on-while-broadcasting-on-the-iphone-2026-11-08)).
 
 - **When**: the same `$effect` of `CallOverlay.svelte` as before - while a picture is on screen
   (`videoShowing`) and the call is not ended, either direction, a CallKit-answered call included
   (the overlay draws every call). An audio call still takes no hold (the table below).
-- **How**: the page posts a boolean to `webkit.messageHandlers.canariIdleTimer`; `canari_ios.mm`
-  (`CanariIdleTimerHandler`, registered beside `canariProximity`) sets
-  `UIApplication.idleTimerDisabled` and logs `[CanariIOS] call idle timer: disabled=<now> (was
-  <before>)`. The page's `[CALL-WAKE] iOS idle timer disabled|enabled (<why>)` line is written
-  once per change: the hold repeated on every return to the foreground posts nothing.
+- **How - a SET OF OWNERS, not a boolean**: a call and a live can overlap, and one's release must
+  not drop the other's hold. The page posts `{owner, hold}` (`owner` = `call` | `live`) to
+  `webkit.messageHandlers.canariIdleTimer`; `canari_ios.mm` (`CanariIdleTimerHandler`, registered
+  beside `canariProximity`) adds or removes the owner from an `NSMutableSet` and sets
+  `UIApplication.idleTimerDisabled = owners.count > 0`, logging `[CanariIOS] idle timer (hold
+  call): owners=[call] disabled=1 (was 0)`. Adding a held owner or removing an absent one changes
+  nothing. The page's `[CALL-WAKE] iOS idle timer held|released (<why>)` line is written once per
+  change per owner: the hold repeated on every return to the foreground posts nothing.
 - **Every end path releases it**: the effect's cleanup on the end of the picture, on `ended`, and
-  on the overlay's unmount; every page load posts `false` once
+  on the overlay's unmount; every page load posts `{reset: true}` once, which empties the set
   (`releaseIosIdleTimerOfPreviousPage`, root layout), for a reload or a WebContent kill that left
   the process alive mid-call. A kill or a crash of the app needs nothing: the property belongs to
   the running process. iOS ignores it while the app is not in the foreground, so a call ended in
   the background is released by the effect when the page runs again, before the screen is seen.
 - **An ask with no handler** (a build without it) logs `[CALL-WAKE] ERROR no canariIdleTimer
   handler`; a release with none is silent.
+- **Tests** (`screenAwake.test.ts`): a call and a live overlapping, released in both orders, and
+  one owner released twice, against the set rule; the `.mm` is pinned to that rule (the set, add,
+  remove, reset, `owners.count > 0`). The Objective-C itself first runs on the phone.
 
 **Owed on the iPhone 12** (a pre-release with this change): a video call both ways, left untouched
-past the auto-lock delay - the screen stays on; the `[CALL-WAKE] iOS idle timer disabled` and
-`[CanariIOS] call idle timer: disabled=1` lines, and no `the screen lock was refused`; at the
-hang-up, `enabled` and `disabled=0`, and the screen dims again at the auto-lock delay; a call
-ended from the other phone while the iPhone is in the background, then the app reopened - the
-screen dims on time.
+past the auto-lock delay - the screen stays on; the `[CALL-WAKE] iOS idle timer held` and
+`[CanariIOS] idle timer (hold call): owners=[call] disabled=1` lines, and no `the screen lock was
+refused`; at the hang-up, `released` and `disabled=0`, and the screen dims again at the auto-lock
+delay; a call ended from the other phone while the iPhone is in the background, then the app
+reopened - the screen dims on time.
 
 ## The quality ladder (2026-10-21) - 720p, and an automatic drop
 
@@ -3032,7 +3039,7 @@ backlog item, [P1 - a call does not survive the app leaving the screen](../../ba
 | The OS knows a call is up | Media Session: title = the peer, `hangup` / `togglemicrophone` handlers, `setMicrophoneActive` (Chromium) - `utils/callMediaSession.ts`, each action in its own `try`, each refusal logged | Android: BUILT, [below](#wp-c-bg-a---the-android-ongoing-call-service-2026-10-20) (a `microphone` foreground service, not `phoneCall`); iOS CallKit for EVERY call (owed) |
 | The microphone in the background | nothing can hold it: Android 9+ gives a backgrounded app silence; WKWebView stops capture when hidden | Android: the foreground service (BUILT); iOS: an `AVAudioSession` call session (owed) |
 | Audio route (speaker, earpiece, Bluetooth) | iOS only: the loudspeaker by label-matched `setSinkId`, best effort, `WARN` when none is listed; the earpiece is the call's DEFAULT output (WebKit lists no such device), asked as `setSinkId('')` or nothing at all (`callAudioRoute.ts`) | Android: `AudioManager.setCommunicationDevice` in the service (BUILT); iOS: `AVAudioSession` (owed) |
-| Screen wake lock | **deliberately none for audio**: a phone call lets the screen go dark in the pocket; a lock would light it. **A video call holds one** while either picture is on screen (`ScreenWakeLock` of `live/liveDevice.ts`, tag `CALL-WAKE`), taken again on every return to the foreground | iOS: `UIApplication.idleTimerDisabled` through `canariIdleTimer` (BUILT 2026-11-08, [above](#the-screen-stays-on-during-an-iphone-video-call-2026-11-08)): WKWebView refuses the wake lock |
+| Screen wake lock | **deliberately none for audio**: a phone call lets the screen go dark in the pocket; a lock would light it. **A video call holds one** while either picture is on screen (`ScreenWakeLock` of `live/liveDevice.ts`, tag `CALL-WAKE`), taken again on every return to the foreground | iOS: `UIApplication.idleTimerDisabled` through `canariIdleTimer`, a set of owners shared with a live (BUILT 2026-11-08, [above](#the-screen-stays-on-during-an-iphone-video-call-2026-11-08)): WKWebView refuses the wake lock |
 | Diagnosis | `[Call] app hidden` / `visible`, with `state=`, `mic=live/os-muted` and `voice=playing` or `paused`, `the system took the microphone`, `the voice was paused while hidden - starting it again` | - |
 | The partner is told | `MicSuspended { suspended }` over the relay, sent by the side whose OS took its microphone; a notice on both screens and in the live region, a toast on the way back ([below](#wp-c-bg-i---the-iphones-microphone-in-the-background-2026-10-20)) | - |
 

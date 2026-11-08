@@ -469,28 +469,50 @@ static void CanariObserveCallProximity(void) {
   NSLog(@"[CanariIOS] listening for the call proximity");
 }
 
-/// THE SCREEN STAYS ON DURING A VIDEO CALL. WKWebView refuses the Screen Wake Lock API
-/// (`NotAllowedError`), so the page posts a boolean through `webkit.messageHandlers.canariIdleTimer`
-/// (`iosCallIdleTimer.ts`): true while a video call is on screen, false at its end, when the call
-/// surface closes - and once at every page boot, so a reload or a WebContent kill mid-call never
-/// leaves the screen on. `idleTimerDisabled` belongs to the running app: a kill or a crash returns
-/// it to the system, and iOS ignores it while the app is not in the foreground. Setting the value
-/// it already has is harmless, so the handler applies every message; anything but a boolean is
-/// logged and ignored.
+/// THE SCREEN STAYS ON DURING A VIDEO CALL AND A LIVE. WKWebView refuses the Screen Wake Lock API
+/// (`NotAllowedError`), so the page posts through `webkit.messageHandlers.canariIdleTimer`
+/// (`screenAwake.ts`) `{owner, hold}` - `owner` is `call` or `live` - when a holder takes or lets go
+/// of the screen, and `{reset: true}` once at every page boot, so a reload or a WebContent kill
+/// mid-call never leaves the screen on.
+///
+/// A SET OF OWNERS, NOT A BOOLEAN: a call and a live can overlap, and the release of one must not
+/// drop the other's hold. `idleTimerDisabled` is YES exactly while the set is not empty. Adding an
+/// owner already held, or removing one not held, changes nothing (idempotent). The property belongs
+/// to the running app: a kill or a crash returns it to the system, and iOS ignores it while the app
+/// is not in the foreground. A malformed message is logged and ignored.
 @interface CanariIdleTimerHandler : NSObject <WKScriptMessageHandler>
+@property(nonatomic, strong) NSMutableSet<NSString *> *owners;
 @end
 @implementation CanariIdleTimerHandler
 - (void)userContentController:(WKUserContentController *)controller
       didReceiveScriptMessage:(WKScriptMessage *)message {
-  if (![message.body isKindOfClass:[NSNumber class]]) {
-    NSLog(@"[CanariIOS] idle timer ignored, the page posted something that is not a boolean");
+  if (self.owners == nil) {
+    self.owners = [NSMutableSet set];
+  }
+  NSDictionary *body = [message.body isKindOfClass:[NSDictionary class]] ? message.body : nil;
+  NSString *change = nil;
+  if ([body[@"reset"] isKindOfClass:[NSNumber class]] && [body[@"reset"] boolValue]) {
+    [self.owners removeAllObjects];
+    change = @"reset";
+  } else if ([body[@"owner"] isKindOfClass:[NSString class]] &&
+             [body[@"hold"] isKindOfClass:[NSNumber class]]) {
+    NSString *owner = body[@"owner"];
+    if ([body[@"hold"] boolValue]) {
+      [self.owners addObject:owner];
+      change = [@"hold " stringByAppendingString:owner];
+    } else {
+      [self.owners removeObject:owner];
+      change = [@"release " stringByAppendingString:owner];
+    }
+  } else {
+    NSLog(@"[CanariIOS] idle timer ignored, the page posted neither {owner, hold} nor {reset}");
     return;
   }
-  BOOL disabled = [(NSNumber *)message.body boolValue];
   UIApplication *app = UIApplication.sharedApplication;
   BOOL was = app.idleTimerDisabled;
-  app.idleTimerDisabled = disabled;
-  NSLog(@"[CanariIOS] call idle timer: disabled=%d (was %d)", app.idleTimerDisabled, was);
+  app.idleTimerDisabled = self.owners.count > 0;
+  NSLog(@"[CanariIOS] idle timer (%@): owners=[%@] disabled=%d (was %d)", change,
+        [self.owners.allObjects componentsJoinedByString:@","], app.idleTimerDisabled, was);
 }
 @end
 
@@ -502,7 +524,7 @@ static void CanariObserveCallIdleTimer(void) {
   }
   handler = [CanariIdleTimerHandler new];
   [webView.configuration.userContentController addScriptMessageHandler:handler name:@"canariIdleTimer"];
-  NSLog(@"[CanariIOS] listening for the call idle timer");
+  NSLog(@"[CanariIOS] listening for the screen idle timer");
 }
 
 /// Publishes the home indicator's inset to the page as `--safe-area-inset-bottom` - the iOS peer of
