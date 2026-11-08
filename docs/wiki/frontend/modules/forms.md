@@ -285,7 +285,7 @@ path, the cash-only submit), `form-status.integration.spec.ts` (migration 145 on
 closed tab, a dead battery or a lost connection lost the work, and a half-finished edit could not be
 kept without showing it to respondents.
 
-**Storage: one unpublished revision per form** (`form_drafts`, migration 143,
+**Storage: one unpublished revision per form** (`form_drafts`, migration 146,
 `form-draft-revision.ts`). `document` is the editor's whole payload - the body a `PATCH /forms/:id`
 would carry - stored AS TYPED, a half-built form included; the form's own row keeps serving
 respondents. `revision` is a compare-and-set counter that ONLY GROWS: a publication or a discard
@@ -337,7 +337,7 @@ revision dropped.
 
 Tests: `forms.service.revision.spec.ts` (autosave, stale revision, atomic publish with rollback,
 payment rules, draft-form publication, discard), `form-draft-revision.integration.spec.ts` (migration
-143, one-of-two saves, growth only, rollback, the lock), `form-item-images.integration.spec.ts` (an
+146, one-of-two saves, growth only, rollback, the lock), `form-item-images.integration.spec.ts` (an
 image only a revision cites), `autosave.svelte.test.ts` (debounce, hidden, left, single flight,
 offline then online, conflict), `FormSaveBar.svelte.test.ts` (the status line, publish and discard),
 `routes/forms/[id]/edit/page.draft`, `routes/forms/create/page.returnNoRoute`,

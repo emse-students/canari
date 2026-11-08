@@ -857,7 +857,7 @@ export class FormsService {
 
   /**
    * Attaches `associationName` to every form that names an association, and
-   * `hasUnpublishedChanges` - whether an unpublished revision holds edits (migration 143): the list
+   * `hasUnpublishedChanges` - whether an unpublished revision holds edits (migration 146): the list
    * marks it, and its "Voir le formulaire" opens the preview of those edits.
    */
   private async withAssociationNames(forms: Form[]) {

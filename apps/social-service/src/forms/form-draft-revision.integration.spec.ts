@@ -1,5 +1,5 @@
 /**
- * Migration 143 and the revision statements against a REAL PostgreSQL: the compare-and-set is ONE
+ * Migration 146 and the revision statements against a REAL PostgreSQL: the compare-and-set is ONE
  * statement (`writeFormDraft`), and only a database proves that two saves built on the same revision
  * cannot both land, that the counter only grows, and that a refused publication leaves the revision.
  *
@@ -26,7 +26,7 @@ const maybe = URL ? describe : describe.skip;
 const FORM = '00000000-0000-4000-8000-0000000a0143';
 const OTHER = '00000000-0000-4000-8000-0000000b0143';
 
-maybe('form revisions against PostgreSQL (migration 143)', () => {
+maybe('form revisions against PostgreSQL (migration 146)', () => {
   const schema = `form_drafts_it_${Math.random().toString(36).slice(2, 10)}`;
   let admin: Client;
   let ds: DataSource;
@@ -46,7 +46,7 @@ maybe('form revisions against PostgreSQL (migration 143)', () => {
     await q(`CREATE TABLE forms (id uuid PRIMARY KEY)`);
     await q(`INSERT INTO forms (id) VALUES ($1), ($2)`, [FORM, OTHER]);
     const migration = readFileSync(
-      join(process.cwd(), 'src', 'migrations', '143_form_drafts.sql'),
+      join(process.cwd(), 'src', 'migrations', '146_form_drafts.sql'),
       'utf8'
     );
     await q(migration);
