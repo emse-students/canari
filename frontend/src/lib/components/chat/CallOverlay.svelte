@@ -69,7 +69,7 @@
   import { primeCallVoice, startCallVoice } from '$lib/utils/callVoice';
   import { CallRingback } from '$lib/utils/callRingback';
   import { untrack } from 'svelte';
-  import { ScreenWakeLock } from '$lib/live/liveDevice';
+  import { screenAwakeHolder } from '$lib/mobile/screenAwake';
 
   let {
     callService,
@@ -498,9 +498,10 @@
   /**
    * The screen stays on while a picture is on it - a video call is watched, not held to the ear
    * (calls.md: an audio call takes no lock). Taken again when the app comes back: the system
-   * releases it on every hide.
+   * releases it on every hide. The iOS app holds it natively (`idleTimerDisabled`): WKWebView
+   * refuses the Screen Wake Lock, so the platform picks the holder, not a refusal.
    */
-  const wakeLock = new ScreenWakeLock(undefined, 'CALL-WAKE');
+  const wakeLock = screenAwakeHolder('call');
   $effect(() => {
     if (!videoShowing || isEnded) return;
     void wakeLock.hold();

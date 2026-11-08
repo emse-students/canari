@@ -48,12 +48,7 @@ import { sealLiveSegment } from './liveCrypto';
 import { LivePosterSender, posterEverySegments } from './livePoster';
 import { deriveLivePosterKey, sealLivePoster } from './livePosterCrypto';
 import { liveTitleToSend } from './liveTitle';
-import {
-  ScreenWakeLock,
-  createMixContext,
-  openLiveScreen,
-  screenShareAvailable,
-} from './liveDevice';
+import { createMixContext, openLiveScreen, screenShareAvailable } from './liveDevice';
 import {
   liveRecordingSupported,
   startLiveRecorder,
@@ -61,6 +56,7 @@ import {
   type LiveRecorderStarter,
 } from './liveRecorder';
 import { LiveSegmentPipeline } from './liveSegmentPipeline';
+import { screenAwakeHolder, type ScreenAwakeHolder } from '$lib/mobile/screenAwake';
 import {
   LIVE_BACKLOG_MARGIN_SEGMENTS,
   LIVE_RECORDER_STOP_BOUND_MS,
@@ -164,7 +160,8 @@ export interface LiveBroadcastDeps {
   generateKeyHex: () => Promise<string>;
   recordingSupported: () => boolean;
   startRecorder: LiveRecorderStarter;
-  wakeLock: { hold(): Promise<void>; release(): void };
+  /** The screen held on while on air, chosen by platform (`screenAwakeHolder`). */
+  wakeLock: ScreenAwakeHolder;
   /** A monotonic clock, in ms. */
   now: () => number;
   /** Resolves after `ms`: the BOUND on a wait that has no verdict of its own, never a decision. */
@@ -196,7 +193,7 @@ export function defaultLiveBroadcastDeps(): LiveBroadcastDeps {
     generateKeyHex: async () => (await generateMediaCek()).keyHex,
     recordingSupported: liveRecordingSupported,
     startRecorder: startLiveRecorder,
-    wakeLock: new ScreenWakeLock(),
+    wakeLock: screenAwakeHolder('live'),
     now: () => performance.now(),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     isHidden: () => typeof document !== 'undefined' && document.visibilityState === 'hidden',

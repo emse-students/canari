@@ -23,8 +23,6 @@ What they found. None of it is a regression, and none of it blocks:
   is not configured` during the sign-in callback.
 - **P3 - `pauseSocket` on an already-closed socket** when the app goes to the background for the
   file picker. This is lifecycle noise next to "Reconnect request refused - paused".
-- **P3 - iOS `[CALL-WAKE]`**: WKWebView refuses the screen wake lock (`NotAllowedError`), so the
-  screen may dim during a call. The fix is native (`idleTimerDisabled` for the call's lifetime).
 - **To watch:** the quality ladder drops 480p30 -> 180p15 four seconds into a call, while the
   bandwidth estimate is still ramping, and recovers within 30 s. One ICE restart followed the
   iPhone camera coming back, and it healed in 5.5 s.
