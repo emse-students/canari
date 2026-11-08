@@ -1,4 +1,4 @@
-## P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided, designed, not built)
+## P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, every site's flag OFF)
 
 **The owner's decisions of 2026-11-07, recorded as decided.**
 
@@ -26,6 +26,40 @@
 - **F. NO "announce this album" action, ever.** Phase 2 is removed from this design.
 - **G. The handoff covers only the sites Canari opens that sign in through MiConnect** (as B says):
   every other site is opened plainly.
+
+### 0. Where it stands (2026-11-08)
+
+**Built, Canari's half of the handoff (H1, H2, H5 minus the push tap route).** What it does, and its
+tests, are in [sessions](../sessions.md#the-sign-in-handoff-to-the-miconnect-sites-2026-11-08):
+the mint `POST /api/auth/handoff`, the JWKS `GET /api/auth/handoff/jwks`, the registry
+`libs/contracts/ecosystem-sites.json`, the vectors `libs/contracts/handoff-token.cases.json`
+(written by `bun tools/handoff-vectors/generate.ts`), the one opener `openEcosystemSite`, and the
+secret `HANDOFF_SIGNING_KEY`. **Every site's `handoff` flag is OFF**, so nothing changes for a user
+until a site's own redemption is live and its flag is turned on.
+
+**Taken here as the reversible recommended options (lead's brief, 2026-11-08):**
+
+- **F1 ships: the token carries `sub` only.** F3 waits for the H0 spike and the read-only MiConnect
+  account (section 9); adding `claims` later is additive for a site that ignores an unknown member.
+  **MiGallery's flag stays OFF until H0 answers**, because F1 leaves a promo or formation changed in
+  MiConnect stale on MiGallery until its next OIDC sign-in (section 4).
+- **No migration on Canari.** The mint is stateless; single use is the site's ledger.
+- **A rotation is a hard cut**, not "publish the new key beside the old one": one variable, the
+  [Keys](../sessions.md#keys) rule. It costs the tokens of the last 60 s (`invalid`), and the user
+  taps again. Section 3.2's two-key rotation is superseded.
+- **`not_yet_valid` is its own class** (an `iat` more than 30 s in the future), beside `expired` and
+  `too_long` (section 3.6, step 3).
+- **Dev mints nothing** (`DEV_HANDOFF_SIGNING_KEY` unset, manifest `silent`): a dev token is
+  `wrong_issuer` at every production site, so the plain open is dev's configured state, said once at
+  info (section 4).
+- **On the web, a popup-blocked tab mints nothing** and the click is said at warn: replacing Canari's
+  own tab would drop its socket and MLS state, which the launcher exists to avoid.
+- **The confirmation of section 3.6 consumes nothing**: the redemption answers `confirm` BEFORE the
+  ledger insert, and the user's click sends the same token again (section 8).
+
+**Not built yet:** H3 (the vendored verifier in `libs/`; the reference is `verifyHandoff` in
+`handoff-redeem.contract.spec.ts`, and section 8 is the contract), the `/ecosystem/[site]` tap route
+(it belongs with N1), and everything on a site (H4, H6, H7).
 
 Everything below is design. File:line references are against `main` on 2026-11-07. Sibling
 repositories are named relative to this one (`../MiGallery`, `../Sky`, `../le-cercle`,
@@ -213,7 +247,7 @@ and never the token:
 2. `iss` = the one configured issuer (`wrong_issuer`); `aud` = the site's own id (`wrong_audience`);
 3. `exp` not past, `iat` not in the future, each with 30 s of leeway for clock skew; **`exp - iat`
    no more than 60**, so even a signed token with a longer lifetime is refused (`expired`,
-   `too_long`);
+   `not_yet_valid`, `too_long`);
 4. `dest` passes the site's own redirect validator (MiGallery's `safeRedirectTarget`), even though
    Canari signed it (`bad_dest`);
 5. **single use, from durable state:** `INSERT INTO handoff_redemptions (jti, sub, exp)`, where
@@ -429,3 +463,128 @@ so an unread earlier notice is replaced on the device rather than stacked.
 Reversible choices taken as recommended unless the owner says otherwise: ES256 and a JWKS; 60 s;
 the fragment; the confirmation before a session for another `sub` is replaced; no handoff from
 links inside content; social-service as the receiver; one key per caller.
+
+### 8. The contract MiGallery implements (WP-H4)
+
+**Everything Canari owes is in place; this is what MiGallery builds, exactly.** Sky and Le Cercle
+implement the same contract with their own admission (section 4). The reference for steps 1-5 is
+`verifyHandoff` in `apps/core-service/src/auth/handoff/handoff-redeem.contract.spec.ts`.
+
+**Configuration: two variables, the same names on all three sites.**
+
+| Variable | Production value | What it is |
+| --- | --- | --- |
+| `CANARI_HANDOFF_ISSUER` | the origin of production's `FRONTEND_URL` first entry (the lead reads it on the estate before setting it) | the ONE issuer accepted; a dev token is `wrong_issuer` |
+| `CANARI_HANDOFF_JWKS` | `<issuer>/api/auth/handoff/jwks` | the public keys, through `jose`'s `createRemoteJWKSet` (a refetch on an unknown `kid`) |
+
+The audience is a constant in MiGallery's code, `migallery`, never a variable.
+
+**The ledger** (SQLite, one table, created like every other MiGallery table):
+
+```sql
+CREATE TABLE IF NOT EXISTS handoff_redemptions (
+  jti         TEXT PRIMARY KEY,
+  sub         TEXT NOT NULL,
+  exp         INTEGER NOT NULL,   -- seconds since the epoch, from the token
+  redeemed_at INTEGER NOT NULL
+);
+```
+
+Purged by a proof, not a timer: at each redemption,
+`DELETE FROM handoff_redemptions WHERE exp < :now - 30`. A row past that bound protects nothing,
+because step 1 refuses its token as `expired` first.
+
+**1. `GET /auth/handoff`, the landing page.** Served with `Referrer-Policy: no-referrer`,
+`Cache-Control: no-store`, and no third-party script. Its script, before anything else:
+
+```js
+const token = location.hash.slice(1);
+history.replaceState(null, '', location.pathname); // the token leaves the address bar at once
+```
+
+then `POST /api/auth/handoff` (same origin, `credentials: 'same-origin'`) with `{ "token": token }`,
+and it acts on the answer:
+
+| Answer | The page does |
+| --- | --- |
+| `200 { "outcome": "ok", "dest": "/mes-photos" }` | `location.replace(dest)` |
+| `200 { "outcome": "confirm", "current": "<A's name>", "next": "<B's name or null>" }` | shows "Vous êtes connecté en tant que A - continuer en tant que B ?"; **Continuer** sends `{ "token": token, "confirm": true }` again (the token held in the page's memory only); **Rester** goes to `/` |
+| `200 { "outcome": "unknown_user", "dest": "/mes-photos" }` | the ordinary OIDC login with `redirectTo=dest` (an honest first visit) |
+| `4xx { "outcome": "<class>" }` | the ordinary OIDC login, no `redirectTo` |
+| an empty fragment | the ordinary OIDC login |
+
+**2. `POST /api/auth/handoff`, the redemption.** In this order, each step ending in the outcome
+named and logged `[HANDOFF] refused class=<outcome> jti=<jti or none>` - **never the token**:
+
+0. `Origin` exactly MiGallery's own origin, else `403 { outcome: "bad_origin" }`;
+   `Content-Type: application/json`, else `415`; a body `{ token: string (<= 4096 characters),
+   confirm?: boolean }`, else `400 { outcome: "invalid" }`.
+1. `jwtVerify(token, JWKS, { algorithms: ['ES256'], typ: 'canari-handoff+jwt', issuer, audience:
+   'migallery', clockTolerance: 30, requiredClaims: ['sub', 'jti', 'iat', 'exp', 'dest'] })`.
+   **Classify by the error's CLASS and its `claim` field, never its message** (the repository
+   rule): `JWTExpired` -> `expired`; `JWTClaimValidationFailed` with `claim === 'iss'` ->
+   `wrong_issuer`, with `claim === 'aud'` -> `wrong_audience`; every other failure (signature,
+   `alg`, `typ`, an unknown `kid`, a malformed token, a missing claim) -> `invalid`. All `400`.
+2. On the verified payload: every claim of its type (`dest` a string, `iat` and `exp` numbers),
+   else `invalid`; `iat > now + 30` -> `not_yet_valid`; `exp - iat > 60` -> `too_long`.
+3. `dest` through `safeRedirectTarget` (`src/lib/auth-redirect.ts`), else `bad_dest`.
+4. **A live `migallery_session` of ANOTHER user, and no `confirm: true`** -> `200 { outcome:
+   "confirm", current, next }`, and **nothing is written**: the token is not consumed, so the
+   click redeems it within its lifetime (past it, step 1 says `expired` and the page goes to the
+   login).
+5. **Single use:** `INSERT OR IGNORE INTO handoff_redemptions (jti, sub, exp, redeemed_at)`; no row
+   inserted -> `409 { outcome: "replayed" }`, logged at WARN. The insert is the decision: nothing
+   reads first and writes afterwards.
+6. **Admission (F1):** the `users` row whose id is `sub`. None -> `200 { outcome: "unknown_user",
+   dest }`, and the page sends the user through OIDC. **F1 writes nothing on the row.** Under F3
+   this step becomes the half of the OIDC callback after the claims (`handleUserInDatabase` with the
+   token's `claims`, nulls cleared), extracted so both paths call one function.
+7. **The ordinary session**, made by the same function the OIDC callback uses (one `sessions` row,
+   7 days, the `migallery_session` cookie with its usual attributes); a replaced session of another
+   user is deleted first. `200 { outcome: "ok", dest }`, logged
+   `[HANDOFF] redeemed jti=<jti> sub=<sub>`.
+
+**What it must not do:** take the token from a query string or a GET; log it; create a new kind of
+session; let a handoff session past the face routes' existing guards (it is an ordinary session,
+and the selfie enrolment's ticked agreement stays).
+
+**Its tests (H4's gate):** every case of `libs/contracts/handoff-token.cases.json` through steps
+1-3, with `createLocalJWKSet(vectors.jwks)` and jose's `currentDate` set to the case's `now`,
+answering `expect` (`bad_dest` is `safeRedirectTarget` refusing `//evil.example/x`); the `replay`
+sequence against one ledger -> `ok`, then `replayed`; a wrong `Origin` -> `bad_origin`; a live
+session of another `sub` -> `confirm` and no ledger row, then `confirm: true` -> `ok`; an unknown
+`sub` -> `unknown_user`; the token in no log line (asserted on the captured logger). The vectors are
+COPIED from Canari and regenerated only there.
+
+**Then Canari turns the flag on:** `"handoff": true` for `migallery` in
+`libs/contracts/ecosystem-sites.json` and its two copies (`handoff-sites.ts`, `ecosystemSites.ts`),
+in a Canari release made after MiGallery's is live; then the phone readings of section 6.
+
+### 9. The read-only MiConnect service account (WP-H0) - for the lead to create
+
+**F1, what ships, needs NO MiConnect access at all**, on Canari or on a site: the site trusts
+Canari's signature for `sub` and admits through its own existing row. **The account exists for F3
+only.** It is read by **core-service at mint time**, never by a site, and its token would be a NEW
+secret (`MICONNECT_READER_TOKEN`, production only like `MICONNECT_EDITOR_TOKEN`; not introduced until
+F3 is built). It is a different account from `miconnect-canari-editor` (WP4), which may write.
+
+**The three reads, and why each:**
+
+| Read | Authentik API | Why |
+| --- | --- | --- |
+| who the user is at MiConnect, and whether they are still active | `GET /api/v3/core/users/?uuid=<users.miconnect_uuid>` -> `pk`, `is_active` | the user API cannot filter on the hashed `sub` ([profiles-and-access](../profiles-and-access.md#four-facts-the-plan-is-shaped-by)) and Canari holds the user's Authentik uuid; a deactivated account mints nothing |
+| whether MiConnect lets this user into the target application | `GET /api/v3/core/applications/<slug>/check_access/?for_user=<pk>` -> `{ passing, messages }` | MiConnect's policy bindings decide who enters (D15, Sky's ICM rule); a refusal mints nothing, as the OIDC flow would have refused |
+| the claims that site's own property mappings compute for this user | `GET /api/v3/providers/oauth2/<provider pk>/preview_user/?for_user=<pk>` -> `{ preview: { ... } }` | fresh claims without Canari duplicating any mapping (the reason F2 was rejected) |
+
+**The permissions, all read-only, as one RBAC role on the service account:**
+
+- `authentik_core.view_user` - the user lookup, and the `for_user` argument of the two other reads;
+- `authentik_core.view_application`, on the three applications (MiGallery, Sky, Le Cercle) only -
+  `check_access`;
+- `authentik_providers_oauth2.view_oauth2provider`, on their three OAuth2 providers only, and
+  `authentik_core.preview_user` - `preview_user`.
+
+**Nothing else:** no `add_*`, `change_*` or `delete_*`, no token, flow or event access, no other
+application or provider. The exact codenames, and whether `check_access?for_user` and
+`preview_user` exist on the RUNNING version, are what H0 verifies first, read-only; if one is
+missing, F1 stays and this section records why.

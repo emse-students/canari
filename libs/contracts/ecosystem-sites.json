@@ -1,0 +1,40 @@
+{
+  "description": "The sibling sites Canari opens (docs/wiki/backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md, owner 2026-11-07/08), in the launcher's order. `origin` is where each answers today. `miconnect` says it signs in through MiConnect, which is the ONLY condition for being in the handoff registry. `handoff` turns the one-time sign-in handoff ON for that site and may be true only once the site's own redemption (`/auth/handoff`) is LIVE in production: before that, Canari would land a token on a page that answers 404. `dests` is the closed allowlist of paths a handoff may land on (`{uuid}` stands for one lowercase UUID segment). core-service's registry (apps/core-service/src/auth/handoff/handoff-sites.ts) and the frontend's (frontend/src/lib/navigation/ecosystemSites.ts) each assert their copy equals this file.",
+  "sites": [
+    {
+      "id": "migallery",
+      "origin": "https://gallery.mitv.fr",
+      "miconnect": true,
+      "handoff": false,
+      "dests": ["/", "/mes-photos", "/mes-photos/confirmer", "/albums/{uuid}"]
+    },
+    {
+      "id": "le-cercle",
+      "origin": "https://cercle.emse.fr",
+      "miconnect": true,
+      "handoff": false,
+      "dests": ["/"]
+    },
+    {
+      "id": "sky",
+      "origin": "https://sky.emse.fr",
+      "miconnect": true,
+      "handoff": false,
+      "dests": ["/"]
+    },
+    {
+      "id": "portail-etu",
+      "origin": "https://portail-etu.emse.fr",
+      "miconnect": false,
+      "handoff": false,
+      "dests": []
+    }
+  ],
+  "landingPath": "/auth/handoff",
+  "refusals": {
+    "notOffered": "HANDOFF_NOT_OFFERED",
+    "unknownSite": "HANDOFF_UNKNOWN_SITE",
+    "siteNotEnabled": "HANDOFF_SITE_NOT_ENABLED",
+    "badDest": "HANDOFF_BAD_DEST"
+  }
+}
