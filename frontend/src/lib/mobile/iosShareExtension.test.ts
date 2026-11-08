@@ -420,6 +420,13 @@ describe('the conversation suggestions (lot S5, the iOS twin of Android sharing 
     );
   });
 
+  it('the app declares INSendMessageIntent in NSUserActivityTypes, or every donation is refused (1901)', () => {
+    const info = withoutXmlComments(read(resolve(APPLE, 'canari_iOS/Info.plist')));
+    expect(info).toMatch(
+      /<key>NSUserActivityTypes<\/key>\s*<array>\s*<string>INSendMessageIntent<\/string>\s*<\/array>/
+    );
+  });
+
   it('donates one outgoing INSendMessageIntent per target, in its own group', () => {
     expect(suggestions).toContain('import Intents');
     expect(suggestions).toMatch(/INSendMessageIntent\(\s*recipients: nil,/);

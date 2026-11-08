@@ -76,6 +76,7 @@
     offeredTiers,
   } from '$lib/shop/productCards';
   import { m } from '$lib/paraglide/messages';
+  import { setPageTitle } from '$lib/seo/pageTitle.svelte';
   import { wordingFor } from '$lib/associations/kindWording';
 
   interface Props {
@@ -245,6 +246,15 @@
       Log.d('AssociationDetailView: section refused, back to the hub', activeSection);
       void goto(resolve(internalPath(publicSectionHref(base, slug))), { replace: true });
     }
+  });
+
+  // The tab names the entity once it is loaded (association, list or institution alike): the path
+  // alone only knows a neutral word, and the server-injected name exists for a hard load only.
+  $effect(() => {
+    const name = asso?.name?.trim();
+    if (!name) return;
+    setPageTitle(name);
+    return () => setPageTitle(null);
   });
 
   onMount(loadData);
