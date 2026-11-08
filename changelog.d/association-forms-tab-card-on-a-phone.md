@@ -1,1 +1,0 @@
-### Fixed - on a phone, an association's "Formulaires" tab crushed each form's title to single letters beside its actions; the actions now go below the title on a narrow card, and a draft is marked there ([forms](docs/wiki/frontend/modules/forms.md#edits-are-saved-as-they-are-typed-and-published-together-owner-2026-11-08)).

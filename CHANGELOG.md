@@ -14,6 +14,74 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.6.8] - 2026-11-08
+
+### Added - a bell on an association and on a followed person: posts and lives, lives only, or nothing
+
+It replaces the association push mute, copied into it by the held migration 143 (an old build's mute keeps working), and a new follow resets it; the settings list every reduced bell ([engagement](docs/wiki/engagement.md#wp-3---the-bell-built)).
+
+### Added - a BDE can file a neutral "Campus" event on the agenda
+
+The people who file the BDE's events choose "au nom du BDE" or neutral; a neutral event reads
+"Campus" with no association name, logo or creator for anyone but its agenda managers (who see the
+owning association), and
+the BDE stays its owner for rights, validation and audience (migration 144,
+[calendar](docs/wiki/frontend/modules/calendar.md#neutral-campus-events-owner-2026-11-08)).
+
+### Fixed - on a phone, an association's "Formulaires" tab crushed each form's title to single letters beside its actions; the actions now go below the title on a narrow card, and a draft is marked there ([forms](docs/wiki/frontend/modules/forms.md#edits-are-saved-as-they-are-typed-and-published-together-owner-2026-11-08)).
+
+### Fixed - an association page's tab no longer shows its URL slug before the real name arrives: the baseline is the neutral word "Association" ([seo](docs/wiki/frontend/seo.md)).
+
+### Fixed - the page of a bookable space no longer spills past a phone's right edge, and a free day reads 00:00 - 23:59
+
+The booker's grid sized its single phone column by its widest unbreakable text (a truncated name in "Vos réservations ici"), so the whole week was wider than the screen; the column is now `minmax(0,1fr)`. An end at the following midnight is shown as 23:59, a label only ([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Fixed - the minimised call bar keeps its camera button once the camera is off, so it turns the camera back on without going to full screen ([calls](docs/wiki/frontend/modules/calls.md)).
+
+### Changed - a carte de la vie asso belongs to one space, with its own zones and a switch per association
+
+A BDE's managers make and publish the maps of their own spaces, one live map per space, read by the portail with `?space=`; the global association category is replaced by each map's zones (held migration 147, [carte](docs/wiki/carte-vie-asso.md#a-carte-belongs-to-one-space)).
+
+### Changed - CI caches the pinned Trivy and ShellCheck archives instead of downloading them on every run
+
+A GitHub release-download outage failed every pull request on 2026-11-08; the digest is still checked on each run ([cicd](docs/wiki/cicd.md)).
+
+### Changed - the "Messagerie chiffrée active dans un autre onglet" banner and its "Prendre la main" button are gone: a second tab now hands creating a conversation, inviting, removing and entering a community or a salon to the main tab, which runs it once and answers, a main tab closed mid-way being reported and never run twice, and a main tab locked or signed out answering at once ([chat](docs/wiki/frontend/modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08)).
+
+### Added - a form's edits are saved as they are typed, into an unpublished revision (debounced, at once when the page is hidden, left or navigated away from), kept on the device until the server holds them and sent again after a restart, with "Enregistré / Enregistrement... / Non enregistré - hors ligne" under the editor, and published or discarded as one ([forms](docs/wiki/frontend/modules/forms.md#edits-are-saved-as-they-are-typed-and-published-together-owner-2026-11-08)).
+
+### Added - a form is a draft until "Publier": invisible to every respondent read, a paid form built and saved before its association's Lydia is ready, published once its respondents can pay (online ready, or cash accepted), online payment now the editor's choice, and "Voir le formulaire" opening the live page or a preview that sends nothing ([forms](docs/wiki/frontend/modules/forms.md#a-form-is-a-draft-until-it-is-published-owner-2026-11-08)).
+
+### Fixed - the iPhone keeps its screen on during a video call and while broadcasting a live: WKWebView refuses the Screen Wake Lock, so the iOS app disables the idle timer natively, one hold per owner so a call and a live can overlap ([calls](docs/wiki/frontend/modules/calls.md#the-screen-stays-on-during-an-iphone-video-call-2026-11-08)).
+
+### Fixed - a live card's preview no longer 404s when the broadcaster replaces the picture just after the list was read: the previous poster now survives one round (migration 141), and a poster that is really gone is logged at debug. See [lives](docs/wiki/services/lives.md#titles-and-the-preview-image-owner-2026-11-07).
+
+### Fixed - the forms list shared `/forms/<id>` for a public form, which sent a signed-out visitor to login; it now shares `/f/<id>`, and an old `/forms/<id>` link reaches the guest page when the form is public ([forms](docs/wiki/frontend/modules/forms.md)).
+
+### Added - "Annuler partout" / "Supprimer partout" on a reel sent to several conversations, and a notice naming the conversation a send failed in
+
+The last client pieces of "Envoyer à..." from the camera tab, still behind the chat reel writer switch (on in dev builds only); what stands between `main` and the production flip, and the bench readings it waits on, are in [reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#21-what-stands-between-main-and-the-production-flip-2026-11-08).
+
+### Changed - the salon-mount bench counts the engine's layouts, style recalculations and error events
+
+With them, moving the salon mount's layout reads to a ResizeObserver was measured and refuted: no layout or style pass was removed, and the composer's height must be published before the entry fill measures ([community-open-budget](docs/wiki/frontend/community-open-budget.md#the-mounts-layout-reads-moved-and-measured-the-layout-is-paid-anyway-2026-11-08)).
+
+### Added - recent conversations suggested in the iPhone share sheet
+
+The twin of Android's sharing shortcuts: the same five conversations are donated as `INSendMessageIntent`s (a name and an id, never a message), the Share Extension carries the picked one to the picker as a hint, and a sign-out deletes them ([sharing](docs/wiki/frontend/sharing.md#share-suggestions-ios---lot-s5)).
+
+### Added - Canari's half of the one-time sign-in handoff to its MiConnect sites: core-service mints a 60-second ES256 token for a live session (`POST /api/auth/handoff`, public keys at `/api/auth/handoff/jwks`), and the launcher and the profile-photo buttons open sites through one opener; every site's flag ships OFF until its own redemption is live ([sessions](docs/wiki/sessions.md#the-sign-in-handoff-to-the-miconnect-sites-2026-11-08)).
+
+### Fixed - a sign-out now deregisters the push token before it revokes the session,
+
+The server's push deregistration raced the revocation and came back `HTTP 401` (Android, `1.6.7-alpha.3`); `clearAuth` now awaits it first, and a transport failure is a warning naming what stayed registered. A `Close` arriving while the socket is released no longer ends in a native disconnect on a closed connection ([sessions](docs/wiki/sessions.md#a-session-that-ends-takes-its-devices-push-registration-with-it-2026-10-22)).
+
+### Fixed - three WARN lines of the sign-out / sign-in path are gone at their cause: a pause no longer warns when the gateway closes the socket on our own disconnect frame, a sign-out no longer sends a recovery `refresh` that was bound to 401, and a remounted iOS tab bar no longer calls the plugin before it is configured ([sessions](docs/wiki/sessions.md)).
+
+### Fixed - the live picker only offers associations the server accepts, three iPhone clippings and a leftover screen-reader line
+
+The composer's live chip is offered only for an association where the member holds `POST_AS_ASSO` themselves (a global admin no longer gets a `403 LIVE_ASSOCIATION_FORBIDDEN`); the live viewer's name truncates before the report flag, the Formulaires actions wrap, the Settings device id breaks, and a dismissed guidance card no longer leaves "Étape 1 sur 1" in the accessibility tree ([readings](docs/wiki/backlog.d/what-the-readings-of-1-6-7-alpha-3-filed.md)).
+
 ## [1.6.7] - 2026-11-08
 
 ### Fixed - a guest's cash answer awaiting validation no longer turns an association's Formulaires section into a 500
