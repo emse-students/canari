@@ -184,7 +184,7 @@ export interface Form extends CreateFormPayload {
   /** `draft` until a manager publishes it; absent on a server before drafts, which is `published`. */
   status?: FormStatus;
   /**
-   * Whether an unpublished revision holds edits (the managers' list only, migration 143): the row
+   * Whether an unpublished revision holds edits (the managers' list only, migration 146): the row
    * says so, and its "Voir le formulaire" opens the preview of those edits.
    */
   hasUnpublishedChanges?: boolean;

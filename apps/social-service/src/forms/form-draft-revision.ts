@@ -1,7 +1,7 @@
 import type { EntityManager } from 'typeorm';
 
 /**
- * THE UNPUBLISHED REVISION OF A FORM (owner, 2026-11-08; migration 143).
+ * THE UNPUBLISHED REVISION OF A FORM (owner, 2026-11-08; migration 146).
  *
  * The editor saves what the manager types into `form_drafts.document`, as typed, while the form's
  * own row keeps serving respondents. "Publier les modifications" applies the document with the

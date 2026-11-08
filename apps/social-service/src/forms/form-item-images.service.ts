@@ -59,7 +59,7 @@ async function lockImages(m: Pick<EntityManager, 'query'>, mediaIds: string[]): 
 
 /**
  * Whether any form - archived ones included - still cites `mediaId` in one of its questions, or an
- * unpublished revision of one does (migration 143): an image added in the editor is cited by the
+ * unpublished revision of one does (migration 146): an image added in the editor is cited by the
  * revision until it is published or discarded, and must outlive the hour that follows.
  */
 async function isCited(m: Pick<EntityManager, 'query'>, mediaId: string): Promise<boolean> {
@@ -88,7 +88,7 @@ async function isCited(m: Pick<EntityManager, 'query'>, mediaId: string): Promis
  * - a RELEASE deletes the blob, then the row, once NO form cites it - re-read under the lock: an
  *   image replaced or removed, its form deleted. A duplicated question cites the same id, so the
  *   image stays while either copy does. An archived form still cites its images;
- * - an unpublished REVISION (migration 143) cites like a form: kept while the editor holds it;
+ * - an unpublished REVISION (migration 146) cites like a form: kept while the editor holds it;
  * - the hourly RECONCILIATION releases every row older than a day that no form cites: an upload
  *   never saved, a form or an association removed, a release that failed.
  */

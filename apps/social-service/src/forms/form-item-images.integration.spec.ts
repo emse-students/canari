@@ -33,7 +33,7 @@ const migration = (file: string) => readFileSync(join(__dirname, '..', 'migratio
 const ALICE = 'alice-0000';
 const BOB = 'bob-00000';
 
-maybe('question images against PostgreSQL (migrations 136, 143)', () => {
+maybe('question images against PostgreSQL (migrations 136, 146)', () => {
   const schema = `form_item_images_it_${Math.random().toString(36).slice(2, 10)}`;
   let admin: Client;
   let ds: DataSource;
@@ -122,8 +122,8 @@ maybe('question images against PostgreSQL (migrations 136, 143)', () => {
         "createdAt" timestamptz NOT NULL DEFAULT now()
       );
     `);
-    // The unpublished revisions (143): an image only a revision cites is cited all the same.
-    await q(migration('143_form_drafts.sql'));
+    // The unpublished revisions (146): an image only a revision cites is cited all the same.
+    await q(migration('146_form_drafts.sql'));
     images = new FormItemImagesService(http as any, ds.getRepository(FormItemImage));
   });
 

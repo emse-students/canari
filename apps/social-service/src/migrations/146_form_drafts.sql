@@ -1,4 +1,4 @@
--- Migration 143: the unpublished revision of a form, saved as the manager types (owner, 2026-11-08).
+-- Migration 146: the unpublished revision of a form, saved as the manager types (owner, 2026-11-08).
 --
 -- docs/wiki/frontend/modules/forms.md, "Edits are saved as they are typed, and published together".
 -- One row per form at most. `document` is the editor's whole payload (the body a PATCH /forms/:id
