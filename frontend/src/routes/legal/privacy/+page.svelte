@@ -986,6 +986,17 @@
             >
           </tr>
           <tr>
+            <td>Suggestions de partage (application iPhone)</td>
+            <td>
+              Les noms de vos conversations récentes, et leur identifiant interne, sont confiés à
+              iOS pour les proposer dans son menu Partager - jamais le contenu d'un message. iOS
+              peut aussi afficher ces noms dans les suggestions de Siri : Spotlight, le widget de
+              suggestions et, selon vos réglages iOS, l'écran verrouillé. Activé par défaut,
+              désactivable dans Paramètres &gt; Préférences &gt; Suggestions dans le partage
+            </td>
+            <td>Effacés à la déconnexion et à la désactivation du réglage</td>
+          </tr>
+          <tr>
             <td>Identifiant aléatoire <code>klipy_cid</code></td>
             <td>
               Créé par les versions de l'application antérieures à octobre 2026, qui l'envoyaient à
