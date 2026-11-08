@@ -100,6 +100,15 @@ export const LIVE_BATTERY_WARN_LEVEL = 0.6;
 export const LIVE_RECORDER_STOP_BOUND_MS = LIVE_SEGMENT_MS + 1_000;
 
 /**
+ * How long the screen waits for the server's answer to End once the device has given everything
+ * back. The server ends a live by absence anyway, so the answer only decides WHICH end screen is
+ * shown (a moderation cut); past this the screen settles as the member's own End rather than hang
+ * in "ending" behind a request a backgrounded iPhone may hold for minutes. The request is not
+ * cancelled, and the wait is LOGGED.
+ */
+export const LIVE_END_ANSWER_BOUND_MS = 5_000;
+
+/**
  * Segments waiting for the server beyond the reconnect window's worth: the broadcaster gives up
  * there, and the CAUSE is read from the last segment the server STORED, not from the count. Silent
  * past `reconnectWindowMs` is a lost connection - the server ends a live absent that long anyway. Still

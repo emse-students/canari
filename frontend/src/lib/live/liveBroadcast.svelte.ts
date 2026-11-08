@@ -59,6 +59,7 @@ import { LiveSegmentPipeline } from './liveSegmentPipeline';
 import { screenAwakeHolder, type ScreenAwakeHolder } from '$lib/mobile/screenAwake';
 import {
   LIVE_BACKLOG_MARGIN_SEGMENTS,
+  LIVE_END_ANSWER_BOUND_MS,
   LIVE_RECORDER_STOP_BOUND_MS,
   LIVE_SEGMENT_MS,
 } from './constants';
@@ -716,19 +717,24 @@ export class LiveBroadcast {
     if (this.#disposed) return;
     if (!drained) console.warn(`[LIVE-BROADCAST] ${liveId}: the queue is dropped unsent`);
     this.#release();
-    try {
-      await this.#deps.endLive(liveId);
-    } catch (e) {
-      if (isLiveCut(e)) {
-        console.warn('[LIVE-BROADCAST] the End was answered by a moderation cut');
-        this.#serverEndedWhileEnding = 'cut';
-      } else if (!isLiveRefusal(e, 'ended') && !isLiveRefusal(e, 'not-found')) {
-        console.warn(
-          '[LIVE-BROADCAST] the end was not confirmed - the server ends it by absence',
-          e
-        );
+    // BOUNDED: the screen settles on the member's End within LIVE_END_ANSWER_BOUND_MS even when the
+    // request hangs (a backgrounded iPhone holds it for minutes); the server ends by absence anyway.
+    const sendEnd = async (): Promise<void> => {
+      try {
+        await this.#deps.endLive(liveId);
+      } catch (e) {
+        if (isLiveCut(e)) {
+          console.warn('[LIVE-BROADCAST] the End was answered by a moderation cut');
+          this.#serverEndedWhileEnding = 'cut';
+        } else if (!isLiveRefusal(e, 'ended') && !isLiveRefusal(e, 'not-found')) {
+          console.warn(
+            '[LIVE-BROADCAST] the end was not confirmed - the server ends it by absence',
+            e
+          );
+        }
       }
-    }
+    };
+    await this.#bounded(sendEnd(), LIVE_END_ANSWER_BOUND_MS, "the server's answer to End");
     // A 410 heard while draining means the server had ended it first (the hour, a moderation cut).
     this.#settle(this.#serverEndedWhileEnding ?? 'broadcaster');
   }

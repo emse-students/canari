@@ -66,6 +66,7 @@ import {
   setDelegationReadiness,
 } from '$lib/utils/chat/tabCommitDelegation';
 import { processDeviceInvitationsLocally } from './session/sessionAuth';
+import { rememberSelectionForReload } from '$lib/utils/chat/selectionAcrossReload';
 
 /** Creates and returns the reactive chat session store covering login, MLS init, WebSocket, biometrics, device sync and backup. */
 export function useChatSession() {
@@ -288,6 +289,7 @@ export function useChatSession() {
     // The reload releases the lock this tab was just granted; the mark is what lets the page it
     // starts take it back rather than queue behind the tab it took over from.
     markPromotionReload();
+    rememberSelectionForReload(log);
     setTimeout(() => window.location.reload(), 50);
     return true;
   }
@@ -327,6 +329,7 @@ export function useChatSession() {
   setTabLeaderDemotedHandler(() => {
     isTabLeaderState = false;
     tabLeaderSessionCb?.log('[TAB] Leadership released - reloading as follower.');
+    if (tabLeaderSessionCb) rememberSelectionForReload(tabLeaderSessionCb.log);
     if (typeof window === 'undefined') return;
     setTimeout(() => window.location.reload(), 50);
     // Said, so this document neither queues nor accepts the lead on its way out.
