@@ -16,6 +16,7 @@
     MAX_ROLE_LABEL_LENGTH,
     canonicalRoleOf,
     defaultRoleLabel,
+    isAcceptableRoleLabel,
   } from '$lib/utils/chat/communityRoleLabel';
   import { describeCommunityRefusal } from '$lib/utils/chat/communityErrors';
   import { refusalCode } from '$lib/utils/apiRefusal';
@@ -47,6 +48,8 @@
   /** Characters a person sees (code points), the unit the server bounds a name in. */
   const lengthOf = (text: string) => Array.from(text.trim()).length;
   const tooLong = (role: RoleRow) => lengthOf(valueOf(role)) > MAX_ROLE_LABEL_LENGTH;
+  /** Too long, or holding a character the server refuses: not worth sending. */
+  const unsendable = (role: RoleRow) => tooLong(role) || !isAcceptableRoleLabel(valueOf(role));
 
   const valueOf = (role: RoleRow) => drafts[role.id] ?? role.label ?? '';
   const isDirty = (role: RoleRow) =>
@@ -87,14 +90,14 @@
         value={valueOf(role)}
         placeholder={defaultRoleLabel(canonical)}
         disabled={saving[role.id]}
-        invalid={tooLong(role)}
-        error={errors[role.id] || (tooLong(role) ? m.chat_role_name_invalid_error() : '')}
+        invalid={unsendable(role)}
+        error={errors[role.id] || (unsendable(role) ? m.chat_role_name_invalid_error() : '')}
         oninput={(e) => (drafts = { ...drafts, [role.id]: e.currentTarget.value })}
       />
       <div class="flex flex-wrap gap-2">
         <Button
           variant="primary"
-          disabled={!isDirty(role) || tooLong(role) || saving[role.id]}
+          disabled={!isDirty(role) || unsendable(role) || saving[role.id]}
           loading={saving[role.id]}
           onclick={() => void save(role, drafts[role.id]?.trim() ? drafts[role.id].trim() : null)}
         >

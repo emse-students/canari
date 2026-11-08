@@ -293,6 +293,36 @@ export function validateChannelName(raw: unknown): string {
 export const MAX_ROLE_LABEL_LENGTH = 40;
 
 /**
+ * Whether a role name holds a character that must not be in one: a control, invisible-formatting,
+ * line or paragraph separator character (`\p{Cc}\p{Cf}\p{Zl}\p{Zp}`: zero-width, bidi, BOM, tag).
+ *
+ * JUDGED PER GRAPHEME, because emoji are built from exactly those: inside a grapheme that holds a
+ * pictographic (or a tag flag, which starts with U+1F3F4) the zero-width joiner U+200D and the tag
+ * characters U+E0020-U+E007F are the glue of a family, a profession, the rainbow flag or the England
+ * flag, and are allowed. Everywhere else they stay refused - a joiner between letters, a lone one, a
+ * stray tag. THE SAME RULE, WITH THE SAME TEST VECTORS, IS `isAcceptableRoleLabel` in the client
+ * (`utils/chat/communityRoleLabel.ts`).
+ */
+export function roleLabelHasForbiddenCharacter(label: string): boolean {
+  const forbidden = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+  const emojiGlue = /[‍\u{E0020}-\u{E007F}]/gu;
+  // `Intl.Segmenter` is in the runtime (Node 16+) but not in this project's es2021 type library.
+  const Segmenter = (
+    Intl as unknown as {
+      Segmenter: new (
+        locale?: string,
+        options?: { granularity: 'grapheme' }
+      ) => { segment(text: string): Iterable<{ segment: string }> };
+    }
+  ).Segmenter;
+  for (const { segment } of new Segmenter(undefined, { granularity: 'grapheme' }).segment(label)) {
+    const isEmoji = /\p{Extended_Pictographic}/u.test(segment) || segment.startsWith('\u{1F3F4}');
+    if (forbidden.test(isEmoji ? segment.replace(emojiGlue, '') : segment)) return true;
+  }
+  return false;
+}
+
+/**
  * A role's DISPLAY name, as the community typed it: trimmed and nothing else, stored as typed (case,
  * accents, emoji). `null` for "no name of its own" - an absent or blank value resets the role to the
  * localized default - and a typed 400 `ROLE_LABEL_INVALID` for a value that is not text, a name too
@@ -313,7 +343,7 @@ export function validateRoleLabel(raw: unknown): string | null {
       message: `Role name too long (max ${MAX_ROLE_LABEL_LENGTH} characters).`,
     });
   }
-  if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(label)) {
+  if (roleLabelHasForbiddenCharacter(label)) {
     throw new BadRequestException({
       code: ROLE_LABEL_INVALID,
       message: 'Role name cannot contain control or invisible formatting characters.',

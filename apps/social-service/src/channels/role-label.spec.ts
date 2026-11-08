@@ -73,6 +73,33 @@ describe('validateRoleLabel', () => {
       expect([null, 'refused']).toContain(alone);
     }
   });
+
+  it('keeps the glue of emoji: families, professions, the rainbow flag, the England flag', () => {
+    const accepted = [
+      '\u{1F468}‍\u{1F469}‍\u{1F467}', // family
+      '\u{1F469}‍⚕️', // woman health worker
+      '\u{1F3F3}️‍\u{1F308}', // rainbow flag
+      '\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}', // England
+      'Bureau \u{1F469}‍\u{1F3A4}',
+    ];
+    for (const label of accepted) {
+      expect(codeOf(() => validateRoleLabel(label))).toBeUndefined();
+    }
+  });
+
+  it('still refuses a joiner or a tag that is not glue inside an emoji', () => {
+    for (const bad of [
+      'a‍b', // joiner glued to a letter
+      '‍b',
+      'ab‍',
+      'a​b',
+      'a\u{E0067}',
+      '\u{E0067}b',
+      '\u{1F600}​b', // a zero-width space is never glue
+    ]) {
+      expect(codeOf(() => validateRoleLabel(bad))).toBe('ROLE_LABEL_INVALID');
+    }
+  });
 });
 
 describe('roleLabelOfBody', () => {
