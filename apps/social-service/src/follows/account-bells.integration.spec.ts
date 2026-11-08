@@ -395,6 +395,37 @@ maybe('the bell against PostgreSQL (engagement WP-3)', () => {
       expect(await bellRows()).toEqual([]);
     });
 
+    it('an UPPER-CASE association id is the same bell: it withholds, lists and resets on follow', async () => {
+      const upper = BDE.toUpperCase();
+      await bells.setLevel('ann', 'association', upper, 'none');
+      expect(await bellRows()).toEqual([`ann>association:${BDE}=none`]);
+      expect((await bells.listReduced('ann')).map((b) => b.targetId)).toEqual([BDE]);
+      const target = { kind: 'association', id: BDE, push: 'post' } as const;
+      expect([...(await bells.withheldAmong(target, ['ann']))]).toEqual(['ann']);
+      await follows.followAssociation('ann', upper);
+      expect(await bellRows()).toEqual([]);
+    });
+
+    it('moving a bell off none, by any route, leaves no legacy mute row behind', async () => {
+      const legacyRows = () => q(`SELECT 1 FROM association_push_mutes`).then((r) => r.rowCount);
+      const oldImageMute = () =>
+        q(`INSERT INTO association_push_mutes ("userId", "associationId") VALUES ('ann', $1)`, [
+          BDE,
+        ]);
+      await oldImageMute();
+      await bells.setLevel('ann', 'association', BDE, 'lives');
+      expect(await legacyRows()).toBe(0);
+      expect(await bellRows()).toEqual([`ann>association:${BDE}=lives`]);
+      await oldImageMute();
+      await bells.unmute('ann', BDE);
+      expect(await legacyRows()).toBe(0);
+      expect(await bellRows()).toEqual([]);
+      await oldImageMute();
+      await follows.followAssociation('ann', BDE);
+      expect(await legacyRows()).toBe(0);
+      expect(await bellRows()).toEqual([]);
+    });
+
     it('lists every reduction for the settings, an association by name, a person by id', async () => {
       await accepted('ann', 'bob');
       await bells.setLevel('ann', 'user', 'bob', 'lives');

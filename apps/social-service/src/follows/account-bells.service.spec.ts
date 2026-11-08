@@ -55,12 +55,22 @@ describe('the bell rules', () => {
 });
 
 describe('AccountBellsService refusals', () => {
-  const repo = { query: jest.fn(), delete: jest.fn(), findOne: jest.fn() };
+  const repo = {
+    query: jest.fn(),
+    delete: jest.fn(),
+    findOne: jest.fn(),
+    manager: { transaction: jest.fn() },
+  };
   const assoRepo = { exists: jest.fn() };
   const service = () => new AccountBellsService(repo as never, assoRepo as never);
   const codeOf = (e: unknown) => (e as { getResponse: () => { code: string } }).getResponse().code;
 
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    repo.manager.transaction.mockImplementation((work: (em: unknown) => unknown) =>
+      work({ query: repo.query })
+    );
+  });
 
   it('refuses an unknown kind or level before any statement', async () => {
     for (const [kind, level] of [
@@ -85,6 +95,31 @@ describe('AccountBellsService refusals', () => {
     expect(e).toBeInstanceOf(NotFoundException);
     expect(codeOf(e)).toBe(BELL_CODES.targetNotFound);
     expect(repo.query).not.toHaveBeenCalled();
+  });
+
+  it('stores an association id lower-case, whatever the case it came in, and clears the legacy row', async () => {
+    const id = '7A1C2D9E-0000-4000-8000-00000000000A';
+    assoRepo.exists.mockResolvedValue(true);
+    repo.query.mockResolvedValue([{ userId: 'u1' }]);
+    await service().setLevel('u1', 'association', id, 'lives');
+    expect(assoRepo.exists).toHaveBeenCalledWith({ where: { id: id.toLowerCase() } });
+    const calls = repo.query.mock.calls as [string, string[]][];
+    expect(calls[0][0]).toContain('DELETE FROM association_push_mutes');
+    expect(calls[0][1]).toEqual(['u1', id.toLowerCase()]);
+    expect(calls[1][1]).toEqual(['u1', 'association', id.toLowerCase(), 'lives']);
+  });
+
+  it('keeps the legacy row for none, and deletes it with the bell for all', async () => {
+    const id = '7a1c2d9e-0000-4000-8000-00000000000a';
+    assoRepo.exists.mockResolvedValue(true);
+    repo.query.mockResolvedValue([{ userId: 'u1' }]);
+    await service().setLevel('u1', 'association', id, 'none');
+    expect(repo.query).toHaveBeenCalledTimes(1);
+    repo.query.mockClear();
+    await service().setLevel('u1', 'association', id.toUpperCase(), 'all');
+    const sqls = (repo.query.mock.calls as [string, string[]][]).map(([sql]) => sql);
+    expect(sqls[0]).toContain('DELETE FROM association_push_mutes');
+    expect(sqls[1]).toContain('DELETE FROM account_bells');
   });
 
   it('refuses a person the caller does not follow: the conditional upsert wrote no row', async () => {

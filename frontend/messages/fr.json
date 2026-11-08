@@ -1720,6 +1720,7 @@
   "settings_bells_empty": "Aucune notification réduite. La cloche d'une page d'association, ou du profil d'une personne que vous suivez, permet d'en recevoir moins.",
   "settings_bells_restore": "Tout recevoir",
   "settings_bells_restore_aria": "Recevoir à nouveau les publications et les lives de {name}",
+  "settings_bells_unknown_account": "Compte inconnu",
   "settings_bells_load_error": "Impossible de charger les notifications réduites.",
   "asso_manage_list_button": "Gérer la liste",
   "asso_manage_button": "Gestion de l'asso",

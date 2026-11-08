@@ -134,32 +134,52 @@ export class AccountBellsService {
       this.logger.debug(`[BELL] ${short(userId)} refused: kind=${kind} level=${level}`);
       throw new BadRequestException({ code: BELL_CODES.invalid, message: 'Invalid bell' });
     }
+    // ONE entry point for every write (the bell routes AND the legacy push-mute routes): an
+    // association id is a uuid whatever its case, and every reader of this table compares it to the
+    // database's lower-case text, so it is stored lower-case or it would be a bell nothing matches.
+    const target = kind === 'association' ? targetId.toLowerCase() : targetId;
+    const isAssociation = kind === 'association';
+    if (isAssociation && !UUID_RE.test(target)) {
+      // Not a uuid names no association (and no row to clear); the database would type-error below.
+      if (level === 'all') return { level };
+      throw targetNotFound();
+    }
     if (level === 'all') {
-      await this.repo.delete({ userId, targetKind: kind, targetId });
-      this.logger.log(`[BELL] ${short(userId)} ${kind}=${short(targetId)} -> all`);
+      if (isAssociation) {
+        await this.repo.manager.transaction(async (em) => {
+          // The legacy row first: its mirror trigger deletes the bell too, the second delete is a no-op.
+          await em.query(DELETE_LEGACY_MUTE_SQL, [userId, target]);
+          await em.query(DELETE_BELL_SQL, [userId, kind, target]);
+        });
+      } else {
+        await this.repo.delete({ userId, targetKind: kind, targetId: target });
+      }
+      this.logger.log(`[BELL] ${short(userId)} ${kind}=${short(target)} -> all`);
       return { level };
     }
     let written: unknown[];
-    if (kind === 'association') {
-      // Not a uuid names no association, and would be the database's type error (a 500) below.
-      if (!UUID_RE.test(targetId) || !(await this.assoRepo.exists({ where: { id: targetId } }))) {
-        throw targetNotFound();
-      }
-      written = await this.repo.query(UPSERT_BELL_SQL, [userId, kind, targetId, level]);
+    if (isAssociation) {
+      if (!(await this.assoRepo.exists({ where: { id: target } }))) throw targetNotFound();
+      written = await this.repo.manager.transaction(async (em) => {
+        // The legacy table stays a subset of the bells at `none`: any other level clears the row
+        // (its trigger removes the bell, which the upsert then rewrites).
+        if (level !== 'none') await em.query(DELETE_LEGACY_MUTE_SQL, [userId, target]);
+        return em.query(UPSERT_BELL_SQL, [userId, kind, target, level]);
+      });
     } else {
       written = await this.repo.query(UPSERT_PERSON_BELL_SQL, [
         userId,
         kind,
-        targetId,
+        target,
         level,
         FOLLOW_ACCEPTED,
       ]);
     }
     if (!Array.isArray(written) || written.length === 0) {
-      this.logger.debug(`[BELL] ${short(userId)} ${kind}=${short(targetId)}: not followed`);
+      this.logger.debug(`[BELL] ${short(userId)} ${kind}=${short(target)}: not followed`);
       throw targetNotFound();
     }
-    this.logger.log(`[BELL] ${short(userId)} ${kind}=${short(targetId)} -> ${level}`);
+    this.logger.log(`[BELL] ${short(userId)} ${kind}=${short(target)} -> ${level}`);
     return { level };
   }
 
@@ -234,6 +254,17 @@ export class AccountBellsService {
   }
 }
 
+/**
+ * Deletes the LEGACY `association_push_mutes` row of one reader and association, so the old table
+ * stays a subset of the bells at `none` (rollback and the data-subject export read it). Dropped with
+ * that table by the held migration that retires it (docs/wiki/legacy-compatibility.md).
+ */
+const DELETE_LEGACY_MUTE_SQL = `DELETE FROM association_push_mutes
+  WHERE "userId" = $1 AND "associationId" = $2::uuid`;
+
+const DELETE_BELL_SQL = `DELETE FROM account_bells
+  WHERE "userId" = $1 AND "targetKind" = $2 AND "targetId" = $3`;
+
 /** Writes a reduction; returns the row. */
 const UPSERT_BELL_SQL = `INSERT INTO account_bells ("userId", "targetKind", "targetId", level)
   VALUES ($1, $2, $3, $4)
@@ -259,6 +290,15 @@ const UPSERT_PERSON_BELL_SQL = `INSERT INTO account_bells ("userId", "targetKind
 export function resetBellOnNewFollowSql(source: string, kind: BellTargetKind): string {
   return `DELETE FROM account_bells b USING ${source} s
    WHERE b."userId" = s.reader AND b."targetKind" = '${kind}' AND b."targetId" = s.target::text`;
+}
+
+/**
+ * The same reset for the LEGACY mute row of an association (a follow resets the old table too, so it
+ * stays a subset of the bells). Same `$source` contract as above; association follows only.
+ */
+export function resetLegacyMuteOnNewFollowSql(source: string): string {
+  return `DELETE FROM association_push_mutes m USING ${source} s
+   WHERE m."userId" = s.reader AND m."associationId" = s.target`;
 }
 
 const targetNotFound = () =>

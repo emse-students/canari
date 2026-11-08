@@ -1688,6 +1688,7 @@
   "settings_bells_empty": "No reduced notifications. The bell on an association's page, or on the profile of someone you follow, lets you receive fewer.",
   "settings_bells_restore": "Receive everything",
   "settings_bells_restore_aria": "Receive posts and lives from {name} again",
+  "settings_bells_unknown_account": "Unknown account",
   "settings_bells_load_error": "Could not load the reduced notifications.",
   "asso_manage_list_button": "Manage list",
   "asso_manage_button": "Manage association",

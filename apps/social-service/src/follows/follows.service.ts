@@ -16,7 +16,7 @@ import { UserFollow } from './entities/user-follow.entity';
 import { Association } from '../associations/entities/association.entity';
 import { FOLLOW_ACCEPTED, FOLLOW_PENDING, type FollowStatus } from './follow-status';
 import type { FollowNoticeKind } from './entities/user-follow-notice.entity';
-import { resetBellOnNewFollowSql } from './account-bells.service';
+import { resetBellOnNewFollowSql, resetLegacyMuteOnNewFollowSql } from './account-bells.service';
 
 /** How a follows log line names an account: its first 8 characters, never a whole account id. */
 export const short = (id: string): string => id.slice(0, 8);
@@ -140,7 +140,8 @@ export class FollowsService {
          VALUES (gen_random_uuid(), $1, $2)
          ON CONFLICT DO NOTHING
          RETURNING "followerUserId" AS reader, "associationId" AS target
-       ), reset AS (${resetBellOnNewFollowSql('followed', 'association')} RETURNING b."userId")
+       ), reset AS (${resetBellOnNewFollowSql('followed', 'association')} RETURNING b."userId"),
+       legacy AS (${resetLegacyMuteOnNewFollowSql('followed')})
        SELECT (SELECT count(*) FROM followed)::int AS created,
               (SELECT count(*) FROM reset)::int AS reset`,
       [followerUserId, associationId]

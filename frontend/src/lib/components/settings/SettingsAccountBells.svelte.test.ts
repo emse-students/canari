@@ -50,6 +50,16 @@ describe('SettingsAccountBells', () => {
     expect(document.querySelectorAll('li')).toHaveLength(0);
   });
 
+  it('never shows an id for a person whose name is not resolved', async () => {
+    api.listReducedBells.mockResolvedValue([
+      { kind: 'user', targetId: 'u-ghost', level: 'none', name: null },
+    ]);
+    await render();
+    const row = document.querySelector('[data-bell="user:u-ghost"]')!;
+    expect(row.textContent).toContain(m.settings_bells_unknown_account());
+    expect(row.textContent).not.toContain('u-ghost');
+  });
+
   it('lists an association by its name and a person by theirs, with each level', async () => {
     api.listReducedBells.mockResolvedValue([
       { kind: 'association', targetId: A1, level: 'none', name: 'BDE' },

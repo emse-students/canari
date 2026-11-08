@@ -24,7 +24,8 @@
   );
 
   const keyOf = (r: ReducedBell) => `${r.kind}:${r.targetId}`;
-  const nameOf = (r: ReducedBell) => r.name ?? people.get(r.targetId) ?? r.targetId;
+  const nameOf = (r: ReducedBell) =>
+    r.name ?? people.get(r.targetId) ?? m.settings_bells_unknown_account();
   const levelLabel = (r: ReducedBell) =>
     r.level === 'lives' ? m.bell_level_lives() : m.bell_level_none();
 
