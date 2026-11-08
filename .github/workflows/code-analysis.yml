@@ -503,15 +503,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # THE VERIFIED ARCHIVE IS CACHED, keyed on the pin (version AND digest): GitHub's release
+      # downloads answered 504 for hours on 2026-11-08 while its status page said operational, and
+      # every pull request failed fetching bytes it already had. The digest below is checked on
+      # EVERY run, cache hit or not, so a cache can only hand back the archive the pin names.
+      - name: Cache the Trivy archive
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/trivy-archive
+          key: trivy-${{ env.TRIVY_VERSION }}-${{ env.TRIVY_SHA256 }}
+
       - name: Install Trivy ${{ env.TRIVY_VERSION }}, checked against its SHA-256
         run: |
           set -euo pipefail
           tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$tarball" \
-            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${tarball}"
-          echo "${TRIVY_SHA256}  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/trivy-archive"
+          archive="$RUNNER_TEMP/trivy-archive/$tarball"
+          if [ -f "$archive" ]; then
+            echo "Trivy archive restored from the cache"
+          else
+            curl -fsSL --retry 3 -o "$archive" \
+              "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${tarball}"
+          fi
+          echo "${TRIVY_SHA256}  $archive" | sha256sum -c -
           mkdir -p "$RUNNER_TEMP/trivy"
-          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP/trivy" trivy
+          tar -xzf "$archive" -C "$RUNNER_TEMP/trivy" trivy
           echo "$RUNNER_TEMP/trivy" >> "$GITHUB_PATH"
 
       # `rc=0` then `|| rc=$?`, for the reason the npm audit step above gives: GitHub runs this
