@@ -27,6 +27,8 @@
   } from '$lib/posts/pollDraft';
   import { LocalizedError } from '$lib/utils/localizedError';
   import { getForms, type Form } from '$lib/forms/api';
+  // A post cannot carry a DRAFT form (the server refuses it): the picker never offers one.
+  import { publishedForms } from '$lib/forms/publish';
   import {
     ANONYMOUS_POST_IDENTITY,
     buildCreateFormHref,
@@ -416,7 +418,7 @@
     }
 
     try {
-      availableForms = await getForms();
+      availableForms = publishedForms(await getForms());
     } catch (e) {
       console.error('Failed to load forms', e);
     }
@@ -425,7 +427,7 @@
     if (newFormId) {
       sessionStorage.removeItem(POST_NEW_FORM_ID_KEY);
       try {
-        availableForms = await getForms();
+        availableForms = publishedForms(await getForms());
       } catch {
         /* keep previous list */
       }

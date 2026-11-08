@@ -18,10 +18,12 @@
   import { page } from '$app/state';
   import {
     createForm,
+    publishForm,
     uploadFormItemImage,
     type AudienceCondition,
     type CreateFormPayload,
   } from '$lib/forms/api';
+  import { draftRefusalMessage, publishBlocker } from '$lib/forms/publish';
   import { questionImageRefusalMessage } from '$lib/forms/questionImage';
   import { POST_NEW_FORM_ID_KEY, loadPostComposerDraft } from '$lib/posts/postComposerDraft';
   import {
@@ -99,6 +101,8 @@
   /** Pre-selected by a "create a form" link from that association's own tab, e.g. `EditFormsTab`. */
   let associationId = $state(page.url.searchParams.get('association') ?? '');
   let allowCashPayment = $state(false);
+  /** Online payment accepted (owner, 2026-11-08); off with cash on is a cash-only form. */
+  let allowOnlinePayment = $state(true);
   let cashPaymentExpiryDays = $state<number | undefined>(undefined);
   let fileRetentionDays = $state(FILE_RETENTION_DEFAULT_DAYS);
   let cotisation = $state(emptyCotisationSettings());
@@ -257,7 +261,25 @@
     errorBanner?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }
 
-  async function handleSave() {
+  /** Why "Publier" is shut: a paid form whose association cannot collect yet (it saves as a draft). */
+  const blockedReason = $derived(
+    publishBlocker({
+      requiresPayment,
+      associationId,
+      associationCanBePaid,
+      allowCashPayment,
+      allowOnlinePayment,
+    })
+  );
+  let isPublishing = $state(false);
+
+  /**
+   * Saves the new form as a DRAFT, then - for "Publier" - publishes it (owner, 2026-11-08). A draft
+   * opens its edit page, where it is finished and published later; a published form leaves the
+   * builder as before. A publication refused after the draft exists lands on that edit page too,
+   * which says why "Publier" is shut.
+   */
+  async function handleSave(intent: 'draft' | 'publish' = 'draft') {
     if (titleMissing) {
       error = m.form_error_title_required();
       return;
@@ -314,8 +336,10 @@
     }
     isSubmitting = true;
     error = '';
+    let createdId: string | null = null;
     try {
       const payload: CreateFormPayload = {
+        draft: true,
         title,
         description,
         basePrice: requiresPayment ? Math.round(basePrice * 100) : 0,
@@ -337,13 +361,22 @@
         // so; this line contradicted it, and a free form created from an association's own "create
         // a form" button would otherwise vanish from that association's list the moment it saved).
         associationId: associationId || undefined,
-        ...(requiresPayment ? { allowCashPayment } : {}),
+        ...(requiresPayment ? { allowCashPayment, allowOnlinePayment } : {}),
         ...(requiresPayment && allowCashPayment && cashPaymentExpiryDays != null
           ? { cashPaymentExpiryDays }
           : {}),
         ...(formHasFile ? { fileRetentionDays } : {}),
       };
       const created = await createForm(payload);
+      createdId = created.id;
+      if (intent === 'draft') {
+        Log.d('forms-editor', `draft created ${created.id}`);
+        goto(resolve('/forms/[id]/edit', { id: created.id }));
+        return;
+      }
+      isPublishing = true;
+      await publishForm(created.id);
+      Log.d('forms-editor', `created and published ${created.id}`);
       if (fromPostComposer) {
         sessionStorage.setItem(POST_NEW_FORM_ID_KEY, created.id);
         goto(resolve('/posts'));
@@ -353,6 +386,12 @@
         );
       }
     } catch (e: any) {
+      if (createdId) {
+        // The draft is stored; only its publication was refused. Its edit page says why.
+        console.warn('[forms] the draft is saved but its publication was refused:', e);
+        goto(resolve('/forms/[id]/edit', { id: createdId }));
+        return;
+      }
       // A grid the server alone could refuse (a cotisation tier it does not sell) is drawn under
       // that grid and its card opened, as the page's own check does.
       gridFault = refusedProductGridFault(e, items);
@@ -362,10 +401,12 @@
         questionImageRefusalMessage(e) ??
         formCodeMessage(refusalCode(e)) ??
         conflictCodeMessage(refusalCode(e)) ??
+        draftRefusalMessage(refusalCode(e)) ??
         providerRefusalMessage(e) ??
         e.message;
     } finally {
       isSubmitting = false;
+      isPublishing = false;
     }
   }
 </script>
@@ -432,6 +473,7 @@
     {isPublic}
     bind:basePrice
     bind:allowCashPayment
+    bind:allowOnlinePayment
     bind:cashPaymentExpiryDays
     bind:priceMatrix
     {tiers}
@@ -494,7 +536,8 @@
     {titleMissing}
     {isSubmitting}
     {summary}
-    saveLabel={m.form_save_button()}
-    onSave={handleSave}
+    saveLabel={m.form_save_draft_button()}
+    onSave={() => handleSave('draft')}
+    publish={{ onPublish: () => handleSave('publish'), blockedReason, busy: isPublishing }}
   />
 </PageContainer>

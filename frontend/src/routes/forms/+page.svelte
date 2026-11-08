@@ -15,8 +15,18 @@
     type Form,
     type Submission,
   } from '$lib/forms/api';
-  import { Plus, FileText, Pencil, Link, QrCode, Trash2, ChevronUp, Users } from '@lucide/svelte';
   import { formSharePath } from '$lib/forms/shareLink';
+  import {
+    Plus,
+    FileText,
+    Pencil,
+    Link,
+    QrCode,
+    Trash2,
+    ChevronUp,
+    Users,
+    ExternalLink,
+  } from '@lucide/svelte';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { publicAppUrl } from '$lib/utils/publicAppUrl';
   import QrCodeModal from '$lib/components/shared/QrCodeModal.svelte';
@@ -25,6 +35,8 @@
   import FormResponsesPanel from '$lib/components/forms/FormResponsesPanel.svelte';
   import FormExportMenu from '$lib/components/forms/FormExportMenu.svelte';
   import { productGridQuestions } from '$lib/forms/responsesView';
+  import { formViewHref, isDraftForm } from '$lib/forms/publish';
+  import Button from '$lib/components/ui/Button.svelte';
 
   /** The form whose QR code is open, or null. Both share controls point at the same path. */
   let qrForm = $state<Form | null>(null);
@@ -239,6 +251,14 @@
                     {m.form_list_personal_badge()}
                   </span>
                 {/if}
+                {#if isDraftForm(form)}
+                  <span
+                    class="border-cn-border text-text-main inline-flex rounded-full border border-dashed px-2 py-0.5"
+                    data-testid="form-draft-badge"
+                  >
+                    {m.form_status_draft_badge()}
+                  </span>
+                {/if}
               </p>
             </div>
             <!-- Icon-only, all six - a text label on each of six actions demanded more width than
@@ -252,20 +272,36 @@
               >
                 <Pencil size={16} />
               </a>
-              <button
-                onclick={() => copyFormLink(form)}
-                class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
-                title={m.form_list_share_button()}
+              <!-- The respondent view in a new tab; a draft opens as a preview that sends nothing. -->
+              <Button
+                variant="secondary"
+                icon
+                href={formViewHref(form)}
+                target="_blank"
+                rel="noopener"
+                aria-label={m.form_view_open_button()}
+                title={m.form_view_open_button()}
+                data-testid="form-view-link"
               >
-                <Link size={16} />
-              </button>
-              <button
-                onclick={() => (qrForm = form)}
-                class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
-                title={m.qr_button()}
-              >
-                <QrCode size={16} />
-              </button>
+                <ExternalLink size={16} />
+              </Button>
+              <!-- A draft has no link to hand out: nobody but its managers can open it. -->
+              {#if !isDraftForm(form)}
+                <button
+                  onclick={() => copyFormLink(form)}
+                  class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
+                  title={m.form_list_share_button()}
+                >
+                  <Link size={16} />
+                </button>
+                <button
+                  onclick={() => (qrForm = form)}
+                  class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
+                  title={m.qr_button()}
+                >
+                  <QrCode size={16} />
+                </button>
+              {/if}
               <FormExportMenu
                 formId={form.id}
                 title={form.title}

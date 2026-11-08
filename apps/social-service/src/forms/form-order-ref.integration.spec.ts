@@ -61,6 +61,7 @@ maybe('one Lydia order_ref per request of a form answer, against PostgreSQL', ()
     await ds.initialize();
     const associationsService: any = {
       assertPaymentsReady: async () => undefined,
+      canTakePaymentsNow: async () => true,
       getPaymentAccountId: async () => payee,
       getActivePaymentProvider: async () => 'lydia',
       mayAct: async () => false,

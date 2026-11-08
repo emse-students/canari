@@ -79,6 +79,7 @@ import { POST_EDIT_PUBLISHER_ONLY, bdeModeratesContentSql } from '../spaces/bde-
 import { sameSideOfReviewCohort } from '../review-cohort';
 import { PINNED_FOR_VIEWER_IDS_SQL, pinnedForViewerSql, type PinSpace } from './space-pins';
 import { SpacePinsService } from './space-pins.service';
+import { assertFormNotDraft } from '../forms/form-status';
 import {
   commentsWithheldPostIds,
   ownEntryOnly,
@@ -1132,6 +1133,9 @@ export class PostsService {
         data.linkedCalendarEventId
       );
     }
+    // A post is read by its audience: a DRAFT form attached to it would show them a form they cannot
+    // open (`form-status.ts`). Published first, attached after.
+    await assertFormNotDraft(this.postRepo.manager, data.attachedFormId, 'a post');
     if (Array.isArray(data.polls)) {
       data.polls = this.normalizePolls(data.polls);
     }
@@ -2211,7 +2215,12 @@ export class PostsService {
       post.polls = this.normalizePolls(data.polls, post.polls ?? []);
     }
 
-    if ('attachedFormId' in data) post.attachedFormId = data.attachedFormId ?? null;
+    if ('attachedFormId' in data) {
+      if (data.attachedFormId !== post.attachedFormId) {
+        await assertFormNotDraft(this.postRepo.manager, data.attachedFormId, 'a post');
+      }
+      post.attachedFormId = data.attachedFormId ?? null;
+    }
 
     if ('linkedCalendarEventId' in data) {
       if (data.linkedCalendarEventId && post.associationId) {

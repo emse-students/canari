@@ -76,6 +76,9 @@ The form UI offers Lydia and cash since 2026-10-07; Stripe and saved cards are g
 | Lydia (online) | The payer types the address Lydia sends the request to (never stored); redirect to Lydia's payer page, return to `/forms/success?submission_id=...` (see the flow above) |
 | Cash | Submit marked `pending_cash`, association admin validates manually before its deadline |
 
+Online is offered only while the editor accepts it AND the association can collect; a form that takes
+cash is answered in cash meanwhile - [drafts and publication](#a-form-is-a-draft-until-it-is-published-owner-2026-11-08).
+
 A paid answer can be refunded from Canari, in full or in part, by a payout manager of the association
 (the Achats tab, [payments](payments.md#refunds-from-canari-enrolment-lot-4)); a TOTAL refund turns the
 answer `refunded`, which frees its seat and its single-answer slot.
@@ -181,6 +184,83 @@ fall back to `e.message` for the uncoded save refusals.
 l'application pour répondre à cette question" (`FormQuestion.svelte`'s `{:else}`), and a required
 one blocks the send with the same sentence (`firstMissingAnswer`, kind `update`), instead of an empty
 card the server refuses.
+
+## A form is a draft until it is published (owner, 2026-11-08)
+
+**Why.** A paid form could not be built for an association before its Lydia was ready: every save of a
+priced form called `assertPaymentsReady`, so the grid, the prices and the questions had to wait for
+the onboarding. And a new form was answerable the moment it was saved. Both are fixed by one state.
+
+**The state.** `forms.status` (migration 142): `draft` or `published`, default `published`, so every
+form written before it - and every form an older container or an older client writes - is published
+as it always was. A new client creates with `draft: true` (`CreateFormDto.draft`, create only; an edit
+sending it is refused `400 FORM_DRAFT_FLAG_ON_EDIT`) and publishes with `POST /forms/:id/publish`
+(manager only, idempotent: the write is `UPDATE ... WHERE status = 'draft'`, and an already published
+form answers the same success). **A form never goes back to draft**: a link, an answer or a reminder
+handed out cannot be taken back. A client that sends no `draft` gets a published form at once, logged
+`create without draft` ([legacy-compatibility](../../legacy-compatibility.md)).
+
+**A draft is invisible to every respondent read.** One `where`, `respondentFormWhere` (`form-status.ts`:
+id, not archived, `status = 'published'`), answers each of them, and a draft answers exactly what an
+absent form answers, so its id cannot be probed:
+
+| Read path | What a draft answers |
+|---|---|
+| `GET /forms/:id` (the fill page) | 404, except to its managers (`managesForm`: owner, global admin, MANAGE_FORMS) |
+| `GET /forms/:id/check` | the absent-form shape, `maySubmit: false` |
+| `POST /forms/:id/submit`, `POST /public/forms/:id/submit` | 404 |
+| `GET /public/forms/:id` (the guest link `/f/:id`) | 404 |
+| `POST /forms/:id/files` (`assertMayUploadAnswerFile`, `FormFilesService.upload`) | 404 |
+| `POST /forms/:id/remind` (the opening reminder) | 404, so no reminder row exists for a draft and the reminder cron has nothing to send |
+| A post attaching it (`createPost`, `updatePost`) | `400 FORM_IS_DRAFT` (`assertFormNotDraft`); the composer's pickers never offer a draft (`publishedForms`) |
+| An agenda event linking it (`assertFormBelongsToAssociation`) | `400 FORM_IS_DRAFT`; `link-candidates` lists published forms only |
+| The manager list `GET /forms` | listed, with a "Brouillon" badge and no share link or QR |
+
+The engagement chantier's "openings for followers" (WP-2..WP-10, designed, not built) must read
+through the same `where`: an opening of a draft is not an opening.
+
+**A paid form is always saved; its publication waits on a way to pay (amended by the owner the same
+day).** `payment-offer.ts` is the ONE rule, and the editor mirrors it (`publishBlocker`,
+`frontend/src/lib/forms/publish.ts`):
+
+- A paid form takes **online** payment (Lydia, "Paiement Canari") and/or **cash**. Online is now the
+  editor's choice too: `forms."allowOnlinePayment"` (migration 142, default true - online was the only
+  way before, so every existing form keeps it). Off with cash on is a cash-only form.
+- **Saving** a draft never asks about readiness or the association's kind.
+- **Publishing** a paid form (and creating one published at once, an older client; and every edit of a
+  published one) needs its respondents able to pay NOW: cash accepted, OR online accepted and the
+  association able to collect (`canTakePaymentsNow`, read lazily - not asked at all when cash already
+  answers). Neither: `409 FORM_PAYMENTS_NOT_READY` ("Activez le paiement en espèces ou attendez que
+  l'encaissement en ligne soit configuré"), or `400 FORM_NO_PAYMENT_METHOD` when the editor turned both
+  off. The association's kind (`assertKindMayPrice`: an institution never collects, a list only through
+  an approved delegate) is judged at the same moment.
+- **The editor**: "Publier" is shut with that sentence under it; the payment section's warning stays a
+  warning only without cash. With cash on and online not ready it is a note ("L'encaissement en ligne
+  n'est pas encore configuré : les réponses seront payées en espèces pour l'instant") and no "Créer un
+  formulaire gratuit à la place".
+
+**A published paid form while online is not ready.** It stays published and readable (unchanged
+behaviour, measured before this change): every read serves `paymentsPaused`, now
+`charges && !(allowOnlinePayment && collectsNow)`. A respondent of a form that takes cash is offered
+**cash only** - no online choice, never a dead Lydia button (`offersOnlyCash`, both fill pages) - and the
+server refuses an online attempt: `FORM_ONLINE_PAYMENT_NOT_OFFERED` (409, before anything is written)
+on a cash-only form, the existing readiness refusal (`PAYMENTS_NOT_ACTIVATED` / `PAYMENTS_BLOCKED`)
+when online is accepted but not ready. A form without cash shows its online answer held, as before.
+**Online comes back by itself**: `paymentsPaused` is derived on every read, so the first read after the
+association becomes ready offers online again, if the editor kept it on. Guests keep the existing cash
+rules (a public form's cash answer needs `cashPaymentExpiryDays`, and holds its seat until then).
+
+**"Voir le formulaire"** (the forms list row, the editor's header) opens the respondent view in a new
+tab (`target=_blank rel=noopener`, `formViewHref`): the live page for a published form, a PREVIEW
+(`/forms/:id?preview=1`) for a draft. The preview draws the questions, says it is one, shuts the send
+button ("Envoi désactivé (aperçu)") and asks nothing of the reader's state (`isPreview`,
+`routes/forms/[id]/+page.svelte`); the server would refuse a draft's submit anyway.
+
+Tests: `forms.service.draft.spec.ts` (create, edit, publish both ways, cash, idempotence, every read
+path, the cash-only submit), `form-status.integration.spec.ts` (migration 142 on PostgreSQL, the
+`where`, the conditional publish), `frontend/src/lib/forms/publish.test.ts`,
+`FormSaveBar.svelte.test.ts`, `FormPaymentSection.svelte.test.ts`, `routes/forms/page.viewLink`,
+`routes/forms/[id]/page.preview`, `routes/forms/[id]/edit/page.draft`.
 
 ## The admin screens
 

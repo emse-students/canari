@@ -18,10 +18,14 @@ const route = vi.hoisted(() => ({
 vi.mock('$app/state', () => route);
 const nav = vi.hoisted(() => ({ goto: vi.fn(async (_href: string, _opts?: unknown) => {}) }));
 vi.mock('$app/navigation', () => nav);
-const api = vi.hoisted(() => ({ createForm: vi.fn(async () => ({ id: 'f-new' })) }));
+const api = vi.hoisted(() => ({
+  createForm: vi.fn(async () => ({ id: 'f-new' })),
+  publishForm: vi.fn(async () => ({ id: 'f-new', status: 'published' })),
+}));
 vi.mock('$lib/forms/api', async (orig) => ({
   ...(await orig<typeof import('$lib/forms/api')>()),
   createForm: api.createForm,
+  publishForm: api.publishForm,
 }));
 vi.mock('$lib/associations/api', async (orig) => ({
   ...(await orig<typeof import('$lib/associations/api')>()),
@@ -81,7 +85,7 @@ async function saveReturningTo(returnTo: string) {
   title.dispatchEvent(new Event('input', { bubbles: true }));
   await settle();
   const save = [...document.querySelectorAll('button')].find((b) =>
-    b.textContent?.includes(m.form_save_button())
+    b.textContent?.includes(m.form_publish_button())
   )!;
   save.click();
   await settle();
@@ -93,6 +97,9 @@ describe('the form builder, once the form is saved', () => {
     async () => {
       await saveReturningTo('/associations/bde/edit/forms');
       expect(api.createForm).toHaveBeenCalledTimes(1);
+      // Created as a draft, then published: "Publier" is what leaves the builder.
+      expect(api.createForm).toHaveBeenCalledWith(expect.objectContaining({ draft: true }));
+      expect(api.publishForm).toHaveBeenCalledWith('f-new');
       await vi.waitFor(() =>
         expect(nav.goto).toHaveBeenCalledWith('/associations/bde/edit/forms', {})
       );

@@ -70,6 +70,7 @@ maybe("a guest's name and e-mail, against PostgreSQL (migration 138)", () => {
       { get: () => 'https://canari.example' } as any,
       {
         assertPaymentsReady: async () => undefined,
+        canTakePaymentsNow: async () => true,
         getPaymentAccountId: async () => 'vendor',
         getActivePaymentProvider: async () => 'lydia',
         mayAct: async () => false,

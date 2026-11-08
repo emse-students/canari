@@ -120,6 +120,11 @@ export interface CreateFormPayload {
   /** Whether cash (physical) payment is accepted as an alternative to the online payment. */
   allowCashPayment?: boolean;
   /**
+   * Whether online payment is accepted (owner, 2026-11-08); absent keeps the stored value, true for
+   * a new form. Off with cash on is a cash-only form.
+   */
+  allowOnlinePayment?: boolean;
+  /**
    * True when the form charges and its organiser cannot collect right now - a list whose delegation
    * was revoked, or whose receiver lost its Lydia (owner, 2026-11-02). DERIVED by the server on every
    * read, never stored: it resumes by itself on a new accepted delegation.
@@ -150,7 +155,15 @@ export interface CreateFormPayload {
   grantsCotisation?: boolean;
   /** Which tier `grantsCotisation` grants; null = the base tier. */
   cotisationVariantKey?: string | null;
+  /**
+   * CREATE ONLY: `true` stores the form as a DRAFT, seen by its managers alone until
+   * {@link publishForm}. The server refuses it on an edit.
+   */
+  draft?: boolean;
 }
+
+/** A form's life (`form-status.ts` on the server): `draft` until published, then for good. */
+export type FormStatus = 'draft' | 'published';
 
 export interface Form extends CreateFormPayload {
   id: string;
@@ -168,6 +181,8 @@ export interface Form extends CreateFormPayload {
   imageUrl?: string | null;
   /** Answers holding a place (`GET /forms/:id` only): the editor warns before removing an ordered row. */
   submissionCount?: number;
+  /** `draft` until a manager publishes it; absent on a server before drafts, which is `published`. */
+  status?: FormStatus;
 }
 
 import { apiFetch } from '$lib/utils/apiFetch';
@@ -254,6 +269,16 @@ export async function updateForm(id: string, payload: CreateFormPayload): Promis
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw await refusal(res, 'Failed to update form');
+  return res.json();
+}
+
+/**
+ * Publishes a DRAFT form: answerable, listed and reachable by its link from now on. Idempotent on
+ * the server. Refused 409 `FORM_PAYMENTS_NOT_READY` while a paid form's association cannot collect.
+ */
+export async function publishForm(id: string): Promise<{ id: string; status: FormStatus }> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${id}/publish`, { method: 'POST' });
+  if (!res.ok) throw await refusal(res, 'Failed to publish form');
   return res.json();
 }
 

@@ -67,7 +67,7 @@ describe("FormsService - a question's image", () => {
     // The checks unrelated to images, each pinned by its own spec.
     for (const name of [
       'assertKindMayPrice',
-      'assertPaidFormAssociationReady',
+      'assertRespondentsCanPay',
       'assertCotisationConfigValid',
     ]) {
       jest.spyOn(service as any, name).mockResolvedValue(undefined);
