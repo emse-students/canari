@@ -16,11 +16,11 @@ path.
 
 What they found. None of it is a regression, and none of it blocks:
 
-- **P2 - a sign-out revokes the session BEFORE it deregisters the FCM token and closes the socket.**
-  The deregistration then gets a `401`, the server probably keeps the push token, and every
-  sign-out logs one `E [Push] FCM token deregistration failed`, one `refresh 401` and one
-  `pauseSocket: native disconnect failed`. The order belongs in the sign-out sequence: deregister,
-  then close, then revoke.
+- **P3 - sign-out and sign-in noise left after #3144** (read on `1.6.8-alpha.1`): the order is
+  fixed (no `401` on the deregistration, a killed-app push still decrypts after a re-sign-in), but
+  the Mi 9T still logs `pauseSocket: native disconnect failed` at sign-out, both phones log
+  `refresh 401` about 100 ms after `logout 200`, and the iPhone logs six `[NativeTabBar] ... tab bar
+  is not configured` during the sign-in callback.
 - **P3 - `pauseSocket` on an already-closed socket** when the app goes to the background for the
   file picker. This is lifecycle noise next to "Reconnect request refused - paused".
 - **P3 - iOS `[CALL-WAKE]`**: WKWebView refuses the screen wake lock (`NotAllowedError`), so the
