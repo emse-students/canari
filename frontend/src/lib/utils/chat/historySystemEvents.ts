@@ -10,6 +10,8 @@ import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { receivedNoticeTime, renderVisibleNotice } from '$lib/utils/chat/visibleNotices';
 import { appMessageSentAtMs } from '$lib/utils/chat/messageUtils';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
+import { mergeNicknameEntries } from '$lib/utils/users/conversationNicknames.svelte';
+import { applyNicknameFrame } from './nicknameFrame';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
@@ -463,6 +465,16 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         parsed.system.event === 'pin',
         Number(data.at) || parseServerTimestampMs(msg.timestamp) || 0
       );
+    } else if (parsed.system.event === 'nickname') {
+      // The live reader, dated by the log entry when the frame carries no `at`: `applyNickname`
+      // keeps the newer statement, so re-reading a log already followed changes nothing.
+      applyNicknameFrame(
+        conversationId,
+        data,
+        senderNorm,
+        parseServerTimestampMs(msg.timestamp) || 0,
+        (line) => console.debug(line)
+      );
     } else if (parsed.system.event === 'remove_reaction' && data.messageId && data.emoji) {
       // LEGACY FRAME, replay side. Taking a reaction back now travels as a `ReactionMsg` with
       // `removed` set; this only ever sees log entries written before that change. Dated with the
@@ -515,6 +527,12 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       if (pinsMerged > 0) {
         console.debug(
           `[HISTORY_REPLAY] ${pinsMerged} pin state(s) converged for ${conversationId.slice(0, 8)}…`
+        );
+      }
+      const nicknamesMerged = mergeNicknameEntries(conversationId, data.nicknames);
+      if (nicknamesMerged > 0) {
+        console.debug(
+          `[HISTORY_REPLAY] ${nicknamesMerged} nickname(s) converged for ${conversationId.slice(0, 8)}…`
         );
       }
       if (Array.isArray(bundleData) && bundleData.length > 0) {

@@ -2,6 +2,7 @@ import { canari } from '$lib/proto/canari.js';
 import type { ChatMessage, Conversation, MessageReaction, ReadWatermarks } from '$lib/types';
 import { applyReplaySystemEvent, type HistoryRow } from './historySystemEvents';
 import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
+import { nicknameEntry } from '$lib/utils/users/conversationNicknames.svelte';
 import { envelopeBodyText, mkTextEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import { keySource } from '$lib/crypto/messageAuthorship.testKit';
@@ -695,5 +696,32 @@ describe('replaying a pin', () => {
     );
 
     expect(pinnedMessageIds(g)).toEqual([]);
+  });
+});
+
+/**
+ * "Modifier les pseudos": the `nickname` frame is durable in the shared log, so a device that was
+ * offline - or a fresh one walking the scrollback - takes it from the replay, the setter being the
+ * log entry's sender and never a payload field.
+ */
+describe('replaying a nickname', () => {
+  it('applies the frame from the log, and an older one cannot undo it', async () => {
+    // This file runs without a DOM: the register's device copy is unreachable here, and says so.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const g = 'group-nickname';
+    await replay(
+      systemEvent('nickname', { userId: 'Bob', nickname: 'Capitaine', at: 200, setBy: 'forged' }),
+      OTHER,
+      [],
+      g
+    );
+    await replay(
+      systemEvent('nickname', { userId: 'bob', nickname: 'Old', at: 100 }),
+      OWNER,
+      [],
+      g
+    );
+    expect(nicknameEntry(g, 'bob')).toEqual({ nickname: 'Capitaine', setBy: OTHER, at: 200 });
+    warn.mockRestore();
   });
 });

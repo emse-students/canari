@@ -24,6 +24,7 @@ import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RedisService } from '../common/redis';
 import { sanitizeLog } from '../common/log.utils';
 import { isBlockedBetween } from '../common/user-blocks';
+import { memberCanModerate } from './moderation-grant';
 import { ReviewCohortBoundaryException, sameSideOfReviewCohort } from '../review-cohort';
 import {
   communityCrossesReviewCohortFor,
@@ -503,9 +504,7 @@ export class ChannelService implements OnApplicationBootstrap {
    * and the enforcement can never drift apart.
    */
   private async memberCanModerateMessages(member: ChannelMember): Promise<boolean> {
-    if (!member.roleIds?.length) return false;
-    const roles = await this.roleRepo.find({ where: { id: In(member.roleIds) } });
-    return roles.some((r) => roleGrantsModeration(r.permissions));
+    return memberCanModerate(this.roleRepo, member);
   }
 
   // ================= THE GOVERNANCE POSTCONDITION =================

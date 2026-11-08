@@ -57,6 +57,8 @@
     onTakeBackSend?: (messageId: string) => void;
     /** Whether the viewer may delete other members' messages here (`channel.moderate`). */
     canModerate?: boolean;
+    /** This conversation's nickname scope: a sender's nickname set here replaces their name. */
+    nicknameScope?: string | null;
     /** Called when the author chooses to edit a message; the edit happens in the composer. */
     onBeginEdit?: (messageId: string, text: string) => void;
     /** Callback to toggle a message's pinned state. Omit to hide the pin action. */
@@ -118,6 +120,7 @@
     onDiscardSend,
     onTakeBackSend,
     canModerate = false,
+    nicknameScope = null,
     onBeginEdit,
     onTogglePin,
     onReelPurged,
@@ -314,7 +317,8 @@
                   <EmojiText
                     text={getUserFirstNameSync(
                       msg.senderId,
-                      resolvedSenderNames[msg.senderId] || m.user_unknown_label()
+                      resolvedSenderNames[msg.senderId] || m.user_unknown_label(),
+                      nicknameScope ?? undefined
                     )}
                   />
                 {/snippet}

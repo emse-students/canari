@@ -42,6 +42,13 @@ describing it as a live rival is what made it look like a design decision rather
 | `user` | the reported account's id | the account's display name |
 | `live` | a live's id | the broadcaster's display name, plus `live: { state, ..., broadcasterStanding }` - open, ended, cut or gone ([lives](services/lives.md#moderation-wp-l8-server-half)) |
 | `live_chat` | a live chat MESSAGE's id (with `liveId` and the plaintext `message`) | the kept line's text, plus `liveChat: { text, authorName, keptUntil, integrity, ... }` ([lives](services/lives.md#a-reported-chat-line-wp-l8b)) |
+| `nickname` | ONE version of a community nickname, `<member row id>@<set-at ms>` | that version's text while it is still shown, null once it was changed or cleared ([chat](frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08)) |
+
+`nickname` arrived on 2026-11-08 ("Modifier les pseudos"): reportable by a member of that community
+only, its `reportedUserId` the setter read from the membership row, every refusal the `404
+CONTENT_NOT_FOUND` of a post. Only global admins see it in the queue: a BDE's scope
+(`reportInBdeScopeSql`) does not name it. A community moderator reverses one by clearing it. An MLS
+group's nicknames never reach a server and are not reportable.
 
 `live` arrived with WP-L8 (2026-10-19, decision D6: a live is moderated like a post). Its `reportedUserId` is
 the broadcaster read from the live row, never the client's; the live must still have a row and be
@@ -336,6 +343,10 @@ Two write paths never checked `anonymous` before resolving and storing the real 
 - Neither can **react to, comment on, like a comment of or report** a personal post of the other,
   and neither is **notified of a mention** by the other, on any post: a write or a notification
   follows the read's predicate ([posts](frontend/modules/posts.md#a-write-or-a-notification-follows-the-reads-predicate-2026-11-02)).
+- Neither can **set the other's nickname** in a conversation they share ("Modifier les pseudos"): a
+  community refuses it at the server (`403 USER_BLOCKED`); in a group the setter's client asks first,
+  and the target's own devices do not show a nickname of themselves set by someone they stand in a
+  block with ([chat](frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08)).
 
 ### What a block does not do
 

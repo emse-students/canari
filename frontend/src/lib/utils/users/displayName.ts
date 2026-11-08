@@ -15,6 +15,7 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { SYSTEM_SENDER_ID } from '$lib/utils/chat/messageUtils';
 import { noteAbsentUser } from './absentUsers';
 import { noteDeletedAccount, noteResolvedName } from './nameMirror';
+import { visibleNickname } from './conversationNicknames.svelte';
 
 const displayNameCache = new Map<string, string>();
 const inFlight = new Map<string, Promise<string | null>>();
@@ -212,12 +213,26 @@ export function peekUserDisplayName(userId: string): string | null {
  * The given name of a resolved profile, read from its `firstName` column - never cut out of the
  * full name, which breaks on compound given names. `fallback` (the full name the caller holds) is
  * what answers until the profile has been fetched, or when it carries no first name.
+ *
+ * `scope` is the conversation the name is drawn in (see {@link getUserDisplayNameSync}): a nickname
+ * set there replaces the first name too, since it replaces the person's name as a whole.
  */
-export function getUserFirstNameSync(userId: string, fallback: string): string {
-  return firstNameCache.get(normalizeUserId(userId)) ?? fallback;
+export function getUserFirstNameSync(userId: string, fallback: string, scope?: string): string {
+  return visibleNickname(scope, userId) ?? firstNameCache.get(normalizeUserId(userId)) ?? fallback;
 }
 
-export function getUserDisplayNameSync(userId: string, fallback?: string): string {
+/**
+ * The name to draw for `userId`, from what is already known - never a fetch.
+ *
+ * **`scope` IS THE CONVERSATION THE NAME IS DRAWN IN, AND THE ONLY DOOR A NICKNAME HAS.** A nickname
+ * set in a DM, a group or a community ("Modifier les pseudos") overrides the profile name THERE and
+ * nowhere else (`conversationNicknames.svelte.ts`): a caller drawing inside a conversation passes its
+ * scope; a caller drawing anywhere else - a profile, a picker, a notification, a stored notice -
+ * passes none and gets the profile name. No call site reads a nickname itself.
+ */
+export function getUserDisplayNameSync(userId: string, fallback?: string, scope?: string): string {
+  const nickname = visibleNickname(scope, userId);
+  if (nickname) return nickname;
   const normalized = normalizeUserId(userId);
   const cached = displayNameCache.get(normalized);
   if (cached) return cached;

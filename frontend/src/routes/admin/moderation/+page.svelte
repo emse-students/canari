@@ -370,6 +370,7 @@
     user: m.moderation_user(),
     live: m.moderation_type_live(),
     live_chat: m.moderation_type_live_chat(),
+    nickname: m.moderation_type_nickname(),
   });
 
   const liveStateLabel = $derived(liveStateLabels());

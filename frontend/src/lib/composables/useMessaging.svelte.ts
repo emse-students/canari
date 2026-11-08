@@ -27,6 +27,7 @@ import {
   editMessage,
   deleteMessage,
   setMessagePinned,
+  setConversationNickname,
 } from '$lib/utils/chat/messaging';
 import { applySalonEchoChange } from '$lib/utils/chat/salonEcho';
 import {
@@ -3310,6 +3311,30 @@ export function useMessaging() {
     settleControl(ctx, convo.id, messageId, act, queued);
   }
 
+  /**
+   * Queues the silent `nickname` frame of an MLS conversation ("Modifier les pseudos") - the `send`
+   * of a group `NicknamePlace`. The register is moved by the caller once this answers true
+   * (`saveNickname`), so a refused frame leaves no name only this device shows.
+   *
+   * @returns whether the durable queue took it; false too when the conversation is not open here.
+   */
+  async function sendNickname(
+    conversationKey: string,
+    userId: string,
+    nickname: string | null,
+    at: number,
+    ctx: MessagingContext
+  ): Promise<boolean> {
+    const convo = ctx.conversations.get(conversationKey);
+    if (!convo) {
+      console.warn(
+        `[NICKNAME] not sent: conversation ${conversationKey.slice(0, 8)} is not loaded`
+      );
+      return false;
+    }
+    return setConversationNickname(userId, nickname, at, controlDeps(ctx, convo));
+  }
+
   // ── Reply ─────────────────────────────────────────────────────────────────
 
   /** Sets the message the user is replying to, which will be embedded as a quote preview in the next send. */
@@ -3588,6 +3613,8 @@ export function useMessaging() {
     handleEditMessage,
     /** Toggles a message's pinned state (optimistic local + pin/unpin MLS system event). */
     handleTogglePin,
+    /** Queues a conversation's `nickname` frame (`saveNickname`'s group send). */
+    sendNickname,
     /** Runs a refused reaction/edit/pin/delete again (the notice's Retry), with a fresh context. */
     retryRefusedControl,
     /** Sets the message to reply to (shown as a quote in the next send). */

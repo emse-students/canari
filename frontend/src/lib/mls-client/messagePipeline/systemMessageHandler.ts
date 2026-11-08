@@ -63,6 +63,8 @@ import {
 } from '$lib/utils/chat/readState';
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
+import { mergeNicknameEntries } from '$lib/utils/users/conversationNicknames.svelte';
+import { applyNicknameFrame } from '$lib/utils/chat/nicknameFrame';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
 import type {
@@ -1412,6 +1414,15 @@ export async function handleSystemEvent(
           `[HISTORY_BUNDLE] ${pinsMerged} pin state(s) converged for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}`
         );
       }
+      // And the nickname register, for the same reason and with the same kind of merge: a member
+      // admitted after a `nickname` frame went out learns the names from here (the inviter's join
+      // push carries it even when every message is withheld).
+      const nicknamesMerged = addOnly ? 0 : mergeNicknameEntries(convoKey, data.nicknames);
+      if (nicknamesMerged > 0) {
+        log(
+          `[HISTORY_BUNDLE] ${nicknamesMerged} nickname(s) converged for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}`
+        );
+      }
 
       if (msgs.length > 0) {
         // HELD MEANS SHOWN OR STORED. Memory is a window, so every id of the bundle memory does not
@@ -1678,6 +1689,12 @@ export async function handleSystemEvent(
     // is dated on receipt: later than anything we hold, which is the right answer for a frame
     // arriving live, and the only one available. See `docs/wiki/legacy-compatibility.md`.
     applyPin(convoKey, String(data.messageId), event === 'pin', Number(data.at) || Date.now());
+    return true;
+  }
+
+  if (event === 'nickname') {
+    // Dated on receipt when the frame carries no `at`, as a pin is - see `applyNicknameFrame`.
+    applyNicknameFrame(convoKey, data, senderNorm, Date.now(), log);
     return true;
   }
 

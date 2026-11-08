@@ -1,6 +1,24 @@
 import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index } from 'typeorm';
 
 /**
+ * Every kind of thing a report can name - the ONE list the DTO, the service and this column share.
+ * `nickname` (2026-11-08) is one VERSION of a community nickname: `contentId` is
+ * `<member row id>@<set-at ms>` (`nicknameReportSubject`), its setter in `reportedUserId`, read by the
+ * server from the membership row (docs/wiki/moderation-and-blocking.md).
+ */
+export const REPORT_CONTENT_TYPES = [
+  'post',
+  'comment',
+  'user',
+  'live',
+  'live_chat',
+  'nickname',
+] as const;
+
+/** One of {@link REPORT_CONTENT_TYPES}. */
+export type ReportContentType = (typeof REPORT_CONTENT_TYPES)[number];
+
+/**
  * A content report submitted by a user flagging a post, a comment, or a person. ONE per reporter
  * per thing, held by a partial unique index (migration 099) that leaves out the erasure's
  * tombstone, so two erased reporters of one thing do not collide.
@@ -30,8 +48,9 @@ export class ContentReport {
    * to show a moderator - `contentPreview` was hard-coded null for it. A branch that names a
    * capability the product does not have reads, to the next person, as a capability it has.
    */
-  @Column({ length: 30 })
-  contentType: 'post' | 'comment' | 'user' | 'live' | 'live_chat';
+  // The type is NAMED: a union alias reflects as `Object`, which TypeORM refuses at start-up.
+  @Column({ type: 'varchar', length: 30 })
+  contentType: ReportContentType;
 
   @Column()
   @Index()

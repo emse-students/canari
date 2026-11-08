@@ -23,6 +23,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { flushSync } from 'svelte';
+import type { NameReader } from './displayNames.svelte';
 
 const resolveUserDisplayName = vi.fn();
 const getUserDisplayNameSync = vi.fn();
@@ -51,7 +52,7 @@ afterEach(() => {
 describe('userDisplayNames', () => {
   it('runs its effect once per change of the list, not once per name it writes', () => {
     const ids = ['a', 'b'];
-    let read!: Map<string, string>;
+    let read!: NameReader;
     stop = $effect.root(() => {
       read = userDisplayNames(() => ids);
     });
@@ -66,7 +67,7 @@ describe('userDisplayNames', () => {
 
   it('takes an already-known name from the shared cache, not from its own previous map', async () => {
     getUserDisplayNameSync.mockImplementation((id: string) => (id === 'a' ? 'Ada' : id));
-    let read!: Map<string, string>;
+    let read!: NameReader;
     stop = $effect.root(() => {
       read = userDisplayNames(() => ['a']);
     });
@@ -81,7 +82,7 @@ describe('userDisplayNames', () => {
   it('ignores a resolve that answered null - not knowing is not knowing there is none', async () => {
     getUserDisplayNameSync.mockImplementation((id: string) => id);
     resolveUserDisplayName.mockResolvedValue(null);
-    let read!: Map<string, string>;
+    let read!: NameReader;
     stop = $effect.root(() => {
       read = userDisplayNames(() => ['a']);
     });
@@ -94,7 +95,7 @@ describe('userDisplayNames', () => {
 
   it('drops the entry of an id that has left the list', () => {
     let ids = $state(['a', 'b']);
-    let read!: Map<string, string>;
+    let read!: NameReader;
     stop = $effect.root(() => {
       read = userDisplayNames(() => ids);
     });

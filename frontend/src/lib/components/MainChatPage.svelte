@@ -100,6 +100,8 @@
   } from '$lib/types';
   import type { BulkIngestPhase } from '$lib/mls-client';
   import { buildMentionRoster } from '$lib/utils/users/mentionRoster';
+  import { communityNicknameScope } from '$lib/utils/users/conversationNicknames.svelte';
+  import { loadCommunityNicknames } from '$lib/utils/chat/nicknameActions';
 
   interface Props {
     /** Controls whether the sidebar shows private chat conversations or community channels. */
@@ -131,6 +133,30 @@
       )?.viewerCanModerate ??
         false)
   );
+
+  /** The community (database id) the open salon belongs to; null outside a salon. */
+  const selectedChannelWorkspaceId = $derived(
+    isSelectedChannel
+      ? (channels.channelWorkspaces.find((ws) =>
+          ws.channels.some((ch) => ch.id === convs.selectedContact)
+        )?.workspaceDbId ?? null)
+      : null
+  );
+
+  // A COMMUNITY'S NICKNAMES ARE READ ONCE PER SESSION, at the first salon of it opened; the live
+  // `workspace.updated` event keeps them current after that. A failed read is forgotten so the next
+  // opening asks again - an opening is the trigger, never a timer. A plain Set: the effect must not
+  // re-run on its own bookkeeping.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentional: see comment above
+  const nicknamesRead = new Set<string>();
+  $effect(() => {
+    const workspaceId = selectedChannelWorkspaceId;
+    if (!workspaceId || nicknamesRead.has(workspaceId)) return;
+    nicknamesRead.add(workspaceId);
+    void loadCommunityNicknames(workspaceId).then((ok) => {
+      if (!ok) nicknamesRead.delete(workspaceId);
+    });
+  });
 
   /**
    * Whether the viewer may POST in the open channel - the salon's `writePolicy` applied to their own
@@ -223,6 +249,17 @@
 
   /** Explicit derived binding so ChatArea re-renders when the open conversation mutates. */
   const activeConversation = $derived(convs.currentConvo);
+
+  /**
+   * THE ONE SCOPE A NICKNAME IS READ IN for the open conversation ("Modifier les pseudos"): a salon
+   * shows its COMMUNITY's register, an MLS room its own. Handed to the thread's name labels, and to
+   * nothing that leaves the conversation (a push, a profile).
+   */
+  const nicknameScope = $derived(
+    selectedChannelWorkspaceId
+      ? communityNicknameScope(selectedChannelWorkspaceId)
+      : (activeConversation?.id ?? null)
+  );
 
   /**
    * The open conversation's presentation, resolved the SAME way the list and the thread header
@@ -1626,6 +1663,7 @@
           currentUserId={session.userId}
           conversation={activeConversation}
           localPreview={isLocalPreview}
+          {nicknameScope}
           heldNotice={heldCount > 0 ? m.chat_send_held({ count: heldCount }) : ''}
           {messageText}
           isChannel={isSelectedChannel ?? false}
@@ -1768,6 +1806,8 @@
           <ChannelMembersList
             currentUserId={session.userId}
             selectedChannelId={channels.selectedChannelConversationId}
+            workspaceId={selectedChannelWorkspaceId}
+            canModerate={canModerateSelectedChannel}
           />
         {:else if sidePanelKind === 'media' && selectedConversationId}
           <ConversationMediaPanel
@@ -1792,6 +1832,8 @@
             onGroupDelete={() => void convs.handleDeleteGroup(convCtx())}
             onGroupLeave={() => void convs.handleLeaveGroup(convCtx())}
             onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
+            onSendNickname={(userId, nickname, at) =>
+              messaging.sendNickname(convs.selectedContact ?? '', userId, nickname, at, msgCtx())}
           />
         {:else if sidePanelKind === 'settings'}
           <ChannelSettingsPanel

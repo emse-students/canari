@@ -5033,3 +5033,71 @@ A user in the English app wanted a GROUP and created a COMMUNITY: the community 
 | The rail's dashed "+" (`SidebarNewCommunityModal`, `onCreateWorkspace`) | a community (workspace with channels) | title "Nouvelle communauté" / "New community", field "Nom de la communauté" / "Community name", button "Créer la communauté" / "Create community" |
 
 **English never says "club" for a community** (the `chat_*` strings about a community's settings, invitation and deletion now say "community"). "Club" stays where it names an ASSOCIATION (the `asso_*`, `admin_*`, `posts_*`, `payout_*` and `dependency_*` families): there it is the English word for the French "association", a different object from a community.
+
+## Per-conversation nicknames ("Modifier les pseudos", 2026-11-08)
+
+The user's Messenger screen (asked 2026-10-14, rules 2026-10-14 and 2026-10-18): every member listed,
+the name the conversation shows for them, a pencil, "Définir un pseudo". `NicknamesPanel.svelte`,
+opened from the conversation panel (`ChatGroupPanel`, a DM included: both people) and from a salon's
+member list (`ChannelMembersList`, the COMMUNITY's members). What the screen offers is
+`nicknamePermission.ts` (`mayNameMember`, modelled on `pinPermission.ts`); where a change goes and
+what it comes to is `nicknameActions.ts` (`saveNickname`, one typed outcome per sentence).
+
+**Two mechanisms, one register shape** (`conversationNicknames.svelte.ts`): per scope, per member,
+`{ nickname | null, setBy, at }` merged by date - the later wins; on a tie a reset wins, then the larger
+`setBy + nickname`, so every device settles the same pair the same way. A reset is DATED like a set, so
+a late statement cannot resurrect a cleared name. Nothing is keyed by the setter: a nickname stays when
+its setter leaves.
+
+| | DM / group (MLS room) | Community |
+|---|---|---|
+| Who may set | any member, any member (no ranks) | a moderator (`viewerCanModerate`); the target may only CLEAR their own |
+| Carried by | a silent `nickname` system frame, `{ userId, nickname, at }`, `DELIVERY.mutation` (`setConversationNickname`) | `channel_members.nickname`, `nicknameSetBy`, `nicknameSetAt` (migration 149), written by `PUT /api/channels/workspaces/:id/nicknames/:userId` |
+| Checked by | every reader: the setter is the MLS-authenticated sender, never a payload field; the value is held to the contract (`applyNicknameFrame`) | the server, on every write (`CommunityNicknamesService.set`, `memberCanModerate` read from the role rows) |
+| Reaches others | the group's shared log (live and replay) | `workspace.updated { workspaceId, nickname }` to every member, plus `GET .../nicknames` read once per session at the first salon opened and at each opening of the screen |
+| Kept | per device, `localStorage` `canari_nicknames_<groupId>` (500 entries, oldest evicted) | in memory; the server holds it |
+
+**The late joiner.** A member added after a `nickname` frame went out never receives it. Every
+`history_bundle` restates the register (`nicknames`, beside `pins`), and the inviter's join push sends
+its state even when every message is withheld - so the first bundle a new member gets carries the
+names. A diff that converges, no timer, no re-announcement. **The limit, named:** a bundle's entries
+are taken on the relayer's word about who set them, the same trust model as the pin register; the live
+frame and the replay are authenticated, the restatement is not.
+
+**Old clients.** An unknown system event is ACKed silently, so an older build ignores the frame. The
+community change rides `workspace.updated`, whose absent fields every build reads as "unchanged"; a new
+event type would have been logged as an error by every older one.
+
+**The name is resolved in ONE place.** `getUserDisplayNameSync` / `getUserFirstNameSync`
+(`displayName.ts`) and `userDisplayName` / `userDisplayNames` (`displayNames.svelte.ts`) take an
+optional `scope`; with it, `visibleNickname` overrides the profile name, without it nothing does. The
+thread (sender labels, typing line), the DM header and the member lists pass the open conversation's
+scope (`MainChatPage`'s `nicknameScope`: a salon reads its COMMUNITY's register, `community:<id>`);
+nothing else does. The register's reactivity is ONE module-level revision every reader reads and every
+write bumps: a register first created inside a `$derived` would be a source of that derived, which
+Svelte does not track, and the screen kept the old name until that was found.
+
+**Push: a nickname never reaches a notification** (decided 2026-11-08). `notificationSenderName`,
+`resolveNotificationSenderName`, the native name mirror, the Rust scanner and the server's display-name
+copies call the resolver without a scope and name the profile. A lock screen is outside the
+conversation, a nickname somebody else set may be an insult, and the servers never see an MLS group's
+nicknames anyway - one rule for both kinds.
+
+**A block.** A blocked person cannot rename the blocker. In a community the server refuses
+(`403 USER_BLOCKED`, `isBlockedBetween`, either direction). In a group no server reads the frame and
+a block is private, so no third member can know of one: the SETTER's screen asks `block-status` before
+sending (and sends nothing when it cannot ask), and the TARGET's own devices show a nickname of
+themselves set by someone else only once `block-status` for that setter answered "clear" - keyed by
+viewer and setter, asked once, asked again after a failure.
+
+**Limits** are the profile's, in `libs/contracts/conversation-nickname.json`, walked by both
+`nicknameRules.contract.test.ts` and social-service's `community-nicknames.spec.ts`: NFKC, control and
+format characters dropped, trimmed, empty means reset, at most 100 code points (`nickname_too_long`).
+
+**Reports and reversal.** A community nickname is reportable (`contentType: 'nickname'`) by a member
+of that community; the subject is one VERSION, `<member row id>@<set-at ms>`, so a nickname changed
+since is no longer reportable and the next one is a new subject. The setter is read from the row. The
+admin queue shows its text while that version is shown, none once it changed
+([moderation-and-blocking](../../moderation-and-blocking.md)). A moderator reverses one by clearing it
+on the screen. An MLS group's nicknames reach no server, so they have no report: the target resets
+theirs, or blocks.

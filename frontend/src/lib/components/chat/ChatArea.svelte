@@ -204,6 +204,12 @@
     /** Whether the viewer may delete other members' messages here (`channel.moderate`). */
     canModerate?: boolean;
     /**
+     * The scope of this conversation's nickname register (`conversationNicknames.svelte.ts`): the MLS
+     * group id of a DM or group, the community's scope for a salon. Names drawn in the thread pass it
+     * to the resolver, so a nickname set here shows here and nowhere else.
+     */
+    nicknameScope?: string | null;
+    /**
      * Callback to save an edited message by ID with its new text. The editing itself is done in the
      * composer (see {@link editing}); this is called once, on confirmation.
      */
@@ -322,6 +328,7 @@
     onDiscardSend,
     onTakeBackSend,
     canModerate = false,
+    nicknameScope = null,
     onEdit,
     onCancelReply,
     authToken = '',
@@ -808,7 +815,7 @@
   const typingLabel = $derived.by(() => {
     const typers = typingUserIds;
     if (typers.length === 0) return '';
-    const names = typers.map((u) => getUserDisplayNameSync(u, u));
+    const names = typers.map((u) => getUserDisplayNameSync(u, u, nicknameScope ?? undefined));
     if (names.length === 1) return m.chat_typing_one_person({ names: names[0] });
     if (names.length === 2) return m.chat_typing_two_people({ name1: names[0], name2: names[1] });
     return m.chat_typing_multiple_people();
@@ -1768,6 +1775,7 @@
             {onDiscardSend}
             {onTakeBackSend}
             {canModerate}
+            {nicknameScope}
             onBeginEdit={onEdit ? editSession.begin : undefined}
             {onTogglePin}
             {onReelPurged}
