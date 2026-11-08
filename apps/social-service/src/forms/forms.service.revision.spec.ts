@@ -1,5 +1,10 @@
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
-import { FORM_CREATE_KEY_ON_EDIT, FormsService } from './forms.service';
+import {
+  FORM_CREATE_KEY_GONE,
+  FORM_CREATE_KEY_ON_EDIT,
+  FORM_CREATE_KEY_REUSED,
+  FormsService,
+} from './forms.service';
 import { FORM_DRAFT, FORM_PUBLISHED } from './form-status';
 import {
   FORM_CHANGED_SINCE_REVISION,
@@ -139,6 +144,8 @@ describe('FormsService - unpublished revisions', () => {
       }),
       createQueryBuilder: jest.fn(queryBuilder),
       query: jest.fn(),
+      // The publication's locked read of the form (`FOR UPDATE`): the row as it stands.
+      findOne: jest.fn(async () => ({ ...row })),
     };
     const formRepo: any = {
       findOne: jest.fn(async () => ({ ...row })),
@@ -356,6 +363,27 @@ describe('FormsService - unpublished revisions', () => {
       expect(current().status).toBe(FORM_PUBLISHED);
     });
 
+    it('judges a DRAFT with no revision as its row stands under the lock, not as read before', async () => {
+      const { service, current, m } = makeService({
+        form: { status: FORM_DRAFT },
+        canTakePayments: false,
+      });
+      // Free when the manager check read it; made paid (online only) before the transaction.
+      m.findOne.mockImplementationOnce(async () => ({
+        ...current(),
+        requiresPayment: true,
+        basePrice: 1500,
+      }));
+      await expect(service.publishChanges('f1', 0, OWNER, false)).rejects.toMatchObject({
+        response: { code: 'FORM_PAYMENTS_NOT_READY' },
+      });
+      expect(m.findOne).toHaveBeenCalledWith(expect.anything(), {
+        where: { id: 'f1' },
+        lock: { mode: 'pessimistic_write' },
+      });
+      expect(current().status).toBe(FORM_DRAFT);
+    });
+
     it('keeps a paid DRAFT unpublished while its respondents could not pay, revision intact', async () => {
       const { service, current } = makeService({
         form: { status: FORM_DRAFT },
@@ -415,7 +443,12 @@ describe('FormsService - unpublished revisions', () => {
     it('answers the stored form when the same account sends the create again', async () => {
       const { service, formRepo } = makeService({ form: { clientCreateId: KEY } });
       const createNew = jest.spyOn(service as any, 'createNew');
-      const again = await service.create({ ...doc(), clientCreateId: KEY, ownerId: OWNER } as any);
+      const again = await service.create({
+        ...doc(),
+        associationId: 'a1',
+        clientCreateId: KEY,
+        ownerId: OWNER,
+      } as any);
       expect(again).toMatchObject({ id: 'f1', ownerId: OWNER });
       expect(formRepo.findOne).toHaveBeenCalledWith({
         where: { ownerId: OWNER, clientCreateId: KEY },
@@ -444,12 +477,82 @@ describe('FormsService - unpublished revisions', () => {
     it('two sends racing to the insert: the loser answers what the winner stored', async () => {
       const { service, formRepo } = makeService({ form: { clientCreateId: KEY } });
       formRepo.findOne.mockResolvedValueOnce(null);
+      jest.spyOn(service as any, 'createNew').mockRejectedValueOnce(
+        Object.assign(new Error('duplicate key'), {
+          code: '23505',
+          constraint: 'forms_owner_client_create_id',
+        })
+      );
+      expect(
+        await service.create({
+          ...doc(),
+          associationId: 'a1',
+          clientCreateId: KEY,
+          ownerId: OWNER,
+        } as any)
+      ).toMatchObject({ id: 'f1' });
+    });
+
+    it('two sends racing with a question image: the loser, refused the image, answers the stored form', async () => {
+      const { service, formRepo } = makeService({ form: { clientCreateId: KEY } });
+      formRepo.findOne.mockResolvedValueOnce(null);
       jest
         .spyOn(service as any, 'createNew')
-        .mockRejectedValueOnce(Object.assign(new Error('duplicate key'), { code: '23505' }));
+        .mockRejectedValueOnce(new BadRequestException({ code: 'QUESTION_IMAGE_NOT_YOURS' }));
       expect(
-        await service.create({ ...doc(), clientCreateId: KEY, ownerId: OWNER } as any)
+        await service.create({
+          ...doc(),
+          associationId: 'a1',
+          clientCreateId: KEY,
+          ownerId: OWNER,
+        } as any)
       ).toMatchObject({ id: 'f1' });
+    });
+
+    it("a unique violation on ANOTHER index is the create's own failure", async () => {
+      const { service, formRepo } = makeService({ form: { clientCreateId: KEY } });
+      formRepo.findOne.mockResolvedValueOnce(null);
+      const other = Object.assign(new Error('duplicate key'), {
+        code: '23505',
+        constraint: 'forms_something_else',
+      });
+      jest.spyOn(service as any, 'createNew').mockRejectedValueOnce(other);
+      await expect(
+        service.create({
+          ...doc(),
+          associationId: 'a1',
+          clientCreateId: KEY,
+          ownerId: OWNER,
+        } as any)
+      ).rejects.toBe(other);
+    });
+
+    it('a replay naming another association is refused, typed, never answered the first form', async () => {
+      const { service } = makeService({
+        form: { clientCreateId: KEY, associationId: 'asso-a' },
+      });
+      await expect(
+        service.create({
+          ...doc(),
+          associationId: 'asso-b',
+          clientCreateId: KEY,
+          ownerId: OWNER,
+        } as any)
+      ).rejects.toMatchObject({ status: 409, response: { code: FORM_CREATE_KEY_REUSED } });
+    });
+
+    it('a replay of a create whose form was archived since is refused gone', async () => {
+      const { service } = makeService({
+        form: { clientCreateId: KEY, deletedAt: new Date() },
+      });
+      await expect(
+        service.create({
+          ...doc(),
+          associationId: 'a1',
+          clientCreateId: KEY,
+          ownerId: OWNER,
+        } as any)
+      ).rejects.toMatchObject({ status: 410, response: { code: FORM_CREATE_KEY_GONE } });
     });
 
     it('an edit never carries the key', async () => {

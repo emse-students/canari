@@ -237,11 +237,68 @@ describe('FormAutosave', () => {
       newSaveId: () => 'after',
     });
     server.state.revision = 5;
-    autosave.closed(5);
+    autosave.closed(5, 'published');
     expect([autosave.revision, autosave.hasChanges]).toEqual([5, false]);
     expect(device.drop).toHaveBeenCalledTimes(1);
     autosave.schedule(doc('After'));
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
     expect(server.save).toHaveBeenCalledWith(5, doc('After'), 'after', false);
+  });
+
+  it('keeps an edit typed while the publication ran: the first save of the next revision', async () => {
+    const server = fakeServer();
+    const { copy, device } = fakeDevice();
+    const autosave = new FormAutosave({
+      save: server.save,
+      revision: 4,
+      hasChanges: true,
+      device,
+      newSaveId: () => 'typed-meanwhile',
+    });
+    // Typed after the page's flush, while "Publier" awaited the server.
+    autosave.schedule(doc('Typed meanwhile'));
+    server.state.revision = 5;
+    autosave.closed(5, 'published');
+    expect(device.drop).not.toHaveBeenCalled();
+    expect(copy.current).toMatchObject({ base: 5, title: 'Typed meanwhile' });
+    await autosave.flush();
+    expect(server.save).toHaveBeenCalledWith(5, doc('Typed meanwhile'), 'typed-meanwhile', false);
+    expect([autosave.status, autosave.hasChanges]).toEqual(['saved', true]);
+  });
+
+  it('a discard drops an edit typed while it ran: the page shows the published form again', async () => {
+    const server = fakeServer();
+    const { device } = fakeDevice();
+    const autosave = new FormAutosave({ save: server.save, revision: 4, device, newSaveId });
+    autosave.schedule(doc('Thrown away'));
+    autosave.closed(5, 'discarded');
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+    expect(server.save).not.toHaveBeenCalled();
+    expect(device.drop).toHaveBeenCalledTimes(1);
+  });
+
+  it('a save on its way is in the "after" of every copy kept meanwhile', async () => {
+    const after: string[][] = [];
+    const device: AutosaveDeviceCopy = {
+      keep: vi.fn(async (_b: number, _s: string, _d: CreateFormPayload, a: string[]) => {
+        after.push(a);
+      }),
+      sent: vi.fn(async () => {}),
+      drop: vi.fn(async () => {}),
+    };
+    let answer: (v: { revision: number }) => void = () => {};
+    const save = vi.fn(() => new Promise<{ revision: number }>((r) => (answer = r)));
+    const ids = ['s1', 's2'];
+    const autosave = new FormAutosave({ save, revision: 2, device, newSaveId: () => ids.shift()! });
+    autosave.schedule(doc('One'));
+    const flushing = autosave.flush();
+    // s1 is on its way; the manager types on.
+    autosave.schedule(doc('Two'));
+    expect(after.at(-1)).toEqual(['s1']);
+    answer({ revision: 3 });
+    // Answered: s2 goes next, and the copy of it no longer names s1.
+    await vi.waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+    expect(after.at(-1)).toEqual([]);
+    void flushing;
   });
 });

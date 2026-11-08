@@ -42,7 +42,15 @@ export interface FormDraftState {
   savedAt: string | null;
   /** The client's id of the save that wrote this revision, null before the first or after a close. */
   saveId: string | null;
+  /**
+   * The last {@link RECENT_SAVE_IDS} save ids that wrote the revision, oldest first, kept across a
+   * publication or a discard: a client's save found here LANDED, whatever was built on it since.
+   */
+  recentSaveIds: string[];
 }
+
+/** How many save ids a revision remembers (`recentSaveIds`). */
+export const RECENT_SAVE_IDS = 32;
 
 /**
  * The form's own content as one md5: every column of `forms` but its ids, its dates, its status and
@@ -69,21 +77,23 @@ export async function readFormDraft(
   lock = false
 ): Promise<FormDraftState> {
   const rows = (await m.query(
-    `SELECT revision, document, "savedAt", "saveId" FROM form_drafts WHERE "formId" = $1${lock ? ' FOR UPDATE' : ''}`,
+    `SELECT revision, document, "savedAt", "saveId", "recentSaveIds" FROM form_drafts WHERE "formId" = $1${lock ? ' FOR UPDATE' : ''}`,
     [formId]
   )) as Array<{
     revision: number;
     document: Record<string, unknown> | null;
     savedAt: Date;
     saveId: string | null;
+    recentSaveIds: string[] | null;
   }>;
   const row = rows[0];
-  if (!row) return { revision: 0, document: null, savedAt: null, saveId: null };
+  if (!row) return { revision: 0, document: null, savedAt: null, saveId: null, recentSaveIds: [] };
   return {
     revision: Number(row.revision),
     document: row.document ?? null,
     savedAt: new Date(row.savedAt).toISOString(),
     saveId: row.saveId ?? null,
+    recentSaveIds: row.recentSaveIds ?? [],
   };
 }
 
@@ -107,7 +117,7 @@ export async function formChangedSinceRevision(m: Querier, formId: string): Prom
  * Stores `document` as the revision after `baseRevision`, in ONE statement either way: the first
  * save of a form (base 0) inserts and does nothing when a row already exists; every later one
  * updates only while the row still holds `baseRevision`. `saveId` is kept on the row (a client whose
- * answer was lost finds it in the 409). A revision that STARTS here - the first, or the first after
+ * answer was lost finds it in the 409), and appended to `recentSaveIds`, the bounded ancestry. A revision that STARTS here - the first, or the first after
  * a publication or a discard - takes the form's fingerprint as its base. Returns the new state, or
  * `null` when the base has moved (the caller answers 409 with the current one).
  */
@@ -123,8 +133,9 @@ export async function writeFormDraft(
   const result =
     baseRevision === 0
       ? await m.query(
-          `INSERT INTO form_drafts ("formId", revision, document, "savedAt", "saveId", "baseFingerprint")
-             VALUES ($1, 1, $2::jsonb, now(), $3, ${fingerprint})
+          `INSERT INTO form_drafts ("formId", revision, document, "savedAt", "saveId", "baseFingerprint", "recentSaveIds")
+             VALUES ($1, 1, $2::jsonb, now(), $3, ${fingerprint},
+                     CASE WHEN $3::uuid IS NULL THEN '{}'::uuid[] ELSE ARRAY[$3::uuid] END)
            ON CONFLICT ("formId") DO NOTHING
            RETURNING revision, "savedAt"`,
           [formId, json, saveId]
@@ -133,7 +144,10 @@ export async function writeFormDraft(
           `UPDATE form_drafts
               SET revision = revision + 1, document = $2::jsonb, "savedAt" = now(), "saveId" = $4,
                   "baseFingerprint" = CASE WHEN document IS NULL THEN ${fingerprint}
-                                           ELSE "baseFingerprint" END
+                                           ELSE "baseFingerprint" END,
+                  "recentSaveIds" = CASE WHEN $4::uuid IS NULL THEN "recentSaveIds"
+                    ELSE (array_append("recentSaveIds", $4::uuid))[GREATEST(1, cardinality("recentSaveIds") + 2 - ${RECENT_SAVE_IDS}):]
+                  END
             WHERE "formId" = $1 AND revision = $3
            RETURNING revision, "savedAt"`,
           [formId, json, baseRevision, saveId]
@@ -195,29 +209,33 @@ export async function revisionsAtBase(m: Querier, associationId: string): Promis
 }
 
 /**
- * THE TIER RETAG REACHES THE REVISIONS TOO (`ProductsService`, owner 2026-11-01): the forms it
- * re-pointed from `oldKey` to `newKey` may hold an unpublished revision naming `oldKey`, which a
- * publication would write back - so that revision is re-pointed in the same transaction. And a
- * revision that was built on the form as it stood (`atBase`, read by {@link revisionsAtBase} before
- * the retag) takes the retagged form as its base: the retag is no edit made "outside" it, and must
- * not refuse its publication as one.
+ * THE TIER RETAG REACHES THE REVISIONS TOO (`ProductsService`, owner 2026-11-01): every open
+ * revision of the association's forms that GRANTS `oldKey` - the form granting it already, or the
+ * revision turning the grant on - is re-pointed to `newKey` in the same transaction: a publication
+ * would otherwise write the old key back, or grant a tier that no longer exists under it. And a
+ * revision of a retagged form (`retagged`) that was built on the form as it stood (`atBase`, read by
+ * {@link revisionsAtBase} before the retag) takes the retagged form as its base: the retag is no
+ * edit made "outside" it, and must not refuse its publication as one.
  */
 export async function followRetagInRevisions(
   m: Querier,
-  formIds: string[],
+  associationId: string,
+  retagged: string[],
   atBase: string[],
   oldKey: string | null,
   newKey: string | null
 ): Promise<void> {
-  if (formIds.length === 0) return;
+  // A revision that leaves `grantsCotisation` out keeps the form's own switch.
   await m.query(
-    `UPDATE form_drafts
-        SET document = jsonb_set(document, '{cotisationVariantKey}', COALESCE(to_jsonb($3::text), 'null'::jsonb))
-      WHERE "formId" = ANY($1::uuid[]) AND document IS NOT NULL
-        AND document ? 'cotisationVariantKey'
-        AND (document ->> 'cotisationVariantKey') IS NOT DISTINCT FROM $2::text`,
-    [formIds, oldKey, newKey]
+    `UPDATE form_drafts d
+        SET document = jsonb_set(d.document, '{cotisationVariantKey}', COALESCE(to_jsonb($3::text), 'null'::jsonb))
+       FROM forms f
+      WHERE f.id = d."formId" AND f."associationId" = $1 AND d.document IS NOT NULL
+        AND COALESCE((d.document ->> 'grantsCotisation')::boolean, f."grantsCotisation")
+        AND (d.document ->> 'cotisationVariantKey') IS NOT DISTINCT FROM $2::text`,
+    [associationId, oldKey, newKey]
   );
+  const formIds = retagged;
   const rebased = formIds.filter((id) => atBase.includes(id));
   if (rebased.length === 0) return;
   await m.query(

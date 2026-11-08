@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   FORM_DRAFT_CONFLICT,
@@ -14,6 +16,9 @@ import {
   isPreview,
   offersOnlyCash,
   publishBlocker,
+  publishPaymentRefusal,
+  formChargesMoney,
+  type PublishPaymentShape,
   publishedForms,
 } from './publish';
 import { m } from '$lib/paraglide/messages';
@@ -36,24 +41,61 @@ describe('drafts and their publication', () => {
   });
 
   it('shuts "Publier" only when the respondents could not pay now (ready OR cash, owner 2026-11-08)', () => {
-    const base = {
-      requiresPayment: true,
-      associationId: 'a1',
-      associationCanBePaid: false,
-      allowCashPayment: false,
-      allowOnlinePayment: true,
-    };
+    const paid = { requiresPayment: true, allowCashPayment: false, allowOnlinePayment: true };
+    const base = { form: paid, associationId: 'a1', associationCanBePaid: false };
     expect(publishBlocker(base)).toBe(m.form_publish_blocked_payments());
     // Cash accepted: publishable while online is not ready.
-    expect(publishBlocker({ ...base, allowCashPayment: true })).toBeNull();
+    expect(publishBlocker({ ...base, form: { ...paid, allowCashPayment: true } })).toBeNull();
     expect(publishBlocker({ ...base, associationCanBePaid: true })).toBeNull();
     // Neither online nor cash: a paid form nobody could pay.
-    expect(publishBlocker({ ...base, associationCanBePaid: true, allowOnlinePayment: false })).toBe(
-      m.form_no_payment_method()
-    );
-    expect(publishBlocker({ ...base, requiresPayment: false })).toBeNull();
-    // No association: the payment section refuses that case itself (`form_error_association_required`).
+    expect(
+      publishBlocker({
+        ...base,
+        associationCanBePaid: true,
+        form: { ...paid, allowOnlinePayment: false },
+      })
+    ).toBe(m.form_no_payment_method());
+    expect(publishBlocker({ ...base, form: { requiresPayment: false } })).toBeNull();
+    // A choice supplement charges without the switch, as on the server.
+    expect(
+      publishBlocker({
+        ...base,
+        form: {
+          requiresPayment: false,
+          items: [{ type: 'single_choice', options: [{ priceModifier: 300 }] }],
+        },
+      })
+    ).toBe(m.form_publish_blocked_payments());
+    // A personal form collects through the platform: online is ready, a way to pay is still owed.
     expect(publishBlocker({ ...base, associationId: '' })).toBeNull();
+    expect(
+      publishBlocker({ ...base, associationId: '', form: { ...paid, allowOnlinePayment: false } })
+    ).toBe(m.form_no_payment_method());
+  });
+
+  it('agrees with the server on every case of libs/contracts/form-publish-payment.cases.json', () => {
+    const { cases } = JSON.parse(
+      readFileSync(
+        join(process.cwd(), '..', 'libs', 'contracts', 'form-publish-payment.cases.json'),
+        'utf8'
+      )
+    ) as {
+      cases: {
+        name: string;
+        form: PublishPaymentShape;
+        onlineReady: boolean;
+        charges: boolean;
+        expected: string | null;
+      }[];
+    };
+    expect(cases.length).toBeGreaterThan(0);
+    for (const c of cases) {
+      expect([c.name, formChargesMoney(c.form)]).toEqual([c.name, c.charges]);
+      const refusal = formChargesMoney(c.form)
+        ? publishPaymentRefusal(c.form, c.onlineReady)
+        : null;
+      expect([c.name, refusal]).toEqual([c.name, c.expected]);
+    }
   });
 
   it('leads "Voir le formulaire" to the live page, or to a preview while anything is unpublished', () => {

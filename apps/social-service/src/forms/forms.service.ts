@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  GoneException,
   HttpException,
   HttpStatus,
   Injectable,
@@ -17,7 +18,7 @@ import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { Form } from './entities/form.entity';
 import { retireForms } from './retire-forms';
-import { isUniqueViolation } from '../common/pg-errors';
+import { violatesUniqueIndex } from '../common/pg-errors';
 import {
   FORM_NO_PAYMENT_METHOD,
   FORM_ONLINE_PAYMENT_NOT_OFFERED,
@@ -224,7 +225,7 @@ function makeId(prefix: string): string {
  * Whether a form can charge a submitter: payment switched on, a base price, a grid cell above 0, or
  * a choice option with a supplement - each of which `submit` turns into a total above 0.
  */
-function chargesMoney(input: CreateFormDto): boolean {
+export function chargesMoney(input: CreateFormDto): boolean {
   if (input.requiresPayment === true || (input.basePrice ?? 0) > 0) return true;
   const cells = (input.priceMatrix as PriceMatrix | null | undefined)?.cells;
   if (cells && Object.values(cells).some((c) => (c ?? 0) > 0)) return true;
@@ -335,6 +336,26 @@ type FulfilmentFlag = 'cotisationGrantedAt' | 'purchaseRecordedAt' | 'organiserN
 
 /** The 400 refusing a create's idempotency key on an edit. */
 export const FORM_CREATE_KEY_ON_EDIT = 'FORM_CREATE_KEY_ON_EDIT';
+
+/** The 409 refusing a create key replayed for another association than the form it made. */
+export const FORM_CREATE_KEY_REUSED = 'FORM_CREATE_KEY_REUSED';
+
+/** The 410 refusing a create key whose form was deleted (archived) since. */
+export const FORM_CREATE_KEY_GONE = 'FORM_CREATE_KEY_GONE';
+
+/** The unique index of a create key per owner (migration 146). */
+const FORMS_OWNER_CLIENT_CREATE_ID = 'forms_owner_client_create_id';
+
+/** Whether `err` is the claim refusing a question image bound to another form. */
+function isImageNotYours(err: unknown): boolean {
+  if (!(err instanceof HttpException)) return false;
+  const body = err.getResponse();
+  return (
+    typeof body === 'object' &&
+    body !== null &&
+    (body as { code?: string }).code === 'QUESTION_IMAGE_NOT_YOURS'
+  );
+}
 
 @Injectable()
 export class FormsService {
@@ -756,30 +777,60 @@ export class FormsService {
     // owner): nothing another account stored is ever looked up, so it answers no existence question.
     const key = input.clientCreateId;
     if (key) {
-      const existing = await this.formCreatedWith(input.ownerId!, key);
+      const existing = await this.formCreatedWith(input, key);
       if (existing) return existing;
     }
     try {
       return await this.createNew(input, isGlobalAdmin);
     } catch (err) {
-      // Two sends of one create raced to the insert: the loser reads what the winner stored.
-      if (key && isUniqueViolation(err)) {
-        const existing = await this.formCreatedWith(input.ownerId!, key);
+      // Two sends of one create raced. The loser meets the winner's row at the insert (the key's
+      // unique index), or earlier at the claim of a question image the winner already bound to its
+      // form (`QUESTION_IMAGE_NOT_YOURS`): either way the create is DONE, and the stored form is the
+      // answer. Any other failure is the create's own.
+      if (key && (violatesUniqueIndex(err, FORMS_OWNER_CLIENT_CREATE_ID) || isImageNotYours(err))) {
+        const existing = await this.formCreatedWith(input, key);
         if (existing) return existing;
       }
       throw err;
     }
   }
 
-  /** The form `ownerId`'s create keyed `clientCreateId` already stored, or `null`. */
-  private async formCreatedWith(ownerId: string, clientCreateId: string): Promise<Form | null> {
-    const existing = await this.formRepo.findOne({ where: { ownerId, clientCreateId } });
-    if (existing) {
+  /**
+   * The form `input.ownerId`'s create keyed `clientCreateId` already stored, or `null`. A repeat
+   * must be the SAME create: one naming another association is refused (`FORM_CREATE_KEY_REUSED`)
+   * rather than answered a form the caller did not ask for; one whose form was archived since is
+   * refused gone (`FORM_CREATE_KEY_GONE`), never answered a form no respondent can reach.
+   */
+  private async formCreatedWith(
+    input: CreateFormDto,
+    clientCreateId: string
+  ): Promise<Form | null> {
+    const existing = await this.formRepo.findOne({
+      where: { ownerId: input.ownerId!, clientCreateId },
+    });
+    if (!existing) return null;
+    const key = clientCreateId.slice(0, 8);
+    if ((existing.associationId ?? null) !== (input.associationId?.trim() || null)) {
       this.logger.log(
-        `[FORMS] create ${clientCreateId.slice(0, 8)} repeated: form ${existing.id.slice(0, 8)} answered`
+        `[FORMS] create ${key} repeated for another association than form ${existing.id.slice(0, 8)}'s: refused`
       );
+      throw new ConflictException({
+        code: FORM_CREATE_KEY_REUSED,
+        message: 'This create key already made a form for another association.',
+        formId: existing.id,
+      });
     }
-    return existing ?? null;
+    if (existing.deletedAt) {
+      this.logger.log(
+        `[FORMS] create ${key} repeated: form ${existing.id.slice(0, 8)} is archived`
+      );
+      throw new GoneException({
+        code: FORM_CREATE_KEY_GONE,
+        message: 'The form this create made was deleted.',
+      });
+    }
+    this.logger.log(`[FORMS] create ${key} repeated: form ${existing.id.slice(0, 8)} answered`);
+    return existing;
   }
 
   private async createNew(input: CreateFormDto, isGlobalAdmin: boolean) {
@@ -1072,6 +1123,7 @@ export class FormsService {
     // Publishing is its own route, and a published form never goes back to draft: a status sent
     // with an edit is refused rather than ignored (a dropped field is a save that did something else).
     if (input.draft !== undefined) {
+      this.logger.log(`[FORMS] edit of ${formId.slice(0, 8)} refused: it carried \`draft\``);
       throw new BadRequestException({
         code: FORM_DRAFT_FLAG_ON_EDIT,
         message: 'A form is published through POST /forms/:id/draft/publish, never by an edit.',
@@ -1080,6 +1132,7 @@ export class FormsService {
     // The create's idempotency key is the create's alone: an edit sending one is refused rather
     // than written over the stored key (a dropped field is a save that did something else).
     if (input.clientCreateId !== undefined) {
+      this.logger.log(`[FORMS] edit of ${formId.slice(0, 8)} refused: it carried a create key`);
       throw new BadRequestException({
         code: FORM_CREATE_KEY_ON_EDIT,
         message: 'clientCreateId is sent with a create only.',
@@ -1262,6 +1315,9 @@ export class FormsService {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
     if (form.deletedAt) throw new NotFoundException('Form not found');
     if (!isStorableDraftDocument(document)) {
+      this.logger.log(
+        `[FORM_DRAFT] ${formId.slice(0, 8)} save refused: not one JSON object within the size bound`
+      );
       throw new BadRequestException({
         code: FORM_DRAFT_MALFORMED,
         message: 'A form revision is the editor payload, as one JSON object.',
@@ -1325,11 +1381,20 @@ export class FormsService {
   ) {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
     if (form.deletedAt) throw new NotFoundException('Form not found');
-    const wasDraft = form.status === FORM_DRAFT;
     const citedBefore = questionImageIds(form.items);
     const outcome = await this.formRepo.manager.transaction(async (m) => {
       const current = await readFormDraft(m, formId, true);
       if (current.revision !== revision) return { refused: 'conflict' as const };
+      // The form is judged as it stands INSIDE this transaction, its row held: a write landing
+      // between the manager check above and here (an older build's edit, another publication) is
+      // either before this read or waits for the commit. A draft with no revision is published as
+      // this locked row is.
+      const locked = await m.findOne(Form, {
+        where: { id: formId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!locked || locked.deletedAt) return { refused: 'gone' as const };
+      const wasDraft = locked.status === FORM_DRAFT;
       if (!current.document && !wasDraft) return { refused: 'empty' as const };
       // Written since the revision started (an older build editing the form directly): publishing
       // would undo that write unseen, so it is refused unless the manager confirmed the overwrite.
@@ -1337,7 +1402,7 @@ export class FormsService {
       // the form as it stands NOW, not as a write landing between this read and the update.
       const changed = current.document ? await formChangedSinceRevision(m, formId) : false;
       if (changed && !overwrite) return { refused: 'changed' as const };
-      let saved: Form = form;
+      let saved: Form = locked;
       if (current.document) {
         const dto = await this.validatedRevision(current.document);
         saved = (await this.update(formId, dto, userId, isGlobalAdmin, m)) as Form;
@@ -1352,8 +1417,9 @@ export class FormsService {
           .execute();
       }
       const next = current.document ? await closeFormDraft(m, formId) : current.revision;
-      return { refused: null, revision: next, items: saved.items as unknown };
+      return { refused: null, revision: next, items: saved.items as unknown, wasDraft };
     });
+    if (outcome.refused === 'gone') throw new NotFoundException('Form not found');
     if (outcome.refused === 'conflict') return this.throwDraftConflict(formId, revision, 'publish');
     if (outcome.refused === 'changed') {
       this.logger.log(
@@ -1366,13 +1432,16 @@ export class FormsService {
       });
     }
     if (outcome.refused === 'empty') {
+      this.logger.log(
+        `[FORM_DRAFT] ${formId.slice(0, 8)} publish of revision ${revision} refused: no unpublished change`
+      );
       throw new ConflictException({
         code: FORM_DRAFT_EMPTY,
         message: 'This form holds no unpublished changes.',
       });
     }
     this.logger.log(
-      `[FORM_DRAFT] ${formId.slice(0, 8)} revision ${revision} published${wasDraft ? ', and the form with it' : ''}${overwrite ? ' (overwrite confirmed)' : ''}`
+      `[FORM_DRAFT] ${formId.slice(0, 8)} revision ${revision} published${outcome.wasDraft ? ', and the form with it' : ''}${overwrite ? ' (overwrite confirmed)' : ''}`
     );
     // Replaced or removed by the published revision: released once nothing cites it, after the commit.
     const citedAfter = questionImageIds(outcome.items);
@@ -1409,6 +1478,8 @@ export class FormsService {
       revision: current.revision,
       // The save that wrote it: a client whose answer was lost recognises its own and adopts it.
       saveId: current.saveId,
+      // And the saves before it: a device copy whose own save is here landed, and nothing of it is lost.
+      recentSaveIds: current.recentSaveIds,
     });
   }
 

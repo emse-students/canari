@@ -268,7 +268,10 @@ describe('resendFormDraftCopies', () => {
   });
 });
 
-describe('a save whose answer was lost, more typing, the app closed', () => {
+describe.each([
+  ['a save whose answer was lost, more typing, the app closed', 'lost'],
+  ['a save still on its way, more typing, the tab closed (it lands after)', 'in flight'],
+] as const)('%s', (_title, how) => {
   /** A server holding one revision, compare-and-set like `PUT /forms/:id/draft`. */
   function server() {
     const state = {
@@ -287,7 +290,10 @@ describe('a save whose answer was lost, more typing, the app closed', () => {
     return { state, write };
   }
 
-  /** The editor up to the close: S1 lands with its answer lost, then D2 is typed and never sent. */
+  /**
+   * The editor up to the close: S1 lands - its answer lost, or never read because the page died
+   * with it in flight - then D2 is typed and never sent.
+   */
   async function typeThenClose(userId: string) {
     const srv = server();
     const ids = ['s1', 's2'];
@@ -298,14 +304,20 @@ describe('a save whose answer was lost, more typing, the app closed', () => {
       device: deviceCopyOf(userId, () => ({ formId: 'f1', clientCreateId: null })),
       save: async (base, document, saveId) => {
         const out = srv.write(base, document, saveId);
-        if (srv.state.lose) throw new TypeError('Failed to fetch');
-        return out;
+        if (!srv.state.lose) return out;
+        if (how === 'in flight') return new Promise<never>(() => {});
+        throw new TypeError('Failed to fetch');
       },
     });
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     autosave.schedule(doc('one'));
-    await autosave.flush();
-    expect(autosave.status).toBe('offline');
+    if (how === 'lost') {
+      await autosave.flush();
+      expect(autosave.status).toBe('offline');
+    } else {
+      void autosave.flush({ leaving: true });
+      await vi.waitFor(() => expect(srv.state.saveId).toBe('s1'));
+    }
     autosave.schedule(doc('two'));
     // The app is closed here: nothing more is sent; what the device holds is all that is left.
     const store = formDraftCopyStore(userId);
@@ -336,6 +348,35 @@ describe('a save whose answer was lost, more typing, the app closed', () => {
     });
     await resendFormDraftCopies(d);
     expect(srv.state).toMatchObject({ revision: 4, saveId: 's2', document: doc('two') });
+    expect(await store.list()).toEqual([]);
+    expect(d.dropped).not.toHaveBeenCalled();
+  });
+});
+
+describe('a copy whose own save landed and another writer built on it', () => {
+  it('reopened: landed, by the ancestry, not stale', () => {
+    expect(
+      copyAgainst(copyOf('f', { saveId: 'mine' }), {
+        revision: 7,
+        saveId: 'theirs',
+        recentSaveIds: ['mine', 'theirs'],
+      }).verdict
+    ).toBe('landed');
+  });
+
+  it('resent: cleared without a word to the member', async () => {
+    const store = storeOf();
+    await store.put(copyOf('f1', { saveId: 'mine' }));
+    const d = deps(store, {
+      save: vi.fn(async () =>
+        Promise.reject(new FormDraftConflictError(7, 'theirs', ['mine', 'theirs']))
+      ),
+      conflictOf: (e) =>
+        e instanceof FormDraftConflictError
+          ? { revision: e.revision, saveId: e.saveId, recentSaveIds: e.recentSaveIds }
+          : undefined,
+    });
+    await resendFormDraftCopies(d);
     expect(await store.list()).toEqual([]);
     expect(d.dropped).not.toHaveBeenCalled();
   });

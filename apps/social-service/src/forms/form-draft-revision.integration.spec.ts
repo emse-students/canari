@@ -51,6 +51,7 @@ maybe('form revisions against PostgreSQL (migration 146)', () => {
     await ds.initialize();
     await q(`CREATE TABLE forms (id uuid PRIMARY KEY, title text, "imageUrl" text,
       "associationId" uuid, "cotisationVariantKey" text, "ownerId" text,
+      "grantsCotisation" boolean NOT NULL DEFAULT false,
       "updatedAt" timestamptz NOT NULL DEFAULT now())`);
     await q(`INSERT INTO forms (id, title) VALUES ($1, 'Gala'), ($2, 'Gala'), ($3, 'Gala')`, [
       FORM,
@@ -78,6 +79,7 @@ maybe('form revisions against PostgreSQL (migration 146)', () => {
       document: null,
       savedAt: null,
       saveId: null,
+      recentSaveIds: [],
     });
   });
 
@@ -182,12 +184,54 @@ maybe('form revisions against PostgreSQL (migration 146)', () => {
     expect(await changed()).toBe(false);
   });
 
+  it('remembers the saves that wrote it, across a close, and only the last 32', async () => {
+    const RING = '00000000-0000-4000-8000-0000000a0146';
+    await q(`INSERT INTO forms (id, title) VALUES ($1, 'Ring')`, [RING]);
+    const ids = Array.from(
+      { length: 34 },
+      (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`
+    );
+    await writeFormDraft(ds.manager, RING, 0, { title: 'r' }, ids[0]);
+    await ds.transaction(async (m) => {
+      await readFormDraft(m, RING, true);
+      await closeFormDraft(m, RING);
+    });
+    // Closed: the save that wrote the published revision is still known.
+    expect((await readFormDraft(ds.manager, RING)).recentSaveIds).toEqual([ids[0]]);
+    for (let i = 1; i < ids.length; i++) {
+      await writeFormDraft(ds.manager, RING, i + 1, { title: `r${i}` }, ids[i]);
+    }
+    expect((await readFormDraft(ds.manager, RING)).recentSaveIds).toEqual(ids.slice(2));
+  });
+
   it('a tier retag reaches the revision, and is no change "outside" it', async () => {
     const ASSO = '00000000-0000-4000-8000-0000000e0146';
     const RETAGGED = '00000000-0000-4000-8000-0000000f0146';
+    const TURNS_ON = '00000000-0000-4000-8000-0000000d0146';
+    const ELSEWHERE = '00000000-0000-4000-8000-0000000c0146';
     await q(
-      `INSERT INTO forms (id, title, "associationId", "cotisationVariantKey") VALUES ($1, 'Adhésion', $2, 'old')`,
+      `INSERT INTO forms (id, title, "associationId", "cotisationVariantKey", "grantsCotisation") VALUES ($1, 'Adhésion', $2, 'old', true)`,
       [RETAGGED, ASSO]
+    );
+    // A form of the association that grants nothing yet, whose revision turns the grant on with the
+    // old key; and a revision of ANOTHER association naming the same key.
+    await q(
+      `INSERT INTO forms (id, title, "associationId") VALUES ($1, 'Soirée', $2), ($3, 'Autre', $4)`,
+      [TURNS_ON, ASSO, ELSEWHERE, '00000000-0000-4000-8000-0000000b0146']
+    );
+    await writeFormDraft(
+      ds.manager,
+      TURNS_ON,
+      0,
+      { title: 'Soirée', grantsCotisation: true, cotisationVariantKey: 'old' },
+      SAVE_2
+    );
+    await writeFormDraft(
+      ds.manager,
+      ELSEWHERE,
+      0,
+      { title: 'Autre', grantsCotisation: true, cotisationVariantKey: 'old' },
+      SAVE_2
     );
     await writeFormDraft(
       ds.manager,
@@ -198,19 +242,25 @@ maybe('form revisions against PostgreSQL (migration 146)', () => {
     );
     await ds.transaction(async (m) => {
       const atBase = await revisionsAtBase(m, ASSO);
-      expect(atBase).toEqual([RETAGGED]);
+      expect(atBase).toContain(RETAGGED);
       await m.query(`UPDATE forms SET "cotisationVariantKey" = 'new' WHERE id = $1`, [RETAGGED]);
-      await followRetagInRevisions(m, [RETAGGED], atBase, 'old', 'new');
+      await followRetagInRevisions(m, ASSO, [RETAGGED], atBase, 'old', 'new');
     });
     expect((await readFormDraft(ds.manager, RETAGGED)).document).toMatchObject({
       cotisationVariantKey: 'new',
+    });
+    expect((await readFormDraft(ds.manager, TURNS_ON)).document).toMatchObject({
+      cotisationVariantKey: 'new',
+    });
+    expect((await readFormDraft(ds.manager, ELSEWHERE)).document).toMatchObject({
+      cotisationVariantKey: 'old',
     });
     expect(await ds.transaction((m) => formChangedSinceRevision(m, RETAGGED))).toBe(false);
     // Back to the base tier: the key becomes JSON null, never a vanished document.
     await ds.transaction(async (m) => {
       const atBase = await revisionsAtBase(m, ASSO);
       await m.query(`UPDATE forms SET "cotisationVariantKey" = NULL WHERE id = $1`, [RETAGGED]);
-      await followRetagInRevisions(m, [RETAGGED], atBase, 'new', null);
+      await followRetagInRevisions(m, ASSO, [RETAGGED], atBase, 'new', null);
     });
     expect((await readFormDraft(ds.manager, RETAGGED)).document).toEqual({
       title: 'Adhésion',

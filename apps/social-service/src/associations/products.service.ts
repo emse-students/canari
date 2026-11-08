@@ -1710,6 +1710,7 @@ export class ProductsService {
       const forms = (Array.isArray(updated[0]) ? updated[0] : updated) as Array<{ id: string }>;
       await followRetagInRevisions(
         manager,
+        associationId,
         forms.map((f) => f.id),
         atBase,
         retagging.oldVariantKey ?? null,

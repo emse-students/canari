@@ -5822,5 +5822,7 @@
   "form_image_remove_failed": "The image could not be removed. Try again.",
   "form_draft_copy_untitled": "Untitled form",
   "form_draft_copy_dropped": "The edits to \"{title}\" kept on this device could not be saved: the form was changed elsewhere or no longer exists.",
-  "form_edit_load_action": "Loading the form"
+  "form_edit_load_action": "Loading the form",
+  "form_create_key_reused": "This draft was already created for another association. Reload the page and continue from \"My forms\".",
+  "form_create_key_gone": "This draft was deleted in the meantime."
 }

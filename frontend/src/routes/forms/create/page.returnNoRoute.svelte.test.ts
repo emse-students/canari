@@ -42,9 +42,10 @@ vi.mock('$lib/forms/api', async (orig) => ({
   saveFormDraft: api.saveFormDraft,
   publishFormDraft: api.publishFormDraft,
 }));
+const assos = vi.hoisted(() => ({ list: [] as { id: string; name: string }[] }));
 vi.mock('$lib/associations/api', async (orig) => ({
   ...(await orig<typeof import('$lib/associations/api')>()),
-  listMyAssociations: async () => [],
+  listMyAssociations: async () => assos.list,
   getAssociation: () => Promise.reject(new Error('unused')),
 }));
 vi.mock('$lib/associations/activePaymentProvider.svelte', () => ({
@@ -236,6 +237,45 @@ describe('the form builder saves as it is typed', () => {
         expect(device.copies.size).toBe(0);
       } finally {
         vi.useRealTimers();
+      }
+    },
+    MOUNT_BUDGET_MS
+  );
+});
+
+describe('the association of a create sent', () => {
+  it(
+    'is fixed from the FIRST create sent, answered or not: its replay must name the same one',
+    async () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      assos.list = [{ id: 'a1', name: 'BDE' }];
+      api.createForm.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+      route.page.url = new URL('https://canari.test/forms/create');
+      const app = mount(Page, { target: document.body });
+      mounted.push(() => void unmount(app));
+      await settle();
+      const picker = () => document.querySelector<HTMLElement>('#association-select');
+      const shut = () =>
+        picker()?.hasAttribute('disabled') === true ||
+        picker()?.getAttribute('aria-disabled') === 'true';
+      await vi.waitFor(() => expect(picker()).not.toBeNull());
+      expect(shut()).toBe(false);
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        const title = document.querySelector<HTMLInputElement>(
+          `input[placeholder="${m.form_title_placeholder()}"]`
+        )!;
+        title.value = 'Soiree';
+        title.dispatchEvent(new Event('input', { bubbles: true }));
+        await settle();
+        await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+        await settle();
+        // The create reached no answer: it may have stored the form all the same.
+        expect(api.createForm).toHaveBeenCalledTimes(1);
+        expect(shut()).toBe(true);
+      } finally {
+        vi.useRealTimers();
+        assos.list = [];
       }
     },
     MOUNT_BUDGET_MS

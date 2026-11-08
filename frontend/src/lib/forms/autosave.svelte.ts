@@ -97,6 +97,11 @@ export class FormAutosave {
    * says it did. Emptied by the next answer - the server's revision is known again.
    */
   #unanswered: string[] = [];
+  /**
+   * The save on its way and not answered yet: it may land after this page is gone, so every copy
+   * kept meanwhile records it in `after` - a page closed now re-bases on it instead of dropping.
+   */
+  #sending: string | null = null;
   #timer: ReturnType<typeof setTimeout> | null = null;
   #inFlight: Promise<void> | null = null;
 
@@ -171,14 +176,35 @@ export class FormAutosave {
     return !this.#pending && !this.#inFlight && !this.#timer && this.status !== 'offline';
   }
 
-  /** A publication or a discard emptied the revision: the editor now builds on `revision`. */
-  closed(revision: number): void {
+  /**
+   * A publication or a discard emptied the revision: the editor now builds on `revision`.
+   *
+   * An edit typed WHILE a publication ran is not part of what it published (the page saved
+   * everything first and published that), and it is KEPT: it becomes the first save of the next
+   * revision - "Modifications non publiées" again - rather than vanish. Blocking the inputs instead
+   * would freeze a manager mid-word for a request's length, and a keystroke dropped in silence is a
+   * loss nobody sees. A DISCARD drops it: the manager asked for the edits to go, and the page shows
+   * the published form again.
+   */
+  closed(revision: number, how: 'published' | 'discarded'): void {
     this.revision = revision;
     this.hasChanges = false;
-    this.#pending = null;
     this.#unanswered = [];
     if (this.#timer) clearTimeout(this.#timer);
     this.#timer = null;
+    const typedMeanwhile = how === 'published' ? this.#pending : null;
+    this.#pending = null;
+    if (typedMeanwhile) {
+      this.#pending = typedMeanwhile;
+      Log.d(
+        'forms-autosave',
+        `an edit typed during the publication kept: saved on revision ${revision}`
+      );
+      this.#keep(typedMeanwhile);
+      this.status = 'saving';
+      void this.flush();
+      return;
+    }
     this.status = 'saved';
     this.#dropCopy('the revision was published or discarded');
   }
@@ -211,7 +237,10 @@ export class FormAutosave {
   }
 
   #keep(pending: Pending): void {
-    const after = this.#unanswered.filter((id) => id !== pending.saveId);
+    const after = [
+      ...this.#unanswered,
+      ...(this.#sending && !this.#unanswered.includes(this.#sending) ? [this.#sending] : []),
+    ].filter((id) => id !== pending.saveId);
     this.#device
       ?.keep(this.revision, pending.saveId, pending.document, after)
       .catch((e: unknown) =>
@@ -247,13 +276,17 @@ export class FormAutosave {
   async #send(pending: Pending, leaving: boolean): Promise<void> {
     // Written before it leaves, on the base it is sent on.
     this.#keep(pending);
+    this.#sending = pending.saveId;
     try {
       const saved = await this.#save(this.revision, pending.document, pending.saveId, leaving);
+      this.#sending = null;
       this.#landed(pending.saveId, saved.revision);
       // An edit typed during the save keeps the line on "Enregistrement..." until it lands too.
       this.status = this.#pending ? 'saving' : 'saved';
       Log.d('forms-autosave', `revision ${saved.revision} saved`);
     } catch (e) {
+      // Answered or not, it is on its way no more: an unanswered one moves to `#unanswered` below.
+      this.#sending = null;
       if (e instanceof FormDraftConflictError && e.saveId !== null) {
         if (e.saveId === pending.saveId) {
           // This very save landed already (sent again after a lost answer, or by the resend).

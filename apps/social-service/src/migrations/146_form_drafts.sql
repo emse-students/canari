@@ -16,6 +16,11 @@
 -- the save landed, and it adopts the revision instead of reporting a conflict (idempotence from the
 -- row, never from a clock).
 --
+-- `recentSaveIds` is the last 32 save ids that wrote the revision, kept across a publication or a
+-- discard: the ANCESTRY a device copy is judged against. A copy whose own save is in it landed, even
+-- when another writer built on it since - nothing of it is lost, and it is cleared without telling
+-- the member it was. Bounded (32 uuids, about 0.5 KB a row).
+--
 -- `baseFingerprint` is the md5 of the form's own content (`forms` minus its ids, dates, status and
 -- cover image) at the moment the revision STARTED. Publication compares it with the form as it is
 -- now and refuses `409 FORM_CHANGED_SINCE_REVISION` when something else wrote the form meanwhile
@@ -25,12 +30,16 @@
 -- create carrying it for the same owner answers the stored form instead of storing another (a create
 -- whose answer was lost). It is NEVER the form's id - the server mints that - so a client cannot
 -- choose the id of a form deleted earlier, which posts, links and QR codes may still name. Unique per
--- owner (the index), absent on every form made before it.
+-- owner (the index), absent on every form made before it. The column is a nullable ADD COLUMN with
+-- no default (catalog only, no rewrite). The unique index is built NON-concurrently, inside this
+-- migration's transaction: it holds a SHARE lock on `forms` (reads go on, writes wait) for the
+-- build, and the build is harmless at this size - one row per form, every key NULL until a client
+-- sends one, and the index is partial (`WHERE "clientCreateId" IS NOT NULL`), so it starts empty.
 --
 -- No personal data beyond what `forms` already holds: the document is the form's own content, and
 -- no author column is kept.
 --
--- ADDITIVE: a new table, nothing existing is touched. Idempotent for CD (IF NOT EXISTS).
+-- ADDITIVE: a new table and a new nullable column with its index; no existing value is touched. Idempotent for CD (IF NOT EXISTS).
 
 SET lock_timeout = '5s';
 
@@ -40,7 +49,8 @@ CREATE TABLE IF NOT EXISTS form_drafts (
   document jsonb,
   "savedAt" timestamptz NOT NULL DEFAULT now(),
   "saveId" uuid,
-  "baseFingerprint" text
+  "baseFingerprint" text,
+  "recentSaveIds" uuid[] NOT NULL DEFAULT '{}'
 );
 
 ALTER TABLE forms ADD COLUMN IF NOT EXISTS "clientCreateId" uuid;

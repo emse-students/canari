@@ -206,6 +206,11 @@ export interface FormDraft {
   savedAt: string | null;
   /** The client id of the save that wrote this revision: a device copy naming it has landed. */
   saveId?: string | null;
+  /**
+   * The last save ids that wrote the revision, kept across a publication or a discard: a device copy
+   * whose own save is among them landed, whatever another writer built on it since.
+   */
+  recentSaveIds?: string[];
 }
 
 import { apiFetch } from '$lib/utils/apiFetch';
@@ -343,7 +348,10 @@ export async function saveFormDraft(
       Log.i('FORMS', `revision save of ${id} refused: it is at ${answer.revision}`);
       throw new FormDraftConflictError(
         answer.revision,
-        typeof answer.saveId === 'string' ? answer.saveId : null
+        typeof answer.saveId === 'string' ? answer.saveId : null,
+        Array.isArray(answer.recentSaveIds)
+          ? answer.recentSaveIds.filter((id: unknown): id is string => typeof id === 'string')
+          : []
       );
     }
     Log.i('FORMS', `revision save of ${id}: refused status=409 code=${answer.code ?? 'none'}`);

@@ -28,6 +28,12 @@ export const FORM_DRAFT_FLAG_ON_EDIT = 'FORM_DRAFT_FLAG_ON_EDIT';
 /** The 400 refusing to publish a paid form that accepts neither online nor cash. */
 export const FORM_NO_PAYMENT_METHOD = 'FORM_NO_PAYMENT_METHOD';
 
+/** The 409 refusing a create key replayed for another association than the form it made. */
+export const FORM_CREATE_KEY_REUSED = 'FORM_CREATE_KEY_REUSED';
+
+/** The 410 refusing a create key whose form was deleted since. */
+export const FORM_CREATE_KEY_GONE = 'FORM_CREATE_KEY_GONE';
+
 /** The 409 refusing an online answer on a cash-only form. */
 export const FORM_ONLINE_PAYMENT_NOT_OFFERED = 'FORM_ONLINE_PAYMENT_NOT_OFFERED';
 
@@ -44,22 +50,81 @@ export function publishedForms<F extends Pick<Form, 'status'>>(forms: F[]): F[] 
   return forms.filter((f) => !isDraftForm(f));
 }
 
+/** What {@link formChargesMoney} and {@link publishPaymentRefusal} read of a form. */
+export interface PublishPaymentShape {
+  requiresPayment?: boolean | null;
+  basePrice?: number | null;
+  /** The pricing grid, as the editor payload carries it (`{ cells }`), read defensively. */
+  priceMatrix?: unknown;
+  /**
+   * The questions, as the editor payload carries them: a product grid's full `pricing.prices` (the
+   * typed view narrows it away), read defensively.
+   */
+  items?: readonly unknown[];
+  allowCashPayment?: boolean | null;
+  allowOnlinePayment?: boolean | null;
+}
+
 /**
- * Why "Publier" is shut, as the sentence shown beside it, or `null` while it may be pressed - the
- * server's rule (`payment-offer.ts`, owner 2026-11-08): a PAID form is published when its
- * respondents can pay now, in cash (accepted) or online (accepted AND the association can collect).
- * Everything is built and saved as a draft whatever the readiness; only the publication waits.
+ * Whether a form charges a respondent - the server's `chargesMoney`, MIRRORED: the payment switch, a
+ * base price, a grid cell above 0, a product grid priced above 0, or a CHOICE question's option
+ * supplement. `libs/contracts/form-publish-payment.cases.json` is asserted on both sides.
+ */
+export function formChargesMoney(form: PublishPaymentShape): boolean {
+  if (form.requiresPayment === true || (form.basePrice ?? 0) > 0) return true;
+  const cells = (form.priceMatrix as { cells?: Record<string, unknown> | null } | null | undefined)
+    ?.cells;
+  if (Object.values(cells ?? {}).some((c) => typeof c === 'number' && c > 0)) return true;
+  return (form.items ?? []).some((raw) => {
+    const item = raw as {
+      type?: string;
+      options?: readonly { priceModifier?: number | null }[] | null;
+      productGrid?: {
+        pricing?: { prices?: Record<string, Record<string, unknown> | null> } | null;
+      };
+    };
+    if (item.type === 'product_grid') {
+      return Object.values(item.productGrid?.pricing?.prices ?? {}).some((list) =>
+        Object.values(list ?? {}).some((cents) => typeof cents === 'number' && cents > 0)
+      );
+    }
+    const choice = ['single_choice', 'dropdown', 'multiple_choice'].includes(item.type ?? '');
+    return choice && (item.options ?? []).some((o) => (o.priceModifier ?? 0) > 0);
+  });
+}
+
+/**
+ * Why a CHARGING form may not be published now, as the server's code, or `null` - the server's
+ * `publishPaymentRefusal` (`payment-offer.ts`), MIRRORED and asserted on the same cases: cash
+ * answers alone; else online must be accepted, and the association able to collect (`onlineReady`;
+ * a personal form collects through the platform, always ready).
+ */
+export function publishPaymentRefusal(
+  form: PublishPaymentShape,
+  onlineReady: boolean
+): string | null {
+  if (form.allowCashPayment === true) return null;
+  if (form.allowOnlinePayment === false) return FORM_NO_PAYMENT_METHOD;
+  return onlineReady ? null : FORM_PAYMENTS_NOT_READY;
+}
+
+/**
+ * Why "Publier" is shut, as the sentence shown beside it, or `null` while it may be pressed: the
+ * server's own rule, through its mirrors ({@link formChargesMoney}, {@link publishPaymentRefusal},
+ * owner 2026-11-08). Everything is built and saved as a draft whatever the readiness; only the
+ * publication waits.
  */
 export function publishBlocker(state: {
-  requiresPayment: boolean;
+  form: PublishPaymentShape;
   associationId: string | null | undefined;
   associationCanBePaid: boolean;
-  allowCashPayment: boolean;
-  allowOnlinePayment: boolean;
 }): string | null {
-  if (!state.requiresPayment || !state.associationId || state.allowCashPayment) return null;
-  if (!state.allowOnlinePayment) return m.form_no_payment_method();
-  return state.associationCanBePaid ? null : m.form_publish_blocked_payments();
+  if (!formChargesMoney(state.form)) return null;
+  const code = publishPaymentRefusal(
+    state.form,
+    !state.associationId || state.associationCanBePaid
+  );
+  return code ? draftRefusalMessage(code) : null;
 }
 
 /** The sentence for a refusal of the draft and publish routes, or `null` for another code. */
@@ -77,6 +142,10 @@ export function draftRefusalMessage(code: string | null | undefined): string | n
       return m.form_online_payment_not_offered();
     case FORM_DRAFT_CONFLICT:
       return m.form_draft_conflict_refusal();
+    case FORM_CREATE_KEY_REUSED:
+      return m.form_create_key_reused();
+    case FORM_CREATE_KEY_GONE:
+      return m.form_create_key_gone();
     case FORM_DRAFT_EMPTY:
       return m.form_draft_empty_refusal();
     case FORM_DRAFT_INVALID:

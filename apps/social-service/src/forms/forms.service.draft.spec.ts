@@ -106,7 +106,13 @@ describe('FormsService - drafts', () => {
     };
     formRepo.manager = {
       transaction: jest.fn((fn: (m: unknown) => Promise<unknown>) =>
-        fn({ createQueryBuilder: formRepo.createQueryBuilder, query: jest.fn() })
+        fn({
+          createQueryBuilder: formRepo.createQueryBuilder,
+          query: jest.fn(),
+          // The publication's locked read of the form: the same row.
+          findOne: (_entity: unknown, opts: { where: Record<string, unknown> }) =>
+            formRepo.findOne(opts),
+        })
       ),
       query: jest.fn(),
     };

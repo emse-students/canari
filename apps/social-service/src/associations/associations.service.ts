@@ -4801,6 +4801,8 @@ ${rejectionReason}`
         basePrice: true,
         currency: true,
         allowCashPayment: true,
+        // A draft is the managers' alone: the tab marks it, so nobody links it believing it live.
+        status: true,
         createdAt: true,
       },
     });

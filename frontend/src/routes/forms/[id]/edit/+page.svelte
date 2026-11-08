@@ -286,7 +286,7 @@
    */
   async function unsentCopy(
     formId: string,
-    revision: { revision: number; saveId?: string | null }
+    revision: { revision: number; saveId?: string | null; recentSaveIds?: string[] }
   ) {
     const userId = currentUserId();
     if (!userId) return null;
@@ -420,11 +420,9 @@
   /** Why "Publier" is shut: a paid form whose association cannot collect yet. */
   const blockedReason = $derived(
     publishBlocker({
-      requiresPayment,
+      form: buildPayload(),
       associationId: association?.id,
       associationCanBePaid,
-      allowCashPayment,
-      allowOnlinePayment,
     })
   );
   let isPublishing = $state(false);
@@ -543,7 +541,7 @@
     isPublishing = true;
     const result = await publishFormDraft(formId, autosave.revision, overwriteOffered);
     overwriteOffered = false;
-    autosave.closed(result.revision);
+    autosave.closed(result.revision, 'published');
     Log.d('forms-editor', `published ${formId} at revision ${result.revision}`);
     goto(resolve('/forms'));
   }
@@ -631,7 +629,7 @@
     try {
       await autosave.flush();
       const result = await discardFormDraft(formId, autosave.revision);
-      autosave.closed(result.revision);
+      autosave.closed(result.revision, 'discarded');
       applyContent(form);
       Log.d('forms-editor', `revision of ${formId} discarded`);
     } catch (e: any) {

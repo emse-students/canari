@@ -16,7 +16,9 @@ export class FormDraftConflictError extends ApiRefusalError {
     /** The revision the server holds now. */
     readonly revision: number,
     /** The client id of the save that wrote it; null when the revision was closed or never named one. */
-    readonly saveId: string | null
+    readonly saveId: string | null,
+    /** The last save ids that wrote the revision (its bounded ancestry), oldest first. */
+    readonly recentSaveIds: string[] = []
   ) {
     super(409, FORM_DRAFT_CONFLICT, `The form revision moved to ${revision}`);
     this.name = 'FormDraftConflictError';

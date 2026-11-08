@@ -280,10 +280,14 @@ async function whenNoEditor<T>(key: string, fn: () => Promise<T>): Promise<T | n
 
 // ── The background resend: copies left by a closed page reach the server when it answers ─────────
 
-/** A conflict's facts: the revision the server holds, and the client id of the save that wrote it. */
+/**
+ * A conflict's facts: the revision the server holds, the client id of the save that wrote it, and
+ * the saves before it (its bounded ancestry, `recentSaveIds`).
+ */
 export interface CopyConflict {
   revision: number;
   saveId: string | null;
+  recentSaveIds?: string[];
 }
 
 /** What a resend needs from the forms API and the session (injected by the tests). */
@@ -376,14 +380,16 @@ async function sendCopy(start: FormDraftCopy, deps: ResendDeps): Promise<Sent> {
         return 'done';
       } catch (e) {
         const conflict = deps.conflictOf(e);
-        if (!conflict?.saveId) throw e;
-        if (conflict.saveId === copy.saveId) {
+        if (!conflict) throw e;
+        if (conflict.saveId === copy.saveId || conflict.recentSaveIds?.includes(copy.saveId)) {
+          // Its save landed - its answer was lost - and whatever was built on it since holds it:
+          // nothing of the copy is lost, so the member is told nothing.
           live(deps);
           await deps.store.deleteIfSent([copy.key], copy.saveId);
           Log.d('FORM-DRAFT-COPY', `copy of ${formId} had landed; its answer was lost`);
           return 'done';
         }
-        if (!copy.after.includes(conflict.saveId)) throw e;
+        if (!conflict.saveId || !copy.after.includes(conflict.saveId)) throw e;
         // A save this page sent before it landed unanswered: the copy is built on it.
         Log.d(
           'FORM-DRAFT-COPY',
@@ -417,18 +423,20 @@ async function sendCopy(start: FormDraftCopy, deps: ResendDeps): Promise<Sent> {
 }
 
 /**
- * The copy of the form the server holds at `revision` (written by save `saveId`), as an editor
- * opening it should use it:
- * - `landed`: the copy's own save wrote the revision - nothing is owed;
+ * The copy of the form the server holds at `revision` (written by save `saveId`, after the saves of
+ * `recentSaveIds`), as an editor opening it should use it:
+ * - `landed`: the copy's own save is in the revision's ancestry - nothing is owed, even when another
+ *   writer built on it since;
  * - `use`: built on that revision, directly or through a predecessor that landed unanswered
  *   (re-based then);
  * - `stale`: built on a revision another writer moved past - its edits cannot be sent.
  */
 export function copyAgainst(
   copy: FormDraftCopy,
-  revision: { revision: number; saveId?: string | null }
+  revision: { revision: number; saveId?: string | null; recentSaveIds?: string[] }
 ): { verdict: 'landed' } | { verdict: 'use'; copy: FormDraftCopy } | { verdict: 'stale' } {
   if (revision.saveId && copy.saveId === revision.saveId) return { verdict: 'landed' };
+  if (revision.recentSaveIds?.includes(copy.saveId)) return { verdict: 'landed' };
   if (copy.baseRevision === revision.revision) return { verdict: 'use', copy };
   if (revision.saveId && copy.after.includes(revision.saveId)) {
     return { verdict: 'use', copy: { ...copy, baseRevision: revision.revision, after: [] } };

@@ -5822,5 +5822,7 @@
   "form_image_remove_failed": "L'image n'a pas pu être supprimée. Réessayez.",
   "form_draft_copy_untitled": "Formulaire sans titre",
   "form_draft_copy_dropped": "Les modifications de « {title} » gardées sur cet appareil n'ont pas pu être enregistrées : le formulaire a été modifié ailleurs ou n'existe plus.",
-  "form_edit_load_action": "Chargement du formulaire"
+  "form_edit_load_action": "Chargement du formulaire",
+  "form_create_key_reused": "Ce brouillon a déjà été créé pour une autre association. Rechargez la page pour repartir de « Mes formulaires ».",
+  "form_create_key_gone": "Ce brouillon a été supprimé entre-temps."
 }

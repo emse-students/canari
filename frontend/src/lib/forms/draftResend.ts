@@ -41,7 +41,9 @@ function depsFor(userId: string): ResendDeps {
     save: (copy) => saveFormDraft(copy.formId, copy.baseRevision, copy.document, copy.saveId),
     statusOf: refusalStatus,
     conflictOf: (e) =>
-      e instanceof FormDraftConflictError ? { revision: e.revision, saveId: e.saveId } : undefined,
+      e instanceof FormDraftConflictError
+        ? { revision: e.revision, saveId: e.saveId, recentSaveIds: e.recentSaveIds }
+        : undefined,
     dropped: tellCopyDropped,
   };
 }

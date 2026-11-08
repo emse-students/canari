@@ -268,13 +268,7 @@
 
   /** Why "Publier" is shut: a paid form whose association cannot collect yet (it saves as a draft). */
   const blockedReason = $derived(
-    publishBlocker({
-      requiresPayment,
-      associationId,
-      associationCanBePaid,
-      allowCashPayment,
-      allowOnlinePayment,
-    })
+    publishBlocker({ form: buildPayload(), associationId, associationCanBePaid })
   );
   let isPublishing = $state(false);
 
@@ -298,9 +292,16 @@
   const createKey = crypto.randomUUID();
   /** Set once the server holds the draft (its shell answered). */
   let createdId = $state<string | null>(null);
+  /**
+   * Set at the FIRST create sent, answered or not: the association is fixed from then on. A create
+   * whose answer was lost may have stored the form under the association it named, and its replay
+   * must name the same one (the server refuses another, `FORM_CREATE_KEY_REUSED`).
+   */
+  let createSent = $state(false);
 
   async function draftId(): Promise<string> {
     if (createdId) return createdId;
+    createSent = true;
     const created = await createForm({
       clientCreateId: createKey,
       draft: true,
@@ -479,7 +480,7 @@
         }
         isPublishing = true;
         const result = await publishFormDraft(createdId, autosave.revision);
-        autosave.closed(result.revision);
+        autosave.closed(result.revision, 'published');
         Log.d('forms-editor', `created and published ${createdId}`);
         publishedId = createdId;
       }
@@ -560,7 +561,7 @@
             ...associations.map((a) => ({ value: a.id, label: a.name })),
           ]}
           onValueChange={(v) => (associationId = v)}
-          disabled={!!createdId}
+          disabled={createSent}
         />
       {/if}
 
