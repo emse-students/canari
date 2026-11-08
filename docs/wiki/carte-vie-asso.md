@@ -40,7 +40,8 @@ Decided by the owner on 2026-11-08, built by migration 147:
 - **The map offers every association of its space**: type `association`, not archived, whose
   audience reaches the space (`ruleReachesSpaceSql`, the same reach the agenda uses). Defined ONCE,
   `offeredAssociationsSql` in `spaces/public-space.ts`: the portail's association directory
-  (`GET /api/public/associations?space=`) answers the same set. Reach, not
+  (`GET /api/public/associations?space=`) answers the same set plus the space's ARCHIVED
+  associations (an explicit option of the one definition; the carte asks for the living ones only). Reach, not
   "governed by the BDE", because one BDE governs several spaces and a map is about one of them.
 - **Each association has a switch, stored in the project** (`poster_entries`, one row per map and
   association: `enabled`, `zoneId`). An association of the space with NO row is NEW - created, or

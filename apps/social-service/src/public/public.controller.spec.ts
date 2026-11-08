@@ -107,10 +107,12 @@ describe('PublicController - the association directory of one space (owner, 2026
     { id: 'in', slug: 'in', name: 'In', type: 'association' },
     { id: 'out', slug: 'out', name: 'Out', type: 'association' },
     { id: 'lst', slug: 'lst', name: 'Liste', type: 'list' },
+    { id: 'old', slug: 'old', name: 'Old', type: 'association', archived: true },
   ];
   function makeController() {
     const list = jest.fn(() => Promise.resolve(rows));
-    const offeredInSpace = jest.fn(() => Promise.resolve(new Set(['in'])));
+    // The space's associations, archived ones included (`old`).
+    const offeredInSpace = jest.fn(() => Promise.resolve(new Set(['in', 'old'])));
     const findBySlug = jest.fn((slug: string) =>
       Promise.resolve(rows.find((r) => r.slug === slug))
     );
@@ -127,14 +129,14 @@ describe('PublicController - the association directory of one space (owner, 2026
   it('keeps only the associations the named space offers; lists are not filtered by it', async () => {
     const { controller, offeredInSpace } = makeController();
     const served = await controller.listAssociations(undefined, 'ICM:saint-etienne');
-    expect(served.map((a) => a.slug)).toEqual(['in', 'lst']);
+    expect(served.map((a) => a.slug)).toEqual(['in', 'lst', 'old']);
     expect(offeredInSpace).toHaveBeenCalledWith({ formation: 'ICM', campus: 'saint-etienne' });
   });
 
   it("answers the COMPLETE list without a space - Canari's own sitemap reads it", async () => {
     const { controller, offeredInSpace } = makeController();
     const served = await controller.listAssociations('association', undefined);
-    expect(served.map((a) => a.slug)).toEqual(['in', 'out', 'lst']);
+    expect(served.map((a) => a.slug)).toEqual(['in', 'out', 'lst', 'old']);
     expect(offeredInSpace).not.toHaveBeenCalled();
   });
 
@@ -157,6 +159,10 @@ describe('PublicController - the association directory of one space (owner, 2026
     // A list is not an association of a space: the space does not filter it.
     await expect(controller.getBySlug('lst', 'ICM:saint-etienne')).resolves.toMatchObject({
       slug: 'lst',
+    });
+    // Archived, of the space: still its page (the portail's archived section links it).
+    await expect(controller.getBySlug('old', 'ICM:saint-etienne')).resolves.toMatchObject({
+      slug: 'old',
     });
     await expect(controller.getBySlug('out', undefined)).resolves.toMatchObject({ slug: 'out' });
   });

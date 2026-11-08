@@ -149,8 +149,9 @@ export class PublicController {
    * Lists associations and/or lists. `?type=association|list` restricts; omit for both.
    *
    * `?space=<formation>:<campus>` (owner, 2026-11-08) keeps, among rows of type `association`, only
-   * those the space OFFERS - the same set as a carte of that space (`spaces/public-space.ts`); lists
-   * and institutions are not filtered by it. The portail-etu showcase sends its space; without the
+   * those whose audience reaches the space - a carte's set of that space, plus its archived ones,
+   * which the showcase lists in its archived section (`spaces/public-space.ts`); lists and
+   * institutions are not filtered by it. The portail-etu showcase sends its space; without the
    * parameter the answer is the COMPLETE list, unchanged, because Canari's own sitemap and SEO read
    * it too. A malformed `space` is a typed 400 (`PUBLIC_SPACE_INVALID`).
    */
@@ -174,7 +175,8 @@ export class PublicController {
   /**
    * One association/list by slug, with its public members.
    *
-   * With `?space=`, an association (type `association`) the space does not offer answers 404, the
+   * With `?space=`, an association (type `association`, archived or not) whose audience does not
+   * reach the space answers 404, the
    * same as an unknown slug: the showcase of a space must not render another space's association
    * by URL. Without it, every association answers - Canari's own pages read it.
    */

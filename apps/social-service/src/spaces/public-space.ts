@@ -29,9 +29,13 @@ export interface PublicSpaceKey {
 }
 
 /**
- * THE ASSOCIATIONS A SPACE OFFERS: every association of type `association`, not archived, one of
- * whose audience rules reaches the space - "who addresses this space", the same reading every
- * per-space surface makes (`ruleReachesSpaceSql`). Answers `id`, ordered by id.
+ * THE ASSOCIATIONS OF A SPACE: every association of type `association` one of whose audience rules
+ * reaches the space - "who addresses this space", the same reading every per-space surface makes
+ * (`ruleReachesSpaceSql`). Answers `id`, ordered by id.
+ *
+ * ARCHIVED, AN EXPLICIT CHOICE OF THE READER (owner, 2026-11-08): a carte offers only the living
+ * associations (`'active'`); the portail's directory lists the archived ones of its space too, in its
+ * archived section (`'any'`). The space-reach condition is the same for both - one definition.
  *
  * The audience, not the governing parent: a BDE governs several spaces (production: one association
  * governs four), so its children say nothing about WHICH space is meant, while the audience says
@@ -41,17 +45,21 @@ export interface PublicSpaceKey {
  *   map's space, `cas.formation = $1 AND cas.campus = $2` for a space named in a public URL. Always a
  *   literal written in this codebase, never user input.
  */
-export function offeredAssociationsSql(spaceMatch: string): string {
+export function offeredAssociationsSql(spaceMatch: string, archived: 'active' | 'any'): string {
   return `SELECT ca.id FROM associations ca
-  WHERE ca.type = 'association' AND NOT ca.archived
+  WHERE ca.type = 'association'${archived === 'active' ? ' AND NOT ca.archived' : ''}
     AND EXISTS (SELECT 1 FROM association_audiences car JOIN spaces cas ON ${spaceMatch}
       WHERE car."associationId" = ca.id AND ${ruleReachesSpaceSql('car', 'cas')})
   ORDER BY ca.id`;
 }
 
-/** {@link offeredAssociationsSql} for a space named by its natural key: `$1` formation, `$2` campus. */
+/**
+ * {@link offeredAssociationsSql} for a space named by its natural key (`$1` formation, `$2` campus),
+ * archived ones INCLUDED: the portail's directory splits active and archived itself.
+ */
 export const OFFERED_BY_SPACE_KEY_SQL = offeredAssociationsSql(
-  'cas.formation = $1 AND cas.campus = $2'
+  'cas.formation = $1 AND cas.campus = $2',
+  'any'
 );
 
 /**
