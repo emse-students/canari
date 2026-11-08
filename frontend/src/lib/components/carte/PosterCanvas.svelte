@@ -841,7 +841,7 @@
           {...{ [DIRECTORY_CONTENT_ATTR]: '' }}
           style="columns:{DIRECTORY_COLUMNS};column-gap:{DIRECTORY_COLUMN_GAP}px;font-size:{DIRECTORY_BASE_FONT}px;"
         >
-          {#each model.zones as zone (zone.categoryId ?? 'none')}
+          {#each model.zones as zone (zone.zoneId ?? 'none')}
             {#if zone.bubbles.length > 0}
               <div
                 data-pdf-text

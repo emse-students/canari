@@ -1215,10 +1215,6 @@ export class AssociationsService {
     if (dto.color !== undefined && (dto.color === null || dto.color.trim() === '')) {
       patch.color = null;
     }
-    // Blank category id clears the association's thematic category back to null.
-    if (dto.categoryId !== undefined && (dto.categoryId === null || dto.categoryId === '')) {
-      patch.categoryId = null;
-    }
     if (
       dto.contactEmail !== undefined &&
       (dto.contactEmail === null || dto.contactEmail.trim() === '')

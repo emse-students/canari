@@ -6,42 +6,52 @@ import { ProductsService } from '../associations/products.service';
 import { PosterService } from '../associations/poster.service';
 import { PostPreviewService } from '../posts/post-preview.service';
 
-describe('PublicController.getPublishedCarte (WP-CARTO-1, showcase map)', () => {
-  function makeController(published: unknown, associations: Record<string, unknown> = {}) {
+describe('PublicController.getPublishedCarte (WP-CARTO-1, one live map per space)', () => {
+  function makeController(
+    published: unknown,
+    associations: Record<string, unknown> = {},
+    legacy: unknown = null
+  ) {
     const getPublished = jest.fn(() => Promise.resolve(published));
-    const poster = { getPublished } as unknown as PosterService;
-    return new PublicController(
+    const getSoleLegacyPublished = jest.fn(() => Promise.resolve(legacy));
+    const poster = { getPublished, getSoleLegacyPublished } as unknown as PosterService;
+    const controller = new PublicController(
       associations as unknown as AssociationsService,
       {} as ProductsService,
       poster,
       {} as PostPreviewService
     );
+    return { controller, getPublished, getSoleLegacyPublished };
   }
 
-  it('404s when nothing is published, so the showcase simply omits the map', async () => {
-    const controller = makeController(null);
-    await expect(controller.getPublishedCarte()).rejects.toThrow(NotFoundException);
+  const carte = {
+    version: 1,
+    name: 'Carte 2026',
+    units: [
+      {
+        assoId: 'a1',
+        cards: [
+          { userId: 'u1', name: 'Ada' },
+          { userId: 'u2', name: 'Bob' },
+        ],
+      },
+    ],
+  };
+
+  it('404s when the named space has nothing live, so the showcase simply omits the map', async () => {
+    const { controller, getPublished } = makeController(null);
+    await expect(controller.getPublishedCarte('ICM:saint-etienne')).rejects.toThrow(
+      NotFoundException
+    );
+    expect(getPublished).toHaveBeenCalledWith({ formation: 'ICM', campus: 'saint-etienne' });
   });
 
-  it('serves the live map, each card carrying the photo address of its public roster row', async () => {
-    const carte = {
-      version: 1,
-      name: 'Carte 2026',
-      units: [
-        {
-          assoId: 'a1',
-          cards: [
-            { userId: 'u1', name: 'Ada' },
-            { userId: 'u2', name: 'Bob' },
-          ],
-        },
-      ],
-    };
+  it('serves the live map of the named space, each card carrying the photo address of its public roster row', async () => {
     const publicAvatarUrlsFor = jest.fn(() =>
       Promise.resolve(new Map([['a1:u1', '/api/public/members/m1/avatar']]))
     );
-    const controller = makeController(carte, { publicAvatarUrlsFor });
-    const served = await controller.getPublishedCarte();
+    const { controller } = makeController(carte, { publicAvatarUrlsFor });
+    const served = await controller.getPublishedCarte('ICM:saint-etienne');
     expect(publicAvatarUrlsFor).toHaveBeenCalledWith([
       { associationId: 'a1', userId: 'u1' },
       { associationId: 'a1', userId: 'u2' },
@@ -52,6 +62,43 @@ describe('PublicController.getPublishedCarte (WP-CARTO-1, showcase map)', () => 
       null,
     ]);
     expect(served.name).toBe('Carte 2026');
+  });
+
+  it.each([
+    ['a value with no colon', 'ICM'],
+    ['an unknown formation', 'XYZ:saint-etienne'],
+    ['an unknown campus', 'ICM:paris'],
+    ['a lower-cased formation', 'icm:saint-etienne'],
+    ['three parts', 'ICM:saint-etienne:x'],
+    ['a repeated parameter', ['ICM:saint-etienne', 'ISMIN:saint-etienne']],
+  ])('refuses %s with the typed 400, before any read', async (_label, value) => {
+    const { controller, getPublished } = makeController(carte);
+    await expect(controller.getPublishedCarte(value)).rejects.toMatchObject({
+      response: { code: 'CARTE_PUBLIC_SPACE_INVALID' },
+    });
+    expect(getPublished).not.toHaveBeenCalled();
+  });
+
+  it('[LEGACY] serves the one live map to a showcase that names no space', async () => {
+    const publicAvatarUrlsFor = jest.fn(() => Promise.resolve(new Map()));
+    const { controller, getPublished, getSoleLegacyPublished } = makeController(
+      null,
+      { publicAvatarUrlsFor },
+      carte
+    );
+    const served = await controller.getPublishedCarte(undefined);
+    expect(served.name).toBe('Carte 2026');
+    expect(getSoleLegacyPublished).toHaveBeenCalled();
+    expect(getPublished).not.toHaveBeenCalled();
+  });
+
+  it('[LEGACY] answers a typed 400 with no space when zero or several maps are live, never a guess', async () => {
+    const { controller } = makeController(null, {}, null);
+    const refusal = controller.getPublishedCarte('');
+    await expect(refusal).rejects.toThrow(BadRequestException);
+    await expect(controller.getPublishedCarte(undefined)).rejects.toMatchObject({
+      response: { code: 'CARTE_PUBLIC_SPACE_REQUIRED' },
+    });
   });
 });
 

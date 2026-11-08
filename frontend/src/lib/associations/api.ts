@@ -235,8 +235,6 @@ export interface Association {
   isAdmin?: boolean;
   /** Hex color for calendar display (e.g. "#e83e8c"). Null → frontend uses generateAvatarColor fallback. */
   color?: string | null;
-  /** Primary thematic category (managed table). Null when uncategorized. Used by the "Carte de la Vie Asso" poster. */
-  categoryId?: string | null;
   /** Discriminates a regular association from a promo list. */
   type: 'association' | 'list' | 'institution';
   /** Lists only: the promotion year the list belongs to. */
@@ -311,8 +309,6 @@ export interface UpdateAssociationPayload {
   documentQuotaBytes?: number;
   /** Hex color for calendar display. Pass `""` or `null` to revert to auto-generated color. */
   color?: string | null;
-  /** Primary thematic category id. Pass `""` or `null` to clear. */
-  categoryId?: string | null;
   /** Archive/unarchive the association. */
   archived?: boolean;
   /** Public contact e-mail. Pass `""` or `null` to clear. */
@@ -3001,99 +2997,6 @@ export async function startLydiaOnboarding(
   return body as { url: string; accountId: string };
 }
 
-// ── Association categories (thematic taxonomy) ───────────────────────────────
-
-/** A managed thematic category used to group associations on the poster and directory. */
-export interface AssociationCategory {
-  id: string;
-  /** Human-readable label (e.g. "Cuisine"). */
-  label: string;
-  /** URL-safe unique identifier (e.g. "cuisine"). */
-  slug: string;
-  /** Display position - lower values appear first. */
-  sortOrder: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface CreateAssociationCategoryPayload {
-  label: string;
-  slug: string;
-  sortOrder?: number;
-}
-
-export interface UpdateAssociationCategoryPayload {
-  label?: string;
-  sortOrder?: number;
-}
-
-/**
- * The category list, held for five minutes and shared by every caller.
- *
- * It is a handful of labels that only a global admin can change, read by the association profile
- * tab and both carte screens - and the profile tab is inside a tab strip that UNMOUNTS its panel,
- * so every switch back to it re-asked. Same invalidation rule as the directory: the four writes
- * below drop it, the window only bounds a change made elsewhere.
- */
-const categories = new SharedCache<AssociationCategory[]>(5 * 60_000);
-
-/** Lists categories in display order. Public. */
-export async function listAssociationCategories(): Promise<AssociationCategory[]> {
-  return categories.load('all', () =>
-    request<AssociationCategory[]>('/api/associations/categories')
-  );
-}
-
-/** Creates a category. Global admins / BDE super-admins only. */
-export async function createAssociationCategory(
-  payload: CreateAssociationCategoryPayload
-): Promise<AssociationCategory> {
-  const created = await request<AssociationCategory>('/api/associations/categories', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  categories.invalidate();
-  return created;
-}
-
-/** Updates a category's label/order. Global admins / BDE super-admins only. */
-export async function updateAssociationCategory(
-  id: string,
-  payload: UpdateAssociationCategoryPayload
-): Promise<AssociationCategory> {
-  const updated = await request<AssociationCategory>(
-    `/api/associations/categories/${encodeURIComponent(id)}`,
-    { method: 'PATCH', body: JSON.stringify(payload) }
-  );
-  categories.invalidate();
-  return updated;
-}
-
-/** Deletes a category and detaches it from its associations. Global admins / BDE super-admins only. */
-export async function deleteAssociationCategory(id: string): Promise<{ ok: boolean }> {
-  const result = await request<{ ok: boolean }>(
-    `/api/associations/categories/${encodeURIComponent(id)}`,
-    { method: 'DELETE' }
-  );
-  // A deleted category is detached from its associations, so the directory carries it too.
-  categories.invalidate();
-  invalidateAssociationDirectory();
-  return result;
-}
-
-/** Persists a new top-to-bottom category order. Global admins / BDE super-admins only. */
-export async function reorderAssociationCategories(
-  orderedIds: string[]
-): Promise<AssociationCategory[]> {
-  const reordered = await request<AssociationCategory[]>('/api/associations/categories/reorder', {
-    method: 'PATCH',
-    body: JSON.stringify({ orderedIds }),
-  });
-  // The response IS the new list in the new order, so it seeds rather than evicts.
-  categories.put('all', reordered);
-  return reordered;
-}
-
 // ── Poster projects ("Carte de la Vie Asso") ─────────────────────────────────
 
 /**
@@ -3106,6 +3009,11 @@ export interface PosterProject {
   name: string;
   /** Opaque JSON layout - the editor owns this shape. */
   layout: Record<string, unknown>;
+  /**
+   * The space (formation x campus) the map is drawn for; null for a map migration 147 could not
+   * attach, which only the platform admin sees until it is attached.
+   */
+  spaceId: string | null;
   /** ISO timestamp of the last publish to the public showcase; null when this poster is offline. */
   publishedAt: string | null;
   /**
@@ -3118,24 +3026,127 @@ export interface PosterProject {
   updatedAt: string;
 }
 
+/** A space a map can be drawn for: one formation x campus pair. */
+export interface CarteSpace {
+  id: string;
+  formation: string;
+  campus: string;
+}
+
+/** A zone of ONE map (its own taxonomy since migration 147). */
+export interface PosterZone {
+  id: string;
+  posterProjectId: string;
+  label: string;
+  sortOrder: number;
+}
+
+/**
+ * One association as one map has seen it: its switch and its zone. An association of the map's
+ * space with NO entry is new - offered switched off, with a badge.
+ */
+export interface PosterEntry {
+  posterProjectId: string;
+  associationId: string;
+  enabled: boolean;
+  zoneId: string | null;
+}
+
+/** One map as the editor opens it: its space, zones, switches and what its space offers today. */
+export interface PosterProjectDetail extends PosterProject {
+  space: CarteSpace | null;
+  zones: PosterZone[];
+  entries: PosterEntry[];
+  /** Every association of the map's space today; one with no entry is new. */
+  spaceAssociationIds: string[];
+}
+
 export interface CreatePosterProjectPayload {
   name: string;
+  /** The space the map is drawn for - one the caller manages. */
+  spaceId: string;
   layout?: Record<string, unknown>;
 }
 
 export interface UpdatePosterProjectPayload {
   name?: string;
   layout?: Record<string, unknown>;
+  /** Attaches a map that has no space; an attached map never moves. */
+  spaceId?: string;
 }
 
-/** Lists all poster projects, most-recently-updated first. Admins / BDE super-admins only. */
+/** The refusal codes of the carte routes the editor names to its author. */
+export const CARTE_REFUSAL = {
+  UNIT_OUTSIDE_MAP: 'CARTE_UNIT_OUTSIDE_MAP',
+  NOT_ATTACHED: 'CARTE_NOT_ATTACHED',
+} as const;
+
+/**
+ * The maps the caller manages (those of the spaces its BDE governs; every map for the platform
+ * admin), most-recently-updated first.
+ */
 export async function listPosterProjects(): Promise<PosterProject[]> {
   return request<PosterProject[]>('/api/associations/poster');
 }
 
-/** Loads one poster project (full layout). Admins / BDE super-admins only. */
-export async function getPosterProject(id: string): Promise<PosterProject> {
-  return request<PosterProject>(`/api/associations/poster/${encodeURIComponent(id)}`);
+/** The spaces the caller may create a map for. */
+export async function listCarteSpaces(): Promise<CarteSpace[]> {
+  return request<CarteSpace[]>('/api/associations/poster/spaces');
+}
+
+/** Loads one map with its space, zones and switches. 404 for a map the caller does not manage. */
+export async function getPosterProject(id: string): Promise<PosterProjectDetail> {
+  return request<PosterProjectDetail>(`/api/associations/poster/${encodeURIComponent(id)}`);
+}
+
+/** Adds a zone to a map. */
+export async function createPosterZone(projectId: string, label: string): Promise<PosterZone> {
+  return request<PosterZone>(`/api/associations/poster/${encodeURIComponent(projectId)}/zones`, {
+    method: 'POST',
+    body: JSON.stringify({ label }),
+  });
+}
+
+/** Renames a zone of a map. */
+export async function renamePosterZone(
+  projectId: string,
+  zoneId: string,
+  label: string
+): Promise<PosterZone> {
+  return request<PosterZone>(
+    `/api/associations/poster/${encodeURIComponent(projectId)}/zones/${encodeURIComponent(zoneId)}`,
+    { method: 'PATCH', body: JSON.stringify({ label }) }
+  );
+}
+
+/** Deletes a zone of a map; its associations stay on the map, unzoned. */
+export async function deletePosterZone(projectId: string, zoneId: string): Promise<void> {
+  await request<unknown>(
+    `/api/associations/poster/${encodeURIComponent(projectId)}/zones/${encodeURIComponent(zoneId)}`,
+    { method: 'DELETE' }
+  );
+}
+
+/** Persists the order of a map's zones (every zone, exactly once). */
+export async function reorderPosterZones(
+  projectId: string,
+  orderedIds: string[]
+): Promise<PosterZone[]> {
+  return request<PosterZone[]>(
+    `/api/associations/poster/${encodeURIComponent(projectId)}/zones/order`,
+    { method: 'PUT', body: JSON.stringify({ orderedIds }) }
+  );
+}
+
+/** Writes the switch and/or zone of associations on a map; an absent field is left as it is. */
+export async function setPosterEntries(
+  projectId: string,
+  entries: { associationId: string; enabled?: boolean; zoneId?: string | null }[]
+): Promise<PosterEntry[]> {
+  return request<PosterEntry[]>(
+    `/api/associations/poster/${encodeURIComponent(projectId)}/entries`,
+    { method: 'PUT', body: JSON.stringify({ entries }) }
+  );
 }
 
 /** Creates a poster project owned by the caller. Admins / BDE super-admins only. */
@@ -3167,8 +3178,8 @@ export async function deletePosterProject(id: string): Promise<{ ok: boolean }> 
 }
 
 /**
- * Publishes a poster to the public showcase (portail-etu), replacing whatever was live - at most
- * one map is published at a time. The payload is the normalized geometry document built by
+ * Publishes a poster to the public showcase (portail-etu), replacing the live map of ITS SPACE -
+ * at most one map is live per space. The payload is the normalized geometry document built by
  * {@link buildPublishedCarte}, not the editor layout. Admins / BDE super-admins only.
  *
  * @param fingerprint - Of that exact document, so the editor can later tell whether the live map is

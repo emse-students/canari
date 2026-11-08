@@ -7,9 +7,7 @@
     deleteAssociationLogo,
     associationSecondLogoSrc,
     listAssociations,
-    listAssociationCategories,
     type Association,
-    type AssociationCategory,
     type LogoSlot,
   } from '$lib/associations/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -53,10 +51,6 @@
   let editColor = $state(initial.color ?? '');
   /** Public contact e-mail, or "" when none. */
   let editContactEmail = $state(initial.contactEmail ?? '');
-  /** Primary thematic category id ("" = uncategorized), used by the "Carte de la Vie Asso" poster. */
-  let editCategoryId = $state(initial.categoryId ?? '');
-  /** Managed thematic categories, loaded once for the picker. */
-  let categoryOptions = $state<AssociationCategory[]>([]);
 
   // ── List-only fields (campaign year, optional 2nd theme; the parent for the platform admin) ──
   const isList = initial.type === 'list';
@@ -77,10 +71,6 @@
     { value: '', label: m.list_new_parent_none() },
     ...associationPickerOptions(parentOptions),
   ]);
-  const categoryPickerOptions = $derived<PickerOption[]>([
-    { value: '', label: m.asso_edit_category_none() },
-    ...categoryOptions.map((c) => ({ value: c.id, label: c.label })),
-  ]);
 
   onMount(async () => {
     if (isList) {
@@ -93,14 +83,6 @@
         console.warn('[ASSO] parent candidates unavailable for the profile picker', err);
         parentOptions = [];
       }
-      return;
-    }
-    // Load the thematic categories for regular associations (used by the poster generator).
-    try {
-      categoryOptions = await listAssociationCategories();
-    } catch (err) {
-      console.warn('[ASSO] categories unavailable for the profile picker', err);
-      categoryOptions = [];
     }
   });
 
@@ -153,13 +135,12 @@
                 ? { parentAssociationId: editParentId || null }
                 : {}),
             }
-          : { categoryId: editCategoryId || null }),
+          : {}),
       });
       editDescription = updated.description ?? '';
       editBioMarkdown = updated.bioMarkdown ?? '';
       editColor = updated.color ?? '';
       editContactEmail = updated.contactEmail ?? '';
-      editCategoryId = updated.categoryId ?? '';
       editPromo = updated.promo ?? '';
       editName2 = updated.name2 ?? '';
       editParentId = updated.parentAssociationId ?? '';
@@ -345,23 +326,6 @@
       <ColorPicker bind:value={editColor} label={m.asso_edit_color_picker_label()} />
     </div>
   </div>
-
-  {#if !isList}
-    <div>
-      <label for="edit-asso-category" class="text-text-main mb-2 ml-1 block text-sm font-bold">
-        {m.asso_edit_category_label()}
-      </label>
-      <Picker
-        id="edit-asso-category"
-        value={editCategoryId}
-        options={categoryPickerOptions}
-        onValueChange={(v) => (editCategoryId = v)}
-        label={m.asso_edit_category_label()}
-        variant="field"
-      />
-      <p class="text-text-muted mt-1.5 ml-1 text-xs">{m.asso_edit_category_hint()}</p>
-    </div>
-  {/if}
 
   <div class="border-cn-border/70 bg-cn-bg text-text-muted space-y-3 rounded-xl border p-3 text-xs">
     <p class="text-text-main font-semibold">{m.asso_edit_preview_label()}</p>

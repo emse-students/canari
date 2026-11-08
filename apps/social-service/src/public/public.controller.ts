@@ -20,6 +20,7 @@ import { Association } from '../associations/entities/association.entity';
 import { ProductsService } from '../associations/products.service';
 import { PosterService, type PublishedCarteResponse } from '../associations/poster.service';
 import type { PublishedCarteCard, PublishedCarteUnit } from '../associations/published-carte';
+import { CARTE_ERROR, parseCarteSpaceParam } from '../associations/poster-scope';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import { coreUrl } from '../internal/service-urls';
 import { PostPreviewService, type PostSharePreview } from '../posts/post-preview.service';
@@ -303,22 +304,45 @@ export class PublicController {
   }
 
   /**
-   * The live "Carte de la Vie Asso", rendered interactively by the portail-etu showcase.
+   * The live "Carte de la Vie Asso" of ONE space, rendered interactively by the portail-etu showcase.
+   *
+   * `?space=<formation>:<campus>` names the space (`ICM:saint-etienne`): each space has at most one
+   * live map since migration 147, and the showcase names its own space in its configuration - Canari
+   * knows nothing of which school a showcase belongs to. 404 when that space has no live map; the
+   * showcase then simply omits the map. A value naming no possible space is a typed 400
+   * (`CARTE_PUBLIC_SPACE_INVALID`).
+   *
+   * [LEGACY] With no `space`, a showcase deployed before it sent one still gets the map while EXACTLY
+   * ONE map is live anywhere, logged at WARN; otherwise a typed 400 (`CARTE_PUBLIC_SPACE_REQUIRED`)
+   * rather than a guess (docs/wiki/legacy-compatibility.md).
    *
    * Returns placement only - each bubble carries an `assoId` the consumer joins against
-   * {@link listAssociations}, so a rename or a new logo shows up with no republish. 404 when no
-   * poster is currently published; the showcase then simply omits the map.
+   * {@link listAssociations}, so a rename or a new logo shows up with no republish.
    *
    * Cached briefly: the payload can embed a background image, and a published map changes at most
    * a few times a year, so a short shared cache keeps the showcase cheap without making an
-   * unpublish take noticeably long to appear.
+   * unpublish take noticeably long to appear. The query string is part of the cache key.
    */
   @Get('carte')
   @Header('Cache-Control', 'public, max-age=300')
-  async getPublishedCarte(): Promise<PublicCarteResponse> {
-    this.logger.debug('public getPublishedCarte');
-    const carte = await this.poster.getPublished();
-    if (!carte) throw new NotFoundException('No published carte');
+  async getPublishedCarte(@Query('space') rawSpace?: unknown): Promise<PublicCarteResponse> {
+    const space = parseCarteSpaceParam(rawSpace);
+    this.logger.debug(
+      `public getPublishedCarte ${space ? `${space.formation}:${space.campus}` : '(no space)'}`
+    );
+    let carte: PublishedCarteResponse | null;
+    if (space) {
+      carte = await this.poster.getPublished(space);
+      if (!carte) throw new NotFoundException('No published carte for this space');
+    } else {
+      carte = await this.poster.getSoleLegacyPublished();
+      if (!carte) {
+        throw new BadRequestException({
+          code: CARTE_ERROR.PUBLIC_SPACE_REQUIRED,
+          message: 'space is required: name it as <formation>:<campus>, e.g. ICM:saint-etienne',
+        });
+      }
+    }
     // Each card's photo by its roster row, the address the public roster hands out. The card's
     // `userId` is served beside it: the showcase keys its card list on that field.
     const avatars = await this.associations.publicAvatarUrlsFor(
