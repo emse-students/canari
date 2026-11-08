@@ -825,7 +825,11 @@ its own transaction, reading the event row `FOR SHARE` (`PostsService.saveWithEv
 `FOR NO KEY UPDATE` (`withEventLock`) while it asks whether a post links it. The two locks conflict,
 so whichever commits first is seen by the other and the second is refused with
 `CALENDAR_NEUTRAL_LINKED_POST`. (A check made before the post transaction, as first built, left a
-window where both passed: the switch's EXISTS could not see an uncommitted post.) The three post
+window where both passed: the switch's EXISTS could not see an uncommitted post.) Only a link SET or
+CHANGED is checked: the edit form sends the current link with every edit, and an unchanged one is
+already committed, so the switch sees it - re-checking it made a post uneditable once its event was
+rejected or deleted. Both orders are run against PostgreSQL in
+`posts/calendar-link-lock.integration.spec.ts`. The three post
 readers then STATE the rule rather than heal a breach of it: the two forward ones
 (`findCalendarEventByLinkedPost`, `findValidatedCalendarEventSummary`) and the reverse one
 (`findPostLinkedToCalendarEvent`, `GET /posts/calendar-link/:eventId`, which joins the event) read

@@ -1346,14 +1346,21 @@ export class PostsService {
   }
 
   /**
-   * Writes `post` through `write`, and when `linking` (the write sets the link) and it names an
-   * agenda event, resolves that link INSIDE the write's transaction under the event row's `FOR SHARE` lock (`resolvePostCalendarEventLink`).
+   * Writes `post` through `write`, and when `linking` (the write SETS or CHANGES the link) and it
+   * names an agenda event, resolves that link INSIDE the write's transaction under the event row's
+   * `FOR SHARE` lock (`resolvePostCalendarEventLink`). An unchanged link is not re-checked: it is
+   * already committed, so a presentation switch's linked-post check sees it, and an edit of the text
+   * of a post whose event was since rejected or deleted stays possible.
    *
    * The presentation switch holds the same row `FOR NO KEY UPDATE` (`withEventLock`) while it asks
    * whether a post links the event, and the two locks conflict: either the post commits first and
    * the switch sees it (refused, `CALENDAR_NEUTRAL_LINKED_POST`), or the switch commits first and
    * the link reads the neutral row (refused, the same code). A check made before the transaction
    * left a window where both passed - a race that heals is still a defect.
+   *
+   * It locks the EVENT before writing the POST, which is safe only because `posts` holds no
+   * foreign key to `associations` or to `association_calendar_events`, so the write takes no other
+   * lock on them. Adding such a key must revisit the lock order documented on `withEventLock`.
    */
   private async saveWithEventLink(
     post: Post,
@@ -2246,9 +2253,14 @@ export class PostsService {
 
     if ('attachedFormId' in data) post.attachedFormId = data.attachedFormId ?? null;
 
-    // Resolved by `saveWithEventLink` under the event's lock, where the row is written.
+    // Resolved by `saveWithEventLink` under the event's lock, where the row is written - and only
+    // when the link is set or CHANGED: the edit form sends the current link with every edit.
+    const linkedBefore = post.linkedCalendarEventId ?? null;
+    let linking = false;
     if ('linkedCalendarEventId' in data) {
-      post.linkedCalendarEventId = data.linkedCalendarEventId ?? null;
+      const next = data.linkedCalendarEventId?.trim() || null;
+      linking = next !== null && next !== linkedBefore;
+      post.linkedCalendarEventId = linking ? data.linkedCalendarEventId : next;
     }
 
     if ('scheduledAt' in data) {
@@ -2270,9 +2282,7 @@ export class PostsService {
       : [];
     post.mentions = mentionedIds;
 
-    const saved = await this.saveWithEventLink(post, 'linkedCalendarEventId' in data, (repo) =>
-      repo.save(post)
-    );
+    const saved = await this.saveWithEventLink(post, linking, (repo) => repo.save(post));
     await this.invalidateListCache();
     return this.serveToReader(saved, { viewerId: userId, isGlobalAdmin });
   }

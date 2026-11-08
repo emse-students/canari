@@ -98,4 +98,84 @@ describe('PostsService: a post links an agenda event under the event lock', () =
     expect(postRepo.manager.transaction).not.toHaveBeenCalled();
     expect(postRepo.save).toHaveBeenCalled();
   });
+
+  /**
+   * THE EDIT FORM SENDS THE CURRENT LINK WITH EVERY EDIT (`EditPostForm.svelte`), so the update
+   * checks the link only when it is set or CHANGED. Re-checking an unchanged one made a post
+   * uneditable once its event was rejected or deleted, or when it was a personal post an older
+   * update had linked unchecked. The race stays closed: an existing link is committed, and the
+   * presentation switch's linked-post check sees it.
+   */
+  describe('updatePost', () => {
+    function editable(stored: Partial<Post>) {
+      const resolve = jest.fn(() => Promise.resolve('ev-2'));
+      const made = makeService(resolve);
+      const row = { id: 'p1', kind: 'post', authorId: 'officer', markdown: 'Soiree', ...stored };
+      Object.assign(made.postRepo, { findOne: jest.fn(async () => row) });
+      Object.assign(made.service, {
+        assertMayEdit: jest.fn(async () => undefined),
+        applyStudentsOnly: jest.fn(async () => undefined),
+        serveToReader: jest.fn(async (saved: unknown) => saved),
+      });
+      return { ...made, resolve };
+    }
+
+    it('edits a personal post that already carries a link, without checking it', async () => {
+      const { service, resolve, postRepo } = editable({
+        associationId: null,
+        linkedCalendarEventId: 'ev-1',
+      });
+      await service.updatePost('p1', 'officer', {
+        markdown: 'Soiree d hiver',
+        linkedCalendarEventId: 'ev-1',
+      });
+      expect(resolve).not.toHaveBeenCalled();
+      expect(postRepo.manager.transaction).not.toHaveBeenCalled();
+      expect(postRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ markdown: 'Soiree d hiver', linkedCalendarEventId: 'ev-1' })
+      );
+    });
+
+    it('edits an association post whose linked event was since rejected, link unchanged', async () => {
+      const { service, resolve, postRepo } = editable({
+        associationId: ASSO,
+        linkedCalendarEventId: 'ev-1',
+      });
+      await service.updatePost('p1', 'officer', {
+        markdown: 'Annule',
+        linkedCalendarEventId: 'ev-1',
+      });
+      expect(resolve).not.toHaveBeenCalled();
+      expect(postRepo.save).toHaveBeenCalled();
+    });
+
+    it('checks a CHANGED link under the event lock', async () => {
+      const { service, resolve, postRepo, txRepo, txManager } = editable({
+        associationId: ASSO,
+        linkedCalendarEventId: 'ev-1',
+      });
+      await service.updatePost('p1', 'officer', {
+        markdown: 'Soiree',
+        linkedCalendarEventId: 'ev-2',
+      });
+      expect(resolve).toHaveBeenCalledWith(ASSO, 'ev-2', txManager);
+      expect(txRepo.save).toHaveBeenCalled();
+      expect(postRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('clears a link without checking anything', async () => {
+      const { service, resolve, postRepo } = editable({
+        associationId: ASSO,
+        linkedCalendarEventId: 'ev-1',
+      });
+      await service.updatePost('p1', 'officer', {
+        markdown: 'Soiree',
+        linkedCalendarEventId: null,
+      });
+      expect(resolve).not.toHaveBeenCalled();
+      expect(postRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ linkedCalendarEventId: null })
+      );
+    });
+  });
 });
