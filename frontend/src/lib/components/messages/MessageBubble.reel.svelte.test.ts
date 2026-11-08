@@ -180,7 +180,11 @@ describe('MessageBubble - my reel sent to several conversations (15.2, 15.7)', (
   const own = { isOwn: true, senderId: 'u-me', onDelete: vi.fn() };
 
   it('offers "Supprimer partout" in the delete confirmation once a send went, and hands the message up', async () => {
-    reachMock.mockResolvedValue({ queued: [send(3)], standing: [send(1), send(2)] });
+    reachMock.mockResolvedValue({
+      takeId: 't',
+      queued: [send(3)],
+      standing: [send(1), send(2)],
+    });
     const onDeleteReelEverywhere = vi.fn();
     render(video({ intent: 'reel-message' }), vi.fn(), { ...own, onDeleteReelEverywhere });
     await openDelete();
@@ -191,11 +195,15 @@ describe('MessageBubble - my reel sent to several conversations (15.2, 15.7)', (
       m.reel_sendto_delete_everywhere_hint({ count: 3 })
     );
     button.click();
+    // A second tap during the confirmation's outro ends nothing: the press is taken once.
+    button.click();
+    flushSync();
+    expect(onDeleteReelEverywhere).toHaveBeenCalledTimes(1);
     expect(onDeleteReelEverywhere).toHaveBeenCalledWith('m1');
   });
 
   it('offers "Annuler partout" while no send has gone', async () => {
-    reachMock.mockResolvedValue({ queued: [send(1), send(2)], standing: [] });
+    reachMock.mockResolvedValue({ takeId: 't', queued: [send(1), send(2)], standing: [] });
     render(video({ intent: 'reel-message' }), vi.fn(), {
       ...own,
       onDeleteReelEverywhere: vi.fn(),
@@ -207,7 +215,7 @@ describe('MessageBubble - my reel sent to several conversations (15.2, 15.7)', (
   });
 
   it('offers nothing more for a take naming one message, nor on another device (no reach)', async () => {
-    reachMock.mockResolvedValue({ queued: [], standing: [send(1)] });
+    reachMock.mockResolvedValue({ takeId: 't', queued: [], standing: [send(1)] });
     render(video({ intent: 'reel-message' }), vi.fn(), {
       ...own,
       onDeleteReelEverywhere: vi.fn(),

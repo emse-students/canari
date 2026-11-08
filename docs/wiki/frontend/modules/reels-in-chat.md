@@ -1635,16 +1635,21 @@ both reach production in the same flip, because they are ONE switch.
   queue). The delete confirmation of MY OWN reel message asks it when it opens (an event, never
   polled) and, when the take names two messages or more (`reelEverywhereActOf`), offers beside the
   plain delete "Annuler partout" while none has gone, "Supprimer partout" once one has, with a line
-  saying how many conversations. Both run `handleDeleteReelEverywhere`: the reach read once, each
-  send through the one delete path (`deleteMessage`: a queued one withdrawn, a sent one deleted for
-  everyone), and the take settles from its rows - the last withdrawal releases its session, the last
-  deletion its file's hold. A sender's other device has no reach and offers neither (15.7). This
-  replaced the outbox's `cancelTakeEverywhere` and `sentTakeOf`, which nothing called.
-- **`reel_sendto_failed_in`.** `failPermanently` calls `OutboxDeps.onReelSendFailed(conversationId)`
-  for a send of a take (named by its row, or - a light queue row read by the take's own verdict -
-  by the take's in-memory view), after the thread's own line; the session shows one toast naming the
-  conversation (`reelSendFailedName`: the DM peer or group name; `reel_sendto_failed_in_unnamed` when
-  this device no longer holds it - never a raw id).
+  saying how many conversations (no promise about the file: a take also published keeps it on its
+  post). Both run `handleDeleteReelEverywhere`: a sent message deleted for everyone through the one
+  delete path, a queued one withdrawn; **the reach is a snapshot**, so a queued send the queue no
+  longer holds is deleted only if the take now counts it as gone out, and skipped if it failed - a
+  delete would name a message no peer has. **One run per take at a time** (an in-flight set of take
+  ids; the confirm button is disabled once pressed), and a conversation no longer on this device is
+  skipped and said in a toast. The take settles from its rows - the last withdrawal releases its
+  session, the last deletion its file's hold. A sender's other device has no reach and offers neither
+  (15.7). This replaced the outbox's `cancelTakeEverywhere` and `sentTakeOf`, which nothing called.
+- **`reel_sendto_failed_in`, ONE notice per cause.** `OutboxDeps.onReelSendFailed` is told either
+  `{ kind: 'send' }` - one send refused on its own (its group gone, the member removed), which names
+  its conversation - or `{ kind: 'take' }` - a verdict on the take's file (refused, over today's
+  budget, unpreparable, lost, expired) that ends every send, said ONCE per take per page life with the
+  conversations it reached, never once per send. The session's toast is `reelSendFailedNotice`: the
+  name, "N conversations", or "the conversations you chose" - never a raw id.
 - **`reel_sendto_same_as_post`** under the chips when the feed row AND a chat are ticked.
 - **Tests**: `outbox.reelResume.test.ts` (the reach of a queued and of a sent take, the failed-in
   conversations of a refused send and of a take over its budget),

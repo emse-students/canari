@@ -112,6 +112,7 @@ import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
 import {
   applyOutboxPendingStatuses,
   awaitOutboxSettled,
+  cancelOutboxMessage,
   enqueueOutboxMessage,
   enqueueOutboxTake,
   isEnqueueQuotaFailure,
@@ -2987,39 +2988,120 @@ export function useMessaging() {
   }
 
   /**
-   * "Annuler partout" / "Supprimer partout" (reels-in-chat 15.2, 15.7): ends every message the take
-   * of `messageId` was queued as - a send still queued is WITHDRAWN, a send that went is deleted for
-   * everyone - in each conversation, each through the one delete path ({@link deleteMessage}). The
-   * take settles from its rows as they go: the last withdrawal releases its session, the last
-   * deletion gives the file's hold back (D-delete-one). The reach is read ONCE, before anything is
-   * ended: a send that leaves the queue meanwhile is still in the list, and the one delete path turns
-   * its withdrawal into a delete for everyone. A conversation no longer on this device is skipped and
-   * said. Returns how many messages were ended.
+   * The takes an "everywhere" run is ending right now: a second press (a double tap during the
+   * confirmation's outro, another bubble of the same take) while one runs ends nothing - it would
+   * send a delete for sends the first run withdrew, which no peer ever received.
    */
-  async function handleDeleteReelEverywhere(messageId: string, ctx: MessagingContext) {
+  const everywhereRunning = new SvelteSet<string>();
+
+  /**
+   * "Annuler partout" / "Supprimer partout" (reels-in-chat 15.2, 15.7): ends every message the take
+   * of `messageId` was queued as, in each conversation. A send that WENT is deleted for everyone
+   * through the one delete path ({@link deleteMessage}); a send still QUEUED is withdrawn - and when
+   * the queue no longer holds it (the reach is a snapshot), it is deleted for everyone only if the
+   * take now counts it as gone out, skipped otherwise (it failed or was withdrawn: no peer has it).
+   * The take settles from its rows as they go (the last withdrawal releases its session, the last
+   * deletion gives the file's hold back, D-delete-one). One run per take at a time
+   * (`everywhereRunning`). A conversation no longer on this device is skipped and counted.
+   */
+  async function handleDeleteReelEverywhere(
+    messageId: string,
+    ctx: MessagingContext
+  ): Promise<{ ended: number; skipped: number; running: boolean }> {
     const reach = await outboxReelTakeReachOf(messageId);
-    const sends = reach ? [...reach.queued, ...reach.standing] : [];
-    ctx.log(
-      `[MEDIA] delete everywhere ${messageId.slice(0, 8)}…: ${reach?.queued.length ?? 0} queued and ${reach?.standing.length ?? 0} sent message(s) of its take`
-    );
-    let deleted = 0;
-    for (const send of sends) {
-      const found = [...ctx.conversations.entries()].find(([, c]) => c.id === send.conversationId);
-      if (!found) {
-        ctx.log(
-          `[MEDIA] ${send.id.slice(0, 8)}…: its conversation is not on this device - skipped`
-        );
-        continue;
-      }
-      const [convoKey, convo] = found;
-      const act: ControlAct = { kind: 'delete' };
-      const outcome = await deleteMessage(send.id, controlDeps(ctx, convo));
-      settleControl(ctx, convo.id, send.id, act, outcome !== 'refused');
-      if (outcome === 'refused') continue;
-      await applyDeleteLocally(outcome, send.id, convoKey, ctx);
-      deleted++;
+    if (!reach) {
+      ctx.log(`[MEDIA] delete everywhere ${messageId.slice(0, 8)}…: no take names it - nothing`);
+      return { ended: 0, skipped: 0, running: false };
     }
-    return deleted;
+    if (everywhereRunning.has(reach.takeId)) {
+      ctx.log(
+        `[MEDIA] delete everywhere ${messageId.slice(0, 8)}…: take ${reach.takeId.slice(0, 8)}… is already being ended - this press ends nothing`
+      );
+      return { ended: 0, skipped: 0, running: true };
+    }
+    everywhereRunning.add(reach.takeId);
+    try {
+      ctx.log(
+        `[MEDIA] delete everywhere ${messageId.slice(0, 8)}…: ${reach.queued.length} queued and ${reach.standing.length} sent message(s) of take ${reach.takeId.slice(0, 8)}…`
+      );
+      let ended = 0;
+      let skipped = 0;
+      for (const [send, wasQueued] of [
+        ...reach.queued.map((s) => [s, true] as const),
+        ...reach.standing.map((s) => [s, false] as const),
+      ]) {
+        const found = [...ctx.conversations.entries()].find(
+          ([, c]) => c.id === send.conversationId
+        );
+        if (!found) {
+          ctx.log(
+            `[MEDIA] ${send.id.slice(0, 8)}…: its conversation is not on this device - skipped`
+          );
+          skipped++;
+          continue;
+        }
+        const [convoKey, convo] = found;
+        if (wasQueued && !(await endQueuedSend(send.id, messageId, convoKey, convo.id, ctx)))
+          continue;
+        if (wasQueued) {
+          ended++;
+          continue;
+        }
+        if (await deleteForEveryone(send.id, convoKey, convo, ctx)) ended++;
+      }
+      return { ended, skipped, running: false };
+    } finally {
+      everywhereRunning.delete(reach.takeId);
+    }
+  }
+
+  /**
+   * Ends a send the reach saw QUEUED: withdrawn while the queue holds it; once it left the queue,
+   * deleted for everyone only if its take now counts it as gone out (`standing`), skipped otherwise -
+   * it failed or was withdrawn, and a delete would name a message no peer has. Whether it was ended.
+   */
+  async function endQueuedSend(
+    sendId: string,
+    takeMessageId: string,
+    convoKey: string,
+    conversationId: string,
+    ctx: MessagingContext
+  ): Promise<boolean> {
+    if (await cancelOutboxMessage(sendId)) {
+      settleControl(ctx, conversationId, sendId, { kind: 'delete' }, true);
+      await applyDeleteLocally('withdrawn', sendId, convoKey, ctx);
+      return true;
+    }
+    // NOT WITHDRAWN: it is on the wire, or it left the queue since the snapshot. Its settlement says
+    // which, then the take's record decides - never a delete for an id that never went.
+    await awaitOutboxSettled(sendId);
+    const now = await outboxReelTakeReachOf(sendId);
+    const convo = ctx.conversations.get(convoKey);
+    if (now?.standing.some((s) => s.id === sendId) && convo) {
+      return deleteForEveryone(sendId, convoKey, convo, ctx);
+    }
+    if (now?.queued.some((s) => s.id === sendId) && (await cancelOutboxMessage(sendId))) {
+      await applyDeleteLocally('withdrawn', sendId, convoKey, ctx);
+      return true;
+    }
+    ctx.log(
+      `[MEDIA] ${sendId.slice(0, 8)}… (take of ${takeMessageId.slice(0, 8)}…): left the queue without going out - skipped, no peer has it`
+    );
+    return false;
+  }
+
+  /** Deletes a sent message of a take for everyone through the one delete path. Whether it was taken. */
+  async function deleteForEveryone(
+    sendId: string,
+    convoKey: string,
+    convo: Conversation,
+    ctx: MessagingContext
+  ): Promise<boolean> {
+    const outcome = await deleteMessage(sendId, controlDeps(ctx, convo));
+    settleControl(ctx, convo.id, sendId, { kind: 'delete' }, outcome !== 'refused');
+    if (outcome === 'refused') return false;
+    await applyDeleteLocally(outcome, sendId, convoKey, ctx);
+    return true;
   }
 
   /**

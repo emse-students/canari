@@ -263,6 +263,11 @@
    */
   let everywhereAct = $state<'cancel-all' | 'delete-everywhere' | null>(null);
   let everywhereCount = $state(0);
+  /** The confirm was pressed: a second tap during the outro ends nothing (`handleDeleteReelEverywhere` guards a run too). */
+  let everywherePressed = $state(false);
+  $effect(() => {
+    if (showDeleteModal) everywherePressed = false;
+  });
   $effect(() => {
     if (!showDeleteModal || !isOwn || !isReelMessageRow || !onDeleteReelEverywhere) {
       everywhereAct = null;
@@ -543,6 +548,8 @@
   }
 
   function confirmDeleteEverywhere() {
+    if (everywherePressed) return;
+    everywherePressed = true;
     onDeleteReelEverywhere?.(messageId);
     showDeleteModal = false;
   }
@@ -1291,7 +1298,12 @@
     {/if}
     {#snippet footer()}
       {#if everywhereAct}
-        <Button variant="danger-outline" onclick={confirmDeleteEverywhere} data-reel-everywhere>
+        <Button
+          variant="danger-outline"
+          disabled={everywherePressed}
+          onclick={confirmDeleteEverywhere}
+          data-reel-everywhere
+        >
           {everywhereAct === 'cancel-all'
             ? m.reel_sendto_cancel_all()
             : m.reel_sendto_delete_everywhere()}

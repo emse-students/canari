@@ -4462,11 +4462,15 @@
   "reel_sendto_failed": "The send could not be queued.",
   "reel_sendto_failed_in": "The video could not be sent to \"{name}\": open the conversation to see why.",
   "reel_sendto_failed_in_unnamed": "A video could not be sent to one of the conversations you chose: open it to see why.",
+  "reel_sendto_failed_in_many": "The video could not be sent to {count} conversations: open them to see why.",
+  "reel_sendto_failed_in_chosen": "The video could not be sent to the conversations you chose: open them to see why.",
+  "reel_sendto_delete_everywhere_skipped": "Deleted in {done} conversations; {skipped} are no longer on this device and keep it.",
+  "reel_sendto_everywhere_running": "This video is already being deleted.",
   "reel_sendto_same_as_post": "The conversations will receive the published video itself.",
   "reel_sendto_cancel_all": "Cancel everywhere",
   "reel_sendto_cancel_all_hint": "This video is going to {count} conversations: \"Cancel everywhere\" stops it in each of them.",
   "reel_sendto_delete_everywhere": "Delete everywhere",
-  "reel_sendto_delete_everywhere_hint": "This video was sent to {count} conversations: \"Delete everywhere\" removes it from each of them, then the file.",
+  "reel_sendto_delete_everywhere_hint": "This video was sent to {count} conversations: \"Delete everywhere\" removes it from each of them.",
   "reel_sendto_send": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],

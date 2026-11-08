@@ -7,6 +7,8 @@
  * KNOWS cannot be sent to, never what it would have to guess.
  */
 import type { Conversation } from '$lib/types';
+import type { ReelSendFailure } from '$lib/utils/chat/outbox';
+import { m } from '$lib/paraglide/messages';
 import { isNeverAdmitted } from '$lib/utils/chat/admissionState';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import {
@@ -101,4 +103,25 @@ export function reelSendFailedName(
     return pres.displayNameResolved && name.length > 0 ? name : null;
   }
   return null;
+}
+
+/**
+ * The ONE notice a reel send failure gets (15.2): a send refused on its own names its conversation;
+ * a verdict on the take is said once for the take - its conversation when it reached one, how many
+ * when several, "the conversations you chose" when this device no longer knows them. `form` is for
+ * the log line.
+ */
+export function reelSendFailedNotice(
+  conversations: Iterable<[string, Conversation]>,
+  failure: ReelSendFailure,
+  currentUserId: string
+): { text: string; form: 'named' | 'unnamed' | 'count' | 'unknown' } {
+  const ids = failure.kind === 'send' ? [failure.conversationId] : failure.conversationIds;
+  if (ids.length > 1)
+    return { text: m.reel_sendto_failed_in_many({ count: ids.length }), form: 'count' };
+  if (ids.length === 0) return { text: m.reel_sendto_failed_in_chosen(), form: 'unknown' };
+  const name = reelSendFailedName([...conversations], ids[0], currentUserId);
+  return name === null
+    ? { text: m.reel_sendto_failed_in_unnamed(), form: 'unnamed' }
+    : { text: m.reel_sendto_failed_in({ name }), form: 'named' };
 }

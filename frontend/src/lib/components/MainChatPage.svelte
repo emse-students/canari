@@ -1697,7 +1697,20 @@
             : (msgId) => void messaging.handleDeleteMessage(msgId, msgCtx())}
           onDeleteReelEverywhere={isSelectedChannel
             ? undefined
-            : (msgId) => void messaging.handleDeleteReelEverywhere(msgId, msgCtx())}
+            : (msgId) =>
+                void messaging.handleDeleteReelEverywhere(msgId, msgCtx()).then((run) => {
+                  // A second press while a run ends the same take, or conversations no longer on
+                  // this device: said, never silent (the hint promised every conversation).
+                  if (run.running) showToast(m.reel_sendto_everywhere_running(), 'info');
+                  else if (run.skipped > 0)
+                    showToast(
+                      m.reel_sendto_delete_everywhere_skipped({
+                        done: run.ended,
+                        skipped: run.skipped,
+                      }),
+                      'warning'
+                    );
+                })}
           onEdit={isSelectedChannel
             ? (msgId, text) =>
                 void channels.editChannelMessage(

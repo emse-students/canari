@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Conversation } from '$lib/types';
+import { m } from '$lib/paraglide/messages';
 import {
   isReelSendListed,
   reelSendCandidates,
   reelSendFailedName,
+  reelSendFailedNotice,
   reelSendPlan,
   toggleReelTarget,
 } from './reelSendTargets';
@@ -122,5 +124,35 @@ describe('reelSendFailedName (15.2, reel_sendto_failed_in)', () => {
 
   it('names nothing for a conversation this device no longer holds - never a raw id', () => {
     expect(reelSendFailedName(rows, 'gone', ME)).toBeNull();
+  });
+});
+
+describe('reelSendFailedNotice (15.2): ONE notice per cause', () => {
+  const rows = [convo({ id: 'g1', name: 'Bureau' }), convo({ id: 'g2', name: 'Copains' })];
+
+  it('names the conversation of a send refused on its own', () => {
+    expect(reelSendFailedNotice(rows, { kind: 'send', conversationId: 'g1' }, ME)).toEqual({
+      text: m.reel_sendto_failed_in({ name: 'Bureau' }),
+      form: 'named',
+    });
+  });
+
+  it("says a take's verdict once, with how many conversations it reached", () => {
+    expect(
+      reelSendFailedNotice(rows, { kind: 'take', conversationIds: ['g1', 'g2', 'g3'] }, ME)
+    ).toEqual({ text: m.reel_sendto_failed_in_many({ count: 3 }), form: 'count' });
+    expect(reelSendFailedNotice(rows, { kind: 'take', conversationIds: ['g2'] }, ME).form).toBe(
+      'named'
+    );
+  });
+
+  it('never names a raw id: a conversation gone, or a take whose sends are no longer known', () => {
+    expect(reelSendFailedNotice(rows, { kind: 'send', conversationId: 'gone' }, ME).form).toBe(
+      'unnamed'
+    );
+    expect(reelSendFailedNotice(rows, { kind: 'take', conversationIds: [] }, ME)).toEqual({
+      text: m.reel_sendto_failed_in_chosen(),
+      form: 'unknown',
+    });
   });
 });
