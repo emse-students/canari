@@ -71,6 +71,12 @@
      * field the API will refuse is how a control comes to look broken rather than forbidden.
      */
     canDeclareBreak?: boolean;
+    /**
+     * Whether the viewer may file a NEUTRAL event here ("Campus", no association; owner,
+     * 2026-11-08): this association is a BDE and the viewer files its events. The server refuses
+     * anyone else (`CALENDAR_NEUTRAL_NOT_A_BDE`, and the route's PROPOSE_EVENT).
+     */
+    canPresentNeutral?: boolean;
   }
 
   let {
@@ -78,6 +84,7 @@
     associationSlug,
     canEdit = false,
     canDeclareBreak = false,
+    canPresentNeutral = false,
   }: Props = $props();
 
   /**
@@ -129,6 +136,9 @@
   const capabilities = $derived({
     canSetKind: canDeclareBreak,
     canLinkForm: canEdit && formValues.writeSide === 'organiser',
+    // Only this BDE's OWN events: one it co-organises belongs to another association, which is
+    // never a BDE's to present as "Campus".
+    canSetPresentation: canPresentNeutral && formValues.targetAssociationId === associationId,
   });
 
   let showSubscribeModal = $state(false);

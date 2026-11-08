@@ -559,6 +559,7 @@
           associationSlug={asso.slug}
           canEdit={canProposeEvent}
           {canDeclareBreak}
+          canPresentNeutral={asso.isBDE && canProposeEvent}
         />
       </div>
     {:else if activeSection === 'members'}

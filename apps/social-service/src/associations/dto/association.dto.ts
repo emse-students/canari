@@ -22,7 +22,10 @@ import {
   PURCHASE_CLOSING_OUTCOMES,
   type PurchaseClosingOutcome,
 } from '../../users/entities/purchase-record-closing.entity';
-import { AssociationCalendarEventKind } from '../entities/association-calendar-event.entity';
+import {
+  AssociationCalendarEventKind,
+  AssociationCalendarEventPresentation,
+} from '../entities/association-calendar-event.entity';
 import { ALL_PERMISSION_FLAGS } from '../entities/association-member.entity';
 import { ASSOCIATION_IMAGE_URL_MAX_LENGTH } from '../association-image-url';
 
@@ -352,6 +355,15 @@ export class CreateAssociationCalendarEventDto {
   targetAssocId?: string;
 
   /**
+   * `association` (default) or `neutral`: shown as "Campus" with no association. Only a BDE's event
+   * may be neutral, and a neutral one has no co-organiser and no linked form
+   * (`event-presentation.ts`).
+   */
+  @IsOptional()
+  @IsEnum(AssociationCalendarEventPresentation)
+  presentation?: AssociationCalendarEventPresentation;
+
+  /**
    * Associations ASKED to co-organise this event (D39): each gets a `coorganise` proposal and
    * co-organises only once its publishers accept it. The array bound (10) is only a transport
    * sanity limit: THE CAP IS `MAX_CO_ORGANISERS`, enforced by the service so the refusal is a typed
@@ -406,6 +418,11 @@ export class UpdateAssociationCalendarEventDto {
   @ArrayMaxSize(10)
   @IsUUID('all', { each: true })
   coOwnerIds?: string[];
+
+  /** Changes how the event is presented; the organiser side only. Omit to leave it unchanged. */
+  @IsOptional()
+  @IsEnum(AssociationCalendarEventPresentation)
+  presentation?: AssociationCalendarEventPresentation;
 }
 
 /** Optional reason provided by the BDE when rejecting a pending calendar event. */
