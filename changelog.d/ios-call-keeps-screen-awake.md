@@ -1,0 +1,1 @@
+### Fixed - the iPhone keeps its screen on during a video call: WKWebView refuses the Screen Wake Lock, so the iOS app disables the idle timer natively for as long as the picture is on screen ([calls](docs/wiki/frontend/modules/calls.md#the-screen-stays-on-during-an-iphone-video-call-2026-11-08)).

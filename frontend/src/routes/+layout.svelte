@@ -26,6 +26,7 @@
   } from '$lib/mobile/androidCallService';
   import { showToast } from '$lib/stores/toast.svelte';
   import { releaseIosProximityOfPreviousPage } from '$lib/mobile/iosCallProximity';
+  import { releaseIosIdleTimerOfPreviousPage } from '$lib/mobile/iosCallIdleTimer';
   import {
     clearEdgeExclusionsForNewDocument,
     excludeLeftEdgeOver,
@@ -166,8 +167,9 @@
     if (isAndroidTauriRuntime()) {
       releaseCallServiceOfPreviousPage(window);
     }
-    // Its iOS twin: the proximity sensor a reloaded page may have left armed.
+    // Its iOS twins: the proximity sensor and the idle timer a reloaded page may have left set.
     if (isIosTauriRuntime()) releaseIosProximityOfPreviousPage();
+    if (isIosTauriRuntime()) releaseIosIdleTimerOfPreviousPage();
     themeStore.init();
     startTabIndicator();
     publishTextZoom();

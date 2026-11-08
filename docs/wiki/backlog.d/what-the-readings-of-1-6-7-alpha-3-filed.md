@@ -32,8 +32,6 @@ What they found. None of it is a regression, and none of it blocks:
   - the Settings device-id footer is cut at the right edge.
 - **P3 - the dismissed profile-photo card leaves its "Étape 1 sur 1" text in the iOS accessibility
   tree**, on every page. VoiceOver may read it.
-- **P3 - iOS `[CALL-WAKE]`**: WKWebView refuses the screen wake lock (`NotAllowedError`), so the
-  screen may dim during a call. The fix is native (`idleTimerDisabled` for the call's lifetime).
 - **To watch:** the quality ladder drops 480p30 -> 180p15 four seconds into a call, while the
   bandwidth estimate is still ramping, and recovers within 30 s. One ICE restart followed the
   iPhone camera coming back, and it healed in 5.5 s.

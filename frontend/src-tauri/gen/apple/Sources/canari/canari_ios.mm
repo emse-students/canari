@@ -469,6 +469,42 @@ static void CanariObserveCallProximity(void) {
   NSLog(@"[CanariIOS] listening for the call proximity");
 }
 
+/// THE SCREEN STAYS ON DURING A VIDEO CALL. WKWebView refuses the Screen Wake Lock API
+/// (`NotAllowedError`), so the page posts a boolean through `webkit.messageHandlers.canariIdleTimer`
+/// (`iosCallIdleTimer.ts`): true while a video call is on screen, false at its end, when the call
+/// surface closes - and once at every page boot, so a reload or a WebContent kill mid-call never
+/// leaves the screen on. `idleTimerDisabled` belongs to the running app: a kill or a crash returns
+/// it to the system, and iOS ignores it while the app is not in the foreground. Setting the value
+/// it already has is harmless, so the handler applies every message; anything but a boolean is
+/// logged and ignored.
+@interface CanariIdleTimerHandler : NSObject <WKScriptMessageHandler>
+@end
+@implementation CanariIdleTimerHandler
+- (void)userContentController:(WKUserContentController *)controller
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+  if (![message.body isKindOfClass:[NSNumber class]]) {
+    NSLog(@"[CanariIOS] idle timer ignored, the page posted something that is not a boolean");
+    return;
+  }
+  BOOL disabled = [(NSNumber *)message.body boolValue];
+  UIApplication *app = UIApplication.sharedApplication;
+  BOOL was = app.idleTimerDisabled;
+  app.idleTimerDisabled = disabled;
+  NSLog(@"[CanariIOS] call idle timer: disabled=%d (was %d)", app.idleTimerDisabled, was);
+}
+@end
+
+static void CanariObserveCallIdleTimer(void) {
+  static CanariIdleTimerHandler *handler = nil;
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil || handler != nil) {
+    return;
+  }
+  handler = [CanariIdleTimerHandler new];
+  [webView.configuration.userContentController addScriptMessageHandler:handler name:@"canariIdleTimer"];
+  NSLog(@"[CanariIOS] listening for the call idle timer");
+}
+
 /// Publishes the home indicator's inset to the page as `--safe-area-inset-bottom` - the iOS peer of
 /// what Android's window insets give the same 35 consumers (`app.html` names that variable "the one
 /// place this is decided").
@@ -920,6 +956,7 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariObserveDocumentScrollRange();
   CanariObserveTheme();
   CanariObserveCallProximity();
+  CanariObserveCallIdleTimer();
   CanariHideKeyboardAccessoryBar();
   CanariPublishSafeAreaInsets();
   CanariPublishDynamicType();
