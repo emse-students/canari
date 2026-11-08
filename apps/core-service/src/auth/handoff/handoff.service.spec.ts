@@ -173,7 +173,7 @@ describe('HandoffService', () => {
       ['garbage', 'not-a-key'],
       [
         'an RSA key',
-        generateKeyPairSync('rsa', { modulusLength: 1024 })
+        generateKeyPairSync('rsa', { modulusLength: 2048 })
           .privateKey.export({ format: 'der', type: 'pkcs8' })
           .toString('base64'),
       ],
