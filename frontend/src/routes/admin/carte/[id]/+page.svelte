@@ -1,5 +1,6 @@
 <script lang="ts">
   import Button from '$lib/components/ui/Button.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import { onMount, tick, untrack } from 'svelte';
@@ -845,15 +846,15 @@
             style="min-width:120px;max-width:400px;width:{Math.max(120, editedName.length * 10)}px;"
           />
         {:else}
-          <button
-            type="button"
-            class="group text-text-main hover:text-cn-yellow flex items-center gap-2 text-lg font-bold transition-colors"
+          <Button
+            variant="ghost"
+            class="group"
             onclick={startRenamingName}
             title={m.admin_carte_rename_project_title()}
           >
-            {project.name}
+            <span class="text-text-main text-lg font-bold">{project.name}</span>
             <Pencil size={14} class="opacity-0 transition-opacity group-hover:opacity-60" />
-          </button>
+          </Button>
         {/if}
         {#if space}
           <span
@@ -1141,17 +1142,17 @@
               <!-- Associations: every association of the space, with its switch and its zone. -->
               <section class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-4">
                 <h3 class="text-text-main text-sm font-bold">{m.carte_assos_heading()}</h3>
-                <label
-                  class="border-cn-border flex items-center gap-2 rounded-lg border px-2 py-1.5"
-                >
+                <div class="flex items-center gap-2">
                   <Search size={14} class="text-text-muted shrink-0" />
-                  <input
+                  <Input
                     bind:value={assoSearch}
+                    type="search"
                     placeholder={m.carte_assos_search()}
                     aria-label={m.carte_assos_search()}
-                    class="text-text-main min-w-0 flex-1 bg-transparent text-sm outline-none"
+                    density="compact"
+                    class="min-w-0 flex-1"
                   />
-                </label>
+                </div>
                 {#if spaceAssociations.length === 0}
                   <p class="text-text-muted text-xs">{m.carte_assos_empty()}</p>
                 {:else}
@@ -1207,33 +1208,37 @@
                     <ul class="space-y-1">
                       {#each zones as zone, index (zone.id)}
                         <li class="flex items-center gap-1">
-                          <div class="flex flex-col">
-                            <button
-                              type="button"
+                          <div class="flex">
+                            <Button
+                              variant="ghost"
+                              size="compact"
+                              icon
                               onclick={() => void moveZone(index, -1)}
                               disabled={index === 0 || zoneBusy}
                               aria-label={m.carte_category_move_up()}
-                              class="text-text-muted hover:text-text-main disabled:opacity-30"
                             >
                               <ChevronUp size={14} />
-                            </button>
-                            <button
-                              type="button"
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="compact"
+                              icon
                               onclick={() => void moveZone(index, 1)}
                               disabled={index === zones.length - 1 || zoneBusy}
                               aria-label={m.carte_category_move_down()}
-                              class="text-text-muted hover:text-text-main disabled:opacity-30"
                             >
                               <ChevronDown size={14} />
-                            </button>
+                            </Button>
                           </div>
-                          <input
+                          <Input
                             value={zone.label}
                             maxlength={120}
                             aria-label={m.carte_zone_rename({ label: zone.label })}
-                            onblur={(e) => void renameZone(zone, e.currentTarget.value)}
+                            onblur={(e: FocusEvent & { currentTarget: HTMLInputElement }) =>
+                              void renameZone(zone, e.currentTarget.value)}
                             disabled={zoneBusy}
-                            class="text-text-main hover:border-cn-border focus:border-cn-border min-w-0 flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm font-semibold focus:outline-none"
+                            density="compact"
+                            class="min-w-0 flex-1"
                           />
                           <Button
                             variant="danger-outline"
@@ -1257,12 +1262,13 @@
                     void addZone();
                   }}
                 >
-                  <input
+                  <Input
                     bind:value={newZoneLabel}
                     maxlength={120}
                     placeholder={m.carte_zone_add_placeholder()}
                     aria-label={m.carte_zone_add_placeholder()}
-                    class="border-cn-border text-text-main min-w-0 flex-1 rounded-lg border bg-transparent px-2 py-1.5 text-sm"
+                    density="compact"
+                    class="min-w-0 flex-1"
                   />
                   <Button
                     type="submit"
