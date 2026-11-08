@@ -51,3 +51,10 @@ apps/social-service/src/migrations/131_dependency_triggers.sql 9e6eb4f7d8006f639
 # decision asked once production carried `1.6.5`; adversarial review passed 2026-11-07. Any edit to
 # the file holds it again.
 apps/social-service/src/migrations/134_drop_posts_pinned.sql d571439f26c22c40b33f70dfca9eb90ff3782bc8718a88ebc987ee52026d79a8
+
+# 143: the association push mutes copied into the bell (engagement WP-3, L8), with a trigger mirroring
+# every write an older social-service image makes on the old table during the deploy (L19). A backfill
+# (INSERT ... SELECT, ON CONFLICT DO NOTHING) of one small table. Line written by the AUTHOR for the
+# file's final SQL; it is the lead's approval under the owner's 2026-11-03 delegation only once the
+# adversarial review has passed and the lead merges this pull request by hand. Any edit holds it again.
+apps/social-service/src/migrations/143_account_bells_copy_push_mutes.sql 72153fdb6139b52beb9adc22bbfdb612056788787057347f7302c96635c7d779

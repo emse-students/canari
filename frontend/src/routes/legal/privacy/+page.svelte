@@ -351,7 +351,12 @@
         <dd>
           Pour chaque appareil : un identifiant, son nom et son système, la version de
           l'application, ses clés publiques de chiffrement et le jeton de notification attribué par
-          Google (FCM) ou Apple (APNs), avec la langue de l'appareil.
+          Google (FCM) ou Apple (APNs), avec la langue de l'appareil. Si vous réglez la cloche d'un
+          compte - une association, ou une personne que vous suivez - sur « Lives seulement » ou «
+          Rien », le serveur garde ce choix (le compte concerné et le niveau) pour ne vous envoyer
+          que ce que vous avez choisi ; ce compte n'en est pas informé, et ses publications restent
+          dans votre fil et dans vos notifications. Suivre ce compte à nouveau rétablit «
+          Publications et lives ».
         </dd>
       </div>
       <div>
@@ -875,6 +880,14 @@
           <tr>
             <td>Notifications dans l'application</td>
             <td>90 jours</td>
+          </tr>
+          <tr>
+            <td>Réglage de la cloche d'un compte (« Lives seulement » ou « Rien »)</td>
+            <td>
+              Jusqu'à ce que vous le remettiez sur « Publications et lives », que vous suiviez à
+              nouveau ce compte, ou à la suppression de votre compte, de celui de la personne ou de
+              l'association
+            </td>
           </tr>
           <tr>
             <td>Signalements</td>

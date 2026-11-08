@@ -352,6 +352,8 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 | GET | `/api/posts/me/follow-requests/sent` | The caller's unanswered requests (withdraw with `DELETE users/:userId/follow`) |
 | GET | `/api/posts/me/followers` | The caller's accepted followers, most recently accepted first; `createdAt` is the acceptance (`limit` <= 100, `offset`) |
 | DELETE | `/api/posts/me/followers/:userId` | Remove a follower: deleted, nobody told (404 when not one) |
+| GET | `/api/posts/me/bells/:kind/:targetId` | The caller's bell on one account, `kind` `user` or `association`: `{ level }`, `all` (posts and lives, the default) when none is stored ([engagement](../engagement.md#the-bell---data-model-and-how-it-combines-with-categories-and-mutes)) |
+| PUT | `/api/posts/me/bells/:kind/:targetId` | Set it, body `{ level }` (`all`, `lives`, `none`); idempotent; 400 `BELL_INVALID`, 404 `BELL_TARGET_NOT_FOUND` for an association that does not exist or a person the caller does not follow (accepted) |
 
 ### Channels
 

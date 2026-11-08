@@ -7,6 +7,7 @@
   import { fetchUserProfile, type UserProfile, getSavedUserId } from '$lib/stores/user';
   import { PROFILE_SELF_SEGMENT } from '$lib/profile/profileSections';
   import { askToFollow, getFollowStatus, leaveFollow, type FollowStatus } from '$lib/follows/api';
+  import AccountBell from '$lib/components/follows/AccountBell.svelte';
   import {
     describeFollowRefusal,
     followActionOf,
@@ -342,6 +343,13 @@
             {/if}
             {followLabel(followStatus)}
           </button>
+          <!--
+            THE BELL (engagement WP-3, L7): offered once the reader FOLLOWS this person (accepted) -
+            a bell on someone whose posts the reader is not told of would be a second, silent follow.
+          -->
+          {#if followStatus === 'accepted'}
+            <AccountBell kind="user" targetId={profile.id} />
+          {/if}
           <button
             onclick={handleSendMessage}
             class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 focus-visible:ring-cn-yellow/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold shadow-md transition-all outline-none focus-visible:ring-2 active:scale-95"

@@ -16,6 +16,7 @@ import { UserFollow } from './entities/user-follow.entity';
 import { Association } from '../associations/entities/association.entity';
 import { FOLLOW_ACCEPTED, FOLLOW_PENDING, type FollowStatus } from './follow-status';
 import type { FollowNoticeKind } from './entities/user-follow-notice.entity';
+import { resetBellOnNewFollowSql } from './account-bells.service';
 
 /** How a follows log line names an account: its first 8 characters, never a whole account id. */
 export const short = (id: string): string => id.slice(0, 8);
@@ -118,17 +119,37 @@ export class FollowsService {
 
   // --- Association follows ---
 
-  /** Follows an association. Silently ignores duplicate follows (idempotent). Throws if the association does not exist. */
+  /**
+   * Follows an association. Idempotent: a second follow writes nothing. Throws if the association
+   * does not exist.
+   *
+   * ONE STATEMENT, and the bell rides on it (L3, engagement WP-3): the `INSERT ... ON CONFLICT DO
+   * NOTHING RETURNING` returns a row only when THIS call created the follow, and the reader's bell
+   * on the association is deleted from that row - so a new follow means posts and lives again (a
+   * muted association followed again is unmuted), while a retried follow, a double tap, returns no
+   * row and leaves a bell the reader set since untouched.
+   */
   async followAssociation(followerUserId: string, associationId: string): Promise<{ ok: boolean }> {
     const exists = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!exists) {
       throw new NotFoundException('Association not found');
     }
-    const already = await this.followRepo.findOne({ where: { followerUserId, associationId } });
-    if (!already) {
-      const row = this.followRepo.create({ followerUserId, associationId });
-      await this.followRepo.save(row);
-    }
+    const created: unknown = await this.followRepo.query(
+      `WITH followed AS (
+         INSERT INTO association_follows (id, "followerUserId", "associationId")
+         VALUES (gen_random_uuid(), $1, $2)
+         ON CONFLICT DO NOTHING
+         RETURNING "followerUserId" AS reader, "associationId" AS target
+       ), reset AS (${resetBellOnNewFollowSql('followed', 'association')} RETURNING b."userId")
+       SELECT (SELECT count(*) FROM followed)::int AS created,
+              (SELECT count(*) FROM reset)::int AS reset`,
+      [followerUserId, associationId]
+    );
+    const row = Array.isArray(created) ? (created[0] as { created: number; reset: number }) : null;
+    this.logger.log(
+      `[FOLLOW] ${followerUserId.slice(0, 8)} -> association ${associationId.slice(0, 8)}: ` +
+        `${row?.created ? 'followed' : 'already following'}${row?.reset ? ', bell reset' : ''}`
+    );
     return { ok: true };
   }
 

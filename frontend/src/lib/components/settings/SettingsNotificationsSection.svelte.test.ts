@@ -7,10 +7,10 @@ const api = vi.hoisted(() => ({
   saveDisabledCategories: vi.fn(),
 }));
 vi.mock('$lib/notifications/preferencesApi', () => api);
-// The muted-associations list is its own component with its own test; here it only has to be quiet.
-vi.mock('$lib/associations/api', () => ({
-  listMutedAssociations: vi.fn(() => Promise.resolve([])),
-  unmuteAssociationPush: vi.fn(),
+// The reduced-bells list is its own component with its own test; here it only has to be quiet.
+vi.mock('$lib/follows/bell', () => ({
+  listReducedBells: vi.fn(() => Promise.resolve([])),
+  setBellLevel: vi.fn(),
 }));
 
 import SettingsNotificationsSection from './SettingsNotificationsSection.svelte';

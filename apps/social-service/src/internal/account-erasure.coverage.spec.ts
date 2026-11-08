@@ -58,6 +58,9 @@ const RAW_TABLES = [
   // Migration 135's retired post ids: an id and a date, no account - written BY the erasure's own
   // delete of the member's posts, so a resend of one never brings it back.
   'deleted_post_ids',
+  // Migration 080's per-association mute: its entity went with engagement WP-3, which copied the
+  // rows into `account_bells` (migration 143); the table stays until its held drop.
+  'association_push_mutes',
   // Migration 127's per-space pins (WP-PIN): who pinned.
   'post_space_pins',
   // Migration 129's dependency journal: the platform admin who changed a parent or a governor.

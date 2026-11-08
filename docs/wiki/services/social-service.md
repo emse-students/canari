@@ -678,7 +678,7 @@ Live broadcasts, behind `LIVE_ENABLED`; every route, its rights and its refusal 
 | GET | `/api/associations/:id` | Get association detail |
 | POST | `/api/associations` | Create association (global admin or BDE `MANAGE_ASSO` flag) |
 | PATCH | `/api/associations/:id` | Update details: each field asks its own right (`UPDATE_FIELD_RIGHTS`: profile `EDIT_PROFILE`, `archived` `MANAGE_MEMBERS`, cotisation `MANAGE_PRODUCTS`, quota and a list's parent the platform admin) - [the field table](../association-permissions.md#edit_profile-bit-12-the-profile-is-not-the-roster-and-patch-id-is-not-one-flag-owner-2026-11-02) |
-| GET/PUT/DELETE | `/api/associations/:id/push-mute` | The caller's push mute of one association; `GET /api/associations/me/push-mutes` lists them |
+| GET/PUT/DELETE | `/api/associations/:id/push-mute` | LEGACY (builds older than the bell, engagement WP-3): the caller's bell on one association read as a mute (`none`); `GET /api/associations/me/push-mutes` lists them |
 | POST | `/api/associations/:id/members` | Add member to association |
 | POST | `/api/associations/:id/events` | Create calendar event |
 | PATCH | `/api/associations/:id/events/:eventId` | Update calendar event |
@@ -948,41 +948,47 @@ where "Suivre" is defined.
 Pinned by `post-announce.scheduler.spec.ts`, whose first assertion is the stamp/send ORDER rather
 than the recipients.
 
-### Follow, mute and read grants: three different facts (decided by the user, 2026-10-08)
+### Follow, bell and read grants: three different facts (decided by the user, 2026-10-08; the mute became the bell, engagement WP-3, 2026-11-08)
 
 | | What it is | Does it decide who is PUSHED? |
 | --- | --- | --- |
-| **Follow** (`association_follows`, button "Suivre") | a reading preference: it feeds the "followed" view of the feed | **No.** Every association post is pushed to everyone who can SEE it; the follow table is not consulted for announcing (STATUS QUO, chosen on purpose) |
-| **Mute** (`association_push_mutes`, migration 080) | "stop pushing me THIS association", and only that | **Yes - it removes the recipient from the PUSH**, never from the feed or the bell |
+| **Follow** (`association_follows`, button "Suivre") | a reading preference: it feeds the "followed" view of the feed | **No** for an association: every association post is pushed to everyone who can SEE it; the follow table is not consulted for announcing (STATUS QUO, chosen on purpose). A PERSON's accepted followers are their announcement audience |
+| **Bell** (`account_bells`, migrations 142-143) | what the reader receives from ONE account, a person they follow or an association: posts and lives (no row, the default), `lives`, or `none`. The old association **mute** (`association_push_mutes`, migration 080) is the level `none`, copied by 143 | **Yes - it removes the recipient from the PUSH**, never from the feed or the bell list |
 | **Nominative read grant** (`read_grants`) | access to read | **No.** A read grant is access, not subscription: its holders are not announced to |
 
-**Where a mute is applied: ONE place, server-side.** `PostNotificationsService.createNotifications`
-asks `AssociationPushMutesService.mutedAmong(associationId, recipients)` just before the push loop
-and drops the muted. The in-app `post_notifications` row is still written (the bell is the record, a
-push is the interruption), and the announce SQL is untouched. Nothing is filtered by the client, and
-no cache or feed key is involved.
+**Where the bell is applied: ONE place, server-side.** `PostNotificationsService.fanOutPush` asks
+`AccountBellsService.withheldAmong(target, recipients)` just before the push loop and drops the
+withheld (`bellTargetOf`: the association when the push carries one, the person acting otherwise). The
+in-app `post_notifications` row is still written (the bell list is the record, a push is the
+interruption), and the announce SQL is untouched. Nothing is filtered by the client, and no cache or
+feed key is involved. The full design, the levels and why a new follow resets the row:
+[engagement](../engagement.md#the-bell---data-model-and-how-it-combines-with-categories-and-mutes).
 
-**If the mute lookup fails the push FAILS CLOSED and LOUD**: `[NOTIFY] mute lookup failed` at error level, the error rethrown to the caller's own warning, the in-app rows kept. Pushing everyone would override a stated choice. The announce stamp is a CONDITIONAL update (`feedNotifiedAt IS NULL`), so two overlapping instances cannot both announce a post. Account deletion purges the account's mutes (`internal.controller.ts`).
+**If the bell lookup fails the push FAILS CLOSED and LOUD**: `[NOTIFY] bell lookup failed` at error level, the error rethrown to the caller's own warning, the in-app rows kept. Pushing everyone would override a stated choice. The announce stamp is a CONDITIONAL update (`feedNotifiedAt IS NULL`), so two overlapping instances cannot both announce a post. Account deletion purges the account's bells and every bell on it (`account-erasure.ts`).
 
-**Per type, and the list is an ALLOWLIST** (`MUTABLE_PUSH_TYPES`; a new type is never muted by
+**Per type, and the list is an ALLOWLIST** (`BELL_PUSH_KINDS`; a new type is never withheld by
 accident):
 
-| Type | Recipient is | Muted by a mute? |
-| --- | --- | --- |
-| `association_post` | a reader | yes |
-| `association_repost` | a reader the republication newly reached (the mute is the REPUBLISHING association's) | yes |
-| `live_started` | a reader who sees the association broadcasting a live (WP-L7, widened from its followers on 2026-11-07, [engagement](../engagement.md); push only, no bell row - `pushNotice`, [lives](lives.md#the-push-to-the-followers-wp-l7-server-half)) | yes |
-| `repost_proposed`, `coorganise_proposed` | managers who must accept | **no** - operational |
-| `repost_personal_requested` | the author of a personal post an association asks to carry (D38b) | **yes** - the author's mute of the asking association |
-| `event_proposed/validated/rejected/updated/deleted/pending` | validators and proposers | **no** - operational |
-| `followed_post`, `mention`, `reply`, `reaction`, `comment` | addressed to you by a person | **no** - not an association's push |
+| Type | Recipient is | Its bell | Withheld at `lives`? at `none`? |
+| --- | --- | --- | --- |
+| `association_post` | a reader | the association's | yes / yes |
+| `association_repost` | a reader the republication newly reached | the REPUBLISHING association's | yes / yes |
+| `live_started` | a reader who sees the account broadcasting (WP-L7; push only, no bell row - `pushNotice`, [lives](lives.md#the-push-to-the-followers-wp-l7-server-half)) | the association's, or the broadcasting person's | **no** / yes |
+| `followed_post`, `member_repost` | an accepted follower | the author's, the reposter's (L17) | yes / yes |
+| `repost_personal_requested` | the author of a personal post an association asks to carry (D38b) | the asking association's | yes / yes |
+| `repost_proposed`, `coorganise_proposed` | managers who must accept | - | **never** - operational |
+| `event_proposed/validated/rejected/updated/deleted/pending` | validators and proposers | - | **never** - operational |
+| `mention`, `reply`, `reaction`, `comment` | addressed to you by a person | - | **never** |
 
 **Routes** (own rows only: the caller's id is the `x-user-id` header, never a body field):
-`GET|PUT|DELETE /api/associations/:id/push-mute` (status, mute, unmute - idempotent) and
-`GET /api/associations/me/push-mutes` (the settings list). UI: a "Couper les notifications" button
-beside "Suivre" on the association page, and a "muted associations" list with an unmute button in
-the notification settings (`SettingsMutedAssociations.svelte`). The account-wide `posts` switch
-still applies first, in chat-delivery.
+`GET /api/posts/me/bells` (the settings list), `GET|PUT /api/posts/me/bells/:kind/:targetId` (read,
+set `{ level }` - idempotent; a person only while followed, accepted). **Legacy, for builds older than
+the bell control** ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---an-association-mute-set-by-a-build-older-than-the-bell-designed-2026-11-07)):
+`GET|PUT|DELETE /api/associations/:id/push-mute` and `GET /api/associations/me/push-mutes`, which read
+and write `account_bells` (mute = `none`, unmute = no row). UI: the bell (`AccountBell.svelte`)
+beside "Suivre" on the association page and on a followed person's profile, and the "Notifications
+réduites" list with a "Tout recevoir" button in the notification settings
+(`SettingsAccountBells.svelte`). The account-wide `posts` switch still applies, in chat-delivery.
 
 **Measured on the local estate (2026-10-08, sandbox accounts, a build of this branch beside the
 old container).** Association post, recipients: follower, muted follower, non-follower member. The

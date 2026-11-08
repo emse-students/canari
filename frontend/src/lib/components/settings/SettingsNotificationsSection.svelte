@@ -7,7 +7,7 @@
     type NotificationCategory,
   } from '$lib/notifications/categories';
   import { m } from '$lib/paraglide/messages';
-  import SettingsMutedAssociations from './SettingsMutedAssociations.svelte';
+  import SettingsAccountBells from './SettingsAccountBells.svelte';
 
   /**
    * One switch per notification category, per ACCOUNT: the choice is stored server-side, which
@@ -98,5 +98,5 @@
     {/each}
   </div>
 
-  <SettingsMutedAssociations />
+  <SettingsAccountBells />
 </div>

@@ -5,8 +5,8 @@ Instagram-style follow suggestions, with a ceiling on the noise. This page holds
 design that answers each one, what each surface reveals and to whom, and the work packages in order.
 The queue entry is [backlog.d](backlog.d/engagement-chantier.md).
 
-**State: WP-1 and WP-1b BUILT (the association live audience, and its 6-hour bound); everything
-else DESIGNED, not built.**
+**State: WP-1 and WP-1b BUILT (the association live audience, and its 6-hour bound); WP-3 BUILT
+(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); everything else DESIGNED, not built.**
 
 Context it must respect, and which nothing here changes:
 
@@ -102,6 +102,11 @@ and is recorded here only; no package on this page builds it.
 | L8 | `association_push_mutes` is folded into the bell table (a mute is level `none` on an entity). The copy is a HELD migration (a backfill). **The old mute endpoints stay and write `account_bells`** (mute = level `none`, unmute = delete the row), so a build older than the bell control loses no mute it sets after the copy; that shim is [listed with its removal condition](legacy-compatibility.md#no-date-yet---an-association-mute-set-by-a-build-older-than-the-bell-designed-2026-11-07). The old table is then read and written by nothing, and dropped later by a second HELD migration. | Two stores for one fact diverge; a mute written to the old table after the copy would be silently lost. |
 | L15 | "Suivez aussi..." after a follow or a follow REQUEST is built from the VIEWER's own sources - their current suggestion ranking (friends of friends among accounts they already follow, co-members, cohort, entities), minus the account just followed - and NEVER from the target's follows. | Ranking by the target's follow list would reveal it, and to someone the target has not accepted when the follow is a pending request to a private account. Reversed by changing the one input of that call. |
 | L16 | Lives of ONE association are announced at most once per 6 hours: a second live within 6 hours of the association's last ANNOUNCED live is claimed (`announcedAt` stamped, so never announced later) but not pushed. Built from durable state, `associations."lastLiveAnnouncedAt"`, not from `lives` (a live row is deleted at its end). WP-1b. | Since WP-1 an association's live reaches its whole campus, and `live_starts` allows 6 starts an hour per broadcaster; without a limit an association could ring the campus six times an hour. 6 hours is a constant. |
+| L17 | A MEMBER REPOST (`member_repost`) is one of the reposter's "posts" to the bell: a bell on X at `lives` or `none` withholds the push of X's reposts as it does X's own posts. | The reader receives a repost BECAUSE they follow X (WP-F6), so it is something X puts in their feed; a bell that let X's reposts through would not be "what you receive from X". Reversed by moving the type out of the `post` kind in `BELL_PUSH_KINDS`. |
+| L18 | `repost_personal_requested` (an association asking the reader to carry their post) is withheld by that association's bell at `lives` as well as at `none`. | The old mute silenced it; it is not a live, and `lives` means "only its lives". Reversed by one entry of `BELL_PUSH_KINDS`. |
+| L19 | Migration 143 installs a TRIGGER on `association_push_mutes` mirroring every insert, upsert and delete into `account_bells`, in the copy's transaction, under `SHARE ROW EXCLUSIVE`. | During a rolling deploy an older social-service image may still write a mute to the old table AFTER the copy: without the mirror it would be read by nothing (a race that does not even heal). The lock orders a concurrent mute after the copy, so every row is copied or mirrored, never neither. The trigger goes with the table's held drop. |
+| L20 | A bell row SURVIVES an unfollow (it is inert: an unfollowed person's posts are not announced to the reader) and is deleted by the next follow's own statement (L3). The settings list ("Notifications réduites") shows every reduced bell, people included, each with "Tout recevoir". | Deleting on unfollow would be a second write on a path L3 already covers; the list makes every reduction visible and reversible. Reversed by a `DELETE` in the unfollow statements. |
+| L21 | `PUT` on an entity's bell needs only the entity to exist (the old mute's rule), not that the reader sees it; on a person it needs an accepted follow, checked IN the upsert statement. An id that is no uuid is `404 BELL_TARGET_NOT_FOUND`, never the database's type error. | An entity's posts reach readers whatever they follow, and a bell that reduces nothing is harmless; the person check is the one L7 owes, and a check apart from the write would let an unfollow slip between them. |
 | L9 | The opening reminders of forms, booking spaces and events share ONE table (`opening_reminders`, kind + target), replacing `form_reminders`. | One unique key `(kind, targetId, userId)` is what makes "one notification, never two" a constraint instead of a convention. |
 | L10 | Suggestion score = `4 * min(mutual, 10) + 3 * min(sharedAssociations, 3) + tier` (tier 3 same promo and formation, 2 same formation, 1 same campus), ties broken by id. | Deterministic and explainable from the card ("N en commun" carries the dominant term). The weights are one constant each. |
 | L11 | A suggestion card shows NO reason line besides "N en commun" and the faces. | A line "Promo 2027" or "Membre du BDE" would disclose a profile fact or a membership to someone who may not see it elsewhere; the count and the faces are what decision 4 chose to show. |
@@ -177,6 +182,54 @@ request, so no release - a hotfix included - can carry the wider audience withou
   past 6 hours by SQL (the database's clock, no wall clock asserted) pushes; a member's live right
   after the association's is pushed as ever; and "an ARCHIVED association cannot go live, and one
   archived after its start is not announced".
+
+## WP-3 - the bell (BUILT)
+
+Built 2026-11-08 to the design [below](#the-bell---data-model-and-how-it-combines-with-categories-and-mutes)
+(L3, L7, L8) plus L17-L21 above. The decisions it applies are 3d, 5a and 10.
+
+- **Migrations.** 142 (`account_bells` and its target index; plain, not held) and 143 (the mirror
+  trigger, L19, then the copy of `association_push_mutes`; **HELD**, marked `-- canari:hold-for-owner`,
+  its approval line written in `infrastructure/migration-approvals.txt` in the same pull request, so
+  the pull request is never auto-armed and is merged by hand - step 2 of the order
+  [below](#which-migrations-are-held) is that merge).
+- **Server.** `follows/account-bells.service.ts` (the levels, `BELL_PUSH_KINDS`, `bellTargetOf`,
+  `withheldAmong`, the legacy mute methods, `resetBellOnNewFollowSql`) and
+  `follows/account-bells.controller.ts` (`GET /api/posts/me/bells`, `GET|PUT
+  /api/posts/me/bells/:kind/:targetId`). The seam is `PostNotificationsService.fanOutPush`, where the
+  mute was: `MUTABLE_PUSH_TYPES` and `AssociationPushMutesService` are gone. The reset rides on
+  `FollowsService.followAssociation` (now ONE `INSERT ... ON CONFLICT DO NOTHING RETURNING` with the
+  `DELETE` reading it) and on `FollowRequestsService.accept` (the acceptance `UPDATE ... RETURNING`
+  with the same `DELETE`). An association's deletion deletes the bells on it; the account erasure
+  deletes the reader's bells and every bell on the erased person, and its association lock set reads
+  `account_bells` (the association delete now writes it).
+- **Client.** `AccountBell.svelte` (the app's `Picker`: "Publications et lives", "Lives seulement",
+  "Rien", each with a one-line hint; optimistic, back with a toast on a refusal; disabled while its
+  level is unread) beside "Suivre" on an association's page (followed or not) and on a person's
+  profile once followed (accepted); "Notifications réduites" in the notification settings
+  (`SettingsAccountBells.svelte`) replaced the muted-associations list. The old mute button, its
+  strings and its client calls are gone.
+- **Proof.** `follows/account-bells.integration.spec.ts` on PostgreSQL: 143 copies every mute and
+  keeps a newer bell, and re-runs clean; the mirror turns an old image's insert, upsert and delete into
+  the bell write; a level is idempotent and `all` is no row; a person's bell is refused unfollowed,
+  pending and across a block (severed follow); a NEW association follow resets the bell, a retried one
+  or five concurrent ones do not; a person's acceptance resets the new follower's bell, a re-sent one
+  or one refused across a block does not; the level table through the REAL notification service
+  (association post and live, a person's post and live, a mention never withheld); the legacy routes
+  read and write the bell; the settings list; the erasure. Unit: `account-bells.service.spec.ts`,
+  `post-notifications.batch.spec.ts`. Client: `AccountBell.svelte.test.ts`,
+  `SettingsAccountBells.svelte.test.ts`.
+- **Owed on the phones** (after the approval line is merged and a NEW pre-release serves dev): on the
+  Mi 9T and the iPhone 12, set an association's bell to "Rien" and publish as that association from
+  the other phone - the post is in the feed and the notifications list, with no push; "Lives
+  seulement" then a live of it - pushed; a followed person at "Lives seulement" - their post silent,
+  their live pushed; unfollow then re-follow (accepted) - "Publications et lives" again; a mute set
+  before the pre-release reads "Rien" on the association page and in "Notifications réduites".
+
+**The daily cap (WP-8) is NOT built with it**, by the design's own order: WP-3 and WP-8 never meet
+(L4), and WP-8 ships immediately before WP-9, the first package that sends a capped kind - built
+earlier it would guard nothing - and only once [R2](#r2---the-cap-check) has been read on production
+and written back here.
 
 ## Follow suggestions - the query
 
@@ -673,7 +726,7 @@ then WP-9). Shipping it earlier would guard nothing.
 | **WP-1** (BUILT, #3119) | An association's live reaches everyone who can see it | `lives/live-announcer.ts` | `lives.integration.spec.ts` on PostgreSQL ([above](#wp-1---an-associations-live-reaches-everyone-who-can-see-it-built)) |
 | **WP-1b** (BUILT, #3119) | One announced live per association per 6 hours (L16) | `lives/lives.service.ts` (the claim) | [above](#wp-1b---one-announced-live-per-association-per-6-hours-built-in-the-same-pull-request) |
 | **WP-2** | Suivre everywhere a person or entity is named: post headers of an account the viewer does not follow, search results, association cards (today only the profile and the association page carry it) | `frontend/src/lib/follows/api.ts` | component tests per surface; a phone reading of a follow request from a post header |
-| **WP-3** | The bell (decisions 3d, 5a, 10): `account_bells` (`lives` and `none` only, L3), the HELD copy of `association_push_mutes`, the old mute endpoints writing `account_bells` (L8), a follow deleting the row in the creating statement, the seam in `fanOutPush`, the profile control, the association mute UI moved onto it | `follows/association-push-mutes.service.ts` | integration spec of the level table above; a new follow resets a reduced bell and a RETRIED follow does not; following a muted association again unmutes it; a mute set through the old endpoint after the copy is honoured; the existing mute specs still green against the new store |
+| **WP-3** (BUILT, [below](#wp-3---the-bell-built)) | The bell (decisions 3d, 5a, 10): `account_bells` (`lives` and `none` only, L3), the HELD copy of `association_push_mutes`, the old mute endpoints writing `account_bells` (L8), a follow deleting the row in the creating statement, the seam in `fanOutPush`, the profile control, the association mute UI moved onto it | `follows/association-push-mutes.service.ts` | integration spec of the level table above; a new follow resets a reduced bell and a RETRIED follow does not; following a muted association again unmutes it; a mute set through the old endpoint after the copy is honoured; the existing mute specs still green against the new store |
 | **WP-4** | Openings for followers (5d): `opening_reminders`, the HELD copy of `form_reminders`, follower rows at publication, "Me prévenir" upsert, booking and event openings; never capped | `forms/forms-reminder.scheduler.ts` | integration spec: a follower who also asked gets ONE push, a follower gets the opening and no heads-up, a non-follower who asked gets both |
 | **WP-5** | The suggestion query, its faces, entities, `follow_suggestion_dismissals`, `GET /api/suggestions`, `POST /api/suggestions/dismiss`, the erasure | `follows/` | integration spec of every exclusion of decision 2 and every face rule of decision 4; EXPLAIN on dev |
 | **WP-6** | The surfaces (decisions 3 and 7): the carousel in the feed, "Suivez aussi...", the empty Suivis feed, the onboarding banner | the feed route | component tests; phone readings on both bench phones |
