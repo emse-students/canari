@@ -1085,6 +1085,8 @@
   "seo_post_description_fallback": "A post from {association} on the Canari social feed.",
   "seo_post_image_alt": "Image from {association}'s post",
   "seo_logo_alt": "{name} logo",
+  "seo_association_title": "Association",
+  "seo_association_description": "The public page of an association on Canari: news, calendar and forms.",
   "seo_community_invite_title": "Join {name}",
   "seo_community_invite_description": "An invitation to join the {name} community on Canari: discussions, announcements and student support at Mines Saint-Etienne.",
   "seo_group_invite_title": "Join {name}",

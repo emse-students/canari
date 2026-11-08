@@ -1117,6 +1117,8 @@
   "seo_post_description_fallback": "Publication de {association} sur le fil social Canari.",
   "seo_post_image_alt": "Image de la publication de {association}",
   "seo_logo_alt": "Logo {name}",
+  "seo_association_title": "Association",
+  "seo_association_description": "Page publique de l'association sur Canari : actualités, agenda et formulaires.",
   "seo_community_invite_title": "Rejoindre {name}",
   "seo_community_invite_description": "Invitation à rejoindre la communauté {name} sur Canari : discussions, annonces et entraide entre étudiants des Mines Saint-Étienne.",
   "seo_group_invite_title": "Rejoindre {name}",

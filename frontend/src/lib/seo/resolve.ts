@@ -253,16 +253,18 @@ export function resolveSeoForPath(pathname: string): SeoMeta {
     // inside, never a second indexable page: the hub is the one page the sitemap offers, and a
     // section is `noindex` on the server answer too, so a crawler that finds one by a link does not
     // list it beside its hub.
+    // THE SLUG IS NEVER A TITLE: it is an identifier, and this baseline is what the tab shows until
+    // the page hands its real name over (`pageTitle`) or the server enriches it. The path carries no
+    // kind either (association, list and institution share `/associations/<slug>`), so the baseline
+    // is the neutral word, and the real name replaces it.
     const sectionMatch = path.match(ASSOCIATION_SECTION_PATH);
     if (sectionMatch) {
-      return appPageSeo(path, decodeURIComponent(sectionMatch[1]));
+      return appPageSeo(path, m.seo_association_title());
     }
-    const slugMatch = path.match(/^\/associations\/([^/]+)$/);
-    if (slugMatch) {
-      const slug = decodeURIComponent(slugMatch[1]);
+    if (/^\/associations\/[^/]+$/.test(path)) {
       return {
-        title: slug,
-        description: `Page publique de l'association ${slug} sur Canari : actualités, agenda et formulaires.`,
+        title: m.seo_association_title(),
+        description: m.seo_association_description(),
         path,
       };
     }
