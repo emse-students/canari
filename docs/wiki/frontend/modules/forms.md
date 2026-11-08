@@ -634,7 +634,13 @@ A manager can make a form **public** (`forms.isPublic`, migration 068, switch in
 avancés"). Anybody holding its link answers at **`/f/:id`** - no session, no app chrome, no login
 redirect (`+layout.ts` lets `/f/` through as it does `/legal`). A member who opens that link is sent
 to `/forms/:id`, where the form knows who they are; the share button and the QR code of a public form
-hand out the `/f/` address.
+hand out the `/f/` address - the forms list and the detail page both through `formSharePath`
+(`lib/forms/shareLink.ts`), decided from `isPublic`. A `/forms/:id` link already in circulation for a
+public form is answered by the root guard: with no session confirmed, `guestPathForMemberLink` asks the
+endpoint the guest page reads (`GET /api/public/forms/:id`, 404 for anything not public) for the
+`/forms/<uuid>` shape only, and routes to `/f/:id` on an answer, to login otherwise (logged
+`[FormLink]`). `/f/` is deliberately not in the universal-link claim (`appSiteAssociation.ts`): a guest
+link opens in the browser; `/forms/*` stays claimed so an installed app gets the guard above.
 
 **Everything follows from a guest having no identity** (the shared option rule
 [below](#which-options-rule-each-other-out-one-rule-in-either-order-2026-11-06), then

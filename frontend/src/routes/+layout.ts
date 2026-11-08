@@ -9,7 +9,13 @@ import { refresh } from '$lib/stores/auth';
 import { settleBootSession, startBootSession } from '$lib/stores/bootSession.svelte';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
-import { internalPath, isSignedOutPath, loginReturningTo } from '$lib/utils/internalPath';
+import {
+  appPathFromPathname,
+  internalPath,
+  isSignedOutPath,
+  loginReturningTo,
+} from '$lib/utils/internalPath';
+import { guestPathForMemberLink, memberFormIdOfPath } from '$lib/forms/shareLink';
 import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
 // See: https://v2.tauri.app/start/frontend/sveltekit/ for more info
 export const ssr = false;
@@ -54,6 +60,18 @@ export const load = async (event: LoadEvent) => {
       { replace: true }
     );
 
+  // A SIGNED-OUT visitor on a form's MEMBER link (`/forms/<id>`, the address the forms list used to
+  // hand out for a public form) is sent to the form's guest page when the server serves it as
+  // public, to the login screen otherwise. Asked only here, once no session is confirmed.
+  // Any other path goes to login SYNCHRONOUSLY, as before: only the member-form shape pays a read.
+  const goToLoginOrGuestForm = () => {
+    const appPath = appPathFromPathname(event.url.pathname);
+    if (!memberFormIdOfPath(appPath)) return goToLogin();
+    return guestPathForMemberLink(appPath).then((guest) =>
+      guest ? goto(resolve(internalPath(guest)), { replace: true }) : goToLogin()
+    );
+  };
+
   const userId = currentUserId();
   if (userId) {
     // A known user ends any session question still open (an OIDC return that settled it).
@@ -72,7 +90,7 @@ export const load = async (event: LoadEvent) => {
   startBootSession({
     refresh: () => refresh(event.fetch),
     currentUserId,
-    goToLogin: () => goToLogin().catch(() => {}),
+    goToLogin: () => goToLoginOrGuestForm().catch(() => {}),
     onSessionKnown: checkSession,
   });
 };
