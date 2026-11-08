@@ -1,6 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import { publicRedirectTarget } from '$lib/associations/publicSections';
 import type { PageLoad } from './$types';
+import { resolveSeoForPath } from '$lib/seo/resolve';
 import type { SeoMeta } from '$lib/seo/types';
 
 /**
@@ -16,16 +17,17 @@ export const load: PageLoad = ({ params, url }) => {
   const target = publicRedirectTarget('/associations', slug, params.section, url.searchParams);
   if (target) redirect(307, target);
 
+  // THE SLUG IS NEVER A TITLE, and a route `load` cannot know the entity's name: title and
+  // description come from the path's neutral baseline (`resolveSeoForPath`, Paraglide), and the page
+  // hands the real name over once loaded (`pageTitle`, from `AssociationDetailView`).
+  // A section is not the entity's page: never offered to a search engine, and its canonical is
+  // its own address - the one the server answer carries.
+  const path = params.section
+    ? `/associations/${params.slug}/${params.section}`
+    : `/associations/${params.slug}`;
   const seo: SeoMeta = {
-    title: slug || 'Association',
-    description: slug
-      ? `Association ${slug} sur Canari : actualités, agenda et vie associative EMSE.`
-      : 'Association sur Canari.',
-    // A section is not the entity's page: never offered to a search engine, and its canonical is
-    // its own address - the one the server answer carries (`resolveSeoForPath`).
-    path: params.section
-      ? `/associations/${params.slug}/${params.section}`
-      : `/associations/${params.slug}`,
+    ...resolveSeoForPath(path),
+    path,
     ...(params.section ? { noindex: true } : {}),
   };
   return { seo };

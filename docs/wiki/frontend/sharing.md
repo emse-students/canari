@@ -246,8 +246,15 @@ and the picker still opens**. What differs is only what the platform holds.
   extension](https://developer.apple.com/documentation/foundation/supporting-suggestions-in-your-app-s-share-extension)):
   the extension's `IntentsSupported`, the donation of an `INSendMessageIntent` with
   `speakableGroupName` and `conversationIdentifier`, `extensionContext.intent` in the extension.
-  It does NOT ask for `NSUserActivityTypes` in the app's `Info.plist` (that is the Communication
-  Notifications requirement), so none was added. It says to donate when a message is sent or
+  It does not mention `NSUserActivityTypes` in the app's `Info.plist`, so none was added at first -
+  **and that was the defect**: the first iPhone syslog (2026-11-08, `1.6.8-alpha.3`) read
+  `publishShareTargets: 5 target(s)`, five `Can NOT donate INSendMessageIntent for fr.emse.canari`,
+  `target #N was not donated (code 1901)`, `publish: 0 of 5 donated`. The donating app must declare
+  the intent in `NSUserActivityTypes`; `canari_iOS/Info.plist` now does (a tracked, hand-kept file:
+  `gen/apple/README.md` forbids a blind `tauri ios init`, `tauri.conf.json` carries no plist merge,
+  and CI only patches the export-compliance key into it, so the key survives). No entitlement was
+  added. **A compile proves nothing about a donation: the iPhone reading after the next pre-release
+  (`donate`, not `0 of N`, then the sheet offering the conversations) is the proof, and is owed.** It says to donate when a message is sent or
   received; this donates the recency list instead, the Android decision - whether iOS ranks such
   donations into the sheet is the first thing the iPhone reading answers.
 - Guards: `iosShareExtension.test.ts` (the plist key, the donation, the group delete before every
