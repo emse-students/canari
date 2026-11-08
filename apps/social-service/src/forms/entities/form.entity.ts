@@ -140,7 +140,7 @@ export class Form {
   allowCashPayment: boolean;
 
   /**
-   * Whether ONLINE payment (Lydia, "Paiement Canari") is accepted (migration 142, owner 2026-11-08):
+   * Whether ONLINE payment (Lydia, "Paiement Canari") is accepted (migration 145, owner 2026-11-08):
    * true for every form before it, where online was the only way. Off with cash on is a cash-only
    * form. Offered to a respondent only while the association can collect (`payment-offer.ts`).
    */
@@ -176,7 +176,7 @@ export class Form {
   deletedAt: Date | null;
 
   /**
-   * `draft` until a manager publishes it, then `published` for good (migration 142, owner
+   * `draft` until a manager publishes it, then `published` for good (migration 145, owner
    * 2026-11-08). A draft is read by its managers only: every respondent read goes through
    * `respondentFormWhere` (`form-status.ts`). The column defaults to `published`, so a form an
    * older container or an older client writes is answerable as it always was.
