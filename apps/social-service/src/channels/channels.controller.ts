@@ -16,7 +16,7 @@ import {
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { Throttle } from '@nestjs/throttler';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
-import { ChannelService } from './channel.service';
+import { ChannelService, roleLabelOfBody } from './channel.service';
 import {
   type AcceptWorkspaceInviteDto,
   type ChannelInviteDto,
@@ -902,7 +902,11 @@ export class ChannelsController {
     @Param('roleId') roleId: string,
     @Body() body: SetRoleLabelDto
   ) {
-    return this.service.setRoleDisplayLabel(roleId, xUserId.trim().toLowerCase(), body?.label);
+    return this.service.setRoleDisplayLabel(
+      roleId,
+      xUserId.trim().toLowerCase(),
+      roleLabelOfBody(body)
+    );
   }
 
   /**

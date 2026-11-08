@@ -426,10 +426,15 @@
     workspaceRoles.map((r) => ({ ...r, label: globalChannels.roleLabels[r.id] ?? null }))
   );
 
-  /** Persists a role's own name (null resets it). The announcement, not this answer, updates the screen. */
+  /**
+   * Persists a role's own name (null resets it) and applies the server's answer to the store. The
+   * announcement of the same write says the same thing, so applying both is idempotent - and a
+   * publish that never arrives cannot leave a saved name looking reverted.
+   */
   async function handleRoleLabelSave(roleId: string, label: string | null) {
     Log.d('communityAdmin.handleRoleLabelSave', { roleId, reset: label === null });
-    await channelService.setRoleLabel(roleId, label);
+    const saved = await channelService.setRoleLabel(roleId, label);
+    globalChannels.setRoleLabel(roleId, saved.label);
   }
 
   /** Persists a member's new role via the workspace-scoped endpoint, then refreshes the list. */
@@ -683,6 +688,15 @@
   $effect(() => {
     const declared = selectedWorkspace?.historyVisibility;
     historyVisibility = declared ?? GRAINE_DEFAULT_HISTORY_VISIBILITY;
+  });
+
+  // ANOTHER COMMUNITY'S ROLES AND NAMES ARE NEVER SHOWN IN THIS ONE: emptied whenever the selected
+  // community changes (and only then), so a picker or badge drawn before the new listing lands shows
+  // the localized defaults, not the previous community's names.
+  $effect(() => {
+    void selectedWorkspace?.workspaceDbId;
+    workspaceRoles = [];
+    globalChannels.setRoleLabels({});
   });
 
   // Load data lazily when a tab becomes active; reset transient state on close.

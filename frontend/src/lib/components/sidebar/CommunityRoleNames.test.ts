@@ -43,7 +43,7 @@ const settle = async () => {
 };
 
 describe('CommunityRoleNames', () => {
-  it('draws one field per role, admin first, the default name as placeholder, 40 characters at most', () => {
+  it('draws one field per role, admin first, with the default name as placeholder', () => {
     render();
     expect(rows().map((r) => input(r).placeholder)).toEqual([
       m.chat_role_admin(),
@@ -52,7 +52,6 @@ describe('CommunityRoleNames', () => {
     ]);
     expect(input(rows()[0]).value).toBe('Presidence');
     expect(input(rows()[1]).value).toBe('');
-    expect(input(rows()[0]).maxLength).toBe(40);
   });
 
   it('saves the typed name of that role, trimmed, only once it differs', async () => {
@@ -78,6 +77,17 @@ describe('CommunityRoleNames', () => {
     buttons(admin)[1].click();
     await settle();
     expect(onSave).toHaveBeenLastCalledWith('r-admin', null);
+  });
+
+  it('counts code points, not UTF-16 units: 40 emoji save, 41 do not', () => {
+    const onSave = render();
+    const mod = rows()[1];
+    type(input(mod), '\u{1F3B5}'.repeat(40));
+    expect(buttons(mod)[0].disabled).toBe(false);
+    type(input(mod), '\u{1F3B5}'.repeat(41));
+    expect(buttons(mod)[0].disabled).toBe(true);
+    expect(mod.textContent).toContain(m.chat_role_name_invalid_error());
+    expect(onSave).not.toHaveBeenCalled();
   });
 
   it('names a refusal from its code', async () => {

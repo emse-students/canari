@@ -2645,6 +2645,15 @@ export function useChannelWorkspaces() {
    */
   let roleLabels = $state<Record<string, string | null>>({});
 
+  /**
+   * Applies ONE role's name as the server's own answer to a rename gave it. Idempotent with the
+   * announcement of the same write (same value either way), so a publish that never arrives cannot
+   * leave a saved name looking reverted.
+   */
+  function setRoleLabel(roleId: string, label: string | null) {
+    roleLabels = { ...roleLabels, [roleId]: label };
+  }
+
   /** Replaces what is known about role names - what the panel does when it lists a community's roles. */
   function setRoleLabels(all: Record<string, string | null>) {
     roleLabels = { ...all };
@@ -2785,6 +2794,7 @@ export function useChannelWorkspaces() {
       return roleLabels;
     },
     setRoleLabels,
+    setRoleLabel,
 
     handleWorkspaceUpdated,
     /** Applies an incoming real-time workspace-deleted event (an admin deleted the community). */

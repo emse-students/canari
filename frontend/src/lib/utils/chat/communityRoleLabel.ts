@@ -13,7 +13,7 @@ import { m } from '$lib/paraglide/messages';
 /** The three roles a community has. */
 export type CanonicalRole = 'member' | 'moderator' | 'admin';
 
-/** Longest role display name, in characters a person sees. Mirrors the server's `MAX_ROLE_LABEL_LENGTH`. */
+/** Longest role display name, in characters a person sees. The server bounds it in code points (`MAX_ROLE_LABEL_LENGTH` there, the same number), so the editor counts code points too, never UTF-16 units. */
 export const MAX_ROLE_LABEL_LENGTH = 40;
 
 /**

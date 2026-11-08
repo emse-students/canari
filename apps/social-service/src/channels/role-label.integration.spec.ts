@@ -183,7 +183,7 @@ maybe('role display names against PostgreSQL', () => {
 
   it('refuses a name that is too long or holds a control character, typed 400', async () => {
     const { ids } = await community();
-    for (const bad of ['x'.repeat(41), 'a\nb', 'a‮b', 42]) {
+    for (const bad of ['x'.repeat(41), 'a\nb', 'a‮b', 'a​b', '​', 42]) {
       expect(await settle(service.setRoleDisplayLabel(ids.member, 'a1', bad))).toEqual({
         status: 400,
         code: 'ROLE_LABEL_INVALID',
@@ -247,6 +247,17 @@ maybe('role display names against PostgreSQL', () => {
     publish.mockClear();
     await service.setRoleDisplayLabel(ids.moderator, 'a1', '');
     expect(publish.mock.calls[0][1].label).toBeNull();
+  });
+
+  it('a permission toggle publishes WITHOUT a label, so a late one cannot undo a rename', async () => {
+    const { ids } = await community();
+    await service.setRoleDisplayLabel(ids.member, 'a1', 'Musicien');
+    publish.mockClear();
+    await service.setRoleBasePermission(ids.member, 'a1', 'member.invite', true);
+    const grid = publish.mock.calls.find((c) => c[0] === 'workspace.role.permissions');
+    expect(grid).toBeDefined();
+    expect('label' in grid![1]).toBe(false);
+    expect((await rowOf(ids.member)).displayLabel).toBe('Musicien');
   });
 
   it('a demotion that committed before the write is honoured: the former admin is refused', async () => {

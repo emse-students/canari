@@ -44,6 +44,10 @@
   let saving = $state<Record<string, boolean>>({});
   let errors = $state<Record<string, string>>({});
 
+  /** Characters a person sees (code points), the unit the server bounds a name in. */
+  const lengthOf = (text: string) => Array.from(text.trim()).length;
+  const tooLong = (role: RoleRow) => lengthOf(valueOf(role)) > MAX_ROLE_LABEL_LENGTH;
+
   const valueOf = (role: RoleRow) => drafts[role.id] ?? role.label ?? '';
   const isDirty = (role: RoleRow) =>
     (drafts[role.id]?.trim() ?? role.label ?? '') !== (role.label ?? '');
@@ -54,7 +58,8 @@
     errors = { ...errors, [role.id]: '' };
     try {
       await onSave(role.id, next);
-      // The announcement is the only writer of the saved name, here as for every member.
+      // The saved name reaches the store from the caller's answer and the announcement alike (the
+      // same value, so applying both is idempotent); the draft is dropped either way.
       const { [role.id]: _gone, ...rest } = drafts;
       drafts = rest;
     } catch (e) {
@@ -81,15 +86,15 @@
         label={m.chat_role_name_input_label({ role: defaultRoleLabel(canonical) })}
         value={valueOf(role)}
         placeholder={defaultRoleLabel(canonical)}
-        maxlength={MAX_ROLE_LABEL_LENGTH}
         disabled={saving[role.id]}
-        error={errors[role.id]}
+        invalid={tooLong(role)}
+        error={errors[role.id] || (tooLong(role) ? m.chat_role_name_invalid_error() : '')}
         oninput={(e) => (drafts = { ...drafts, [role.id]: e.currentTarget.value })}
       />
       <div class="flex flex-wrap gap-2">
         <Button
           variant="primary"
-          disabled={!isDirty(role) || saving[role.id]}
+          disabled={!isDirty(role) || tooLong(role) || saving[role.id]}
           loading={saving[role.id]}
           onclick={() => void save(role, drafts[role.id]?.trim() ? drafts[role.id].trim() : null)}
         >

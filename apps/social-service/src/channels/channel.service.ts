@@ -296,7 +296,8 @@ export const MAX_ROLE_LABEL_LENGTH = 40;
  * A role's DISPLAY name, as the community typed it: trimmed and nothing else, stored as typed (case,
  * accents, emoji). `null` for "no name of its own" - an absent or blank value resets the role to the
  * localized default - and a typed 400 `ROLE_LABEL_INVALID` for a value that is not text, a name too
- * long, or one holding a control or bidi-override character (which could make a name read as
+ * long, or one holding a control, invisible-formatting (zero-width, bidi override, BOM, tag), line or
+ * paragraph separator character (which could make a name read as
  * another). It is a LABEL: no decision reads it, so no spelling of it can grant or hide anything.
  */
 export function validateRoleLabel(raw: unknown): string | null {
@@ -312,13 +313,28 @@ export function validateRoleLabel(raw: unknown): string | null {
       message: `Role name too long (max ${MAX_ROLE_LABEL_LENGTH} characters).`,
     });
   }
-  if (/[\p{Cc}‪-‮⁦-⁩]/u.test(label)) {
+  if (/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(label)) {
     throw new BadRequestException({
       code: ROLE_LABEL_INVALID,
-      message: 'Role name cannot contain control characters.',
+      message: 'Role name cannot contain control or invisible formatting characters.',
     });
   }
   return label;
+}
+
+/**
+ * The `label` of a rename request's body. The KEY is required: only an explicit null or a blank
+ * string resets a name, so a body that forgot the field (`{}`, a wrong key, no body) is a typed
+ * 400 `ROLE_LABEL_INVALID` instead of silently erasing the community's name.
+ */
+export function roleLabelOfBody(body: unknown): unknown {
+  if (typeof body !== 'object' || body === null || !('label' in body)) {
+    throw new BadRequestException({
+      code: ROLE_LABEL_INVALID,
+      message: 'The request must carry a "label" (null or blank resets it).',
+    });
+  }
+  return (body as { label: unknown }).label;
 }
 
 /** The community's own order: the arranged position, then age, then id so it is total. */
@@ -6711,13 +6727,17 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
-   * The ONE `workspace.role.permissions` publish, to the whole membership, carrying the role's
-   * WHOLE public state - what it grants and the community's own name for it (`label`, null for
-   * none) - so a client applies one event whichever of the two changed and never has to guess the
-   * other. Returns the members it was sent to. A rename sends this and nothing more: it changes no
-   * one's standing.
+   * The ONE `workspace.role.permissions` publish, to the whole membership. It carries what the
+   * role grants and, ONLY when `withLabel`, the community's own name for it (`label`, null for
+   * none). A publish names what ITS write changed and nothing else: a permission toggle omits
+   * `label` (absent = unchanged on every client), so a toggle whose publish lands after a
+   * concurrent rename cannot put the old name back. Returns the members it was sent to. A rename
+   * changes no one's standing, so it sends this and nothing more.
    */
-  private async announceRoleToCommunity(role: ChannelRole): Promise<ChannelMember[]> {
+  private async announceRoleToCommunity(
+    role: ChannelRole,
+    withLabel = false
+  ): Promise<ChannelMember[]> {
     const members = await this.memberRepo.find({ where: { workspaceId: role.workspaceId } });
     await this.redis.publishChannelEvent(
       'workspace.role.permissions',
@@ -6725,7 +6745,7 @@ export class ChannelService implements OnApplicationBootstrap {
         workspaceId: role.workspaceId,
         roleId: role.id,
         permissions: role.permissions,
-        label: role.displayLabel ?? null,
+        ...(withLabel ? { label: role.displayLabel ?? null } : {}),
       },
       members.map((m) => m.userId)
     );
@@ -6838,7 +6858,7 @@ export class ChannelService implements OnApplicationBootstrap {
       `[ROLE] renamed role=${roleId} workspace=${workspaceId} label=${label === null ? 'default' : `${Array.from(label).length} chars`} by=${actorUserId.slice(0, 8)}`
     );
     try {
-      await this.announceRoleToCommunity(saved);
+      await this.announceRoleToCommunity(saved, true);
     } catch (e) {
       this.logger.warn(
         `[ROLE] renamed but the community was not told role=${roleId}: ${e instanceof Error ? e.message : String(e)}`

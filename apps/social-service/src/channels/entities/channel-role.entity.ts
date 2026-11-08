@@ -19,7 +19,7 @@ export class ChannelRole {
   workspaceId: string;
 
   /**
-   * The role's IDENTITY ('Administrateur', 'Moderateur', 'Membre'), never edited after the seed:
+   * The role's IDENTITY (the names `createWorkspace` seeds: Administrateur, the accented moderator name, Membre), never edited after the seed:
    * lookups and the admin / moderator / member fold read it. NOT what a screen shows - see
    * `displayLabel`.
    */

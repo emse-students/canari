@@ -299,25 +299,25 @@ The three roles stay fixed (identity, permissions); each community may give them
 ("Presidence", "Bureau", "Musicien"). LABELS ONLY.
 
 - **Storage: a separate nullable column, `channel_roles."displayLabel"` (migration 150, varchar 40),
-  never the existing `name`.** `name` is the role's IDENTITY ('Administrateur', 'Moderateur',
-  'Membre'): `mapRoleInputToWorkspaceRoleName`, invitations, assignment and every client of
+  never the existing `name`.** `name` is the role's IDENTITY (the names `createWorkspace` seeds:
+  Administrateur, the accented moderator name, Membre): `mapRoleInputToWorkspaceRoleName`, invitations, assignment and every client of
   `minClientVersion` 1.6.6 resolve a role from it, and `normalizeRoleLabelToCanonical` folds an
   unknown name to `member`. Writing a free-text label into `name` would show an administrator as
   "Membre" on an old client (and break the by-name lookups). With its own column an old client ignores the
   field it does not know and sees exactly what it saw before; the listing (`roles`) simply carries
   `displayLabel` beside `name`. NULL = no name of its own, every client shows the localized default
   (`chat_role_admin` / `chat_role_moderator` / `chat_role_member`).
-- **Write: `PATCH /channels/roles/:roleId/label` `{ label: string | null }`** (`setRoleDisplayLabel`).
+- **Write: `PATCH /channels/roles/:roleId/label` `{ label: string | null }`** (`setRoleDisplayLabel`); the `label` KEY is required (`roleLabelOfBody`): a body without it is a 400, only an explicit null or blank resets.
   Only an administrator (`workspace.manage`, read under the community removal lock so a demotion
   committing meanwhile is honoured); anyone else is refused 403 `ROLE_RENAME_REQUIRES_ADMIN`. The
   client receives no role name to decide on: it mounts the editor from `viewerCanManage`, the existing
-  decision flag. `validateRoleLabel`: trimmed, at most 40 code points, no control or bidi-override
+  decision flag. `validateRoleLabel`: trimmed, at most 40 code points, no control, invisible-formatting (`\p{Cf}`: zero-width, bidi, BOM, tag) or line-separator
   character (400 `ROLE_LABEL_INVALID`); a blank or null value RESETS. One name per role.
-- **Live update: the existing `workspace.role.permissions` event** now carries the role's whole public
-  state - `permissions` AND `label` (string, or null for the default) - to the whole membership
-  (`announceRoleToCommunity`, the one publish a permission edit and a rename share). A rename sends it
-  and nothing else (no standing changes, so no `workspace.role.changed`). Absent `label` (an older
-  server) leaves the name where it was.
+- **Live update: the existing `workspace.role.permissions` event** is the role's one public
+  publish (`announceRoleToCommunity`) to the whole membership, shared by a permission edit and a rename,
+  each carrying only what ITS write changed: a rename adds `label` (string, or null for the default), a
+  permission toggle OMITS it, so a toggle's late publish cannot restore an old name. Absent `label`
+  means unchanged on every client. A rename changes no standing, so no `workspace.role.changed`.
 - **Nothing keys on a label.** Consumers audited: the roster rows and `normalizeRoleLabelToCanonical`
   read `name`; permission checks read `permissions`; invite and assignment lookups read `name`; the
   client folds `name` (never the label) through `canonicalRoleOf`; `mapRoleInputToWorkspaceRoleName`

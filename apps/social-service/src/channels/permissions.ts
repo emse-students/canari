@@ -182,7 +182,7 @@ export const ROLE_CHANGE_EXCEEDS_ACTOR = 'ROLE_CHANGE_EXCEEDS_ACTOR';
 export const ROLE_RENAME_REQUIRES_ADMIN = 'ROLE_RENAME_REQUIRES_ADMIN';
 
 /**
- * The refusal code (400) of a role display name that is too long, holds a control or bidi-override
+ * The refusal code (400) of a role display name that is too long, holds a control, invisible-formatting or separator
  * character, or is not text. An EMPTY name is not refused: it resets the role to its default.
  */
 export const ROLE_LABEL_INVALID = 'ROLE_LABEL_INVALID';
