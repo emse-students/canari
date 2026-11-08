@@ -816,8 +816,11 @@ export class LivesService implements OnModuleDestroy {
       await this.deletePosterObject(liveId, name, 'its reservation was taken over');
       throw new ConflictException({ code: 'LIVE_POSTER_RESERVATION_LOST' });
     }
-    if (outcome.previous !== null) {
-      await this.deletePosterObject(liveId, outcome.previous, 'replaced');
+    if (outcome.displaced !== null) {
+      // The poster two rounds back. The latest PUT is covered (the previous one stays readable); a list
+      // read before the PUT BEFORE it, fetched after this one, can still meet a 404 - a window bounded
+      // below by LIVE_POSTER_MIN_INTERVAL_MS, and the expected gateway not-found on the client.
+      await this.deletePosterObject(liveId, outcome.displaced, 'displaced');
     }
     this.logger.debug(`[LIVE_POSTER] ${liveId}: poster ${name} stored (${data.length} B)`);
     return { name, posterAt: outcome.posterAt };
@@ -878,7 +881,7 @@ export class LivesService implements OnModuleDestroy {
     liveId: string,
     name: string
   ): Promise<
-    | { kind: 'stored'; previous: string | null; posterAt: Date }
+    | { kind: 'stored'; displaced: string | null; posterAt: Date }
     | { kind: 'ended'; endedAt: Date | null; endReason: LiveEndReason | null }
     | { kind: 'lost' }
   > {
@@ -888,8 +891,9 @@ export class LivesService implements OnModuleDestroy {
         endReason: LiveEndReason | null;
         posterPendingName: string | null;
         posterName: string | null;
+        posterPreviousName: string | null;
       }[] = await tx.query(
-        `SELECT "endedAt", "endReason", "posterPendingName", "posterName"
+        `SELECT "endedAt", "endReason", "posterPendingName", "posterName", "posterPreviousName"
            FROM lives WHERE id = $1 FOR UPDATE`,
         [liveId]
       );
@@ -918,11 +922,16 @@ export class LivesService implements OnModuleDestroy {
       }
       const [stamped] = (await tx.query(
         `UPDATE lives SET "posterName" = $2, "posterAt" = now(),
+                "posterPreviousName" = "posterName",
                 "posterPendingName" = NULL, "posterPendingAt" = NULL
           WHERE id = $1 RETURNING "posterAt"`,
         [liveId, name]
       )) as [{ posterAt: Date }[], number];
-      return { kind: 'stored' as const, previous: row.posterName, posterAt: stamped[0].posterAt };
+      return {
+        kind: 'stored' as const,
+        displaced: row.posterPreviousName,
+        posterAt: stamped[0].posterAt,
+      };
     });
   }
 
@@ -944,7 +953,7 @@ export class LivesService implements OnModuleDestroy {
   /**
    * Deletes one poster object no row names any more. Best effort: a refusal leaves it under the
    * live's prefix, which the purge at the live's end deletes whole - so at most one stale image per
-   * failure, for the live's lifetime, never past it.
+   * failure, for the live's lifetime, never past it. The WARN names the object: it is a real leak.
    */
   private async deletePosterObject(liveId: string, name: string, why: string): Promise<void> {
     try {
