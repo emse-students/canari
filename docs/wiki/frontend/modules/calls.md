@@ -3656,4 +3656,4 @@ publisher), Cloudflare TURN as production configures it, renegotiation with seve
 extensions are kept by id (the engine registers none of its own, so this keeps only what a browser's
 offer named); map by URI the day one is registered. Gathering is IPv4 only. Calls stay held off in
 production (`CALLS_COMPILED = false`). Open items of the review are in
-[backlog](../../backlog.md#p3---the-sfu-after-the-webrtc-021-port-review-leftovers-2026-10-27).
+[backlog](../../backlog.d/p3-the-sfu-after-the-webrtc-0-21-port-review-leftovers.md).
