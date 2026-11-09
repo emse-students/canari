@@ -1,4 +1,4 @@
-# P2 - a phone microphone may answer two channels with one silent (reported 2026-11-09)
+## P2 - a phone microphone may answer two channels with one silent (reported 2026-11-09)
 
 Owner: the live's sound is "mono", maybe some videos too. Read as: the sound plays out of ONE side.
 
