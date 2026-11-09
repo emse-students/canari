@@ -14,7 +14,8 @@
    * is carried by the shape and stays legible on any frame. Centred, 64px (72px on a full-screen reel).
    */
   interface Props {
-    onclick: () => void;
+    /** Absent: the disc is DECORATIVE (a `span`, no control, no label) - a poster that sits inside a link, such as the shared-post card's. */
+    onclick?: () => void;
     /** `lg` on a whole-screen reel. */
     size?: 'md' | 'lg';
     /** Out of the tab order where the bar repeats it for the keyboard. */
@@ -24,22 +25,26 @@
   let { onclick, size = 'md', tabindex }: Props = $props();
 </script>
 
-<button
-  type="button"
+<svelte:element
+  this={onclick ? 'button' : 'span'}
+  type={onclick ? 'button' : undefined}
   class="glass-video video-play-disc absolute top-1/2 left-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-1 focus-visible:ring-offset-black active:scale-95 motion-reduce:transition-none {size ===
   'lg'
     ? 'h-18 w-18'
     : 'h-16 w-16'}"
-  aria-label={m.video_play_label()}
+  aria-label={onclick ? m.video_play_label() : undefined}
+  aria-hidden={onclick ? undefined : 'true'}
   data-glass={videoGlass()}
-  data-video-controls
+  data-video-controls={onclick ? '' : undefined}
   data-video-play-disc
-  {tabindex}
-  onpointerdown={(e) => e.stopPropagation()}
-  onclick={(e) => {
-    e.stopPropagation();
-    onclick();
-  }}
+  tabindex={onclick ? tabindex : undefined}
+  onpointerdown={onclick ? (e: PointerEvent) => e.stopPropagation() : undefined}
+  onclick={onclick
+    ? (e: MouseEvent) => {
+        e.stopPropagation();
+        onclick();
+      }
+    : undefined}
 >
   <Play
     size={size === 'lg' ? 32 : 28}
@@ -47,7 +52,7 @@
     fill="currentColor"
     class="ml-1 drop-shadow"
   />
-</button>
+</svelte:element>
 
 <style>
   /* Pops in where it appears, so a pause reads as a change rather than a sticker; none when the
