@@ -380,6 +380,27 @@ describe('LiveBroadcast - on air', () => {
     expect(b.phase).toBe('ended');
   });
 
+  it('End settles the screen BEFORE the request resolves, and an unanswered end is retried when the link is back, then answered once', async () => {
+    const { b, deps, reconnect, reconnectListeners } = await ready();
+    await b.start();
+    let fail!: (e: unknown) => void;
+    deps.endLive.mockImplementationOnce(() => new Promise((_, rej) => (fail = rej)) as never);
+    await b.end();
+    // Settled with the request still pending.
+    expect(b.phase).toBe('ended');
+    expect(b.endCause).toBe('broadcaster');
+    expect(deps.endLive).toHaveBeenCalledTimes(1);
+    // A transport failure is no answer: it waits for the link, it does not retry on a clock.
+    fail(new TypeError('offline'));
+    await vi.waitFor(() => expect(reconnectListeners.size).toBe(1));
+    expect(deps.endLive).toHaveBeenCalledTimes(1);
+    reconnect();
+    await vi.waitFor(() => expect(reconnectListeners.size).toBe(0));
+    expect(deps.endLive).toHaveBeenCalledTimes(2);
+    reconnect();
+    expect(deps.endLive).toHaveBeenCalledTimes(2);
+  });
+
   it('leaving while the end waits for the network ends the live once, and the wait does nothing after', async () => {
     const { b, deps, uploaders, fireTimers } = await ready();
     await b.start();
