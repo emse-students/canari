@@ -9,12 +9,12 @@
 import { describe, it, expect, afterEach, afterAll, vi } from 'vitest';
 
 // Same import-cycle break as `Sidebar.creationRefusal.svelte.test.ts`.
-vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
+vi.mock('$lib/stores/globalChatSingleton.svelte', async () => ({
   appendLog: () => {},
   globalSession: {},
   globalConvs: {},
   globalMessaging: {},
-  globalChannels: {},
+  globalChannels: (await import('./globalChannelsStub')).globalChannelsStub(),
   globalNotifs: {},
 }));
 

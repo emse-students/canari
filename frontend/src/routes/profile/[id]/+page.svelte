@@ -6,7 +6,14 @@
   import { goto } from '$app/navigation';
   import { fetchUserProfile, type UserProfile, getSavedUserId } from '$lib/stores/user';
   import { PROFILE_SELF_SEGMENT } from '$lib/profile/profileSections';
-  import { askToFollow, getFollowStatus, leaveFollow, type FollowStatus } from '$lib/follows/api';
+  import { getFollowStatus, type FollowStatus } from '$lib/follows/api';
+  import {
+    askPerson,
+    followEpoch,
+    leavePerson,
+    recordPersonStatus,
+    withdrawPerson,
+  } from '$lib/follows/followState.svelte';
   import AccountBell from '$lib/components/follows/AccountBell.svelte';
   import {
     describeFollowRefusal,
@@ -78,13 +85,21 @@
 
   /** Loads a profile and its extras, ignoring the result if a newer load has since started. */
   async function loadProfile(userId: string, token: number) {
+    const readAt = followEpoch();
     try {
       const [prof, status, blocks] = await Promise.all([
         fetchUserProfile(userId),
-        getFollowStatus(userId).catch((e: unknown) => {
-          Log.d('profile.loadFollowStatus failed', e);
-          return null;
-        }),
+        getFollowStatus(userId)
+          .then((read) => {
+            // The ledger learns what this page read (a chip elsewhere agrees with it) - unless the
+            // reader changed while it was out.
+            recordPersonStatus(userId, read, readAt);
+            return read;
+          })
+          .catch((e: unknown) => {
+            Log.d('profile.loadFollowStatus failed', e);
+            return null;
+          }),
         // A blocked person is hidden from search but their profile stays reachable - by url, or
         // from the blocked list itself - so this page has to know, or it would offer to block
         // somebody who already is.
@@ -205,8 +220,10 @@
     actionMessage = '';
     Log.d('profile.handleFollowToggle', `${action} from ${was ?? 'none'}`);
     try {
-      if (action === 'ask') followStatus = await askToFollow(profile.id);
-      else await leaveFollow(profile.id);
+      if (action === 'ask') followStatus = await askPerson(profile.id);
+      // A withdraw answers where the pair stands NOW: a request accepted meanwhile stays a follow.
+      else if (action === 'withdraw') followStatus = await withdrawPerson(profile.id);
+      else await leavePerson(profile.id);
     } catch (err) {
       Log.d('profile.handleFollowToggle failed', err);
       followStatus = was;

@@ -60,6 +60,12 @@
   import { rememberedKeyboardHeight } from '$lib/stores/keyboardHeightMemory';
   import { abandonHistoryOverlay, pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
   import ComposerEmojiPicker from './ComposerEmojiPicker.svelte';
+  import { warmEmojiPicker, whenIdleAfterPaint } from '$lib/utils/emojiPreload';
+  import {
+    emojiPickerDataSource,
+    getPreferredSkinTone,
+    getRecentEmojis,
+  } from '$lib/components/messages/emojiPickerShared';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { portal } from '$lib/actions/portal';
   import { Log } from '$lib/utils/Log';
@@ -827,6 +833,13 @@
       Log.d('ChatComposer', `edit entered, caret to ${end}`);
       mentionComposer?.focusEditor();
       mentionComposer?.setSelectionRange(end);
+    });
+  });
+
+  /** The emoji picker's first screen is fetched once the composer has painted and the thread is idle, so opening it (here or on a reaction) paints at once. */
+  onMount(() => {
+    whenIdleAfterPaint(() => {
+      void warmEmojiPicker(emojiPickerDataSource(), getPreferredSkinTone(), getRecentEmojis());
     });
   });
 

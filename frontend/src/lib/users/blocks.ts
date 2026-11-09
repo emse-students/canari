@@ -49,6 +49,29 @@ async function request<T>(path: string, init: ApiFetchOptions = {}): Promise<T> 
  */
 let blocksCache: { owner: string | null; rows: Promise<BlockedUser[]> } | null = null;
 
+/** Listeners told that the reader's blocks changed here (see {@link onBlocksChanged}). */
+const blockListeners = new Set<() => void>();
+
+/**
+ * Runs `listener` after every {@link blockUser} and {@link unblockUser} on this device - for state
+ * derived from the blocks (the follow chips' ledger: a block severs both follows server-side).
+ * Returns the unsubscribe.
+ */
+export function onBlocksChanged(listener: () => void): () => void {
+  blockListeners.add(listener);
+  return () => blockListeners.delete(listener);
+}
+
+function notifyBlocksChanged(): void {
+  for (const l of blockListeners) {
+    try {
+      l();
+    } catch (e) {
+      Log.d('blocks.notifyBlocksChanged listener failed', e);
+    }
+  }
+}
+
 /**
  * The people the signed-in user has blocked, newest first. Cached (see above); `fresh` bypasses
  * the cache for a screen whose whole job is to show the truth, such as the blocked-accounts list.
@@ -79,19 +102,27 @@ export async function listBlockedUsers({ fresh = false }: { fresh?: boolean } = 
 export async function blockUser(userId: string): Promise<{ ok: true }> {
   Log.d('blocks.blockUser', userId);
   blocksCache = null;
-  return request<{ ok: true }>('/api/users/me/blocks', {
-    method: 'POST',
-    body: JSON.stringify({ userId }),
-  });
+  try {
+    return await request<{ ok: true }>('/api/users/me/blocks', {
+      method: 'POST',
+      body: JSON.stringify({ userId }),
+    });
+  } finally {
+    notifyBlocksChanged();
+  }
 }
 
 /** Lifts a block. Only the person who set it can. */
 export async function unblockUser(userId: string): Promise<{ ok: true }> {
   Log.d('blocks.unblockUser', userId);
   blocksCache = null;
-  return request<{ ok: true }>(`/api/users/me/blocks/${encodeURIComponent(userId)}`, {
-    method: 'DELETE',
-  });
+  try {
+    return await request<{ ok: true }>(`/api/users/me/blocks/${encodeURIComponent(userId)}`, {
+      method: 'DELETE',
+    });
+  } finally {
+    notifyBlocksChanged();
+  }
 }
 
 /**

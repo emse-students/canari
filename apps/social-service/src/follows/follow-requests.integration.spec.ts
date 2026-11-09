@@ -872,4 +872,105 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     await requests.leave('ann', 'bob');
     expect(dropped).toEqual([`${POST_LIST_CACHE_PREFIX}*`]);
   });
+
+  describe('withdraw: only a request nobody answered (engagement WP-2)', () => {
+    it('removes a pending request and its bell row, and answers ok', async () => {
+      await requests.ask('ann', 'bob');
+      expect(await requests.withdraw('ann', 'bob')).toEqual({ ok: true });
+      expect(await statusOf('ann', 'bob')).toBeNull();
+      expect(await bellOf('bob')).toEqual([]);
+    });
+
+    it('NEVER removes an accepted follow: a 409 FOLLOW_REQUEST_ANSWERED, the row stays', async () => {
+      await requests.ask('ann', 'bob');
+      await requests.accept('bob', 'ann');
+      const err = await refusalOf(requests.withdraw('ann', 'bob'));
+      expect(codeOf(err)).toBe('FOLLOW_REQUEST_ANSWERED');
+      expect((err as { getStatus: () => number }).getStatus()).toBe(409);
+      expect(await statusOf('ann', 'bob')).toBe('accepted');
+    });
+
+    it('a request the person refused, or none at all, is a 404 FOLLOW_REQUEST_NOT_FOUND', async () => {
+      await requests.ask('ann', 'bob');
+      await requests.refuse('bob', 'ann');
+      for (const to of ['bob', 'cid']) {
+        const err = await refusalOf(requests.withdraw('ann', to));
+        expect(codeOf(err)).toBe('FOLLOW_REQUEST_NOT_FOUND');
+        expect((err as { getStatus: () => number }).getStatus()).toBe(404);
+      }
+    });
+
+    it('leaves another asker request to the same person untouched', async () => {
+      await requests.ask('ann', 'bob');
+      await requests.ask('cid', 'bob');
+      await requests.withdraw('ann', 'bob');
+      expect(await statusOf('cid', 'bob')).toBe('pending');
+    });
+  });
+
+  describe('userFollowStatuses: the chips of a whole page in ONE query (engagement WP-2)', () => {
+    it('answers the caller own standing per id: accepted, pending, and nothing for the rest', async () => {
+      await requests.ask('ann', 'bob');
+      await requests.ask('ann', 'cid');
+      await requests.accept('cid', 'ann');
+      expect(await follows.userFollowStatuses('ann', ['bob', 'cid', 'dan', 'zed'])).toEqual({
+        bob: 'pending',
+        cid: 'accepted',
+      });
+    });
+
+    it('is one SQL statement however many ids, and a repeated id counts once', async () => {
+      const seen: string[] = [];
+      const repo = ds.getRepository(UserFollow);
+      const spy = jest.spyOn(repo, 'query').mockImplementation(((sql: string, p?: unknown[]) => {
+        seen.push(sql);
+        return ds.query(sql, p);
+      }) as never);
+      const svc = new FollowsService({} as never, repo, {} as never);
+      await svc.userFollowStatuses('ann', ['bob', 'bob', 'cid', 'dan', 'eve']);
+      spy.mockRestore();
+      expect(seen).toHaveLength(1);
+    });
+
+    it('reveals only the caller side: another account follow of the caller is invisible', async () => {
+      await requests.ask('bob', 'ann');
+      expect(await follows.userFollowStatuses('ann', ['bob'])).toEqual({});
+    });
+
+    it('a private account the caller never asked is none, whatever its own follows', async () => {
+      await requests.ask('dan', 'eve');
+      expect(await follows.userFollowStatuses('ann', ['dan', 'eve'])).toEqual({});
+    });
+
+    it('a block, in either direction, severs both follows - so it reads as the same none as follow-status', async () => {
+      const internal = severing();
+      await requests.ask('ann', 'bob');
+      await requests.accept('bob', 'ann');
+      await requests.ask('ann', 'cid');
+      await requests.ask('ann', 'dan');
+      await requests.accept('dan', 'ann');
+      expect(await follows.userFollowStatuses('ann', ['bob', 'cid', 'dan'])).toEqual({
+        bob: 'accepted',
+        cid: 'pending',
+        dan: 'accepted',
+      });
+      await internal.severFollowsBetween('ann', 'bob', IT_SECRET);
+      await block('dan', 'ann');
+      await internal.severFollowsBetween('dan', 'ann', IT_SECRET);
+      expect(await follows.userFollowStatuses('ann', ['bob', 'cid', 'dan'])).toEqual({
+        cid: 'pending',
+      });
+    });
+
+    it('agrees with the single follow-status read for every id', async () => {
+      await requests.ask('ann', 'bob');
+      await requests.ask('ann', 'cid');
+      await requests.accept('cid', 'ann');
+      const ids = ['bob', 'cid', 'dan'];
+      const batch = await follows.userFollowStatuses('ann', ids);
+      for (const id of ids) {
+        expect(batch[id] ?? null).toBe(await follows.userFollowStatus('ann', id));
+      }
+    });
+  });
 });
