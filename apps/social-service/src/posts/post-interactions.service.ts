@@ -34,6 +34,7 @@ import {
 } from './comment-removal';
 import { forgetCommentNotices, writeComments } from './comment-write';
 import { announceFriendActivity, type FriendAct } from './friend-activity';
+import { announceCampusTrend } from './campus-trend';
 import { COMMENT_DELETE_FORBIDDEN, COMMENT_EDIT_AUTHOR_ONLY } from '../spaces/bde-moderation';
 import { PostMediaRetentionService, commentMediaIds } from './post-media-retention.service';
 import { isExpiredReel } from './reel.constants';
@@ -161,6 +162,13 @@ export class PostInteractionsService {
       this.logger.warn(
         `[FRIEND_ACTIVITY] ${act} on post=${post.id.slice(0, 8)} not told: ${String(e)}`
       );
+    });
+    // CAMPUS TRENDS (engagement WP-10): this write may be the one that makes the post take off.
+    void announceCampusTrend(
+      { manager: this.postRepo.manager, notifications: this.notifications },
+      post.id
+    ).catch((e: unknown) => {
+      this.logger.warn(`[TREND] post=${post.id.slice(0, 8)} not told: ${String(e)}`);
     });
   }
 

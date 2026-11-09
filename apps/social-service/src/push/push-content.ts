@@ -32,6 +32,7 @@ export type PushContentKey =
   | 'social_member_repost'
   | 'social_friend_reaction'
   | 'social_friend_comment'
+  | 'social_campus_trend'
   | 'social_repost_proposed'
   | 'social_repost_personal_requested'
   | 'social_coorganise_proposed'
@@ -709,6 +710,21 @@ export function friendCommentContent(
     actorName,
     arg: preview,
     legacyTitle: `${actorName} a commenté une publication`,
+    legacyBody: preview || 'Voir la publication',
+  };
+}
+
+/**
+ * A post of the recipient's space took off (engagement WP-10, campus trends): nobody acted in the
+ * notice's name, so `actorName` is empty - an anonymous post stays anonymous; `arg` is the opening
+ * of the post's own text.
+ */
+export function campusTrendContent(preview: string): PushContent {
+  return {
+    key: 'social_campus_trend',
+    actorName: '',
+    arg: preview,
+    legacyTitle: 'Une publication fait réagir votre espace',
     legacyBody: preview || 'Voir la publication',
   };
 }

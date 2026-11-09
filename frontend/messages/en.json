@@ -5933,6 +5933,7 @@
   "notif_member_repost_text": "reposted:",
   "notif_friend_reaction_text": "reacted to a post:",
   "notif_friend_comment_text": "commented on a post:",
+  "notif_campus_trend_text": "A post in your space is taking off:",
   "settings_share_activity": "Share my activity",
   "settings_share_activity_hint": "People who follow you are told when you react to or comment on a post they already see. Nothing is sent about a post they cannot see, nor for an anonymous comment or one written as an association.",
   "settings_share_activity_error": "The setting could not be saved.",

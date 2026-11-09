@@ -6,6 +6,7 @@ import { Post } from './entities/post.entity';
 import { PushService } from '../push/push.service';
 import { AccountBellsService, bellTargetOf } from '../follows/account-bells.service';
 import {
+  CAMPUS_TREND_NOTIFICATION,
   ENGAGEMENT_PUSH_TYPES,
   FRIEND_COMMENT_NOTIFICATION,
   FRIEND_REACTION_NOTIFICATION,
@@ -30,6 +31,7 @@ import {
   memberRepostContent,
   friendReactionContent,
   friendCommentContent,
+  campusTrendContent,
   repostProposedContent,
   repostPersonalRequestedContent,
   coorganiseProposedContent,
@@ -125,6 +127,8 @@ export const POST_BOUND_NOTIFICATION_TYPES: readonly string[] = [
   // only while they still do.
   FRIEND_REACTION_NOTIFICATION,
   FRIEND_COMMENT_NOTIFICATION,
+  // Engagement WP-10: a campus trend names a post its space saw.
+  CAMPUS_TREND_NOTIFICATION,
 ];
 
 /**
@@ -339,6 +343,10 @@ export class PostNotificationsService {
         return friendReactionContent(actorName, text, icon);
       case FRIEND_COMMENT_NOTIFICATION:
         return friendCommentContent(actorName, text, icon);
+      // Engagement WP-10: a post of the recipient's space took off. Nobody acted; `text` is the
+      // opening of the post.
+      case CAMPUS_TREND_NOTIFICATION:
+        return campusTrendContent(text);
       // D38b: an association asks the AUTHOR to let it republish their personal post. `actorName`
       // is the ASSOCIATION. Its answers (`repost_personal_accepted` / `_refused`) are in-app only.
       case 'repost_personal_requested':
