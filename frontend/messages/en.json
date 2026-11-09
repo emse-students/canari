@@ -817,7 +817,6 @@
   "upload_repairing": "Syncing the conversation - retrying automatically",
   "upload_retrying": "Retrying automatically",
   "upload_waiting": "Waiting for a connection - retrying automatically",
-  "upload_unavailable": "Server briefly unavailable - retrying automatically",
   "upload_blocked": "Blocked by the server - try again later",
   "upload_failed": "Could not send: no answer from the server after several tries ({sent} of {total} sent). Try again or delete this message.",
   "upload_refused": "The server refused this upload. Retry or cancel it.",

@@ -45,6 +45,9 @@ import {
   MAX_CONCURRENT_UPLOADS,
   MAX_UNEXPECTED_ATTEMPTS,
   MAX_CONSECUTIVE_SERVER_ERRORS,
+  MAX_UNAVAILABLE_ANSWERS,
+  isServerFailureTerminal,
+  unavailableRunStart,
   MAX_RETRY_AFTER_MS,
   SERVER_ERROR_HOLD_MS,
   serverErrorHoldMs,
@@ -104,6 +107,7 @@ import {
   unsentReasonOf,
   uploadPercent,
   uploadViewOf,
+  textWaitOf,
 } from './uploadProgress.svelte';
 import {
   encodeOutboxSensitive,
@@ -5307,29 +5311,109 @@ describe('a deploy outage is not a send failure (R05)', () => {
 
     await attempt(outbox, storage, 't1');
     expect(status('t1')).toBe('pending');
-    expect(uploadViewOf('t1')?.phase).toBe('unavailable');
+    expect(textWaitOf('t1')).toBe('server');
     expect(storage._map.get('t1').serverErrors ?? 0).toBe(0);
 
     await attempt(outbox, storage, 't1');
     expect(status('t1')).toBe('sent');
-    expect(uploadViewOf('t1')).toBeUndefined();
+    expect(textWaitOf('t1')).toBeUndefined();
     expect(storage._map.has('t1')).toBe(false);
     expect(mls.sendMessage).toHaveBeenCalledTimes(2);
   });
 
-  it('never fails a text on "not now", however long the deploy: 12 x 502/503/504, then sent', async () => {
-    const outcomes: Outcome[] = [502, 503, 504, 502, 503, 504, 502, 503, 504, 502, 503, 504, 'ok'];
+  it('does not fail a text on a deploy\'s "not now": 11 x 502/503/504, then sent', async () => {
+    const outcomes: Outcome[] = [502, 503, 504, 502, 503, 504, 502, 503, 504, 502, 503, 'ok'];
     const mls = scripted(outcomes);
     const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
 
-    await attempt(outbox, storage, 't1', 12);
+    await attempt(outbox, storage, 't1', MAX_UNAVAILABLE_ANSWERS - 1);
     expect(status('t1')).toBe('pending');
     expect(storage._map.get('t1').serverErrors ?? 0).toBe(0);
+    expect(storage._map.get('t1').unavailableAnswers).toBe(MAX_UNAVAILABLE_ANSWERS - 1);
     expect(errorSpy).not.toHaveBeenCalled();
 
     await attempt(outbox, storage, 't1');
     expect(status('t1')).toBe('sent');
-    expect(mls.sendMessage).toHaveBeenCalledTimes(13);
+    expect(mls.sendMessage).toHaveBeenCalledTimes(MAX_UNAVAILABLE_ANSWERS);
+  });
+
+  it('BOUNDED BY ANSWERS (review of #3189): the 12th "not now" in a row fails the text, Retry offered', async () => {
+    // Twelve on the plain ladder span about eight minutes - a rolling deploy ends with a success
+    // long before; a route that stays dead hands the text back to the member.
+    const ladder = Array.from({ length: MAX_UNAVAILABLE_ANSWERS }, (_, k) =>
+      unavailableHoldMs(k + 1, null)
+    );
+    expect(ladder.slice(0, -1).reduce((a, b) => a + b, 0)).toBeGreaterThan(7 * 60_000);
+    const mls = scripted(Array.from({ length: MAX_UNAVAILABLE_ANSWERS }, () => 502 as Outcome));
+    const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
+
+    await attempt(outbox, storage, 't1', MAX_UNAVAILABLE_ANSWERS);
+    expect(status('t1')).toBe('error');
+    expect(uploadViewOf('t1')?.phase).toBe('failed');
+    // Kept, and terminal from the DURABLE row: a reload decides the same.
+    expect(isServerFailureTerminal(storage._map.get('t1'))).toBe(true);
+    expect(mls.sendMessage).toHaveBeenCalledTimes(MAX_UNAVAILABLE_ANSWERS);
+  });
+
+  it('a reconnect proves the link, not the send route: it does not reset the count', async () => {
+    const mls = scripted(Array.from({ length: MAX_UNAVAILABLE_ANSWERS }, () => 503 as Outcome));
+    const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
+    await attempt(outbox, storage, 't1', MAX_UNAVAILABLE_ANSWERS - 1);
+    connectivity.notifyServerUnreachable();
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+    expect(status('t1')).toBe('error');
+    expect(storage._map.get('t1').unavailableAnswers).toBe(MAX_UNAVAILABLE_ANSWERS);
+  });
+
+  it('the count survives a reload: a new controller over the same storage parks at the 12th', async () => {
+    const seed = { ...textEntry('t1', 'g1', 100), unavailableAnswers: MAX_UNAVAILABLE_ANSWERS - 1 };
+    const { storage, outbox, status } = setup([seed], scripted([504]));
+    await attempt(outbox, storage, 't1');
+    expect(status('t1')).toBe('error');
+  });
+
+  it('the Retry of a text failed on "not now" sends again, and owes twelve FRESH answers before the next park', async () => {
+    const mls = scripted([
+      ...Array.from({ length: MAX_UNAVAILABLE_ANSWERS }, () => 502 as Outcome),
+      ...Array.from({ length: MAX_UNAVAILABLE_ANSWERS - 1 }, () => 503 as Outcome),
+      'ok',
+    ]);
+    const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
+    await attempt(outbox, storage, 't1', MAX_UNAVAILABLE_ANSWERS);
+    expect(status('t1')).toBe('error');
+
+    // The Retry sends at once, and that attempt is answered "not now" once more.
+    outbox.retryUpload('t1');
+    await outboxIdle();
+    expect(status('t1')).toBe('pending');
+    expect(storage._map.get('t1').serverErrors).toBe(0);
+    // Not set back to 0: it is also the evidence a withdrawal reads.
+    expect(storage._map.get('t1').unavailableAnswers).toBe(MAX_UNAVAILABLE_ANSWERS + 1);
+    await attempt(outbox, storage, 't1', MAX_UNAVAILABLE_ANSWERS - 2);
+    expect(status('t1')).toBe('pending');
+    await attempt(outbox, storage, 't1');
+    expect(status('t1')).toBe('sent');
+  });
+
+  it('places the next park exactly twelve answers after a Retry', () => {
+    expect(unavailableRunStart(0)).toBe(0);
+    expect(unavailableRunStart(7)).toBe(MAX_UNAVAILABLE_ANSWERS);
+    expect(unavailableRunStart(MAX_UNAVAILABLE_ANSWERS)).toBe(MAX_UNAVAILABLE_ANSWERS);
+  });
+
+  it("an attachment is not bounded by it (its upload is the member's own wait)", async () => {
+    const media: OutboxEntry = {
+      ...textEntry('c1', 'g1', 100),
+      kind: 'control',
+    };
+    const mls = scripted(Array.from({ length: MAX_UNAVAILABLE_ANSWERS }, () => 503 as Outcome));
+    const storage = makeStorage([media]);
+    const outbox = createOutbox(makeDeps({ mlsService: mls, storage }));
+    await attempt(outbox, storage, 'c1', MAX_UNAVAILABLE_ANSWERS);
+    expect(storage._map.get('c1').serverErrors ?? 0).toBe(0);
+    expect(storage._map.get('c1').unavailableAnswers).toBe(MAX_UNAVAILABLE_ANSWERS);
+    outbox.dispose();
   });
 
   it('holds "not now" on the plain ladder, never the one-minute floor of a counted 5xx', async () => {
@@ -5367,7 +5451,7 @@ describe('a deploy outage is not a send failure (R05)', () => {
     const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
     await outbox.flush();
     expect(status('t1')).toBe('pending');
-    expect(uploadViewOf('t1')?.phase).toBe('waiting');
+    expect(textWaitOf('t1')).toBe('network');
 
     connectivity.notifyServerUnreachable();
     connectivity.notifyServerReachable();
@@ -5417,6 +5501,45 @@ describe('a deploy outage is not a send failure (R05)', () => {
     await outbox.flush();
     expect(await outbox.cancelPending('t1')).toBe(false);
     expect(storage._map.has('t1')).toBe(false);
+  });
+
+  // The reviewer's probe (review of #3189, D1): the evidence is the DURABLE row, so a reload - a new
+  // controller over the same storage - or a follower tab decides the same as the tab that sent it.
+  it('after a reload, a text answered 500 still lets the delete travel (control)', async () => {
+    const { storage, outbox } = setup([textEntry('t1', 'g1', 100)], scripted(['500']));
+    await outbox.flush();
+    outbox.dispose();
+    const reloaded = createOutbox(makeDeps({ mlsService: makeMls(), storage }));
+    expect(await reloaded.cancelPending('t1')).toBe(false);
+    reloaded.dispose();
+  });
+
+  it('after a reload, a text answered 502 still lets the delete travel', async () => {
+    const { storage, outbox } = setup([textEntry('t1', 'g1', 100)], scripted([502]));
+    await outbox.flush();
+    outbox.dispose();
+    const reloaded = createOutbox(makeDeps({ mlsService: makeMls(), storage }));
+    expect(await reloaded.cancelPending('t1')).toBe(false);
+    expect(storage._map.has('t1')).toBe(false);
+    reloaded.dispose();
+  });
+
+  it('a 502 then a 403 takes the "waiting for the server" view away (D5)', async () => {
+    const mls = makeMls({
+      send: (() => {
+        let i = 0;
+        return async () => {
+          if (i++ === 0) throw new SendUnavailableError('g1', 502, 'gateway');
+          throw new ApiRefusalError(403, 'gateway', 'forbidden');
+        };
+      })(),
+    });
+    const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
+    await attempt(outbox, storage, 't1');
+    expect(textWaitOf('t1')).toBe('server');
+    await attempt(outbox, storage, 't1');
+    expect(status('t1')).toBe('pending');
+    expect(textWaitOf('t1')).toBeUndefined();
   });
 });
 

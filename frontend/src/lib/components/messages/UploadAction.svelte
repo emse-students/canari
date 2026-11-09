@@ -22,7 +22,6 @@
   const retryable = $derived(
     view.phase === 'stalled' ||
       view.phase === 'waiting' ||
-      view.phase === 'unavailable' ||
       view.phase === 'repairing' ||
       view.phase === 'retrying' ||
       view.phase === 'blocked' ||

@@ -28,8 +28,6 @@ export function uploadCaption(view: UploadView, declaredSize: number): string {
       return m.upload_queued();
     case 'waiting':
       return m.upload_waiting();
-    case 'unavailable':
-      return m.upload_unavailable();
     case 'repairing':
       return m.upload_repairing();
     case 'retrying':

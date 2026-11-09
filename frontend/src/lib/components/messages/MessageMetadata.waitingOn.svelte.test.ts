@@ -5,7 +5,7 @@
  * failure; a send with no answer at all says "waiting for the network"; anything else keeps the
  * plain "en attente".
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import MessageMetadata from './MessageMetadata.svelte';
 import { m } from '$lib/paraglide/messages';
@@ -60,5 +60,24 @@ describe('MessageMetadata on a pending send', () => {
     const target = render({ status: 'error', waitingOn: 'server' });
     expect(target.textContent).toContain(m.msg_echec());
     expect(pendingText(target)).toBeUndefined();
+  });
+});
+
+describe('a salon text held for the server keeps its actions (review of #3189, D2)', () => {
+  it('offers Retry and Discard on a pending row that was handed them, and each works', () => {
+    const onRetry = vi.fn();
+    const onDiscard = vi.fn();
+    const target = render({ waitingOn: 'server', onRetry, onDiscard });
+    expect(pendingText(target)).toContain(m.msg_waiting_for_server());
+    (target.querySelector('[data-testid="message-retry"]') as HTMLButtonElement).click();
+    (target.querySelector('[data-testid="message-discard"]') as HTMLButtonElement).click();
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onDiscard).toHaveBeenCalledTimes(1);
+  });
+
+  it('a pending row handed no action shows none', () => {
+    const target = render({ waitingOn: 'network' });
+    expect(target.querySelector('[data-testid="message-retry"]')).toBeNull();
+    expect(target.querySelector('[data-testid="message-discard"]')).toBeNull();
   });
 });

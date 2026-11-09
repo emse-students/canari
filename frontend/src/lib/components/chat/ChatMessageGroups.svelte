@@ -23,6 +23,8 @@
   import { isAbsentUser } from '$lib/utils/users/absentUsers';
   import { m } from '$lib/paraglide/messages';
   import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
+  import { salonEchoSettleable } from '$lib/utils/chat/salonEcho';
+  import { textWaitOf } from '$lib/utils/chat/uploadProgress.svelte';
 
   interface Props {
     /** Slice of message groups currently rendered in the DOM. */
@@ -374,14 +376,10 @@
               onTogglePin={mayPinMessage(pinStanding) && !msg.awaitingServerId
                 ? onTogglePin
                 : undefined}
-              onRetry={msg.awaitingServerId &&
-              (msg.status === 'error' || msg.status === 'unconfirmed') &&
-              onRetrySend
+              onRetry={salonEchoSettleable(msg, textWaitOf) && onRetrySend
                 ? () => onRetrySend?.(msg.id)
                 : undefined}
-              onDiscard={msg.awaitingServerId &&
-              (msg.status === 'error' || msg.status === 'unconfirmed') &&
-              onDiscardSend
+              onDiscard={salonEchoSettleable(msg, textWaitOf) && onDiscardSend
                 ? () => onDiscardSend?.(msg.id)
                 : undefined}
               onRestore={msg.awaitingServerId && msg.status === 'unconfirmed' && onTakeBackSend

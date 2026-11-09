@@ -849,7 +849,6 @@
   "upload_repairing": "Synchronisation de la conversation - nouvel essai automatique",
   "upload_retrying": "Nouvel essai automatique en cours",
   "upload_waiting": "En attente de connexion - nouvel essai automatique",
-  "upload_unavailable": "Serveur momentanément indisponible - nouvel essai automatique",
   "upload_blocked": "Envoi bloqué par le serveur - réessayez plus tard",
   "upload_failed": "Envoi impossible : aucune réponse du serveur après plusieurs essais ({sent} sur {total} envoyés). Réessayez ou supprimez ce message.",
   "upload_refused": "Envoi refusé par le serveur. Réessayez ou annulez l'envoi.",

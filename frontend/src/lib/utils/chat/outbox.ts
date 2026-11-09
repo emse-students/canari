@@ -66,7 +66,12 @@ import {
   SendUnavailableError,
   type SentFrame,
 } from '$lib/mls-client/mlsDeliveryApi';
-import { backoffFor, MAX_RETRY_AFTER_MS, unavailableHoldMs } from './retryLadder';
+import {
+  backoffFor,
+  MAX_RETRY_AFTER_MS,
+  MAX_UNAVAILABLE_ANSWERS,
+  unavailableHoldMs,
+} from './retryLadder';
 import {
   UPLOAD_NO_ANSWER_ATTEMPTS,
   UPLOAD_PROGRESS_MARGIN_BYTES,
@@ -78,8 +83,10 @@ import {
 } from '$lib/utils/uploadXhr';
 import {
   clearAllUploads,
+  clearTextWait,
   clearUpload as clearUploadView,
   patchUpload as patchUploadView,
+  setTextWait,
   setUnsentReason,
   setUploadRetry,
   type UnsentReason,
@@ -131,9 +138,19 @@ export const MAX_UNEXPECTED_ATTEMPTS = 8;
  * deploy rotating a container answers them for its few seconds - and none of them refuses the
  * message. They are held on the plain ladder like a transport failure, resumed by a reconnect,
  * shown as waiting for the server, and neither count nor reset this run: only a 5xx that says the
- * service itself failed (`500`, `501`...) does.
+ * service itself failed (`500`, `501`...) does. They have their own bound,
+ * {@link MAX_UNAVAILABLE_ANSWERS}.
  */
 export const MAX_CONSECUTIVE_SERVER_ERRORS = 5;
+
+/**
+ * The bound on "not now" answers, shared with the salon send (`retryLadder.ts`). For a text the park
+ * writes {@link MAX_CONSECUTIVE_SERVER_ERRORS} into `serverErrors`, so the one terminal predicate
+ * ({@link isServerFailureTerminal}), the one Retry and every reader stay as they are; the count itself
+ * (`OutboxEntry.unavailableAnswers`) is never set back below a multiple of it (`unavailableRunStart`):
+ * it is also what tells a withdrawal the frame may have been stored.
+ */
+export { MAX_UNAVAILABLE_ANSWERS };
 
 /**
  * The SHORTEST hold after a counted 5xx: the ladder's top step. On the plain ladder five 5xx land at
@@ -166,6 +183,16 @@ function isTypedEntry(entry: OutboxEntry): boolean {
 /** The kinds {@link MAX_CONSECUTIVE_SERVER_ERRORS} applies to: a message the member typed. */
 function boundedOnServerErrors(entry: OutboxEntry): boolean {
   return isTypedEntry(entry);
+}
+
+/**
+ * Where a "not now" count stands after the member's Retry: rounded UP to the next multiple of
+ * {@link MAX_UNAVAILABLE_ANSWERS}, so the next park comes after exactly that many fresh answers,
+ * and never down to 0 - a count above 0 is the durable evidence a withdrawal reads that the frame
+ * may have been stored.
+ */
+export function unavailableRunStart(count: number): number {
+  return Math.ceil(count / MAX_UNAVAILABLE_ANSWERS) * MAX_UNAVAILABLE_ANSWERS;
 }
 
 /**
@@ -809,12 +836,6 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    */
   const transportHeld = new Set<string>();
   /**
-   * Ids answered "not now" (`SendUnavailableError`) at least once since they were queued: a 502 after
-   * an upstream reset, or a 504, may come after the frame was stored, so a withdrawal of one must let
-   * the delete travel as an event ({@link withdrawRow}). In memory, like `transportHeld`.
-   */
-  const answeredUnavailable = new Set<string>();
-  /**
    * Ids whose last attempt was HELD FOR THEIR GROUP (not sendable yet, or awaiting the Welcome of a
    * re-admission), with their conversation: the entries {@link OutboxController.resumeGroup} resumes
    * when that group becomes ready. In memory, like `transportHeld` and for the same reason.
@@ -1105,11 +1126,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // for any retry. Nothing here waits for a timer to expire.
     for (const id of transportHeld) {
       resuming.add(id);
-      // The link is back: the stale "waiting for the connection" (or "for the server", an entry
-      // answered "not now", held here too) is false from now on, the entry is simply next in line
-      // until its attempt starts and says `preparing`.
-      const phase = viewOfUpload(id)?.phase;
-      if (phase === 'waiting' || phase === 'unavailable') patchUpload(id, { phase: 'queued' });
+      // The link is back: the stale "waiting for the connection" (or, on a text, "for the server",
+      // an entry answered "not now", held here too) is false from now on, the entry is simply next
+      // in line until its attempt starts and says `preparing`.
+      if (viewOfUpload(id)?.phase === 'waiting') patchUpload(id, { phase: 'queued' });
+      clearTextWait(id);
     }
     transportHeld.clear();
     runFlush();
@@ -2179,6 +2200,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       quiet?: boolean;
       /** The run of consecutive 5xx to record with the backoff (the 5xx arm only). */
       serverErrors?: number;
+      /** The count of "not now" answers to record with the backoff (the "not now" arm only). */
+      unavailableAnswers?: number;
       /** The hold, when it is not the plain ladder's (`serverErrorHoldMs`, the 5xx arm only). */
       delayMs?: number;
     } = {}
@@ -2196,24 +2219,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // THE LABEL IS THE HOLD'S TYPED REASON, never a guess: only a transport failure accuses the
     // network, only a "not now" answer the server; a group repair and any other failure each say
     // what they are.
-    const phase = opts.unavailable
-      ? 'unavailable'
-      : opts.transport
-        ? 'waiting'
-        : opts.repair
-          ? 'repairing'
-          : 'retrying';
+    // An attachment's "not now" is its MLS post, made after the upload (`uploadedRef` is set), so
+    // no upload view is written for it: `unavailable` only ever names a TEXT's wait.
+    const phase = opts.transport ? 'waiting' : opts.repair ? 'repairing' : 'retrying';
     if (!opts.quiet && outboxKindHoldsBlob(entry.kind) && !entry.media?.uploadedRef) {
       patchUpload(entry.id, { phase, loaded: 0, attempt: entry.attempts + 1 });
     } else if (isTypedEntry(entry)) {
-      // A TYPED MESSAGE has no upload, so its view says only what it waits for, and only when that
-      // is the link or the server (R05, 2026-11-09): "en attente" alone read the same during a
-      // deploy as during a group repair. Any other hold takes a stale one away.
-      if (phase === 'waiting' || phase === 'unavailable') {
-        patchUpload(entry.id, { phase, attempt: entry.attempts + 1 });
-      } else if (viewOfUpload(entry.id)) {
-        clearUpload(entry.id);
-      }
+      // A TYPED MESSAGE has no upload, so it says only what it waits for, and only when that is
+      // the link or the server (R05, 2026-11-09): "en attente" alone read the same during a deploy
+      // as during a group repair. Any other hold takes a stale one away.
+      if (opts.unavailable) setTextWait(entry.id, 'server');
+      else if (opts.transport) setTextWait(entry.id, 'network');
+      else clearTextWait(entry.id);
     }
     const attempts = entry.attempts + 1;
     await storage
@@ -2225,6 +2242,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           lastAttemptAt: Date.now(),
           nextAttemptAt: Date.now() + (opts.delayMs ?? backoffFor(attempts)),
           ...(opts.serverErrors !== undefined ? { serverErrors: opts.serverErrors } : {}),
+          ...(opts.unavailableAnswers !== undefined
+            ? { unavailableAnswers: opts.unavailableAnswers }
+            : {}),
         },
         deviceKey()
       )
@@ -2368,7 +2388,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     clearUpload(messageId);
     patchStatus(messageId, 'pending');
     await storage
-      .updateOutboxEntry(messageId, { serverErrors: 0, nextAttemptAt: 0 }, deviceKey())
+      .updateOutboxEntry(
+        messageId,
+        {
+          serverErrors: 0,
+          nextAttemptAt: 0,
+          unavailableAnswers: unavailableRunStart(stored.unavailableAnswers ?? 0),
+        },
+        deviceKey()
+      )
       .catch((err: unknown) =>
         log(`[OUTBOX] ${messageId.slice(0, 8)}… 5xx count reset not persisted: ${String(err)}`)
       );
@@ -2453,7 +2481,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       unexpected.delete(entry.id);
       // THE MEMBER'S RETRY of a text failed on 5xx: the retry wrote the count back to 0, and this
       // snapshot may predate that write. A reconnect's resume never reaches here (not `serverFailed`).
-      if (serverFailed.delete(entry.id)) entry = { ...entry, serverErrors: 0 };
+      if (serverFailed.delete(entry.id)) {
+        entry = {
+          ...entry,
+          serverErrors: 0,
+          unavailableAnswers: unavailableRunStart(entry.unavailableAnswers ?? 0),
+        };
+      }
     }
     // PARKED IS NOT BLOCKING: the entry waits for the member, and what was written after it goes.
     if (!resumed && parked.has(entry.id)) return 'parked';
@@ -2744,7 +2778,6 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         });
         patchStatus(entry.id, 'sent');
         clearUpload(entry.id);
-        answeredUnavailable.delete(entry.id);
         transportHeld.delete(entry.id);
         repairHeld.delete(entry.id);
         unexpected.delete(entry.id);
@@ -2987,6 +3020,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       console.error(line);
       log(line);
       patchStatus(entry.id, 'pending');
+      // A view an earlier hold drew ("waiting for the server" after a 502) is not what this entry
+      // waits for now: it waits for a sign-in, which no label here claims.
+      clearUpload(entry.id);
       return 'skip';
     }
     if (kind === 'evicted') {
@@ -3001,14 +3037,33 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // floor), resumed by a reconnect, shown as waiting for the server, and the 5xx run below is
     // neither counted nor reset: it was what failed every text sent during a long deploy. What
     // ends the wait is an answer - the send, or a refusal - never a count of these.
+    //
+    // BOUNDED BY ANSWERS, NOT BY A CLOCK (review of #3189): a text answered "not now"
+    // {@link MAX_UNAVAILABLE_ANSWERS} times with no 2xx between leaves the waiting state for the
+    // failed one. The count is written on every kind - it is also what a withdrawal reads.
     if (e instanceof SendUnavailableError) {
-      answeredUnavailable.add(entry.id);
+      const answers = (entry.unavailableAnswers ?? 0) + 1;
+      if (boundedOnServerErrors(entry) && answers % MAX_UNAVAILABLE_ANSWERS === 0) {
+        await storage
+          ?.updateOutboxEntry(
+            entry.id,
+            { unavailableAnswers: answers, serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS },
+            deviceKey()
+          )
+          .catch((err: unknown) =>
+            log(`[OUTBOX] ${entry.id.slice(0, 8)}… "not now" park not persisted: ${String(err)}`)
+          );
+        return parkServerFailure(
+          { ...entry, unavailableAnswers: answers, serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS },
+          `the server answered "not now" (${e.status}, ${e.origin}) in ${terminalId.slice(0, 8)}… ${MAX_UNAVAILABLE_ANSWERS} times with no success between - the route is not coming back by itself`
+        );
+      }
       const delayMs = unavailableHoldMs(entry.attempts + 1, e.retryAfterMs);
       return holdForRetry(
         entry,
         (attempts) =>
-          `[OUTBOX] ${entry.id.slice(0, 8)}… held: the server is not serving (${e.status}, ${e.origin}) in ${terminalId.slice(0, 8)}… - not a refusal, not counted (attempt ${attempts}), next in ${delayMs} ms or at the reconnect${e.retryAfterMs !== null ? ` (Retry-After ${e.retryAfterMs} ms)` : ''}`,
-        { transport: true, unavailable: true, delayMs }
+          `[OUTBOX] ${entry.id.slice(0, 8)}… held: the server is not serving (${e.status}, ${e.origin}) in ${terminalId.slice(0, 8)}… - not a refusal, "not now" ${answers}${boundedOnServerErrors(entry) ? `/${MAX_UNAVAILABLE_ANSWERS}` : ''} (attempt ${attempts}), next in ${delayMs} ms or at the reconnect${e.retryAfterMs !== null ? ` (Retry-After ${e.retryAfterMs} ms)` : ''}`,
+        { transport: true, unavailable: true, delayMs, unavailableAnswers: answers }
       );
     }
     // A 5xx ON A TEXT IS COUNTED, read from the TYPE (`SendServerError`, typed at the throw): the
@@ -4339,10 +4394,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // queued the frame. So a text that was ever answered 5xx in this run is withdrawn here AND
     // answered "maybe sent", and the delete also goes out as an event (peers that have it drop it).
     // AND SO IS A "NOT NOW": a 502 after an upstream reset, or a 504, may come after the frame was
-    // queued. Kept in memory (`answeredUnavailable`), like every transport outcome: a reload, or a
-    // follower tab that never sent it, does not know - the residual the transport failures share.
-    const maybeStored = (queued.serverErrors ?? 0) > 0 || answeredUnavailable.has(messageId);
-    answeredUnavailable.delete(messageId);
+    // queued. Read from the DURABLE row (`unavailableAnswers`, review of #3189), so a reload and a
+    // follower tab that never sent it decide the same.
+    const maybeStored = (queued.serverErrors ?? 0) > 0 || (queued.unavailableAnswers ?? 0) > 0;
     // READ BEFORE THE ROW GOES: the reel's open upload session, which nothing could name afterwards.
     // An entry waiting in backoff, parked as failed, or not restarted since a relaunch has no
     // transfer running to abort - the row is the only thing that knows its session.
@@ -4401,7 +4455,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     }
     if (maybeStored) {
       const unavailableNote =
-        (queued.serverErrors ?? 0) > 0 ? '' : ' and a "not now" (502/503/504)';
+        (queued.unavailableAnswers ?? 0) > 0
+          ? ` and ${queued.unavailableAnswers} "not now" (502/503/504)`
+          : '';
       log(
         reason === 'exit'
           ? `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn by the group exit after ${queued.serverErrors ?? 0} counted 5xx answer(s)${unavailableNote} - a gateway may have stored it, so the members may have it`
