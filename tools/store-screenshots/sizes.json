@@ -1,0 +1,11 @@
+{
+  "_doc": "Output sizes per store, from docs/wiki/store-listings.md section 3. phone = captioned screenshots; feature = Play feature graphic (own layout). No alpha channel anywhere: lib.mjs flattens.",
+  "sizes": [
+    { "id": "apple-6.9", "store": "apple", "width": 1320, "height": 2868, "kind": "phone" },
+    { "id": "apple-6.5", "store": "apple", "width": 1284, "height": 2778, "kind": "phone" },
+    { "id": "play-phone", "store": "play", "width": 1080, "height": 1920, "kind": "phone" },
+    { "id": "play-feature", "store": "play", "width": 1024, "height": 500, "kind": "feature" }
+  ],
+  "capture": { "cssWidth": 390, "cssHeight": 1000, "deviceScaleFactor": 3 },
+  "look": { "field": "#f6c232", "ink": "#151b2c", "font": "Fredoka" }
+}

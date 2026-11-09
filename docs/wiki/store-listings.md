@@ -222,3 +222,31 @@ every PNG against the checklist of section 4 before it leaves the scratchpad. No
 1. User reviews the two drafts and answers 8.3.
 2. A fictional dev dataset exists (section 5), then capture on the bench phone, user views every frame.
 3. `tools/store-listings/play.mjs` dry-run; apply only on the user's word.
+
+## 9. The reproducible screenshot pipeline (decided 2026-11-09)
+
+**Owner decisions, binding:** the real app on dev, rendered at exact store sizes, composed by script; six
+shots in this order - promise (conversation list), encrypted messaging, communities, feed and polls,
+agenda and associations, privacy; bare rounded UI with no phone frame, cropped at the bottom, on the
+field `#f6c232`, caption at the top in Fredoka bold, ink `#151b2c`, three to six words and an optional
+short sub-line; LIGHT theme; French and English sets with the same layout. This section SUPERSEDES the
+bench-phone plan of 8.2 for the store images (a phone frame-less web render has no status bar to clean;
+the Mi 9T path stays valid for a native-chrome shot).
+
+Tooling: [tools/store-screenshots](../../tools/store-screenshots/README.md). Sizes: Apple 6.9in
+1320x2868 (accepted larger class of section 3), Apple 6.5in 1284x2778, Play phone 1080x1920, feature
+graphic 1024x500; output is RGB PNG without metadata. Capture is a 390x1000 CSS viewport at 3x in a Chrome
+signed in on dev, so the web layout (not the native Liquid Glass chrome) is what the stores show: a
+choice to confirm on the first review.
+
+**Demo scenario:** one integration and party week - invented common first names, generic associations
+(no real name), a group conversation, a poll, an event. **Photos:** free-licence Commons images only,
+each recorded with source URL, author and licence in `photos.manifest.json`; the files are downloaded,
+never committed. **Gate:** `verify` refuses a set while a `Canari Test` or `Fictif` string is on screen
+or a scenario string is missing, so the checklist of section 4 is partly asserted instead of read.
+
+**State (2026-11-09):** capture, verify and compose work end to end (first preview set rendered from
+whatever dev held, hence `PREVIEW-` files). NOT done: the demo content on dev. The conversation and the
+communities are MLS state that live clients must create; the rig's accounts carry `Canari Test` display
+names and their Authentik profile is production-adjacent (section 4), the posts, poll and event need
+association officers, and the photos need an upload path into the posts. Those are what remains owed.
