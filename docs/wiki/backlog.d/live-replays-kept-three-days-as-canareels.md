@@ -1,4 +1,4 @@
-## Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07, design not written)
+## Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07; designed 2026-11-09, not built)
 
 Asked by the owner on 2026-11-07, every question answered the same day:
 
@@ -25,3 +25,11 @@ the audience, report, staff and broadcaster deletion; a durable-state sweep at t
 privacy texts (CGU, privacy page, register C19 "supprimé peu après sa fin"); the work packages,
 each migration marked plain or held. A first design run was stopped at the pause of 2026-11-07
 before it wrote anything.
+
+**DESIGNED 2026-11-09: [live-replays](../live-replays.md)** - the measured cost (0.9-1.4 GB per
+hour of live; production stores 0.9), the mechanism (the live's own segments kept and served as a
+replay post, no new file written), the three days as `posts."expiresAt"` read by the existing
+sweeps, the audience, the CanaReels audit and its proposed model, the migrations (none held), the
+work packages WP-R1..WP-R6, the readings, and eight questions for the owner in two lots. The finding
+that decides the shape: replays in the nightly media backup would cost about 47 days' worth of
+replay on the same disk, so the design takes the segments out of the backup (WP-R3).
