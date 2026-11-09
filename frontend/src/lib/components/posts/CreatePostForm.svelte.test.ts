@@ -48,9 +48,21 @@ vi.mock('$lib/posts/api', async (orig) => ({
     Promise.resolve({
       maxDurationMs: 90_000,
       chatMaxDurationMs: 60_000,
-      retentionDays: 30,
+      maxAspectRatio: 0.8,
+      retentionDays: 365,
       warningWindowDays: 7,
     }),
+}));
+// What the engine reads of a picked video (its displayed frame and length): set per test.
+const pickedVideo = vi.hoisted(() => ({
+  metadata: { durationMs: null, width: null, height: null } as {
+    durationMs: number | null;
+    width: number | null;
+    height: number | null;
+  },
+}));
+vi.mock('$lib/reels/videoDuration', () => ({
+  readVideoMetadata: () => Promise.resolve(pickedVideo.metadata),
 }));
 
 vi.mock('$lib/components/reels/CameraOverlay.svelte', async () => ({
@@ -78,6 +90,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  pickedVideo.metadata = { durationMs: null, width: null, height: null };
   while (mounted.length) unmount(mounted.pop()!);
   holdPostComposerMedia([]);
   revoked.length = 0;
@@ -252,6 +265,41 @@ describe('CreatePostForm - a video filmed with its camera is a CanaReel (one cam
     flushSync();
     expect(heldPostComposerMedia()).toHaveLength(1);
     expect(target.isConnected).toBe(true);
+  });
+});
+
+describe('CreatePostForm - a picked vertical short video is said to be a CanaReel BEFORE "Publier" (2026-11-09)', () => {
+  const notice = (target: HTMLElement) =>
+    target.querySelector('[data-post-composer-reel-notice]')?.textContent?.trim() ?? null;
+  const settle = async () => {
+    for (let i = 0; i < 4; i++) await tick();
+    flushSync();
+  };
+
+  it('a vertical video of 90 s or less: the notice names the rule and the lifetime', async () => {
+    pickedVideo.metadata = { durationMs: 30_000, width: 1080, height: 1920 };
+    const { target } = await open();
+    pick(target, new File(['take'], 'clip.mp4', { type: 'video/mp4' }));
+    await settle();
+    expect(notice(target)).toBe(
+      m.reels_publish_from_composer_notice({ seconds: 90, lifetime: m.reels_lifetime_one_year() })
+    );
+  });
+
+  it('a landscape video, a longer one or an unreadable one stays a post: no notice', async () => {
+    for (const metadata of [
+      { durationMs: 30_000, width: 1920, height: 1080 },
+      { durationMs: 90_001, width: 1080, height: 1920 },
+      { durationMs: null, width: null, height: null },
+    ]) {
+      pickedVideo.metadata = metadata;
+      const { target } = await open();
+      pick(target, new File(['take'], 'clip.mp4', { type: 'video/mp4' }));
+      await settle();
+      expect(notice(target)).toBeNull();
+      unmount(mounted.pop()!);
+      holdPostComposerMedia([]);
+    }
   });
 });
 

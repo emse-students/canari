@@ -430,6 +430,15 @@ client, `reels/reelRule.ts`, reading the server's numbers (`GET /api/posts/reel-
   step's notice now says the rule ("Une vidéo verticale de 90 secondes au plus est un CanaReel :
   supprimé au bout de 1 an"), and every lifetime is worded by `reelLifetimeLabel` ("1 an" for 365
   days, "N jours" otherwise).
+- **The composer says it BEFORE "Publier"** (review of #3250): a picked video the rule makes a
+  CanaReel shows the same amber notice as the camera step under the media strip
+  (`data-post-composer-reel-notice`, `CreatePostForm.svelte`), read on the picked file's DISPLAYED
+  frame and length (`readVideoMetadata`) through `reelDeclarationFor`, the queue's own classifier
+  with its exclusions. Without it, a member who imported a video into "Nouvelle publication" learnt
+  only after publishing that it is deleted after a year. The queue still decides on the PREPARED
+  file; the two agree because preparation keeps the displayed frame's ratio and the length.
+  Pinned by `CreatePostForm.svelte.test.ts` (vertical short: the notice; landscape, longer,
+  unreadable: none).
 - **An estate older than the rule** serves no `maxAspectRatio` (`reelRuleOf` -> `null`, logged at
   WARN): the composer's video stays a post and the tab's take a reel, each as that estate expects.
 - **Old queued posts** (prepared before this release, no recorded length) stay posts.

@@ -68,6 +68,12 @@ YEAR** (was C6's month); the reels already published were moved to the year by m
 - **An estate older than the rule** serves no `maxAspectRatio`: the client then keeps that estate's
   behaviour (the composer's video a post, the tab's take a reel) and logs it - the days between the
   stores and the production deploy.
+- **An app older than the rule** still offers a gallery pick of ANY frame in the CanaReels tab and
+  publishes it as `kind: 'reel'`: a landscape or square pick is now refused at this door with its
+  `400` ("a reel's video must be vertical"), and that app shows its generic publish error. Deliberate
+  - the door is the rule - and bounded: on a phone those apps' filmed takes are vertical (the
+  capture saves the portrait preview box's frame, `framedCapture.ts`), and the member can still
+  publish the video as a post from "Nouvelle publication".
 - **Existing posts are not converted**: a vertical video published as a post before the rule stays a
   post (it already shows in the pager through `singleMedia`, below, and never expires).
 
@@ -365,10 +371,21 @@ the stored `expiresAt`, whichever lifetime wrote it. Pinned by
 reel already on the year do not; the second run updates 0 rows; the interval equals
 `REEL_RETENTION_DAYS`), mutation-checked by widening the `WHERE` to `replay`.
 
-**What it costs** is a read the owner runs on production (read-only, `BEGIN READ ONLY` / `ROLLBACK`):
-the live reels, their bytes as each row's `media[0].size` declares them (media-service keeps no SQL
-table of sizes), and the daily publish rate of the last 30 days - the storage a year holds is roughly
-that rate x 365 x the mean size.
+**What it costs** is read on production (read-only, `BEGIN READ ONLY` / `ROLLBACK`): the live reels,
+their bytes as each row's `media[0].size` declares them (media-service keeps no SQL table of sizes),
+and the daily publish rate of the last 30 days - the storage a year holds is roughly that rate x 365
+x the mean size.
+
+**Measured by the lead on production, 2026-11-09 (read-only, numbers only):**
+
+| What | Value |
+| --- | --- |
+| Live reels today | 9, 31 MB in total (mean 3.5 MB), the oldest from 2026-10-19 |
+| Publish rate, last 30 days | 0.3 reel/day, about 1 MB/day |
+| A year of reels at that rate | about 110 reels, 373 MB |
+| Upper bound of what the vertical-video rule adds (the composer's single-video posts, last 30 days) | 15 posts (0.5/day), 184 MB in 30 days - at most about 2.2 GB a year, if every one were vertical and 90 s or less |
+
+**Conclusion: the one-year lifetime costs a few GB a year at most - not a storage concern.**
 
 ## The migration: `069_posts_reels.sql`
 
