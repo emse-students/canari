@@ -258,6 +258,6 @@ class: `sizes.json` holds 1206x2622 for Apple, 1080x1920 for Play phones and the
 poll, events, one group conversation, four DMs, two communities, all from live clients after the demo seats
 were emptied through the product); the Android native capture and the composition run end to end; the manifest
 holds 6 Commons SCENE photos with source, author and licence (no portrait: faces are invented geometric
-avatars, served by the dev-only override of #3219). NOT done, with what lifts each:
+avatars, served by the dev-only override of #3219); three scene-photo posts went through the real composer; the iOS capture path is written (tab and link taps, the accessibility tree as the page probe) but has not run on a signed-in iPhone; both phones' local debris is cleaned. NOT done, with what lifts each:
 [README](../../tools/store-screenshots/README.md#what-is-blocked-2026-11-09-evening-and-what-lifts-each) -
-the avatars on dev (the override must be deployed), the iOS capture, the English pass and the post media.
+the avatars on dev (the override must be deployed), a signed-in iPhone for the iOS capture, the English pass (it sets the French content aside, so it runs after the French capture). Event covers appear only in the event detail modal, which no shot opens, so none were posted.

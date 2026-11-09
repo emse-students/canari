@@ -145,6 +145,7 @@
   "shots": [
     {
       "id": "1-promise",
+      "ios": [{"tab":2}],
       "route": "/chat",
       "caption": {
         "fr": "Ta vie asso, au même endroit",
@@ -165,6 +166,7 @@
     },
     {
       "id": "2-messaging",
+      "ios": [{"tab":2},{"tap":{"fr":"Soirée d'intégration","en":"Integration party"}}],
       "route": "/chat",
       "open": {
         "fr": "Soirée d'intégration",
@@ -189,6 +191,7 @@
     },
     {
       "id": "3-communities",
+      "ios": [{"tab":1}],
       "route": "/communities",
       "caption": {
         "fr": "Des communautés à ton image",
@@ -201,6 +204,7 @@
     },
     {
       "id": "4-feed-polls",
+      "ios": [{"tab":0},{"tap":{"fr":"Suivis","en":"Following"}}],
       "route": "/posts",
       "caption": {
         "fr": "Actus et sondages du campus",
@@ -221,6 +225,7 @@
     },
     {
       "id": "5-agenda",
+      "ios": [{"tab":3}],
       "route": "/calendar",
       "caption": {
         "fr": "Agenda et associations réunis",
@@ -237,6 +242,7 @@
     },
     {
       "id": "6-privacy",
+      "ios": [],
       "route": "/settings/security",
       "caption": {
         "fr": "Ta vie privée, protégée",

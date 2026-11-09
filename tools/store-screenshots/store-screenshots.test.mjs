@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
-import { flattenPng, pngInfo } from './lib.mjs';
+import { flattenPng, pngInfo, treeProbe } from './lib.mjs';
 import { ALLOWED } from './photos.mjs';
 
 const read = (f) => JSON.parse(readFileSync(join(import.meta.dir, f), 'utf8'));
@@ -56,6 +56,31 @@ describe('photo manifest', () => {
       expect(e.sourceUrl).toStartWith('https://');
       expect(e.author).toBeTruthy();
       expect(ALLOWED).toContain(e.license);
+    }
+  });
+});
+
+describe('treeProbe (the iOS page probe, from WDA\'s flattened tree)', () => {
+  const el = (type, text, x, y, w, h) => ({ type, text, rect: { x, y, width: w, height: h } });
+  test('lists on-screen text in reading order under the language line', () => {
+    const out = treeProbe([el('StaticText', 'Second', 20, 300, 100, 20), el('StaticText', 'First', 20, 100, 100, 20), el('StaticText', 'Below', 20, 900, 100, 20)], 'fr', 844).split('\n');
+    expect(out).toEqual(['fr', 'First', 'Second']);
+  });
+  test('an initials circle is reported as [MEDIA], a word or a big letter box is not', () => {
+    const out = treeProbe([el('StaticText', 'CG', 20, 100, 40, 40), el('StaticText', 'OK', 20, 200, 200, 40), el('StaticText', 'Lina', 80, 100, 60, 20)], 'en', 844);
+    expect(out).toContain('[MEDIA] 1 initials avatar(s) on screen');
+  });
+  test('the test-environment banner text reaches the text, so verify can refuse it', () => {
+    const out = treeProbe([el('StaticText', 'Environnement de test', 10, 60, 300, 20)], 'fr', 844);
+    expect(out.includes(scenario.forbiddenOnScreen.find((s) => s === 'Environnement de test'))).toBe(true);
+  });
+});
+
+describe('ios steps', () => {
+  test('every shot declares its iOS navigation, tabs 0-3 or a tap in both languages', () => {
+    for (const s of scenario.shots) {
+      expect(Array.isArray(s.ios)).toBe(true);
+      for (const st of s.ios) expect(st.tab !== undefined ? st.tab >= 0 && st.tab <= 3 : !!(st.tap?.fr && st.tap?.en)).toBe(true);
     }
   });
 });

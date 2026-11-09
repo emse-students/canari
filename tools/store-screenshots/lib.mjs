@@ -128,3 +128,26 @@ export const PAGE_PROBE = `(() => {
 
 /** Closes the "Environnement de test" banner of a dev page (its own close button). */
 export const CLOSE_BANNER = `(()=>{const el=[...document.querySelectorAll('div,section,aside')].find(d=>d.children.length<=3&&/^(Environnement de test|Test environment)/.test(d.textContent.trim())&&d.querySelector('button'));el?.querySelector('button')?.click()})()`;
+
+/**
+ * The iOS counterpart of `PAGE_PROBE`, from WDA's flattened accessibility tree (`ios.mjs flat`): the
+ * iPhone app has no inspector tab, so the page text is what the native tree reports. Same output
+ * shape as `PAGE_PROBE` (a language line, the text, then `[MEDIA]` lines), so `shots.mjs verify`
+ * reads both. An initials avatar is a short upper-case text (1-2 letters) drawn in a roughly square
+ * box no larger than a avatar; a broken image is NOT detectable from the tree (the shot is looked at).
+ * @param {{type?:string,text:string,rect:{x:number,y:number,width:number,height:number}}[]} flat
+ * @param {string} lang the language the capture was set to
+ * @param {number} windowHeight the window height in points; elements wholly below it are off screen
+ */
+export function treeProbe(flat, lang, windowHeight = 844) {
+  const onScreen = flat.filter((e) => e.rect && e.rect.height > 0 && e.rect.width > 0 && e.rect.y < windowHeight && e.rect.y + e.rect.height > 0);
+  const ordered = [...onScreen].sort((a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x);
+  const initials = ordered.filter((e) => {
+    const bare = String(e.type ?? '').replace(/^XCUIElementType/, '');
+    const square = Math.abs(e.rect.width - e.rect.height) <= 6 && e.rect.width <= 80;
+    return bare === 'StaticText' && /^\p{Lu}{1,2}$/u.test(e.text.trim()) && square;
+  });
+  const lines = [lang, ...ordered.map((e) => e.text)];
+  if (initials.length) lines.push(`[MEDIA] ${initials.length} initials avatar(s) on screen`);
+  return lines.join(String.fromCharCode(10));
+}

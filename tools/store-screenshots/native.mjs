@@ -14,7 +14,8 @@
  * is switched off at the end.
  *
  * iOS (iPhone 12): the pixels are WDA's screenshot (`tools/ios-device/ios.mjs shot`); the WebKit
- * inspector bridge carries the same page script. The status bar CANNOT be forced from here (the OS
+ * inspector is not reachable on the dev app, so taps navigate and the accessibility tree is the
+ * probe (`treeProbe`, per-shot `ios` steps in scenario.json). The status bar CANNOT be forced from here (the OS
  * keeps its clock, signal dots and battery), so the shot shows the device's real one.
  *
  * The bench phones are a sandbox; the owner's personal phone is NEVER used (the rig's serial map
@@ -27,7 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { armIfPhone, resolveDevice } from '../cross-client-harness/device.mjs';
 import { client, evaluate } from '../cross-client-harness/chat.mjs';
 import { SERIAL_OF } from '../cross-client-harness/names.mjs';
-import { CLOSE_BANNER, PAGE_PROBE } from './lib.mjs';
+import { CLOSE_BANNER, PAGE_PROBE, treeProbe } from './lib.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const scenario = JSON.parse(readFileSync(join(HERE, 'scenario.json'), 'utf8'));
@@ -53,8 +54,49 @@ async function screenshot() {
   return readFileSync(out);
 }
 
+/**
+ * The iOS run: the dev app has no inspector tab, so navigation is taps (the native tab bar by
+ * position, in-app links by text, per `shot.ios` in scenario.json) and the probe is the
+ * accessibility tree (`treeProbe`). Theme and language are set beforehand in Settings > Preferences;
+ * the tree's language line is the one asked for, and `verify` reads the text.
+ */
+async function runIos() {
+  const ios = await import('../ios-device/ios.mjs');
+  const sid = await ios.session();
+  const win = await ios.size(sid);
+  for (const lang of langs) {
+    for (const shot of scenario.shots) {
+      for (const step of shot.ios ?? []) {
+        if (step.tab !== undefined) {
+          const bar = await ios.tabs(sid);
+          const t = bar[step.tab];
+          if (!t) throw new Error(`tab ${step.tab} not on screen (${bar.length} tabs): is the app signed in?`);
+          await ios.tapAt(sid, Math.round(t.x + t.width / 2), Math.round(t.y + t.height / 2));
+        } else {
+          await ios.tapText(sid, step.tap[lang]);
+        }
+        await sleep(3000);
+      }
+      // The banner's close cross (owner, 2026-11-09): tapped when the tree shows the banner; verify still fails a shot that shows it.
+      const hits = [...(await ios.find(sid, 'Environnement de test')), ...(await ios.find(sid, 'Test environment'))];
+      if (hits.length) {
+        const y0 = hits[0].rect.y;
+        const close = ios.flatten(await ios.tree(sid)).find((e) => /^(Fermer|Close)/.test(e.label) && Math.abs(e.rect.y - y0) <= 40);
+        if (close) await ios.tapAt(sid, Math.round(close.rect.x + close.rect.width / 2), Math.round(close.rect.y + close.rect.height / 2));
+        await sleep(800);
+      }
+      const dir = join(work, 'ios', lang);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, `${shot.id}.txt`), treeProbe(ios.flatten(await ios.tree(sid)), lang, win.height));
+      writeFileSync(join(dir, `${shot.id}.png`), await screenshot());
+      log('captured', platform, lang, shot.id);
+    }
+  }
+}
+
 if (platform === 'ios') {
-  throw new Error('iOS capture: the WebKit inspector bridge (rig device I1) is not wired in this tool yet - see README, "What is blocked"');
+  await runIos();
+  process.exit(0);
 }
 
 const target = resolveDevice(['--android']);
