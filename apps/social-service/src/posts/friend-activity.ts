@@ -30,6 +30,21 @@ export function commentSpeaksAsWriter(comment: StoredComment): boolean {
 }
 
 /**
+ * A SQL boolean: no block either way between reader `reader` and the author of post row `post` -
+ * ASKED ONLY OF A POST THAT NAMES ITS AUTHOR. An association post hides the member who published it
+ * and an anonymous one its writer, so the feed exempts both from its block filter
+ * (`blockedAuthorSql`, `common/blocked-user-ids.ts`); a notice withheld on that block would be the
+ * de-anonymisation oracle the feed refuses to be - block a suspect, see whether the notice about
+ * the anonymous post still comes. Shared by friends' activity and campus trends (WP-10).
+ */
+export function namedAuthorUnblockedSql(post: string, reader: string): string {
+  return `(${post}."associationId" IS NOT NULL OR COALESCE(${post}.anonymous, false)
+     OR NOT EXISTS (SELECT 1 FROM user_blocks nau_b
+                     WHERE (nau_b."blockerId" = ${reader} AND nau_b."blockedId" = ${post}."authorId")
+                        OR (nau_b."blockedId" = ${reader} AND nau_b."blockerId" = ${post}."authorId")))`;
+}
+
+/**
  * THE DISCLOSURE RULE AND THE TOLD-ONCE LEDGER IN ONE STATEMENT (engagement WP-9). `$1` the post,
  * `$2` X (who acted), `$3` the act. Every accepted follower R of X is a candidate, and is told ONLY
  * when all of these hold - each a predicate that already exists, but rule 0:
@@ -42,15 +57,17 @@ export function commentSpeaksAsWriter(comment: StoredComment): boolean {
  * 3. R would see X's act on P's own page: P's comments and reactors are not withheld from R
  *    (`commentsWithheldFromViewerSql`) - implied by rule 2's plain door, and asked anyway, so the
  *    rule does not rest on that implication.
- * 4. No block either way between R and X, nor between R and P's author.
+ * 4. No block either way between R and X, nor between R and P's author when P NAMES its author
+ *    ({@link namedAuthorUnblockedSql}: an anonymous or an association post is exempt, as in the feed).
  * 5. P is not anonymous when the act is a comment.
  * 6. R is not P's author (they get the existing notice), and X is not P's author.
  * 7. R has no row for P in the ledger or in `post_notifications` (told once, L14) - the
  *    announcement, a republication, a repost and the previous engagement notice all exclude them.
  * 8. The comment speaks as X - {@link commentSpeaksAsWriter}, asked before this statement runs.
  *
- * And never across the review cohort's boundary (built per call: the cohort is read from the
- * environment). `ORDER BY` gives every concurrent writer one lock order on the ledger's key;
+ * And never across the review cohort's boundary, with X nor with P's author - the feed's
+ * `reviewCohortAuthorFilterSql` keeps a review account's posts from every outside reader (built per
+ * call: the cohort is read from the environment). `ORDER BY` gives every concurrent writer one lock order on the ledger's key;
  * `ON CONFLICT DO NOTHING RETURNING` answers exactly who THIS write told.
  */
 export function friendActivityLedgerSql(): string {
@@ -68,9 +85,11 @@ SELECT fa_post.id, fa_r.id, 'friend'
    AND (fa_post."scheduledAt" IS NULL OR fa_post."scheduledAt" <= now())
    AND ($3::varchar = 'reaction' OR NOT COALESCE(fa_post.anonymous, false))
    AND ${sameSideOfReviewCohortSql('fa_r.id', '$2::varchar')}
+   AND ${sameSideOfReviewCohortSql('fa_r.id', 'fa_post."authorId"')}
    AND NOT EXISTS (SELECT 1 FROM user_blocks fa_b
-                    WHERE (fa_b."blockerId" = fa_r.id AND fa_b."blockedId" IN ($2::varchar, fa_post."authorId"))
-                       OR (fa_b."blockedId" = fa_r.id AND fa_b."blockerId" IN ($2::varchar, fa_post."authorId")))
+                    WHERE (fa_b."blockerId" = fa_r.id AND fa_b."blockedId" = $2::varchar)
+                       OR (fa_b."blockedId" = fa_r.id AND fa_b."blockerId" = $2::varchar))
+   AND ${namedAuthorUnblockedSql('fa_post', 'fa_r.id')}
    AND ${postVisibleToUserSql('fa_post', 'fa_r')}
    AND NOT ${commentsWithheldFromViewerSql('fa_post', 'fa_r.id')}
    AND NOT EXISTS (SELECT 1 FROM post_notifications fa_n

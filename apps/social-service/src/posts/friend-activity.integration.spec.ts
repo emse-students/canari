@@ -35,6 +35,8 @@ const ISMIN = JSON.stringify([{ formation: 'ISMIN', promo: 2025 }]);
 
 /** Gardanne's association: a Saint-Etienne reader sees its posts only through a read grant. */
 const EG = '5e000000-0000-4000-8000-0000000000e9';
+/** A Saint-Etienne association: its posts reach every Saint-Etienne reader. */
+const ES = '5e000000-0000-4000-8000-0000000000e5';
 
 /** A post id per case, readable in a failure. */
 const P = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -162,10 +164,14 @@ maybe("friends' activity against PostgreSQL (engagement WP-9)", () => {
         'utf8'
       )
     );
-    await q(`INSERT INTO associations (id, name, slug) VALUES ($1, 'EG', 'eg')`, [EG]);
+    await q(`INSERT INTO associations (id, name, slug) VALUES ($1, 'EG', 'eg'), ($2, 'ES', 'es')`, [
+      EG,
+      ES,
+    ]);
     await q(
-      `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, NULL, $2)`,
-      [EG, GA]
+      `INSERT INTO association_audiences ("associationId", formation, campus)
+       VALUES ($1, NULL, $2), ($3, NULL, $4)`,
+      [EG, GA, ES, SE]
     );
 
     // x acts; a writes the posts. Every other one follows x, accepted, unless named otherwise.
@@ -252,7 +258,30 @@ maybe("friends' activity against PostgreSQL (engagement WP-9)", () => {
   it('rule 5: a comment on an anonymous post tells nobody; a reaction on it may be told', async () => {
     await post(P(5), 'a', { anonymous: true });
     expect(await tell(P(5), 'x', 'comment', plain('x'))).toBe(0);
-    expect(await tell(P(5), 'x', 'reaction')).toBe(4);
+    // blk3 too: the post names nobody, so a block with its hidden writer withholds nothing - a
+    // withheld notice would tell blk3 who wrote it (the feed's exemption, `blockedAuthorSql`).
+    expect(await tell(P(5), 'x', 'reaction')).toBe(5);
+    expect(await told(P(5))).toEqual(['blk3', ...REACHED]);
+  });
+
+  it('rule 4: a block with the member who published an association post withholds nothing', async () => {
+    await post(P(12), 'a', { association: ES });
+    // blk3 is blocked by a, who published as ES: told like every other reader of ES.
+    expect(await tell(P(12), 'x', 'reaction')).toBe(5);
+    expect(await told(P(12))).toEqual(['blk3', ...REACHED]);
+  });
+
+  it("never a review account's post to a reader outside the cohort, an association's included", async () => {
+    // The feed hides a post a review account published AS an association from every outside
+    // reader (`reviewCohortAuthorFilterSql`), though the association's rules reach them.
+    await post(P(13), 'a', { association: ES });
+    process.env[REVIEW_COHORT_ENV] = 'a';
+    try {
+      expect(await tell(P(13), 'x', 'reaction')).toBe(0);
+    } finally {
+      if (previousCohort === undefined) delete process.env[REVIEW_COHORT_ENV];
+      else process.env[REVIEW_COHORT_ENV] = previousCohort;
+    }
   });
 
   it('rule 6: X acting on their own post tells nobody', async () => {

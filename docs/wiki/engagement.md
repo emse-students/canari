@@ -655,7 +655,11 @@ told ONLY when ALL of these hold, each a predicate that already exists except ru
    students-only gate, the spaces, the follower doors and the repost doors all apply.
 3. **R would see X's act on P's own page**: for a comment, `commentsWithheldFromViewerSql(P, R)` is
    false and the comment is not hidden; for a reaction, the post shows its reactors to R.
-4. **No block** between R and X, nor between R and P's author.
+4. **No block** between R and X, nor between R and P's author **when P names its author**: an
+   anonymous or an association post is exempt, exactly as the feed's block filter exempts it
+   (`blockedAuthorSql`) - a notice withheld on a block with the hidden writer would be a
+   de-anonymisation oracle (block a suspect, see whether the notice comes). `namedAuthorUnblockedSql`,
+   review of #3281.
 5. **P is not anonymous** when the act is a comment (a comment thread under an anonymous post is
    already the one place the author is hidden; naming X there adds nothing and risks inference) - a
    reaction to an anonymous post may be told, since it names only X and the post.
@@ -693,7 +697,9 @@ Built 2026-11-09 to the rule above. Migration **159** (`user_activity_settings` 
   ledger insert `ON CONFLICT DO NOTHING RETURNING`, one lock order. Rule 8 is asked of the stored
   comment before it (`commentSpeaksAsWriter`). Then `createNotifications` writes the rows and pushes
   through the bell and the cap. Called after a NEW reaction (changing the emoji is not news) and
-  after every comment (`PostInteractionsService.tellFriends`, fire-and-forget, a failure logged).
+  after every comment (`PostInteractionsService.tellFriends`, fire-and-forget, a failure logged) -
+  a comment's only once its own comment, reply and mention rows are written, so a follower it
+  answers or mentions is told once by rule 7, never twice by a race (review of #3281).
 - **"Partager mon activité"**: `GET` / `PUT /api/posts/me/activity-settings`, the switch in
   Settings > Préférences (`ActivitySharingSetting.svelte`, strings `settings_share_activity`,
   `settings_share_activity_hint`).
