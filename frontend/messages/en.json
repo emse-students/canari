@@ -426,7 +426,16 @@
   "chat_device_revoke_session_confirm": "Remove this connection? Whoever holds it will be signed out and has to start over.",
   "chat_devices_intro": "Each row is a device linked to your account. Removing it signs it out and takes away its access to your conversations: it starts from scratch.",
   "chat_device_no_session": "No active connection",
-  "chat_device_session_count": "{count} connections",
+  "chat_device_session_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} connection",
+        "countPlural=other": "{count} connections"
+      }
+    }
+  ],
   "chat_device_session_orphan_note": "This connection never identified a device: it has not unlocked your messages. If you do not recognise it, remove it.",
   "chat_device_session_unlisted_note": "This connection names a device that is no longer in the list. If you do not recognise it, remove it.",
   "chat_device_limit_reached": "This device could not register: your account has reached the limit of {max} devices. Delete an unused device in Settings > Device management, then reopen the app.",
@@ -673,7 +682,16 @@
   "msg_max_reactions_label": "Maximum of {max} different reactions on this message.",
   "msg_recent_reactions_label": "Recent",
   "msg_reactions_label": "Message reactions",
-  "msg_reactions_show_more": "Show {count} more reactions",
+  "msg_reactions_show_more": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Show {count} more reaction",
+        "countPlural=other": "Show {count} more reactions"
+      }
+    }
+  ],
   "msg_reaction_aria_label": "{emoji} ({count} people)",
   "msg_reaction_aria_label_one": "{emoji} (1 person)",
   "msg_audio_format_unsupported_label": "Format not supported",
@@ -785,7 +803,16 @@
   "post_report_label": "Report",
   "post_report_comment_label": "Report this comment",
   "post_like_label": "Like",
-  "post_likes_count_label": "{count} Likes",
+  "post_likes_count_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} Like",
+        "countPlural=other": "{count} Likes"
+      }
+    }
+  ],
   "post_reply_label": "Reply",
   "post_show_comments_label": "Show {count} comments",
   "post_hide_comments_label": "Hide",
@@ -1061,7 +1088,16 @@
   "post_create_publish_button_label": "Publish",
   "post_form_section_remove_label": "Remove form",
   "post_form_choose_label": "- Choose a form -",
-  "post_form_questions_label": "{count} questions",
+  "post_form_questions_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} question",
+        "countPlural=other": "{count} questions"
+      }
+    }
+  ],
   "post_form_opens_suffix_label": "opens {date}",
   "post_form_opens_planned_label": "Scheduled to open on {date}",
   "post_form_none_yet_label": "No form yet.",
@@ -1146,29 +1182,130 @@
   "admin_storage_disk_used": "{used} / {total} used ({percent}%)",
   "admin_storage_postgres_label": "Database",
   "admin_storage_garage_label": "Media objects (Garage)",
-  "admin_storage_garage_object_count": "{count} objects",
+  "admin_storage_garage_object_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object",
+        "countPlural=other": "{count} objects"
+      }
+    }
+  ],
   "admin_storage_redis_label": "Cache (Redis)",
   "admin_storage_unavailable": "Measurement unavailable.",
   "admin_storage_media_growth_title": "What was written",
   "admin_storage_media_week_range": "{from}-{to} d",
   "admin_storage_media_week_current": "Last 7 days",
   "admin_storage_media_older": "Beyond {days} d: {size}. Retention erases part of it, so this is not a growth measurement.",
-  "admin_storage_media_undated": "{count} objects carry no write date and are absent from the bars above.",
+  "admin_storage_media_undated": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object carries no write date and is absent from the bars above.",
+        "countPlural=other": "{count} objects carry no write date and are absent from the bars above."
+      }
+    }
+  ],
   "admin_storage_media_retention_title": "Retention",
   "admin_storage_media_retention_healthy": "No object beyond the {days}-day window. Swept every {hours} h.",
-  "admin_storage_media_retention_pending": "{count} objects ({size}) are past the {days}-day window and are waiting for the next sweep.",
-  "admin_storage_media_retention_stalled": "{count} objects ({size}) should be gone: the oldest is {age} days old for a {days}-day window. A sweep ran and did not take them.",
+  "admin_storage_media_retention_pending": [
+    {
+      "declarations": [
+        "input count",
+        "input days",
+        "input size",
+        "local countPlural = count: plural"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object ({size}) is past the {days}-day window and is waiting for the next sweep.",
+        "countPlural=other": "{count} objects ({size}) are past the {days}-day window and are waiting for the next sweep."
+      }
+    }
+  ],
+  "admin_storage_media_retention_stalled": [
+    {
+      "declarations": [
+        "input count",
+        "input age",
+        "input days",
+        "input size",
+        "local countPlural = count: plural"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object ({size}) should be gone: the oldest is {age} days old for a {days}-day window. A sweep ran and did not take it.",
+        "countPlural=other": "{count} objects ({size}) should be gone: the oldest is {age} days old for a {days}-day window. A sweep ran and did not take them."
+      }
+    }
+  ],
   "admin_storage_media_unreachable_title": "Out of the sweep's reach",
   "admin_storage_media_unreachable_none": "None. Every object in the bucket has its metadata entry.",
-  "admin_storage_media_unreachable_some": "{count} objects ({size}) no sweep can ever reach.",
+  "admin_storage_media_unreachable_some": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object ({size}) no sweep can ever reach.",
+        "countPlural=other": "{count} objects ({size}) no sweep can ever reach."
+      }
+    }
+  ],
   "admin_storage_media_untracked": "{count} ({size}) with no metadata entry: the sweep iterates the metadata and never sees them.",
   "admin_storage_media_tombstoned": "{count} ({size}) marked deleted yet still in the bucket: a delete that failed.",
-  "admin_storage_media_public": "{count} objects ({size}) are public assets, exempt from retention.",
-  "admin_storage_media_archive": "{count} objects ({size}) are feed media (posts, comments, avatars), kept indefinitely.",
-  "admin_storage_media_association": "{count} objects ({size}) are association documents, kept indefinitely, even after the uploader's account is deleted.",
-  "admin_storage_media_reel": "{count} objects ({size}) are CanaReels videos, deleted with their reel one month after publication.",
+  "admin_storage_media_public": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object ({size}) is a public asset, exempt from retention.",
+        "countPlural=other": "{count} objects ({size}) are public assets, exempt from retention."
+      }
+    }
+  ],
+  "admin_storage_media_archive": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object ({size}) is feed media (posts, comments, avatars), kept indefinitely.",
+        "countPlural=other": "{count} objects ({size}) are feed media (posts, comments, avatars), kept indefinitely."
+      }
+    }
+  ],
+  "admin_storage_media_association": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object ({size}) is an association document, kept indefinitely, even after the uploader's account is deleted.",
+        "countPlural=other": "{count} objects ({size}) are association documents, kept indefinitely, even after the uploader's account is deleted."
+      }
+    }
+  ],
+  "admin_storage_media_reel": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object ({size}) is a CanaReels video, deleted with its reel one month after publication.",
+        "countPlural=other": "{count} objects ({size}) are CanaReels videos, deleted with their reel one month after publication."
+      }
+    }
+  ],
   "admin_storage_reels": "{live} reels alive, {overdue} overdue for deletion (an overdue reel is still there after its month: the hourly worker has not removed it).",
-  "admin_storage_media_unclassified": "{count} objects ({size}) carry no retention class (uploaded before 2026-10-01 or by an old client): the sweep never touches them.",
+  "admin_storage_media_unclassified": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} object ({size}) carries no retention class (uploaded before 2026-10-01 or by an old client): the sweep never touches it.",
+        "countPlural=other": "{count} objects ({size}) carry no retention class (uploaded before 2026-10-01 or by an old client): the sweep never touches them."
+      }
+    }
+  ],
   "admin_storage_mls_title": "MLS",
   "admin_storage_mls_desc": "What the database and the cache above are made of. Numbers only: nothing here warns, classifies or acts.",
   "admin_storage_mls_tables_title": "Tables",
@@ -1177,13 +1314,36 @@
   "admin_storage_mls_table_live": "~{size} of data",
   "admin_storage_mls_queue_title": "Undelivered queue",
   "admin_storage_mls_queue_summary": "{rows} messages waiting for {devices} devices.",
-  "admin_storage_mls_queue_deepest": "Deepest single device queue: {count} messages.",
+  "admin_storage_mls_queue_deepest": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Deepest single device queue: {count} message.",
+        "countPlural=other": "Deepest single device queue: {count} messages."
+      }
+    }
+  ],
   "admin_storage_mls_queue_oldest": "Oldest message waiting: {days} days.",
   "admin_storage_mls_queue_empty": "Nothing waiting.",
   "admin_storage_mls_queue_growth": "Messages queued per week",
   "admin_storage_mls_ghosts_title": "Devices without a key package",
   "admin_storage_mls_ghosts_none": "None. All {devices} devices holding memberships have published a key package.",
-  "admin_storage_mls_ghosts_some": "{count} of {devices} devices hold memberships ({memberships}) and have published no key package: they can be added to nothing and can receive no Welcome.",
+  "admin_storage_mls_ghosts_some": [
+    {
+      "declarations": [
+        "input count",
+        "input devices",
+        "input memberships",
+        "local countPlural = count: plural"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} of {devices} devices holds memberships ({memberships}) and has published no key package: it can be added to nothing and can receive no Welcome.",
+        "countPlural=other": "{count} of {devices} devices hold memberships ({memberships}) and have published no key package: they can be added to nothing and can receive no Welcome."
+      }
+    }
+  ],
   "admin_storage_mls_redis_title": "Cache keys",
   "admin_storage_mls_redis_summary": "{keys} keys. The breakdown below is a sample of {sampled}.",
   "admin_storage_mls_redis_prefix": "{prefix}: {keys}",
@@ -1298,7 +1458,16 @@
   "admin_legacy_status_already_held": "Already a member - row closed, nothing changed",
   "admin_legacy_collision_hint": "Several rows share the same last name, first name and promo for one association. Nothing can decide on its own which belongs to whom: the first person to sign in takes the membership and the other rows stay stuck.",
   "admin_legacy_empty": "No rows.",
-  "admin_legacy_total_label": "{count} rows",
+  "admin_legacy_total_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} row",
+        "countPlural=other": "{count} rows"
+      }
+    }
+  ],
   "admin_payments_connect_hint": "Online payments are configured on each association: public page → Edit → Payments tab.",
   "admin_agenda_title": "Pending events",
   "admin_agenda_subtitle": "Validate an event to make it visible on the public agenda and the global calendar.",
@@ -2929,8 +3098,16 @@
   "form_cash_expiry_placeholder": "Never (leave empty)",
   "form_cash_expiry_hint": "On-site payments not validated after this delay automatically expire. Leave empty to never expire.",
   "form_cash_expiry_required_public": "Required on a public form: an unpaid on-site answer keeps its seat until this delay ends.",
-  "form_questions_count": "{count} questions",
-  "form_questions_count_one": "1 question",
+  "form_questions_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} question",
+        "countPlural=other": "{count} questions"
+      }
+    }
+  ],
   "form_add_question_button": "Add a question",
   "form_error_title_required": "The form title is required.",
   "form_error_association_required": "Please select a recipient association for a paid form.",
@@ -4105,7 +4282,16 @@
   "chat_system_call_busy": "Contact busy",
   "chat_system_call_duration_under_minute": "less than a minute",
   "chat_system_call_duration_one_minute": "1 minute",
-  "chat_system_call_duration_minutes": "{count} minutes",
+  "chat_system_call_duration_minutes": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} minute",
+        "countPlural=other": "{count} minutes"
+      }
+    }
+  ],
   "chat_preview_media": "[Media]",
   "chat_preview_info": "[Info]",
   "chat_preview_poll": "[Poll]",
@@ -4239,7 +4425,16 @@
   "pdf_open_document_label": "Open the document",
   "post_file_ready_to_save": "Ready - tap to save",
   "pdf_viewer_page_alt": "Page {page} of {total}",
-  "pdf_viewer_page_count": "{count} pages",
+  "pdf_viewer_page_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} page",
+        "countPlural=other": "{count} pages"
+      }
+    }
+  ],
   "pdf_viewer_zoom_in": "Zoom in",
   "pdf_viewer_zoom_out": "Zoom out",
   "pdf_viewer_error": "This document cannot be displayed.",
@@ -4410,7 +4605,16 @@
   "form_criterion_question_label": "Question",
   "form_criterion_question_placeholder": "Choose a question...",
   "form_criterion_untitled_question": "Untitled question",
-  "form_criterion_formation_count": "{count} people",
+  "form_criterion_formation_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} person",
+        "countPlural=other": "{count} people"
+      }
+    }
+  ],
   "form_builder_priced_by_grid": "Prices for this question are set in the pricing grid, not here.",
   "form_view_not_open_to_you_title": "This form is not meant for you",
   "form_view_not_open_to_you_desc": "Access is limited to certain class years, tracks or members.",
@@ -4531,7 +4735,23 @@
   "reel_sendto_failed_in_unnamed": "A video could not be sent to one of the conversations you chose: open it to see why.",
   "reel_sendto_failed_in_many": "The video could not be sent to {count} conversations: open them to see why.",
   "reel_sendto_failed_in_chosen": "The video could not be sent to the conversations you chose: open them to see why.",
-  "reel_sendto_delete_everywhere_skipped": "Deleted in {done} conversations; {skipped} are no longer on this device and keep it.",
+  "reel_sendto_delete_everywhere_skipped": [
+    {
+      "declarations": [
+        "input done",
+        "input skipped",
+        "local donePlural = done: plural",
+        "local skippedPlural = skipped: plural"
+      ],
+      "selectors": ["donePlural", "skippedPlural"],
+      "match": {
+        "donePlural=one skippedPlural=one": "Deleted in {done} conversation; {skipped} is no longer on this device and keeps it.",
+        "donePlural=one skippedPlural=other": "Deleted in {done} conversation; {skipped} are no longer on this device and keep it.",
+        "donePlural=other skippedPlural=one": "Deleted in {done} conversations; {skipped} is no longer on this device and keeps it.",
+        "donePlural=other skippedPlural=other": "Deleted in {done} conversations; {skipped} are no longer on this device and keep it."
+      }
+    }
+  ],
   "reel_sendto_everywhere_running": "This video is already being deleted.",
   "reel_sendto_same_as_post": "The conversations will receive the published video itself.",
   "reel_sendto_cancel_all": "Cancel everywhere",
