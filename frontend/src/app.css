@@ -654,10 +654,14 @@ body {
    and sheet headings and inherit the body family at their own bold weight; a heading that is a NAME
    (`AssociationTile`, the community title in `Sidebar`) opts in with `font-display`. A sheet or tab
    title that happens to be an `h1` for the outline opts OUT with `font-body`. */
-h1,
-.font-brand,
-.font-display {
-  font-family: var(--font-display);
+/* IN `@layer base`: unlayered, this rule outranked every utility, so the `font-body` opt-out on an
+   `h1` (18 places and PostMarkdown's `[&_h1]:font-body`) computed to Fredoka and did nothing. */
+@layer base {
+  h1,
+  .font-brand,
+  .font-display {
+    font-family: var(--font-display);
+  }
 }
 
 /*

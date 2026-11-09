@@ -244,7 +244,7 @@ Messenger use ONE family throughout; Canari keeps two, the second as the excepti
 (Fredoka) carries only the page title (`h1`), a NAME (association tile, community title, contact
 name in the chat header, profile name) via the `font-display` utility, and the wordmark
 (`font-brand`, `CanariBrand` and the login title). An `h1` that is really a tab or sheet title opts
-out with `font-body`. **No heading carries `tracking-tight`** (it was -0.5 to -0.7px on every `h1`
+out with `font-body` - which works only because the `h1` rule is in `@layer base` (`appDisplayFaceLayer.test.ts`); unlayered it beat the utility. **No heading carries `tracking-tight`** (it was -0.5 to -0.7px on every `h1`
 and section title against the reference's `normal`); the wordmark keeps its own `tracking-wide`,
 it is identity. Eyebrow labels (`uppercase tracking-wide`) are not headings and are untouched.
 
