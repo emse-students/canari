@@ -1,5 +1,4 @@
 <script lang="ts">
-  import InlineVideo from '$lib/components/shared/InlineVideo.svelte';
   import VideoPlayer from '$lib/components/shared/VideoPlayer.svelte';
   import { m } from '$lib/paraglide/messages';
   import {
@@ -80,6 +79,11 @@
      */
     onNear?: () => void;
     /**
+     * Opens the message's actions sheet from a video's own chip: a hold on a conversation's video is
+     * its pause (owner, 2026-11-09), so a video-only bubble needs another way to its menu.
+     */
+    onActions?: () => void;
+    /**
      * The picture or video fills the top of its bubble edge to edge, and the caption sits under it
      * in the same bubble (Messenger's and WhatsApp's). Set by `MessageBubble` for a photo or a video
      * that carries text: the bubble clips the media's corners, so this only cancels the bubble's own
@@ -131,6 +135,7 @@
     textSegments = [],
     onNavigateLink: _onNavigateLink,
     onNear,
+    onActions,
     bleed = false,
     senderId,
     sentAt,
@@ -348,19 +353,22 @@
               <Download size={16} strokeWidth={2.5} />
             </button>
           {:else if blobUrl}
-            <!-- THE FEED'S VIDEO, NOT THE ENGINE'S (2026-10-01): plays by itself while on screen,
-                 muted by the app's one sound answer, a tap opening the viewer. ITS OWN SHAPE, NEVER
+            <!-- CANARI'S PLAYER, NOT THE ENGINE'S (2026-10-01): played when asked, its sound its
+                 own, the expand chip opening the viewer (`VideoPlayer` `chat`). ITS OWN SHAPE, NEVER
                  CROPPED (user, 2026-10-02): CONTAINED in the frame, so past the height ceiling it
                  letterboxes on the black rather than losing its edges. -->
-            <InlineVideo
-              src={blobUrl}
-              onOpen={() => (showLightbox = true)}
-              onMetadata={frame.onLoad}
-              manualPlay
-              openLabel={m.msg_open_video_fullscreen_label()}
-              class="absolute inset-0"
-              videoClass="h-full w-full object-contain object-center"
-            />
+            <div class="absolute inset-0">
+              <VideoPlayer
+                variant="chat"
+                src={blobUrl}
+                onOpen={() => (showLightbox = true)}
+                {onActions}
+                onMetadata={frame.onLoad}
+                openLabel={m.msg_open_video_fullscreen_label()}
+                class="h-full w-full"
+                videoClass="h-full w-full object-contain object-center"
+              />
+            </div>
           {:else if failure}
             <!-- `compact`: the frame of a 4:1 panorama is 56 px tall, and the failure must fit the
                  box the picture would have had rather than re-shape the row. The frame's own

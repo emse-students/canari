@@ -510,7 +510,7 @@
     "input": 0
   },
   "src/lib/components/live/LiveViewer.svelte": {
-    "button": 6,
+    "button": 5,
     "select": 0,
     "input": 0
   },
@@ -1006,11 +1006,6 @@
   },
   "src/lib/components/shared/GlassMenuButton.svelte": {
     "button": 2,
-    "select": 0,
-    "input": 0
-  },
-  "src/lib/components/shared/InlineVideo.svelte": {
-    "button": 3,
     "select": 0,
     "input": 0
   },

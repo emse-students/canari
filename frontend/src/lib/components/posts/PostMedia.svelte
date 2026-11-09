@@ -32,7 +32,6 @@
   import PdfThumbnail from '$lib/components/shared/PdfThumbnail.svelte';
   import PdfViewerModal from '$lib/components/shared/PdfViewerModal.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
-  import InlineVideo from '$lib/components/shared/InlineVideo.svelte';
   import VideoPlayer from '$lib/components/shared/VideoPlayer.svelte';
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
   import MediaSpinner from '$lib/components/shared/MediaSpinner.svelte';
@@ -636,11 +635,12 @@
       <!-- ========== VIDEO ========== -->
       <!-- UNDER A SINGLE-ATTACHMENT POST THE BOX IS THE CALLER'S (`letterbox`): `PostContent`
            reserves it at the video's own shape under the `--media-max-height` ceiling, and the
-           video is CONTAINED in it: the whole frame, the sides filled by a blurred copy of its first frame (`InlineVideo` `backdrop`)
+           video is CONTAINED in it: the whole frame, the sides filled by a blurred copy of its first frame (`VideoPlayer` `backdrop`)
            (user, 2026-10-22; a gallery cell passes `videoFit="cover"`, its square being the point). It used to draw its own 16:9 box inside that reservation,
            which put a phone's vertical clip in a narrow strip over a grey band (Mi 9T, 2026-09-29).
            It was cropped (`object-cover`) until 2026-10-22, which cut a portrait clip. -->
-      <InlineVideo
+      <VideoPlayer
+        variant="feed"
         src={playUrl!}
         disableRemotePlayback={streamManaged}
         streamed={streamUrl !== null}

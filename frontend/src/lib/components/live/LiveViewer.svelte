@@ -17,16 +17,12 @@
    */
   import { onMount, tick } from 'svelte';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
-  import {
-    LoaderCircle,
-    MessageCircle,
-    MessageCircleOff,
-    Radio,
-    Share2,
-    Volume2,
-    VolumeX,
-    X,
-  } from '@lucide/svelte';
+  import { LoaderCircle, MessageCircle, MessageCircleOff, Radio, Share2, X } from '@lucide/svelte';
+  import { videoGestures } from '$lib/actions/videoGestures';
+  import VideoSoundButton from '$lib/components/ui/player/VideoSoundButton.svelte';
+  import VideoFeedbackGlyph, {
+    type VideoFeedbackKind,
+  } from '$lib/components/ui/player/VideoFeedbackGlyph.svelte';
   import LiveBadge from './LiveBadge.svelte';
   import LiveIdentity from './LiveIdentity.svelte';
   import LiveReportControl from './LiveReportControl.svelte';
@@ -113,8 +109,9 @@
 
   /**
    * The `<video>` as the player drives it. A `play()` the engine refuses WITH sound (no gesture yet)
-   * is tried again muted - which turns the app's one sound answer off, as any muted video does - so a
-   * live never sits paused behind an autoplay rule; the toggle brings the sound back with a tap.
+   * is tried again muted, so a live never sits paused behind an autoplay rule; the app's answer goes
+   * silent for this session only (`muteForRefusedStart`) - the reader's remembered choice is not the
+   * engine's refusal - and a tap brings the sound back.
    */
   function videoFor(el: HTMLVideoElement): LiveVideoLike {
     return {
@@ -139,6 +136,7 @@
         } catch (e) {
           if (el.muted) throw e;
           console.warn(`[LIVE] viewer: play() with sound refused (${String(e)}) - muted`);
+          videoSound.muteForRefusedStart();
           el.muted = true;
           await el.play();
         }
@@ -243,8 +241,17 @@
     return chat.send(text);
   }
 
+  /** What the last tap on the picture did, for the glyph (`VideoFeedbackGlyph`). */
+  let feedback = $state<{ kind: VideoFeedbackKind; n: number } | null>(null);
+  let feedbackCount = 0;
+
+  /**
+   * The sound, from the speaker or a tap on the picture (owner, 2026-11-09: the tap is the sound on
+   * every video). A live has no hold: its player resumes a paused element at the next delivery.
+   */
   function toggleSound() {
     videoSound.toggle();
+    feedback = { kind: videoSound.muted ? 'sound-off' : 'sound-on', n: ++feedbackCount };
     if (video) video.muted = videoSound.muted;
     // A tap is the gesture an unmuted play() needed.
     if (video?.paused && viewerState.kind === 'playing')
@@ -288,7 +295,8 @@
     <video
       bind:this={video}
       use:followVideoSound
-      class="absolute inset-0 h-full w-full object-contain"
+      use:videoGestures={{ onTap: toggleSound, enabled: !terminal }}
+      class="absolute inset-0 h-full w-full object-contain [-webkit-touch-callout:none]"
       class:opacity-40={terminal}
       playsinline
       autoplay
@@ -297,6 +305,8 @@
       onerror={() => player?.noteMediaError()}
       data-live-video
     ></video>
+    <!-- A tap's glyph: the feedback of a gesture, never a state. -->
+    <VideoFeedbackGlyph {feedback} />
 
     <div
       class="absolute inset-x-0 top-0 flex items-center gap-2 bg-linear-to-b from-black/60 to-transparent p-3 pt-[calc(var(--safe-area-inset-top,0px)+0.75rem)]"
@@ -324,21 +334,8 @@
         </span>
       </span>
       <LiveReportControl {live} onBlocked={() => overlay.dismissFromUi()} />
-      <button
-        type="button"
-        class="ui-icon-button rounded-full bg-black/30 outline-none hover:bg-black/50 focus-visible:ring-2 focus-visible:ring-amber-500"
-        aria-label={videoSound.muted ? m.live_viewer_unmute() : m.live_viewer_mute()}
-        title={videoSound.muted ? m.live_viewer_unmute() : m.live_viewer_mute()}
-        aria-pressed={!videoSound.muted}
-        onclick={toggleSound}
-        data-live-sound
-      >
-        {#if videoSound.muted}
-          <VolumeX size={22} />
-        {:else}
-          <Volume2 size={22} />
-        {/if}
-      </button>
+      <!-- The kit's speaker, the same object as on every other video (owner, 2026-11-09). -->
+      <VideoSoundButton muted={videoSound.muted} onToggle={toggleSound} data-live-sound />
       <!-- Withheld: no toggle either - a button that shows and hides nothing is a dead control. -->
       {#if !chatWithheld}
         <button
