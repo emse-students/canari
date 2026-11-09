@@ -73,6 +73,9 @@ const RAW_TABLES = [
   // Migration 146's unpublished form revisions: a form id and the form's own content, no account -
   // they go with their form (ON DELETE CASCADE), as its other content does.
   'form_drafts',
+  // Migration 156's replay cap evictions (docs/wiki/live-replays.md): a live id, byte counts and a
+  // date, no account - and pruned at 30 days by the live sweep.
+  'live_replay_cap_evictions',
 ];
 
 const SRC = join(__dirname, '..');
