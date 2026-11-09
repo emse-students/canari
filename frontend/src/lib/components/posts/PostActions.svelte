@@ -143,8 +143,8 @@
     class="{ACTION} text-text-muted touch-manipulation select-none hover:bg-(--cn-surface)"
     aria-label={userReaction ? reactionTypeToLabel(userReaction) : m.post_react()}
     title={m.post_react_hold_hint()}
-    aria-haspopup="true"
     aria-expanded={showReactionPicker}
+    aria-pressed={userReaction != null}
     data-post-react
   >
     {#if userReaction}
@@ -158,7 +158,7 @@
   <Button
     variant="ghost"
     onclick={() => openPicker('assistive button')}
-    class="sr-only"
+    class="sr-only focus:not-sr-only"
     aria-label={m.post_reacter()}
     data-post-react-picker-open
   />

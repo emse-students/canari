@@ -150,7 +150,7 @@ function mountCard(post: PostEntity, commentsOpen = false) {
 
 /** The poll's option buttons, by their `aria-disabled`. */
 function optionsRefused(target: HTMLElement): string[] {
-  return [...target.querySelectorAll('button[aria-pressed]')].map(
+  return [...target.querySelectorAll('[data-poll-option]')].map(
     (b) => b.getAttribute('aria-disabled') ?? ''
   );
 }
@@ -242,9 +242,7 @@ it('a row whose read was issued BEFORE a vote answered does not erase the vote',
   const { target, props } = mountCard(row({ canVote: true }));
   const getIssuedAt = nextPostSequence();
   vi.mocked(votePoll).mockResolvedValue(row({}));
-  (
-    target.querySelector('button[aria-pressed][aria-disabled="false"]') as HTMLButtonElement
-  ).click();
+  (target.querySelector('[data-poll-option][aria-disabled="false"]') as HTMLButtonElement).click();
   await settle();
   expect(tallied(target)).toBe(true);
 
@@ -259,9 +257,7 @@ it('a row landing while the vote is still out does not erase it either', async (
   const { target, props } = mountCard(row({ canVote: true }));
   const answer = deferred<PostEntity>();
   vi.mocked(votePoll).mockReturnValue(answer.promise);
-  (
-    target.querySelector('button[aria-pressed][aria-disabled="false"]') as HTMLButtonElement
-  ).click();
+  (target.querySelector('[data-poll-option][aria-disabled="false"]') as HTMLButtonElement).click();
   await settle();
 
   // Issued after the tap, answered before the vote committed: it does not have the vote.
@@ -324,9 +320,7 @@ it('the poll selection follows the card, not a row older than the vote', async (
   const { target, props } = mountCard(row({ canVote: true }));
   const getIssuedAt = nextPostSequence();
   vi.mocked(votePoll).mockResolvedValue(row({}));
-  (
-    target.querySelector('button[aria-pressed][aria-disabled="false"]') as HTMLButtonElement
-  ).click();
+  (target.querySelector('[data-poll-option][aria-disabled="false"]') as HTMLButtonElement).click();
   await settle();
 
   // The row read before the vote answered still holds the reader's PREVIOUS answer.
@@ -346,7 +340,7 @@ it('the poll selection follows the card, not a row older than the vote', async (
   });
   flushSync();
 
-  const pressed = [...target.querySelectorAll('button[aria-pressed]')].map((b) =>
+  const pressed = [...target.querySelectorAll('[data-poll-option]')].map((b) =>
     b.getAttribute('aria-pressed')
   );
   expect(pressed).toEqual(['true', 'false']);

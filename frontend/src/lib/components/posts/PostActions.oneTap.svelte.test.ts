@@ -105,7 +105,8 @@ it('reaches the picker without a gesture: context menu, ArrowUp, the assistive b
   target.querySelector<HTMLButtonElement>('button[data-post-react-picker-open]')!.click();
   expect(open).toHaveBeenCalledTimes(3);
   expect(quick).not.toHaveBeenCalled();
-  expect(button.getAttribute('aria-haspopup')).toBe('true');
+  // The popup is a plain group, which no aria-haspopup value names: only aria-expanded says it.
+  expect(button.hasAttribute('aria-haspopup')).toBe(false);
 });
 
 it('Escape closes the open picker', () => {
@@ -114,4 +115,12 @@ it('Escape closes the open picker', () => {
     .querySelector('[role="group"]')!
     .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   expect(close).toHaveBeenCalledTimes(1);
+});
+
+it('announces the reacted state and shows the assistive button on keyboard focus', () => {
+  expect(mountBar(null).getAttribute('aria-pressed')).toBe('false');
+  document.body.innerHTML = '';
+  expect(mountBar('LIKE').getAttribute('aria-pressed')).toBe('true');
+  const assistive = target.querySelector<HTMLButtonElement>('button[data-post-react-picker-open]')!;
+  expect(assistive.className).toContain('focus:not-sr-only');
 });
