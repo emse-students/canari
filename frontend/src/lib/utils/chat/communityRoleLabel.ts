@@ -9,6 +9,7 @@
  */
 
 import { m } from '$lib/paraglide/messages';
+import { hasInvisibleCharacter } from '$lib/utils/users/visibleText';
 
 /** The three roles a community has. */
 export type CanonicalRole = 'member' | 'moderator' | 'admin';
@@ -45,21 +46,10 @@ export function resolveRoleLabel(role: CanonicalRole, customLabel?: string | nul
 }
 
 /**
- * Whether a role name is acceptable to the server's rule, so the editor can refuse before sending.
- * THE SAME RULE AS `roleLabelHasForbiddenCharacter` in social-service (`channel.service.ts`), with
- * the same test vectors: no control, invisible-formatting, line or paragraph separator character
- * (`\p{Cc}\p{Cf}\p{Zl}\p{Zp}`), judged per grapheme so emoji keep their glue - the zero-width joiner
- * U+200D and the tag characters U+E0020-U+E007F are allowed INSIDE a grapheme holding a pictographic
- * (or starting with U+1F3F4) and refused everywhere else. Length is a separate bound.
+ * Whether a role name is acceptable to the server's rule, so the editor can refuse before sending:
+ * no character the shared text rule would drop (`hasInvisibleCharacter`, `utils/users/visibleText.ts`,
+ * the same file the server holds a byte-identical copy of). Length is a separate bound.
  */
 export function isAcceptableRoleLabel(label: string): boolean {
-  const forbidden = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
-  const emojiGlue = /[‍\u{E0020}-\u{E007F}]/gu;
-  for (const { segment } of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(
-    label
-  )) {
-    const isEmoji = /\p{Extended_Pictographic}/u.test(segment) || segment.startsWith('\u{1F3F4}');
-    if (forbidden.test(isEmoji ? segment.replace(emojiGlue, '') : segment)) return false;
-  }
-  return true;
+  return !hasInvisibleCharacter(label);
 }
