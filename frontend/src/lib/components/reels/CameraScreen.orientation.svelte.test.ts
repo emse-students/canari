@@ -103,14 +103,15 @@ describe('CameraScreen - the orientation (owner, 2026-11-09)', () => {
     expect(sent.at(-1)).toBe('portrait');
   });
 
-  it('a take freezes the orientation it started in, and the button stands down', async () => {
+  it('a take locks the orientation it started in, and the button stands down', async () => {
     const props = $state({ recording: false });
     viewportOrientation.landscape = false;
     const { target } = await mountCamera(props);
     viewportOrientation.landscape = true;
     props.recording = true;
     flushSync();
-    expect(sent.at(-1)).toBe('landscape');
+    // `locked`: what is on screen and no other side, on a tablet too (screen-orientation.md).
+    expect(sent.at(-1)).toBe('locked');
     expect(target.querySelector<HTMLButtonElement>('[data-rotate-button]')!.disabled).toBe(true);
     props.recording = false;
     flushSync();

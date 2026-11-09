@@ -28,7 +28,15 @@ import { sealLiveChatMessage } from '$lib/live/liveChatCrypto';
 import { KEY, LIMITS, LIVE_ID } from '$lib/live/liveBroadcast.test-helper';
 import type { LiveChatBlock, LiveManifest } from '$lib/live/types';
 import { flushMacrotask } from '../../../test/flush';
+import { resetScreenOrientationForTest } from '$lib/mobile/screenOrientation.svelte';
 
+// The orientation block runs as the Android app, whose bridge records what native is told; every
+// other block is the web build, as before.
+const runtime = vi.hoisted(() => ({ android: false }));
+vi.mock('$lib/utils/appVersion', async (orig) => ({
+  ...(await orig<typeof import('$lib/utils/appVersion')>()),
+  isAndroidTauriRuntime: () => runtime.android,
+}));
 vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm: vi.fn(() => Promise.resolve(true)) }));
 vi.mock('$lib/components/shared/Avatar.svelte', () => ({ default: () => {} }));
 vi.mock('$lib/live/shareLive', () => ({ shareLiveLink: vi.fn() }));
@@ -633,5 +641,37 @@ describe('LiveBroadcaster - a double tap on the preview flips the lens (owner, 2
     await settle();
     expect(cam.control.opened).toHaveLength(1);
     expect(toggle.getAttribute('aria-pressed')).toBe('true');
+  });
+});
+
+describe('LiveBroadcaster - the orientation (owner, 2026-11-09)', () => {
+  type Win = Window & { canariOrientation?: { set: (m: string) => void } };
+  let sent: string[];
+
+  beforeEach(() => {
+    resetScreenOrientationForTest();
+    sent = [];
+    runtime.android = true;
+    (window as Win).canariOrientation = { set: (mode) => sent.push(mode) };
+  });
+
+  afterEach(() => {
+    runtime.android = false;
+    delete (window as Win).canariOrientation;
+  });
+
+  it('turns in the preview, LOCKS what is on screen from Start, and gives portrait back at unmount', async () => {
+    screen();
+    await settle();
+    expect(sent).toEqual(['auto']);
+    expect(q('[data-rotate-button]')).not.toBeNull();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    expect(q('[data-live-phase]')!.dataset.livePhase).toBe('live');
+    // `locked`, never the orientation restated: a tablet's portrait is free rotation.
+    expect(sent.at(-1)).toBe('locked');
+    expect(q('[data-rotate-button]')).toBeNull();
+    unmount(mounted.pop()!);
+    expect(sent.at(-1)).toBe('portrait');
   });
 });
