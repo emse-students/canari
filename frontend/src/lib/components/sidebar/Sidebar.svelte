@@ -787,6 +787,7 @@
               isSelected={selectedContact === name}
               unreadCount={convo.unreadCount ?? 0}
               imageMediaId={convo.imageMediaId}
+              lastActivityAt={conversationRecency(convo)}
               onClick={() => onSelectConversation(name)}
             />
           </div>
