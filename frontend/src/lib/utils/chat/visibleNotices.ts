@@ -16,9 +16,10 @@
  *
  * @see docs/wiki/protocols/history-reconciliation.md#the-acting-device-writes-its-own-notice
  */
-import { m } from '$lib/paraglide/messages';
 import type { IMlsService } from '$lib/mlsService';
 import { encodeAppMessage, mkVisibleSystem } from '$lib/proto/codec';
+import { mkNoticeEnvelope, serializeEnvelope, type NoticeSpec } from '$lib/envelope';
+import { noticeText, noticeUserIds } from './noticeText';
 import type { AddMessageToChatOptions } from '$lib/types';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { SYSTEM_SENDER_ID } from './messageUtils';
@@ -54,41 +55,69 @@ function addedUsersOf(data: Record<string, unknown>): string[] {
 }
 
 /**
- * The text of a visible notice, or `null` when its payload names nothing to draw (a rename with no
- * name, a removal with no target, an addition of nobody) - the same verdicts the receivers apply.
+ * The structured fact of a visible notice, or `null` when its payload names nothing to draw (a rename
+ * with no name, a removal with no target, an addition of nobody) - the same verdicts the receivers apply.
+ */
+export function visibleNoticeSpec(
+  event: VisibleNoticeEvent,
+  data: Record<string, unknown>,
+  actor: string
+): NoticeSpec | null {
+  switch (event) {
+    case 'groupRenamed':
+      return data.newName ? { event, actor, name: String(data.newName) } : null;
+    case 'groupImageChanged': {
+      const hasImage = typeof data.imageMediaId === 'string' && data.imageMediaId;
+      return { event: hasImage ? 'groupPhotoChanged' : 'groupPhotoRemoved', actor };
+    }
+    case 'memberRemoved':
+      return data.targetUser ? { event, actor, targets: [String(data.targetUser)] } : null;
+    case 'memberAdded': {
+      const users = addedUsersOf(data);
+      return users.length ? { event, actor, targets: users } : null;
+    }
+  }
+}
+
+/**
+ * The text of a visible notice, or `null` when its payload names nothing to draw. Names are
+ * resolved once here for the STORED fallback sentence; the row itself carries the ids and is redrawn
+ * from them (see {@link visibleNoticeContent}).
  */
 export async function renderVisibleNotice(
   event: VisibleNoticeEvent,
   data: Record<string, unknown>,
   actor: string
 ): Promise<string | null> {
-  switch (event) {
-    case 'groupRenamed': {
-      if (!data.newName) return null;
-      const getName = await resolveDisplayNames([actor]);
-      return m.chat_system_group_renamed({ sender: getName(actor), name: String(data.newName) });
-    }
-    case 'groupImageChanged': {
-      const getName = await resolveDisplayNames([actor]);
-      const imageMediaId =
-        typeof data.imageMediaId === 'string' && data.imageMediaId ? data.imageMediaId : null;
-      return imageMediaId
-        ? m.chat_system_group_photo_changed({ sender: getName(actor) })
-        : m.chat_system_group_photo_removed({ sender: getName(actor) });
-    }
-    case 'memberRemoved': {
-      if (!data.targetUser) return null;
-      const target = String(data.targetUser);
-      const getName = await resolveDisplayNames([actor, target]);
-      return m.chat_system_member_removed({ sender: getName(actor), target: getName(target) });
-    }
-    case 'memberAdded': {
-      const users = addedUsersOf(data);
-      const getName = await resolveDisplayNames([actor, ...users]);
-      const added = users.map((u) => getName(u)).join(', ');
-      return added ? m.chat_system_member_added({ sender: getName(actor), members: added }) : null;
-    }
-  }
+  const spec = visibleNoticeSpec(event, data, actor);
+  if (!spec) return null;
+  return noticeText(spec, await resolveDisplayNames(noticeUserIds(spec)));
+}
+
+/**
+ * The CONTENT a notice row is stored with: a system envelope carrying the sentence (fallback) AND the
+ * ids it names, so the renderer draws the names live and a name unknown at write time is not frozen
+ * into the row. `null` when the payload names nothing.
+ */
+export async function visibleNoticeContent(
+  event: VisibleNoticeEvent,
+  data: Record<string, unknown>,
+  actor: string
+): Promise<string | null> {
+  const spec = visibleNoticeSpec(event, data, actor);
+  if (!spec) return null;
+  return noticeContent(spec, await resolveDisplayNames(noticeUserIds(spec)));
+}
+
+/** A notice row's stored content from its spec and a name lookup. */
+export function noticeContent(spec: NoticeSpec, nameOf: (userId: string) => string): string {
+  return serializeEnvelope(mkNoticeEnvelope(noticeText(spec, nameOf), spec));
+}
+
+/** The departure notice of `leaver`, as stored content (live handler and archive replay share it). */
+export async function memberLeftContent(leaver: string): Promise<string> {
+  const spec: NoticeSpec = { event: 'memberLeft', actor: leaver };
+  return noticeContent(spec, await resolveDisplayNames([leaver]));
 }
 
 /**
@@ -164,7 +193,7 @@ export async function sendVisibleNotice(
 ): Promise<void> {
   const frame = mkVisibleSystem(event, JSON.stringify(payload));
   const noOwnRow = event === 'memberLeft' || event === 'groupDeleted' || !own;
-  const text = noOwnRow ? null : await renderVisibleNotice(event, payload, own.actor);
+  const text = noOwnRow ? null : await visibleNoticeContent(event, payload, own.actor);
   const sent = await mlsService.sendMessage(groupId, encodeAppMessage(frame));
   if (noOwnRow) return;
   if (text === null) {

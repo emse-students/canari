@@ -1502,6 +1502,8 @@ handler and the archive replay, which had two copies of it between them. The rep
 photo notice it never drew, which had left a device that met that frame only in the archive one row
 short as well.
 
+**The row carries ids, the reader draws the names** (2026-11-09, 1.6.8: the latest join read "Utilisateur inconnu a rejoint" for good). The stored sentence froze whatever `resolveDisplayNames` answered at write time, and a newcomer's profile is often unreadable then (a 404 or a nameless row, both cached as the unknown label). The stored envelope now holds `notice: { event, actor, targets, name }` beside the fallback `text` (`visibleNoticeContent`, `memberLeftContent`; `noticeText` is the one sentence builder), and `MessageBubble` draws the sentence from the ids through the single-flight `resolveUserDisplayName`, so the row redraws when the name lands. Rows written before this keep their stored sentence. Salon rows (`mkSystemEnvelope` in the community code), the uninvited-entry and device lines, and call rows are still frozen text.
+
 **Mixed versions need nothing.** An older acting device still lacks its row, and converges as before
 (one relay, marked). An older member's digest names the notice the updated acting device now holds,
 so the diff is empty. Rows that only one device should ever hold (an outbox line, an eviction notice)

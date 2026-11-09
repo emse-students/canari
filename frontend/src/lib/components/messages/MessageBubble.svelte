@@ -12,6 +12,7 @@
     type MediaFailureCause,
   } from '$lib/utils/mediaErrors';
   import { parseEnvelope } from '$lib/envelope';
+  import { noticeText, noticeUserIds } from '$lib/utils/chat/noticeText';
   import Modal from '../shared/Modal.svelte';
   import MessageEmojiPicker from './MessageEmojiPicker.svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
@@ -63,6 +64,7 @@
   import {
     getUserDisplayNameSync,
     getUserFirstNameSync,
+    peekUserDisplayName,
     resolveUserDisplayName,
   } from '$lib/utils/users/displayName';
   import {
@@ -316,12 +318,35 @@
   let channelInvite = $derived(
     envelope.kind === 'system' ? (envelope.channelInvite ?? null) : null
   );
+  /**
+   * A NOTICE ROW NAMES ITS PEOPLE BY ID AND DRAWS THE NAMES HERE, NEVER FROM A FROZEN SENTENCE.
+   * A name unknown when the row was written (a newcomer's profile not yet readable) is fetched by the
+   * one display-name resolver (single-flight, cached) and lands in `noticeNames`, which redraws the
+   * row. A person the server genuinely does not know keeps the unknown label, logged once by the
+   * resolver with its reason.
+   */
+  let noticeNames = $state<Record<string, string>>({});
+  let notice = $derived(envelope.kind === 'system' ? (envelope.notice ?? null) : null);
+  $effect(() => {
+    if (!notice) return;
+    for (const id of noticeUserIds(notice)) {
+      if (peekUserDisplayName(id) !== null) continue;
+      void resolveUserDisplayName(id).then((name) => {
+        if (name && noticeNames[id] !== name) noticeNames = { ...noticeNames, [id]: name };
+      });
+    }
+  });
   let textContent = $derived(
-    envelope.kind === 'text' || envelope.kind === 'system'
-      ? envelope.text
-      : envelope.kind === 'media'
-        ? (envelope.caption ?? '')
-        : ''
+    notice
+      ? noticeText(
+          notice,
+          (id) => noticeNames[id] ?? peekUserDisplayName(id) ?? getUserDisplayNameSync(id)
+        )
+      : envelope.kind === 'text' || envelope.kind === 'system'
+        ? envelope.text
+        : envelope.kind === 'media'
+          ? (envelope.caption ?? '')
+          : ''
   );
   let effectiveReplyTo = $derived(
     replyTo ??
