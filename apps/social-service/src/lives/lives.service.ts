@@ -83,6 +83,8 @@ import {
 import { derivePosterKey } from './live-poster-key';
 import { readLiveReplaysMode } from './live-replays-mode';
 import { readPostOpenVerdict } from '../posts/post-openable';
+import { invalidatePostListCache } from '../posts/post-list-cache';
+import { RedisService } from '../common/redis';
 
 /** A live as its viewers read it: the key included (L2, Q4). */
 export interface LiveView {
@@ -408,7 +410,8 @@ export class LivesService implements OnModuleDestroy {
     private readonly moderation: ModerationService,
     private readonly seats: LiveSeats,
     private readonly announcer: LiveAnnouncer,
-    private readonly notifications: PostNotificationsService
+    private readonly notifications: PostNotificationsService,
+    private readonly redis: RedisService
   ) {}
 
   /**
@@ -1696,7 +1699,9 @@ export class LivesService implements OnModuleDestroy {
     this.logger.debug(`[LIVE_CUT] ${liveId} asked by ${short(reviewerId)}`);
     const { reason, details } = parseModerationNote(input);
 
+    let replayEnded = false;
     const result = await this.db.transaction(async (tx): Promise<LiveCutResult> => {
+      replayEnded = false;
       // THE STANDING LOCK FIRST, the row lock second - the order a start takes them too, so the two
       // never wait on each other in a cycle. The broadcaster is read unlocked to name the lock: it
       // only ever changes to the erased tombstone, which the locked read below refuses anyway.
@@ -1775,7 +1780,7 @@ export class LivesService implements OnModuleDestroy {
       // A cut of a live already published as a replay ends the replay in the same transaction
       // (docs/wiki/live-replays.md: a CUT of the live stays a cut, with its strike; a deletion of the
       // replay POST by staff is not one - D7). The worker deletes the post, then the sweep the live.
-      await this.expireReplay(liveId, 'removed', tx);
+      replayEnded = await this.expireReplay(liveId, 'removed', tx);
       const cut = newlyCut
         ? { reason: reason as LiveCutReason, cutAt: inserted[0].cutAt, strike: inserted[0].strike }
         : (await this.cutOf(tx, liveId))!;
@@ -1810,6 +1815,7 @@ export class LivesService implements OnModuleDestroy {
       );
       await this.notifyCut(result);
     }
+    if (replayEnded) await this.replayFeedsChanged(liveId, 'a cut ended its replay');
     await this.purgeBestEffort(liveId, 'after a cut');
     return result;
   }
@@ -1942,6 +1948,7 @@ export class LivesService implements OnModuleDestroy {
         return eviction;
       });
       if (!round) break;
+      await this.replayFeedsChanged(round.liveId, 'the cap ended its replay');
       this.logger.warn(
         `[LIVE_REPLAY_CAP] ${round.liveId}: replay ended early, ${round.bytes}B of ${round.totalBytes}B over the ${capBytes}B cap`
       );
@@ -2287,7 +2294,9 @@ export class LivesService implements OnModuleDestroy {
       // deletion - by the hourly worker at its expiry, by its author or staff - releases the segments.
       // A cut or an erasure ends the replay NOW, by its own column: every read refuses a post past its
       // `expiresAt` at once, and the worker deletes it (comments' media included) at its next tick.
-      if (row.removed && row.replayLive) await this.expireReplay(liveId, 'removed');
+      if (row.removed && row.replayLive && (await this.expireReplay(liveId, 'removed'))) {
+        await this.replayFeedsChanged(liveId, 'its broadcaster was removed');
+      }
       this.logger.debug(`[LIVE_GC] ${liveId} kept: its replay post ${row.replayPostId} exists`);
       return 'kept';
     }
@@ -2429,12 +2438,30 @@ export class LivesService implements OnModuleDestroy {
     );
     if (outcome === 'ineligible') return false;
     if (outcome === 'published') {
+      await this.replayFeedsChanged(liveId, 'its replay was published');
       this.closeArrivalOutages(liveId);
       await this.seats.forgetArrivals(liveId).catch((e: unknown) => {
         this.logger.warn(`[LIVE_ARRIVAL] ${liveId}: arrivals left to their TTL: ${String(e)}`);
       });
     }
     return true;
+  }
+
+  /**
+   * A replay post appeared or ended outside `PostsService`: the cached feed pages (up to 30 s old)
+   * are invalidated as every post write does (`invalidatePostListCache`), so a cut, an eviction or a
+   * publication is on the next read, not a TTL later. After the commit; a failure is logged and
+   * leaves the pages to their TTL - the reads themselves refuse an expired replay meanwhile.
+   */
+  private async replayFeedsChanged(liveId: string, why: string): Promise<void> {
+    try {
+      await invalidatePostListCache(this.redis);
+      this.logger.debug(`[LIVE_REPLAY] ${liveId}: feed pages invalidated (${why})`);
+    } catch (e) {
+      this.logger.warn(
+        `[LIVE_REPLAY] ${liveId}: feed pages NOT invalidated (${why}), stale up to their TTL: ${String(e)}`
+      );
+    }
   }
 
   /**

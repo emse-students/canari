@@ -559,6 +559,49 @@ describe('updatePost - a reel', () => {
   });
 });
 
+describe('updatePost - a live replay (docs/wiki/live-replays.md, review of #3248)', () => {
+  const replay = {
+    id: 'p1',
+    authorId: 'alice',
+    kind: 'replay',
+    liveId: 'l1',
+    markdown: 'Gala live',
+    media: [],
+    durationMs: 60_000,
+    expiresAt: new Date(NOW + DAY_MS),
+    associationId: null,
+    studentsOnly: false,
+  } as unknown as Post;
+
+  it('is edited by its caption alone, as a reel: no media, poll, form, event or schedule', async () => {
+    const { service, postRepo } = makeService({ existing: { ...replay } });
+    await expect(
+      service.updatePost('p1', 'alice', { markdown: 'x', media: [{ mediaId: 'other' }] }, false)
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.updatePost(
+        'p1',
+        'alice',
+        { markdown: 'x', scheduledAt: '2099-01-01T00:00:00Z' },
+        false
+      )
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(postRepo.save).not.toHaveBeenCalled();
+    await expect(
+      service.updatePost('p1', 'alice', { markdown: 'new' }, false)
+    ).resolves.toBeDefined();
+    expect((postRepo.save.mock.calls[0][0] as unknown as Post).markdown).toBe('new');
+  });
+
+  it('refuses the "Entre etudiants" switch: a replay keeps the audience of its live (D8)', async () => {
+    const { service, postRepo } = makeService({ existing: { ...replay } });
+    await expect(
+      service.updatePost('p1', 'alice', { markdown: 'x', studentsOnly: true }, false)
+    ).rejects.toMatchObject({ response: { code: 'students_only_not_offered' } });
+    expect(postRepo.save).not.toHaveBeenCalled();
+  });
+});
+
 describe('deletePost - a reel deleted by hand', () => {
   const reel = {
     id: 'r1',

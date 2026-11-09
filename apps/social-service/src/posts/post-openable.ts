@@ -97,8 +97,10 @@ export async function readPostOpenVerdict(
     return refuse('not-found', `scheduled for ${scheduledAt.toISOString()}`);
   }
   const blockedIds = await blockedUserIdsFor(manager, opts.viewerId);
+  // A live replay is the broadcaster on screen: a block hides it as it hid the live, an
+  // association's live included (docs/wiki/live-replays.md section 4).
   if (
-    !post.associationId &&
+    (!post.associationId || post.kind === 'replay') &&
     !post.anonymous &&
     blockedIds.includes(post.authorId) &&
     !opts.allowHidden

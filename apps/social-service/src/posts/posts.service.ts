@@ -52,7 +52,7 @@ import {
   readPostListPage,
   writePostListPage,
 } from './post-list-cache';
-import { assertStudentsOnlyOffered } from './students-only';
+import { STUDENTS_ONLY_NOT_OFFERED, assertStudentsOnlyOffered } from './students-only';
 import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
 import { readPostOpenVerdict } from './post-openable';
@@ -1609,14 +1609,20 @@ export class PostsService {
    * anonymous post on the platform. `listPosts`'s `followed` arm already excludes anonymous posts
    * for the neighbouring reason: presence in a feed is itself an answer about authorship.
    *
+   * A LIVE REPLAY of an association is the one association post filtered: the live named its
+   * broadcaster to every viewer and hid itself from a block either way, so the replay keeps that
+   * rule and the block reveals nothing the live had not (docs/wiki/live-replays.md section 4).
+   *
    * It is applied to the `followed` feed too, where severing the two follows has usually removed
    * these posts already - `UserBlocksService.severFollows` is a cross-service call that is
    * BEST-EFFORT by design and logs rather than fails, so "usually" is exactly what it is.
    */
   private blockedAuthorSql(blockedParam: number | null): string {
     if (blockedParam === null) return '';
+    // A LIVE REPLAY keeps its live's block rule, either way whoever it was broadcast for
+    // (docs/wiki/live-replays.md section 4): its author is the broadcaster on screen.
     return `AND (
-           posts."associationId" IS NOT NULL
+           (posts."associationId" IS NOT NULL AND posts.kind <> 'replay')
            OR COALESCE(posts.anonymous, false)
            OR posts."authorId" <> ALL($${blockedParam}::text[])
          )`;
@@ -2271,8 +2277,9 @@ export class PostsService {
     await this.assertMayEdit(post, userId, isGlobalAdmin);
     await this.applyStudentsOnly(post, data.studentsOnly);
 
-    // A reel is edited by its caption alone; a post's text-or-media rule is the DTO's.
-    if (post.kind === 'reel') {
+    // A reel - and a live replay, whose shape the server wrote (docs/wiki/live-replays.md) - is
+    // edited by its caption alone; a post's text-or-media rule is the DTO's.
+    if (post.kind === 'reel' || post.kind === 'replay') {
       if (isExpiredPost(post)) throw new NotFoundException('Post not found');
       assertReelEditShape(data);
       post.markdown = data.markdown;
@@ -2362,6 +2369,15 @@ export class PostsService {
    */
   private async applyStudentsOnly(post: Post, next: boolean | undefined): Promise<void> {
     if (next === undefined || next === post.studentsOnly) return;
+    if (post.kind === 'replay' && next) {
+      // A live replay has exactly its live's audience (owner, 2026-11-09, D8): the switch is not
+      // offered on it, whatever the association's type.
+      this.logger.warn(`[STUDENTS_ONLY] refused on live replay ${post.id.slice(0, 8)} (D8)`);
+      throw new BadRequestException({
+        code: STUDENTS_ONLY_NOT_OFFERED,
+        message: 'A live replay keeps the audience of its live.',
+      });
+    }
     assertStudentsOnlyOffered(next, await this.associationTypeOf(post.associationId ?? null));
     this.logger.log(
       `[STUDENTS_ONLY] post ${post.id.slice(0, 8)}: switch turned ${next ? 'ON - withdrawn from readers outside students and members' : 'OFF - given back to its audience'}`

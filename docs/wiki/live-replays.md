@@ -325,11 +325,21 @@ so with the switch off nothing changes for any live.
   (`endedLiveIds` leaves it out, unless its broadcaster was erased and the replay still shows).
 - **A cut ends the replay at once** (`cut` -> `expireReplay`, in the cut's own transaction) - a cut is
   moderation of the LIVE and keeps its strike; **a staff deletion of the replay POST is D7**: the
-  post's ordinary deletion, no strike. An erasure is met by the next sweep, which ends the replay.
+  post's ordinary deletion, no strike. **An erasure ends it in its own transaction**: it locks the
+  account's lives first (`ERASURE_LIVES_LOCK_SQL`, the order a publication and a cut take them, so a
+  replay being published is seen or never published), a personal replay goes with the account's
+  posts, and an association's is ended and loses the title it copied (`live_replays`, before the live
+  forgets its broadcaster); the sweep's erased-broadcaster term is the backstop.
+- **A replay is edited by its caption alone**, as a reel (no media, poll, form, event or schedule),
+  and refuses the "Entre etudiants" switch (`students_only_not_offered`, D8).
+- **A publication, a cut, an eviction and an erasure met by the sweep invalidate the feed cache**
+  (`invalidatePostListCache`, after the commit), as every post write does - never a 30 s TTL later.
 - **`GET /api/lives/:id/replay?from=N`** (behind `LiveEnabledGuard`, `no-store`): the live key, the
   segments from `N` with `atMs` on the database clock, `nextFrom`, `expiresAt` and `serverNow` (the
   time left, D3, is computed against the server's clock). No seat. The gate is the replay post's own
-  (`readPostOpenVerdict`): its audience, moderation, a block with a personal author, and the
+  (`readPostOpenVerdict`): its audience, moderation, a block either way with its broadcaster - an
+  association's replay included, as its live was (the feed's `blockedAuthorSql` exempts every other
+  association post, a replay alone not: the live had already named its broadcaster) - and the
   **removed viewer** (a viewer the broadcaster removed from the live never sees the replay). Any
   refusal and an expired replay are the same `404 LIVE_NOT_FOUND`.
 - **`withReplays`** on `GET /api/posts` (the feed, and `kind=reel` - the CanaReels list) and on

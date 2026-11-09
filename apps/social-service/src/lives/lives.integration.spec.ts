@@ -56,8 +56,10 @@ import { ContentReport } from '../moderation/entities/content-report.entity';
 import type { UserModeration } from '../moderation/entities/user-moderation.entity';
 import type { Repository } from 'typeorm';
 import type { PostNotificationsService } from '../posts/post-notifications.service';
+import type { RedisService } from '../common/redis';
 import {
   DELETED_ACCOUNT,
+  ERASURE_LIVES_LOCK_SQL,
   LIVES_ERASURE_STATEMENTS,
   runErasureStatements,
 } from '../internal/account-erasure';
@@ -295,6 +297,12 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
   let admin: Client;
   let ds: DataSource;
   let store: MemoryStore;
+  /** The feed cache's generation moves: each replay published, cut, evicted or erased counts one. */
+  let feedGenerations = 0;
+  const feedCache = {
+    incr: async () => (feedGenerations += 1),
+    deleteByPattern: async () => 0,
+  } as unknown as RedisService;
   let lives: LivesService;
   let sweeper: LiveRetentionScheduler;
   let announcer: LiveAnnouncer;
@@ -483,7 +491,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       { isUserMuted: async (userId: string) => muted.has(userId) } as unknown as ModerationService,
       seats as unknown as LiveSeats,
       announcer,
-      notifications
+      notifications,
+      feedCache
     );
     sweeper = new LiveRetentionScheduler(lives);
   });
@@ -839,6 +848,79 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect((await replays(live.id))[0].showing).toBe(false);
       await reelWorker();
       expect((await sweeper.sweepOnce()).deleted).toBe(1);
+    });
+
+    /** An association's finished live of ALICE (BDE reaching Saint-Etienne ICM), past the 30 s floor. */
+    const finishedAssociationLive = async () => {
+      await q(`INSERT INTO associations (id, name) VALUES ($1, 'BDE')`, [ASSO]);
+      await q(
+        `INSERT INTO association_audiences ("associationId", formation, campus) VALUES ($1, 'ICM', ${SE})`,
+        [ASSO]
+      );
+      mayActAs.add(`${ALICE}:${ASSO}`);
+      const live = await lives.start(ALICE, { key: KEY, associationId: ASSO, title: 'Gala live' });
+      await q(`UPDATE lives SET "startedAt" = now() - interval '10 minutes' WHERE id = $1`, [
+        live.id,
+      ]);
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.ingest(ALICE, live.id, 1, segment(1));
+      await q(
+        `UPDATE live_segments SET "createdAt" = "createdAt" - interval '50 seconds'
+          WHERE "liveId" = $1 AND "index" = 0`,
+        [live.id]
+      );
+      await lives.end(ALICE, live.id);
+      return live;
+    };
+
+    it("an ASSOCIATION's replay keeps its live's block rule, either way (review of #3248)", async () => {
+      const live = await finishedAssociationLive();
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [DAVE, ALICE]);
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [ALICE, EVE]);
+      await expect(lives.replay(CAROL, live.id)).resolves.toMatchObject({ liveId: live.id });
+      for (const who of [DAVE, EVE]) {
+        expect((await refusal(lives.replay(who, live.id))).code).toBe('LIVE_NOT_FOUND');
+      }
+    });
+
+    it("an ERASED broadcaster's association replay ends IN the erasure and loses the title it copied (review of #3248)", async () => {
+      const live = await finishedAssociationLive();
+      expect(
+        await q(`SELECT markdown FROM posts WHERE "liveId" = $1 AND kind = 'replay'`, [live.id])
+      ).toEqual([{ markdown: 'Gala live' }]);
+      await ds.transaction(async (m) => {
+        await m.query(ERASURE_LIVES_LOCK_SQL, [ALICE]);
+        await runErasureStatements(
+          {
+            write: async (sql, params) => ((await m.query(sql, params)) as [unknown, number])[1],
+            read: async <T>(sql: string, params: unknown[]) => (await m.query(sql, params)) as T[],
+          },
+          LIVES_ERASURE_STATEMENTS,
+          ALICE
+        );
+      });
+      // Before any sweep: refused to everyone, and the member's words are gone.
+      expect((await replays(live.id))[0].showing).toBe(false);
+      expect(
+        await q(`SELECT markdown FROM posts WHERE "liveId" = $1 AND kind = 'replay'`, [live.id])
+      ).toEqual([{ markdown: '' }]);
+      expect((await refusal(lives.replay(CAROL, live.id))).code).toBe('LIVE_NOT_FOUND');
+    });
+
+    it('a publication, a cut and a cap eviction each move the feed cache generation (review of #3248)', async () => {
+      const live = await finishedLive();
+      let before = feedGenerations;
+      await lives.end(ALICE, live.id);
+      expect(feedGenerations).toBe(before + 1);
+      before = feedGenerations;
+      await lives.cut(MOD, live.id, { reason: 'spam' });
+      expect(feedGenerations).toBe(before + 1);
+
+      const other = await finishedLive(BOB);
+      await lives.end(BOB, other.id);
+      before = feedGenerations;
+      await expect(lives.enforceReplayCap(1)).resolves.toHaveLength(1);
+      expect(feedGenerations).toBe(before + 1);
     });
 
     it('serves the replay with its key and its time line - and the same 404 to an outsider, a removed viewer, a blocked one, and past its time', async () => {
@@ -1835,7 +1917,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
             throw new Error('mute lookup down');
           },
         } as unknown as PostNotificationsService),
-        notifications
+        notifications,
+        feedCache
       );
       const live = await broken.start(ALICE, { key: KEY });
       await expect(broken.ingest(ALICE, live.id, 0, segment(0))).resolves.toMatchObject({
@@ -1868,7 +1951,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
             return data.recipientIds.length;
           },
         } as unknown as PostNotificationsService),
-        notifications
+        notifications,
+        feedCache
       );
       const live = await held.start(ALICE, { key: KEY });
       // Answered with the push still held inside `pushNotice`: nothing here waits for it.
@@ -1929,7 +2013,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
           { isUserMuted: async () => false } as unknown as ModerationService,
           seats as unknown as LiveSeats,
           new LiveAnnouncer(one, notifications),
-          notifications
+          notifications,
+          feedCache
         );
         const live = await onOne.start(ALICE, { key: KEY });
         const hold = store.holdNextStore();
