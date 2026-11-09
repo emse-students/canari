@@ -367,7 +367,6 @@
         class="live-chat-field relative min-w-0 flex-1"
         role="group"
         aria-label={m.live_chat_input_label()}
-        aria-invalid={composerError !== null}
         aria-describedby={composerError !== null ? 'live-chat-composer-error' : undefined}
         data-live-chat-input
       >
