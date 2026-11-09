@@ -650,7 +650,7 @@
         backdrop={letterbox && videoFit === 'contain'}
         class={letterbox
           ? videoFit === 'contain'
-            ? 'bg-cn-surface h-full w-full'
+            ? 'bg-cn-card h-full w-full'
             : 'h-full w-full bg-black'
           : 'aspect-video w-full max-w-md rounded-3xl bg-black/10 shadow-sm dark:bg-black/40'}
         videoClass="relative h-full w-full {letterbox && videoFit === 'cover'

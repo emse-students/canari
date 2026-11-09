@@ -643,10 +643,13 @@
   <DoubleTapHeart bind:this={hearts} />
   <!-- THE CARD STANDS OFF THE PAGE A LITTLE MORE (user, 2026-10-01, Mi 9T): `shadow-sm` at 5 %
        black on `--cn-bg` barely drew an edge in light mode, and in dark mode a `#121212` card on
-       black was held by a 10 % hairline alone. A soft `shadow-md` lifts it in light; dark mode has
-       no shadow to cast onto black, so its edge goes from 10 % to 15 %. -->
+       black was held by a 10 % hairline alone. A soft `shadow-md` lifts it in light. DARK HAS NO
+       HAIRLINE ANY MORE (design audit vs Facebook, 2026-11-09): the 15 % edge of 2026-10-01 sat ON
+       TOP of an 18-point lightness step (`#121212` on true black) that already separates the two,
+       and Facebook's dark feed separates by lightness alone. The border stays as a TRANSPARENT one so
+       the box does not change size. -->
   <Card
-    class="group/card bg-cn-surface border border-black/5 p-0! shadow-md shadow-black/8 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl dark:border-white/15 dark:shadow-none"
+    class="group/card bg-cn-card border border-black/5 p-0! shadow-md shadow-black/8 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl dark:border-transparent dark:shadow-none"
   >
     <!--
       THE MENU SHARES THE HEADER'S LINE; FIVE BUTTONS USED TO FLOAT OVER IT.

@@ -50,6 +50,8 @@
   /* Panel/card background. Exposed as a utility (`bg-cn-surface`) so components stop
      hardcoding `bg-white`, which never flips and turns text-on-surface unreadable in dark. */
   --color-cn-surface: var(--cn-surface);
+  /* The FEED POST CARD's fill: `--cn-surface` in light, one step lighter in dark (see `--cn-surface-card`). */
+  --color-cn-card: var(--cn-surface-card);
   --color-surface-elevated: var(--surface-elevated);
   /* Recessed surface, one step AWAY from the reader (inactive badges, muted chips) - the mirror
      of `surface-elevated`. Six components already used `bg-cn-surface-alt` before this entry
@@ -402,6 +404,7 @@
   --chart-series-8: #e34948;
   --cn-bg: #f0f2f5;
   --cn-surface: #ffffff; /* measured, 68% of the handset thread in light mode */
+  --cn-surface-card: var(--cn-surface);
   /* A HAIRLINE, NOT A LINE. The reference draws six visible borders on an entire page, all
      1px at 5% white; every other "border" it sets is the same colour as the surface behind it and
      therefore invisible. Separation there comes from a step in LIGHTNESS between surfaces, never
@@ -572,6 +575,11 @@
      from each other as they are there. */
   --cn-bg: #000000;
   --cn-surface: #121212;
+  /* THE FEED CARD STANDS OFF THE OLED PAGE BY TONE, NOT BY AN OUTLINE (design audit S4, 2026-11-09;
+     the owner's 2026-10-01 "stand off more" kept, the hairline dropped). Facebook's dark feed puts the
+     card one step above the page (#18191a page, #242526 card); on true black that step is #1c1c1c,
+     10 points over the #121212 every other panel keeps. Only the post card takes it. */
+  --cn-surface-card: #1c1c1c;
   /* Same reasoning as the light hairline above - see there. */
   --cn-border: rgba(255, 255, 255, 0.1);
   /* Same reasoning as the light pair above - see there. */
