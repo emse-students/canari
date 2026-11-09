@@ -15,7 +15,8 @@
     "hint-booking-spaces",
     "hint-booking-week",
     "prompt-profile-photo",
-    "prompt-profile-photo-reminder"
+    "prompt-profile-photo-reminder",
+    "prompt-birthday"
   ],
   "unknownIdCode": "HELP_ID_UNKNOWN"
 }

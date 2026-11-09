@@ -243,6 +243,8 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
       '073_republications.sql',
       '078_read_grants.sql',
       '121_member_reposts.sql',
+      // The bell re-reads a birthday notice against its date (`birthdayRowShownSql`).
+      '148_profile_birthdays.sql',
       '123_member_repost_notices.sql',
       '127_post_space_pins.sql',
       '132_read_grant_readers.sql',

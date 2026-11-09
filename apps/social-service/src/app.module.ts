@@ -20,6 +20,7 @@ import { MinesweeperModule } from './minesweeper/minesweeper.module';
 import { CoorganisationModule } from './coorganisation/coorganisation.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { LivesModule } from './lives/lives.module';
+import { BirthdaysModule } from './birthdays/birthdays.module';
 import { HealthController } from './health.controller';
 import { typeormSynchronize } from './typeorm-synchronize';
 
@@ -74,6 +75,8 @@ import { typeormSynchronize } from './typeorm-synchronize';
     BookingsModule,
     // Lives (docs/wiki/services/lives.md), every route behind LIVE_ENABLED: WP-L2 and WP-L3.
     LivesModule,
+    // Birthdays on profiles (docs/wiki/birthdays.md): the date, its visibility, the ring, the notice.
+    BirthdaysModule,
   ],
   controllers: [HealthController],
 })

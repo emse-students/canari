@@ -6,6 +6,7 @@
   import ProfileChips from '$lib/components/profile/ProfileChips.svelte';
   import ProfileCorrectionRequest from '$lib/components/profile/ProfileCorrectionRequest.svelte';
   import ProfileMinesweeperBadge from '$lib/components/profile/ProfileMinesweeperBadge.svelte';
+  import ProfileBirthdayLine from '$lib/components/profile/ProfileBirthdayLine.svelte';
   import { useMyProfile } from '$lib/profile/myProfileModel.svelte';
   import { profileHubRows } from '$lib/profile/profileSections';
   import { m } from '$lib/paraglide/messages';
@@ -73,6 +74,7 @@
       </h1>
       <ProfileMinesweeperBadge userId={profile.id} />
       <ProfileChips {profile} />
+      <ProfileBirthdayLine userId={profile.id} self />
       <ProfileCorrectionRequest />
     </div>
     <a

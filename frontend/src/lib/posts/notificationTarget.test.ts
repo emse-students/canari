@@ -83,7 +83,7 @@ describe('notificationHref', () => {
 
   it('gives every known type a destination, bar the two resolved by slug', () => {
     // Compared with a hand-written count so a type removed from the set cannot pass silently.
-    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(42);
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(43);
     // The live moderation notices go nowhere: a cut live is deleted when it ends, and a suspension
     // or a withdrawal has no page.
     const liveModeration = ['live_cut', 'live_suspended', 'live_withdrawn'];
@@ -127,6 +127,11 @@ describe('notificationHref', () => {
       FOLLOW_REQUESTS_ROUTE
     );
     expect(notificationHref({ type: 'follow_accepted', postId: 'bob-1' })).toBe('/profile/bob-1');
+  });
+
+  it("opens the profile of the person whose birthday it is - `postId` is that person's id", () => {
+    expect(isKnownNotificationType('birthday')).toBe(true);
+    expect(notificationHref({ type: 'birthday', postId: 'ann-1' })).toBe('/profile/ann-1');
   });
 
   it.each(['live_cut', 'live_suspended', 'live_withdrawn'])(

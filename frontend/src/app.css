@@ -363,6 +363,18 @@
   --avatar-hue-6-to: #b91c1c;
   --avatar-hue-7-from: #d08200;
   --avatar-hue-7-to: #b45309;
+  /* THE BIRTHDAY RING (docs/wiki/birthdays.md): drawn by `.birthday-ring` around the avatar of a
+     member whose birthday it is today, in every theme - built from the avatar hues and the brand
+     yellow, so it adds no colour of its own. */
+  --birthday-ring: conic-gradient(
+    from 0deg,
+    var(--cn-yellow),
+    var(--avatar-hue-0-from),
+    var(--avatar-hue-1-from),
+    var(--avatar-hue-2-from),
+    var(--avatar-hue-3-from),
+    var(--cn-yellow)
+  );
 
   /* CATEGORICAL CHART SERIES (admin status curves): the eight validated slots of the dataviz
      default palette, in fixed order, never cycled. Dark has its own steps, not a flipped copy.
@@ -3116,6 +3128,31 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 .avatar-placeholder[data-hue='7'] {
   --avatar-hue-from: var(--avatar-hue-7-from);
   --avatar-hue-to: var(--avatar-hue-7-to);
+}
+
+/* THE BIRTHDAY RING, on the avatar's OWN box (`Avatar.svelte`, the one component every person's
+   face goes through): a gradient band drawn INSIDE the edge by a masked pseudo-element, so it needs
+   no wrapper, moves no layout and is never clipped by a caller's `overflow-hidden rounded-full`. Its
+   width is a share of the avatar, so a 16 px face and a 112 px one carry the same ring. */
+.birthday-ring {
+  position: relative;
+}
+.birthday-ring::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  padding: 9%;
+  background: var(--birthday-ring);
+  -webkit-mask:
+    linear-gradient(black 0 0) content-box,
+    linear-gradient(black 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(black 0 0) content-box exclude,
+    linear-gradient(black 0 0);
+  pointer-events: none;
 }
 
 /* GLASS FALLBACK - THE ONE PLACE `.glass-chrome` GIVES UP BLUR. Where `backdrop-filter` is missing, or

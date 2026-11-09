@@ -253,6 +253,8 @@ class NotificationService: UNNotificationServiceExtension {
     // A follow request and its acceptance (WP-F2): the person names the title, fixed body.
     case "social_follow_request": composed = actorTitled("follow_request")
     case "social_follow_accepted": composed = actorTitled("follow_accepted")
+    // A followed person's birthday: the person names the title, the body is the fixed sentence.
+    case "social_birthday": composed = actorTitled("birthday")
     // A new person asks to join a conversation the reader is in: the person names the title, the
     // conversation's name is the body (a fixed phrase when it has none).
     // With no name to show (the lookup failed server-side) the title says "someone": an id never
