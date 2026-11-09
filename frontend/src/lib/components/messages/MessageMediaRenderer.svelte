@@ -539,7 +539,7 @@
                 {uploadCaption(upload, mediaRef!.size)}
               </p>
             {:else if !failure}
-              <!-- No ``: it would render the "Ko" unit as "KO". -->
+              <!-- No `uppercase`: it would render the "Ko" unit as "KO". -->
               <p class="text-2xs font-semibold opacity-60">
                 {formatFileSize(mediaRef!.size)}
               </p>

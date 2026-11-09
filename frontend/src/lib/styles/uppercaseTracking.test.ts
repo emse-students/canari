@@ -21,7 +21,8 @@
 import { describe, it, expect } from 'vitest';
 import { join, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { allMarkup } from './markupSources';
+import { readdirSync, readFileSync } from 'node:fs';
+import { allMarkup, withoutComments } from './markupSources';
 
 const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -29,7 +30,35 @@ const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TOKEN =
   /(?<![\w:-])(?:(?!first-letter:)[a-z-]+:)?(?:uppercase|tracking-(?:wide|wider|widest))(?![\w-])/g;
 
+/**
+ * THE SAME TWO FACTS WRITTEN AS CSS: `text-transform: uppercase`, and a POSITIVE `letter-spacing` of
+ * 0.05em or more (the audit's threshold: below that the gap is optical kerning, not a "label"
+ * style). Read in every `.css` file and in the `<style>` of every `.svelte` file, because
+ * `.chat-sticky-date-indicator` in `app.css` shouted "LUNDI 9 NOVEMBRE" over a thread whose inline
+ * separator is sentence case, and no utility-class scan could see it.
+ */
+const CSS_TOKEN =
+  /text-transform\s*:\s*uppercase|letter-spacing\s*:\s*\+?(?:0?\.(?:0[5-9]|[1-9]\d*)|[1-9]\d*(?:\.\d+)?)(?:em|rem|px)/g;
+
+/** Every `.css` file under `dir`, recursively (generated Paraglide modules hold none). */
+function cssFiles(dir: string, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) cssFiles(full, out);
+    else if (entry.name.endsWith('.css')) out.push(full);
+  }
+  return out;
+}
+
 const ALLOWED: Record<string, { count: number; why: string }> = {
+  'lib/components/posts/CreatePostForm.svelte': {
+    count: 1,
+    why: 'the file-type badge of an attachment ("pdf", "zip") is an abbreviation read as a code, as a file manager shows it',
+  },
+  'lib/components/posts/EditPostForm.svelte': {
+    count: 1,
+    why: 'the same file-type badge as in the composer',
+  },
   'lib/components/posts/PostCodeBlock.svelte': {
     count: 2,
     why: 'the language tag of a code block ("js", "sql") is an abbreviation read as a code, as every code editor shows it',
@@ -45,6 +74,24 @@ describe('uppercase and letter-spacing', () => {
   for (const { file, body } of allMarkup(src)) {
     const n = (body.match(TOKEN) ?? []).length;
     if (n > 0) found.set(file.split(sep).join('/'), n);
+  }
+
+  // The wordmark (`CanariBrand`) sets no letter-spacing or capitals, so it needs no entry here.
+  for (const file of cssFiles(src)) {
+    const n = (withoutComments(readFileSync(file, 'utf8')).match(CSS_TOKEN) ?? []).length;
+    if (n > 0)
+      found.set(
+        file
+          .slice(src.length + 1)
+          .split(sep)
+          .join('/'),
+        n
+      );
+  }
+  for (const { file, body } of allMarkup(src)) {
+    const n = (body.match(CSS_TOKEN) ?? []).length;
+    if (n > 0)
+      found.set(file.split(sep).join('/'), (found.get(file.split(sep).join('/')) ?? 0) + n);
   }
 
   it('no component sets text in capitals or spaces its letters outside the allowlist', () => {

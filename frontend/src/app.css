@@ -2653,7 +2653,6 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   line-height: var(--text-2xs--line-height);
   font-weight: 700;
   letter-spacing: normal;
-  text-transform: uppercase;
   color: var(--text-main);
   /* THE PILL IS GLASS (`.glass-chrome`'s recipe), NOT AN OPAQUE CHIP WITH A HALO. It floats over the
      thread while content moves under it - the chrome the glass exists for - so a sender name or a
