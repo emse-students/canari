@@ -1,21 +1,13 @@
 // @vitest-environment happy-dom
-import { SvelteMap } from 'svelte/reactivity';
 
 /** Who is signed in on this install: the inviter, then the newcomer reading what reached them. */
 const me = vi.hoisted(() => ({ id: 'alice' }));
 
 vi.mock('$lib/stores/userState.svelte', () => ({ currentUserId: () => me.id }));
-vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
-  globalMessaging: { isMessageCatchupActive: false, resetMessageCatchupState: vi.fn() },
-}));
 vi.mock('$lib/users/blocks', () => ({ isBlockedWith: vi.fn(async () => false) }));
-// The acting device's own notice resolves names: a profile read nothing here is about.
-vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('$lib/utils/users/displayName')>()),
-  resolveDisplayNames: async () => (id: string) => id,
-}));
 
 import type { IStorage, StoredMessage } from '$lib/db';
+import type { DeliveredWelcome } from '$lib/mls-client/IMlsService';
 import { addressedHistoryAnswer } from '$lib/mls-client/frameDelivery';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { decodeAppMessage } from '$lib/proto/codec';
@@ -25,8 +17,8 @@ import {
   mergeBundleNicknames,
   nicknameEntry,
 } from '$lib/utils/users/conversationNicknames.svelte';
-import { inviteMembersToGroup } from './groupCreation';
 import { digestIdentity } from './historyDigestRendezvous';
+import { installJoinPush, queueJoinPush, type JoinPushDeps } from './joinPush';
 
 const GROUP = 'g1';
 /** Server time the newcomer was admitted at: everything before it is withheld from them (step A). */
@@ -38,21 +30,15 @@ const PAST: StoredMessage = {
   timestamp: ARRIVAL - 60_000,
   serverTimestamp: ARRIVAL - 60_000,
 } as StoredMessage;
+const DELIVERED: DeliveredWelcome = {
+  groupId: GROUP,
+  userId: 'beta',
+  deviceId: 'beta-dev',
+  welcome: new Uint8Array([1, 2, 3]),
+};
 
 function inviter() {
   const mlsService = createMlsServiceStub({
-    fetchUserDevices: vi.fn(async (u: string) => [{ deviceId: `${u}-dev` }]),
-    getGroupRosterAtGeneration: vi.fn(async () => ({
-      members: [{ userId: 'alice' }, { userId: 'gamma' }],
-      seatGeneration: 3,
-    })),
-    getGroupUserMembers: vi.fn(async () => [{ userId: 'alice' }, { userId: 'gamma' }]),
-    addMembersBulk: vi.fn(async () => ({
-      addedDeviceIds: ['beta-dev'],
-      skipped: [],
-      welcome: new Uint8Array([1]),
-    })),
-    getDeviceId: vi.fn(() => 'alice-dev'),
     // The newcomer's own window as the server states it: out of the group until their arrival.
     getGroupWithheld: vi.fn(
       async (_g: string, forUserId?: string) =>
@@ -63,21 +49,13 @@ function inviter() {
     getMessages: vi.fn(async () => [PAST]),
     getConversation: vi.fn(async () => null),
   } as unknown as IStorage;
-  return {
-    mlsService,
-    deps: {
-      mlsService,
-      storage,
-      userId: 'alice',
-      deviceKeyB64: 'k',
-      historyBaseUrl: 'https://example.invalid',
-      conversations: new SvelteMap(),
-      selectConversation: vi.fn(),
-      saveConversation: vi.fn(async () => {}),
-      addMessageToChat: vi.fn(async () => {}),
-      log: vi.fn(),
-    },
+  const deps: JoinPushDeps = {
+    account: () => 'alice',
+    storage: () => storage,
+    deviceKeyB64: () => 'k',
+    log: vi.fn(),
   };
+  return { mlsService, deps };
 }
 
 /** Every `history_bundle` the inviter sent, with how it was routed. */
@@ -92,15 +70,16 @@ function bundlesSent(mlsService: ReturnType<typeof createMlsServiceStub>) {
 }
 
 /**
- * THE MEMBER'S "AJOUTER" OWES THE JOIN PUSH (reading 2 of "Modifier les pseudos", FAILED on
- * `1.6.9-alpha.1`): `inviteMembersToGroup` delivered its Welcomes and pushed nothing, so a person
- * added there never learned a nickname set before them - the push is the one bundle a register is
- * taken from. Driven through the real Add path, never through the bundle builder alone.
+ * THE JOIN PUSH FOLLOWS EVERY DELIVERED WELCOME (reading 2 of "Modifier les pseudos", FAILED on
+ * `1.6.9-alpha.1`): the member's "Ajouter" and the owed-Welcome drain delivered Welcomes and pushed
+ * nothing, so a newcomer never learned a nickname set before them. `BaseMlsService` announces each
+ * delivery (its own tests); this is what the announcement starts.
  */
-describe('inviteMembersToGroup - the join push hands a newcomer the nickname register', () => {
+describe('the join push of a delivered Welcome', () => {
   beforeEach(() => {
     localStorage.clear();
     me.id = 'alice';
+    applyNickname(GROUP, 'gamma', { nickname: 'Gam', setBy: 'alice', at: ARRIVAL - 30_000 });
   });
   afterEach(() => {
     forgetConversationNicknames('alice');
@@ -108,13 +87,11 @@ describe('inviteMembersToGroup - the join push hands a newcomer the nickname reg
     localStorage.clear();
   });
 
-  it('pushes the register to the added device, addressed to it, with none of the past', async () => {
-    applyNickname(GROUP, 'gamma', { nickname: 'Gam', setBy: 'alice', at: ARRIVAL - 30_000 });
+  it('pushes the register to the delivered device, addressed to it, with none of the past', async () => {
     const { mlsService, deps } = inviter();
 
-    const outcome = await inviteMembersToGroup(['beta'], { id: GROUP } as never, deps as never);
+    await queueJoinPush(mlsService, DELIVERED, deps);
 
-    expect(outcome.kind).toBe('added');
     const to = digestIdentity('beta', 'beta-dev');
     const bundles = bundlesSent(mlsService);
     expect(bundles).toHaveLength(1);
@@ -135,13 +112,50 @@ describe('inviteMembersToGroup - the join push hands a newcomer the nickname reg
     expect(nicknameEntry(GROUP, 'gamma')).toMatchObject({ nickname: 'Gam', verified: false });
   });
 
-  it('pushes nothing to a device whose Welcome was not delivered', async () => {
-    applyNickname(GROUP, 'gamma', { nickname: 'Gam', setBy: 'alice', at: ARRIVAL - 30_000 });
+  it('pushes once per Welcome: the same bytes delivered again (a reload that lost the clear) push nothing', async () => {
     const { mlsService, deps } = inviter();
-    vi.mocked(mlsService.sendWelcome).mockRejectedValue(new Error('delivery down'));
 
-    await inviteMembersToGroup(['beta'], { id: GROUP } as never, deps as never);
+    await queueJoinPush(mlsService, DELIVERED, deps);
+    await queueJoinPush(mlsService, { ...DELIVERED, welcome: new Uint8Array([1, 2, 3]) }, deps);
 
-    expect(bundlesSent(mlsService)).toEqual([]);
+    expect(bundlesSent(mlsService)).toHaveLength(1);
+  });
+
+  it('pushes again for a LATER Welcome to the same device - a re-add is a new admission', async () => {
+    const { mlsService, deps } = inviter();
+
+    await queueJoinPush(mlsService, DELIVERED, deps);
+    await queueJoinPush(mlsService, { ...DELIVERED, welcome: new Uint8Array([9]) }, deps);
+
+    expect(bundlesSent(mlsService)).toHaveLength(2);
+  });
+
+  it('pushes nothing into a key group', async () => {
+    const { mlsService, deps } = inviter();
+    vi.mocked(mlsService.isDistributionGroup).mockReturnValue(true);
+
+    await queueJoinPush(mlsService, DELIVERED, deps);
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('is started by the delivery itself, never awaited by it, and one failing push does not stop the next', async () => {
+    const { mlsService, deps } = inviter();
+    let listener: ((d: DeliveredWelcome) => void) | undefined;
+    vi.mocked(mlsService.onWelcomeDelivered).mockImplementation((l) => {
+      listener = l;
+    });
+    installJoinPush(mlsService, deps);
+    vi.mocked(mlsService.sendMessage).mockRejectedValueOnce(new Error('send down'));
+
+    // Synchronous, returns nothing to await: the delivery goes on whatever the push does.
+    expect(listener?.(DELIVERED)).toBeUndefined();
+    await queueJoinPush(mlsService, { ...DELIVERED, deviceId: 'beta-dev-2' }, deps);
+
+    const to = bundlesSent(mlsService).map((b) => b.data.to);
+    expect(to).toEqual([digestIdentity('beta', 'beta-dev'), digestIdentity('beta', 'beta-dev-2')]);
+    expect(vi.mocked(deps.log).mock.calls.some(([l]) => String(l).includes('send error'))).toBe(
+      true
+    );
   });
 });

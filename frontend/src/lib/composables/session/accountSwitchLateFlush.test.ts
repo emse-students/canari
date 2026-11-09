@@ -28,11 +28,18 @@ type FakeClient = {
   pauseSocket: ReturnType<typeof vi.fn>;
   isWsOpen: () => boolean;
   destroy: ReturnType<typeof vi.fn>;
+  /** The join push is installed with every client the session builds (`joinPush.ts`). */
+  onWelcomeDelivered: ReturnType<typeof vi.fn>;
 };
 const made: FakeClient[] = [];
 vi.mock('$lib/mlsService', () => ({
   createMlsService: () => {
-    const client: FakeClient = { pauseSocket: vi.fn(), isWsOpen: () => false, destroy: vi.fn() };
+    const client: FakeClient = {
+      pauseSocket: vi.fn(),
+      isWsOpen: () => false,
+      destroy: vi.fn(),
+      onWelcomeDelivered: vi.fn(),
+    };
     made.push(client);
     return client;
   },

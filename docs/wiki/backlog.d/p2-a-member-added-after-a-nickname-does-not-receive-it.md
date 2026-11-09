@@ -22,24 +22,32 @@ received one. The reader was right to refuse every other bundle; the writer neve
 joiner's later reconciliation answers are addressed answers to its own asks (`addOnly`), which take
 messages and nothing else, so nothing repaired it.
 
-**The fix.** `attemptBulkAddition` now pushes the join bundle to each device whose Welcome was delivered
-(`pushJoinBundles` in `groupActions.ts`, one `sendFullHistoryBundle` per device, caught and logged per
-device), as the two other Add paths always did; `deliverWelcomes` returns the devices it reached
-beside their owners. The push is addressed to the device and filtered on its owner's server windows
-(step A), so it carries no message from before the arrival - for a newcomer it is the state-only frame:
-the nickname register, the pins, the floor and the read watermarks. Why that does not leak what step A
-withholds: [chat](../frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08), "The late joiner".
+**The adversarial review found the same hole on a second path**: the owed-Welcome drain
+(`BaseMlsService.deliverOwedWelcomes`) delivers a Welcome whose first send failed, or every Welcome of
+an Add whose commit outcome was unknown and accepted later - and pushed nothing either.
 
-The test that would have caught it, and fails without the fix: `groupCreation.joinPush.test.ts` drives
-the real Add (`inviteMembersToGroup`) on a group whose register holds an entry and a pre-arrival message,
-and asserts ONE `history_bundle`, `join`, addressed to the new device, carrying the register and no
-message; the newcomer's `mergeBundleNicknames` then takes it as "Defini avant votre arrivee".
+**The fix: the push hangs on the delivery of a Welcome, not on a caller.**
+`BaseMlsService.sendWelcomeConsuming` - the one place every path's Welcome is known stored - announces
+each delivery once (`onWelcomeDelivered`), and `joinPush.ts`, installed with the service, answers it
+with one `sendFullHistoryBundle` to that device: once per Welcome from a durable per-account ledger,
+queued and never awaited by the gesture, never into a key group. The explicit pushes of the pending
+invitation and the welcome_request paths are gone (they would now push twice). Step A holds: the push
+is addressed to the device and filtered on its owner's windows, so for a newcomer it carries no
+message from before the arrival. Mechanism and cost: [chat](../frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08), "The late joiner".
+
+The tests that would have caught it, each failing without the fix: `BaseMlsService.unresolvedCommit.test.ts`
+(a settled Add announces each delivered Welcome once, a Welcome whose first send failed is announced
+when the drain delivers it, a re-run announces nothing, the Add caller's own send is announced once);
+`joinPush.test.ts` (the push carries the register and no message, addressed to the device, and the
+newcomer's `mergeBundleNicknames` takes it as "Defini avant votre arrivee"; the same Welcome delivered
+again pushes nothing; a later Welcome pushes; no push into a key group; one failing push does not
+stop the next).
 
 **Owed: the re-reading on the next pre-release** (`1.6.9-alpha.2` or later). In a group where a member
 already holds a nickname, add a FOURTH account through "Ajouter" from a phone on that build; on the new
 member, open the group's "Modifier les pseudos": the nicknamed member reads the nickname with "Defini
 avant votre arrivee", at once, and `localStorage` holds `canari_nicknames:v1:<new account>:<group>`. The
-inviter's exported log carries `[HISTORY_BUNDLE] join push -> <account>:<device>` then either `Empty
+inviter's exported log carries `[JOIN_PUSH] <group>... join push -> <account>:<device>` then either `Empty
 bundle sent ... addressed to ...` or `Full history sent: k of N` with `k` counting only what was sent
 since the Add (the inviter's own notice); the web console of the new member `[HISTORY_BUNDLE] 1 nickname(s) taken
 (unverified)`. Remove the account added by the first reading first (or use another one): its device

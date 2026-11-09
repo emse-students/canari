@@ -69,7 +69,6 @@ export async function serveWelcomeRequest(
   try {
     await handleWelcomeRequest({
       mlsService: ctx.mlsService,
-      storage: ctx.storage,
       userId: ctx.userId,
       deviceKeyB64: ctx.deviceKeyB64,
       conversations: ctx.conversations,

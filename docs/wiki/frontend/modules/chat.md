@@ -5081,12 +5081,34 @@ its setter leaves.
 **The late joiner.** A member added after a `nickname` frame went out never receives it. The
 inviter's JOIN PUSH to the new device restates the register (`nicknames`, beside `pins`), even when
 every message is withheld, so a new member gets the names in the first bundle. That join push is the
-ONLY bundle a register is taken from (review of #3177). **EVERY Add path sends it**: the pending
-invitation and the welcome request always did (`sendFullHistoryBundle` in `actions.ts`), and the
-member's "Ajouter" - `inviteMembersToGroup`, which a join-request approval also is - did not until
-#3185 (`pushJoinBundles`, one push per device whose Welcome was delivered). Reading 2 of
-`1.6.9-alpha.1` found the gap: a newcomer added there saw no nickname at all
-([defect](../../backlog.d/p2-a-member-added-after-a-nickname-does-not-receive-it.md)).
+ONLY bundle a register is taken from (review of #3177). **It hangs on the delivery of a Welcome, not
+on a caller** (#3185). `BaseMlsService.sendWelcomeConsuming` is the one place a Welcome is known
+stored by the server, whoever sent it - the member's "Ajouter" (`inviteMembersToGroup`, which a
+join-request approval also is), a pending invitation, a welcome_request answer, a group's creation, or
+the owed-Welcome drain (`deliverOwedWelcomes`) that delivers a Welcome whose first send failed or whose
+Add's commit was only settled later. It announces each delivery once (`onWelcomeDelivered`; a
+concurrent send of the same bytes awaits the first), and `joinPush.ts`, installed with the service in
+`useChatSession`, answers it:
+
+- **once per Welcome, from durable state**: a per-account ledger (`mls_join_pushes_sent:v1:<account>`,
+  a 512-entry FIFO) names each pushed Welcome by group, device and a fingerprint of its bytes, written
+  before the push starts. The drain consumes what it delivers, so a re-run sends nothing; a reload that
+  lost the clear re-sends the same bytes, and the ledger stops the second push (the joiner, already
+  holding the group, would refuse it as answering no ask). A re-add is a new Welcome and is pushed for;
+- **off the gesture**: queued synchronously at the delivery and run one at a time, never awaited by the
+  Add, so "added" shows at once; each push caught and logged on its own (`[JOIN_PUSH]`);
+- **never into a key group** (`isDistributionGroup`).
+
+Before #3185 only the pending invitation and the welcome_request answer pushed, each by an explicit
+call: a newcomer added by "Ajouter", or whose Welcome came from the drain, saw no nickname at all
+(reading 2 of `1.6.9-alpha.1`, [defect](../../backlog.d/p2-a-member-added-after-a-nickname-does-not-receive-it.md)).
+
+**What a push costs.** `sendFullHistoryBundle` decrypts the inviter's whole store for the group and,
+in `sendBundleChunks`, re-reads the reader's windows for EVERY 200-message chunk - deliberately: a
+chunk is filtered on the windows in force when it leaves, so a member removed or re-added meanwhile
+is held to the current answer. For a newcomer every chunk is withheld, so a store of N messages costs
+one full decrypt and N/200 window reads to send a state-only frame. It is not reduced here (the
+per-chunk read is the correctness property); it no longer delays the member's gesture.
 
 **Why it does not breach step A** ([the decision](../../backlog.md#p1---a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10-21-that-they-must-not)).
 Step A forbids a newcomer the MESSAGES sent before their arrival; the push is addressed to the new

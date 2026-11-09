@@ -572,7 +572,6 @@ export async function processDeviceInvitationsLocally(
     const sweep = beginJoinRequestSweep();
     const swept = await processPendingInvitations({
       mlsService: ctx.ensureMls(),
-      storage: ctx.getStorage(),
       userId: ctx.getUserId(),
       deviceKeyB64: ctx.getDeviceKey(),
       conversations: cb.conversations,
