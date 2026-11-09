@@ -5829,5 +5829,11 @@
   "form_create_key_gone": "This draft was deleted in the meantime.",
   "follow_chip_follow_named": "Follow {name}",
   "follow_chip_withdraw_named": "Request sent - withdraw the follow request to {name}",
-  "follow_chip_withdraw": "Request sent - withdraw the follow request"
+  "follow_chip_withdraw": "Request sent - withdraw the follow request",
+  "chat_role_names_title": "Role names",
+  "chat_role_names_description": "Give each role the name your community uses. Only the name changes: what each role may do stays the same. Leave it empty to use the default name.",
+  "chat_role_name_input_label": "Name of the {role} role",
+  "chat_role_name_reset_button": "Default name",
+  "chat_role_name_invalid_error": "This name cannot be saved: 40 characters at most, no control characters.",
+  "chat_role_name_forbidden_error": "Only administrators can rename roles."
 }

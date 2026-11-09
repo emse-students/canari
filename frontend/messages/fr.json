@@ -5829,5 +5829,11 @@
   "form_create_key_gone": "Ce brouillon a été supprimé entre-temps.",
   "follow_chip_follow_named": "Suivre {name}",
   "follow_chip_withdraw_named": "Demande envoyée - retirer la demande de suivi à {name}",
-  "follow_chip_withdraw": "Demande envoyée - retirer la demande de suivi"
+  "follow_chip_withdraw": "Demande envoyée - retirer la demande de suivi",
+  "chat_role_names_title": "Noms des rôles",
+  "chat_role_names_description": "Donnez à chaque rôle le nom que votre communauté utilise. Seul le nom change : les droits de chaque rôle restent les mêmes. Laissez vide pour reprendre le nom par défaut.",
+  "chat_role_name_input_label": "Nom du rôle {role}",
+  "chat_role_name_reset_button": "Nom par défaut",
+  "chat_role_name_invalid_error": "Ce nom ne peut pas être enregistré : 40 caractères au plus, sans caractère de contrôle.",
+  "chat_role_name_forbidden_error": "Seuls les administrateurs peuvent renommer les rôles."
 }

@@ -942,6 +942,74 @@ budget is still met on no row.
 may still be stepping, kept its momentum 3 times out of 3 (plus one at +150 ms) and carried a
 192-message salon to its top, so the widen's `scrollTop` writes do not cancel a fling there.
 
+### Per-bubble and per-day work, cut (2026-11-08)
+
+**Method.** `frontend/bench/salon-mount/` on a readable build (`BENCH_READABLE=1 ... --profile`),
+hub scene, CPU x4, read with `profile-summary.mjs`: the inclusive time per function across the open
+(the reveal's 20 bubbles and the widen's 40). Nothing on the phone: the cold first open's profile the
+section above asks for still needs the Mi 9T.
+
+**What the profile named, before** (one open of 60 bubbles, x4, inclusive ms; a profiled run is
+slower than a bare one, so this is the SHAPE):
+
+| cost | first open | reopen | what it is |
+| --- | --- | --- | --- |
+| `MessageBubble`, all of it | 212 | 222 | the bubbles |
+| `isEmojiOnlyText` | 33 | 17 | a NEW `Intl.Segmenter` per bubble, and the whole text split before counting, to decide the jumbomoji |
+| `calendarDay` / `formatDayLabel` | 18 | 2 | three `Intl.DateTimeFormat` built per day separator, on every regrouping of the WHOLE conversation (`groupMessages` is not windowed) |
+| `MessageMediaRenderer` | 1 | 10 | mounted under every TEXT bubble, where it draws nothing |
+| the four closed overlays (`Modal`, `MessageMobileActions`, `MessageInfoTooltip`, `MessageEmojiPicker`) | 13 | 22 | per bubble, not moved (below) |
+
+**What changed.**
+- `emoji.ts`: ONE segmenter for the page and a lazy `graphemes` (shared with `emojiSvg.ts`, which had
+  its own copy); `isEmojiOnlyText` stops at the first grapheme that is not an emoji, or at the one
+  past `maxCount`. An ordinary message is answered after its first letter, whatever its length.
+  Pinned: one segmenter for every call, a 50 000-character message answered.
+- `dates.ts`: `calendarDay` answers the browser's own zone from the `Date` getters (no `Intl`; a
+  named zone still goes through `Intl`), and `dayLabeler` names many days against one clock with one
+  formatter per label shape. `groupMessages` makes one labeler per pass. `formatDayLabel` is a
+  one-day labeler, so its tests pin both.
+- `MessageBubble`: the media renderer is mounted only for a bubble that has an attachment.
+- The bench: `--days N` spreads the salon over N days (a separator each), the `mixed` shape's senders
+  are seeded in the directory (an unknown one was looked up on the bench server, a 404, a refresh
+  attempt and an engine warning per open), a failed load's warning names its URL, and a temp
+  profile Windows keeps locked no longer throws away the summary.
+
+**Measured** (medians, interleaved run by run against `origin/main` at `519a5693b`, this
+workstation under a heavy foreign load - the absolute milliseconds are 2-3x the 2026-11-07 tables
+and swing by 100 ms run to run, so read the arms against each other, never against those tables):
+
+| scene, shape, CPU | runs | open | gesture task, base -> this | reveal, base -> this |
+| --- | --- | --- | --- | --- |
+| pane, 200 rows over 200 days, mixed senders, x4 | 9 | first | 751 -> **495** | 831 -> **556** |
+| same | 9 | reopen | 347 -> **125** | 377 -> **161** |
+| hub, 200 rows in one day, own, x4 | 9 | first | 425 -> 350 | 433 -> 363 |
+| same | 9 | reopen | 151 -> 164 | 157 -> 169 |
+| hub, one day, own, x1 | 7 | first / reopen | 58 / 25 -> 55 / 23 | 60 / 25 -> 57 / 24 |
+
+Layouts and style recalculations are unchanged on every row (same counts; this cut is script only),
+rows at the reveal unchanged (20, or 10 groups plus their separators on the 200-day salon), engine
+warnings 0 on both arms once the bench's own 404 was removed.
+
+**How to read it.** A salon read for months - one separator a day - paid ~220 ms at x4 per
+REGROUPING for its day names alone, on every open and every message that arrives (`groupMessages`
+runs over the whole conversation, not the render window): that is the size-dependent cost, and it is
+gone. On the bench seed's shape (one day, one-line ASCII messages) the gain is the per-bubble part,
+~0.3 ms a bubble at x4 in the profile, inside the noise of a loaded machine.
+
+**Not moved, and why.** The four overlays every bubble mounts closed (~0.3 ms a bubble at x4) keep
+their place: they play an intro (`Modal`'s `in:fly`, the sheet's `transition:fly`) that a local
+transition plays only when its OWN block is created, so mounting them on demand would drop the
+animation of the first open of each. Mounting them on the bubble's first `pointerdown`/`focusin`,
+before any of them can open, is the candidate; it changes when `bindHistoryOverlay` registers and
+needs its own review.
+
+**Owed on the Mi 9T, with the next pre-release:** `community-open.mjs` cold and warm at 1x on the
+`BancOuverture-1` seed (one day: expect the salon-open long task to move by the per-bubble part
+only, within the spread), and the same on a salon spanning weeks, which no bench seed holds yet
+(`community-bench-seed.mjs` writes its messages in one burst) - `reopen>msgs` and the cached-reopen
+long task are the readings that should move there.
+
 ## 7. Not measured, and owed
 
 - **A CPU profile of the warm resume at 4x** (blocker 5's 2 s before the tap is handled):

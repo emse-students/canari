@@ -80,6 +80,7 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node",
+    "globalSetup": "<rootDir>/../jest-global-setup.cjs",
     "setupFilesAfterEnv": [
       "<rootDir>/../jest-integration-budget.cjs"
     ]

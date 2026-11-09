@@ -2104,4 +2104,24 @@ describe('useChannelWorkspaces - the history rule moving under an open session',
 
     expect(requestCommunityHistory).not.toHaveBeenCalled();
   });
+
+  it("keeps the community's own role names current from the announcement, and resets on null", () => {
+    const store = useChannelWorkspaces();
+    store.setRoleLabels({ r1: 'Presidence', r2: null });
+
+    // A permission edit announced by an older server carries no name: the name stays.
+    store.handleRolePermissionsChanged({ roleId: 'r1', permissions: ['workspace.manage'] });
+    expect(store.roleLabels).toEqual({ r1: 'Presidence', r2: null });
+
+    store.handleRolePermissionsChanged({ roleId: 'r2', permissions: [], label: 'Musicien' });
+    expect(store.roleLabels.r2).toBe('Musicien');
+
+    store.handleRolePermissionsChanged({ roleId: 'r1', permissions: [], label: null });
+    expect(store.roleLabels.r1).toBeNull();
+
+    // The server's own answer to a rename applies idempotently, announcement or not.
+    store.setRoleLabel('r2', 'Bureau');
+    store.setRoleLabel('r2', 'Bureau');
+    expect(store.roleLabels.r2).toBe('Bureau');
+  });
 });

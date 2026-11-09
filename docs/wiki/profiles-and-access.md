@@ -625,7 +625,7 @@ purpose**: `associations.type` gaining `institution` (nothing could create one y
 only (`NginxAuthGuard` + `GlobalAdminGuard`), registered BEFORE `AssociationsController` so the literal
 `associations/spaces` wins over `associations/:id`: `GET /api/associations/spaces` (every pair with its
 BDE), `GET /api/associations/spaces/audiences` (the rules of EVERY association in one read, which is all
-the grid needs to draw itself), `PUT /api/associations/spaces/:id/bde` (designate or clear; only a
+the grid needs to draw itself - replaced by the catalogue's per-row rules and removed at floor `1.6.6`), `PUT /api/associations/spaces/:id/bde` (designate or clear; only a
 regular association, never a list; **the same association may be the BDE of several spaces - user,
 2026-10-04, so the migration carries NO unique index on the BDE column**) and
 `GET/PUT /api/associations/:id/audiences` (replace the rules in one transaction, de-duplicated; **an
@@ -1576,8 +1576,8 @@ reaches the personnel side"), the latter **for this consented path only**.
   **An older build is refused, deliberately**: it draws no warning and sends no fingerprint, so its
   Accept of an institution's request is that same 409, read there as "no longer pending", and the
   request stays stuck on that device until the app updates (Refuse works). No fallback accepts
-  without a fingerprint; the floor retires the case
-  ([legacy-compatibility](legacy-compatibility.md#no-date-yet---an-institutions-republication-request-accepted-by-a-build-that-never-showed-its-audience)).
+  without a fingerprint; floor `1.6.6` retired the case
+  ([legacy-compatibility](legacy-compatibility.md#entries-166-retires-or-unblocks-the-owners-raise-of-2026-11-08)).
 - **After acceptance, the audience is LIVE**: who sees the post follows the carrier's CURRENT
   audience rules and membership, never the snapshot the author accepted. A rule added later, or a
   member who joins, reads it; a member who leaves stops. The author's remedy is to withdraw the

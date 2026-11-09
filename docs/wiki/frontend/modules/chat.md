@@ -2359,6 +2359,19 @@ A purged community goes through `dropCommunityLocally` in `ChatBackgroundService
 chat panel afterwards needs to know whether what was on screen belonged to the community that
 just vanished.
 
+### A community's own names for its three roles (owner, 2026-11-08)
+
+The "Roles" tab of the community settings (`SidebarCommunityAdminPanel`) opens with `CommunityRoleNames`,
+one field per role (admin, moderator, member), mounted only when the server said `viewerCanManage`.
+The default name is the placeholder; saving a blank field resets it. **Labels only**: the three roles,
+their permissions and their holders are untouched, and the stored role `name` stays the identity the
+client folds through `canonicalRoleOf` - a label is never read for a decision. Every place a role name
+is drawn (member badges, invite and role pickers, the permission grid headers) goes through the ONE
+resolver `resolveRoleLabel` (`utils/chat/communityRoleLabel.ts`), fed by `globalChannels.roleLabels`
+(by role id), which the listing fills and the `workspace.role.permissions` event (it carries `label`)
+keeps current for every member without a reload. Server side, column choice and refusals:
+[social-service](../../services/social-service.md#a-community-may-name-its-three-roles-owner-2026-11-08).
+
 ### Leaving: a private channel, or the whole community - never a public channel
 
 `ChannelSettingsModal` offers "Quitter le salon" only when `selectedChannel.isPrivate`. A public
@@ -4424,7 +4437,11 @@ weekday alone up to six calendar days back ("Mercredi"), then day and month ("23
 year only when it is not the current one. `Intl` in the Paraglide locale, so English reads "Monday",
 "September 23", "May 5, 2025". A day in the future (a skewed clock) never gets a bare weekday. The
 floating pill reads its text off the separator's `data-chat-date-separator`, so the two cannot
-disagree. Days are counted by `calendarDay`, shared with the media viewer's title.
+disagree. Days are counted by `calendarDay`, shared with the media viewer's title. `groupMessages`
+names the days of a pass through ONE `dayLabeler` (one clock, one `Intl.DateTimeFormat` per label
+shape), and `calendarDay` answers the browser's own zone from the `Date` getters: the regrouping
+runs over the whole conversation on every change of it, and three `Intl` builds per day separator
+were most of its cost ([community-open-budget](../community-open-budget.md#per-bubble-and-per-day-work-cut-2026-11-08)).
 
 **The pill is the last row of `.chat-thread-banners`, not a box positioned over the panel.** It was
 `absolute; left: 50%; translateX(-50%)`: shrink-to-fit could only use the half of the panel right of

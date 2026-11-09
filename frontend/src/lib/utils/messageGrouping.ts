@@ -1,5 +1,5 @@
 import type { ChatMessage } from '$lib/types';
-import { formatDayLabel, formatTime24, toValidDate } from '$lib/utils/dates';
+import { dayLabeler, formatTime24, toValidDate } from '$lib/utils/dates';
 import { compareMessageOrder, messageTime } from '$lib/utils/chat/messageOrder';
 import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
@@ -48,8 +48,13 @@ function isAlreadySorted(msgs: ChatMessage[]): boolean {
 export function groupMessages(messages: ChatMessage[], now: Date = new Date()): MessageGroup[] {
   if (messages.length === 0) return [];
 
-  const locale = getLocale();
-  const dayLabels = { today: m.chat_day_today(), yesterday: m.chat_day_yesterday() };
+  // ONE LABELER PER PASS: every day of the conversation is named against one clock and one set of
+  // formatters, not three `Intl` builds per day (`dayLabeler`).
+  const dayLabel = dayLabeler(
+    getLocale(),
+    { today: m.chat_day_today(), yesterday: m.chat_day_yesterday() },
+    now
+  );
   const sorted = isAlreadySorted(messages) ? messages : [...messages].sort(compareMessageOrder);
   const groups: MessageGroup[] = [];
   let lastDate: string | null = null;
@@ -69,7 +74,7 @@ export function groupMessages(messages: ChatMessage[], now: Date = new Date()): 
     if (lastDate !== msgDate) {
       groups.push({
         type: 'date_separator',
-        date: formatDayLabel(d, locale, dayLabels, now),
+        date: dayLabel(d),
       });
       lastDate = msgDate;
       lastTimestamp = null; // Reset time gap check for new day
