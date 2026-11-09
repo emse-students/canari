@@ -1,7 +1,7 @@
 /**
  * Pure rules for the store listing texts and screenshots, shared by `play.mjs` and its test.
  *
- * WHY a rule file apart from the uploader: a text naming a removed feature (Stripe, audio calls)
+ * WHY a rule file apart from the uploader: a text naming a removed feature (Stripe) or promising a payment
  * is a false claim in a public store, and it must be refused in CI, not discovered by a reviewer
  * of the store page. The limits are the stores' own, enforced here rather than truncated.
  */
@@ -29,19 +29,25 @@ export const LIMITS = {
 /** Claims that are false, unnamed on purpose, or superlative. Matched case-insensitively. */
 export const FORBIDDEN = [
   /stripe/i,
-  /\bappels?\b/i,
-  /\bcalls?\b/i,
   /\bmeilleure?s?\b/i,
   /\bbest\b/i,
   /\bn[°o]\s?1\b/i,
   /canari-emse\.fr/i,
   /lydia/i,
-  // Payments are `disabled` in production (Lydia is not live, docs/wiki/backlog.md WP-LYDIA-1), so a
-  // listing may not promise one, nor a ticketing/shop flow that rests on it.
+  // Owner decision 2026-11-09: a store text promises NOTHING about money. Calls and video calls are
+  // live and may be named; payment, shop and ticketing claims stay refused (no association is
+  // proven able to collect, and the Data Safety / App Privacy answers are not written for it).
   /\bpaiements?\b/i,
   /\bpayments?\b/i,
+  /\bachat(?:s|er)?\b/i,
+  /\bboutique\b/i,
+  /\bshop\b/i,
   /billetterie/i,
   /ticketing/i,
+  /\btickets?\b/i,
+  // The insider tagline and the old spelling: the product writes "CanaReels".
+  /marteaux/i,
+  /Canareels/,
 ];
 
 const URL_FIELDS = ['play.contactWebsite', 'appStore.supportUrl', 'appStore.marketingUrl'];
