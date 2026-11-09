@@ -408,7 +408,7 @@
           {#if canManagePayoutAccount && activePaymentProvider.current === null}
             <!-- Provider unknown: no provider-specific card until it is. -->
             <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
-              <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+              <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
                 <CreditCard size={20} />
                 {m.asso_payments_section_title()}
               </h2>
@@ -441,7 +441,7 @@
             <!-- Payments declared OFF platform-wide: the existing "not configured" state, never an
                  onboarding flow. -->
             <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
-              <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+              <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
                 <CreditCard size={20} />
                 {m.asso_payments_section_title()}
               </h2>
@@ -463,7 +463,7 @@
       {#if editSection === 'documents' && canManageDocuments && asso}
         <div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6 shadow-sm">
           <div>
-            <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+            <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
               <FolderLock size={20} />
               {m.asso_doc_vault_title()}
             </h2>

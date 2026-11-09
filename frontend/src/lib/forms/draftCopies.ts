@@ -49,6 +49,13 @@ export interface FormDraftCopy {
   formId: string | null;
   /** The create's idempotency key, for a form made on the create page; `null` otherwise. */
   clientCreateId: string | null;
+  /**
+   * The association the create of a copy with no `formId` names (`''`: none) - the one the page
+   * already SENT, whose replay must name the same, while the document carries the builder's latest
+   * choice (a draft may change association, owner 2026-11-09). Absent on a copy written before it was
+   * recorded: the picker was shut once a create was sent then, so the document's own was the create's.
+   */
+  createAssociationId?: string;
   /** The revision the document is built on: the base of the save that sends it. */
   baseRevision: number;
   /** The client id of the save that sends this document - one per document, minted when typed. */
@@ -463,7 +470,7 @@ export interface DeviceCopy {
  */
 export function deviceCopyOf(
   userId: string,
-  ids: () => { formId: string | null; clientCreateId: string | null }
+  ids: () => { formId: string | null; clientCreateId: string | null; createAssociationId?: string }
 ): DeviceCopy {
   const store = formDraftCopyStore(userId);
   const keys = () => {
@@ -472,10 +479,19 @@ export function deviceCopyOf(
   };
   return {
     keep: (baseRevision, saveId, document, after) => {
-      const { formId, clientCreateId } = ids();
+      const { formId, clientCreateId, createAssociationId } = ids();
       const key = formId ?? clientCreateId;
       if (!key) return Promise.reject(new Error('a device copy needs a form id or a create key'));
-      return store.put({ key, formId, clientCreateId, baseRevision, saveId, after, document });
+      return store.put({
+        key,
+        formId,
+        clientCreateId,
+        ...(createAssociationId !== undefined ? { createAssociationId } : {}),
+        baseRevision,
+        saveId,
+        after,
+        document,
+      });
     },
     sent: async (saveId) => {
       await store.deleteIfSent(keys(), saveId);

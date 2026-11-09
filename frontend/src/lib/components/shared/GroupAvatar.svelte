@@ -13,7 +13,7 @@
     /** Display name used for initials fallback. */
     name?: string;
     /** Avatar size preset. */
-    size?: 'sm' | 'md' | 'lg';
+    size?: 'sm' | 'md' | 'lg' | 'xl';
     /** When true, the avatar stretches to fill its container instead of using a preset size. */
     fill?: boolean;
     /** Border-radius style of the avatar. */
@@ -40,13 +40,15 @@
       ? 'w-full h-full text-base'
       : size === 'sm'
         ? 'w-6 h-6 text-xs'
-        : size === 'lg'
-          ? 'w-12 h-12 text-base'
-          : 'w-8 h-8 text-sm'
+        : size === 'xl'
+          ? 'w-14 h-14 text-lg'
+          : size === 'lg'
+            ? 'w-12 h-12 text-base'
+            : 'w-8 h-8 text-sm'
   );
   const shapeClasses = $derived(shape === 'circle' ? 'rounded-full' : 'squircle');
 
-  const iconSize = $derived(size === 'sm' ? 14 : size === 'lg' ? 22 : 18);
+  const iconSize = $derived(size === 'sm' ? 14 : size === 'xl' ? 26 : size === 'lg' ? 22 : 18);
 
   /**
    * The letters drawn when there is no image, or nothing when the icon should show instead.

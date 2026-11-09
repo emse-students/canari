@@ -1,4 +1,4 @@
-import { emojiSvgSrc } from '$lib/utils/emojiSvg';
+import { emojiPictureSrc } from '$lib/utils/emojiStyle';
 import {
   EMOJI_CATEGORIES,
   loadEmojiCatalog,
@@ -71,6 +71,7 @@ export function whenIdleAfterPaint(task: () => void): void {
  * instead of fetching 70-odd SVGs on the tap that opens it (the iPhone showed blank and growing
  * cells, 2026-11-08). Bounded: the catalogue is the one the picker loads anyway, and the pictures
  * are the first screen, the tab icons and the recents - about 80 files of ~3 kB, once per session.
+ * Under the "system" emoji setting no picture is drawn, so none is fetched: only the catalogue loads.
  */
 export async function warmEmojiPicker(
   dataSource: string,
@@ -81,7 +82,7 @@ export async function warmEmojiPicker(
     const entries = await loadEmojiCatalog(dataSource);
     warmEmojiPictures(
       [...recents, ...tabIconEmoji(entries), ...firstScreenEmoji(entries, tone)].map((emoji) =>
-        emojiSvgSrc(emoji)
+        emojiPictureSrc(emoji)
       )
     );
   } catch (e) {

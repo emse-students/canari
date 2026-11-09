@@ -272,7 +272,7 @@
     </div>
 
     <div class="flex items-center gap-3">
-      <label for="assoc-logo-zoom" class="text-text-muted text-xs font-bold tracking-wide uppercase"
+      <label for="assoc-logo-zoom" class="text-text-muted text-xs font-bold"
         >{m.asso_logo_zoom_label()}</label
       >
       <input

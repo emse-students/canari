@@ -36,6 +36,7 @@ import {
 } from './dto/space.dto';
 import { ZONED_INSTANT } from './dto/booking.dto';
 import { BookingPosterMedia, posterOf } from './booking-poster-media';
+import { announceOpeningToFollowers, followOpeningMove } from '../openings/opening-reminders';
 import {
   BookingNotificationsService,
   deletedBookingNotices,
@@ -250,7 +251,7 @@ export class BookingSpacesService {
     if (!isValidTimeZone(next.timeZone)) throw new BadRequestException({ code: 'time-zone' });
     const stepShape =
       next.slotMode === 'step'
-        ? (next.stepMinutes ?? 0) > 0 && (next.maxSteps ?? 0) >= 1
+        ? (next.stepMinutes ?? 0) > 0 && (next.maxSteps === null || next.maxSteps >= 1)
         : next.stepMinutes === null && next.maxSteps === null;
     if (!stepShape) throw new BadRequestException({ code: 'step-shape' });
     // The mirror (`booking_spaces_slot_minutes`): a slot length only on a slots space, in range.
@@ -359,7 +360,8 @@ export class BookingSpacesService {
       ...owner,
       slotMode: 'step',
       stepMinutes: 30,
-      maxSteps: 4,
+      // No longest booking until the organiser sets one (migration 153).
+      maxSteps: null,
       slotMinutes: null,
     });
     this.applySettings(space, dto);
@@ -391,6 +393,7 @@ export class BookingSpacesService {
         }
         const created = await m.save(BookingSpace, space);
         const column = await this.writeDefaultColumn(m, created, hours);
+        await announceSpaceOpening(m, created, actor.userId);
         return { id: created.id, resourceId: column };
       });
       this.logger.log(
@@ -461,6 +464,9 @@ export class BookingSpacesService {
         const oldPoster = space.poster?.mediaId ?? null;
         const before: SlotConfig = { ...space };
         const formerName = space.name;
+        const opensBefore = space.opensAt ? new Date(space.opensAt).getTime() : null;
+        const listedBefore = space.discoverability === 'listed';
+        const audienceBefore = !!space.audience;
         const storedImageUrls = questionImageUrlsOf(space.items);
         this.applySettings(space, dto);
         await this.assertSettingsValid(space, storedImageUrls);
@@ -482,6 +488,19 @@ export class BookingSpacesService {
           claimed = newPoster;
         }
         await m.save(BookingSpace, space);
+        // Its opening moved, it became listed, or its audience was cleared (L29): the reminders
+        // follow, in this transaction (engagement WP-4). `ON CONFLICT DO NOTHING` tells nobody twice.
+        const opensAfter = space.opensAt ? new Date(space.opensAt).getTime() : null;
+        if (opensAfter !== opensBefore) {
+          await followOpeningMove(m, 'booking', spaceId, space.opensAt);
+        }
+        if (
+          opensAfter !== opensBefore ||
+          (!listedBefore && space.discoverability === 'listed') ||
+          (audienceBefore && !space.audience)
+        ) {
+          await announceSpaceOpening(m, space, actor.userId);
+        }
         if (space.name !== formerName)
           await this.renameDefaultColumn(m, spaceId, formerName, space.name);
         this.logger.log(`[BOOKINGS] space updated id=${spaceId.slice(0, 8)}`);
@@ -720,4 +739,29 @@ export class BookingSpacesService {
     if (!space) throw new NotFoundException({ code: 'space-not-found' });
     return space;
   }
+}
+
+/**
+ * The opening of an association's LISTED booking space, written for the association's followers
+ * who see it (engagement WP-4, decision 5d): its window (`opensAt`), or now when it is bookable at
+ * once. A space reached by its link only is never announced - it is not meant to be found, and its
+ * name never reaches a lock screen (Q-R5) - nor a personal one, which has no followers, nor one
+ * with an `audience` (L25 as amended after the review of #3188).
+ */
+export async function announceSpaceOpening(
+  m: EntityManager,
+  space: Pick<BookingSpace, 'id' | 'associationId' | 'opensAt' | 'discoverability' | 'audience'>,
+  actorId: string
+): Promise<void> {
+  if (space.discoverability !== 'listed') return;
+  // A space with an AUDIENCE is not named to the followers it refuses (Reservations hides it from
+  // them, and its page answers 403): none is written (review of #3188, L25). The claim re-reads it.
+  if (space.audience) return;
+  await announceOpeningToFollowers(m, {
+    kind: 'booking',
+    targetId: space.id,
+    associationId: space.associationId,
+    opensAt: space.opensAt ? new Date(space.opensAt) : null,
+    actorId,
+  });
 }

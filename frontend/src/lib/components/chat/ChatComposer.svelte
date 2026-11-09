@@ -1006,7 +1006,7 @@
         <div
           class="bg-cn-surface rounded-2xl border border-black/5 p-3 shadow-lg md:p-4 dark:border-white/10"
         >
-          <div class="text-text-muted text-2xs mb-2 px-1 font-bold tracking-wider uppercase">
+          <div class="text-text-muted text-2xs mb-2 px-1 font-bold">
             {m.chat_pending_files_count({ pendingFiles: pendingFiles.length })}
           </div>
           <div class="flex max-h-52 flex-wrap gap-3 overflow-y-auto overscroll-contain">

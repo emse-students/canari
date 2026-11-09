@@ -39,6 +39,15 @@ import type {
  * a key group refused the person. `welcome` is then ABSENT: the commit merged, the Welcome
  * the merge owed is already discharged, and nothing is to be sent to that device (DEV-3, 2026-10-25).
  */
+/** One Welcome the server stored for one device ({@link IMlsService.onWelcomeDelivered}). */
+export type DeliveredWelcome = {
+  groupId: string;
+  userId: string;
+  deviceId: string;
+  /** The Welcome's bytes - what tells this delivery from a later Welcome to the same device. */
+  welcome: Uint8Array;
+};
+
 export interface OneDeviceAddResult {
   welcome?: Uint8Array;
   ratchetTree?: Uint8Array;
@@ -1857,6 +1866,14 @@ export interface IMlsService {
   onDisconnect(callback: () => void): void;
   /** Registers a callback invoked after a Welcome message has been successfully processed. */
   onWelcomeProcessed(callback: (groupId?: string) => void): void;
+
+  /**
+   * Installs THE listener of every Welcome this device delivers: called once per send the server
+   * stored, whichever path sent it (an Add, a pending invitation, a welcome_request answer, the
+   * owed-Welcome drain). Called synchronously and never awaited; one listener, installed by the
+   * session when it builds this service, so no delivery can precede it.
+   */
+  onWelcomeDelivered(listener: (delivered: DeliveredWelcome) => void): void;
 
   /**
    * Registers an observer of the bulk-ingest window lifecycle. Observers are notified in

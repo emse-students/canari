@@ -156,7 +156,6 @@ function joinerSide(member: ReturnType<typeof memberSide>) {
     sendWelcomeRequest: vi.fn(async (groupId: string) => {
       await handleWelcomeRequest({
         mlsService: member.mlsService as unknown as IMlsService,
-        storage: null,
         userId: 'me',
         deviceKeyB64: 'pin',
         conversations: member.deps.conversations as Map<string, Conversation>,

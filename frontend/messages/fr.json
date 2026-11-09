@@ -2,6 +2,10 @@
   "$schema": "https://inlang.com/schema/inlang-message-format",
   "settings_language_label": "Langue",
   "settings_language_desc": "Langue de l'interface",
+  "settings_emoji_style_label": "Emojis",
+  "settings_emoji_style_desc": "Système : ceux de votre téléphone. Canari : les mêmes dessins sur tous les appareils.",
+  "settings_emoji_style_system": "Système",
+  "settings_emoji_style_canari": "Canari",
   "auth_brand_subtitle": "Mines Saint-Étienne",
   "auth_redirecting": "Redirection…",
   "auth_restore_in_progress": "Restauration de votre session...",
@@ -458,7 +462,16 @@
   "chat_device_revoke_session_confirm": "Supprimer cette connexion ? Celui qui la détient sera déconnecté et devra tout reprendre depuis le début.",
   "chat_devices_intro": "Chaque ligne est un appareil relié à votre compte. Le supprimer le déconnecte et lui retire l'accès à vos conversations : il repart de zéro.",
   "chat_device_no_session": "Aucune connexion active",
-  "chat_device_session_count": "{count} connexions",
+  "chat_device_session_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} connexion",
+        "countPlural=other": "{count} connexions"
+      }
+    }
+  ],
   "chat_device_session_orphan_note": "Cette connexion n'a jamais identifié d'appareil : elle n'a pas déverrouillé vos messages. Si vous ne la reconnaissez pas, supprimez-la.",
   "chat_device_session_unlisted_note": "Cette connexion nomme un appareil qui ne figure plus dans la liste. Si vous ne la reconnaissez pas, supprimez-la.",
   "chat_device_limit_reached": "Cet appareil n'a pas pu s'enregistrer : votre compte a atteint la limite de {max} appareils. Supprimez un appareil inutilisé dans Paramètres > Gestion des appareils, puis rouvrez l'application.",
@@ -493,7 +506,16 @@
   "chat_channel_access_description": "Définissez si le canal est ouvert à tous les membres ou restreint à certains utilisateurs.",
   "chat_channel_settings_read_only_hint": "Seuls les membres ayant la permission de gérer les canaux peuvent modifier ces réglages.",
   "common_loading_label": "Chargement…",
-  "reactors_more_label": "+{count} autres",
+  "reactors_more_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "+{count} autre",
+        "countPlural=other": "+{count} autres"
+      }
+    }
+  ],
   "common_saving_label": "Sauvegarde…",
   "common_delete_button": "Supprimer",
   "chat_channel_private_label": "Canal privé",
@@ -636,6 +658,8 @@
   "msg_restored_unverified": "non vérifié",
   "msg_restored_unverified_hint": "Ce message a été restauré depuis l'historique d'un autre membre, et rien ne prouve qui l'a écrit : son auteur utilisait peut-être une ancienne version de Canari.",
   "msg_en_attente": "En attente…",
+  "msg_waiting_for_network": "En attente du réseau…",
+  "msg_waiting_for_server": "En attente du serveur…",
   "msg_echec": "Échec",
   "msg_non_confirme": "Non confirmé",
   "msg_remettre_dans_le_champ": "Remettre dans le champ",
@@ -705,7 +729,16 @@
   "msg_max_reactions_label": "Maximum de {max} réactions différentes sur ce message.",
   "msg_recent_reactions_label": "Récents",
   "msg_reactions_label": "Réactions au message",
-  "msg_reactions_show_more": "Afficher {count} autres réactions",
+  "msg_reactions_show_more": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Afficher {count} autre réaction",
+        "countPlural=other": "Afficher {count} autres réactions"
+      }
+    }
+  ],
   "msg_reaction_aria_label": "{emoji} ({count} personnes)",
   "msg_reaction_aria_label_one": "{emoji} (1 personne)",
   "msg_audio_format_unsupported_label": "Format non supporté",
@@ -735,6 +768,7 @@
   "post_anonymous_removed": "Anonymat retiré, l'auteur est de nouveau visible.",
   "post_unable_to_unmask": "Impossible de retirer l'anonymat",
   "post_reacter": "Ajouter une réaction",
+  "post_react_hold_hint": "Appui court : J'aime. Appui long : choisir une réaction",
   "post_already_reported": "Vous avez déjà signalé ce post.",
   "post_unable_to_vote": "Impossible de voter",
   "post_action_not_allowed": "Action non autorisée",
@@ -1022,14 +1056,14 @@
   "post_create_form_none_available": "Vous n'avez aucun formulaire à joindre. Créez-en un, ou retirez le formulaire du post.",
   "post_create_publish_error": "Impossible de publier le post",
   "publish_queue_queued": "Publication en attente",
-  "publish_queue_preparing": "Préparation du média {current} sur {count}",
-  "publish_queue_preparing_percent": "Préparation du média {current} sur {count} - {percent} %",
-  "publish_queue_uploading": "Publication en cours - média {current} sur {count} - {percent} %",
-  "publish_queue_publishing": "Publication en cours...",
-  "publish_queue_waiting": "Publication en pause - elle reprendra dès que la connexion revient",
-  "publish_queue_failed": "La publication a échoué : {reason}",
-  "publish_queue_paused": "Publication en pause",
-  "publish_queue_withdrawing": "Suppression de la publication...",
+  "publish_queue_preparing": "Préparation {current}/{count}",
+  "publish_queue_preparing_percent": "Préparation {current}/{count} · {percent} %",
+  "publish_queue_uploading": "Envoi {current}/{count} · {percent} %",
+  "publish_queue_publishing": "Publication…",
+  "publish_queue_waiting": "En attente du réseau",
+  "publish_queue_failed": "Échec : {reason}",
+  "publish_queue_paused": "En pause",
+  "publish_queue_withdrawing": "Suppression…",
   "publish_queue_pause": "Mettre en pause",
   "publish_queue_resume": "Reprendre",
   "publish_queue_gone": "Cette publication a été supprimée : elle ne peut plus être publiée",
@@ -1096,7 +1130,16 @@
   "post_create_publish_button_label": "Publier",
   "post_form_section_remove_label": "Retirer le formulaire",
   "post_form_choose_label": "- Choisir un formulaire -",
-  "post_form_questions_label": "{count} questions",
+  "post_form_questions_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} question",
+        "countPlural=other": "{count} questions"
+      }
+    }
+  ],
   "post_form_opens_suffix_label": "ouvre {date}",
   "post_form_opens_planned_label": "Ouverture prévue le {date}",
   "post_form_none_yet_label": "Aucun formulaire pour l'instant.",
@@ -1181,29 +1224,130 @@
   "admin_storage_disk_used": "{used} / {total} utilisés ({percent} %)",
   "admin_storage_postgres_label": "Base de données",
   "admin_storage_garage_label": "Objets média (Garage)",
-  "admin_storage_garage_object_count": "{count} objets",
+  "admin_storage_garage_object_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet",
+        "countPlural=other": "{count} objets"
+      }
+    }
+  ],
   "admin_storage_redis_label": "Cache (Redis)",
   "admin_storage_unavailable": "Mesure indisponible.",
   "admin_storage_media_growth_title": "Ce qui a été écrit",
   "admin_storage_media_week_range": "{from}-{to} j",
   "admin_storage_media_week_current": "7 derniers jours",
   "admin_storage_media_older": "Au-delà de {days} j : {size}. La rétention en efface une partie, ce n'est donc pas une mesure de croissance.",
-  "admin_storage_media_undated": "{count} objets sans date d'écriture, absents des barres ci-dessus.",
+  "admin_storage_media_undated": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet sans date d'écriture, absent des barres ci-dessus.",
+        "countPlural=other": "{count} objets sans date d'écriture, absents des barres ci-dessus."
+      }
+    }
+  ],
   "admin_storage_media_retention_title": "Rétention",
   "admin_storage_media_retention_healthy": "Aucun objet au-delà de la fenêtre de {days} jours. Balayage toutes les {hours} h.",
-  "admin_storage_media_retention_pending": "{count} objets ({size}) ont dépassé la fenêtre de {days} jours et attendent le prochain balayage.",
-  "admin_storage_media_retention_stalled": "{count} objets ({size}) auraient dû partir : le plus ancien a {age} jours pour une fenêtre de {days} jours. Un balayage est passé sans les prendre.",
+  "admin_storage_media_retention_pending": [
+    {
+      "declarations": [
+        "input count",
+        "input days",
+        "input size",
+        "local countPlural = count: plural"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) a dépassé la fenêtre de {days} jours et attend le prochain balayage.",
+        "countPlural=other": "{count} objets ({size}) ont dépassé la fenêtre de {days} jours et attendent le prochain balayage."
+      }
+    }
+  ],
+  "admin_storage_media_retention_stalled": [
+    {
+      "declarations": [
+        "input count",
+        "input age",
+        "input days",
+        "input size",
+        "local countPlural = count: plural"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) aurait dû partir : le plus ancien a {age} jours pour une fenêtre de {days} jours. Un balayage est passé sans le prendre.",
+        "countPlural=other": "{count} objets ({size}) auraient dû partir : le plus ancien a {age} jours pour une fenêtre de {days} jours. Un balayage est passé sans les prendre."
+      }
+    }
+  ],
   "admin_storage_media_unreachable_title": "Hors d'atteinte du balayage",
   "admin_storage_media_unreachable_none": "Aucun. Chaque objet du bucket a son entrée de métadonnées.",
-  "admin_storage_media_unreachable_some": "{count} objets ({size}) qu'aucun balayage ne peut atteindre.",
+  "admin_storage_media_unreachable_some": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) qu'aucun balayage ne peut atteindre.",
+        "countPlural=other": "{count} objets ({size}) qu'aucun balayage ne peut atteindre."
+      }
+    }
+  ],
   "admin_storage_media_untracked": "{count} ({size}) sans entrée de métadonnées : le balayage parcourt les métadonnées, il ne les voit pas.",
   "admin_storage_media_tombstoned": "{count} ({size}) marqués supprimés mais toujours dans le bucket : une suppression a échoué.",
-  "admin_storage_media_public": "{count} objets ({size}) sont des ressources publiques, exemptées de rétention.",
-  "admin_storage_media_archive": "{count} objets ({size}) sont des médias du fil (posts, commentaires, avatars), conservés indéfiniment.",
-  "admin_storage_media_association": "{count} objets ({size}) sont des documents d'associations, conservés indéfiniment, même après la suppression du compte qui les a envoyés.",
-  "admin_storage_media_reel": "{count} objets ({size}) sont des vidéos de CanaReels, supprimées avec leur reel un mois après la publication.",
+  "admin_storage_media_public": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) est une ressource publique, exemptée de rétention.",
+        "countPlural=other": "{count} objets ({size}) sont des ressources publiques, exemptées de rétention."
+      }
+    }
+  ],
+  "admin_storage_media_archive": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) est un média du fil (posts, commentaires, avatars), conservé indéfiniment.",
+        "countPlural=other": "{count} objets ({size}) sont des médias du fil (posts, commentaires, avatars), conservés indéfiniment."
+      }
+    }
+  ],
+  "admin_storage_media_association": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) est un document d'association, conservé indéfiniment, même après la suppression du compte qui l'a envoyé.",
+        "countPlural=other": "{count} objets ({size}) sont des documents d'associations, conservés indéfiniment, même après la suppression du compte qui les a envoyés."
+      }
+    }
+  ],
+  "admin_storage_media_reel": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) est une vidéo de CanaReels, supprimée avec son reel un mois après la publication.",
+        "countPlural=other": "{count} objets ({size}) sont des vidéos de CanaReels, supprimées avec leur reel un mois après la publication."
+      }
+    }
+  ],
   "admin_storage_reels": "{live} reels en vie, {overdue} en retard de suppression (un reel en retard est encore là passé son mois : le traitement horaire ne l'a pas retiré).",
-  "admin_storage_media_unclassified": "{count} objets ({size}) n'ont aucune classe de rétention (envoyés avant le 2026-10-01 ou par un ancien client) : le balayage n'y touche jamais.",
+  "admin_storage_media_unclassified": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) n'a aucune classe de rétention (envoyé avant le 2026-10-01 ou par un ancien client) : le balayage n'y touche jamais.",
+        "countPlural=other": "{count} objets ({size}) n'ont aucune classe de rétention (envoyés avant le 2026-10-01 ou par un ancien client) : le balayage n'y touche jamais."
+      }
+    }
+  ],
   "admin_storage_mls_title": "MLS",
   "admin_storage_mls_desc": "Ce que contiennent la base et le cache ci-dessus. Des nombres seulement : rien ici n'alerte, ne classe ni n'agit.",
   "admin_storage_mls_tables_title": "Tables",
@@ -1212,13 +1356,36 @@
   "admin_storage_mls_table_live": "~{size} de données",
   "admin_storage_mls_queue_title": "File non distribuée",
   "admin_storage_mls_queue_summary": "{rows} messages en attente pour {devices} appareils.",
-  "admin_storage_mls_queue_deepest": "File la plus profonde pour un seul appareil : {count} messages.",
+  "admin_storage_mls_queue_deepest": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "File la plus profonde pour un seul appareil : {count} message.",
+        "countPlural=other": "File la plus profonde pour un seul appareil : {count} messages."
+      }
+    }
+  ],
   "admin_storage_mls_queue_oldest": "Message le plus ancien en attente : {days} jours.",
   "admin_storage_mls_queue_empty": "Rien en attente.",
   "admin_storage_mls_queue_growth": "Messages mis en file par semaine",
   "admin_storage_mls_ghosts_title": "Appareils sans key package",
   "admin_storage_mls_ghosts_none": "Aucun. Les {devices} appareils qui portent des adhésions ont tous publié un key package.",
-  "admin_storage_mls_ghosts_some": "{count} appareils sur {devices} portent des adhésions ({memberships}) sans avoir publié de key package : ils ne peuvent être ajoutés à rien ni recevoir de Welcome.",
+  "admin_storage_mls_ghosts_some": [
+    {
+      "declarations": [
+        "input count",
+        "input devices",
+        "input memberships",
+        "local countPlural = count: plural"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} appareil sur {devices} porte des adhésions ({memberships}) sans avoir publié de key package : il ne peut être ajouté à rien ni recevoir de Welcome.",
+        "countPlural=other": "{count} appareils sur {devices} portent des adhésions ({memberships}) sans avoir publié de key package : ils ne peuvent être ajoutés à rien ni recevoir de Welcome."
+      }
+    }
+  ],
   "admin_storage_mls_redis_title": "Clés du cache",
   "admin_storage_mls_redis_summary": "{keys} clés. La répartition ci-dessous est un échantillon de {sampled}.",
   "admin_storage_mls_redis_prefix": "{prefix} : {keys}",
@@ -1333,7 +1500,16 @@
   "admin_legacy_status_already_held": "Déjà cotisant - ligne close sans rien changer",
   "admin_legacy_collision_hint": "Plusieurs lignes partagent le même nom, prénom et promo pour une même association. Rien ne peut décider seul laquelle revient à qui : la première personne connectée prend la cotisation et les autres lignes restent bloquées.",
   "admin_legacy_empty": "Aucune ligne.",
-  "admin_legacy_total_label": "{count} lignes",
+  "admin_legacy_total_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} ligne",
+        "countPlural=other": "{count} lignes"
+      }
+    }
+  ],
   "admin_payments_connect_hint": "La configuration des paiements en ligne se fait sur chaque association : page publique → Modifier → onglet Paiements.",
   "admin_agenda_title": "Événements en attente",
   "admin_agenda_subtitle": "Validez un événement pour le rendre visible sur l'agenda public et dans l'agenda global.",
@@ -2153,7 +2329,7 @@
   "asso_members_role_admin": "Admin",
   "asso_members_role_bde": "Bureau du BDE (Admin + agenda, associations, modération)",
   "asso_forms_title": "Formulaires",
-  "asso_forms_subtitle": "Formulaires liés à cette association. Validez les paiements en espèces en attente.",
+  "asso_forms_subtitle": "Formulaires liés à cette association. Validez les paiements sur place en attente.",
   "asso_forms_new_form_button": "Nouveau formulaire",
   "asso_forms_payments_missing_no_manage": "Certains formulaires sont payants mais les paiements en ligne ne sont pas configurés. Demandez à un responsable disposant de l'accès « Gérer le compte bancaire » de les activer.",
   "asso_forms_payments_missing_can_manage_prefix": "Certains formulaires sont payants mais ",
@@ -2161,7 +2337,7 @@
   "asso_forms_payments_missing_suffix": ". Les paiements en ligne ne fonctionneront pas tant que vous n'aurez pas ",
   "asso_forms_payments_configure_link": "configuré les paiements dans l'onglet Paiements",
   "asso_forms_price_free": "Gratuit",
-  "asso_forms_cash_accepted": "Espèces acceptées",
+  "asso_forms_cash_accepted": "Paiement sur place accepté",
   "asso_forms_payments_not_configured_badge": "Paiements non configurés",
   "asso_forms_view_link": "Voir le formulaire ↗",
   "asso_forms_pending_cash_label": [
@@ -2177,10 +2353,10 @@
   "asso_forms_cancel_cash_confirm": "Annuler ce paiement ?",
   "asso_forms_cancel_cash_confirm_button": "Annuler le paiement",
   "asso_forms_cancel_cash_cancel": "Non",
-  "asso_forms_no_pending_cash": "Aucun paiement en espèces en attente.",
+  "asso_forms_no_pending_cash": "Aucun paiement sur place en attente.",
   "asso_forms_no_forms": "Aucun formulaire lié à cette association.",
   "asso_achats_title": "Achats et acheteurs",
-  "asso_achats_subtitle": "Historique des paiements boutique et formulaires payants. Attribuez un produit manuellement (espèces, paiement antérieur à Canari).",
+  "asso_achats_subtitle": "Historique des paiements boutique et formulaires payants. Attribuez un produit manuellement (paiement sur place, paiement antérieur à Canari).",
   "asso_achats_filter_label": "Filtrer par produit",
   "asso_achats_filter_all": "Tous les achats",
   "asso_achats_grant_title": "Attribuer un produit",
@@ -2188,7 +2364,7 @@
   "asso_achats_grant_product_label": "Produit",
   "asso_achats_grant_product_placeholder": "Choisir…",
   "asso_achats_grant_amount_label": "Montant payé (€)",
-  "asso_achats_grant_other_hint": "L'achat apparaîtra dans l'historique comme un paiement en direct.",
+  "asso_achats_grant_other_hint": "L'achat apparaîtra dans l'historique comme un paiement sur place.",
   "asso_achats_grant_cotisation_hint": "Le membre recevra la cotisation \"{name}\".",
   "asso_achats_grant_submitting": "Attribution…",
   "asso_achats_grant_button": "Attribuer comme acheté",
@@ -2205,7 +2381,7 @@
   "asso_achats_col_amount": "Montant",
   "asso_achats_source_product": "Boutique",
   "asso_achats_source_form": "Formulaire",
-  "asso_achats_payment_cash": "Paiement en direct",
+  "asso_achats_payment_cash": "Paiement sur place",
   "asso_achats_not_granted": "Non accordé",
   "asso_achats_not_granted_hint": "Payé, mais l'achat n'a pas été délivré (une cotisation qui n'a pas pu être accordée, un article supprimé ou un compte effacé avant le paiement, ou un formulaire accordant une cotisation qu'il n'a pas accordée). Vérifiez ce que l'acheteur détient avant de rembourser : il a pu être délivré depuis. Sinon, remboursez-le ou accordez-le à la main.",
   "asso_achats_close_refunded_button": "Marquer remboursé",
@@ -2285,7 +2461,7 @@
       }
     }
   ],
-  "asso_cotisations_tier_delete_checkout_open": "Un paiement de ce palier est en cours, dans la boutique ou via un formulaire qui l'attribue. Retirez le palier de la vente et fermez ces formulaires pour qu'aucun autre ne commence, puis réessayez une fois ce paiement réglé ou expiré (une trentaine de minutes en ligne ; un paiement en espèces attend d'être validé ou annulé).",
+  "asso_cotisations_tier_delete_checkout_open": "Un paiement de ce palier est en cours, dans la boutique ou via un formulaire qui l'attribue. Retirez le palier de la vente et fermez ces formulaires pour qu'aucun autre ne commence, puis réessayez une fois ce paiement réglé ou expiré (une trentaine de minutes en ligne ; un paiement sur place attend d'être validé ou annulé).",
   "asso_cotisations_add_tier_label": "Forfait",
   "asso_cotisations_tier_change_label": "Changer de forfait",
   "asso_cotisations_tier_change_error": "Impossible de changer le forfait de ce cotisant",
@@ -2706,7 +2882,7 @@
   "form_list_answers_none": "Cette personne n'a rempli aucune question.",
   "form_status_free": "Gratuit",
   "form_status_pending": "En attente",
-  "form_status_pending_cash": "Espèces en attente",
+  "form_status_pending_cash": "Paiement sur place en attente",
   "form_status_paid": "Payé",
   "form_status_cancelled": "Annulé",
   "form_status_expired": "Expiré",
@@ -2753,9 +2929,12 @@
   "form_cotisation_tier_base": "Cotisation",
   "form_image_add_after_create": "Vous pourrez ajouter une affiche après avoir créé le formulaire.",
   "form_section_responses": "Réponses",
-  "form_association_hint": "Le formulaire apparaîtra dans l'espace de l'association, et ses gestionnaires de formulaires pourront le modifier. Ce choix est définitif.",
+  "form_association_hint": "Le formulaire apparaîtra dans l'espace de l'association, et ses gestionnaires de formulaires pourront le modifier. Ce choix reste modifiable jusqu'à la publication.",
+  "form_association_applies_at_publish": "Le changement d'association prendra effet à la publication du formulaire.",
+  "form_association_fixed_refusal": "Ce formulaire est publié : il reste rattaché à son association, car ses réponses, ses paiements et ses rappels en dépendent. Pour le proposer sous une autre association, créez un nouveau formulaire.",
+  "form_association_not_yours_refusal": "Pour changer l'association de ce brouillon, il faut être membre de l'association qu'il quitte et de celle qu'il rejoint.",
   "form_association_none": "Aucune (formulaire personnel)",
-  "form_association_locked_hint": "Choisie à la création, elle ne peut plus être changée.",
+  "form_association_locked_hint": "Un formulaire publié reste rattaché à son association : ses réponses, ses paiements et ses rappels en dépendent. Pour le proposer sous une autre association, créez un nouveau formulaire.",
   "form_payment_needs_association_title": "Un formulaire payant a besoin d'une association",
   "form_payment_needs_association_desc": "L'argent doit être versé à une association. Choisissez-en une dans les informations générales, ou laissez le formulaire gratuit.",
   "form_payment_needs_setup_title": "{association} ne peut pas encore encaisser",
@@ -2777,7 +2956,7 @@
   "form_anonymous_hint": "Les réponses sont enregistrées sans nom, sans e-mail et sans heure précise : on sait seulement qui a déjà répondu, jamais ce qu'il a répondu. Gratuit uniquement, et définitif une fois le formulaire créé.",
   "form_anonymous_hint_fixed": "Choisi à la création : un formulaire ne devient pas anonyme, ni nominatif, après coup.",
   "form_public_label": "Formulaire public",
-  "form_public_hint": "Toute personne ayant le lien peut répondre, sans compte Canari, et autant de fois qu'elle veut. Pour savoir qui a répondu, demandez aux invités leur nom, leur prénom ou leur e-mail ci-dessous. Un invité peut payer (prix, suppléments, espèces, grille de prix) ; sur une grille selon la promo, la formation ou la cotisation, il paie le tarif « autres ». L'adresse e-mail du paiement n'est conservée que si vous demandez l'e-mail.",
+  "form_public_hint": "Toute personne ayant le lien peut répondre, sans compte Canari, et autant de fois qu'elle veut. Pour savoir qui a répondu, demandez aux invités leur nom, leur prénom ou leur e-mail ci-dessous. Un invité peut payer (prix, suppléments, paiement sur place, grille de prix) ; sur une grille selon la promo, la formation ou la cotisation, il paie le tarif « autres ». L'adresse e-mail du paiement n'est conservée que si vous demandez l'e-mail.",
   "form_option_conflict_anonymous_payment": "Un formulaire anonyme ne peut pas être payant : payer identifie la personne.",
   "form_option_conflict_anonymous_grant": "Un formulaire anonyme ne peut pas accorder de cotisation : une cotisation est accordée à un compte.",
   "form_option_conflict_anonymous_file": "Un formulaire anonyme ne peut pas demander de fichier : un fichier est lié au compte qui l'envoie.",
@@ -2845,7 +3024,7 @@
   "form_guest_submit_failed": "Votre réponse n'a pas pu être envoyée. Vérifiez-la et réessayez dans un instant.",
   "form_grant_blocked_public": "Indisponible sur un formulaire public : un invité n'a pas de compte à qui accorder une cotisation.",
   "form_guest_cash_owed_title": "Réponse enregistrée",
-  "form_guest_cash_owed_desc": "Réglez {amount} en espèces auprès de l'organisateur : votre réponse compte dès qu'il valide le paiement. Donnez-lui votre référence.",
+  "form_guest_cash_owed_desc": "Réglez {amount} sur place auprès de l'organisateur : votre réponse compte dès qu'il valide le paiement. Donnez-lui votre référence.",
   "form_guest_payment_note": "Paiement sécurisé sur la page de Lydia, sans compte Canari. Votre adresse e-mail ne sert qu'à la demande de paiement et n'est pas conservée.",
   "form_guest_reference": "Référence : {reference}",
   "form_guest_receipt_confirmed_desc": "Votre réponse est enregistrée et payée. Notez votre référence : aucun e-mail ne vous sera envoyé, et l'organisateur vous retrouve grâce à elle.",
@@ -2867,8 +3046,8 @@
     }
   ],
   "form_responses_card_paid": "Payées",
-  "form_responses_card_paid_hint": "Lydia ou espèces reçues",
-  "form_responses_card_unpaid": "Non payées (espèces)",
+  "form_responses_card_paid_hint": "Lydia ou paiement sur place reçu",
+  "form_responses_card_unpaid": "Non payées (sur place)",
   "form_responses_card_unpaid_hint": "{amount} à encaisser",
   "form_responses_card_collected": "Montant encaissé",
   "form_responses_card_refunded_hint": "{amount} remboursés",
@@ -2886,9 +3065,9 @@
   "form_responses_no_match": "Aucune réponse ne correspond.",
   "form_responses_status_with_method": "{status} · {method}",
   "form_responses_method_online": "Lydia",
-  "form_responses_method_cash": "espèces",
+  "form_responses_method_cash": "sur place",
   "form_responses_mark_paid": "Marquer payé",
-  "form_responses_mark_paid_confirm": "Confirmer que {name} a payé {amount} en espèces ?",
+  "form_responses_mark_paid_confirm": "Confirmer que {name} a payé {amount} sur place ?",
   "form_responses_mark_paid_error": "Impossible de marquer cette réponse comme payée.",
   "form_responses_totals_all": "Commande fournisseur · tous produits",
   "form_responses_units": [
@@ -2902,7 +3081,7 @@
     }
   ],
   "form_responses_count_unpaid": "Compter les réponses non payées",
-  "form_responses_count_unpaid_hint": "Les commandes en espèces pas encore reçues. Une réponse remboursée ne compte jamais.",
+  "form_responses_count_unpaid_hint": "Les commandes à payer sur place pas encore reçues. Une réponse remboursée ne compte jamais.",
   "form_responses_total": "Total",
   "form_responses_summary_managers_only": "Visible des gestionnaires du formulaire uniquement.",
   "form_responses_summary_answers": [
@@ -2938,7 +3117,7 @@
   "form_export_grid_total": "Total",
   "form_export_grid_amount": "Montant",
   "form_export_grid_received": "Payé ou gratuit",
-  "form_export_grid_awaiting_cash": "Espèces non reçues",
+  "form_export_grid_awaiting_cash": "Paiement sur place non reçu",
   "form_opens_at_label": "Date d'ouverture (shotgun)",
   "form_opens_at_hint": "Laissez vide pour ouvrir immédiatement. Les réponses seront bloquées avant cette date.",
   "form_requires_payment_label": "Ce formulaire nécessite un paiement",
@@ -2959,13 +3138,21 @@
   "form_online_payment_unavailable_label": "Paiement en ligne indisponible",
   "form_online_payment_unavailable_desc": "Cette plateforme n'a pas de moyen de paiement en ligne actif : le formulaire ne pourra pas être payé en ligne.",
   "form_online_payment_unknown_label": "Paiement en ligne",
-  "form_cash_label": "Accepter le paiement en espèces",
+  "form_cash_label": "Accepter le paiement sur place",
   "form_cash_expiry_label": "Expiration du paiement en attente (jours)",
   "form_cash_expiry_placeholder": "Jamais (laisser vide)",
-  "form_cash_expiry_hint": "Les paiements en espèces non validés après ce délai passent automatiquement à \"expiré\". Laissez vide pour ne jamais expirer.",
-  "form_cash_expiry_required_public": "Obligatoire sur un formulaire public : une réponse en espèces non payée garde sa place jusqu'à ce délai.",
-  "form_questions_count": "{count} questions",
-  "form_questions_count_one": "1 question",
+  "form_cash_expiry_hint": "Les paiements sur place non validés après ce délai passent automatiquement à \"expiré\". Laissez vide pour ne jamais expirer.",
+  "form_cash_expiry_required_public": "Obligatoire sur un formulaire public : une réponse non payée, à régler sur place, garde sa place jusqu'à ce délai.",
+  "form_questions_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} question",
+        "countPlural=other": "{count} questions"
+      }
+    }
+  ],
   "form_add_question_button": "Ajouter une question",
   "form_error_title_required": "Le titre du formulaire est obligatoire.",
   "form_error_association_required": "Veuillez sélectionner une association bénéficiaire pour un formulaire payant.",
@@ -2978,16 +3165,16 @@
   "form_draft_notice": "Brouillon : personne d'autre que les gestionnaires ne le voit tant qu'il n'est pas publié.",
   "form_publish_button": "Publier",
   "form_publishing_label": "Publication…",
-  "form_publish_blocked_payments": "Activez le paiement en espèces ou attendez que l'encaissement en ligne soit configuré",
+  "form_publish_blocked_payments": "Activez le paiement sur place ou attendez que l'encaissement en ligne soit configuré",
   "form_is_draft_refusal": "Ce formulaire est un brouillon : publiez-le avant de le joindre.",
   "form_draft_flag_on_edit": "Mettez à jour l'application pour publier ce formulaire.",
   "form_view_open_button": "Voir le formulaire",
   "form_preview_banner": "Aperçu : c'est ce que verront les répondants. Aucune réponse ne peut être envoyée depuis cet aperçu.",
   "form_preview_submit_disabled": "Envoi désactivé (aperçu)",
-  "form_no_payment_method": "Choisissez au moins un moyen de paiement : en ligne ou en espèces.",
-  "form_online_payment_not_offered": "Ce formulaire se paie en espèces uniquement.",
+  "form_no_payment_method": "Choisissez au moins un moyen de paiement : en ligne ou sur place.",
+  "form_online_payment_not_offered": "Ce formulaire se paie uniquement sur place.",
   "form_online_payment_toggle_hint": "Proposé aux répondants dès que l'encaissement en ligne de l'association est prêt.",
-  "form_payment_online_pending_cash_note": "L'encaissement en ligne n'est pas encore configuré : les réponses seront payées en espèces pour l'instant.",
+  "form_payment_online_pending_cash_note": "L'encaissement en ligne n'est pas encore configuré : les réponses seront payées sur place pour l'instant.",
   "form_image_section": "Image / affiche",
   "form_image_add_label": "Ajouter une image (JPEG / PNG / WebP, max 8 Mo)",
   "form_image_uploading": "Envoi en cours…",
@@ -3363,7 +3550,6 @@
   "profile_bio_save_error_fallback": "Erreur lors de la sauvegarde",
   "settings_page_title": "Paramètres",
   "settings_page_subtitle": "Préférences, sécurité et gestion de votre compte",
-  "settings_device_id_label": "device : {id}",
   "settings_storage_heading": "Stockage",
   "settings_storage_desc": "Espace utilisé par Canari sur cet appareil : messages, cache média et état de chiffrement.",
   "settings_storage_measuring": "Mesure en cours...",
@@ -3459,13 +3645,13 @@
   "purchases_explore_shop": "Explorer la boutique",
   "purchases_status_paid": "Payé",
   "purchases_status_paid_not_granted": "Payé, non livré par ce paiement : contactez l'association",
-  "purchases_status_pending_cash": "En attente (cash)",
+  "purchases_status_pending_cash": "En attente (sur place)",
   "purchases_status_cancelled": "Annulé",
   "purchases_status_expired": "Expiré",
   "purchases_status_refunded": "Remboursé",
   "purchases_source_form": "Formulaire",
   "purchases_source_shop": "Boutique",
-  "purchases_payment_cash": "Espèces",
+  "purchases_payment_cash": "Paiement sur place",
   "purchases_payment_card": "Carte bancaire",
   "shop_heading": "Boutique",
   "shop_subtitle": "Cotisations, recharges et produits des associations",
@@ -3770,7 +3956,7 @@
   "asso_statement_payment": "Paiement",
   "asso_statement_refund_total": "Remboursement total",
   "asso_statement_refund_partial": "Remboursement partiel",
-  "asso_statement_cash": "Espèces",
+  "asso_statement_cash": "Paiement sur place",
   "asso_statement_online": "En ligne",
   "asso_statement_total_received": "Total encaissé",
   "asso_statement_total_refunded": "Total remboursé",
@@ -3843,9 +4029,8 @@
   "profile_public_info_heading": "Informations",
   "status_pill_connected": "Connecté",
   "status_pill_offline": "Hors-ligne",
-  "admin_maintenance_banner_text": "Mode maintenance actif - seuls les administrateurs ont accès.",
+  "admin_maintenance_banner_text": "Maintenance : admins uniquement",
   "env_banner_test_label": "Environnement de test",
-  "env_banner_test_detail": "Les personnes et les associations sont fictives. Rien de ce que vous faites ici n'atteint la vraie application.",
   "md_toolbar_aria_label": "Mise en forme",
   "md_toolbar_bold": "Gras",
   "md_toolbar_italic": "Italique",
@@ -3906,10 +4091,10 @@
   "calendar_event_fallback_title": "Événement",
   "calendar_event_linked_form": "Formulaire lié",
   "calendar_event_linked_post": "Post lié",
-  "mls_error_oom_text": "Mémoire insuffisante - rechargez l'application pour recevoir de nouveaux messages.",
-  "mls_error_private_mode_text": "Mode navigation privée - les messages ne seront pas conservés après fermeture.",
-  "mls_error_keystore_lost_text": "Notifications push dégradées - reconnectez-vous pour les réactiver.",
-  "mls_error_restore_shortfall_text": "Certaines conversations n'ont pas pu être restaurées sur cet appareil et attendent d'être resynchronisées.",
+  "mls_error_oom_text": "Mémoire insuffisante",
+  "mls_error_private_mode_text": "Navigation privée : messages non conservés",
+  "mls_error_keystore_lost_text": "Notifications push dégradées : reconnectez-vous",
+  "mls_error_restore_shortfall_text": "Conversations à resynchroniser",
   "mls_error_reload_action": "Recharger",
   "mls_error_dismiss_action": "Compris",
   "media_lightbox_default_aria": "Aperçu média",
@@ -4140,9 +4325,17 @@
   "chat_system_call_busy": "Contact occupé",
   "chat_system_call_duration_under_minute": "moins d'une minute",
   "chat_system_call_duration_one_minute": "1 minute",
-  "chat_system_call_duration_minutes": "{count} minutes",
+  "chat_system_call_duration_minutes": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} minute",
+        "countPlural=other": "{count} minutes"
+      }
+    }
+  ],
   "chat_preview_media": "[Média]",
-  "chat_preview_info": "[Info]",
   "chat_preview_poll": "[Sondage]",
   "chat_preview_gif": "[GIF]",
   "chat_preview_link": "[Lien]",
@@ -4242,7 +4435,16 @@
   "pdf_open_document_label": "Ouvrir le document",
   "post_file_ready_to_save": "Prêt - touchez pour enregistrer",
   "pdf_viewer_page_alt": "Page {page} sur {total}",
-  "pdf_viewer_page_count": "{count} pages",
+  "pdf_viewer_page_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} page",
+        "countPlural=other": "{count} pages"
+      }
+    }
+  ],
   "pdf_viewer_zoom_in": "Agrandir",
   "pdf_viewer_zoom_out": "Réduire",
   "pdf_viewer_error": "Ce document ne peut pas être affiché.",
@@ -4255,9 +4457,9 @@
   "open_in_app_banner_install": "Pas encore l'application ? La télécharger",
   "open_in_app_banner_open": "Ouvrir dans l'application",
   "open_in_app_banner_dismiss": "Continuer dans ce navigateur",
-  "offline_banner_title": "Hors connexion.",
+  "offline_banner_title": "Hors connexion",
   "offline_banner_desc": "Vous pouvez lire vos conversations. Vos messages partiront dès le retour du réseau ; dans un salon, les photos, vidéos et sondages attendent la connexion.",
-  "offline_banner_reconnecting": "Connexion retrouvée, synchronisation de vos messages...",
+  "offline_banner_reconnecting": "Synchronisation…",
   "slow_indicator_label": "Connexion lente. Vos messages partent quand même ; les chargements peuvent prendre plus de temps.",
   "link_label_home": "Accueil",
   "link_label_chat": "Discussion",
@@ -4413,7 +4615,16 @@
   "form_criterion_question_label": "Question",
   "form_criterion_question_placeholder": "Choisir une question...",
   "form_criterion_untitled_question": "Question sans titre",
-  "form_criterion_formation_count": "{count} personnes",
+  "form_criterion_formation_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} personne",
+        "countPlural=other": "{count} personnes"
+      }
+    }
+  ],
   "form_builder_priced_by_grid": "Les tarifs de cette question sont fixés dans la grille tarifaire, pas ici.",
   "form_view_not_open_to_you_title": "Ce formulaire ne vous est pas destiné",
   "form_view_not_open_to_you_desc": "Son accès est réservé à certaines promotions, formations ou cotisants.",
@@ -4534,7 +4745,23 @@
   "reel_sendto_failed_in_unnamed": "Une vidéo n'a pas pu être envoyée dans l'une des conversations choisies : ouvrez-la pour voir pourquoi.",
   "reel_sendto_failed_in_many": "La vidéo n'a pas pu être envoyée dans {count} conversations : ouvrez-les pour voir pourquoi.",
   "reel_sendto_failed_in_chosen": "La vidéo n'a pas pu être envoyée dans les conversations choisies : ouvrez-les pour voir pourquoi.",
-  "reel_sendto_delete_everywhere_skipped": "Supprimée dans {done} conversations ; {skipped} ne sont plus sur cet appareil et la gardent.",
+  "reel_sendto_delete_everywhere_skipped": [
+    {
+      "declarations": [
+        "input done",
+        "input skipped",
+        "local donePlural = done: plural",
+        "local skippedPlural = skipped: plural"
+      ],
+      "selectors": ["donePlural", "skippedPlural"],
+      "match": {
+        "donePlural=one skippedPlural=one": "Supprimée dans {done} conversation ; {skipped} n'est plus sur cet appareil et la garde.",
+        "donePlural=one skippedPlural=other": "Supprimée dans {done} conversation ; {skipped} ne sont plus sur cet appareil et la gardent.",
+        "donePlural=other skippedPlural=one": "Supprimée dans {done} conversations ; {skipped} n'est plus sur cet appareil et la garde.",
+        "donePlural=other skippedPlural=other": "Supprimée dans {done} conversations ; {skipped} ne sont plus sur cet appareil et la gardent."
+      }
+    }
+  ],
   "reel_sendto_everywhere_running": "La suppression de cette vidéo est déjà en cours.",
   "reel_sendto_same_as_post": "Les conversations recevront la vidéo publiée elle-même.",
   "reel_sendto_cancel_all": "Annuler partout",
@@ -4967,6 +5194,7 @@
   "bookings_section_data": "Données",
   "bookings_summary_essentials": "Nom, description, affiche, fuseau",
   "bookings_summary_when_step": "Durée au choix : tranches de {step} min, {max} au plus",
+  "bookings_summary_when_step_free": "Durée au choix : tranches de {step} min, sans limite de durée",
   "bookings_summary_when_step_any": "Durée au choix",
   "bookings_summary_when_slots": "Créneaux fixes",
   "bookings_summary_columns": "Colonnes : {count}",
@@ -4996,8 +5224,12 @@
   "bookings_mode_slots_hint": "Chaque plage est un créneau, réservé en entier.",
   "bookings_slot_length_hint": "La durée d'un créneau que la grille ouvre quand vous la peignez.",
   "bookings_slot_length_inferred": "Lue dans les créneaux existants",
+  "bookings_field_max_minutes": "Durée maximale d'une réservation (minutes)",
+  "bookings_field_max_minutes_none": "Pas de limite",
+  "bookings_field_max_minutes_hint": "Vide = pas de limite. Un multiple de {step} min (la durée d'un pas). Le nombre de réservations par personne et le total par jour ou par semaine se règlent juste en dessous.",
+  "bookings_field_max_minutes_result": "Soit au plus {duration} par réservation.",
+  "bookings_problem_max_minutes": "Un multiple de la durée d'un pas, 96 pas au plus",
   "bookings_field_step": "Durée d'un pas (minutes)",
-  "bookings_field_max_steps": "Pas qui se suivent, au plus",
   "bookings_field_audience": "Réserver à certaines personnes",
   "bookings_field_audience_hint": "Désactivé, tout compte connecté peut réserver.",
   "bookings_field_names": "Ce que voient les autres",
@@ -5209,7 +5441,16 @@
   "bookings_day_state_none": "rien de libre",
   "bookings_strip_label": "Jours de la semaine",
   "bookings_column_label": "Colonne",
-  "bookings_column_free_count": "{count} libres",
+  "bookings_column_free_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} libre",
+        "countPlural=other": "{count} libres"
+      }
+    }
+  ],
   "bookings_grid_caption": "Créneaux de {space}",
   "bookings_grid_drag_hint_pointer": "Glissez sur la grille pour choisir plusieurs créneaux.",
   "bookings_grid_drag_hint_touch": "Appui long, puis glissez sur la grille pour choisir plusieurs créneaux.",
@@ -5617,6 +5858,8 @@
   "notif_booking_cancelled_text": "a annulé une réservation",
   "notif_booking_withdrawn_text": "a quitté votre réservation",
   "notif_booking_added_text": "vous a inscrit à une réservation",
+  "notif_booking_open_text": "a ouvert les réservations :",
+  "notif_event_open_text": "a publié un événement :",
   "notif_booking_changed_text": "a modifié votre réservation",
   "notif_booking_removed_text": "vous a retiré d'une réservation",
   "notif_booking_reminder_text": "Rappel : votre réservation commence bientôt",

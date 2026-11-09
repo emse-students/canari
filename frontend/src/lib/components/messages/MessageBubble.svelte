@@ -1,6 +1,6 @@
 <script lang="ts">
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
-  import { CornerDownRight, Info, Building2 } from '@lucide/svelte';
+  import { CornerDownRight, Building2 } from '@lucide/svelte';
   import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
   import { m } from '$lib/paraglide/messages';
   import { MediaService } from '$lib/media';
@@ -20,6 +20,7 @@
     retryUpload,
     unsentReasonOf,
     uploadViewOf,
+    textWaitOf,
     uploadCancelOf,
     type UnsentReason,
     type UploadView,
@@ -798,6 +799,17 @@
   const queuedTextFailed = $derived(
     isOwn && !mediaRef && status === 'error' && uploadViewOf(messageId)?.phase === 'failed'
   );
+  /**
+   * What a pending TEXT of mine waits for (R05, 2026-11-09), as its sender wrote it (`textWaitOf`:
+   * the outbox for a DM, `messaging.ts` for a salon): the server that answered "not now", or the
+   * link. `null`: a plain "en attente".
+   */
+  const waitingOn = $derived.by((): 'network' | 'server' | null => {
+    if (!isOwn || mediaRef || status !== 'pending') return null;
+    // A device KNOWN offline waits for the link first, whatever the server said before it went.
+    if (connectivity.isOffline) return 'network';
+    return textWaitOf(messageId) ?? null;
+  });
   const upload = $derived.by((): UploadView | null => {
     if (!isOwn || !mediaRef || mediaRef.mediaId) return null;
     if (status !== 'pending' && status !== 'sending') return null;
@@ -977,11 +989,8 @@
     </div>
   {:else}
     <div
-      class="text-text-muted inline-flex max-w-md items-center gap-2 rounded-xl border border-black/5 bg-black/5 px-3.5 py-1.5 text-center text-xs font-medium shadow-sm dark:border-white/10 dark:bg-white/5 {shouldAnimate
-        ? 'animate-rise-in'
-        : ''}"
+      class="text-text-muted max-w-md text-center text-xs {shouldAnimate ? 'animate-rise-in' : ''}"
     >
-      <Info size={14} class="shrink-0 opacity-60" />
       <span><EmojiText text={textContent} /></span>
     </div>
   {/if}
@@ -1183,6 +1192,7 @@
               {isLastOwn}
               isReadReceiptAnchor={false}
               {status}
+              {waitingOn}
               {readBy}
               onRetry={onRetry ?? (queuedTextFailed ? () => retryUpload(messageId) : undefined)}
               {onDiscard}
