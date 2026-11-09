@@ -21,12 +21,12 @@ async function settle() {
   }
 }
 
-async function render(blocked = false) {
+async function render(blocked = false, busy = false) {
   const onReport = vi.fn();
   const onBlockToggle = vi.fn();
   component = mount(ProfileOverflowMenu, {
     target: document.body,
-    props: { blocked, onReport, onBlockToggle },
+    props: { blocked, busy, onReport, onBlockToggle },
   });
   await settle();
   return { onReport, onBlockToggle };
@@ -95,5 +95,41 @@ describe('ProfileOverflowMenu', () => {
     items()[1].click();
     await settle();
     expect(onBlockToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not start a second block change while one is in flight, but still reports', async () => {
+    const { onReport, onBlockToggle } = await render(false, true);
+    await open();
+    items()[1].click();
+    await settle();
+    expect(onBlockToggle).not.toHaveBeenCalled();
+    await new Promise((r) => setTimeout(r, 400));
+    await settle();
+    await open();
+    items()[0].click();
+    await settle();
+    expect(onReport).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes on Escape and hands focus back to its button', async () => {
+    await render();
+    await open();
+    expect(items()).toHaveLength(2);
+    items()[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await settle();
+    expect(trigger().getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(trigger());
+  });
+
+  it('offers the same two entries as a sheet on a phone', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: true,
+      media: query,
+      addEventListener() {},
+      removeEventListener() {},
+    }));
+    await render();
+    await open();
+    expect(items().map((i) => i.dataset.menuItem)).toEqual(['report', 'block']);
   });
 });

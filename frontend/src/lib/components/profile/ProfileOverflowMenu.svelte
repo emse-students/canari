@@ -15,6 +15,7 @@
   import { opensAsSheet } from '$lib/components/ui/floatingSurface';
   import type { MenuListSection } from '$lib/components/ui/menuList';
   import { m } from '$lib/paraglide/messages';
+  import { Log } from '$lib/utils/Log';
 
   interface Props {
     /** The reader has blocked this person: the block entry then lifts it. */
@@ -53,6 +54,7 @@
 
   function select(key: string) {
     open = false;
+    Log.d('ProfileOverflowMenu', `picked ${key}${busy ? ' (a block change is in flight)' : ''}`);
     if (key === 'report') onReport();
     else if (!busy) onBlockToggle();
   }
