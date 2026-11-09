@@ -1757,6 +1757,25 @@ Windows-style destination. A first dump caught only the composer, the stories ba
 the action bar was below the fold - so the feed has to be scrolled until a bar is fully on screen
 before the dump is worth anything.
 
+### The feed card brought to the reference (2026-11-09)
+
+The owner's *"C'est beaucoup moins beau que Facebook"* sent an audit of the app on both bench phones (Mi 9T at `font_scale` 0.85, dp = CSS px). The post card's numbers, before and after this change (the "after" column is the class arithmetic, to be read on the phones):
+
+| part | before | after | Facebook |
+| --- | --- | --- | --- |
+| post header | 68 | 60 (`py-2.5` + a 40 tile) | 64 |
+| header avatar | 32 | **40** (`h-10 w-10`, `PostAuthorAvatar fill`) | 40 |
+| text inset from the screen edge | 37 (16 + `px-5`) | **32** (16 + `px-4`, header, body, preview, action bar) | 12 (full-bleed, not copied) |
+| body line pitch | 20.7 (`leading-relaxed`) | 17 (the token's 15/20 at 0.85) | 17.8 |
+| body colour | `opacity-90` | full `--text-main` | full |
+| card gap | 24 (`mb-6`) | **12** (`mb-3`) | 2-8 |
+| card corner | 18 (`rounded-3xl`, the bubble tier) | **12** (`rounded-2xl`, the larger card) | 8 |
+| pinned marker | amber-500 uppercase sticker over the edge | muted `Pin` + word on the time line | a muted word |
+| time line | clock glyph + time | time only | time only |
+| band between top bar and the feed tabs (phone) | 32 (`--page-column-top` 24 + `pt-2`) | 8 (`-mt-6` on the sticky wrapper, below `md`) | 0 |
+
+`ui/Card` (also the calendar's panels) takes the 12 px corner with the post card. `PostCornerBadge` stays for the feed's "new" chip only.
+
 ## 23. The two bars - Instagram measured on the same phone, and the size that became the reference
 
 From the user, 2026-09-14: *"Je viens de t'installer instagram pour que tu puisses observer les
