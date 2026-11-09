@@ -238,13 +238,14 @@ poster and the unplayable notice are the same code.
 - **What the expand chip changed**: the whole picture was the viewer's button
   (`data-double-tap-defers`, the click held for the double-tap window). The picture's tap is now the
   sound, which waits by itself where a like exists; the chip is a button and opens at once.
-- **Two things for the readings, decided by the code as it stands, not by the owner** (the lead's
-  call to keep or change):
-  - **A hold on a chat video also raises the bubble's long-press action sheet**: `videoGestures` does
-    not stop `pointerdown`, so the bubble's own long press fires too. The pause is right; whether the
-    sheet should be suppressed over a video is the question.
-  - **A tap on a chat video that has not started toggles its sound but does not play it**: only the
-    disc plays (the tap is the sound everywhere). Its glyph says what it did.
+- **A hold on a chat video pauses it and ONLY that** (owner, 2026-11-09): the bubble's long-press
+  action sheet does not open over the video, and stays reachable from the rest of the bubble.
+  `MessageBubble` reads the fact at the press - the target is inside a `[data-video-player]` - and
+  then arms no sheet timer and ignores the `contextmenu` a phone raises for a touch hold
+  (`MessageBubble.videoHold.svelte.test.ts`).
+- **A tap on a chat video that has not started toggles its sound but does not play it** (decided by
+  the code as it stands, for the readings): only the disc plays (the tap is the sound everywhere).
+  Its glyph says what it did.
 
 ## The live viewer, on the kit (step E)
 
@@ -270,5 +271,5 @@ judge) and it is not a clip with a duration - and takes the kit around it:
 | A | tokens, fallback, the kit, the gestures, the remembered sound | built |
 | B | lightbox (`VideoPlayer` full mode) on the kit; the measurement protocol | built - readings owed ([the glass budget](#the-glass-budget)) |
 | C | CanaReels (`variant="reel"`): tap = sound, hold = pause, the rail's speaker is the kit's | built - readings owed (a reel tap, a hold, a double-tap like on both phones) |
-| D | feed (`variant="feed"`) and chat (`variant="chat"`); `InlineVideo` deleted | built - readings owed (a feed tap and the expand chip, a chat disc, hold and the action sheet) |
+| D | feed (`variant="feed"`) and chat (`variant="chat"`); `InlineVideo` deleted | built - readings owed (a feed tap and the expand chip, a chat disc, a hold that opens no sheet) |
 | E | the live viewer: the kit's speaker, tap = sound, no hold; a refused audible start no longer remembered as "off" | built - readings owed (a live tap and the speaker on both phones) |
