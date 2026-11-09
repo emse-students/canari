@@ -397,6 +397,8 @@ static void CanariObserveTheme(void) {
 ///   rotation lock for that, so nothing here reads the lock.
 /// - `landscape`: both landscapes, and a geometry request that turns the scene NOW - which iOS honours
 ///   with the lock on (an app-requested orientation is not an auto-rotation).
+/// - `locked`: the scene's orientation NOW and no other, on an iPad too - a take or a live on air,
+///   recorded at one frame size. No geometry request: it is already there.
 ///
 /// THE GATE IS tao's ROOT VIEW CONTROLLER. Info.plist lists the three orientations, so the scene may
 /// turn; what it actually allows is `TaoUIViewController -supportedInterfaceOrientations`, replaced
@@ -405,9 +407,11 @@ static void CanariObserveTheme(void) {
 /// answers when it is set - before any hook here could add one.
 ///
 /// An iPad keeps tao's own mask (every orientation) for `portrait` and `auto`: it is a PC here, as an
-/// Android tablet is; only `landscape` forces it.
+/// Android tablet is; only `landscape` and `locked` force it.
 static NSString *g_canariOrientationMode = @"portrait";
 static UIInterfaceOrientationMask g_canariOrientationMask = UIInterfaceOrientationMaskPortrait;
+/// Whether the mask binds an iPad too (`landscape`, `locked`).
+static BOOL g_canariOrientationForcedOnIpad = NO;
 
 typedef UIInterfaceOrientationMask (*CanariSupportedOrientationsIMP)(id, SEL);
 static CanariSupportedOrientationsIMP CanariOrigSupportedOrientations = NULL;
@@ -417,7 +421,7 @@ static BOOL CanariIsPhone(void) {
 }
 
 static UIInterfaceOrientationMask CanariSupportedOrientations(id self, SEL _cmd) {
-  if (!CanariIsPhone() && g_canariOrientationMask != UIInterfaceOrientationMaskLandscape) {
+  if (!CanariIsPhone() && !g_canariOrientationForcedOnIpad) {
     return CanariOrigSupportedOrientations(self, _cmd);
   }
   return g_canariOrientationMask;
@@ -455,6 +459,15 @@ static void CanariApplyOrientation(NSString *mode) {
     mask = UIInterfaceOrientationMaskAllButUpsideDown;
   } else if ([mode isEqualToString:@"landscape"]) {
     mask = UIInterfaceOrientationMaskLandscape;
+  } else if ([mode isEqualToString:@"locked"]) {
+    // The mask of the ONE orientation on screen (`UIInterfaceOrientationMask` is `1 << orientation`).
+    UIInterfaceOrientation now = CanariFindWebView().window.windowScene.effectiveGeometry.interfaceOrientation;
+    if (now == UIInterfaceOrientationUnknown) {
+      NSLog(@"[CanariOrientation] ERROR locked asked but the scene's orientation is unknown - %@ kept",
+            g_canariOrientationMode);
+      return;
+    }
+    mask = (UIInterfaceOrientationMask)(1 << now);
   } else {
     NSLog(@"[CanariOrientation] unknown mode ignored: %@", mode);
     return;
@@ -468,11 +481,12 @@ static void CanariApplyOrientation(NSString *mode) {
   NSLog(@"[CanariOrientation] %@ -> %@", g_canariOrientationMode, mode);
   g_canariOrientationMode = mode;
   g_canariOrientationMask = mask;
+  g_canariOrientationForcedOnIpad = [mode isEqualToString:@"landscape"] || [mode isEqualToString:@"locked"];
   UIWindow *window = CanariFindWebView().window;
   [window.rootViewController setNeedsUpdateOfSupportedInterfaceOrientations];
-  // `auto` asks for no geometry: the accelerometer, under the lock, decides from here. The two forced
-  // modes turn the scene now - with the lock on too.
-  if ([mode isEqualToString:@"auto"]) return;
+  // `auto` asks for no geometry: the accelerometer, under the lock, decides from here. `locked` is
+  // already where it stays. The two forced modes turn the scene now - with the lock on too.
+  if ([mode isEqualToString:@"auto"] || [mode isEqualToString:@"locked"]) return;
   UIWindowScene *scene = window.windowScene;
   if (scene == nil) {
     NSLog(@"[CanariOrientation] no window scene - %@ waits for the next rotation", mode);

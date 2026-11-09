@@ -146,17 +146,20 @@ describe('screen orientation (one stack of requests, released on unmount)', () =
     viewportOrientation.landscape = true;
     // A take freezes what is on screen, and the button stands down under it.
     hook.hold(true);
+    expect(sent.at(-1)).toBe('locked');
     hook.rotate();
-    expect(sent.at(-1)).toBe('landscape');
+    expect(sent.at(-1)).toBe('locked');
     hook.hold(false);
+    // The freeze gives back the button's choice, not auto.
+    expect(sent.at(-1)).toBe('landscape');
     // The second press: portrait, forced.
     hook.rotate();
     expect(sent.at(-1)).toBe('portrait');
     unmount();
-    expect(sent).toEqual(['portrait', 'auto', 'landscape', 'portrait']);
+    expect(sent).toEqual(['portrait', 'auto', 'landscape', 'locked', 'landscape', 'portrait']);
   });
 
-  it('a hold under auto freezes the orientation the phone was turned to, and gives it back', () => {
+  it('a hold under auto locks what is on screen, whichever way that is, and gives auto back', () => {
     initScreenOrientation();
     // happy-dom's window is 1024x768, a landscape viewport: start upright, as a phone does.
     viewportOrientation.landscape = false;
@@ -168,7 +171,9 @@ describe('screen orientation (one stack of requests, released on unmount)', () =
     viewportOrientation.landscape = true;
     hook.hold(true);
     hook.hold(true);
-    expect(sent).toEqual(['portrait', 'auto', 'landscape']);
+    // `locked`, never `landscape`: that would still allow the flip to the other landscape side, and
+    // a frozen PORTRAIT must not map to a tablet's free rotation.
+    expect(sent).toEqual(['portrait', 'auto', 'locked']);
     hook.hold(false);
     expect(sent.at(-1)).toBe('auto');
     unmount();
