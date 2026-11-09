@@ -271,6 +271,14 @@ and the Authentik database. No separate bucket/key bootstrap is needed afterward
 the bucket/key from `GARAGE_ACCESS_KEY_ID`/`GARAGE_SECRET_ACCESS_KEY` on every boot, and is a no-op when
 the restored volumes already contain them. See [backup/README.md](backup/README.md).
 
+**Live segments and replays are NOT restored, by design** (owner decision D2, 2026-11-09): they sit
+on the `live_segments` volume (media-service, `/app/live_segments`), which no backup reads, so a
+restored host starts with none. Nothing to bootstrap: `docker compose` creates the volume empty at the
+first deploy and media-service creates its directories at boot. What that loses is the lives on air
+and the replays of the last 3 days; their post rows come back with the database and are dropped by
+the reel worker at their `expiresAt`, and the live sweep purges their (empty) prefixes
+([live-replays](../docs/wiki/live-replays.md#wp-r3-as-built-the-segments-outside-the-backup)).
+
 ## 7. Enable recurring backups
 
 ```bash
@@ -381,6 +389,7 @@ only copy. What a bootstrap owes:
 - [ ] SSH to the offsite backup host working
 - [ ] CD passed green (Canari + Authentik)
 - [ ] Data restored from the offsite backup
+- [ ] NOT the `live_segments` volume: it is never backed up, and starts empty (section 6)
 - [ ] Backup cron installed
 - [ ] Egress probe cron installed (`/home/canari/egress/samples.ndjson` growing by one line a minute)
 - [ ] Reverse proxy / DNS / TLS in place

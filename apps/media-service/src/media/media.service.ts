@@ -10,14 +10,13 @@ import {
   NotFoundException,
   PayloadTooLargeException,
 } from '@nestjs/common';
-import { StorageService } from './storage.service';
+import { StorageService, type StoredObject } from './storage.service';
 import { parseByteRange } from './byte-range';
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import { Readable } from 'stream';
 import sharp from 'sharp';
-import { LIVE_PREFIX } from './live-segments.service';
 
 /** UUID v4 pattern - used to validate user-supplied IDs before path joins and property accesses. */
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -206,8 +205,10 @@ export interface MediaStorageStats {
   formFileBytes: number;
   /**
    * Sealed segments of lives (`live/<liveId>/<name>`), outside the metadata index by design and
-   * deleted by social-service's live sweep when their live ends. Their own line rather than
-   * `untracked`: a count that does not fall back to zero between lives is that sweep stopped.
+   * deleted by social-service's live sweep when their live ends (or when its replay goes). Read from
+   * THEIR OWN STORE, the `live_segments` volume that is never backed up (live replays WP-R3), so they
+   * are NOT in `totalBytes`, `objectCount` or the weekly buckets, which describe the backed-up object
+   * store. A count that does not fall back to zero between lives and replays is that sweep stopped.
    */
   liveSegmentCount: number;
   liveSegmentBytes: number;
@@ -2086,8 +2087,11 @@ export class MediaService {
    *    metadata, so these can never be seen again by it - measured at 7 objects on 2026-08-11.
    *  - `tombstoned*`: the metadata says purged and the object is still there, so a delete failed.
    *    They become `untracked` once the tombstone is trimmed at 90 days.
+   *
+   * `liveSegments` is the listing of the OTHER store, the live segments' (never backed up), handed in
+   * by the caller that owns it; it feeds the `liveSegment*` line only.
    */
-  async getStorageStats(): Promise<MediaStorageStats> {
+  async getStorageStats(liveSegments: StoredObject[]): Promise<MediaStorageStats> {
     const objects = await this.storage.listObjects();
     const now = Date.now();
     const retentionCutoff = now - RETENTION_MS;
@@ -2127,8 +2131,8 @@ export class MediaService {
       pendingReelTtlMs: PENDING_REEL_TTL_MS,
       formFileCount: 0,
       formFileBytes: 0,
-      liveSegmentCount: 0,
-      liveSegmentBytes: 0,
+      liveSegmentCount: liveSegments.length,
+      liveSegmentBytes: liveSegments.reduce((sum, segment) => sum + segment.size, 0),
       posterCount: 0,
       posterBytes: 0,
       unclassifiedCount: 0,
@@ -2151,11 +2155,6 @@ export class MediaService {
         }
       }
 
-      if (object.id.startsWith(LIVE_PREFIX)) {
-        stats.liveSegmentCount += 1;
-        stats.liveSegmentBytes += object.size;
-        continue;
-      }
       const entry = this.meta.items[object.id];
       if (!entry) {
         stats.untrackedCount += 1;

@@ -1,6 +1,13 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnApplicationBootstrap,
+} from '@nestjs/common';
 import type { Readable } from 'stream';
-import { StorageService } from './storage.service';
+import { LiveSegmentStore } from './live-segment-store';
+import { LIVE_KEY_PREFIX, StorageService, type StoredObject } from './storage.service';
 
 /**
  * The largest live segment stored, in bytes - the same bound social-service's ingest applies
@@ -13,7 +20,7 @@ export const LIVE_SEGMENT_MAX_BYTES = 4 * 1024 * 1024;
 export const LIVE_TRIM_MAX_NAMES = 50;
 
 /** Every object of every live lives under this prefix, and nothing else does. */
-export const LIVE_PREFIX = 'live/';
+export const LIVE_PREFIX = LIVE_KEY_PREFIX;
 
 /**
  * Any spelling of a uuid, for the INTERNAL routes: social-service may pass a live id as its client
@@ -66,7 +73,10 @@ export interface LiveTrimResult {
 
 /**
  * The sealed segments of lives (WP-L3, docs/wiki/services/lives.md), kept under
- * `live/<liveId>/<name>`.
+ * `live/<liveId>/<name>` IN THEIR OWN STORE, {@link LiveSegmentStore} (the `live_segments` volume),
+ * never in the backed-up object store: a live's segments become its replay, and replays are never
+ * in backups (live replays WP-R3, docs/wiki/live-replays.md, D2). {@link StorageService} refuses a
+ * `live/` key outright, so the split holds whoever writes.
  *
  * NOT IN THE METADATA INDEX, deliberately: a segment every few seconds would be a JSON rewrite of the
  * whole index every few seconds, and nothing here needs what the index records - the owner is the
@@ -79,10 +89,48 @@ export interface LiveTrimResult {
  * Both ids are uuids, checked here: they are path segments of an object key.
  */
 @Injectable()
-export class LiveSegmentsService {
+export class LiveSegmentsService implements OnApplicationBootstrap {
   private readonly logger = new Logger(LiveSegmentsService.name);
 
-  constructor(private readonly storage: StorageService) {}
+  constructor(
+    private readonly storage: LiveSegmentStore,
+    /** The backed-up object store: touched ONLY by {@link drainObjectStore} (list, delete), never written. */
+    private readonly objectStore: StorageService
+  ) {}
+
+  /** Drains the segments a release before WP-R3 left in the object store, once the module is up. */
+  async onApplicationBootstrap(): Promise<void> {
+    await this.drainObjectStore();
+  }
+
+  /**
+   * Deletes every `live/` object left in the backed-up object store, and logs how many - the
+   * segments of lives running when the release that moved them out was deployed (at most the newest
+   * 20 of each: no replay can exist there, the replay switch ships after WP-R3). After that boot
+   * nothing writes there ({@link StorageService} refuses the prefix), so every later boot logs
+   * `drained=0` (docs/wiki/legacy-compatibility.md: removed once both estates have logged it).
+   * A failure is logged and does not stop the boot: what it leaves is drained by the next boot.
+   */
+  async drainObjectStore(): Promise<number> {
+    let drained = 0;
+    try {
+      for (const object of await this.objectStore.listObjects(LIVE_PREFIX)) {
+        await this.objectStore.delete(object.id);
+        drained += 1;
+      }
+      this.logger.log(`[LIVE_STORE] object store drained of old live segments: drained=${drained}`);
+    } catch (e) {
+      this.logger.error(
+        `[LIVE_STORE] draining old live segments from the object store failed after ${drained}: ${String(e)}`
+      );
+    }
+    return drained;
+  }
+
+  /** Every stored segment of every live, for the storage panel's live line. */
+  async listSegments(): Promise<StoredObject[]> {
+    return this.storage.listObjects(LIVE_PREFIX);
+  }
 
   /** The prefix of one live's objects; refuses anything but a uuid. */
   static prefix(liveId: string): string {

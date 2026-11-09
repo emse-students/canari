@@ -216,6 +216,22 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 
 ## The diary
 
+### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
+
+**Site:** `LiveSegmentsService.drainObjectStore`, run by `onApplicationBootstrap`
+(`apps/media-service/src/media/live-segments.service.ts`).
+**What it humours:** a media-service before live replays WP-R3 wrote live segments and posters into
+the backed-up object store (Garage) under `live/`; since WP-R3 they live on the `live_segments`
+volume ([live-replays](live-replays.md#wp-r3-as-built-the-segments-outside-the-backup)), and
+`StorageService` refuses a `live/` key. The segments of a live on air at that deploy stayed in Garage,
+where no purge and no reaper looks any more. Each boot deletes every `live/` object of the object
+store and logs `[LIVE_STORE] object store drained of old live segments: drained=N` (an ERROR line if
+the store failed; the next boot retries). A rollback to an older image writes there again, and the
+next forward deploy drains it.
+**The cost while it stands:** one empty prefix listing of Garage per boot.
+**Removal condition:** the release carrying WP-R3 deployed on both estates and, after it, one boot of
+each logging `drained=0`. Then delete the method, its hook, its two spec cases and this entry.
+
 ### Removal at the portail's deploy + one silent week - the public carte read that names no space (2026-11-08)
 
 **Site:** `PosterService.getSoleLegacyPublished` and the no-`space` branch of

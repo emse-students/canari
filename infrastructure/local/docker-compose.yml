@@ -265,8 +265,13 @@ services:
       GARAGE_SECRET_ACCESS_KEY: ${GARAGE_SECRET_ACCESS_KEY:?run 'make local-env' - infrastructure/.env carries no GARAGE_SECRET_ACCESS_KEY}
       GARAGE_BUCKET: ${GARAGE_BUCKET:?run 'make local-env' - infrastructure/.env carries no GARAGE_BUCKET}
       MEDIA_MAX_SIZE_MB: "${MEDIA_MAX_SIZE_MB:-50}"
+      # The live segments' own store, the `live_segments` volume below: a live's segments become its
+      # replay, and replays are NEVER backed up (docs/wiki/live-replays.md, D2). backup-objects.sh
+      # mounts an allowlist of volumes that does not name it, asserted by backup-sources.test.sh.
+      LIVE_SEGMENTS_DIR: /app/live_segments
     volumes:
       - media_meta:/app/media_meta
+      - live_segments:/app/live_segments
     depends_on:
       garage:
         condition: service_healthy
@@ -530,3 +535,5 @@ volumes:
   garage_meta:
   garage_data:
   media_meta:
+  # The live segments, never backed up (docs/wiki/live-replays.md, D2).
+  live_segments:

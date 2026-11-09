@@ -563,7 +563,7 @@ export class MediaController {
     @Headers('x-internal-secret') internalSecret: string | undefined
   ): Promise<MediaStorageStats> {
     assertInternalSecret(internalSecret);
-    return this.mediaService.getStorageStats();
+    return this.mediaService.getStorageStats(await this.liveSegments.listSegments());
   }
 
   // ---------------------------------------------------------------------------
