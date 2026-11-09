@@ -839,6 +839,13 @@ Decided 2026-10-18 on review (nothing limited it before). Four bounds, each a ty
 
 ## Deletion: at the end, plus a sweep (Q10, L3)
 
+**Live replays (2026-11-09) change this for a live started while `live_replays_mode` is `on`**: its
+`lives."keepsReplay"` is fixed at the start (migration 156) and its end will publish a three-day
+replay instead of purging - [live-replays](../live-replays.md), the one design. Until WP-R2 ships,
+and for every live with `keepsReplay = false`, what follows holds unchanged. Every `[LIVE]` end
+line (`ended by its broadcaster`, `ended by the sweep`) carries `duration=`, `segments=`, `stored=`
+and `replay=`, the only record of a past live's length (WP-R1).
+
 There is no replay. At the broadcaster's end the segments and the row are deleted at once **unless a
 viewer still holds a seat**; every other end, and any purge that failed or waited, is finished by
 `LiveRetentionScheduler` (every 30 s).

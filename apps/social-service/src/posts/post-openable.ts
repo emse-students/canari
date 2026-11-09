@@ -2,7 +2,7 @@ import type { EntityManager } from 'typeorm';
 import { blockedUserIdsFor } from '../common/blocked-user-ids';
 import { postVisibleToViewerSql, type PostAccessIntent } from '../spaces/reader-spaces';
 import { commentsWithheldPostIds } from './comments-withheld';
-import { isExpiredReel, type PostKind } from './reel.constants';
+import { isExpiredPost, type StoredPostKind } from './reel.constants';
 
 /**
  * The columns of a `posts` row the open-a-post gate reads - an entity or a raw row both fit, so a
@@ -16,7 +16,7 @@ export interface OpenablePost {
   anonymous?: boolean | null;
   hiddenByModeration?: boolean | null;
   scheduledAt?: Date | string | null;
-  kind?: PostKind | null;
+  kind?: StoredPostKind | null;
   expiresAt?: Date | string | null;
 }
 
@@ -48,7 +48,7 @@ const refuse = (refusal: 'not-found' | 'hidden', why: string): PostOpenVerdict =
  * report - five of which hide a post - could be filed by someone who was never shown it.
  *
  * The terms, IN THIS ORDER (the order is the read's, and it matters for what a refusal reveals):
- * 1. a reel past its month is gone for everyone (`isExpiredReel`);
+ * 1. a reel past its month is gone for everyone (`isExpiredPost`);
  * 2. the audience - `postVisibleToViewerSql`, a global admin included (opening by id is a
  *    moderation path - for an "Entre étudiants" post only with `allowHidden`, the moderation read);
  *    a read grant counts for `'READ_OR_REACT'` and `'COMMENT'`, never for `'VOTE'`. BEFORE the
@@ -71,7 +71,7 @@ export async function readPostOpenVerdict(
   opts: { viewerId?: string; allowHidden?: boolean },
   intent: PostAccessIntent
 ): Promise<PostOpenVerdict> {
-  if (isExpiredReel(post)) return refuse('not-found', `reel expired at ${String(post.expiresAt)}`);
+  if (isExpiredPost(post)) return refuse('not-found', `reel expired at ${String(post.expiresAt)}`);
   const rows: { visible: boolean }[] = await manager.query(
     // `adminModerates` only with `allowHidden`: a platform admin opens an "Entre étudiants" post to
     // MODERATE it (read it, its comments), never to react, comment or vote (lead, 2026-11-04).
