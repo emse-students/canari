@@ -378,7 +378,9 @@
 
   <!-- Info (name, status) -->
   <div class="flex min-w-0 flex-1 flex-col justify-center">
-    <h2 class="text-text-main mb-0.5 truncate text-base leading-tight font-bold md:text-base">
+    <h2
+      class="font-display text-text-main mb-0.5 truncate text-base leading-tight font-bold md:text-base"
+    >
       {#if peerLinked}
         <ProfileLink userId={contactName} class="hover:underline">
           <EmojiText text={effectiveDisplayName} />

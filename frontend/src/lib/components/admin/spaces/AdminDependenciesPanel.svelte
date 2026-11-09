@@ -285,7 +285,7 @@
     <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface) p-4">
       {#each tree.families as family (family.bde.id)}
         <section data-family={family.bde.id}>
-          <h3 class="text-text-main text-sm font-bold">
+          <h3 class="font-display text-text-main text-sm font-bold">
             {family.bde.name}
             <span class="text-text-muted text-xs font-normal">
               {m.admin_dependencies_children({ count: family.children.length })}

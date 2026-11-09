@@ -425,7 +425,7 @@
         <div class="flex flex-wrap items-start gap-4">
           <AssociationAvatar id={asso.id} name={asso.name} logoUrl={asso.logoUrl} size="lg" />
           <div class="min-w-0 flex-1 basis-64">
-            <h1 class="text-text-main text-xl font-bold tracking-tight [overflow-wrap:anywhere]">
+            <h1 class="text-text-main text-xl font-bold [overflow-wrap:anywhere]">
               {asso.name}
             </h1>
             <!--
@@ -528,7 +528,7 @@
     {:else if activeSection === null}
       <SectionHub rows={hubRows} label={m.asso_sections_nav_label()} />
       <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
-        <h2 class="text-text-main text-lg font-bold tracking-tight">{m.asso_tab_about()}</h2>
+        <h2 class="text-text-main text-lg font-bold">{m.asso_tab_about()}</h2>
         <!--
           THE PROSE KEEPS THE READING MEASURE THE PAGE GAVE UP. Widening the column to `tool` is
           right for the walls and wrong for a paragraph: 1024px less the card's padding is about 150
@@ -559,7 +559,7 @@
     {:else if activeSection === 'calendar'}
       <div class="border-cn-border bg-cn-surface rounded-2xl border p-6 shadow-sm">
         <div class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h1 class="text-text-main text-lg font-bold tracking-tight">{m.asso_tab_calendar()}</h1>
+          <h1 class="font-body text-text-main text-lg font-bold">{m.asso_tab_calendar()}</h1>
           <a
             href="/calendar?association={encodeURIComponent(asso.id)}"
             class="text-cn-dark text-xs font-semibold hover:underline"
@@ -578,7 +578,7 @@
     {:else if activeSection === 'members'}
       <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
         <div class="flex items-center justify-between gap-2">
-          <h1 class="text-text-main text-lg font-bold tracking-tight">
+          <h1 class="font-body text-text-main text-lg font-bold">
             {m.common_members_label()}
           </h1>
           {#if members.length > 0}
@@ -611,7 +611,7 @@
     {:else if activeSection === 'shop'}
       <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
         <div class="flex items-center justify-between gap-2">
-          <h1 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+          <h1 class="font-body text-text-main flex items-center gap-2 text-lg font-bold">
             <ShoppingBag size={20} />
             {m.asso_tab_shop()}
           </h1>
@@ -644,7 +644,7 @@
       </div>
     {:else if activeSection === 'partnerships'}
       <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
-        <h1 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+        <h1 class="font-body text-text-main flex items-center gap-2 text-lg font-bold">
           <Handshake size={20} />
           {m.asso_tab_partnerships()}
         </h1>

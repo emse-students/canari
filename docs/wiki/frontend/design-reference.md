@@ -237,6 +237,21 @@ stays).
 **`letter-spacing: normal` everywhere**, including the `0.5px` and the `0.04em`. **Weights 400 / 500
 / 600 / 700 only.**
 
+**Families and heading letter-spacing (owner, 2026-11-09, audit findings S1 and Q11).** Facebook and
+Messenger use ONE family throughout; Canari keeps two, the second as the exception.
+`--font-body` (Nunito, the `body` family) carries every `h2..h6`, section and list heading
+("Aujourd'hui", "Cette semaine", settings sections, sheet titles) at bold. `--font-display`
+(Fredoka) carries only the page title (`h1`), a NAME (association tile, community title, contact
+name in the chat header, profile name) via the `font-display` utility, and the wordmark
+(`font-brand`, `CanariBrand` and the login title). An `h1` that is really a tab or sheet title opts
+out with `font-body` - which works only because the `h1` rule is in `@layer base` (`appDisplayFaceLayer.test.ts`); unlayered it beat the utility. **No heading carries `tracking-tight`** (it was -0.5 to -0.7px on every `h1`
+and section title against the reference's `normal`); the wordmark keeps its own `tracking-wide`,
+it is identity. Eyebrow labels (`uppercase tracking-wide`) are not headings and are untouched.
+
+**Settings sections** (finding Q12): the breadcrumb already names the section, so the card does not
+say it again and carries no icon tile; the section heading stays as an `sr-only` `h2` for the
+outline and the screen reader, and the description and the rows use the full card width.
+
 **Spacing**: 2, 4, 6, 8, 12, 16, 24. The reference's 6px icon-button padding is adopted; Canari's
 current 10px and 32px are not in the reference and go.
 
@@ -571,8 +586,8 @@ moving between two tabs of the same app moves the text under the reader.
 
 Two findings the sweep produced that the eye could not:
 
-- **`font-brand` on the Feed's title is a no-op.** `app.css:319` already gives `h1..h6` the Fredoka
-  face, so the class made one page look deliberate and the other 33 look accidental while changing
+- **`font-brand` on the Feed's title is a no-op.** `app.css` gave `h1..h6` the Fredoka
+  face (since 2026-11-09 only `h1` and `font-display`), so the class made one page look deliberate and the other 33 look accidental while changing
   nothing. It is not set in the shared heading.
 - **Three routes nested a `<main>` inside the shell's own `<main id="main-content">`** - a landmark
   inside itself, so a screen reader had two "main" regions to choose between. The shared container is

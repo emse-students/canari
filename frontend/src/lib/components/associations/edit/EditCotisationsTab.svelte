@@ -676,7 +676,7 @@
 
 <div class="space-y-6">
   <div class="border-cn-border bg-cn-surface space-y-1 rounded-2xl border p-6 shadow-sm">
-    <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+    <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
       <HandCoins size={20} />
       {m.asso_cotisations_title()}
     </h2>

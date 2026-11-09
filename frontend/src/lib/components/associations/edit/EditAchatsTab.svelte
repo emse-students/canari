@@ -308,7 +308,7 @@
 <div class="border-cn-border space-y-5 rounded-2xl border bg-[var(--cn-surface)]/95 p-6 shadow-sm">
   <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
     <div>
-      <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+      <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
         <UsersIcon size={20} />
         {m.asso_achats_title()}
       </h2>
