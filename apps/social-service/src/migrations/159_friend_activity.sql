@@ -1,4 +1,4 @@
--- Migration 158 : friends' activity (engagement WP-9, decisions 5b and 9).
+-- Migration 159 : friends' activity (engagement WP-9, decisions 5b and 9).
 --
 -- docs/wiki/engagement.md, "(b) friends' activity - the disclosure rule" and "No double
 -- notification". When X reacts to or comments on post P, the accepted followers of X who already

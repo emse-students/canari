@@ -679,7 +679,7 @@ statement for all of X's followers, then counted by the cap like any engagement 
 
 ### WP-9 - friends' activity (BUILT)
 
-Built 2026-11-09 to the rule above. Migration **158** (`user_activity_settings` and
+Built 2026-11-09 to the rule above. Migration **159** (`user_activity_settings` and
 `post_engagement_notices`, plain); `posts/friend-activity.ts` holds the one statement.
 
 - **Two notice types, not one**: `friend_reaction` and `friend_comment`, each with its own push key

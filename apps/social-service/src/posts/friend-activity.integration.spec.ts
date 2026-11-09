@@ -1,5 +1,5 @@
 /**
- * FRIENDS' ACTIVITY (engagement WP-9) against a REAL PostgreSQL: migration 158 as it ships, one case
+ * FRIENDS' ACTIVITY (engagement WP-9) against a REAL PostgreSQL: migration 159 as it ships, one case
  * per rule of the disclosure list (docs/wiki/engagement.md, "(b) friends' activity - the disclosure
  * rule"), rule 0 included and rule 8 once for each of its three comment shapes, the told-once ledger,
  * and the in-app row and push the told readers get through `createNotifications` (the bell and the
@@ -150,9 +150,9 @@ maybe("friends' activity against PostgreSQL (engagement WP-9)", () => {
     await q(migration('132_read_grant_readers.sql'));
     await q(migration('121_member_reposts.sql'));
     await q(migration('157_engagement_push_days.sql'));
-    await q(migration('158_friend_activity.sql'));
+    await q(migration('159_friend_activity.sql'));
     // A replay is a no-op (the deploy ledger may run it twice).
-    await q(migration('158_friend_activity.sql'));
+    await q(migration('159_friend_activity.sql'));
     await q(
       readFileSync(
         join(
