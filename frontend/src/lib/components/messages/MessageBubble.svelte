@@ -1,6 +1,6 @@
 <script lang="ts">
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
-  import { CornerDownRight, Info, Building2 } from '@lucide/svelte';
+  import { CornerDownRight, Building2 } from '@lucide/svelte';
   import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
   import { m } from '$lib/paraglide/messages';
   import { MediaService } from '$lib/media';
@@ -953,11 +953,8 @@
     </div>
   {:else}
     <div
-      class="text-text-muted inline-flex max-w-md items-center gap-2 rounded-xl border border-black/5 bg-black/5 px-3.5 py-1.5 text-center text-xs font-medium shadow-sm dark:border-white/10 dark:bg-white/5 {shouldAnimate
-        ? 'animate-rise-in'
-        : ''}"
+      class="text-text-muted max-w-md text-center text-xs {shouldAnimate ? 'animate-rise-in' : ''}"
     >
-      <Info size={14} class="shrink-0 opacity-60" />
       <span><EmojiText text={textContent} /></span>
     </div>
   {/if}
