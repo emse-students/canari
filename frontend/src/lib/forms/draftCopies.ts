@@ -284,7 +284,7 @@ async function whenNoEditor<T>(key: string, fn: () => Promise<T>): Promise<T | n
  * A conflict's facts: the revision the server holds, the client id of the save that wrote it, and
  * the saves before it (its bounded ancestry, `recentSaveIds`).
  */
-export interface CopyConflict {
+interface CopyConflict {
   revision: number;
   saveId: string | null;
   recentSaveIds?: string[];

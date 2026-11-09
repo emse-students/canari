@@ -1943,7 +1943,6 @@
   "carte_project_open": "Ouvrir",
   "carte_project_delete_confirm": "Supprimer l'affiche « {name} » ?",
   "carte_project_updated_at": "Modifiée le {date}",
-  "carte_space_label": "Espace",
   "carte_space_option": "{formation} - {campus}",
   "carte_space_none": "Sans espace",
   "carte_space_pick": "Choisir l'espace",
@@ -1955,7 +1954,6 @@
   "carte_assos_search": "Rechercher une association",
   "carte_assos_empty": "Aucune association dans cet espace.",
   "carte_asso_new_badge": "Nouvelle",
-  "carte_asso_toggle": "Afficher {name} sur la carte",
   "carte_asso_zone": "Zone de {name}",
   "carte_new_assos_title": [
     {

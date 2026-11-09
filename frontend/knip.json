@@ -13,6 +13,9 @@
     "src/lib/proto/canari.*",
     ".paraglide-test/**"
   ],
+  "ignoreIssues": {
+    "src/lib/utils/users/visibleText.ts": ["exports", "types"]
+  },
   "ignoreUnresolved": ["^\\$lib/(wasm|proto/canari)", "^\\$lib/paraglide/"],
   "ignoreDependencies": ["emoji-picker-element-data", "husky"],
   "ignoreBinaries": ["wasm-pack"]

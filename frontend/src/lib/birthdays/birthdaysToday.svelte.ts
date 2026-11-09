@@ -15,7 +15,7 @@ import { fetchBirthdaysToday, fetchMyBirthday } from './api';
  * A failed ask keeps the last answer for the same account (it was the server's) and says so; it is
  * never replaced by a guess.
  */
-export class BirthdaysTodayStore {
+class BirthdaysTodayStore {
   #account: string | null = null;
   readonly #ids = new SvelteSet<string>();
   #token = 0;

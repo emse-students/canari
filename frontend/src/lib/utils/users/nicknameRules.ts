@@ -15,9 +15,4 @@
  * The rule itself is `visibleText.ts`, kept byte-identical on both sides (a declared duplicate).
  */
 
-export {
-  NICKNAME_MAX_LENGTH,
-  NICKNAME_TOO_LONG,
-  normalizeNickname,
-  type NicknameNormalization,
-} from './visibleText';
+export { NICKNAME_MAX_LENGTH, NICKNAME_TOO_LONG, normalizeNickname } from './visibleText';

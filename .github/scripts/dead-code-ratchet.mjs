@@ -25,7 +25,7 @@
  *
  * Mechanism and how to allow-list: docs/wiki/dead-code.md.
  */
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 /** The knip issue categories the ratchet counts (every array knip's JSON reporter fills). */
@@ -80,11 +80,12 @@ export function summariseKnip(report) {
 export function sourceTokens(dir) {
   const tokens = new Set();
   const walk = (current) => {
-    for (const entry of readdirSync(current)) {
-      const path = join(current, entry);
-      if (entry === 'paraglide' || entry === 'node_modules') continue;
-      if (statSync(path).isDirectory()) walk(path);
-      else if (SOURCE_FILE.test(entry)) {
+    // Each entry carries its own type, so no separate stat races the read below.
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      if (entry.name === 'paraglide' || entry.name === 'node_modules') continue;
+      const path = join(current, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (SOURCE_FILE.test(entry.name)) {
         for (const token of readFileSync(path, 'utf8').match(TOKEN) ?? []) tokens.add(token);
       }
     }
@@ -123,6 +124,24 @@ export function compareToBaseline(baseline, current) {
   return { raised, lowered };
 }
 
+/**
+ * Parses the JSON file at `path`, or returns `null` when it does not exist. One read and no prior
+ * existence check: a check followed by a read or a write is a race (CodeQL js/file-system-race).
+ *
+ * @param {string} path file to read
+ * @returns {any}
+ */
+export function readJsonIfPresent(path) {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return null;
+    }
+    throw error;
+  }
+}
+
 /** Runs knip in `frontendDir` and returns its parsed JSON report (knip exits 1 on any finding). */
 function runKnip(frontendDir) {
   const run = Bun.spawnSync(
@@ -151,9 +170,7 @@ function main() {
   const allowlistPath = join(frontendDir, 'dead-code-allowlist.json');
 
   const knip = summariseKnip(runKnip(frontendDir));
-  const allowed = existsSync(allowlistPath)
-    ? (JSON.parse(readFileSync(allowlistPath, 'utf8')).messages ?? {})
-    : {};
+  const allowed = readJsonIfPresent(allowlistPath)?.messages ?? {};
   const keys = Object.keys(
     JSON.parse(readFileSync(join(frontendDir, 'messages/fr.json'), 'utf8'))
   ).filter((key) => key !== '$schema');
@@ -162,12 +179,13 @@ function main() {
   const current = { ...knip.counts, messages: unusedKeys.length };
   const items = { ...knip.items, messages: unusedKeys };
 
-  if (!existsSync(baselinePath)) {
-    writeFileSync(baselinePath, `${JSON.stringify(current, null, 2)}\n`);
+  const baseline = readJsonIfPresent(baselinePath);
+  if (baseline === null) {
+    // `wx` creates only: a baseline that appeared since the read above is never overwritten.
+    writeFileSync(baselinePath, `${JSON.stringify(current, null, 2)}\n`, { flag: 'wx' });
     console.log(`dead-code: no baseline, wrote ${relative(process.cwd(), baselinePath)}`);
     return;
   }
-  const baseline = JSON.parse(readFileSync(baselinePath, 'utf8'));
   const { raised, lowered } = compareToBaseline(baseline, current);
 
   for (const label of raised) {
