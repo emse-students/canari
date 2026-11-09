@@ -128,15 +128,91 @@ Tests: `styles/videoGlass.test.ts` (each fallback line), `utils/videoGlass.test.
 ## The glass budget
 
 The Android default is flat until a reading on the Mi 9T says the blur costs no janky frames
-(owner). The protocol is written with the lightbox's migration, the first surface that can be measured
-with its bar up; the lead takes the readings.
+(owner, 2026-11-09). **The lead takes the readings, on a pre-release carrying the lightbox migration;
+nothing here was measured yet.** No published benchmark of `backdrop-filter` over a live `<video>` in
+an Android WebView exists - only bug reports (Mozilla 1927619 and 1732817: Mali needs several render
+targets, older Adreno pays framebuffer copies, cost grows with the radius and the blurred area) - so
+this is a hypothesis to measure, not a finding.
+
+**What the budget is.** One glass layer per visible player at most (the lightbox bar, ~360 x 56 px,
+or a 64 px disc), unmounted when hidden; an idle video (bar faded, nothing touched) pays no extra
+layer. The pass mark: with the bar held up over a playing 1080p H.264 clip for 30 s, the janky-frame
+share rises by **no more than 3 points** and the median frame time by **no more than 1 ms** over the
+same run with the flat chip.
+
+**The switch under test.** `ANDROID_VIDEO_GLASS` in `src/lib/utils/videoGlass.ts`. For the readings
+only, a build with it `true` (glass) is compared against the shipped `false` (flat); the comparison is
+made on ONE build by flipping the element's `data-glass` from the remote inspector (below), which
+avoids a second install.
+
+### The Mi 9T (Snapdragon 730, Adreno 618) - the decisive reading
+
+1. Install the pre-release (the store tester track or the APK). Open a post holding a **1080p H.264
+   video of at least 30 s** (record one on the phone, publish it to a test account), open it in the
+   lightbox, let it play and loop.
+2. Keep the bar up for the run: with `chrome://inspect` attached to the app's WebView, run once in the
+   console `document.querySelector('[data-video-player]').dispatchEvent(new PointerEvent('pointermove', {bubbles: true, pointerType: 'mouse'}))`
+   every 2 s (`setInterval`, cleared after), which is the mouse path that raises the bar - the
+   worst case, a bar that never fades.
+3. **Flat run**: `adb shell dumpsys gfxinfo fr.emse.canari reset`, wait 30 s,
+   `adb shell dumpsys gfxinfo fr.emse.canari > flat.txt`. Read `Janky frames: N (P%)` and the
+   `50th percentile` line.
+4. **Glass run**: in the console,
+   `document.querySelectorAll('[data-glass]').forEach(e => e.dataset.glass = 'glass')` - and re-run it
+   if the bar remounts (it does after a fade; the interval in step 2 prevents that). Reset, wait 30 s,
+   dump to `glass.txt`.
+5. Repeat 3 and 4 twice more, alternating; record the six pairs (janky %, median ms). The WebView's
+   frames are the app's frames in `gfxinfo` (one `SurfaceView`), so the comparison is like for like.
+6. **Decision**: if the glass runs stay within the pass mark of the flat ones, flip
+   `ANDROID_VIDEO_GLASS` to `true` in one PR quoting the six pairs here; otherwise keep it `false` and
+   write the numbers here as the reason. Either way, record the date, the build and the clip.
+   A Chrome trace (`chrome://inspect` > Performance, 10 s, with the bar up) is the deeper reading if the
+   numbers are near the line: look for `Paint` / `RasterTask` time per frame with glass vs flat.
+
+### The iPhone 12 - a check, not a gate
+
+The iPhone draws glass already (WebKit, `decideVideoGlass`). The reading confirms it does not cost a
+dropped frame there: on the pre-release, the same 30 s clip in the lightbox with the bar held up
+(Safari Web Inspector on the Mac, the same console line as step 2), and the device log read with
+`python -m pymobiledevice3 syslog live` filtered on the app for `[VIDEO]` and WebKit's
+`compositing` warnings; Instruments' Core Animation FPS template (a Mac with Xcode) is the frame-rate
+reading if one is at hand. A visible stutter, or an FPS under 55 with the bar up and 59-60 without,
+would be the finding that sends iOS to the flat chip too - a decision for the owner, not this page.
+
+### What else to look at during the same session (both phones)
+
+- the bar's legibility over a WHITE frame and over a saturated green one (the 2026-10-01 report);
+- a tap toggles the sound with the glyph; a hold pauses and resumes; the bar comes back on a tap;
+- the flat chip (Android) still reads as the same design: same shapes, a darker solid tint.
+
+## The lightbox, on the kit (step B)
+
+`VideoPlayer`'s full mode - the single-media viewer, the gallery viewer, the chat viewer, the
+conversation media panel:
+
+- **One floating glass pill** (`data-video-bar`, `.glass-video`, the 18 px `rounded-3xl`) over the
+  free bottom scrim gradient: play/pause, `elapsed / duration`, the `bar` scrubber, the speaker, full
+  screen where the engine offers it. Its buttons are `VideoChipButton glass={false}`: one blur.
+- **UNMOUNTED when faded**, not `opacity-0` (`{#if controlsVisible}`): the fade rule itself is
+  unchanged (`CONTROLS_FADE_MS` of playback without a touch; a mouse move, a key, a pause, keyboard
+  focus bring it back). It comes in with a 150 ms opacity animation, none under reduced motion.
+- **A tap toggles the sound and RAISES the bar**; it no longer hides it (the 2026-10-02 toggle is
+  retired: the tap is the sound now, and the bar leaves by itself). A `silent` video's tap only
+  raises the bar. **A held press pauses** and draws neither the disc nor the bar for that pause; the
+  release resumes only what the hold paused.
+- **The glass play disc** (`VideoPlayDisc`) when paused, `tabindex="-1"` because the bar repeats it.
+- The minimal (reel) mode shares three pieces already: the `lg` glass disc on an autoplay refusal,
+  `VideoFeedbackGlyph` for its tap, and the `line` scrubber (its played part now yellow). Its tap is
+  still play/pause until step C.
+- **A surface that likes on double tap** (`doubleTapLike` on, `data-double-tap-likes`) makes the
+  player's single tap wait for the double-tap window - so on a reel the like never flips the sound.
 
 ## Where the migration stands
 
 | Step | Surface | State |
 | --- | --- | --- |
 | A | tokens, fallback, the kit, the gestures, the remembered sound | built |
-| B | lightbox (`VideoPlayer` full mode) on the kit; the measurement protocol | next |
-| C | CanaReels (`ReelSlide`, the minimal mode) | |
+| B | lightbox (`VideoPlayer` full mode) on the kit; the measurement protocol | built - readings owed ([the glass budget](#the-glass-budget)) |
+| C | CanaReels (`ReelSlide`, the minimal mode): its gestures and the rail's speaker | next (B already gave it the glass disc, the shared glyph and the yellow line) |
 | D | feed and chat (`InlineVideo`, deleted) | |
 | E | the live viewer | |
