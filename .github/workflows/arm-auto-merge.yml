@@ -445,6 +445,26 @@ jobs:
             echo "Auto-merge was already armed on #$PR; nothing to do."
             exit 0
           fi
+          # canari-only:begin
+          # GITHUB REFUSES TO ARM WHAT IS ALREADY MERGEABLE (measured on #3202, run 42700845061: the
+          # pull request was marked ready AFTER its CI finished, `enablePullRequestAutoMerge` answered
+          # "unstable status", and nobody merged it). Auto-merge is a promise to merge LATER; when the
+          # answer is already yes there is nothing to wait for, so merge NOW - on the head the guard
+          # judged and only if `CI passed` is green on it. The state is read as DATA
+          # (`mergeStateStatus`), never from the prose of the refusal: CLEAN is mergeable, UNSTABLE is
+          # mergeable with a non-required check red or pending. Every other state fails loudly below.
+          merge_state="$(gh pr view "$PR" --repo "$REPO" --json mergeStateStatus --jq '.mergeStateStatus')"
+          if [ "$merge_state" = 'CLEAN' ] || [ "$merge_state" = 'UNSTABLE' ]; then
+            green="$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs?check_name=CI%20passed&per_page=100" \
+              --jq '[.check_runs[] | select(.name == "CI passed" and .conclusion == "success")] | length')"
+            if [ "$green" -ge 1 ]; then
+              echo "#$PR is already $merge_state and CI passed is green on $HEAD_SHA - merging it now."
+              gh pr merge "$PR" --squash --match-head-commit "$HEAD_SHA" --repo "$REPO"
+              exit 0
+            fi
+            echo "::error::#$PR is $merge_state but CI passed is not green on $HEAD_SHA - not merged."
+          fi
+          # canari-only:end
           echo "::error::Could not arm auto-merge on #$PR, and it is not armed. Check that the"
           echo "::error::canari-auto-merge App is installed with Pull requests write, and that"
           echo "::error::auto-merge is still allowed on the repository."

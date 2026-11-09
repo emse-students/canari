@@ -507,6 +507,46 @@ fi
   fi
 }
 
+# ── B33: a pull request that is ALREADY mergeable cannot be armed, so it is merged now ───────────
+# GitHub refuses `--auto` on a clean or unstable pull request (#3202). The ordinary step must then
+# read `mergeStateStatus` as data and merge on the judged head when `CI passed` is green on it.
+awk '
+  /^      - name: Ask GitHub to merge it/ { inside = 1; next }
+  inside && /^      - name:/ { exit }
+  inside && /^        run: \|/ { inrun = 1; next }
+  inside && inrun { sub(/^          /, ""); print }
+' "$wf" >"$work/merge.sh"
+mkdir -p "$work/bin2"
+cat >"$work/bin2/gh" <<'SH'
+#!/usr/bin/env bash
+echo "$*" >>"$FAKE_GH_LOG"
+case "$1 ${2:-}" in
+  "pr merge") case " $* " in *" --auto "*) exit 1 ;; esac; exit 0 ;;
+  "pr view") case " $* " in
+      *mergeStateStatus*) echo "$FAKE_STATE" ;;
+      *) echo false ;;
+    esac ;;
+  api*) echo "$FAKE_GREEN" ;;
+esac
+SH
+chmod +x "$work/bin2/gh"
+merge_case() { # <state> <green count> -> $out, $st
+  : >"$work/gh.log"
+  out="$(cd "$work" && PATH="$work/bin2:$PATH" GH_TOKEN=x REPO=o/r PR=5 HEAD_SHA="$M2" FAKE_STATE="$1" FAKE_GREEN="$2" FAKE_GH_LOG="$work/gh.log" bash "$work/merge.sh" 2>&1)"
+  st=$?
+}
+merged_now() { grep -qxF "pr merge 5 --squash --match-head-commit $M2 --repo o/r" "$work/gh.log"; }
+for state in CLEAN UNSTABLE; do
+  merge_case "$state" 1
+  if [ "$st" = 0 ] && merged_now; then pass "B33 a $state pull request with CI passed green on its head is merged now, on that head"; else fail "B33 $state was not merged now" "$out"; fi
+done
+merge_case UNSTABLE 0
+if [ "$st" != 0 ] && ! merged_now; then pass "B33 an UNSTABLE pull request whose CI passed is not green on the head is not merged, and fails"; else fail "B33 merged without a green CI passed" "$out"; fi
+for state in BLOCKED BEHIND DIRTY UNKNOWN; do
+  merge_case "$state" 1
+  if [ "$st" != 0 ] && ! merged_now; then pass "B33 a $state pull request is not merged now, and the step fails loudly"; else fail "B33 $state was merged or passed" "$out"; fi
+done
+
 # ── B20: `pull_request_target` runs with the base repository's secrets: it never checks out ───────
 if grep -qE '^\s*-?\s*uses:\s*actions/checkout' "$wf"; then
   fail "B20 arm-auto-merge.yml checks out code under pull_request_target"
