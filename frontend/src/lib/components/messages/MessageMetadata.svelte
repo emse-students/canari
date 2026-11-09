@@ -22,16 +22,24 @@
     isReadReceiptAnchor: boolean;
     /** Current send status of the message. */
     status?: MessageSendStatus;
+    /**
+     * What a `pending` message WAITS FOR, when that is known (R05, 2026-11-09): the link (`network`:
+     * the last attempt got no answer, or the device is offline) or the server (`server`: it answered
+     * "not now", 502/503/504 - a deploy). The label says so instead of a bare "en attente"; `null`
+     * keeps it. Never a failure: the send goes on its own.
+     */
+    waitingOn?: 'network' | 'server' | null;
     /** User IDs who have read the message, derived from the conversation's read watermarks. */
     readBy: string[];
     /** When true, renders outside the bubble (delivery/read indicators). */
     outsideBubble?: boolean;
     /**
-     * Offered on a salon send that can be re-sent (WP-OFF-2): a FAILED one, and an UNCONFIRMED one,
-     * whose repeat the server answers with the row it already holds (WP-OFF-3).
+     * Offered on a salon send that can be re-sent (WP-OFF-2): a FAILED one, an UNCONFIRMED one,
+     * whose repeat the server answers with the row it already holds (WP-OFF-3), and a PENDING one
+     * held for the server after a "not now" (R05, review of #3189), to send it now.
      */
     onRetry?: () => void;
-    /** Offered beside `onRetry`, and on an unconfirmed send: gives the message up. */
+    /** Offered beside `onRetry` (a held, failed or unconfirmed send): gives the message up. */
     onDiscard?: () => void;
     /**
      * Offered on an UNCONFIRMED send (no answer came back): takes the row away and hands its text back
@@ -47,6 +55,7 @@
     isLastOwn,
     isReadReceiptAnchor = false,
     status,
+    waitingOn = null,
     readBy,
     outsideBubble = false,
     onRetry,
@@ -89,6 +98,44 @@
   const show = $derived(showEdited || showUnverified || showSendStatus || showSent || showRead);
 </script>
 
+<!-- What the author can do about an unsent row, the same three buttons wherever they apply: Retry,
+     Restore (an unconfirmed send only) and Discard. -->
+{#snippet sendActions(withRestore: boolean)}
+  {#if onRetry}
+    <button
+      type="button"
+      class="font-semibold underline"
+      data-testid="message-retry"
+      onclick={(e) => {
+        e.stopPropagation();
+        onRetry?.();
+      }}>{m.common_retry_button()}</button
+    >
+  {/if}
+  {#if withRestore && onRestore}
+    <button
+      type="button"
+      class="font-semibold underline"
+      data-testid="message-restore"
+      onclick={(e) => {
+        e.stopPropagation();
+        onRestore?.();
+      }}>{m.msg_remettre_dans_le_champ()}</button
+    >
+  {/if}
+  {#if onDiscard}
+    <button
+      type="button"
+      class="font-semibold underline"
+      data-testid="message-discard"
+      onclick={(e) => {
+        e.stopPropagation();
+        onDiscard?.();
+      }}>{m.common_delete_button()}</button
+    >
+  {/if}
+{/snippet}
+
 {#if show}
   <div
     class="flex w-full items-center gap-1.5 {outsideBubble
@@ -113,9 +160,18 @@
     {/if}
     {#if showSendStatus}
       {#if status === 'pending'}
-        <span class="text-2xs inline-flex items-center gap-1 font-semibold opacity-50">
+        <span
+          class="text-2xs inline-flex items-center gap-1 font-semibold opacity-50"
+          data-testid="message-pending"
+        >
           <Clock size={12} />
-          {m.msg_en_attente()}
+          {waitingOn === 'server'
+            ? m.msg_waiting_for_server()
+            : waitingOn === 'network'
+              ? m.msg_waiting_for_network()
+              : m.msg_en_attente()}
+          <!-- A salon text held for the server keeps its author's hand on it (review of #3189). -->
+          {@render sendActions(false)}
         </span>
       {:else if status === 'sending'}
         <span class="text-2xs inline-flex items-center gap-1 font-semibold opacity-50">
@@ -126,28 +182,7 @@
         <span class="text-2xs inline-flex items-center gap-1 font-semibold text-red-500">
           <TriangleAlert size={12} />
           {m.msg_echec()}
-          {#if onRetry}
-            <button
-              type="button"
-              class="font-semibold underline"
-              data-testid="message-retry"
-              onclick={(e) => {
-                e.stopPropagation();
-                onRetry?.();
-              }}>{m.common_retry_button()}</button
-            >
-          {/if}
-          {#if onDiscard}
-            <button
-              type="button"
-              class="font-semibold underline"
-              data-testid="message-discard"
-              onclick={(e) => {
-                e.stopPropagation();
-                onDiscard?.();
-              }}>{m.common_delete_button()}</button
-            >
-          {/if}
+          {@render sendActions(false)}
         </span>
       {:else if status === 'unconfirmed'}
         <span
@@ -156,39 +191,7 @@
         >
           <CircleHelp size={12} />
           {m.msg_non_confirme()}
-          {#if onRetry}
-            <button
-              type="button"
-              class="font-semibold underline"
-              data-testid="message-retry"
-              onclick={(e) => {
-                e.stopPropagation();
-                onRetry?.();
-              }}>{m.common_retry_button()}</button
-            >
-          {/if}
-          {#if onRestore}
-            <button
-              type="button"
-              class="font-semibold underline"
-              data-testid="message-restore"
-              onclick={(e) => {
-                e.stopPropagation();
-                onRestore?.();
-              }}>{m.msg_remettre_dans_le_champ()}</button
-            >
-          {/if}
-          {#if onDiscard}
-            <button
-              type="button"
-              class="font-semibold underline"
-              data-testid="message-discard"
-              onclick={(e) => {
-                e.stopPropagation();
-                onDiscard?.();
-              }}>{m.common_delete_button()}</button
-            >
-          {/if}
+          {@render sendActions(true)}
         </span>
       {/if}
     {:else if showSent}

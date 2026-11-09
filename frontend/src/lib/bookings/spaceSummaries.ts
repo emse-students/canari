@@ -8,6 +8,7 @@
  */
 import { m } from '$lib/paraglide/messages';
 import type { SettingsDraft } from './spaceSettings.svelte';
+import { durationLabel } from './wizard';
 
 export interface SectionSummaries {
   essentials: string;
@@ -27,11 +28,13 @@ export function sectionSummaries(draft: SettingsDraft, columnCount: number): Sec
   const mode =
     draft.slotMode === 'slots'
       ? m.bookings_summary_when_slots()
-      : isCount(draft.stepMinutes) && isCount(draft.maxSteps)
-        ? m.bookings_summary_when_step({
-            step: draft.stepMinutes.trim(),
-            max: draft.maxSteps.trim(),
-          })
+      : isCount(draft.stepMinutes)
+        ? isCount(draft.maxMinutes)
+          ? m.bookings_summary_when_step({
+              step: draft.stepMinutes.trim(),
+              max: durationLabel(Number(draft.maxMinutes)),
+            })
+          : m.bookings_summary_when_step_free({ step: draft.stepMinutes.trim() })
         : m.bookings_summary_when_step_any();
   const who = [
     draft.audience == null ? m.bookings_summary_audience_all() : m.bookings_summary_audience_some(),

@@ -83,7 +83,7 @@ describe('notificationHref', () => {
 
   it('gives every known type a destination, bar the two resolved by slug', () => {
     // Compared with a hand-written count so a type removed from the set cannot pass silently.
-    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(43);
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(45);
     // The live moderation notices go nowhere: a cut live is deleted when it ends, and a suspension
     // or a withdrawal has no page.
     const liveModeration = ['live_cut', 'live_suspended', 'live_withdrawn'];
@@ -119,6 +119,13 @@ describe('notificationHref', () => {
     'booking_removed',
   ])('%s opens Reservations: its postId is a booking, which has no page (WP-N)', (type) => {
     expect(notificationHref({ type, postId: 'booking-1' })).toBe('/bookings');
+  });
+
+  it('opens Reservations for a booking space that opened and the agenda for an event (engagement WP-4)', () => {
+    expect(isKnownNotificationType('booking_open')).toBe(true);
+    expect(isKnownNotificationType('event_open')).toBe(true);
+    expect(notificationHref({ type: 'booking_open', postId: 'space-1' })).toBe('/bookings');
+    expect(notificationHref({ type: 'event_open', postId: 'event-1' })).toBe('/calendar');
   });
 
   it('sends a follow request to the inbox and an acceptance to the person who said yes (WP-F4)', () => {

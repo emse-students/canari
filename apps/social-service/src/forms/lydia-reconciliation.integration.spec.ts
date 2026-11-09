@@ -22,6 +22,7 @@ import { DataSource } from 'typeorm';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
 import { FormReminder } from './entities/form-reminder.entity';
+import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
@@ -80,7 +81,14 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
     await admin.connect();
     await admin.query(`CREATE SCHEMA ${schema}`);
     const options = { extra: { options: `-c search_path=${schema},public` } };
-    const entities = [Form, Submission, FormReminder, FormRespondent, PurchaseRecord];
+    const entities = [
+      Form,
+      Submission,
+      FormReminder,
+      OpeningReminder,
+      FormRespondent,
+      PurchaseRecord,
+    ];
     const built = new DataSource({
       type: 'postgres',
       url: URL,
@@ -126,7 +134,7 @@ RESET lock_timeout;`
     forms = new FormsService(
       ds.getRepository(Form),
       ds.getRepository(Submission),
-      ds.getRepository(FormReminder),
+      ds.getRepository(OpeningReminder),
       { get: () => 'https://canari.example' } as any,
       associationsService,
       { grantCotisant: jest.fn() } as any,

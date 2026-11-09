@@ -57,6 +57,13 @@ describe('wizardProblems', () => {
     expect(wizardProblems(newWizardDraft('Salle'))).toEqual({});
   });
 
+  it('starts with no longest booking, and sends none unless one is picked', () => {
+    expect(newWizardDraft('Salle').maxMinutes).toBeNull();
+    expect(wizardPayload(newWizardDraft('Salle'))?.fields.maxSteps).toBeNull();
+    const d = { ...newWizardDraft('Salle'), maxMinutes: 120 };
+    expect(wizardPayload(d)?.fields.maxSteps).toBe(4);
+  });
+
   it('asks for a name', () => {
     expect(wizardProblems(newWizardDraft('  ')).name).toBe('required');
   });
@@ -101,7 +108,7 @@ describe('wizardPayload', () => {
       description: null,
       slotMode: 'step',
       stepMinutes: 30,
-      maxSteps: 4,
+      maxSteps: null,
       audience: null,
       nameVisibility: 'occupied',
       discoverability: 'listed',

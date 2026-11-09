@@ -29,6 +29,7 @@ import {
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
 import { FormReminder } from './entities/form-reminder.entity';
+import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
@@ -87,7 +88,7 @@ maybe('a guest who pays, against PostgreSQL (migrations 103, 104 and 105)', () =
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [Form, Submission, FormReminder, FormRespondent, PurchaseRecord],
+      entities: [Form, Submission, FormReminder, OpeningReminder, FormRespondent, PurchaseRecord],
       subscribers: [SlowSubmissionInsert],
       synchronize: true,
       extra: { options: `-c search_path=${schema},public` },
@@ -131,7 +132,7 @@ maybe('a guest who pays, against PostgreSQL (migrations 103, 104 and 105)', () =
     service = new FormsService(
       ds.getRepository(Form),
       ds.getRepository(Submission),
-      ds.getRepository(FormReminder),
+      ds.getRepository(OpeningReminder),
       { get: () => 'https://canari.example' } as any,
       associationsService,
       { grantCotisant: jest.fn() } as any,

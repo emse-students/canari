@@ -45,7 +45,7 @@
 
 <div class="space-y-3 sm:space-y-4" data-testid="choice-options-editor">
   <div class="flex flex-col gap-0.5 sm:flex-row sm:items-end sm:justify-between">
-    <h4 class="text-text-main text-xs font-bold uppercase opacity-80">
+    <h4 class="text-text-main text-xs font-bold opacity-80">
       {m.form_builder_options_header()}
     </h4>
     {#if priced}
@@ -69,7 +69,7 @@
         class="rounded-xl border border-black/5 bg-black/[0.02] p-2.5 sm:rounded-none sm:border-0 sm:bg-transparent sm:p-0 dark:border-white/10 dark:bg-white/[0.02]"
       >
         <div class="mb-2 flex items-center justify-between gap-2 sm:hidden">
-          <span class="text-text-muted text-2xs font-bold uppercase">
+          <span class="text-text-muted text-2xs font-bold">
             {m.form_builder_option_mobile_label()}
             {idx + 1}
           </span>

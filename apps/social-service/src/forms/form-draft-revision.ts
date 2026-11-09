@@ -187,6 +187,15 @@ export async function formsWithUnpublishedChanges(
   return new Set(rows.map((r) => r.formId));
 }
 
+/**
+ * The association a revision `d` of form `f` will give the form, as text: the one its document names
+ * (`''` or JSON null: none), else the form's own - an absent field leaves the link. Compared as
+ * text, never cast: a document is stored as typed, and one garbage value must not fail a statement
+ * that reads every revision of an association.
+ */
+const REVISION_ASSOCIATION_SQL = `(CASE WHEN d.document -> 'associationId' IS NULL THEN f."associationId"::text
+  ELSE NULLIF(d.document ->> 'associationId', '') END)`;
+
 /** Whether `document` may be stored: a plain object, within {@link FORM_DRAFT_MAX_CHARS}. */
 export function isStorableDraftDocument(document: unknown): document is Record<string, unknown> {
   if (!document || typeof document !== 'object' || Array.isArray(document)) return false;
@@ -225,12 +234,14 @@ export async function followRetagInRevisions(
   oldKey: string | null,
   newKey: string | null
 ): Promise<void> {
-  // A revision that leaves `grantsCotisation` out keeps the form's own switch.
+  // A revision that leaves `grantsCotisation` out keeps the form's own switch; one that names an
+  // association grants THAT association's tier (a draft may move, owner 2026-11-09), so it follows
+  // that association's retag and not its row's.
   await m.query(
     `UPDATE form_drafts d
         SET document = jsonb_set(d.document, '{cotisationVariantKey}', COALESCE(to_jsonb($3::text), 'null'::jsonb))
        FROM forms f
-      WHERE f.id = d."formId" AND f."associationId" = $1 AND d.document IS NOT NULL
+      WHERE f.id = d."formId" AND ${REVISION_ASSOCIATION_SQL} = $1::text AND d.document IS NOT NULL
         AND COALESCE((d.document ->> 'grantsCotisation')::boolean, f."grantsCotisation")
         AND (d.document ->> 'cotisationVariantKey') IS NOT DISTINCT FROM $2::text`,
     [associationId, oldKey, newKey]

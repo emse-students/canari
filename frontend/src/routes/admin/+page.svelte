@@ -75,10 +75,7 @@
 <div class="space-y-6">
   {#each groups as group (group.key)}
     <section class="space-y-2" aria-labelledby="group-{group.key}">
-      <h2
-        id="group-{group.key}"
-        class="text-text-muted scroll-mt-4 px-1 text-xs font-bold tracking-wide uppercase"
-      >
+      <h2 id="group-{group.key}" class="text-text-muted scroll-mt-4 px-1 text-xs font-bold">
         {group.label}
       </h2>
       <SectionHub rows={group.rows} label={group.label} />

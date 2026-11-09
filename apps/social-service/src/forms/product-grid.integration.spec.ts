@@ -23,6 +23,7 @@ import { DataSource } from 'typeorm';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
 import { FormReminder } from './entities/form-reminder.entity';
+import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
@@ -80,7 +81,7 @@ maybe('the priced grid against PostgreSQL (migration 137)', () => {
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [Form, Submission, FormReminder, FormRespondent, PurchaseRecord],
+      entities: [Form, Submission, FormReminder, OpeningReminder, FormRespondent, PurchaseRecord],
       synchronize: true,
       extra: { options: `-c search_path=${schema},public` },
     });
@@ -98,7 +99,7 @@ maybe('the priced grid against PostgreSQL (migration 137)', () => {
     service = new FormsService(
       ds.getRepository(Form),
       ds.getRepository(Submission),
-      ds.getRepository(FormReminder),
+      ds.getRepository(OpeningReminder),
       { get: () => 'https://canari.example' } as any,
       {
         assertPaymentsReady: async () => undefined,
