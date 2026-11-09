@@ -11,9 +11,9 @@
   import { Send, UserCheck } from '@lucide/svelte';
   import ProfileCard from '$lib/components/profile/ProfileCard.svelte';
   import FollowPersonRow from '$lib/components/follows/FollowPersonRow.svelte';
+  import { withdrawPerson } from '$lib/follows/followState.svelte';
   import {
     appendFollowPage,
-    leaveFollow,
     listFollowers,
     listSentFollowRequests,
     nextFollowCursor,
@@ -109,7 +109,8 @@
     pendingId = userId;
     error = '';
     try {
-      await leaveFollow(userId);
+      // Only a request is withdrawn here; one accepted meanwhile stays a follow (the ledger says so).
+      await withdrawPerson(userId);
     } catch (e: unknown) {
       Log.d('ProfileFollowersSection.withdraw failed', e);
       sent = previous;

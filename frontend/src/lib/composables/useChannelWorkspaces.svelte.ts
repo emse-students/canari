@@ -2624,9 +2624,39 @@ export function useChannelWorkspaces() {
    * Applies what a role grants NOW, from the server: either its own answer to an edit, or the
    * announcement of somebody else's.
    */
-  function handleRolePermissionsChanged(event: { roleId: string; permissions: string[] }) {
+  function handleRolePermissionsChanged(event: {
+    roleId: string;
+    permissions: string[];
+    label?: string | null;
+  }) {
     if (!event.roleId) return;
     rolePermissions = { ...rolePermissions, [event.roleId]: [...event.permissions] };
+    // Absent leaves the name where it was; null is the community resetting it to the default.
+    if (event.label !== undefined) {
+      roleLabels = { ...roleLabels, [event.roleId]: event.label };
+    }
+  }
+
+  /**
+   * The community's own display name for each role, keyed by role id (null / absent: the localized
+   * default). Same shape and reasons as `rolePermissions`: the panel fills it from the listing it
+   * loads, and the server's `workspace.role.permissions` announcement - which carries the name -
+   * keeps it current for every member without a reload. LABELS ONLY: nothing decides on these.
+   */
+  let roleLabels = $state<Record<string, string | null>>({});
+
+  /**
+   * Applies ONE role's name as the server's own answer to a rename gave it. Idempotent with the
+   * announcement of the same write (same value either way), so a publish that never arrives cannot
+   * leave a saved name looking reverted.
+   */
+  function setRoleLabel(roleId: string, label: string | null) {
+    roleLabels = { ...roleLabels, [roleId]: label };
+  }
+
+  /** Replaces what is known about role names - what the panel does when it lists a community's roles. */
+  function setRoleLabels(all: Record<string, string | null>) {
+    roleLabels = { ...all };
   }
 
   function handleWorkspaceUpdated(event: {
@@ -2759,6 +2789,12 @@ export function useChannelWorkspaces() {
     setRolePermissions,
     /** Applies an incoming real-time change to what a role grants (this device's or anybody's). */
     handleRolePermissionsChanged,
+    /** The community's own role names, keyed by role id - see the state's own note. */
+    get roleLabels() {
+      return roleLabels;
+    },
+    setRoleLabels,
+    setRoleLabel,
 
     handleWorkspaceUpdated,
     /** Applies an incoming real-time workspace-deleted event (an admin deleted the community). */

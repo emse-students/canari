@@ -18,8 +18,20 @@ export class ChannelRole {
   @Column({ type: 'uuid' })
   workspaceId: string;
 
+  /**
+   * The role's IDENTITY (the names `createWorkspace` seeds: Administrateur, the accented moderator name, Membre), never edited after the seed:
+   * lookups and the admin / moderator / member fold read it. NOT what a screen shows - see
+   * `displayLabel`.
+   */
   @Column()
   name: string;
+
+  /**
+   * The community's own name for this role, or null for "none: use the localized default".
+   * LABEL ONLY: no permission and no role lookup ever reads it (migration 150).
+   */
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  displayLabel: string | null;
 
   @Column()
   priority: number;

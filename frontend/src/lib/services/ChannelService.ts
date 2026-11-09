@@ -38,7 +38,15 @@ export interface WorkspaceDetailDto {
   workspace: WorkspaceDto;
   channels: ChannelDto[];
   members: Array<{ userId: string; roleIds?: string[] }>;
-  roles: Array<{ id: string; name: string; priority?: number; permissions?: string[] }>;
+  roles: Array<{
+    id: string;
+    /** The role's identity ('Administrateur', ...): what logic reads. NEVER the label. */
+    name: string;
+    /** The community's own display name for it, or null for the localized default. */
+    displayLabel?: string | null;
+    priority?: number;
+    permissions?: string[];
+  }>;
 }
 
 /**
@@ -1215,6 +1223,27 @@ export class ChannelService {
       {
         method: 'PATCH',
         body: JSON.stringify({ key, granted }),
+      }
+    );
+    await this.handleError(res);
+    return res.json();
+  }
+
+  /**
+   * Gives a role the community's own display name, or resets it (`label` null). Administrators
+   * only: anybody else is refused 403 `ROLE_RENAME_REQUIRES_ADMIN`. A LABEL - the role's identity and
+   * permissions are untouched. The answer is an acknowledgement; every member (this device
+   * included) learns the name from the server's `workspace.role.permissions` announcement.
+   */
+  async setRoleLabel(
+    roleId: string,
+    label: string | null
+  ): Promise<{ roleId: string; roleName: string; label: string | null }> {
+    const res = await this.fetchWithAuth(
+      `${this.baseUrl}/api/channels/roles/${encodeURIComponent(roleId)}/label`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ label }),
       }
     );
     await this.handleError(res);

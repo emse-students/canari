@@ -303,6 +303,8 @@
   "chat_insert_emoji_label": "Insert {emoji}",
   "chat_composer_group_label": "Text input and file drop area",
   "chat_drag_files_badge": "Drop your files here",
+  "composer_drop_web_image_refused": "That website does not let other sites read its image. Save the image, then attach the file.",
+  "post_drop_overlay": "Drop to attach to your post",
   "composer_drop_file_unreadable": "Your file manager did not hand this file to the browser. Use the attachment button instead.",
   "chat_enlarge_preview_label": "Enlarge preview",
   "chat_remove_file_label": "Remove file",
@@ -5847,5 +5849,14 @@
   "moderation_type_nickname": "Nickname",
   "chat_nicknames_hidden_for_you": "A nickname you cannot see is set for you. Reset it to clear it for everyone.",
   "chat_nicknames_error_superseded": "A more recent change already wins. Try again in a moment.",
-  "chat_nicknames_set_before_you": "Set before you joined"
+  "chat_nicknames_set_before_you": "Set before you joined",
+  "follow_chip_follow_named": "Follow {name}",
+  "follow_chip_withdraw_named": "Request sent - withdraw the follow request to {name}",
+  "follow_chip_withdraw": "Request sent - withdraw the follow request",
+  "chat_role_names_title": "Role names",
+  "chat_role_names_description": "Give each role the name your community uses. Only the name changes: what each role may do stays the same. Leave it empty to use the default name.",
+  "chat_role_name_input_label": "Name of the {role} role",
+  "chat_role_name_reset_button": "Default name",
+  "chat_role_name_invalid_error": "This name cannot be saved: 40 characters at most, no control characters.",
+  "chat_role_name_forbidden_error": "Only administrators can rename roles."
 }

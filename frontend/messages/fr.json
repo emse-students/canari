@@ -335,6 +335,8 @@
   "chat_insert_emoji_label": "Insérer {emoji}",
   "chat_composer_group_label": "Zone de saisie et dépôt de fichiers",
   "chat_drag_files_badge": "Déposez vos fichiers ici",
+  "composer_drop_web_image_refused": "Ce site ne laisse pas d'autres sites lire son image. Enregistrez l'image, puis joignez le fichier.",
+  "post_drop_overlay": "Déposez pour joindre à votre publication",
   "composer_drop_file_unreadable": "Le gestionnaire de fichiers n'a pas transmis ce fichier au navigateur. Utilisez le bouton de pièce jointe.",
   "chat_enlarge_preview_label": "Agrandir l'aperçu",
   "chat_remove_file_label": "Retirer le fichier",
@@ -5847,5 +5849,14 @@
   "moderation_type_nickname": "Pseudo",
   "chat_nicknames_hidden_for_you": "Un pseudo que vous ne voyez pas est défini pour vous. Réinitialisez-le pour l'effacer pour tous.",
   "chat_nicknames_error_superseded": "Un changement plus récent l'emporte déjà. Réessayez dans un instant.",
-  "chat_nicknames_set_before_you": "Défini avant votre arrivée"
+  "chat_nicknames_set_before_you": "Défini avant votre arrivée",
+  "follow_chip_follow_named": "Suivre {name}",
+  "follow_chip_withdraw_named": "Demande envoyée - retirer la demande de suivi à {name}",
+  "follow_chip_withdraw": "Demande envoyée - retirer la demande de suivi",
+  "chat_role_names_title": "Noms des rôles",
+  "chat_role_names_description": "Donnez à chaque rôle le nom que votre communauté utilise. Seul le nom change : les droits de chaque rôle restent les mêmes. Laissez vide pour reprendre le nom par défaut.",
+  "chat_role_name_input_label": "Nom du rôle {role}",
+  "chat_role_name_reset_button": "Nom par défaut",
+  "chat_role_name_invalid_error": "Ce nom ne peut pas être enregistré : 40 caractères au plus, sans caractère de contrôle.",
+  "chat_role_name_forbidden_error": "Seuls les administrateurs peuvent renommer les rôles."
 }

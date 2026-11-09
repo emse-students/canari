@@ -149,7 +149,7 @@ apps themselves (no WebView here), a real account, and the keyboard on a phone.
 | `MainChatPage.svelte` | Root chat page, orchestrates sidebar + chat area |
 | `ChatArea.svelte` | Header + message list + composer |
 | `MessageTextBody.svelte` | A message's text, its links, and the link card under it. **The card is capped at `max-w-sm` in a conversation** (2026-09-25): the bubble is `w-fit` with no width of its own, so a long title stretched the card across the thread - one line of title over a band of blurred poster. The title wraps to three lines (a post's is cut at 100 characters upstream). The feed's `PostContent` mounts the card uncapped, at the post's width. |
-| `ChatComposer.svelte` | Message input, media picker, reply preview. **The drop badge ends at the WINDOW, not the panel** (2026-09-25): a drop on the editor stops propagating (the file is attached once), and a cancelled drag's closing `dragleave` fires wherever the pointer was - so `drop` (capture), `dragleave` with no `relatedTarget` and `dragend` are read on `window`; `ChatComposer.dragBadge.svelte.test.ts`. **A drop carrying only a local file's ADDRESS is refused, not inserted** (2026-09-25): Firefox given a file by Nemo receives its `file:///` URI and path but no `File`, and the editor pasted the name. `localFileAddressesFromTransfer` (`composerTransfer.ts`) recognises it; the editor and the panel insert nothing and toast `composer_drop_file_unreadable` - a page cannot read a local file from its address, so the attachment button is the way. **On a phone the paperclip opens a menu** (2026-09-28, user: *"comme sur messenger"*) - since 2026-10-02 THE one menu, each entry going straight to its picker, and none on an iOS browser where WebKit's sheet is the menu ([below](#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)). A picker is chosen by what the input ACCEPTS - one input taking images, videos, audio, PDFs and archives is a document request, which Android answers with the file browser - so the photos entry is a second input accepting `image/*,video/*` only: the system photo picker where the phone has one, the photo library on iOS, and no gallery permission (Google Play grants that only to apps built around photos, so an in-app Messenger-style grid was declined). A desktop keeps its single dialog. `ChatComposer.attachMenu.svelte.test.ts`; **which Android versions show the photo grid through the WebView's chooser is NOT measured - owed on a phone.** |
+| `ChatComposer.svelte` | Message input, media picker, reply preview. **One drop rule for every composer** (2026-11-08): `handleComposerDrop` (`utils/composerDrop.ts`) reads a drop as real files, then a withheld local address (toast), then a WEB IMAGE with no file (`webImageUrlsFromTransfer`, fetched by `fetchWebImageFile` - a host without CORS gives the toast `composer_drop_web_image_refused` and a `[COMPOSER]` warn naming the host and the typed cause), then text; the post sheet (`CreatePostForm`) is one zone through the `composerDropZone` action, and `dropEffectFor` follows the source's `effectAllowed` (forcing `copy` on a move-only web image made the browser refuse the drop). **The drop badge ends at the WINDOW, not the panel** (2026-09-25): a drop on the editor stops propagating (the file is attached once), and a cancelled drag's closing `dragleave` fires wherever the pointer was - so `drop` (capture), `dragleave` with no `relatedTarget` and `dragend` are read on `window`; `ChatComposer.dragBadge.svelte.test.ts`. **A drop carrying only a local file's ADDRESS is refused, not inserted** (2026-09-25): Firefox given a file by Nemo receives its `file:///` URI and path but no `File`, and the editor pasted the name. `localFileAddressesFromTransfer` (`composerTransfer.ts`) recognises it; the editor and the panel insert nothing and toast `composer_drop_file_unreadable` - a page cannot read a local file from its address, so the attachment button is the way. **On a phone the paperclip opens a menu** (2026-09-28, user: *"comme sur messenger"*) - since 2026-10-02 THE one menu, each entry going straight to its picker, and none on an iOS browser where WebKit's sheet is the menu ([below](#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)). A picker is chosen by what the input ACCEPTS - one input taking images, videos, audio, PDFs and archives is a document request, which Android answers with the file browser - so the photos entry is a second input accepting `image/*,video/*` only: the system photo picker where the phone has one, the photo library on iOS, and no gallery permission (Google Play grants that only to apps built around photos, so an in-app Messenger-style grid was declined). A desktop keeps its single dialog. `ChatComposer.attachMenu.svelte.test.ts`; **which Android versions show the photo grid through the WebView's chooser is NOT measured - owed on a phone.** |
 | `ChatMessageGroups.svelte` | Groups messages by date, sticky date indicator |
 | `MessageBubble.svelte` | Renders a single message with reply, reactions, status |
 | `ConversationMediaPanel.svelte` | Side panel showing shared media for a conversation |
@@ -2359,6 +2359,19 @@ A purged community goes through `dropCommunityLocally` in `ChatBackgroundService
 chat panel afterwards needs to know whether what was on screen belonged to the community that
 just vanished.
 
+### A community's own names for its three roles (owner, 2026-11-08)
+
+The "Roles" tab of the community settings (`SidebarCommunityAdminPanel`) opens with `CommunityRoleNames`,
+one field per role (admin, moderator, member), mounted only when the server said `viewerCanManage`.
+The default name is the placeholder; saving a blank field resets it. **Labels only**: the three roles,
+their permissions and their holders are untouched, and the stored role `name` stays the identity the
+client folds through `canonicalRoleOf` - a label is never read for a decision. Every place a role name
+is drawn (member badges, invite and role pickers, the permission grid headers) goes through the ONE
+resolver `resolveRoleLabel` (`utils/chat/communityRoleLabel.ts`), fed by `globalChannels.roleLabels`
+(by role id), which the listing fills and the `workspace.role.permissions` event (it carries `label`)
+keeps current for every member without a reload. Server side, column choice and refusals:
+[social-service](../../services/social-service.md#a-community-may-name-its-three-roles-owner-2026-11-08).
+
 ### Leaving: a private channel, or the whole community - never a public channel
 
 `ChannelSettingsModal` offers "Quitter le salon" only when `selectedChannel.isPrivate`. A public
@@ -4424,7 +4437,11 @@ weekday alone up to six calendar days back ("Mercredi"), then day and month ("23
 year only when it is not the current one. `Intl` in the Paraglide locale, so English reads "Monday",
 "September 23", "May 5, 2025". A day in the future (a skewed clock) never gets a bare weekday. The
 floating pill reads its text off the separator's `data-chat-date-separator`, so the two cannot
-disagree. Days are counted by `calendarDay`, shared with the media viewer's title.
+disagree. Days are counted by `calendarDay`, shared with the media viewer's title. `groupMessages`
+names the days of a pass through ONE `dayLabeler` (one clock, one `Intl.DateTimeFormat` per label
+shape), and `calendarDay` answers the browser's own zone from the `Date` getters: the regrouping
+runs over the whole conversation on every change of it, and three `Intl` builds per day separator
+were most of its cost ([community-open-budget](../community-open-budget.md#per-bubble-and-per-day-work-cut-2026-11-08)).
 
 **The pill is the last row of `.chat-thread-banners`, not a box positioned over the panel.** It was
 `absolute; left: 50%; translateX(-50%)`: shrink-to-fit could only use the half of the panel right of

@@ -658,7 +658,12 @@ describe('encryption.worker - one key per direction, the kind bound to every fra
   });
 
   describe('a receiver that opens nothing (the two ends hold different keys)', () => {
-    /** Frames sealed by an end holding ANOTHER caller key: what a peer at another MLS epoch sends. */
+    /**
+     * `n` frames sealed by an end holding ANOTHER caller key: what a peer at another MLS epoch sends.
+     * ONE real AES-GCM seal, repeated: the receiver fails every copy the same way (the key is wrong
+     * whatever the IV), so `n` distinct seals only added `n` thread-pool round trips - the cost that
+     * pushed this file past 5 s when the whole suite ran in parallel.
+     */
     async function foreignFrames(n: number): Promise<Uint8Array[]> {
       const other = await crypto.subtle.importKey(
         'raw',
@@ -668,15 +673,12 @@ describe('encryption.worker - one key per direction, the kind bound to every fra
         ['encrypt']
       );
       const aad = new TextEncoder().encode('canari-call-v2|audio');
-      return Promise.all(
-        Array.from({ length: n }, async () => {
-          const iv = crypto.getRandomValues(new Uint8Array(12));
-          const c = new Uint8Array(
-            await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad }, other, opus())
-          );
-          return Uint8Array.from([...iv, ...c]);
-        })
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const c = new Uint8Array(
+        await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad }, other, opus())
       );
+      const frame = Uint8Array.from([...iv, ...c]);
+      return Array.from({ length: n }, () => frame);
     }
     const undecryptable = () => posted.filter((m) => m.type === 'undecryptable');
 

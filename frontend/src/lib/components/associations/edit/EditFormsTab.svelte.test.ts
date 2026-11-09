@@ -145,3 +145,31 @@ describe('EditFormsTab - a form card on a phone', () => {
     expect(title.querySelector('[data-testid="form-draft-badge"]')).not.toBeNull();
   });
 });
+
+describe('EditFormsTab - the paid-forms banner on a phone', () => {
+  // happy-dom lays nothing out: the rule is pinned as the classes that decide it. A button is an
+  // atomic inline box, so a long link label could not break and jumped to its own line, leaving the
+  // closing full stop alone (iPhone, 2026-11-08); `inline` lets it flow with the sentence.
+  it('lets the link flow inside the sentence and keeps the full stop right after it', async () => {
+    state.forms = [{ ...form(), basePrice: 2800 }];
+    state.pending = [];
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    component = mount(EditFormsTab, {
+      target,
+      props: {
+        asso,
+        onlinePaymentsReady: false,
+        canManagePayoutAccount: true,
+        onGoToPayments: () => {},
+      },
+    });
+    await flushMacrotask();
+    await flushMacrotask();
+    flushSync();
+    const link = target.querySelector('[data-testid="payments-link"]')!;
+    expect(link.classList).toContain('inline');
+    expect(link.classList).toContain('p-0');
+    expect(link.nextSibling?.textContent?.trim()).toBe('.');
+  });
+});

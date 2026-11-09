@@ -1,3 +1,4 @@
+import { OFFERED_BY_SPACE_KEY_SQL, type PublicSpaceKey } from '../spaces/public-space';
 import {
   BadRequestException,
   ConflictException,
@@ -19,7 +20,6 @@ import {
   mayCollect,
   writablePermissions,
 } from './collection-policy';
-import { LEGACY_ADMIN_PRESETS, withLegacyEditProfile } from './legacy-admin-presets';
 import {
   assertInstitutionMemberWrite,
   assertWithinGrantCeiling,
@@ -1176,6 +1176,22 @@ export class AssociationsService {
   }
 
   /** Loads one association by its URL slug and appends a memberCount. */
+  /**
+   * The ids of the associations of a space ({@link OFFERED_BY_SPACE_KEY_SQL}): type `association`,
+   * audience reaching the space, archived ones included - the carte's set plus the archived
+   * associations of the same space. Read by the public directory a showcase filters by its space.
+   */
+  async offeredInSpace(space: PublicSpaceKey): Promise<Set<string>> {
+    const rows: { id: string }[] = await this.assoRepo.query(OFFERED_BY_SPACE_KEY_SQL, [
+      space.formation,
+      space.campus,
+    ]);
+    this.logger.debug(
+      `[DIRECTORY] ${space.formation}:${space.campus} offers ${rows.length} association(s)`
+    );
+    return new Set(rows.map((r) => r.id));
+  }
+
   async findBySlug(slug: string) {
     const asso = await this.assoRepo.findOne({ where: { slug } });
     if (!asso) throw new NotFoundException('Association not found');
@@ -1821,7 +1837,7 @@ export class AssociationsService {
     const saved = await this.insertMembership(
       this.memberRepo.manager,
       target,
-      { ...dto, permissions: await this.legacyAddMask(dto.permissions, granter, associationId) },
+      dto,
       sortOrder,
       granter,
       'addMember'
@@ -2037,21 +2053,6 @@ export class AssociationsService {
       this.isAssociationSuperAdminOf(granter.userId, associationId),
     ]);
     return { isGlobalAdmin: false, isSuperAdminOf, ownPermissions: own?.permissions ?? 0 };
-  }
-
-  /**
-   * LEGACY SHIM until 2027-05-03 (`legacy-admin-presets.ts`): a member ADD posting exactly a
-   * pre-`EDIT_PROFILE` admin preset gets the bit, when the granter's ceiling covers it. The
-   * standing is read only for such a mask; the write itself is judged by `insertMembership`.
-   */
-  private async legacyAddMask(
-    permissions: number,
-    granter: MemberGranter,
-    associationId: string
-  ): Promise<number> {
-    if (!LEGACY_ADMIN_PRESETS.has(permissions)) return permissions;
-    const ceiling = grantCeiling(await this.granterStanding(granter, associationId));
-    return withLegacyEditProfile(this.logger, permissions, ceiling, 'addMember');
   }
 
   /**

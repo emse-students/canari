@@ -904,10 +904,16 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
           .finally(() => (settled = true));
         // The writer commits only once the release has either finished or is WAITING on the lock -
         // read from the server, never from a clock - so an unlocked release reads "uncited" first.
+        // Only a waiter on THIS poster's lock counts: `pg_locks` is database-wide, and a sibling
+        // spec waiting on its own advisory lock must never end this wait early. A bigint key is
+        // split by PostgreSQL into classid (high 32 bits) and objid (low 32 bits).
         for (;;) {
           const [{ n }] = (
             await admin.query(
-              `SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`
+              `SELECT count(*)::int AS n FROM pg_locks
+                WHERE locktype = 'advisory' AND NOT granted
+                  AND ((classid::bigint << 32) | objid::bigint) = hashtextextended($1, 0)`,
+              [`booking-poster:${mine.mediaId}`]
             )
           ).rows as { n: number }[];
           if (n > 0 || settled) break;

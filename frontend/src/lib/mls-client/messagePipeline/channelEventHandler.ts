@@ -302,6 +302,9 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onRolePermissionsChanged?.({
       roleId,
       permissions: Array.isArray(data.permissions) ? data.permissions.map(String) : [],
+      // The community's own name for the role: a string, or null for "none - use the default". ABSENT
+      // (a server older than the rename) leaves the name where the last listing put it.
+      label: typeof data.label === 'string' ? data.label : data.label === null ? null : undefined,
     });
     return;
   }

@@ -132,6 +132,7 @@ export function fakeDeps() {
   const clock = { t: 1_000 };
   /** Every bounded wait started, fired only by the test: no real time passes. */
   const timers: { ms: number; fire: () => void }[] = [];
+  const reconnectListeners = new Set<() => void>();
   let hidden = false;
   const deps = {
     fetchLiveLimits: vi.fn(async () => LIMITS),
@@ -158,6 +159,10 @@ export function fakeDeps() {
         new Uint8Array(plain) as Uint8Array<ArrayBuffer>
     ),
     fetchLive: vi.fn(async () => liveView()),
+    onReconnect: vi.fn((listener: () => void) => {
+      reconnectListeners.add(listener);
+      return () => reconnectListeners.delete(listener);
+    }),
     endLive: vi.fn(async () => ({
       id: LIVE_ID,
       endedAt: '2026-10-19T10:30:00.000Z',
@@ -197,6 +202,13 @@ export function fakeDeps() {
     uploaders,
     clock,
     timers,
+    /** The link comes back: every subscribed listener runs. */
+    reconnect: () => {
+      // A SNAPSHOT: a one-shot listener removes itself from the set while it runs.
+      // oxlint-disable-next-line unicorn/no-useless-spread
+      for (const l of [...reconnectListeners]) l();
+    },
+    reconnectListeners,
     /** Fires every pending bound of `ms`. */
     fireTimers: (ms: number) => {
       for (const t of timers.filter((x) => x.ms === ms)) t.fire();

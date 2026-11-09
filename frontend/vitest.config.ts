@@ -9,7 +9,11 @@ export default defineConfig({
   test: {
     // The locale is global and some files move it; this gives every file the same starting
     // point. Fourteen assertions depended on worker order until 2026-09-17 - see the file.
-    setupFiles: ['./src/test/locale.ts', './src/test/noRealNetwork.ts'],
+    setupFiles: [
+      './src/test/locale.ts',
+      './src/test/noRealNetwork.ts',
+      './src/test/emojiWarmUp.ts',
+    ],
     globals: true,
     // NODE BY DEFAULT: no window is built for a file that does not ask for one. A file that needs a
     // DOM says so on its first line, `// @vitest-environment happy-dom`, and a file that needs one

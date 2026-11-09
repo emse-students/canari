@@ -14,13 +14,9 @@ reading the release owed PASSED, and the stable ships on them:
 The dark bench room made every frame black, so the PICTURE itself was not judged, only the media
 path.
 
-What they found. None of it is a regression, and none of it blocks:
+What they found. None of it was a regression; the sign-out and sign-in noise lines were fixed at
+their causes (#3149). What is left:
 
-- **P3 - sign-out and sign-in noise left after #3144** (read on `1.6.8-alpha.1`): the order is
-  fixed (no `401` on the deregistration, a killed-app push still decrypts after a re-sign-in), but
-  the Mi 9T still logs `pauseSocket: native disconnect failed` at sign-out, both phones log
-  `refresh 401` about 100 ms after `logout 200`, and the iPhone logs six `[NativeTabBar] ... tab bar
-  is not configured` during the sign-in callback.
 - **P3 - `pauseSocket` on an already-closed socket** when the app goes to the background for the
   file picker. This is lifecycle noise next to "Reconnect request refused - paused".
 - **To watch:** the quality ladder drops 480p30 -> 180p15 four seconds into a call, while the

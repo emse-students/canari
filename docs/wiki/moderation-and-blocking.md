@@ -234,8 +234,8 @@ content inside an institution's or another BDE's post or live: [the place decide
   2026-11-04: a reply in a protected name goes with the question it answers.
 - **An app newer than its server** (a delete answered `{ ok: true }` alone) drops the comment and its
   whole subtree locally, as that server did, and logs `[VERSION-SKEW]` at warn. An app older than the
-  tombstone draws one as an empty bubble -
-  [legacy-compatibility](legacy-compatibility.md#no-date-yet---a-moderation-tombstone-drawn-by-a-build-that-does-not-know-removedbymoderation-2026-11-04).
+  tombstone drew one as an empty bubble, until floor `1.6.6` retired those builds -
+  [legacy-compatibility](legacy-compatibility.md#entries-166-retires-or-unblocks-the-owners-raise-of-2026-11-08).
 
 **The queue's comment branch at volume (measured 2026-11-04, scratch PostgreSQL 18).** 2,000 posts,
 20,000 comments (200 threads of 50 with chained replies), 2,000 reports (1,000 on comments), one BDE
