@@ -146,7 +146,10 @@ asked for the post path's predicate, not a copy of it, and that is what the shap
 entity post's announcement already runs on production for every association post: one statement per
 live, at its first stored segment, never per segment.
 
-**A measured bound, not a setting: the JIT threshold.** The review of #3119 read the association
+**The JIT threshold, now switched off (2026-11-09).** Every social-service connection starts with
+`jit=off` (`PG_SESSION_OPTIONS`), after the same cliff made the bell's read take 1-13 s
+([posts](frontend/modules/posts.md#the-bell-re-checks-the-post-review-of-2965-2026-11-03)); the
+bound below no longer exists, and is kept as the record of why. The review of #3119 read the association
 audience plan at an estimated cost of about 83,000 on a 3,000-user fixture, against PostgreSQL's
 default `jit_above_cost` of 100,000. Past it, PostgreSQL JIT-compiles the plan, which adds a fixed
 compilation time (tens to a few hundred milliseconds) and changes no result. The statement runs once
