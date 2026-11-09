@@ -51,20 +51,17 @@
   <!-- No placement of its own: `+layout.svelte` stacks the window-scale banners in one fixed column.
        It is FIRST in that column deliberately - the others come and go, this one is a property of
        the whole deployment, so it must not be pushed off screen by a transient notice. -->
-  <Banner variant="info" center class="font-bold">
-    <FlaskConical size={14} aria-hidden="true" />
-    <span>
-      {m.env_banner_test_label()}
-      <span class="hidden font-normal sm:inline">{m.env_banner_test_detail()}</span>
-    </span>
+  <Banner variant="info" thin center class="font-bold">
+    <FlaskConical size={12} aria-hidden="true" />
+    <span class="truncate">{m.env_banner_test_label()}</span>
     {#snippet action()}
       <button
         type="button"
-        class="ui-icon-button -mr-2 shrink-0 rounded-full"
+        class="banner-action -mr-2"
         aria-label={m.common_close_label()}
         onclick={dismiss}
       >
-        <X size={16} aria-hidden="true" />
+        <X size={14} aria-hidden="true" />
       </button>
     {/snippet}
   </Banner>

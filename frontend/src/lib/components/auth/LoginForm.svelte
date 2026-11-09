@@ -65,7 +65,7 @@
       >
         <img src="/favicon.png" alt="Canari Logo" class="h-2/3 w-2/3 object-contain" />
       </div>
-      <h1 class="font-brand text-text-main text-5xl font-bold tracking-wide">Canari</h1>
+      <h1 class="font-brand text-text-main text-5xl font-bold">Canari</h1>
       <p class="text-text-muted mt-3 text-base font-medium">{m.auth_brand_subtitle()}</p>
     </div>
 

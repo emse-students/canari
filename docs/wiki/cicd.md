@@ -2960,6 +2960,14 @@ unreachable in chat-gateway (HS256 only), mls-wasm and src-tauri (one X25519/Ed2
 ephemeral secret - bounded by that secret living for one operation and by the SFU never having
 placed a production call. The webrtc 0.21 port ([calls](frontend/modules/calls.md#the-webrtc-020-port-measured-2026-09-15)) removes that edge.
 
+`RUSTSEC-2026-0441` (pin-utils, an "unmaintained" status warning only, 2026-11-09) is ignored in call-service on the same webrtc 0.17 edge (webrtc-util -> nix 0.26.4 -> pin-utils): no lockfile bump drops it, the webrtc 0.21 port does; re-examine by then or 2027-01-31.
+
+`RUSTSEC-2026-0459` (bundled SQLite before 3.54 returns uninitialised page-cache memory for a crafted
+database and `-wal` pair; fix only in libsqlite3-sys 0.39) turned the `cargo audit` job red in
+`frontend/src-tauri` on 2026-11-09. No lockfile change can take it - no released sqlx accepts 0.39 -
+and it is ignored there, **time-boxed to 2027-01-31**, with the vendored-amalgamation fork as the
+fallback ([backlog](backlog.d/p2-sqlite-bundled-needs-sqlx-release.md)).
+
 ### A merged branch that is still there was pushed back, not left behind (measured 2026-09-22)
 
 Two specimens of a squash-merged branch still on the remote: #341 (2026-09-03, present twelve minutes after an auto-merge while #339 and #340 were already 404; a `DELETE /git/refs/heads/...` removed it with no error) and #825. Of 596 merges since 2026-09-17, exactly one branch was still there on 2026-09-22: `perf/le-blob-ne-traverse-plus-le-pont`, whose merge consumed head `9ff6d0755` (2026-09-17 19:09:28 Z) while the branch carried `4b4b5862b`, committed 22:08 Z, three hours AFTER the merge.

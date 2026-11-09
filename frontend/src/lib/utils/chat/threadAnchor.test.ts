@@ -1,10 +1,12 @@
 import {
   anchorShift,
   chatViewCountLine,
+  chatViewEntryLine,
   firstRowBelow,
   isPinnedToBottom,
   keyboardChangeResponse,
   respondToNewMessage,
+  stickToBottomAfterScroll,
   THREAD_BOTTOM_SLACK_PX,
   threadGrowthResponse,
   threadReach,
@@ -99,8 +101,27 @@ describe('threadGrowthResponse', () => {
     expect(threadGrowthResponse({ ...grew(4000), isLoadingOlder: true })).toBe('keep-row');
   });
 
-  it('refuses while the conversation is still being entered', () => {
-    expect(threadGrowthResponse({ ...grew(4000), isEntering: true })).toBe('keep-row');
+  /**
+   * AN ENTRY IS AT THE BOTTOM (owner's Android 1.6.8, 2026-11-09): the upgrades and the withdrawal
+   * of a notification-tap open land while the entry runs, and were dropped when this said `keep-row`.
+   */
+  it('follows any change while the conversation is being entered, whatever the flag says', () => {
+    expect(threadGrowthResponse({ ...grew(4000), isEntering: true })).toBe('follow-bottom');
+    expect(threadGrowthResponse({ ...grew(90), isEntering: true, wasNearBottom: false })).toBe(
+      'follow-bottom'
+    );
+    expect(threadGrowthResponse({ ...settled, currentReach: 820, isEntering: true })).toBe(
+      'follow-bottom'
+    );
+    expect(threadGrowthResponse({ ...settled, isEntering: true, wasNearBottom: false })).toBe(
+      'hold-bottom'
+    );
+  });
+
+  it('still leaves a prepend during the entry to its own restore', () => {
+    expect(threadGrowthResponse({ ...grew(4000), isEntering: true, isLoadingOlder: true })).toBe(
+      'keep-row'
+    );
   });
 
   it('is decided by the reach moving, never by how much', () => {
@@ -322,5 +343,50 @@ describe('keyboardChangeResponse', () => {
         })
       ).toBe('stay');
     }
+  });
+});
+
+describe('chatViewEntryLine', () => {
+  it('names the conversation, the pin, the flag, the newest row and the count', () => {
+    expect(
+      chatViewEntryLine('0123456789abcdef', {
+        pinned: false,
+        isNearBottom: true,
+        newestVisible: false,
+        rows: 60,
+        fromBottom: 180,
+      })
+    ).toBe(
+      '01234567 entry settled: pinned=false isNearBottom=true newestVisible=false rows=60 fromBottom=180'
+    );
+  });
+});
+
+describe('stickToBottomAfterScroll', () => {
+  const at = { pinned: false, scrollTop: 1000, wasNearBottom: true, previousScrollTop: 1000 };
+
+  it('is true whenever the pane is within the slack of its bottom', () => {
+    expect(stickToBottomAfterScroll({ ...at, pinned: true, wasNearBottom: false })).toBe(true);
+  });
+
+  /**
+   * THE FRAME RACE (review of #3223): a medium grew by 300 px in the frame of a pending scroll
+   * measurement, which runs before the `ResizeObserver` that follows it. The reader did not move.
+   */
+  it('keeps a reader at the bottom when the bottom moved away and the pane did not move up', () => {
+    expect(stickToBottomAfterScroll(at)).toBe(true);
+    expect(stickToBottomAfterScroll({ ...at, scrollTop: 1040 })).toBe(true);
+  });
+
+  it('lets a reader who moved up out of the slack leave the bottom', () => {
+    expect(stickToBottomAfterScroll({ ...at, scrollTop: 860 })).toBe(false);
+  });
+
+  it('never brings back a reader in history who is not in the slack', () => {
+    expect(stickToBottomAfterScroll({ ...at, wasNearBottom: false, scrollTop: 1400 })).toBe(false);
+  });
+
+  it('measures plainly when there is no previous offset to compare with', () => {
+    expect(stickToBottomAfterScroll({ ...at, previousScrollTop: null })).toBe(false);
   });
 });

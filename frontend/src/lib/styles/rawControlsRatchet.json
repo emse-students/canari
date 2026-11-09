@@ -555,7 +555,7 @@
     "input": 0
   },
   "src/lib/components/messages/MessageMetadata.svelte": {
-    "button": 6,
+    "button": 4,
     "select": 0,
     "input": 0
   },
@@ -1306,11 +1306,6 @@
   },
   "src/routes/profile/[id]/+page.svelte": {
     "button": 4,
-    "select": 0,
-    "input": 0
-  },
-  "src/routes/settings/+page.svelte": {
-    "button": 1,
     "select": 0,
     "input": 0
   },

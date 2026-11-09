@@ -401,9 +401,7 @@
 
         {#if capabilities.canLinkForm && linkableForms && !neutral}
           <div class="border-cn-border/70 bg-cn-bg/30 space-y-3 rounded-xl border p-3">
-            <p
-              class="text-text-muted flex items-center gap-1 text-xs font-bold tracking-wide uppercase"
-            >
+            <p class="text-text-muted flex items-center gap-1 text-xs font-bold">
               <Link2 size={14} />
               {m.asso_calendar_link_form_label()}
             </p>

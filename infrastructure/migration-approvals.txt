@@ -69,3 +69,13 @@ apps/social-service/src/migrations/143_account_bells_copy_push_mutes.sql 72153fd
 # adversarial review passed 2026-11-08 in two rounds; the dev reading is taken through the 1.6.8
 # pre-release before the stable. Any edit to the file holds it again.
 apps/social-service/src/migrations/147_poster_spaces_and_zones.sql 1f6b76ff3f6b2dec2dae701fbdc33c9aefb8ab6ba2f781796881b46cda0bf491
+
+# 152: the opening reminders copied from form_reminders (engagement WP-4, L24-L29), with a trigger mirroring
+# every claim an older social-service image makes on form_reminders during the deploy (heads-up only in
+# the five minutes before the opening and never after "it's open"; the opening only once open). A copy
+# (INSERT ... SELECT, ON CONFLICT DO NOTHING) of one small table, non-destructive. Approved by the lead
+# under the owner's 2026-11-03 delegation (docs/wiki/backlog.d/owner-decisions-of-2026-11-03-evening.md),
+# the owner confirming on 2026-11-09 that it merges first and runs on dev (with a backup) through the
+# next pre-release before any stable; adversarial review passed 2026-11-09 in three rounds. Any edit to
+# the file holds it again.
+apps/social-service/src/migrations/152_opening_reminders_copy_form_reminders.sql a3b6cdcc9c5961d69b41eaeaf6a50b805c436fc87e8bda426945a6690e7db0f5

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatMessage, Conversation } from '$lib/types';
-import { applySalonEchoChange, mergeAnnouncedMessage, nextEchoMessages } from './salonEcho';
+import {
+  applySalonEchoChange,
+  mergeAnnouncedMessage,
+  nextEchoMessages,
+  salonEchoSettleable,
+} from './salonEcho';
 
 vi.mock('$lib/mls-client/tabMessageSync', () => ({ publishTabMessageUpdate: vi.fn() }));
 import { publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
@@ -188,5 +193,37 @@ describe('a follower tab that composed a salon message shows ONE row, in both or
     // The echo has no server time yet, so it is drawn below every dated row (`awaitsServerTime`).
     expect(merged?.messages.map((m) => m.id)).toEqual(['srv', 'local']);
     expect(mergeAnnouncedMessage(merged!.messages, announced())).toBeNull();
+  });
+});
+
+describe('salonEchoSettleable - which echo offers Retry and Discard (review of #3189, D2)', () => {
+  const waits = new Map<string, 'network' | 'server'>([
+    ['held', 'server'],
+    ['offline', 'network'],
+  ]);
+  const waitOf = (id: string) => waits.get(id);
+  const echoRow = (id: string, status: ChatMessage['status'], awaitingServerId = true) => ({
+    id,
+    status,
+    awaitingServerId,
+  });
+
+  it('a pending echo HELD FOR THE SERVER offers them', () => {
+    expect(salonEchoSettleable(echoRow('held', 'pending'), waitOf)).toBe(true);
+  });
+
+  it('a failed or unconfirmed echo offers them, as before', () => {
+    expect(salonEchoSettleable(echoRow('x', 'error'), waitOf)).toBe(true);
+    expect(salonEchoSettleable(echoRow('x', 'unconfirmed'), waitOf)).toBe(true);
+  });
+
+  it('a pending echo waiting for the link or its salon, or one in flight, does not', () => {
+    expect(salonEchoSettleable(echoRow('offline', 'pending'), waitOf)).toBe(false);
+    expect(salonEchoSettleable(echoRow('gate', 'pending'), waitOf)).toBe(false);
+    expect(salonEchoSettleable(echoRow('held', 'sending'), waitOf)).toBe(false);
+  });
+
+  it('a settled row (no longer awaiting its server id) never does', () => {
+    expect(salonEchoSettleable(echoRow('held', 'pending', false), waitOf)).toBe(false);
   });
 });

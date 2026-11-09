@@ -276,6 +276,10 @@ class NotificationService: UNNotificationServiceExtension {
     // An edit (owner, 2026-11-02): the booking was moved, or the reader taken off it.
     case "social_booking_changed": composed = actorTitled("booking_changed")
     case "social_booking_removed": composed = actorTitled("booking_removed")
+    // The openings told to an association's followers (engagement WP-4): the association names
+    // the title, the space's name or the event's title is the body.
+    case "social_booking_open": composed = actorTitled("booking_open")
+    case "social_event_open": composed = actorTitled("event_open")
     // The reminder: nobody acted, a fixed title; the body is the place and the time.
     case "social_booking_reminder":
       composed = (

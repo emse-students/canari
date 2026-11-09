@@ -31,6 +31,7 @@ import { readServerInstant, type ServerInstant } from './serverInstant';
 import { RefusedRenewedToken, renewingOn401, resendAfter401 } from '$lib/utils/renewOn401';
 import { RefreshFailedError, SessionEndedByDeviceRevocationError } from '$lib/stores/auth';
 import { DEVICE_REVOKED_BY_OWNER, REVIEW_COHORT_BOUNDARY_CODE } from '$lib/utils/refusalCodes';
+import { isUnavailableStatus } from '$lib/utils/unavailableAnswer';
 
 /**
  * What the server did with a member's Decline of an invitation-link ask
@@ -625,6 +626,25 @@ export class SendServerError extends ApiRefusalError {
   ) {
     super(status, null, `Message send answered ${status} (${origin}) for group ${groupId}`);
     this.name = 'SendServerError';
+  }
+}
+
+/**
+ * The delivery service - or the proxy in front of it - answered "NOT NOW": `502`, `503` or `504`
+ * (`unavailableAnswer.ts`). A {@link SendServerError} still, so every reader of a 5xx keeps reading
+ * it as one, but its own TYPE, because the outbox's policy for it is the opposite of a 5xx's: it is
+ * held for the server to serve again and never counted toward a failure (R05, 2026-11-09). A deploy
+ * rotating a container answers exactly these for its few seconds.
+ */
+export class SendUnavailableError extends SendServerError {
+  constructor(
+    groupId: string,
+    status: number,
+    origin: ResponseOrigin,
+    retryAfterMs: number | null = null
+  ) {
+    super(groupId, status, origin, retryAfterMs);
+    this.name = 'SendUnavailableError';
   }
 }
 
@@ -2336,7 +2356,10 @@ export class MlsDeliveryApi {
         throw new GroupDeletedError(groupId);
       }
       if (res.status >= 500) {
-        throw new SendServerError(
+        // "NOT NOW" AND "I FAILED" ARE TWO ANSWERS, told apart HERE by the status and carried as
+        // two types: the outbox holds the first for the server and counts the second.
+        const Answer = isUnavailableStatus(res.status) ? SendUnavailableError : SendServerError;
+        throw new Answer(
           groupId,
           res.status,
           responseOrigin(res),

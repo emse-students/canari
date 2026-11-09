@@ -16,7 +16,7 @@
  */
 
 /** Current schema version. A freshly created database is stamped with this and skips all migrations. */
-export const SCHEMA_VERSION = 18;
+export const SCHEMA_VERSION = 19;
 
 /** Columns the v1 -> v2 purge inspects, when they exist. Historical: `salt` is gone since 2c3ec6fe. */
 const BLOB_LEGACY_COLUMNS = ['iv', 'salt', 'cipher_text'] as const;
@@ -72,6 +72,20 @@ export function outboxServerErrorsStatement(columns: readonly string[]): string 
   return columns.includes('server_errors')
     ? null
     : 'ALTER TABLE outbox ADD COLUMN server_errors INTEGER DEFAULT 0';
+}
+
+/**
+ * The v18 -> v19 step: the outbox row gains `unavailable_answers`, its count of "not now" answers
+ * (502, 503, 504) since it was queued (`OutboxEntry.unavailableAnswers`). `DEFAULT 0`, so every row
+ * already queued reads as never answered "not now". Returns `null` when the column is there - a
+ * fresh database, or a rerun - so the step is a no-op twice.
+ *
+ * @param columns Column names of the `outbox` table, from `PRAGMA table_info(outbox)`.
+ */
+export function outboxUnavailableAnswersStatement(columns: readonly string[]): string | null {
+  return columns.includes('unavailable_answers')
+    ? null
+    : 'ALTER TABLE outbox ADD COLUMN unavailable_answers INTEGER DEFAULT 0';
 }
 
 /**

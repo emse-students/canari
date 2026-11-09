@@ -21,6 +21,11 @@ export interface MlsHolder {
   /** The current client, created on first use. */
   ensure(): IMlsService;
   /**
+   * The current client, or `null` when none is held - never creates one. What a callback installed on
+   * a client compares itself against: a client the holder let go of is not the session's any more.
+   */
+  current(): IMlsService | null;
+  /**
    * Destroys the current client now (a failed login, a revoked device). With `only`, does so only
    * when `only` IS the current client: a login stopped by a sign-out releases the client it built,
    * never one the next sign-in has built since the sign-out retired it.
@@ -68,6 +73,7 @@ export function createMlsHolder(
       if (!current) current = create();
       return current;
     },
+    current: () => current,
     reset(only) {
       if (only && current !== only) return;
       current?.destroy?.();
