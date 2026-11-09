@@ -47,6 +47,7 @@ import {
 import { sealLiveSegment } from './liveCrypto';
 import { LivePosterSender, posterEverySegments } from './livePoster';
 import { deriveLivePosterKey, sealLivePoster } from './livePosterCrypto';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 import { liveTitleToSend } from './liveTitle';
 import { createMixContext, openLiveScreen, screenShareAvailable } from './liveDevice';
 import {
@@ -150,6 +151,8 @@ export interface LiveBroadcastDeps {
   ) => Promise<Uint8Array<ArrayBuffer>>;
   fetchLive: (liveId: string) => Promise<LiveView>;
   endLive: (liveId: string) => Promise<LiveEndResult>;
+  /** Subscribes to the link coming back (`connectivity.onReconnect`); returns the unsubscribe. */
+  onReconnect: (listener: () => void) => () => void;
   createUploader: (liveId: string, options: LiveSegmentUploaderOptions) => LiveUploaderLike;
   seal: (
     keyHex: string,
@@ -188,6 +191,7 @@ export function defaultLiveBroadcastDeps(): LiveBroadcastDeps {
     sealPoster: sealLivePoster,
     fetchLive,
     endLive,
+    onReconnect: (listener) => connectivity.onReconnect(listener),
     createUploader: (liveId, options) => new LiveSegmentUploader(liveId, options),
     seal: sealLiveSegment,
     generateKeyHex: async () => (await generateMediaCek()).keyHex,
@@ -716,19 +720,9 @@ export class LiveBroadcast {
     if (this.#disposed) return;
     if (!drained) console.warn(`[LIVE-BROADCAST] ${liveId}: the queue is dropped unsent`);
     this.#release();
-    try {
-      await this.#deps.endLive(liveId);
-    } catch (e) {
-      if (isLiveCut(e)) {
-        console.warn('[LIVE-BROADCAST] the End was answered by a moderation cut');
-        this.#serverEndedWhileEnding = 'cut';
-      } else if (!isLiveRefusal(e, 'ended') && !isLiveRefusal(e, 'not-found')) {
-        console.warn(
-          '[LIVE-BROADCAST] the end was not confirmed - the server ends it by absence',
-          e
-        );
-      }
-    }
+    // THE MEMBER'S TAP IS THE DECISION: the screen settles now, behind no request. The end reaches the
+    // server durably instead (`#deliverEnd`: idempotent, retried until ANSWERED).
+    this.#deliverEnd(liveId);
     // A 410 heard while draining means the server had ended it first (the hour, a moderation cut).
     this.#settle(this.#serverEndedWhileEnding ?? 'broadcaster');
   }
@@ -1001,15 +995,48 @@ export class LiveBroadcast {
   }
 
   #endBestEffort(liveId: string): void {
-    this.#deps.endLive(liveId).then(
-      (r) => console.debug(`[LIVE-BROADCAST] ${liveId} ended on leaving (${r.endReason})`),
-      (e: unknown) => {
-        if (isLiveRefusal(e, 'ended') || isLiveRefusal(e, 'not-found')) return;
-        console.warn(
-          `[LIVE-BROADCAST] ${liveId} not ended on leaving - the server ends it by absence`,
-          e
-        );
-      }
-    );
+    this.#deliverEnd(liveId);
+  }
+
+  #endsInFlight = new Set<string>();
+
+  /**
+   * Delivers the End to the server until it ANSWERS. `POST /lives/:id/end` is idempotent (a repeat is
+   * the same end, or `not-found` once purged), so a retry is always safe. A status code is an answer
+   * and stops the delivery (a moderation cut included, which the screen has already settled past);
+   * only a transport failure retries, and it retries on the link coming back (an event), never on a
+   * clock. Lost with the page, in which case the server ends the live by absence.
+   */
+  #deliverEnd(liveId: string): void {
+    if (this.#endsInFlight.has(liveId)) return;
+    this.#endsInFlight.add(liveId);
+    let unsubscribe: (() => void) | null = null;
+    const attempt = (): void => {
+      console.debug(`[LIVE-BROADCAST] delivering the end of ${liveId}`);
+      this.#deps.endLive(liveId).then(
+        (r) => {
+          console.debug(`[LIVE-BROADCAST] ${liveId} end answered (${r.endReason})`);
+          done();
+        },
+        (e: unknown) => {
+          if (e instanceof LiveRefusalError) {
+            console.debug(`[LIVE-BROADCAST] ${liveId} end answered with a refusal (${e.code})`);
+            done();
+            return;
+          }
+          console.warn(
+            `[LIVE-BROADCAST] the end of ${liveId} did not reach the server - retried when the link is back`,
+            e
+          );
+          unsubscribe ??= this.#deps.onReconnect(() => attempt());
+        }
+      );
+    };
+    const done = (): void => {
+      unsubscribe?.();
+      unsubscribe = null;
+      this.#endsInFlight.delete(liveId);
+    };
+    attempt();
   }
 }

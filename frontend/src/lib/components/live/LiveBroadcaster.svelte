@@ -106,7 +106,7 @@
 
   /** Asks, then ends the live: the End button, Back and the edge swipe all come here. */
   export async function confirmEnd(): Promise<void> {
-    console.debug('[LIVE-SCREEN] end asked');
+    console.debug(`[LIVE-SCREEN] end asked in ${broadcast.phase}`);
     const ok = await showConfirm(m.live_end_confirm(), {
       danger: true,
       confirmLabel: m.live_end_confirm_button(),
@@ -117,6 +117,10 @@
       return;
     }
     await broadcast.end();
+    // The line that decides a "stayed up after Terminer" report: the phase the End left behind.
+    console.debug(
+      `[LIVE-SCREEN] end returned in ${broadcast.phase} (${broadcast.endCause ?? 'no cause'})`
+    );
   }
 
   function close() {
