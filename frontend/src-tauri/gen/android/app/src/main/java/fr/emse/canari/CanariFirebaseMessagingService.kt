@@ -5832,6 +5832,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_booking_added_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_booking_added_body) }
             )
+            // The openings told to an association's followers (engagement WP-4): the association
+            // names the title, the space's name or the event's title is the body - a fixed sentence
+            // when the server sends none.
+            "social_booking_open" -> Pair(
+                res.getString(R.string.notif_social_booking_open_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_booking_open_body) }
+            )
+            "social_event_open" -> Pair(
+                res.getString(R.string.notif_social_event_open_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_event_open_body) }
+            )
             // An edit (owner, 2026-11-02): the booking was moved, or the reader taken off it.
             "social_booking_changed" -> Pair(
                 res.getString(R.string.notif_social_booking_changed_title, actor),

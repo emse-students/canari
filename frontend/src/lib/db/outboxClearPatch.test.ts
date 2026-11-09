@@ -32,7 +32,7 @@ describe('SqliteStorage.updateOutboxEntry', () => {
     expect(select).not.toHaveBeenCalled();
     expect(execute).toHaveBeenCalledTimes(1);
     expect(execute.mock.calls[0][0]).toContain('UPDATE outbox SET');
-    expect(execute.mock.calls[0][1]).toEqual(['id-1', null, 2, null, 99, null]);
+    expect(execute.mock.calls[0][1]).toEqual(['id-1', null, 2, null, 99, null, null]);
   });
 
   it('writes the consecutive 5xx count in place, a reset to 0 included', async () => {
@@ -45,7 +45,22 @@ describe('SqliteStorage.updateOutboxEntry', () => {
 
     expect(select).not.toHaveBeenCalled();
     expect(execute.mock.calls[0][0]).toContain('server_errors = COALESCE($6, server_errors)');
-    expect(execute.mock.calls[0][1]).toEqual(['id-1', null, null, null, null, 0]);
+    expect(execute.mock.calls[0][1]).toEqual(['id-1', null, null, null, null, 0, null]);
+  });
+
+  it('writes the "not now" count in place (R05 bound, review of #3189)', async () => {
+    const storage = new SqliteStorage('u');
+    const execute = vi.fn().mockResolvedValue(undefined);
+    const select = vi.fn();
+    (storage as unknown as { db: unknown }).db = { execute, select };
+
+    await storage.updateOutboxEntry('id-1', { unavailableAnswers: 3 }, 'key');
+
+    expect(select).not.toHaveBeenCalled();
+    expect(execute.mock.calls[0][0]).toContain(
+      'unavailable_answers = COALESCE($7, unavailable_answers)'
+    );
+    expect(execute.mock.calls[0][1]).toEqual(['id-1', null, null, null, null, null, 3]);
   });
 });
 
@@ -112,6 +127,6 @@ describe('the in-place patch keeps a zero', () => {
     const execute = vi.fn().mockResolvedValue(undefined);
     (storage as unknown as { db: unknown }).db = { execute, select: vi.fn() };
     await storage.updateOutboxEntry('id-1', { attempts: 0, nextAttemptAt: 0 }, 'key');
-    expect(execute.mock.calls[0][1]).toEqual(['id-1', null, 0, null, 0, null]);
+    expect(execute.mock.calls[0][1]).toEqual(['id-1', null, 0, null, 0, null, null]);
   });
 });

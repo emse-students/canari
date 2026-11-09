@@ -57,11 +57,10 @@
   import CommentsPreview from './CommentsPreview.svelte';
   import PostCommentsSheet from './PostCommentsSheet.svelte';
   import PostActionsMenu from './PostActionsMenu.svelte';
-  import PostCornerBadge from './PostCornerBadge.svelte';
   import PostFeedback from './PostFeedback.svelte';
   import EditPostForm from './EditPostForm.svelte';
   import RepublishDialog from './RepublishDialog.svelte';
-  import { Pin, CalendarCheck } from '@lucide/svelte';
+  import { CalendarCheck } from '@lucide/svelte';
   import { untrack } from 'svelte';
   import { FORM_CARD_PLACEHOLDER_MIN_HEIGHT } from '$lib/utils/mediaLayout';
   import { REACTIONS, reactionCountsOf } from '$lib/posts/reactions';
@@ -635,24 +634,22 @@
      (`data-no-double-tap`), and never a link, button, poll option or field inside it. Off while the
      post is being edited and for a reader who is not signed in. -->
 <div
-  class="relative mb-6"
+  class="relative mb-3"
   use:doubleTapLike={{
     onDoubleTap: likeOnDoubleTap,
     enabled: !editingPost && currentUserId.trim() !== '',
   }}
 >
   <DoubleTapHeart bind:this={hearts} />
-  {#if localPost.pinned}
-    <PostCornerBadge label={m.post_pinned()}>
-      {#snippet icon()}<Pin size={10} strokeWidth={3} />{/snippet}
-    </PostCornerBadge>
-  {/if}
   <!-- THE CARD STANDS OFF THE PAGE A LITTLE MORE (user, 2026-10-01, Mi 9T): `shadow-sm` at 5 %
        black on `--cn-bg` barely drew an edge in light mode, and in dark mode a `#121212` card on
-       black was held by a 10 % hairline alone. A soft `shadow-md` lifts it in light; dark mode has
-       no shadow to cast onto black, so its edge goes from 10 % to 15 %. -->
+       black was held by a 10 % hairline alone. A soft `shadow-md` lifts it in light. DARK HAS NO
+       HAIRLINE ANY MORE (design audit vs Facebook, 2026-11-09): the 15 % edge of 2026-10-01 sat ON
+       TOP of an 18-point lightness step (`#121212` on true black) that already separates the two,
+       and Facebook's dark feed separates by lightness alone. The border stays as a TRANSPARENT one so
+       the box does not change size. -->
   <Card
-    class="group/card bg-cn-surface border border-black/5 p-0! shadow-md shadow-black/8 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl dark:border-white/15 dark:shadow-none"
+    class="group/card bg-cn-card border border-black/5 p-0! shadow-md shadow-black/8 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl dark:border-transparent dark:shadow-none"
   >
     <!--
       THE MENU SHARES THE HEADER'S LINE; FIVE BUTTONS USED TO FLOAT OVER IT.
@@ -715,7 +712,7 @@
 
     {#if localPost.linkedCalendarEvent}
       {@const ev = localPost.linkedCalendarEvent}
-      <div class="px-5 pb-3">
+      <div class="px-4 pb-3">
         <a
           href="{publicSectionHref(
             '/associations',
@@ -741,7 +738,7 @@
     {/if}
 
     {#if editingPost}
-      <div class="px-4 pb-4 sm:px-5">
+      <div class="px-4 pb-4">
         <EditPostForm
           post={localPost}
           {authToken}
@@ -765,7 +762,9 @@
         {showReactionPicker}
         reactionList={REACTIONS}
         commentCount={commentCountOf(localPost) || undefined}
-        onToggleReactionPicker={() => (showReactionPicker = !showReactionPicker)}
+        onQuickReact={() => void handleReaction(userReaction ?? DOUBLE_TAP_REACTION)}
+        onOpenReactionPicker={() => (showReactionPicker = true)}
+        onCloseReactionPicker={() => (showReactionPicker = false)}
         onReactionSelect={handleReaction}
         onCommentClick={canSeeComments
           ? () => openCommentsSheet({ write: comments.length === 0 })
@@ -799,7 +798,7 @@
     />
 
     {#if pendingAttachedFormIds.length > 0}
-      <div class="space-y-3 px-5 py-3" aria-hidden="true">
+      <div class="space-y-3 px-4 py-3" aria-hidden="true">
         {#each pendingAttachedFormIds as formId (formId)}
           <div
             class="animate-pulse rounded-2xl border border-black/5 bg-black/5 dark:border-white/10 dark:bg-white/5"

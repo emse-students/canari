@@ -13,6 +13,7 @@ import {
   setPlainTextSelection,
 } from './mentionEditor';
 import { EXAMPLE_MENTION_USER_ID, formatMentionToken } from '../mentions';
+import { setEmojiStyle } from '$lib/utils/emojiStyle';
 
 /**
  * THE COMPOSER DRAWS EMOJI AS NOTO'S PICTURES, AND THE TEXT IT HANDS BACK IS UNCHANGED.
@@ -24,13 +25,18 @@ import { EXAMPLE_MENTION_USER_ID, formatMentionToken } from '../mentions';
 describe('mentionEditor - emoji pictures', () => {
   let root: HTMLDivElement;
 
+  // These pin the "Canari" emoji setting, where the composer draws pictures; "system" is below.
   beforeEach(() => {
+    setEmojiStyle('canari');
     root = document.createElement('div');
     root.contentEditable = 'true';
     document.body.appendChild(root);
   });
 
-  afterEach(() => root.remove());
+  afterEach(() => {
+    root.remove();
+    setEmojiStyle('system');
+  });
 
   const pictures = () =>
     [...root.querySelectorAll<HTMLImageElement>(EMOJI_IMAGE_SELECTOR)].map((img) => img.alt);
@@ -96,13 +102,18 @@ describe('mentionEditor - emoji pictures', () => {
 describe('mentionEditor - a trailing <br> with nothing after it', () => {
   let root: HTMLDivElement;
 
+  // These pin the "Canari" emoji setting, where the composer draws pictures; "system" is below.
   beforeEach(() => {
+    setEmojiStyle('canari');
     root = document.createElement('div');
     root.contentEditable = 'true';
     document.body.appendChild(root);
   });
 
-  afterEach(() => root.remove());
+  afterEach(() => {
+    root.remove();
+    setEmojiStyle('system');
+  });
 
   it('is not a newline', () => {
     root.innerHTML = 'salut <img class="emoji" data-emoji="🎉" alt="🎉"><br>';
@@ -131,5 +142,35 @@ describe('mentionEditor - a trailing <br> with nothing after it', () => {
     renderPlainTextToMentionEditor(root, 'a\nb');
     setPlainTextSelection(root, 2);
     expect(getPlainTextSelection(root).start).toBe(2);
+  });
+});
+
+/**
+ * UNDER THE "SYSTEM" EMOJI SETTING (the default since 2026-11-09) THE COMPOSER DRAWS NO PICTURE: an
+ * emoji stays a character the font draws, the text handed back is the same, and typing one never
+ * asks for a DOM rebuild.
+ */
+describe('mentionEditor - the system emoji setting', () => {
+  let root: HTMLDivElement;
+
+  beforeEach(() => {
+    setEmojiStyle('system');
+    root = document.createElement('div');
+    root.contentEditable = 'true';
+    document.body.appendChild(root);
+  });
+
+  afterEach(() => root.remove());
+
+  it('keeps emoji as text and serializes back to the same text', () => {
+    const text = 'salut 😀 et 🇫🇷\n👍🏽 fin';
+    renderPlainTextToMentionEditor(root, text);
+    expect(root.querySelectorAll(EMOJI_IMAGE_SELECTOR)).toHaveLength(0);
+    expect(serializeMentionEditor(root)).toBe(text);
+  });
+
+  it('never asks for a rebuild to draw an emoji', () => {
+    root.textContent = 'a 😀';
+    expect(needsEmojiRender(root)).toBe(false);
   });
 });

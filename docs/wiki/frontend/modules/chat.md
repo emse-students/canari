@@ -11,6 +11,7 @@
 - Offline message delivery via pull on reconnect (`fetchPendingMessages`).
 - Message reactions, edits, deletes.
 - Media attachments (images, files — CEK in MLS ciphertext).
+  A generic file is a COMPACT ROW (2026-11-09, design audit M6): bubble-tone fill, no border, 36 px tile, ~56 dp tall (was a 70 dp bordered card); the 44 dp download button sets the floor (`MessageMediaRenderer`).
 - Read receipts.
 - In-chat message search.
 - Conversation sidebar with direct messages and group list.
@@ -83,6 +84,9 @@ button for the glass pill), all built by `profileHref` (`utils/users/profileHref
 - **A direct header**: desktop - the peer's avatar and name are links, the gear stays. Phone glass - the
   centre pill opens the profile; **settings stay one tap away in the "..." menu** (they already had an
   entry there, so nothing became unreachable). A group or salon pill still opens its settings.
+  **The pill takes all the free width** (`w-full`, 2026-11-09): its web rect IS the native pill, and a
+  pill hugging the web text was narrower than the native system font needs, cutting a name at 186 pt
+  with 70 pt of bar empty.
 - **A deleted or erased account gets no link**, and a pill with no page behind it falls back to settings:
   `isAbsentUser` (`displayName.ts`) is a reactive set filled when the server answers 404/deleted, so a
   link drawn before the answer is withdrawn when it lands. `false` means "not known gone". The profile
@@ -1727,6 +1731,95 @@ backoff once, and the store probes `/api/version` on `online` instead of waiting
 request to prove the server reachable: 2.4-2.9 s down to 5-13 ms on a good link, one probe round trip
 on a weak one. Refusals keep their clock. The reasoning, the bounds and the numbers are in
 [offline-and-weak-network](../offline-and-weak-network.md#12-wp-off-6-shipped-a-prompt-bounded-resume-exactly-once-in-effect).
+
+### A deploy's "not now" is not a send failure (R05, 2026-11-09)
+
+**The defect** ([backlog](../../backlog.md#p1---a-tab-or-app-open-across-a-production-deploy-sees-the-outage-as-chec-de-lenvoi)).
+A production deploy answers `502`, `503` and `504` for its few seconds - the estate's nginx writes
+its own in JSON (`@api_error_502/503/504` in `infrastructure/local/Dockerfile.frontend`), so they
+read as `gateway` answers - and a reset connection is a transport failure. Two paths turned that
+into a failure the member saw:
+
+- **A DM or group text**: `postApplicationMessage` typed every 5xx as `SendServerError`, and the
+  outbox COUNTED it toward `MAX_CONSECUTIVE_SERVER_ERRORS` (the user's decision of 2026-10-18, for
+  a server that keeps failing): five "not now" in a row parked the text as `error` ("Echec" +
+  "Reessayer"), each one held a one-minute floor (`SERVER_ERROR_HOLD_MS`) whatever the server did
+  next, and no reconnect resumed it.
+- **A salon text** (`deliverSalonSend`, `utils/chat/messaging.ts`): any 5xx with the link up was
+  `unconfirmed` - "Pas de reponse du serveur : ce message n'est peut-etre pas parti" - and waited
+  for the author's Retry, for good.
+
+**Classified at the throw, by the status the answer carried** (`utils/unavailableAnswer.ts`, the
+one predicate): `502`, `503` and `504` say "not now" - a proxy about the service behind it, or a
+service that could not ask a peer (chat-delivery's `entitlement_unavailable` while social-service
+restarts). None refuses the MESSAGE. Every other 5xx is the service answering that IT failed, and
+keeps the 2026-10-18 policy. The delivery API raises `SendUnavailableError` (a `SendServerError`
+still, so every reader of a 5xx reads it as one); the salon reads `isUnavailableAnswer` on the
+`ChannelApiError` the channel service threw.
+
+**Held, deterministically, and ended only by an answer:**
+
+| | DM / group (`outbox.ts`) | Salon (`messaging.ts`) |
+| --- | --- | --- |
+| "not now" | held on the PLAIN ladder (`retryLadder.ts`: 2, 5, 15, 30, 60 s, or the server's `Retry-After`), never counting toward nor resetting a run of real 5xx; in `transportHeld`, so a reconnect sends it at once; counted in the row (`unavailableAnswers`) | `pending`, held for the server (`holdForServer`): owed to the reconnect AND one ladder step of the same ladder, whichever comes first - a deploy that rotates one service drops no connection, so no reconnect would ever come; counted in its unsent ledger entry |
+| a reset / no answer | unchanged: `transportHeld`, the reconnect | unchanged: owed to the reconnect when the link is known down |
+| what ends it | the send (2xx), a REFUSAL (410, a 403, the 5th real 5xx), or the 12th "not now" in a row: `error` ("Echec" + "Reessayer") | the row, a refusal (`error`, its Retry), or the 12th "not now" in a row: `unconfirmed` (Retry, Discard, Restore) |
+| what the member can do meanwhile | delete it | Retry now, or Discard (`salonEchoSettleable`) |
+| what the bubble says meanwhile | "En attente du serveur..." / "En attente du reseau..." | the same |
+
+**Bounded by answers, never by a clock (review of #3189).** A "not now" is uncounted toward the 5xx
+run only while there is evidence the service is alive, and the evidence is the send's OWN 2xx -
+which ends the send. `MAX_UNAVAILABLE_ANSWERS` (12, `retryLadder.ts`, the one constant both paths
+read) answers in a row with no 2xx between leave the wait; a websocket reconnect proves the link,
+never the send route, and resets nothing. Twelve on the plain ladder span about eight minutes: a
+rolling deploy ends with a success long before, and a dead route hands the message back to the
+member. The reasoning: [offline-and-weak-network section 17](../offline-and-weak-network.md#17-a-text-the-server-keeps-failing-becomes-failed-with-a-retry-user-2026-10-18).
+The DM park writes `MAX_CONSECUTIVE_SERVER_ERRORS` into `serverErrors`, so the one terminal predicate
+(`isServerFailureTerminal`), the one Retry and every tab read it as before. The DM count is never set
+back below a multiple of 12 (`unavailableRunStart`): a Retry owes twelve FRESH answers before the next
+park, and a count above 0 stays the withdrawal's evidence (below). The salon count is reset by the
+author's Retry (`resetUnavailableAnswers`); an attachment's run is its page life's hold.
+
+**Exactly once.** Every repeat carries the first attempt's client id: the DM receivers drop a
+second frame with a `messageId` they hold (`addMessageToChat`), and social-service answers a salon
+repeat with the row it stored (migration 090, `findByClientMessageId`). A salon repeat is held for
+the server only once a repeat is PROVEN safe (`salonRepeatProof.ts`); before, it is `unconfirmed`
+and now also waits for that proof. One lane per conversation keeps a DM entry off the wire twice,
+and a salon redelivery is serialised by `retrying` and cancels its own ladder step when it starts
+(`takeServerHoldStep`). The frame of a salon send - in the tab that composed it as in another -
+ends it (`forgetDeliveredSalonSend`, called by `channelEventHandler.ts` where the echo is re-keyed):
+its hold, its ladder step and its debt to the reconnect go, so a delivered message is never POSTed
+again. A text answered "not now" and then deleted lets the delete travel as an event: a `502` after
+an upstream reset, or a `504`, may come after the frame was stored - read from the DURABLE row
+(`unavailableAnswers > 0`, SQLite migration v19), so a reload and a follower tab decide the same.
+MLS state and crypto are untouched: each attempt is sealed exactly as before.
+
+**The label** is the hold's typed reason, written where the hold is decided: a TEXT has no upload,
+so it is not an upload phase but its own record (`TextWait`, `setTextWait` in
+`uploadProgress.svelte.ts`, dropped with the message's view and at a reconnect). The outbox writes
+`network` or `server` for a DM text, the salon `server` for its text, and `MessageBubble` hands
+`waitingOn` to `MessageMetadata`; a device known offline says the network first. An attachment's
+"not now" is its MLS post, made after its upload, so it writes no upload view; its upload's own
+`502`/`503`/`504` is a `MediaUploadError`, held as `retrying`. A `403` after a "not now" drops the
+stale label (the 403 parking clears the view).
+
+**The ladder is not a clock that decides anything.** A step only ASKS again; its cost when wrong is
+one request answered "not now", bounded by the 60 s top step; a reconnect skips it. What ends the
+wait is always an answer. Tests: `outbox.test.ts` ("a deploy outage is not a send failure (R05)":
+503 then 200, eleven "not now" then sent, the 12th failing the text, a reconnect not resetting the
+count, the count across a reload, a Retry owing twelve fresh answers, the plain ladder, the
+reconnect, a reset then the reconnect, a reconnect racing two flushes sending once, a 410 still
+failing, a "not now" neither counting nor resetting a run of 500s, the delete travelling - also
+after a reload, the reviewer's probe - and a 403 after a 502 dropping the label),
+`useMessaging.salonQueue.svelte.test.ts` (the salon twins: reconnect, ladder step with no reconnect,
+both at once sending once, a long deploy, a 403 after a 503, a 400 at once, the author's Retry
+ending the hold, the proof, the 12th "not now" unconfirmed, a Retry restarting the run, Retry-now and
+Discard while held, the frame ending the hold), `channelEventHandler.salonEcho.test.ts` (the frame
+calls `forgetDeliveredSalonSend`), `salonEcho.test.ts` (`salonEchoSettleable`),
+`mlsDeliveryApi.forbidden.test.ts` (the type at the throw, both origins), `unavailableAnswer.test.ts`,
+`MessageMetadata.waitingOn.svelte.test.ts` (the label, and the held row's actions),
+`sqliteMigrations.test.ts` (v19), `outboxClearPatch.test.ts` (the count written in place). **Owed:** a deploy drill on dev with the two bench
+phones sending throughout (no "Echec", no "Non confirme", each message once on the peer).
 
 ### Everything the outbox swallows, it logs
 
@@ -5081,7 +5174,63 @@ its setter leaves.
 **The late joiner.** A member added after a `nickname` frame went out never receives it. The
 inviter's JOIN PUSH to the new device restates the register (`nicknames`, beside `pins`), even when
 every message is withheld, so a new member gets the names in the first bundle. That join push is the
-ONLY bundle a register is taken from (review of #3177). A broadcast or replayed bundle carries none,
+ONLY bundle a register is taken from (review of #3177). **It hangs on the delivery of a Welcome, not
+on a caller** (#3185). `BaseMlsService.sendWelcomeConsuming` is the one place a Welcome is known
+stored by the server, whoever sent it - the member's "Ajouter" (`inviteMembersToGroup`, which a
+join-request approval also is), a pending invitation, a welcome_request answer, a group's creation, or
+the owed-Welcome drain (`deliverOwedWelcomes`) that delivers a Welcome whose first send failed or whose
+Add's commit was only settled later. It announces each delivery once (`onWelcomeDelivered`; a
+concurrent send of the same bytes awaits the first), and `joinPush.ts`, installed with the service in
+`useChatSession`, answers it:
+
+- **once per Welcome, from durable state**: a per-account ledger (`mls_join_pushes_sent:v1:<account>`,
+  a 512-entry FIFO) names each pushed Welcome by group, device and a fingerprint of its bytes, written
+  before the push starts. The drain consumes what it delivers, so a re-run sends nothing; a reload that
+  lost the clear re-sends the same bytes, and the ledger stops the second push (the joiner, already
+  holding the group, would refuse it as answering no ask). A re-add is a new Welcome and is pushed for;
+- **off the gesture**: queued synchronously at the delivery and run one at a time, never awaited by the
+  Add, so "added" shows at once; each push caught and logged on its own (`[JOIN_PUSH]`);
+- **never into a key group** (`isDistributionGroup`);
+- **for the session that delivered it**: the account, the store and the device key are read when the
+  delivery is announced, and a job whose client the session holder let go of (a sign-out, an account
+  switch) is dropped at its turn (`isCurrent`, `MlsHolder.current`), so a queued push never runs with
+  the next account's data through the previous account's MLS client.
+
+**The limit it keeps: online only.** The push is an ADDRESSED frame, and an addressed frame is
+transport-only - the server publishes it to a device all of whose live sessions declared the capability
+and refuses it otherwise (`addressed_unsupported`); it is never queued. A newcomer whose device is not
+connected when its Welcome is delivered gets no push, and nothing retries it. That outcome is returned
+(`sendFullHistoryBundle` -> `unaddressable`) and said at warn (`[JOIN_PUSH] NOT DELIVERED`), never
+swallowed. **The fix is the newcomer asking, not the inviter retrying**, and the reasoning is the
+choice: an inviter retry "when the device becomes present" rests on two things nobody holds durably -
+the newcomer's `join` ask lives in memory (`noteJoinSolicited`), so a reload between the Welcome and the
+retried push refuses it, and the inviter's own device has to come back while the newcomer is online.
+The newcomer, by contrast, is online by construction when it asks, already runs a reconciliation on
+every connection whose deferral waits for a member to return, and can keep a durable "register owed"
+marker until an answer clears it. So the register will ride the existing digest ask (`register: true`)
+and its elected answer, under the same four limits below - designed in
+[its entry](../../backlog.d/p2-an-offline-newcomer-receives-no-join-push.md), not built in #3185 because
+it changes the reconciliation's wire and deserves its own review.
+
+Before #3185 only the pending invitation and the welcome_request answer pushed, each by an explicit
+call: a newcomer added by "Ajouter", or whose Welcome came from the drain, saw no nickname at all
+(reading 2 of `1.6.9-alpha.1`, [defect](../../backlog.d/p2-a-member-added-after-a-nickname-does-not-receive-it.md)).
+
+**What a push costs.** `sendFullHistoryBundle` decrypts the inviter's whole store for the group and,
+in `sendBundleChunks`, re-reads the reader's windows for EVERY 200-message chunk - deliberately: a
+chunk is filtered on the windows in force when it leaves, so a member removed or re-added meanwhile
+is held to the current answer. For a newcomer every chunk is withheld, so a store of N messages costs
+one full decrypt and N/200 window reads to send a state-only frame. It is not reduced here (the
+per-chunk read is the correctness property); it no longer delays the member's gesture.
+
+**Why it does not breach step A** ([the decision](../../backlog.md#p1---a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10-21-that-they-must-not)).
+Step A forbids a newcomer the MESSAGES sent before their arrival; the push is addressed to the new
+device and filtered on its owner's server windows, so for a newcomer it carries no message from
+before - a state-only frame, or only what was sent since the Add. A nickname is not a past message:
+it is the name the conversation shows TODAY for a current member, which the newcomer reads on every
+later frame anyway, and which the screen marks "Défini avant votre arrivée" rather than attributing.
+Its only trace of the past is the entry's date and the setter the relayer states, and the screen
+names neither as a fact: the entry is unverified, the relayer's word. A broadcast or replayed bundle carries none,
 and an answer to a later ask carries none either. A bundle's entries are the relayer's word about what
 others did, so a relayer could forge a setter and pass the target's block check. So
 `mergeBundleNicknames` applies four limits:
