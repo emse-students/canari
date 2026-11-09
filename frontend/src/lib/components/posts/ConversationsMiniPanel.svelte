@@ -32,6 +32,8 @@
     unreadCount: number;
     imageMediaId: string | null;
     lastMessageContent?: string;
+    /** Newest message time (ms), for the tile's relative time. */
+    lastActivityAt?: number;
   }
 
   let idbItems = $state<ConvItem[]>([]);
@@ -99,6 +101,8 @@
       lastMessageContent:
         (conv.messages?.length > 0 ? previewContentOf(conv.messages) : undefined) ??
         baseline?.lastMessageContent,
+      lastActivityAt:
+        conv.messages?.length > 0 ? conversationRecency(conv) : baseline?.lastActivityAt,
     };
   }
 
@@ -271,6 +275,7 @@
             isSelected={false}
             unreadCount={item.unreadCount}
             imageMediaId={item.imageMediaId}
+            lastActivityAt={item.lastActivityAt}
             onClick={() => navigateToConversation(item.meta.id)}
           />
         {/each}

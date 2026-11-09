@@ -11,6 +11,7 @@
   import { visibleNickname } from '$lib/utils/users/conversationNicknames.svelte';
   import { isCanonicalDirectKey } from '$lib/utils/chat/conversations';
   import { m } from '$lib/paraglide/messages';
+  import { timeAgo } from '$lib/utils/time';
   import { canAnswerJoinRequests, pendingJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
 
   interface Props {
@@ -55,6 +56,11 @@
     unreadCount?: number;
     /** Optional media ID for the group avatar image. Ignored for channels (name only, no avatar). */
     imageMediaId?: string | null;
+    /**
+     * When the newest message was sent (ms epoch, `conversationRecency`), shown right-aligned on the
+     * name line through `timeAgo`. Absent or 0 for a conversation with no message: no time is drawn.
+     */
+    lastActivityAt?: number;
     /** Callback fired when the user clicks the tile. */
     onClick: () => void;
   }
@@ -72,6 +78,7 @@
     isSelected,
     unreadCount = 0,
     imageMediaId = null,
+    lastActivityAt = 0,
     onClick,
   }: Props = $props();
 
@@ -85,6 +92,11 @@
     canAnswerJoinRequests()
       ? pendingJoinRequests().filter((r) => r.groupId === conversationId).length
       : 0
+  );
+
+  /** The relative time of the last message, empty when the conversation has none. */
+  const timeLabel = $derived(
+    lastActivityAt > 0 ? timeAgo(new Date(lastActivityAt).toISOString()) : ''
   );
 
   // Only direct conversations have a real peer user ID - group/channel names are
@@ -187,7 +199,7 @@
   data-removed={isRemoved}
   data-awaiting-admission={awaitingAdmission}
   data-selected={isSelected}
-  class="group flex w-full items-center gap-4 rounded-2xl p-3.5 text-left transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98] {isSelected
+  class="group flex h-18 w-full items-center gap-3 rounded-2xl px-3 text-left transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98] {isSelected
     ? 'bg-cn-surface border border-black/5 shadow-sm dark:border-white/10 '
     : unreadCount > 0
       ? 'hover:bg-cn-surface border border-transparent bg-white/30 dark:hover:bg-white/10'
@@ -196,18 +208,18 @@
   <!-- Avatar / group icon zone -->
   <div class="relative shrink-0">
     {#if isDirect}
-      <Avatar userId={contactName} size="lg" fallbackLabel={effectiveDisplayName} />
+      <Avatar userId={contactName} size="xl" fallbackLabel={effectiveDisplayName} />
       {#if isOnline}
         <span
           class="absolute right-0 bottom-0 block h-3.5 w-3.5 rounded-full bg-green-500 shadow-sm ring-2 ring-white dark:ring-zinc-900"
         ></span>
       {/if}
     {:else if conversationType === 'channel'}
-      <div class="text-text-muted flex h-12 w-12 items-center justify-center">
+      <div class="text-text-muted flex h-14 w-14 items-center justify-center">
         <Hash size={22} strokeWidth={2.5} />
       </div>
     {:else}
-      <GroupAvatar id={conversationId} {imageMediaId} name={displayName} size="lg" />
+      <GroupAvatar id={conversationId} {imageMediaId} name={displayName} size="xl" />
     {/if}
   </div>
 
@@ -215,12 +227,22 @@
   <div class="flex min-w-0 flex-1 flex-col justify-center">
     <div class="mb-0.5 flex items-center justify-between gap-3">
       <!-- Conversation name -->
-      <span class="text-text-main truncate text-sm {unreadCount > 0 ? 'font-bold' : 'font-bold'}">
+      <span
+        class="text-text-main truncate text-sm {unreadCount > 0 ? 'font-bold' : 'font-semibold'}"
+      >
         <EmojiText text={effectiveDisplayName} />
       </span>
 
-      <!-- Badges area (unread, sync) -->
+      <!-- Time of the last message, then the badges (join asks, unread) -->
       <div class="flex shrink-0 items-center gap-2">
+        {#if timeLabel}
+          <span
+            class="text-xs {unreadCount > 0 ? 'text-text-main font-semibold' : 'text-text-muted'}"
+            data-conversation-time
+          >
+            {timeLabel}
+          </span>
+        {/if}
         <!--
           NO BADGE FOR "NOT JOINED YET", AND THAT IS A PRODUCT DECISION (user, 2026-09-04): *"tu
           peux le laisser dans les logs. L'utilisateur doit voir le moins possible qu'il se passe des
@@ -261,8 +283,8 @@
     <!-- Last message preview -->
     <div
       class="mt-0.5 truncate text-sm {unreadCount > 0
-        ? 'text-text-main font-semibold'
-        : 'text-text-muted opacity-90'}"
+        ? 'text-text-main font-bold'
+        : 'text-text-muted'}"
     >
       <EmojiText
         text={awaitingAdmission
