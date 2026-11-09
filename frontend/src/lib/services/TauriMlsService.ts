@@ -45,7 +45,7 @@ import {
   GatewayOpenAbandonedError,
   type GatewaySocketOpen,
 } from '$lib/mls-client/gatewaySocketOpen';
-import { getToken } from '$lib/stores/auth';
+import { getToken, signOutGeneration } from '$lib/stores/auth';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { toBase64, toHex } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -624,13 +624,45 @@ export class TauriMlsService extends BaseMlsService {
     // plugin has already dropped such a connection, so `disconnect()` on it can only answer
     // "Trying to work with closed connection" (Mi 9T, 2026-10-06, on every background). The
     // rejection is the fact, known here: release only a socket whose send was accepted.
+    // THE CLOSE THAT ARRIVES IN THE WINDOW IS A FACT TOO. The main listener is gone (above), so a
+    // `Close` delivered while the `disconnect` frame is in flight or the native release runs - the
+    // peer ending the connection as we ask it to - would otherwise be unknown here. A short-lived
+    // watcher records it and stays until the release has settled, on every path.
+    let closedNatively = false;
+    const unwatch = ws.addListener((msg: WsMessage) => {
+      if (msg.type === 'Close') closedNatively = true;
+    });
     void ws.send(JSON.stringify({ type: 'disconnect' })).then(
       () => {
-        ws.disconnect().catch((e: unknown) => {
-          console.warn(`[WS] pauseSocket: native disconnect failed: ${String(e)}`);
-        });
+        if (closedNatively) {
+          unwatch();
+          console.log(
+            '[WS] pauseSocket: the socket closed while the disconnect was sent - nothing to release.'
+          );
+          return;
+        }
+        ws.disconnect().then(
+          () => unwatch(),
+          (e: unknown) => {
+            unwatch();
+            // THE REFUSAL IS THE ANSWER TO OUR OWN FRAME, WHETHER OR NOT ITS `Close` HAS ARRIVED.
+            // The gateway answers `disconnect` by ending the connection (`handle_disconnect`: the
+            // recv loop breaks), and the plugin forgets a connection the instant the peer's Close
+            // reaches Rust - BEFORE it delivers that `Close` to this page. So `disconnect()` can
+            // be refused ("closed connection") ahead of the `Close` message the watcher waits
+            // for: the plugin gives no earlier signal, and the sign-out reading of 2026-11-08 (Mi 9T,
+            // 77 ms between the accepted frame and the refusal) lost exactly that race. The frame
+            // was ACCEPTED, so the socket is released by the gateway, which is what was asked.
+            console.log(
+              closedNatively
+                ? `[WS] pauseSocket: the peer had already closed the socket (${String(e)}) - released.`
+                : `[WS] pauseSocket: the gateway closed the socket on our disconnect frame before the native release ran (${String(e)}) - released.`
+            );
+          }
+        );
       },
       (e: unknown) => {
+        unwatch();
         console.log(
           `[WS] pauseSocket: socket already closed natively (${String(e)}) - nothing to release.`
         );
@@ -707,6 +739,8 @@ export class TauriMlsService extends BaseMlsService {
     state?: Uint8Array,
     opts?: MlsInitOptions
   ): Promise<void> {
+    // Taken at ENTRY: a sign-out during the native load below must fence the push-context write too.
+    const signOutsAtStart = signOutGeneration();
     this.userId = userId;
     this.delivery.userId = userId;
     this._deviceKeyB64 = deviceKeyB64;
@@ -876,36 +910,16 @@ export class TauriMlsService extends BaseMlsService {
       () => {}
     );
 
-    // Save session context for Android push notifications (no-op on desktop).
-    // Must run AFTER saveState writes mls.bin (C3: race condition fix).
-    // Only applicable when a device key is available (C5: skip in biometric mode
-    // where deviceKeyB64="" would store an empty key, overwriting the
-    // biometric key already stored by biometricLoginImpl → getKeyBytes).
-    if (deviceKeyB64.length > 0) {
-      void savePromise.then(() =>
-        getToken()
-          .then((pushToken: string) =>
-            invoke('store_push_context', {
-              deviceKeyB64,
-              userId,
-              deviceId: this.deviceId,
-              baseUrl: this.historyUrl,
-              pushToken,
-              // Restated because this call REPLACES push_context.json - see set_push_context_locale.
-              locale: getLocale(),
-            })
-          )
-          // EVERY SWALLOWED BRANCH LOGS. This chain is gated on a network round-trip and a
-          // keystore write, and it silently carried the device-identity backup until that backup
-          // became `store_device_identity`'s own job - months of drift with nothing in any log.
-          // `String(e)`: the class names the cause (`TransportFailureError` on an offline start,
-          // when no token exists), and the stack of a known throw is a dozen lines that say nothing.
-          // NOT re-attempted at the reconnect - an open item, see offline-and-weak-network section 15.
-          .catch((e) =>
-            console.warn(`[MLS][Tauri] push_context write after init failed: ${String(e)}`)
-          )
-      );
-    }
+    // Save the session context the native background side reads (Android FCM service, iOS NSE;
+    // no-op on desktop). Must run AFTER saveState writes mls.bin (C3: race condition fix).
+    //
+    // WRITTEN ON EVERY SIGN-IN, BIOMETRIC ONE INCLUDED (2026-11-07). It used to be skipped when
+    // `deviceKeyB64` was empty (C5: an empty key would have overwritten the keystore entry the
+    // biometric login had just read). But a sign-out strips push_context.json to its identity keys
+    // - no `baseUrl` - so a phone that signed out and back in by fingerprint kept the stripped file,
+    // and every push since was a generic banner until a PIN sign-in. The native command now takes
+    // the key as OPTIONAL: `null` writes the session's file and leaves the keystore entry alone.
+    this.storeSessionPushContext(savePromise, deviceKeyB64, userId, 'init', signOutsAtStart);
 
     // Populate the local groups cache from Rust after init. AWAITED, so it is on the boot's
     // critical path in a way the write above is not - which is the whole reason both carry a clock.
@@ -1299,23 +1313,67 @@ export class TauriMlsService extends BaseMlsService {
 
     // Refresh the native push context so background FCM decryption uses the
     // updated keystore key.
-    void getToken()
-      .then((pushToken: string) =>
-        invoke('store_push_context', {
-          deviceKeyB64: newDeviceKeyB64,
-          userId: this.userId,
+    this.storeSessionPushContext(
+      Promise.resolve(),
+      newDeviceKeyB64,
+      this.userId,
+      'device key change',
+      signOutGeneration()
+    );
+
+    console.log('[MLS][Tauri] Device key changed - state re-encrypted and persisted.');
+  }
+
+  /**
+   * Writes this session's `push_context.json` (and, with a key, its keystore entry) once `after`
+   * settles - the ONE call site of `store_push_context`, fire-and-forget.
+   *
+   * FENCED ON THE SIGN-OUT GENERATION. The write waits on `after` (the `mls.bin` save at init) and
+   * on a token, and a sign-out can land in between: `end_push_registration` strips the file, then
+   * this late write put `baseUrl` and the bearer back for the account that left - and every native
+   * reader but the FCM service (which honours the signed-out mark) acted for it again. An account
+   * switch inside the same window would have written A's ids with B's token. So the caller hands
+   * the generation it captured BEFORE its first await, and a write it no longer matches is dropped,
+   * with a line.
+   *
+   * `deviceKeyB64` empty means a biometric session: `null` goes to the native side, which then
+   * leaves the keystore entry alone and writes the file only.
+   */
+  private storeSessionPushContext(
+    after: Promise<unknown>,
+    deviceKeyB64: string,
+    userId: string,
+    site: string,
+    generation: number
+  ): void {
+    void after
+      .then(() => getToken())
+      .then((pushToken: string) => {
+        if (signOutGeneration() !== generation) {
+          console.log(
+            `[MLS][Tauri] push_context write after ${site} dropped - a sign-out began since it was asked`
+          );
+          return;
+        }
+        return invoke('store_push_context', {
+          deviceKeyB64: deviceKeyB64.length > 0 ? deviceKeyB64 : null,
+          userId,
           deviceId: this.deviceId,
           baseUrl: this.historyUrl,
           pushToken,
           // Restated because this call REPLACES push_context.json - see set_push_context_locale.
           locale: getLocale(),
-        })
-      )
+        });
+      })
+      // EVERY SWALLOWED BRANCH LOGS. This chain is gated on a network round-trip and a
+      // keystore write, and it silently carried the device-identity backup until that backup
+      // became `store_device_identity`'s own job - months of drift with nothing in any log.
+      // `String(e)`: the class names the cause (`TransportFailureError` on an offline start,
+      // when no token exists), and the stack of a known throw is a dozen lines that say nothing.
+      // NOT re-attempted at the reconnect - an open item, see offline-and-weak-network section 15.
       .catch((e) =>
-        console.warn('[MLS][Tauri] push_context refresh after device key change failed:', e)
+        console.warn(`[MLS][Tauri] push_context write after ${site} failed: ${String(e)}`)
       );
-
-    console.log('[MLS][Tauri] Device key changed - state re-encrypted and persisted.');
   }
 
   /** Tauri-native `invoke` wrapper - calls `generer_key_packages_et_persister`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */

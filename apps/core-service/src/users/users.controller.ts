@@ -91,6 +91,7 @@ type AvatarLogOutcome =
   | 'not-modified'
   | 'absent'
   | 'unavailable'
+  | 'known-down'
   | 'disabled'
   | 'rejected'
   | 'refused';
@@ -130,7 +131,12 @@ export class UsersController {
       ` access=${access.kind}` +
       (access.kind === 'refused' ? ` reason=${access.reason}` : '') +
       (access.kind === 'unsigned' ? unsignedProvenance(req) : '');
-    if (outcome === 'served' || outcome === 'not-modified' || outcome === 'absent') {
+    if (
+      outcome === 'served' ||
+      outcome === 'not-modified' ||
+      outcome === 'absent' ||
+      outcome === 'known-down'
+    ) {
       this.logger.log(line);
     } else this.logger.warn(line);
   }
@@ -406,7 +412,10 @@ export class UsersController {
       return;
     }
     if (outcome.kind === 'unavailable') {
-      log('unavailable', 502);
+      // Answered from the known-down state: still ONE `[AVATAR]` line per request (the signed-avatar
+      // phase-2 measurement reads them), but as `known-down` at info level - the outage itself is the
+      // service's two transition lines.
+      log(outcome.shortCircuited ? 'known-down' : 'unavailable', 502);
       res.set({ 'Cache-Control': 'no-store' });
       res.status(502).end();
       return;

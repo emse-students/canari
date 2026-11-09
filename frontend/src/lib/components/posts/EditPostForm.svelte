@@ -20,6 +20,8 @@
     type UpdatePostPayload,
   } from '$lib/posts/api';
   import { getForm, getForms, type Form } from '$lib/forms/api';
+  // A post cannot carry a DRAFT form (the server refuses it): the picker never offers one.
+  import { publishedForms } from '$lib/forms/publish';
   import { withAttachedForm } from '$lib/posts/editableForms';
   import { buildCreateFormHref } from '$lib/posts/postComposerDraft';
   import {
@@ -193,7 +195,11 @@
     }
 
     try {
-      availableForms = await withAttachedForm(await getForms(), post.attachedFormId, getForm);
+      availableForms = await withAttachedForm(
+        publishedForms(await getForms()),
+        post.attachedFormId,
+        getForm
+      );
     } catch (e) {
       console.error('Failed to load forms for edit', e);
     }
@@ -606,7 +612,7 @@
         </button>
         <Button
           type="button"
-          class="shrink-0 px-5 py-2 text-sm !font-bold"
+          class="shrink-0"
           disabled={saving ||
             (!markdown.trim() && existingMedia.length === 0 && newFiles.length === 0)}
           loading={saving}

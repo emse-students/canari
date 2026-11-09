@@ -496,6 +496,8 @@ rotated device id, another account, a transport failure, a plain expiry),
 
 ## A session that ends takes its device's push registration with it (2026-10-22)
 
+**Order of a sign-out (2026-11-08).** The server's push deregistration is started by `endSessionImpl` while the credential is valid and AWAITED by `clearAuth` (through the sign-out handler's promise, bounded by the write deadline) before the revocation `POST /api/auth/logout`; then the teardown and the wipe. Run beside the revocation it came back `HTTP 401` (Mi 9T, `1.6.7-alpha.3`). A transport failure is a `[Push]` warning naming what stayed registered and never blocks the sign-out.
+
 **After any sign-out, the device stops being a push destination for the account that left - on
 both sides, and neither depends on the other.**
 
@@ -696,6 +698,76 @@ URL, as `?t=<avatar token>`, decided owner 2026-11-02.
   day, an older day, an ended session, a tampered token, another session's mac, the internal
   exemption, the phase-1 count), `push.controller.avatar.spec.ts` (chat-delivery sends its secret),
   `avatarUrl.test.ts` and `userAvatarCache.test.ts` (client).
+
+## The sign-in handoff to the MiConnect sites (2026-11-08)
+
+**Canari, signed in, opens a sibling site that signs in through MiConnect (MiGallery first, then Sky
+and Le Cercle) already signed in**, instead of the site asking for a MiConnect login the browser has
+long forgotten. Decided by the owner on 2026-11-07; the design, the threats and the per-site work
+are in [the design note](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md),
+which also holds **the contract a site implements**. This section is what Canari does.
+
+- **The mint.** `POST /api/auth/handoff { aud, dest }` -> `{ url, expiresInSeconds }` on
+  core-service (`auth/handoff/handoff.service.ts`, the route in `auth.controller.ts`). It needs a
+  LIVE access token (`requireAccessToken`, [the session's liveness](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)
+  included), so an ended Canari session mints nothing, and a sid-less (legacy) token, which names no
+  session at all, is refused too; the subject is the token's, never the body's. Throttled per account (20 a minute). One audit line per mint,
+  `[HANDOFF] minted aud=<site> user=<sub> jti=<jti> dest=<path>`, and **the token itself is never
+  logged**.
+- **The token.** A compact JWS, `ES256`, header `typ: canari-handoff+jwt` and `kid` (RFC 7638),
+  payload `iss` (the origin of `FRONTEND_URL`'s first entry), `aud` (the site id), `sub` (the
+  MiConnect sub, which IS `users.id`), `jti` (128 random bits), `iat`, `exp = iat + 60`, `dest` (a
+  path). Its own key, `HANDOFF_SIGNING_KEY`, never `JWT_SECRET`: a separate key and an explicit type
+  keep it from ever being taken for an access token (see [Keys](#keys)). Sub only (F1): no claim
+  rides in it until the MiConnect read of the design note's F3 is proven.
+- **The registry is closed and server-side.** `libs/contracts/ecosystem-sites.json`, copied by
+  core-service (`handoff-sites.ts`) and by the client (`ecosystemSites.ts`), each asserting its copy
+  equals the file. The client names a site by id; **core-service composes the URL**
+  (`<origin>/auth/handoff#<token>`), so the route is no open redirect. `dest` must equal one path
+  of the site's allowlist exactly (`{uuid}` one lowercase UUID segment; no query, no fragment, no
+  normalisation). A site is minted for only while its `handoff` flag is true, and **every flag ships
+  false**. A flag goes on only when core-service runs MiConnect's access check at mint (the user
+  active, `check_access` on the target application - without it a handoff bypasses MiConnect's
+  decisions), the site's provider `sub_mode` was read as `hashed_user_id`, and the site's
+  redemption is live with handoff sessions MARKED and stepped up through a MiConnect sign-in before
+  any state-changing action - the answer to login CSRF ([the design note](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md),
+  sections 0 and 3.7).
+- **The fragment.** The token rides after `#`, which no browser sends to a server, so it stays out
+  of every access log and `Referer`. The site's landing page removes it at once and redeems it with
+  a same-origin POST.
+- **The JWKS.** `GET /api/auth/handoff/jwks`, public, `Cache-Control: public, max-age=60`. A site
+  refetches on an unknown `kid`. **A rotation is a hard cut at Canari** (one variable, no "previous
+  key", the rule of [Keys](#keys)): the tokens of the last 60 s are refused `invalid` and the user
+  taps again. **At a site it is bounded by its cache**: each site sets `cacheMaxAge` to 60-120 s, so
+  a rotated-out key verifies for two minutes at most; after a compromise the operator also restarts
+  each site right after the deploy.
+- **Fails closed.** No key: `HANDOFF_NOT_OFFERED` (404) on both routes, said once at boot. A key
+  that is set but unreadable (a PEM, another curve, garbage), or no issuer: said at `error` at boot,
+  closed, never weaker. Dev holds no key (manifest `silent`) until a site test instance trusts dev's
+  issuer: a dev token would be `wrong_issuer` at every production site.
+- **Single use is the SITE's.** Canari's mint is stateless; the site's ledger (`jti` as a primary
+  key, the INSERT is the decision) is where a replay lands, so the site owns it.
+- **The client: one opener.** `openEcosystemSite(id, dest)` (`frontend/src/lib/navigation/openEcosystemSite.ts`)
+  is the only place a sibling site is opened: the launcher (`EcosystemLauncher.svelte`), the
+  profile-photo button and the profile-photo prompt (`profilePhotoLink.ts`). A flagged site mints
+  then opens the URL: the system browser on the native shells, on the web a tab opened `about:blank`
+  in the click itself (a popup blocker drops a window opened after an `await`), cut from its opener,
+  then pointed at the URL. **A site without the flag is opened plainly**, today's behaviour. **A
+  refused or failed mint opens the site plainly and says so at `warn` with its class** (the code and
+  status, or the error's name): the primary path failed. `HANDOFF_NOT_OFFERED` is the estate's
+  configured state and is said once at info. A minted URL not on the site's origin is refused
+  (`HandoffUrlMismatchError`). The launcher's anchors carry `data-ecosystem-site`, which the global
+  link handler leaves to their own `onclick`. **Links inside messages and posts are never handed
+  off**: a link someone else wrote must not choose what the user's own session opens.
+- **Pinned by** `handoff.service.spec.ts` (the mint, refusals, fail-closed, the audit line, the token
+  in no log line), `handoff-redeem.contract.spec.ts` (a reference verifier, the contract's steps in
+  order, run over the vectors `libs/contracts/handoff-token.cases.json` and over minted tokens:
+  single use, replay, expiry, audience, a forged `sub`, another issuer, another key),
+  `auth.controller.handoff.spec.ts` (a live session only, the body's `sub` ignored, the JWKS),
+  `handoff-sites.spec.ts` and `ecosystemSites.test.ts` (the contract file), `openEcosystemSite.test.ts`
+  (flagged, unflagged, refused, transport failure, foreign URL, not offered, the web tab, and a scan
+  that fails if any module but `ecosystemSites.ts` writes a registered origin). The vectors are
+  written by `bun tools/handoff-vectors/generate.ts` with core-service's own signing code.
 
 ## Keys
 

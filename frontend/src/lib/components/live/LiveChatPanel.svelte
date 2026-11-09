@@ -27,6 +27,8 @@
     maxChars: number | null;
     /** The broadcaster or staff: every line gets a hide button. */
     canModerate?: boolean;
+    /** The live's broadcaster: that account's lines carry the host badge. Absent: no badge. */
+    hostId?: string | null;
     send(text: string): Promise<LiveChatSendFailure | null>;
     retry(clientId: string): void;
     discard(clientId: string): void;
@@ -40,6 +42,7 @@
     canWrite,
     maxChars,
     canModerate = false,
+    hostId = null,
     send,
     retry,
     discard,
@@ -81,7 +84,8 @@
   }
 
   $effect(() => {
-    const count = lines.length;
+    // Messages only: an arrival line is ambient and never raises the "new messages" chip.
+    const count = lines.filter((l) => !l.kind).length;
     untrack(() => {
       const next = onLinesAdded(pinnedToEnd, unseen, count - seenCount);
       seenCount = count;
@@ -174,113 +178,138 @@
     aria-relevant="additions"
   >
     {#each lines as line (lineKey(line))}
-      {@const key = lineKey(line)}
-      {@const id = line.id}
-      {@const canReport = !!report && !line.mine && id !== null && line.status !== 'failed'}
-      {@const canHide = canModerate && id !== null && line.status !== 'failed'}
-      {@const hasActions = canReport || canHide}
-      <li
-        class="live-chat-line text-sm text-white"
-        class:opacity-60={line.status === 'pending'}
-        data-live-chat-line={line.id ?? 'pending'}
-        data-live-chat-status={line.status}
-      >
-        {#snippet body()}
+      {#if line.kind === 'arrival'}
+        <!-- "X a rejoint" (owner, 2026-11-07): a server observation, never tapped for actions. -->
+        <li
+          class="live-chat-line live-chat-arrival flex items-center gap-2 text-xs"
+          data-live-chat-arrival
+        >
           <span class="shrink-0" aria-hidden="true"
             ><Avatar userId={line.authorId} size="xs" /></span
           >
           <span class="min-w-0 flex-1 break-words">
-            <bdi class="font-bold">{nameOf(line)}</bdi>
-            <bdi class="whitespace-pre-wrap" dir="auto"><EmojiText text={line.text} /></bdi>
-            {#if line.status === 'pending'}
-              <span class="sr-only">{m.live_chat_pending()}</span>
-            {/if}
-            {#if line.status === 'failed' && line.failure}
-              <span
-                class="text-banner-notice mt-0.5 block text-xs"
-                data-live-chat-failure={line.failure}
-              >
-                {failureText(line.failure)}
-              </span>
-            {/if}
+            <bdi class="font-semibold">{nameOf(line)}</bdi>
+            {m.live_chat_arrival()}
           </span>
-        {/snippet}
-
-        {#if hasActions}
-          <button
-            type="button"
-            class="flex w-full items-start gap-2 rounded-lg text-start outline-none focus-visible:ring-2 focus-visible:ring-white"
-            aria-expanded={openKey === key}
-            aria-label={m.live_chat_line_actions({ name: nameOf(line) })}
-            onclick={() => toggleActions(key)}
-            data-live-chat-line-toggle
-          >
-            {@render body()}
-          </button>
-          {#if openKey === key}
-            <div class="mt-1 flex gap-2 ps-8" data-live-chat-actions>
-              {#if canReport}
-                <button
-                  type="button"
-                  class="live-chat-action"
-                  aria-label={m.live_chat_report({ name: nameOf(line) })}
-                  onclick={() => {
-                    openKey = null;
-                    report?.(line);
-                  }}
-                  data-live-chat-report
-                >
-                  <Flag size={14} />
-                  {m.live_chat_action_report()}
-                </button>
+        </li>
+      {:else if line.kind === 'arrivals-more'}
+        <li class="live-chat-line live-chat-arrival ps-8 text-xs" data-live-chat-arrivals-more>
+          {line.more === 1
+            ? m.live_chat_arrivals_more_one()
+            : m.live_chat_arrivals_more_other({ count: line.more ?? 0 })}
+        </li>
+      {:else}
+        {@const key = lineKey(line)}
+        {@const id = line.id}
+        {@const canReport = !!report && !line.mine && id !== null && line.status !== 'failed'}
+        {@const canHide = canModerate && id !== null && line.status !== 'failed'}
+        {@const hasActions = canReport || canHide}
+        <li
+          class="live-chat-line text-sm text-white"
+          class:opacity-60={line.status === 'pending'}
+          data-live-chat-line={line.id ?? 'pending'}
+          data-live-chat-status={line.status}
+        >
+          {#snippet body()}
+            <span class="shrink-0" aria-hidden="true"
+              ><Avatar userId={line.authorId} size="xs" /></span
+            >
+            <span class="min-w-0 flex-1 break-words">
+              <bdi class="font-bold">{nameOf(line)}</bdi>
+              {#if hostId !== null && line.authorId === hostId.toLowerCase()}
+                <span class="live-chat-host" data-live-chat-host>{m.live_chat_host()}</span>
               {/if}
-              {#if canHide && id !== null}
+              <bdi class="whitespace-pre-wrap" dir="auto"><EmojiText text={line.text} /></bdi>
+              {#if line.status === 'pending'}
+                <span class="sr-only">{m.live_chat_pending()}</span>
+              {/if}
+              {#if line.status === 'failed' && line.failure}
+                <span
+                  class="text-banner-notice mt-0.5 block text-xs"
+                  data-live-chat-failure={line.failure}
+                >
+                  {failureText(line.failure)}
+                </span>
+              {/if}
+            </span>
+          {/snippet}
+
+          {#if hasActions}
+            <button
+              type="button"
+              class="flex w-full items-start gap-2 rounded-lg text-start outline-none focus-visible:ring-2 focus-visible:ring-white"
+              aria-expanded={openKey === key}
+              aria-label={m.live_chat_line_actions({ name: nameOf(line) })}
+              onclick={() => toggleActions(key)}
+              data-live-chat-line-toggle
+            >
+              {@render body()}
+            </button>
+            {#if openKey === key}
+              <div class="mt-1 flex gap-2 ps-8" data-live-chat-actions>
+                {#if canReport}
+                  <button
+                    type="button"
+                    class="live-chat-action"
+                    aria-label={m.live_chat_report({ name: nameOf(line) })}
+                    onclick={() => {
+                      openKey = null;
+                      report?.(line);
+                    }}
+                    data-live-chat-report
+                  >
+                    <Flag size={14} />
+                    {m.live_chat_action_report()}
+                  </button>
+                {/if}
+                {#if canHide && id !== null}
+                  <button
+                    type="button"
+                    class="live-chat-action"
+                    aria-label={m.live_chat_hide({ name: nameOf(line) })}
+                    onclick={() => {
+                      openKey = null;
+                      hide(id);
+                    }}
+                    data-live-chat-hide
+                  >
+                    <EyeOff size={14} />
+                    {m.live_chat_action_hide()}
+                  </button>
+                {/if}
+              </div>
+            {/if}
+          {:else}
+            <div class="flex items-start gap-2">
+              {@render body()}
+              {#if line.status === 'failed'}
+                {#if line.failure === 'too-fast' || line.failure === 'network'}
+                  <button
+                    type="button"
+                    class="ui-icon-button shrink-0 rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-white"
+                    aria-label={m.live_chat_retry()}
+                    title={m.live_chat_retry()}
+                    onclick={() => retry(line.clientId)}
+                    data-live-chat-retry
+                  >
+                    <RotateCcw size={18} />
+                  </button>
+                {/if}
                 <button
                   type="button"
-                  class="live-chat-action"
-                  aria-label={m.live_chat_hide({ name: nameOf(line) })}
-                  onclick={() => {
-                    openKey = null;
-                    hide(id);
-                  }}
-                  data-live-chat-hide
+                  class="ui-icon-button shrink-0 rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-white"
+                  aria-label={m.live_chat_discard()}
+                  title={m.live_chat_discard()}
+                  onclick={() => discard(line.clientId)}
+                  data-live-chat-discard
                 >
-                  <EyeOff size={14} />
-                  {m.live_chat_action_hide()}
+                  <Trash2 size={18} />
                 </button>
               {/if}
             </div>
           {/if}
-        {:else}
-          <div class="flex items-start gap-2">
-            {@render body()}
-            {#if line.status === 'failed'}
-              {#if line.failure === 'too-fast' || line.failure === 'network'}
-                <button
-                  type="button"
-                  class="ui-icon-button shrink-0 rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-white"
-                  aria-label={m.live_chat_retry()}
-                  title={m.live_chat_retry()}
-                  onclick={() => retry(line.clientId)}
-                  data-live-chat-retry
-                >
-                  <RotateCcw size={18} />
-                </button>
-              {/if}
-              <button
-                type="button"
-                class="ui-icon-button shrink-0 rounded-full outline-none hover:bg-white/15 focus-visible:ring-2 focus-visible:ring-white"
-                aria-label={m.live_chat_discard()}
-                title={m.live_chat_discard()}
-                onclick={() => discard(line.clientId)}
-                data-live-chat-discard
-              >
-                <Trash2 size={18} />
-              </button>
-            {/if}
-          </div>
-        {/if}
-      </li>
+        </li>
+      {/if}
     {/each}
   </ol>
 
@@ -340,9 +369,31 @@
   .live-chat-list {
     mask-image: linear-gradient(to bottom, transparent 0, var(--color-cn-scrim) 2.5rem);
   }
-  /* White on a moving picture: the shadow, not a box, keeps a line legible. */
+  /* White on a moving picture, Instagram-live style: medium weight (names stay bold) and a double
+     shadow - a tight edge and a soft halo - keep a line legible on a bright frame. The dark
+     gradient under the whole bottom block is the viewer's. */
   .live-chat-line {
-    text-shadow: 0 0.0625rem 0.25rem color-mix(in srgb, var(--color-cn-scrim) 85%, transparent);
+    font-weight: 500;
+    text-shadow:
+      0 0.0625rem 0.125rem color-mix(in srgb, var(--color-cn-scrim) 90%, transparent),
+      0 0 0.5rem color-mix(in srgb, var(--color-cn-scrim) 70%, transparent);
+  }
+  /* An arrival is quieter than a message: smaller (`text-xs` in markup) and a little dimmer. */
+  .live-chat-arrival {
+    color: color-mix(in srgb, white 80%, transparent);
+    font-weight: 400;
+  }
+  /* The broadcaster's lines are marked: a small amber pill after the name. */
+  .live-chat-host {
+    display: inline-block;
+    border-radius: 999px;
+    background: var(--color-cn-yellow);
+    color: var(--color-cn-ink);
+    padding: 0 0.375rem;
+    font-size: var(--text-xs);
+    font-weight: 700;
+    text-shadow: none;
+    vertical-align: baseline;
   }
   /* The shared glass recipe (`.glass-chrome`: blur, saturate, a hairline edge) on DARK tokens, fixed
      for the live whatever the theme: the picture behind is the video, never the theme's surface. */

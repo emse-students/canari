@@ -2285,10 +2285,13 @@ Pinned by `frameHandler.test.ts`, "the salon scope of an answer".
 **The native mirror cannot make that check** - it knows neither which salons are private nor which
 key group a frame came on. So a bundle's seeds are marked `relayed` by `proto_fields::graine_seeds`,
 and `store_graine_seeds_json` mirrors a relayed seed only for a salon the mirror already holds a
-session of; any other is left to the app, which reads the same answer from its durable queue. That
+session of LABELLED WITH THE SAME ACCOUNT (since 2026-11-07: another account's session of the salon,
+or one written before the label, is not this account's admission -
+[auth](../frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07));
+any other is left to the app, which reads the same answer from its durable queue. That
 check opens the SEALED mirror with the cache key, through the one reader `read_graine_mirror`: a
 plain-text read of it failed on every sealed file, so no relayed seed was mirrored at all
-(`a_relayed_seed_is_mirrored_only_for_a_salon_the_device_already_reads`). A sender's own distributed
+(`a_relayed_seed_is_mirrored_only_for_a_salon_the_account_already_reads`). A sender's own distributed
 seed is mirrored as before. Bundles reach the native path only on Android
 (`handleMlsFrame`, a key-group push with its ciphertext inline); the iOS extension opens only the
 `seedFrame` a salon push carries, which is a single seed.
@@ -3611,7 +3614,9 @@ nothing verifies anything. That is G2-4.
   restored session always rotates before it seals again, and the same index is never signed twice
   from two installs.
 - **In the native mirror.** A `graine_seeds.json` entry becomes
-  `{seed, createdAt, firstIndex[, version: 2, minterUserId, signingPk]}`.
+  `{seed, createdAt, firstIndex[, version: 2, minterUserId, signingPk]}` - and since 2026-11-07
+  `accounts[, unattributed]`, its writers' labels
+  ([auth](../frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07)).
   - Both writers go through `MirrorSeed` in `commands/push.rs`: `store_graine_seed` from the
     webview, and `store_graine_seeds_json` from the push's attached frame, whose `proto_fields.rs`
     now reads `first_index` too.

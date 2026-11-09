@@ -34,6 +34,7 @@ import {
   fetchLiveLimits,
   fetchLiveRules,
   fetchLiveManifest,
+  fetchLivePoster,
   fetchLiveSegment,
   isLiveCut,
   hideLiveMessage,
@@ -43,6 +44,7 @@ import {
   LiveRefusalError,
   LiveSegmentUploader,
   liveSegmentUrl,
+  livePosterUrl,
   manifestQuery,
   postLiveMessage,
   postLiveReactions,
@@ -232,6 +234,10 @@ describe('the routes', () => {
     );
     expect(apiFetch).not.toHaveBeenCalled();
     expect(liveSegmentUrl(LIVE, 'n')).toBe(`https://media.test/api/media/public/live/${LIVE}/n`);
+    // The preview has its OWN path, so nginx counts it apart from the segments (review of #3135).
+    expect(livePosterUrl(LIVE, 'n')).toBe(
+      `https://media.test/api/media/public/live-poster/${LIVE}/n`
+    );
   });
 
   it("the segment fetch carries the caller's signal, and nothing else is added for it", async () => {
@@ -241,6 +247,33 @@ describe('the routes', () => {
     const [, , init] = trackedFetch.mock.lastCall!;
     expect(init).toEqual({ method: 'GET', signal: ctrl.signal });
     expect(Object.keys(init).sort()).toEqual(['method', 'signal']);
+  });
+});
+
+describe('a poster fetch declares not-found expected', () => {
+  it('logs a poster 404 at debug, not warn, and still throws the typed refusal', async () => {
+    trackedFetch.mockResolvedValue(json(404, { statusCode: 404, message: 'Not Found' }));
+    const e = await refusal(fetchLivePoster(LIVE, 'abc'));
+    expect(e.kind).toBe('not-found');
+    expect(console.warn).not.toHaveBeenCalled();
+    expect(console.debug).toHaveBeenCalledWith(expect.stringContaining('expected'));
+  });
+
+  it('keeps the WARN for a poster 404 that is not the gateways (an edge page or bare nginx 404)', async () => {
+    trackedFetch.mockResolvedValueOnce(new Response('', { status: 404 }));
+    await refusal(fetchLivePoster(LIVE, 'abc'));
+    trackedFetch.mockResolvedValueOnce(html(404));
+    await refusal(fetchLivePoster(LIVE, 'abc'));
+    expect(console.warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the warn for every other poster refusal, and for a segment 404', async () => {
+    trackedFetch.mockResolvedValueOnce(new Response('', { status: 429 }));
+    await refusal(fetchLivePoster(LIVE, 'abc'));
+    expect(console.warn).toHaveBeenCalledTimes(1);
+    trackedFetch.mockResolvedValueOnce(json(404, { statusCode: 404 }));
+    await refusal(fetchLiveSegment(LIVE, 'abc'));
+    expect(console.warn).toHaveBeenCalledTimes(2);
   });
 });
 

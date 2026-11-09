@@ -102,6 +102,7 @@ maybe('the priced grid against PostgreSQL (migration 137)', () => {
       { get: () => 'https://canari.example' } as any,
       {
         assertPaymentsReady: async () => undefined,
+        canTakePaymentsNow: async () => true,
         getPaymentAccountId: async () => 'vendor',
         getActivePaymentProvider: async () => 'lydia',
         mayAct: async () => false,

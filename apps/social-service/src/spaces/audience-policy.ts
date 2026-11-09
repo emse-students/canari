@@ -88,8 +88,8 @@ export interface SpaceStanding {
 }
 
 /**
- * Does `r` stay inside the spaces the star governs? PER SPACE, the granularity governance has
- * (`holdsBdeFlagOverSql`), never per campus (2026-11-02): a (formation, campus) rule is inside when
+ * Does `r` stay inside the governed spaces of `spaces`? PER SPACE, the granularity a BDE is
+ * designated at (A3), never per campus (2026-11-02): a (formation, campus) rule is inside when
  * that space is governed; a whole-campus rule only when EVERY opened space of the campus is (one
  * campus may hold two BDEs); an `everyone` rule never. A campus with no opened space is outside.
  */
@@ -119,29 +119,37 @@ export function changedRules(
 }
 
 /**
- * THE BDE STAR'S BOUND: "LIRE TOUT, MODIFIER DANS SES ESPACES" (owner, 2026-11-03).
+ * THE BDE STAR'S BOUND: "LIRE TOUT, MODIFIER DANS SES ESPACES" (owner, 2026-11-03, G8).
  *
  * - **Reading** (`assertBdeMayReadAudience`): a star reads the audience of any association or list
- *   of its campus - one with a rule on a campus where it governs a space, or one with no rule.
- * - **Writing** (here): the star must already GOVERN the entity (`governsEntity`, the management
- *   predicate `holdsBdeFlagOverSql` at MANAGE_ASSO - never an institution, never another BDE), so it
- *   cannot take an entity over by adding its own space to it. Then every rule the write ADDS or
- *   REMOVES must lie inside the spaces it governs (`ruleInsideGovernedSpaces`). A rule already in
- *   force that exceeds them - a whole-campus rule over a campus two BDEs share - is left as it is:
- *   the star can neither remove nor widen it (`AUDIENCE_RULE_BEYOND_BDE_SPACES`); that is the
- *   platform admin's.
+ *   of its campus - one with a rule on a campus where it governs a space, or one with no rule - and
+ *   a parent reads its own child's wherever it reaches.
+ * - **Writing** (here): the star must already GOVERN the entity (`governsEntity`, the governance
+ *   predicate `holdsBdeFlagOverSql` at MANAGE_ASSO: MANAGE_ASSO in its PARENT, WP-D2 - never an
+ *   institution, never another BDE), so it cannot take an entity over by adding its own space to it.
+ *   Then every rule the write ADDS or REMOVES must lie inside the spaces of THAT parent
+ *   (`governorSpaces`, `ENTITY_GOVERNOR_SPACE_STANDINGS_SQL`; D1 "Oui pour le parent") - never
+ *   inside another BDE the same person also manages. A rule already in force that exceeds them - a
+ *   whole-campus rule over a campus two BDEs share - is left as it is: the star can neither remove
+ *   nor widen it (`AUDIENCE_RULE_BEYOND_BDE_SPACES`); that is the platform admin's.
+ *
+ * @param readerSpaces Every space, governed when ANY BDE where the star holds MANAGE_ASSO governs
+ *   it (`BDE_SPACE_STANDINGS_SQL`): the read bound.
+ * @param governorSpaces Every space, governed when the entity's own governing BDE does and the star
+ *   holds MANAGE_ASSO there: the write bound.
  */
 export function assertBdeMayWriteAudience(
   type: string,
-  spaces: readonly SpaceStanding[],
+  readerSpaces: readonly SpaceStanding[],
+  governorSpaces: readonly SpaceStanding[],
   governsEntity: boolean,
   current: readonly RuleLike[],
   submitted: readonly RuleLike[]
 ): void {
-  assertBdeMayReadAudience(type, spaces, current);
+  assertBdeMayReadAudience(type, readerSpaces, current, governsEntity);
   if (!governsEntity) throw outsideBdeCampus();
   const beyond = changedRules(current, submitted).filter(
-    (r) => !ruleInsideGovernedSpaces(r, spaces)
+    (r) => !ruleInsideGovernedSpaces(r, governorSpaces)
   );
   if (beyond.length > 0) {
     throw new ForbiddenException({
@@ -160,12 +168,16 @@ function ruleOnGovernedCampus(r: RuleLike, spaces: readonly SpaceStanding[]): bo
 /**
  * The BDE star's READ bound ("Lire tout", owner 2026-11-03): any association or list of its campus,
  * whether or not its rules exceed the star's spaces - the editor shows those rules read-only. An
- * institution stays the platform admin's; a reader governing no space is no star.
+ * institution stays the platform admin's; a reader governing no space is no star. The PARENT of the
+ * entity (`governsEntity`, WP-D2) reads it wherever its rules lie: a child the platform admin sent
+ * to another campus is still its parent's to see. The parent may ADD rules inside its own spaces; a
+ * rule outside them stays the platform admin's to remove (`AUDIENCE_RULE_BEYOND_BDE_SPACES`).
  */
 export function assertBdeMayReadAudience(
   type: string,
   spaces: readonly SpaceStanding[],
-  current: readonly RuleLike[]
+  current: readonly RuleLike[],
+  governsEntity = false
 ): void {
   if (type === 'institution') {
     throw new ForbiddenException({
@@ -179,7 +191,11 @@ export function assertBdeMayReadAudience(
       message: 'Global admin or MANAGE_ASSO in a BDE required.',
     });
   }
-  if (current.length > 0 && !current.some((r) => ruleOnGovernedCampus(r, spaces))) {
+  if (
+    !governsEntity &&
+    current.length > 0 &&
+    !current.some((r) => ruleOnGovernedCampus(r, spaces))
+  ) {
     throw outsideBdeCampus();
   }
 }

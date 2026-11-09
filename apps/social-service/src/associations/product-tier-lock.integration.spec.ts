@@ -167,6 +167,12 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
       `CREATE TABLE forms (id uuid PRIMARY KEY, "associationId" uuid, "grantsCotisation" boolean NOT NULL,
          "cotisationVariantKey" varchar(64))`
     );
+    // A retag follows the open revisions of the forms it rewrites (`followRetagInRevisions`,
+    // migration 146): the columns it reads and writes.
+    await admin.query(
+      `CREATE TABLE form_drafts ("formId" uuid PRIMARY KEY REFERENCES forms(id) ON DELETE CASCADE,
+         revision integer NOT NULL, document jsonb, "saveId" uuid, "baseFingerprint" text)`
+    );
 
     await ds.getRepository(Association).save(
       ds.getRepository(Association).create({

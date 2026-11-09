@@ -596,7 +596,7 @@ Every strip that announces a transient app-wide fact goes through
 
 | Scale | Where | Who |
 | --- | --- | --- |
-| Window | `+layout.svelte`, one fixed flex column | maintenance, fatal MLS error, tab follower, offline |
+| Window | `+layout.svelte`, one fixed flex column | maintenance, fatal MLS error, offline (the tab-follower banner was removed 2026-11-08) |
 | Conversation | `ChatArea.svelte`, `absolute` over the message list | synchronisation |
 | Application | `MainChatPage.svelte` | **nothing, on purpose** |
 

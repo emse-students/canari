@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import Modal from '../shared/Modal.svelte';
@@ -227,23 +228,23 @@
   -->
   {#snippet footer()}
     {#if activeTab === 'contact'}
-      <button
+      <Button
+        class="w-full"
         type="submit"
         form="new-contact-form"
         disabled={!contactId.trim() || isSelf || busy}
-        class="text-cn-ink w-full rounded-xl bg-amber-500 py-2.5 font-semibold transition-all duration-200 hover:bg-amber-400 focus:ring-2 focus:ring-amber-500/50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
       >
         {busy ? m.chat_modal_creation_in_progress_label() : m.chat_modal_start_discussion_button()}
-      </button>
+      </Button>
     {:else}
-      <button
+      <Button
+        class="w-full"
         type="submit"
         form="new-group-form"
         disabled={!groupName.trim() || busy}
-        class="text-cn-ink w-full rounded-xl bg-amber-500 py-2.5 font-semibold transition-all duration-200 hover:bg-amber-400 focus:ring-2 focus:ring-amber-500/50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
       >
         {busy ? m.chat_modal_creation_in_progress_label() : m.chat_modal_create_group_button()}
-      </button>
+      </Button>
     {/if}
   {/snippet}
 </Modal>

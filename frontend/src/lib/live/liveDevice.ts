@@ -130,9 +130,15 @@ export class ScreenWakeLock {
       this.#sentinel = sentinel;
       console.debug(`[${this.tag}] screen held on`);
     } catch (err) {
-      // A hidden page, or a policy: the screen may dim. Logged, never retried on a timer.
+      // A hidden page, a missing user activation, a permission or a feature policy: the screen may
+      // dim. Logged, never retried on a timer. The engine's refusal is written as TEXT, its message
+      // included: passed as an object, the log keeps only a DOMException's class (`NotAllowedError`)
+      // and loses the sentence that names WHICH of those gates refused - the one fact that decides
+      // the fix (the iPhone refuses every video call, 2026-11-07).
       this.#refusedTicket = ticket;
-      console.warn(`[${this.tag}] the screen lock was refused`, err);
+      console.warn(
+        `[${this.tag}] the screen lock was refused (${String(err)}) - the screen may dim`
+      );
     }
   }
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { RefreshCw, Upload, Download } from '@lucide/svelte';
   import {
     globalSession as session,
@@ -174,20 +175,12 @@
           {shownCode}
         </p>
         <div class="mt-3 flex gap-2">
-          <button
-            type="button"
-            onclick={copyCode}
-            class="border-cn-border rounded-xl border px-3 py-2 text-sm font-bold"
-          >
+          <Button variant="secondary" onclick={copyCode}>
             {m.profile_backup_code_copy()}
-          </button>
-          <button
-            type="button"
-            onclick={forgetShownCode}
-            class="bg-cn-yellow text-cn-dark rounded-xl px-3 py-2 text-sm font-bold"
-          >
+          </Button>
+          <Button onclick={forgetShownCode}>
             {m.profile_backup_code_done()}
-          </button>
+          </Button>
         </div>
       </div>
     {/if}
@@ -214,20 +207,12 @@
           class="border-cn-border bg-cn-surface text-text-main mt-2 w-full rounded-xl border px-3 py-2 font-mono text-sm"
         />
         <div class="mt-3 flex gap-2">
-          <button
-            type="button"
-            onclick={cancelCode}
-            class="border-cn-border rounded-xl border px-3 py-2 text-sm font-bold"
-          >
+          <Button variant="secondary" onclick={cancelCode}>
             {m.profile_backup_code_cancel()}
-          </button>
-          <button
-            type="submit"
-            disabled={session.isImporting}
-            class="bg-cn-yellow text-cn-dark rounded-xl px-3 py-2 text-sm font-bold disabled:opacity-50"
-          >
+          </Button>
+          <Button type="submit" disabled={session.isImporting}>
             {m.profile_backup_code_submit()}
-          </button>
+          </Button>
         </div>
       </form>
     {/if}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -369,6 +370,7 @@
     user: m.moderation_user(),
     live: m.moderation_type_live(),
     live_chat: m.moderation_type_live_chat(),
+    nickname: m.moderation_type_nickname(),
   });
 
   const liveStateLabel = $derived(liveStateLabels());
@@ -625,30 +627,31 @@
             <!-- Actions -->
             <div class="border-cn-border/40 space-y-2 border-t pt-2">
               <div class="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="compact"
                   onclick={() => handleReview(report.id, 'reviewed')}
                   disabled={processingId === report.id}
-                  class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-green-400 hover:text-green-600 disabled:opacity-40"
                 >
                   <Check size={13} />
                   {m.moderation_marquer_traite()}
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="compact"
                   onclick={() => handleReview(report.id, 'dismissed')}
                   disabled={processingId === report.id}
-                  class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-gray-400 hover:text-gray-600 disabled:opacity-40"
                 >
                   <X size={13} />
                   {m.moderation_ignorer()}
-                </button>
+                </Button>
               </div>
               <div class="flex flex-wrap items-center gap-2">
                 <!-- A BDE moderator mutes the people of its own spaces only (2026-11-02). -->
                 {#if report.canMuteReporter === true}
-                  <button
-                    type="button"
+                  <Button
+                    variant="danger-outline"
+                    size="compact"
                     onclick={() =>
                       openMuteDialog(
                         report.reporterId,
@@ -656,16 +659,16 @@
                         report.id
                       )}
                     disabled={processingId === report.id}
-                    class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-orange-400 hover:text-orange-600 disabled:opacity-40"
                     title={m.moderation_mute_reporter_hint()}
                   >
                     <UserX size={13} />
                     {m.moderation_muter_signaleur()}
-                  </button>
+                  </Button>
                 {/if}
                 {#if report.reportedUserId && report.canMuteReportedUser === true}
-                  <button
-                    type="button"
+                  <Button
+                    variant="danger-outline"
+                    size="compact"
                     onclick={() =>
                       openMuteDialog(
                         report.reportedUserId!,
@@ -673,45 +676,44 @@
                         report.id
                       )}
                     disabled={processingId === report.id}
-                    class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
                     title={m.moderation_mute_author_hint()}
                   >
                     <UserX size={13} />
                     {m.moderation_muter_auteur()}
-                  </button>
+                  </Button>
                 {/if}
               </div>
               {#if report.contentType === 'post'}
                 <div class="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    size="compact"
                     onclick={() => handleHidePost(report)}
                     disabled={processingId === report.id}
-                    class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-amber-400 hover:text-amber-600 disabled:opacity-40"
                   >
                     <EyeOff size={13} />
                     {m.moderation_masquer_post()}
-                  </button>
-                  <button
-                    type="button"
+                  </Button>
+                  <Button
+                    variant="danger-outline"
+                    size="compact"
                     onclick={() => handleDeletePost(report)}
                     disabled={processingId === report.id}
-                    class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
                   >
                     <Trash2 size={13} />
                     {m.moderation_supprimer_post()}
-                  </button>
+                  </Button>
                 </div>
               {:else if report.contentType === 'comment'}
-                <button
-                  type="button"
+                <Button
+                  variant="danger-outline"
+                  size="compact"
                   onclick={() => handleDeleteComment(report)}
                   disabled={processingId === report.id}
-                  class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
                 >
                   <Trash2 size={13} />
                   {m.moderation_supprimer_commentaire()}
-                </button>
+                </Button>
               {/if}
             </div>
           </div>
@@ -868,25 +870,28 @@
           <div
             class="flex items-center gap-2 border-t border-orange-200/60 pt-2 dark:border-orange-900/30"
           >
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="compact"
               onclick={() => openPostPreview(post.id)}
-              class="border-cn-border text-text-muted hover:text-cn-yellow flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-amber-400"
               title={m.moderation_preview_full_label()}
             >
               <Eye size={13} />
               {m.moderation_apercu()}
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="secondary"
+              size="compact"
               onclick={() => handleRestore(post.id)}
               disabled={processingId === post.id}
-              class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-green-400 hover:text-green-600 disabled:opacity-40"
               title={m.moderation_restore_hint()}
             >
               {m.moderation_restaurer()}
-            </button>
+            </Button>
             {#if post.authorId}
-              <button
+              <Button
+                variant="danger-outline"
+                size="compact"
                 onclick={async () => {
                   processingId = post.id;
                   try {
@@ -897,22 +902,23 @@
                   await handleDeleteHidden(post.id);
                 }}
                 disabled={processingId === post.id}
-                class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-orange-400 hover:text-orange-600 disabled:opacity-40"
                 title={m.moderation_delete_mute_hint()}
               >
                 <UserX size={13} />
                 {m.moderation_supprimer_muter()}
-              </button>
+              </Button>
             {/if}
-            <button
+            <Button
+              variant="danger-outline"
+              size="compact"
+              class="ml-auto"
               onclick={() => handleDeleteHidden(post.id)}
               disabled={processingId === post.id}
-              class="border-cn-border text-text-muted ml-auto flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
               title={m.moderation_delete_permanently_hint()}
             >
               <Trash2 size={13} />
               {m.common_delete_button()}
-            </button>
+            </Button>
           </div>
         </div>
       {/each}
@@ -961,14 +967,15 @@
               </p>
             {/if}
           </div>
-          <button
+          <Button
+            variant="secondary"
+            size="compact"
             onclick={() => handleUnmute(user.userId)}
             disabled={processingId === user.userId}
-            class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-green-400 hover:text-green-600 disabled:opacity-40"
           >
             <UserCheck size={14} />
             {m.moderation_demuter()}
-          </button>
+          </Button>
         </div>
       {/each}
     </div>

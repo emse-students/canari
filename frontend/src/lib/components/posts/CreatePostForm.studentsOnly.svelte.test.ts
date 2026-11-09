@@ -32,6 +32,7 @@ vi.mock('$lib/associations/api', async (orig) => ({
 vi.mock('$lib/posts/postIdentity', async (orig) => ({
   ...(await orig<typeof import('$lib/posts/postIdentity')>()),
   listPostAsAssociations: () => Promise.resolve(ENTITIES as unknown as Association[]),
+  listLiveAssociations: () => Promise.resolve([]),
 }));
 vi.mock('$lib/posts/api', async (orig) => ({
   ...(await orig<typeof import('$lib/posts/api')>()),

@@ -25,7 +25,11 @@
     "something addressable, an empty string where the caller treats the name as decoration - and this",
     "file deliberately does not pin it.",
     "",
-    "Every value is trimmed before it is considered, so a column holding only whitespace is absent."
+    "Every value is trimmed before it is considered, so a column holding only whitespace is absent.",
+    "",
+    "A per-conversation NICKNAME is not part of this precedence: the frontend resolver lays it over",
+    "this name inside its conversation only (`conversationNicknames.svelte.ts`), and it never reaches",
+    "a server copy, a push title or the native name mirror."
   ],
   "cases": [
     {

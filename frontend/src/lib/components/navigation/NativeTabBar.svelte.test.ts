@@ -248,7 +248,7 @@ describe('NativeTabBar', () => {
     }
   });
 
-  it('reserves the space the plugin measures, not the web bar’s 4rem', async () => {
+  it('reserves the space the plugin measures, not the web bar’s --bottom-nav-height', async () => {
     await mountBar({ visible: true });
     expect(document.documentElement.style.getPropertyValue('--bottom-nav-reserve')).toBe('83px');
   });
@@ -283,6 +283,33 @@ describe('NativeTabBar', () => {
     expect(nativeTabBar.status).toBe('failed');
     expect(error.mock.calls.flat().join(' ')).toContain('web bar');
     error.mockRestore();
+  });
+
+  it('a remount after sign-out sends nothing to the plugin before its own configuration answered', async () => {
+    // iPhone 12, 2026-11-08: the first mount's `native` outlived it, so the sign-in's mount sent
+    // hide / interaction / badge calls into a bar the plugin had removed ("not configured").
+    await mountBar({ visible: false });
+    expect(nativeTabBar.status).toBe('native');
+    while (mounted.length) mounted.pop()!();
+    expect(nativeTabBar.status).toBe('pending');
+    expect(plugin.removeTabBar).toHaveBeenCalledTimes(1);
+
+    let answerConfigure: () => void = () => {};
+    plugin.configureTabBar.mockReturnValue(new Promise<void>((r) => (answerConfigure = r)));
+    core.invoke.mockClear();
+    plugin.setBadge.mockClear();
+    badges.placeBadge.mockReturnValue(1);
+    await mountBar({ visible: false });
+
+    expect(callsOf(HIDE)).toHaveLength(0);
+    expect(callsOf(INTERACTIVE)).toHaveLength(0);
+    expect(plugin.setBadge).not.toHaveBeenCalled();
+
+    answerConfigure();
+    await settle();
+    expect(nativeTabBar.status).toBe('native');
+    expect(callsOf(HIDE)).toHaveLength(1);
+    expect(plugin.setBadge).toHaveBeenCalled();
   });
 
   it('takes no touch while a modal web layer covers the page, and takes them again after', async () => {

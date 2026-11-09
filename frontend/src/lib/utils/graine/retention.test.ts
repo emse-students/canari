@@ -27,7 +27,8 @@ const forgetMirrored = vi.fn();
 vi.mock('./graineMirror', () => ({
   mirrorGraineSeed: vi.fn(),
   forgetGraineChannelMirror: vi.fn(),
-  forgetGraineMirroredSessions: (ids: readonly string[]) => forgetMirrored(ids),
+  forgetGraineMirroredSessions: (ids: readonly string[], accountId: string) =>
+    forgetMirrored(ids, accountId),
 }));
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -97,7 +98,7 @@ describe('sweepExpiredGraineSeeds', () => {
     // All three stores or none: the cache is what this tab answers from until it reloads, and the
     // native mirror is what a background push reads with the app killed.
     expect(cachedGraineSession('s-old')).toBeNull();
-    expect(forgetMirrored).toHaveBeenCalledWith(['s-old']);
+    expect(forgetMirrored).toHaveBeenCalledWith(['s-old'], 'alice');
   });
 
   it('KEEPS a session the server still names, however old it is', async () => {

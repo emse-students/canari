@@ -106,7 +106,9 @@ final class ShareCapture {
     /// belongs to the file. `docs/wiki/frontend/sharing.md`, "At rest".
     static let lockedAtRest: [FileAttributeKey: Any] = [.protectionKey: FileProtectionType.completeUnlessOpen]
 
-    /// Copies the share and hands it over. BLOCKING: call it off the main thread.
+    /// Copies the share and hands it over. BLOCKING: call it off the main thread. `target` is the
+    /// suggestion the member picked (`c:<conversation id>`, already checked by
+    /// `ShareRules.suggestedTarget`), written into the manifest as Android writes it.
     ///
     /// UNDER AN EXPIRING ACTIVITY. An extension suspended while it holds a lock on a file in a
     /// shared container is killed by the system (`0xdead10cc`), and a copy of a long video can
@@ -114,7 +116,7 @@ final class ShareCapture {
     /// `performExpiringActivity`: on expiry it is cancelled, deletes its partial directory and
     /// releases the lock BEFORE the expiry handler returns. The app is told a share is ready
     /// (`postReady`) only AFTER the lock is released, or its try-lock import would answer Busy.
-    func run(items: [NSExtensionItem]) -> ShareCaptureOutcome {
+    func run(items: [NSExtensionItem], target: String?) -> ShareCaptureOutcome {
         let finished = DispatchGroup()
         finished.enter()
         var outcome: ShareCaptureOutcome = .failed
@@ -132,7 +134,7 @@ final class ShareCapture {
                 return
             }
             guard self.cancellation.start() else { return }
-            outcome = self.captureLocked(items: items)
+            outcome = self.captureLocked(items: items, target: target)
             finished.leave()
         }
         finished.wait()
@@ -146,7 +148,7 @@ final class ShareCapture {
     }
 
     /// The capture itself, under the App Group lock (released when this returns).
-    private func captureLocked(items: [NSExtensionItem]) -> ShareCaptureOutcome {
+    private func captureLocked(items: [NSExtensionItem], target: String?) -> ShareCaptureOutcome {
         let providers = items.flatMap { $0.attachments ?? [] }
         log.info("share received: \(items.count) item(s), \(providers.count) attachment(s)")
         guard let container = FileManager.default.containerURL(
@@ -263,13 +265,18 @@ final class ShareCapture {
             }
             return reportRefusals(container, refused: refused, epoch: epoch) ? .keptNothing(refused: refused) : .failed
         }
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "id": shareId,
             "epoch": epoch,
             "text": text,
             "files": files,
             "refused": refused,
         ]
+        // The suggestion the member picked (sharing lot S5), under Android's key: the app's import
+        // carries every key through unchanged, and the page reads it as a hint.
+        if let target = target {
+            payload["target"] = target
+        }
         // CLAIMED, NOT PEEKED AT, exactly as on Android - and an older session's share never replaces
         // a newer one's.
         let replaced: [String: Any]?

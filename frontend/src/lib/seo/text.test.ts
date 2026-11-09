@@ -1,5 +1,33 @@
 import { describe, expect, it } from 'vitest';
-import { truncateForMeta } from './text';
+import { markdownToPlainText, truncateForMeta } from './text';
+
+describe('markdownToPlainText', () => {
+  it('keeps intra-word hyphens and en/em dashes', () => {
+    expect(markdownToPlainText('Saint-Etienne – peut-etre — fini')).toBe(
+      'Saint-Etienne – peut-etre — fini'
+    );
+  });
+
+  it('strips list markers at the start of a line only', () => {
+    expect(markdownToPlainText('- un\n* deux\n+ trois\n  - quatre-cinq')).toBe(
+      'un deux trois quatre-cinq'
+    );
+  });
+
+  it('leaves a hyphen between spaces alone', () => {
+    expect(markdownToPlainText('Gala - 20h')).toBe('Gala - 20h');
+  });
+
+  it('drops a horizontal rule', () => {
+    expect(markdownToPlainText('avant\n---\napres')).toBe('avant apres');
+  });
+
+  it('still strips emphasis, headings, links and code', () => {
+    expect(markdownToPlainText('# Titre\n**gras** [lien](https://x.test) `code`')).toBe(
+      'Titre gras lien code'
+    );
+  });
+});
 
 describe('truncateForMeta', () => {
   it('leaves a text that fits untouched', () => {

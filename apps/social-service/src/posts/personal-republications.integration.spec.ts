@@ -62,6 +62,7 @@ const maybe = URL ? describe : describe.skip;
 const LOCK_ONLY = new Set([
   'association_role_history',
   'association_push_mutes',
+  'account_bells',
   'association_calendar_events',
   'forms',
   'form_respondents',
@@ -290,6 +291,7 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
     await q(`
       CREATE TABLE association_role_history (association_id uuid, user_id varchar);
       CREATE TABLE association_push_mutes ("associationId" uuid, "userId" varchar);
+      CREATE TABLE account_bells ("userId" varchar, "targetKind" varchar, "targetId" varchar);
       CREATE TABLE association_calendar_events ("associationId" uuid, "createdBy" varchar,
         "validatedBy" varchar, "rejectedBy" varchar);
       CREATE TABLE forms (id uuid PRIMARY KEY, "associationId" uuid, "ownerId" varchar);
@@ -318,6 +320,8 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
     await q(migration('132_read_grant_readers.sql'));
     await q(migration('096_personal_republication_requests.sql'));
     await q(migration('121_member_reposts.sql'));
+    // The bell re-reads a birthday notice against its date (`birthdayRowShownSql`).
+    await q(migration('148_profile_birthdays.sql'));
     // AG and AG2 reach the whole Gardanne campus, and nothing else.
     for (const id of [AG, AG2]) {
       await q(`DELETE FROM association_audiences WHERE "associationId" = $1`, [id]);

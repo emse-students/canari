@@ -62,6 +62,9 @@ const TAG = 'LiveChat';
  */
 export const LIVE_CHAT_KEPT_LINES = 200;
 
+/** How many arrival lines stay among them: a crowd arriving never buries the conversation. */
+export const LIVE_ARRIVAL_LINES_KEPT = 20;
+
 /**
  * The five kinds, in the order the reaction bar draws them (the server's `LIVE_REACTION_KINDS`):
  * heart, laugh, bravo, fire and the canary chick (owner decision 2026-10-20). `love` and `happy`
@@ -131,6 +134,14 @@ export interface LiveChatLine {
   status: 'pending' | 'sent' | 'failed';
   failure?: LiveChatSendFailure;
   mine: boolean;
+  /**
+   * What the line is: absent for a message; `arrival` for "X a rejoint" (`authorId` is the joiner,
+   * `text` empty); `arrivals-more` for the folded rest of a crowd (`more`, "et N autres"). Server
+   * observations, never sealed text and never actionable - no report, no hide.
+   */
+  kind?: 'arrival' | 'arrivals-more';
+  /** The number folded into an `arrivals-more` line. */
+  more?: number;
 }
 
 /** What the session needs from outside - the network, the seal, an id. Faked in tests. */
@@ -224,6 +235,8 @@ export class LiveChatSession {
   private tapCap: number | null = null;
   private messagesAfter: number | undefined;
   private reactionsAfter: number | undefined;
+  /** The arrival cursor; absent on the first poll (the server then tells no history). */
+  private arrivalsAfter: number | undefined;
   private lines: LiveChatLine[] = [];
   /** The sealed bytes of each of my messages not yet acknowledged, by clientId - what a retry re-sends. */
   private readonly sealedByClientId = new Map<string, string>();
@@ -298,7 +311,11 @@ export class LiveChatSession {
    */
   query(): LiveChatQuery {
     this.flushTaps();
-    return { messagesAfter: this.messagesAfter, reactionsAfter: this.reactionsAfter };
+    return {
+      messagesAfter: this.messagesAfter,
+      reactionsAfter: this.reactionsAfter,
+      arrivalsAfter: this.arrivalsAfter,
+    };
   }
 
   /** A poll's `chat` block (absent when the server did not serve one). Applied in arrival order. */
@@ -324,8 +341,13 @@ export class LiveChatSession {
     else console.error(`[LIVE_CHAT] ${this.liveId}: a chat block without a message cursor`);
     if (Number.isSafeInteger(block.reactionsCursor)) this.reactionsAfter = block.reactionsCursor;
     else console.error(`[LIVE_CHAT] ${this.liveId}: a chat block without a reaction cursor`);
+    // The arrival cursor follows the same rule as the message one: none while withheld (so the next
+    // served poll is a joiner's, told no history); kept when the server sent no arrivals (an older
+    // server, or its log not answering) rather than reset - a reset would ask for a first poll.
+    if (this.chatWithheld) this.arrivalsAfter = undefined;
+    else if (Number.isSafeInteger(block.arrivalsCursor)) this.arrivalsAfter = block.arrivalsCursor;
     this.chain = this.chain
-      .then(() => this.apply(block))
+      .then(() => this.apply(block, block.messagesCursor))
       .catch((e: unknown) => {
         // A block that throws must not stall the chain behind it. Rows are tried one by one, so
         // reaching this is a defect in the session itself.
@@ -554,7 +576,7 @@ export class LiveChatSession {
     this.opts.onLiveOver?.(error);
   }
 
-  private async apply(block: LiveChatBlock): Promise<void> {
+  private async apply(block: LiveChatBlock, ownCursor: number): Promise<void> {
     const key = this.keyHex;
     if (this.stopped || key === null) return;
     // A withheld block carries no line; one that was in flight when the switch went off is not drawn.
@@ -581,8 +603,9 @@ export class LiveChatSession {
         break;
       }
     }
-    if (messages.length > 0) {
-      Log.d(TAG, { op: 'receive', messages: messages.length, dropped });
+    const arrived = this.drawArrivals(block, ownCursor);
+    if (messages.length > 0 || arrived) {
+      Log.d(TAG, { op: 'receive', messages: messages.length, dropped, arrived });
       this.changed();
     }
     for (const w of Array.isArray(block.reactions) ? block.reactions : []) {
@@ -591,6 +614,70 @@ export class LiveChatSession {
         if (typeof n === 'number' && n > 0) this.opts.onFloat?.(kind, n);
       }
     }
+  }
+
+  /**
+   * Draws the block's ARRIVAL lines ("X a rejoint", owner 2026-11-07): one per named account, then
+   * one "et N autres" for the crowd the server folded. Never for a withheld reader, never twice for
+   * one server sequence, and a malformed row is dropped and said. They sort just after THIS poll's
+   * messages: a half step past the block's own cursor (`ownCursor`, captured when the block
+   * arrived, not read when it is drawn - a block applied after a newer one still sorts under its
+   * own messages), so a later message lands under them. Only the
+   * newest {@link LIVE_ARRIVAL_LINES_KEPT} stay, so a crowd never buries the conversation.
+   * Returns whether a line was added.
+   */
+  private drawArrivals(block: LiveChatBlock, ownCursor: number): boolean {
+    if (this.chatWithheld || !Array.isArray(block.arrivals)) return false;
+    const seq = (Number.isSafeInteger(ownCursor) ? ownCursor : 0) + 0.5;
+    let added = false;
+    for (const a of block.arrivals) {
+      if (typeof a?.userId !== 'string' || !Number.isSafeInteger(a.seq)) {
+        console.warn(`[LIVE_CHAT] ${this.liveId}: a malformed arrival dropped`);
+        continue;
+      }
+      const clientId = `arrival:${a.seq}`;
+      if (this.lines.some((l) => l.clientId === clientId)) continue;
+      this.lines.push({
+        id: null,
+        clientId,
+        authorId: a.userId.toLowerCase(),
+        text: '',
+        seq,
+        status: 'sent',
+        mine: false,
+        kind: 'arrival',
+      });
+      added = true;
+    }
+    const more = block.arrivalsMore;
+    if (typeof more === 'number' && Number.isSafeInteger(more) && more > 0) {
+      this.lines.push({
+        id: null,
+        clientId: `arrivals-more:${block.arrivalsCursor ?? seq}`,
+        authorId: '',
+        text: '',
+        seq,
+        status: 'sent',
+        mine: false,
+        kind: 'arrivals-more',
+        more,
+      });
+      added = true;
+    }
+    if (added) this.trimArrivalLines();
+    return added;
+  }
+
+  /** Keeps only the newest {@link LIVE_ARRIVAL_LINES_KEPT} arrival lines. */
+  private trimArrivalLines(): void {
+    const extra = this.lines.filter((l) => l.kind !== undefined).length - LIVE_ARRIVAL_LINES_KEPT;
+    if (extra <= 0) return;
+    let drop = extra;
+    this.lines = this.lines.filter((l) => {
+      if (l.kind === undefined || drop <= 0) return true;
+      drop--;
+      return false;
+    });
   }
 
   /**

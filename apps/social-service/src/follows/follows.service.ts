@@ -16,6 +16,7 @@ import { UserFollow } from './entities/user-follow.entity';
 import { Association } from '../associations/entities/association.entity';
 import { FOLLOW_ACCEPTED, FOLLOW_PENDING, type FollowStatus } from './follow-status';
 import type { FollowNoticeKind } from './entities/user-follow-notice.entity';
+import { resetBellOnNewFollowSql, resetLegacyMuteOnNewFollowSql } from './account-bells.service';
 
 /** How a follows log line names an account: its first 8 characters, never a whole account id. */
 export const short = (id: string): string => id.slice(0, 8);
@@ -30,6 +31,10 @@ export const FOLLOW_CODES = {
   pendingLimit: 'FOLLOW_PENDING_LIMIT',
   /** The asker has notified {@link FOLLOW_ASKS_PER_DAY} new people in the last day (429). */
   dailyLimit: 'FOLLOW_DAILY_LIMIT',
+  /** A withdraw found the request already ACCEPTED (409): it is a follow now, not withdrawn. */
+  requestAnswered: 'FOLLOW_REQUEST_ANSWERED',
+  /** A withdraw found no request: the person refused it, or it was withdrawn already (404). */
+  requestNotFound: 'FOLLOW_REQUEST_NOT_FOUND',
 } as const;
 
 /**
@@ -118,17 +123,38 @@ export class FollowsService {
 
   // --- Association follows ---
 
-  /** Follows an association. Silently ignores duplicate follows (idempotent). Throws if the association does not exist. */
+  /**
+   * Follows an association. Idempotent: a second follow writes nothing. Throws if the association
+   * does not exist.
+   *
+   * ONE STATEMENT, and the bell rides on it (L3, engagement WP-3): the `INSERT ... ON CONFLICT DO
+   * NOTHING RETURNING` returns a row only when THIS call created the follow, and the reader's bell
+   * on the association is deleted from that row - so a new follow means posts and lives again (a
+   * muted association followed again is unmuted), while a retried follow, a double tap, returns no
+   * row and leaves a bell the reader set since untouched.
+   */
   async followAssociation(followerUserId: string, associationId: string): Promise<{ ok: boolean }> {
     const exists = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!exists) {
       throw new NotFoundException('Association not found');
     }
-    const already = await this.followRepo.findOne({ where: { followerUserId, associationId } });
-    if (!already) {
-      const row = this.followRepo.create({ followerUserId, associationId });
-      await this.followRepo.save(row);
-    }
+    const created: unknown = await this.followRepo.query(
+      `WITH followed AS (
+         INSERT INTO association_follows (id, "followerUserId", "associationId")
+         VALUES (gen_random_uuid(), $1, $2)
+         ON CONFLICT DO NOTHING
+         RETURNING "followerUserId" AS reader, "associationId" AS target
+       ), reset AS (${resetBellOnNewFollowSql('followed', 'association')} RETURNING b."userId"),
+       legacy AS (${resetLegacyMuteOnNewFollowSql('followed')})
+       SELECT (SELECT count(*) FROM followed)::int AS created,
+              (SELECT count(*) FROM reset)::int AS reset`,
+      [followerUserId, associationId]
+    );
+    const row = Array.isArray(created) ? (created[0] as { created: number; reset: number }) : null;
+    this.logger.log(
+      `[FOLLOW] ${followerUserId.slice(0, 8)} -> association ${associationId.slice(0, 8)}: ` +
+        `${row?.created ? 'followed' : 'already following'}${row?.reset ? ', bell reset' : ''}`
+    );
     return { ok: true };
   }
 
@@ -386,6 +412,37 @@ export class FollowsService {
   }
 
   /**
+   * Withdraws a request NOT ANSWERED YET - and only that: `DELETE ... WHERE status = 'pending'`, so
+   * a tap on "Demande envoyee" that raced the person's acceptance can never become a silent
+   * unfollow. A row that was answered in between is a 409 `FOLLOW_REQUEST_ANSWERED` (the caller
+   * refreshes its status: it now follows), and no row at all - the person refused it, or it was
+   * withdrawn already - is a 404 `FOLLOW_REQUEST_NOT_FOUND` (the caller refreshes to none). Typed,
+   * so no client reads a message.
+   */
+  async withdrawRequest(followerUserId: string, followedUserId: string): Promise<{ ok: boolean }> {
+    const result: unknown = await this.userFollowRepo.query(
+      `DELETE FROM user_follows
+        WHERE "followerUserId" = $1 AND "followedUserId" = $2 AND status = '${FOLLOW_PENDING}'
+        RETURNING status`,
+      [followerUserId, followedUserId]
+    );
+    const rows = (Array.isArray(result) && Array.isArray(result[0]) ? result[0] : []) as unknown[];
+    if (rows.length > 0) {
+      this.logger.debug(
+        `[FOLLOW] ${short(followerUserId)} withdrew the request to ${short(followedUserId)}`
+      );
+      return { ok: true };
+    }
+    const now = await this.userFollowStatus(followerUserId, followedUserId);
+    this.logger.debug(
+      `[FOLLOW] ${short(followerUserId)} withdraw of ${short(followedUserId)}: nothing pending (now ${now ?? 'no row'})`
+    );
+    if (now === FOLLOW_ACCEPTED) {
+      throw new ConflictException({ code: FOLLOW_CODES.requestAnswered });
+    }
+    throw new NotFoundException({ code: FOLLOW_CODES.requestNotFound });
+  }
+  /**
    * Where the viewer stands with the given user: `accepted` (a follow), `pending` (a request not
    * answered yet) or `null` (neither).
    */
@@ -397,6 +454,29 @@ export class FollowsService {
       where: { followerUserId, followedUserId },
     });
     return row?.status ?? null;
+  }
+
+  /**
+   * Where the viewer stands with EACH of `userIds`, in ONE query (`= ANY($2)`): the batch behind the
+   * client's "Suivre" chips (engagement WP-2), so a feed or a search page costs one read rather than
+   * one per author. Answers only the ids the viewer has a row for - an id with no row is `none` to
+   * the caller - and exactly what {@link userFollowStatus} answers per id, nothing more: an id across
+   * the review cohort's boundary reads as none (`follow-status` does the same), and no block is
+   * revealed (a block severs both follows, so it already reads as none).
+   */
+  async userFollowStatuses(
+    viewerId: string,
+    userIds: readonly string[]
+  ): Promise<Record<string, FollowStatus>> {
+    const ids = [...new Set(userIds)].filter((id) => sameSideOfReviewCohort(viewerId, id));
+    if (ids.length === 0) return {};
+    const rows: { followedUserId: string; status: FollowStatus }[] =
+      await this.userFollowRepo.query(
+        `SELECT "followedUserId", status FROM user_follows
+        WHERE "followerUserId" = $1 AND "followedUserId" = ANY($2::varchar[])`,
+        [viewerId, ids]
+      );
+    return Object.fromEntries(rows.map((r) => [r.followedUserId, r.status]));
   }
 
   /**

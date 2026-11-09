@@ -2954,16 +2954,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      *
      * `seedsJson` is the `seeds` array `nativeDecryptMessageWithKey` returns alongside
      * `reason=graine-key-material`: `[{channelId, sessionId, seedB64, createdAt}, ...]`. Returns
-     * how many entries were stored, or -1 when the payload could not be read at all or
-     * [cacheKeyB64] is empty: the mirror is sealed under that key (Rust `native_cache`) and is
-     * never written in the clear.
+     * `{"stored": n, "leftToApp": m}` - a relayed seed for a salon this account has no mirrored
+     * session of is LEFT TO THE APP, which checks it fully, and is not a seed lost - or null when
+     * the payload could not be read at all or [cacheKeyB64] is empty: the mirror is sealed under
+     * that key (Rust `native_cache`) and is never written in the clear.
      *
      * THE ONE FILE THIS PATH MAY WRITE. The background decrypt is read-only by construction - it
      * must never advance `mls.bin`, which the foreground owns - and this touches nothing else: the
      * mirror is a cache of key material the device is already entitled to, bounded per channel,
      * and rebuilt from the group's log whenever the app next runs.
      */
-    external fun nativeStoreGraineSeeds(dataDir: String, cacheKeyB64: String, seedsJson: String): Int
+    external fun nativeStoreGraineSeeds(dataDir: String, cacheKeyB64: String, seedsJson: String): String?
 
     /**
      * Whether the sealed mirror under [dataDir] holds a session: 1 yes, 0 no, -1 unreadable. The
@@ -3978,9 +3979,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         requesterDeviceId: String,
     ) {
         // File loads (read-only, outside the lock)
-        val ctx = MlsContextLoader.loadPushContext(this)
+        val ctxRead = MlsContextLoader.readPushContext(this)
+        val ctx = ctxRead.context
         if (ctx == null) {
-            Log.e(TAG, "processWelcomeRequestBackground: push_context.json absent -> abort")
+            Log.e(TAG, "processWelcomeRequestBackground: push_context.json ${ctxRead.verdict.describe()} -> abort")
             return
         }
         val secret = retrievePushSecret(this)
@@ -4437,9 +4439,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         // Load the push context (file read) before the lock - read-only, thread-safe.
-        val ctx = MlsContextLoader.loadPushContext(this)
+        val read = MlsContextLoader.readPushContext(this)
+        val ctx = read.context
         if (ctx == null) {
-            Log.e(TAG, "tryDecrypt: push_context.json absent or invalid -> abort")
+            Log.e(TAG, "tryDecrypt: push_context.json ${read.verdict.describe()} -> abort")
             return PushDecrypt.Refused
         }
 
@@ -4797,9 +4800,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         queuedMessageId: String?,
         inlineProto: String?,
     ) {
-        val ctx = MlsContextLoader.loadPushContext(this)
+        val ctxRead = MlsContextLoader.readPushContext(this)
+        val ctx = ctxRead.context
         if (ctx == null) {
-            Log.e(TAG, "processReceivedWelcomeBackground: push_context.json absent -> abort")
+            Log.e(TAG, "processReceivedWelcomeBackground: push_context.json ${ctxRead.verdict.describe()} -> abort")
             return
         }
 
@@ -5208,9 +5212,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      */
     private fun groupLocality(groupId: String): GroupLocality {
         if (groupId.isEmpty()) return GroupLocality.ABSENT
-        val ctx = MlsContextLoader.loadPushContext(this)
+        val read = MlsContextLoader.readPushContext(this)
+        val ctx = read.context
         if (ctx == null) {
-            Log.w(TAG, "groupLocality: push context absent group=${groupId.take(8)} -> UNKNOWN")
+            Log.w(TAG, "groupLocality: push context ${read.verdict.describe()} group=${groupId.take(8)} -> UNKNOWN")
             return GroupLocality.UNKNOWN
         }
         val locality = withMlsStateLock(5) {
@@ -5791,6 +5796,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             "social_follow_accepted" -> Pair(
                 res.getString(R.string.notif_social_follow_accepted_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_follow_accepted_body) }
+            )
+            // A followed person's birthday: the person names the title, the body is the fixed
+            // sentence - the server sends no fragment for this key.
+            "social_birthday" -> Pair(
+                res.getString(R.string.notif_social_birthday_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_birthday_body) }
             )
             // The strike ladder's three notices to a broadcaster (WP-L8b): fixed sentences - no
             // actor (which moderator acted is not theirs to read) and no fragment.
@@ -6613,7 +6624,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      */
     private fun absorbGraineSeeds(cacheKey: String, seedsJson: String, groupId: String) {
         try {
-            val stored = nativeStoreGraineSeeds(
+            val outcome = nativeStoreGraineSeeds(
                 MlsContextLoader.tauriDataDir(this).absolutePath,
                 cacheKey,
                 seedsJson,
@@ -6624,9 +6635,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // `stored 0 seed(s)` at debug level on every frame while the lock under the writer
             // failed on Android, and nothing else said a word.
             val offered = try { JSONArray(seedsJson).length() } catch (e: Exception) { -1 }
+            val parsed = outcome?.let { try { JSONObject(it) } catch (e: Exception) { null } }
+            val stored = parsed?.optInt("stored", -1) ?: -1
+            // NOT A LOSS: a relayed seed for a salon this account never mirrored is the app's to
+            // check (Rust `store_graine_seeds_json`), so it is said apart and never counted as one.
+            val leftToApp = parsed?.optInt("leftToApp", 0) ?: 0
+            if (leftToApp > 0) {
+                Log.i(TAG, "absorbGraineSeeds: $leftToApp relayed seed(s) left to the app group=${groupId.take(8)}")
+            }
             if (stored < 0) {
                 Log.w(TAG, "absorbGraineSeeds: the native writer refused the payload group=${groupId.take(8)}")
-            } else if (offered > 0 && stored < offered) {
+            } else if (offered > 0 && stored + leftToApp < offered) {
                 Log.e(TAG, "absorbGraineSeeds: the native writer kept $stored of $offered seed(s) group=${groupId.take(8)} - the rest never reached the mirror")
                 if (stored > 0) drainPendingChannelFrames(cacheKey)
             } else {

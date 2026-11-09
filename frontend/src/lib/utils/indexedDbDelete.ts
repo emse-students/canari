@@ -8,7 +8,17 @@
  */
 export function deleteIndexedDbByName(name: string, tag: string): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
-    const req = indexedDB.deleteDatabase(name);
+    let req: IDBOpenDBRequest;
+    try {
+      req = indexedDB.deleteDatabase(name);
+    } catch (e) {
+      // Thrown before any request exists: no IndexedDB in this realm, a name the engine refuses, a
+      // storage the browser shut (a private window). The promise still RESOLVES - the wipe goes on
+      // - and says the database may remain.
+      console.error(`${tag} could not ask for ${name} to be deleted:`, e);
+      resolve(false);
+      return;
+    }
     req.onsuccess = () => resolve(true);
     // A DELETE THAT FAILED USED TO LOOK EXACTLY LIKE ONE THAT WORKED. `resolve()` alone left the
     // survey as the only witness, which says WHAT remains and never WHY - and the two databases

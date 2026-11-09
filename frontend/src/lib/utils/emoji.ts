@@ -11,9 +11,21 @@
 
 const EMOJI_PATTERN = /\p{Extended_Pictographic}|\p{Regional_Indicator}/u;
 
-function graphemeClusters(text: string): string[] {
-  const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-  return Array.from(segmenter.segment(text), (s) => s.segment);
+/**
+ * ONE SEGMENTER FOR THE PAGE, built on first use. Constructing an `Intl.Segmenter` is the expensive
+ * half of a grapheme split (it loads the locale's break rules), and `isEmojiOnlyText` used to build
+ * one per call - once per message bubble mounted, the largest named function of a salon open after
+ * the bubbles themselves (community-open-budget, 2026-11-08). A segmenter holds no per-call state.
+ */
+let segmenter: Intl.Segmenter | null = null;
+
+/**
+ * The grapheme clusters of `text`, LAZILY: a caller that stops early pays only for what it read,
+ * whatever the length of the text. The one grapheme split of the app (`emojiSvg.ts` uses it too).
+ */
+export function* graphemes(text: string): Generator<string> {
+  segmenter ??= new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+  for (const { segment } of segmenter.segment(text)) yield segment;
 }
 
 /** True if `text` contains at least one emoji grapheme, anywhere. */
@@ -28,7 +40,16 @@ export function containsEmoji(text: string): boolean {
 export function isEmojiOnlyText(text: string, maxCount: number): boolean {
   const stripped = text.replace(/\s+/gu, '');
   if (!stripped) return false;
-  const clusters = graphemeClusters(stripped);
-  if (clusters.length === 0 || clusters.length > maxCount) return false;
-  return clusters.every((cluster) => EMOJI_PATTERN.test(cluster));
+  // NO PICTOGRAPH, NO SEGMENTER: a message without one (nearly every message) cannot be emoji-only,
+  // and one regex pass answers that where a grapheme split costs the segmenter's construction on
+  // the first bubble and an iterator per row after it - inside every salon open.
+  if (!EMOJI_PATTERN.test(stripped)) return false;
+  // BOUNDED BY `maxCount`, NOT BY THE TEXT: the scan stops at the first grapheme that is not an
+  // emoji (the first letter of an ordinary message) or at the one past `maxCount`, so a long
+  // message costs what a short one does.
+  let count = 0;
+  for (const cluster of graphemes(stripped)) {
+    if (++count > maxCount || !EMOJI_PATTERN.test(cluster)) return false;
+  }
+  return count > 0;
 }

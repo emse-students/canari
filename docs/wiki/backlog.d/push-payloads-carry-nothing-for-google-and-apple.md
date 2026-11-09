@@ -205,6 +205,17 @@ rewrite opens the app at the list (no `groupId` in clear for `CanariTapDeepLink`
   (`pushWakeCompiled.test.ts` reads the three native receivers as text). **The Swift and the
   Objective-C++ are not compiled by any pull-request job** - only a release's `ios.yml` builds them -
   and nothing native has RUN. The switch stays `full` until the readings below.
+- **2026-11-07 - step 2's server half (WP-W3) built, behind the same switch**: chat-delivery migration
+  046 (`push_envelope`, and `push_token.wakeVersion`, which REPLACES `wakeCapable` as the capability
+  the server reads: MLS wake at `>= 1`, envelope wake at `>= 2`; no backfill), `sendPushToUser` storing
+  and waking, `GET /mls/push/wake?envelopeId=`, and a `presentation` on both answers. Inert until a
+  client declares version 2 (WP-W4: no client does yet). Old clients: unchanged - a step-1 build's
+  `wake: true` is read as version 1, so its MLS frames are woken exactly as before once its app starts
+  after the deploy (full pushes until then), and its salon and social pushes stay full. What was built
+  and what was revised against the design (one table, no backfill): [content-free-push section
+  3.2](../protocols/content-free-push.md#32-everything-sent-through-sendpushtouser---no-durable-row-exists-so-one-is-written).
+  Owed: the device row [CFP-W3](../device-verification.md#cfp-w3-the-step-1-wake-still-wakes-after-migration-046---owed-on-the-mi-9t-on-dev)
+  and section 9's production volume counts; next is WP-W4 (Android).
 
 ### Readings owed (the code is verified only by COMPILING, and iOS not even that before a release)
 

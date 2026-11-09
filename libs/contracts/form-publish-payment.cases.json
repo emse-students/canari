@@ -1,0 +1,28 @@
+{
+  "$comment": [
+    "WHETHER A FORM CHARGES, AND WHY ITS PUBLICATION IS REFUSED, ASSERTED ON BOTH SIDES (owner, 2026-11-08).",
+    "",
+    "The server decides (`chargesMoney` in apps/social-service/src/forms/forms.service.ts and",
+    "`publishPaymentRefusal` in forms/payment-offer.ts); the editor only shuts \"Publier\" with the",
+    "same answer (`formChargesMoney` and `publishPaymentRefusal` in frontend/src/lib/forms/publish.ts).",
+    "Both specs read these cases, so the screen never opens a publication the server refuses, nor",
+    "shuts one it would take. `onlineReady`: the association can collect online now (a personal",
+    "form is always ready: it collects through the platform). `charges`: whether the form charges;",
+    "`expected`: the refusal code of its publication, null when it may be published."
+  ],
+  "cases": [
+    { "name": "a free form", "form": { "requiresPayment": false, "basePrice": 0, "items": [] }, "onlineReady": false, "charges": false, "expected": null },
+    { "name": "payment switched on, online not ready", "form": { "requiresPayment": true, "basePrice": 0, "items": [] }, "onlineReady": false, "charges": true, "expected": "FORM_PAYMENTS_NOT_READY" },
+    { "name": "payment switched on, online ready", "form": { "requiresPayment": true, "basePrice": 0, "items": [] }, "onlineReady": true, "charges": true, "expected": null },
+    { "name": "cash answers while online is not ready", "form": { "requiresPayment": true, "allowCashPayment": true, "items": [] }, "onlineReady": false, "charges": true, "expected": null },
+    { "name": "neither cash nor online", "form": { "requiresPayment": true, "allowOnlinePayment": false, "items": [] }, "onlineReady": true, "charges": true, "expected": "FORM_NO_PAYMENT_METHOD" },
+    { "name": "a base price charges without the switch", "form": { "requiresPayment": false, "basePrice": 500, "items": [] }, "onlineReady": false, "charges": true, "expected": "FORM_PAYMENTS_NOT_READY" },
+    { "name": "a grid cell above 0 charges", "form": { "requiresPayment": false, "basePrice": 0, "priceMatrix": { "cells": { "a": 0, "b": 300 } }, "items": [] }, "onlineReady": false, "charges": true, "expected": "FORM_PAYMENTS_NOT_READY" },
+    { "name": "a grid of zeros does not", "form": { "requiresPayment": false, "basePrice": 0, "priceMatrix": { "cells": { "a": 0 } }, "items": [] }, "onlineReady": false, "charges": false, "expected": null },
+    { "name": "a choice option's supplement charges", "form": { "requiresPayment": false, "basePrice": 0, "items": [{ "id": "q1", "type": "single_choice", "options": [{ "id": "o1", "priceModifier": 200 }] }] }, "onlineReady": false, "charges": true, "expected": "FORM_PAYMENTS_NOT_READY" },
+    { "name": "a multiple choice supplement charges", "form": { "requiresPayment": false, "basePrice": 0, "items": [{ "id": "q1", "type": "multiple_choice", "options": [{ "id": "o1", "priceModifier": 50 }] }] }, "onlineReady": false, "charges": true, "expected": "FORM_PAYMENTS_NOT_READY" },
+    { "name": "a text question's stale supplement charges nothing", "form": { "requiresPayment": false, "basePrice": 0, "items": [{ "id": "q1", "type": "text", "options": [{ "id": "o1", "priceModifier": 200 }] }] }, "onlineReady": false, "charges": false, "expected": null },
+    { "name": "a product grid priced above 0 charges", "form": { "requiresPayment": false, "basePrice": 0, "items": [{ "id": "q1", "type": "product_grid", "productGrid": { "pricing": { "prices": { "row": { "col": 1200 } } } } }] }, "onlineReady": false, "charges": true, "expected": "FORM_PAYMENTS_NOT_READY" },
+    { "name": "a product grid at 0 does not", "form": { "requiresPayment": false, "basePrice": 0, "items": [{ "id": "q1", "type": "product_grid", "productGrid": { "pricing": { "prices": { "row": { "col": 0 } } } } }] }, "onlineReady": false, "charges": false, "expected": null }
+  ]
+}

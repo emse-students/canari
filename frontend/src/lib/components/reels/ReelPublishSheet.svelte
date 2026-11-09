@@ -377,8 +377,8 @@
       {:else if composer}
         <Button
           type="button"
-          variant="outline"
-          class="shrink-0 px-4 py-2 text-sm font-semibold"
+          variant="secondary"
+          class="shrink-0"
           disabled={publishing}
           onclick={() => {
             console.debug('[reel-publish] kept as a post: the video goes back to the composer');
@@ -392,7 +392,7 @@
       {/if}
       <Button
         type="button"
-        class="shrink-0 px-6 py-2 text-sm font-bold"
+        class="shrink-0"
         disabled={publishing}
         loading={publishing}
         onclick={publish}

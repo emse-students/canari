@@ -83,13 +83,9 @@
           <span class="sr-only">{m.readaccess_last_change()} :</span>
           {change.text}
         </p>
-        <button
-          type="button"
-          onclick={change.undo}
-          class="text-text-main hover:bg-cn-surface-alt shrink-0 rounded-lg px-3 py-2 text-sm font-bold"
-        >
+        <Button variant="ghost" class="shrink-0" onclick={change.undo}>
           {m.common_undo_label()}
-        </button>
+        </Button>
       </div>
     {/if}
     {#each CAMPUSES as campus (campus)}

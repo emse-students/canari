@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { untrack } from 'svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import Select from '$lib/components/ui/Select.svelte';
@@ -194,14 +195,9 @@
 
   {#snippet footer()}
     <div class="flex justify-end">
-      <button
-        type="button"
-        disabled={!start || !end}
-        onclick={submit}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-      >
+      <Button disabled={!start || !end} onclick={submit}>
         {m.bookings_range_continue()}
-      </button>
+      </Button>
     </div>
   {/snippet}
 </Modal>

@@ -122,6 +122,23 @@ describe('an event whose address is missing', () => {
     expect(said()).toContain('roleId');
   });
 
+  it('hands on the role name the announcement carries: a string, null for the default, absent as unchanged', async () => {
+    const onRolePermissionsChanged = vi.fn();
+    const send = (data: Record<string, unknown>) =>
+      handleChannelEvent(
+        { type: 'workspace.role.permissions', data: { roleId: 'r1', permissions: [], ...data } },
+        ctx({ onRolePermissionsChanged })
+      );
+    await send({ label: 'Presidence' });
+    await send({ label: null });
+    await send({});
+    expect(onRolePermissionsChanged.mock.calls.map((c) => c[0].label)).toEqual([
+      'Presidence',
+      null,
+      undefined,
+    ]);
+  });
+
   it('every one of them accuses at ERROR, so none can be read as informational', async () => {
     await handleChannelEvent({ type: 'typing', data: {} }, ctx());
     expect(said()).toContain('[ERROR]');

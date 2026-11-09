@@ -33,7 +33,7 @@ const migration = (file: string) => readFileSync(join(__dirname, '..', 'migratio
 const ALICE = 'alice-0000';
 const BOB = 'bob-00000';
 
-maybe('question images against PostgreSQL (migration 136)', () => {
+maybe('question images against PostgreSQL (migrations 136, 146)', () => {
   const schema = `form_item_images_it_${Math.random().toString(36).slice(2, 10)}`;
   let admin: Client;
   let ds: DataSource;
@@ -122,6 +122,8 @@ maybe('question images against PostgreSQL (migration 136)', () => {
         "createdAt" timestamptz NOT NULL DEFAULT now()
       );
     `);
+    // The unpublished revisions (146): an image only a revision cites is cited all the same.
+    await q(migration('146_form_drafts.sql'));
     images = new FormItemImagesService(http as any, ds.getRepository(FormItemImage));
   });
 
@@ -231,5 +233,21 @@ maybe('question images against PostgreSQL (migration 136)', () => {
       publicAssets.has(abandoned),
       publicAssets.has(citedOld),
     ]).toEqual([true, false, true]);
+  });
+
+  it('keeps an image only an unpublished revision cites, and releases it once the revision is emptied', async () => {
+    const formId = await form([]);
+    const added = await upload(formId, ALICE, 25);
+    await q(`INSERT INTO form_drafts ("formId", revision, document) VALUES ($1, 1, $2)`, [
+      formId,
+      JSON.stringify({ title: 't', items: [item('q1', added)] }),
+    ]);
+    await images.reconcileOnce();
+    await images.releaseUncited([added], 'question edited');
+    expect(publicAssets.has(added)).toBe(true);
+    // Discarded: the revision cites nothing any more.
+    await q(`UPDATE form_drafts SET document = NULL, revision = 2 WHERE "formId" = $1`, [formId]);
+    await images.releaseUncited([added], 'form revision discarded');
+    expect(publicAssets.has(added)).toBe(false);
   });
 });

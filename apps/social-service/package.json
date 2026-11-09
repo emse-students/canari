@@ -1,6 +1,6 @@
 {
   "name": "social-service",
-  "version": "1.6.6-alpha.4",
+  "version": "1.6.9-alpha.1",
   "private": true,
   "scripts": {
     "start": "ts-node src/main.ts",
@@ -80,6 +80,7 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node",
+    "globalSetup": "<rootDir>/../jest-global-setup.cjs",
     "setupFilesAfterEnv": [
       "<rootDir>/../jest-integration-budget.cjs"
     ]

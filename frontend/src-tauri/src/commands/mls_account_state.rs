@@ -185,6 +185,18 @@ fn parked_dir_name(user_id: &str) -> String {
         .collect()
 }
 
+/// The name an account goes by in a file SEVERAL accounts share - each entry of the Graine seed
+/// mirror (`commands::push`, the `accounts` label): the same hex SHA-256 as its parked directory,
+/// of the id in its canonical spelling (`canonical_user_id`, ASCII-lowercased).
+///
+/// CANONICAL HERE, unlike [`parked_dir_name`], because the mirror's writers read the id from three
+/// places - the page's Graine runtime, the push context the push decrypt is handed, the wipe's
+/// caller - and only the canonical form is the same in all three. The hash and not the id for the
+/// slot's reason: the file is shared by accounts, and naming them in it is not its job.
+pub(crate) fn account_label(user_id: &str) -> String {
+    parked_dir_name(&mls_core::device_trust::canonical_user_id(user_id.trim()))
+}
+
 /// Whether `name` is exactly a committed reset's tombstone: `<64 lowercase hex>.committed`, the shape
 /// [`parked_dir_name`] gives an account and [`COMMITTED_SUFFIX`] a commit (round 12 of the review of
 /// #2919). The ALLOWLIST of what the settle deletes unasked - never a suffix match, which would

@@ -126,6 +126,7 @@ function makeService(opts: { form?: Record<string, unknown>; facts?: PricingFact
       isMember: jest.fn(() => Promise.resolve(true)),
       collectsNow: jest.fn(() => Promise.resolve(true)),
       assertPaymentsReady: jest.fn(() => Promise.resolve()),
+      canTakePaymentsNow: jest.fn(() => Promise.resolve(true)),
       getPaymentAccountId: jest.fn(() => Promise.resolve('vendor')),
       getActivePaymentProvider: jest.fn(() => Promise.resolve('lydia')),
       collectionSubjectOf: jest.fn(() => Promise.resolve(null)),

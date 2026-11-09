@@ -357,6 +357,37 @@ export function publishOutboxEntryCancelled(messageId: string): void {
   } satisfies TabOutboxEvent);
 }
 
+/**
+ * A commit a follower tab hands to the leader (`tabCommitDelegation.ts`), on the same channel.
+ *
+ * Like the outbox nudge, ONLY THE SIGNAL CROSSES THE CHANNEL: the request and its outcome live in a
+ * durable record (the account's IndexedDB), committed BEFORE the signal is posted, so a signal lost
+ * to a tab that was not listening yet costs the next drain and nothing else.
+ * `tab_commit_requested` goes follower -> leader, `tab_commit_settled` leader -> follower; both carry
+ * the request id and the account whose store holds the record - nothing of the request itself.
+ */
+export type TabCommitEvent =
+  | { type: 'tab_commit_requested'; id: string; account: string }
+  | { type: 'tab_commit_settled'; id: string; account: string };
+
+const COMMIT_EVENT_TYPES = new Set<string>(['tab_commit_requested', 'tab_commit_settled']);
+
+/** Posts a commit-delegation signal to the other tabs (see {@link TabCommitEvent}). */
+export function postTabCommitEvent(event: TabCommitEvent): void {
+  ensureChannel()?.postMessage(event satisfies TabCommitEvent);
+}
+
+/** Subscribes this tab to the commit-delegation signals of the other tabs. */
+export function subscribeTabCommitEvents(handler: (event: TabCommitEvent) => void): () => void {
+  const ch = ensureChannel();
+  if (!ch) return () => {};
+  const onMessage = (ev: MessageEvent<TabCommitEvent>) => {
+    if (COMMIT_EVENT_TYPES.has(ev.data?.type)) handler(ev.data);
+  };
+  ch.addEventListener('message', onMessage);
+  return () => ch.removeEventListener('message', onMessage);
+}
+
 /** Subscribes this tab to outbox coordination events from the other tabs of this account. */
 export function subscribeTabOutboxEvents(handler: (event: TabOutboxEvent) => void): () => void {
   const ch = ensureChannel();

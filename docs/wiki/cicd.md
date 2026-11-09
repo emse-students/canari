@@ -31,6 +31,7 @@ was written, the migration 082 spec turned out to have failed on EVERY run since
 The job runs them in band against production's PostgreSQL, pinned by the digest the compose files
 carry, and its last step FAILS unless jest ran as many suites as there are files on disk and skipped
 none: a jest run that selects nothing is no longer a pass (the `test` scripts lost `--passWithNoTests` in WP-T2), but a gate that selects by name still needs its own count of what ran.
+**PARALLEL LOCAL RUNS OF THE INTEGRATION SPECS ARE SAFE SINCE 2026-11-09** (`jest-global-setup.cjs`). One database serves every spec, and the specs are isolated by schema only - but an extension is database-wide: TypeORM's `CREATE EXTENSION IF NOT EXISTS "btree_gist"` (any DataSource whose entities include `Booking`) and `"uuid-ossp"` carry no SCHEMA, so on a database without them they landed in the FIRST schema of the spec's `search_path`, and that spec's `DROP SCHEMA ... CASCADE` took `bookings_live_no_overlap` and the UUID defaults out of every sibling spec's schema (measured with 3 workers: overlapping bookings both succeeded, 1 run in 11). CI's `--runInBand` order hid it. A jest `globalSetup` now creates both in `public` once, as production has them (migration 087); production is not affected.
 **Every integration spec has a 60 s budget per test and hook, set once** by
 `apps/social-service/jest-integration-budget.cjs` (selected by the same file name), not jest's 5 s:
 a spec builds its schema in `beforeAll` on a server that may have just started, and on a fresh
@@ -232,8 +233,8 @@ which is how three chains came to each re-derive the same fact:
 
 1. `enumerate-services` names all eight services (no diff: every service is built every release)
 2. Builds the frontend against that estate's `VITE_*` set, then every image → GHCR, each tagged `v<version>`
-3. Self-hosted runner: sync `.env`, `docker compose pull`, then every service replaced one at a time by `infrastructure/lib/rolling.sh` ([below](#a-deploy-replaces-nothing-a-member-is-talking-to)) - production by `--tag v<version>`, so re-running an old release's deploy is a ROLLBACK - across the replica lists too, because they rest naming each service by DNS ([why](#a-rollback-across-the-replica-lists))
-4. Database migrations, then health checks
+3. Self-hosted runner: sync `.env`, `docker compose pull`, then the database and its migrations BEFORE any application service (`deploy-environment.sh`: a service never meets a schema older than its code)
+4. Every service replaced one at a time by `infrastructure/lib/rolling.sh` ([below](#a-deploy-replaces-nothing-a-member-is-talking-to)) - production by `--tag v<version>`, so re-running an old release's deploy is a ROLLBACK - across the replica lists too, because they rest naming each service by DNS ([why](#a-rollback-across-the-replica-lists)); then health checks
 5. MiConnect's blueprints: a pre-release DRY-RUNS them against the production MiConnect, and a
    stable APPLIES them before `prod-released` moves. The same runner lives on MiConnect's host, so
    `apply-blueprints.sh` reaches the worker container directly. The fresh-instance gate before both
@@ -1109,6 +1110,27 @@ absence, while the same release put Android on the Play `production` track by it
 release was **half-shipped by construction**. `tools/app-store/submit.mjs` closes it; everything
 about how, including the release-notes file a human owes each stable and why its first line names
 its own version, is in [its README](../../tools/app-store/README.md), the only copy.
+
+### The Android release build restores Gradle, it never saves it (2026-11-09)
+
+`android.yml` cached nothing under `~/.gradle`, so every release fetched the Gradle wrapper
+distribution (`services.gradle.org`) and the dependency jars (Maven Central, GitHub) cold. The run of
+`v1.6.9-alpha.1` failed three times on a 504 and a 10 s read timeout from those hosts. The fix is a
+cache, not a retry or a longer timeout: `actions/cache/restore` of `~/.gradle/caches` and
+`~/.gradle/wrapper`, under the SAME key `compile-android-app` (`ci.yml`) already saves
+(`gradle-app-<os>-<hash of gen/android's gradle files and wrapper properties>`, prefix fallback).
+
+- **Read-only in the release, and that is the safety argument.** GitHub scopes a cache to the ref
+  that wrote it and lets a ref read its own and the default branch's. A release runs on a tag ref:
+  it can read what `main` wrote, can never read a pull request's cache (`refs/pull/N/merge`), and a
+  save from the tag would be unreadable by the next release anyway. So only `compile-android-app`
+  running on `main` (reviewed code, green CI) writes it, and the release only avoids downloads;
+  Gradle still resolves from the committed build files, so what is built is unchanged.
+- **A cold cache is the old behaviour, not a failure.** `compile-android-app` runs on `main` only
+  when the Android tree changed, and an unread entry is evicted after 7 days; a release after that
+  downloads as before.
+- `test-android` and `compile-android-app` already cached these paths with `actions/cache`; `ios.yml`
+  caches only Bun (no CocoaPods or SwiftPM cache exists, and `compile-ios-app` has none either).
 
 **BOTH ARMS ARE ALSO HAND-DISPATCHABLE, AND THAT IS A CAPABILITY RATHER THAN A SECOND DOOR.** It is
 the only way to compile Swift, ObjC or Kotlin from the Windows workstation this project is developed
@@ -2796,7 +2818,7 @@ are builder stages and the local compose file, which reach no estate.
 | in the `dependencies` half, so it gates `CI passed` and runs nightly | same footing as the audits: a database that moves without a commit; exit `2` (database or registry unreachable) is priced by `registry_outage_is_failure` |
 | the allowlist is `.github/image-scan-allowlist.yaml`, Trivy's own format | one entry per advisory, each with a `statement`; `image-scan-allowlist.test.mjs` refuses a missing statement, an unknown key and any `expired_at` - an entry retires on evidence, never on a date |
 | **every entry retires itself** | each image is rescanned WITHOUT the allowlist and `ignored-advisories-still-reported.sh` (media-service's check) fails on an id nothing reports any more. A pull request that moves a pin deletes the entries it made unnecessary in the same commit |
-| Trivy from its release tarball, not `aquasecurity/trivy-action` | a tag can move, a checksum cannot. **Nothing watches the pin**: move it by changing `TRIVY_VERSION` and `TRIVY_SHA256` together, the checksum read from that release's `trivy_<v>_checksums.txt` |
+| Trivy from its release tarball, not `aquasecurity/trivy-action` | a tag can move, a checksum cannot. **Nothing watches the pin**: move it by changing `TRIVY_VERSION` and `TRIVY_SHA256` together, the checksum read from that release's `trivy_<v>_checksums.txt`. **The verified archive is cached** (`actions/cache`, keyed on version AND digest; ShellCheck the same, keyed on `.shellcheck-version` and its digest): GitHub's release downloads answered 504 for hours on 2026-11-08 under an "operational" status page and failed every pull request; the digest is still checked on every run, so a cache hit can only be the pinned archive |
 
 **What the first measurement found (Trivy 0.75.0, 2026-10-23), and what each became:**
 

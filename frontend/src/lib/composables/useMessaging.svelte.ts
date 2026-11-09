@@ -27,6 +27,7 @@ import {
   editMessage,
   deleteMessage,
   setMessagePinned,
+  setConversationNickname,
 } from '$lib/utils/chat/messaging';
 import { applySalonEchoChange } from '$lib/utils/chat/salonEcho';
 import {
@@ -112,11 +113,12 @@ import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
 import {
   applyOutboxPendingStatuses,
   awaitOutboxSettled,
+  cancelOutboxMessage,
   enqueueOutboxMessage,
   enqueueOutboxTake,
   isEnqueueQuotaFailure,
   outboxReelSendDeleted,
-  sentOutboxTakeOf,
+  outboxReelTakeReachOf,
   type OutboxSettlement,
 } from '$lib/utils/chat/outbox';
 import { MessagePairWriteError, MessageWrittenError } from '$lib/utils/chat/messageWrittenError';
@@ -2987,36 +2989,120 @@ export function useMessaging() {
   }
 
   /**
-   * "Supprimer partout" (reels-in-chat 15.7): deletes, for everyone, every message the take of
-   * `messageId` went out as - in each conversation, each through the one delete path
-   * ({@link deleteMessage}) - and the last one gives the file's hold back (D-delete-one). A message
-   * no take names is deleted alone. A conversation no longer on this device is skipped and said.
-   * Returns how many messages were deleted.
+   * The takes an "everywhere" run is ending right now: a second press (a double tap during the
+   * confirmation's outro, another bubble of the same take) while one runs ends nothing - it would
+   * send a delete for sends the first run withdrew, which no peer ever received.
    */
-  async function handleDeleteReelEverywhere(messageId: string, ctx: MessagingContext) {
-    const record = await sentOutboxTakeOf(messageId);
-    const sends = record?.sends ?? [];
-    ctx.log(
-      `[MEDIA] delete everywhere ${messageId.slice(0, 8)}…: ${sends.length} message(s) of take ${record?.takeId.slice(0, 8) ?? '(none)'}…`
-    );
-    let deleted = 0;
-    for (const send of sends) {
-      const found = [...ctx.conversations.entries()].find(([, c]) => c.id === send.conversationId);
-      if (!found) {
-        ctx.log(
-          `[MEDIA] ${send.id.slice(0, 8)}…: its conversation is not on this device - skipped`
-        );
-        continue;
-      }
-      const [convoKey, convo] = found;
-      const act: ControlAct = { kind: 'delete' };
-      const outcome = await deleteMessage(send.id, controlDeps(ctx, convo));
-      settleControl(ctx, convo.id, send.id, act, outcome !== 'refused');
-      if (outcome === 'refused') continue;
-      await applyDeleteLocally(outcome, send.id, convoKey, ctx);
-      deleted++;
+  const everywhereRunning = new SvelteSet<string>();
+
+  /**
+   * "Annuler partout" / "Supprimer partout" (reels-in-chat 15.2, 15.7): ends every message the take
+   * of `messageId` was queued as, in each conversation. A send that WENT is deleted for everyone
+   * through the one delete path ({@link deleteMessage}); a send still QUEUED is withdrawn - and when
+   * the queue no longer holds it (the reach is a snapshot), it is deleted for everyone only if the
+   * take now counts it as gone out, skipped otherwise (it failed or was withdrawn: no peer has it).
+   * The take settles from its rows as they go (the last withdrawal releases its session, the last
+   * deletion gives the file's hold back, D-delete-one). One run per take at a time
+   * (`everywhereRunning`). A conversation no longer on this device is skipped and counted.
+   */
+  async function handleDeleteReelEverywhere(
+    messageId: string,
+    ctx: MessagingContext
+  ): Promise<{ ended: number; skipped: number; running: boolean }> {
+    const reach = await outboxReelTakeReachOf(messageId);
+    if (!reach) {
+      ctx.log(`[MEDIA] delete everywhere ${messageId.slice(0, 8)}…: no take names it - nothing`);
+      return { ended: 0, skipped: 0, running: false };
     }
-    return deleted;
+    if (everywhereRunning.has(reach.takeId)) {
+      ctx.log(
+        `[MEDIA] delete everywhere ${messageId.slice(0, 8)}…: take ${reach.takeId.slice(0, 8)}… is already being ended - this press ends nothing`
+      );
+      return { ended: 0, skipped: 0, running: true };
+    }
+    everywhereRunning.add(reach.takeId);
+    try {
+      ctx.log(
+        `[MEDIA] delete everywhere ${messageId.slice(0, 8)}…: ${reach.queued.length} queued and ${reach.standing.length} sent message(s) of take ${reach.takeId.slice(0, 8)}…`
+      );
+      let ended = 0;
+      let skipped = 0;
+      for (const [send, wasQueued] of [
+        ...reach.queued.map((s) => [s, true] as const),
+        ...reach.standing.map((s) => [s, false] as const),
+      ]) {
+        const found = [...ctx.conversations.entries()].find(
+          ([, c]) => c.id === send.conversationId
+        );
+        if (!found) {
+          ctx.log(
+            `[MEDIA] ${send.id.slice(0, 8)}…: its conversation is not on this device - skipped`
+          );
+          skipped++;
+          continue;
+        }
+        const [convoKey, convo] = found;
+        if (wasQueued && !(await endQueuedSend(send.id, messageId, convoKey, convo.id, ctx)))
+          continue;
+        if (wasQueued) {
+          ended++;
+          continue;
+        }
+        if (await deleteForEveryone(send.id, convoKey, convo, ctx)) ended++;
+      }
+      return { ended, skipped, running: false };
+    } finally {
+      everywhereRunning.delete(reach.takeId);
+    }
+  }
+
+  /**
+   * Ends a send the reach saw QUEUED: withdrawn while the queue holds it; once it left the queue,
+   * deleted for everyone only if its take now counts it as gone out (`standing`), skipped otherwise -
+   * it failed or was withdrawn, and a delete would name a message no peer has. Whether it was ended.
+   */
+  async function endQueuedSend(
+    sendId: string,
+    takeMessageId: string,
+    convoKey: string,
+    conversationId: string,
+    ctx: MessagingContext
+  ): Promise<boolean> {
+    if (await cancelOutboxMessage(sendId)) {
+      settleControl(ctx, conversationId, sendId, { kind: 'delete' }, true);
+      await applyDeleteLocally('withdrawn', sendId, convoKey, ctx);
+      return true;
+    }
+    // NOT WITHDRAWN: it is on the wire, or it left the queue since the snapshot. Its settlement says
+    // which, then the take's record decides - never a delete for an id that never went.
+    await awaitOutboxSettled(sendId);
+    const now = await outboxReelTakeReachOf(sendId);
+    const convo = ctx.conversations.get(convoKey);
+    if (now?.standing.some((s) => s.id === sendId) && convo) {
+      return deleteForEveryone(sendId, convoKey, convo, ctx);
+    }
+    if (now?.queued.some((s) => s.id === sendId) && (await cancelOutboxMessage(sendId))) {
+      await applyDeleteLocally('withdrawn', sendId, convoKey, ctx);
+      return true;
+    }
+    ctx.log(
+      `[MEDIA] ${sendId.slice(0, 8)}… (take of ${takeMessageId.slice(0, 8)}…): left the queue without going out - skipped, no peer has it`
+    );
+    return false;
+  }
+
+  /** Deletes a sent message of a take for everyone through the one delete path. Whether it was taken. */
+  async function deleteForEveryone(
+    sendId: string,
+    convoKey: string,
+    convo: Conversation,
+    ctx: MessagingContext
+  ): Promise<boolean> {
+    const outcome = await deleteMessage(sendId, controlDeps(ctx, convo));
+    settleControl(ctx, convo.id, sendId, { kind: 'delete' }, outcome !== 'refused');
+    if (outcome === 'refused') return false;
+    await applyDeleteLocally(outcome, sendId, convoKey, ctx);
+    return true;
   }
 
   /**
@@ -3223,6 +3309,30 @@ export function useMessaging() {
     const act: ControlAct = { kind: 'pin', pinned: next, at };
     const queued = await sendControlAct(messageId, act, controlDeps(ctx, convo));
     settleControl(ctx, convo.id, messageId, act, queued);
+  }
+
+  /**
+   * Queues the silent `nickname` frame of an MLS conversation ("Modifier les pseudos") - the `send`
+   * of a group `NicknamePlace`. The register is moved by the caller once this answers true
+   * (`saveNickname`), so a refused frame leaves no name only this device shows.
+   *
+   * @returns whether the durable queue took it; false too when the conversation is not open here.
+   */
+  async function sendNickname(
+    conversationKey: string,
+    userId: string,
+    nickname: string | null,
+    at: number,
+    ctx: MessagingContext
+  ): Promise<boolean> {
+    const convo = ctx.conversations.get(conversationKey);
+    if (!convo) {
+      console.warn(
+        `[NICKNAME] not sent: conversation ${conversationKey.slice(0, 8)} is not loaded`
+      );
+      return false;
+    }
+    return setConversationNickname(userId, nickname, at, controlDeps(ctx, convo));
   }
 
   // ── Reply ─────────────────────────────────────────────────────────────────
@@ -3503,6 +3613,8 @@ export function useMessaging() {
     handleEditMessage,
     /** Toggles a message's pinned state (optimistic local + pin/unpin MLS system event). */
     handleTogglePin,
+    /** Queues a conversation's `nickname` frame (`saveNickname`'s group send). */
+    sendNickname,
     /** Runs a refused reaction/edit/pin/delete again (the notice's Retry), with a fresh context. */
     retryRefusedControl,
     /** Sets the message to reply to (shown as a quote in the next send). */

@@ -48,7 +48,7 @@
    *
    * The space the bar covers is the PLUGIN's answer (`getTabBarInsets`), written to
    * `--bottom-nav-reserve`, which is what `.page-scroll-wrap` and `.mobile-nav-inset` reserve: the
-   * floating iOS 26 pill and the classic bar are not the web bar's `4rem`.
+   * floating iOS 26 pill and the classic bar are not the web bar's `--bottom-nav-height`.
    */
   interface Props {
     /**
@@ -202,7 +202,16 @@
     destroyed = true;
     void listener?.unregister();
     void statusBarListener?.unregister();
-    if (nativeTabBar.status === 'native') void removeTabBar().catch(logFailure('remove'));
+    if (nativeTabBar.status === 'native') {
+      // THE BAR IS GONE, SO THE FACT SAYS SO. `nativeTabBar` is module state and outlives this
+      // instance: left at `native`, the NEXT mount (sign-out to /login, then the sign-in's
+      // callback page) ran its show / hide, interaction and badge effects before its own
+      // `configure()` had answered, and the plugin refused each with "tab bar is not configured"
+      // (iPhone 12, 2026-11-08: six WARN lines at the auth callback, and a Swift NOTICE with them).
+      // Every effect already waits for `native`; it now waits for THIS mount's configuration.
+      nativeTabBar.status = 'pending';
+      void removeTabBar().catch(logFailure('remove'));
+    }
     document.documentElement.style.removeProperty('--bottom-nav-reserve');
   });
 

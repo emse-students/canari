@@ -12,6 +12,7 @@ import type { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialE
 import {
   PlatformConfig,
   type CallsMode,
+  type CheckpointSkipMode,
   type LivesMode,
   type PushMode,
 } from './entities/platform-config.entity';
@@ -33,6 +34,7 @@ export type PlatformConfigPublic = {
   callsMode: CallsMode;
   livesMode: LivesMode;
   pushMode: PushMode;
+  checkpointSkipMode: CheckpointSkipMode;
 };
 
 /**
@@ -64,6 +66,7 @@ const DEFAULT_ROW: PlatformConfig = {
   callsMode: 'off',
   livesMode: 'off',
   pushMode: 'full',
+  checkpointSkipMode: 'off',
 };
 
 /** Reads and updates the singleton platform configuration row in PostgreSQL. */
@@ -187,6 +190,16 @@ export class PlatformService implements OnModuleInit {
       }
       changes.pushMode = dto.pushMode;
     }
+    if (dto.checkpointSkipMode !== undefined) {
+      // How durable every client's MLS state is between two checkpoints turns on it, so who moved
+      // it, and when, is a warn line like the other switches.
+      if (dto.checkpointSkipMode !== row.checkpointSkipMode) {
+        this.logger.warn(
+          `checkpointSkipMode ${row.checkpointSkipMode} -> ${dto.checkpointSkipMode} by=${by}`
+        );
+      }
+      changes.checkpointSkipMode = dto.checkpointSkipMode;
+    }
 
     if (Object.keys(changes).length > 0) {
       const updated = await this.repo.update({ id: 1 }, changes);
@@ -200,7 +213,7 @@ export class PlatformService implements OnModuleInit {
     }
     const saved = await this.repo.findOneOrFail({ where: { id: 1 } });
     this.logger.debug(
-      `Platform config updated fields=${Object.keys(changes).join(',') || 'none'} maintenance=${saved.maintenanceEnabled} minClient=${saved.minClientVersion} paymentProvider=${saved.paymentProvider} callsMode=${saved.callsMode} livesMode=${saved.livesMode} pushMode=${saved.pushMode}`
+      `Platform config updated fields=${Object.keys(changes).join(',') || 'none'} maintenance=${saved.maintenanceEnabled} minClient=${saved.minClientVersion} paymentProvider=${saved.paymentProvider} callsMode=${saved.callsMode} livesMode=${saved.livesMode} pushMode=${saved.pushMode} checkpointSkipMode=${saved.checkpointSkipMode}`
     );
     if (dto.paymentProvider !== undefined) {
       if (dto.paymentProvider === 'disabled') {
@@ -291,5 +304,6 @@ function toPublic(row: PlatformConfig): PlatformConfigPublic {
     callsMode: row.callsMode,
     livesMode: row.livesMode,
     pushMode: row.pushMode,
+    checkpointSkipMode: row.checkpointSkipMode,
   };
 }

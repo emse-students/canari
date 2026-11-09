@@ -182,8 +182,8 @@ refused here: its `MANAGE_ASSO` creates through `POST /associations`, in its own
   during the search pause never mixes the old cursor with the new query. A cursor the server did not
   write is the typed `ADMIN_ASSOCIATION_BAD_CURSOR`, never a 500: a malformed shape, an id that is not
   a UUID, and a NUL are all refused this way. Each row carries its audience rules, which
-  replaced the whole-table `GET /api/associations/spaces/audiences` read (kept for old builds,
-  [legacy-compatibility](../../legacy-compatibility.md)).
+  replaced the whole-table `GET /api/associations/spaces/audiences` read (kept for old builds until
+  floor `1.6.6` retired it, [legacy-compatibility](../../legacy-compatibility.md#entries-166-retires-or-unblocks-the-owners-raise-of-2026-11-08)).
   Measured 2026-11-02, read-only: production holds 97 entities (49 associations, 44 lists, 4
   institutions; 49 of them already have no member), dev holds 10. The paging is there so that the
   count does not matter.
@@ -194,7 +194,13 @@ refused here: its `MANAGE_ASSO` creates through `POST /associations`, in its own
 - **The Dependencies panel** (`AdminDependenciesPanel.svelte`, `GET`/`PUT
   /api/associations/spaces/dependencies[/:id]`, reform 2.7): each BDE with the entities that depend on
   it, then the entities attached to a non-BDE (orphaned), those with no BDE, and the institutions,
-  apart; each mismatch of 2.5 beside its entity. A platform admin changes a parent, and a list's
+  apart; each mismatch of 2.5 beside its entity. **Layout (2026-11-07):** one line per entity (name,
+  type chip, quiet "shown under X" hint, `archived` tag when the name is greyed, action); a mismatch
+  is a small labelled warning icon (`aria-label` and `title` carry the sentence), and a BDE whose
+  children have `reaches_outside_parent` heads its list with one summary and a toggle narrowing the
+  family to them (a view filter only, no server call); children are split into Associations and
+  Lists. WP-D2 (#3115) changes governance to read the parent, not this mismatch's meaning: the
+  sentence stays a statement about the audience, no longer one about who governs. A platform admin changes a parent, and a list's
   display label (G3), here; the server journals it and refuses what the two-level rule forbids. The
   panel reads the axis again after every governor designation (`revision`). The arrangement is
   `groupDependencies` (`$lib/associations/dependencies.ts`), which puts every entity in exactly one

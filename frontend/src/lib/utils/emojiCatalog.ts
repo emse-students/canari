@@ -60,8 +60,13 @@ export interface EmojiEntry {
   emoji: string;
   annotation: string;
   category: EmojiCategory;
-  /** Folded search words: annotation, tags and shortcodes. */
-  words: string[];
+  /**
+   * Folded search words: annotation, tags and shortcodes. COMPUTED ON FIRST READ, once per entry:
+   * only a typed query reads it, and folding all ~1900 entries (NFD, ligatures, a split each) was
+   * ~85 % of `buildCatalog` - a ~60 ms task at 4x CPU that the composer's idle warm-up ran inside
+   * every first salon open, for a picker most opens never use.
+   */
+  readonly words: string[];
   /** Tone -> the skin-toned emoji, for the tones this entry has. */
   skins: Partial<Record<Exclude<SkinTone, 0>, string>>;
 }
@@ -92,13 +97,16 @@ export function buildCatalog(dataset: readonly DatasetEntry[]): EmojiEntry[] {
         skins[tone as Exclude<SkinTone, 0>] = skin.emoji;
       }
     }
+    let words: string[] | null = null;
     entries.push({
       emoji: raw.emoji,
       annotation: raw.annotation,
       category,
-      words: searchTokens(
-        [raw.annotation, ...(raw.tags ?? []), ...(raw.shortcodes ?? [])].join(' ')
-      ),
+      get words() {
+        return (words ??= searchTokens(
+          [raw.annotation, ...(raw.tags ?? []), ...(raw.shortcodes ?? [])].join(' ')
+        ));
+      },
       skins,
     });
   }

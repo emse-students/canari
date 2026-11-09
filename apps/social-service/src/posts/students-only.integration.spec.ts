@@ -231,6 +231,9 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
         "followedUserId" varchar(255) NOT NULL, status varchar(16) NOT NULL);
       CREATE TABLE user_moderation ("userId" varchar(255) PRIMARY KEY,
         "isMuted" boolean NOT NULL DEFAULT false);
+      -- The columns the agenda's link back reads: it joins the event, presented by its association.
+      CREATE TABLE association_calendar_events (id uuid PRIMARY KEY,
+        presentation varchar(16) NOT NULL DEFAULT 'association');
     `);
     // The bell's table as the estates hold it - its columns' types from the migrations (#3019's 500).
     await createPostNotificationsTable(q);
@@ -240,6 +243,8 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
       '073_republications.sql',
       '078_read_grants.sql',
       '121_member_reposts.sql',
+      // The bell re-reads a birthday notice against its date (`birthdayRowShownSql`).
+      '148_profile_birthdays.sql',
       '123_member_repost_notices.sql',
       '127_post_space_pins.sql',
       '132_read_grant_readers.sql',
@@ -283,6 +288,10 @@ maybe('"Entre étudiants" against PostgreSQL (migration 133)', () => {
     await q(
       `INSERT INTO user_follows ("followerUserId", "followedUserId", status) VALUES
          ('fo', 'rp', 'accepted'), ('f2', 'st', 'accepted')`
+    );
+    await q(
+      `INSERT INTO association_calendar_events (id, presentation) VALUES ($1, 'association')`,
+      [EVENT]
     );
     await q(
       `INSERT INTO posts (id, "authorId", "associationId", markdown, "linkedCalendarEventId")

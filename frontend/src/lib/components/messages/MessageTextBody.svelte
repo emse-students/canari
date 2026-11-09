@@ -40,7 +40,7 @@
   <p
     class="{jumbo
       ? 'text-3xl leading-tight'
-      : 'text-sm leading-relaxed'} wrap-anywhere whitespace-pre-wrap select-text {isDeleted
+      : 'text-sm leading-relaxed'} wrap-anywhere whitespace-pre-wrap select-text pointer-coarse:select-none pointer-coarse:[-webkit-touch-callout:none] {isDeleted
       ? 'italic opacity-60'
       : ''}"
   >
