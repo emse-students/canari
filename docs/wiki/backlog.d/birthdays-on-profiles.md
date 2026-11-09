@@ -12,7 +12,8 @@ Built 2026-11-09, everything owed at decision time included - the mechanism, eac
 2. The profile line "C'est son anniversaire aujourd'hui" seen by a non-follower whose visibility hides the date, with no date shown to them.
 3. The morning notice: one bell row and one push per follower who may see the date, on Android AND iOS (the native `social_birthday` texts in clear, the tap opening the profile), and never a second one after a restart of social-service.
 4. The category `Anniversaires` switched off: no push, the bell row still there.
-5. The prompt card on both phones for an account with no date: shown once, "Ajouter mon anniversaire" opens the section, never shown again on the other phone.
-6. One week after the stable: `SELECT visibility, count(*) FROM profile_birthdays GROUP BY 1` on production, to measure adoption and the default's share.
+5. The settings after a first save: the note that the date counts from tomorrow, then the date locked with the day it opens, and no ring on the day it was set (the review's rules, [birthdays](../birthdays.md#a-date-cannot-be-moved-to-buy-a-ring-or-a-notice-lead-decision-2026-11-09)).
+6. The prompt card on both phones for an account with no date: shown once, "Ajouter mon anniversaire" opens the section, never shown again on the other phone.
+7. One week after the stable: `SELECT visibility, count(*) FROM profile_birthdays GROUP BY 1` on production, to measure adoption and the default's share.
 
 29 February on the 28th is proven by the integration test only (no reading can wait for 2027-02-28).

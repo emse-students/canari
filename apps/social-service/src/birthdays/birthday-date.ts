@@ -59,10 +59,39 @@ export const PARIS_HOUR_SQL = `EXTRACT(HOUR FROM now() AT TIME ZONE '${BIRTHDAY_
  * SQL condition: a birthday stored as (`month`, `day`) is celebrated on the date expression `date`.
  * Its own day; and a 29 February on the 28th of a year whose February has no 29th (`make_date(y, 3,
  * 1) - 1` is the last day of that February).
+ *
+ * Each branch compares the COLUMNS to `smallint` expressions of `date` alone, so the
+ * `(month, day)` index can serve either branch (a `numeric` from a bare `EXTRACT` would cast the
+ * column instead and rule the index out). At a few hundred rows the planner may still prefer a scan.
  */
 export function celebratedOnSql(month: string, day: string, date: string): string {
-  return `((${month} = EXTRACT(MONTH FROM ${date}) AND ${day} = EXTRACT(DAY FROM ${date}))
-    OR (${month} = 2 AND ${day} = 29 AND EXTRACT(MONTH FROM ${date}) = 2
-      AND EXTRACT(DAY FROM ${date}) = 28
+  return `((${month} = EXTRACT(MONTH FROM ${date})::smallint
+      AND ${day} = EXTRACT(DAY FROM ${date})::smallint)
+    OR (${month} = 2::smallint AND ${day} = 29::smallint
+      AND EXTRACT(MONTH FROM ${date}) = 2 AND EXTRACT(DAY FROM ${date}) = 28
       AND EXTRACT(DAY FROM make_date(EXTRACT(YEAR FROM ${date})::int, 3, 1) - 1) = 28))`;
+}
+
+/**
+ * SQL condition: birthday row `b`'s date is IN EFFECT on the Paris date `date` - it was set before
+ * that day began. A date set or moved today is celebrated from its next occurrence, never today:
+ * moving it onto today cannot buy a ring or a notice (lead decision, 2026-11-09, docs/wiki/birthdays.md).
+ */
+export function dateInEffectSql(b: string, date: string): string {
+  return `(${b}."dateSetAt" AT TIME ZONE '${BIRTHDAY_TIME_ZONE}')::date < ${date}`;
+}
+
+/** At most one notice per member in this many days, whatever the date is moved to. */
+export const BIRTHDAY_NOTICE_EVERY_DAYS = 300;
+
+/** A date may be changed at most once in this many days; a clear then a set counts as a change. */
+export const BIRTHDAY_CHANGE_WINDOW_DAYS = 30;
+
+/**
+ * SQL condition: birthday row `b` may be announced on the Paris date `date` - never announced, or
+ * last announced at least {@link BIRTHDAY_NOTICE_EVERY_DAYS} days before. The notifier's claim.
+ */
+export function noticeOpenSql(b: string, date: string): string {
+  return `(${b}."lastAnnouncedOn" IS NULL
+    OR ${b}."lastAnnouncedOn" <= ${date} - ${BIRTHDAY_NOTICE_EVERY_DAYS})`;
 }

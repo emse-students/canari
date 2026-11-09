@@ -6,7 +6,15 @@ import { PostNotification } from '../posts/entities/post-notification.entity';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import { NOTIFICATIONS_TARGET } from '../push/push-target';
 import { acceptedFollowSql } from '../follows/follow-status';
-import { PARIS_HOUR_SQL, PARIS_TODAY_SQL, celebratedOnSql } from './birthday-date';
+import {
+  BIRTHDAY_CHANGE_WINDOW_DAYS,
+  BIRTHDAY_TIME_ZONE,
+  PARIS_HOUR_SQL,
+  PARIS_TODAY_SQL,
+  celebratedOnSql,
+  dateInEffectSql,
+  noticeOpenSql,
+} from './birthday-date';
 import { birthdayDateVisibleToSql } from './birthday-sql';
 import { BIRTHDAY_NOTIFICATION } from './birthday-notification';
 
@@ -35,6 +43,8 @@ export interface BirthdayNoticeTick {
   told: number;
   /** Celebrants whose claim failed - retried by the next tick, the claim never committed. */
   failed: number;
+  /** `birthday_changes` rows past their 30-day window, deleted by this tick. */
+  purged: number;
 }
 
 /**
@@ -47,11 +57,17 @@ export interface BirthdayNoticeTick {
  * nothing left, or catch up what a restart or a failed claim left over. A day that ends with the
  * service down announces nothing late: the notice says "today".
  *
- * IDEMPOTENT FROM STATE, NEVER FROM A CLOCK: a celebrant is announced by claiming their
- * `birthday_notices` row for the date in the SAME transaction that writes the followers' bell rows -
- * both commit or neither does. A second tick, a second replica or a retry finds the claim and does
- * nothing; a failure commits nothing and the next tick tries again. The push follows the commit,
- * best-effort like every push, and through the same mapping, bell and fan-out as every notice.
+ * IDEMPOTENT FROM STATE, NEVER FROM A CLOCK: a celebrant is announced by CLAIMING - a conditional
+ * `UPDATE profile_birthdays SET "lastAnnouncedOn" = today` that only a row never announced, or last
+ * announced `BIRTHDAY_NOTICE_EVERY_DAYS` days or more before, passes - in the SAME transaction
+ * that writes the followers' bell rows: both commit or neither does. A second tick or replica waits
+ * on the row lock, re-reads the row, and fails the condition; a failure commits nothing and the next
+ * tick tries again. The 300 days also make a MOVED date announce nothing twice in a year, and a date
+ * set today is not announced today (`dateInEffectSql`). The push follows the commit, best-effort
+ * like every push, through the same mapping, bell and fan-out as every notice.
+ *
+ * Each tick also deletes the `birthday_changes` rows whose 30-day window has closed: the only thing
+ * that row is for (`BirthdaysService.setMine`), so it is kept no longer.
  *
  * ONE JOB PER CELEBRANT, EACH CAUGHT AND LOGGED: one celebrant that fails never stops the others.
  */
@@ -88,7 +104,8 @@ export class BirthdayNotifier {
    */
   async announceDue(clock?: BirthdayClock): Promise<BirthdayNoticeTick> {
     const { today, hour } = clock ?? (await this.clock());
-    const tick: BirthdayNoticeTick = { today, due: 0, claimed: 0, told: 0, failed: 0 };
+    const tick: BirthdayNoticeTick = { today, due: 0, claimed: 0, told: 0, failed: 0, purged: 0 };
+    tick.purged = await this.purgeChanges(today);
     if (hour < BIRTHDAY_NOTICE_FROM_HOUR) {
       this.logger.debug(`${TAG} ${today} ${hour}h: before the morning, nothing to do`);
       return tick;
@@ -96,8 +113,8 @@ export class BirthdayNotifier {
     const due = (await this.ds.query(
       `SELECT b."userId" AS "userId" FROM profile_birthdays b
         WHERE ${celebratedOnSql('b.month', 'b.day', '$1::date')}
-          AND NOT EXISTS (SELECT 1 FROM birthday_notices n
-            WHERE n."userId" = b."userId" AND n."celebratedOn" = $1::date)
+          AND ${dateInEffectSql('b', '$1::date')}
+          AND ${noticeOpenSql('b', '$1::date')}
         ORDER BY b."userId"`,
       [today]
     )) as Array<{ userId: string }>;
@@ -127,6 +144,28 @@ export class BirthdayNotifier {
   }
 
   /**
+   * Deletes the `birthday_changes` rows whose window closed by `today` (Paris): they only ever
+   * refuse a new date within 30 days of the last one. Caught here, so a failed purge never stops the
+   * notices; the next tick retries it.
+   */
+  private async purgeChanges(today: string): Promise<number> {
+    try {
+      const [, purged] = (await this.ds.query(
+        `DELETE FROM birthday_changes
+          WHERE ("changedAt" AT TIME ZONE '${BIRTHDAY_TIME_ZONE}')::date + ${BIRTHDAY_CHANGE_WINDOW_DAYS} <= $1::date`,
+        [today]
+      )) as [unknown[], number];
+      if (purged > 0) this.logger.log(`${TAG} ${today} purged ${purged} closed change window(s)`);
+      return purged;
+    } catch (e) {
+      this.logger.error(
+        `${TAG} ${today} the change-window purge failed, retried next tick: ${String(e)}`
+      );
+      return 0;
+    }
+  }
+
+  /**
    * Claims `userId`'s notice for `today` and writes the bell rows of the followers who may read the
    * date, in ONE transaction, then pushes them. Answers how many were told, or `null` when the claim
    * was already taken (another tick or replica announced it).
@@ -134,11 +173,17 @@ export class BirthdayNotifier {
   private async announceOne(userId: string, today: string): Promise<number | null> {
     const actorName = await this.notifications.resolveActorName(userId);
     const recipients = await this.ds.transaction(async (m) => {
-      const claimed = (await m.query(
-        `INSERT INTO birthday_notices ("userId", "celebratedOn") VALUES ($1, $2::date)
-         ON CONFLICT DO NOTHING RETURNING "userId"`,
+      // The claim re-checks everything the due list read, on the row it locks: a date moved or
+      // cleared since, or a claim another tick committed, fails it.
+      const [claimed] = (await m.query(
+        `UPDATE profile_birthdays b SET "lastAnnouncedOn" = $2::date
+          WHERE b."userId" = $1
+            AND ${celebratedOnSql('b.month', 'b.day', '$2::date')}
+            AND ${dateInEffectSql('b', '$2::date')}
+            AND ${noticeOpenSql('b', '$2::date')}
+          RETURNING b."userId"`,
         [userId, today]
-      )) as unknown[];
+      )) as [unknown[], number];
       if (claimed.length === 0) return null;
       // The member's accepted followers whom the date's visibility admits - `nobody` reaches no one,
       // `school` and `followers` reach every accepted follower with no block and on the same side

@@ -3,7 +3,7 @@ import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import {
   BirthdaysService,
   type BirthdaysToday,
-  type OwnBirthday,
+  type OwnBirthdayState,
   type ViewedBirthday,
 } from './birthdays.service';
 
@@ -20,29 +20,27 @@ import {
 export class BirthdaysController {
   constructor(private readonly birthdays: BirthdaysService) {}
 
-  /** `{ birthday: { month, day, visibility } | null }`. */
+  /** `{ birthday: { month, day, visibility } | null, changeOpensOn: 'YYYY-MM-DD' | null }`. */
   @Get('me/birthday')
-  async mine(@Headers('x-user-id') userId: string): Promise<{ birthday: OwnBirthday | null }> {
-    return { birthday: await this.birthdays.mine(userId) };
+  mine(@Headers('x-user-id') userId: string): Promise<OwnBirthdayState> {
+    return this.birthdays.state(userId);
   }
 
   /**
    * `{ month, day, visibility? }` - 400 `BIRTHDAY_DATE_INVALID` for a date no calendar has, 400
-   * `PROFILE_FIELD_VISIBILITY_INVALID` for a visibility outside the three. Idempotent.
+   * `PROFILE_FIELD_VISIBILITY_INVALID` for a visibility outside the three, 409
+   * `BIRTHDAY_CHANGE_TOO_SOON` (with `opensOn`) for a new date within 30 days of the last one.
+   * Answers the state it leaves. Idempotent.
    */
   @Put('me/birthday')
-  async set(
-    @Headers('x-user-id') userId: string,
-    @Body() body: unknown
-  ): Promise<{ birthday: OwnBirthday }> {
-    return { birthday: await this.birthdays.setMine(userId, body) };
+  set(@Headers('x-user-id') userId: string, @Body() body: unknown): Promise<OwnBirthdayState> {
+    return this.birthdays.setMine(userId, body);
   }
 
-  /** Removes the caller's birthday. Idempotent. `{ birthday: null }`, the state it leaves. */
+  /** Removes the caller's birthday; always accepted, idempotent. Answers the state it leaves. */
   @Delete('me/birthday')
-  async clear(@Headers('x-user-id') userId: string): Promise<{ birthday: null }> {
-    await this.birthdays.clearMine(userId);
-    return { birthday: null };
+  clear(@Headers('x-user-id') userId: string): Promise<OwnBirthdayState> {
+    return this.birthdays.clearMine(userId);
   }
 
   /** `{ birthday: { month, day } | null, today }` as the caller may read it. */

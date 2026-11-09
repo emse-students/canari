@@ -46,3 +46,16 @@ export function birthdayMonthNames(locale: string): string[] {
   const format = new Intl.DateTimeFormat(locale, { month: 'long', timeZone: 'UTC' });
   return MONTH_LENGTH.map((_, index) => format.format(Date.UTC(2000, index, 1)));
 }
+
+/**
+ * A server calendar date (`YYYY-MM-DD`, a Paris date) as a reader's long date, "8 décembre 2026".
+ * Read and written in UTC so no device zone can shift it by a day.
+ */
+export function formatCalendarDate(isoDate: string, locale: string): string {
+  return new Date(`${isoDate}T00:00:00Z`).toLocaleDateString(locale, {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  formatCalendarDate,
   birthdayMonthNames,
   daysInBirthdayMonth,
   formatBirthday,
@@ -35,5 +36,10 @@ describe('birthday dates on the client', () => {
     expect(fr).toHaveLength(12);
     expect(fr[0]).toBe('janvier');
     expect(fr[11]).toBe('décembre');
+  });
+
+  it('writes the calendar date the server sent as is, whatever the device zone', () => {
+    expect(formatCalendarDate('2026-12-08', 'fr')).toBe('8 décembre 2026');
+    expect(formatCalendarDate('2027-01-01', 'en')).toBe('January 1, 2027');
   });
 });

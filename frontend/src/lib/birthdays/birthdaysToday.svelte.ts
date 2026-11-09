@@ -98,7 +98,7 @@ export class OwnBirthdayFact {
       this.#hasBirthday = null;
     }
     try {
-      const birthday = await fetchMyBirthday();
+      const { birthday } = await fetchMyBirthday();
       if (this.#account !== account) return;
       this.#hasBirthday = birthday !== null;
     } catch (e) {

@@ -25,7 +25,11 @@ import { AccountBellsService } from '../follows/account-bells.service';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
 import { REVIEW_COHORT_ENV } from '../review-cohort';
 import type { PushContent } from '../push/push-content';
-import { BIRTHDAY_BODY_INVALID, BirthdaysService } from './birthdays.service';
+import {
+  BIRTHDAY_BODY_INVALID,
+  BIRTHDAY_CHANGE_TOO_SOON,
+  BirthdaysService,
+} from './birthdays.service';
 import { BirthdayNotifier } from './birthday-notifier.scheduler';
 import { BIRTHDAY_NOTIFICATION } from './birthday-notification';
 import { BIRTHDAY_DATE_INVALID } from './birthday-date';
@@ -170,14 +174,39 @@ maybe('birthdays against PostgreSQL (migration 148)', () => {
     await admin.end();
   });
 
-  beforeEach(() => {
+  // Every case starts with no change window open and nobody announced: the 30-day and 300-day
+  // rules are proven by the cases that name them, and the others move dates freely.
+  beforeEach(async () => {
     pushed.length = 0;
+    await q(`DELETE FROM birthday_changes`);
+    await q(`UPDATE profile_birthdays SET "lastAnnouncedOn" = NULL`);
   });
+  /** `setMine` with the change window closed first - for the cases about something else. */
+  const setFree = async (user: string, body: Record<string, unknown>) => {
+    await q(`DELETE FROM birthday_changes WHERE "userId" = $1`, [user]);
+    return birthdays.setMine(user, body);
+  };
+  /** As if the date had been set before today began (Paris): it is in effect today. */
+  const setYesterday = (user = 'ann') =>
+    q(`UPDATE profile_birthdays SET "dateSetAt" = now() - interval '1 day' WHERE "userId" = $1`, [
+      user,
+    ]);
+  const parisToday = async () => {
+    const [{ m, d, today }] = (
+      await q(
+        `SELECT EXTRACT(MONTH FROM (now() AT TIME ZONE 'Europe/Paris')::date)::int AS m,
+                EXTRACT(DAY FROM (now() AT TIME ZONE 'Europe/Paris')::date)::int AS d,
+                to_char((now() AT TIME ZONE 'Europe/Paris')::date, 'YYYY-MM-DD') AS today`
+      )
+    ).rows as Array<{ m: number; d: number; today: string }>;
+    return { m, d, today };
+  };
 
   it('starts empty: no account has a birthday, so nobody has a ring or a notice', async () => {
     expect((await q(`SELECT count(*)::int AS n FROM profile_birthdays`)).rows[0].n).toBe(0);
     expect(await birthdays.mine('ann')).toBeNull();
     expect(await birthdays.ofUser('fol', 'ann')).toEqual({ birthday: null, today: false });
+    expect(await birthdays.state('ann')).toEqual({ birthday: null, changeOpensOn: null });
     expect((await birthdays.today('fol')).userIds).toEqual([]);
   });
 
@@ -203,13 +232,13 @@ maybe('birthdays against PostgreSQL (migration 148)', () => {
   });
 
   it('stores day and month with FOLLOWERS by default, and keeps the visibility on a date-only edit', async () => {
-    expect(await birthdays.setMine('ann', { month: 3, day: 14 })).toEqual({
+    expect((await setFree('ann', { month: 3, day: 14 })).birthday).toEqual({
       month: 3,
       day: 14,
       visibility: 'followers',
     });
     await birthdays.setMine('ann', { month: 3, day: 14, visibility: 'school' });
-    expect(await birthdays.setMine('ann', { month: 3, day: 15 })).toEqual({
+    expect((await setFree('ann', { month: 3, day: 15 })).birthday).toEqual({
       month: 3,
       day: 15,
       visibility: 'school',
@@ -222,12 +251,20 @@ maybe('birthdays against PostgreSQL (migration 148)', () => {
         [schema]
       )
     ).rows.map((r) => r.column_name as string);
-    expect(columns).toEqual(['day', 'month', 'updatedAt', 'userId', 'visibility']);
+    expect(columns).toEqual([
+      'dateSetAt',
+      'day',
+      'lastAnnouncedOn',
+      'month',
+      'updatedAt',
+      'userId',
+      'visibility',
+    ]);
   });
 
   it('shows the date to exactly the viewers its visibility names', async () => {
     const date = { month: 3, day: 15 };
-    await birthdays.setMine('ann', { ...date, visibility: 'school' });
+    await setFree('ann', { ...date, visibility: 'school' });
     expect(await dateSeenBy('ann')).toEqual(date);
     expect(await dateSeenBy('fol')).toEqual(date);
     expect(await dateSeenBy('pen')).toEqual(date);
@@ -251,13 +288,9 @@ maybe('birthdays against PostgreSQL (migration 148)', () => {
   });
 
   it('draws the ring for everybody on the day whatever the visibility, and on no other day', async () => {
-    const [{ m, d }] = (
-      await q(
-        `SELECT EXTRACT(MONTH FROM (now() AT TIME ZONE 'Europe/Paris')::date)::int AS m,
-                EXTRACT(DAY FROM (now() AT TIME ZONE 'Europe/Paris')::date)::int AS d`
-      )
-    ).rows as Array<{ m: number; d: number }>;
-    await birthdays.setMine('ann', { month: m, day: d, visibility: 'nobody' });
+    const { m, d } = await parisToday();
+    await setFree('ann', { month: m, day: d, visibility: 'nobody' });
+    await setYesterday();
     for (const viewer of ['ann', 'fol', 'pen', 'oth']) {
       expect(await birthdays.ofUser(viewer, 'ann')).toEqual({
         birthday: viewer === 'ann' ? { month: m, day: d } : null,
@@ -274,14 +307,14 @@ maybe('birthdays against PostgreSQL (migration 148)', () => {
     expect(today.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 
     // Another day: no ring. (A day that is never today: the 1st of next month or the 2nd.)
-    await birthdays.setMine('ann', { month: m, day: d === 1 ? 2 : 1 });
+    await setFree('ann', { month: m, day: d === 1 ? 2 : 1 });
+    await setYesterday();
     expect((await birthdays.ofUser('oth', 'ann')).today).toBe(false);
     expect((await birthdays.today('oth')).userIds).toEqual([]);
   });
 
   it('celebrates a 29 February on the 28th of a common year, and on the 29th of a leap year', async () => {
     await q(`DELETE FROM profile_birthdays`);
-    await q(`DELETE FROM birthday_notices`);
     await birthdays.setMine('leap', { month: 2, day: 29, visibility: 'followers' });
     // Shown as entered: the 29th.
     expect(await dateSeenBy('fol', 'leap')).toEqual({ month: 2, day: 29 });
@@ -298,15 +331,15 @@ maybe('birthdays against PostgreSQL (migration 148)', () => {
     expect(
       (
         await q(
-          `SELECT to_char("celebratedOn", 'YYYY-MM-DD') AS d FROM birthday_notices ORDER BY 1`
+          `SELECT to_char("lastAnnouncedOn", 'YYYY-MM-DD') AS d FROM profile_birthdays
+            WHERE "userId" = 'leap'`
         )
       ).rows.map((r) => r.d)
-    ).toEqual(['2027-02-28', '2028-02-29', '2100-02-28']);
+    ).toEqual(['2100-02-28']);
   });
 
   it('tells, from the morning, the accepted followers who may read the date - once per day', async () => {
     await q(`DELETE FROM profile_birthdays`);
-    await q(`DELETE FROM birthday_notices`);
     await q(`DELETE FROM post_notifications`);
     await birthdays.setMine('ann', { month: 6, day: 21, visibility: 'school' });
 
@@ -315,7 +348,13 @@ maybe('birthdays against PostgreSQL (migration 148)', () => {
       due: 0,
       claimed: 0,
     });
-    expect((await q(`SELECT count(*)::int AS n FROM birthday_notices`)).rows[0].n).toBe(0);
+    expect(
+      (
+        await q(
+          `SELECT count(*)::int AS n FROM profile_birthdays WHERE "lastAnnouncedOn" IS NOT NULL`
+        )
+      ).rows[0].n
+    ).toBe(0);
 
     const first = await notifier.announceDue({ today: '2027-06-21', hour: 8 });
     expect(first).toMatchObject({ due: 1, claimed: 1, told: 1, failed: 0 });
@@ -337,11 +376,10 @@ maybe('birthdays against PostgreSQL (migration 148)', () => {
     expect(await birthdayRows()).toEqual(['fol<ann']);
     expect(pushed).toEqual([]);
 
-    // Two racing ticks on a NEW day: one claim, one row, one push.
-    await birthdays.setMine('ann', { month: 6, day: 22 });
+    // Two racing ticks on the NEXT year's day: one claim, one row, one push.
     const race = await Promise.all([
-      notifier.announceDue({ today: '2027-06-22', hour: 10 }),
-      notifier.announceDue({ today: '2027-06-22', hour: 10 }),
+      notifier.announceDue({ today: '2028-06-21', hour: 10 }),
+      notifier.announceDue({ today: '2028-06-21', hour: 10 }),
     ]);
     expect(race[0].claimed + race[1].claimed).toBe(1);
     await flush();
@@ -350,9 +388,8 @@ maybe('birthdays against PostgreSQL (migration 148)', () => {
   });
 
   it('tells nobody when the date is hidden, and the bell is withheld by a bell on the person', async () => {
-    await q(`DELETE FROM birthday_notices`);
     await q(`DELETE FROM post_notifications`);
-    await birthdays.setMine('ann', { month: 7, day: 1, visibility: 'nobody' });
+    await setFree('ann', { month: 7, day: 1, visibility: 'nobody' });
     expect(await notifier.announceDue({ today: '2027-07-01', hour: 9 })).toMatchObject({
       claimed: 1,
       told: 0,
@@ -360,7 +397,8 @@ maybe('birthdays against PostgreSQL (migration 148)', () => {
     expect(await birthdayRows()).toEqual([]);
 
     // A follower who set ann's bell to "Rien": the row is written, the push is not.
-    await birthdays.setMine('ann', { month: 7, day: 2, visibility: 'followers' });
+    await setFree('ann', { month: 7, day: 2, visibility: 'followers' });
+    await q(`UPDATE profile_birthdays SET "lastAnnouncedOn" = NULL`);
     await q(
       `INSERT INTO account_bells ("userId", "targetKind", "targetId", level) VALUES ('fol', 'user', 'ann', 'none')`
     );
@@ -372,9 +410,8 @@ maybe('birthdays against PostgreSQL (migration 148)', () => {
   });
 
   it('keeps the bell row only while its reader may still read the date', async () => {
-    await q(`DELETE FROM birthday_notices`);
     await q(`DELETE FROM post_notifications`);
-    await birthdays.setMine('ann', { month: 8, day: 1, visibility: 'followers' });
+    await setFree('ann', { month: 8, day: 1, visibility: 'followers' });
     await notifier.announceDue({ today: '2027-08-01', hour: 9 });
     const bellOf = async (reader: string) =>
       (await notifications.bellPageQuery(reader, 30).getMany())
@@ -391,20 +428,98 @@ maybe('birthdays against PostgreSQL (migration 148)', () => {
   });
 
   it('the account erasure removes the date, its notices and the rows naming the member', async () => {
-    await birthdays.setMine('ann', { month: 9, day: 9 });
+    await setFree('ann', { month: 9, day: 9 });
+    expect((await birthdays.state('ann')).changeOpensOn).not.toBeNull();
     await notifier.announceDue({ today: '2027-09-09', hour: 9 });
+    expect((await birthdays.mine('ann'))?.month).toBe(9);
+    // A change row the erasure must reach (the tick above purged the one older than its day).
+    await q(`INSERT INTO birthday_changes ("userId") VALUES ('ann') ON CONFLICT DO NOTHING`);
     expect((await birthdays.mine('ann'))?.month).toBe(9);
     for (const statement of ERASURE_STATEMENTS) {
       if (
-        ['profile_birthdays', 'birthday_notices', 'post_notifications'].includes(statement.label)
+        ['profile_birthdays', 'birthday_changes', 'post_notifications'].includes(statement.label)
       ) {
         await q(statement.sql, ['ann']);
       }
     }
     expect(await birthdays.mine('ann')).toBeNull();
     expect(
-      (await q(`SELECT count(*)::int AS n FROM birthday_notices WHERE "userId" = 'ann'`)).rows[0].n
+      (await q(`SELECT count(*)::int AS n FROM birthday_changes WHERE "userId" = 'ann'`)).rows[0].n
     ).toBe(0);
     expect(await birthdayRows()).toEqual([]);
+  });
+
+  it('celebrates a date set or moved today from its next occurrence, never today', async () => {
+    await q(`DELETE FROM post_notifications`);
+    const { m, d, today } = await parisToday();
+    await setFree('ann', { month: m, day: d, visibility: 'school' });
+    // Set today: no ring for anybody, the member included, and no notice, all day.
+    expect((await birthdays.ofUser('oth', 'ann')).today).toBe(false);
+    expect((await birthdays.ofUser('ann', 'ann')).today).toBe(false);
+    expect((await birthdays.today('oth')).userIds).toEqual([]);
+    expect((await notifier.announceDue({ today, hour: 9 })).claimed).toBe(0);
+    expect(await birthdayRows()).toEqual([]);
+    // Once in effect, a visibility edit is not a new date: it never delays the day.
+    await setYesterday();
+    await birthdays.setMine('ann', { month: m, day: d, visibility: 'followers' });
+    expect((await birthdays.ofUser('oth', 'ann')).today).toBe(true);
+    expect((await notifier.announceDue({ today, hour: 9 })).claimed).toBe(1);
+  });
+
+  it('announces a member at most once in 300 days, wherever the date is moved', async () => {
+    await q(`DELETE FROM post_notifications`);
+    await setFree('ann', { month: 6, day: 10, visibility: 'followers' });
+    expect((await notifier.announceDue({ today: '2027-06-10', hour: 9 })).claimed).toBe(1);
+    // Moved to tomorrow after today's notice: tomorrow tells nobody...
+    await setFree('ann', { month: 6, day: 11 });
+    expect((await notifier.announceDue({ today: '2027-06-11', hour: 9 })).claimed).toBe(0);
+    // ...nor the 299th day after...
+    await setFree('ann', { month: 4, day: 4 });
+    expect((await notifier.announceDue({ today: '2028-04-04', hour: 9 })).claimed).toBe(0);
+    // ...and the 300th may be told again.
+    await setFree('ann', { month: 4, day: 5 });
+    expect((await notifier.announceDue({ today: '2028-04-05', hour: 9 })).claimed).toBe(1);
+    await flush();
+    expect(await birthdayRows()).toEqual(['fol<ann', 'fol<ann']);
+    // A clear takes the day it was announced with it: nothing about the date is left.
+    await birthdays.clearMine('ann');
+    expect(
+      (await q(`SELECT count(*)::int AS n FROM profile_birthdays WHERE "userId" = 'ann'`)).rows[0].n
+    ).toBe(0);
+  });
+
+  it('refuses a new date within 30 days of the last, a clear then a set included, never a visibility edit', async () => {
+    const { today } = await parisToday();
+    const first = await birthdays.setMine('ann', { month: 5, day: 5 });
+    expect(first.birthday).toEqual({ month: 5, day: 5, visibility: 'followers' });
+    const opensOn = first.changeOpensOn;
+    expect((await q(`SELECT to_char($1::date + 30, 'YYYY-MM-DD') AS d`, [today])).rows[0].d).toBe(
+      opensOn
+    );
+
+    expect(await refusalOf(birthdays.setMine('ann', { month: 5, day: 6 }))).toBe(
+      BIRTHDAY_CHANGE_TOO_SOON
+    );
+    // The same date, or another visibility, is no change.
+    expect(
+      (await birthdays.setMine('ann', { month: 5, day: 5, visibility: 'school' })).birthday
+    ).toEqual({ month: 5, day: 5, visibility: 'school' });
+    // A clear is always accepted, and a set after it is a change.
+    expect(await birthdays.clearMine('ann')).toEqual({ birthday: null, changeOpensOn: opensOn });
+    expect(await refusalOf(birthdays.setMine('ann', { month: 5, day: 5 }))).toBe(
+      BIRTHDAY_CHANGE_TOO_SOON
+    );
+    expect(await birthdays.mine('ann')).toBeNull();
+
+    // 30 Paris days later the window is open, and the hourly job has deleted the row.
+    await q(`UPDATE birthday_changes SET "changedAt" = now() - interval '31 days'`);
+    await q(
+      `INSERT INTO birthday_changes ("userId", "changedAt") VALUES ('oth', now() - interval '29 days')`
+    );
+    expect((await notifier.announceDue({ today, hour: 3 })).purged).toBe(1);
+    expect(
+      (await q(`SELECT "userId" FROM birthday_changes ORDER BY 1`)).rows.map((r) => r.userId)
+    ).toEqual(['oth']);
+    expect((await birthdays.setMine('ann', { month: 5, day: 6 })).birthday?.day).toBe(6);
   });
 });

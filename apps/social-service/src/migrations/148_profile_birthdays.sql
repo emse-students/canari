@@ -13,13 +13,18 @@
 --    celebrated on the 28th in a year without one (`birthdays/birthday-date.ts`). `visibility` is
 --    the shared profile-field rule (`birthdays/profile-field-visibility.ts`). No foreign key on
 --    "userId": `users` is core-service's table; the account erasure deletes the row.
--- 2. `birthday_notices`: the durable record that a member's birthday of ONE Paris calendar date was
---    announced. The notifier claims it (`INSERT ... ON CONFLICT DO NOTHING`) in the transaction that
---    writes the followers' notifications, so a re-run, a second replica or a restart within the day
---    announces nothing twice - idempotence from state, never from a clock.
+--    - "dateSetAt": when the DATE was last set (a visibility edit leaves it). A date takes effect
+--      from the NEXT Paris day: the ring and the notice need it set before today (decision of the
+--      lead, 2026-11-09 - a date moved onto today is never celebrated today).
+--    - "lastAnnouncedOn": the Paris date the followers were last told. It IS the notice's claim: the
+--      notifier's conditional UPDATE sets it in the transaction that writes the followers' bell rows,
+--      and refuses while it is within 300 days - so a re-run, a second replica or a restart announces
+--      nothing twice, and a moved date announces nothing twice in a year. Deleted with the row.
+-- 2. `birthday_changes`: when a member last set a date, and nothing else - not the date. A date
+--    changes at most once per 30 days, a clear then a set counting as a change; the row outlives a
+--    clear only for that window, and the notifier's hourly job deletes it after 30 days.
 --
--- The celebrants of a day are found by (month, day): a handful of rows a day out of a few hundred,
--- so the index is the whole read.
+-- The index serves the celebrants' read, `celebratedOnSql` comparing (month, day) as smallints.
 --
 -- ADDITIVE: two new tables and an index, no existing row read or changed - not held. Idempotent for
 -- CD: IF NOT EXISTS everywhere. LOCKS: none on an existing table; gives up after 5 s rather than queue.
@@ -34,6 +39,8 @@ CREATE TABLE IF NOT EXISTS profile_birthdays (
   day smallint NOT NULL CHECK (day BETWEEN 1 AND 31),
   visibility varchar(16) NOT NULL DEFAULT 'followers'
     CHECK (visibility IN ('school', 'followers', 'nobody')),
+  "dateSetAt" timestamptz NOT NULL DEFAULT now(),
+  "lastAnnouncedOn" date,
   "updatedAt" timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT "CHK_profile_birthdays_calendar" CHECK (
     day <= CASE WHEN month = 2 THEN 29 WHEN month IN (4, 6, 9, 11) THEN 30 ELSE 31 END
@@ -42,11 +49,9 @@ CREATE TABLE IF NOT EXISTS profile_birthdays (
 
 CREATE INDEX IF NOT EXISTS "IDX_profile_birthdays_month_day" ON profile_birthdays (month, day);
 
-CREATE TABLE IF NOT EXISTS birthday_notices (
-  "userId" varchar(255) NOT NULL,
-  "celebratedOn" date NOT NULL,
-  "createdAt" timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY ("userId", "celebratedOn")
+CREATE TABLE IF NOT EXISTS birthday_changes (
+  "userId" varchar(255) PRIMARY KEY,
+  "changedAt" timestamptz NOT NULL DEFAULT now()
 );
 
 COMMIT;

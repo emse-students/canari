@@ -74,9 +74,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // the erased account as a `user` target, and would otherwise outlive it.
   'account_bells.userId': { action: 'delete' },
   'account_bells.targetId': { action: 'delete' },
-  // The member's birthday and visibility (migration 148), and the record that it was announced.
+  // The member's birthday and visibility (migration 148), and when they last set a date.
   'profile_birthdays.userId': { action: 'delete' },
-  'birthday_notices.userId': { action: 'delete' },
+  'birthday_changes.userId': { action: 'delete' },
   'user_tags.userId': { action: 'delete' },
   'user_moderation.userId': { action: 'delete' },
   'form_respondents.userId': { action: 'delete' },
@@ -547,10 +547,11 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     label: 'account_bells',
     sql: `DELETE FROM account_bells WHERE "userId" = $1 OR "targetId" = $1`,
   },
-  // The birthday (migration 148): the date, its visibility, and the days it was announced. The
-  // followers' notices name the member as their actor and go with `post_notifications` below.
+  // The birthday (migration 148): the date, its visibility, the day it was last announced, and
+  // when a date was last set. The followers' notices name the member as their actor and go with
+  // `post_notifications` below.
   { label: 'profile_birthdays', sql: `DELETE FROM profile_birthdays WHERE "userId" = $1` },
-  { label: 'birthday_notices', sql: `DELETE FROM birthday_notices WHERE "userId" = $1` },
+  { label: 'birthday_changes', sql: `DELETE FROM birthday_changes WHERE "userId" = $1` },
   // Anonymised, in `ERASURE_TIER_ORDER` (checkouts, records, then the tags): the order a settlement
   // (checkout row, record, tag) and a closing (record, tag) take. An erasure that runs first is seen
   // by both: the settlement of an erased buyer's checkout records `paid_not_granted` and grants

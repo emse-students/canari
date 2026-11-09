@@ -34,6 +34,14 @@ export class ProfileBirthday {
   @Column({ type: 'varchar', length: 16, default: 'followers' })
   visibility: ProfileFieldVisibility;
 
+  /** When the DATE was last set; a date takes effect from the next Paris day (docs/wiki/birthdays.md). */
+  @Column({ type: 'timestamptz', default: () => 'now()' })
+  dateSetAt: Date;
+
+  /** The Paris date the followers were last told - the notice's claim, refused within 300 days. */
+  @Column({ type: 'date', nullable: true })
+  lastAnnouncedOn: string | null;
+
   @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt: Date;
 }

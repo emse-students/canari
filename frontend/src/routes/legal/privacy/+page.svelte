@@ -209,9 +209,13 @@
           membre qui peut voir votre profil, quel que soit ce choix ; la date elle-même n'est pas
           montrée à ceux qui ne peuvent pas la voir. Le matin du jour, vos abonnés acceptés qui
           peuvent voir la date reçoivent une notification (« C'est l'anniversaire de ... ») ; ils
-          peuvent couper cette catégorie dans leurs réglages de notifications. Le serveur garde,
-          pour chaque anniversaire annoncé, le jour où il l'a été, pour ne jamais prévenir deux
-          fois. Vous pouvez modifier ou retirer la date à tout moment depuis votre profil.
+          peuvent couper cette catégorie dans leurs réglages de notifications. Une date enregistrée
+          compte à partir du lendemain ; vos abonnés sont prévenus au plus une fois tous les 300
+          jours, et le serveur garde pour cela le dernier jour où ils l'ont été. Une nouvelle date
+          ne peut être enregistrée qu'une fois tous les 30 jours (la retirer puis la remettre compte
+          comme un changement) : le serveur garde à cette fin le moment où vous avez enregistré une
+          date, sans la date elle-même. Vous pouvez retirer la date à tout moment depuis votre
+          profil.
         </dd>
       </div>
       <div>
@@ -832,8 +836,10 @@
           <tr>
             <td>Anniversaire</td>
             <td>
-              La date : jusqu'à ce que vous la retiriez ou la suppression du compte ; le jour où un
-              anniversaire a été annoncé : jusqu'à la suppression du compte
+              La date, qui la voit et le dernier jour où vos abonnés ont été prévenus : jusqu'à ce
+              que vous la retiriez (aussitôt supprimés) ou la suppression du compte ; le moment où
+              une date a été enregistrée (sans la date) : 30 jours, ou jusqu'à la suppression du
+              compte
             </td>
           </tr>
           <tr>

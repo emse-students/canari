@@ -21,10 +21,13 @@ queue entry and the readings still owed are in
 
 Everything is in social-service, migration `148_profile_birthdays.sql`:
 
-- `profile_birthdays`: `userId` (PK), `month`, `day`, `visibility`, `updatedAt`. CHECKs refuse a
-  month outside 1..12 and a day the month cannot have (29 February is allowed, 30 February is not).
-- `birthday_notices`: `(userId, celebratedOn)` PK - the durable fact that this birthday was
-  announced on this Paris date.
+- `profile_birthdays`: `userId` (PK), `month`, `day`, `visibility`, `dateSetAt` (when the DATE was
+  last set - a visibility edit leaves it), `lastAnnouncedOn` (the Paris date the followers were last
+  told, the notice's claim), `updatedAt`. CHECKs refuse a month outside 1..12 and a day the month
+  cannot have (29 February is allowed, 30 February is not). "Retirer" deletes the row, and with it
+  everything about the date.
+- `birthday_changes`: `userId` (PK), `changedAt` - when a date was last set, never which. It outlives
+  a removal only for the 30-day change window, and the notifier's hourly job deletes it then.
 
 Social-service holds the follows, the bell (`account_bells`) and the notifications, so the visibility
 rule and the notice are one SQL statement each, with no cross-service call. **Core's profile DTO is
@@ -34,6 +37,30 @@ never shows a date its reader may no longer see.
 The migration is purely additive (two new tables and an index, `IF NOT EXISTS`, `lock_timeout`), so
 it is not held: `infrastructure/lib/migration-hold.sh` judges it plain. Every existing account starts
 with no row - the field is optional and empty.
+
+## A date cannot be moved to buy a ring or a notice (lead decision, 2026-11-09)
+
+The adversarial review of #3180 found that moving the date every day would give a school-wide ring
+and a push to every follower EVERY day. Three rules close it, each reversible by one constant or one
+condition:
+
+1. **A date counts from the NEXT Paris day.** The ring, the profile's "today" line and the notice all
+   require `dateSetAt` before today began (`dateInEffectSql`), the first date included: a member who
+   enters their birthday on the day itself is celebrated next year.
+2. **One notice per member per 300 days** (`BIRTHDAY_NOTICE_EVERY_DAYS`), wherever the date is
+   moved: the claim refuses while `lastAnnouncedOn` is closer than that. A date moved after its notice
+   tells nobody again within the 300 days; the ring still shows on the new day (rule 3 bounds that).
+3. **A NEW date at most once per 30 days** (`BIRTHDAY_CHANGE_WINDOW_DAYS`, counted in Paris dates).
+   The first date opens the window, and a removal then a new date counts as a change; a visibility
+   edit, or setting the same date again, is never one. The settings show the day the window opens
+   (`changeOpensOn` from `GET posts/me/birthday`) and lock the date until then, so the form never
+   learns it by a refusal; a second device racing the first meets `409 BIRTHDAY_CHANGE_TOO_SOON`
+   (with `opensOn`), shown as its own message. Removing the date is always accepted.
+
+Residue, accepted: a member who removes their date and enters a new one every 30 days gets a ring
+each time and, since a removal deletes `lastAnnouncedOn` with the date, a notice each time - at most
+one per 30 days. Keeping the last notice's day after a removal would close it, at the price of
+keeping a trace of the date after "Retirer", which the owner's rule on removal forbids.
 
 ## Who sees what
 
@@ -53,7 +80,9 @@ optional field reuses.
 The "today" answer carries no date. The ring list is `GET posts/birthdays/today` -> the Paris date
 and the ids of the members the viewer may see celebrating; the client holds it in memory only
 (`birthdaysToday.svelte.ts`), refreshes it on focus and visibility change, and drops it at sign-out.
-**The client never decides "today"**: the date comes from the database.
+**The client never decides "today"**: the date comes from the database. Refreshed on focus and
+visibility only: a tab left open in the foreground over midnight keeps yesterday's ring until it is
+next focused or shown.
 
 ## The day, and 29 February
 
@@ -67,17 +96,21 @@ leap year) in `birthdays.integration.spec.ts`.
 
 `BirthdayNotifier` (`birthday-notifier.scheduler.ts`) runs at minute 13 of every hour and does
 nothing before 08:00 Paris (`BIRTHDAY_NOTICE_FROM_HOUR`), so a restart catches up the same day. For
-each member celebrated today, in ONE transaction:
+each member celebrated today whose date is in effect, in ONE transaction:
 
-1. claim the day: `INSERT INTO birthday_notices ... ON CONFLICT DO NOTHING RETURNING` - **idempotence
-   is this row, never a clock**: a second tick, a second replica or a restart finds the claim and
-   tells nobody twice;
+1. claim the day: `UPDATE profile_birthdays SET "lastAnnouncedOn" = today WHERE ...` re-checking the
+   day, the date in effect and the 300 days on the row it locks - **idempotence is this column, never
+   a clock**: a second tick or replica waits on the row lock, re-reads it and fails the condition, so
+   nobody is told twice;
 2. read the recipients: accepted followers who may see the date (so `nobody` tells nobody);
 3. write their bell rows (`post_notifications`, type `birthday`, `postId` = the celebrant's id).
 
 After the commit, `PostNotificationsService.pushNotice` fans out the pushes (content key
 `social_birthday`, category `birthdays`). Each celebrant is its own `try`: one failure is logged and
-the batch goes on. A school-visibility member's non-follower sees the date but is not told - the
+the batch goes on. A push that fails after the commit is logged at error and not retried (a retry
+would be the duplicate the claim exists to prevent); **a crash between the commit and the push loses
+that push with no trace**, while the bell rows survive. Each tick also deletes the
+`birthday_changes` rows whose window has closed. A school-visibility member's non-follower sees the date but is not told - the
 notice is for followers (decision 4).
 
 - **The bell** (engagement L22): a bell on the celebrant at `lives` or `none` withholds the push; the
@@ -92,7 +125,10 @@ notice is for followers (decision 4).
 ## The entry point and the prompt card
 
 - **Profile > Anniversaire** (`profileSections.ts`, section `birthday`; `ProfileBirthdaySection.svelte`):
-  day and month selects, the three visibility choices with their consequence, save and remove.
+  day and month selects, the three visibility choices with their consequence, save and remove. It
+  says before the first save that a date counts from tomorrow and holds 30 days, and while the window
+  is open it locks the date and names the day it opens. The `nobody` choice says the truth: the date
+  is hidden and nobody is told, but the ring still shows on the day to everyone (decision 3).
 - **The prompt card** `prompt-birthday` (`guides/birthdayPrompt.ts`, built on the profile-photo
   prompt's engine): ONE card on the feed for an account with no birthday, seen once per ACCOUNT
   (`help_seen`). **Why a card**: the field is empty for every existing account, and the ring and the
@@ -102,8 +138,8 @@ notice is for followers (decision 4).
 
 ## Erasure
 
-`account-erasure.ts` deletes `profile_birthdays` and `birthday_notices` rows of the erased account;
-the coverage spec asserts both columns. The bell rows naming the member go with the existing
+`account-erasure.ts` deletes the `profile_birthdays` and `birthday_changes` rows of the erased
+account; the coverage spec asserts both columns. The bell rows naming the member go with the existing
 `post_notifications` statements.
 
 ## Proofs
@@ -111,9 +147,13 @@ the coverage spec asserts both columns. The bell rows naming the member go with 
 - `apps/social-service/src/birthdays/birthdays.integration.spec.ts` (PostgreSQL): the empty start,
   refused dates, the default visibility, the visibility matrix, the ring on the day only, 29
   February, the morning gate and idempotence, a hidden date telling nobody, the bell withholding,
-  the bell row following the visibility, erasure.
+  the bell row following the visibility, erasure; a date set today celebrated from its next
+  occurrence only; one notice in 300 days wherever the date moves; a new date refused within 30 days
+  (a removal then a set included) and the window purged.
 - `birthday-date.spec.ts`: the two parsers' typed refusals.
-- Frontend: `birthdayDate.test.ts`, `Avatar.birthday.svelte.test.ts` (the ring on initials and photo,
+- Frontend: `birthdayDate.test.ts`, `ProfileBirthdaySection.svelte.test.ts` (the note before the
+  first save, the date locked while the window is open, a refusal from another device),
+  `Avatar.birthday.svelte.test.ts` (the ring on initials and photo,
   nobody else's, gone at sign-out, never invented offline), `birthdayPrompt.test.ts`,
   `NotificationRow.svelte.test.ts`, `notificationTarget.test.ts`, and the native and category
   contract tests.

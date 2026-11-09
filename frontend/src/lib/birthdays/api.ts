@@ -49,30 +49,47 @@ export interface BirthdaysToday {
 /** The typed refusal of a date no calendar has. */
 export const BIRTHDAY_DATE_INVALID = 'BIRTHDAY_DATE_INVALID';
 
-/** The caller's own birthday, or `null` when they entered none. */
-export async function fetchMyBirthday(): Promise<OwnBirthday | null> {
-  const { birthday } = await socialRequest<{ birthday: OwnBirthday | null }>(
-    '/api/posts/me/birthday'
-  );
-  Log.d('birthdays', `own birthday read: ${birthday ? 'set' : 'none'}`);
-  return birthday;
+/**
+ * The typed refusal (409) of a NEW date within 30 days of the last one, a clear then a set
+ * included. The settings know it beforehand from {@link OwnBirthdayState.changeOpensOn}; the refusal
+ * is what a second device meets in a race.
+ */
+export const BIRTHDAY_CHANGE_TOO_SOON = 'BIRTHDAY_CHANGE_TOO_SOON';
+
+/** The member's own state: the date, and when a NEW date is accepted. */
+export interface OwnBirthdayState {
+  birthday: OwnBirthday | null;
+  /** `YYYY-MM-DD`, the first Paris date a new date is accepted; `null` when one is now. */
+  changeOpensOn: string | null;
 }
 
-/** Writes the caller's birthday and its visibility; answers what the server stored. */
-export async function saveMyBirthday(value: OwnBirthday): Promise<OwnBirthday> {
+/** The caller's own birthday and change window. */
+export async function fetchMyBirthday(): Promise<OwnBirthdayState> {
+  const state = await socialRequest<OwnBirthdayState>('/api/posts/me/birthday');
+  Log.d(
+    'birthdays',
+    `own birthday read: ${state.birthday ? 'set' : 'none'}, change opens ${state.changeOpensOn ?? 'now'}`
+  );
+  return state;
+}
+
+/**
+ * Writes the caller's birthday and its visibility; answers the state the server left. Refused
+ * {@link BIRTHDAY_CHANGE_TOO_SOON} for a new date inside the change window.
+ */
+export async function saveMyBirthday(value: OwnBirthday): Promise<OwnBirthdayState> {
   Log.d('birthdays', `saving own birthday, visibility=${value.visibility}`);
-  const { birthday } = await socialRequest<{ birthday: OwnBirthday }>('/api/posts/me/birthday', {
+  return socialRequest<OwnBirthdayState>('/api/posts/me/birthday', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(value),
   });
-  return birthday;
 }
 
-/** Removes the caller's birthday: no date, no ring, no notice. */
-export async function clearMyBirthday(): Promise<void> {
+/** Removes the caller's birthday: no date, no ring, no notice. Always accepted. */
+export async function clearMyBirthday(): Promise<OwnBirthdayState> {
   Log.d('birthdays', 'clearing own birthday');
-  await socialRequest<{ birthday: null }>('/api/posts/me/birthday', { method: 'DELETE' });
+  return socialRequest<OwnBirthdayState>('/api/posts/me/birthday', { method: 'DELETE' });
 }
 
 /** `userId`'s birthday as the reader may see it. */

@@ -5835,7 +5835,7 @@
   "profile_birthday_visibility_followers": "Mes abonnés",
   "profile_birthday_visibility_followers_hint": "Seulement les personnes dont vous avez accepté la demande. Elles sont prévenues le matin du jour J.",
   "profile_birthday_visibility_nobody": "Personne",
-  "profile_birthday_visibility_nobody_hint": "La date reste privée et personne n'est prévenu.",
+  "profile_birthday_visibility_nobody_hint": "La date est masquée sur votre profil et personne n'est prévenu. Le jour venu, le cercle festif autour de votre photo reste visible de tous.",
   "profile_birthday_ring_note": "Le jour de votre anniversaire, un cercle festif entoure votre photo partout dans l'application, pour tout le monde, quel que soit ce choix.",
   "profile_birthday_save": "Enregistrer",
   "profile_birthday_remove": "Retirer mon anniversaire",
@@ -5852,5 +5852,8 @@
   "guide_birthday_title": "Ajoutez votre anniversaire",
   "guide_birthday_body": "Le jour venu, votre photo s'entoure d'un cercle festif et vos abonnés sont prévenus. Seuls le jour et le mois sont demandés, et vous choisissez qui voit la date.",
   "guide_birthday_action": "Ajouter mon anniversaire",
-  "profile_public_default_name": "Membre Canari"
+  "profile_public_default_name": "Membre Canari",
+  "profile_birthday_takes_effect": "Une date enregistrée compte à partir de demain, et ne pourra plus être changée pendant 30 jours (la retirer puis la remettre compte comme un changement).",
+  "profile_birthday_change_opens": "Vous pourrez changer la date à partir du {date}. Vous pouvez toujours changer qui la voit, ou la retirer.",
+  "profile_birthday_change_too_soon": "La date a déjà été changée il y a moins de 30 jours."
 }

@@ -5835,7 +5835,7 @@
   "profile_birthday_visibility_followers": "My followers",
   "profile_birthday_visibility_followers_hint": "Only the people whose request you accepted. They are told on the morning of the day.",
   "profile_birthday_visibility_nobody": "Nobody",
-  "profile_birthday_visibility_nobody_hint": "The date stays private and nobody is told.",
+  "profile_birthday_visibility_nobody_hint": "The date is hidden on your profile and nobody is told. On the day, the festive ring around your photo is still shown to everyone.",
   "profile_birthday_ring_note": "On your birthday, a festive ring surrounds your photo everywhere in the app, for everyone, whatever you choose here.",
   "profile_birthday_save": "Save",
   "profile_birthday_remove": "Remove my birthday",
@@ -5852,5 +5852,8 @@
   "guide_birthday_title": "Add your birthday",
   "guide_birthday_body": "On the day, a festive ring surrounds your photo and your followers are told. Only the day and the month are asked, and you choose who sees the date.",
   "guide_birthday_action": "Add my birthday",
-  "profile_public_default_name": "Canari member"
+  "profile_public_default_name": "Canari member",
+  "profile_birthday_takes_effect": "A saved date counts from tomorrow, and cannot be changed again for 30 days (removing it and adding it back counts as a change).",
+  "profile_birthday_change_opens": "You can change the date from {date}. You can always change who sees it, or remove it.",
+  "profile_birthday_change_too_soon": "The date was already changed less than 30 days ago."
 }
