@@ -12,6 +12,7 @@ import { downloadDecryptedFile } from '$lib/utils/fileDownload';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { readApiJson } from '$lib/utils/apiJson';
 import { registerPerReaderCache, SharedCache } from '$lib/utils/sharedCache';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 // Type-only: `carte/publish` transitively imports this module, so a value import would cycle.
 import type { PublishedCarte } from '$lib/carte/publish';
 import type { PriceMatrix } from '$lib/pricing/priceMatrix';
@@ -1112,6 +1113,8 @@ export async function getMyBdeReach(): Promise<BdeReach> {
 let myAssociationsProbe: Promise<Association[]> | null = null;
 /** Whether the probe above ended in a failure (its list is then `[]`, which is NOT "belongs to nothing"). */
 let myAssociationsProbeFailed = false;
+/** The one-shot reconnect subscription that owes a failed probe its retry; null when none is owed. */
+let stopProbeReconnect: (() => void) | null = null;
 
 /**
  * Whether the membership probe FAILED: its `[]` then says nothing about what the reader belongs to.
@@ -1131,6 +1134,32 @@ registerPerReaderCache(() => {
 });
 
 /**
+ * Re-asks a FAILED membership probe, once, and does nothing when the last probe did not fail.
+ *
+ * A FAILURE IS A STATE, NOT AN ANSWER. Fail-closed is right for the moment (every BDE flag denied),
+ * but the `[]` it hands back must not outlive the cause: it stays held only so that callers do not
+ * each re-ask a server that just refused, and two EVENTS - never a clock - lift it: the
+ * connectivity reconnect ({@link ensureMyAssociations} arms it) and the next navigation (the root
+ * layout calls this from `beforeNavigate`). A retry that fails again is held and armed again; one
+ * in flight is shared by whoever asks meanwhile, because the failed state is already cleared.
+ */
+export async function retryFailedMyAssociationsProbe(): Promise<void> {
+  if (!myAssociationsProbeFailed) return;
+  console.info('[associations] membership probe failed earlier, asking again');
+  await ensureMyAssociations(true);
+}
+
+/** Arms the one reconnect that retries a failed probe; one subscription however many failures. */
+function owedProbeRetryOnReconnect(): void {
+  if (stopProbeReconnect) return;
+  stopProbeReconnect = connectivity.onReconnect(() => {
+    stopProbeReconnect?.();
+    stopProbeReconnect = null;
+    void retryFailedMyAssociationsProbe();
+  });
+}
+
+/**
  * Loads the caller's memberships once per session and publishes EVERY BDE-derived flag from that
  * one answer.
  *
@@ -1138,8 +1167,16 @@ registerPerReaderCache(() => {
  * admin layout wants the super-admin and the moderator tier in the same breath - and two caches
  * over the same endpoint would drift the moment one is force-refreshed and the other is not.
  *
- * A failure is a refusal of every flag, and it is logged: a silently empty membership list is
- * indistinguishable from a user who belongs to nothing, and would hide a control with no trace.
+ * A failure is a refusal of every flag, logged at WARN with the status, and it is a FAILED STATE
+ * ({@link didMyAssociationsProbeFail}) retried on the next reconnect or navigation
+ * ({@link retryFailedMyAssociationsProbe}); a silently empty membership list is indistinguishable
+ * from a user who belongs to nothing, and would hide a control with no trace.
+ *
+ * What each caller does with that `[]`: `ensureMayOpenAdmin` reads the three flags (all denied, so
+ * the admin shell stays shut until the retry); the three `ensure*` flag probes below return false;
+ * the dashboard draws no membership entries; the follow chip asks {@link didMyAssociationsProbeFail}
+ * and offers nothing it cannot tell is not the reader's own. A retry that succeeds publishes the
+ * flags through the same user-state setters, which the reactive callers read.
  */
 export async function ensureMyAssociations(force = false): Promise<Association[]> {
   if (force) invalidateMyAssociations();
@@ -1152,8 +1189,13 @@ export async function ensureMyAssociations(force = false): Promise<Association[]
         return assos;
       })
       .catch((err) => {
-        console.error('[associations] membership probe failed, every BDE flag denied', err);
+        const status = err instanceof ApiRefusalError ? err.status : 'no answer';
+        console.warn(
+          `[associations] membership probe failed (${status}), every BDE flag denied until the next reconnect or navigation`,
+          err
+        );
         myAssociationsProbeFailed = true;
+        owedProbeRetryOnReconnect();
         setAssociationSuperAdmin(false);
         setContentModerator(false);
         setEventValidator(false);

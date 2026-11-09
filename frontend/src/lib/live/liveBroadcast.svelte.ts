@@ -998,6 +998,7 @@ export class LiveBroadcast {
     this.#deliverEnd(liveId);
   }
 
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- an imperative dedupe guard, read only by `#deliverEnd`, never by a template or effect
   #endsInFlight = new Set<string>();
 
   /**
