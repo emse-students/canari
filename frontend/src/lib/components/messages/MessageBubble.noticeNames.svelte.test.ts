@@ -21,7 +21,7 @@ vi.mock('$lib/stores/user', () => ({
 
 import MessageBubble from './MessageBubble.svelte';
 import * as userStore from '$lib/stores/user';
-import { mkNoticeEnvelope, serializeEnvelope } from '$lib/envelope';
+import { mkNoticeEnvelope, serializeEnvelope, type NoticeSpec } from '$lib/envelope';
 import { noticeText } from '$lib/utils/chat/noticeText';
 import { seedUserDisplayName } from '$lib/utils/users/displayName';
 import { flushMacrotask } from '../../../test/flush';
@@ -38,7 +38,7 @@ describe('a notice row is redrawn when the member name arrives', () => {
       () => new Promise((r) => (release = r)) as never
     );
     // The stored sentence is the one a failed lookup baked in.
-    const spec = { event: 'memberAdded', actor: 'u-adder', targets: ['u-newcomer'] } as const;
+    const spec: NoticeSpec = { event: 'memberAdded', actor: 'u-adder', targets: ['u-newcomer'] };
     const stored = serializeEnvelope(
       mkNoticeEnvelope(
         noticeText(spec, () => 'Utilisateur inconnu'),
