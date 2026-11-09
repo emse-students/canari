@@ -210,6 +210,47 @@ conversation media panel:
 - **A surface that likes on double tap** (`doubleTapLike` on, `data-double-tap-likes`) makes the
   player's single tap wait for the double-tap window - so on a reel the like never flips the sound.
 
+## The feed and a conversation, on the kit (step D)
+
+`InlineVideo` is DELETED: the feed's and a conversation's inline video are `VideoPlayer` variants,
+so every video in the app but the live one (step E) is one component. The variant picks, once at
+mount, how the element takes turns - `feed` `playWhileVisible`, `chat` `arbitratePlayback`, a viewer
+`followVideoSound` - and nothing else differs in kind: the gestures, the glyph, the keyboard map, the
+poster and the unplayable notice are the same code.
+
+- **`feed`** (`PostMedia`, a post card, a reel card, a post page): plays muted while on screen and
+  loops, `#t=0.1` on a decrypted file (never on a stream), the blurred first-frame `backdrop` in the
+  contained bands. **The kit's speaker chip bottom-right, always drawn** (28 px glass in a 44 px
+  target), **the expand chip top-right** (`VideoExpandButton`, the caller's `openLabel`). No bar, no
+  play disc - it plays by being on screen, as Instagram's does. **A tap is the app's sound**,
+  remembered (`videoSound.setMuted`); inside a post card that likes on double tap it waits for the
+  window. **On a video on screen but PAUSED** (an autoplay the engine refused, the reader's own
+  pause) the tap gives the sound and then plays it - there is no disc to press. `f` opens the
+  viewer, the inline video's only full screen.
+- **A pause the reader makes on the feed stays made** (stack review, 2026-11-09). A hold, Space or
+  `k` calls `markReaderPaused` before `pause()`: the pause's own `pause` event made the arbiter
+  report idle, and `resumeVisible` replayed the video last come into view - the one just paused.
+  Until it plays again (the reader's play, a hold released) or LEAVES the screen, neither the idle
+  resume nor its intersection starts it (`VideoPlayer.inline.svelte.test.ts`, through the real
+  `playWhileVisible`).
+- **`chat`** (`MessageMediaRenderer`): played when asked, never looped, **its sound its own**
+  (`local`: audible from the start, neither reading nor writing the app's answer). **The glass play
+  disc** until it is started, and again on a pause or at its end; **the first tap plays it**, audible,
+  as the disc does, and **once started the tap is its sound**. Once started, **a pause/play chip
+  bottom-left, its speaker bottom-right and the `line` scrubber stay**. The expand chip (top-right)
+  opens the viewer, which resumes where it was (`videoResume`); on a phone **the message's actions
+  chip** (top-left, `onActions`, the bubble's sheet) sits opposite it - see the next bullet.
+- **What the expand chip changed**: the whole picture was the viewer's button
+  (`data-double-tap-defers`, the click held for the double-tap window). The picture's tap is now the
+  sound, which waits by itself where a like exists; the chip is a button and opens at once.
+- **A hold on a chat video pauses it and ONLY that** (owner, 2026-11-09): the bubble's long-press
+  action sheet does not open over the video, and stays reachable from the rest of the bubble.
+  `MessageBubble` reads the fact at the press - the target is inside a `[data-video-player]` - and
+  then arms no sheet timer and ignores the `contextmenu` a phone raises for a touch hold
+  (`MessageBubble.videoHold.svelte.test.ts`). **A bubble that is nothing but its video** has no
+  "rest" to hold, so the bubble hands the player `onActions` on a phone: the `...` chip opens the
+  same sheet (`msg_more_actions_label`). On a desktop the hover toolbar is the menu, as before.
+
 ## Where the migration stands
 
 | Step | Surface | State |
@@ -217,5 +258,5 @@ conversation media panel:
 | A | tokens, fallback, the kit, the gestures, the remembered sound | built |
 | B | lightbox (`VideoPlayer` full mode) on the kit; the measurement protocol | built - readings owed ([the glass budget](#the-glass-budget)) |
 | C | CanaReels (`variant="reel"`): tap = sound, hold = pause, the rail's speaker is the kit's | built - readings owed (a reel tap, a hold, a double-tap like on both phones) |
-| D | feed and chat (`InlineVideo`, deleted) | next |
-| E | the live viewer | |
+| D | feed (`variant="feed"`) and chat (`variant="chat"`); `InlineVideo` deleted | built - readings owed (a feed tap and the expand chip, a chat disc, a hold that opens no sheet) |
+| E | the live viewer | next |

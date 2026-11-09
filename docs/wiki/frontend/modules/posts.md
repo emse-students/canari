@@ -261,11 +261,11 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   frame at the clip's own ratio, never cropped - user, 2026-10-22, a portrait clip past the
   `--media-max-height` ceiling used to lose its top and bottom). The bands the ceiling leaves on the
   sides are a blurred copy of the clip's own first frame, the picture post's backdrop
-  (`BlurredBackdrop`): `InlineVideo` draws the frame it already decoded ONCE into a 48 px canvas
+  (`BlurredBackdrop`): the feed's player (`VideoPlayer variant="feed"`, `backdrop`) draws the frame it already decoded ONCE into a 48 px canvas
   (`captureVideoFrame`) - no second `<video>`, no second stream, one `drawImage` and a few hundred
   bytes - and until it exists the box is the neutral `bg-cn-surface` under the usual poster. A reel
   goes through the SAME box (`singleMedia`), with a 9:16 fallback when it carries no dimensions. The
-  square gallery cell still crops (`videoFit="cover"`, its shape being the point). It plays muted on its own (`InlineVideo`, rule in
+  square gallery cell still crops (`videoFit="cover"`, its shape being the point). It plays muted on its own (`VideoPlayer` `feed`, rule in
   [durable-rules](../../durable-rules.md#ui-and-i18n---frontendarchitecture-auth-native-prompts)).
   The download lives in the viewer. A video posted before this carries no dimensions and keeps the
   4:3 box, contained the same way. Measured on the Mi 9T: a 1080 x 2340 clip in a 402 x 567 box,
@@ -1302,23 +1302,26 @@ client wrote: those are `other`, and their cached bytes are kept, since an updat
 
 The viewers handed a clip to `<video controls>`, which is the ENGINE's bar: Android's grey strip
 with its own "plein ecran" pill and download button on the Mi 9T, another one on iOS, neither themed
-nor sized to a 44 px target. Two components now carry every video the app shows.
+nor sized to a 44 px target. ONE component now carries every video the app shows (owner, 2026-11-09:
+`InlineVideo` was folded into `VideoPlayer` as its `feed` and `chat` variants and deleted).
 
 | Where | Component | What it is |
 | --- | --- | --- |
-| Feed card | `InlineVideo` | Instagram-style: muted autoplay while on screen, one sound button, a tap opens the viewer |
-| Chat bubble | `InlineVideo manualPlay` | Discord-style: a play button, no autoplay (see below) |
+| Feed card | `VideoPlayer variant="feed"` | Instagram-style: muted autoplay while on screen, the kit's speaker chip, a tap is the sound, the expand chip opens the viewer |
+| Chat bubble | `VideoPlayer variant="chat"` | Discord-style: the glass play disc, no autoplay, its own sound (see below) |
 | Single-media viewer, gallery viewer, chat viewer, conversation media panel | `VideoPlayer` | The full player |
 
 - **A conversation's video plays when asked, not when scrolled to** (user, 2026-10-02, *"comme sur
-  Discord"*): `InlineVideo`'s `manualPlay` mode. It shows its first frame with an amber **play
-  button**; **the button starts the video where it is, with sound of its own**;
-  **a tap on the rest of it opens the viewer, whose player starts it too**. No `playWhileVisible`, no
+  Discord"*): `VideoPlayer variant="chat"`. It shows its first frame with the glass **play
+  disc**; **the disc starts the video where it is, with sound of its own**;
+  **the expand chip opens the viewer, whose player starts it too** (a tap on the picture used to;
+  since 2026-11-09 it is this video's own sound, and a press held pauses it). No `playWhileVisible`, no
   loop (it stops on its last frame and offers play again).
   **A conversation has NO app-wide sound button, and its videos never touch `videoSound`** (user,
   2026-10-02: *"le bouton mute ne devrait pas apparaitre dans les conversations ... quand on appuie,
   TOUS les boutons de la page changent"* - the feed's rule, one answer for every video, is right for
-  the feed and was wrong where each video is its own). The manual `InlineVideo` is audible from the
+  the feed and was wrong where each video is its own). Its speaker, drawn once it has started, mutes
+  that one video. The `chat` player is audible from the
   start (`muted = false`), neither reads nor writes the app-wide answer - so a feed that autoplays
   muted cannot open a conversation video silent - and the chat viewer and the conversation media
   panel mount `VideoPlayer soundScope="local"`: it opens audible and its bar button mutes that one
@@ -1332,7 +1335,7 @@ nor sized to a 44 px target. Two components now carry every video the app shows.
   and unregisters on destroy, and CLAIMS on its own `play` event, so a button, a native control and a
   programmatic `play()` claim alike. Every other media playing is PAUSED, not reset: it keeps its
   position, its own `pause` handler shows "play" again, no `ended`. Players: conversation video
-  (`InlineVideo manualPlay`), voice note (`VoiceMessagePlayer`), audio attachment (`PostMedia`), feed
+  (`VideoPlayer` `chat`), voice note (`VoiceMessagePlayer`), audio attachment (`PostMedia`), feed
   video (`playWhileVisible`), the viewers (`VideoPlayer`, reels included). Not registered, so untouched:
   notification sounds, a call's streams, silent previews (`SharedMediaThumb`, `PickedMediaPreview`,
   the reel publish sheet's muted loop), the camera preview.
@@ -1350,7 +1353,8 @@ nor sized to a 44 px target. Two components now carry every video the app shows.
   devrait reprendre la ou elle en est, pas au debut"*). The inline video and the viewer's player are
   two `<video>` elements, so the viewer started at 0. Several places open the viewer from an inline
   video (a chat bubble, a post, a post's gallery, a reel), so the position is not a prop threaded through
-  each: `InlineVideo` writes `currentTime` to `utils/videoResume.ts` as the reader opens it, keyed by
+  each: the inline `VideoPlayer` (`feed`, `chat`) writes `currentTime` to `utils/videoResume.ts` as
+  the reader opens it from the expand chip, keyed by
   the media URL (both are handed the same decrypted blob URL), and `VideoPlayer` TAKES it when it
   mounts and seeks once on `loadedmetadata`, when there is a duration to seek in. **Taken, not read**:
   once the viewer has it, it is gone, so opening the same file later from somewhere that never played
@@ -1401,15 +1405,15 @@ nor sized to a 44 px target. Two components now carry every video the app shows.
   for its taps, not exercised with fingers.
 - **No native poster, ever.** `poster` stays `TRANSPARENT_VIDEO_POSTER` (the WebView's grey play
   button), and `VideoPoster` - Canari's ink-to-scrim gradient and an amber play disc - covers the box
-  until `loadeddata` says the first frame is in the element. `InlineVideo` does the same, and the
+  until `loadeddata` says the first frame is in the element. The inline variants do the same, and the
   card's loading box IS that poster rather than a flat black one.
-- **A streamed `src` reaches the element untouched.** `VideoPlayer` never appends to a URL, and
-  `InlineVideo` keeps its `streamed` prop: `#t=0.1` only on a decrypted file, never on an MSE URL.
+- **A streamed `src` reaches the element untouched.** `VideoPlayer` appends `#t=0.1` only for an
+  inline variant on a decrypted file (`streamed` off): never on an MSE URL, never in a viewer.
   A viewer opened while the card is still STREAMING has no `blobUrl` yet (an MSE URL feeds one
   element) and shows the poster until the last segment fills it.
-- **A chat video is an `InlineVideo` now**, like the feed's, instead of a `<video controls>` in the
+- **A chat video is the shared `VideoPlayer` (`chat`) now**, like the feed's, instead of a `<video controls>` in the
   bubble; the bubble's viewer is `VideoPlayer`.
-- **Every video LOOPS, like Instagram's** (user, 2026-10-01): `InlineVideo` has `loop`, and
+- **Every video LOOPS, like Instagram's** (user, 2026-10-01): the `feed` variant loops (a conversation's does not), and
   `VideoPlayer`'s `loop` prop defaults to true. A looping element never fires `ended` and never
   pauses, so nothing in the bar can stick at the end: the time reads from 0 again on the next
   `timeupdate` and the fade keeps running. Both are pinned by tests.
@@ -1864,8 +1868,10 @@ the same fix; the media viewer already used `timeStamp`. `doubleTapLike.test.ts`
   click goes on to its target at once. On text it does nothing; on a reel it toggles the player's
   controls, and the second toggles them back - the pair cancels itself, so nothing needs to wait.
 - **On a media that OPENS A VIEWER the single tap IS held**, because no second tap can take back a
-  full-screen viewer: a picture (`PostMedia`'s image button), a feed video and a reel card
-  (`InlineVideo`'s open button), the gallery's "+N" cell carry `data-double-tap-defers`. Their click
+  full-screen viewer: a picture (`PostMedia`'s image button) and the gallery's "+N" cell carry
+  `data-double-tap-defers`. A feed video and a reel card no longer do (2026-11-09): their picture's
+  tap is the sound, which waits for the window itself (`videoGestures`, `data-double-tap-likes`), and
+  the viewer is the expand chip's, a button that acts at once. Their click
   is stopped in capture and replayed (`element.click()`) once the window has passed with no second
   tap; a double spends it on the like. **That wait is `createTapDisambiguator`'s one timer and its
   stated reason: whether a second tap will come is not a fact any event carries before it comes.**
