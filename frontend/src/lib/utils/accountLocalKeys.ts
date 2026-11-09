@@ -76,6 +76,11 @@ export const ACCOUNT_KEY = {
    */
   historyHeldNothing: (userId: string) => `canari_graine_history_held_nothing:v1:${userId}`,
   /**
+   * `chat/joinPush.ts`: the Welcomes this device has already sent its join push for - group, device
+   * and a fingerprint of the Welcome's bytes, a bounded FIFO.
+   */
+  joinPushesSent: (userId: string) => `mls_join_pushes_sent:v1:${userId}`,
+  /**
    * `graine/admissionGate.ts`: what this device recorded by itself about who is admitted - per
    * community the roots and the admissions it verified. Other members' ids, written by this
    * account's device.
@@ -234,6 +239,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.postComposerDraft(userId),
     ACCOUNT_KEY.workspaceSnapshot(userId),
     ACCOUNT_KEY.historyHeldNothing(userId),
+    ACCOUNT_KEY.joinPushesSent(userId),
     ACCOUNT_KEY.admissionLedger(userId),
     ACCOUNT_KEY.historyClosedSeen(userId),
     ACCOUNT_KEY.pagedHistoryAnswer(userId),

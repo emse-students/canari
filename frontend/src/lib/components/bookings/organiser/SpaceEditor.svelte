@@ -23,7 +23,12 @@
     type ManagedSpace,
     type SlotMode,
   } from '$lib/bookings/api';
-  import { DEFAULT_SLOT_MINUTES, durationChoices, SLOT_LENGTH_CHOICES } from '$lib/bookings/wizard';
+  import {
+    DEFAULT_SLOT_MINUTES,
+    durationChoices,
+    durationLabel,
+    SLOT_LENGTH_CHOICES,
+  } from '$lib/bookings/wizard';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { strandedIdsOf } from '$lib/bookings/stranded';
   import { columnsHidden } from '$lib/bookings/columns';
@@ -111,6 +116,12 @@
       : undefined
   );
   const zones = $derived(timeZoneChoices(draft.timeZone));
+  /** The longest single booking as words, null while the field is empty (no limit) or invalid. */
+  const longestBooking = $derived(
+    /^\d+$/.test(draft.maxMinutes.trim()) && Number(draft.maxMinutes) > 0
+      ? Number(draft.maxMinutes)
+      : null
+  );
   /** The step the availability editor offers times on: the SAVED one, which the server reads. */
   const savedStep = $derived(space.slotMode === 'step' ? space.stepMinutes : null);
   /** The slot length a painted slot opens: the SAVED one too, null when none is stored. */
@@ -146,10 +157,11 @@
     }
   }
 
-  function problemOf(field: NumberField | 'name'): string | undefined {
+  function problemOf(field: NumberField | 'name' | 'maxMinutes'): string | undefined {
     const p = problems[field];
     if (!p) return undefined;
     if (p === 'required' || field === 'name') return m.bookings_problem_required();
+    if (field === 'maxMinutes') return m.bookings_problem_max_minutes();
     return m.bookings_problem_range(NUMBER_BOUNDS[field as NumberField]);
   }
 
@@ -344,13 +356,6 @@
         inputmode="numeric"
         bind:value={draft.stepMinutes}
         error={problemOf('stepMinutes')}
-      />
-      <Input
-        id="space-max-steps"
-        label={m.bookings_field_max_steps()}
-        inputmode="numeric"
-        bind:value={draft.maxSteps}
-        error={problemOf('maxSteps')}
       />
     </div>
   {/if}
@@ -568,6 +573,28 @@
       />
     </div>
   </div>
+  {#if draft.slotMode === 'step'}
+    <div>
+      <Input
+        id="space-max-minutes"
+        label={m.bookings_field_max_minutes()}
+        inputmode="numeric"
+        placeholder={m.bookings_field_max_minutes_none()}
+        bind:value={draft.maxMinutes}
+        error={problemOf('maxMinutes')}
+      />
+      <p class={CONTROL_HINT_CLASS}>
+        {m.bookings_field_max_minutes_hint({ step: draft.stepMinutes.trim() })}
+        {#if longestBooking !== null}
+          <strong
+            >{m.bookings_field_max_minutes_result({
+              duration: durationLabel(longestBooking),
+            })}</strong
+          >
+        {/if}
+      </p>
+    </div>
+  {/if}
   <p class={CONTROL_HINT_CLASS}>{m.bookings_field_empty_hint()}</p>
   <div>
     <Input
