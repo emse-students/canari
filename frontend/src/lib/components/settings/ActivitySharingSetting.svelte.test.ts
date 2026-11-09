@@ -32,7 +32,12 @@ async function render() {
   await settle();
 }
 
-const switchEl = () => document.querySelector<HTMLButtonElement>('[role="switch"]');
+const switchEl = () =>
+  document.querySelector<HTMLInputElement>(
+    '[data-activity-sharing-setting] input[type="checkbox"]'
+  );
+/** What the switch draws: the checkbox's own state. */
+const drawn = () => String(switchEl()?.checked);
 
 beforeEach(() => vi.clearAllMocks());
 afterEach(() => {
@@ -45,7 +50,7 @@ describe('ActivitySharingSetting', () => {
   it('draws nothing until the server answered, then its answer', async () => {
     api.getActivitySettings.mockResolvedValue({ shareActivity: true });
     await render();
-    expect(switchEl()?.getAttribute('aria-checked')).toBe('true');
+    expect(drawn()).toBe('true');
     expect(document.body.textContent).toContain(m.settings_share_activity());
   });
 
@@ -56,7 +61,7 @@ describe('ActivitySharingSetting', () => {
     switchEl()!.click();
     await settle();
     expect(api.setActivitySettings).toHaveBeenCalledWith(false);
-    expect(switchEl()?.getAttribute('aria-checked')).toBe('false');
+    expect(drawn()).toBe('false');
   });
 
   it('keeps the old state and says so when the write fails', async () => {
@@ -65,7 +70,7 @@ describe('ActivitySharingSetting', () => {
     await render();
     switchEl()!.click();
     await settle();
-    expect(switchEl()?.getAttribute('aria-checked')).toBe('false');
+    expect(drawn()).toBe('false');
     expect(toast.showToast).toHaveBeenCalledWith(m.settings_share_activity_error(), 'error');
   });
 });
