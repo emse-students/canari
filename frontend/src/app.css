@@ -72,6 +72,9 @@
      next one somebody writes. `banner` is the neutral strip (connectivity, synchronisation),
      `banner-warn` the one carrying a caution. Both are `color-mix` of two OPAQUE colours, which is
      what keeps them opaque - do not reintroduce an alpha modifier on top of them. */
+  /* ONE HEIGHT FOR EVERY BANNER STRIP (owner, 2026-11-09): one line, 32px, 24px for the deployment marker. */
+  --banner-height: 2rem;
+  --banner-height-thin: 1.5rem;
   --color-banner: var(--banner-bg);
   --color-banner-warn: var(--banner-warn-bg);
   /* The three STRONG variants, fixed in both themes for the same reason as `cn-scrim`: they carry
@@ -1208,6 +1211,28 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
  * its own and no call site has to shout.
  */
 @layer components {
+  /* A control inside a banner strip: drawn 24px so the strip stays 32px, but its hit area is padded
+     out to 44px tall by a pseudo-element, so the touch target does not shrink with the strip. */
+  .banner-action {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    height: 1.5rem;
+    min-width: 1.5rem;
+    border-radius: var(--radius-lg);
+    padding-inline: 0.5rem;
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .banner-action::before {
+    content: '';
+    position: absolute;
+    inset: -0.625rem -0.25rem;
+  }
+
   .ui-icon-button {
     display: inline-flex;
     flex-shrink: 0;

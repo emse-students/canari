@@ -11,8 +11,8 @@
 <!-- No placement of its own: `+layout.svelte` stacks the window-scale banners in one fixed column,
      so two of them showing at once queue up instead of one hiding the other. -->
 <Banner variant="notice" center class="font-bold">
-  <TriangleAlert size={14} aria-hidden="true" />
-  <span>
+  <TriangleAlert size={14} class="shrink-0" aria-hidden="true" />
+  <span class="truncate">
     {m.admin_maintenance_banner_text()}
     {#if message}
       {message}
