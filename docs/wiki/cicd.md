@@ -31,6 +31,7 @@ was written, the migration 082 spec turned out to have failed on EVERY run since
 The job runs them in band against production's PostgreSQL, pinned by the digest the compose files
 carry, and its last step FAILS unless jest ran as many suites as there are files on disk and skipped
 none: a jest run that selects nothing is no longer a pass (the `test` scripts lost `--passWithNoTests` in WP-T2), but a gate that selects by name still needs its own count of what ran.
+**PARALLEL LOCAL RUNS OF THE INTEGRATION SPECS ARE SAFE SINCE 2026-11-09** (`jest-global-setup.cjs`). One database serves every spec, and the specs are isolated by schema only - but an extension is database-wide: TypeORM's `CREATE EXTENSION IF NOT EXISTS "btree_gist"` (any DataSource whose entities include `Booking`) and `"uuid-ossp"` carry no SCHEMA, so on a database without them they landed in the FIRST schema of the spec's `search_path`, and that spec's `DROP SCHEMA ... CASCADE` took `bookings_live_no_overlap` and the UUID defaults out of every sibling spec's schema (measured with 3 workers: overlapping bookings both succeeded, 1 run in 11). CI's `--runInBand` order hid it. A jest `globalSetup` now creates both in `public` once, as production has them (migration 087); production is not affected.
 **Every integration spec has a 60 s budget per test and hook, set once** by
 `apps/social-service/jest-integration-budget.cjs` (selected by the same file name), not jest's 5 s:
 a spec builds its schema in `beforeAll` on a server that may have just started, and on a fresh
