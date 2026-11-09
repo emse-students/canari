@@ -155,6 +155,33 @@ selector, and every platform draws them as emoji regardless. The list is now the
 with a real typographic life (`#`, `*`, `0`-`9`, `©`, `®`, `™`), fixed in `emojiSvg.ts`; the computed
 list and its code in `tools/emoji-svg/build.mjs` are gone.
 
+### The picker paints at once - 2026-11-08
+
+Reported on the iPhone app: opening the picker, many cells of the first category were blank for a
+moment, others appeared small and grew, the recents row showed empty tiles, and the tab bar showed one
+stray emoji and no icons until loaded. **Cause, read from the code** (the device itself was not
+available, so the cause is the combination, not one measured frame): every cell was `loading="lazy"`
+and `decoding="async"` (the first frames are drawn before the decode lands), the pictures were fetched
+only on the tap that opened the picker (cold: ~70 SVGs in a burst on a phone's link), the tab icons and
+recents were plain `EmojiText` images with the `alt` glyph painted in their box while pending (the
+"stray emoji" and the small-then-big look: a text-size glyph replaced by the picture), and the cells'
+size came from a class only. nginx was already right (`/emoji/` is `immutable`, one year), so a second
+open is warm; the defect is the first open of a session.
+
+**Fix, at the cause, no timer and no placeholder**: the cells carry `width`/`height`; the first screen
+(`FIRST_SCREEN_EMOJI_COUNT` = 64 cells of the first category, about 7 rows) is `loading="eager"` and
+`decoding="sync"`, everything below stays lazy; the tab icons are pictures of their own, eager and
+synchronously decoded; the alt text is `text-transparent`, so a picture on its way never shows the
+emoji as a glyph; and `ChatComposer` calls `warmEmojiPicker` (`emojiPreload.ts`) once it has painted and the thread is idle (`whenIdleAfterPaint`: never at mount, which is the community-open window; a scheduling choice, nothing breaks if it runs later), at `fetchPriority = low`, which loads the
+catalogue the picker needs anyway and fetches and decodes the recents, nine tab icons and the 64-cell
+first screen (about 80 files of ~3 kB, 250 kB at most, once per session; the browser cache then holds
+them for a year). Pinned by `emojiPreload.test.ts` (a source pin for the grid, said honestly: no gate
+here paints on WebKit).
+
+**Measured in Chromium on a throwaway route** (time from the open tap to the 64 first cells and the nine
+tab icons all decoded, Slow 4G, 4x CPU slowdown): see the pull request body for the numbers. **The
+iPhone reading is owed** ([device-verification](../device-verification.md)).
+
 ## The PDF export - rasterised, never embedded
 
 jsPDF's text embedding (`frontend/src/lib/pdf/appFonts.ts`) only supports plain TrueType outlines, so
