@@ -16,7 +16,7 @@ import type {
 } from '$lib/live/livePlayer';
 import type { LiveChatDeps } from '$lib/live/liveChat';
 import type { LiveLimits, LiveListItem, LiveManifest } from '$lib/live/types';
-import { videoSound } from '$lib/stores/videoSound.svelte';
+import { VIDEO_SOUND_KEY, videoSound } from '$lib/stores/videoSound.svelte';
 import { setContentModerator } from '$lib/stores/userState.svelte';
 import { m } from '$lib/paraglide/messages';
 
@@ -327,15 +327,59 @@ describe('LiveViewer', () => {
     expect(viewer().contains(flag)).toBe(true);
   });
 
-  it("the sound toggle sets the app's one sound answer", async () => {
+  it("the sound toggle is the kit's speaker and sets the app's one sound answer", async () => {
     await render();
     const button = document.querySelector<HTMLButtonElement>('[data-live-sound]')!;
-    expect(button.getAttribute('aria-label')).toBe(m.live_viewer_unmute());
+    expect(button.getAttribute('aria-label')).toBe(m.video_sound_label());
+    expect(button.getAttribute('aria-pressed')).toBe('false');
     button.click();
     flushSync();
     expect(videoSound.muted).toBe(false);
-    expect(button.getAttribute('aria-label')).toBe(m.live_viewer_mute());
+    expect(button.getAttribute('aria-pressed')).toBe('true');
     expect(document.querySelector<HTMLVideoElement>('[data-live-video]')!.muted).toBe(false);
+  });
+
+  /**
+   * AN ENGINE'S REFUSAL IS NOT THE READER'S CHOICE (step E): a live whose audible `play()` is refused
+   * plays muted, silent for this session - and the remembered "on" stays on this device.
+   */
+  it('a refused audible start plays muted, and the stored sound stays on', async () => {
+    videoSound.setMuted(false);
+    expect(localStorage.getItem(VIDEO_SOUND_KEY)).toBe('on');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const play = vi.mocked(HTMLMediaElement.prototype.play).mockImplementation(function (
+      this: HTMLMediaElement
+    ) {
+      return this.muted
+        ? Promise.resolve()
+        : Promise.reject(new DOMException('no gesture yet', 'NotAllowedError'));
+    });
+    await render();
+    const video = document.querySelector<HTMLVideoElement>('[data-live-video]')!;
+    expect(play).toHaveBeenCalled();
+    expect(video.muted).toBe(true);
+    expect(videoSound.muted).toBe(true);
+    // The element's own `volumechange`, as a viewer forwards it, writes nothing either.
+    video.dispatchEvent(new Event('volumechange'));
+    expect(localStorage.getItem(VIDEO_SOUND_KEY)).toBe('on');
+  });
+
+  /** THE TAP IS THE SOUND ON EVERY VIDEO (owner, 2026-11-09), the live's included, with its glyph. */
+  it('a tap on the picture toggles the sound and shows what it did', async () => {
+    await render();
+    const video = document.querySelector<HTMLVideoElement>('[data-live-video]')!;
+    video.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, button: 0 })
+    );
+    video.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+    video.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+    flushSync();
+    expect(videoSound.muted).toBe(false);
+    expect(video.muted).toBe(false);
+    expect(document.querySelector('[data-video-glyph]')!.getAttribute('data-video-glyph')).toBe(
+      'sound-on'
+    );
   });
 
   it('Escape closes it and the seat goes back', async () => {

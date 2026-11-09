@@ -176,7 +176,7 @@
   <section class="border-cn-border space-y-3 border-t pt-4" aria-labelledby="lydia-cashiers-title">
     <h3
       id="lydia-cashiers-title"
-      class="text-text-main flex items-center gap-2 text-base font-bold tracking-tight"
+      class="text-text-main flex items-center gap-2 text-base font-bold"
     >
       <Users size={18} />
       {m.asso_lydia_cashiers_title()}

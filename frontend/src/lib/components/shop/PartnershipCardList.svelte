@@ -154,7 +154,7 @@
               </p>
               {#if card.membersOnly}
                 <span
-                  class="bg-amber-warn/15 text-amber-warn-text text-2xs rounded-full px-2 py-0.5 font-bold uppercase"
+                  class="bg-amber-warn/15 text-amber-warn-text text-2xs rounded-full px-2 py-0.5 font-bold"
                 >
                   {m.shop_partnership_members_only_badge()}
                 </span>

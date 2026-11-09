@@ -753,7 +753,7 @@
           <CalendarDays size={18} />
         </div>
         <div class="min-w-0 flex-1">
-          <p class="text-text-muted text-xs font-bold tracking-wide uppercase">
+          <p class="text-text-muted text-xs font-bold">
             {m.form_view_event_linked()}
           </p>
           <p class="text-text-main truncate text-sm font-semibold">{linkedAgendaEvent.title}</p>

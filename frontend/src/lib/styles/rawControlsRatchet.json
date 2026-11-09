@@ -510,7 +510,7 @@
     "input": 0
   },
   "src/lib/components/live/LiveViewer.svelte": {
-    "button": 6,
+    "button": 5,
     "select": 0,
     "input": 0
   },
@@ -555,7 +555,7 @@
     "input": 0
   },
   "src/lib/components/messages/MessageMetadata.svelte": {
-    "button": 6,
+    "button": 4,
     "select": 0,
     "input": 0
   },
@@ -875,7 +875,7 @@
     "input": 0
   },
   "src/lib/components/reels/ReelActionRail.svelte": {
-    "button": 5,
+    "button": 4,
     "select": 0,
     "input": 0
   },
@@ -1009,11 +1009,6 @@
     "select": 0,
     "input": 0
   },
-  "src/lib/components/shared/InlineVideo.svelte": {
-    "button": 3,
-    "select": 0,
-    "input": 0
-  },
   "src/lib/components/shared/MarkdownComposerToolbar.svelte": {
     "button": 2,
     "select": 0,
@@ -1068,11 +1063,6 @@
     "button": 0,
     "select": 0,
     "input": 1
-  },
-  "src/lib/components/shared/VideoPlayer.svelte": {
-    "button": 4,
-    "select": 0,
-    "input": 0
   },
   "src/lib/components/shared/VideoPreparationProgress.svelte": {
     "button": 1,
@@ -1316,11 +1306,6 @@
   },
   "src/routes/profile/[id]/+page.svelte": {
     "button": 4,
-    "select": 0,
-    "input": 0
-  },
-  "src/routes/settings/+page.svelte": {
-    "button": 1,
     "select": 0,
     "input": 0
   },

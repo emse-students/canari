@@ -70,7 +70,7 @@
 
 {#if comments.length > 0 || commentCount > 0}
   <div
-    class="border-t border-black/5 bg-white/30 px-4 pt-2 pb-3 sm:px-5 dark:border-white/10 dark:bg-black/10"
+    class="border-t border-black/5 bg-white/30 px-4 pt-2 pb-3 dark:border-white/10 dark:bg-black/10"
     data-comments-preview
   >
     {#if commentCount > 1}

@@ -184,10 +184,7 @@
 {:else if census}
   <!-- Right now -->
   <section class="mb-8" aria-labelledby="status-now">
-    <h2
-      id="status-now"
-      class="text-text-muted mb-3 text-xs font-semibold tracking-widest uppercase"
-    >
+    <h2 id="status-now" class="text-text-muted mb-3 text-xs font-semibold">
       {m.admin_status_now_heading()}
     </h2>
     <div class="grid grid-cols-2 gap-3">
@@ -226,10 +223,7 @@
   <!-- History: one line per platform, one per version -->
   <section class="mb-8" aria-labelledby="status-history">
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-      <h2
-        id="status-history"
-        class="text-text-muted text-xs font-semibold tracking-widest uppercase"
-      >
+      <h2 id="status-history" class="text-text-muted text-xs font-semibold">
         {m.admin_status_history_heading()}
       </h2>
       <div
@@ -274,10 +268,7 @@
 
   <!-- Versions live right now -->
   <section aria-labelledby="status-versions">
-    <h2
-      id="status-versions"
-      class="text-text-muted mb-1 text-xs font-semibold tracking-widest uppercase"
-    >
+    <h2 id="status-versions" class="text-text-muted mb-1 text-xs font-semibold">
       {m.admin_status_versions_heading()}
     </h2>
     <p class="text-text-muted mb-3 text-sm">{m.admin_status_versions_hint()}</p>

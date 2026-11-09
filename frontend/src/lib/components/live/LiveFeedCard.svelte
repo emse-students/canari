@@ -181,7 +181,7 @@
     </span>
     <span class="absolute inset-x-0 top-0 flex items-center justify-between gap-2 p-2">
       <span
-        class="bg-red-err text-2xs inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-bold tracking-wide"
+        class="bg-red-err text-2xs inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 font-bold"
         data-live-badge
       >
         <span class="size-1.5 rounded-full bg-white motion-safe:animate-pulse" aria-hidden="true"

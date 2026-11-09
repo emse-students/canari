@@ -31,9 +31,7 @@
   }: Props = $props();
 </script>
 
-<div
-  class="border-b border-white/50 bg-white/30 px-4 py-3 dark:border-white/10 dark:bg-gray-900/40"
->
+<div class="bg-cn-surface px-4 py-3">
   <div class="flex items-center gap-2">
     <div class="relative flex-1">
       <Search size={16} class="text-text-muted absolute top-1/2 left-3 -translate-y-1/2" />
@@ -42,7 +40,7 @@
         value={searchQuery}
         oninput={(e) => onSearchQueryChange((e.target as HTMLInputElement).value)}
         placeholder={m.chat_search_placeholder()}
-        class="bg-cn-surface focus:ring-accent/45 w-full rounded-2xl border border-white/50 py-2.5 pr-4 pl-10 text-sm outline-none focus:ring-2 dark:border-white/10"
+        class="bg-control-fill text-text-main placeholder:text-text-muted focus:ring-accent/40 h-10 w-full rounded-full border-0 pr-4 pl-10 text-sm outline-none focus:ring-2"
       />
     </div>
 

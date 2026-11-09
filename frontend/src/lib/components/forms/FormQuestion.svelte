@@ -359,8 +359,7 @@
           <tr class="bg-cn-border/20">
             <th class="sticky left-0 z-10 w-1/3 min-w-30 bg-(--cn-surface) p-3"></th>
             {#each item.options ?? [] as col (col.id)}
-              <th
-                class="text-text-muted min-w-20 px-3 py-3 text-center text-xs font-bold tracking-wide uppercase"
+              <th class="text-text-muted min-w-20 px-3 py-3 text-center text-xs font-bold"
                 >{col.label}</th
               >
             {/each}

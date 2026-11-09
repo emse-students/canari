@@ -140,7 +140,7 @@
   <!-- Text metadata -->
   <div class="flex min-w-0 flex-1 flex-col justify-center gap-1">
     <span
-      class="text-2xs bg-accent/15 text-accent-text inline-flex max-w-full items-center gap-1 self-start truncate rounded-md px-1.5 py-0.5 font-bold tracking-wider"
+      class="text-2xs bg-accent/15 text-accent-text inline-flex max-w-full items-center gap-1 self-start truncate rounded-md px-1.5 py-0.5 font-bold"
     >
       <Images size={11} strokeWidth={2.5} />
       {siteLabel}

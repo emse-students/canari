@@ -160,7 +160,7 @@
         <!-- Narrow left accent bar for the active item. -->
         {#if isActive}
           <div
-            class="bg-accent absolute top-1/2 left-0 h-6 w-1 -translate-y-1/2 rounded-r-full shadow-[0_0_8px_rgba(245,158,11,0.6)]"
+            class="bg-accent absolute top-1/2 left-0 h-6 w-1 -translate-y-1/2 rounded-r-full shadow-[0_0_8px_color-mix(in_srgb,var(--accent)_60%,transparent)]"
           ></div>
         {/if}
 
@@ -227,7 +227,7 @@
       >
         {#if settingsActive}
           <div
-            class="bg-accent absolute top-1/2 left-0 h-6 w-1 -translate-y-1/2 rounded-r-full shadow-[0_0_8px_rgba(245,158,11,0.6)]"
+            class="bg-accent absolute top-1/2 left-0 h-6 w-1 -translate-y-1/2 rounded-r-full shadow-[0_0_8px_color-mix(in_srgb,var(--accent)_60%,transparent)]"
           ></div>
         {/if}
 

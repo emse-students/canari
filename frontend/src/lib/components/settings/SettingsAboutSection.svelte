@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Info, Download, FileText } from '@lucide/svelte';
+  import { Download, FileText } from '@lucide/svelte';
   import {
     getClientAppVersion,
     openLatestAppUpdate,
@@ -71,17 +71,12 @@
   class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-500 duration-500 md:p-8"
   style="animation-fill-mode: backwards;"
 >
-  <div class="mb-2 flex items-center gap-3">
-    <div class="bg-accent/10 text-cn-dark rounded-xl p-2.5">
-      <Info size={22} strokeWidth={2.5} />
-    </div>
-    <h2 class="text-text-main text-lg font-bold">{m.settings_about_heading()}</h2>
-  </div>
-  <p class="text-text-muted mb-6 text-xs leading-relaxed font-medium sm:pl-[3.75rem]">
+  <h2 class="sr-only">{m.settings_about_heading()}</h2>
+  <p class="text-text-muted mb-6 text-xs leading-relaxed font-medium">
     {m.settings_about_desc()}
   </p>
 
-  <div class="space-y-3 sm:pl-[3.75rem]">
+  <div class="space-y-3">
     <p class="text-text-main text-sm">
       {m.settings_about_version_label()}
       <strong class="font-bold">{clientVersion}</strong>

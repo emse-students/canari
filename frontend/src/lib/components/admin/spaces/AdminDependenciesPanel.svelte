@@ -235,7 +235,7 @@
 {#snippet familyChildren(rows: DependencyEntity[])}
   {#each subgroups(rows) as sub (sub.key)}
     <div class="border-cn-border mt-1 ml-3 border-l pl-3" data-subgroup={sub.key}>
-      <h4 class="text-text-muted text-xs font-semibold tracking-wide uppercase">
+      <h4 class="text-text-muted text-xs font-semibold">
         {sub.title} ({sub.rows.length})
       </h4>
       <ul class="divide-cn-border/70 divide-y">
@@ -250,7 +250,7 @@
 {#snippet group(title: string, rows: DependencyEntity[], editable: boolean)}
   {#if rows.length > 0}
     <div>
-      <h4 class="text-text-muted text-xs font-semibold tracking-wide uppercase">
+      <h4 class="text-text-muted text-xs font-semibold">
         {title} ({rows.length})
       </h4>
       <ul class="divide-cn-border/70 divide-y">
@@ -285,7 +285,7 @@
     <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface) p-4">
       {#each tree.families as family (family.bde.id)}
         <section data-family={family.bde.id}>
-          <h3 class="text-text-main text-sm font-bold">
+          <h3 class="font-display text-text-main text-sm font-bold">
             {family.bde.name}
             <span class="text-text-muted text-xs font-normal">
               {m.admin_dependencies_children({ count: family.children.length })}

@@ -423,9 +423,7 @@
 
       <div class="flex min-w-0 flex-1 flex-col justify-center gap-0.5 py-0.5">
         <span
-          class="text-2xs sm:text-2xs bg-accent/12 text-accent-text inline-flex max-w-full items-center self-start truncate rounded-md px-2 py-0.5 font-bold tracking-wider {isInApp
-            ? 'uppercase'
-            : 'normal-case'}"
+          class="text-2xs sm:text-2xs bg-accent/12 text-accent-text inline-flex max-w-full items-center self-start truncate rounded-md px-2 py-0.5 font-bold"
         >
           {cardCategory}
         </span>

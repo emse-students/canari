@@ -587,7 +587,7 @@
         <h2 class="text-text-main text-xl font-bold">{m.chat_channel_overview_tab()}</h2>
         <div class="space-y-4">
           <div class="space-y-2">
-            <label class="text-text-muted text-xs font-bold uppercase" for="channel-name"
+            <label class="text-text-muted text-xs font-bold" for="channel-name"
               >{m.chat_channel_name_label()}</label
             >
             <div class="flex gap-2">
@@ -636,7 +636,7 @@
         -->
         {#if selectedChannel?.isPrivate || canManage}
           <div class="space-y-3 border-t border-black/10 pt-6 dark:border-white/10">
-            <h3 class="mb-2 px-1 text-xs font-bold tracking-wider text-red-500 uppercase">
+            <h3 class="mb-2 px-1 text-xs font-bold text-red-500">
               {m.chat_danger_zone_label()}
             </h3>
             <!-- Only a private channel can be left: a public one is readable by every member of the
@@ -754,8 +754,8 @@
             <!-- ═══ Qui peut écrire ? ═══ -->
             <div class="space-y-2 border-t border-black/5 pt-4 dark:border-white/10">
               <div class="flex items-center gap-2">
-                <MessageSquareText size={16} class="text-accent-text" strokeWidth={2.5} />
-                <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
+                <MessageSquareText size={16} class="text-accent-icon" strokeWidth={2.5} />
+                <p class="text-text-muted text-xs font-bold">
                   {m.chat_channel_who_can_write()}
                 </p>
               </div>
@@ -777,9 +777,7 @@
             <!-- ═══ Member allowlist (only once the SERVER holds the salon private) ═══ -->
             {#if accessIsPrivate}
               <div class="space-y-3 border-t border-black/5 pt-4 dark:border-white/10">
-                <p
-                  class="text-text-muted flex items-center gap-1.5 text-xs font-bold tracking-wider uppercase"
-                >
+                <p class="text-text-muted flex items-center gap-1.5 text-xs font-bold">
                   <Lock size={13} />
                   {m.chat_allowed_members_label()}
                 </p>
@@ -831,9 +829,7 @@
                 <!-- Add a user -->
                 {#if canManage}
                   <div class="space-y-2 pt-1">
-                    <p
-                      class="text-text-muted flex items-center gap-1.5 text-xs font-bold tracking-wider uppercase"
-                    >
+                    <p class="text-text-muted flex items-center gap-1.5 text-xs font-bold">
                       {m.chat_channel_add_user_label()}
                     </p>
                     <!-- Wraps rather than squeezing the search to a sliver on a phone-width panel. -->

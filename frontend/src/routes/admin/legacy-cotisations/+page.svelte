@@ -196,7 +196,7 @@
       <table class="w-full text-sm">
         <thead>
           <tr
-            class="border-cn-border text-text-muted border-b bg-(--surface-elevated) text-xs font-semibold tracking-wide uppercase"
+            class="border-cn-border text-text-muted border-b bg-(--surface-elevated) text-xs font-semibold"
           >
             <th class="px-4 py-2.5 text-left">{m.admin_legacy_col_source()}</th>
             <th class="px-4 py-2.5 text-left">{m.admin_legacy_col_association()}</th>

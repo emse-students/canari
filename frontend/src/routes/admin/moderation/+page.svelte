@@ -480,7 +480,7 @@
   {:else}
     <!-- Pending reports -->
     {#if pendingReports.length > 0}
-      <h2 class="text-text-muted mb-3 text-sm font-bold tracking-wider uppercase">
+      <h2 class="text-text-muted mb-3 text-sm font-bold">
         {m.moderation_pending_header_label({ count: pendingReports.length })}
       </h2>
       <div class="mb-8 space-y-3">
@@ -723,7 +723,7 @@
 
     <!-- Resolved reports -->
     {#if resolvedReports.length > 0}
-      <h2 class="text-text-muted mb-3 text-sm font-bold tracking-wider uppercase">
+      <h2 class="text-text-muted mb-3 text-sm font-bold">
         {m.moderation_resolved_header_label({ count: resolvedReports.length })}
       </h2>
       <div class="space-y-2">

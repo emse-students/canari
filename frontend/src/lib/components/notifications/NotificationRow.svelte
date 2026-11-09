@@ -155,6 +155,16 @@
     'event_pending_coorganiser',
   ] as const;
   const isEventNotif = $derived((EVENT_TYPES as readonly string[]).includes(notif.type));
+  /**
+   * THE TWO OPENINGS told to an association's followers (engagement WP-4), named for the same reason:
+   * the ASSOCIATION opened a booking space or published an event. `text` is the space's name or the
+   * event's title, empty for a space reached by its link only.
+   */
+  const OPENING_TEXT: Readonly<Record<string, () => string>> = {
+    booking_open: m.notif_booking_open_text,
+    event_open: m.notif_event_open_text,
+  };
+  const isOpeningNotif = $derived(Object.hasOwn(OPENING_TEXT, notif.type));
 
   /**
    * THE TWO PUBLICATION NOTICES, which spent their life reading "a commente :".
@@ -210,6 +220,7 @@
       isRepostNotif ||
       isCoorganiseNotif ||
       notif.type === 'repost_personal_requested' ||
+      isOpeningNotif ||
       // An organiser of an association space cancelled or booked: the association acted (WP-N).
       notif.type === 'booking_cancelled' ||
       notif.type === 'booking_added' ||
@@ -331,7 +342,7 @@
                 ? 'bg-red-500 text-white'
                 : notif.type === 'event_pending' || notif.type === 'event_pending_coorganiser'
                   ? 'bg-accent text-on-accent'
-                  : isEventNotif || isCoorganiseNotif
+                  : isEventNotif || isCoorganiseNotif || isOpeningNotif
                     ? 'bg-sky-600 text-white'
                     : isPostNotif || isRepostNotif || isPersonalRepostNotif
                       ? 'bg-indigo-500 text-white'
@@ -350,8 +361,9 @@
   // passed by exactly one caller: the 320px bell dropdown, deleted on 2026-09-14 when the bell
   // became a link to this page. A second shape nothing asks for is a second shape nobody checks.
   const avatarBox = 'h-14 w-14';
-  const badgeBox = 'h-7 w-7';
-  const glyph = 15;
+  // 20px on a 56px disc: the 28px one hid half of the initials (design audit M9).
+  const badgeBox = 'h-5 w-5';
+  const glyph = 11;
 </script>
 
 <button
@@ -447,7 +459,7 @@
         <Newspaper size={glyph} strokeWidth={2.75} />
       {:else if isRepostNotif || isPersonalRepostNotif}
         <Repeat2 size={glyph} strokeWidth={2.75} />
-      {:else if isCoorganiseNotif}
+      {:else if isCoorganiseNotif || isOpeningNotif}
         <CalendarPlus size={glyph} strokeWidth={2.75} />
       {:else if isUnknownNotif}
         <Bell size={glyph} strokeWidth={2.75} />
@@ -574,6 +586,9 @@
       {:else if isCoorganiseNotif}
         {m.notif_coorganise_proposed_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if isOpeningNotif}
+        {OPENING_TEXT[notif.type]()}
+        {#if bodyText}<span class="italic"><EmojiText text={bodyText} /></span>{/if}
       {:else if !isUnknownNotif}
         {m.notif_comment_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>

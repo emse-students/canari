@@ -609,7 +609,7 @@
             <div>
               <div class="mb-2 flex items-center gap-1.5">
                 <GitBranch size={13} class="text-text-muted/70 shrink-0" />
-                <span class="text-text-muted text-2xs font-bold uppercase"
+                <span class="text-text-muted text-2xs font-bold"
                   >{m.form_builder_conditional_label()}</span
                 >
               </div>

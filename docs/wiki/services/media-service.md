@@ -800,7 +800,7 @@ is also a visible test change.
 WebView refused it with `MEDIA_ERR_SRC_NOT_SUPPORTED` ("Format error") before `sourceopen`, and the
 post sat on a dead player with no request sent. `segmentedMediaStream.test.ts`'s fake `MediaSource`
 cannot see a URL, so every gate was green. Fixed in the same pull request: a streamed `src` reaches
-the element exactly as minted (`streamed`, pinned in `InlineVideo.svelte.test.ts`).
+the element exactly as minted (`streamed`, pinned in `VideoPlayer.inline.svelte.test.ts` since `InlineVideo` was folded into `VideoPlayer`).
 
 **How it was driven, with the writer off.** The PR's own `encryptSegmentedMedia` sealed a 20.9 MB
 fragmented MP4 (H.264 Main + AAC, `video/mp4; codecs="avc1.4D4028, mp4a.40.2"`, 20 segments) under

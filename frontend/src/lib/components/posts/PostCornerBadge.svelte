@@ -4,6 +4,8 @@
   /**
    * Props for the chip a post hangs off its own top-left corner.
    *
+   * Since 2026-11-09 a pinned post no longer wears it: "Epingle" is a muted word on the post header's time line, and this chip is the feed's "new" label only.
+   *
    * ## Why this is a component and not two spans
    *
    * It WAS two spans - "EPINGLE" written in `PostCard` and "NOUVEAU" written in the feed page -
@@ -38,7 +40,7 @@
   for the card's own header underneath it.
 -->
 <span
-  class="text-on-accent text-2xs bg-accent pointer-events-none absolute -top-2 left-4 z-10 inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-bold tracking-widest uppercase"
+  class="text-on-accent text-2xs bg-accent pointer-events-none absolute -top-2 left-4 z-10 inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-bold"
 >
   {@render icon?.()}
   {label}

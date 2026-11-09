@@ -655,7 +655,7 @@
     >
       <ChevronLeft size={24} strokeWidth={2.5} />
     </button>
-    <h1 class="min-w-0 text-base font-bold">{m.reels_editor_title()}</h1>
+    <h1 class="font-body min-w-0 text-base font-bold">{m.reels_editor_title()}</h1>
     <button
       type="button"
       class="text-on-accent bg-accent hover:bg-accent-hover inline-flex h-11 items-center gap-1.5 rounded-full px-4 text-sm font-bold outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50"
@@ -726,7 +726,7 @@
           class="bg-cn-surface text-cn-ink flex h-64 min-h-0 flex-col overflow-hidden rounded-2xl"
           data-reel-emoji-grid
         >
-          <EmojiGrid onPick={(emoji) => addEmoji(emoji)} />
+          <EmojiGrid onPick={(emoji) => addEmoji(emoji)} emojiStyle="canari" />
         </div>
       {/if}
     {/if}

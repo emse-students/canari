@@ -59,7 +59,7 @@
   class="border-cn-border/60 bg-cn-surface rounded-2xl border p-5 shadow-sm ring-1 ring-black/[0.02] dark:ring-white/[0.04]"
 >
   <div class="mb-4 flex items-center justify-between gap-2">
-    <p class="text-text-muted text-2xs flex items-center gap-2 font-bold tracking-widest uppercase">
+    <p class="text-text-muted text-2xs flex items-center gap-2 font-bold">
       <ClipboardList size={16} strokeWidth={2.5} class="text-accent-icon shrink-0" />
       {m.post_form_fallback_title()}
     </p>

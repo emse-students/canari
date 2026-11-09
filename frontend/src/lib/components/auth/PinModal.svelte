@@ -281,7 +281,7 @@
         >
           <img src="/favicon.svg" alt="" class="size-11 object-contain" />
         </div>
-        <h1 class="text-text-main text-xl font-semibold">
+        <h1 class="font-body text-text-main text-xl font-semibold">
           {isFirstSetup ? m.auth_pin_title_setup() : m.auth_pin_title()}
         </h1>
         <p class="text-text-muted text-sm">

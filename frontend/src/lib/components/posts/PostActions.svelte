@@ -4,6 +4,10 @@
   import { MessageCircle, FaceSlightlySmiling } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { reactionTypeToLabel } from '$lib/posts/reactions';
+  import { longPress } from '$lib/actions/longPress';
+  import { clickOutside } from '$lib/actions/clickOutside';
+  import { Log } from '$lib/utils/Log';
+  import Button from '$lib/components/ui/Button.svelte';
 
   /** Props for the PostActions bar (reaction picker + comment button + the reaction tally). */
   interface Props {
@@ -13,8 +17,15 @@
     showReactionPicker: boolean;
     /** Full list of available reaction types with their emoji. */
     reactionList: ReadonlyArray<{ type: string; emoji: string }>;
-    /** Called when the user clicks the reaction button to open or close the picker. */
-    onToggleReactionPicker: () => void;
+    /**
+     * ONE TAP on the reaction button (owner, 2026-11-09, Facebook's rule): the caller likes the post,
+     * or takes the reader's reaction back when they already have one.
+     */
+    onQuickReact: () => void;
+    /** A long press, the context menu or the labelled assistive button asks for the picker. */
+    onOpenReactionPicker: () => void;
+    /** The picker was dismissed without a choice (Escape, a tap elsewhere). */
+    onCloseReactionPicker: () => void;
     /** Called when the user selects an emoji from the picker. */
     onReactionSelect: (reactionType: string) => void;
     /** Total number of comments (top-level + replies). */
@@ -36,7 +47,9 @@
     userReaction,
     showReactionPicker,
     reactionList,
-    onToggleReactionPicker,
+    onQuickReact,
+    onOpenReactionPicker,
+    onCloseReactionPicker,
     onReactionSelect,
     commentCount,
     onCommentClick,
@@ -53,6 +66,27 @@
    */
   const ACTION =
     'flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-lg px-2.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent-icon';
+
+  let reactButton = $state<HTMLElement | null>(null);
+
+  /** The picker is opened by a hold, a context menu, ArrowUp or the assistive button. */
+  function openPicker(via: string) {
+    Log.d('PostActions', `reaction picker opened via ${via}`);
+    onOpenReactionPicker();
+  }
+
+  function onReactKeydown(e: KeyboardEvent) {
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      openPicker('ArrowUp');
+    }
+  }
+
+  function onPickerKeydown(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || !showReactionPicker) return;
+    onCloseReactionPicker();
+    reactButton?.focus();
+  }
 </script>
 
 <!--
@@ -81,18 +115,37 @@
   NO RULE UNDER THE ROW, AND TIGHTER INSETS (user, 2026-10-01, Mi 9T). Its `border-b` drew a line
   that, with the comment section's own `border-t` under it, was two hairlines one pixel apart, and a
   line closing the card's last row when the section is shut. The section's top border is the one
-  separator that means something. The first glyph now starts on the text column - `px-2` here plus
-  a 20 px icon centred in a 44 px target lands it at 20 px, the post text's `px-5` - and the two
+  separator that means something. The first glyph now starts on the text column - `px-1` here plus
+  a 20 px icon centred in a 44 px target lands it at 16 px, the post text's `px-4` - and the two
   buttons touch instead of floating 4 px apart; each target stays 44 px.
 -->
-<div class="relative flex items-center px-2">
+<svelte:window onkeydown={onPickerKeydown} />
+
+<div class="relative flex items-center px-1">
+  <!--
+    ONE TAP LIKES, A HOLD CHOOSES (owner, 2026-11-09, audit S2: Facebook's rule). The smiley used to
+    open the picker, so the commonest reaction cost two taps. `longPress` is the shared hold: a press
+    that travels past its slop is a SCROLL and never opens anything (the feed is scrolled by touch
+    from this very bar), and the click ending a hold is swallowed so opening the picker never also
+    likes. A tap on the reader's own reaction takes it back; a hold while reacted opens the picker to
+    change it. The assistive ways: the context menu (Menu key, Shift+F10), ArrowUp, and the
+    screen-reader-only button below, so the picker never depends on a gesture.
+  -->
   <button
     type="button"
-    onclick={onToggleReactionPicker}
-    class="{ACTION} text-text-muted hover:bg-(--cn-surface)"
-    aria-label={m.post_reacter()}
-    title={m.post_reacter()}
+    bind:this={reactButton}
+    onclick={onQuickReact}
+    onkeydown={onReactKeydown}
+    use:longPress={{
+      onHold: () => openPicker('hold'),
+      onContextMenu: () => openPicker('contextmenu'),
+    }}
+    class="{ACTION} text-text-muted touch-manipulation select-none hover:bg-(--cn-surface)"
+    aria-label={userReaction ? reactionTypeToLabel(userReaction) : m.post_react()}
+    title={m.post_react_hold_hint()}
     aria-expanded={showReactionPicker}
+    aria-pressed={userReaction != null}
+    data-post-react
   >
     {#if userReaction}
       <span class="text-lg" aria-hidden="true"
@@ -102,6 +155,13 @@
       <FaceSlightlySmiling size={20} />
     {/if}
   </button>
+  <Button
+    variant="ghost"
+    onclick={() => openPicker('assistive button')}
+    class="sr-only focus:not-sr-only"
+    aria-label={m.post_reacter()}
+    data-post-react-picker-open
+  />
 
   {#if onCommentClick}
     <button
@@ -129,6 +189,11 @@
       class="border-cn-border absolute right-3 bottom-full left-3 z-50 mb-2 flex items-center gap-0.5 rounded-full border bg-(--cn-surface) p-1 shadow-lg sm:right-auto sm:gap-1 sm:p-1.5"
       role="group"
       aria-label={m.post_reacter()}
+      use:clickOutside={{
+        enabled: true,
+        callback: onCloseReactionPicker,
+        ignore: () => reactButton,
+      }}
     >
       {#each reactionList as reaction (reaction.type)}
         <button

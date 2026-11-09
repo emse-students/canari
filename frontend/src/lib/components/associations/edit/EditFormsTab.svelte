@@ -137,7 +137,7 @@
 <div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6 shadow-sm">
   <div class="flex flex-wrap items-center justify-between gap-3">
     <div>
-      <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+      <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
         <ClipboardList size={20} />
         {m.asso_forms_title()}
       </h2>

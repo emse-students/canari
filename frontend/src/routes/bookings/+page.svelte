@@ -87,7 +87,7 @@
         aria-labelledby="bookings-mine-heading"
         use:guideAnchor={'bookings.mine'}
       >
-        <h2 id="bookings-mine-heading" class="text-text-main text-lg font-bold tracking-tight">
+        <h2 id="bookings-mine-heading" class="text-text-main text-lg font-bold">
           {m.bookings_mine_heading()}
         </h2>
         {#if bookingsError}
@@ -127,7 +127,7 @@
       </section>
 
       <section class="space-y-3" aria-labelledby="bookings-spaces-heading">
-        <h2 id="bookings-spaces-heading" class="text-text-main text-lg font-bold tracking-tight">
+        <h2 id="bookings-spaces-heading" class="text-text-main text-lg font-bold">
           {m.bookings_spaces_heading()}
         </h2>
         {#if spacesError}

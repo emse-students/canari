@@ -115,11 +115,7 @@
     }
   });
 
-  const countLabel = $derived(
-    items.length === 1
-      ? m.form_questions_count_one()
-      : m.form_questions_count({ count: items.length })
-  );
+  const countLabel = $derived(m.form_questions_count({ count: items.length }));
 
   function openWizard(afterIndex: number | null) {
     Log.d('FormQuestionsSection', `add wizard opened, after ${afterIndex ?? 'the end'}`);

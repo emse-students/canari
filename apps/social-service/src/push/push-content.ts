@@ -46,6 +46,8 @@ export type PushContentKey =
   | 'social_booking_reminder'
   | 'social_booking_changed'
   | 'social_booking_removed'
+  | 'social_booking_open'
+  | 'social_event_open'
   | 'form_opening_soon'
   | 'form_open'
   | 'form_paid_over_capacity'
@@ -143,6 +145,8 @@ export type PushContent = {
    *   for `social_booking_reminder` the place followed by the start time on the space's clock.
    *   EMPTY on a space reached by its link only (Q-R5): a lock screen never names such a space, and
    *   the device then shows the key's fixed sentence
+   * - `social_booking_open` / `social_event_open` (engagement WP-4): the booking space's name, the
+   *   event's title - EMPTY for a space reached by its link only (Q-R5)
    */
   arg: string;
   legacyTitle: string;
@@ -921,5 +925,35 @@ export function bookingReminderContent(line: string): PushContent {
     arg: line,
     legacyTitle: 'Rappel de réservation',
     legacyBody: line || 'Votre réservation commence bientôt',
+  };
+}
+
+/**
+ * AN ASSOCIATION THE READER FOLLOWS OPENED A BOOKING SPACE (engagement WP-4, decision 5d): its
+ * window opened, or it was created bookable at once. `actorName` is the ASSOCIATION; `arg` is the
+ * space's name, empty for a space reached by its link only (Q-R5), and the fixed sentence then.
+ */
+export function bookingOpenContent(associationName: string, place: string): PushContent {
+  return {
+    key: 'social_booking_open',
+    actorName: associationName,
+    arg: place,
+    legacyTitle: `${associationName} ouvre les réservations`,
+    legacyBody: place || 'Retrouvez-les dans Réservations',
+  };
+}
+
+/**
+ * AN ASSOCIATION THE READER FOLLOWS PUBLISHED AN EVENT on the agenda (engagement WP-4, decision 5d):
+ * an event with no registration form "opens" when it is validated - one with a form opens with its
+ * form. `actorName` is the ASSOCIATION; `arg` is the event's title.
+ */
+export function eventOpenContent(associationName: string, title: string): PushContent {
+  return {
+    key: 'social_event_open',
+    actorName: associationName,
+    arg: title,
+    legacyTitle: `${associationName} publie un événement`,
+    legacyBody: title || "Retrouvez-le dans l'agenda",
   };
 }

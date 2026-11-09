@@ -90,7 +90,7 @@
   {#each days as day (day.date)}
     <section data-day={day.date} aria-label={formatDay(day.date)} class="scroll-mt-2">
       <h3
-        class="px-1 pt-3 pb-1.5 text-xs font-bold tracking-wide uppercase {day.date === today
+        class="px-1 pt-3 pb-1.5 text-xs font-bold {day.date === today
           ? 'text-text-main'
           : 'text-text-muted'}"
       >

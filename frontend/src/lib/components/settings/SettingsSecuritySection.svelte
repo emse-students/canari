@@ -1,13 +1,5 @@
 <script lang="ts">
-  import {
-    Shield,
-    KeyRound,
-    Monitor,
-    CircleCheck,
-    FingerprintPattern,
-    LogIn,
-    Clock,
-  } from '@lucide/svelte';
+  import { KeyRound, Monitor, CircleCheck, FingerprintPattern, LogIn, Clock } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { slide } from 'svelte/transition';
   import { globalSession as session, appendLog } from '$lib/stores/globalChatSingleton.svelte';
@@ -171,12 +163,7 @@
   class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-200 duration-500 md:p-8"
   style="animation-fill-mode: backwards;"
 >
-  <div class="mb-6 flex items-center gap-3">
-    <div class="bg-accent/10 text-cn-dark rounded-xl p-2.5">
-      <Shield size={22} strokeWidth={2.5} />
-    </div>
-    <h2 class="text-text-main text-lg font-bold">{m.profile_security_heading()}</h2>
-  </div>
+  <h2 class="sr-only">{m.profile_security_heading()}</h2>
 
   {#if changePinSuccess}
     <div

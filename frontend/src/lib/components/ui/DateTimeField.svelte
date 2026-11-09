@@ -235,7 +235,7 @@
       </div>
       <div class="grid grid-cols-7 gap-0.5 text-center">
         {#each weekdays as name (name)}
-          <span class="text-text-muted text-2xs py-1 font-bold uppercase">{name}</span>
+          <span class="text-text-muted text-2xs py-1 font-bold">{name}</span>
         {/each}
         {#each cells as day, i (i)}
           {#if day === null}

@@ -831,7 +831,7 @@
       <!-- ONE action bar on one line (owner, 2026-11-08): it scrolls sideways rather than wrapping. -->
       <header class="flex items-center gap-2 overflow-x-auto pb-1 whitespace-nowrap">
         {#if !canEdit}
-          <h2 class="text-text-main text-lg font-bold">{project.name}</h2>
+          <h2 class="font-display text-text-main text-lg font-bold">{project.name}</h2>
         {:else if editingName}
           <input
             bind:this={nameInputEl}

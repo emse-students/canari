@@ -676,7 +676,7 @@
 
 <div class="space-y-6">
   <div class="border-cn-border bg-cn-surface space-y-1 rounded-2xl border p-6 shadow-sm">
-    <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+    <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
       <HandCoins size={20} />
       {m.asso_cotisations_title()}
     </h2>
@@ -792,7 +792,7 @@
         <div class="border-cn-border space-y-3 border-t pt-4">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h4 class="text-text-main text-xs font-bold tracking-wide uppercase">
+              <h4 class="text-text-main text-xs font-bold">
                 {m.asso_cotisations_price_title()}
               </h4>
               {#if tierProducts.length > 1}
@@ -1044,7 +1044,7 @@
                 void handleCreateTier();
               }}
             >
-              <p class="text-text-main text-xs font-bold tracking-wide uppercase">
+              <p class="text-text-main text-xs font-bold">
                 {m.asso_cotisations_tier_add_title()}
               </p>
               <div class="grid gap-3 sm:grid-cols-2">
@@ -1159,7 +1159,7 @@
         <div class="space-y-4">
           {#each rosterGroups as group (group.promo ?? 'none')}
             <div class="space-y-2">
-              <h4 class="text-text-muted text-xs font-bold tracking-wide uppercase">
+              <h4 class="text-text-muted text-xs font-bold">
                 {group.promo != null
                   ? m.asso_cotisations_group_promo_label({ promo: group.promo })
                   : m.asso_cotisations_group_no_promo()}

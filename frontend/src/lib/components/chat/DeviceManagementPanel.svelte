@@ -354,8 +354,8 @@
   <div class="px-1">
     {#if loading}
       <div class="text-text-muted flex flex-col items-center justify-center gap-4 py-12">
-        <Loader size={28} class="text-accent-text animate-spin" />
-        <span class="text-sm font-semibold tracking-wide">{m.chat_syncing_devices()}</span>
+        <Loader size={28} class="text-accent-icon animate-spin" />
+        <span class="text-sm font-semibold">{m.chat_syncing_devices()}</span>
       </div>
     {:else}
       <!-- The error sits ABOVE the list, never instead of it: a refused deletion has to be read
@@ -396,7 +396,7 @@
           {m.chat_devices_intro()}
         </p>
 
-        <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
+        <p class="text-text-muted text-xs font-bold">
           {m.chat_devices_count_label({ devices: devices.length })}
         </p>
 
@@ -456,14 +456,14 @@
                       </span>
                       {#if row.device}
                         <span
-                          class="text-text-muted text-2xs rounded-full bg-black/5 px-2 py-0.5 font-semibold tracking-wider uppercase dark:bg-white/10"
+                          class="text-text-muted text-2xs rounded-full bg-black/5 px-2 py-0.5 font-semibold dark:bg-white/10"
                         >
                           {getDeviceOsLabel(row.device)}
                         </span>
                       {/if}
                       {#if row.isCurrentDevice}
                         <span
-                          class="text-on-accent text-2xs bg-accent rounded-full px-2 py-0.5 font-bold tracking-wider uppercase shadow-sm"
+                          class="text-on-accent text-2xs bg-accent rounded-full px-2 py-0.5 font-bold shadow-sm"
                         >
                           {m.chat_current_device_badge()}
                         </span>

@@ -5,7 +5,8 @@
  * entry that Back, Escape, the X and a tap above it close - before the viewer, never with it - the
  * send on the post menu's share, and a post of one picture drawn as a page with the same rail.
  */
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { beforeAll, afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { setEmojiStyle } from '$lib/utils/emojiStyle';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import ReelViewer from './ReelViewer.svelte';
 import type { PostComment, PostEntity } from '$lib/posts/api';
@@ -123,6 +124,10 @@ async function render(startPost: PostEntity, likerId?: string) {
 }
 
 import { videoSound } from '$lib/stores/videoSound.svelte';
+
+// These read the emoji PICTURE (`img.emoji`), so they run under the "Canari" emoji setting; both
+// modes are pinned in `EmojiText.svelte.test.ts`.
+beforeAll(() => setEmojiStyle('canari'));
 
 const q = <T extends Element = HTMLElement>(sel: string) => document.querySelector<T>(sel);
 

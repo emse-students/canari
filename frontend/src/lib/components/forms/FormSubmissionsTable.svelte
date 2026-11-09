@@ -260,7 +260,7 @@
       {#each answered as { item, text } (item.id)}
         {@const file = liveFile(sub, item)}
         <div class={text.length > 80 ? 'sm:col-span-2' : ''}>
-          <dt class="text-text-muted text-2xs font-semibold tracking-wide uppercase">
+          <dt class="text-text-muted text-2xs font-semibold">
             {item.label}
           </dt>
           {#if file}
@@ -289,9 +289,7 @@
 <div class="hidden overflow-x-auto sm:block">
   <table class="w-full text-sm">
     <thead>
-      <tr
-        class="text-text-muted border-cn-border border-b text-left text-xs font-bold tracking-wide uppercase"
-      >
+      <tr class="text-text-muted border-cn-border border-b text-left text-xs font-bold">
         <th class="w-10 pb-2"><span class="sr-only">{m.form_list_answers_show()}</span></th>
         <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_date()}</th>
         {#if !anonymous}

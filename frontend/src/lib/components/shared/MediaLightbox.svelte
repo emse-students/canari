@@ -152,7 +152,8 @@
   /**
    * A video player's own box - the picture AND the black around a letterboxed clip. A swipe or a
    * pinch that starts there is still the viewer's, but a TAP or a double-tap is the player's: it
-   * toggles the player's controls (`VideoPlayer`), where the viewer's tap used to take the black
+   * toggles the sound and raises the controls (`VideoPlayer`, `videoGestures`), where the viewer's
+   * tap used to take the black
    * margins for its own and toggle the title bar instead.
    */
   const VIDEO_PLAYER = '[data-video-player]';
@@ -516,7 +517,7 @@
       const dy = end.y - touchStart.y;
 
       if (kind === 'pending') {
-        // A tap on a video player is NOT cancelled: its click is the player's toggle of its controls.
+        // A tap on a video player is NOT cancelled: its click is the player's (the sound, the bar).
         if (isTap(touchStart, end) && !touchOnPlayer) {
           // Cancelled so the tap does not also become the browser's click / dblclick.
           e.preventDefault();

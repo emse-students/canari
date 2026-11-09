@@ -207,9 +207,7 @@
            So each month is its own block and the card is the list under the heading, not around it.
            `top-0` is the top of `.page-scroll-wrap`, which starts below the mobile header. -->
       <section bind:this={sectionEls[index]}>
-        <h3
-          class="bg-cn-bg text-text-muted sticky top-0 z-10 py-2 text-xs font-bold tracking-wide uppercase"
-        >
+        <h3 class="bg-cn-bg text-text-muted sticky top-0 z-10 py-2 text-xs font-bold">
           {section.label}
         </h3>
 

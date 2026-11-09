@@ -960,7 +960,7 @@
   <div
     class="pointer-events-none mb-1 transition-transform duration-200 ease-out motion-reduce:transition-none [&_button]:pointer-events-auto {searchQuery
       ? ''
-      : 'sticky top-0 z-10 pt-2 pb-3'} {tabsHidden ? '-translate-y-full' : ''}"
+      : 'sticky top-0 z-10 -mt-6 pt-2 pb-3 md:mt-0'} {tabsHidden ? '-translate-y-full' : ''}"
     inert={tabsHidden}
     onfocusin={() => (tabsFocused = true)}
     onfocusout={(e) => {

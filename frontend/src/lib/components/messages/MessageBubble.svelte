@@ -1,6 +1,6 @@
 <script lang="ts">
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
-  import { CornerDownRight, Info, Building2 } from '@lucide/svelte';
+  import { CornerDownRight, Building2 } from '@lucide/svelte';
   import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
   import { m } from '$lib/paraglide/messages';
   import { MediaService } from '$lib/media';
@@ -12,6 +12,7 @@
     type MediaFailureCause,
   } from '$lib/utils/mediaErrors';
   import { parseEnvelope } from '$lib/envelope';
+  import { noticeDisplayText, noticeUserIds } from '$lib/utils/chat/noticeText';
   import Modal from '../shared/Modal.svelte';
   import MessageEmojiPicker from './MessageEmojiPicker.svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
@@ -20,6 +21,7 @@
     retryUpload,
     unsentReasonOf,
     uploadViewOf,
+    textWaitOf,
     uploadCancelOf,
     type UnsentReason,
     type UploadView,
@@ -62,6 +64,7 @@
   import {
     getUserDisplayNameSync,
     getUserFirstNameSync,
+    peekUserDisplayName,
     resolveUserDisplayName,
   } from '$lib/utils/users/displayName';
   import {
@@ -315,12 +318,34 @@
   let channelInvite = $derived(
     envelope.kind === 'system' ? (envelope.channelInvite ?? null) : null
   );
+  /**
+   * A NOTICE ROW NAMES ITS PEOPLE BY ID AND DRAWS THE NAMES HERE, NEVER FROM A FROZEN SENTENCE.
+   * A name unknown when the row was written (a newcomer's profile not yet readable) is fetched by the
+   * one display-name resolver (single-flight, cached) and lands in `noticeNames`, which redraws the
+   * row. Until EVERY name is known the stored sentence shows (`noticeDisplayText`): the writer drew it
+   * with the names it held, so a cold cache never degrades it. The resolver keeps a 404 or a nameless
+   * profile as the unknown label for the session, so a row written during that state redraws at the
+   * next launch, not before (review of #3232).
+   */
+  let noticeNames = $state<Record<string, string>>({});
+  let notice = $derived(envelope.kind === 'system' ? (envelope.notice ?? null) : null);
+  $effect(() => {
+    if (!notice) return;
+    for (const id of noticeUserIds(notice)) {
+      if (peekUserDisplayName(id) !== null) continue;
+      void resolveUserDisplayName(id).then((name) => {
+        if (name && noticeNames[id] !== name) noticeNames = { ...noticeNames, [id]: name };
+      });
+    }
+  });
   let textContent = $derived(
-    envelope.kind === 'text' || envelope.kind === 'system'
-      ? envelope.text
-      : envelope.kind === 'media'
-        ? (envelope.caption ?? '')
-        : ''
+    notice && envelope.kind === 'system'
+      ? noticeDisplayText(notice, envelope.text, (id) => noticeNames[id] ?? peekUserDisplayName(id))
+      : envelope.kind === 'text' || envelope.kind === 'system'
+        ? envelope.text
+        : envelope.kind === 'media'
+          ? (envelope.caption ?? '')
+          : ''
   );
   let effectiveReplyTo = $derived(
     replyTo ??
@@ -590,6 +615,30 @@
     return { x: pe.clientX, y: pe.clientY };
   }
 
+  /**
+   * A PRESS THAT STARTS ON A VIDEO IS ITS PLAYER'S (owner, 2026-11-09): held there, it pauses the
+   * video and ONLY that - the action sheet stays reachable from the rest of the bubble. The player
+   * says so by being a `[data-video-player]`; the bubble reads that fact at the press rather than
+   * opening the sheet and racing the pause.
+   */
+  function pressOwnedByVideo(e: Event): boolean {
+    const target = e.target as Element | null;
+    return (
+      target !== null &&
+      typeof target.closest === 'function' &&
+      target.closest('[data-video-player]') !== null
+    );
+  }
+
+  /** The actions sheet, opened from a video's chip - the long press it replaces over a video. */
+  function openActionsFromVideo() {
+    Log.d('MESSAGE', `actions of ${messageId} opened from its video's chip`);
+    bubbleTaps.cancel();
+    showMobileActions = true;
+    emojiPickerOrigin = null;
+    showInfo = false;
+  }
+
   function beginLongPress(e: PointerEvent | TouchEvent) {
     const { x, y } = pointerCoords(e);
     pointerStartX = x;
@@ -599,8 +648,8 @@
 
     const pointerType = 'pointerType' in e ? e.pointerType : 'touch';
 
-    // Long press: arm on any non-mouse touch event on mobile
-    if (pointerType !== 'mouse' && isMobile) {
+    // Long press: arm on any non-mouse touch event on mobile - never over a video, whose hold pauses.
+    if (pointerType !== 'mouse' && isMobile && !pressOwnedByVideo(e)) {
       if (longPressTimer) clearTimeout(longPressTimer);
       longPressTimer = setTimeout(() => {
         if (replyGesture?.phase === 'horizontal') return;
@@ -774,6 +823,17 @@
   const queuedTextFailed = $derived(
     isOwn && !mediaRef && status === 'error' && uploadViewOf(messageId)?.phase === 'failed'
   );
+  /**
+   * What a pending TEXT of mine waits for (R05, 2026-11-09), as its sender wrote it (`textWaitOf`:
+   * the outbox for a DM, `messaging.ts` for a salon): the server that answered "not now", or the
+   * link. `null`: a plain "en attente".
+   */
+  const waitingOn = $derived.by((): 'network' | 'server' | null => {
+    if (!isOwn || mediaRef || status !== 'pending') return null;
+    // A device KNOWN offline waits for the link first, whatever the server said before it went.
+    if (connectivity.isOffline) return 'network';
+    return textWaitOf(messageId) ?? null;
+  });
   const upload = $derived.by((): UploadView | null => {
     if (!isOwn || !mediaRef || mediaRef.mediaId) return null;
     if (status !== 'pending' && status !== 'sending') return null;
@@ -953,11 +1013,8 @@
     </div>
   {:else}
     <div
-      class="text-text-muted inline-flex max-w-md items-center gap-2 rounded-xl border border-black/5 bg-black/5 px-3.5 py-1.5 text-center text-xs font-medium shadow-sm dark:border-white/10 dark:bg-white/5 {shouldAnimate
-        ? 'animate-rise-in'
-        : ''}"
+      class="text-text-muted max-w-md text-center text-xs {shouldAnimate ? 'animate-rise-in' : ''}"
     >
-      <Info size={14} class="shrink-0 opacity-60" />
       <span><EmojiText text={textContent} /></span>
     </div>
   {/if}
@@ -1060,6 +1117,15 @@
             ontouchcancel={endSwipeReply}
             oncontextmenu={(e) => {
               e.preventDefault();
+              // A phone raises `contextmenu` for a touch hold too: over a video it is the player's
+              // pause, never the sheet.
+              if (pressOwnedByVideo(e)) {
+                Log.d(
+                  'MESSAGE',
+                  `long press over a video in ${messageId} - the player's, no sheet`
+                );
+                return;
+              }
               // The sheet supersedes a tap still waiting out the double-tap window.
               bubbleTaps.cancel();
               if (isDeleted) return; // see the long-press timer: the sheet has no items on a tombstone
@@ -1123,6 +1189,7 @@
                   {reelPurgedAt}
                   onReelPurged={onReelPurged ? (at) => onReelPurged(messageId, at) : undefined}
                   onNear={() => (isNearViewport = true)}
+                  onActions={isMobile && !isDeleted ? openActionsFromVideo : undefined}
                   {upload}
                   uploadFailed={uploadFailed || retiredForGroup}
                   {uploadFailedLabel}
@@ -1149,6 +1216,7 @@
               {isLastOwn}
               isReadReceiptAnchor={false}
               {status}
+              {waitingOn}
               {readBy}
               onRetry={onRetry ?? (queuedTextFailed ? () => retryUpload(messageId) : undefined)}
               {onDiscard}

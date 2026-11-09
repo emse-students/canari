@@ -124,7 +124,7 @@
         {#if status === 'loading'}
           <p class="text-text-muted">{m.form_success_verifying()}</p>
         {:else}
-          <h1 class="text-text-main text-2xl font-bold tracking-tight">{TITLE[status]()}</h1>
+          <h1 class="text-text-main text-2xl font-bold">{TITLE[status]()}</h1>
           <p class="text-text-muted mt-2">{DESCRIPTION[status]()}</p>
         {/if}
       </div>

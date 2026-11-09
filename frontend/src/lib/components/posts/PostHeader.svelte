@@ -5,7 +5,7 @@
   import RevealedAuthorLine from './RevealedAuthorLine.svelte';
   import StudentsOnlyChip from './StudentsOnlyChip.svelte';
   import FollowChip from '$lib/components/follows/FollowChip.svelte';
-  import { Clock, Repeat2, Send } from '@lucide/svelte';
+  import { Pin, Repeat2, Send } from '@lucide/svelte';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
   import {
@@ -64,18 +64,18 @@
   share) to five (a manager who can also pin, edit, delete and report). Without `min-w-0` a flex
   item refuses to shrink below its content and the `truncate` below never fires.
 -->
-<div class="flex min-w-0 flex-1 items-center gap-3.5 bg-transparent px-5 py-4">
+<div class="flex min-w-0 flex-1 items-center gap-3 bg-transparent px-4 py-2.5">
   {#if authorHref}
     <a
       href={authorHref}
       class="focus-visible:ring-accent-icon shrink-0 rounded-full shadow-sm transition-transform duration-200 outline-none hover:scale-105 focus-visible:ring-2"
       aria-label={authorLinkLabel}
     >
-      <PostAuthorAvatar {post} />
+      <span class="block h-10 w-10"><PostAuthorAvatar {post} fill /></span>
     </a>
   {:else}
     <span class="shrink-0">
-      <PostAuthorAvatar {post} />
+      <span class="block h-10 w-10"><PostAuthorAvatar {post} fill /></span>
     </span>
   {/if}
 
@@ -103,8 +103,14 @@
       class="text-text-muted text-2xs mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 font-medium opacity-80"
       data-post-time-line
     >
-      <Clock size={12} strokeWidth={2.5} class="shrink-0" />
       <span class="shrink-0" title={exactDate(post.publishedAt)}>{timeAgo(post.publishedAt)}</span>
+      {#if post.pinned}
+        <!-- A PINNED POST IS A MUTED WORD ON THE TIME'S LINE, as Facebook marks a pinned or sponsored post - no coloured sticker over the card's edge. -->
+        <span class="flex shrink-0 items-center gap-1" data-post-pinned>
+          <Pin size={12} strokeWidth={2.5} class="shrink-0" aria-hidden="true" />
+          {m.post_pinned()}
+        </span>
+      {/if}
       {#if post.studentsOnly}
         <StudentsOnlyChip />
       {/if}

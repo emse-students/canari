@@ -181,7 +181,7 @@
     data-audience-editor
   >
     <div>
-      <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+      <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
         <Globe size={20} />
         {m.audience_heading()}
       </h2>

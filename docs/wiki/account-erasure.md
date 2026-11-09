@@ -14,7 +14,7 @@ found what it missed:
 
 - **social**: comments, likes, reactions and poll votes left on OTHER people's posts (inside the
   `posts.comments` / `reactions` / `polls` JSONB, out of reach of any column statement); form
-  submissions (`userId`, `email`, `answers`), `form_respondents`, `form_reminders`,
+  submissions (`userId`, `email`, `answers`), `form_respondents`, `form_reminders`, `opening_reminders`,
   `post_notifications`, the three minesweeper tables, `document_reviewer_grants`,
   `webhook_deliveries.userId`, `product_checkouts.userId` (per row, `'[deleted]:' || id`, because
   of its partial unique index), `legacy_cotisations.claimedByUserId`, and about twenty authorship

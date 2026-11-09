@@ -112,7 +112,7 @@
           <Shield size={22} />
         </span>
         <div>
-          <h1 class="text-text-main text-xl font-bold tracking-tight">{scope.title()}</h1>
+          <h1 class="text-text-main text-xl font-bold">{scope.title()}</h1>
           <p class="text-text-muted mt-0.5 text-sm">{scope.description()}</p>
         </div>
       </header>

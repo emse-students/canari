@@ -126,7 +126,7 @@
 
 <div class="border-cn-border bg-cn-surface space-y-6 rounded-2xl border p-6 shadow-sm">
   <div>
-    <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+    <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
       <Inbox size={20} />
       {m.asso_proposals_title()}
     </h2>

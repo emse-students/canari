@@ -358,9 +358,7 @@
       <div class="text-text-main mb-1 truncate text-base font-bold">
         <EmojiText text={effectiveDisplayName} />
       </div>
-      <div
-        class="text-text-muted text-2xs inline-flex items-center gap-1.5 font-bold tracking-wider uppercase"
-      >
+      <div class="text-text-muted text-2xs inline-flex items-center gap-1.5 font-bold">
         <!--
                 UNCONDITIONAL, BECAUSE IT STATES A FACT ABOUT THE CONVERSATION AND NOT ABOUT THIS
                 DEVICE. It used to fork on `isReady` and show an amber "not joined" line, which is
@@ -388,7 +386,7 @@
     >
       <label
         for="group-rename-input"
-        class="text-text-muted text-2xs mb-1 inline-flex items-center gap-2 font-bold tracking-wider uppercase"
+        class="text-text-muted text-2xs mb-1 inline-flex items-center gap-2 font-bold"
       >
         <PencilLine size={14} />
         {m.chat_group_name_label()}
@@ -463,9 +461,7 @@
     <div
       class="bg-cn-surface flex flex-col gap-3 rounded-2xl border border-black/5 p-4 shadow-sm @md:p-5 dark:border-white/10"
     >
-      <span
-        class="text-text-muted text-2xs inline-flex items-center gap-2 font-bold tracking-wider uppercase"
-      >
+      <span class="text-text-muted text-2xs inline-flex items-center gap-2 font-bold">
         <Link2 size={14} />
         {m.chat_group_invite_link_title()}
       </span>
@@ -504,9 +500,7 @@
   {#if isGroupConversation}
     <div class="flex flex-col gap-3">
       <div class="flex items-center justify-between gap-2 px-1">
-        <span
-          class="text-text-muted text-2xs inline-flex items-center gap-2 font-bold tracking-wider uppercase"
-        >
+        <span class="text-text-muted text-2xs inline-flex items-center gap-2 font-bold">
           <Users size={14} />
           {m.chat_group_members_count_label({ count: groupMembers.length })}
         </span>
@@ -636,7 +630,7 @@
 
       {#if confirmLeave}
         <div class="flex flex-col gap-3" transition:fade={{ duration: 150 }}>
-          <p class="text-center text-xs font-bold tracking-wider text-orange-500 uppercase">
+          <p class="text-center text-xs font-bold text-orange-500">
             {m.chat_group_leave_confirm_question()}
           </p>
           <div class="flex gap-3">
@@ -678,7 +672,7 @@
           </Button>
         {:else}
           <div class="flex flex-col gap-3" transition:fade={{ duration: 150 }}>
-            <p class="text-center text-xs font-bold tracking-wider text-red-500 uppercase">
+            <p class="text-center text-xs font-bold text-red-500">
               {m.chat_group_delete_confirm_question()}
             </p>
             <div class="flex gap-3">

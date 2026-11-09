@@ -188,7 +188,7 @@
     >
       <ChevronLeft size={24} strokeWidth={2.5} />
     </button>
-    <h1 bind:this={heading} tabindex="-1" class="text-base font-bold outline-none">
+    <h1 bind:this={heading} tabindex="-1" class="font-body text-base font-bold outline-none">
       {m.reel_sendto_title()}
     </h1>
   </header>

@@ -74,7 +74,7 @@ describe('PostContent, a reel', () => {
     expect(box.style.aspectRatio).toBe(`${1080 / 1920} / 1`);
     expect(box.style.maxHeight).toContain('--media-max-height');
     expect(box.className).toContain('w-full');
-    expect(box.className).toContain('bg-cn-surface');
+    expect(box.className).toContain('bg-cn-card');
   });
 
   it('a landscape clip is the same box at its own ratio', async () => {

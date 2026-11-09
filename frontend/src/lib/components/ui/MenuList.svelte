@@ -67,7 +67,7 @@
       {#if section.title}
         <p
           id="menu-{domKey}-{si}"
-          class="text-text-muted text-2xs px-3 pt-3 pb-1 font-bold uppercase"
+          class="text-text-muted text-2xs px-3 pt-3 pb-1 font-bold"
           data-menu-section-title
         >
           {section.title}

@@ -81,7 +81,7 @@ export function messageInsertSql(
 }
 
 /** Columns bound per outbox row in {@link outboxInsertSql}. */
-export const OUTBOX_COLUMNS = 12;
+export const OUTBOX_COLUMNS = 13;
 
 /**
  * Outbox rows ONE statement can carry. A chat-reel take and its sends (RC-13) must fit in one: they
@@ -91,7 +91,7 @@ export const OUTBOX_ROWS_PER_STATEMENT = Math.floor(MAX_BOUND_PARAMETERS / OUTBO
 
 /**
  * The most conversations ONE chat-reel take may be sent to on THIS client, whatever the engine: the
- * sends that fit beside their take in one SQLite statement (82). IndexedDB has no such bound, and is
+ * sends that fit beside their take in one SQLite statement (75). IndexedDB has no such bound, and is
  * held to the same one on purpose, so a take never queues on the web and is refused on a phone. The
  * server's `chatReelMaxTargets` (15) is the tighter bound in practice; the sheet honours the SMALLER
  * of the two (`chatReelTargetCap`).
@@ -105,7 +105,7 @@ export const REEL_TAKE_MAX_SENDS = OUTBOX_ROWS_PER_STATEMENT - 1;
  * {@link outboxInsertSql}'s column order, `id` first.
  */
 export const OUTBOX_UPDATE_ROW_SQL =
-  'UPDATE outbox SET conversation_id = $2, sent_at = $3, kind = $4, status = $5, attempts = $6, last_attempt_at = $7, next_attempt_at = $8, server_errors = $9, created_at = $10, iv = $11, cipher_text = $12 WHERE id = $1';
+  'UPDATE outbox SET conversation_id = $2, sent_at = $3, kind = $4, status = $5, attempts = $6, last_attempt_at = $7, next_attempt_at = $8, server_errors = $9, unavailable_answers = $10, created_at = $11, iv = $12, cipher_text = $13 WHERE id = $1';
 
 /**
  * `INSERT OR REPLACE` for `rows` outbox rows, placeholders numbered across the whole statement like
@@ -125,7 +125,7 @@ export function outboxInsertSql(rows: number): string {
     return `(${placeholders.join(', ')})`;
   });
   return (
-    'INSERT OR REPLACE INTO outbox (id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, server_errors, created_at, iv, cipher_text) VALUES ' +
+    'INSERT OR REPLACE INTO outbox (id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, server_errors, unavailable_answers, created_at, iv, cipher_text) VALUES ' +
     tuples.join(', ')
   );
 }

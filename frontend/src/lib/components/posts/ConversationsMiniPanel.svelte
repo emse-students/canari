@@ -32,6 +32,8 @@
     unreadCount: number;
     imageMediaId: string | null;
     lastMessageContent?: string;
+    /** Newest message time (ms), for the tile's relative time. */
+    lastActivityAt?: number;
   }
 
   let idbItems = $state<ConvItem[]>([]);
@@ -99,6 +101,8 @@
       lastMessageContent:
         (conv.messages?.length > 0 ? previewContentOf(conv.messages) : undefined) ??
         baseline?.lastMessageContent,
+      lastActivityAt:
+        conv.messages?.length > 0 ? conversationRecency(conv) : baseline?.lastActivityAt,
     };
   }
 
@@ -218,13 +222,11 @@
       <div class="bg-accent/10 text-accent-text rounded-lg p-1.5">
         <MessageCircle size={16} strokeWidth={2.5} />
       </div>
-      <span class="text-text-main text-sm font-bold tracking-wide"
-        >{m.post_conversations_panel_title()}</span
-      >
+      <span class="text-text-main text-sm font-bold">{m.post_conversations_panel_title()}</span>
     </div>
     <a
       href={resolve('/chat')}
-      class="text-2xs text-accent-text hover:text-accent-text focus-visible:ring-accent-icon flex items-center gap-0.5 rounded font-bold tracking-wider uppercase transition-colors outline-none focus-visible:ring-2"
+      class="text-2xs text-accent-text focus-visible:ring-accent-icon flex items-center gap-0.5 rounded font-bold transition-colors outline-none focus-visible:ring-2"
     >
       {m.post_conversations_see_all_label()}
       <ChevronRight size={14} strokeWidth={2.5} />
@@ -271,6 +273,7 @@
             isSelected={false}
             unreadCount={item.unreadCount}
             imageMediaId={item.imageMediaId}
+            lastActivityAt={item.lastActivityAt}
             onClick={() => navigateToConversation(item.meta.id)}
           />
         {/each}

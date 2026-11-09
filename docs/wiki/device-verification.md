@@ -668,7 +668,11 @@ locked and the app killed, and a second device calling it with VIDEO.
 
 ## The emoji picker paints at once - owed on the iPhone (2026-11-08)
 
-Cause and fix: [emoji](frontend/emoji.md#the-picker-paints-at-once---2026-11-08). On a pre-release, killed app, a conversation with at least one message: open a conversation, wait for it to settle, tap a message's reaction "+" (then the composer's emoji button on a second run). Read: no cell of the first screen of "Smileys et emotions" is blank or grows, "Recents" has no empty tile, the tab bar shows nine icons and no stray glyph, on the FIRST open after a cold launch. Record the first-frame state with a screen capture.
+Cause and fix: [emoji](frontend/emoji.md#the-picker-paints-at-once---2026-11-08). On a pre-release, killed app, a conversation with at least one message: open a conversation, wait for it to settle, tap a message's reaction "+" (then the composer's emoji button on a second run). Read: no cell of the first screen of "Smileys et emotions" is blank or grows, "Recents" has no empty tile, the tab bar shows nine icons and no stray glyph, on the FIRST open after a cold launch. Record the first-frame state with a screen capture. **Since the emoji setting (2026-11-09) this reading is of the "Canari" mode**: choose it in Settings > Preferences first.
+
+## The emoji setting - owed on both phones (2026-11-09)
+
+Mechanism: [emoji](frontend/emoji.md#the-setting---one-resolver-2026-11-09). On a pre-release, both phones, an install that had the app before the update. Read: **(1)** with nothing chosen, Settings > Preferences > "Emojis" shows "Systeme" selected, and a bubble, a reaction pill, the picker's cells and tab bar and the composer draw the platform's emoji (Apple's on the iPhone, the phone maker's on the Mi 9T), a skin-toned thumb in one glyph; **(2)** the picker's cells sit centred at the size of the pictures, nothing clipped; **(3)** switching to "Canari" redraws the open conversation in Noto's pictures without a restart, and a cold start opens straight in pictures with no system glyph on the first frame; **(4)** back to "Systeme", a cold start draws no picture first; **(5)** a jumbo emoji-only message is large in both modes; **(6)** under "Systeme", a poster export still shows Noto's pictures.
 
 ## The seed mirror labelled by account - owed (2026-11-07)
 

@@ -164,7 +164,7 @@
       -->
       {#if showRecents}
         <div class="mt-5 flex min-h-0 flex-1 flex-col">
-          <p class="text-text-muted text-2xs mb-2 font-bold tracking-widest uppercase">
+          <p class="text-text-muted text-2xs mb-2 font-bold">
             {m.chat_modal_recent_peers_label()}
           </p>
           <ul class="-mx-2 min-h-0 flex-1 overflow-y-auto">

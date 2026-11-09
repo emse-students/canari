@@ -159,7 +159,7 @@
       <div
         class="flex flex-wrap items-center gap-1.5 border-b border-black/5 bg-white/20 px-3 py-2 dark:border-white/10 dark:bg-black/10"
       >
-        <span class="text-text-muted/80 text-2xs mr-2 font-bold tracking-widest uppercase">
+        <span class="text-text-muted/80 text-2xs mr-2 font-bold">
           {m.msg_recent_reactions_label()}
         </span>
         {#each recentEmojis as emoji (emoji)}

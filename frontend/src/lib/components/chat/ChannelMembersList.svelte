@@ -122,10 +122,8 @@
   <!-- Admins & Moderators section. -->
   {#if admins.length > 0}
     <div class="animate-in fade-in slide-in-from-bottom-2 duration-300">
-      <h3
-        class="text-text-muted text-2xs mb-3 flex items-center gap-2 px-2 font-bold tracking-widest uppercase"
-      >
-        <ShieldAlert size={14} class="text-accent-text" strokeWidth={2.5} />
+      <h3 class="text-text-muted text-2xs mb-3 flex items-center gap-2 px-2 font-bold">
+        <ShieldAlert size={14} class="text-accent-icon" strokeWidth={2.5} />
         {m.chat_admins_count_label({ admins: admins.length })}
       </h3>
       <div class="space-y-1.5">
@@ -160,9 +158,7 @@
       class="animate-in fade-in slide-in-from-bottom-2 delay-75 duration-300"
       style="animation-fill-mode: backwards;"
     >
-      <h3
-        class="text-text-muted text-2xs mb-3 flex items-center gap-2 px-2 font-bold tracking-widest uppercase"
-      >
+      <h3 class="text-text-muted text-2xs mb-3 flex items-center gap-2 px-2 font-bold">
         <User size={14} class="text-text-muted/70" strokeWidth={2.5} />
         {m.chat_members_count_label({ regulars: regulars.length })}
       </h3>

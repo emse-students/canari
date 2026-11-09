@@ -122,7 +122,7 @@
 
   <!-- The preview: the sentence, and the line the member would read in the shop. -->
   <div class="bg-cn-surface space-y-2 rounded-xl p-3">
-    <p class="text-text-muted text-xs font-bold tracking-wide uppercase">
+    <p class="text-text-muted text-xs font-bold">
       {m.asso_cotisations_rise_preview_title()}
     </p>
     <p class="text-text-main text-sm">{riseSentence(quote)}</p>
