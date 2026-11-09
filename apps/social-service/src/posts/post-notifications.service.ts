@@ -35,6 +35,8 @@ import {
   bookingAddedContent,
   bookingCancelledContent,
   bookingReminderContent,
+  bookingOpenContent,
+  eventOpenContent,
   bookingChangedContent,
   bookingRemovedContent,
   bookingWithdrawnContent,
@@ -362,6 +364,13 @@ export class PostNotificationsService {
         return withIcon(bookingChangedContent(actorName, text), icon);
       case 'booking_removed':
         return withIcon(bookingRemovedContent(actorName, text), icon);
+      // The openings told to an association's followers (engagement WP-4). `actorName` is the
+      // ASSOCIATION, `text` the space's name (empty for a link-only one) or the event's title. No
+      // picture: the caller is the scheduler, whose actor is the platform.
+      case 'booking_open':
+        return bookingOpenContent(actorName, text);
+      case 'event_open':
+        return eventOpenContent(actorName, text);
       // The agenda's six. `text` is the event's TITLE for all of them - never a composed sentence,
       // which is what the server used to send here and could not translate.
       case 'event_proposed':

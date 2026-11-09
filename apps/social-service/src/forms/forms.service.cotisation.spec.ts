@@ -34,6 +34,19 @@ describe('FormsService - cotisation configuration and granting', () => {
       save: jest.fn((x: unknown) => Promise.resolve(x)),
       findOne: jest.fn(() => Promise.resolve(opts.form ?? null)),
     };
+    // A form published at once by an association is stored in a transaction that also writes its
+    // followers' opening rows (engagement WP-4): the save is still `formRepo.save`, the rows a no-op.
+    formRepo.manager = {
+      transaction: jest.fn((fn: (m: unknown) => Promise<unknown>) =>
+        fn({
+          save: async (_entity: unknown, x: unknown) => ({
+            id: 'f-new',
+            ...(await formRepo.save(x)),
+          }),
+          query: jest.fn(() => Promise.resolve([])),
+        })
+      ),
+    };
     const submissionRepo: any = {
       count: jest.fn(() => Promise.resolve(0)),
       findOne: jest.fn(() => Promise.resolve(opts.submission ?? null)),

@@ -5849,6 +5849,8 @@
   "notif_booking_cancelled_text": "cancelled a booking",
   "notif_booking_withdrawn_text": "left your booking",
   "notif_booking_added_text": "added you to a booking",
+  "notif_booking_open_text": "opened bookings:",
+  "notif_event_open_text": "published an event:",
   "notif_booking_changed_text": "changed your booking",
   "notif_booking_removed_text": "removed you from a booking",
   "notif_booking_reminder_text": "Reminder: your booking starts soon",

@@ -71,7 +71,14 @@ import {
   type RequestState,
 } from './seat-hold';
 import { Submission } from './entities/submission.entity';
-import { FormReminder } from './entities/form-reminder.entity';
+import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
+import {
+  announceOpeningToFollowers,
+  askOpening,
+  cancelOpening,
+  followOpeningMove,
+  isTold,
+} from '../openings/opening-reminders';
 import { FormRespondent } from './entities/form-respondent.entity';
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import axios from 'axios';
@@ -388,7 +395,7 @@ export class FormsService {
   constructor(
     @InjectRepository(Form) private readonly formRepo: Repository<Form>,
     @InjectRepository(Submission) private readonly submissionRepo: Repository<Submission>,
-    @InjectRepository(FormReminder) private readonly reminderRepo: Repository<FormReminder>,
+    @InjectRepository(OpeningReminder) private readonly reminderRepo: Repository<OpeningReminder>,
     private readonly configService: ConfigService,
     private readonly associationsService: AssociationsService,
     private readonly userTagService: UserTagService,
@@ -912,13 +919,50 @@ export class FormsService {
     });
     // A question citing an image: the citation is checked and bound in the transaction that stores
     // the form, under each image's lock (`FormItemImagesService`). None cited, nothing to claim.
-    if (questionImageIds(form.items).length === 0) return this.formRepo.save(form);
+    // A form published at once by an association tells its followers in that same transaction
+    // (engagement WP-4): a form stored without its followers' rows would never be announced.
+    const cites = questionImageIds(form.items).length > 0;
+    const announces = status === FORM_PUBLISHED && !!form.associationId;
+    if (!cites && !announces) return this.formRepo.save(form);
     return this.formRepo.manager.transaction(async (m) => {
-      const ids = await this.formItemImages.claimForSave(m, form.items, null, input.ownerId!);
+      const ids = cites
+        ? await this.formItemImages.claimForSave(m, form.items, null, input.ownerId!)
+        : [];
       const saved = await m.save(Form, form);
-      await this.formItemImages.bindToForm(m, ids, saved.id);
+      if (cites) await this.formItemImages.bindToForm(m, ids, saved.id);
+      if (announces) await this.announceFormOpening(m, saved, input.ownerId!);
       return saved;
     });
+  }
+
+  /**
+   * The opening of a PUBLISHED association form, written for the association's followers who see it
+   * (engagement WP-4, decision 5d): one row each, the opening only, never two with an ask. Called
+   * where the form becomes published - a create published at once, a draft's publication - and
+   * where a published form's opening moves.
+   */
+  private async announceFormOpening(
+    m: EntityManager,
+    form: Pick<Form, 'id' | 'associationId' | 'opensAt'>,
+    actorId: string
+  ): Promise<void> {
+    await announceOpeningToFollowers(m, {
+      kind: 'form',
+      targetId: form.id,
+      associationId: form.associationId ?? null,
+      opensAt: form.opensAt ? new Date(form.opensAt) : null,
+      actorId,
+    });
+  }
+
+  /** A published form's opening moved: its rows follow it, and its followers are written again. */
+  private async followFormOpeningMove(
+    m: EntityManager,
+    form: Pick<Form, 'id' | 'associationId' | 'opensAt'>,
+    actorId: string
+  ): Promise<void> {
+    await followOpeningMove(m, 'form', form.id, form.opensAt ? new Date(form.opensAt) : null);
+    await this.announceFormOpening(m, form, actorId);
   }
 
   /**
@@ -1348,6 +1392,7 @@ export class FormsService {
       ...rest
     } = input;
     const citedBefore = questionImageIds(form.items);
+    const opensBefore = form.opensAt ? new Date(form.opensAt).getTime() : null;
     Object.assign(form, {
       ...rest,
       associationId,
@@ -1402,18 +1447,28 @@ export class FormsService {
       if (dropped.length > 0) await this.formItemImages.releaseUncited(dropped, 'question edited');
       return withStatus(saved);
     }
+    // THE OPENING MOVED on a PUBLISHED form (engagement WP-4): its reminders follow it in the
+    // transaction that saves it. A draft has no reminder yet - its publication writes them.
+    const opensAfter = form.opensAt ? new Date(form.opensAt).getTime() : null;
+    const moves = status === FORM_PUBLISHED && opensAfter !== opensBefore;
     if (inTransaction) {
       if (citedAfter.length > 0) {
         await this.formItemImages.claimForSave(inTransaction, form.items, formId, userId);
       }
-      return withStatus(await inTransaction.save(Form, written as Form));
+      const saved = await inTransaction.save(Form, written as Form);
+      if (moves) await this.followFormOpeningMove(inTransaction, form, userId);
+      return withStatus(saved);
     }
-    if (citedBefore.length === 0 && citedAfter.length === 0) {
+    if (citedBefore.length === 0 && citedAfter.length === 0 && !moves) {
       return withStatus(await this.formRepo.save(written as Form));
     }
     const saved = await this.formRepo.manager.transaction(async (m) => {
-      await this.formItemImages.claimForSave(m, form.items, formId, userId);
-      return m.save(Form, written as Form);
+      if (citedBefore.length > 0 || citedAfter.length > 0) {
+        await this.formItemImages.claimForSave(m, form.items, formId, userId);
+      }
+      const stored = await m.save(Form, written as Form);
+      if (moves) await this.followFormOpeningMove(m, form, userId);
+      return stored;
     });
     // Replaced or removed: released once no question of any form cites it (a duplicated question
     // still does). After the commit, so the release re-reads the citations this save wrote.
@@ -1555,6 +1610,9 @@ export class FormsService {
           .set({ status: FORM_PUBLISHED })
           .where('id = :id AND status = :draft', { id: formId, draft: FORM_DRAFT })
           .execute();
+        // Published: the association's followers are told of its opening (engagement WP-4), in
+        // the transaction that publishes it.
+        await this.announceFormOpening(m, saved, userId);
       }
       const next = current.document ? await closeFormDraft(m, formId) : current.revision;
       return { refused: null, revision: next, items: saved.items as unknown, wasDraft };
@@ -3913,29 +3971,21 @@ export class FormsService {
     if (!form.opensAt || new Date(form.opensAt) <= new Date()) {
       throw new BadRequestException('Form is already open or has no scheduled opening time');
     }
-    await this.reminderRepo.upsert(
-      {
-        formId,
-        userId,
-        opensAt: new Date(form.opensAt),
-        notified5min: false,
-        notifiedOnOpen: false,
-      },
-      ['formId', 'userId']
-    );
+    // "Me prévenir" (engagement WP-4): the reader's opening row becomes an ask - one row whether
+    // or not they also follow the association, so one opening push.
+    await askOpening(this.reminderRepo.manager, 'form', formId, userId, new Date(form.opensAt));
     return { ok: true };
   }
 
-  /** Removes a user's reminder subscription for a form. */
+  /** Removes a user's reminder for a form - an ask, or the row they hold as a follower (L24). */
   async unsubscribeReminder(formId: string, userId: string) {
-    await this.reminderRepo.delete({ formId, userId });
+    await cancelOpening(this.reminderRepo.manager, 'form', formId, userId);
     return { ok: true };
   }
 
-  /** Returns whether the user has an active reminder subscription for a form. */
+  /** Returns whether the user will be told of the form's opening - asked, or as a follower. */
   async checkReminder(formId: string, userId: string) {
-    const count = await this.reminderRepo.count({ where: { formId, userId } });
-    return { subscribed: count > 0 };
+    return { subscribed: await isTold(this.reminderRepo.manager, 'form', formId, userId) };
   }
 
   /** Uploads a banner image for a form and updates imageUrl / imageMediaId. */
