@@ -2,6 +2,7 @@ import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { AvatarCache, isCacheableAbsence } from './avatar.cache';
+import { loadDevAvatars, type DevAvatar } from './dev-avatar-override';
 import { UpstreamHealth, classifyUpstreamFailure, type UpstreamAdmission } from './upstream-health';
 
 /**
@@ -90,6 +91,8 @@ export const AVATAR_SUBJECT_ID = /^[a-zA-Z0-9_-]{1,128}$/;
 
 @Injectable()
 export class AvatarService {
+  /** The dev estate's explicit per-account avatars; EMPTY everywhere else (see `loadDevAvatars`). */
+  private readonly devAvatars: Map<string, DevAvatar>;
   private readonly logger = new Logger(AvatarService.name);
   private readonly avatarApiUrl: string;
   private readonly avatarApiKey: string;
@@ -112,6 +115,17 @@ export class AvatarService {
       'https://gallery.mitv.fr'
     );
     this.avatarApiKey = this.configService.get<string>('MIGALLERY_API_KEY', '');
+    // Throws (the process refuses to boot) when a directory is named on a non-dev estate.
+    this.devAvatars = loadDevAvatars(
+      this.configService.get<string>('DEV_AVATAR_OVERRIDE_DIR'),
+      this.configService.get<string>('DEV_AVATAR_OVERRIDE_EXTRA'),
+      this.configService.get<string>('FRONTEND_URL')
+    );
+    if (this.devAvatars.size > 0) {
+      this.logger.warn(
+        `[AVATAR_DEV_OVERRIDE] ${this.devAvatars.size} account(s) are served an explicit dev avatar instead of the gallery's - dev estate only`
+      );
+    }
 
     if (!this.avatarApiKey) {
       this.logger.warn(
@@ -159,6 +173,13 @@ export class AvatarService {
    *   avatar as before. Logged once per call at warn, since the client then pays the refusals again.
    */
   async fetchAvatarPresence(userIds: readonly string[]): Promise<Set<string> | null> {
+    const own = userIds.filter((id) => this.devAvatars.has(id));
+    const upstream = await this.fetchGalleryPresence(userIds);
+    return upstream === null || own.length === 0 ? upstream : new Set([...upstream, ...own]);
+  }
+
+  /** The gallery's half of {@link fetchAvatarPresence}. */
+  private async fetchGalleryPresence(userIds: readonly string[]): Promise<Set<string> | null> {
     if (!this.avatarApiKey) return new Set();
     if (userIds.length === 0) return new Set();
     const admission = this.health.admit();
@@ -221,6 +242,9 @@ export class AvatarService {
     if (!AVATAR_SUBJECT_ID.test(userId)) {
       throw new HttpException('Invalid user ID', HttpStatus.BAD_REQUEST);
     }
+
+    const dev = this.devAvatars.get(userId);
+    if (dev) return { kind: 'image', body: dev.body, contentType: dev.contentType, etag: dev.etag };
 
     // NOT `unavailable`: see the type's docblock. This cannot change while the process lives, so
     // answering "try again" to every render is a storm with no exit.

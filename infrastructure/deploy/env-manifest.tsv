@@ -91,6 +91,7 @@ CLOUDFLARE_ACCOUNT_ID	warn	warn	secret:CLOUDFLARE_ACCOUNT_ID	no TURN relay - ice
 CLOUDFLARE_TURN_MONTHLY_BUDGET_GB	silent	silent	secret:CLOUDFLARE_TURN_MONTHLY_BUDGET_GB	the default budget (950 GB) applies, which is the intended value; 0 makes calls STUN only
 CLOUDFLARE_TURN_ANALYTICS_TOKEN	warn	warn	secret:CLOUDFLARE_TURN_ANALYTICS_TOKEN	no TURN relay - ice-servers answers STUN only (TURN_METER_UNAVAILABLE), a call behind NAT cannot connect
 MIGALLERY_API_KEY	warn	warn	secret:MIGALLERY_API_KEY	the avatar service does not work
+AVATAR_OVERRIDE_EXTRA	skip	warn	secret:AVATAR_OVERRIDE_EXTRA	the bench accounts show an initials circle on dev instead of their explicit avatar (the four demo people still do) - DEV ONLY: skipped in production, whose compose never reads it
 MICONNECT_EDITOR_TOKEN	warn	skip	secret:MICONNECT_EDITOR_TOKEN	an admin's profile edit is refused (typed: not configured) - production only, because dev and production share ONE MiConnect
 HANDOFF_SIGNING_KEY	warn	silent	secret:HANDOFF_SIGNING_KEY	no sign-in handoff is minted (POST /api/auth/handoff answers HANDOFF_NOT_OFFERED), so every MiConnect site Canari opens is opened plainly and may ask for a MiConnect sign-in again; silent on dev, where no site trusts the dev issuer yet
 GOOGLE_SAFE_BROWSING_API_KEY	warn	warn	secret:GOOGLE_SAFE_BROWSING_API_KEY	links are not checked against Safe Browsing

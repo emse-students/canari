@@ -7,7 +7,8 @@
  * any reaction) gets the heart and NO request; a poll option or the action bar keeps its own taps;
  * a signed-out reader likes nothing; and a like given in the reel viewer reaches the card.
  */
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { beforeAll, afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { setEmojiStyle } from '$lib/utils/emojiStyle';
 import { flushSync, mount, unmount } from 'svelte';
 import PostCard from './PostCard.svelte';
 import type { PostEntity } from '$lib/posts/api';
@@ -17,6 +18,10 @@ import { publishPostReactions } from '$lib/posts/postReaction';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { m } from '$lib/paraglide/messages';
 import { flushMacrotask } from '../../../test/flush';
+
+// These read the emoji PICTURE (`img.emoji`), so they run under the "Canari" emoji setting; both
+// modes are pinned in `EmojiText.svelte.test.ts`.
+beforeAll(() => setEmojiStyle('canari'));
 
 vi.mock('$lib/posts/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/posts/api')>()),

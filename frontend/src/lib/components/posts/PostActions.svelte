@@ -115,13 +115,13 @@
   NO RULE UNDER THE ROW, AND TIGHTER INSETS (user, 2026-10-01, Mi 9T). Its `border-b` drew a line
   that, with the comment section's own `border-t` under it, was two hairlines one pixel apart, and a
   line closing the card's last row when the section is shut. The section's top border is the one
-  separator that means something. The first glyph now starts on the text column - `px-2` here plus
-  a 20 px icon centred in a 44 px target lands it at 20 px, the post text's `px-5` - and the two
+  separator that means something. The first glyph now starts on the text column - `px-1` here plus
+  a 20 px icon centred in a 44 px target lands it at 16 px, the post text's `px-4` - and the two
   buttons touch instead of floating 4 px apart; each target stays 44 px.
 -->
 <svelte:window onkeydown={onPickerKeydown} />
 
-<div class="relative flex items-center px-2">
+<div class="relative flex items-center px-1">
   <!--
     ONE TAP LIKES, A HOLD CHOOSES (owner, 2026-11-09, audit S2: Facebook's rule). The smiley used to
     open the picker, so the commonest reaction cost two taps. `longPress` is the shared hold: a press

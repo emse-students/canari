@@ -726,7 +726,7 @@
           class="bg-cn-surface text-cn-ink flex h-64 min-h-0 flex-col overflow-hidden rounded-2xl"
           data-reel-emoji-grid
         >
-          <EmojiGrid onPick={(emoji) => addEmoji(emoji)} />
+          <EmojiGrid onPick={(emoji) => addEmoji(emoji)} emojiStyle="canari" />
         </div>
       {/if}
     {/if}

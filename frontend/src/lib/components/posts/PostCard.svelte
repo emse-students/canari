@@ -57,11 +57,10 @@
   import CommentsPreview from './CommentsPreview.svelte';
   import PostCommentsSheet from './PostCommentsSheet.svelte';
   import PostActionsMenu from './PostActionsMenu.svelte';
-  import PostCornerBadge from './PostCornerBadge.svelte';
   import PostFeedback from './PostFeedback.svelte';
   import EditPostForm from './EditPostForm.svelte';
   import RepublishDialog from './RepublishDialog.svelte';
-  import { Pin, CalendarCheck } from '@lucide/svelte';
+  import { CalendarCheck } from '@lucide/svelte';
   import { untrack } from 'svelte';
   import { FORM_CARD_PLACEHOLDER_MIN_HEIGHT } from '$lib/utils/mediaLayout';
   import { REACTIONS, reactionCountsOf } from '$lib/posts/reactions';
@@ -635,18 +634,13 @@
      (`data-no-double-tap`), and never a link, button, poll option or field inside it. Off while the
      post is being edited and for a reader who is not signed in. -->
 <div
-  class="relative mb-6"
+  class="relative mb-3"
   use:doubleTapLike={{
     onDoubleTap: likeOnDoubleTap,
     enabled: !editingPost && currentUserId.trim() !== '',
   }}
 >
   <DoubleTapHeart bind:this={hearts} />
-  {#if localPost.pinned}
-    <PostCornerBadge label={m.post_pinned()}>
-      {#snippet icon()}<Pin size={10} strokeWidth={3} />{/snippet}
-    </PostCornerBadge>
-  {/if}
   <!-- THE CARD STANDS OFF THE PAGE A LITTLE MORE (user, 2026-10-01, Mi 9T): `shadow-sm` at 5 %
        black on `--cn-bg` barely drew an edge in light mode, and in dark mode a `#121212` card on
        black was held by a 10 % hairline alone. A soft `shadow-md` lifts it in light; dark mode has
@@ -715,7 +709,7 @@
 
     {#if localPost.linkedCalendarEvent}
       {@const ev = localPost.linkedCalendarEvent}
-      <div class="px-5 pb-3">
+      <div class="px-4 pb-3">
         <a
           href="{publicSectionHref(
             '/associations',
@@ -741,7 +735,7 @@
     {/if}
 
     {#if editingPost}
-      <div class="px-4 pb-4 sm:px-5">
+      <div class="px-4 pb-4">
         <EditPostForm
           post={localPost}
           {authToken}
@@ -801,7 +795,7 @@
     />
 
     {#if pendingAttachedFormIds.length > 0}
-      <div class="space-y-3 px-5 py-3" aria-hidden="true">
+      <div class="space-y-3 px-4 py-3" aria-hidden="true">
         {#each pendingAttachedFormIds as formId (formId)}
           <div
             class="animate-pulse rounded-2xl border border-black/5 bg-black/5 dark:border-white/10 dark:bg-white/5"
