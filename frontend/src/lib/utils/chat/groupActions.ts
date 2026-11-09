@@ -816,8 +816,11 @@ function serializeForBundle(m: StoredMessage) {
  * and the chunk that closes that ask.
  *
  * The ratchet cost of addressing - a non-recipient skips the sender's generations - is bounded by
- * `maximum_forward_distance` (2 000) over CONSECUTIVE addressed frames, i.e. one answer of 400 000
- * messages (docs/wiki/protocols/history-answer-addressing.md).
+ * `maximum_forward_distance` (2 000) over CONSECUTIVE addressed frames of one epoch. Since the join
+ * push follows every delivered Welcome, one bulk Add sends its pushes back to back, so the unit is the
+ * Add: at least one frame per added device, `ceil(entitled / 200)` for a returning member. Nothing caps
+ * the devices of one Add; the numbers that cross it are in
+ * docs/wiki/protocols/history-answer-addressing.md ("The ratchet cost of addressing").
  *
  * There is no `vouched` flag any more, and its absence is the point. It existed to tell a durable
  * marker whether it might be discharged - "I compared my whole store and you are complete" as
@@ -987,6 +990,10 @@ export async function historyGroupStartFor(
  * The recipient deduplicates messages by `id` on receipt - multiple calls are idempotent.
  * Stops at the first chunk error to avoid spamming the network.
  *
+ * @returns {@link JoinPushOutcome} - whether anything reached the device, and when nothing did
+ *          because the server could not address it, that fact rather than a log line alone: an
+ *          addressed frame is transport-only, so a device offline at the push never receives it.
+ *
  * **An empty group is answered, not ignored**, and this is the one path where an empty bundle still
  * earns its frame: the receiver is a member being INVITED, so it has no conversation row yet, and
  * the bundle is what hands it the shared floor and the read watermarks. Everywhere else an empty
@@ -1003,18 +1010,18 @@ export async function sendFullHistoryBundle(
     to: string;
   },
   chunkSize = 200
-): Promise<void> {
+): Promise<JoinPushOutcome> {
   const { storage, deviceKeyB64, mlsService, log, to } = deps;
   if (!storage) {
     log(`[HISTORY_BUNDLE] No storage - cannot serve ${groupId.slice(0, 8)}…`);
-    return;
+    return 'not-sent';
   }
   // Not even the state-only frame (its floor and watermarks) goes to a withheld device.
   if (await historyWithheldAfterSettling(groupId, to, mlsService, log)) {
     log(
       `[HISTORY_BUNDLE] ${to} entered ${groupId.slice(0, 8)}... unvouched - no history pushed to it until a member vouches for it`
     );
-    return;
+    return 'not-sent';
   }
 
   let messages: StoredMessage[];
@@ -1024,7 +1031,7 @@ export async function sendFullHistoryBundle(
     // A read that FAILED proves nothing about the group: stay silent so the requester retries
     // against another member rather than concluding the history is empty.
     log(`[HISTORY_BUNDLE] Read failed for ${groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`);
-    return;
+    return 'not-sent';
   }
   const state = await storedConversationState(groupId, storage);
   // A group with no messages can still have read state, a floor and pins worth handing over - and
@@ -1033,7 +1040,7 @@ export async function sendFullHistoryBundle(
   // ADDRESSED like the rest of the push when the server routes it (step A), and closing the `join`
   // ask; broadcast when the windows could not be read, since nothing then says which - exactly the
   // frame this was before step A, and it carries no message.
-  const sendStateOnly = async (why: string, addressed: boolean): Promise<void> => {
+  const sendStateOnly = async (why: string, addressed: boolean): Promise<JoinPushOutcome> => {
     if (
       !addressed &&
       (await anyHistoryWithheldIn(groupId, () => mlsService.getGroupMemberIdentities(groupId)))
@@ -1041,7 +1048,7 @@ export async function sendFullHistoryBundle(
       log(
         `[HISTORY_BUNDLE] Not broadcasting the state-only frame in ${groupId.slice(0, 8)}... - a device there is withheld (${why})`
       );
-      return;
+      return 'not-sent';
     }
     const bytes = bundleFrame([], to, { state, answer: { join: true }, last: true });
     try {
@@ -1054,14 +1061,16 @@ export async function sendFullHistoryBundle(
       log(
         `[HISTORY_BUNDLE] Empty bundle sent for ${groupId.slice(0, 8)}… (${why})${addressed ? `, addressed to ${to}` : ''}`
       );
+      return 'sent';
     } catch (e) {
       if (e instanceof AddressedUnsupportedError) {
         log(
           `[HISTORY_BUNDLE] ${to} cannot be addressed in ${groupId.slice(0, 8)}… (offline, or a session of it predates addressed answers) - pushing it nothing`
         );
-        return;
+        return 'unaddressable';
       }
       log(`[HISTORY_BUNDLE] Empty bundle send error: ${String(e).slice(0, 120)}`);
+      return 'not-sent';
     }
   };
   if (messages.length === 0) {
@@ -1073,8 +1082,7 @@ export async function sendFullHistoryBundle(
       userIdOfLeaf(to),
       true
     );
-    await sendStateOnly('group has no history', mode?.mode === 'addressed');
-    return;
+    return sendStateOnly('group has no history', mode?.mode === 'addressed');
   }
 
   // ADDRESSED TO THE INVITEE AND FILTERED ON THEIR OWN WINDOWS (step A; user, 2026-10-21: a new
@@ -1087,17 +1095,25 @@ export async function sendFullHistoryBundle(
     { mlsService, log },
     { chunkSize, to, state, answer: { join: true }, push: true }
   );
-  if (outcome.kind === 'refused') return;
+  if (outcome.kind === 'refused') return 'not-sent';
+  if (outcome.kind === 'unaddressable') return 'unaddressable';
   if (outcome.kind === 'unreadable') {
-    await sendStateOnly('exclusion windows unreadable - no message carried', false);
-    return;
+    return sendStateOnly('exclusion windows unreadable - no message carried', false);
   }
   if (outcome.kind === 'withheld-all') {
-    await sendStateOnly('every message withheld', outcome.addressed);
-    return;
+    return sendStateOnly('every message withheld', outcome.addressed);
   }
   log(`[HISTORY_BUNDLE] Full history sent: ${outcome.count} of ${messages.length} message(s)`);
+  return outcome.count > 0 ? 'sent' : 'not-sent';
 }
+
+/**
+ * What {@link sendFullHistoryBundle} did for the device it pushes to: something reached it, nothing
+ * did because the server could not address it (offline at the push, or a session of it predating
+ * addressed answers - `addressed_unsupported`), or nothing did for any other reason, each said in
+ * the log where it happened.
+ */
+export type JoinPushOutcome = 'sent' | 'unaddressable' | 'not-sent';
 
 /**
  * Whether `to` is withheld in `groupId`, read only AFTER every device event already merged has been
@@ -1240,7 +1256,7 @@ async function sendBundleChunks(
         log(
           `[HISTORY_BUNDLE] ${to} cannot be addressed in ${groupId.slice(0, 8)}… (offline, or a session of it predates addressed answers) - answering nothing rather than broadcasting`
         );
-        return sent === 0 ? { kind: 'refused' } : { kind: 'sent', count: sent };
+        return sent === 0 ? { kind: 'unaddressable' } : { kind: 'sent', count: sent };
       }
       log(`[HISTORY_BUNDLE] Chunk send error ${chunkNo}: ${String(e)}`);
       return { kind: 'sent', count: sent };
@@ -1258,13 +1274,16 @@ async function sendBundleChunks(
 /**
  * What {@link sendBundleChunks} did: no window could be read (nothing sent), every message was
  * withheld (nothing sent; `addressed` says how the last read said to route), the reader could not be answered at all (an addressed answer to no ask,
- * or a device the server cannot address - nothing sent, and nothing must be sent in its place), or
- * `count` messages went out before the end or the first failed chunk.
+ * or a withheld device - nothing sent, and nothing must be sent in its place), the server could not
+ * address the reader before a single chunk left (`unaddressable`: offline, or a session of it
+ * predating addressed answers - never turned into a broadcast either), or `count` messages went out
+ * before the end or the first failed chunk.
  */
 type BundleOutcome =
   | { kind: 'unreadable' }
   | { kind: 'withheld-all'; addressed: boolean }
   | { kind: 'refused' }
+  | { kind: 'unaddressable' }
   | { kind: 'sent'; count: number };
 
 /**
