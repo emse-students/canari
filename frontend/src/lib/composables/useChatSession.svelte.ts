@@ -66,6 +66,8 @@ import {
   setDelegationReadiness,
 } from '$lib/utils/chat/tabCommitDelegation';
 import { processDeviceInvitationsLocally } from './session/sessionAuth';
+import { publishLeaderLink, startLeaderLink } from '$lib/mls-client/tabLeaderLink.svelte';
+import { rememberSelectionForReload } from '$lib/utils/chat/selectionAcrossReload';
 
 /** Creates and returns the reactive chat session store covering login, MLS init, WebSocket, biometrics, device sync and backup. */
 export function useChatSession() {
@@ -205,6 +207,8 @@ export function useChatSession() {
     isWsConnected: () => isWsConnected,
     setIsWsConnected: (v) => {
       isWsConnected = v;
+      // The follower tabs pill reads this tab socket (`tabLeaderLink.svelte.ts`).
+      publishLeaderLink(v);
       // A socket that closed has nothing caught up: a native answer waits for the next catch-up.
       if (!v) setSessionCaughtUp(false);
     },
@@ -288,6 +292,7 @@ export function useChatSession() {
     // The reload releases the lock this tab was just granted; the mark is what lets the page it
     // starts take it back rather than queue behind the tab it took over from.
     markPromotionReload();
+    rememberSelectionForReload(log);
     setTimeout(() => window.location.reload(), 50);
     return true;
   }
@@ -327,11 +332,15 @@ export function useChatSession() {
   setTabLeaderDemotedHandler(() => {
     isTabLeaderState = false;
     tabLeaderSessionCb?.log('[TAB] Leadership released - reloading as follower.');
+    if (tabLeaderSessionCb) rememberSelectionForReload(tabLeaderSessionCb.log);
     if (typeof window === 'undefined') return;
     setTimeout(() => window.location.reload(), 50);
     // Said, so this document neither queues nor accepts the lead on its way out.
     return 'reloads';
   });
+
+  // A follower tab learns the leader socket state here; the leader answers its queries.
+  if (typeof window !== 'undefined') startLeaderLink();
 
   // ── Exposed API ───────────────────────────────────────────────────────────
 

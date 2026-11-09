@@ -172,7 +172,8 @@
             >{m.asso_forms_payments_missing_strong()}</strong
           >{m.asso_forms_payments_missing_suffix()}<button
             type="button"
-            class="font-semibold underline hover:no-underline"
+            data-testid="payments-link"
+            class="inline p-0 text-start font-semibold underline hover:no-underline"
             onclick={onGoToPayments}>{m.asso_forms_payments_configure_link()}</button
           >.
         {:else}

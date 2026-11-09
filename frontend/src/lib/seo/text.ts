@@ -1,12 +1,21 @@
 /**
- * Strips lightweight Markdown to plain text for meta descriptions.
+ * Strips lightweight Markdown to plain text for meta descriptions and one-line excerpts.
+ *
+ * A hyphen is only markup as a LIST MARKER ("- " at the start of a line) or a horizontal rule
+ * ("---" alone on a line); anywhere else it is text, so "Saint-Etienne", an en/em dash and a
+ * spaced " - " survive untouched.
  */
 export function markdownToPlainText(markdown: string): string {
   return markdown
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/`([^`]+)`/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/[#*_~>|-]/g, ' ')
+    .split('\n')
+    .map((line) =>
+      /^\s*([-*_])(\s*\1){2,}\s*$/.test(line) ? ' ' : line.replace(/^\s*[-*+]\s+/, ' ')
+    )
+    .join(' ')
+    .replace(/[#*_~>|]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }

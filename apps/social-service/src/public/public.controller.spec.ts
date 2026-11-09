@@ -74,7 +74,7 @@ describe('PublicController.getPublishedCarte (WP-CARTO-1, one live map per space
   ])('refuses %s with the typed 400, before any read', async (_label, value) => {
     const { controller, getPublished } = makeController(carte);
     await expect(controller.getPublishedCarte(value)).rejects.toMatchObject({
-      response: { code: 'CARTE_PUBLIC_SPACE_INVALID' },
+      response: { code: 'PUBLIC_SPACE_INVALID' },
     });
     expect(getPublished).not.toHaveBeenCalled();
   });
@@ -99,6 +99,72 @@ describe('PublicController.getPublishedCarte (WP-CARTO-1, one live map per space
     await expect(controller.getPublishedCarte(undefined)).rejects.toMatchObject({
       response: { code: 'CARTE_PUBLIC_SPACE_REQUIRED' },
     });
+  });
+});
+
+describe('PublicController - the association directory of one space (owner, 2026-11-08)', () => {
+  const rows = [
+    { id: 'in', slug: 'in', name: 'In', type: 'association' },
+    { id: 'out', slug: 'out', name: 'Out', type: 'association' },
+    { id: 'lst', slug: 'lst', name: 'Liste', type: 'list' },
+    { id: 'old', slug: 'old', name: 'Old', type: 'association', archived: true },
+  ];
+  function makeController() {
+    const list = jest.fn(() => Promise.resolve(rows));
+    // The space's associations, archived ones included (`old`).
+    const offeredInSpace = jest.fn(() => Promise.resolve(new Set(['in', 'old'])));
+    const findBySlug = jest.fn((slug: string) =>
+      Promise.resolve(rows.find((r) => r.slug === slug))
+    );
+    const listMembersPublic = jest.fn(() => Promise.resolve([]));
+    const controller = new PublicController(
+      { list, offeredInSpace, findBySlug, listMembersPublic } as unknown as AssociationsService,
+      {} as ProductsService,
+      {} as PosterService,
+      {} as PostPreviewService
+    );
+    return { controller, list, offeredInSpace };
+  }
+
+  it('keeps only the associations the named space offers; lists are not filtered by it', async () => {
+    const { controller, offeredInSpace } = makeController();
+    const served = await controller.listAssociations(undefined, 'ICM:saint-etienne');
+    expect(served.map((a) => a.slug)).toEqual(['in', 'lst', 'old']);
+    expect(offeredInSpace).toHaveBeenCalledWith({ formation: 'ICM', campus: 'saint-etienne' });
+  });
+
+  it("answers the COMPLETE list without a space - Canari's own sitemap reads it", async () => {
+    const { controller, offeredInSpace } = makeController();
+    const served = await controller.listAssociations('association', undefined);
+    expect(served.map((a) => a.slug)).toEqual(['in', 'out', 'lst', 'old']);
+    expect(offeredInSpace).not.toHaveBeenCalled();
+  });
+
+  it('refuses a malformed space with the typed 400, before any read', async () => {
+    const { controller, list } = makeController();
+    await expect(controller.listAssociations('association', 'ICM')).rejects.toMatchObject({
+      response: { code: 'PUBLIC_SPACE_INVALID' },
+    });
+    expect(list).not.toHaveBeenCalled();
+  });
+
+  it('404s an association page the named space does not offer, and serves it without a space', async () => {
+    const { controller } = makeController();
+    await expect(controller.getBySlug('out', 'ICM:saint-etienne')).rejects.toThrow(
+      NotFoundException
+    );
+    await expect(controller.getBySlug('in', 'ICM:saint-etienne')).resolves.toMatchObject({
+      slug: 'in',
+    });
+    // A list is not an association of a space: the space does not filter it.
+    await expect(controller.getBySlug('lst', 'ICM:saint-etienne')).resolves.toMatchObject({
+      slug: 'lst',
+    });
+    // Archived, of the space: still its page (the portail's archived section links it).
+    await expect(controller.getBySlug('old', 'ICM:saint-etienne')).resolves.toMatchObject({
+      slug: 'old',
+    });
+    await expect(controller.getBySlug('out', undefined)).resolves.toMatchObject({ slug: 'out' });
   });
 });
 
