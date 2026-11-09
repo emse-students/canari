@@ -19,9 +19,17 @@
  * 4. A manifest poll every {@link LIVE_MANIFEST_POLL_MS} from the last index taken; each new
  *    segment fetched (the plain public fetch), opened with the live key, appended in order. A backlog
  *    longer than the policy lets the video sit behind (`LiveBufferPolicy.isBacklog`), or a gap the
- *    window already passed, or a stall, and the player jumps to the newest and seeks to the edge
- *    rather than replaying the backlog. A delivery that leaves less media ahead than the longest wait
- *    for the next one re-anchors at the target at once (`LiveBufferPolicy.reanchor`).
+ *    window already passed, and the player jumps to the newest and seeks to the edge rather than
+ *    playing the backlog. EVERY SEEK GOES FORWARD OR NOT AT ALL (`liveSeekPoint`): media already
+ *    shown is never shown again (owner, 2026-11-09 - a short margin and the end of a stall were
+ *    re-anchored BEHIND the playhead, and a broadcaster on a bad link made every late segment replay
+ *    the one before it).
+ * 5. THE MARGIN: the join anchors `LIVE_PLAYER_MARGIN_SEGMENTS` segments behind the edge (the
+ *    policy's target); a margin a late segment shortened is rebuilt by playing slower, and one past
+ *    the target by playing faster (`LiveBufferPolicy.pace`, read at each poll, pitch preserved). Only
+ *    a buffer that actually runs dry stalls: the screen is told (`onBuffering`), the last frame stays,
+ *    and the next media appended resumes it - with ONE info line per stall, its duration and the
+ *    margin it started from.
  *
  * Every failure goes through {@link liveFailureOutcome}, ONE decision: a state to stop on, or a
  * retry with a backoff while the screen says "reconnecting". The end is the server's verdict (`410`,
@@ -47,8 +55,11 @@ import {
   classifyLiveWait,
   formatLiveRanges,
   LiveBufferPolicy,
+  livePaceRate,
+  liveSeekPoint,
   mediaAheadS,
   type LiveCadenceBreak,
+  type LivePace,
   type LiveTimeRanges,
 } from './liveBufferPolicy';
 import {
@@ -103,6 +114,11 @@ export interface LiveVideoLike {
    * waiting.
    */
   readonly readyState: number;
+  /**
+   * The playback rate the policy's pace sets (`LiveBufferPolicy.pace`): 1, or a few percent either
+   * side. The element keeps the audio's pitch (`preservesPitch`, the viewer's adapter).
+   */
+  playbackRate: number;
   play(): Promise<void>;
   pause(): void;
 }
@@ -154,6 +170,12 @@ export interface LivePlayerOptions {
    * a number on screen is always the last answered poll's). A number, never a name.
    */
   onViewers?(count: number | null): void;
+  /**
+   * Told when the buffer RAN DRY while the live plays (`true`) and when media appended resumed it
+   * (`false`): the screen draws its loading state over the last frame meanwhile. Never told for the
+   * engine's own short wait with media ahead, nor for a seek's.
+   */
+  onBuffering?(dry: boolean): void;
   /**
    * The live chat (WP-L6), riding THIS poll: asked for its cursors before each manifest request and
    * handed the answer's `chat` block - one request a tick, no second timer. Absent: no chat asked.
@@ -260,7 +282,15 @@ export class LivePlayer {
   private appendFailures = 0;
   /** True from `start()` until `stop()` or a final state: a stale continuation must not act then. */
   private running = false;
-  private stalled = false;
+  /**
+   * The stall open now, or null: since when (the monotonic clock), the margin the last delivery had
+   * left (ms of media ahead, null before any), and whether the engine FROZE with media ahead (a wait
+   * of its own that never ended) rather than ran dry - a frozen engine is re-seeked in place.
+   */
+  private stall: { sinceMs: number; marginMs: number | null; frozen: boolean } | null = null;
+  /** The media ahead the last delivery left, in ms - the margin a stall started from. */
+  private lastMarginMs: number | null = null;
+  private pace: LivePace = 'steady';
   /**
    * The engine's own wait (`held`, media buffered ahead of the playhead): where the playhead stood
    * and the monotonic clock then, until the next delivery reads whether it ended; null when none is
@@ -300,6 +330,7 @@ export class LivePlayer {
     const gen = ++this.generation;
     this.downloads = new AbortController();
     this.resetRun();
+    this.setPace('steady', 'start');
     this.running = true;
     // Said even when it already was: the screen leaves a final state for this one.
     this.state = { kind: 'connecting' };
@@ -321,6 +352,7 @@ export class LivePlayer {
     console.debug(`[LIVE] viewer stop ${this.liveId} (${this.state.kind})`);
     this.generation++;
     this.running = false;
+    this.endStall('stopped');
     this.summarise('stopped');
     this.teardownMedia();
     this.giveBackSeat();
@@ -350,7 +382,7 @@ export class LivePlayer {
    * next delivery re-anchor at the policy's target - which that delivery's own gap has already raised.
    */
   noteStall(): void {
-    if (!this.joined || this.stalled) return;
+    if (!this.joined || this.stall) return;
     const at = this.video.currentTime;
     const ranges = this.buffer?.buffered ?? null;
     const wait = classifyLiveWait(this.video.seeking, at, ranges);
@@ -375,7 +407,7 @@ export class LivePlayer {
         this.seekToEdge('time gap');
         return;
       case 'starved':
-        this.latchStall(at);
+        this.latchStall(at, this.deps.now(), false);
         return;
     }
   }
@@ -419,7 +451,8 @@ export class LivePlayer {
     this.retryAttempt = 0;
     this.openFailures = 0;
     this.appendFailures = 0;
-    this.stalled = false;
+    this.stall = null;
+    this.lastMarginMs = null;
     this.held = null;
     this.broadcasterQuiet = false;
     this.policy.reset();
@@ -511,6 +544,7 @@ export class LivePlayer {
     }
     this.generation++;
     this.running = false;
+    this.endStall(final.kind);
     this.summarise(final.kind);
     this.abortDownloads();
     this.cancelTimer?.();
@@ -606,6 +640,7 @@ export class LivePlayer {
     this.joined = true;
     this.policy.delivered(this.deps.now());
     this.seekToEdge('join');
+    this.lastMarginMs = this.behindMs();
     this.resume();
     console.log(`[LIVE] viewer joined ${this.liveId} at segment ${newest.index}`);
     this.showPlaying();
@@ -652,26 +687,30 @@ export class LivePlayer {
           await this.take(gen, s);
           if (!this.alive(gen)) return;
         }
-        if (this.appended > before) this.noteDelivery(fresh, this.appended - before, seen);
-        // THE STALL LATCH IS READ HERE, AFTER EVERY AWAIT OF THIS DELIVERY, AND CLEARED ONLY BY THE
-        // RE-ANCHOR IT ASKED FOR. A `waiting` that latched while the segments were fetched, opened
-        // or appended is therefore re-anchored now, on the media that just arrived - never cleared
-        // with no seek (LIVE-STALL-1: a stall latched mid-fetch was wiped, and the viewer stalled
-        // again 4 s later). A stall latched during the trim below stays latched for the next one.
-        // Otherwise the policy says whether the media ahead outlasts the longest wait for the next
-        // delivery (`short`: re-anchored NOW, before that wait drains it - LIVE-STALL-1) or sits
-        // past the target and its slack (`drift`). The engine's own wait, if one is open, is read
-        // first: a playhead that never moved since is a stall like any other.
+        const delivered = this.appended > before;
+        if (delivered) this.noteDelivery(fresh, this.appended - before, seen);
+        // THE STALL LATCH IS READ HERE, AFTER EVERY AWAIT OF THIS DELIVERY, AND SPENT ONLY WHEN MEDIA
+        // LIES AHEAD OF THE PLAYHEAD AGAIN. A `waiting` that latched while the segments were fetched,
+        // opened or appended is therefore resumed now, on the media that just arrived - never
+        // cleared with nothing to play (LIVE-STALL-1: a stall latched mid-fetch was wiped, and the
+        // viewer stalled again 4 s later). A stall latched during the trim below stays latched for
+        // the next one. The engine's own wait, if one is open, is read first: a playhead that never
+        // moved since is a stall like any other. Otherwise a catch-up or a drift past the target and
+        // its slack seeks FORWARD to the target; a short margin is the pace's, never a seek's.
         this.settleHeldWait();
-        const stall = this.stalled;
-        const why = stall ? 'stall' : catchUp ? 'catch-up' : this.policy.reanchor(this.behindMs());
-        if (why !== null && this.seekToEdge(why) && stall) this.stalled = false;
+        if (this.stall) this.resumeFromStall();
+        else {
+          const why = catchUp ? 'catch-up' : this.policy.reanchor(this.behindMs());
+          if (why !== null) this.seekToEdge(why);
+        }
+        if (delivered) this.lastMarginMs = this.behindMs();
         // A pause from outside (an audio interruption, another player claiming playback) is not
         // left frozen until the drift forces a seek.
         this.resume();
         await this.trim();
         if (!this.alive(gen)) return;
-      }
+        this.choosePace(delivered);
+      } else this.choosePace(false);
       this.showPlaying();
       this.later(gen, LIVE_MANIFEST_POLL_MS, (g) => this.poll(g));
     } catch (e) {
@@ -815,7 +854,7 @@ export class LivePlayer {
     const playing =
       at !== held.at && this.video.readyState >= HAVE_FUTURE_DATA && !this.video.paused;
     if (!playing) {
-      this.latchStall(at);
+      this.latchStall(at, held.wallMs, true);
       return;
     }
     const wallMs = Math.max(0, this.deps.now() - held.wallMs);
@@ -826,12 +865,83 @@ export class LivePlayer {
     );
   }
 
-  /** A stall at `at`: said once, and latched for the next delivery's re-anchor. */
-  private latchStall(at: number): void {
+  /**
+   * A stall at `at`, open since `sinceMs`: said once, latched for the next delivery that brings
+   * media, and drawn on the screen (`onBuffering`) until then. `frozen`: the engine held media ahead
+   * and did not play it.
+   */
+  private latchStall(at: number, sinceMs: number, frozen: boolean): void {
     console.debug(
       `[LIVE] viewer ${this.liveId} stalled at ${at.toFixed(2)} (target ${Math.round(this.policy.targetMs)} ms)`
     );
-    this.stalled = true;
+    this.stall = { sinceMs, marginMs: this.lastMarginMs, frozen };
+    this.opts.onBuffering?.(true);
+  }
+
+  /**
+   * A delivery after a stall: the playhead goes where {@link liveSeekPoint} says - forward to the
+   * target when the delivery brought more than it, across a hole, or nowhere, the media appended
+   * continuing exactly where the picture stopped. A FROZEN engine (media ahead it never played) is
+   * seeked in place at worst, which restarts its decoder and shows nothing twice. The stall is spent
+   * once media lies ahead of the playhead; with nothing buffered it stays latched.
+   */
+  private resumeFromStall(): void {
+    const stall = this.stall;
+    if (!stall) return;
+    const ranges = this.buffer?.buffered ?? null;
+    if (!ranges || ranges.length === 0) {
+      console.debug(`[LIVE] viewer ${this.liveId}: no media buffered - no seek (stall)`);
+      return;
+    }
+    const at = this.video.currentTime;
+    const point = liveSeekPoint(at, ranges, this.policy.targetMs);
+    if (point !== null) this.seekTo(point, 'stall');
+    else if (stall.frozen) this.seekTo(at, 'stall');
+    if (mediaAheadS(this.video.currentTime, ranges) <= 0) {
+      console.debug(
+        `[LIVE] viewer ${this.liveId}: nothing playable past ${this.video.currentTime.toFixed(2)} ${formatLiveRanges(ranges)} - still dry`
+      );
+      return;
+    }
+    this.endStall('resumed');
+  }
+
+  /**
+   * Closes the open stall, if any, with ONE info line - how long the picture stood still, how it
+   * ended (`resumed`, or the final state that ended it), and the margin it started from against the
+   * target - so a log export counts how often, and after how much margin, viewers stall.
+   */
+  private endStall(how: string): void {
+    const stall = this.stall;
+    if (!stall) return;
+    this.stall = null;
+    const ms = Math.max(0, this.deps.now() - stall.sinceMs);
+    const margin = stall.marginMs === null ? '-' : `${Math.round(stall.marginMs)}`;
+    console.log(
+      `[LIVE] viewer ${this.liveId}: stalled ${Math.round(ms)} ms (${how}), from a margin of ${margin} ms, target ${Math.round(this.policy.targetMs)} ms`
+    );
+    this.opts.onBuffering?.(false);
+  }
+
+  /**
+   * The pace at this poll ({@link LiveBufferPolicy.pace}): read on every poll that plays, never
+   * during a stall (nothing plays to pace). `atDelivery`: this poll appended media.
+   */
+  private choosePace(atDelivery: boolean): void {
+    if (this.stall || !this.joined) return;
+    this.setPace(this.policy.pace(this.behindMs(), this.pace, atDelivery), 'margin');
+  }
+
+  /** Sets the pace and its rate on the video; one debug line per change, never per poll. */
+  private setPace(next: LivePace, why: string): void {
+    const rate = livePaceRate(next);
+    if (next === this.pace && this.video.playbackRate === rate) return;
+    this.pace = next;
+    this.video.playbackRate = rate;
+    if (why === 'start') return;
+    console.debug(
+      `[LIVE] viewer ${this.liveId}: pace ${next} (${rate}x), ${(this.behindMs() / 1000).toFixed(2)} s ahead, target ${Math.round(this.policy.targetMs)} ms`
+    );
   }
 
   /** How far behind its buffered end the video plays, in ms. */
@@ -842,35 +952,38 @@ export class LivePlayer {
   }
 
   /**
-   * Puts the video the policy's target behind the newest buffered media, and plays. Returns whether
-   * it seeked: with nothing buffered there is no edge, and a stall latched stays latched.
+   * Puts the video where {@link liveSeekPoint} says - the policy's target behind the newest buffered
+   * media when that lies AHEAD of the playhead - and plays. Never backward: a playhead already past
+   * the anchor stays (it holds less margin than the target, which the pace rebuilds).
    */
-  private seekToEdge(why: string): boolean {
-    const ranges = this.buffer?.buffered;
+  private seekToEdge(why: string): void {
+    const ranges = this.buffer?.buffered ?? null;
     if (!ranges || ranges.length === 0) {
       console.debug(`[LIVE] viewer ${this.liveId}: no media buffered - no seek (${why})`);
-      return false;
+      return;
     }
-    const end = ranges.end(ranges.length - 1);
-    const start = ranges.start(ranges.length - 1);
-    const target = this.policy.targetMs;
-    if (why === 'short' && end - target / 1000 < start) {
-      // The buffer does not hold the target's worth behind its edge: a seek clamped to its start
-      // would replay that start at every delivery until it did. The next deliveries fill it.
+    const point = liveSeekPoint(this.video.currentTime, ranges, this.policy.targetMs);
+    if (point === null) {
       console.debug(
-        `[LIVE] viewer ${this.liveId}: ${(end - start).toFixed(2)} s buffered, under the ${Math.round(target)} ms target - no seek (short)`
+        `[LIVE] viewer ${this.liveId}: at ${this.video.currentTime.toFixed(2)}, the anchor is not ahead in ${formatLiveRanges(ranges)} - no seek (${why})`
       );
-      return false;
+      return;
     }
-    this.video.currentTime = Math.max(start, end - target / 1000);
+    this.seekTo(point, why);
+  }
+
+  /** The one write of the playhead: never before where it stands, but in place (a frozen engine). */
+  private seekTo(point: number, why: string): void {
+    const ranges = this.buffer?.buffered ?? null;
+    const end = ranges && ranges.length > 0 ? ranges.end(ranges.length - 1) : point;
+    this.video.currentTime = point;
     // A seek ends any wait of the engine's own: the playhead it moved proves nothing about it.
     this.held = null;
     this.seeks++;
     console.debug(
-      `[LIVE] viewer ${this.liveId}: seek to the live edge (${why}) at ${end.toFixed(2)}, ${Math.round(target)} ms behind`
+      `[LIVE] viewer ${this.liveId}: seek to the live edge (${why}) at ${end.toFixed(2)}, ${Math.round((end - point) * 1000)} ms behind`
     );
     this.resume();
-    return true;
   }
 
   /** Where the video plays and what it holds, read at one instant (for the delivery line). */
