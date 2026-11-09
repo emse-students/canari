@@ -6,6 +6,7 @@ import type { MediaRef } from '$lib/media';
 import type { FormItem } from '$lib/forms/api';
 import type { Campus, Formation } from '$lib/profile/miconnectProfile';
 import { nextPostSequence, stampServed } from '$lib/posts/postCardSync';
+import { serverLiveReplaysMode } from '$lib/stores/appVersionCheck.svelte';
 
 export type PostMediaRef = MediaRef & { caption?: string };
 
@@ -307,7 +308,12 @@ export interface PostEntity {
    * `'reel'` for a CanaReel - one vertical video that the server deletes, row and blob, at
    * `expiresAt` (C6). Absent on a server older than reels, which is a post.
    */
-  kind?: PostKind;
+  kind?: StoredPostKind;
+  /**
+   * The live a `'replay'` shows (docs/wiki/live-replays.md); `null` on every other kind. A replay
+   * carries no media: its segments come from `GET /api/lives/:id/replay`, keyed by this id.
+   */
+  liveId?: string | null;
   /** A reel's length as its author declared it (C4); `null` on a post. */
   durationMs?: number | null;
   /** When the server deletes a reel (`createdAt` + 30 days, set once); `null` on a post. */
@@ -316,6 +322,13 @@ export interface PostEntity {
 
 /** What a feed row is. A reel is a post of kind `'reel'`: same feed, comments, reactions, reports. */
 export type PostKind = 'post' | 'reel';
+
+/**
+ * Every kind a served row can be: the two a client publishes, and `'replay'` - a finished live kept
+ * three days (docs/wiki/live-replays.md), which only the server creates and which comes ONLY to a
+ * client that asked for it (`withReplays`).
+ */
+export type StoredPostKind = PostKind | 'replay';
 
 /** Whether a row is a CanaReel. */
 export function isReel(post: Pick<PostEntity, 'kind'>): boolean {
@@ -404,6 +417,13 @@ export interface ListPostsOptions {
    * link out, which this client reads as before.
    */
   withLinks?: boolean;
+  /**
+   * The feed and the CanaReels list carry the live replays too (`kind = 'replay'`, docs/wiki/live-replays.md).
+   * Left undefined, `listPosts` sends it exactly when the server's switch reads `on`
+   * (`serverLiveReplaysMode`): with the switch off the question is never asked, and an older server
+   * ignores it. A list that cannot draw a replay (search, a profile) passes `false`.
+   */
+  withReplays?: boolean;
 }
 
 export interface ScheduledPost {
@@ -491,6 +511,7 @@ export function buildListPostsSearchParams(options: ListPostsOptions): string {
   if (options.promo != null && !Number.isNaN(options.promo)) p.set('promo', String(options.promo));
   if (options.formation?.trim()) p.set('formation', options.formation.trim());
   if (options.kind) p.set('kind', options.kind);
+  if (options.withReplays) p.set('withReplays', 'true');
   if (options.multiMedia) p.set('multiMedia', 'true');
   if (options.multiMedia && options.withLinks) p.set('withLinks', 'true');
   if (options.singleMedia || options.multiMedia) {
@@ -525,7 +546,9 @@ async function readPosts<T extends PostEntity | PostEntity[]>(path: string): Pro
 }
 
 export async function getPost(postId: string): Promise<PostEntity> {
-  return readPosts<PostEntity>(`/api/posts/${postId}`);
+  // A replay opened by its link (a notification, a share) is served only to a client that says it can draw one.
+  const q = serverLiveReplaysMode() === 'on' ? '?withReplays=true' : '';
+  return readPosts<PostEntity>(`/api/posts/${postId}${q}`);
 }
 
 export async function updatePost(postId: string, payload: UpdatePostPayload): Promise<PostEntity> {
@@ -561,7 +584,8 @@ export async function listPosts(
 ): Promise<PostEntity[]> {
   const opts: ListPostsOptions =
     typeof limitOrOptions === 'number' ? { limit: limitOrOptions } : limitOrOptions;
-  const q = buildListPostsSearchParams(opts);
+  const withReplays = opts.withReplays ?? serverLiveReplaysMode() === 'on';
+  const q = buildListPostsSearchParams({ ...opts, withReplays });
   return readPosts<PostEntity[]>(`/api/posts${q}`);
 }
 

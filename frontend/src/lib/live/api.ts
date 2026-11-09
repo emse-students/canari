@@ -39,6 +39,7 @@ import type {
   LiveReactionKind,
   LiveRefusalKind,
   LiveRemovedViewer,
+  LiveReplayPage,
   LiveRulesStatus,
   LiveTitleResult,
   LiveView,
@@ -298,6 +299,19 @@ export async function startLive(
 export async function fetchLive(liveId: string): Promise<LiveView> {
   console.debug(`[LIVE] open ${liveId}`);
   return liveJson<LiveView>(livePath(liveId), 'Live open');
+}
+
+/**
+ * `GET /api/lives/:id/replay[?from=<index>]` - one page of a finished live's three-day REPLAY: the
+ * key, the segments from `from` with their place on the time line, `nextFrom`. Takes NO seat. Every
+ * refusal is the same `not-found` (an outsider, a block, a removed viewer, an expired replay).
+ */
+export async function fetchLiveReplay(liveId: string, from?: number): Promise<LiveReplayPage> {
+  console.debug(`[LIVE_REPLAY] page of ${liveId} from ${from ?? 0}`);
+  return liveJson<LiveReplayPage>(
+    `${livePath(liveId)}/replay${from === undefined ? '' : `?from=${from}`}`,
+    'Live replay'
+  );
 }
 
 /**

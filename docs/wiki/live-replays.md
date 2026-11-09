@@ -382,3 +382,16 @@ so with the switch off nothing changes for any live.
 [lives](services/lives.md), [live](frontend/modules/live.md), [reels (server)](services/reels.md),
 [reels (client)](frontend/modules/reels.md), [storage-forecast](infrastructure/storage-forecast.md),
 [backup](infrastructure/backup.md), [register C19](compliance/register-of-processing.md).
+
+## WP-R4 and WP-R5 as built
+
+The client half (`frontend/`), inert while `live_replays_mode` is `off`:
+
+- **The switch.** `/api/version` publishes `liveReplays.mode`; `serverLiveReplaysMode()` reads it (off until a server says on, fails closed). `listPosts` and `getPost` send `withReplays` only when it reads `on` (a list that cannot draw a replay passes `false`); `PostCard` draws nothing for a replay row left in a cache while it is off.
+- **`live/replayPlayer.ts`** is a separate small machine, not a mode of the 1000-line `LivePlayer`: it shares that player's MSE flavour, buffer settle, init comparison and seal, and none of its live-edge policy. It lists pages of `GET /api/lives/:id/replay`, keeps 12 s ahead and 10 s behind the playhead, and MEASURES each appended segment's place in the buffer (`newMediaStart`) rather than trusting `atMs`. A seek takes the last segment at or before the target; a seek inside buffered media only moves the cursor. A replay trimmed to its last hours is rebased to zero under a `timestampOffset` so the player's bar reads its own length. Failures: `404` is "gone", transport and busy are a backoff retry, unsupported engine and undecryptable are final.
+- **`ReplayPane`** mounts the shared `VideoPlayer` (`reel` variant, `streamed`) on the MediaSource URL for the ACTIVE page only, with the "Rediffusion" mark and the time left (`replayTimeLeft`, from the replay route's own `expiresAt` and `serverNow`). `fullScreenPageOf` answers `replay`. **`ReplayCard`** is the feed card: mark, length, title, no inline play, no time left (feed rows carry no server clock).
+- **No repost:** the card's menu offers no repost, republication or consent for a replay; the reel rail never had one. The rail's "Envoyer a..." stays (a link, not a repost). A replay is edited by its caption alone, as the server decided.
+- **Save (WP-R5):** `ReelSaveButton` runs `saveReplayFlow` (list, say the size, confirm) then `saveReplay`: the first init once, every fragment staged at a continuing offset (`stageBlobAt`), a second part (`-2.mp4`) when an init differs; a part is committed to the gallery as soon as it is closed. On the web a part is held and handed to the download.
+- **Broadcaster texts (part of WP-R6):** the audience rule, the end confirm and the broadcaster's own end screen name the replay only while the switch is on (and, for the last two, only for a live of at least 30 s: `replayFollows`). The legal pages (privacy `#directs`, CGU `#directs`, register C19) are NOT changed here: they say "pas de rediffusion" and change at the flip.
+
+Owed: the cover picture (the replay route serves no poster), `LIVE_RULES_VERSION` 3 (server side), the phone readings listed above.

@@ -1,6 +1,8 @@
 <script lang="ts">
   import PostMedia from './PostMedia.svelte';
   import { isReel, type PostEntity, type PostMediaRef } from '$lib/posts/api';
+  import ReplayCard from './ReplayCard.svelte';
+  import { isReplay } from '$lib/live/replayTimeline';
   import ReelViewer from '$lib/components/reels/ReelViewer.svelte';
   import LinkPreviewCard from '../messages/LinkPreviewCard.svelte';
   import PostMarkdown from './PostMarkdown.svelte';
@@ -151,6 +153,8 @@
     return asReel ? REEL_FALLBACK_ASPECT : DEFAULT_MEDIA_ASPECT;
   }
   let reelViewerOpen = $state(false);
+  /** A live replay: no media, a card that opens the CanaReels viewer (`ReplayCard`). */
+  const replay = $derived(isReplay(post));
 </script>
 
 {#if post.markdown}
@@ -177,7 +181,12 @@
   </div>
 {/if}
 
-{#if postMedia.length > 0 && authToken}
+{#if replay}
+  <ReplayCard {post} onOpen={() => (reelViewerOpen = true)} />
+  {#if reelViewerOpen}
+    <ReelViewer startPost={post} {authToken} {likerId} onClose={() => (reelViewerOpen = false)} />
+  {/if}
+{:else if postMedia.length > 0 && authToken}
   <div
     class="w-full overflow-hidden first:rounded-t-2xl last:rounded-b-2xl {post.markdown
       ? ''

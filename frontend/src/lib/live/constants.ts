@@ -161,3 +161,14 @@ export const LIVE_WITHDRAWAL_FROM_CUTS = 3;
 
 /** The rolling window of the strike ladder, in days. MIRRORS `LIVE_STRIKE_WINDOW_MS` (90 days). */
 export const LIVE_STRIKE_WINDOW_DAYS = 90;
+
+/**
+ * THE SHORTEST LIVE THAT BECOMES A REPLAY, in ms (owner, 2026-11-09): the server's
+ * `LIVE_REPLAY_MIN_MS` (`apps/social-service/src/lives/live.constants.ts`), which decides; this copy
+ * only lets the broadcaster's end screen say whether a replay follows. `liveReplayConstantsAgree.test.ts`
+ * fails the day one of them drifts.
+ */
+export const LIVE_REPLAY_MIN_MS = 30_000;
+
+/** How many days a replay is kept after its live's end: the server's `LIVE_REPLAY_RETENTION_DAYS`, said in the texts. */
+export const LIVE_REPLAY_RETENTION_DAYS = 3;
