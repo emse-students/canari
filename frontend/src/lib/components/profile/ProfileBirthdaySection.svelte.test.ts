@@ -21,6 +21,12 @@ vi.mock('$lib/birthdays/api', async (importOriginal) => ({
 const toasts = vi.hoisted(() => ({ showToast: vi.fn() }));
 vi.mock('$lib/stores/toast.svelte', () => toasts);
 vi.mock('$lib/stores/user', () => ({ currentUserId: () => 'me' }));
+// The Picker's sheet fades and flies: a Web Animation happy-dom rejects with an AbortError when the
+// next picker opens mid-outro. The transition is not what this file pins.
+vi.mock('svelte/transition', () => ({
+  fade: () => ({ duration: 0 }),
+  fly: () => ({ duration: 0 }),
+}));
 
 import ProfileBirthdaySection from './ProfileBirthdaySection.svelte';
 import { m } from '$lib/paraglide/messages';
@@ -40,7 +46,19 @@ async function render() {
   await settle();
 }
 
-const select = (id: string) => document.getElementById(id) as HTMLSelectElement;
+/** The Picker's trigger: the control the label points at. */
+const select = (id: string) => document.getElementById(id) as HTMLButtonElement;
+/** Opens the picker `id` and picks the option that reads `label`. */
+async function pick(id: string, label: string) {
+  select(id).click();
+  await settle();
+  const option = Array.from(document.querySelectorAll<HTMLButtonElement>('[role="option"]')).find(
+    (o) => o.textContent?.trim() === label
+  );
+  if (!option) throw new Error(`no option ${label} in ${id}`);
+  option.click();
+  await settle();
+}
 const opens = () => document.querySelector('[data-testid="birthday-change-opens"]');
 const saveButton = () =>
   [...document.querySelectorAll('button')].find(
@@ -91,11 +109,9 @@ describe('the birthday settings', () => {
   it('meets a refusal from another device with its message and the server state', async () => {
     api.fetchMyBirthday.mockResolvedValueOnce({ birthday: null, changeOpensOn: null });
     await render();
-    select('birthday-day').value = '6';
-    select('birthday-day').dispatchEvent(new Event('change'));
-    select('birthday-month').value = '5';
-    select('birthday-month').dispatchEvent(new Event('change'));
-    await settle();
+    await pick('birthday-month', 'mai');
+    await pick('birthday-day', '6');
+    expect(saveButton().disabled).toBe(false);
     api.saveMyBirthday.mockRejectedValueOnce(
       new ApiRefusalError(409, 'BIRTHDAY_CHANGE_TOO_SOON', 'refused')
     );

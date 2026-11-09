@@ -3,7 +3,9 @@
   import { Cake } from '@lucide/svelte';
   import ProfileCard from '$lib/components/profile/ProfileCard.svelte';
   import Button from '$lib/components/ui/Button.svelte';
-  import { CONTROL_LABEL_CLASS, controlClass } from '$lib/components/ui/controlClasses';
+  import Select from '$lib/components/ui/Select.svelte';
+  import { CONTROL_LABEL_CLASS } from '$lib/components/ui/controlClasses';
+  import type { PickerOption } from '$lib/components/ui/picker';
   import {
     BIRTHDAY_CHANGE_TOO_SOON,
     BIRTHDAY_VISIBILITIES,
@@ -58,6 +60,11 @@
   };
 
   const monthNames = birthdayMonthNames(getLocale());
+  /** The twelve months, January first; the value is the month number. */
+  const monthOptions: PickerOption[] = monthNames.map((name, index) => ({
+    value: String(index + 1),
+    label: name,
+  }));
 
   let loading = $state(true);
   let loadFailed = $state(false);
@@ -72,6 +79,10 @@
   let visibility = $state<BirthdayVisibility>(DEFAULT_BIRTHDAY_VISIBILITY);
 
   const dayCount = $derived(month > 0 ? daysInBirthdayMonth(month) : 31);
+  /** The days the chosen month has (29 for February: a birthday some years have). */
+  const dayOptions = $derived<PickerOption[]>(
+    Array.from({ length: dayCount }, (_, i) => ({ value: String(i + 1), label: String(i + 1) }))
+  );
   const valid = $derived(isBirthdayDate(month, day));
   const dateLocked = $derived(changeOpensOn !== null);
   const opensLabel = $derived(
@@ -158,38 +169,24 @@
     </p>
   {:else if !loading}
     <div class="grid grid-cols-2 gap-3">
-      <div>
-        <label for="birthday-day" class={CONTROL_LABEL_CLASS}
-          >{m.profile_birthday_day_label()}</label
-        >
-        <select
-          id="birthday-day"
-          bind:value={day}
-          disabled={busy || dateLocked}
-          class={controlClass()}
-        >
-          <option value={0} disabled>{m.profile_birthday_day_label()}</option>
-          {#each Array.from({ length: dayCount }, (_, i) => i + 1) as d (d)}
-            <option value={d}>{d}</option>
-          {/each}
-        </select>
-      </div>
-      <div>
-        <label for="birthday-month" class={CONTROL_LABEL_CLASS}>
-          {m.profile_birthday_month_label()}
-        </label>
-        <select
-          id="birthday-month"
-          bind:value={month}
-          disabled={busy || dateLocked}
-          class={controlClass()}
-        >
-          <option value={0} disabled>{m.profile_birthday_month_label()}</option>
-          {#each monthNames as name, index (index)}
-            <option value={index + 1}>{name}</option>
-          {/each}
-        </select>
-      </div>
+      <Select
+        id="birthday-day"
+        label={m.profile_birthday_day_label()}
+        placeholder={m.profile_birthday_day_label()}
+        value={day > 0 ? String(day) : ''}
+        options={dayOptions}
+        disabled={busy || dateLocked}
+        onValueChange={(v) => (day = Number(v))}
+      />
+      <Select
+        id="birthday-month"
+        label={m.profile_birthday_month_label()}
+        placeholder={m.profile_birthday_month_label()}
+        value={month > 0 ? String(month) : ''}
+        options={monthOptions}
+        disabled={busy || dateLocked}
+        onValueChange={(v) => (month = Number(v))}
+      />
     </div>
 
     <fieldset class="mt-5">
