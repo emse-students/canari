@@ -40,6 +40,10 @@ export function containsEmoji(text: string): boolean {
 export function isEmojiOnlyText(text: string, maxCount: number): boolean {
   const stripped = text.replace(/\s+/gu, '');
   if (!stripped) return false;
+  // NO PICTOGRAPH, NO SEGMENTER: a message without one (nearly every message) cannot be emoji-only,
+  // and one regex pass answers that where a grapheme split costs the segmenter's construction on
+  // the first bubble and an iterator per row after it - inside every salon open.
+  if (!EMOJI_PATTERN.test(stripped)) return false;
   // BOUNDED BY `maxCount`, NOT BY THE TEXT: the scan stops at the first grapheme that is not an
   // emoji (the first letter of an ordinary message) or at the one past `maxCount`, so a long
   // message costs what a short one does.

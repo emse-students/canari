@@ -71,7 +71,14 @@ const server = Bun.serve({
   port: 0,
   fetch(req) {
     const [, arm, ...rest] = new URL(req.url).pathname.split('/');
-    const file = ARMS[arm] ? join(ARMS[arm], ...rest) : null;
+    // A root-relative asset the app fetches itself (`/emoji-data-fr.json`, which the composer's
+    // idle warm-up loads) is served from `static/`, as the app serves it; a miss here made that
+    // fetch fail and hid the warm-up's own cost from the bench.
+    const file = ARMS[arm]
+      ? join(ARMS[arm], ...rest)
+      : /^[\w.-]+$/.test(arm ?? '')
+        ? join(frontend, 'static', arm)
+        : null;
     return file && existsSync(file)
       ? new Response(Bun.file(file))
       : new Response('not found', { status: 404 });
@@ -271,7 +278,11 @@ for (const [arm, which] of Object.keys(ARMS).flatMap((a) => [
 ])) {
   const rs = readings[arm][which];
   const longest = rs.map((r) => Math.max(0, ...r.longTasks.map(([, d]) => d)));
+  // The long tasks AFTER the gesture's own (start > 0): the widen's steps and whatever idle work
+  // (a warm-up, a parse) lands in the window - what the open's critical path shares the thread with.
+  const tail = rs.map((r) => r.longTasks.filter(([s]) => s > 20).reduce((a, [, d]) => a + d, 0));
+  const tailCount = rs.map((r) => r.longTasks.filter(([s]) => s > 20).length);
   console.log(
-    `  ${arm.padEnd(4)} ${which.padEnd(6)} gesture ${median(rs.map((r) => r.mountMs)).toFixed(0)} ms, reveal ${median(rs.map((r) => r.revealMs)).toFixed(0)} ms, longest task ${median(longest)} ms, rows at reveal ${median(rs.map((r) => r.rowsAtReveal))}, settled ${median(rs.map((r) => r.rowsSettled))}, layouts ${median(rs.map((r) => r.layouts))} (${median(rs.map((r) => r.layoutMs)).toFixed(0)} ms), styles ${median(rs.map((r) => r.styles))} (${median(rs.map((r) => r.styleMs)).toFixed(0)} ms), engine warnings ${median(rs.map((r) => r.warnings))}`
+    `  ${arm.padEnd(4)} ${which.padEnd(6)} gesture ${median(rs.map((r) => r.mountMs)).toFixed(0)} ms, reveal ${median(rs.map((r) => r.revealMs)).toFixed(0)} ms, longest task ${median(longest)} ms, long tasks after the gesture ${median(tailCount)} (${median(tail)} ms), rows at reveal ${median(rs.map((r) => r.rowsAtReveal))}, settled ${median(rs.map((r) => r.rowsSettled))}, layouts ${median(rs.map((r) => r.layouts))} (${median(rs.map((r) => r.layoutMs)).toFixed(0)} ms), styles ${median(rs.map((r) => r.styles))} (${median(rs.map((r) => r.styleMs)).toFixed(0)} ms), engine warnings ${median(rs.map((r) => r.warnings))}`
   );
 }
