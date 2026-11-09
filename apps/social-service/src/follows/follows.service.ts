@@ -422,6 +422,29 @@ export class FollowsService {
   }
 
   /**
+   * Where the viewer stands with EACH of `userIds`, in ONE query (`= ANY($2)`): the batch behind the
+   * client's "Suivre" chips (engagement WP-2), so a feed or a search page costs one read rather than
+   * one per author. Answers only the ids the viewer has a row for - an id with no row is `none` to
+   * the caller - and exactly what {@link userFollowStatus} answers per id, nothing more: an id across
+   * the review cohort's boundary reads as none (`follow-status` does the same), and no block is
+   * revealed (a block severs both follows, so it already reads as none).
+   */
+  async userFollowStatuses(
+    viewerId: string,
+    userIds: readonly string[]
+  ): Promise<Record<string, FollowStatus>> {
+    const ids = [...new Set(userIds)].filter((id) => sameSideOfReviewCohort(viewerId, id));
+    if (ids.length === 0) return {};
+    const rows: { followedUserId: string; status: FollowStatus }[] =
+      await this.userFollowRepo.query(
+        `SELECT "followedUserId", status FROM user_follows
+        WHERE "followerUserId" = $1 AND "followedUserId" = ANY($2::varchar[])`,
+        [viewerId, ids]
+      );
+    return Object.fromEntries(rows.map((r) => [r.followedUserId, r.status]));
+  }
+
+  /**
    * Returns the IDs of the users the given user FOLLOWS - accepted rows only, a pending request is
    * not a follow. Used by PostsService to build the "followed" feed.
    */

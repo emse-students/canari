@@ -9,7 +9,7 @@ import { flushSync, mount, unmount, tick } from 'svelte';
 const api = vi.hoisted(() => ({
   askToFollow: vi.fn(),
   leaveFollow: vi.fn(),
-  getFollowStatus: vi.fn(),
+  getFollowStatuses: vi.fn(),
 }));
 vi.mock('$lib/follows/api', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -20,7 +20,14 @@ const asso = vi.hoisted(() => ({
   listMyFollowedAssociations: vi.fn(),
 }));
 vi.mock('$lib/associations/api', () => asso);
-const blocks = vi.hoisted(() => ({ listBlockedUsers: vi.fn() }));
+const blocks = vi.hoisted(() => ({
+  listBlockedUsers: vi.fn(),
+  onBlocksChanged: vi.fn((l: () => void) => {
+    blocks.listener = l;
+    return () => {};
+  }),
+  listener: null as null | (() => void),
+}));
 vi.mock('$lib/users/blocks', () => blocks);
 const toast = vi.hoisted(() => ({ showToast: vi.fn() }));
 vi.mock('$lib/stores/toast.svelte', () => toast);
@@ -63,7 +70,7 @@ afterEach(() => {
 
 describe('a person', () => {
   it('offers Suivre when not followed, and a tap asks and shows the request', async () => {
-    api.getFollowStatus.mockResolvedValue(null);
+    api.getFollowStatuses.mockResolvedValue({});
     api.askToFollow.mockResolvedValue('pending');
     await render('user', 'u1');
     expect(chip()?.dataset.followChipState).toBe('ask');
@@ -75,7 +82,7 @@ describe('a person', () => {
   });
 
   it('a tap on the request withdraws it', async () => {
-    api.getFollowStatus.mockResolvedValue('pending');
+    api.getFollowStatuses.mockResolvedValue({ u1: 'pending' });
     api.leaveFollow.mockResolvedValue(undefined);
     await render('user', 'u1');
     chip()!.click();
@@ -85,7 +92,7 @@ describe('a person', () => {
   });
 
   it('draws nothing for an accepted follow, yourself, a blocked account, or while unknown', async () => {
-    api.getFollowStatus.mockResolvedValue('accepted');
+    api.getFollowStatuses.mockResolvedValue({ u1: 'accepted' });
     await render('user', 'u1');
     expect(chip()).toBeNull();
     unmount(component!);
@@ -94,18 +101,18 @@ describe('a person', () => {
     unmount(component!);
     blocks.listBlockedUsers.mockResolvedValue([{ userId: 'u2' }]);
     resetFollowState();
-    api.getFollowStatus.mockResolvedValue(null);
+    api.getFollowStatuses.mockResolvedValue({});
     await render('user', 'u2');
     expect(chip()).toBeNull();
     unmount(component!);
     resetFollowState();
-    api.getFollowStatus.mockReturnValue(new Promise(() => {}));
+    api.getFollowStatuses.mockReturnValue(new Promise(() => {}));
     await render('user', 'u3');
     expect(chip()).toBeNull();
   });
 
   it('puts the chip back with the refusal sentence when the server refuses', async () => {
-    api.getFollowStatus.mockResolvedValue(null);
+    api.getFollowStatuses.mockResolvedValue({});
     api.askToFollow.mockRejectedValue(new ApiRefusalError(403, FOLLOW_BLOCKED, 'x'));
     await render('user', 'u1');
     chip()!.click();
@@ -115,15 +122,57 @@ describe('a person', () => {
   });
 
   it('reads each person once however many chips name them', async () => {
-    api.getFollowStatus.mockResolvedValue(null);
+    api.getFollowStatuses.mockResolvedValue({});
     await render('user', 'u1');
     const second = mount(FollowChip, {
       target: document.body,
       props: { kind: 'user', targetId: 'u1' },
     });
     await settle();
-    expect(api.getFollowStatus).toHaveBeenCalledTimes(1);
+    expect(api.getFollowStatuses).toHaveBeenCalledTimes(1);
     unmount(second);
+  });
+});
+
+describe('batching', () => {
+  it('N chips in one render are ONE request, the same person once', async () => {
+    api.getFollowStatuses.mockResolvedValue({ u2: 'pending' });
+    const mounts = ['u1', 'u2', 'u3', 'u1'].map((id) =>
+      mount(FollowChip, { target: document.body, props: { kind: 'user', targetId: id } })
+    );
+    await settle();
+    expect(api.getFollowStatuses).toHaveBeenCalledTimes(1);
+    expect(api.getFollowStatuses).toHaveBeenCalledWith(['u1', 'u2', 'u3']);
+    expect(document.querySelectorAll('[data-follow-chip-state="pending"]').length).toBe(1);
+    mounts.forEach((c) => unmount(c));
+  });
+
+  it('splits above the server cap, one call per hundred', async () => {
+    api.getFollowStatuses.mockResolvedValue({});
+    const mounts = Array.from({ length: 205 }, (_, i) =>
+      mount(FollowChip, { target: document.body, props: { kind: 'user', targetId: `p${i}` } })
+    );
+    await settle();
+    expect(api.getFollowStatuses.mock.calls.map((c) => c[0].length)).toEqual([100, 100, 5]);
+    mounts.forEach((c) => unmount(c));
+  });
+
+  it('does not ask again for what the session already read', async () => {
+    api.getFollowStatuses.mockResolvedValue({});
+    await render('user', 'u1');
+    unmount(component!);
+    await render('user', 'u1');
+    expect(api.getFollowStatuses).toHaveBeenCalledTimes(1);
+  });
+
+  it('a block drops what was read and a chip on screen asks again', async () => {
+    api.getFollowStatuses.mockResolvedValueOnce({ u1: 'accepted' }).mockResolvedValueOnce({});
+    await render('user', 'u1');
+    expect(chip()).toBeNull();
+    blocks.listener!();
+    await settle();
+    expect(api.getFollowStatuses).toHaveBeenCalledTimes(2);
+    expect(chip()?.dataset.followChipState).toBe('ask');
   });
 });
 

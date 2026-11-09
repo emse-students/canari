@@ -137,3 +137,22 @@ export async function removeFollower(userId: string): Promise<void> {
 export async function listSentFollowRequests(after?: string): Promise<FollowListEntry[]> {
   return socialRequest<FollowListEntry[]>(`/api/posts/me/follow-requests/sent${pageQuery(after)}`);
 }
+
+/** How many ids one {@link getFollowStatuses} call may carry - the server's `FOLLOW_STATUS_BATCH_MAX`. */
+export const FOLLOW_STATUS_BATCH_MAX = 100;
+
+/**
+ * Where the reader stands with EACH of `userIds`, in one call: an id the reader neither follows nor
+ * asked is absent from the answer (read: none). At most {@link FOLLOW_STATUS_BATCH_MAX} ids - the
+ * caller chunks. What a page of "Suivre" chips reads instead of one `follow-status` per person.
+ */
+export async function getFollowStatuses(
+  userIds: readonly string[]
+): Promise<Record<string, FollowStatus>> {
+  Log.d('follows', `statuses of ${userIds.length}`);
+  const { statuses } = await socialRequest<{ statuses: Record<string, FollowStatus> }>(
+    '/api/posts/me/follow-statuses',
+    { method: 'POST', body: JSON.stringify({ userIds }) }
+  );
+  return statuses;
+}

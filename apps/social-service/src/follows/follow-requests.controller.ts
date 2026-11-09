@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   DefaultValuePipe,
   Delete,
@@ -28,6 +29,12 @@ import { sameSideOfReviewCohort } from '../review-cohort';
  * (`user_follow_notices`); this bounds the WRITES.
  */
 export const FOLLOW_ASKS_PER_MINUTE = 30;
+
+/** How many ids one `me/follow-statuses` call may carry. */
+export const FOLLOW_STATUS_BATCH_MAX = 100;
+/** The 400 codes of that call. */
+export const FOLLOW_STATUS_BATCH_TOO_LARGE = 'FOLLOW_STATUS_BATCH_TOO_LARGE';
+export const FOLLOW_STATUS_BATCH_INVALID = 'FOLLOW_STATUS_BATCH_INVALID';
 
 /**
  * Following a PERSON, and answering who asks (WP-F1, WP-F2), under `/api/posts/...` - the prefix
@@ -90,6 +97,24 @@ export class FollowRequestsController {
     return { following: status !== null, status };
   }
 
+  /**
+   * The caller's standing with MANY users at once - `{ userIds }` in, `{ statuses: { id: status } }`
+   * out, an id the caller has no row for absent (read: none). One query for a whole feed page or
+   * search page (engagement WP-2); at most {@link FOLLOW_STATUS_BATCH_MAX} ids, a longer list is a
+   * 400 `FOLLOW_STATUS_BATCH_TOO_LARGE` and a body that is not a list of strings a 400
+   * `FOLLOW_STATUS_BATCH_INVALID`. Never more than `follow-status` says per id.
+   */
+  @HttpPost('me/follow-statuses')
+  async statuses(@Headers('x-user-id') xUserId: string, @Body() body: { userIds?: unknown }) {
+    const ids = body?.userIds;
+    if (!Array.isArray(ids) || !ids.every((id) => typeof id === 'string' && id.length > 0)) {
+      throw new BadRequestException({ code: FOLLOW_STATUS_BATCH_INVALID });
+    }
+    if (ids.length > FOLLOW_STATUS_BATCH_MAX) {
+      throw new BadRequestException({ code: FOLLOW_STATUS_BATCH_TOO_LARGE });
+    }
+    return { statuses: await this.follows.userFollowStatuses(xUserId, ids as string[]) };
+  }
   /**
    * The follow requests waiting for the caller's answer, newest first (`limit` at most 100). EVERY
    * follow list pages by `after`, the `cursor` of the last entry served (`follow-cursor.ts`); a

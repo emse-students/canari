@@ -6,7 +6,7 @@ design that answers each one, what each surface reveals and to whom, and the wor
 The queue entry is [backlog.d](backlog.d/engagement-chantier.md).
 
 **State: WP-1 and WP-1b BUILT (the association live audience, and its 6-hour bound); WP-3 BUILT
-(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built)); everything else DESIGNED, not built.**
+(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built), with one small server route); everything else DESIGNED, not built.**
 
 Context it must respect, and which nothing here changes:
 
@@ -741,21 +741,35 @@ then WP-9). Shipping it earlier would guard nothing.
 
 ### WP-2 - Suivre everywhere (BUILT)
 
-Frontend only; no server change. One component, `components/follows/FollowChip.svelte`, drawn in
-three places: the post header (`PostHeader`: the association of an association post, the author of
-a personal post, nothing on an anonymous one, a revealed author included), the directory rows, and
-`AssociationTile` (the chip is a sibling of the tile's link, never inside it).
+One component, `components/follows/FollowChip.svelte`, drawn in three places: the post header
+(`PostHeader`: the association of an association post, the author of a personal post, nothing on an
+anonymous one, a revealed author included), the directory rows, and `AssociationTile` (the chip is a
+sibling of the tile's link, never inside it).
 
-**The "do I follow this" fact is not carried by any payload, and none needed to be.**
-`follows/followState.svelte.ts` is the shared, reactive ledger: a person is read lazily ONCE per
-distinct id through the existing `follow-status` call (at most 4 in flight; a feed of fifty posts by
-ten authors costs ten reads), the followed associations are ONE read of `me/following`, the blocks
-one cached `listBlockedUsers`. A chip draws nothing while its answer is unknown, and never for
-yourself, a blocked account, a person already followed or an association already followed. A tap
-on a person asks (the chip reads "Demande envoyee", a second tap withdraws) with the profile's own
-pure rules (`followButton.ts`: action, optimistic status, refusal sentence); a refusal puts the
-state back and toasts. An association follows at once and the chip goes away. A bulk "who I follow"
-read would replace the per-author reads if a later surface (the carousel of WP-6) needs it.
+**The "do I follow this" fact is read in ONE bulk call per tick.** `POST /api/posts/me/follow-statuses`
+(`FollowRequestsController.statuses`, `FollowsService.userFollowStatuses`) takes `{ userIds }`, at most
+100 (a longer list is a 400 `FOLLOW_STATUS_BATCH_TOO_LARGE`, a body that is not a list of non-empty
+strings a 400 `FOLLOW_STATUS_BATCH_INVALID`), runs ONE query (`= ANY($2)`) on the CALLER's own rows of
+`user_follows` and answers `{ statuses: { id: 'pending' | 'accepted' } }`, an id with no row absent
+(none). It says exactly what `follow-status` says per id and no more: an id across the review cohort's
+boundary reads as none, a block already reads as none (it severs both follows), and nothing about the
+OTHER side - a person who follows the caller, or blocked them, is invisible. Blocks are NOT in this
+answer on purpose: "they blocked you" would be new knowledge no single route gives, so the chip still
+reads the caller's own blocks once (`listBlockedUsers`, cached).
+
+On the client `follows/followState.svelte.ts` is the shared reactive ledger. Chips ask for an id, the
+ledger dedups it and flushes everything asked in the same tick through a microtask (no timer), chunked
+at the cap: a feed or search page of N authors is ONE request. Answers are cached for the session; a
+tap writes its own answer; a block or an unblock on this device (`onBlocksChanged`) drops what was read,
+and a chip still on screen asks again. Followed associations are one read of `me/following`. A chip
+draws nothing while its answer is unknown, and never for yourself, a blocked account, a person already
+followed or an association already followed. A tap on a person asks (the chip reads "Demande envoyee",
+a second tap withdraws) with the profile's own pure rules (`followButton.ts`: action, optimistic status,
+refusal sentence); a refusal puts the state back and toasts. An association follows at once and the chip
+goes away. Proof: `follow-requests.integration.spec.ts` on PostgreSQL (statuses, one statement, caller
+side only, a stranger's private account, blocks both ways, agreement with `follow-status`),
+`follow-requests.controller.spec.ts` (cap, typed 400s), and the chip specs (N chips = 1 request).
+
 ### Which migrations are held
 
 The [held-migration rule](cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01) holds a

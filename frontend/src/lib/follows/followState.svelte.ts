@@ -4,10 +4,11 @@
  * made on one surface reads as made on all of them at once, and no surface asks the server twice
  * for the same pair.
  *
- * - A PERSON is resolved lazily, once per distinct id, through the existing `follow-status` call
- *   (a feed of fifty posts by ten people costs ten reads, not fifty), at most
- *   {@link MAX_STATUS_READS} at a time. No bulk "who I follow" list exists server-side and none is
- *   needed: nothing here reads a list of persons.
+ * - A PERSON is resolved lazily, once per distinct id, and ALL the ids asked for in the same tick
+ *   leave in ONE call (`getFollowStatuses`, chunked at the server's cap): a feed or a search page
+ *   costs one request however many authors it names - on a weak link, N reads would be N round
+ *   trips. The queue is flushed by a microtask, never a timer. A tap writes the answer itself, and
+ *   a block drops what was read (a block severs both follows server-side).
  * - ASSOCIATIONS are one read of `me/following`, shared by every card.
  * - Blocks are one cached read (`listBlockedUsers`); a blocked account is never offered.
  *
@@ -16,24 +17,27 @@
  */
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { followAssociation, listMyFollowedAssociations } from '$lib/associations/api';
-import { listBlockedUsers } from '$lib/users/blocks';
+import { listBlockedUsers, onBlocksChanged } from '$lib/users/blocks';
 import { currentUserId } from '$lib/stores/user';
 import { showToast } from '$lib/stores/toast.svelte';
 import { refusalCode } from '$lib/utils/apiRefusal';
 import { Log } from '$lib/utils/Log';
 import { m } from '$lib/paraglide/messages';
-import { askToFollow, getFollowStatus, leaveFollow, type FollowStatus } from './api';
+import {
+  FOLLOW_STATUS_BATCH_MAX,
+  askToFollow,
+  getFollowStatuses,
+  leaveFollow,
+  type FollowStatus,
+} from './api';
 import { describeFollowRefusal, followActionOf, optimisticStatusAfter } from './followButton';
-
-/** How many `follow-status` reads are in flight at once. */
-export const MAX_STATUS_READS = 4;
 
 /** A resolved person: where the reader stands, or `null` for neither. */
 const persons = new SvelteMap<string, FollowStatus | null>();
 /** Persons whose read is queued or in flight - never read twice. */
 const requested = new SvelteSet<string>();
 const queue: string[] = [];
-let inFlight = 0;
+let flushQueued = false;
 
 const followedAssociations = new SvelteSet<string>();
 const associationsState = $state<{ loaded: boolean }>({ loaded: false });
@@ -42,12 +46,26 @@ let associationsRead: Promise<void> | null = null;
 const blockedIds = new SvelteSet<string>();
 const blocksState = $state<{ loaded: boolean }>({ loaded: false });
 let blocksRead: Promise<void> | null = null;
+let stopWatchingBlocks: (() => void) | null = null;
+
+/** A block or an unblock here: the blocks and every person read are stale (a block severs follows). */
+function dropAfterBlockChange(): void {
+  Log.d('followState', 'blocks changed: dropping what was read');
+  persons.clear();
+  requested.clear();
+  blockedIds.clear();
+  blocksState.loaded = false;
+  blocksRead = null;
+}
 
 /** Forgets everything: another account signed in, or a test. */
 export function resetFollowState(): void {
   persons.clear();
   requested.clear();
   queue.length = 0;
+  flushQueued = false;
+  stopWatchingBlocks?.();
+  stopWatchingBlocks = null;
   followedAssociations.clear();
   associationsState.loaded = false;
   associationsRead = null;
@@ -56,24 +74,23 @@ export function resetFollowState(): void {
   blocksRead = null;
 }
 
-function pump(): void {
-  while (inFlight < MAX_STATUS_READS && queue.length > 0) {
-    const id = queue.shift()!;
-    inFlight++;
-    getFollowStatus(id)
-      .then((status) => {
-        // A tap that landed while the read was out wins: the read is older than the tap.
-        if (!persons.has(id)) persons.set(id, status);
+/** Sends everything queued so far: one call per {@link FOLLOW_STATUS_BATCH_MAX} ids. */
+function flush(): void {
+  flushQueued = false;
+  while (queue.length > 0) {
+    const ids = queue.splice(0, FOLLOW_STATUS_BATCH_MAX);
+    getFollowStatuses(ids)
+      .then((statuses) => {
+        for (const id of ids) {
+          // A tap that landed while the read was out wins: the read is older than the tap.
+          if (!persons.has(id)) persons.set(id, statuses[id] ?? null);
+        }
       })
       .catch((e: unknown) => {
         // Unknown stays unknown: no chip is drawn, which is the safe side of "never offer what is
-        // already followed". The id may be asked again on the next mount.
-        Log.d('followState', `status of ${id.slice(0, 8)} failed: ${String(e)}`);
-        requested.delete(id);
-      })
-      .finally(() => {
-        inFlight--;
-        pump();
+        // already followed". The ids may be asked again on the next mount.
+        Log.d('followState', `statuses of ${ids.length} failed: ${String(e)}`);
+        for (const id of ids) requested.delete(id);
       });
   }
 }
@@ -83,7 +100,10 @@ export function ensurePersonStatus(userId: string): void {
   if (requested.has(userId)) return;
   requested.add(userId);
   queue.push(userId);
-  pump();
+  if (!flushQueued) {
+    flushQueued = true;
+    queueMicrotask(flush);
+  }
 }
 
 /** Starts the one read of the followed associations (a no-op once started). */
@@ -103,6 +123,7 @@ export function ensureAssociationsLoaded(): void {
 /** Starts the one read of the reader's blocks (a no-op once started). */
 export function ensureBlocksLoaded(): void {
   if (blocksRead) return;
+  if (!stopWatchingBlocks) stopWatchingBlocks = onBlocksChanged(dropAfterBlockChange);
   blocksRead = listBlockedUsers()
     .then((rows) => {
       for (const b of rows) blockedIds.add(b.userId);

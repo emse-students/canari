@@ -12,7 +12,7 @@
    * the labels and refusals are the profile's (`followButton.ts`).
    */
   import { UserPlus, Send } from '@lucide/svelte';
-  import { onMount } from 'svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import { m } from '$lib/paraglide/messages';
   import {
     ensureAssociationsLoaded,
@@ -36,16 +36,19 @@
 
   let { kind, targetId, name = '' }: Props = $props();
 
-  onMount(() => {
+  const person = $derived(kind === 'user' ? personChipState(targetId) : undefined);
+
+  // An effect and not a mount hook: a block drops what the ledger read, the answer turns unknown
+  // again and this chip asks again - one more id in the next batch.
+  $effect(() => {
     if (kind === 'user') {
       ensureBlocksLoaded();
-      if (targetId) ensurePersonStatus(targetId);
+      if (targetId && person === undefined) ensurePersonStatus(targetId);
     } else {
       ensureAssociationsLoaded();
     }
   });
 
-  const person = $derived(kind === 'user' ? personChipState(targetId) : undefined);
   const followed = $derived(kind === 'association' ? isAssociationFollowed(targetId) : undefined);
   /** `null` when nothing is to be drawn. */
   const shown = $derived.by<'ask' | 'pending' | null>(() => {
@@ -71,16 +74,13 @@
 </script>
 
 {#if shown}
-  <button
-    type="button"
+  <Button
+    size="compact"
+    variant={shown === 'pending' ? 'secondary' : 'primary'}
     onclick={onTap}
     aria-label={label}
     data-follow-chip={kind}
     data-follow-chip-state={shown}
-    class="focus-visible:ring-cn-yellow/50 inline-flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-xs font-bold transition-all outline-none focus-visible:ring-2 active:scale-95 {shown ===
-    'pending'
-      ? 'border-cn-border text-text-muted border'
-      : 'bg-cn-yellow text-cn-ink'}"
   >
     {#if shown === 'pending'}
       <Send size={12} strokeWidth={2.5} aria-hidden="true" />
@@ -88,5 +88,5 @@
       <UserPlus size={12} strokeWidth={2.5} aria-hidden="true" />
     {/if}
     <span>{shown === 'pending' ? followLabel('pending') : followLabel(null)}</span>
-  </button>
+  </Button>
 {/if}
