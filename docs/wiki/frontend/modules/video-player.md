@@ -97,6 +97,11 @@ like the theme: not per account, not wiped by a sign-out.
 - **A conversation's video keeps its own sound** (owner, 2026-10-02, unchanged): pressing play is the
   reader asking for that video, so it plays audible and its speaker mutes that element only
   (`soundScope="local"`); it neither reads nor writes `videoSound`.
+- **An engine's refusal is not the reader's choice** (step E). The live viewer, refused an audible
+  `play()`, retries muted so a live never sits paused; it calls `videoSound.muteForRefusedStart()`
+  first, which silences THIS session without writing the store, so the element's `volumechange`
+  (forwarded by `followVideoSound`) finds the answer already muted and writes nothing. Before, that
+  retry would have remembered "off" for good - a refusal turned into a preference.
 - **Not yet: the device volume.** No WebView exposes the system volume; following it (the struck
   glyph at volume 0, as Instagram does) needs a native bridge on each phone - owed in
   [backlog](../../backlog.d/video-sound-follows-the-device-volume.md).
@@ -251,6 +256,23 @@ poster and the unplayable notice are the same code.
   "rest" to hold, so the bubble hands the player `onActions` on a phone: the `...` chip opens the
   same sheet (`msg_more_actions_label`). On a desktop the hover toolbar is the menu, as before.
 
+## The live viewer, on the kit (step E)
+
+`LiveViewer` keeps its own `<video>` - `LivePlayer` drives it (MSE, the latency policy, the stall
+judge) and it is not a clip with a duration - and takes the kit around it:
+
+- **The kit's speaker** (`VideoSoundButton`, glass chip, `data-live-sound`) replaces the top bar's
+  own button and its two labels (`live_viewer_mute` / `live_viewer_unmute`, deleted): the same
+  object, name and `aria-pressed` as on every other video.
+- **A tap on the picture is the sound**, with the `VideoFeedbackGlyph` and its announcement
+  (`videoGestures` on the `<video>`; the top bar, the chat and the reactions are siblings, so their
+  taps are theirs). Off on a terminal screen.
+- **NO HOLD: a live does not pause** (decided here, reversible). `LivePlayer.resume()` plays a paused
+  element again at its next delivery, so a held pause would fight the player within a second, and
+  pausing a live only puts it behind its own edge; Instagram Live has no pause either. `videoGestures`
+  takes the hold as optional for this: without `onHoldStart` no hold timer is armed.
+- **The refused audible start no longer writes "off"**: [the sound state](#the-sound-state).
+
 ## Where the migration stands
 
 | Step | Surface | State |
@@ -259,4 +281,4 @@ poster and the unplayable notice are the same code.
 | B | lightbox (`VideoPlayer` full mode) on the kit; the measurement protocol | built - readings owed ([the glass budget](#the-glass-budget)) |
 | C | CanaReels (`variant="reel"`): tap = sound, hold = pause, the rail's speaker is the kit's | built - readings owed (a reel tap, a hold, a double-tap like on both phones) |
 | D | feed (`variant="feed"`) and chat (`variant="chat"`); `InlineVideo` deleted | built - readings owed (a feed tap and the expand chip, a chat disc, a hold that opens no sheet) |
-| E | the live viewer | next |
+| E | the live viewer: the kit's speaker, tap = sound, no hold; a refused audible start no longer remembered as "off" | built - readings owed (a live tap and the speaker on both phones) |
