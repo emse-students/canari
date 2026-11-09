@@ -605,6 +605,15 @@
     );
   }
 
+  /** The actions sheet, opened from a video's chip - the long press it replaces over a video. */
+  function openActionsFromVideo() {
+    Log.d('MESSAGE', `actions of ${messageId} opened from its video's chip`);
+    bubbleTaps.cancel();
+    showMobileActions = true;
+    emojiPickerOrigin = null;
+    showInfo = false;
+  }
+
   function beginLongPress(e: PointerEvent | TouchEvent) {
     const { x, y } = pointerCoords(e);
     pointerStartX = x;
@@ -1147,6 +1156,7 @@
                   {reelPurgedAt}
                   onReelPurged={onReelPurged ? (at) => onReelPurged(messageId, at) : undefined}
                   onNear={() => (isNearViewport = true)}
+                  onActions={isMobile && !isDeleted ? openActionsFromVideo : undefined}
                   {upload}
                   uploadFailed={uploadFailed || retiredForGroup}
                   {uploadFailedLabel}

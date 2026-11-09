@@ -224,12 +224,22 @@ poster and the unplayable notice are the same code.
   target), **the expand chip top-right** (`VideoExpandButton`, the caller's `openLabel`). No bar, no
   play disc - it plays by being on screen, as Instagram's does. **A tap is the app's sound**,
   remembered (`videoSound.setMuted`); inside a post card that likes on double tap it waits for the
-  window. `f` opens the viewer, the inline video's only full screen.
+  window. **On a video on screen but PAUSED** (an autoplay the engine refused, the reader's own
+  pause) the tap gives the sound and then plays it - there is no disc to press. `f` opens the
+  viewer, the inline video's only full screen.
+- **A pause the reader makes on the feed stays made** (stack review, 2026-11-09). A hold, Space or
+  `k` calls `markReaderPaused` before `pause()`: the pause's own `pause` event made the arbiter
+  report idle, and `resumeVisible` replayed the video last come into view - the one just paused.
+  Until it plays again (the reader's play, a hold released) or LEAVES the screen, neither the idle
+  resume nor its intersection starts it (`VideoPlayer.inline.svelte.test.ts`, through the real
+  `playWhileVisible`).
 - **`chat`** (`MessageMediaRenderer`): played when asked, never looped, **its sound its own**
   (`local`: audible from the start, neither reading nor writing the app's answer). **The glass play
-  disc** until it is started, and again on a pause or at its end; **once started, its speaker and the
-  `line` scrubber stay**. The expand chip opens the viewer, which resumes where it was
-  (`videoResume`).
+  disc** until it is started, and again on a pause or at its end; **the first tap plays it**, audible,
+  as the disc does, and **once started the tap is its sound**. Once started, **a pause/play chip
+  bottom-left, its speaker bottom-right and the `line` scrubber stay**. The expand chip (top-right)
+  opens the viewer, which resumes where it was (`videoResume`); on a phone **the message's actions
+  chip** (top-left, `onActions`, the bubble's sheet) sits opposite it - see the next bullet.
 - **What the expand chip changed**: the whole picture was the viewer's button
   (`data-double-tap-defers`, the click held for the double-tap window). The picture's tap is now the
   sound, which waits by itself where a like exists; the chip is a button and opens at once.
@@ -237,10 +247,9 @@ poster and the unplayable notice are the same code.
   action sheet does not open over the video, and stays reachable from the rest of the bubble.
   `MessageBubble` reads the fact at the press - the target is inside a `[data-video-player]` - and
   then arms no sheet timer and ignores the `contextmenu` a phone raises for a touch hold
-  (`MessageBubble.videoHold.svelte.test.ts`).
-- **A tap on a chat video that has not started toggles its sound but does not play it** (decided by
-  the code as it stands, for the readings): only the disc plays (the tap is the sound everywhere).
-  Its glyph says what it did.
+  (`MessageBubble.videoHold.svelte.test.ts`). **A bubble that is nothing but its video** has no
+  "rest" to hold, so the bubble hands the player `onActions` on a phone: the `...` chip opens the
+  same sheet (`msg_more_actions_label`). On a desktop the hover toolbar is the menu, as before.
 
 ## Where the migration stands
 

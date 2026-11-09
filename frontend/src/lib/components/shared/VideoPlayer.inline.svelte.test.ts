@@ -12,7 +12,7 @@
  * on scroll; it is audible whatever the app-wide answer, and never changes it; it does not loop; two
  * take turns; a tap is its own sound, and goes no further than the player.
  */
-import { it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import VideoPlayer from './VideoPlayer.svelte';
 import { videoSound } from '$lib/stores/videoSound.svelte';
@@ -20,6 +20,7 @@ import { takeVideoPosition } from '$lib/utils/videoResume';
 import { followVideoSound } from '$lib/actions/playWhileVisible';
 import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
 import { m } from '$lib/paraglide/messages';
+import { HOLD_TO_PAUSE_MS } from '$lib/actions/videoGestures';
 import { captureVideoFrame } from '$lib/utils/videoFrameBackdrop';
 
 // happy-dom has no canvas to draw a frame on: the capture is the module's, pinned on its own.
@@ -312,7 +313,8 @@ it('chat: the disc goes while it plays and comes back when it pauses; the line a
 });
 
 it("chat: a tap on the picture goes no further - a bubble's info panel never opens", () => {
-  const { root } = mountVariant('chat');
+  const { root, video } = mountVariant('chat');
+  vi.spyOn(video, 'play').mockResolvedValue();
   const bubble = vi.fn();
   document.body.addEventListener('click', bubble);
   tap(root);
@@ -356,4 +358,112 @@ it('chat: a viewer opening pauses the one playing inline, and closing leaves it 
   expect(pause).toHaveBeenCalledTimes(1);
   action.destroy();
   expect(play).not.toHaveBeenCalled();
+});
+
+/**
+ * A real element's play and pause, as the arbiter and the feed read them: `paused` follows the
+ * calls, and each fires its event.
+ */
+function liveElement(video: HTMLVideoElement) {
+  let paused = true;
+  Object.defineProperty(video, 'paused', { configurable: true, get: () => paused });
+  const play = vi.spyOn(video, 'play').mockImplementation(async () => {
+    paused = false;
+    video.dispatchEvent(new Event('play'));
+  });
+  const pause = vi.spyOn(video, 'pause').mockImplementation(() => {
+    paused = true;
+    video.dispatchEvent(new Event('pause'));
+  });
+  return { play, pause };
+}
+
+/**
+ * A PAUSE THE READER MADE STAYS MADE (stack review, 2026-11-09): the feed's own idle resume used to
+ * replay the video just paused - its `pause` event said "nothing plays", and the video last come into
+ * view was that one. Driven through the REAL `playWhileVisible` and arbiter.
+ */
+describe('feed: the reader pauses, and the feed does not undo it', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('a hold pauses it until released', () => {
+    const { root, video } = mountVariant('feed');
+    const { play, pause } = liveElement(video);
+    observed.at(-1)!([{ isIntersecting: true }]);
+    expect(play).toHaveBeenCalledTimes(1);
+
+    root.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, button: 0 }));
+    vi.advanceTimersByTime(HOLD_TO_PAUSE_MS);
+    expect(pause).toHaveBeenCalledTimes(1);
+    expect(play, 'the feed replays nothing while it is held').toHaveBeenCalledTimes(1);
+    expect(video.paused).toBe(true);
+
+    root.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+    expect(play, 'the release resumes it').toHaveBeenCalledTimes(2);
+  });
+
+  it('Space pauses it, and it stays paused until it leaves the screen and comes back', () => {
+    const { root, video } = mountVariant('feed');
+    const { play } = liveElement(video);
+    observed.at(-1)!([{ isIntersecting: true }]);
+    root.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    expect(video.paused).toBe(true);
+    expect(play).toHaveBeenCalledTimes(1);
+
+    observed.at(-1)!([{ isIntersecting: true }]);
+    expect(play, 'a new intersection report while still on screen').toHaveBeenCalledTimes(1);
+    observed.at(-1)!([{ isIntersecting: false }]);
+    observed.at(-1)!([{ isIntersecting: true }]);
+    expect(play, 'scrolled away and back: it plays as any other').toHaveBeenCalledTimes(2);
+  });
+});
+
+it('feed: a tap on a video on screen but paused (an autoplay refused) gives the sound and plays it', () => {
+  const { root, video } = mountVariant('feed');
+  const { play } = liveElement(video);
+  tap(root);
+  flushSync();
+  expect(videoSound.muted).toBe(false);
+  expect(play).toHaveBeenCalledTimes(1);
+});
+
+it('chat: the first tap plays it, audible, as the disc does - and the next is its sound', () => {
+  const { root, video, target } = mountVariant('chat');
+  const { play } = liveElement(video);
+  tap(root);
+  flushSync();
+  expect(play).toHaveBeenCalledTimes(1);
+  expect(video.muted).toBe(false);
+  expect(target.querySelector('[data-video-glyph]')!.getAttribute('data-video-glyph')).toBe('play');
+  tap(root);
+  flushSync();
+  expect(video.muted, 'started: the tap is its sound').toBe(true);
+  expect(play).toHaveBeenCalledTimes(1);
+  expect(videoSound.muted, 'its own sound, never the app').toBe(true);
+});
+
+it('chat: once started, a pause chip pauses it and plays it again', () => {
+  const { target, video } = mountVariant('chat');
+  const { play, pause } = liveElement(video);
+  void video.play();
+  flushSync();
+  const toggle = () => target.querySelector<HTMLButtonElement>('[data-video-toggle]')!;
+  expect(toggle().getAttribute('aria-label')).toBe(m.video_pause_label());
+  toggle().click();
+  flushSync();
+  expect(pause).toHaveBeenCalledTimes(1);
+  expect(toggle().getAttribute('aria-label')).toBe(m.video_play_label());
+  toggle().click();
+  expect(play).toHaveBeenCalledTimes(2);
+});
+
+it("chat: the message's actions are a chip, given by the bubble, since a hold is the pause", () => {
+  const onActions = vi.fn();
+  const { target } = mountVariant('chat', { onActions });
+  const chip = target.querySelector<HTMLButtonElement>('[data-video-actions]')!;
+  expect(chip.getAttribute('aria-label')).toBe(m.msg_more_actions_label());
+  chip.click();
+  expect(onActions).toHaveBeenCalledOnce();
+  expect(mountVariant('chat').target.querySelector('[data-video-actions]')).toBeNull();
 });

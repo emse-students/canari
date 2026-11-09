@@ -79,6 +79,11 @@
      */
     onNear?: () => void;
     /**
+     * Opens the message's actions sheet from a video's own chip: a hold on a conversation's video is
+     * its pause (owner, 2026-11-09), so a video-only bubble needs another way to its menu.
+     */
+    onActions?: () => void;
+    /**
      * The picture or video fills the top of its bubble edge to edge, and the caption sits under it
      * in the same bubble (Messenger's and WhatsApp's). Set by `MessageBubble` for a photo or a video
      * that carries text: the bubble clips the media's corners, so this only cancels the bubble's own
@@ -130,6 +135,7 @@
     textSegments = [],
     onNavigateLink: _onNavigateLink,
     onNear,
+    onActions,
     bleed = false,
     senderId,
     sentAt,
@@ -347,6 +353,7 @@
                 variant="chat"
                 src={blobUrl}
                 onOpen={() => (showLightbox = true)}
+                {onActions}
                 onMetadata={frame.onLoad}
                 openLabel={m.msg_open_video_fullscreen_label()}
                 class="h-full w-full"

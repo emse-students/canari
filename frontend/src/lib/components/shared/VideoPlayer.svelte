@@ -8,7 +8,7 @@
 
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { CircleAlert, Maximize, Minimize, Pause, Play } from '@lucide/svelte';
+  import { CircleAlert, Ellipsis, Maximize, Minimize, Pause, Play } from '@lucide/svelte';
   import { videoGestures } from '$lib/actions/videoGestures';
   import { videoGlass } from '$lib/utils/videoGlass';
   import VideoChipButton from '$lib/components/ui/player/VideoChipButton.svelte';
@@ -22,6 +22,7 @@
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import {
     followVideoSound,
+    markReaderPaused,
     playWhileVisible,
     type VideoSoundScope,
   } from '$lib/actions/playWhileVisible';
@@ -146,6 +147,12 @@
     onOpen?: () => void;
     /** The expand chip's accessible name (the surface's own "open in full screen"). */
     openLabel?: string;
+    /**
+     * A conversation's video: opens the MESSAGE's actions (the bubble's long-press sheet). A hold on
+     * the picture is the pause only (owner, 2026-11-09), so a bubble that is nothing but its video
+     * keeps its menu through this chip. Without it, no chip.
+     */
+    onActions?: () => void;
     /** The element's `loadedmetadata` - a `MediaFrame` reads an undeclared clip's size from it. */
     onMetadata?: (event: Event) => void;
     /**
@@ -191,6 +198,7 @@
     streamed = false,
     onOpen,
     openLabel,
+    onActions,
     onMetadata,
     onVideo,
     backdrop = false,
@@ -350,16 +358,50 @@
   function togglePlay() {
     if (!video) return;
     showControls();
-    if (minimal) showFeedback(video.paused ? 'play' : 'pause');
+    if (minimal || inline) showFeedback(video.paused ? 'play' : 'pause');
     if (video.paused) {
-      video.play().catch((err: unknown) => {
-        console.warn('[VideoPlayer] play() refused', {
-          name: err instanceof Error ? err.name : String(err),
-          muted: video?.muted,
-        });
-      });
+      playNow();
     } else {
-      video.pause();
+      pauseByReader();
+    }
+  }
+
+  /** Asks the element to play; a refusal is logged with what it was asked with. */
+  function playNow() {
+    video?.play().catch((err: unknown) => {
+      console.warn('[VideoPlayer] play() refused', {
+        name: err instanceof Error ? err.name : String(err),
+        muted: video?.muted,
+      });
+    });
+  }
+
+  /** A pause the READER made: a feed video then stays paused (`markReaderPaused`). */
+  function pauseByReader() {
+    if (!video) return;
+    if (variant === 'feed') markReaderPaused(video);
+    video.pause();
+  }
+
+  /**
+   * THE PICTURE'S TAP (stack review, 2026-11-09): the sound everywhere, and two cases where a sound
+   * toggle alone would leave the reader with a still picture and nothing to press:
+   * - a conversation's video NOT YET STARTED: the tap plays it, audible, as its disc does - its sound
+   *   is the tap's once it has started;
+   * - a feed video ON SCREEN BUT PAUSED (an autoplay the engine refused, the reader's own pause): the
+   *   tap gives the sound, then plays it.
+   */
+  function onPictureTap() {
+    if (!video) return;
+    if (variant === 'chat' && !started) {
+      Log.d('VideoPlayer', 'chat: the first tap plays it');
+      togglePlay();
+      return;
+    }
+    toggleMute();
+    if (variant === 'feed' && video.paused) {
+      Log.d('VideoPlayer', 'feed: a tap on a paused video plays it');
+      playNow();
     }
   }
 
@@ -385,7 +427,7 @@
     if (!video) return;
     holding = true;
     heldWasPlaying = !video.paused;
-    if (heldWasPlaying) video.pause();
+    if (heldWasPlaying) pauseByReader();
   }
 
   /** The hold ended: resume what it paused, and nothing it did not. */
@@ -465,7 +507,9 @@
    * show anything by itself.
    */
   function onPointerMove(e: PointerEvent) {
-    if (e.pointerType === 'mouse') showControls();
+    // Only a player with a bar has controls to raise; elsewhere this would restart the fade timer on
+    // every mouse movement for nothing.
+    if (e.pointerType === 'mouse' && !minimal && !inline) showControls();
   }
 
   /** A drag on the scrubber keeps the controls up; its end restarts the fade. */
@@ -620,7 +664,7 @@
   aria-label={m.video_player_label()}
   tabindex="0"
   data-video-player={variant}
-  use:videoGestures={{ onTap: toggleMute, onHoldStart, onHoldEnd }}
+  use:videoGestures={{ onTap: onPictureTap, onHoldStart, onHoldEnd }}
   onkeydown={onKeydown}
   onfocusin={onFocusIn}
   onpointermove={onPointerMove}
@@ -737,7 +781,31 @@
           class="absolute right-0.5 bottom-0.5 z-20"
         />
       {/if}
+      {#if onActions}
+        <!-- The message's actions: a hold on the picture is the pause, so the menu is a chip. -->
+        <VideoChipButton
+          label={m.msg_more_actions_label()}
+          onclick={onActions}
+          class="absolute top-0.5 left-0.5 z-20"
+          data-video-actions
+        >
+          <Ellipsis size={16} strokeWidth={2.5} class="drop-shadow" />
+        </VideoChipButton>
+      {/if}
       {#if variant === 'chat' && started}
+        <!-- Pause and play again without the keyboard: the tap is the sound once started. -->
+        <VideoChipButton
+          label={paused ? m.video_play_label() : m.video_pause_label()}
+          onclick={togglePlay}
+          class="absolute bottom-0.5 left-0.5 z-20"
+          data-video-toggle
+        >
+          {#if paused}
+            <Play size={14} strokeWidth={2.5} fill="currentColor" class="ml-0.5 drop-shadow" />
+          {:else}
+            <Pause size={14} strokeWidth={2.5} fill="currentColor" class="drop-shadow" />
+          {/if}
+        </VideoChipButton>
         <div class="absolute inset-x-0 bottom-0 z-10" data-video-line-slot>
           <VideoScrubber
             variant="line"
