@@ -333,6 +333,70 @@ describe('openSegmentedStream', () => {
     handle.close();
   });
 
+  /**
+   * THE VIEWER NEVER WAITS FOR THE WHOLE FILE, AND NEVER DOWNLOADS IT TWICE (owner, 2026-11-09: 26 s
+   * before the viewer of a 33 MB video played, the card already playing). The viewer is a fork: its
+   * own MediaSource over the card's segment feed.
+   */
+  it('a viewer fork starts on its head before the last segment, and the file is fetched once', async () => {
+    const { ref, requests } = await servedVideo(8);
+    const card = openSegmentedStream(ref('v'), 'https://media.test', STREAM, FEED_STREAM_PACING);
+    card.attach(new FakeElement());
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    const cardSource = FakeMediaSource.last!;
+
+    const viewer = card.fork();
+    const viewerSource = FakeMediaSource.last!;
+    expect(viewerSource).not.toBe(cardSource);
+    expect(viewer.url).toBe('blob:stream');
+    const element = new FakeElement();
+    viewer.attach(element);
+
+    // Its head is appended from what the card already fetched: no request, and 2 of 8 segments.
+    await vi.waitFor(() => expect(viewerSource.buffer.appended).toHaveLength(2));
+    await settle();
+    expect(requests).toHaveLength(2);
+    expect(viewerSource.buffer.appended).toHaveLength(2);
+    expect(viewerSource.ended).toBeNull();
+
+    // Playing with a full buffer ahead: it holds - the viewer never runs to the end on its own.
+    element.paused = false;
+    element.bufferedEnd = 60;
+    element.dispatchEvent(new Event('play'));
+    await settle();
+    expect(requests).toHaveLength(2);
+    expect(viewerSource.buffer.appended).toHaveLength(2);
+
+    // The buffer runs low: it asks for more, and the card's feed serves it.
+    element.bufferedEnd = 0;
+    element.dispatchEvent(new Event('timeupdate'));
+    await vi.waitFor(() => expect(requests.length).toBeGreaterThan(2));
+
+    // Closing the viewer leaves the card alone; reading to the end fetches each segment ONCE.
+    viewer.close();
+    expect(cardSource.readyState).toBe('open');
+    const second = card.fork();
+    second.fetchAll();
+    const blob = await second.done;
+    expect(blob.size).toBe(8 * SEGMENTED_MEDIA_SEGMENT_BYTES);
+    expect(requests).toHaveLength(8);
+    card.close();
+  });
+
+  it('closing the card stops a fork it fed', async () => {
+    const { ref } = await servedVideo(8);
+    const card = openSegmentedStream(ref('v'), 'https://media.test', STREAM, FEED_STREAM_PACING);
+    const viewer = card.fork();
+    viewer.attach(new FakeElement());
+    const failed = viewer.done.then(
+      () => 'resolved',
+      (e: Error) => e.name
+    );
+    await settle();
+    card.close();
+    expect(await failed).toBe('AbortError');
+  });
+
   it('stops for good when closed - the segment in flight is aborted and nothing more is asked', async () => {
     const { ref, requests } = await servedVideo(6, 2);
     const handle = openSegmentedStream(ref('r'), 'https://media.test', STREAM, FEED_STREAM_PACING);

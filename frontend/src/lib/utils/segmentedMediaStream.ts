@@ -36,9 +36,12 @@
  * clock. Leaving the viewport band is the owner's to act on: it closes the stream, which aborts the
  * segment in flight (`PostMedia`, `deferred`).
  *
- * An UNPACED stream - the viewer, the lightbox - fetches the whole file as fast as it comes: the
- * reader asked for that video. {@link SegmentedStreamHandle.fetchAll} turns a paced stream into one
- * when its owner opens a viewer that waits for the whole file.
+ * The full-screen viewer is a FORK of the card's stream ({@link SegmentedStreamHandle.fork}): its
+ * own MediaSource and element, the same segment feed, paced by {@link VIEWER_STREAM_PACING}. It
+ * plays as soon as its head is appended and never waits for the whole file; a segment is fetched
+ * once however many elements read it. An UNPACED stream (the live viewer's replay, a gallery
+ * cell) fetches the whole file as fast as it comes, and {@link SegmentedStreamHandle.fetchAll}
+ * turns a paced one into it.
  *
  * # What is NOT here yet
  *
@@ -144,6 +147,14 @@ export interface SegmentedStreamHandle {
   attach(element: PacingElement): () => void;
   /** Lifts the pacing: every remaining segment is fetched. Idempotent. */
   fetchAll(): void;
+  /**
+   * A second stream over the SAME segments, for a second element (the full-screen viewer): its own
+   * URL, paced by {@link VIEWER_STREAM_PACING}. A segment the first stream already fetched is
+   * taken from the shared feed, and one the fork fetches is the first stream's too - the file is
+   * never downloaded twice, and the viewer starts as soon as ITS head is appended. Closing the fork
+   * stops only the fork; closing the original stops both. A fork is not forked again.
+   */
+  fork(): SegmentedStreamHandle;
   /** Stops fetching - the segment in flight included - and releases the URL. Safe to call twice. */
   close(): void;
 }
@@ -176,6 +187,48 @@ export function bufferedAhead(element: Pick<PacingElement, 'currentTime' | 'buff
 }
 
 /**
+ * The viewer's pacing: the head, then 30 s ahead while it plays. Longer than a feed card's - the
+ * reader chose this video and watches it full screen - yet still bounded, so a 33 MB video left
+ * after ten seconds is not fetched whole.
+ */
+export const VIEWER_STREAM_PACING: StreamPacing = { headSegments: 2, aheadSeconds: 30 };
+
+/**
+ * The segments of ONE media, fetched at most once whoever asks. Every consumer of the stream - the
+ * inline element, a viewer forked from it - reads through this, so a second element never means a
+ * second download: a segment already in is a `Blob` in the engine's store (which spills to disk),
+ * and the next consumer simply takes it.
+ */
+interface SegmentFeed {
+  /** How many segments the media has - opens the reader on first use. */
+  count(): Promise<number>;
+  /** Segment `index`, fetched and verified the first time it is asked for. */
+  segment(index: number): Promise<Blob>;
+}
+
+/** A feed over `ref`; every read is aborted with `signal` (the root stream's close). */
+function createSegmentFeed(ref: MediaRef, baseUrl: string, signal: AbortSignal): SegmentFeed {
+  let reader: ReturnType<typeof openSegmentedMedia> | null = null;
+  const open = () =>
+    (reader ??= openSegmentedMedia(httpRangeSource(baseUrl, ref.mediaId), ref.key, ref.iv, signal));
+  const segments = new Map<number, Promise<Blob>>();
+  return {
+    count: async () => (await open()).segmentCount,
+    segment(index) {
+      let pending = segments.get(index);
+      if (!pending) {
+        // Each segment is kept as a BLOB, never as the `ArrayBuffer` it was decrypted into: the
+        // buffer is dropped once read, and what the final file needs sits in the engine's blob
+        // store instead of the JS heap, beside the MSE buffer.
+        pending = open().then(async (r) => new Blob([await r.readSegment(index, signal)]));
+        segments.set(index, pending);
+      }
+      return pending;
+    },
+  };
+}
+
+/**
  * Opens `ref` as a stream: the URL is usable at once, and segments are fetched, verified and
  * appended in order while it plays.
  *
@@ -191,10 +244,31 @@ export function openSegmentedStream(
   playback: Extract<SegmentedPlayback, { kind: 'stream' }>,
   pacing?: StreamPacing
 ): SegmentedStreamHandle {
+  const rootAbort = new AbortController();
+  const feed = createSegmentFeed(ref, baseUrl, rootAbort.signal);
+  return openConsumer(ref, feed, playback, pacing, rootAbort, 'stream');
+}
+
+/**
+ * One MSE consumer of a feed: its own `MediaSource`, URL and pacing. The root consumer owns the
+ * feed's abort; a fork's close stops only itself.
+ */
+function openConsumer(
+  ref: MediaRef,
+  feed: SegmentFeed,
+  playback: Extract<SegmentedPlayback, { kind: 'stream' }>,
+  pacing: StreamPacing | undefined,
+  rootAbort: AbortController,
+  label: 'stream' | 'viewer'
+): SegmentedStreamHandle {
   console.debug(
-    `[media-seg] stream ${ref.mediaId} (${ref.mimeType}) through ${playback.managed ? 'ManagedMediaSource' : 'MediaSource'}${pacing ? `, paced (${pacing.headSegments} head, ${pacing.aheadSeconds} s ahead)` : ''}`
+    `[media-seg] ${label} ${ref.mediaId} (${ref.mimeType}) through ${playback.managed ? 'ManagedMediaSource' : 'MediaSource'}${pacing ? `, paced (${pacing.headSegments} head, ${pacing.aheadSeconds} s ahead)` : ''}`
   );
-  const abort = new AbortController();
+  // The root's close reaches every consumer; a fork's close stops only itself.
+  const abort = label === 'stream' ? rootAbort : new AbortController();
+  if (label === 'viewer') {
+    rootAbort.signal.addEventListener('abort', () => abort.abort(), { once: true });
+  }
   const source = new playback.MediaSourceCtor();
   const url = URL.createObjectURL(source);
   let closed = false;
@@ -243,25 +317,17 @@ export function openSegmentedStream(
       source.addEventListener('sourceopen', () => resolve(), { once: true })
     );
     const buffer = source.addSourceBuffer(ref.mimeType);
-    const reader = await openSegmentedMedia(
-      httpRangeSource(baseUrl, ref.mediaId),
-      ref.key,
-      ref.iv,
-      abort.signal
-    );
-    // Each segment is kept as a BLOB, never as the `ArrayBuffer` it was decrypted into: the buffer
-    // is dropped the moment the element has it, and the bytes the final file needs sit in the
-    // engine's blob store (which spills to disk) instead of the JS heap, beside the MSE buffer.
+    const segmentCount = await feed.count();
     const parts: Blob[] = [];
-    for (let i = 0; i < reader.segmentCount; i++) {
+    for (let i = 0; i < segmentCount; i++) {
       await demand(i);
-      const plain = await reader.readSegment(i, abort.signal);
+      const part = await feed.segment(i);
       if (closed) throw new DOMException('stream closed', 'AbortError');
-      await appendSegment(buffer, plain);
-      parts.push(new Blob([plain]));
+      await appendSegment(buffer, await part.arrayBuffer());
+      parts.push(part);
     }
     if (source.readyState === 'open') source.endOfStream();
-    console.debug(`[media-seg] stream ${ref.mediaId}: ${reader.segmentCount} segment(s) appended`);
+    console.debug(`[media-seg] ${label} ${ref.mediaId}: ${segmentCount} segment(s) appended`);
     return new Blob(parts, { type: ref.mimeType });
   })();
 
@@ -292,6 +358,10 @@ export function openSegmentedStream(
       console.debug(`[media-seg] stream ${ref.mediaId}: pacing lifted, fetching the rest`);
       paced = false;
       poke();
+    },
+    fork() {
+      if (label === 'viewer') throw new Error('a viewer stream is not forked again');
+      return openConsumer(ref, feed, playback, VIEWER_STREAM_PACING, rootAbort, 'viewer');
     },
     close() {
       if (closed) return;
