@@ -4,7 +4,12 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
-import { FormsService, FORM_DRAFT_FLAG_ON_EDIT } from './forms.service';
+import {
+  FormsService,
+  FORM_ASSOCIATION_FIXED,
+  FORM_ASSOCIATION_NOT_YOURS,
+  FORM_DRAFT_FLAG_ON_EDIT,
+} from './forms.service';
 import {
   FORM_NO_PAYMENT_METHOD,
   FORM_ONLINE_PAYMENT_NOT_OFFERED,
@@ -239,6 +244,121 @@ describe('FormsService - drafts', () => {
       await expect(refusal).rejects.toMatchObject({
         response: { code: FORM_DRAFT_FLAG_ON_EDIT },
       });
+    });
+  });
+
+  // THE AUTOSAVE MUST NOT LOCK THE OWNER (owner, 2026-11-09): the first autosave creates the draft,
+  // and the association it was created under used to be fixed from then on. A draft has no answer,
+  // payment, reminder or attachment, so it may move - by someone who is a member of both sides.
+  describe('the association of a draft', () => {
+    /** `isMember` true only for the associations listed. */
+    const memberOf = (associations: any, ...ids: string[]) =>
+      associations.isMember.mockImplementation((_u: string, id: string) =>
+        Promise.resolve(ids.includes(id))
+      );
+    const moveTo = (associationId: string | null) => createInput({ title: 'Gala', associationId });
+
+    it('moves a draft to another association its actor belongs to, and logs it', async () => {
+      const { service, formRepo, associations } = makeService();
+      memberOf(associations, 'a1', 'a2');
+      await service.update('f1', moveTo('a2'), OWNER, false);
+      expect(formRepo.save.mock.calls.at(-1)[0].associationId).toBe('a2');
+      expect(associations.isMember).toHaveBeenCalledWith(OWNER, 'a1');
+      expect(associations.isMember).toHaveBeenCalledWith(OWNER, 'a2');
+    });
+
+    it('makes a draft personal ("" or null) and a personal draft an association\'s', async () => {
+      const toNone = makeService();
+      memberOf(toNone.associations, 'a1');
+      await toNone.service.update('f1', moveTo(''), OWNER, false);
+      expect(toNone.formRepo.save.mock.calls.at(-1)[0].associationId).toBeNull();
+      const toNull = makeService();
+      memberOf(toNull.associations, 'a1');
+      await toNull.service.update('f1', moveTo(null), OWNER, false);
+      expect(toNull.formRepo.save.mock.calls.at(-1)[0].associationId).toBeNull();
+      const fromNone = makeService({ form: { associationId: null } });
+      memberOf(fromNone.associations, 'a2');
+      await fromNone.service.update('f1', moveTo('a2'), OWNER, false);
+      expect(fromNone.formRepo.save.mock.calls.at(-1)[0].associationId).toBe('a2');
+    });
+
+    it('refuses, typed, an association the actor is no member of - and leaves the draft where it was', async () => {
+      const { service, formRepo, associations } = makeService();
+      memberOf(associations, 'a1');
+      await expect(service.update('f1', moveTo('a2'), OWNER, false)).rejects.toMatchObject({
+        status: 403,
+        response: { code: FORM_ASSOCIATION_NOT_YOURS },
+      });
+      expect(formRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('refuses taking a draft out of an association the actor no longer belongs to', async () => {
+      // A co-manager through MANAGE_FORMS who is not a member: may edit, may not walk off with it.
+      const { service, formRepo, associations } = makeService({ mayAct: true });
+      memberOf(associations, 'a2');
+      await expect(service.update('f1', moveTo('a2'), STRANGER, false)).rejects.toMatchObject({
+        response: { code: FORM_ASSOCIATION_NOT_YOURS },
+      });
+      await expect(service.update('f1', moveTo(''), STRANGER, false)).rejects.toMatchObject({
+        response: { code: FORM_ASSOCIATION_NOT_YOURS },
+      });
+      expect(formRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('lets a global admin move a draft without membership', async () => {
+      const { service, formRepo, associations } = makeService();
+      memberOf(associations);
+      await service.update('f1', moveTo('a2'), STRANGER, true);
+      expect(formRepo.save.mock.calls.at(-1)[0].associationId).toBe('a2');
+      expect(associations.isMember).not.toHaveBeenCalled();
+    });
+
+    it('asks no membership when the association does not change, or is not sent', async () => {
+      const { service, associations } = makeService();
+      await service.update('f1', moveTo('a1'), OWNER, false);
+      await service.update('f1', createInput({ associationId: undefined }), OWNER, false);
+      expect(associations.isMember).not.toHaveBeenCalled();
+    });
+
+    it('refuses moving a PUBLISHED form, typed, whoever asks', async () => {
+      const { service, formRepo } = makeService({ form: { status: FORM_PUBLISHED } });
+      for (const admin of [false, true]) {
+        await expect(service.update('f1', moveTo('a2'), OWNER, admin)).rejects.toMatchObject({
+          status: 400,
+          response: { code: FORM_ASSOCIATION_FIXED },
+        });
+      }
+      expect(formRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('publishes a draft whose revision moved it, under the new association, judged there', async () => {
+      const revision = jest.requireMock('./form-draft-revision') as { readFormDraft: jest.Mock };
+      revision.readFormDraft.mockResolvedValueOnce({
+        revision: 3,
+        document: { title: 'Gala', basePrice: 0, currency: 'eur', items: [], associationId: 'a2' },
+        savedAt: null,
+        saveId: null,
+      });
+      const { service, row, formRepo, associations } = makeService();
+      formRepo.manager.query.mockResolvedValue([]);
+      memberOf(associations, 'a1', 'a2');
+      const transactionQuery = jest.fn(async (sql: string) =>
+        /form_drafts/.test(sql) && /RETURNING/.test(sql) ? [{ revision: 4 }] : [{ changed: false }]
+      );
+      formRepo.manager.transaction.mockImplementation((fn: (m: unknown) => Promise<unknown>) =>
+        fn({
+          createQueryBuilder: formRepo.createQueryBuilder,
+          query: transactionQuery,
+          findOne: (_entity: unknown, opts: { where: Record<string, unknown> }) =>
+            formRepo.findOne(opts),
+          save: (_entity: unknown, x: Record<string, unknown>) => {
+            Object.assign(row, x);
+            return Promise.resolve({ ...row });
+          },
+        })
+      );
+      await service.publishChanges('f1', 3, OWNER, false);
+      expect(row).toMatchObject({ associationId: 'a2', status: FORM_PUBLISHED });
     });
   });
 

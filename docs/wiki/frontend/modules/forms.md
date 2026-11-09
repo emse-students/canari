@@ -322,10 +322,12 @@ A concurrent autosave waits on the publication's row lock, then finds its base m
 (`form-draft-revision.integration.spec.ts` proves it on PostgreSQL). `GET /forms` marks each row
 `hasUnpublishedChanges`; the list badges it ("Modifications non publiées") and its "Voir le
 formulaire" opens the preview of those edits. A draft form may still change its anonymity at its
-publication (no answer exists yet); a published one may not, as before. The association stays fixed at
-creation: the create page's picker is shut from the FIRST create sent while that create may have
-landed (no answer, a 5xx, or `FORM_CREATE_KEY_REUSED`) - a create whose answer was lost may have
-stored the form under the association it named; any other 4xx stored nothing and opens it again. The association's
+publication (no answer exists yet); a published one may not, as before. So may its association
+([below](#a-drafts-association-may-change-a-published-forms-may-not-owner-2026-11-09)): the picker
+stays open after the first autosave. What the FIRST create sent named is still remembered while that
+create may have landed (no answer, a 5xx, or `FORM_CREATE_KEY_REUSED`) - its replay must name the
+same association - but it no longer shuts the picker: a later choice rides in the revision. Any
+other 4xx stored nothing, and the next create names the choice of that moment. The association's
 "Formulaires" tab marks a draft too (`listFormsByAssociation` serves `status`), and its form card
 stacks the actions under the title on a narrow card (`@container`, `@md:flex-row`): side by side,
 they crushed the title to single letters on a phone (2026-11-08).
@@ -894,7 +896,7 @@ payer to the processor and to the submission, and a cotisation is granted TO an 
 grid, cash, a cotisation grant and an option supplement are all refused; the editor shuts the
 payment switch and the anonymity switch against each other, with the reason as the hint.
 
-**Fixed at creation**, exactly like the association link: turning it on later would promise
+**Fixed once published**, like a published form's association link (a draft may still change it): turning it on later would promise
 anonymity to answers already stored with a name, and turning it off would quietly start naming
 people who were told they were not. `update` refuses a present, different value; the edit screen
 shows the toggle read-only.
@@ -1282,14 +1284,85 @@ again (production, read 2026-11-06: no form cites one). Asserted in
 
 **Submissions and exports are unchanged**: an image is part of the question, never of an answer.
 
-## A form's association is chosen once, at creation
+## A draft's association may change; a published form's may not (owner, 2026-11-09)
 
-A form is either personal or an association's, and `update` refuses any change to `associationId`
-(absent means unchanged; a different value is a 400 naming the reason). Moving a form between the two
-would ask who owns it afterwards, and there is no answer that does not surprise someone: the owner
-who created it, or the managers who inherited it. The edit screen therefore shows the association as
-read-only text rather than a disabled picker - a disabled control suggests someone with more rights
-could change it, and there is no such someone.
+**The report.** *"Dans les formulaires, la sauvegarde auto empeche de modifier le proprietaire du
+formulaire (comme l'asso), pas modifiable. Il faut relacher."* The cause was two locks, both written
+before drafts existed and both meeting the autosave of 2026-11-08:
+
+- the create page shut its picker the moment the first autosave sent the draft's create
+  (`disabled={createSent}`, `routes/forms/create/+page.svelte`), so a builder who typed a title
+  before choosing - or changed their mind - could not choose any more;
+- the server refused every `associationId` on an edit that differed from the stored one
+  (`FormsService.update`, user decision 2026-08-23: "the association link is fixed at creation"),
+  so even a revision carrying another association would have been refused at its publication, and
+  the editor of a draft showed it read-only.
+
+The 2026-08-23 decision guarded a real thing - MANAGE_FORMS is a right over an association's forms,
+so a manager who could cut the link could walk off with a form, and re-pointing it would hand a form
+to a third association - but it was written when every form was published at its first save. A
+draft has no answer, no payment, no refund, no cotisation granted, no reminder (`/remind` 404s on a
+draft) and no post or event naming it (`FORM_IS_DRAFT`): nothing is tied to its link yet.
+
+**The rule (`FormsService.associationAfterEdit`, the only place it is decided):**
+
+| The edit sends | A DRAFT | A PUBLISHED form |
+|---|---|---|
+| nothing (`associationId` absent) | left as it is | left as it is |
+| the stored value (`''` and `null` both mean personal) | no change, no check | no change |
+| another association, or none | moved, when the actor is a MEMBER of the association it leaves AND of the one it joins (the creation rule, `isMember`, applied to both sides; a global admin always) - else `403 FORM_ASSOCIATION_NOT_YOURS` | `400 FORM_ASSOCIATION_FIXED`, global admin included |
+
+Both refusals are typed and logged (`[FORMS] draft <id> not moved` / `edit of <id> refused: a
+published form stays put`), and a move is logged with both sides and the actor. Membership of the
+OLD side is what keeps the walk-off closed: a co-manager through MANAGE_FORMS who is no member may
+edit the draft, never take it out (`form-association-move.integration.spec.ts` proves it on
+PostgreSQL). Every rule `update` runs after the decision - the grids, the kind that may price, the
+payment readiness, the cotisation tiers and who may grant them - reads the association the form
+WILL have, never the stored link.
+
+**Why a published form stays put.** What is tied to its association by then: its answers and the
+payments routed to that association's collection account (Lydia, refunds from its treasury), the
+cotisations it granted (a TIER of that association), its opening reminders, the posts and agenda
+events of that association naming it (`assertFormBelongsToAssociation`), the engagement chantier's
+openings for followers when they are built (WP-4 `opening_reminders`: an opening is the
+association's), and who may read its answers (MANAGE_FORMS of that association). Moving any of these
+silently would re-route money and hand answers to people they were not given to; moving them all is
+a migration of a form's history, not an edit. The editor shows the association read-only with the
+reason and the way out ("créez un nouveau formulaire", `form_association_locked_hint`), and a
+refusal reaching it is worded by `draftRefusalMessage`.
+
+**How a draft moves: in its revision, applied at publication.** The association rides in the
+autosaved document like every other field - the create page always sends it (`''` for personal:
+the revision is an edit, where an absent field means "leave it"), the draft's editor too
+(`buildPayload`, drafts only; a published form's payload leaves it out). `publishChanges` applies the
+document through `update`, so the move and the publication are ONE transaction: refused, nothing
+moves and the revision stays. Until then the draft's ROW keeps the association it was created under,
+which is what lists it (`GET /forms`, the association's "Formulaires" tab) and who manages it; the
+picker says so when the choice differs ("Le changement d'association prendra effet à la publication
+du formulaire", `FormAssociationPicker.svelte`). Writing the row at every autosave was rejected: the
+autosave stores a document AS TYPED, with one compare-and-set statement, and an authorization
+refusal there would fail every later save of the page until the choice was undone.
+
+**The tier retag follows the revision's association.** A revision naming an association grants
+THAT association's tier, so `followRetagInRevisions` matches a revision by the association it will
+give the form (`REVISION_ASSOCIATION_SQL`: the document's, else the form's own; compared as text,
+since a stored document is unvalidated and one garbage value must not fail the statement).
+
+**The create's replay still names what it was sent with.** The create page remembers the association
+its FIRST create named (`createAssociation`) while that create may have landed; its replay - by the
+page, or by the background resend from a device copy (`createAssociationId`, `draftResend.ts`) -
+names the same one, or the server would refuse it `FORM_CREATE_KEY_REUSED`. The device copy's
+document carries the builder's latest choice, which the revision then applies.
+
+**The edit screen of a published form** shows the association as read-only text rather than a
+disabled picker - a disabled control suggests someone with more rights could change it, and there is
+no such someone.
+
+Tests: `forms.service.draft.spec.ts` ("the association of a draft"), `forms.service.cotisation.spec.ts`
+("the association link of a published form is fixed"), `form-association-move.integration.spec.ts`
+and `form-draft-revision.integration.spec.ts` (PostgreSQL), `routes/forms/create/page.returnNoRoute`
+("the association of a draft being built": changed after the first autosave, two quick edits keep it,
+the replay names the sent one), `routes/forms/[id]/edit/page.draft` ("the association").
 
 **The create screen dropped the choice for a free form (fixed 2026-09-19).** `associationId` was
 sent to the server only when `requiresPayment` was also true - so picking an association for a

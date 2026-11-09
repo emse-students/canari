@@ -8755,7 +8755,7 @@ onglet. Au passage : un formulaire GRATUIT perdait son association au moment mem
 - `associationId` n'etait envoye au serveur que si `requiresPayment` l'etait aussi, une regle que
 l'API elle-meme n'a jamais demandee. Sans ce correctif, tout formulaire gratuit cree depuis ce
 nouveau bouton aurait disparu de la liste qui l'a ouvert.
-[forms](docs/wiki/frontend/modules/forms.md#a-forms-association-is-chosen-once-at-creation).
+[forms](docs/wiki/frontend/modules/forms.md#a-drafts-association-may-change-a-published-forms-may-not-owner-2026-11-09).
 
 ### Removed - les deux volumes PostgreSQL 15 laisses par la bascule sur 18 sont supprimes
 

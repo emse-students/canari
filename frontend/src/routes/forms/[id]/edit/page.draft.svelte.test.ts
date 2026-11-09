@@ -7,11 +7,15 @@
  * lands, and an editor reopened sends what a closed one left. An estate older than revisions gets
  * the editor it always had.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { m } from '$lib/paraglide/messages';
 import { AUTOSAVE_DELAY_MS } from '$lib/forms/autosave.svelte';
 import { dismissToast, toastStore } from '$lib/stores/toast.svelte';
+import { adoptTransitionAnimations } from '../../../../test/adoptTransitionAnimations';
+
+// The association picker's panel leaves by an outro when an option is chosen.
+afterAll(adoptTransitionAnimations());
 
 const route = vi.hoisted(() => ({
   page: { params: { id: 'f1' }, url: new URL('https://canari.test/forms/f1/edit'), state: {} },
@@ -20,6 +24,7 @@ vi.mock('$app/state', () => route);
 vi.mock('$app/navigation', () => ({ goto: vi.fn(async () => {}), beforeNavigate: vi.fn() }));
 const api = vi.hoisted(() => ({
   status: 'draft' as 'draft' | 'published',
+  associationId: null as string | null,
   revision: {
     revision: 0,
     document: null as Record<string, unknown> | null,
@@ -49,7 +54,7 @@ vi.mock('$lib/forms/api', async (orig) => ({
     items: [{ id: 'q1', label: 'Nom', required: false, type: 'short_text' }],
     currency: 'eur',
     basePrice: 0,
-    associationId: null,
+    associationId: api.associationId,
   }),
   getFormDraft: api.getFormDraft.mockImplementation(async () => api.revision),
   updateForm: api.updateForm,
@@ -112,6 +117,15 @@ vi.mock('$lib/forms/draftCopies', async (orig) => ({
     };
   },
 }));
+const ASSOS = vi.hoisted(() => [
+  { id: 'a1', name: 'BDE', type: 'association' },
+  { id: 'a2', name: 'BDS', type: 'association' },
+]);
+vi.mock('$lib/associations/api', async (orig) => ({
+  ...(await orig<typeof import('$lib/associations/api')>()),
+  listMyAssociations: async () => ASSOS,
+  getAssociation: async (id: string) => ASSOS.find((a) => a.id === id)!,
+}));
 vi.mock('$lib/associations/activePaymentProvider.svelte', () => ({
   activePaymentProvider: { current: 'lydia' },
   loadActivePaymentProvider: () => Promise.resolve(),
@@ -140,6 +154,7 @@ afterEach(() => {
   }));
   vi.useRealTimers();
   api.revision = { revision: 0, document: null, savedAt: null, saveId: null };
+  api.associationId = null;
   caps.formDrafts = true;
   device.copies.clear();
   toastStore.toasts.forEach((t) => dismissToast(t.id));
@@ -507,4 +522,102 @@ describe('the editor', () => {
     },
     MOUNT_BUDGET_MS
   );
+
+  // THE AUTOSAVE MUST NOT LOCK THE OWNER (owner, 2026-11-09). A draft's association is its
+  // builder's choice until publication; a published form's stays, and the editor says why.
+  describe('the association', () => {
+    async function pickAssociation(label: string) {
+      document.querySelector<HTMLButtonElement>('#association-select')!.click();
+      await settle();
+      const option = [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(
+        (o) => o.textContent?.trim() === label
+      );
+      expect(option, `no option ${label}`).toBeDefined();
+      option!.click();
+      await settle();
+    }
+    const savedDocuments = () =>
+      api.saveFormDraft.mock.calls.map((c) => (c as unknown[])[2] as Record<string, unknown>);
+
+    it(
+      'of a draft: changed after an autosave, saved, and kept through a quick second edit',
+      async () => {
+        api.status = 'draft';
+        api.associationId = 'a1';
+        await open();
+        await vi.waitFor(() =>
+          expect(document.querySelector('#association-select')).not.toBeNull()
+        );
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        // An autosave lands first: the draft is not locked by it.
+        type(titleInput(), 'Gala 1');
+        await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+        await settle();
+        expect(savedDocuments().at(-1)).toMatchObject({ title: 'Gala 1', associationId: 'a1' });
+
+        await pickAssociation('BDS');
+        const title = [...document.querySelectorAll<HTMLInputElement>('input')].find(
+          (i) => i.value === 'Gala 1'
+        )!;
+        type(title, 'Gala 2');
+        await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+        await settle();
+        expect(savedDocuments().at(-1)).toMatchObject({ title: 'Gala 2', associationId: 'a2' });
+        expect(byTestId('form-association-pending')).not.toBeNull();
+
+        byTestId<HTMLButtonElement>('publish-button')!.click();
+        await vi.advanceTimersByTimeAsync(0);
+        await settle();
+        expect(api.publishFormDraft).toHaveBeenCalledWith('f1', 2, false);
+        expect(savedDocuments().every((d, i) => i === 0 || d.associationId === 'a2')).toBe(true);
+      },
+      MOUNT_BUDGET_MS
+    );
+
+    it(
+      "of a draft reopened on a revision that moved it: the editor shows the revision's",
+      async () => {
+        api.status = 'draft';
+        api.associationId = 'a1';
+        api.revision = {
+          revision: 4,
+          document: {
+            title: 'Gala',
+            basePrice: 0,
+            currency: 'eur',
+            items: [],
+            associationId: 'a2',
+          },
+          savedAt: null,
+          saveId: null,
+        };
+        await open();
+        await vi.waitFor(() =>
+          expect(document.querySelector('#association-select')?.textContent).toContain('BDS')
+        );
+        expect(byTestId('form-association-pending')).not.toBeNull();
+        expect(api.saveFormDraft).not.toHaveBeenCalled();
+      },
+      MOUNT_BUDGET_MS
+    );
+
+    it(
+      'of a published form: read-only, said why, and never sent with an edit',
+      async () => {
+        api.status = 'published';
+        api.associationId = 'a1';
+        await open();
+        expect(document.querySelector('#association-select')).toBeNull();
+        expect(byTestId('form-association-locked')?.textContent?.trim()).toBe(
+          m.form_association_locked_hint()
+        );
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        type(titleInput(), 'Gala published');
+        await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+        await settle();
+        expect(savedDocuments().at(-1)).not.toHaveProperty('associationId');
+      },
+      MOUNT_BUDGET_MS
+    );
+  });
 });

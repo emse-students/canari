@@ -530,6 +530,23 @@ weigh closing them by hand against the rollback.
 the default of a create (a create without it a draft too). Measure before: the `[FORMS] create without draft` lines
 in social-service count the older builds still creating forms.
 
+### No date yet - a draft's association, between builds (2026-11-09)
+
+**Site:** `FormsService.associationAfterEdit` (server), `createAssociationOf` (`frontend/src/lib/forms/draftResend.ts`).
+**A current editor against an older social-service.** The editor now sends a draft's association in
+every revision (`''` for none, never `null`, so an older server's `trim()` reads it). An older server
+still refuses a DIFFERENT value at the publication, with an untyped `400`: the builder reads the
+generic refusal and the draft stays as it was, revision included - nothing is lost, and the move
+works once the server carries this change. The same value is no change on either side.
+**An older build against the current server** never sends a draft's association on an edit (its
+editor leaves the field out, its create page shut the picker): it moves nothing.
+**A device copy kept before `createAssociationId` was recorded** (a create page of the 2026-11-08
+build closed with its create unanswered) names its create's association from its document, which
+WAS the create's then - that build shut the picker once a create was sent; read with a `Log.d` line.
+**Removal condition:** device copies die at sign-out and land within a session, so the copy branch
+may go one stable after this change; nothing to remove server side
+([forms](frontend/modules/forms.md#a-drafts-association-may-change-a-published-forms-may-not-owner-2026-11-09)).
+
 ### No date yet - an association mute set by a build older than the bell (designed 2026-11-07)
 
 **BUILT 2026-11-08 with WP-3 of [engagement](engagement.md) (L8).**
