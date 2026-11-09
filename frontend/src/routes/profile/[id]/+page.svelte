@@ -344,11 +344,11 @@
             data-follow-status={followStatus ?? 'none'}
           >
             {#if followStatus === 'accepted'}
-              <UserCheck size={18} strokeWidth={2.5} />
+              <UserCheck size={16} class="shrink-0" />
             {:else if followStatus === 'pending'}
-              <UserRoundCheck size={18} strokeWidth={2.5} />
+              <UserRoundCheck size={16} class="shrink-0" />
             {:else}
-              <UserPlus size={18} strokeWidth={2.5} />
+              <UserPlus size={16} class="shrink-0" />
             {/if}
             <span class="whitespace-nowrap">{followLabel(followStatus)}</span>
           </Button>
@@ -357,7 +357,7 @@
             class="min-h-11 flex-1 sm:flex-none"
             onclick={handleSendMessage}
           >
-            <MessageCircle size={18} strokeWidth={2.5} />
+            <MessageCircle size={16} class="shrink-0" />
             <span class="whitespace-nowrap">{m.profile_public_message_btn()}</span>
           </Button>
           <!--

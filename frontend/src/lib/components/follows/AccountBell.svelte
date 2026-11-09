@@ -90,7 +90,7 @@
 >
   {#snippet trigger(selected)}
     <span class="inline-flex items-center gap-2" data-testid="account-bell" data-level={level}>
-      <Icon size={iconOnly ? 18 : 16} strokeWidth={iconOnly ? 2.5 : undefined} aria-hidden="true" />
+      <Icon size={16} class="shrink-0" aria-hidden="true" />
       {#if !iconOnly}
         <span>{selected?.label ?? m.bell_label()}</span>
         <ChevronDown size={14} aria-hidden="true" class="text-text-muted" />

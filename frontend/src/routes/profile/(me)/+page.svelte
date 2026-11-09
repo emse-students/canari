@@ -65,7 +65,7 @@
     {/snippet}
     {#snippet actions()}
       <Button variant="secondary" href={resolve('/settings')} class="min-h-11 flex-1 sm:flex-none">
-        <SlidersHorizontal size={18} strokeWidth={2.5} aria-hidden="true" />
+        <SlidersHorizontal size={16} class="shrink-0" aria-hidden="true" />
         <span class="whitespace-nowrap">{m.settings_page_title()}</span>
       </Button>
     {/snippet}

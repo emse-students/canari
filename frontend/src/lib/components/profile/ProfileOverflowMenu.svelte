@@ -70,7 +70,7 @@
     aria-expanded={open}
     data-testid="profile-overflow"
   >
-    <Ellipsis size={18} strokeWidth={2.5} aria-hidden="true" />
+    <Ellipsis size={16} class="shrink-0" aria-hidden="true" />
   </Button>
 </span>
 
