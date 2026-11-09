@@ -21,6 +21,8 @@
 #   | 530 whose body names Cloudflare's 1033    | tunnel-down      | the connector's host              |
 #   | 530 without a 1033                        | unclassified-530 | read the body                     |
 #   | other 52x, 502, 503, 504                  | origin-failing   | the service behind the name       |
+#   | 4xx the EDGE wrote (`cf-mitigated`, a     | edge-refused     | the zone's security settings: the |
+#   | Cloudflare block or challenge page)       |                  | MONITOR is refused, not the name  |
 #   | any other status                          | unexpected       | read the target                   |
 #   | no HTTP answer on every attempt           | unreachable      | a transport failure, not an answer|
 #
@@ -29,8 +31,18 @@
 # probed IN PARALLEL, so the worst case of the run is one target's (attempts x 15 s + spacings),
 # about 65 s, never the sum.
 #
+# `edge-refused` IS NOT AN OUTAGE AND NOT HEALTH: the edge answered for itself, so the reading says
+# nothing about the name and everything about this probe - it is BLINDNESS, reported as such by
+# `upstream-issues.sh`. Measured 2026-11-06..09: every reading of the three Cloudflare-fronted names
+# from a GitHub-hosted runner was a 403 while a phone read 200; classed `unexpected`, it opened
+# three "is down" issues that no reading could ever close.
+#
+# EVERY READING CARRIES ITS EVIDENCE (the `evidence` column: the `server` and `cf-mitigated`
+# headers, and the first words of the body), because a class this script cannot decide must still
+# leave a reader able to.
+#
 # OUTPUT. A human line per target on stdout, and when `UPSTREAM_RESULTS` is set one TSV line per
-# target (`name class code url`) for `upstream-issues.sh`. Exit 0 whether or not a target is down
+# target (`name class code url evidence`) for `upstream-issues.sh`. Exit 0 whether or not a target is down
 # (a finding is data, not a fault of this script); exit 2 only when the script cannot run.
 # =================================================================================================
 set -uo pipefail
@@ -47,9 +59,16 @@ legacy|https://canari-emse.fr/api/version
 production|https://canari.emse.fr/api/version'
 TARGETS="${UPSTREAM_TARGETS-$DEFAULT_TARGETS}"
 
-# classify <http_code> <body> -> echoes the class
+# The markers of a response Cloudflare's edge wrote ITSELF instead of forwarding the origin's: a
+# managed or JavaScript challenge (`cf-mitigated: challenge`, "Just a moment..."), a block page
+# ("Attention Required! | Cloudflare", "Sorry, you have been blocked") or the plain-text form a
+# non-browser client gets (`error code: 1010`, `1020`...). 1033 is excluded: it is a 530, and it is
+# about the tunnel, not about the client.
+readonly EDGE_BODY_MARKERS='Attention Required! \| Cloudflare|Sorry, you have been blocked|Just a moment\.\.\.|/cdn-cgi/challenge-platform/|cf-error-code|error code: 10(0[0-9]|1[0-9]|2[0-9])([^0-9]|$)'
+
+# classify <http_code> <body> <headers> -> echoes the class
 classify() {
-  local code="$1" body="$2"
+  local code="$1" body="$2" headers="${3:-}"
   case "$code" in
   2??) echo up ;;
   530)
@@ -57,27 +76,45 @@ classify() {
     ;;
   52? | 502 | 503 | 504) echo origin-failing ;;
   000) echo unreachable ;;
+  4??)
+    if grep -qiE '^cf-mitigated:' <<<"$headers" || grep -qE "$EDGE_BODY_MARKERS" <<<"$body"; then
+      echo edge-refused
+    else
+      echo unexpected
+    fi
+    ;;
   *) echo unexpected ;;
   esac
+}
+
+# evidence <headers file> <body file> -> one line, no tab: what a reader needs to class it by hand.
+evidence() {
+  local server mitigated words
+  server="$(grep -iE '^server:' "$1" 2>/dev/null | tail -1 | cut -d: -f2- | tr -d '\r\t' | sed 's/^ *//')"
+  mitigated="$(grep -iE '^cf-mitigated:' "$1" 2>/dev/null | tail -1 | cut -d: -f2- | tr -d '\r\t' | sed 's/^ *//')"
+  words="$(head -c 4096 "$2" 2>/dev/null | tr -s '\r\n\t ' ' ' | sed 's/<[^>]*>/ /g' | tr -s ' ' | sed 's/^ //' | cut -c1-120)"
+  printf 'server=%s cf-mitigated=%s body=%s' "${server:--}" "${mitigated:--}" "${words:--}"
 }
 
 TMP="$(mktemp -d)" || exit 2
 trap 'rm -rf "$TMP"' EXIT
 
-# probe_one <name> <url> <out>: writes "name<TAB>class<TAB>code<TAB>url" to <out>.
+# probe_one <name> <url> <out>: writes "name<TAB>class<TAB>code<TAB>url<TAB>evidence" to <out>.
 probe_one() {
-  local name="$1" url="$2" out="$3" i code class body
+  local name="$1" url="$2" out="$3" i code class body hdr
   body="$out.body"
+  hdr="$out.headers"
   for ((i = 1; i <= ATTEMPTS; i++)); do
     : >"$body"
-    code="$($CURL -sS -m 15 -A "$UA" -o "$body" -w '%{http_code}' "$url" 2>/dev/null || true)"
+    : >"$hdr"
+    code="$($CURL -sS -m 15 -A "$UA" -D "$hdr" -o "$body" -w '%{http_code}' "$url" 2>/dev/null || true)"
     code="${code:-000}"
-    class="$(classify "$code" "$(head -c 4096 "$body")")"
+    class="$(classify "$code" "$(head -c 4096 "$body")" "$(cat "$hdr")")"
     [ "$class" = up ] && break
     [ "$i" -lt "$ATTEMPTS" ] && sleep "$SPACING"
   done
-  printf '%s	%s	%s	%s
-' "$name" "$class" "$code" "$url" >"$out"
+  printf '%s	%s	%s	%s	%s
+' "$name" "$class" "$code" "$url" "$(evidence "$hdr" "$body")" >"$out"
 }
 
 n=0
@@ -103,9 +140,11 @@ for ((i = 1; i <= n; i++)); do
     echo "::error::upstream: the probe of ${names[$((i - 1))]} left no reading" >&2
     exit 2
   fi
-  IFS=$'	' read -r name class code url <"$TMP/$i"
+  IFS=$'	' read -r name class code url ev <"$TMP/$i"
   printf '  %-17s %-11s HTTP %s  %s
 ' "$class" "$name" "$code" "$url"
+  [ "$class" = up ] || printf '      %s
+' "$ev"
   [ -z "$RESULTS" ] || cat "$TMP/$i" >>"$RESULTS"
 done
 exit 0
