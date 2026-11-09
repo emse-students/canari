@@ -4338,6 +4338,10 @@ answering device. A member with 2-3 devices online still answers 2-3 times. Each
 one row, not one per seat, and that is the price of D1 and D2 above. To read it on prod: the
 per-group copies-per-payload query of the audit, and the `[SEND][trace] ADDRESSED` lines in
 chat-delivery (`ADDRESSED_NOBODY` warns when the device that asked is no longer a member).
+**Read on production 2026-11-09**: one bundle of 16 KB or more in 7 days, one copy; 24 addressed
+frames in 72 h, each matched to exactly one device; the backlog P1 is closed
+([the read](../infrastructure/prod-queue-and-epoch-audit-2026-10-12.md#closed-2026-11-09---a-repair-answer-reaches-the-device-that-asked-and-nobody-else)).
+A session-less seat is never addressed: the addressee is the device that just sent the ask.
 
 ### Risks, stated
 

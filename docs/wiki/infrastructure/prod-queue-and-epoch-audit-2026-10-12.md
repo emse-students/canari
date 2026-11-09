@@ -453,8 +453,8 @@ about 09:00 UTC. Nothing was written.
 **Hypothesis, NOT proven:** `1b1687d0` is the community key group whose seed requests and answers
 were broadcast to every member (F1 and F3 in section 7). #1768 addresses each answer to the device
 that asked. It shipped in `v1.2.6` on 2026-10-13, so the rate should fall as clients update. The
-measurement that settles it is in the
-[backlog](../backlog.md#p1---a-community-key-group-sends-every-repair-answer-to-every-seat-and-42--of-seats-have-no-device-behind-them-production-2026-10-12).
+measurement that settles it is
+[the closing read of 2026-11-09](#closed-2026-11-09---a-repair-answer-reaches-the-device-that-asked-and-nobody-else).
 No deletion is proposed: these rows belong to live devices.
 
 ## How to re-measure
@@ -615,3 +615,76 @@ A pass is the owner's decision each time.
 7. **One device first**, checked in the database, the Redis routing set and the logs; then the rest.
 8. **Re-count afterwards**: 0 queued rows, 0 seats and 0 key packages for every revoked device, one
    `revoked_device` row each, and the rows of every OTHER device unchanged.
+
+## Closed 2026-11-09 - a repair answer reaches the device that asked, and nobody else
+
+**The question it closes** (the P1 opened in the backlog on 2026-10-12): a repair answer was queued
+for every seat of a community's key group, 42 % of those seats had no session behind them, and the
+fix was to send each answer only to a seat that can use it. **It is done, by F1 (#1768, `v1.2.6`,
+[channel-encryption section 23](../protocols/channel-encryption.md#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12))
+and the floor**, and nothing new was built for it: the read below found no answer reaching a second
+seat.
+
+**Where the recipients are decided - two places, one fact.**
+
+- The client NAMES them. `answerSeedRequest` in `frontend/src/lib/utils/graine/frameHandler.ts` is the
+  only code that sends a `graineBundle` (SESSIONS and HISTORY asks alike; the native code only parses
+  the fields), and every page of every answer goes with `addressedKeyMaterial(requester)`, the
+  requester being the request envelope's `sender:senderDeviceId`. With no device on the envelope it
+  sends nothing, never a broadcast.
+- The server NARROWS. `MessagingService.sendMessage` resolves the group's live member devices as for
+  every send, then keeps only those `readAddressedDevices` names; a key that names no member adds
+  nothing (`ADDRESSED_NOBODY` warns), and the frame stays out of the shared history stream.
+
+**The discriminator is the request itself, not a session.** The requesting device is the one seat
+proven to have a device behind it: it just sent the ask. `auth_sessions` was the audit's evidence for
+the 42 %, but it answers "does this device hold a refresh token", not "is there a device behind this
+seat": 40 of the 63 session-less phone seats of today still hold a push token, and the owner closed a
+reaper (#2880) because no fact the server holds proves a device was replaced. Filtering an answer by
+it would add nothing (the addressee already proved itself) and would use a column for a question it
+was not written to answer.
+
+**The invariants, and what keeps them.**
+
+| Invariant | What holds it |
+| --- | --- |
+| A seat whose device appears later still repairs | It asks for itself; the answer is durable and addressed to it, so it is queued even if it went offline after asking (`messaging.durability.spec.ts`, "is queued for the addressed device ONLY, offline included"). The key-group log replays the original distributions, and the history ask is unchanged |
+| No member is left unrepaired | Every member's missing seed is asked by that member; what the others lost is the free absorption of answers meant for someone else, which finding B showed were mostly seeds already held |
+| No admitted build broadcasts an answer | The floor is `1.6.6` ([legacy-compatibility](../legacy-compatibility.md)), far past `1.2.6`; the old-client rows of section 23 no longer occur |
+
+**The read, production, 2026-11-09** (read-only, inside `BEGIN READ ONLY ... ROLLBACK`; aggregates only):
+
+| What | 2026-10-12 | 2026-11-09 |
+| --- | --- | --- |
+| `queued_message` rows / devices | 93 580 / 558 (301 937 the next day) | **15 944 / 248** |
+| Active seats with no session row | 821 of 1 952 (42 %) | **148 of 2 003 (7.4 %)**: 63 phone seats (40 of them with a push token), 85 web |
+| Key-group application payloads of 16 KB or more, copies each | about 42 | **1 payload in 7 days, 1 copy** |
+| Key-group application payloads under 1.5 KB, last 7 days | - | 205, 24.8 copies on average; 13 single-copy (answers), the rest seed distributions |
+| `[SEND] ... ADDRESSED group=` lines in the delivery log, last 72 h (seed answers, plus 9 conversation history answers) | - | **24, every one `matched=1 of 1`**; 0 `ADDRESSED_NOBODY` |
+
+The per-group prediction of 2026-10-13 (`1b1687d0` below 51 000 rows a day) is superseded: the third
+and fourth passes revoked most of that group's queue, so copies per payload is the measurement that
+still reads the fix, and it reads 1.
+
+**What is left, and why it is NOT this item.** Durable BROADCASTS - seed distributions, commits,
+messages and mutations - are still queued for every seat, session-less ones included. In the last 7
+days that was 2 695 of the 8 137 key-group rows still waiting (33 %), 367 of 1 081 DM rows and 617 of
+1 312 group-conversation rows: the session-less devices never drain, so they hold a share far larger
+than their 7.4 % of seats. Skipping them at fan-out would leave a device that signs in again under the
+same id with holes in its commits - the reason the third pass revoked rather than deleted. That
+population is the orphan-devices item: watched daily by `[ORPHAN_DEVICES]`, cleaned by the hand
+procedure above ([backlog](../backlog.d/p2-orphan-devices-refill-the-queue-watched-daily-cleaned-by-hand.md)).
+
+```sql
+-- the read of 2026-11-09, besides section 8's totals and seat queries
+WITH p AS (SELECT md5(q.proto) h, bool_or(coalesce(q."isCommit",false)) c, bool_or(coalesce(q."isWelcome",false)) w,
+                  max(length(q.proto)) len, count(*) copies,
+                  count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM auth_sessions s WHERE s."deviceId" = q."deviceId")) nosess
+           FROM queued_message q JOIN dm_groups g ON g.id = q."groupId"
+           WHERE g."distributionWorkspaceId" IS NOT NULL AND q."createdAt" > now() - interval '7 days'
+           GROUP BY 1)
+SELECT CASE WHEN w THEN 'welcome' WHEN c THEN 'commit' ELSE 'app' END,
+       CASE WHEN len<1500 THEN '<1.5k' WHEN len<4000 THEN '1.5-4k' WHEN len<16000 THEN '4-16k' ELSE '>=16k' END,
+       count(*), sum(copies), round(avg(copies),1), sum(nosess), count(*) FILTER (WHERE copies=1)
+FROM p GROUP BY 1,2 ORDER BY 1,2;
+```
