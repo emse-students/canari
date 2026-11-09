@@ -31,6 +31,7 @@ use tauri::{
 use crate::state::{AppState, PendingDb};
 
 // Re-export commands for generate_handler!
+use crate::commands::app_active::ios_app_active;
 use crate::commands::at_rest_key::{
     cle_au_repos_lire, cle_au_repos_marquer, cle_au_repos_oublier, cle_au_repos_preparer,
     cle_au_repos_schema, supprimer_cle_appareil,
@@ -72,12 +73,12 @@ use crate::commands::push::{
     ack_fcm_cache, acknowledge_quick_reply, check_push_secret_health, claim_device_notices,
     delete_user_push_files, delete_user_quick_replies, forget_account_graine_seeds,
     forget_graine_channel, forget_graine_sessions, get_fcm_token, get_push_diagnostic,
-    get_voip_token, load_push_context, preclaim_device_notices, read_and_clear_outbox_sent,
-    read_and_clear_pending_call_accept, read_and_clear_pending_notification_tap,
-    read_and_clear_pending_quick_replies, read_and_clear_read_watermarks, read_outbox_mirror,
-    return_pending_quick_replies, set_push_context_locale, store_device_identity,
-    store_graine_seed, store_outbox_mirror, store_push_context, store_push_secret, take_fcm_cache,
-    take_key_group_push_joins,
+    get_voip_token, load_push_context, preclaim_device_notices, push_cache_message_ids,
+    read_and_clear_outbox_sent, read_and_clear_pending_call_accept,
+    read_and_clear_pending_notification_tap, read_and_clear_pending_quick_replies,
+    read_and_clear_read_watermarks, read_outbox_mirror, return_pending_quick_replies,
+    set_push_context_locale, store_device_identity, store_graine_seed, store_outbox_mirror,
+    store_push_context, store_push_secret, take_fcm_cache, take_key_group_push_joins,
 };
 use crate::commands::push_registration::{
     complete_owed_push_token_deletion, end_push_registration,
@@ -1803,9 +1804,11 @@ pub fn run() {
             get_local_storage_usage,
             take_fcm_cache,
             ack_fcm_cache,
+            push_cache_message_ids,
             read_and_clear_read_watermarks,
             take_key_group_push_joins,
             take_nse_outcomes,
+            ios_app_active,
             take_native_push_log,
             store_outbox_mirror,
             read_outbox_mirror,

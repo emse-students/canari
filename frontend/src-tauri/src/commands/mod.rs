@@ -1,5 +1,7 @@
 // The bench build's observables, absent from every store build; the pure halves also compile for
 // the host test run so CI pins them without the feature (see the module's own comment).
+// Whether the iPhone app is active, asked by the page (`appActive.ts`, 2026-11-01).
+pub mod app_active;
 pub mod at_rest_key;
 // The page's leave flush held open by an iOS background task (2026-11-02); a no-op elsewhere.
 pub mod background_flush;

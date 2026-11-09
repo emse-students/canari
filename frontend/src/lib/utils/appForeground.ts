@@ -19,6 +19,8 @@
  * (`canari_ios.mm`, `CanariPublishForeground`, on `didEnterBackground` / `willEnterForeground`):
  * without it this answered `true` on an iPhone for ever, and a frame processed in the seconds before
  * suspension counted as read on arrival. `appForeground.contract.test.ts` holds the two shells to it.
+ * The separate ACTIVE/inactive fact (Face ID sheet, Control Center) is not this one: it is read only
+ * by the banner and queue decisions (`appActive.ts`).
  *
  * ON WEB AND DESKTOP THIS IS `true` AND MEANS NOTHING. They have a working visibility API and
  * callers keep using it; the default is the quiet one - an app believed to be on screen raises no notification, which

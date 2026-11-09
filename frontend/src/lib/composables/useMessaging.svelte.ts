@@ -7,6 +7,7 @@
  * - File selection + validation
  */
 import { isAppInForeground } from '$lib/utils/appForeground';
+import { isIosAppInactive } from '$lib/utils/appActive';
 import { isSalonMuted } from '$lib/utils/chat/salonUnread';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate, SvelteSet } from 'svelte/reactivity';
@@ -60,6 +61,13 @@ import {
 } from '$lib/utils/chat/messageOrder';
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
 import { isUnreadForUser, readPointFor } from '$lib/utils/chat/readState';
+import {
+  claimAnnouncement,
+  recordNotified,
+  settleAnnouncement,
+  unnotifiedOf,
+} from '$lib/utils/chat/notifiedMessages';
+import { pushCacheMessageIds } from '$lib/utils/chat/fcmCache';
 import { canSeeArrivalNow, isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
@@ -208,7 +216,7 @@ export interface MessagingContext {
     conversationId?: string,
     mentionsMe?: boolean,
     native?: NativeMessageNotification
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   /**
    * Tells this user's OTHER devices that a salon has been read, so any of them still showing its
    * notification drops it. Optional: only the layer holding a channel client can provide it, and
@@ -635,6 +643,11 @@ export function useMessaging() {
     serverAt: number | undefined,
     /** How many inbound messages the ONE banner stands for - see `NativeMessageNotification.covers`. */
     covers: number,
+    /**
+     * The ids of the messages the ONE banner stands for - the key "already notified" is asked by
+     * (`notifiedMessages.ts`). One for a live frame, every inbound one for a catch-up flush.
+     */
+    messageIds: readonly string[],
     /** Whether the open proved the banner's author - see `NativeMessageNotification.authorProven`. */
     authorProven: boolean,
     /** True on the re-entry that follows the read of a salon's level - see the salon branch below. */
@@ -667,6 +680,18 @@ export function useMessaging() {
     if (!notificationPreferences.isEnabled(category)) {
       console.log(
         `[NOTIF] Inbound in ${conversationKey} - category "${category}" is switched off for this account; nothing raised.`
+      );
+      return;
+    }
+
+    // OUT OF FRONT ON AN iPHONE, THE SERVER ANNOUNCES (`appActive.ts`). A salon message is pushed to
+    // every member and the extension raises its banner, so the page raising one too was the second
+    // banner - silent here. A private conversation's frame is not consumed at all while inactive
+    // (`BaseMlsService.processQueue`), so the only one that reaches this line began decrypting while
+    // the app was active: it was ACKed, no push follows, and the page's banner is the only one.
+    if (category !== 'messages' && isIosAppInactive()) {
+      console.log(
+        `[NOTIF] Inbound in ${conversationKey} - the iPhone app is inactive and the salon's push announces it; nothing raised.`
       );
       return;
     }
@@ -709,6 +734,7 @@ export function useMessaging() {
             sentAt,
             serverAt,
             covers,
+            messageIds,
             authorProven,
             true
           );
@@ -764,6 +790,18 @@ export function useMessaging() {
     // said ONCE by `sendSystemNotification`, so silence here is now attributable to that one line
     // rather than to nothing. `default` is not blocked and still narrates: asking is real there.
     if (systemNotificationsBlockedAnnounceOnce()) return;
+    // A MESSAGE IS ANNOUNCED ONCE, WHATEVER CARRIED IT HERE. A cold start or a resume pulls again
+    // every row this device never acknowledged - and a push the iOS extension decrypted and
+    // presented acknowledges nothing - so the same message arrives a second time as an "arrival"
+    // (iPhone 12, `1.5.4-alpha.1`, 2026-11-01: "K2 group killed 0724" presented twice). Asked by
+    // MESSAGE ID against a durable record (`notifiedMessages.ts`) - here, and again after the push
+    // cache is read below, where the claim is made in the same tick as the last check.
+    if (messageIds.length > 0 && unnotifiedOf(ctx.userId, messageIds).length === 0) {
+      console.log(
+        `[NOTIF] Inbound in ${conversationKey} - ${messageIds.length} message(s) already notified on this device; nothing raised.`
+      );
+      return;
+    }
     // THE DECISION LINE, and it fires only when a notification is actually expected - the reader
     // cannot see this message land. Everything downstream of here already speaks (`[NOTIF] Raised`,
     // `Throttled`, `permission is ...`), and everything upstream is the ordinary case of a message
@@ -784,34 +822,67 @@ export function useMessaging() {
     console.log(`[NOTIF] Inbound in ${conversationKey} while ${away} - asking.`);
     const preview = getPreviewText(parseEnvelope(content));
     const notificationBody = preview || m.notif_new_message();
-    // The sender's name is ASKED for, not just read: see `resolveNotificationSenderName`.
-    void resolveNotificationSenderName(senderId, convo)
-      // THE NAME IS ON DISK BEFORE THE NATIVE BUILDER READS IT. Resolving the sender notes the name
-      // for `display_names.json`, whose write follows at the end of the task; the Android builder
-      // reads that FILE to name a salon's speaker, so posting first raced the write and a proven
-      // author could read "Quelqu'un". `flushNameMirror` resolves once the write it finds - or the
-      // one in flight - is done (or kept after a failure, which it says).
-      .then(async (senderName) => {
-        await flushNameMirror();
-        return senderName;
-      })
-      .then((senderName) =>
-        ctx.sendSystemNotification(senderName, notificationBody, conversationKey, mentionsMe, {
-          // ON ANDROID THIS IS THE CALL, not an enrichment of it: the frame no longer builds its own
-          // plain notification, it asks the native builder for the SAME one a push would raise. See
-          // `nativeNotification.ts` for the pair of notifications this replaced.
-          conversationId: conversationKey,
-          senderId,
-          senderName,
-          groupName: notificationGroupName(convo.conversationType, convo.contactName, convo.name),
-          body: notificationBody,
-          mentionsMe,
-          sentAt,
-          serverAt: serverAt ?? 0,
-          covers,
-          authorProven,
-        })
+    void (async () => {
+      // WHAT THE iOS SYSTEM ALREADY PRESENTED AND THE APP HAS NOT TAKEN YET is read from the push
+      // cache here, at the decision: the take that records it runs after this drain
+      // (`pushCacheMessageIds`). Empty off iOS.
+      const presented = await pushCacheMessageIds();
+      // What the extension presented WAS announced - recorded as such, by the party that saw it.
+      recordNotified(
+        ctx.userId,
+        messageIds.filter((id) => presented.has(id))
       );
+      // ASKED AGAIN AFTER THE AWAIT, AND CLAIMED IN THE SAME TICK: another decision about the same
+      // message (a live frame and the flush that follows it) may have recorded or claimed it
+      // meanwhile, and nothing between this check and the claim yields, so only one passes. A CLAIM,
+      // NOT A RECORD: the record is written once the banner exists (`settleAnnouncement`), so a
+      // throttle, a refusal or a throw leaves the message announceable.
+      const owed = claimAnnouncement(ctx.userId, messageIds);
+      if (messageIds.length > 0 && owed.length === 0) {
+        console.log(
+          `[NOTIF] Inbound in ${conversationKey} - ${messageIds.length} message(s) already announced (by the extension or another notification); nothing raised.`
+        );
+        return;
+      }
+      let raised = false;
+      try {
+        // THE BANNER STANDS FOR WHAT IT ANNOUNCES, not for what the flush carried: a message already
+        // announced is not counted in it again.
+        const announced = messageIds.length > 0 ? owed.length : covers;
+        // The sender's name is ASKED for, not just read: see `resolveNotificationSenderName`.
+        const senderName = await resolveNotificationSenderName(senderId, convo);
+        // THE NAME IS ON DISK BEFORE THE NATIVE BUILDER READS IT: the Android builder reads
+        // `display_names.json` to name a salon speaker, whose write follows the resolution above
+        // (`flushNameMirror` resolves once that write, or the one in flight, is done).
+        await flushNameMirror();
+        raised = await ctx.sendSystemNotification(
+          senderName,
+          notificationBody,
+          conversationKey,
+          mentionsMe,
+          {
+            // ON ANDROID THIS IS THE CALL, not an enrichment of it: the frame no longer builds its
+            // own plain notification, it asks the native builder for the SAME one a push would raise.
+            // See `nativeNotification.ts` for the pair of notifications this replaced.
+            conversationId: conversationKey,
+            senderId,
+            senderName,
+            groupName: notificationGroupName(convo.conversationType, convo.contactName, convo.name),
+            body: notificationBody,
+            mentionsMe,
+            sentAt,
+            serverAt: serverAt ?? 0,
+            covers: announced,
+            authorProven,
+          }
+        );
+      } finally {
+        settleAnnouncement(ctx.userId, owed, raised);
+      }
+    })().catch((e: unknown) => {
+      // EVERY SWALLOWED BRANCH LOGS: a rejection here is a banner owed and not raised.
+      console.error(`[NOTIF] Inbound in ${conversationKey} - the notification was not raised:`, e);
+    });
   }
 
   /**
@@ -1323,6 +1394,7 @@ export function useMessaging() {
         resolvedTimestamp.getTime(),
         newMsg.serverTimestamp,
         1,
+        [newMsg.id],
         options.authorProven === true
       );
     }
@@ -1918,6 +1990,7 @@ export function useMessaging() {
         lastInbound.serverTimestamp,
         // THE FLUSH RAISES ONE BANNER FOR N MESSAGES, and the server may have pushed each of them.
         inbound.length,
+        inbound.map((msg) => msg.id),
         // The banner's message is the LAST one, so its proof is the one that names the speaker.
         authorProvenIds.has(lastInbound.id)
       );

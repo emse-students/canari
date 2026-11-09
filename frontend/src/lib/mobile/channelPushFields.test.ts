@@ -313,12 +313,9 @@ describe('channel push payload contract (social-service writer vs the three nati
     // THE NAME IS ON DISK BEFORE THE NATIVE BUILDER READS IT (review of #2888, LOW-1): the socket
     // trigger names a salon's speaker from `display_names.json`, and resolving the sender is what
     // notes the name - so the mirror is flushed between the two, never after the post.
-    const resolved = messaging.indexOf('void resolveNotificationSenderName(senderId, convo)');
+    const resolved = messaging.indexOf('await resolveNotificationSenderName(senderId, convo)');
     const flushed = messaging.indexOf('await flushNameMirror();', resolved);
-    const posted = messaging.indexOf(
-      'ctx.sendSystemNotification(senderName, notificationBody',
-      resolved
-    );
+    const posted = messaging.indexOf('ctx.sendSystemNotification(', resolved);
     expect(resolved).toBeGreaterThan(-1);
     expect(flushed).toBeGreaterThan(resolved);
     expect(posted).toBeGreaterThan(flushed);

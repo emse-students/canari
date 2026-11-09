@@ -9,6 +9,7 @@ import {
   unregisterMlsStatePersister,
 } from '$lib/mls-client/mlsStatePersisterRegistry';
 import type { ExternalJoinOutcome } from '$lib/mls-client/IMlsService';
+import { GroupDrainAbandonedError } from '$lib/mls-client/IMlsService';
 import {
   describeKeyGroupFrameLosses,
   resetKeyGroupFrameLosses,
@@ -1122,6 +1123,36 @@ describe('a held key group behind its server', () => {
     expect(isInEpochGap('g-1')).toBe(false);
     expect(listener).toHaveBeenCalledWith('g-1', 'caught-up');
     log.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('STOPS when the client ended during the wait - abandoned, typed: no replay, no verdict told', async () => {
+    const { ctx, settle, listener } = behind(4, [{ baseEpoch: 4 }], 5);
+    (
+      ctx as unknown as { whenGroupDrained: ReturnType<typeof vi.fn> }
+    ).whenGroupDrained.mockRejectedValue(new GroupDrainAbandonedError('g-1'));
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const verdict = proto2.verifyDistributionEpoch.call(ctx, 'g-1', 5);
+    settle();
+
+    expect(await verdict).toBe('abandoned');
+    expect(ctx.fetchCommitsSince).not.toHaveBeenCalled();
+    expect(listener).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it('any OTHER failure of the wait is said, naming the caller, and the epoch is still checked', async () => {
+    const { ctx, settle } = behind(5, [], 5);
+    const failure = new Error('scheduler broke');
+    (
+      ctx as unknown as { whenGroupDrained: ReturnType<typeof vi.fn> }
+    ).whenGroupDrained.mockRejectedValue(failure);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const verdict = proto2.verifyDistributionEpoch.call(ctx, 'g-1', 5);
+    settle();
+
+    expect(await verdict).toBe('current');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('[GRAINE] epoch check'), failure);
     warn.mockRestore();
   });
 

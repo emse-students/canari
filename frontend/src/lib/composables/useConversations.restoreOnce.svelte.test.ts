@@ -10,10 +10,19 @@
 import { SvelteMap } from 'svelte/reactivity';
 
 const loadExistingConversations = vi.hoisted(() => vi.fn());
+const seedConversationRows = vi.hoisted(() => vi.fn());
+const replayConversationHistories = vi.hoisted(() =>
+  vi.fn(async (_ctx: unknown, _metas: unknown) => undefined)
+);
 
 vi.mock('$lib/utils/chat/conversations', async (importOriginal) => {
   const actual = await importOriginal<typeof import('$lib/utils/chat/conversations')>();
-  return { ...actual, loadExistingConversations };
+  return {
+    ...actual,
+    loadExistingConversations,
+    seedConversationRows,
+    replayConversationHistories,
+  };
 });
 
 // The archive read each owed replay makes: counted, and the place a test drops the link mid-replay.
@@ -431,5 +440,73 @@ describe('archive replays a restore skipped on a link known down', () => {
     await settle();
 
     expect(replayLines(ctx)).toEqual([]);
+  });
+});
+
+describe('seedConversationRowsAhead - the rows before the inbound gate, the history after it', () => {
+  beforeEach(() => {
+    loadExistingConversations.mockReset();
+    loadExistingConversations.mockResolvedValue(undefined);
+  });
+
+  it('seeds once: the restore that follows replays what the seed returned and seeds nothing', async () => {
+    const seeded = [{ id: 'g-1' }];
+    seedConversationRows.mockResolvedValueOnce(seeded);
+    const convs = useConversations();
+    const ctx = makeCtx();
+
+    await convs.seedConversationRowsAhead(ctx);
+    expect(seedConversationRows).toHaveBeenCalledTimes(1);
+    expect(replayConversationHistories).not.toHaveBeenCalled();
+
+    await convs.loadAndRestoreConversations(ctx);
+    // A second seed would rebuild every row and drop what a live frame wrote into it since.
+    expect(loadExistingConversations).not.toHaveBeenCalled();
+    expect(seedConversationRows).toHaveBeenCalledTimes(1);
+    expect(replayConversationHistories).toHaveBeenCalledTimes(1);
+    expect(replayConversationHistories.mock.calls[0][1]).toBe(seeded);
+    expect(convs.conversationsRestored).toBe(true);
+  });
+
+  it('hands the seed to ONE restore only: the next one is a whole restore again', async () => {
+    seedConversationRows.mockResolvedValueOnce([{ id: 'g-1' }]);
+    const convs = useConversations();
+    await convs.seedConversationRowsAhead(makeCtx());
+    await convs.loadAndRestoreConversations(makeCtx());
+    await convs.loadAndRestoreConversations(makeCtx());
+    expect(replayConversationHistories).toHaveBeenCalledTimes(1);
+    expect(loadExistingConversations).toHaveBeenCalledTimes(1);
+  });
+
+  it('is its generation restore: an ask made while it seeds runs after it, on what it seeded', async () => {
+    let release!: (v: unknown) => void;
+    seedConversationRows.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    const convs = useConversations();
+    const seed = convs.seedConversationRowsAhead(makeCtx());
+    await settle();
+    const restore = convs.loadAndRestoreConversations(makeCtx());
+    await settle();
+    expect(replayConversationHistories).not.toHaveBeenCalled();
+    expect(loadExistingConversations).not.toHaveBeenCalled();
+    const seeded = [{ id: 'g-1' }];
+    release(seeded);
+    await seed;
+    await restore;
+    expect(replayConversationHistories.mock.calls[0][1]).toBe(seeded);
+    expect(loadExistingConversations).not.toHaveBeenCalled();
+  });
+
+  it('keeps nothing for a generation a sign-out retired while it seeded', async () => {
+    let release!: (v: unknown) => void;
+    seedConversationRows.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    const convs = useConversations();
+    const seed = convs.seedConversationRowsAhead(makeCtx('alice'));
+    await settle();
+    convs.invalidateRestores();
+    release([{ id: 'alice-g' }]);
+    await seed;
+    await convs.loadAndRestoreConversations(makeCtx('bob'));
+    expect(replayConversationHistories).not.toHaveBeenCalled();
+    expect(loadExistingConversations).toHaveBeenCalledTimes(1);
   });
 });
