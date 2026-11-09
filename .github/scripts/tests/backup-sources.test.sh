@@ -14,7 +14,8 @@
 #
 # WHAT IT HOLDS.
 #   1. backup-objects.sh mounts exactly garage_data, garage_meta and media_meta of the project.
-#   2. No script of infrastructure/backup names `live_segments`.
+#   2. No script of infrastructure/backup names `live_segments` (its README.md, which says why the
+#      volume is left out, is the one file allowed to).
 #   3. The deployed compose files mount `live_segments` into media-service at the path its
 #      LIVE_SEGMENTS_DIR names, so the segments are on that volume and not in the container layer
 #      (where a recreate would lose them) nor on a backed-up volume.
@@ -77,11 +78,11 @@ case " $mounted " in
   *) pass "it never mounts live_segments" ;;
 esac
 
-echo "no backup script names the live segments volume"
-if grep -rln 'live_segments' "$SRC" >/dev/null 2>&1; then
-  fail "a backup script names live_segments: $(grep -rln 'live_segments' "$SRC" | tr '\n' ' ')"
+echo "no backup script names the live segments volume (its README says why it is not backed up)"
+if grep -rln --exclude='*.md' 'live_segments' "$SRC" >/dev/null 2>&1; then
+  fail "a backup script names live_segments: $(grep -rln --exclude='*.md' 'live_segments' "$SRC" | tr '\n' ' ')"
 else
-  pass "infrastructure/backup never names live_segments"
+  pass "no script of infrastructure/backup names live_segments"
 fi
 
 echo "the deployed compose files put the segments on that volume"

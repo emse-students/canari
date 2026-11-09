@@ -66,10 +66,18 @@ export class LiveSegmentStore implements OnModuleInit {
     this.logger.log(`[LIVE_STORE] live segments are stored under ${this.root} (not backed up)`);
   }
 
-  /** The file of a key; refuses a key outside `live/` or one that would leave the root. */
+  /**
+   * The file of a key; refuses a key outside `live/`, one that is not exactly `live/<folder>/<name>`
+   * (so a delete's folder removal can only ever name a live's folder, never `live/` itself), and one
+   * that would leave the root.
+   */
   private fileOf(key: string): string {
     if (!key.startsWith(STORE_PREFIX)) {
       throw new Error(`live segment store holds ${STORE_PREFIX} keys only, refused ${key}`);
+    }
+    const parts = key.split('/');
+    if (parts.length !== 3 || parts.some((p) => p === '' || p === '.' || p === '..')) {
+      throw new Error(`key ${key} is not live/<folder>/<name>: refused by the live segment store`);
     }
     const file = path.resolve(this.root, key);
     if (!file.startsWith(path.join(this.root, STORE_PREFIX))) {

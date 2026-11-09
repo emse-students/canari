@@ -103,7 +103,12 @@ describe('LiveSegmentStore', () => {
   it('refuses a key outside live/, a key that walks out of its root, and a size that lies', async () => {
     const s = await store();
     await expect(s.put(CHAT_BLOB, Buffer.from('x'), 1)).rejects.toThrow(/live\//);
-    await expect(s.put(`live/../${CHAT_BLOB}`, Buffer.from('x'), 1)).rejects.toThrow(/outside/);
+    await expect(s.put(`live/../${CHAT_BLOB}`, Buffer.from('x'), 1)).rejects.toThrow(/refused/);
+    // Not exactly live/<folder>/<name>: a key at the top of live/ would make a delete's folder
+    // removal name live/ itself, and a deeper one is no segment this store writes.
+    await expect(s.put(`live/${SEG_A}`, Buffer.from('x'), 1)).rejects.toThrow(/refused/);
+    await expect(s.put(`live/${LIVE}/x/${SEG_A}`, Buffer.from('x'), 1)).rejects.toThrow(/refused/);
+    await expect(s.delete(`live/${SEG_A}`)).rejects.toThrow(/refused/);
     await expect(s.put(`live/${LIVE}/${SEG_A}`, Buffer.from('xy'), 1)).rejects.toThrow(/declared/);
     expect(filesUnder(root)).toEqual([]);
   });
@@ -164,10 +169,21 @@ describe('LiveSegmentsService over the live store', () => {
       [`live/${LIVE}/${SEG_A}`]: 'old',
       [`live/${OTHER}/${SEG_B}`]: 'old',
       [CHAT_BLOB]: 'chat',
+      // Under live/ but not the shape a release wrote (an allowlist, not a prefix): kept.
+      [`live/${LIVE}/not-a-segment`]: 'other',
+      [`live/ABCDEF01-1111-4111-8111-111111111111/${SEG_A}`]: 'other',
+      [`live/${LIVE}/${SEG_A}/deeper`]: 'other',
     });
     const svc = quiet(new LiveSegmentsService(await store(), objects.stub));
     await expect(svc.drainObjectStore()).resolves.toBe(2);
-    expect([...objects.objects.keys()]).toEqual([CHAT_BLOB]);
+    expect([...objects.objects.keys()].sort()).toEqual(
+      [
+        CHAT_BLOB,
+        `live/${LIVE}/not-a-segment`,
+        `live/ABCDEF01-1111-4111-8111-111111111111/${SEG_A}`,
+        `live/${LIVE}/${SEG_A}/deeper`,
+      ].sort()
+    );
     await expect(svc.drainObjectStore()).resolves.toBe(0);
   });
 

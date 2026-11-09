@@ -224,8 +224,9 @@ SELECT count(*) FROM lives WHERE "liveKey" IS NOT NULL;
 the backed-up object store (Garage) under `live/`; since WP-R3 they live on the `live_segments`
 volume ([live-replays](live-replays.md#wp-r3-as-built-the-segments-outside-the-backup)), and
 `StorageService` refuses a `live/` key. The segments of a live on air at that deploy stayed in Garage,
-where no purge and no reaper looks any more. Each boot deletes every `live/` object of the object
-store and logs `[LIVE_STORE] object store drained of old live segments: drained=N` (an ERROR line if
+where no purge and no reaper looks any more. Each boot deletes every live segment key of the object
+store (`live/<uuid>/<uuid>`, an allowlist: any other `live/` object is logged at WARN and kept) and
+logs `[LIVE_STORE] object store drained of old live segments: drained=N leftAlone=M` (an ERROR line if
 the store failed; the next boot retries). A rollback to an older image writes there again, and the
 next forward deploy drains it.
 **The cost while it stands:** one empty prefix listing of Garage per boot.

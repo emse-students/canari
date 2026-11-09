@@ -381,7 +381,8 @@ is `media_upload_sessions`, already "DELIBERATELY not backed up".
 - **`LiveSegmentStore`** (`apps/media-service/src/media/live-segment-store.ts`): the key
   `live/<liveId>/<name>` is the file `$LIVE_SEGMENTS_DIR/live/<liveId>/<name>`; written in
   `.staging/` then renamed (a reader sees a whole segment or none; staging is emptied at boot, one
-  process); a key outside `live/` or resolving outside the root is refused; deleting a live's last
+  process); a key outside `live/`, not exactly `live/<folder>/<name>`, or resolving outside the root
+  is refused (so a delete's folder removal can never name `live/` itself); deleting a live's last
   segment removes its folder, so the orphan reaper's folder listing names only lives that hold bytes
   (no store races that: a live on air keeps its newest 20 segments, and its purge runs after its end
   and the drain of its uploads). `LiveSegmentsService` reads it through the same six calls it read
@@ -389,9 +390,12 @@ is `media_upload_sessions`, already "DELIBERATELY not backed up".
   unchanged; the posters (`live/<liveId>/<uuid>`) move with them.
 - **The split holds whoever writes**: `StorageService.put` and `putFileStream` REFUSE a `live/` key,
   so no path can put a segment back into the backed-up store.
-- **The old segments are drained**: at each boot media-service deletes every `live/` object left in
+- **The old segments are drained**: at each boot media-service deletes every live segment left in
   Garage (the lives on air at the deploy - no replay can be there, the switch ships after WP-R3) and
-  logs `[LIVE_STORE] ... drained=N`; removal condition in
+  logs `[LIVE_STORE] ... drained=N leftAlone=M`. The delete is an ALLOWLIST of one key shape,
+  `live/<uuid>/<uuid>` in canonical lower case (`LiveSegmentsService.isSegmentKey`, what `key()`
+  wrote, segments and posters alike), never the bare prefix: anything else under `live/` is named at
+  WARN and kept (review of #3253); removal condition in
   [legacy-compatibility](legacy-compatibility.md#removal-once-both-estates-log-drained0---live-segments-an-older-release-left-in-garage-2026-11-09).
   A live on air during that deploy loses at most its last ~40 s window to its viewers, as any
   media-service recreate already costs.

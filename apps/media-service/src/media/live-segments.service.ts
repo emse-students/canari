@@ -104,7 +104,9 @@ export class LiveSegmentsService implements OnApplicationBootstrap {
   }
 
   /**
-   * Deletes every `live/` object left in the backed-up object store, and logs how many - the
+   * Deletes every live SEGMENT left in the backed-up object store ({@link isSegmentKey}: an
+   * allowlist of one key shape, so another object under `live/` is logged and kept), and logs how
+   * many - the
    * segments of lives running when the release that moved them out was deployed (at most the newest
    * 20 of each: no replay can exist there, the replay switch ships after WP-R3). After that boot
    * nothing writes there ({@link StorageService} refuses the prefix), so every later boot logs
@@ -113,12 +115,23 @@ export class LiveSegmentsService implements OnApplicationBootstrap {
    */
   async drainObjectStore(): Promise<number> {
     let drained = 0;
+    let leftAlone = 0;
     try {
       for (const object of await this.objectStore.listObjects(LIVE_PREFIX)) {
+        // AN ALLOWLIST, NOT A PREFIX: only the exact shape a release before WP-R3 wrote
+        // (`live/<liveId>/<segment>`, two canonical uuids, `LiveSegmentsService.key`) is deleted.
+        // Anything else under `live/` is not a segment this code made, so it is named and kept.
+        if (!LiveSegmentsService.isSegmentKey(object.id)) {
+          leftAlone += 1;
+          this.logger.warn(`[LIVE_STORE] ${object.id} is not a live segment key - left alone`);
+          continue;
+        }
         await this.objectStore.delete(object.id);
         drained += 1;
       }
-      this.logger.log(`[LIVE_STORE] object store drained of old live segments: drained=${drained}`);
+      this.logger.log(
+        `[LIVE_STORE] object store drained of old live segments: drained=${drained} leftAlone=${leftAlone}`
+      );
     } catch (e) {
       this.logger.error(
         `[LIVE_STORE] draining old live segments from the object store failed after ${drained}: ${String(e)}`
@@ -142,6 +155,20 @@ export class LiveSegmentsService implements OnApplicationBootstrap {
   static key(liveId: string, name: string): string {
     if (!UUID_RE.test(name)) throw new BadRequestException('segment name must be a uuid');
     return `${LiveSegmentsService.prefix(liveId)}${name.toLowerCase()}`;
+  }
+
+  /**
+   * Whether `key` is exactly a segment key as {@link LiveSegmentsService.key} writes it:
+   * `live/<liveId>/<name>`, both canonical (lower-case) uuids, nothing before, between or after.
+   */
+  static isSegmentKey(key: string): boolean {
+    const parts = key.split('/');
+    return (
+      parts.length === 3 &&
+      `${parts[0]}/` === LIVE_PREFIX &&
+      CANONICAL_UUID_RE.test(parts[1]) &&
+      CANONICAL_UUID_RE.test(parts[2])
+    );
   }
 
   /**
