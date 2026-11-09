@@ -21,6 +21,19 @@ export type OpenLivesOutcome =
   /** The server said no (the switch off, or a refusal): the card shows nothing. */
   | { kind: 'hidden' };
 
+/**
+ * Whether this session already learned that lives are switched off on the estate. DURABLE STATE, not
+ * a timer: the answer is the estate's switch, so asking again on every foreground (51 warnings in a
+ * week of one phone's log, 1.6.8) learns nothing. It is memory only - a reload asks again, which is
+ * how a switch turned on later is noticed.
+ */
+let livesDisabledThisSession = false;
+
+/** Forgets what the session learned (tests only). */
+export function resetLivesDisabledForTests(): void {
+  livesDisabledThisSession = false;
+}
+
 /** The lives a reader's card lists: the server's order (newest first), the reader's own left out. */
 export function livesForFeed(lives: LiveListItem[], viewerId: string | null): LiveListItem[] {
   return viewerId ? lives.filter((l) => l.broadcasterId !== viewerId) : lives;
@@ -31,6 +44,7 @@ export async function loadOpenLivesForFeed(
   viewerId: string | null,
   list: () => Promise<LiveListItem[]> = listOpenLives
 ): Promise<OpenLivesOutcome> {
+  if (livesDisabledThisSession) return { kind: 'hidden' };
   try {
     const lives = livesForFeed(await list(), viewerId);
     console.debug(`[LIVE] feed card: ${lives.length} open live(s)`);
@@ -41,7 +55,10 @@ export async function loadOpenLivesForFeed(
       return { kind: 'kept' };
     }
     if (isLiveRefusal(e, 'disabled')) {
-      console.debug('[LIVE] feed card: lives are switched off on this estate');
+      livesDisabledThisSession = true;
+      console.debug(
+        '[LIVE] feed card: lives are switched off on this estate - not asked again this session'
+      );
       return { kind: 'hidden' };
     }
     console.warn(`[LIVE] feed card: the list was refused (${String(e)}) - no card`);

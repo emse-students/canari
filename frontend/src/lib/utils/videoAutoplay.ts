@@ -55,3 +55,33 @@ export function decideAutoplayRejection(
   }
   return { kind: 'blocked', cause: 'errored' };
 }
+
+/**
+ * Logs one rejected `play()` of an element that has no player of its own (the feed's
+ * `playWhileVisible`, a conversation's `InlineVideo` button) at the level its verdict deserves, and
+ * returns the verdict. An `AbortError` is the engine saying a pause or a new source overtook the
+ * ask - somebody's decision, not a defect - so it is never a warning (1.6.8 logs, 2026-11-09: 37
+ * warnings of one race); a refusal or a failure still is, with its name.
+ *
+ * @param scope The log prefix, e.g. `playWhileVisible`.
+ * @param err The rejection of `play()`.
+ * @param video The element asked.
+ * @param askedSrc The element's `src` when the ask was made.
+ */
+export function logRefusedPlay(
+  scope: string,
+  err: unknown,
+  video: Pick<HTMLVideoElement, 'src' | 'muted'>,
+  askedSrc: string
+): AutoplayVerdict {
+  const name = playRejectionName(err);
+  const verdict = decideAutoplayRejection(name, { sourceChanged: video.src !== askedSrc });
+  if (verdict.kind === 'ask-at-next-load') {
+    console.debug(`[video] ${scope}: play() interrupted by a new source (${name})`);
+  } else if (verdict.cause === 'interrupted') {
+    console.info(`[video] ${scope}: play() interrupted by a pause (${name}, same source)`);
+  } else {
+    console.warn(`[video] ${scope}: play() ${verdict.cause}`, { name, muted: video.muted });
+  }
+  return verdict;
+}

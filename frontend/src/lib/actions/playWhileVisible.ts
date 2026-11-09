@@ -9,6 +9,7 @@ import {
 import { videoSound } from '$lib/stores/videoSound.svelte';
 import { isAppOnScreen } from '$lib/utils/appForeground';
 import { Log } from '$lib/utils/Log';
+import { logRefusedPlay } from '$lib/utils/videoAutoplay';
 
 /**
  * Plays a video while most of it is on screen and pauses it when it leaves.
@@ -81,12 +82,8 @@ export function holdPlayback(reason: string): () => void {
 }
 
 function tryPlay(video: HTMLVideoElement) {
-  video.play().catch((err: unknown) => {
-    console.warn('[video] playWhileVisible: play() refused', {
-      name: err instanceof Error ? err.name : String(err),
-      muted: video.muted,
-    });
-  });
+  const askedSrc = video.src;
+  video.play().catch((err: unknown) => logRefusedPlay('playWhileVisible', err, video, askedSrc));
 }
 
 /**

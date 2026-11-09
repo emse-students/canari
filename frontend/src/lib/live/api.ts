@@ -220,9 +220,14 @@ function withClientVersion(init: ApiFetchOptions = {}): ApiFetchOptions {
 }
 
 /** Runs one authenticated lives call and returns its JSON, or throws the typed refusal. */
-async function liveJson<T>(url: string, what: string, init: ApiFetchOptions = {}): Promise<T> {
+async function liveJson<T>(
+  url: string,
+  what: string,
+  init: ApiFetchOptions = {},
+  expected: readonly LiveRefusalKind[] = []
+): Promise<T> {
   const res = await apiFetch(url, withClientVersion(init));
-  if (!res.ok) throw await liveRefusal(res, what);
+  if (!res.ok) throw await liveRefusal(res, what, false, expected);
   return (await res.json()) as T;
 }
 
@@ -238,7 +243,8 @@ export async function fetchLiveLimits(): Promise<LiveLimits> {
  */
 export async function listOpenLives(): Promise<LiveListItem[]> {
   console.debug('[LIVE] list');
-  return liveJson<LiveListItem[]>(livesBase(), 'Live list');
+  // `disabled` is an ordinary answer of this call (the switch is off on the estate), not a warning.
+  return liveJson<LiveListItem[]>(livesBase(), 'Live list', {}, ['disabled']);
 }
 
 /** `GET /api/lives/rules` - whether the caller must accept the first-live rules before starting. */

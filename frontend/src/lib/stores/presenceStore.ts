@@ -4,6 +4,7 @@ import { apiFetch } from '$lib/utils/apiFetch';
 import { gatewayUrl } from '$lib/utils/apiUrl';
 import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
 import { Log } from '$lib/utils/Log';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 
 /**
  * Svelte store mapping each watched user ID to a boolean indicating whether
@@ -240,7 +241,14 @@ async function pollPresence(): Promise<void> {
     if (hidden.length > 0) Log.d(`[presence] ${hidden.length} watched user(s) no longer visible`);
     if (cameOnline.length > 0) notifyCameOnline(cameOnline);
   } catch (err) {
-    console.error('Failed to fetch presence', err);
+    // A request that got no answer is the link being down, which the connectivity store already
+    // says once; the map simply stays as it was until the next poll (1.6.8 logs, 2026-11-09: an
+    // ERROR with a stack for every poll while offline). Anything else is a defect and accuses.
+    if (isTransportFailure(err)) {
+      console.log('[presence] the poll got no answer - the map stays as it was');
+    } else {
+      console.error('Failed to fetch presence', err);
+    }
   }
 }
 

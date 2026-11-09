@@ -20,7 +20,6 @@ These are the lines of the same log that fix does NOT cover, each with its count
 - **P2 - `[WS] pauseSocket: native disconnect failed`: 8 lines** (`TauriMlsService.ts`, ~lines
   600-603). A regression of #1603, which made the native release on pause reliable; the plugin's
   rejection says why, read it from the log line before touching the code.
-- **P3 - `playWhileVisible play() refused AbortError` at WARN: 37 lines** (`playWhileVisible.ts:41`).
   An `AbortError` from `play()` is a pause or a source change interrupting it - the page's own
   decision, not a refusal. Classify it at the catch (by `name`, a DOMException field, not prose)
   and say it at the level of what it is; any other rejection keeps the warn.

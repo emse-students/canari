@@ -14,6 +14,7 @@ import {
   MediaNotFoundError,
   MediaPurgedError,
   MediaUnreachableError,
+  resolveMediaCredential,
 } from './mediaErrors';
 import { noteMediaCacheHit } from './mediaTouch';
 import { mediaRequestGate } from './requestGate';
@@ -177,7 +178,7 @@ async function fetchMediaObject(
   const res = await mediaRequestGate.run(async () => {
     // Out of the queue: from here the gate no longer honours an abort (see `SharedLoad`).
     onStart?.();
-    const headers = { Authorization: `Bearer ${await getToken()}` };
+    const headers = { Authorization: `Bearer ${await resolveMediaCredential(getToken)}` };
     try {
       return await fetch(url, { headers });
     } catch (err) {

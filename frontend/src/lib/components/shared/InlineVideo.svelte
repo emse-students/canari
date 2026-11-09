@@ -7,6 +7,7 @@
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
   import { rememberVideoPosition } from '$lib/utils/videoResume';
+  import { logRefusedPlay } from '$lib/utils/videoAutoplay';
   import VideoPoster from './VideoPoster.svelte';
   import BlurredBackdrop from './BlurredBackdrop.svelte';
   import { captureVideoFrame } from '$lib/utils/videoFrameBackdrop';
@@ -142,11 +143,9 @@
     if (!videoEl) return;
     Log.d('VIDEO', 'InlineVideo: manual play, audible, app-wide sound untouched');
     videoEl.muted = false;
-    videoEl.play().catch((err: unknown) => {
-      console.warn('[video] InlineVideo: play() refused', {
-        name: err instanceof Error ? err.name : String(err),
-      });
-    });
+    const el = videoEl;
+    const askedSrc = el.src;
+    el.play().catch((err: unknown) => logRefusedPlay('InlineVideo', err, el, askedSrc));
   }
 
   function toggleSound(e: MouseEvent) {

@@ -1,6 +1,11 @@
 /** The card's list: the reader's own live left out, a lost answer kept, a refusal hidden. */
-import { describe, it, expect, vi } from 'vitest';
-import { formatLiveElapsed, livesForFeed, loadOpenLivesForFeed } from './openLives';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
+import {
+  formatLiveElapsed,
+  livesForFeed,
+  loadOpenLivesForFeed,
+  resetLivesDisabledForTests,
+} from './openLives';
 import { LiveRefusalError } from './api';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import type { LiveListItem } from './types';
@@ -21,6 +26,8 @@ describe('livesForFeed', () => {
 });
 
 describe('loadOpenLivesForFeed', () => {
+  beforeEach(() => resetLivesDisabledForTests());
+
   it('answers the filtered list', async () => {
     const out = await loadOpenLivesForFeed(
       'me',
@@ -51,6 +58,28 @@ describe('loadOpenLivesForFeed', () => {
       );
       expect(out).toEqual({ kind: 'hidden' });
     }
+  });
+});
+
+describe('a switched-off estate is learned once per session', () => {
+  beforeEach(() => resetLivesDisabledForTests());
+
+  it('asks the server once, then answers hidden without asking again', async () => {
+    const list = vi.fn(async () => {
+      throw new LiveRefusalError(404, null, 'x', 'disabled', null, null, null);
+    });
+    expect(await loadOpenLivesForFeed('me', list)).toEqual({ kind: 'hidden' });
+    expect(await loadOpenLivesForFeed('me', list)).toEqual({ kind: 'hidden' });
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps asking after a refusal that is not the switch', async () => {
+    const list = vi.fn(async () => {
+      throw new LiveRefusalError(400, 'X', 'x', 'refused', null, null, null);
+    });
+    await loadOpenLivesForFeed('me', list);
+    await loadOpenLivesForFeed('me', list);
+    expect(list).toHaveBeenCalledTimes(2);
   });
 });
 

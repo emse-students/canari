@@ -1,7 +1,11 @@
 import { readSource, relativeTo, sourceFiles } from '../../../test/sourceTree';
 import type { IMlsService } from '$lib/mlsService';
 import { withoutAnyComments } from '$lib/styles/markupSources';
-import { forgetGroupsAbsentFromServer, readGroupSweepSnapshot } from './groupSweep';
+import {
+  forgetGroupsAbsentFromServer,
+  keptVerdictLatch,
+  readGroupSweepSnapshot,
+} from './groupSweep';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 
 /**
@@ -9,6 +13,8 @@ import { TransportFailureError } from '$lib/utils/transportFailure';
  * scope, which `decideAbsentLocalGroupFate` reduces to `forget` - the destructive branch, so a test
  * that expects nothing forgotten is measuring the guard rather than a stub that had nothing to do.
  */
+beforeEach(() => keptVerdictLatch.reset());
+
 function makeMls(overrides: Partial<Record<string, unknown>> = {}): IMlsService {
   const built: Record<string, unknown> = {
     getUserGroups: vi.fn().mockResolvedValue([]),
@@ -200,6 +206,28 @@ describe('forgetGroupsAbsentFromServer', () => {
     const lines = log.mock.calls.map((c) => String(c[0]));
     expect(lines.filter((l) => l.includes('WASM kept'))).toHaveLength(1);
     expect(lines.filter((l) => l.includes('not asked again'))).toHaveLength(1);
+  });
+
+  it('says a kept group ONCE across connections', async () => {
+    // 1.6.8 log: 11 `WASM kept` lines per connection, the same verdict for the same groups.
+    const status: Record<string, unknown> = {
+      groupId: 'seed-carrier',
+      deletedAt: null,
+      distributionWorkspaceId: 'w',
+    };
+    const mlsService = makeMls({
+      getLocalGroups: vi.fn().mockReturnValue(['seed-carrier']),
+      getUserGroups: vi.fn().mockResolvedValue([{ groupId: 'other', name: 'o' }]),
+      getGroupServerStatus: vi.fn(async () => status),
+    });
+    const log = vi.fn();
+    const kept = () => log.mock.calls.filter((c) => String(c[0]).includes('WASM kept')).length;
+
+    for (let connection = 0; connection < 3; connection++) {
+      const snapshot = await readGroupSweepSnapshot(mlsService, 'u', log);
+      await forgetGroupsAbsentFromServer(mlsService, snapshot, log);
+    }
+    expect(kept()).toBe(1);
   });
 
   it('asks again on a new pass, and forgets a group that stopped being a key group in between', async () => {

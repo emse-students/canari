@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import type { Conversation } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
-import { discoverMissingGroups } from './actions';
+import { discoverMissingGroups, uiKeptLatch } from './actions';
 import {
   forgetMlsGroupIfPresent,
   purgeLocalConversationRecord,
@@ -974,5 +974,48 @@ describe('discoverMissingGroups - a never-admitted conversation', () => {
 
     expect(conversations.has('ask-id')).toBe(true);
     expect(deleteConversation).not.toHaveBeenCalledWith('ask-id');
+  });
+});
+
+describe('discoverMissingGroups - removed rows', () => {
+  beforeEach(() => uiKeptLatch.reset());
+
+  const removedRow = (id: string): Conversation => ({
+    id,
+    contactName: id,
+    name: 'Groupe',
+    messages: [],
+    lifecycle: 'removed',
+    mlsStateHex: null,
+    conversationType: 'group',
+  });
+  const run = (conversations: Map<string, Conversation>, mls: IMlsService, log = vi.fn()) =>
+    discoverMissingGroups({
+      mlsService: mls,
+      userId: 'user-a',
+      deviceKeyB64: '1234',
+      conversations,
+      deleteConversation: vi.fn().mockResolvedValue(undefined),
+      log,
+    });
+
+  it('says a removed row awaiting its manual deletion once, not on every connection', async () => {
+    const conversations = new Map([['r1', removedRow('r1')]]);
+    const log = vi.fn();
+    for (let connection = 0; connection < 3; connection++) {
+      await run(conversations, makeMls(), log);
+    }
+    const lines = log.mock.calls.map((c) => String(c[0]));
+    expect(lines.filter((l) => l.includes('awaiting a manual deletion'))).toHaveLength(1);
+    expect(conversations.has('r1')).toBe(true);
+  });
+
+  it('drops the removed row of a registered key-distribution group - it is no conversation', async () => {
+    const conversations = new Map([['kd1', removedRow('kd1')]]);
+    const mls = makeMls({ isDistributionGroup: vi.fn((id: string) => id === 'kd1') });
+    await run(conversations, mls);
+    expect(conversations.has('kd1')).toBe(false);
+    // The row only: the MLS state is the sweep's to spare or forget.
+    expect(mls.forgetGroup).not.toHaveBeenCalled();
   });
 });

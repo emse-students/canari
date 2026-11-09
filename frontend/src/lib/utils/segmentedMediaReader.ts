@@ -29,6 +29,7 @@ import {
   MediaNotFoundError,
   MediaPurgedError,
   MediaUnreachableError,
+  resolveMediaCredential,
 } from './mediaErrors';
 import { mediaRequestGate } from './requestGate';
 
@@ -71,7 +72,7 @@ export function httpRangeSource(baseUrl: string, mediaId: string): CiphertextRan
       // one vocabulary (`mediaFailureCause`) whichever path the media took.
       const res = await mediaRequestGate.run(async () => {
         const headers = {
-          Authorization: `Bearer ${await getToken()}`,
+          Authorization: `Bearer ${await resolveMediaCredential(getToken)}`,
           Range: `bytes=${start}-${endExclusive - 1}`,
         };
         try {

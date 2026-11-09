@@ -2,6 +2,10 @@ import type { IMlsService, UserGroupRow } from '$lib/mls-client/IMlsService';
 import { forgetMlsGroupIfPresent } from './groupActions';
 import { reconcileAbsentLocalGroup, type AbsentLocalGroupVerdict } from './groupLifecycle';
 import { isTransportFailure } from '$lib/utils/transportFailure';
+import { createChangeLatch } from '$lib/utils/changeLatch';
+
+/** The `kept` verdicts already said, by group: a connection that repeats one says nothing. */
+export const keptVerdictLatch = createChangeLatch();
 
 /**
  * The two reads a group sweep compares, taken in the ONE order that is sound, plus the verdict on
@@ -204,7 +208,10 @@ export async function forgetGroupsAbsentFromServer(
     const fate = await reconcileAbsentLocalGroup(mlsService, groupId);
     if (fate.action === 'keep' && fate.serverAnswered) verdicts?.set(groupId, fate);
     if (fate.action === 'keep') {
-      log(`[SYNC] WASM kept ${groupId.slice(0, 8)}… - ${fate.reason}`);
+      // ONCE PER CHANGE: the same group kept for the same reason on every connection is one line.
+      if (keptVerdictLatch.changed(groupId, fate.reason)) {
+        log(`[SYNC] WASM kept ${groupId.slice(0, 8)}… - ${fate.reason}`);
+      }
       continue;
     }
     // Through the shared helper, so both sweeps drop the same two halves. Forgetting the tree alone
