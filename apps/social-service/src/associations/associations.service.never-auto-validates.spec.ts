@@ -43,6 +43,14 @@ function makeService() {
       return e;
     }),
   };
+  // The creation is ONE transaction in production; here it runs on the stub repository.
+  const manager = {
+    query: jest.fn(async () => []),
+    getRepository: () => calendarRepo,
+  };
+  Object.assign(calendarRepo, {
+    manager: { transaction: async (work: (m: unknown) => unknown) => work(manager) },
+  });
 
   // POSITIONAL, AND FOURTEEN LONG - keep these comments aligned with the parameter list in
   // `associations.service.ts`, and change them in the same commit that changes it.
@@ -63,7 +71,7 @@ function makeService() {
     { enabled: () => false, tell: async () => 0 } as never // lydiaNotifier
   );
 
-  const notifyEventValidatorsOfProposal = jest.fn();
+  const notifyEventValidatorsOfProposal = jest.fn().mockResolvedValue(undefined);
   const notifyAssocAdminsOfEventAction = jest.fn();
   Object.assign(service, {
     findById: jest.fn(async () => ({ id: 'asso-1' })),
@@ -139,6 +147,23 @@ describe('createCalendarEvent - nothing is validated at creation', () => {
     );
 
     // The reach the grant buys is still there - the row lands on the target association.
+    expect(saved[0].associationId).toBe('asso-1');
+    expect(validationOf(saved[0])).toEqual(PENDING);
+  });
+
+  it("a parent BDE's officer GOVERNS its child (WP-D2) and still only proposes, with no deposit reach", async () => {
+    // Governance (MANAGE_ASSO in the parent, which admits the officer through the role guard) is not
+    // the agenda right: `isBde` is the controller's AGENDA verdict, absent here, so a named target
+    // is ignored and the row lands, pending, on the association the route names.
+    const { service, saved } = makeService();
+
+    await service.createCalendarEvent(
+      'asso-1',
+      { ...CREATE, targetAssocId: 'other-asso' } as never,
+      'parent-officer',
+      {}
+    );
+
     expect(saved[0].associationId).toBe('asso-1');
     expect(validationOf(saved[0])).toEqual(PENDING);
   });

@@ -43,7 +43,7 @@ if (!apiOrigin.startsWith('https://dev.canari-emse.fr/')) throw new Error(`refus
 const visible = (sel) => `[].find.call(document.querySelectorAll(${JSON.stringify(sel)}), function (e) { return e.getBoundingClientRect().width > 0; })`;
 const buttonWithText = (text) => `[].find.call(document.querySelectorAll('button'), function (b) { return ((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '')).indexOf(${JSON.stringify(text)}) >= 0 && b.getBoundingClientRect().width > 0; })`;
 const railNames = async () =>
-  JSON.parse(await evaluate(cx, `(function () { var add = ${visible('button[aria-label="Ajouter une communauté"]')}; return JSON.stringify(add ? [].filter.call(add.parentElement.querySelectorAll('button[title]'), function (b) { return b !== add; }).map(function (b) { return b.title; }) : []); })()`));
+  JSON.parse(await evaluate(cx, `(function () { var add = ${visible('button[aria-label="Nouvelle communauté"]')}; return JSON.stringify(add ? [].filter.call(add.parentElement.querySelectorAll('button[title]'), function (b) { return b !== add; }).map(function (b) { return b.title; }) : []); })()`));
 
 /** Clicks the element a page expression resolves to (the selectors here need visibility filters). */
 async function press(expr) {
@@ -58,7 +58,7 @@ async function toHub() {
     await waitMs(600);
   }
   if (await evaluate(cx, `!!${visible('a[href="/communities"]')}`)) await press(visible('a[href="/communities"]'));
-  await until(cx, `!!${visible('button[aria-label="Ajouter une communauté"]')}`, 20000);
+  await until(cx, `!!${visible('button[aria-label="Nouvelle communauté"]')}`, 20000);
 }
 
 async function submitDialog(inputId, name, buttonText) {
@@ -73,7 +73,7 @@ await toHub();
 for (let n = 1; n <= COMMUNITIES; n++) {
   const name = `BancOuverture-${n}`;
   if ((await railNames()).includes(name)) continue;
-  await press(visible('button[aria-label="Ajouter une communauté"]'));
+  await press(visible('button[aria-label="Nouvelle communauté"]'));
   await submitDialog('new-community-name', name, 'Créer la communauté');
   await waitMs(4000);
   await toHub();

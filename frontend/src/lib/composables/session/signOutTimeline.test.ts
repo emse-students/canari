@@ -18,6 +18,14 @@ vi.mock('$lib/stores/user', async (importOriginal) => ({
   clearUserLocally: vi.fn(),
 }));
 
+const { stopPushService } = vi.hoisted(() => ({
+  stopPushService: vi.fn((_base: string, _token: string, _device: string) => Promise.resolve()),
+}));
+vi.mock('$lib/services/PushNotificationService', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/services/PushNotificationService')>()),
+  stopPushService,
+}));
+
 const { clearAuth, setSignOutHandler } = await import('$lib/stores/auth');
 const { createMlsHolder } = await import('./mlsHolder');
 const { registerMlsStatePersister, unregisterMlsStatePersister, activeMlsStatePersister } =
@@ -103,6 +111,50 @@ beforeEach(() => {
   fetchMock.mockReset();
   fetchMock.mockResolvedValue(new Response('', { status: 200 }));
   vi.stubGlobal('fetch', fetchMock);
+});
+
+describe('the order of a sign-out: push deregistration, socket, revocation', () => {
+  it('endSessionImpl returns the deregistration, started before the socket is released', async () => {
+    const s = liveSession();
+    const order: string[] = [];
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => (release = resolve));
+    stopPushService.mockImplementationOnce(() => {
+      order.push('push');
+      return pending;
+    });
+    s.mls.pauseSocket.mockImplementation(() => order.push('socket'));
+    const returned = endSessionImpl(s.ctx, s.cb);
+    expect(stopPushService).toHaveBeenCalledWith('http://history', 'h.e.s', 'device-1');
+    expect(order).toEqual(['push', 'socket']);
+    let settled = false;
+    void returned.then(() => (settled = true));
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    release();
+    await returned;
+    expect(settled).toBe(true);
+  });
+
+  it('clearAuth sends no revocation until the deregistration has answered', async () => {
+    const s = liveSession();
+    let release!: () => void;
+    stopPushService.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (release = resolve))
+    );
+    setSignOutHandler(() => endSessionImpl(s.ctx, s.cb));
+    try {
+      const signingOut = clearAuth();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(s.mls.pauseSocket).toHaveBeenCalledTimes(1);
+      release();
+      await signingOut;
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      setSignOutHandler(null);
+    }
+  });
 });
 
 describe('sign-out, then the resume of the sign-in browser, then a second sign-out', () => {

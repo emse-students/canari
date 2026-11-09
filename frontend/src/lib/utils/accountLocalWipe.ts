@@ -1,10 +1,14 @@
 import { closeCachedStore, closeOpenIndexedDbStores } from '$lib/db';
 import { closeOutboxBlobStores } from '$lib/db/outboxBlob';
 import { closeMlsDb } from '$lib/utils/hex';
+import { publishQueueDbName } from '$lib/posts/publishQueue/publishQueueStore';
+import { forgetTabCommitAccount, tabCommitDbName } from '$lib/utils/chat/tabCommitStore';
+import { formDraftCopiesDbName } from '$lib/forms/draftCopies';
 import { clearDeviceKey } from '$lib/utils/deviceKeyVault';
 import { deleteIndexedDbByName } from '$lib/utils/indexedDbDelete';
 import { dropUploadReleaseMarksOf } from '$lib/utils/chat/uploadReleaseMarks';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { otherAccountOnInstall } from '$lib/utils/installAccounts';
 import {
   ACCOUNT_KEY,
   accountLocalStorageKeysIn,
@@ -15,9 +19,12 @@ import {
   SESSION_META_STORE,
 } from '$lib/utils/accountLocalKeys';
 import {
+  type AccountWipeReason,
   clearDeletedAccountWipePending,
   noteDeletedAccountWipeStarted,
   pendingDeletedAccountWipes,
+  wipeLogTag,
+  wipeReasonOf,
 } from '$lib/utils/deletedAccountMarker';
 
 // The marker's writers, where the deletion's callers already import the wipe from.
@@ -28,7 +35,19 @@ export {
 
 /** The IndexedDB databases keyed by an account id, all of which die with that account. */
 export function accountIndexedDbNames(userId: string): string[] {
-  return [`CanariDB_${userId}`, `CanariDBOutbox_${userId}`, `CanariDBMls_${userId}`];
+  return [
+    `CanariDB_${userId}`,
+    `CanariDBOutbox_${userId}`,
+    `CanariDBMls_${userId}`,
+    // The posts waiting to be published, and their media in the clear: a deleted or revoked
+    // account's photos must not outlive it on the device.
+    publishQueueDbName(userId),
+    // A follower tab's commits handed to the leader: a group's name, user ids, until answered.
+    tabCommitDbName(userId),
+    // A form's edits no save has landed yet (the editor's device copy): its content and the
+    // account that typed it go together.
+    formDraftCopiesDbName(userId),
+  ];
 }
 
 /**
@@ -149,6 +168,8 @@ export async function resumePendingDeletedAccountWipes(live: AccountLiveness): P
     const failures = await wipeDeletedAccountLocalData(id, {
       closeThisRunsHandles: false,
       expectNativeDatabase: false,
+      // The revoked device's account still exists: the resume says so, as the live wipe did.
+      accountStillExists: wipeReasonOf(id) === 'revoked',
       stopIf: resumeStopFor(id, live),
     });
     if (failures.includes(STOPPED_BY_SIGN_IN)) {
@@ -195,6 +216,12 @@ export interface WipeDeletedAccountOptions {
    * running for an account the server has just refused.
    */
   stopIf?: () => WipeStop | null;
+  /**
+   * The account STILL EXISTS - a device its owner revoked, wiped of that one account because another
+   * account uses the install (`wipeAccountOfRevokedDevice`). It is then not noted as deleted here:
+   * the account may sign in on this device again.
+   */
+  accountStillExists?: boolean;
 }
 
 /** The ids whose case collision this start already reported - see {@link wipeDeletedAccountLocalData}. */
@@ -213,8 +240,9 @@ export const REFUSED_CASE_COLLISION = 'the account id (it differs from another o
  * Removes what ONE deleted account left on this device: its local message database, its slot of the
  * device-key vault, its platform-keystore entry and its per-account `localStorage` keys. NOT a device
  * reset - another account signed in on the same install keeps its database, its vault slot, the
- * in-app log, the preferences and `mls.bin` (one file per install, which may hold another account's
- * state, so it is deliberately left alone).
+ * in-app log, the preferences and the `mls.bin` slot when it is theirs. On a native install every
+ * MLS state of the deleted account goes (`delete_user_mls_state`): its parked one, and the slot
+ * when the slot's owner record names it and no session is loaded.
  *
  * A sign-out keeps all of this on purpose ("keep the state"); a DELETION is the one exit after which
  * nobody can ever open it again, so leaving it is only a cost: every message row stays under the
@@ -230,7 +258,9 @@ export async function wipeDeletedAccountLocalData(
   userId: string,
   options: WipeDeletedAccountOptions
 ): Promise<string[]> {
-  const tag = `[DEL-LOCAL] ${userId.slice(0, 8)}`;
+  // A revoked device's account still exists: its lines say so (round 8 of the review of #2919).
+  const reason: AccountWipeReason = options.accountStillExists ? 'revoked' : 'deleted';
+  const tag = `${wipeLogTag(reason)} ${userId.slice(0, 8)}`;
   if (!isWipeableAccountId(userId)) {
     console.error(`${tag} refusing to wipe an account id outside the allowlist`);
     return ['the account id'];
@@ -240,7 +270,7 @@ export async function wipeDeletedAccountLocalData(
   // the resume: a stale marker resumed in two web tabs would leave the flag in tab A after the user
   // signed in again from tab B, whose `forgetDeletedAccountOnSignIn` clears only its own process -
   // and tab A would refuse the new account. The resume's own guard is the marker, which tab B drops.
-  if (!options.stopIf) noteDeletedAccountWipeStarted(userId);
+  if (!options.stopIf && !options.accountStillExists) noteDeletedAccountWipeStarted(userId);
   const twins = caseCollidingAccountIdsIn(localStorage, userId);
   if (twins.length > 0) {
     // Kept as owed on purpose: reported at ERROR once per start (the resume and the live wipe may
@@ -283,8 +313,10 @@ export async function wipeDeletedAccountLocalData(
   // The WebView's databases exist on every platform (a phone's MESSAGE store is SQLite, but its
   // outbox blobs are IndexedDB), and are named by the account, so no other account is reachable.
   await step('the local IndexedDB databases', async () => {
+    // A follower tab's handed-over commits: their store closes and never re-creates the database.
+    forgetTabCommitAccount(userId);
     const results = await Promise.all(
-      accountIndexedDbNames(userId).map((name) => deleteIndexedDbByName(name, '[DEL-LOCAL]'))
+      accountIndexedDbNames(userId).map((name) => deleteIndexedDbByName(name, wipeLogTag(reason)))
     );
     if (results.includes(false)) throw new Error('an IndexedDB delete failed or is deferred');
   });
@@ -298,12 +330,35 @@ export async function wipeDeletedAccountLocalData(
       });
       console.log(`${tag} native database: ${removed} file(s) removed`);
     });
+    // Every MLS state of the account (`mls_account_state.rs`): its parked directory, and the slot
+    // ONLY when the slot's owner record names it - never another account's.
+    await step('the parked MLS state', async () => {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const removed = await invoke<number>('delete_user_mls_state', { userId });
+      console.log(`${tag} parked MLS state: ${removed} file(s) removed`);
+    });
     // The push side's plaintext (unsent protos, push-decrypted messages, the bearer push token),
     // removed natively ONLY when `push_context.json` names this account - see `push.rs`.
     await step('the native push files', async () => {
       const { invoke } = await import('@tauri-apps/api/core');
       const removed = await invoke<number>('delete_user_push_files', { userId });
       console.log(`${tag} native push files: ${removed} file(s) removed`);
+    });
+    // The account's Graine seeds in the push mirror: the entries ONLY this account wrote - an entry
+    // another account also wrote keeps that writer. One written before the label (writer unknown)
+    // goes too when no other account lives here, since nothing else will ever remove it for an
+    // account that is gone; with another account here it may be theirs and stays
+    // (`forget_account_graine_seeds`, `push.rs`).
+    await step('the mirrored Graine seeds', async () => {
+      const aloneOnInstall = !(await otherAccountOnInstall(userId, tag));
+      const { invoke } = await import('@tauri-apps/api/core');
+      const removed = await invoke<number>('forget_account_graine_seeds', {
+        userId,
+        aloneOnInstall,
+      });
+      console.log(
+        `${tag} mirrored Graine seeds: ${removed} seed entry(ies) removed from the app's copy (alone on the install: ${aloneOnInstall})`
+      );
     });
     // The notification replies still waiting for the page: ONLY this account's lines, since the file
     // can hold another account's (`delete_user_quick_replies`, `push.rs`). Always 0 off iOS.

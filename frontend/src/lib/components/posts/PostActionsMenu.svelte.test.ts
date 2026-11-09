@@ -13,6 +13,12 @@
 import { it, expect, afterEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import PostActionsMenu from './PostActionsMenu.svelte';
+import { toggleMyRepost } from '$lib/posts/sharePost';
+
+vi.mock('$lib/posts/sharePost', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/posts/sharePost')>()),
+  toggleMyRepost: vi.fn(async (_id: string, repostedByMe: boolean) => !repostedByMe),
+}));
 
 const mounted: (() => void)[] = [];
 
@@ -56,8 +62,9 @@ function mountMenu(props: Partial<Parameters<typeof PostActionsMenu>[1]> = {}) {
   const instance = mount(PostActionsMenu, {
     target: card,
     props: {
-      pinned: false,
+      pinSpaces: [],
       canManage: false,
+      canEdit: false,
       canPin: false,
       canReport: true,
       canUnmaskAnonymous: false,
@@ -147,14 +154,38 @@ it('offers the request to the author, and the cancel of a waiting request, only 
   flushSync();
 
   const items = Array.from(document.body.querySelectorAll('[role="menuitem"]'));
-  const ask = items.find((el) =>
-    el.textContent?.includes("Republier au nom d'une association")
-  ) as HTMLElement;
+  const ask = items.find((el) => el.textContent?.includes('Demander à republier')) as HTMLElement;
   expect(ask).toBeDefined();
   const cancel = items.find((el) => el.textContent?.includes('Annuler la demande de BDA'));
   (cancel as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
   flushSync();
   expect(onWithdrawRequest).toHaveBeenCalledWith('prop-1');
+});
+
+/** The labels of the opened menu's rows. */
+function menuLabels(props: Parameters<typeof mountMenu>[0]): string[] {
+  mountMenu(props).querySelector('button')!.click();
+  flushSync();
+  return Array.from(document.body.querySelectorAll('[role="menuitem"]')).map(
+    (el) => el.textContent ?? ''
+  );
+}
+
+it('draws the bin without the pencil for a moderator: only the author edits (2026-11-02)', () => {
+  const labels = menuLabels({ canManage: true, canEdit: false });
+  expect(labels.some((t) => t.includes('Supprimer le post'))).toBe(true);
+  expect(labels.some((t) => t.includes('Modifier le post'))).toBe(false);
+});
+
+it('draws the pencil for the author', () => {
+  const labels = menuLabels({ canManage: true, canEdit: true });
+  expect(labels.some((t) => t.includes('Modifier le post'))).toBe(true);
+});
+
+it('never lets the pencil follow canManage: the bin alone for a manager not served canEdit', () => {
+  const labels = menuLabels({ canManage: true });
+  expect(labels.some((t) => t.includes('Supprimer le post'))).toBe(true);
+  expect(labels.some((t) => t.includes('Modifier le post'))).toBe(false);
 });
 
 it('offers no request entry by default', () => {
@@ -164,5 +195,88 @@ it('offers no request entry by default', () => {
   const labels = Array.from(document.body.querySelectorAll('[role="menuitem"]')).map(
     (el) => el.textContent ?? ''
   );
-  expect(labels.some((t) => t.includes("Republier au nom d'une association"))).toBe(false);
+  expect(labels.some((t) => t.includes('Demander à republier'))).toBe(false);
+});
+
+function openMenu(props: Parameters<typeof mountMenu>[0]) {
+  mountMenu(props).querySelector('button')!.click();
+  flushSync();
+  return document.body.querySelector('[data-repost-row]') as HTMLElement | null;
+}
+
+it('draws the repost row only when the server granted it or the reader already reposted', () => {
+  expect(openMenu({})).toBeNull();
+});
+
+it('reposts through the shared helper and reports the answer', async () => {
+  const onRepostChange = vi.fn();
+  const row = openMenu({ canRepost: true, onRepostChange });
+  expect(row?.textContent).toContain('Republier pour mes abonnés');
+  row!.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
+  await vi.waitFor(() => expect(onRepostChange).toHaveBeenCalledWith(true));
+  expect(toggleMyRepost).toHaveBeenCalledWith('p1', false);
+});
+
+it('takes the repost back when the reader already made it', async () => {
+  const onRepostChange = vi.fn();
+  const row = openMenu({ repostedByMe: true, onRepostChange });
+  expect(row?.textContent).toContain('Annuler ma republication');
+  row!.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
+  await vi.waitFor(() => expect(onRepostChange).toHaveBeenCalledWith(false));
+  expect(toggleMyRepost).toHaveBeenCalledWith('p1', true);
+});
+
+it('never lets a menu row icon shrink when its label wraps', () => {
+  openMenu({ canRepost: true, canRequestRepublication: true });
+  const rows = Array.from(document.body.querySelectorAll('[role="menuitem"]'));
+  expect(rows.length).toBeGreaterThan(1);
+  for (const row of rows) expect(row.className).toContain('[&>svg]:shrink-0');
+});
+
+/**
+ * WP-PIN: a pin is a promotion PER SPACE. The menu draws one entry per space the server served in
+ * `pinSpaces`; with exactly one it reads as the plain "Epingler", and a pin kept but not shown (a
+ * 4th, "en attente") says so, so its governor can unpin it or leave it.
+ */
+const ICM_SE = {
+  spaceId: 'space-icm',
+  formation: 'ICM',
+  campus: 'saint-etienne',
+  state: null,
+} as const;
+const ISMIN_SE = {
+  spaceId: 'space-ismin',
+  formation: 'ISMIN',
+  campus: 'saint-etienne',
+  state: 'pending',
+} as const;
+
+it('pins directly with one governed space, and names each space when there are several', () => {
+  expect(menuLabels({ canPin: true, pinSpaces: [ICM_SE] }).map((t) => t.trim())).toContain(
+    'Épingler'
+  );
+  while (mounted.length) mounted.pop()!();
+  document.body.innerHTML = '';
+  const labels = menuLabels({ canPin: true, pinSpaces: [ICM_SE, ISMIN_SE] });
+  expect(labels.some((t) => t.includes('Épingler pour ICM'))).toBe(true);
+  expect(labels.some((t) => t.includes('Désépingler pour ISMIN') && t.includes('en attente'))).toBe(
+    true
+  );
+});
+
+it('hands the picked space to onTogglePin', () => {
+  const onTogglePin = vi.fn();
+  mountMenu({ canPin: true, pinSpaces: [ICM_SE, ISMIN_SE], onTogglePin })
+    .querySelector('button')!
+    .click();
+  flushSync();
+  const row = document.body.querySelector('[data-post-pin-space="space-ismin"]') as HTMLElement;
+  row.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
+  flushSync();
+  expect(onTogglePin).toHaveBeenCalledWith(ISMIN_SE);
+});
+
+it('offers no pin entry when the server granted none', () => {
+  const labels = menuLabels({ canPin: false, pinSpaces: [ICM_SE] });
+  expect(labels.some((t) => t.includes('pingler'))).toBe(false);
 });

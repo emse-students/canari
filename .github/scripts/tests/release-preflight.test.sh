@@ -232,12 +232,12 @@ PARTIAL="$(PATH="$STUB:$PATH" VERSION=1.5.1-alpha.5 TARGET_SHA=0123456789abcdef 
   bash "$HERE/../release-preflight.sh" 2>&1)"
 PARTIAL_EXIT=$?
 rm -rf "$STUB"
-if [ "$PARTIAL_EXIT" -ne 0 ] && printf '%s' "$PARTIAL" | grep -q 'REFUSE  could not tell whether a newer release exists - the tag list could not be read'; then
+if [ "$PARTIAL_EXIT" -ne 0 ] && grep -q 'REFUSE  could not tell whether a newer release exists - the tag list could not be read' <<<"$PARTIAL"; then
   pass 'a tag listing that fails after page one refuses the release'
 else
   fail "a failed tag listing was not refused (exit $PARTIAL_EXIT): $PARTIAL"
 fi
-if printf '%s' "$PARTIAL" | grep -q 'page 2 lost'; then
+if grep -q 'page 2 lost' <<<"$PARTIAL"; then
   pass "and the refusal carries gh's own error"
 else
   fail "the refusal dropped gh's error: $PARTIAL"
@@ -259,7 +259,7 @@ chmod +x "$STUB/gh"
 AFTER_STABLE="$(PATH="$STUB:$PATH" VERSION=1.5.1-alpha.6 TARGET_SHA=0123456789abcdef REPO=o/r \
   bash "$HERE/../release-preflight.sh" 2>&1)"
 rm -rf "$STUB"
-if printf '%s' "$AFTER_STABLE" | grep -q 'gh release create v1.5.2-alpha.1 --prerelease'; then
+if grep -q 'gh release create v1.5.2-alpha.1 --prerelease' <<<"$AFTER_STABLE"; then
   pass "after this version's stable shipped, the refusal names the next patch's alpha.1"
 else
   fail "the refusal after the stable does not name v1.5.2-alpha.1: $AFTER_STABLE"
@@ -268,7 +268,7 @@ fi
 # And the gate is WIRED: a classifier nobody calls protects nothing.
 GATE2B="$(sed -n "/^if \[ \"\$KIND\" = 'prerelease' \]; then/,/^fi/p" "$HERE/../release-preflight.sh")"
 for needle in 'matching-refs/tags/v' 'classify_prerelease_currency' 'scripts/bump-app-version.sh' 'cut a NEW pre-release'; do
-  if printf '%s' "$GATE2B" | grep -qF "$needle"; then
+  if grep -qF "$needle" <<<"$GATE2B"; then
     pass "the preflight's pre-release currency check carries: $needle"
   else
     fail "the preflight's pre-release currency check no longer carries: $needle"
@@ -283,7 +283,7 @@ printf '\ngate 3 explains the admin-merge refusal\n'
 PREFLIGHT="$HERE/../release-preflight.sh"
 GATE3="$(sed -n "/never ran on/,/^    ;;/p" "$PREFLIGHT")"
 for needle in 'ADMIN-MERGED' 'own CI' 'gh run list --branch main' 'gh run rerun' 'no new tag'; do
-  if printf '%s' "$GATE3" | grep -qF "$needle"; then
+  if grep -qF "$needle" <<<"$GATE3"; then
     pass "the 'never ran' refusal mentions: $needle"
   else
     fail "the 'never ran' refusal no longer mentions: $needle"

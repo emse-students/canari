@@ -1,6 +1,7 @@
 package fr.emse.canari
 
 import android.content.Context
+import fr.emse.canari.push.PushContextVerdict
 import org.json.JSONObject
 import java.io.File
 
@@ -47,30 +48,48 @@ object MlsContextLoader {
     fun tauriDataDir(context: Context): File = context.dataDir
 
     /**
-     * Loads push_context.json from the Tauri directory (app_data_dir).
-     * Returns null if the file is absent or if a required field is empty/missing.
+     * What reading push_context.json gave: the context, or the [PushContextVerdict] saying why there
+     * is none - "absent" and "invalid: baseUrl missing" are different defects, so a caller that logs
+     * a refusal logs [PushContextVerdict.describe], never a line conflating the two.
      */
-    fun loadPushContext(context: Context): PushContext? {
+    class PushContextRead(val context: PushContext?, val verdict: PushContextVerdict)
+
+    /**
+     * Loads push_context.json from the Tauri directory (app_data_dir), classified.
+     * The context is null unless the verdict is [PushContextVerdict.Usable].
+     */
+    fun readPushContext(context: Context): PushContextRead {
         val file = File(tauriDataDir(context), "push_context.json")
-        if (!file.exists()) return null
-        return try {
-            val j = JSONObject(file.readText())
-            val userId   = j.optString("userId").takeIf   { it.isNotEmpty() } ?: return null
-            val deviceId = j.optString("deviceId").takeIf { it.isNotEmpty() } ?: return null
-            val baseUrl  = j.optString("baseUrl").takeIf  { it.isNotEmpty() } ?: return null
-            // WP-SEC-1: the device key is no longer in the JSON; source it from the Keystore.
-            // An empty key means the keystore is unavailable — the push falls back to the
-            // generic text, but that is the acceptable one-push cost (see B5 migration).
-            val deviceKeyB64 = MlsDeviceKeyStore.retrieve(context, userId, deviceId) ?: ""
-            PushContext(
-                userId = userId,
-                deviceId = deviceId,
-                baseUrl = baseUrl,
-                deviceKeyB64 = deviceKeyB64,
-                locale = j.optString("locale"),
-            )
-        } catch (_: Exception) { null }
+        if (!file.exists()) return PushContextRead(null, PushContextVerdict.Absent)
+        val j = try {
+            JSONObject(file.readText())
+        } catch (e: Exception) {
+            return PushContextRead(null, PushContextVerdict.Unreadable(e.javaClass.simpleName))
+        }
+        val verdict = PushContextVerdict.of { j.optString(it) }
+        if (verdict != PushContextVerdict.Usable) return PushContextRead(null, verdict)
+        val userId = j.optString("userId")
+        val deviceId = j.optString("deviceId")
+        // WP-SEC-1: the device key is no longer in the JSON; source it from the Keystore.
+        // An empty key means the keystore is unavailable — the push falls back to the
+        // generic text, but that is the acceptable one-push cost (see B5 migration).
+        val deviceKeyB64 = MlsDeviceKeyStore.retrieve(context, userId, deviceId) ?: ""
+        val ctx = PushContext(
+            userId = userId,
+            deviceId = deviceId,
+            baseUrl = j.optString("baseUrl"),
+            deviceKeyB64 = deviceKeyB64,
+            locale = j.optString("locale"),
+        )
+        return PushContextRead(ctx, verdict)
     }
+
+    /**
+     * Loads push_context.json from the Tauri directory (app_data_dir).
+     * Returns null if the file is absent or if a required field is empty/missing - a caller that
+     * LOGS that null uses [readPushContext] instead, which says which.
+     */
+    fun loadPushContext(context: Context): PushContext? = readPushContext(context).context
 
     /**
      * Reads just the `userId` field of push_context.json.

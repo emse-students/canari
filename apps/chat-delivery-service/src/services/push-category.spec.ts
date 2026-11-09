@@ -28,6 +28,7 @@ describe('categoryOfDataPush', () => {
     ['social_live_started', 'posts'],
     ['social_follow_request', 'follows'],
     ['social_follow_accepted', 'follows'],
+    ['social_birthday', 'birthdays'],
     ['chat_join_ask', 'messages'],
     ['form_opening_soon', 'forms'],
     ['form_open', 'forms'],
@@ -41,10 +42,13 @@ describe('categoryOfDataPush', () => {
     ['event_updated', 'events'],
     ['event_deleted', 'events'],
     ['event_pending', 'events'],
+    ['event_pending_coorganiser', 'events'],
     ['social_booking_cancelled', 'bookings'],
     ['social_booking_withdrawn', 'bookings'],
     ['social_booking_added', 'bookings'],
     ['social_booking_reminder', 'bookings'],
+    ['social_booking_changed', 'bookings'],
+    ['social_booking_removed', 'bookings'],
   ])('files contentKey %s under %s', (contentKey, expected) => {
     expect(categoryOfDataPush({ type: 'social', contentKey })).toBe(expected);
   });

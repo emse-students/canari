@@ -31,8 +31,8 @@ vi.mock('$lib/utils/users/displayName', () => ({
   resolveUserDisplayName: async (id: string) => `User ${id}`,
 }));
 vi.mock('$lib/utils/userAvatarCache', () => ({
-  resolveUserAvatarDisplayUrl: async () => ({ kind: 'none' as const }),
-  releaseUserAvatarDisplayUrl: () => {},
+  resolveUserAvatarDisplay: async () => ({ kind: 'none' as const }),
+  releaseUserAvatarDisplay: () => {},
 }));
 
 const mounted: (() => void)[] = [];
@@ -151,8 +151,10 @@ describe('older comments, read page by page (through the real ledger)', () => {
     vi.mocked(apiFetch).mockImplementation(async (url: string, init?: RequestInit) => {
       if (url.includes('/api/posts/p1/comments') && (init?.method ?? 'GET') === 'GET') {
         const comments = await pending;
+        // JSON, as the service answers: a 2xx without it is an edge's page (`socialRequest`).
         return new Response(JSON.stringify({ comments, nextCursor: null, hasMore: false }), {
           status: 200,
+          headers: { 'content-type': 'application/json' },
         });
       }
       return new Promise<Response>(() => {});

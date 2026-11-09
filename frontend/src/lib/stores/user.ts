@@ -7,6 +7,8 @@ import { refusalOrigin, type ResponseOrigin } from '$lib/utils/apiJson';
 import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { clearWorkspaceSnapshots } from '$lib/utils/chat/workspaceSnapshot';
 import { forgetStoredFeeds } from '$lib/posts/feedStoreEpoch';
+import { forgetConversationNicknames } from '$lib/utils/users/conversationNicknames.svelte';
+import { currentUserId as signedInUserId } from '$lib/stores/userState.svelte';
 // The notepad envelope is the same on both sides (AES-256-GCM under a hex key
 // held by its owner), so the association vault's implementation is reused rather
 // than copied - one envelope, one place to get right.
@@ -113,6 +115,10 @@ export function clearUserLocally(): void {
   // The stored feed pages end with it, by the same rule and in the same call: their epoch goes now,
   // their sealed bytes at the next read or write of the account's store (`feedStoreEpoch.ts`).
   forgetStoredFeeds('sign-out');
+  // The nickname registers too: names other members set, text about people that a sign-out must
+  // not leave on a shared install (review of #3177).
+  const leaving = signedInUserId();
+  if (leaving) forgetConversationNicknames(leaving);
   setCurrentUserId(null);
 }
 

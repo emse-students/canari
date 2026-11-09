@@ -1,6 +1,8 @@
 // The bench build's observables, absent from every store build; the pure halves also compile for
 // the host test run so CI pins them without the feature (see the module's own comment).
 pub mod at_rest_key;
+// The page's leave flush held open by an iOS background task (2026-11-02); a no-op elsewhere.
+pub mod background_flush;
 #[cfg(any(feature = "bench-observables", test))]
 pub mod bench;
 // The iOS Share Extension's share, carried out of the App Group; the pure halves compile for the
@@ -11,6 +13,10 @@ pub mod cookies;
 pub mod display_names;
 pub mod handoff;
 pub mod mls;
+// One MLS state per account on a shared install: the slot, the parked states, the switch.
+pub mod mls_account_state;
+// The Android push service's warnings and errors, carried into the app log (2026-11-04).
+pub mod native_push_log;
 pub mod notifications;
 // The iOS notification extension's outcome log, carried into the app log (2026-11-01).
 pub mod nse_outcomes;

@@ -11,10 +11,12 @@ import { applyChannelEdit } from '$lib/utils/chat/channelEdit';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
 import { mergeReadWatermark, withOwnReadAdvanced } from '$lib/utils/chat/readState';
+import { publishReadState } from '$lib/mls-client/tabMessageSync';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import type { MessageHandlerDeps } from './deps';
 import { isJoinAskOutcome } from '../joinAskFrames';
 import { salonGrants } from '$lib/utils/chat/memberRemoval';
+import { applyCommunityNicknameEvent } from '$lib/utils/chat/nicknameActions';
 
 /**
  * Context for handleChannelEvent: MessageHandlerDeps plus the epoch-recovery
@@ -300,6 +302,9 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     onRolePermissionsChanged?.({
       roleId,
       permissions: Array.isArray(data.permissions) ? data.permissions.map(String) : [],
+      // The community's own name for the role: a string, or null for "none - use the default". ABSENT
+      // (a server older than the rename) leaves the name where the last listing put it.
+      label: typeof data.label === 'string' ? data.label : data.label === null ? null : undefined,
     });
     return;
   }
@@ -320,6 +325,13 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
 
   if (event.type === 'workspace.updated') {
     const data = event.data || {};
+    if (data.nickname !== undefined) {
+      // A COMMUNITY NICKNAME CHANGED ("Modifier les pseudos"). It rides this type because every
+      // client knows it - an older one ignores the field - and the event carries nothing else, so
+      // the community entry is not touched.
+      applyCommunityNicknameEvent(String(data.workspaceId || ''), data.nickname);
+      return;
+    }
     onWorkspaceUpdated?.({
       workspaceId: String(data.workspaceId || ''),
       imageMediaId: data.imageMediaId,
@@ -393,7 +405,11 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
             const merged = mergeReadWatermark(convo.readWatermarks, userId, Number(data.at));
             return merged ? { ...convo, readWatermarks: merged } : convo;
           })();
-    if (next !== convo) conversations.set(key, next);
+    if (next !== convo) {
+      conversations.set(key, next);
+      // A follower tab of this browser has no socket: it learns the mark from here (`read_state`).
+      publishReadState(key, userId.toLowerCase(), Number(data.at), 'stamped');
+    }
     return;
   }
 

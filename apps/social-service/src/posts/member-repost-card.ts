@@ -4,7 +4,12 @@ import {
   postVisibleToViewerSql,
 } from '../spaces/reader-spaces';
 import { acceptedFollowSql } from '../follows/follow-status';
-import { FIRST_HAND, repostConsentSql, type RepostConsent } from './member-reposts.service';
+import {
+  FIRST_HAND,
+  repostConsentSql,
+  repostShownToAuthorSql,
+  type RepostConsent,
+} from './member-reposts.service';
 
 /** A person named on a card as having reposted it (WP-F6). */
 export interface Reposter {
@@ -22,6 +27,11 @@ export interface MemberRepostContext {
   reposters: Map<string, Reposter[]>;
   /** Per post the reader AUTHORED (personal, not anonymous), its consent. */
   consent: Map<string, RepostConsent>;
+  /**
+   * Per post the reader AUTHORED (personal, not anonymous), how many reposts of it the author's
+   * list shows (`repostShownToAuthorSql`) - the menu's "Republie par N personnes".
+   */
+  reposterCount: Map<string, number>;
 }
 
 /** The context of a reader who holds nothing. */
@@ -30,6 +40,7 @@ export const EMPTY_MEMBER_REPOST_CONTEXT: MemberRepostContext = {
   mine: new Set(),
   reposters: new Map(),
   consent: new Map(),
+  reposterCount: new Map(),
 };
 
 type Runner = { query: (sql: string, params?: unknown[]) => Promise<unknown> };
@@ -60,6 +71,9 @@ export async function memberRepostContext(
                 AND NOT COALESCE(posts.anonymous, false)) AS own,
               posts."allowReposts" AS override,
               ${repostConsentSql('posts')} AS consents,
+              CASE WHEN posts."authorId" = $2 THEN (SELECT count(*)::int FROM member_reposts mc_cnt
+                 JOIN users mc_cnt_u ON mc_cnt_u.id = mc_cnt."reposterId"
+                WHERE ${repostShownToAuthorSql('posts', 'mc_cnt', 'mc_cnt_u')}) END AS "reposterCount",
               (NOT COALESCE(posts.anonymous, false)
                 AND NOT COALESCE(posts."hiddenByModeration", false)
                 AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= now())
@@ -92,6 +106,7 @@ export async function memberRepostContext(
     mine: new Set(),
     reposters: new Map(),
     consent: new Map(),
+    reposterCount: new Map(),
   };
   const rows = Array.isArray(state)
     ? (state as {
@@ -100,6 +115,7 @@ export async function memberRepostContext(
         own: boolean;
         override: boolean | null;
         consents: boolean;
+        reposterCount: number;
         repostable: boolean;
       }[])
     : [];
@@ -108,6 +124,7 @@ export async function memberRepostContext(
     else if (row.repostable) out.repostable.add(row.id);
     if (row.own) {
       out.consent.set(row.id, { override: row.override ?? null, effective: row.consents === true });
+      out.reposterCount.set(row.id, Number(row.reposterCount) || 0);
     }
   }
   const names = Array.isArray(named)

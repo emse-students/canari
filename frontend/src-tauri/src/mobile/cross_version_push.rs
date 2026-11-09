@@ -562,4 +562,101 @@ mod through_the_mirror {
         // Opened for whoever it names, so nothing proved the author: a banner names nobody.
         assert_eq!(info["authorProven"], false);
     }
+
+    /// Opens `plaintext`, sealed today as a v1 row of the mirrored session, through the mirror.
+    fn open_v1_sealed(tag: &str, plaintext: &[u8], tamper: bool) -> serde_json::Value {
+        use aes_gcm::aead::{Aead, KeyInit};
+        use aes_gcm::{Aes256Gcm, Key, Nonce};
+        let key = derive_message_key(&GRAINE_SEED, GRAINE_SESSION, GRAINE_INDEX).expect("key");
+        let mut sealed = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key))
+            .encrypt(Nonce::from_slice(&NONCE), plaintext)
+            .expect("seal");
+        if tamper {
+            sealed[0] ^= 0x01;
+        }
+        let dir = mirror(
+            tag,
+            "v1-salon",
+            serde_json::json!({ "seed": STANDARD.encode(GRAINE_SEED), "createdAt": 1, "firstIndex": 0 }),
+        );
+        open_graine_push(
+            &dir,
+            Some(&MIRROR_KEY),
+            &GrainePush {
+                channel_id: "v1-salon",
+                session_id: GRAINE_SESSION,
+                index: GRAINE_INDEX,
+                sender_id: "anyone",
+                nonce_b64: &STANDARD.encode(NONCE),
+                ciphertext_b64: &STANDARD.encode(sealed),
+                signature_b64: "",
+            },
+            PushLanguage::French,
+        )
+    }
+
+    /// `AppMessage { reaction (3): ReactionMsg { message_id (1), emoji (2), removed (4) = 1 } }`.
+    fn withdrawn_reaction() -> Vec<u8> {
+        let mut reaction = vec![0x0a, 6];
+        reaction.extend_from_slice(b"target");
+        reaction.extend_from_slice(&[0x12, 4]);
+        reaction.extend_from_slice("\u{1f44d}".as_bytes());
+        reaction.extend_from_slice(&[0x20, 0x01]);
+        let mut msg = vec![0x1a, reaction.len() as u8];
+        msg.extend_from_slice(&reaction);
+        msg
+    }
+
+    /// A withdrawn reaction is not a banner, and says so (2026-11-04): it used to come back as
+    /// `graine-open-failed`, the same token as a ciphertext the seed does not open.
+    #[test]
+    fn a_v1_row_taking_a_reaction_back_is_silent_not_a_failed_open() {
+        let info = open_v1_sealed("v1-withdrawn", &withdrawn_reaction(), false);
+        assert_eq!(info["ok"], false);
+        assert_eq!(info["reason"], "reaction-withdrawn");
+    }
+
+    #[test]
+    fn a_v1_ciphertext_the_seed_does_not_open_is_a_failed_open() {
+        let plaintext = build_text_app_message(MESSAGE_ID, SENT_AT, TEXT);
+        let info = open_v1_sealed("v1-tampered", &plaintext, true);
+        assert_eq!(info["reason"], "graine-open-failed");
+    }
+
+    /// Every token `open_graine_push` can answer is one the blind-banner report allows, or one the
+    /// push treats as no banner at all (`libs/contracts/blind-banner-terms.json`). Read from the
+    /// source, so a new `refused("...")` added without the contract fails here.
+    #[test]
+    fn every_salon_open_refusal_is_in_the_blind_banner_contract() {
+        let contract: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../libs/contracts/blind-banner-terms.json"
+        ))
+        .expect("contract");
+        let allowed: Vec<&str> = ["refused", "silent"]
+            .iter()
+            .flat_map(|k| contract[*k].as_array().expect("list").iter())
+            .map(|v| v.as_str().expect("token"))
+            .collect();
+        let source = include_str!("background.rs");
+        let start = source
+            .find("pub fn open_graine_push(")
+            .expect("open_graine_push");
+        let end = source[start..]
+            .find("/// Decrypts an end-to-end-encrypted media blob")
+            .expect("the end of the salon open")
+            + start;
+        let mut seen = 0;
+        for piece in source[start..end].split("refused(\"").skip(1) {
+            let token = &piece[..piece.find('"').expect("closing quote")];
+            assert!(
+                allowed.contains(&token),
+                "{token} is not in the blind-banner contract"
+            );
+            seen += 1;
+        }
+        assert!(
+            seen >= 10,
+            "the scan found only {seen} refusals - did the source move?"
+        );
+    }
 }

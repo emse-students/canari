@@ -125,7 +125,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       false,
       undefined,
       false,
-      { senderDeviceId: 'peer-phone' }
+      { senderDeviceId: 'peer-phone', channel: 'live', aheadOfMailbox: true }
     );
 
     // The branch has to come FIRST. This group has no conversation, so the known-group path would
@@ -138,7 +138,10 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       distributionGroup,
       'peer',
       new Uint8Array([1, 2]),
-      'peer-phone'
+      'peer-phone',
+      // The arrival stamp too: a live frame that arrived before the mailbox was listed on this link
+      // steps no commit when it is ahead of the local epoch (`routeDistributionFrame`).
+      true
     );
     expect(deps.addMessageToChat).not.toHaveBeenCalled();
   });
@@ -1335,18 +1338,24 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
   describe('the device key is read at each write, never captured at setup', () => {
     it('seals a reaction arriving after the key changed under the NEW key', async () => {
       let currentKey = 'key-before-pin-change';
-      const updateMessage = vi.fn().mockResolvedValue(undefined);
+      const mergeMessages = vi.fn(
+        async (_c: string, ids: string[], merge: (row: any) => any, _key: string) =>
+          merge(target) ? new Set(ids) : new Set()
+      );
+      const target = { id: 'm-target', senderId: 'user-a', content: 'hi' } as any;
       const conversations = createTestConversations([
-        [
-          groupId,
-          emptyConversation(groupId, {
-            messages: [{ id: 'm-target', senderId: 'user-a', content: 'hi' } as any],
-          }),
-        ],
+        [groupId, emptyConversation(groupId, { messages: [target] })],
       ]);
       const deps = baseDeps({
         conversations,
-        storage: { updateMessage },
+        // Shown AND stored: a reaction is written at rest only to a row that stands there.
+        storage: {
+          mergeMessages,
+          getMessagesByIds: vi.fn(async () => ({
+            rows: new Map([['m-target', target]]),
+            unreadable: new Set(),
+          })),
+        },
         deviceKey: () => currentKey,
       });
       const mls = deps.mlsService as any;
@@ -1366,8 +1375,8 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       const ok = await onMsg('peer', new Uint8Array([1]), groupId, false, undefined, false);
 
       expect(ok).toBe(true);
-      expect(updateMessage).toHaveBeenCalledTimes(1);
-      expect(updateMessage.mock.calls[0][2]).toBe('key-after-pin-change');
+      expect(mergeMessages).toHaveBeenCalledTimes(1);
+      expect(mergeMessages.mock.calls[0][3]).toBe('key-after-pin-change');
     });
 
     it('republishes key material under the NEW key after a PIN change', async () => {

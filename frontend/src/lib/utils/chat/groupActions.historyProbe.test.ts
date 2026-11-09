@@ -21,6 +21,8 @@ function storageHolding(count: number | Error, messages: StoredMessage[] = []): 
         count instanceof Error ? Promise.reject(count) : Promise.resolve(count)
       ),
     getMessages: vi.fn().mockResolvedValue(messages),
+    // The window read: these fixtures hold nothing below any window they are asked for.
+    getMessagesSince: vi.fn().mockResolvedValue(messages),
     getConversation: vi.fn().mockResolvedValue(undefined),
   } as unknown as IStorage;
 }

@@ -35,7 +35,6 @@ describe("PostsService feed queries carry a post's linked calendar event", () =>
     polls: [],
     forms: [],
     reactions: [],
-    pinned: false,
     scheduledAt: null,
     hiddenByModeration: false,
     commentCount: 0,
@@ -65,6 +64,8 @@ describe("PostsService feed queries carry a post's linked calendar event", () =>
     const associations = {
       mayActOnAny: jest.fn(() => Promise.resolve(new Set<string>())),
       isContentModerator: jest.fn(() => Promise.resolve(false)),
+      moderatedPostIds: () => Promise.resolve(new Set<string>()),
+      mayModeratePost: () => Promise.resolve(false),
       findValidatedCalendarEventSummary,
     };
     const service = new PostsService(

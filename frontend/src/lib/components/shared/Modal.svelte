@@ -3,11 +3,12 @@
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { Snippet } from 'svelte';
   import { X } from '@lucide/svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import { fly } from 'svelte/transition';
   import { portal } from '$lib/actions/portal';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { swipeBack } from '$lib/actions/swipeBack';
-  import { insideViewerLayer } from '$lib/utils/viewerLayer';
+  import { insideViewerLayer, markViewerLayer } from '$lib/utils/viewerLayer';
   import {
     pushHistoryOverlay,
     closeHistoryOverlayFromUi,
@@ -113,6 +114,9 @@
 
   /** Opened from inside a full-screen viewer, the modal rung is under it (`utils/viewerLayer.ts`). */
   const inViewer = insideViewerLayer();
+  // Read BEFORE marking: this modal sits on its own rung, and only what it opens clears it (the
+  // GIF picker of a comment box in a post's comments dialog sat UNDER it, on `--z-sheet`).
+  markViewerLayer();
 
   const backdropAlignClass = $derived(
     fullViewport || topAnchored || phoneFullScreen
@@ -300,13 +304,9 @@
           >
             <h2 class="text-cn-dark text-base font-semibold">{title}</h2>
             {#if dismissible}
-              <button
-                onclick={dismiss}
-                class="ui-icon-button hover:bg-cn-bg text-text-muted hover:text-cn-dark rounded-lg transition-colors"
-                aria-label={m.common_close_label()}
-              >
+              <Button variant="ghost" icon onclick={dismiss} aria-label={m.common_close_label()}>
                 <X size={16} />
-              </button>
+              </Button>
             {/if}
           </div>
         {/if}

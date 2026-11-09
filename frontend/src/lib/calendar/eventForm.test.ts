@@ -7,6 +7,7 @@ import {
   validateEventForm,
   withCoOrganiserStates,
   loadCoOrganiserFields,
+  withdrawalCoOwnerIds,
   type EventFormValues,
 } from './eventForm';
 import { toDatetimeLocalValue } from '$lib/utils/dates';
@@ -26,12 +27,16 @@ const BASE: EventFormValues = {
   start: '2026-10-06T18:00',
   end: '2026-10-06T23:00',
   kind: 'break',
+  presentation: 'association',
   linkedFormId: 'form-1',
   coOwnerIds: ['asso-2'],
   coOwnersLoad: 'ready',
   coOwnerStates: [],
   targetAssociationId: 'asso-1',
+  writeSide: 'organiser',
 };
+
+const SIDE_ORGANISER = () => Promise.resolve({ side: 'organiser' as const });
 
 describe('validateEventForm', () => {
   it('asks for an association first, but only where one is chosen', () => {
@@ -91,6 +96,18 @@ describe('toUpdatePayload', () => {
     expect(payload.linkedFormId).toBeNull();
   });
 
+  // The form link is the organiser's: a partner's save carries text only, even on a surface that
+  // may link forms, or a partner saving a typo would resend (and the server would refuse) the link.
+  it('sends the linked form for the organiser only', () => {
+    const caps = { canLinkForm: true };
+    expect(toUpdatePayload({ ...BASE, linkedFormId: 'f-1' }, caps).linkedFormId).toBe('f-1');
+    for (const writeSide of ['partner', 'unknown'] as const) {
+      expect(
+        'linkedFormId' in toUpdatePayload({ ...BASE, linkedFormId: 'f-1', writeSide }, caps)
+      ).toBe(false);
+    }
+  });
+
   it('leaves kind alone for a surface that cannot set it', () => {
     // Harmless today, since the server gates on the value CHANGING rather than being sent - but a
     // surface with no kind control resending one is a claim it has no business making.
@@ -104,6 +121,42 @@ describe('toUpdatePayload', () => {
     expect(toUpdatePayload(BASE, {}).coOwnerIds).toEqual(['asso-2']);
     expect('coOwnerIds' in toUpdatePayload({ ...BASE, coOwnersLoad: 'loading' }, {})).toBe(false);
     expect('coOwnerIds' in toUpdatePayload({ ...BASE, coOwnersLoad: 'failed' }, {})).toBe(false);
+  });
+
+  // E2: the date and the partner list are the organiser's. For a partner, or a viewer whose side
+  // never arrived, they are UNSENT, so the save is text and cannot be refused.
+  it('sends the date and the partner list for the organiser only', () => {
+    const organiser = toUpdatePayload(BASE, {});
+    expect(organiser.startsAt).toBeDefined();
+    expect(organiser.coOwnerIds).toEqual(['asso-2']);
+    for (const writeSide of ['partner', 'unknown'] as const) {
+      const payload = toUpdatePayload({ ...BASE, writeSide }, {});
+      expect(payload.title).toBe('Gala');
+      expect('startsAt' in payload).toBe(false);
+      expect('endsAt' in payload).toBe(false);
+      expect('coOwnerIds' in payload).toBe(false);
+    }
+  });
+});
+
+describe('withdrawalCoOwnerIds', () => {
+  const st = (associationId: string, status: 'accepted' | 'pending' | 'refused') => ({
+    associationId,
+    name: associationId,
+    slug: associationId,
+    color: null,
+    logoUrl: null,
+    status,
+    proposalId: null,
+  });
+
+  it('keeps the other partners, pending included, drops the refused and the viewer itself', () => {
+    expect(
+      withdrawalCoOwnerIds(
+        [st('me', 'accepted'), st('a2', 'accepted'), st('a3', 'pending'), st('a4', 'refused')],
+        'me'
+      )
+    ).toEqual(['a2', 'a3']);
   });
 });
 
@@ -133,11 +186,39 @@ describe('withCoOrganiserStates', () => {
 
   it('a failed read leaves the list unsent rather than guessed', async () => {
     const values = { ...BASE, coOwnersLoad: 'loading' as const };
-    const fields = await loadCoOrganiserFields(values, () => Promise.reject(new Error('503')));
+    const fields = await loadCoOrganiserFields(
+      values,
+      () => Promise.reject(new Error('503')),
+      SIDE_ORGANISER
+    );
     expect(fields.coOwnersLoad).toBe('failed');
+    expect(fields.writeSide).toBe('unknown');
     expect('coOwnerIds' in toUpdatePayload({ ...values, ...fields }, {})).toBe(false);
-    const ok = await loadCoOrganiserFields(values, () => Promise.resolve([state('a2', 'pending')]));
-    expect(ok).toMatchObject({ coOwnerIds: ['a2'], coOwnersLoad: 'ready' });
+    const ok = await loadCoOrganiserFields(
+      values,
+      () => Promise.resolve([state('a2', 'pending')]),
+      SIDE_ORGANISER
+    );
+    expect(ok).toMatchObject({ coOwnerIds: ['a2'], coOwnersLoad: 'ready', writeSide: 'organiser' });
+  });
+
+  it('a failed side read is a failed load: the side stays unknown, never guessed', async () => {
+    const values = { ...BASE, coOwnersLoad: 'loading' as const, writeSide: 'unknown' as const };
+    const fields = await loadCoOrganiserFields(
+      values,
+      () => Promise.resolve([state('a2', 'pending')]),
+      () => Promise.reject(new Error('503'))
+    );
+    expect(fields).toMatchObject({ coOwnersLoad: 'failed', writeSide: 'unknown' });
+  });
+
+  it('carries the partner side the server named', async () => {
+    const fields = await loadCoOrganiserFields(
+      { ...BASE, coOwnersLoad: 'loading', writeSide: 'unknown' },
+      () => Promise.resolve([]),
+      () => Promise.resolve({ side: 'partner' })
+    );
+    expect(fields.writeSide).toBe('partner');
   });
 });
 
@@ -198,6 +279,8 @@ describe('eventFormValuesFrom', () => {
       // Not sendable until the states are read (D39).
       coOwnersLoad: 'loading',
       targetAssociationId: 'asso-1',
+      // An existing event's side is the server's to say (E2).
+      writeSide: 'unknown',
     });
   });
 

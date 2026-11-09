@@ -93,10 +93,10 @@ Every filter the feed has applies (blocked authors, moderation-hidden, promo gat
 
 **`singlePhotos=true` (with `kind=reel`, 2026-10-19)** adds the posts whose ONLY content is one
 picture - the photo pages of the CanaReels viewer ([client half](../frontend/modules/reels.md#the-rail-the-comments-sheet-and-the-photo-pages-user-2026-10-19-instagrams-reels)).
-The clause is `SINGLE_PHOTO_POST_SQL` (`posts/single-photo-sql.ts`): exactly one element in
+The clause is `SINGLE_PHOTO_POST_SQL` (`posts/full-screen-post-sql.ts`): exactly one element in
 `images`, typed `image` (or untyped with an `image/` mime type, a legacy row), no poll, no form, no
 attached form, no linked calendar event, no `http(s)://` in the text (whose preview the page would
-drop). A column holding JSON `null` or a scalar counts as empty through a `CASE` on
+drop; allowed since 2026-11-06 under `withLinks`, below). A column holding JSON `null` or a scalar counts as empty through a `CASE` on
 `jsonb_typeof` - `jsonb_array_length` raises on it and would fail the page. It is OR-ed into the
 reel filter of every feed arm, behind the same visibility rules, and keys its own cache entry.
 Without `kind=reel` it means nothing. **An older server strips the unknown parameter**
@@ -105,7 +105,76 @@ shows no photo pages. **`kind=reel` is ordered by `publishedAt` alone** (`listOr
 a feed concept and does not head the CanaReels list. Every `listPosts` and `searchPosts` order ends
 in `posts.id DESC`, so posts published at the same instant (scheduled ones) can neither repeat nor
 be skipped across `OFFSET` pages; the post an event card links back to is picked the same way. Pinned by `posts.service.reels.spec.ts` (every
-arm) and `single-photo-sql.integration.spec.ts` (the `jsonb` arithmetic, on a real PostgreSQL).
+arm) and `full-screen-post-sql.integration.spec.ts` (the `jsonb` arithmetic, on a real PostgreSQL).
+
+**`singleMedia=true` (with `kind=reel`, 2026-11-06)** is the same list with ONE VIDEO too: the posts
+whose only content is one picture OR one video, a video not filmed with the Canari camera (owner:
+*a feed post of a single video exists and does not appear*). The clause is `SINGLE_MEDIA_POST_SQL`
+(same file): the picture rule above, OR-ed with the same rule on a `video`-typed (or untyped with a
+`video/` mime type) attachment, with the SAME exclusions (poll, form, attached form, linked event,
+link in the text). It wins over `singlePhotos` when both are sent, and **`singlePhotos` stays
+served, pictures only** (`singleMediaModeOf`): an installed client keeps asking for it and its
+`fullScreenPageOf` would draw a foreign video as a reel and log an accusation, so it must never
+receive one. The current client sends BOTH (`buildListPostsSearchParams`), so a server that does
+not know `singleMedia` still serves the pictures. The cache key carries `+photos` or `+media`.
+**A video post never expires**: only a `kind = 'reel'` row has an `expiresAt`, and the live-reel
+clause (`posts.kind <> 'reel' OR "expiresAt" > NOW()`) leaves a plain post alone; the viewer draws
+it as a `reel` page (`fullScreenPageOf`), so the save button, the rail's reactions and the comments
+sheet read it like any post. Pagination order is unchanged (`publishedAt DESC, id DESC`). Pinned by
+`full-screen-post-sql.integration.spec.ts` (both clauses on a real PostgreSQL, a video with each
+exclusion, a legacy video by mime type) and `posts.service.reels.spec.ts` (the wiring in every arm,
+the precedence, and "means nothing without `kind=reel`").
+
+**`multiMedia=true` (with `kind=reel`, 2026-11-06)** adds the CAROUSELS to that list: the posts of
+**2 to 10 attachments, every one a picture or a video** (each by its `type`, or untyped with an
+`image/` or `video/` mime type), with the same exclusions (owner: *a post of several photos and
+videos, swiped left and right as on Instagram*; [client half](../frontend/modules/reels.md#carousel-pages---a-post-of-several-photos-and-videos-owner-2026-11-06)).
+The clause is `MULTI_MEDIA_POST_SQL` (same file), OR-ed with `SINGLE_MEDIA_POST_SQL` under the mode
+`carousel` (`singleMediaSql`). "Every element" is a `NOT EXISTS` over `jsonb_array_elements`, behind
+a `CASE` on `jsonb_typeof` for the same reason as the length: the function raises on a scalar. A
+file, an audio or an element with neither type nor mime keeps the whole post out; eleven or more
+attachments too (`CAROUSEL_MAX_MEDIA`, Instagram's cap). **Precedence: `multiMedia` > `singleMedia` >
+`singlePhotos`** (`singleMediaModeOf`), and each older switch keeps its meaning, so an installed
+client that sends `singleMedia` alone - and cannot draw a carousel - never receives one. The current
+client sends all three, so a server that does not know `multiMedia` still serves the single pictures
+and videos. The cache key carries `+carousel`. Pinned by `full-screen-post-sql.integration.spec.ts`
+(the bounds 10 and 11, a mix with a caption, a legacy element by mime, a file, an audio, an untyped
+element, each exclusion; the `carousel` mode is exactly the union of the two clauses) and
+`posts.service.reels.spec.ts` (every arm, `singleMedia` alone never answers a carousel, "means nothing
+without `kind=reel`").
+
+**`withLinks=true` (with `multiMedia=true`, 2026-11-06)** lets a post with a LINK in its text in:
+the single and carousel rules above WITHOUT the `http(s)://` clause (owner: *a photo, video or
+carousel post with a link appears in CanaReels, the link clickable in the caption*;
+[client half](../frontend/modules/reels.md#a-post-with-a-link-in-its-text-owner-2026-11-06)).
+Poll, form, attached form and linked event still keep a post out. The clause is
+`LINKED_MEDIA_POST_SQL`, the mode `carousel-links`, the cache-key suffix `+carousel-links`.
+**It means something only with `multiMedia`** (`singleMediaModeOf`): every client built without
+this change (every release through `1.6.6-alpha.1`; the first that sends `withLinks` is
+`1.6.6-alpha.2` at the earliest, the first stable `1.6.6`) drops a post with a link (`fullScreenPageOf` reads it as no page and accuses it), and
+none of them sends `withLinks`, so each keeps the rule it was built for; the switch is not given a
+meaning beside an older one because no client would send that pair. A server that does not know
+`withLinks` strips it and keeps the link out, which the current client reads as before. Pinned by
+`full-screen-post-sql.integration.spec.ts` (the `carousel-links` mode is exactly the `carousel` mode
+plus the three rows whose only extra is a link; poll, form, attached form and event rows stay out)
+and `posts.service.reels.spec.ts` (every arm; `withLinks` without `multiMedia`, and `multiMedia`
+without `withLinks`, keep the link out).
+
+**Saving a feed video (decided 2026-11-06, reversible).** The 2026-10-09 rule *any reel can be
+saved* now covers a feed video shown in the viewer. It is saved under its OWN type, never relabelled
+an MP4: `saveReel.ts` takes the extension and the mime from `ref.mimeType` (mp4, mov, webm, m4v,
+3gp; anything else an mp4) and names it `canari-video-...` rather than `canari-reel-...` (a reel in
+a conversation, with no `kind`, stays `canari-reel-...`). The mime goes down to the native save
+(`save_video`'s optional `mime`, default `video/mp4`, so an older client still works): Android's
+`GalleryPlugin.kt` writes it into MediaStore, and the Rust command renames the staged file to the
+name's extension because iOS Photos reads the container off the extension. **iOS Photos reads no
+WebM, so the rail hides the save for a WebM in the iOS app** (`canSaveVideo`); the web and Android
+keep it.
+
+**The next slide's preload skips a long feed video (decided 2026-11-06).** A feed video is not
+prepared into a reel and may be hundreds of MB; `ReelSlide` preloads the next slide's video only
+when it streams (`encoding: 'segmented-v1'`) or weighs at most 28 MB (`worthPreloading`,
+`REEL_PRELOAD_MAX_BYTES`, the reel cap); any other loads when its slide becomes active.
 
 **An expired reel is never served**, whether the worker has reached it or not: a reel whose
 `expiresAt` has passed is excluded from every read (`GET /api/posts/:id` answers `404`). The client

@@ -25,6 +25,8 @@
     value: string;
     /** Selectable options, in display order. */
     options: PickerOption[];
+    /** Shown in the control while no option matches `value` (nothing chosen yet). */
+    placeholder?: string;
     /** Whether the control is disabled. */
     disabled?: boolean;
     /** Appends a red asterisk to the label. */
@@ -41,6 +43,7 @@
     hint,
     value,
     options,
+    placeholder = '',
     disabled = false,
     required = false,
     class: className = '',
@@ -62,6 +65,7 @@
     id={uniqueId}
     {value}
     {options}
+    {placeholder}
     {disabled}
     {onValueChange}
     label={label ?? ''}

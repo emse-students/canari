@@ -1,4 +1,5 @@
 import { Repository } from 'typeorm';
+import { pinnedForViewerSql } from './space-pins';
 import { PostsService } from './posts.service';
 import { Post } from './entities/post.entity';
 import { RedisService } from '../common/redis/redis.service';
@@ -43,6 +44,8 @@ describe('PostsService feeds of what associations republish', () => {
       {
         mayActOnAny: jest.fn(() => Promise.resolve(new Set<string>())),
         isContentModerator: jest.fn(() => Promise.resolve(false)),
+        moderatedPostIds: () => Promise.resolve(new Set<string>()),
+        mayModeratePost: () => Promise.resolve(false),
       } as unknown as AssociationsService,
       {} as PostNotificationsService,
       { release: jest.fn() } as unknown as PostMediaRetentionService
@@ -67,7 +70,7 @@ describe('PostsService feeds of what associations republish', () => {
       await service.listPosts({ limit: 10, offset: 0, feed: 'associations', viewerUserId: 'v1' });
 
       expect(feed().sql).toContain(
-        `ORDER BY posts.pinned DESC, ${republishedFeedAtSql('$3')} DESC, posts.id DESC`
+        `ORDER BY ${pinnedForViewerSql('posts', '$3')} DESC, ${republishedFeedAtSql('$3')} DESC, posts.id DESC`
       );
     });
 
@@ -134,7 +137,7 @@ describe('PostsService feeds of what associations republish', () => {
       await service.listPosts({ limit: 10, offset: 0, feed: 'followed', viewerUserId: 'v1' });
 
       expect(feed().sql).toContain(
-        `ORDER BY posts.pinned DESC, ${republishedFeedAtSql('$5', '$3', FOLLOWED_REPOST_AT)} DESC, posts.id DESC`
+        `ORDER BY ${pinnedForViewerSql('posts', '$5')} DESC, ${republishedFeedAtSql('$5', '$3', FOLLOWED_REPOST_AT)} DESC, posts.id DESC`
       );
     });
   });
@@ -145,6 +148,22 @@ describe('PostsService feeds of what associations republish', () => {
 
     const { sql } = feed();
     expect(sql).not.toContain('post_republications rf_');
-    expect(sql).toContain('ORDER BY posts.pinned DESC, posts."publishedAt" DESC, posts.id DESC');
+    expect(sql).toContain(
+      `ORDER BY ${pinnedForViewerSql('posts', '$3')} DESC, posts."publishedAt" DESC, posts.id DESC`
+    );
+    // A feed of SPACES (decision 5): neither follower door.
+    expect(sql).toContain(postVisibleToViewerSql('posts', '$3', { followers: false }));
+  });
+
+  it('the CanaReels viewer ("reels") asks the WHOLE predicate, reels only, newest first then id', async () => {
+    const { service, feed } = makeService();
+    // `kind` is not sent: the feed names its kind itself.
+    await service.listPosts({ limit: 10, offset: 0, feed: 'reels', viewerUserId: 'v1' });
+
+    const { sql } = feed();
+    expect(sql).toContain(`AND ${postVisibleToViewerSql('posts', '$3')}`);
+    expect(sql).not.toContain(postVisibleToViewerSql('posts', '$3', { followers: false }));
+    expect(sql).toContain(`AND posts.kind = 'reel'`);
+    expect(sql).toContain('ORDER BY posts."publishedAt" DESC, posts.id DESC');
   });
 });

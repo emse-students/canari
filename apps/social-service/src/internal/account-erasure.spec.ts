@@ -95,6 +95,27 @@ describe('scrubComments', () => {
     expect(scrubComments(null, ME).changed).toBe(false);
   });
 
+  it("prunes a moderation tombstone whose last reply was the account's, and keeps one still answered", () => {
+    const tomb = (id: string) => ({
+      id,
+      parentId: null,
+      text: '',
+      likes: [],
+      removedByModeration: true,
+    });
+    const { comments, changed } = scrubComments(
+      [
+        tomb('t-empty'),
+        comment('mine', ME, 't-empty'),
+        tomb('t-kept'),
+        comment('r', 'x', 't-kept'),
+      ],
+      ME
+    ) as { comments: Array<{ id: string }>; changed: boolean };
+    expect(changed).toBe(true);
+    expect(comments.map((c) => c.id)).toEqual(['t-kept', 'r']);
+  });
+
   it('cannot loop on a cycle in stored data', () => {
     const { comments } = scrubComments(
       [comment('a', ME, 'b'), comment('b', ME, 'a'), comment('r', 'x', 'a')],
@@ -205,7 +226,7 @@ describe('InternalController.deleteUserData', () => {
       }),
       announceErasedPins: jest.fn(async () => 0),
     };
-    const redis = { deleteByPattern: jest.fn(async () => 0) };
+    const redis = { incr: jest.fn(async () => 1), deleteByPattern: jest.fn(async () => 0) };
     const lydiaCashiers = {
       revokeBeforeErasure: jest.fn(opts.revoke ?? (async () => new Set<string>())),
     };

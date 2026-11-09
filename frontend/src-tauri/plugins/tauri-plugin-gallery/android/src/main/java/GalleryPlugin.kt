@@ -49,6 +49,8 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
     class SaveVideoArgs {
         lateinit var path: String
         lateinit var name: String
+        // The container of the video: a reel is an MP4, a feed video may be a mov or a webm.
+        var mime: String? = null
     }
 
     @Command
@@ -90,7 +92,7 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
         val resolver = activity.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.Video.Media.DISPLAY_NAME, args.name)
-            put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+            put(MediaStore.Video.Media.MIME_TYPE, args.mime ?: "video/mp4")
             put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/$ALBUM")
             put(MediaStore.Video.Media.IS_PENDING, 1)
         }
@@ -128,7 +130,7 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
             if (!dir.exists() && !dir.mkdirs()) throw IllegalStateException("cannot create $dir")
             val target = File(dir, args.name)
             File(args.path).copyTo(target, overwrite = true)
-            MediaScannerConnection.scanFile(activity, arrayOf(target.absolutePath), arrayOf("video/mp4"), null)
+            MediaScannerConnection.scanFile(activity, arrayOf(target.absolutePath), arrayOf(args.mime ?: "video/mp4"), null)
             Log.d(TAG, "saveVideo: saved to ${target.absolutePath}")
             invoke.resolve(JSObject().put("status", "saved"))
         } catch (e: Exception) {
@@ -182,6 +184,45 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         send.clipData = ClipData.newRawUri(null, uri)
         openChooser(invoke, send)
+    }
+
+    @InvokeArg
+    class WriteDocumentArgs {
+        lateinit var path: String
+        lateinit var uri: String
+    }
+
+    /**
+     * Copies the staged file at `path` into the document `uri` that the save dialog's
+     * `ACTION_CREATE_DOCUMENT` just created, and answers the bytes written.
+     *
+     * THE STREAM IS THE PROVIDER'S, AND IT IS CLOSED HERE, AFTER THE COPY. The `plugin-fs` write
+     * this replaces took the descriptor out of its `ParcelFileDescriptor` (`detachFd()`), which
+     * tells the provider's close listener "closed" before the first byte: the Downloads provider
+     * recorded the size then - 0 - and kept it. Mode `wt`, as the `plugin-fs` write it replaces
+     * (`truncate: true`): since API 29 a bare `w` is not guaranteed to truncate, and a provider may
+     * hand back an existing document, so an overwrite with `w` could keep stale trailing bytes.
+     */
+    @Command
+    fun writeDocument(invoke: Invoke) {
+        val args = invoke.parseArgs(WriteDocumentArgs::class.java)
+        val source = File(args.path)
+        // Not the URI: it ends with the file's name.
+        Log.d(TAG, "writeDocument: ${source.length()} bytes")
+        offMainThread {
+            try {
+                val uri = Uri.parse(args.uri)
+                val resolver = activity.contentResolver
+                val out = resolver.openOutputStream(uri, "wt")
+                    ?: throw IllegalStateException("the provider gave no output stream")
+                val written = out.use { stream -> source.inputStream().use { it.copyTo(stream) } }
+                Log.d(TAG, "writeDocument: $written bytes written, stream closed")
+                invoke.resolve(JSObject().put("written", written))
+            } catch (e: Exception) {
+                Log.e(TAG, "writeDocument failed", e)
+                invoke.reject("writeDocument failed: ${e.message}")
+            }
+        }
     }
 
     /** Opens the chooser on `send`; resolved once it is shown, whatever the member then picks. */

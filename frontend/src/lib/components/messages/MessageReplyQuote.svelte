@@ -41,8 +41,9 @@
    * author inside the quote; it writes one small muted line above the pair saying who answered
    * whom - "Leon vous a repondu" - with a reply-arrow glyph, and that line is inset to the BUBBLE'S
    * TEXT left edge rather than to the bubble's own edge (measured: arrow at x=165, quote text at
-   * x=160, quote bubble at x=129). Two phrasings cover it ("Nils a repondu" / "Vous avez repondu"): the quoted
-   * bubble right below already shows whose message is answered, so the caption names only the replier.
+   * x=160, quote bubble at x=129). The wording lives in `replyCaption`: when the sender header is already
+   * drawn above (a group's first bubble) the caption drops the replier and names the quoted author
+   * ("A repondu a Bob" / "A repondu a son message"); otherwise it stays self-contained.
    *
    * THE QUOTED AUTHOR'S PROFILE LINK IS GONE, deliberately. It was an `<a>` nested inside the
    * quote's `<button>` - invalid markup, and the reference has no such link either: the whole quote
@@ -56,6 +57,7 @@
     gifPreviewUrl,
   } from '$lib/utils/chat/messageDisplay';
   import { m } from '$lib/paraglide/messages';
+  import { replyCaption } from '$lib/utils/chat/replyCaption';
   import ReplyGifThumb from './ReplyGifThumb.svelte';
 
   interface Props {
@@ -65,21 +67,50 @@
     content: string;
     /** True when the REPLY (not the quote) is the reader's own message. Decides side and palette. */
     isOwn: boolean;
-    /** Pre-resolved display name of the author of the reply, named only when it is not the reader. */
+    /** Pre-resolved given name of the author of the reply, named only when it is not the reader. */
     replierDisplayName: string;
+    /** Author id of the reply. */
+    replierId?: string;
+    /** Author id of the quoted message. */
+    quotedId?: string;
+    /** Pre-resolved given name of the quoted message's author. */
+    quotedDisplayName?: string;
+    /** The reader's id, so a quote of the reader's own message reads "you". */
+    currentUserId?: string;
+    /** True when the sender's name is already drawn above the bubble (see `replyCaption`). */
+    headerShown?: boolean;
     /** Called when the user clicks the quote to navigate to the original message. */
     onNavigateToMessage?: (id: string) => void;
   }
 
-  let { replyId, content, isOwn, replierDisplayName, onNavigateToMessage }: Props = $props();
+  let {
+    replyId,
+    content,
+    isOwn,
+    replierDisplayName,
+    replierId = '',
+    quotedId = '',
+    quotedDisplayName = '',
+    currentUserId = '',
+    headerShown = false,
+    onNavigateToMessage,
+  }: Props = $props();
 
   const previewText = $derived(shortenReplyPreview(content));
   /** Set when the quoted message is a GIF: the quote then draws the picture, never its address. */
   const gifUrl = $derived(gifPreviewUrl(content));
 
-  /** Who answered, in one line: the reader is always "vous", anyone else by given name. */
+  /** Who answered whom, in one line; drops the replier when the header above already names them. */
   const caption = $derived(
-    isOwn ? m.msg_reply_caption_you() : m.msg_reply_caption_other({ name: replierDisplayName })
+    replyCaption({
+      headerShown,
+      isOwn,
+      replierId,
+      quotedId,
+      currentUserId,
+      replierName: replierDisplayName,
+      quotedName: quotedDisplayName,
+    })
   );
 </script>
 

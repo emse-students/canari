@@ -15,10 +15,12 @@
     name: string;
     /** This person's grants only. */
     grants: ReadGrant[];
+    /** Their switch "voit les commentaires" (owner, 2026-11-04), said in one line under the chips. */
+    seesComments: boolean;
     onEdit: () => void;
   }
 
-  let { name, grants, onEdit }: Props = $props();
+  let { name, grants, seesComments, onEdit }: Props = $props();
 
   const groups = $derived(groupGrantsByCampus(grants));
 </script>
@@ -48,6 +50,9 @@
         {/each}
       </dl>
     {/if}
+    <p class="text-text-muted text-xs" data-testid="read-grant-comments-state">
+      {seesComments ? m.readaccess_card_comments_on() : m.readaccess_card_comments_off()}
+    </p>
   </div>
   <button
     type="button"

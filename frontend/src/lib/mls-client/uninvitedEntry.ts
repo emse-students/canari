@@ -83,7 +83,7 @@ export function reportUninvitedEntry(event: DeviceEvent, kind: UninvitedEntryKin
     );
   } else if (kind === 'unvouched-device') {
     console.error(
-      `[MLS] UNINVITED ENTRY group=${event.groupId.slice(0, 8)} entrant=${report.entrant} epoch=${event.epoch} key=${event.keyFingerprint} - a never-seen device of a member admitted itself; no member added it`
+      `[MLS] UNINVITED ENTRY group=${event.groupId.slice(0, 8)} entrant=${report.entrant} epoch=${event.epoch} key=${event.keyFingerprint} - a known device of a member admitted itself under a key other than the one known for it; no member added it`
     );
   } else {
     console.log(

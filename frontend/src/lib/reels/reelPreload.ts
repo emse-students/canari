@@ -6,11 +6,12 @@
  * It mounts no `<video>`: an element would count as an open viewer and claim playback from the reel
  * being watched (`followVideoSound`).
  *
- * NO TWO DOWNLOADS OF ONE REEL. When the reel becomes current BEFORE its preload has finished, the
- * preload is ABORTED rather than left to race the player's own fetch (which streams a segmented video
- * as it arrives) - so a reel is fetched by the preload or by the player, never by both at once. When
- * it has finished, its hold is released: the player retained the same cached URL first, and the pool
- * keeps an unheld URL for minutes anyway.
+ * HAND-OVER AT THE SWIPE. `stop()` releases the preload's HOLD on the shared load
+ * (`mediaBlobCache.ts`), it does not cancel bytes already on the wire: a request that has left the
+ * gate's queue stays joinable, so the player's whole-blob read of the same reel joins it and loses
+ * nothing. A STREAMED segmented video opens its own fetch (`openSegmentedStream`) instead, so the
+ * preload's partial bytes are dropped there. A preload that has finished has its hold given back;
+ * the player retained the same cached URL first, and the pool keeps an unheld URL for minutes anyway.
  */
 import {
   acquireDecryptedMediaBlobUrl,
@@ -29,6 +30,20 @@ const defaultCache: ReelPreloadCache = {
   acquire: acquireDecryptedMediaBlobUrl,
   release: releaseDecryptedMediaBlobUrl,
 };
+
+/**
+ * The most a preload fetches of a video it cannot stream: the reel cap (about 28 MB of ciphertext,
+ * what a reel of the 90 s cap weighs). A FEED VIDEO is not prepared into a reel (owner, 2026-11-06:
+ * a post of one video is drawn as a reel page) and may be hundreds of MB; fetching it whole for a
+ * slide the reader may never reach would cost more than the head start is worth, so it loads when
+ * its slide becomes active.
+ */
+export const REEL_PRELOAD_MAX_BYTES = 28 * 1024 * 1024;
+
+/** Whether the next slide's video is worth fetching ahead: it streams (segmented), or it is reel-sized. */
+export function worthPreloading(ref: Pick<MediaRef, 'encoding' | 'size'>): boolean {
+  return ref.encoding === 'segmented-v1' || ref.size <= REEL_PRELOAD_MAX_BYTES;
+}
 
 /** One reel's preload: started at once, ended by {@link ReelPreload.stop}. */
 export class ReelPreload {

@@ -155,7 +155,7 @@ The gzip fix and its measurement are [section 10](#10-package-status-2026-10-09)
 Warm navigation is cheap and one-RTT deep: the local-first work of 2026-09-23 holds. What this phase
 could NOT measure is the weight of a real feed (20 posts with media), a real salon page (100 rows) and
 a long DM history; the code says: chat images are compressed to **2560 px / q 0.92** and uploaded as ONE
-encrypted blob each (`media.ts:130`), posts to 2048 px, comments to 1280 px; the server cannot make
+encrypted blob each (`media.ts:130`), posts to 1600 px / q 0.85 (2048 px / q 0.92 until 2026-11-06), comments to 1280 px; the server cannot make
 thumbnails of ciphertext, so **a 300 px bubble downloads the full image**; the media route is
 `no-store` (`media.controller.ts:546`) so only the client's blob cache keeps it.
 
@@ -648,9 +648,9 @@ makes long - and one detail page awaits its own data.
 | 0 | **P1** Any upload body over 10 MiB is dropped by the host WAF (403 HTML) and was retried for ever | **BUILT: WP-OFF-8** (8 MiB budget, chunk route above it, a refusal ends the entry with an explicit bubble) | [host-waf-body-limit](../infrastructure/host-waf-body-limit.md) |
 | 1 | **P1** An attachment bubble is blind: no progress, cancel or retry, no deadline on the upload | **BUILT: WP-OFF-8** ([13.4](#134-wp-off-8-built-a-bubble-that-says-how-much-has-gone-and-can-be-ended)) | this page |
 | 2 | **P1** Navigation waits on a profile call (root layout) and on one post (detail page) | **BUILT: WP-NAV-1** (a separate pull request; [posts](modules/posts.md)) | `routes/+layout.ts`, `routes/posts/[postId]` |
-| 3 | **P2** Every failed upload restarts at byte 0; a 50 MB body is ONE request | open for every attachment but one: a CHAT REEL resumes since RC-5 (draft) through media-service's upload sessions, sending only the parts the server lacks ([reels-in-chat](modules/reels-in-chat.md#14-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19)); the general writer is S2 of [media-streaming-upload](../services/media-streaming-upload.md) | [reels-in-chat](modules/reels-in-chat.md), [media-service](../services/media-service.md) |
+| 3 | **P2** Every failed upload restarts at byte 0; a 50 MB body is ONE request | open for every attachment but one: a CHAT REEL resumes since RC-5 (draft) through media-service's upload sessions, sending only the parts the server lacks ([reels-in-chat](modules/reels-in-chat.md#14-what-the-resumable-outbox-rc-5-built-and-what-it-owes-on-devices-2026-10-19)); the general writer is S2 of [media-streaming-upload](../services/media-streaming-upload.md); a FEED POST resumes since 2026-11-06 (its photos and videos one by one, the composer closed at once: [posts](modules/posts.md#the-background-publish-queue)) | [reels-in-chat](modules/reels-in-chat.md), [media-service](../services/media-service.md) |
 | 4 | **P2** The upload holds the conversation's lane and a send slot, so text sent behind a big file waits for it | **BUILT: WP-OFF-9** ([13.8](#138-wp-off-9-built-the-upload-runs-outside-the-lane-2026-10-18)) | this page |
-| 5 | **P2** A salon (channel) attachment blocks the composer with no progress and no cancel (`isUploadingMedia`) | open: it needs WP-OFF-2/3's salon row; `xhrUpload` is ready for it | [backlog](../backlog.md) |
+| 5 | **P2** A salon (channel) attachment blocks the composer with no progress and no cancel (`isUploadingMedia`) | **BUILT 2026-11-02**: drawn at the tap, its row carries the upload (`salonAttachmentSend.ts`) | [chat](modules/chat.md#a-salon-attachment-is-drawn-at-the-tap-and-its-row-carries-its-upload-2026-11-02) |
 | 6 | **P2** The 13 MB file lives in the outbox row and three times in memory per attempt | the file is outside the row since 13.7; RC-5 (draft) adds the raw take in the same store and a second blob slot, so replacing the bytes never overwrites what the committed row names | [reels-in-chat](modules/reels-in-chat.md) |
 | 7 | **P2** First list render waits for the WASM (R7) | diagnosed, not built: WP-W3 | section 10.3 |
 | 8 | **P3** Chat images have no thumbnail, a 300 px bubble downloads the whole blob | open: WP-W7 | section 5 |
@@ -963,7 +963,7 @@ Tests: `outbox.test.ts` ("a text the server keeps failing (5xx)" and "review of 
 
 ## 18. WP-W4, first part: the account-level reads of a boot are shared while in flight (2026-10-18)
 
-`MlsDeliveryApi.joinInFlight` already shared `groups/:id`, `user-members` and `exclusions` (#1806 era). `fetchUserDevices(userId)` (`devices/<id>`, three callers per boot: the pending-invitation sweep, the welcome-request answer, the group reconcile) and `getUserGroups(userId)` (`users/<id>/groups`: conversation load, sweep, reconcile) now join it too, keyed per account. The entry lives exactly as long as the request: no clock, a caller arriving after the answer asks again, a failure rejects every joiner and is not remembered. Test: `mlsDeliveryApi.inFlight.test.ts` (one request for simultaneous askers, accounts kept apart, a failed read not remembered).
+`MlsDeliveryApi.joinInFlight` already shared `groups/:id`, `user-members` and `exclusions` (#1806 era). The account device list (`devices/<id>`) and `getUserGroups(userId)` (`users/<id>/groups`: conversation load, sweep, reconcile) now join it too, keyed per account. The entry lives exactly as long as the request: no clock, a caller arriving after the answer asks again, a failure rejects every joiner and is not remembered. Test: `mlsDeliveryApi.inFlight.test.ts` (one request for simultaneous askers, accounts kept apart, a failed read not remembered). **Since 2026-11-06 only the ROSTER read is joined** (`listUserDevices`, `?peek=1`): the claiming `fetchUserDevices` spends one package per device and is never shared, because two adders on one package build two Welcomes on it ([key-package-pool](../protocols/key-package-pool.md#a-read-is-not-a-claim---the-empty-pool-storm-of-2026-11-06)).
 
 **`POST /api/mls/register-device` on every cold start stays, on purpose.** The handler is not only a registration: it rewrites `createdAt`, which is THIS DEVICE'S LIVENESS CLOCK (`getUserDevices` drops a row older than 30 days, and the clock must be written by the thing whose liveness it measures); it replaces the last-resort package and its `notAfter` (the recovery from an elapsed package); it refreshes `deviceAppVersion`; and it re-creates the `pending` membership in every group the account is in. A durable "last registered" record would starve all four, so conditioning it needs a separate, cheaper heartbeat first - not built.
 
@@ -975,7 +975,7 @@ The community load and the live stream coming back both call `reconcileSalonUnre
 
 The ordering is the join condition. Each caller still runs its own `settleOwedMarks` first (it now returns how many marks the server took). A caller whose flush delivered NOTHING joins the request in flight (`countsInFlight`, one entry keyed by the session generation); a caller whose flush delivered marks, or failed, sends its own, because the request on the wire predates them. **A second condition closes the interleaving where ANOTHER caller delivered the mark**: `salonMarksDeliveredCount()` (`salonReadMarkQueue.ts`) ticks the instant each salon mark is taken, the request records it when it starts, and a joiner joins only if it is unchanged - otherwise a caller owing nothing (A's flush already emptied the queue) would apply counts that predate A's mark and re-raise the badge A cleared. The reconcile token only orders against salon OPENINGS and level changes, so it never protected this. Each joiner keeps its own try/catch, so a failed shared request is reported once per caller, under its own reason. The entry lives exactly as long as the request - no clock, a failure rejects every joiner and is not remembered, and `resetSalonUnread` (session end) drops it so an answer asked for one account is never handed to the next. Each joiner applies the shared answer to its own state with its own tick.
 
-**The recorded-boot counting test**: `mls-client/bootRequestCount.test.ts` runs the boot's concurrent callers (three `devices/<id>` askers, the community load and the live-stream reconnect) through ONE recording `fetch` released by hand - no sleep, no clock - and asserts exactly one `unread-counts` and one `devices` request. Before the change it counted 2 `unread-counts`. Unit cases in `salonUnread.test.ts`: join when nothing was owed, no join after a delivered mark, failure not remembered, no hand-over across a session end.
+**The recorded-boot counting test**: `mls-client/bootRequestCount.test.ts` runs the boot's concurrent callers (three roster readers of `devices/<id>?peek=1`, the community load and the live-stream reconnect) through ONE recording `fetch` released by hand - no sleep, no clock - and asserts exactly one `unread-counts`, one roster `devices` read and no claim. Before the change it counted 2 `unread-counts`. The recording's three `devices/<id>` askers (the sweep, the `welcome_request` answer, the reconcile) read no list since 2026-11-06: the first two claim the one device they add, and only the adders `deviceListClaims.test.ts` allows claim the list. Unit cases in `salonUnread.test.ts`: join when nothing was owed, no join after a delivered mark, failure not remembered, no hand-over across a session end.
 
 ## 20. A catch-up that gets no answer stops, and the mailbox is owed to the reconnect (2026-10-30)
 
@@ -1053,3 +1053,89 @@ without moving reachability; the API's JSON `200`, `403` and `502` do clear it),
 (stall, unproven, stall stays reachable; an unproven answer keeps the in-flight hint quiet), `reachabilityProbe.test.ts` (the same three pages return `false`), `preferencesApi.test.ts` and
 `mlsDeliveryApi.notFromApi.test.ts` (a portal `200` on each write is `NotFromApiError`, the service's
 JSON is done).
+
+## First paint never waits on the network: the boot session question (2026-11-05)
+
+**What the owner saw.** Two users abroad (Australia, India) opened the Android app and got a screen with
+no button at all, from launch; it worked for one of them on mobile data and not on the home box. The
+site answers from far away, only slowly (`GET /api/version` about 3.1 s from an Indian datacenter,
+0.16 s from France), and `canari.emse.fr` has no CDN in front of it.
+
+**Why it was stuck, from the code.** The UI is embedded in the app (`frontendDist`), so the first paint
+needs no network - but `routes/+layout.ts` runs with `ssr = false` and its `load` did
+`await refresh(event.fetch)` whenever no user id was stored (every first launch, every never-signed-in
+install). An SPA draws nothing until the root `load` resolves, and the layout's `onMount` - which is
+what removes the inline splash of `app.html` (a bird on `#000000`) - cannot run before that. The refresh
+runs under `REFRESH_DEADLINE_MS` (20 s) and is re-sent once (`REFRESH_DEADLINE_RESENDS`), so a path that
+hangs held the splash for up to about 40 s, and then sent the user to login on a failure that was a
+transport failure, not an answer. Every other call between launch and paint is already off the critical
+path: the layout's `onMount` calls (`refreshAppVersionCheck`, avatar purge, outbox drain, deleted-account
+guards) are `void`, `hooks.client.ts` does no I/O in `init`, the WASM prefetch is a fire-and-forget on
+the web and absent on Tauri, and no store awaits at import time. **The root `load` was NOT the only
+awaited network call** - SvelteKit renders nothing until EVERY load of a navigation resolves, page
+loads included. Every `+page.ts` and `+layout.ts` under `src/routes` was enumerated (14 files):
+`posts/+page.ts` and `posts/[postId]/+page.ts` awaited `redirectIfNotFeedAudience()`, which on a first
+visit (no remembered verdict) awaited `GET /api/posts/audience`, a token-bound call that joins the same
+hanging refresh - and `/` redirects to `/posts`, so the default route still sat on the splash for about
+45 s with only the root load fixed (measured in Chromium against an API that never answers). The other
+twelve are synchronous (`redirect`, SEO objects, param parsing). The gate now never awaits an unknown
+verdict: the page opens and the redirect to `/chat` is made behind it from the answer
+(`lib/posts/feedAudience.ts`), pinned with the root load and both post loads together under a refresh
+that never resolves.
+
+**The fix.** `+layout.ts` no longer awaits anything. With no stored user it calls `startBootSession`
+(`lib/stores/bootSession.svelte.ts`) and returns; the layout mounts at once, does not mount the page
+underneath (it would fetch with no token) and `components/layout/BootGate.svelte` draws the boot state
+("Connexion a Canari..."). The refresh's own outcome ends it:
+
+| outcome of the refresh | phase | screen |
+| --- | --- | --- |
+| a token, or a sign-in completed meanwhile | `settled` | the page asked for; the background profile check runs as before |
+| a VERDICT that is not a token: the app's own 401/403 (`SessionExpiredError`), an app-origin 4xx in Nest's envelope such as a 404 or 410 (`RefreshFailedError` itself), an identity split, a sign-out | `settled` | login, carrying the page asked for |
+| NOBODY ANSWERED: a transport failure, a deadline, a captive portal's `200 text/html` (`NotFromApiError`, read through `readApiJson`), a `200` whose body was lost after the head (`AnswerBodyLostError`, same helper) | `unreachable`, cause `network` | "Impossible de joindre Canari depuis ce reseau", a retry button and a hint |
+| NO VERDICT, `TransientAnswerError` (extends `RefreshFailedError`): a 5xx, a 408 or a 429 | `unreachable`, cause `server` | "Canari rencontre un probleme": the server OR an intermediary on the path (a proxy, a VPN) answered an error - the client cannot tell a corporate proxy's 502 from the edge's own, so the hint names both and suggests another network |
+| the same, core-service's 503 `MAINTENANCE` (its `code` read from the JSON body as a field, believed on a 503 only) | `unreachable`, cause `maintenance` | the platform gate's maintenance title, and the operator's text (`maintenanceMessage`, a field of the 503 body since 2026-11-06) or the localized default |
+| the same, any other status the EDGE wrote (a WAF's HTML 403, a JSON block page none of our envelopes) | `unreachable`, cause `network` | the network wording: the path refused, not the server |
+
+The population is decided at the THROW in `refresh` (`stores/auth.ts`) from the status and `refusalOrigin`, and read by TYPE (`isSessionQuestionOpen`, `bootUnreachableCause`), never from a message. An edge 5xx or HTML 403 on the boot refresh used to send the user to login, and so did a captive portal's `200` (a `SyntaxError` from a bare `res.json()`); #3052 parked the first, both fixed 2026-11-06. The two readers split on the type: `useChannelWorkspaces` asks again only on `TransientAnswerError` (the plain base `RefreshFailedError` is the app's own 4xx, a verdict asked again for nothing), while `mlsDeliveryApi` wraps the BASE after a delivery 401 as a definitive `DeliveryRenewalFailedError` - the guard's 401 proved the request did nothing, and an unwrapped app 4xx left a commit's stage unknown, blocking the group. The maintenance 503 of the refresh used to CLEAR the refresh cookie, so the session was lost once the maintenance ended - it no longer touches the cookie or the session (2026-11-06).
+
+`unreachable` is derived from the failure event, never from a second timer, and never logs anyone out
+(a status code is an answer, a transport failure is not). It ends on the retry button or on the
+browser's `online` event. The `/f/` and `isSignedOutPath` routes, the `globalSession` short-circuits, the
+PIN/biometric flow (`isLoginInProgress`), `checkSessionUserInBackground` and the OIDC return are
+unchanged: a known user id, or `globalSession.isLoggedIn`, settles the phase without asking. The web
+build and iOS share the same `+layout.ts`, so both get the same behaviour.
+
+**The deadlines are NOT changed.** A shorter first deadline or a parallel send was considered and
+rejected: the re-send exists so a rotation the server made is answered from its 60 s grace (see
+`REFRESH_DEADLINE_MS`), and a slow-but-alive path (3 s) is nowhere near 20 s. What was wrong was not the
+number but that the wait stood in front of the paint; now it stands behind it, and the screen says what
+it is waiting for. Pinned by `routes/firstPaintNeverWaits.test.ts`.
+
+**Review follow-ups (same day).**
+- A link opened while the question is open (a Tauri deep link on a cold start) re-runs the root load; the
+  boot reads the LATEST caller's deps, so login returns to that page, not to `/`.
+- The question can never leave `resolving` behind (a `finally` settles it), and `unreachable` ends when a
+  session is known by another road (another caller's refresh answered, the unlock completed), on the
+  `online` event, on the retry button or on a navigation.
+- The shell is `inert` and the iOS native tab bar hidden while the screen is up; only the one-line state
+  is a live region and focus moves to Retry.
+- `readNativeRefreshToken` (a local plugin-store read before the request, outside the deadline) is NOT
+  bounded: it is not a network call, a bound would be a bare timer with no event behind it, and a hang
+  there is already visible (the boot screen keeps saying it is connecting). If it is ever seen to
+  hang, the fix is in the store call, not a timeout around it.
+- An edge 5xx, an HTML 403 or a portal's `200 text/html` on the refresh was routed to login; fixed 2026-11-06 (see the table above).
+- A refresh `200` whose body is lost (`AnswerBodyLostError`) reads as no answer, which heals where the cookie carries the credential. Where the client carries its own (`X-Canari-Refresh`: iOS, macOS, Linux) it still holds the token the server may have just ROTATED: a retry inside the 60 s rotation grace heals, one after it is revoked as a replay and the user signs in again. Rare and bounded (a retry needs a tap or the `online` event); not worth a mechanism unless it is ever observed - a revoked-replay log line on core-service right after a body loss is what would show it.
+
+**The reading (2026-11-05, Chromium, production web build, every `/api` request hangs forever, fresh isolated
+context, no stored user, first load for `/`, chunks cached for the others).** Time of the first boot screen,
+what the screen said at 5 s, 25 s and 45 s, and when the unreachable screen replaced it:
+
+| route | boot screen from | 5 s | 25 s | 45 s | unreachable from |
+| --- | ---: | --- | --- | --- | --- |
+| `/` (-> `/posts`) | 3.8 s (cold module load, 0.5 s warm) | connecting | connecting | unreachable | 42.5 s |
+| `/chat` | 0.5 s | connecting | connecting | unreachable | 40.3 s |
+| `/posts/<id>` | 0.5 s | connecting | connecting | unreachable | 40.5 s |
+
+Before the change, `/` showed the splash until about 43 s and then login; with only the root load fixed it
+showed the splash until about 47 s. The unreachable screen arrives at the refresh's own two 20 s deadlines.

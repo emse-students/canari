@@ -308,7 +308,7 @@ was no wherever the subject is one of these:
   `buildConversationRow.onePolicy`, `groupSweep`, `fixedPopover`, `GifPickerModal.overlay`,
   `cardGrid`, `postMarkdownBlocks`, `ModalOverlay`, `sidePanelInset`, `sidePanelWidth`,
   `serverProse`, `markupSources`, `feedAudience`, `AssociationTile` (the walls half),
-  `associationsHeader`, and the one inventory case inside `outbox` (exactly three sites raise a
+  `associationsHeader`, and the one inventory case inside `outbox` (exactly four sites raise a
   flush) and `distributionGroup` (three entrances, one per moment). An inventory of CALLERS cannot be
   replaced by calling the callee.
 - **A wiring statement in `sessionAuth.ts` (2,475 lines) or `ChatBackgroundService.svelte` (2,187)**,
@@ -717,3 +717,24 @@ when the upload settled, so a disposed or withdrawn transfer stuck behind a dead
 late event of an aborted transfer (`persist` is deliberately not guarded: a session opened after the
 abort must still reach `openSessions`, which is what releases it). Two cases prove both and fail without
 the code (checked by removing each).
+
+**Third reading, 2026-11-02** (`outbox.reelResume`, "a cancel of an entry PARKED AS FAILED", failing as
+`expected 2 to be greater than or equal to 3` on a branch that already had the second reading's fixes;
+reproduced 1 run in 31 with 48 busy threads and 8 concurrent runs of that one case). **The cause was in
+the test, not the outbox:** the case drove the faked backoff timer with a loop of at most 50
+advance-and-look steps. `uploadViewOf(VIEW).phase` reads `waiting` BEFORE `scheduleBackoff` arms its
+timer (a queue read on fake-IndexedDB, which answers on real macrotask turns), so on a starved worker the
+50 looks were spent on an empty timer queue, the loop ended, and attempt 3 never started - the wait for
+`settled >= 3` then timed out. A bound counted in looks is a clock by another name. The loop now waits
+for the EVENT (`vi.getTimerCount() > 0`, or the attempt having moved on) and advances exactly one timer
+per pass; nothing asserts a duration and a genuine hang still fails at the wait's own ceiling.
+
+**Fourth reading, 2026-11-06** (`messagesPage` and `pendingMutationsStore` sqlite cases, `audioSession.captureSites`,
+`conversations.retire`, all 5 s timeouts in one full run). Measured, not guessed: the sqlite cases take 16-760 ms
+alone (the heavy ones carry their own 60 s deadline), two of the four victims were 5 ms-class cases, four parallel
+runs of the two files and 40 busy threads did not reproduce it, and a later full run failed seven DIFFERENT tests
+in six other files (one `beforeAll` import hit its 60 s hook ceiling) while other agents' dev servers and test
+runs shared the machine. That is section 8's class: the victims are random, the lever is the load. The ONE code
+cause found: `audioSession.captureSites` still walked the disk (readdir/stat/read of the whole tree inside the
+test); it now reads the shared snapshot. `conversations.retire` already did (686 ms alone, a filter over strings).
+`useConversations.salonStoredPage` had five deadline-based `vi.waitFor` calls; they now wait on the event itself.

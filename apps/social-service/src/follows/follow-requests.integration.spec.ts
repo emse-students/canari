@@ -45,6 +45,7 @@ import { PostNotification } from '../posts/entities/post-notification.entity';
 import { POST_LIST_CACHE_PREFIX } from '../posts/post-list-cache';
 import { FOLLOW_CURSOR_INVALID } from './follow-cursor';
 import { PostNotificationsService } from '../posts/post-notifications.service';
+import { createPostNotificationsTable } from '../posts/post-notifications.it-schema';
 import type { PushContent } from '../push/push-content';
 import { FOLLOW_REQUESTS_TARGET, NOTIFICATIONS_TARGET } from '../push/push-target';
 
@@ -103,6 +104,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
   /** The feed cache: what was dropped is the assertion. */
   const dropped: string[] = [];
   const redis = {
+    incr: () => Promise.resolve(1),
     deleteByPattern: (match: string) => {
       dropped.push(match);
       return Promise.resolve(1);
@@ -147,14 +149,9 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       CREATE TABLE users (id varchar(255) PRIMARY KEY, "displayName" varchar, "firstName" varchar,
         "lastName" varchar, admin boolean NOT NULL DEFAULT false, campus varchar(32),
         cursus jsonb NOT NULL DEFAULT '[]');
-      CREATE TABLE post_notifications (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-        "recipientId" varchar NOT NULL, type varchar NOT NULL, "postId" varchar NOT NULL,
-        "actorId" varchar NOT NULL, "actorName" varchar, "associationId" varchar,
-        "associationLogoUrl" varchar, text varchar NOT NULL, meta jsonb, read boolean NOT NULL DEFAULT false,
-        "createdAt" timestamp NOT NULL DEFAULT clock_timestamp());
       -- What the block severing (migration 121's member reposts) and the bell's member-repost gate
       -- (the post predicate) read since WP-F6: the visibility schema, through its migrations below.
-      CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL, "associationId" uuid,
+      CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL, "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false,
         anonymous boolean NOT NULL DEFAULT false, "hiddenByModeration" boolean NOT NULL DEFAULT false,
         "publishedAt" timestamptz NOT NULL DEFAULT now());
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL, slug varchar NOT NULL,
@@ -164,12 +161,21 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
         "userId" varchar(255) NOT NULL, permissions int NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS user_moderation ("userId" varchar(255) PRIMARY KEY, "isMuted" boolean NOT NULL DEFAULT false);
     `);
+    // The bell's table as the estates hold it - its columns' types from the migrations (#3019's 500).
+    await createPostNotificationsTable(q);
+    // Only the default differs: rows written in one transaction must still order by when.
+    await admin.query(
+      `ALTER TABLE post_notifications ALTER COLUMN "createdAt" SET DEFAULT clock_timestamp()`
+    );
     for (const name of [
       '071_spaces.sql',
       '072_drop_is_bde.sql',
       '073_republications.sql',
       '078_read_grants.sql',
+      '132_read_grant_readers.sql',
       '121_member_reposts.sql',
+      // The bell re-reads a birthday notice against its date (`birthdayRowShownSql`).
+      '148_profile_birthdays.sql',
     ]) {
       await admin.query(readFileSync(join(__dirname, '..', 'migrations', name), 'utf8'));
     }
@@ -180,6 +186,10 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       ]);
     }
     await admin.query(MIGRATION_114);
+    // An acceptance resets the new follower's bell in its own statement (engagement WP-3, L3).
+    await admin.query(
+      readFileSync(join(__dirname, '..', 'migrations', '142_account_bells.sql'), 'utf8')
+    );
     ds = new DataSource({
       type: 'postgres',
       url: URL,
@@ -863,5 +873,106 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     await requests.accept('bob', 'ann');
     await requests.leave('ann', 'bob');
     expect(dropped).toEqual([`${POST_LIST_CACHE_PREFIX}*`]);
+  });
+
+  describe('withdraw: only a request nobody answered (engagement WP-2)', () => {
+    it('removes a pending request and its bell row, and answers ok', async () => {
+      await requests.ask('ann', 'bob');
+      expect(await requests.withdraw('ann', 'bob')).toEqual({ ok: true });
+      expect(await statusOf('ann', 'bob')).toBeNull();
+      expect(await bellOf('bob')).toEqual([]);
+    });
+
+    it('NEVER removes an accepted follow: a 409 FOLLOW_REQUEST_ANSWERED, the row stays', async () => {
+      await requests.ask('ann', 'bob');
+      await requests.accept('bob', 'ann');
+      const err = await refusalOf(requests.withdraw('ann', 'bob'));
+      expect(codeOf(err)).toBe('FOLLOW_REQUEST_ANSWERED');
+      expect((err as { getStatus: () => number }).getStatus()).toBe(409);
+      expect(await statusOf('ann', 'bob')).toBe('accepted');
+    });
+
+    it('a request the person refused, or none at all, is a 404 FOLLOW_REQUEST_NOT_FOUND', async () => {
+      await requests.ask('ann', 'bob');
+      await requests.refuse('bob', 'ann');
+      for (const to of ['bob', 'cid']) {
+        const err = await refusalOf(requests.withdraw('ann', to));
+        expect(codeOf(err)).toBe('FOLLOW_REQUEST_NOT_FOUND');
+        expect((err as { getStatus: () => number }).getStatus()).toBe(404);
+      }
+    });
+
+    it('leaves another asker request to the same person untouched', async () => {
+      await requests.ask('ann', 'bob');
+      await requests.ask('cid', 'bob');
+      await requests.withdraw('ann', 'bob');
+      expect(await statusOf('cid', 'bob')).toBe('pending');
+    });
+  });
+
+  describe('userFollowStatuses: the chips of a whole page in ONE query (engagement WP-2)', () => {
+    it('answers the caller own standing per id: accepted, pending, and nothing for the rest', async () => {
+      await requests.ask('ann', 'bob');
+      await requests.ask('ann', 'cid');
+      await requests.accept('cid', 'ann');
+      expect(await follows.userFollowStatuses('ann', ['bob', 'cid', 'dan', 'zed'])).toEqual({
+        bob: 'pending',
+        cid: 'accepted',
+      });
+    });
+
+    it('is one SQL statement however many ids, and a repeated id counts once', async () => {
+      const seen: string[] = [];
+      const repo = ds.getRepository(UserFollow);
+      const spy = jest.spyOn(repo, 'query').mockImplementation(((sql: string, p?: unknown[]) => {
+        seen.push(sql);
+        return ds.query(sql, p);
+      }) as never);
+      const svc = new FollowsService({} as never, repo, {} as never);
+      await svc.userFollowStatuses('ann', ['bob', 'bob', 'cid', 'dan', 'eve']);
+      spy.mockRestore();
+      expect(seen).toHaveLength(1);
+    });
+
+    it('reveals only the caller side: another account follow of the caller is invisible', async () => {
+      await requests.ask('bob', 'ann');
+      expect(await follows.userFollowStatuses('ann', ['bob'])).toEqual({});
+    });
+
+    it('a private account the caller never asked is none, whatever its own follows', async () => {
+      await requests.ask('dan', 'eve');
+      expect(await follows.userFollowStatuses('ann', ['dan', 'eve'])).toEqual({});
+    });
+
+    it('a block, in either direction, severs both follows - so it reads as the same none as follow-status', async () => {
+      const internal = severing();
+      await requests.ask('ann', 'bob');
+      await requests.accept('bob', 'ann');
+      await requests.ask('ann', 'cid');
+      await requests.ask('ann', 'dan');
+      await requests.accept('dan', 'ann');
+      expect(await follows.userFollowStatuses('ann', ['bob', 'cid', 'dan'])).toEqual({
+        bob: 'accepted',
+        cid: 'pending',
+        dan: 'accepted',
+      });
+      await internal.severFollowsBetween('ann', 'bob', IT_SECRET);
+      await block('dan', 'ann');
+      await internal.severFollowsBetween('dan', 'ann', IT_SECRET);
+      expect(await follows.userFollowStatuses('ann', ['bob', 'cid', 'dan'])).toEqual({
+        cid: 'pending',
+      });
+    });
+
+    it('agrees with the single follow-status read for every id', async () => {
+      await requests.ask('ann', 'bob');
+      await requests.ask('ann', 'cid');
+      await requests.accept('cid', 'ann');
+      const ids = ['bob', 'cid', 'dan'];
+      const batch = await follows.userFollowStatuses('ann', ids);
+      for (const id of ids) {
+        expect(batch[id] ?? null).toBe(await follows.userFollowStatus('ann', id));
+      }
+    });
   });
 });

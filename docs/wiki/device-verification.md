@@ -22,6 +22,158 @@ here and nothing else.**
 
 ## Where the pass stands
 
+**2026-11-04, the bench readings of `v1.6.4-alpha.2` (dev answering `1.6.4-alpha.2`): Mi 9T `canari-test-alpha` (the release APK sideloaded, versionCode `100600402`), iPhone 12 `canari-test-gamma`, the harness Chrome as gamma and delta.** TestFlight offered only `1.6.4 (100600401)` (`alpha.1`) on the iPhone; `alpha.2` changed only the deploy scripts (#3003), so the iPhone read the same client code.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| SC. Cancelling the iOS sign-in sheet (#2995) | **PASS** | The system sheet cancelled three times in a row: each time the button read "Se connecter" again at once and the next tap reopened the sheet; never the stuck "Redirection..." |
+| T. The native tab bar under the tour (#2997) | **PASS** | Tour replayed from Settings: taps on the four tab icons and the bar's band at steps 1, 3 and the last left the tour on its step and the route on the feed; after "Terminer" the chat tab worked; after a terminate and relaunch mid-tour the bar worked at once |
+| Guided help, batch 2 (#2996) | **PASS** | Both phones: the feed-tabs hint (1/3 to 3/3), then CanaReels alone at the next visit, then the chats hint; one help per visit. Mi 9T: "Revoir les aides" lists the four hints and replays one; a hint left at 2/3 by navigating away came back at 1/3 |
+| Named readers' comment switch (#2998), the procedure of [its backlog entry](backlog.d/named-readers-comments-switch-readings-owed.md) | **PASS** | Through the app's routes on dev, a throwaway association, post, comment, reaction and named poll: switch OFF - post 200 with `canSeeComments:false` and no comments, reactions as delta's own plus `otherReactionCounts`, the poll as tallies, `GET`/`POST /comments` 404, `POST /reactions` 201; switch ON - the comment and the names back, `GET /comments` 200, `POST` 201; the journal shows the grant and the switch. Every fixture removed |
+| The moderation tombstone (#2999) | **PASS** | delta (a non-admin BDE moderator) deleted a student's comment under the BDE's post that carried an institution's reply: 200 with one tombstone; the list shows "Commentaire retiré par la modération" with the institution's reply kept under it and the badge counting 1; a reply and a heart to the tombstone answer 409 `COMMENT_REMOVED_BY_MODERATION`; delta's delete of the institution's reply answers 403 `MODERATION_RESERVED_TO_PLATFORM_ADMIN` on both delete routes. Every fixture removed |
+
+**The dev bench accounts (owner, 2026-11-04).** Their rights live in DEV's own database, never in the
+identity provider, which production shares and which is not touched:
+
+- **`canari-test-gamma` is the bench's dev global admin** (`users.admin`); after a dev reset it is
+  restored by the one statement of [dev-environment](infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16).
+- **`canari-test-delta` is the bench's non-admin BDE moderator on dev**: a permanent membership of
+  the fixture "BDE Fictif" with the `MODERATE` permission, added through
+  `POST /api/associations/:id/members` as gamma. It must NOT become an admin: a platform admin
+  moderates everything, so only a non-admin moderator shows a tombstone. A dev reset removes it; it is
+  re-added the same way, and that call is the owner's to approve (an agent's permission layer refuses
+  a permission grant). **Since 2026-11-04 it is also a NON-STUDENT (empty cursus)**: see [the 1.6.4 fixtures](#dev-bench-fixtures-for-the-164-readings-2026-11-04).
+- `canari-test-alpha` and `-beta` are ordinary students, **until the fixtures below turn them into
+  an officer and a non-student**: read [the 1.6.4 fixtures](#dev-bench-fixtures-for-the-164-readings-2026-11-04).
+- **Driving dev without typing a password:** from a signed-in dev page, `POST /api/auth/refresh`
+  (cookie) returns an access token for `fetch` with `Authorization: Bearer`. Fixtures are created
+  through the app's routes (`POST /api/associations/admin`, `POST /api/posts` with `associationId`,
+  `.../comments` with `parentId` and `associationId` for a reply in an entity's name) and removed with
+  `DELETE /api/posts/:id` and `DELETE /api/associations/:id`. A comment's id is NOT in its create
+  answer: read it from `GET /api/posts/:id/comments` before replying with `parentId`.
+
+### Dev bench fixtures for the 1.6.4 readings (2026-11-04)
+
+Prepared on dev for the readings `1.6.4-alpha.3` could not take. Everything went through the app's
+own routes as a signed-in bench account (the refresh-cookie token above); **the only SQL writes are
+the ones listed under "SQL writes"**. Every association is a seeded fictional one. A dev reset
+removes ALL of it (the reels' rows, the memberships, the grants, the product, the cursus change):
+recreate it with the recipes below, in this order.
+
+| Reading | What exists on dev | Who reads it |
+| --- | --- | --- |
+| **(a) 10 video reels** (slow-network CanaReels, #3015) | 10 `kind=reel` posts, 5 by `canari-test-alpha` and 5 by `canari-test-gamma`, captions "Banc reel 1".."Banc reel 10": 540x960, 8 s, H.264 baseline plus AAC, about 2.9 MB each (3 segments of the `segmented-v1` container), declared `durationMs` 8000. The round trip was checked (download, decrypt, `ftyp` header, size equal to the declared size) | any signed-in student account of ICM Saint-Etienne |
+| **(b) a shop with a product** (`hint-asso-shop`, guided help batch 3) | "Club Photo Fictif" (`photo-fictif`): one ACTIVE product "Sticker Canari (banc)", 2.00 EUR, type `other`. Payments cannot be taken on it (see "SQL writes"), so it is for the hint's anchor only, never a checkout | any signed-in account opening `/associations/photo-fictif` |
+| **(c) an association officer who is not an admin** (students-only switch, edit form, #3010) | `canari-test-alpha` is a member of "Club Photo Fictif" AND "Club d'Echecs Fictif" with role "Bureau (banc)" and permissions `4355` = `POST_AS_ASSO` + `PROPOSE_EVENT` + `MANAGE_PRODUCTS` + `EDIT_PROFILE` (not `MANAGE_MEMBERS`, not an admin). Posts published as the association: Photo "Annonce du Club Photo (banc): sortie photo samedi" and "Club Photo (banc): exposition de fin de semestre"; Echecs "Echecs (banc): tournoi du jeudi, ouvert a tous". All three have the switch OFF. Alpha edits them (`PATCH /api/posts/:id` answered 200 and was put back) | Mi 9T (alpha) |
+| **(d1) a non-student recipient of a repost proposal** (bell row, #3019) | `canari-test-delta` AND `canari-test-beta`, both with an EMPTY cursus (campus Saint-Etienne, no space), each a member with `POST_AS_ASSO` of a receiving association (delta: "Club Robotique Fictif", beta: "Fanfare Fictive") that holds a PENDING repost proposal from "Club Photo Fictif", one proposal per Photo post above (switch OFF at proposal time; turn it ON as alpha to read the blanked text). **BLOCKED by a defect: their bell answers 500 until the fix of #3019 (its own pull request) is deployed** | delta on the harness Chrome slot W5, beta on W4 (both signed in) |
+| **(d2) a named reader with a grant-only door** (live chat, #3014) | `canari-test-beta`: a read grant on "saint-etienne, whole campus", "voit les commentaires" OFF (the default), NO membership of the association watched, no cursus. Read through the API on an Echecs post: 200, `canSeeComments: false`; a "students only" post 404 | beta (W4) |
+
+**Added 2026-11-05 (booking hints, batch 4):** the booking space "Banc 165 (2 colonnes)", owned by "BDE Fictif", with 2 resources, created through the app's routes as gamma.
+
+**Why beta, not delta, is the named reader.** delta is also the BDE moderator: a `MODERATE` holder
+opens an Echecs post by id (200, comments visible, even a "students only" one), so a live read
+through delta would be a moderation read, not a grant-only one (the unasserted case of
+[profiles-and-access](profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08)).
+beta holds nothing else.
+
+**Broadcasting an association's live on dev** (lives are on: `GET /api/version` says
+`lives.mode: on`). Proven by API as alpha: `POST /api/lives` with `{ key: <64 hex>, associationId:
+<Photo or Echecs> }` answered 201 and `POST /api/lives/:id/end` 200 (the first-live rules were
+already accepted). The `/api/lives` routes answer 404 to a request WITHOUT the header
+`X-Canari-Client-Version` (at least the lives floor), which looks exactly like "lives off". A live
+needs real video, so it cannot be left standing as a fixture; to take the reading, either:
+
+1. **Mi 9T as alpha** (the app, the real path): feed composer, "Go live", pick the identity
+   "Club d'Echecs Fictif", then watch from beta's Chrome (W4); or
+2. **a scripted broadcaster** through `tools/live-bench/bench.js` evaluated in alpha's page
+   (`inject.mjs`, its README): its `POST /api/lives` body has no `associationId`, so a copy of
+   `bench.js` with `associationId` added to that one body is needed; it needs a camera, so Chrome
+   must be launched with the fake-device flags (`--use-fake-device-for-media-stream
+   --use-fake-ui-for-media-stream`), which the launcher does not set.
+
+Then write a line in the live's chat from a native viewer (a student account) and read beta's view
+against [the entry's procedure](backlog.d/named-readers-comments-switch-readings-owed.md).
+
+**Recipes** (token = `POST /api/auth/refresh` from the account's signed-in dev page, field
+`access_token`; every call carries `Authorization: Bearer` and, for `/api/lives`,
+`X-Canari-Client-Version`):
+
+- **(a)** `ffmpeg -f lavfi -i testsrc2=size=540x960:rate=24:duration=8,hue=h=N*36 -f lavfi -i
+  sine=frequency=...:duration=8 -c:v libx264 -profile:v baseline -pix_fmt yuv420p -b:v 3M -c:a aac
+  -movflags frag_keyframe+empty_moov+default_base_moof -shortest reelN.mp4`; then, per file: encrypt
+  with `encryptSegmentedMedia` (`frontend/src/lib/mediaSegmented.ts`, WebCrypto only, runs under
+  `bun` once its `$lib/` imports are made relative), `POST /api/media/upload` (multipart `file` plus
+  `retentionClass=reel-pending`, under the 10 MiB request budget), then `POST /api/posts` with
+  `{ kind: 'reel', durationMs: 8000, markdown, media: [{ type: 'video', mediaId, key, iv, mimeType:
+  'video/mp4', size, fileName, width: 540, height: 960, encoding: 'segmented-v1' }] }`. Same path as
+  `publishReel.ts`, minus the re-encode (the file is already one fragmented MP4).
+- **(b)** as gamma: `POST /api/associations/:id/products` `{ name, amountCents: 200, type: 'other' }`
+  (created INACTIVE: the platform withholds it while the association's payment onboarding is not
+  done, and `PATCH ... { isActive: true }` answers 400), then SQL write 2.
+- **(c)** as gamma: `POST /api/associations/:id/members` `{ userId, role, permissions: 4355 }`;
+  then as alpha `POST /api/posts` `{ markdown, associationId }`.
+- **(d1)** as gamma: `POST /api/associations/:id/members` `{ userId, role, permissions: 1 }` on the
+  receiving association; as alpha `POST /api/posts/:postId/republication-proposals`
+  `{ associationId: <receiving> }`; then clear the cursus (SQL write 1).
+- **(d2)** as gamma: `PUT /api/associations/read-grants` `{ userId, campus: 'saint-etienne',
+  formation: null, granted: true }` (the "voit les commentaires" switch stays OFF).
+
+**SQL writes on dev, each one** (the owner allows the campaign to write to dev's database,
+[dev-environment](infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16)):
+
+1. **A non-student account** has no route: a cursus is the identity provider's attribute and
+   `findOrCreateFromOidc` REPLACES it at every OIDC sign-in. So, AFTER the sign-in:
+   `UPDATE users SET cursus = '[]'::jsonb, promo = NULL, formation = NULL WHERE id = '<id>'`. Done
+   for delta and beta. **The next sign-in as that account restores the student cursus: run it again
+   afterwards**, and read `GET /api/users/me` (`cursus: []`) before the reading. To give an account
+   its student life back: `cursus` to `[{"promo": 2024, "formation": "ICM"}]`, `promo` 2024,
+   `formation` 'ICM' (delta, alpha, gamma; beta's own were 2023 / ICM). A session already open keeps
+   working.
+2. **The product on sale**: `UPDATE association_products SET "isActive" = true,
+   "activationWithheld" = false WHERE id = '<product id>'`, because dev's payment target is not
+   ready (a reset puts payments back to `disabled`,
+   [dev-environment](infrastructure/dev-environment.md#payments-on-dev-are-switched-on-by-hand-2026-10-21))
+   and the API refuses to activate. A product listed this way answers 400 at checkout.
+3. Read-only selects of `users`, `associations`, `association_audiences`, `association_products`,
+   `posts` and `post_notifications` to pick the fixtures.
+
+**Left as found.** `canari-test-gamma` joined a community "nse banc communaute" by accident during
+the readings; it is still a member, because it disturbs none of these readings. The harness Chrome
+slots W4 (beta) and W5 (delta) were started and signed in for this; W1, W2 and W3 were not touched.
+
+**2026-11-04, the bench readings of `v1.6.3-alpha.10` (dev answering `1.6.3-alpha.10`, server fixes #2992 and #2990): Mi 9T `canari-test-alpha`, iPhone 12 `canari-test-gamma`, gamma also on the harness Chrome (W2 slot, port 9223).** Mi 9T: the release `app-universal-release.apk` sideloaded with `adb install -r` (versionCode `100600310`), Settings > A propos reads `1.6.3-alpha.10`. **iPhone: TestFlight still offered only `1.6.3 (100600309)` (`alpha.9`) about 40 min after the release run went green, so the iPhone ran the `alpha.9` client, not `alpha.10`.** Both fixes are server-side, so readings 1-3 hold for an `alpha.9` client on the iPhone (the web tab was reloaded and runs the `alpha.10` bundle); the iPhone was not re-read on `alpha.10`. After the update the iPhone asked for the PIN again; the typed text did not reach the web field (`ios.mjs type`), the numeric keypad did.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1. Read state Mi 9T -> iPhone (#2992) | **PASS** | alpha sent `a10_r1_0003` with gamma online (green dot), gamma's conversation list showed it, gamma opened it at 00:01:03: the Mi 9T showed the reader head and the double check at 00:01:07 (4 s), no reload. Before the open the bubble carried one check |
+| 2. Reverse, iPhone -> Mi 9T (#2992) | **PASS** | alpha on the conversation list with "1" unread, gamma sent `a10 r2 gamma` from the iPhone; alpha opened it at 00:01:49: the iPhone showed the reader head and the double check on the bubble at 00:01:54 |
+| 3. Own devices: iPhone reads, the web tab's badge clears (#2992) | **PASS** | alpha sent `a10_r3b_web` while gamma's iPhone sat on the list: the web tab (gamma) showed title `(2)` and the row's unread "1". gamma opened the conversation on the iPhone at 00:05:02: within 4 s the row's badge was gone and the title read `(1)` (the remaining unread is another conversation), no reload. The web console carried `[READ] <peer> has read up to ... (server clock)` lines and NO `[READ] REFUSED` line from the reload onwards |
+| 4. CanaReels, an accepted follower from another campus (#2990) | **NOT-READ** | The bench has no pair that can say "another campus": alpha and gamma both read ICM / SAINT-ETIENNE on their profile page, and a campus is the identity provider's attribute (`users.campus`), not something a bench account can set; changing it would need a database write on dev. The union is proven on PostgreSQL by `reels-list.integration.spec.ts` (same-campus reader, other-campus accepted follower, pending follower), so what is owed is only the phone reading, once a dev account of another campus exists |
+
+**Left on the bench:** both phones signed in and unlocked (the Mi 9T on Settings, the iPhone on the conversation with alpha), the harness Chrome back on `/chat` as gamma. Nothing blocks the `1.6.3` stable from these readings: the read-mark defect is closed (its backlog entry is deleted), and reading 4 is a verification owed, not a failure.
+
+
+**2026-11-03, the bench readings of `v1.6.3-alpha.7` (build `100600307`): Mi 9T and iPhone 12, `dev.canari-emse.fr` answering `1.6.3-alpha.7`; accounts `canari-test-alpha` (Mi 9T) and `canari-test-gamma` (iPhone).** The iPhone took the build from TestFlight and Settings > About reads `1.6.3-alpha.7`. The Mi 9T was SIDELOADED (its install carries no installer, and Play offered nothing newer than `alpha.2`), so the release's `app-universal-release.apk` went over it with `adb install -r` (versionCode `100600307`): a reading of the same binary, not of the Play delivery. **Mid-pass the Mi 9T showed the system "Arret en cours..." screen and left adb at 21:11, right after a tap on "Nouveau formulaire" in `/forms`. Cause found afterwards: an EMPTY BATTERY (boot reason `shutdown,battery`), not the app; it clears the "Nouveau formulaire" suspicion. The phone was put back on its charger and the rows below were read in a second pass.** Screenshots are kept out of the repo.
+
+| Reading | Phone | Verdict | What was seen |
+| --- | --- | --- | --- |
+| GIF over the comments sheet (#2981) | Mi 9T | **PASS** | "GIF" in the comments sheet of a feed post: the picker opens above the sheet, loads, a tap attaches the GIF, send posts it and the comment renders it |
+| GIF over the comments sheet (#2981) | iPhone 12 | **PASS** | Same path with gamma: picker above the sheet, GIF picked and sent, rendered as the newest comment; alpha's GIF from the Mi 9T showed in the same sheet |
+| Welcome tour (#2952): steps, "Passer", Back | Mi 9T | **PASS in part** | Six steps (alpha), "Passer" visible. System Back while the tour is up closed it and left the app on `/posts`. NOT read: the step-by-step Back, the Settings replay |
+| Welcome tour (#2952): steps, Back | iPhone 12 | **PASS in part** | Three steps for gamma (welcome, camera, profile) with "Passer", "Precedent" (3/3, 2/3, 1/3 walked back and forth) and "Terminer" at 3/3. NOT read: the native bar's band on iOS 26 (gamma's tour has no tab step) and the Settings replay. **Observed: the native bar stays tappable under the tour's backdrop; a tap on the chat tab left the tour and opened `/chat`** - fixed since (the bar takes no touch while a tour's backdrop is up, [guided-help](frontend/guided-help.md)); the reading is owed in check T |
+| One help per visit, then "Publier" (#2982) | Mi 9T | **PASS** | After the tour was closed by system Back: no hint on the same visit (two screenshots, 4 s apart). After a force-stop and relaunch: the "Publier un message" hint on the "+" with "Passer" and "Terminer" |
+| One help per visit (#2982) | iPhone 12 | **PASS** | Tour left through the tab bar, `/posts` opened afterwards: no hint on that visit. After a terminate and relaunch the "Publier" hint showed on the next visit |
+| `/calendar` hint (#2982) | iPhone 12 | **PASS** | gamma may deposit: the hint anchors on "Deposer un evenement". On the Mi 9T alpha cannot deposit, so no hint there, as designed (a precondition, not a failure) |
+| `/forms/create` hint, 3 steps (#2982) | Mi 9T | **PASS** | Three steps with "Passer" and "Terminer". The iPhone was not read |
+| Pins (#2984) | both | **PASS in part** | gamma pinned a post on the iPhone (a governing BDE); alpha on the Mi 9T saw it first in the feed with the pinned badge. The 4th pin of a space was refused with "Cet espace affiche deja 3 posts epingles : desepingle-en un d'abord.". NOT read: a reader of another space |
+| iPhone A -> B -> A (#2919) | iPhone 12 | **NOT-READ** | Started, not finished: gamma was signed out, then the login page stayed on "Redirection..." (the web-auth consent sheet of the identity provider, then an empty accessibility tree) and B was never signed in. Procedure [AS](#as-two-accounts-on-one-iphone-install-a---b---a---b---owed-on-the-iphone-12-before-the-stable) also needs a third device to write to A and to B and read the notification content on the locked phone, plus the device log. **gamma is left signed OUT on this iPhone** |
+| iOS sign-in after a sign-out (the stall above) | iPhone 12 | **PASS, and one pre-existing defect** | Re-read at 22:18 with the device log: the app was still on "Redirection..." with NO sheet on screen (the first attempt's sheet had been closed). After a relaunch, "Connexion externe (service-account)", "Continuer" on the consent alert, then the identity provider's two stages inside the sheet (its form reaches the accessibility tree only once the page has drawn - the "empty tree" of the first pass), and the callback signed gamma in within 4 s; the PIN gate unlocked through "Saisie manuelle". Not a regression: a sheet closed without signing in leaves the button busy for good (fixed in the plugin since, the reading owed: check SC below). **gamma is signed IN again on the iPhone** |
+| Mi 9T F4 reload | Mi 9T | **PASS** | Cold relaunch in airplane mode: the salon "general" drew its stored last page, up to the last message sent before going offline |
+| iOS read state across devices | both | **FAIL - a server defect, not iOS** | alpha sent a DM from the Mi 9T, gamma's iPhone listed "1 message non lu" and opened the conversation; the Mi 9T kept ONE check (no head, no double check) for over 2 min and after reopening the thread. Reproduced at 22:28 (`1.6.3-alpha.8` on dev), and the same with gamma reading on a web tab (22:31). That web tab's console names the cause: `[READ] REFUSED a read mark from <gamma> ...: the frame carries no server time to bound it` - the iPhone's own mark, refused on gamma's other device too. The gateway drops `createdAt` from every live frame. (A release build prints no console line to logcat, so "no read-mark line" there proved nothing.) Cause and fix: [chat](frontend/modules/chat.md#conversations-are-ordered-by-the-servers-clock-decided-by-the-owner-2026-10-31); fixed by #2992, read PASS on `1.6.3-alpha.10` (entry above) |
+| `event_pending_coorganiser` native strings | both | **NOT-READ** | No dev scenario triggered it in this pass |
+| Wry wake (WMP, #2974) | Mi 9T | **NOT-READ** | No abort, no ANR, process alive, but the trigger was not reached: with `always_finish_activities 1` this MIUI build kept the activity alive, so no `[WRY_MAIN_PIPE] no WebView for activity` line appeared. The setting was reset to 0 |
+| Cold avatars (AV) | Mi 9T | **NOT-READ** | The bench accounts show initials, not photos: no signed avatar request to time and the server `[AVATAR]` count is not reachable from the bench. Cold start to the communities tab took about 3 s |
+
 **2026-10-22, the background Welcome read on the Mi 9T (debug build, frontend `2547870a7`, from `dabc36813` plus an uncommitted manifest whitespace change; local estate with chat-delivery from `4f31a81ad` and the frontend of `5fa025d87`).** The phone was killed (no process), one `mls_group_info` row was deleted, and a new web device of another member asked for a Welcome. Phone: `Welcome created ... baseEpoch=1`, `HTTP 201`, `Welcome sent`, no `sendWelcomeAndCommit failed`. Server: `[BG_WELCOME] START ... baseEpoch=1`, then `REJECT commit epoch_mismatch (server epoch: 3, sent base: 1)`, so there is no `commit accepted`. The commit-caller checks did not refuse. The stale base and the 201 are in [backlog](backlog.d/hardware-reading-owed-one-background-welcome-on-the-mi-9t-2026-10-22.md). Not read: the newcomer afterwards.
 
 **2026-10-13, the bench pass of the owed rows: Mi 9T on `v1.2.6-alpha.1`, iPhone 12 on `1.2.3-alpha.5` (the newest pre-release TestFlight serves it).** `PASS`: check V, check W on the Mi 9T, the "Rester connecte" cold path and its landing preview, #1603 both halves, #1605 on Android, #1548 and the send path on the iPhone. `FAIL`: Android at 200 % text (two P3 in the agenda) and, met in three-button mode, ONE system Back closing both the message action sheet and the conversation (P2). Answered in part: #1604. Detail: [the bench readings of 2026-10-13](#the-bench-readings-of-2026-10-13---the-owed-rows-a-bench-phone-can-settle).
@@ -81,7 +233,7 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 |---|---|---|---|
 | B | WP-VERIF-0 (background decrypt), WP-VERIF-2 | PASS v0.11.7 | owed |
 | B-bis | `G2` - a dismissed notification not coming back at launch, and a new one still arriving | **owed** | n/a (the record is Android's) |
-| B-reel | WP-RC-7 - a CanaReel sent in a DM, a group and a salon reads as one on the lock screen of a killed app, in French and English | **owed** (needs a sender with the RC-4 writer switched on) | owed (same) |
+| B-reel | WP-RC-7 - a CanaReel sent in a DM, a group and a salon reads as one on the lock screen of a killed app, in French and English | **PASS, French, DM + group, `1.6.3-alpha.2`, 2026-11-02**; English, salon (RC-8) and caption (no writer) owed | **PASS, French, DM + group, `1.6.3-alpha.2`, 2026-11-02** (and one finding, below); English, salon and caption owed |
 | D, E | WP-VERIF-0 (PIN change, fresh install) | PASS v0.11.7 | owed |
 | F | WP-VERIF-1 | PASS v0.11.7 | owed |
 | G | WP-VERIF-3 | PASS v0.11.6 | owed |
@@ -96,6 +248,9 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 | P | Cookie durability across a kill (the iOS half of WP-ANDROID-SESS-1) | n/a (fixed + verified) | owed |
 | R | The shrunk release APK still having what it needs | owed | n/a |
 | S | An iPhone obtaining a push token AT ALL (the P1 of 2026-08-27) | n/a (49 rows, healthy) | **RUN 2026-08-28 on 0.14.8: report PASSES, token FAILS.** Cause found and fixed the same day - **RE-RUN OWED on the build carrying it** |
+| AV | Signed avatar URLs: the community open with COLD avatars ([backlog](backlog.d/p2-avatar-urls-refuse-unsigned-requests.md#the-cold-avatar-cost---owed-before-the-phase-1-stable)) - the [community-open budget](frontend/community-open-budget.md) rows on the Mi 9T, first open of the day after a sign-in (no warm blob, no browser-cache entry for the new URLs), against the same rows on the build before | **owed BEFORE the phase-1 stable**, on its pre-release | n/a |
+| T | The welcome tour ([guided-help](frontend/guided-help.md)): starts after the PIN on `/posts` of a fresh account, six steps light the real bottom-bar tabs and the avatar, Back closes it, it does not return after a reinstall (the account's `help_seen`), Settings replays it | **PASS in part, `1.6.3-alpha.7`, 2026-11-03** (six steps, Passer, system Back; the replay owed) | **PASS in part, `1.6.3-alpha.7`, 2026-11-03** (three steps, Passer, Precedent; the replay owed) - and the native bar's band on iOS 26 (the halo is the bar's whole band, the bubble's icon names the tab), and **the bar takes NO touch under the tour** (owed on the first pre-release carrying `set_tab_bar_interactive`): with the tour up, a tap on each tab and on the bar's band does nothing but what the backdrop does (the tour stays on its step, the route does not change, the device log carries `setTabBarInteractive interactive=no`); after "Passer" or "Terminer" (`interactive=yes`) a tab tap navigates again; a first-time HINT (not modal, e.g. "Publier" on `/posts`) leaves the bar tappable |
+| SC | A cancelled iOS sign-in sheet hands the login button back ([mobile](frontend/mobile.md#oidc-login-opens-a-dedicated-in-app-browser-session-wp-oidc-tab-1-android-shipped-and-verified-2026-08-08-ios-verified-on-hardware-2026-08-27)): on `/login`, tap "Se connecter", then (1) "Annuler" on the consent alert, (2) again, "Continuer" then the sheet's close button, (3) again, a full sign-in. Each of (1) and (2) must give the button back (no "Redirection...") at once, with `[CustomTabsPlugin] session cancelled by the user` in the device log and no relaunch; (3) must sign in as before (`session completed`, `/auth/callback` runs). Also: sign out from Settings and close the end-session sheet - the app is on `/login` and its button works | n/a (Android answers `handedOff`; its tab's end is the foreground edge, unchanged) | **owed**, on the first pre-release carrying the fix |
 
 **The `ios-release` artifact CANNOT be installed on a device, and this paragraph said to install it
 until 2026-09-07.** The export is `method: app-store-connect` signed *Apple Distribution*
@@ -110,6 +265,74 @@ only thing that reaches a phone.
 naming the test device's UDID. It also buys `get-task-allow`, which is what makes the WKWebView
 inspectable - so the one change that makes an artifact installable is the same change that makes the
 webview readable. Owed, not done.
+
+## Readings of v1.6.5-alpha.1 (2026-11-05)
+
+Dev answering `1.6.5-alpha.1`. Web on the harness Chrome (gamma, delta, beta), Android on the Mi 9T
+`canari-test-alpha`, iOS on the iPhone 12 `canari-test-gamma`.
+
+**Web: PASS on every row.** Guided help batch 3; batch 4 on `/bookings`, including the multi-column
+week hint (desktop and 375 px); the "Entre étudiants" form, the non-student 404 and the empty bell
+text; the republisher label wrapping at 375 px; grant-only live chat withheld then unwithheld (read
+through the API); a tab re-tap going back to the top.
+
+**Web console, two kinds of lines, judged by the owner as NOT blocking.**
+
+- Cloudflare JS detections (14 per session): injected on the dev zone only and blocked by the CSP.
+  The owner is to switch JS detections off in the Cloudflare dashboard, because the API token lacks
+  the permission. Production is not behind Cloudflare.
+- The old documented `[MLS] key package worker state DISCARDED` guard
+  ([key-package-pool](protocols/key-package-pool.md)).
+
+**Mi 9T: PASS on every row.**
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| M1. The resume fix (#3030) | **PASS** | 3 runs, every message readable, no "Quelqu'un" |
+| M2. No false "arrived twice" at launch | **PASS** | One `pull:queued` crossing line seen; it is benign |
+| M3. Salon banners and push-blind counters | **PASS** | 16 salon banners, all showing text; 0 `[PUSH_BLIND]` and 0 `SEALED_BEFORE_ADMISSION` on dev since the deploy |
+| M4. The reel spinner on a slow link | **PASS** | The spinner shows, and the sound stays uncut |
+| M5. The 1.6.4 rows | **PASS** | All read |
+
+Noise lines N1-N4 were fixed or filed: #3042, #3041, #3043, #3044.
+
+**iPhone 12.**
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| The update | **PASS** | |
+| The status-bar tap | **PASS** | Its log line is now readable, so #3037 is proven |
+| Guided help, batch 4 | **PASS** | |
+| A 1:1 push after a foreground kill | **FAIL** | The banner showed the generic "Nouveau message de ...". The cause was found and fixed in #3040; it is owed its reading on `alpha.2` |
+
+Also measured: the extension's Swift `NSLog` lines are `<private>` on TestFlight.
+
+**The owner's two gestures** (the silent switch, the pinch zoom) were read on `1.6.4-alpha.4`. They
+carry over because #3018's and #3008's files are unchanged (owner, 2026-11-05).
+
+**Sideloaded bench APK.** It is signed by the upload key, so dev refuses its restore key (see
+[account-restore](account-restore.md)).
+
+## IOS-3075. The iOS follow-ups of #3075 - owed on the iPhone 12
+
+Built and merged by #3075 (2026-11-06); **the first build carrying them is `1.6.6-alpha.2`**, and the
+stable `1.6.6` ships them. Compiled only: the Rust half is tested on the host (`cargo test --lib --
+nse_outcomes push`), the Swift and Objective-C halves have never compiled here, only in the release
+workflow. Read on the iPhone 12 (`canari-test-gamma`, then a second bench account for R2) with
+`python -m pymobiledevice3 syslog live` running, on any TestFlight build `>= 1.6.6-alpha.2`. Each
+row closes its [backlog.d](backlog.d/README.md) entry, linked in the row.
+
+| Row | Do | PASS when | FAIL when |
+| --- | --- | --- | --- |
+| R1a. Swift lines in clear, the extension ([entry](backlog.d/p2-swift-nslog-lines-are-unreadable-on-a-store-build.md)) | Kill the app (`bun tools/ios-device/ios.mjs terminate`), send gamma a DM from the harness Chrome | The syslog shows `[CanariNSE] outcome=decrypted cause=... stage=... peakMB=...` with every value readable | The `[CanariNSE]` line reads `<private>` |
+| R1b. Swift lines in clear, a plugin ([entry](backlog.d/p2-swift-nslog-lines-are-unreadable-on-a-store-build.md)) | Sign out, tap "Se connecter" | The syslog shows `[CustomTabsPlugin] openCustomTab: presenting a session`, then `session completed - re-dispatching the callback to the app scheme`, subsystem `fr.emse.canari`, category `customtabs` | Either line is `<private>`, or the plugin line is under `Canari{Foundation}` (an `NSLog` left) |
+| R2. `push_context.json` follows an account switch ([entry](backlog.d/p3-push-context-is-mirrored-to-the-app-group-only-at-lifecycle-events.md)) | Signed in as A with the app in the FOREGROUND, switch to account B, stay in the foreground, then `ios.mjs terminate` (no swipe, no background first); send B a DM | B's banner carries the message text, and the extension's line reads `outcome=decrypted` | The banner is the generic "Nouveau message de ..." or the line is `outcome=fallback` with a cause naming the context or the device - the extension still read A's context |
+| R3a. No more sandbox refusal ([entry](backlog.d/p3-the-nse-cannot-read-its-boot-session.md)) | Any push to the killed app (R1a's is enough) | No `kern.bootsessionuuid unreadable` line in the syslog | The line is there: the build does not carry #3075 |
+| R3b. A marker from before a reboot ([entry](backlog.d/p3-the-nse-cannot-read-its-boot-session.md)) | Kill the app, send a DM, and power the phone off while the banner is still being made (a large photo makes the window longer); power on, unlock, open the app | The app's log has an `[NSE_OUTCOME] {...}` line with `"outcome":"killed"` for that run: the marker's `up` was ahead of the new uptime | Neither `killed` nor any line for that run AND no later drain counts it: the marker waits (stamped below the new uptime and `kill(pid, 0)` answered `EPERM`, logged `[NSE_OUTCOME] pid liveness not provable`) - which says the one-sided proof is not enough, and a new entry is owed |
+
+R3b is a race the bench cannot force: a run that FINISHED before the power-off leaves no marker
+(its line reads `decrypted` or `fallback` at the next drain), which is no verdict - repeat until a
+drain reports either a `killed` line or the `pid liveness not provable` warning.
 
 ## The layout pass of 2026-09-09, and the sixth check that ran later the same day
 
@@ -338,6 +561,192 @@ one's), or any thumbnail.
 Console.app on the `fr.emse.canari.push` process (`[CanariNSE]`). The Rust
 `[MediaBG] ... reel=true - no thumbnail, key withheld` line is a `debug` line of a process the app's
 logger may not run in - its absence proves nothing; the missing picture is the reading.
+
+## WMP. The wry main pipe after an activity destroy - owed on Android
+
+**Proves** the vendored wry fork ([mobile](frontend/mobile.md#wry-main-pipe-patch)) on a device: a
+message for a destroyed activity no longer aborts the process (Play crash `e3697bc4...`).
+Compiling it proved nothing about that. Mi 9T, a build carrying the fork, logcat filtered to the
+three lines that decide it: `adb logcat | grep -E "WRY_MAIN_PIPE|SIGABRT|ANR in"`.
+
+**The ANR (`f51255a5...`) is NOT what this row proves.** It is fixed by construction - an unbounded
+channel's `send` cannot block, and the wake write is non-blocking - and no bench sequence fills an
+eight-slot channel on demand, so a quiet bench would prove nothing about it. Its proof is the field
+reading below.
+
+1. `adb shell settings put global always_finish_activities 1` ("Don't keep activities": leaving the
+   app now destroys its activity while the process lives, `isChangingConfigurations` false - the
+   path that removes the activity's proxy).
+2. Open the app, sign in, open a conversation, press Home. **Expect** the process still alive
+   (`adb shell pidof fr.emse.canari`).
+3. From a second device, send three messages to that conversation, and wait one minute. **Expect**
+   `[WRY_MAIN_PIPE] no WebView for activity N: it was destroyed, so its queued messages are dropped`,
+   exactly ONCE for that activity id. **That line is the proof the trigger was reached** - a message
+   did arrive for a destroyed activity, which on `v1.6.2` was the abort. Without it the row proves
+   nothing and says so; the chat socket lives in Rust (`tauri-plugin-websocket`) and is the expected
+   sender. **And expect** no `SIGABRT` line and the process still alive.
+4. Reopen the app from the launcher. **Expect** the conversation to load normally, no `ANR in
+   fr.emse.canari`, and no other `[WRY_MAIN_PIPE]` line - `failed`, `left a Java exception
+   pending`, `stopped waiting` each name a defect, with the Java stack just above for an
+   exception; so do `the wake pipe reached end of file` and `the wake pipe read failed`, each followed
+   by a SIGABRT (the deliberate abort of a dead wake pipe, owner decision 2026-11-03).
+5. Repeat 2-4 five times (each destroyed activity logs its own one line), then
+   `adb shell settings put global always_finish_activities 0`.
+
+**And in the field - the ANR's only proof, and the crash's second**: once a release carrying the fork
+has served a fortnight, run `bun tools/play-vitals/vitals.mjs`; neither `f51255a5...` nor
+`e3697bc4...` may show a report at or above that release's versionCode. Then add both to
+`tools/play-vitals/known-issues.json` (the merge commit, and that versionCode as
+`fixedInVersionCode`), so any later report reads as a REGRESSION.
+
+Play may cluster the deliberate dead-wake-pipe abort with `e3697bc4`, both being a SIGABRT from the
+looper callback, so read the frames below `cb_handler`: an `onFirstActivityCreateWry` closure means
+a dead pipe (the owner-decided abort); `get_webview` or `handle_message` means a real regression.
+
+## CFP-W3. The step-1 wake still wakes after migration 046 - owed on the Mi 9T, on dev
+
+**Proves** that moving the wake capability from `push_token.wakeCapable` to `wakeVersion` (content-free
+push WP-W3, [design](protocols/content-free-push.md#8-rollout-and-old-clients)) left the step-1 MLS
+wake working on a real phone, and that the envelope half is inert while no client declares version 2.
+Nothing native changed; the server reads a different column, writes it from the same `wake: true`,
+and the wake answer gained a `presentation` key the Android reader must ignore. Needs dev on a release
+carrying 046, `push_mode = wake` on dev (WP-W1), and the Mi 9T on any build carrying the step-1 client.
+
+1. BEFORE reopening the app after the deploy, send the Mi 9T a 1:1 text with the app killed.
+   **Expect** a banner with content, and on the server `[PUSH_SEND] ... mode=full` for that device: its
+   row reads `wakeVersion = 0` until the app starts (046 writes no backfill - the full push is the
+   contract the binary registered under, never a lost notification).
+2. Open the app once (a cold start registers), then kill it. **Expect** on the server
+   `[PUSH_REGISTER] ... wake=1`, and no `[PUSH_ENVELOPE] register sweep FAILED` line.
+3. Send three texts (1:1, group, salon) with the app killed - reading 1 of the
+   [backlog entry](backlog.d/push-payloads-carry-nothing-for-google-and-apple.md#readings-owed-the-code-is-verified-only-by-compiling-and-ios-not-even-that-before-a-release).
+   **Expect** the 1:1 and group banners with their text, `[PUSH_WAKE] fetched` in
+   `adb logcat -s CanariFCM` before the decrypt (the extra `presentation` key read by nothing), and on
+   the server `mode=wake` sends with one `[PUSH_WAKE] served queued=...` each. **Expect** the salon to
+   arrive as a FULL push (`[SOCIAL_PUSH] sent ... mode=full`): the device declares version 1, so no
+   `[PUSH_ENVELOPE]` line and no `mode=wake` on `[SOCIAL_PUSH]` anywhere.
+4. On the dev database: `SELECT platform, "wakeVersion", count(*) FROM push_token GROUP BY 1, 2` and
+   `SELECT count(*) FROM push_envelope`. **Expect** the Mi 9T's row at 1 and ZERO envelopes - an
+   envelope before WP-W4 ships is a writer this row did not expect.
+
+The envelope wake itself (a salon, a comment and a chat reaction, each drawn with content from its
+envelope; a repeat fetch drawing ONE notification) is WP-W4's reading, owed once Android declares
+version 2.
+
+## The VoIP ring announces a video call as video - owed
+
+**Proves** that the native ring carries the media kind (alpha.2 bench: a video call rang as audio).
+Needs a dev build (`CALLS_VIDEO_ENABLED`, `calls_mode = audio_video` on the dev server), the iPhone 12
+locked and the app killed, and a second device calling it with VIDEO.
+
+1. Place a video call from the other device. **Expect** the CallKit screen to read as a video call
+   (the video-call label and the video button on the lock screen), and the log
+   `[CanariCallKit] voip push type=call_ring call=... video=1` then `ringing call=... video=1`.
+2. Answer, unlock. **Expect** the camera on in the call (`pending accept hasVideo` true, the local
+   preview visible) and the caller seeing video.
+3. Repeat with an AUDIO call: `video=0`, audio screen, camera off.
+4. With `calls_mode = audio`, a video ring attempt is refused by the server: no CallKit ring at all.
+
+## The emoji picker paints at once - owed on the iPhone (2026-11-08)
+
+Cause and fix: [emoji](frontend/emoji.md#the-picker-paints-at-once---2026-11-08). On a pre-release, killed app, a conversation with at least one message: open a conversation, wait for it to settle, tap a message's reaction "+" (then the composer's emoji button on a second run). Read: no cell of the first screen of "Smileys et emotions" is blank or grows, "Recents" has no empty tile, the tab bar shows nine icons and no stray glyph, on the FIRST open after a cold launch. Record the first-frame state with a screen capture.
+
+## The seed mirror labelled by account - owed (2026-11-07)
+
+**Proves** that the Graine seed mirror's account labels are written on hardware by both writers (the
+page and the push decrypt) and that one account's wipe removes its own seeds and leaves the other
+account's ([auth](frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07)).
+Verified so far by host tests only, and no mobile target was compiled on the Windows box that wrote
+it: the Kotlin absorber now reads `{stored, leftToApp}` from the JNI writer, and the Objective-C
+activation mirror hands the seed file to Rust (`canari_ios_mirror_graine_seeds_to_app_group`) instead
+of copying it. Needs a pre-release carrying the change, the iPhone 12 (`tools/ios-device`) - the
+platform with TWO copies of the mirror (app and App Group) - then the Mi 9T, and two test accounts A
+and B that are both members of one community with two salons S and T, plus a second device for B. A
+message is "under a session" until that salon rotates (a member joining rotates it): keep T quiet of
+joins for the whole reading.
+
+1. On the phone, sign in as A and let its community sync settle, then sign out and sign in as B -
+   for the FIRST time on this phone. Opening a salon mirrors nothing: the page mirrors a seed when it
+   RECEIVES one (B's first community sync replays the key-group frames that carry T's current
+   session) or when it MINTS one. After B's first sync settles, T's current session is labelled A
+   and B.
+2. Still as B, app killed: have a member mint a new session in S (a member joining is enough), then
+   send a message in S: **expect** a decrypted banner - the seed frame went through the push writer,
+   whose entry is labelled B alone.
+3. From B's other device, remove this phone from B's devices. **Expect** the per-account wipe (A
+   still lives here), with the page's line `[REVOKED-LOCAL] ... mirrored Graine seeds: N seed
+   entry(ies) removed from the app's copy (alone on the install: false)` and, from Rust, one line PER
+   COPY: `[GRAINE_MIRROR] the account's seeds in the app's copy: N removed, M kept for another
+   writer, 0 of unknown writer removed, K of unknown writer left, C channel(s) dropped`, and on iOS
+   a second line `... in the App Group copy: ...` with its own counts (equal to the app's when the
+   group copy was current). N counts the sessions only B wrote (step 2's at least), M the ones A also
+   wrote (T's at least), K the ones mirrored before this build. `0 of unknown writer removed` is the
+   point: another account lives here.
+4. Sign in as A WITHOUT the community sync reaching T (airplane mode right after sign-in), kill the
+   app, back online, send a message in T from another client: **expect** a decrypted banner - A's
+   label kept the shared entry through B's wipe.
+5. On the OTHER phone, holding ONE account only and updated over a pre-label build (so its mirror
+   has entries of unknown writer), with a throwaway test account: delete that account from
+   Settings. **Expect** `(alone on the install: true)` on the page's line and `K of unknown writer
+   removed` with `0 of unknown writer left` on Rust's - the pre-label entries go with the install's
+   last account. (A signed-out account keeps its parked MLS state, so it still counts as "on the
+   install": steps 1-4's phone never reads `true`.)
+6. Nothing in the log at ERROR `[GRAINE_PUSH] seed ... carries no writer account` at any step: that
+   line means a push decrypt reached the writer without its stamp. On Android, a seed RELAYED for the
+   app (no channel known to the push) logs at INFO `left to the app`, never at ERROR.
+
+## The camera tab and Android Back - read on the Mi 9T, `1.6.3-alpha.2`, 2026-11-02
+
+**Method.** The WebView's DevTools socket (`adb forward` to `webview_devtools_remote_<pid>`) read `location.pathname`, `<html>` classes and the console (`[reel-capture]`, `[historyOverlay]`) after each press; no personal data.
+
+| Attempt (about 12 presses) | Result |
+| --- | --- |
+| Idle camera, Back (x4, then swipe back to the camera each time) | `/posts`, chrome back (`fullscreen-place-open` removed), camera reopens by swipe: **PASS** |
+| Hold the shutter 3-4 s, release (review), Back | the "Abandonner cette capture ?" question; `[historyOverlay] Back closed 1 overlay(s), 0 left open` |
+| Back DURING the recording | the camera returns idle on `/camera`, chrome as designed; one more Back goes to `/posts`: **PASS** |
+| Review, Back (question up), Back again (x2, 100 % repeatable) | **the app leaves** (`Setting back callback null`, task closed, no `[historyOverlay]` line for that press) instead of the feed |
+
+**The stuck `/camera` without chrome of alpha.2 did NOT reproduce.** Signature to watch for if it returns: `location.pathname` still `/camera` with `<html class="fullscreen-place-open">` and `[reel-capture] leaving (navigation) ... the camera stays closed` with NO `a navigation ended on this screen` / `did not happen` line after it. That is the same-URL popstate hypothesis (a drain by `beforeNavigate` that no `afterNavigate` follows), still untested.
+
+**The double Back that left the app - cause found, fixed on the web side, the native half owed a build.** Review, Back (the question), Back again finished the activity: `finishing=true`, no `popstate`, no `[historyOverlay]` line. The chain, read on the phone: the question's overlay entry (`ConfirmDialog` -> `ModalOverlay` -> `bindHistoryOverlay`) IS on the stack and history (`history.length` 3, DevTools `Page.getNavigationHistory` shows it), but Wry's callback asks `WebView.canGoBack()` first and it answered false, so `MainActivity.onBackPressed` finished the app. What decides it: an entry pushed from a Back's own handler has no user activation behind it, and Chromium declines to step back from it until the page sees one - a TAP on the dialog text between the two Backs made the second Back close the question (3 of 3), the same question opened by the review's X (a tap) never failed, and `history.back()` from DevTools stepped it fine (a DevTools evaluation may itself count as a user gesture, so that line is weak evidence; the fresh-launch reading below is the real proof). Fix: the page PUBLISHES how many overlays a Back can still close (`window.canariBack.setOverlayDepth`, from the one place `historyOverlayStack` changes: the live overlays minus the Backs issued and not yet landed, as `settleArrival` will close them - a ghost between two live overlays still has one to close; zero on the router's own entry and where no entries are written), and `MainActivity.onBackPressed` reads that number SYNCHRONOUSLY: above zero it lowers it at once and calls `window.__canariBackFromNative()`, which steps the page's own history (the Back closes the question, "Keep"); zero leaves as before. Lowering the depth at the hand-over, not at `popstate`, is what makes two fast Backs close one overlay each. Pinned in `historyOverlayStack.test.ts` (two fast Backs; router entry, no-entry runtime and ghost promise nothing); the Kotlin compiles in CI ("Compile Android app") but HAS NEVER RUN. **Owed: a build with it, then on a fresh launch:**
+
+1. Film a take, Back (the question), Back again: the second Back closes the question, not the app; a third asks again.
+2. Two Backs pressed fast on a review: one overlay closes per press, the page below the camera is never reached.
+3. Back on an incoming call's full-screen overlay: it is minimised, not hung up.
+4. Back on a conversation opened from a notification: it closes to the list.
+5. Back at a root screen (no overlay open): it still leaves the app.
+
+**Untouched stages, read the same day.** The send sheet: Back closes the sheet and leaves the review; the next Back asks the question (a document that had taps: fine). The Android edge-swipe Back in a review asks the same question. The publish sheet was not reached.
+
+**Reading of 2026-11-02 (`1.6.3-alpha.2`, both phones, French; [reels-in-chat section 20](frontend/modules/reels-in-chat.md#20-the-bench-reading-of-163-alpha2-2026-11-02)).**
+The sender was the other bench phone with the dev writer on. No caption (the chat camera has no
+caption field), no salon (RC-8), English not run.
+
+| Phone | App state | Conversation | Lock screen | Verdict |
+| --- | --- | --- | --- | --- |
+| Mi 9T | killed (`HOME`, `am kill`, `pidof` empty), screen off | DM | title `<sender>`, text `🎬 CanaReel`; `decryptProto: success type=media chars=11`, `showNotification ... hasMedia=false` | **PASS** |
+| Mi 9T | same | group | title `<group> : <sender>`, text `🎬 CanaReel`; `hasMedia=false` | **PASS** |
+| iPhone 12 | backgrounded (Home), locked | group | `<group>, <sender>, 🎬 CanaReel` | **PASS** |
+| iPhone 12 | backgrounded, locked | DM | `<sender>, 🎬 CanaReel` | **PASS** |
+| iPhone 12 | killed (`ios.mjs terminate`), locked | DM | `<sender>, 🎬 CanaReel` | **PASS** |
+
+No picture of the reel on either platform. The iPhone's notifications carry one attachment on every
+message, text included (the sender's avatar, `Received replacement content ... attachments: 1`),
+so its "Piece jointe" is not a thumbnail.
+
+**One finding on the iPhone, not specific to reels (P1 iOS notifications):** in a DM created a few
+minutes earlier, while the app was open, and the app then killed with `terminate`, BOTH a reel and
+a control text read `Nouveau message de <sender>` - the generic line, so the extension did not
+decrypt. The same DM read its content once the app had been opened again and left by Home, and a
+DM killed afterwards read `🎬 CanaReel`. The group, older, read its content throughout. Read as:
+the state the extension decrypts with did not yet hold the new DM when the process was killed. The
+syslog shows the extension ran and delivered mutated content (`Service extension delivered mutated
+content`, `Delivered user visible push notification`); its `[NSE_OUTCOME]` line is not readable on a
+TestFlight build (its backlog entry was withdrawn by the owner on 2026-11-03). **Read again on
+`1.6.5-alpha.1` (2026-11-05) and explained:** the App Group copy of the state was made only at an
+activation or a resignation, and a process killed in the foreground never resigns; the copy now
+follows every write of the state ([mobile](frontend/mobile.md#the-extensions-copy-of-the-state-follows-every-write-2026-11-05)).
+Owed: this row again on a build carrying it.
 
 ## C. The row a push creates carries the GROUP's name - owed on BOTH platforms
 
@@ -666,6 +1075,22 @@ works, which only a screenshot caught. And a mounted `<img>` proves nothing on i
 picture keeps its `src` - so the assertion has to be `naturalWidth > 0`. Step 1 (a PDF in a POST) is
 still owed.
 
+
+## M-bis. Several documents in a post: compact rows, and the save that needs its own tap - owed on iPhone
+
+**Proves** the compact document rows of [posts](frontend/modules/posts.md#several-documents-compact-rows-and-a-cap-of-ten-attachments-owner-2026-11-02).
+A row fetches nothing until tapped, so a SAVE on an unfetched row is a download that finishes AFTER
+the tap; the code therefore never saves from there - the row turns "Pret - touchez pour enregistrer"
+and the save runs on a second tap, inside a gesture. Whether WKWebView (the iOS app) really accepts
+that second tap, and whether a save started from the first one would have been refused, only the
+iPhone 12 can say.
+
+1. Post with three PDFs: three rows, no preview, no network request for the files (the log shows no
+   `downloadAndDecrypt`).
+2. Tap a row: a spinner, then the in-app reader opens. Tap another row while the first loads: ignored.
+3. Tap a row's download button: spinner, then "Pret - touchez pour enregistrer"; tap it again: the
+   share/save sheet appears and the file is the right one.
+4. A post with one PDF still shows its first page and saves in one tap.
 ---
 
 ## N. Offline unlock and the promotion back - owed on BOTH platforms
@@ -1126,6 +1551,92 @@ afterwards. Evidence: `<harness-dir>/a1-bench/r1013-owed/checkV*.json` and frame
 
 ## iPad and rotation - owed on an iPad\n\nSwitching into Canari from another app does not rotate the window on an iPad (reported 2026-08-28); it needs an iPad. The Android phone rotation is decided and shipped: portrait under 600 dp, free on a tablet (`canari_lock_portrait`, [mobile](frontend/mobile.md#the-window-layout-the-keyboard-and-the-orientation-lock)).\n
 
+## AS. Two accounts on one iPhone install: A -> B -> A -> B - owed on the iPhone 12 before the stable
+
+**Proves** [one MLS state per account](frontend/modules/auth.md#one-mls-state-per-account-on-a-native-install-owner-decision-2026-11-02)
+on the platform it was built for: every gate on it is a host test, and the switch, the App Group
+copy the notification extension decrypts with and the activation mirror are native. **This is the
+reading the per-account slot (#2919) owes before a stable carries it.** **Precondition:** a
+pre-release carrying #2919 on the iPhone 12 bench phone, two bench accounts A and B where B has
+never signed in on this install, a third device signed in as a third account with a DM to A and a
+DM to B, and the device log (`tools/ios-device`) for the `[MLS_ACCOUNT]`, `[MLS]` and `[CanariPush]`
+lines.
+
+1. **A, then A -> B.** A signed in with a DM open. Sign out, sign in as B. Expect
+   `slot selected for the signing-in account: Moved { parked_other: true, unparked: false }`,
+   `slot state parked` and `the extension's copy of the previous account's state removed`.
+   Background the app, then bring it back. Lock the phone; the third device writes to B - the
+   notification shows the CONTENT. It writes to A - the notification shows no content, and nothing is
+   written for A (no `[KG_PUSH_JOIN]` or state write naming A's account).
+2. **B -> A.** Sign out, sign in as A. Expect `Moved { parked_other: true, unparked: true }`. A's
+   history opens. The third device sends, A replies, the third device decrypts the reply. Lock the
+   phone; a message for A shows its content.
+3. **A -> B.** Sign out, sign in as B. B's DM continues where step 1 left it. Kill the app and
+   relaunch it once: `[CanariPush] mirror to App Group done` appears, and no
+   `[CanariPush] mirror mls.bin failed`.
+4. **Reboot.** Unlock once, lock, the third device writes to B: the content shows.
+4b. **B's "forgot PIN" leaves A intact.** With A having signed in last, sign in as B and take "forgot
+   PIN" at B's PIN gate. Expect `[MLS_ACCOUNT] the PIN reset is staged` then `the PIN reset is
+   committed`, and no `terminer_session_mls` with a sweep; A's state - parked under A's directory - has
+   the same sha256 as before, and A then signs in with its history. With the network cut before the
+   reset, expect `the PIN reset is rolled back` and B's old PIN still opening B's history.
+4c. **An unproven state is never shown to a new account, and goes back to its owner.** On a SECOND
+   install (or after steps 5-7 below are read: this step leaves A's state where steps 1-4 did not),
+   install a build from before the owner record, sign A in, then install the pre-release over it (A's
+   `mls.bin`, no `mls.owner`; at the first start expect `the account its push context names is marked
+   as one a state opened for`, and NEVER `could not be seeded at start-up` nor `is created after
+   start-up`). **Accepted residue, pre-1.3.0 installs only**: if the old build's last sign-in was B's
+   (B used the phone after A and never wrote a state), the seed marks B, and B meets A's state once as
+   the old-PIN refusal - A's state stays whole and A still opens it. Record which account the seed line
+   names when the reading is taken. Sign in as B, who never signed in on this install, and MISTYPE B's PIN
+   once before typing it right: expect `the slot's state of UNPROVEN owner set aside as
+   unproven.residue-<n>` at B's sign-in, and B's PIN gate is B's
+   ordinary one - "Créer mon PIN" when B has no PIN yet, "Déverrouiller" otherwise - which opens with
+   B's own PIN on a fresh state. B never sees "Mon PIN a changé sur un autre appareil → Récupérer mes
+   messages", nor any failure to open a saved state (round 6 offered B A's state, and B met it). Sign out,
+   sign in as A: expect `a state of unproven owner set aside earlier is offered to the signing-in
+   account`, A's history opens, and `mls.owner` names A.
+4d. **B revoking the phone with A parked leaves A whole, and takes B's key.** With A parked and B signed
+   in, note B's keystore alias (`<B's userId>_<B's deviceId>`, in `keystore_aliases.xml` on Android, the
+   `[DEL-LOCAL]` lines on iOS). Remove this phone from B's device list on another device. Expect
+   `another account's MLS state is on this install - only the revoked account is wiped` (or `other
+   account(s) recorded`), never `wiping this device back to a fresh install`; then `[REVOKED-LOCAL] ...
+   done` for B, and no `[DEL-LOCAL]` line about B (B was revoked, not deleted). Afterwards B's alias is ABSENT from the keystore (`BiometricService.isKeyPresent` false; on
+   Android no `<B's alias>` entry), and the run holds ZERO `no keystore entry can be named` lines and
+   ZERO `the revoked account's wipe did not finish` lines. A then signs in with its history, its PIN and
+   its biometric unlock.
+4e. **A reset cut by a reload, then an account switch** (rounds 9 to 11 of the review of #2919). At B's
+   PIN gate take "forgot PIN", and kill the app the moment `the PIN reset is staged by document <n>`
+   appears (before `committed`); relaunch online. Expect, before any unlock, `an unsettled PIN reset is
+   adopted by document <m>` and then, from the server's answer, `the reset is committed` with the gate
+   at once in "Créer mon PIN" (or `rolled back` when the server had not been reached, and B's old PIN
+   opening B's history) - never a `.resetting` left behind, never B's old state unparked after a
+   commit. Repeat with the phone OFFLINE at the relaunch: B's sign-in shows "La réinitialisation de
+   votre PIN attend la réponse du serveur", logged `sign-in refused, as expected` at INFO; reconnect,
+   retry, and the reset settles. Then sign out, sign in as A: A's history opens, its state's sha256
+   unchanged; back to B: B's new PIN opens a fresh state. At every activation of this step note the
+   `[MLS_ACCOUNT] activation mirror: waited N ms for the state lock, held it M ms` line - a reset holds
+   the state lock, and a wait here is the one most likely to stall.
+5. **The greps, over the whole run, each ZERO:** `TWO STATES`, `cut part-way`, `sign-in refused`,
+   `superseded`, `not the push's account`, `a PIN reset was cut`, `committed PIN reset's removal was cut`, `no keystore entry can be named`,
+   `wipe did not finish`, `[DEL-LOCAL]`, `after its erasure`. `residue` appears ONLY on step 4c's install (`UNPROVEN owner set aside as
+   unproven.residue-<n>`), never on the install of steps 1-4.
+6. **The files** (`xcrun devicectl device info files` on the app container and the App Group), on the
+   install of steps 1-4, once step 4d ended with A signed in: NO 64-hex directory under
+   `mls_accounts/` - A's state is in the slot again and B's went with its revoked wipe - and no
+   `.parking`, `.unparking`, `.resetting`, `.committed` or `.residue-<n>` entry; `mls_accounts/unproven.declined`
+   absent or empty (B's entry from 4b, if its reset committed, is pruned by the wipe of B);
+   `mls.owner` in the slot names A; the App Group `mls.bin` has the same sha256 as the slot's.
+7. **The mirror's cost:** between the two `didBecomeActive` mirror lines of one activation, under
+   about 100 ms; and every `[MLS_ACCOUNT] activation mirror: waited N ms for the state lock, held it
+   M ms` line of the run, both numbers noted - a wait in the hundreds of milliseconds is a main-thread
+   stall behind a multi-megabyte write, and blocks the stable like step 5.
+
+`sign-in refused` is expected ONLY as step 4e's offline `sign-in refused, as expected` (INFO).
+
+**Any line of step 5, a missing content in steps 1-4, a key of B left in step 4d, or any directory or suffix in step 6 blocks the
+stable.** The result goes into the [per-account backlog entry](backlog.md#p3---switching-accounts-on-one-iphone-install-makes-the-local-store-unreadable).
+
 ## X. The scroll after an edge swipe - owed on the Mi 9T
 
 **Proves or refutes** [the swallowed scroll](frontend/design-reference.md#41-the-system-back-gesture-takes-the-edge-touch-and-the-swipe-back-stayed-armed-mi-9t-2026-10-05):
@@ -1354,6 +1865,153 @@ the console (CDP on the Mi 9T, the in-app log on the iPhone) for the `[reel-view
    turn ONE page (`[reel-viewer] wheel` once per gesture); ctrl+wheel zooms the page and does not
    turn it; with the comments sheet open the wheel scrolls the list; over an unfolded caption it
    scrolls the caption.
+
+## LA. Read state follows the iPhone leaving and coming back - owed on the iPhone 12 (step 7 on the Mi 9T)
+
+**ANY FAILURE HERE BLOCKS THE STABLE** that carries the iOS read-lifecycle fix (the follow-up to
+#2937). The fix is verified by compiling and by the source contract
+(`utils/appForeground.contract.test.ts`) only. Whether iOS delivers the background/foreground pair
+to the shell, and whether the page hears it, is read here and nowhere else
+([chat](frontend/modules/chat.md#read-state-between-devices---the-census-2026-11-02)).
+**Precondition:** a pre-release carrying it on TestFlight, a second device of the SAME account (a web
+tab), and a peer account that writes to it. The in-app log must be open to read the `[FOREGROUND]` (page)
+and `[CanariIOS]` (shell) lines.
+
+1. **The page hears both edges.** Open a conversation, press Home, come back. Expect one
+   `[FOREGROUND] app in the background` and one `... back in the foreground` per transition, and no
+   `[CanariIOS] ERROR foreground=... not published` line.
+2. **A system sheet is not leaving.** On the open conversation, pull down Control Centre, then trigger
+   the Face ID sheet (lock the app if biometrics are on, or open a biometric-gated setting). Expect NO
+   foreground edge. A message the peer sends while the sheet is up is marked read once it closes,
+   with no change to how the mark leaves.
+3. **A frame that lands while the app is in the background is NOT read.** Press Home, and have the peer send a message
+   within 5 s. Expect the list badge to show 1 on the web tab of the same account, and no "Vu" on the
+   peer. Come back to the conversation: the mark leaves (the badge falls to 0 on the web tab, "Vu" on
+   the peer).
+4. **The badge after a resume.** Leave the iPhone on another conversation, read the first one on the web tab,
+   come back. The iPhone's badge for it is 0 without a reload.
+5. **A notification for Y does not read X.** Open conversation X, press Home, and have the peer
+   send a message in X and then one in Y. Tap Y's notification. Expect, in the device console, the
+   app to show Y; on the web tab of the same account X keeps its badge and the peer shows no "Vu" in
+   X; Y falls to 0. **THE ONE ORDERING RULE: the tap line (`[CanariIOS] notification tap during a
+   resume (...)`) comes BEFORE `round trip answered: publishing the foreground edge (opening: yes)`.**
+   Its `state` and `resumePending` values may be anything the shell accepted (a tap delivered after
+   `didBecomeActive` logs `state=0`), and it may come before or after `didBecomeActive: awaiting the
+   notification-center round trip`. A tap line AFTER `round trip answered`, or `opening: no` on that
+   line, refutes the ordering argument the shell rests on - LIKELY, never proven, until this is read;
+   step 8 applies the same rule to the page's own notification.
+6. **A plain resume still reads X.** Repeat step 5, but open the app from its icon: X is marked
+   read (the web tab drops X's badge, "Vu" in X on the peer).
+7. **The same on the Mi 9T** (the Android half, #2937): steps 5 and 6 with the app on X, tapping Y's
+   notification - X keeps its badge, Y is read; from the launcher X is read. The logcat shows
+   `onResume: opens a link=true` for the tap.
+8. **A notification the page raised itself (iPhone).** Open X and press Home FIRST; THEN, within the
+   few seconds before iOS suspends the page, have the peer send a message in Y - the page, still
+   running but off screen, raises its own notification for it (the push for the same message is then
+   suppressed). Tap it. Expect `notification tap during a resume` and `notification tap on a page
+   notification - handed to the plugin` BEFORE `round trip answered: publishing the foreground edge
+   (opening: yes)` (step 5's one rule, any `state` or `resumePending`); Y opens, X keeps its badge.
+9. **A tap on X's OWN notification, X a DM.** Open DM X, press Home, have the peer send a message in
+   X, tap its notification: X is marked read AT ONCE (the web tab drops X's badge, "Vu" on the peer)
+   - the hold must recognise its own conversation although the link names a group id and the
+   selection a map key.
+10. **A tap on a notification while the app is already in the foreground.** On X, with the app open,
+   let a banner for Y appear and tap it: `notification tap on an active app - not a resume, nothing
+   held`, Y opens and is read; X was read while it was on screen, as before.
+
+## LF. A read reaches the other devices when the iPhone leaves the app - owed on the iPhone 12
+
+**ANY FAILURE HERE BLOCKS THE STABLE** that carries the iOS read-lifecycle fix. **This reading
+also decides the next step**: if the hold begins and then EXPIRES with no settle, the WebContent
+process was suspended under the task, and the delivery moves native, as designed in
+[chat](frontend/modules/chat.md#read-state-between-devices---the-census-2026-11-02). **Precondition:** as
+for LA, plus the Xcode device console (or Console.app) filtered on `leave flush` (the `[CanariPush]` lines).
+
+1. **Online.** Have the peer send a message. Open the conversation on the iPhone and press Home within
+   ONE second, inside the 2 s debounce. Expect, in order: `[CanariPush] leave flush N begun`, the
+   mark's send, then `leave flush N ended: done`, and NO `ERROR leave flush` line. The web tab of the same
+   account shows the conversation as read and the peer shows "Vu" WITHOUT the iPhone being opened
+   again. Repeat 5 times: all 5 must pass.
+2. **Offline.** Switch on aeroplane mode, open a fresh unread conversation, and press Home within one second.
+   Expect the begin, then either `ended: failed` or, if the send hangs until iOS's deadline, the
+   expiration logged as an ERROR by the shell. That ERROR is expected here and nowhere else. Then switch
+   aeroplane mode off and open the app: the owed mark leaves at once (the web tab drops the badge).
+3. **Off iOS nothing changed.** On the Mi 9T, repeat step 1: there is no `leave flush` line, and the mark leaves
+   as before.
+
+## CKS. The checkpoint-skip switch on dev - owed on BOTH phones before the flip
+
+**THE SWITCH STAYS `off` IN PRODUCTION UNTIL BOTH READINGS PASS ON BOTH PHONES** (the Mi 9T and the
+iPhone 12). WP-CHECKPOINT-SKIP was built on 2026-11-07 behind `platform_config.checkpoint_skip_mode`
+(core migration 020): with it `on`, a live drain that only received application frames leaves its
+MLS checkpoint to the next send, commit, background edge or logout, until 100 receive generations are
+unsaved. The decision, the measurement of 2026-10-22 and what it left uncovered are in
+[open-questions](open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below).
+What is read here is the two cases that measurement did not cover.
+
+**Precondition - NOT ambient, assert each line:**
+
+- A pre-release carrying the switch serves dev (`GET https://dev.canari-emse.fr/api/version` answers
+  a `checkpointSkip` field) and is installed on the phone (Mi 9T: the release APK or the Play tester
+  build; iPhone 12: TestFlight). A bench debug build is not needed.
+- **The switch is `on` on dev**: as `canari-test-gamma` (dev's global admin) at `/admin/platform`,
+  "Sauvegarde de l'état de chiffrement après réception" -> "Différée", saved; then
+  `/api/version` answers `"checkpointSkip":{"mode":"on"}`.
+- **The phone heard it**: a running session re-reads the mode only at its next version check,
+  which focus, coming back online and visibility trigger (there is no periodic refresh), and only a
+  LIVE answer counts, never the cached one. After a relaunch (or a return to the foreground), the
+  in-app log carries
+  `[MLS] Checkpoint skip ON: live receive-only drains defer their checkpoint while fewer than 100
+  receive generations are unsaved`. Without that line the run is a control, not a reading.
+- A DM between the phone's bench account and a peer driven from the harness Chrome, which sends
+  NUMBERED messages (`live-1`, `dead-1`, ...) so a gap or a duplicate is read off the conversation.
+- The phone's in-app log open afterwards (the summary and the reload lines go through it; the
+  per-drain `checkpoint deferred ...` line is a debug line, read only in a debug build's console).
+
+**CKS-1. A kill DURING a drain of more than K frames.**
+
+1. Phone open on the feed (NOT the DM, so the drain is the only reader). The peer sends `live-1` ..
+   `live-10`; the phone receives them and writes no checkpoint line for them (they are deferred).
+2. Kill the app: Mi 9T `adb shell am force-stop fr.emse.canari`; iPhone, swipe it away in the app
+   switcher.
+3. The peer sends `dead-1` .. `dead-300` while the phone is dead.
+4. Relaunch and unlock, and kill the app again while the catch-up drain runs - the first time right
+   after the unlock, the second time a second or two later, the third time just after the in-app log
+   shows `Encrypted state checkpoint persisted. Covers ...` (the drain reached K = 100 and
+   checkpointed). Three kills, three relaunches.
+5. Relaunch, unlock, wait for the list to settle, open the DM.
+
+**Expect:** every one of the 310 messages exactly once, in order; in the log no `live-ahead`, no
+`unreadable for good`, no duplicate row, and at least one `Covers N receive generations left by M
+skipped drains` line. A message missing, doubled or unreadable is a FAIL.
+
+**CKS-2. A phone away for HOURS with traffic** - two runs, because they take two different paths.
+
+- **(a) Killed.** Phone open on the feed; the peer sends `live-1` .. `live-20` (deferred). Mi 9T:
+  `adb shell input keyevent KEYCODE_HOME`, then `adb shell am kill fr.emse.canari` and assert
+  `pidof` is empty - **never `force-stop` here**, which cancels every FCM broadcast and so takes the
+  background engine out of the run; iPhone: swipe it away.
+- **(b) Backgrounded, not killed** (the native resume reload, the path that can say `live-ahead`).
+  Same start, then only Home - the process stays alive.
+
+For each run, over AT LEAST THREE HOURS the peer sends one numbered message every ~15 minutes and,
+once in the middle, a burst of 50. Write down every notification the phone shows. The background
+engine decrypts each push READ-ONLY from `mls.bin`, which is behind by the deferred generations, and
+never writes it (the one background write, a staged Welcome, is refused while the app runs:
+`foreground-active` / `warm-process` in `prepare_welcome_background_with_key`,
+`mobile/background.rs`). Then open the app, unlock, open the DM.
+
+**Expect:** every message exactly once, in order; every notification shown matches a message in the
+DM; no `unreadable for good`, no duplicate. What this targets: that a push decrypted from a file
+behind by up to 99 generations still shows its text, and, in run (b), that the resume reload says
+`live-ahead` (expected with deferred generations: the live state is persisted over the file,
+`TauriMlsService.reloadStateFromDisk`, which discards nothing since the engine never wrote it) and
+keeps every message. A missing message, or a notification that could not be read, is a FAIL.
+
+**After the run:** the verdict, the build, the phone and the counts go into a row here and into
+[the question](open-questions.md#the-readings-owed-before-the-flip). Any FAIL: the switch goes back
+to `off` on dev at once and the question is reopened. Both readings passing on both phones: the lead
+flips production at `/admin/platform` and says so.
 
 ## The iPhone 12 owed-readings inventory (2026-10-11)
 

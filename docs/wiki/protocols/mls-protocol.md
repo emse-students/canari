@@ -1505,8 +1505,13 @@ build wrote deafens nothing) and its announcement are deleted. Pinned by
 
 1. **Read the `[UNINVITED_ENTRY]` count on production first**, by `kind`, so the legitimate paths are
    measured before anything else is built.
-2. **The emission side.** A user holding no leaf ASKS a member instead of entering alone, mirroring
-   the further-device door, and never in a 1:1 - so the legitimate paths above stop producing the
+2. **The emission side.** A user holding no leaf ASKS a member and waits for that member's Add,
+   never entering alone, and never in a 1:1. This is NOT the further-device door: since D1 a further
+   device asks first but lets itself in when no member device can answer, because its user's leaf
+   already vouches for it in every member's tree. A user with no leaf has nothing in the tree to vouch
+   for it, so a member's Add stays its only door
+   ([mls-availability-no-holder](mls-availability-no-holder.md#decisions-taken-2026-10-31)). Done this
+   way, the legitimate paths above stop producing the
    commit before any member refuses it. Each path is pinned by a named test that it is merged today
    (`admission_policy.rs`: a 1:1 peer whose KeyPackage was skipped, a user whose only device was
    revoked and swept, an only leaf evicted on a standing seat).
@@ -1563,18 +1568,43 @@ leaf of theirs is in any member's tree); what it can do - enrol a device under a
 is the stated residual risk of the 2026-10-30 decision, made visible by the line and the owner's
 alert rather than gated by a tap.
 
-**The further device's own door is unchanged.** A device whose user holds a leaf in the tree of the
-GroupInfo its external commit would be built on, but none of its own, does not let itself in
-(`externalJoin(groupId, { asAFurtherDevice: 'ask' })`, `external_join_is_a_further_device` in
-`welcome.rs`): it sends a `welcome_request` and a member's device adds it. A user's first device in a
-group, and a device whose own leaf is still there, keep their own door. A device that does let
-itself in (an older client) is still said and reported (`entersAsUnvouchedDevice`,
-`[UNINVITED_ENTRY] kind=unvouched-device`, `chat_system_unvouched_device_entry`) and answered no
-history until a member's Add of it (`historyWithheld.ts`); there is no tap that lifts it any more.
+**The further device asks first, and lets itself in when no member device can answer** (owner,
+2026-10-31, D1 of [mls-availability-no-holder](mls-availability-no-holder.md#decisions-taken-2026-10-31)).
+A device whose user holds a leaf in the tree of the GroupInfo its external commit would be built on,
+but none of its own, first sends a `welcome_request` (`externalJoin(groupId, { asAFurtherDevice:
+'ask' })` answers `further_device`, `external_join_is_a_further_device` in `welcome.rs`). A member
+device online adds it. A `stored` answer - the server's own verdict that no member device is online
+- makes it join by itself IN THE SAME PASS (`requestReAdd`, `recovery.ts`), with `welcomeOwed: 'ask'`
+so an Add already under way (the seat served with the base: `welcomeQueued`, `addInFlight`) is waited
+for. **One door per answer**: the ask carries `selfJoinIfNobody: true`, so on a current base with no
+member online the server stores, queues and wakes nothing (and withdraws an ask an earlier pass
+stored) - no member's background Add races the join. Were a member's Add and the self-join still to
+meet on the same epoch, the strict epoch gate accepts one and the loser rebuilds
+(`mls-core/tests/further_device_door.rs`). A user's first device in a group, and a device whose own
+leaf is still there, keep their own door. **The server holds the self-join shut**
+(`FURTHER_DEVICE_SELF_JOIN_OPEN = false`: no seat is served with the base, so the device reads
+`seat_unreadable` and waits) until `minClientVersion` carries D2/D3
+([the gate](mls-availability-no-holder.md#the-gate-d1-waits-for-d2-and-d3-on-every-member-client)).
 
-**History is the existing design's, unchanged here.** A device added by a member's Add is not
-withheld; what history it receives is decided by the history-answer rules
-([history-answer-addressing](history-answer-addressing.md)), which this change does not touch.
+**Such an entry is announced as an ordinary added device (D2)**: "X a ajoute un appareil" to members,
+"Nouvel appareil connecte" with "Ce n'est pas moi" on the owner's other devices - the same
+`announces_new_device` event a member's Add raises. The `unvouched-device` line, its report and the
+history withholding (`historyWithheld.ts`) are NARROWED to the one class that is not a further
+device's recovery: **a KNOWN device id entering by its own commit under a key other than the one known
+for it** (`trust == KeyChanged && enters_by_its_own_commit()`, one predicate on both sides of the WASM
+boundary - [the trade-off](mls-availability-no-holder.md#the-security-trade-off-honestly)).
+
+**History follows rule 2 for a further device (D3).** What it receives is decided by the
+history-answer rules ([history-answer-addressing](history-answer-addressing.md)); nothing is withheld
+from it because of the door it took. Only the key-changed class above is withheld.
+
+**A community's key group is the same door by design, and its line says so** (2026-11-05). A key
+group is entered by external commit (the app classifies it `open`, `crate::admission`), so a member's
+new browser entering every key group of every community is the ordinary path. The device observer
+(`device_trust.rs`) records the event exactly as in a conversation and says it at info, naming the
+key group's door; a further device's D1 entry into a conversation is said at info too, naming D1. A
+Mi 9T reading of `1.6.5-alpha.1` logged 70 ERROR lines for 7 web sign-ins, every one in a key group,
+before the line was named by the door. Only the key-changed class above stays an ERROR.
 
 **The Android background answer adds a member's device too** (owner, 2026-10-31: *"aussi en
 arriere-plan"*). `prepare_welcome_background_with_key` (`background.rs`) applies the same
@@ -1594,10 +1624,12 @@ after the route's read can overtake - it would otherwise read the commit as a me
 lift the ask. The phone clears its stage and records the target (`BackgroundWelcomeAnswer`), as the
 foreground's `admissionOfSeat` refuses the same seat. The per-device rule it had
 (`admit_only_a_device_this_tree_holds`, `unseen-device`) is deleted. **iOS has no background add
-path at all** (`canari_push.mm`: a `welcome_request_pending` is not acted on), so on iOS the device
-still waits for a member's app. While it waits, the device says so in plain words, with no key and
-no button (`chat_waiting_own_device`): it is added as soon as another device of its user already
-in the conversation, or another member, opens the app.
+path at all** (`canari_push.mm`: a `welcome_request_pending` is not acted on; deferred, D6), so an
+iOS-only member does not answer a further device from the background - which is why the further
+device joins by itself when the server finds no member device online. While it waits, the device
+says so in plain words, with no key and no button (`chat_waiting_own_device`). Where it can never
+get in - no usable base, nothing on its way, no member online, all read from one server answer - it
+says THAT instead (D5, [mls-availability-no-holder](mls-availability-no-holder.md#d5-the-banner-and-what-decides-it)).
 
 **What was deleted with the interim (2026-10-27 to 2026-10-31).** The per-device ask ("Nouvel
 appareil de X - Ajouter / Refuser", its "Details" fingerprint disclosure and its Undo), the approvals
@@ -1926,14 +1958,12 @@ created in a follower's copy is one the leader never holds). Its
 state is a copy loaded once: the version guard refuses its writes once the leader has written, so the
 checkpoint above would fail on every follower commit; and before that checkpoint existed, a commit
 sent from a follower moved the group past the state the leader keeps, because the leader cannot read
-a commit of its own leaf back (`OwnPrivateMessage`). Commits are reached from a follower's UI
-(`groupActions.ts`, `groupCreation.ts`, `actions.ts`); refusing them by the leadership fact is the
-gate the outbox already applies to sends. The member is told, by type: a creation answers the
-`follower-tab` refusal, and an invite or a removal shows the same sentence
-(`reportFollowerTabRefusal`, `conversationRefusalMessage.ts`) - do it in the main tab. A community's
-or a salon's key group refused this way (`leaveKeyGroupToMainTab`, `followerTabKeyGroup.ts`) tells
-the member on a gesture (creating a community or a salon, joining a salon) and goes on without the
-group; on a load it is logged and the load goes on, since the main tab enters it.
+a commit of its own leaf back (`OwnPrivateMessage`). **Since 2026-11-08 the follower HANDS the gesture
+to the leader instead of refusing it** - [below](#a-follower-tab-hands-its-commits-to-the-leader-2026-11-08):
+the role is read at the gesture, before anything is asked, so the service's refusal is now reached
+only by a tab demoted between that read and its commit, and says so (`reportFollowerTabRefusal`). A
+key group met by a LOAD in a follower is still left to the main tab's own load and logged
+(`leaveKeyGroupToMainTab`).
 
 **Cost: one checkpoint per commit, awaited under the MLS lock**, which blocks decrypts and sends in
 every group while it runs. The live web path is the WASM ChaCha20 seal
@@ -3058,7 +3088,32 @@ generation the peer has already consumed, then dropped silently (WP-MULTITAB-1).
 held until `beforeunload`, with mutual exclusion guaranteed by the browser rather than by a
 read-modify-write on `localStorage`. The `BroadcastChannel` + heartbeat implementation is the
 fallback for engines without `navigator.locks` (Tauri WebKitGTK, very old browsers), and
-`canari-mls-tab` still carries the takeover and promotion messages on both paths.
+`canari-mls-tab` still carries the promotion messages on both paths (the take-over request was removed on 2026-11-08, with the follower banner).
+
+### A follower tab hands its commits to the leader (2026-11-08)
+
+Decided by the owner: the follower banner is removed and what a follower refused is done from it.
+`tabCommitDelegation.ts` hands each commit-bearing GESTURE (create a group or a DM, invite, remove,
+enter a community's or a salon's key group) to the leader, which runs the very path its own gesture
+runs, on its authoritative state, and answers the outcome by value - the same outcome types a
+leader caller gets (`ConversationOutcome`, `BulkAdditionOutcome`, a removal's ending). The follower's
+copy never commits and never holds the group it asked for; it draws what the leader stored, and a
+follower does not replay a group its copy does not hold.
+
+The request is a durable record (the account's IndexedDB `CanariDBTabCommit_<userId>`, `pending` ->
+`running` -> `done`, every change one read-check-write transaction) with only a signal on
+`canari-tab-messages`, posted once the record has committed. **Only a state LOADED as the leader runs
+one** (`stateAuthority.ts`): a follower promoted in place leads at once but holds a follower's copy
+until its promotion reload, so it runs and answers nothing - and refuses its own commits - and its
+reloaded successor serves. **A leader that dies mid-request is proven dead by the browser**: it ran
+the request holding the record's Web Lock, so a record found `running` with that lock free is
+answered `leader-gone` and never run again - the dead leader may have reached the server, and its
+kept commit is settled at the next connection by the existing machinery; running it twice is the
+double commit. A `pending` record is run by the next leader, the one a handover elects included,
+and deleted unrun once the tab that asked is gone (its requester lock free). A leader that cannot
+serve ANSWERS: `leader-unavailable` at the PIN keypad or signed out, `not-delegable` for a kind it
+has no executor for or a follower of another account. The mechanism, the refusals, the frozen
+background tab it does not cover, and the guard: [chat](../frontend/modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08).
 
 ### A tab queued behind itself and went read-only for ever - FIXED 2026-09-21
 
@@ -3070,7 +3125,8 @@ its own `beforeunload`. On screen: *"Messagerie chiffree active dans un autre on
 *Hors-ligne* header, and not one community ever listed - permanently, with no other tab in
 existence.
 
-**"Prendre la main" cannot rescue it**, and that is the same defect seen from the other end rather
+**"Prendre la main" could not rescue it** (the button is gone since 2026-11-08, with the follower
+banner), and that is the same defect seen from the other end rather
 than a second one: `requestLeadershipTakeover` posts `request_takeover` on a `BroadcastChannel`,
 and **a BroadcastChannel never delivers to the context that posted**. The only tab that could
 release the lock is the one asking for it.

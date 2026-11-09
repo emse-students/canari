@@ -189,6 +189,19 @@ vulnerabilities:
       - "pkg:deb/debian/libbrotli1@1.1.0-2+b7"
     statement: "Debian libbrotli1 1.1.0-2+b7 in authentik 2026.8.5, the newest authentik release, an upstream image this repository does not build, so the fix is not ours to ship; which processes load it was not verified. Remove when an authentik release ships 1.1.0-2+deb13u1."
 
+  # Debian's apt 3.0.3 (and its library libapt-pkg7.0) in the same authentik image, reported
+  # 2026-11-05, fixed in 3.0.4; the scanner's title names an on-path attacker (the full advisory
+  # text was not read). 2026.8.5 is still the newest authentik release. Upstream's Dockerfile runs
+  # apt-get in its build stages, and its `lifecycle/ak` entrypoint only in `prepare_debug` (the
+  # debugger setting and the `test-all` command), which this deployment enables in neither case; the
+  # image also runs as user 1000, which cannot run apt. Approved by the owner on 2026-11-05. Scoped
+  # by purl to that one build.
+  - id: CVE-2026-109518
+    purls:
+      - "pkg:deb/debian/apt@3.0.3"
+      - "pkg:deb/debian/libapt-pkg7.0@3.0.3"
+    statement: "apt 3.0.3 and libapt-pkg7.0 in authentik 2026.8.5 (an on-path attacker, per the scanner's title): upstream runs apt-get while building the image, and at runtime only in the entrypoint's debug branch (debugger setting or test-all), which this deployment does not enable; the container runs as user 1000. Upstream image, not rebuildable here; remove when an authentik release ships apt 3.0.4."
+
   # Three Python libraries in the same authentik image (2026-10-27), each HIGH with a published fix
   # and none in a release: 2026.8.5 (2026-10-21) is the newest. Read from authentik's own lockfile
   # at that tag (not from running the image): dnspython arrives only through `email-validator`;
@@ -282,3 +295,10 @@ vulnerabilities:
     statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
   - id: GHSA-6v7p-g79w-8964
     statement: "authentik server (): still present in authentik 2026.8.5; no authentik release ships the fix yet. Upstream image."
+  # Published 2026-11-07, Debian zlib1g 1:1.3.dfsg+really1.3.1-1+b1 in the image's base, fixed by
+  # Debian's +deb13u1 - which only an authentik image rebuild can carry (2026.8.5 is the latest
+  # release; none newer exists that day). The same two ids, so they retire with the next upgrade.
+  - id: CVE-2026-85091
+    statement: "zlib1g in authentik server 2026.8.5's Debian base, fixed by Debian +deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-07). Upstream image."
+  - id: CVE-2026-76844
+    statement: "zlib1g in authentik server 2026.8.5's Debian base, fixed by Debian +deb13u1; no authentik release ships a rebuilt image yet (2026.8.5 is the latest, 2026-11-07). Upstream image."

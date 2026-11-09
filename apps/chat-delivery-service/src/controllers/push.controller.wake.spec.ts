@@ -15,6 +15,14 @@ import { GroupMember } from '../entities/group-member.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
 import type { PushMessageInput } from '../services/push-payload';
+import { serveEnvelope, sweepDeviceEnvelopes } from '../utils/push-envelope';
+
+jest.mock('../utils/push-envelope', () => ({
+  serveEnvelope: jest.fn(),
+  sweepDeviceEnvelopes: jest.fn(),
+}));
+const serve = serveEnvelope as jest.MockedFunction<typeof serveEnvelope>;
+const sweep = sweepDeviceEnvelopes as jest.MockedFunction<typeof sweepDeviceEnvelopes>;
 
 /**
  * The two server halves a wake-up push needs from this controller
@@ -32,6 +40,7 @@ describe('PushController - the wake-up push', () => {
     upsert: jest.fn().mockResolvedValue(undefined),
     findOne: jest.fn(),
     update: jest.fn(),
+    manager: { tag: 'the chat-delivery manager' },
   };
   const queuedRepo = { findOne: jest.fn(), find: jest.fn(), save: jest.fn() };
   const emptyRepo = () => ({ findOne: jest.fn(), find: jest.fn(), save: jest.fn() });
@@ -54,6 +63,7 @@ describe('PushController - the wake-up push', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    sweep.mockResolvedValue(0);
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
     pushTokenRepo.findOne.mockResolvedValue({
@@ -99,7 +109,120 @@ describe('PushController - the wake-up push', () => {
       );
       for (const [row] of pushTokenRepo.upsert.mock.calls) {
         expect(row).toHaveProperty('wakeCapable', false);
+        expect(row).toHaveProperty('wakeVersion', 0);
       }
+    });
+
+    it('reads a step-1 binary (`wake: true`) as version 1', async () => {
+      await controller.registerPushToken({ ...body, wake: true }, 'user-1', undefined);
+      expect(pushTokenRepo.upsert.mock.calls[0][0]).toMatchObject({
+        wakeVersion: 1,
+        wakeCapable: true,
+      });
+    });
+
+    it('stores a declared version, capped at the highest this server serves', async () => {
+      await controller.registerPushToken({ ...body, wakeVersion: 2 }, 'user-1', undefined);
+      await controller.registerPushToken({ ...body, wakeVersion: 7 }, 'user-1', undefined);
+      for (const [row] of pushTokenRepo.upsert.mock.calls) {
+        expect(row).toMatchObject({ wakeVersion: 2, wakeCapable: true });
+      }
+    });
+
+    it('stores 0 for an unreadable version, and accuses it', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      await controller.registerPushToken(
+        { ...body, wake: true, wakeVersion: '2' as unknown as number },
+        'user-1',
+        undefined
+      );
+      expect(pushTokenRepo.upsert.mock.calls[0][0]).toMatchObject({
+        wakeVersion: 0,
+        wakeCapable: false,
+      });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('unreadable wakeVersion'));
+    });
+
+    it('sweeps the envelopes of the device that registered - the app is open', async () => {
+      sweep.mockResolvedValue(3);
+      await controller.registerPushToken(body, 'user-1', undefined);
+      expect(sweep).toHaveBeenCalledWith(pushTokenRepo.manager, 'user-1', 'phone-1');
+      expect(sweep.mock.invocationCallOrder[0]).toBeGreaterThan(
+        pushTokenRepo.upsert.mock.invocationCallOrder[0]
+      );
+    });
+
+    it('still hands the device its secret when the sweep fails, and accuses it', async () => {
+      sweep.mockRejectedValue(new Error('db down'));
+      const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+      const answer = await controller.registerPushToken(body, 'user-1', undefined);
+      expect(answer).toMatchObject({ status: 'registered' });
+      expect(answer.pushSecret).toEqual(expect.any(String));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('register sweep FAILED'));
+    });
+  });
+
+  describe('GET mls/push/wake?envelopeId=', () => {
+    const E = '11111111-2222-4333-8444-555555555555';
+    const fetchEnvelope = (envelopeId: string = E) =>
+      controller.fetchWakeFrame(undefined, 'user-1', 'phone-1', undefined, envelopeId);
+    const content = {
+      title: 'BDE - #general',
+      body: '',
+      data: { type: 'channel', channelId: 'c-1' },
+      inline: { ciphertext: 'C'.repeat(9_000) },
+    };
+
+    it('answers the full Android map, its inline group whatever its size', async () => {
+      serve.mockResolvedValue({
+        kind: 'served',
+        content,
+        times: 1,
+        platform: 'android',
+        locale: 'fr',
+      });
+      const answer = await fetchEnvelope();
+      expect(serve).toHaveBeenCalledWith(pushTokenRepo.manager, E, 'user-1', 'phone-1');
+      expect(answer).toMatchObject({
+        status: 'push',
+        fields: {
+          type: 'channel',
+          channelId: 'c-1',
+          ciphertext: content.inline.ciphertext,
+          title: 'BDE - #general',
+        },
+        presentation: { threadId: 'channel_c-1', title: 'BDE - #general' },
+      });
+      expect(queuedRepo.findOne).not.toHaveBeenCalled();
+    });
+
+    it('serves a repeat the same map, and logs it as served again', async () => {
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      serve.mockResolvedValue({ kind: 'served', content, times: 2, platform: 'ios', locale: 'en' });
+      const answer = await fetchEnvelope();
+      expect(answer.status).toBe('push');
+      expect(answer.status === 'push' && answer.fields).not.toHaveProperty('title');
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('served again times=2'));
+    });
+
+    it("answers gone for another registration's envelope, and logs it foreign", async () => {
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      serve.mockResolvedValue({ kind: 'foreign' });
+      await expect(fetchEnvelope()).resolves.toEqual({ status: 'gone' });
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('[PUSH_WAKE] foreign'));
+    });
+
+    it('answers gone when the envelope is not there', async () => {
+      serve.mockResolvedValue({ kind: 'gone' });
+      await expect(fetchEnvelope()).resolves.toEqual({ status: 'gone' });
+    });
+
+    it('refuses an id that is not a uuid, and a request naming both keys', async () => {
+      await expect(fetchEnvelope('nope')).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        controller.fetchWakeFrame(Q, 'user-1', 'phone-1', 'false', E)
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(serve).not.toHaveBeenCalled();
     });
   });
 
@@ -130,6 +253,8 @@ describe('PushController - the wake-up push', () => {
         silent: 'false',
         proto: longProto,
       });
+      // What iOS's `aps` would have said, for the extension to apply (WP-W5).
+      expect(answer.presentation).toMatchObject({ threadId: 'g1', title: 'Alice' });
       // The row is looked up in THIS device's own queue only.
       expect(queuedRepo.findOne).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -171,6 +296,12 @@ describe('PushController - the wake-up push', () => {
       const route = Object.getOwnPropertyDescriptor(PushController.prototype, 'fetchWakeFrame');
       const guards = Reflect.getMetadata('__guards__', route?.value as object) as unknown[];
       expect(guards).toEqual([PushSecretGuard, PushSecretThrottlerGuard]);
+    });
+
+    it('tells every cache not to keep the answer', () => {
+      const route = Object.getOwnPropertyDescriptor(PushController.prototype, 'fetchWakeFrame');
+      const headers = Reflect.getMetadata('__headers__', route?.value as object) as unknown[];
+      expect(headers).toContainEqual({ name: 'Cache-Control', value: 'no-store' });
     });
 
     it('carries no ciphertext for a Welcome, whose bundle comes from fetch-proto', async () => {

@@ -16,6 +16,14 @@ import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vite
 import { flushSync, mount, unmount } from 'svelte';
 import VoiceRecorder from './VoiceRecorder.svelte';
 
+// The microphone hold (`audioSession.ts`, pinned by `audioSession.test.ts`) is passed through: this
+// file's fake streams pin what is ASKED, not the session type.
+vi.mock('$lib/utils/audioSession', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/audioSession')>()),
+  captureUserMedia: (devices: MediaDevices, constraints: MediaStreamConstraints) =>
+    devices.getUserMedia(constraints),
+}));
+
 const CANCEL_SLIDE_PX = 96;
 const LOCK_SLIDE_PX = 72;
 const MIN_RECORDING_MS = 700;

@@ -9,7 +9,7 @@ import {
   KEY_PACKAGE_LIFETIME_DAYS,
   lastResortDeadline,
 } from './entities/key-package.entity';
-import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
+import { OneTimeKeyPackage, usableOneTimePackage } from './entities/one-time-key-package.entity';
 import { Group } from './entities/group.entity';
 import { GroupMember } from './entities/group-member.entity';
 import { DeviceGroupMembership } from './entities/device-group-membership.entity';
@@ -46,6 +46,7 @@ import { expireUnansweredAsks, seatKey } from './utils/group-membership';
 import { announceExpiredAsks, trackJoinAskWork } from './utils/join-ask-announce';
 import { checkDatabaseClockAgreement } from './utils/clock-agreement';
 import { reportOrphanDevices } from './utils/orphan-devices';
+import { takeSafeBrowsingRefusalCount } from './utils/safe-browsing';
 
 /**
  * Thin lifecycle controller: Firebase init, DB migration helpers, and cron jobs.
@@ -70,6 +71,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private reportSingleHolderInterval: ReturnType<typeof setInterval>;
   private reportCommitLogInterval: ReturnType<typeof setInterval>;
   private reportOrphanDevicesInterval: ReturnType<typeof setInterval>;
+  private reportSafeBrowsingInterval: ReturnType<typeof setInterval>;
   private initialSweepTimeout: ReturnType<typeof setTimeout>;
 
   /**
@@ -236,6 +238,12 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, 24 * ONE_HOUR);
 
+    // Count the Safe Browsing configuration refusals of the day, so a dead link check is found the
+    // day it dies - see utils/safe-browsing.ts.
+    this.reportSafeBrowsingInterval = setInterval(() => {
+      this.reportSafeBrowsing();
+    }, 24 * ONE_HOUR);
+
     // Observe the undelivered queue. Purely a report: it deletes nothing, and it exists because
     // a single device silently accumulated 29 499 frames (39 MB) in five hours on production and
     // nothing said so - the shape was only found by hand, a day later.
@@ -386,6 +394,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.reportSingleHolderInterval);
     clearInterval(this.reportCommitLogInterval);
     clearInterval(this.reportOrphanDevicesInterval);
+    clearInterval(this.reportSafeBrowsingInterval);
     clearTimeout(this.initialSweepTimeout);
   }
 
@@ -848,10 +857,13 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * **THE FOURTH REPORT, AND IT EXISTS BECAUSE THE THIRD COUNTS THE WRONG THING.**
    * `reportStaleExternalJoinBases` finds bases that have fallen behind, which is a symptom. What
    * decides whether a conversation can survive is the number of INDEPENDENT parties still holding
-   * its MLS tree, and nothing counted that. Every way into an MLS group - Welcome, external commit,
-   * ReInit, subgroup branching, external proposals - requires a party holding the group secrets,
-   * and this server holds only ciphertext. So a group whose last holder uninstalls is not degraded,
-   * it is OVER, and no repair exists here or in RFC 9420. The only useful moment is BEFORE that.
+   * its MLS tree, and nothing counted that. A CURRENT stored base lets a seated device back in with
+   * no holder (an external commit; every commit since 2026-10-04 stores the base it creates). But
+   * once the base is stale or absent, every way in - Welcome, external commit, ReInit, subgroup
+   * branching, external proposals - requires a party holding the group secrets, and this server
+   * holds only ciphertext. So a group whose last holder uninstalls is CLOSED WHILE ITS BASE IS STALE
+   * OR ABSENT, and no repair exists here or in RFC 9420
+   * (docs/wiki/protocols/mls-availability-no-holder.md). The only useful moment is BEFORE that.
    *
    * Holders are counted as DISTINCT USERS, not rows. Three devices belonging to one person are one
    * person: they share an owner, an account and usually a single act of uninstalling.
@@ -932,8 +944,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       // their Welcome ever landed, which makes them the cheapest repair available.
       this.logger.warn(
         `[CRON] reportSingleHolderGroups: ${one.length} conversation(s) have exactly ONE user ` +
-          `holding the MLS tree - if that user uninstalls, nothing in this system or in RFC 9420 ` +
-          `can reopen them. Highest epoch first, ` +
+          `holding the MLS tree - if that user uninstalls, each is closed while its base is stale ` +
+          `or absent. Highest epoch first, ` +
           `${Math.min(one.length, SINGLE_HOLDER_REPORT_TOP_N)} of ${one.length}: ${name(one)}`
       );
     }
@@ -1142,6 +1154,22 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const sorted = [...values].sort((a, b) => a - b);
     const rank = (q: number) => sorted[Math.max(0, Math.ceil(q * sorted.length) - 1)];
     return `p50=${rank(0.5)} p90=${rank(0.9)} max=${sorted[sorted.length - 1]}`;
+  }
+
+  /**
+   * The daily Safe Browsing refusal count (per replica, since this process started or last reported;
+   * deliberately NOT in the boot sweep, where it would always read 0). Non-zero means the
+   * link check is dead and every link reads "not flagged": logged at ERROR so it is read.
+   */
+  private reportSafeBrowsing() {
+    const refusals = takeSafeBrowsingRefusalCount();
+    if (refusals > 0) {
+      this.logger.error(
+        `[SAFE_BROWSING] refusals=${refusals} - Google refused the configuration, no link was checked`
+      );
+    } else {
+      this.logger.log('[SAFE_BROWSING] refusals=0');
+    }
   }
 
   /** The daily orphan-device count - read-only; see {@link reportOrphanDevices}. */
@@ -1432,9 +1460,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       // TOTAL, LIKE THE TWO READ SITES: `IS NOT NULL AND <= now()` left every undated row in place
       // for ever, and undated rows were arriving at ~290 a day on production on 2026-09-18. They are
       // exactly the rows the resolver could not judge, so they are exactly the ones worth reclaiming.
-      .where(
-        `COALESCE("notAfter", ("createdAt" AT TIME ZONE 'UTC') + interval '${KEY_PACKAGE_LIFETIME_DAYS} days') <= now()`
-      )
+      // The NEGATION of what the claim serves, from the one spelling, so nothing is reclaimed that a
+      // claim would still hand out and nothing is left that it would refuse.
+      .where(`NOT (${usableOneTimePackage()})`)
       .execute();
     if (reclaimed.affected && reclaimed.affected > 0) {
       this.logger.log(

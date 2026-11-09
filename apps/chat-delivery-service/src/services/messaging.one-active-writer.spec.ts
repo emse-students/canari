@@ -619,6 +619,16 @@ describe('the ONE writer of an active membership', () => {
           admittedByBaseEpoch: 7,
         })
       ).resolves.toEqual({ ok: true });
+      // A publisher past the creation: its floor is written INFERRED (it may have been in the tree
+      // long before this publish), so it never withholds a frame.
+      await expect(
+        service.activateDeviceMembership('u1', 'd1', 'g1', {
+          authority: 'distribution_publisher',
+          claim,
+          admittedByBaseEpoch: 8,
+          admissionInferred: true,
+        })
+      ).resolves.toEqual({ ok: true });
 
       expect(deviceGroupRepo.update.mock.calls).toEqual([
         [
@@ -628,6 +638,10 @@ describe('the ONE writer of an active membership', () => {
         [
           { userId: 'u1', deviceId: 'd1', groupId: 'g1', admittedByBaseEpoch: IsNull() },
           { admittedByBaseEpoch: 7, admissionInferred: false },
+        ],
+        [
+          { userId: 'u1', deviceId: 'd1', groupId: 'g1', admittedByBaseEpoch: IsNull() },
+          { admittedByBaseEpoch: 8, admissionInferred: true },
         ],
       ]);
     });
@@ -784,8 +798,7 @@ describe('the INVITATION_STATUS door', () => {
   const promote = () =>
     controller.updateInvitationStatus(
       { deviceId: 'd1', userId: 'u1', groupId: 'g1', status: 'active' },
-      'u1',
-      'false'
+      'u1'
     );
 
   it('promotes through the one writer instead of writing the row itself', async () => {
@@ -811,8 +824,7 @@ describe('the INVITATION_STATUS door', () => {
   it('does NOT reach the promotion writer on a demotion - the two directions are separate', async () => {
     await controller.updateInvitationStatus(
       { deviceId: 'd1', userId: 'u1', groupId: 'g1', status: 'pending' },
-      'u1',
-      'false'
+      'u1'
     );
 
     // What the demotion DOES is the sibling suite's subject: it was written locally here until

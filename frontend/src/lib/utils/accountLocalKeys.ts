@@ -51,11 +51,23 @@ export const ACCOUNT_KEY = {
    * group, the token of the acquisition, cleared when its release is answered.
    */
   addLockMarkers: (userId: string) => `mls_add_lock_markers:v1:${userId}`,
+  /** `postComposerDraft.ts`: the account's unsent post (its text and choices, never its media). */
+  postComposerDraft: (userId: string) => `canari_post_composer_draft:${userId}`,
+  /** `postCommentDraft.ts`: the account's unsent comment on one post. */
+  postCommentDraft: (userId: string, postId: string) =>
+    `canari_post_comment_draft:${userId}:${postId}`,
+  /**
+   * `workspaceSnapshot.ts`: the account's last community list, drawn before the network answers.
+   * Called with `''` it is the prefix every sign-out erases.
+   */
+  workspaceSnapshot: (userId: string) => `canari_workspace_snapshot:v1:${userId}`,
   /** `deviceKeyGate.ts`: the device-key change epoch. */
   deviceKeyEpoch: (userId: string) => `canari-device-key-epoch:${userId}`,
   /** `conversations.ts`: the archived conversation ids (lower-cased, as it always was). */
   archivedConversations: (userId: string) =>
     `canari_archived_conversations_${userId.toLowerCase()}`,
+  /** `noHolder.svelte.ts`: conversations the user took off their list because no holder came back. */
+  unopenableHidden: (userId: string) => `canari_unopenable_hidden:v1:${userId}`,
   /** `seenLedgerBounds.ts`: the index of the per-group seen ledgers. */
   seenCipherIndex: (userId: string) => `history_seen_cipher_index:${userId}`,
   /**
@@ -147,8 +159,20 @@ export const ACCOUNT_KEY = {
    * backups made before it no longer open here; cleared by the next export.
    */
   backupOwedAfterKeyMove: (userId: string) => `canari_backup_owed_after_key_move:v1:${userId}`,
+  /**
+   * `guidance/seenHelps.svelte.ts`: the first-time helps this account has seen, and those whose
+   * record the server has not acknowledged yet - help ids only. The server's `help_seen` is the
+   * truth; this is the optimistic copy that keeps a help from replaying offline.
+   */
+  seenHelps: (userId: string) => `canari_seen_helps:v1:${userId}`,
   /** No longer written; removed by the device reset and the deletion where an old build left it. */
   syncGuideSeen: (userId: string) => `canari_sync_guide_seen_${userId}`,
+  /**
+   * `conversationNicknames.svelte.ts`: one DM's or group's nickname register - names other members
+   * set, so text about people: erased at sign-out as well as by the deletion.
+   */
+  conversationNicknames: (userId: string, groupId: string) =>
+    `canari_nicknames:v1:${userId}:${groupId}`,
   /** `history.ts`: the processed-ciphertext fingerprints of one group. */
   seenCipher: (userId: string, groupId: string) => `history_seen_cipher:${userId}:${groupId}`,
   /** `history.ts`: the last stream id fetched for one group. */
@@ -205,7 +229,10 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.addLockMarkers(userId),
     ACCOUNT_KEY.deviceKeyEpoch(userId),
     ACCOUNT_KEY.archivedConversations(userId),
+    ACCOUNT_KEY.unopenableHidden(userId),
     ACCOUNT_KEY.seenCipherIndex(userId),
+    ACCOUNT_KEY.postComposerDraft(userId),
+    ACCOUNT_KEY.workspaceSnapshot(userId),
     ACCOUNT_KEY.historyHeldNothing(userId),
     ACCOUNT_KEY.admissionLedger(userId),
     ACCOUNT_KEY.historyClosedSeen(userId),
@@ -220,6 +247,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.feedStoreEpoch(userId),
     ACCOUNT_KEY.legacyMlsAutosave(userId),
     ACCOUNT_KEY.syncGuideSeen(userId),
+    ACCOUNT_KEY.seenHelps(userId),
     ACCOUNT_KEY.lastActive(userId),
     ACCOUNT_KEY.restoreKeyRegistered(userId),
     ACCOUNT_KEY.backupRecoveryCode(userId),
@@ -231,6 +259,7 @@ function exactKeys(userId: string): string[] {
 function keyPrefixes(userId: string): string[] {
   return [
     ACCOUNT_KEY.seenCipher(userId, ''),
+    ACCOUNT_KEY.conversationNicknames(userId, ''),
     ACCOUNT_KEY.lastStreamId(userId, ''),
     ACCOUNT_KEY.retryCipher(userId, ''),
     ACCOUNT_KEY.lastConnected(userId, ''),
@@ -239,6 +268,7 @@ function keyPrefixes(userId: string): string[] {
     ACCOUNT_KEY.deviceName(userId, ''),
     ACCOUNT_KEY.leafRefresh(userId, ''),
     ACCOUNT_KEY.refusedDevices(userId, ''),
+    ACCOUNT_KEY.postCommentDraft(userId, ''),
   ];
 }
 

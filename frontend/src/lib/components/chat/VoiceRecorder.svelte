@@ -30,6 +30,7 @@
    */
   import { ChevronLeft, ChevronRight, Lock, Mic, Send, Trash2 } from '@lucide/svelte';
   import { pausePlayback } from '$lib/actions/playbackArbiter';
+  import { captureUserMedia } from '$lib/utils/audioSession';
   import { onDestroy } from 'svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -159,7 +160,7 @@
   async function beginRecording() {
     console.debug('[VoiceRecorder] arming');
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await captureUserMedia(navigator.mediaDevices, { audio: true }, 'voice-note');
 
       if (phase !== 'arming') {
         console.debug('[VoiceRecorder] released before the microphone opened - closing it again');

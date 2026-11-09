@@ -48,6 +48,7 @@ export function createMlsServiceStub(
     connect: vi.fn().mockResolvedValue(undefined),
     isWsOpen: vi.fn().mockReturnValue(true),
     fetchUserDevices: vi.fn().mockResolvedValue([]),
+    listUserDevices: vi.fn().mockResolvedValue([]),
     fetchDeviceKeyPackage: vi.fn().mockResolvedValue({ kind: 'none', reason: 'unregistered' }),
     publishKeyPackage: vi.fn().mockResolvedValue(undefined),
     publishKeyPackages: vi.fn().mockResolvedValue(undefined),
@@ -107,6 +108,8 @@ export function createMlsServiceStub(
     getDeviceId: vi.fn().mockReturnValue('device-test'),
     resolveDeviceId: vi.fn().mockResolvedValue('device-test'),
     fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
+    // Not destroyed by default: `openGatewayConnection` reads it outside its `try`.
+    isDestroyed: () => false,
     waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     getLocalGroups: vi.fn().mockReturnValue([]),
     heldGroupsKnown: vi.fn().mockReturnValue(true),

@@ -58,6 +58,30 @@ describe('POST upload/public: the decode is bounded', () => {
     expect([meta.format, meta.width, meta.height]).toEqual(['webp', 256, 128]);
   });
 
+  it('keeps a content image (a form question picture) at the 1600 px post bound', async () => {
+    const { controller, stored } = build();
+    const photo = await sharp({
+      create: { width: 2400, height: 1200, channels: 3, background: { r: 1, g: 2, b: 3 } },
+    })
+      .jpeg()
+      .toBuffer();
+    await controller.uploadPublic(asUpload(photo), bearer('alice'), { size: 'content' });
+    const meta = await sharp(stored[0]).metadata();
+    expect([meta.format, meta.width, meta.height]).toEqual(['webp', 1600, 800]);
+  });
+
+  it('reads an unknown size as a logo, so an old caller is never refused', async () => {
+    const { controller, stored } = build();
+    const photo = await sharp({
+      create: { width: 1000, height: 500, channels: 3, background: { r: 1, g: 2, b: 3 } },
+    })
+      .jpeg()
+      .toBuffer();
+    await controller.uploadPublic(asUpload(photo), bearer('alice'), { size: 'poster' });
+    const meta = await sharp(stored[0]).metadata();
+    expect([meta.width, meta.height]).toEqual([256, 128]);
+  });
+
   it('refuses an image over IMAGE_DECODE_MAX_PIXELS with a 422 and stores nothing', async () => {
     const { controller, stored } = build();
     const side = Math.ceil(Math.sqrt(IMAGE_DECODE_MAX_PIXELS)) + 500;

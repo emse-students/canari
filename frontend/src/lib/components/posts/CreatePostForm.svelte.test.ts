@@ -10,6 +10,7 @@ import { flushSync, mount, tick, unmount } from 'svelte';
 import CreatePostForm from './CreatePostForm.svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import { m } from '$lib/paraglide/messages';
+import { setCurrentUserId } from '$lib/stores/userState.svelte';
 import {
   ANONYMOUS_POST_IDENTITY,
   forgetPostComposerMedia,
@@ -21,8 +22,16 @@ import {
 } from '$lib/posts/postComposerDraft';
 import { cameraOverlayStub } from '../reels/cameraOverlayStub.test-helper';
 
+const toast = vi.hoisted(() => vi.fn());
+vi.mock('$lib/stores/toast.svelte', async (orig) => ({
+  ...(await orig<typeof import('$lib/stores/toast.svelte')>()),
+  showToast: toast,
+}));
 vi.mock('$lib/moderation/muteCheck', () => ({ assertNotMuted: () => Promise.resolve() }));
 vi.mock('$lib/forms/api', () => ({ getForms: () => Promise.resolve([]) }));
+// The composer hands the post to the background publish queue; what it hands over is the assertion.
+const enqueuePost = vi.hoisted(() => vi.fn((..._args: unknown[]) => Promise.resolve()));
+vi.mock('$lib/posts/publishQueue/publishQueue.svelte', () => ({ enqueuePost }));
 vi.mock('$lib/associations/api', async (orig) => ({
   ...(await orig<typeof import('$lib/associations/api')>()),
   listLinkableValidatedCalendarEvents: () => Promise.resolve([]),
@@ -30,6 +39,7 @@ vi.mock('$lib/associations/api', async (orig) => ({
 vi.mock('$lib/posts/postIdentity', async (orig) => ({
   ...(await orig<typeof import('$lib/posts/postIdentity')>()),
   listPostAsAssociations: () => Promise.resolve([]),
+  listLiveAssociations: () => Promise.resolve([]),
 }));
 vi.mock('$lib/posts/api', async (orig) => ({
   ...(await orig<typeof import('$lib/posts/api')>()),
@@ -55,6 +65,8 @@ const revoked: string[] = [];
 
 beforeEach(() => {
   localStorage.setItem('canari_saved_user', 'user-a');
+  setCurrentUserId('user-a');
+  enqueuePost.mockClear();
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.stubGlobal(
     'URL',
@@ -156,13 +168,17 @@ describe('CreatePostForm - closing keeps the media', () => {
 });
 
 describe('CreatePostForm - the strip of picked files', () => {
-  it('draws "IMG_1" at index 1 and "IMG_" at index 11 as two tiles (their name+index keys collided)', async () => {
+  it('trims a held draft over the cap to ten at restore, through the same rule as a pick', async () => {
+    // Twelve can only arrive from a composer closed before the cap existed: it goes through
+    // `admitAttachments` like every other way in, and the reader is told.
+    holdPostComposerMedia(
+      Array.from({ length: 12 }, (_, i) => new File(['x'], `p${i}`, { type: 'image/png' }))
+    );
     const { target } = await open();
-    for (let i = 0; i < 12; i++) {
-      const name = i === 1 ? 'IMG_1' : i === 11 ? 'IMG_' : `p${i}`;
-      pick(target, new File(['x'], name, { type: 'image/png' }));
-    }
-    expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(12);
+    expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(10);
+    expect(toast).toHaveBeenCalledWith(
+      m.post_attachments_partial({ taken: 10, leftOut: 2, max: 10 })
+    );
   });
 });
 
@@ -176,8 +192,7 @@ describe('CreatePostForm - a video filmed with its camera is a CanaReel (one cam
     flushSync();
     expect(cameraOverlayStub.last).toEqual({
       destination: 'post',
-      composerCaption: 'a caption written first',
-      composerIdentity: '',
+      composerStart: { caption: 'a caption written first', identity: '', studentsOnly: false },
     });
 
     document.querySelector<HTMLButtonElement>('[data-camera-overlay-stub-publish]')!.click();
@@ -212,7 +227,7 @@ describe('CreatePostForm - a video filmed with its camera is a CanaReel (one cam
 
   it("the composer's identity is the camera's: an association chosen here is the reel's start", async () => {
     await openCamera({ ...emptyPostComposerDraft('text'), selectedAssociationId: 'asso-1' });
-    expect(cameraOverlayStub.last?.composerIdentity).toBe('asso-1');
+    expect(cameraOverlayStub.last?.composerStart?.identity).toBe('asso-1');
   });
 
   it('an ANONYMOUS reel lands in the personal feed, never in the associations one', async () => {
@@ -244,6 +259,7 @@ describe('CreatePostForm - a video filmed with its camera is a CanaReel (one cam
     cameraOverlayStub.keepWith = {
       caption: 'edited in the step',
       identity: ANONYMOUS_POST_IDENTITY,
+      studentsOnly: false,
     };
     try {
       document.querySelector<HTMLButtonElement>('[data-camera-overlay-stub-keep]')!.click();
@@ -280,5 +296,23 @@ describe('CreatePostForm - where a post lands', () => {
     publish.click();
     for (let i = 0; i < 6; i++) await tick();
     expect(onPostCreated).toHaveBeenCalledWith('all');
+  });
+});
+
+describe('CreatePostForm - a published post takes its media with it', () => {
+  it('the media handed to the publish queue are not offered again at the next open', async () => {
+    const first = await open();
+    // The parent unmounts the composer the moment it is told the post is created, before any
+    // effect of the composer flushes again.
+    first.onPostCreated.mockImplementation(() => unmount(mounted.pop()!));
+    pick(first.target, new File(['photo'], 'p.jpg', { type: 'image/jpeg' }));
+    const publish = [...first.target.querySelectorAll<HTMLButtonElement>('button')].find(
+      (b) => b.textContent?.trim() === m.post_create_publish_button_label()
+    )!;
+    publish.click();
+    for (let i = 0; i < 6; i++) await tick();
+    expect(enqueuePost).toHaveBeenCalledTimes(1);
+    expect(first.onPostCreated).toHaveBeenCalledTimes(1);
+    expect(heldPostComposerMedia()).toEqual([]);
   });
 });

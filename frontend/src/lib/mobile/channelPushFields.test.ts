@@ -338,7 +338,7 @@ describe('channel push payload contract (social-service writer vs the three nati
       'showsMessage: body != nil, senderId: senderId, serverSaysMentioned: serverSaysMentioned)',
       'if serverSaysMentioned, !mentionsMe {',
       'if body == nil, !senderId.isEmpty || serverSaysMentioned {',
-      'mentioned=\\(serverSaysMentioned)',
+      'mentioned=\\(serverSaysMentioned, privacy: .public)',
     ]);
     onlyThrough(swiftChannelOnly, /\blet mentionsMe\b|\bfetchAvatar\(|\bmentionAuthorLine\(/g, [
       'let mentionsMe = attribution.mentionsMe',
@@ -379,9 +379,9 @@ describe('silent push frames are handled by the app, never by the extension', ()
   const swiftSource = readFileSync(NOTIF_SERVICE_SWIFT, 'utf8');
   const objcSource = readFileSync(CANARI_PUSH_MM, 'utf8');
 
-  /** The `type` values buildInternalApnsRequest turns into a background push. */
+  /** The `type` values `isInternalSilent` names: buildInternalApnsRequest makes them background pushes. */
   const silentTypes = extractKeys(
-    functionBody(payloadSource, /const isSilent =/, /\n {2}\/\//),
+    functionBody(payloadSource, /export function isInternalSilent\(/, /\n\}/),
     /data\.type === '(\w+)'/g
   );
 

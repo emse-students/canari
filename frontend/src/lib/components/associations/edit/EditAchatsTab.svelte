@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { onMount } from 'svelte';
   import {
     listAssociationProductsForManage,
@@ -326,7 +327,6 @@
         onValueChange={(v) => (purchaseFilterProductId = v)}
         label={m.asso_achats_filter_label()}
         variant="field"
-        density="compact"
       />
     </div>
   </div>
@@ -367,7 +367,6 @@
           label={m.asso_achats_grant_product_label()}
           placeholder={m.asso_achats_grant_product_placeholder()}
           variant="field"
-          density="compact"
         />
       </div>
       {#if grantSelectedProduct}
@@ -414,13 +413,9 @@
         {m.asso_achats_grant_other_hint()}
       {/if}
     </p>
-    <button
-      type="submit"
-      disabled={grantingProduct || !grantUserId.trim() || !grantProductId}
-      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
-    >
+    <Button type="submit" disabled={grantingProduct || !grantUserId.trim() || !grantProductId}>
       {grantingProduct ? m.asso_achats_grant_submitting() : m.asso_achats_grant_button()}
-    </button>
+    </Button>
   </form>
 
   {#if purchasesError}
@@ -594,14 +589,9 @@
   {#if refundView}
     <div class="border-cn-border flex flex-col gap-2 border-t pt-4 sm:flex-row sm:items-center">
       <p class="text-text-muted flex-1 text-xs">{m.asso_statement_hint()}</p>
-      <button
-        type="button"
-        disabled={statementBusy}
-        onclick={downloadStatement}
-        class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"
-      >
+      <Button variant="secondary" disabled={statementBusy} onclick={downloadStatement}>
         {m.asso_statement_button()}
-      </button>
+      </Button>
     </div>
     {#if statementError}
       <p class="text-red-err text-xs" role="alert">{statementError}</p>

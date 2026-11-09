@@ -98,6 +98,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
       socketFence: () => 0,
       settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
+      isDestroyed: () => false,
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
@@ -151,7 +152,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
 
     expect(mls.connect).toHaveBeenCalledWith('jwt-access-token', 0);
     expect(setIsWsConnected).toHaveBeenCalledWith(true);
-    expect(mls.generateKeyPackage).toHaveBeenCalledWith('pin1');
+    expect(mls.generateKeyPackage).toHaveBeenCalledWith('pin1', { fresh: true });
     // Group absent from WASM -> onGroupMissing (recovery seam)
     expect(onGroupMissing).toHaveBeenCalledWith('g-not-in-wasm');
     // Group in WASM -> no onGroupMissing
@@ -175,6 +176,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
       socketFence: () => 0,
       settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
+      isDestroyed: () => false,
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
@@ -223,6 +225,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       settleUnresolvedCommits: vi.fn(async () => {
         steps.push('settle');
       }),
+      isDestroyed: () => false,
       fetchPendingMessages: vi.fn(async () => {
         steps.push('fetch');
       }),
@@ -252,6 +255,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
       socketFence: () => 0,
       settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
+      isDestroyed: () => false,
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
@@ -306,6 +310,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
       socketFence: () => 0,
       settleUnresolvedCommits: vi.fn().mockResolvedValue(undefined),
+      isDestroyed: () => false,
       fetchPendingMessages: vi.fn().mockResolvedValue(undefined),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
@@ -347,6 +352,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       gatewaySocketSettled: vi.fn().mockResolvedValue(undefined),
       socketFence: () => 0,
       settleUnresolvedCommits: vi.fn(),
+      isDestroyed: () => false,
       fetchPendingMessages: vi.fn(),
       onDisconnect: vi.fn(),
       sendDisconnect: vi.fn(),
@@ -433,6 +439,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       settleUnresolvedCommits: vi.fn(async () => {
         order.push('settle');
       }),
+      isDestroyed: () => false,
       fetchPendingMessages: vi.fn(async () => {
         order.push('fetch');
       }),

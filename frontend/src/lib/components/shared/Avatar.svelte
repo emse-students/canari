@@ -1,12 +1,13 @@
 <script lang="ts">
   import { m } from '$lib/paraglide/messages';
   import AvatarPlaceholder from '$lib/components/shared/AvatarPlaceholder.svelte';
+  import { birthdaysToday } from '$lib/birthdays/birthdaysToday.svelte';
   import { getInitials } from '$lib/utils/avatar';
-  import { coreUrl } from '$lib/utils/apiUrl';
+  import { avatarUrl } from '$lib/utils/avatarUrl';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import {
-    releaseUserAvatarDisplayUrl,
-    resolveUserAvatarDisplayUrl,
+    releaseUserAvatarDisplay,
+    resolveUserAvatarDisplay,
     type AvatarDisplay,
   } from '$lib/utils/userAvatarCache';
 
@@ -37,8 +38,6 @@
    */
   const identified = $derived(userId.trim().length > 0);
 
-  const avatarSrc = $derived(`${coreUrl()}/api/users/${encodeURIComponent(userId)}/avatar`);
-
   let imageFailed = $state(false);
   let imageLoaded = $state(false);
   /** Null until the cache has answered. NOTHING IS REQUESTED BEFORE THAT - see the effect below. */
@@ -62,11 +61,12 @@
     });
   });
 
-  // ONE EFFECT, AND IT OWNS EVERY PIECE OF PER-URL STATE. A second effect used to reset the same
-  // flags when `userId` changed, which is the same event by another name - `avatarSrc` derives from
-  // `userId` and from nothing else - so the two raced to reset each other on every switch.
+  // ONE EFFECT, AND IT OWNS EVERY PIECE OF PER-FACE STATE. A second effect used to reset the same
+  // flags when `userId` changed, which is the same event by another name, so the two raced to reset
+  // each other on every switch. The cache is keyed by the id, never by the URL: the URL carries the
+  // viewer's avatar token (`avatarUrl.ts`), which the cache builds at the request.
   $effect(() => {
-    const httpUrl = avatarSrc;
+    const subject = userId;
     display = null;
     imageFailed = false;
     imageLoaded = false;
@@ -77,7 +77,7 @@
       return;
     }
     let cancelled = false;
-    const pending = resolveUserAvatarDisplayUrl(httpUrl, userId).then((resolved) => {
+    const pending = resolveUserAvatarDisplay(subject).then((resolved) => {
       if (cancelled) return;
       display = resolved;
       // Bytes already held locally: there is no round trip to wait for, so the initials placeholder
@@ -90,7 +90,7 @@
       // count that had not been incremented yet: the blob retained a moment later was then held by
       // nobody, so it lived for the whole page AND kept being handed to every later mount of that
       // same face - a stale photo with no owner and no way out.
-      void pending.finally(() => releaseUserAvatarDisplayUrl(httpUrl));
+      void pending.finally(() => releaseUserAvatarDisplay(subject));
     };
   });
 
@@ -106,21 +106,30 @@
             : 'w-8 h-8 text-sm'
   );
   const shapeClasses = $derived(shape === 'circle' ? 'rounded-full' : 'squircle');
+  /**
+   * THE BIRTHDAY RING (decision 3, docs/wiki/birthdays.md): drawn HERE, on the one component every
+   * person's face goes through, for a member whose birthday the server says is today - to every
+   * reader, wherever the face appears, never per call site. `.birthday-ring` draws it inside the
+   * avatar's own edge, so no caller's layout or clip changes.
+   */
+  const celebrating = $derived(identified && birthdaysToday.has(userId));
+  const ringClass = $derived(celebrating ? 'birthday-ring' : '');
 </script>
 
 {#if imageFailed || display?.kind === 'none'}
   <AvatarPlaceholder
     seed={userId}
     {initials}
-    class="{shapeClasses} shrink-0 overflow-hidden shadow-sm {sizeClasses}"
+    class="{shapeClasses} shrink-0 overflow-hidden shadow-sm {sizeClasses} {ringClass}"
     title={displayLabel}
     ariaLabel={m.avatar_aria_label({ name: displayLabel })}
   />
 {:else}
   <div
-    class="{shapeClasses} shrink-0 shadow-sm {sizeClasses} relative overflow-hidden"
+    class="{shapeClasses} shrink-0 shadow-sm {sizeClasses} relative overflow-hidden {ringClass}"
     title={displayLabel}
     aria-label={m.avatar_aria_label({ name: displayLabel })}
+    data-birthday={celebrating ? 'today' : undefined}
   >
     {#if !imageLoaded}
       <!-- Placeholder a initiales affiche immediatement (displayLabel est resolu de facon
@@ -134,7 +143,7 @@
            network request the cache existed to avoid. -->
       <img
         src={display.url}
-        alt={`Avatar de ${displayLabel}`}
+        alt={m.avatar_aria_label({ name: displayLabel })}
         decoding="async"
         class="h-full w-full object-cover transition-opacity duration-150 select-none {imageLoaded
           ? 'opacity-100'
@@ -147,7 +156,7 @@
           // so the network is worth asking once. Anything else is a refusal already established.
           if (!triedDirectFallback && display?.kind === 'blob') {
             triedDirectFallback = true;
-            display = { kind: 'direct', url: avatarSrc };
+            display = { kind: 'direct', url: avatarUrl(userId) };
             return;
           }
           imageFailed = true;

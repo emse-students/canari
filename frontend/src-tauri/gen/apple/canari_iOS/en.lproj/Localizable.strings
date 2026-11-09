@@ -49,6 +49,8 @@
 "notif.social.join_ask_anon.title" = "Someone wants to join";
 "notif.social.follow_accepted.title" = "%@ accepted your request";
 "notif.social.follow_accepted.body" = "Your request was accepted";
+"notif.social.birthday.title" = "It's %@'s birthday";
+"notif.social.birthday.body" = "Wish them a happy birthday";
 "notif.social.live_cut.title" = "Your live was stopped";
 "notif.social.live_cut.body" = "Moderators cut your live. This is a warning.";
 "notif.social.live_suspended.title" = "Lives suspended";
@@ -61,6 +63,10 @@
 "notif.social.booking_withdrawn.body" = "Your booking still stands";
 "notif.social.booking_added.title" = "%@ added you to a booking";
 "notif.social.booking_added.body" = "Find it in Bookings";
+"notif.social.booking_changed.title" = "%@ changed your booking";
+"notif.social.booking_changed.body" = "Find the new time in Bookings";
+"notif.social.booking_removed.title" = "%@ removed you from a booking";
+"notif.social.booking_removed.body" = "You are no longer part of it";
 "notif.social.booking_reminder.title" = "Booking reminder";
 "notif.social.booking_reminder.body" = "Your booking starts soon";
 "notif.form.opening_soon.title" = "Form opening soon";
@@ -75,6 +81,12 @@
 "notif.lydia_payments_paused.body" = "Lydia payments for %1$@ are paused: Lydia refused a payment request.";
 "notif.lydia_refund_issued.title" = "Refund";
 "notif.lydia_refund_issued.body" = "%1$@ refunded one of your payments.";
+"notif.delegation_revoked.title" = "Payments paused";
+"notif.delegation_revoked.body" = "The association receiving %1$@'s payments ended the delegation: its payments are paused.";
+"notif.delegation_receiver_not_ready.title" = "Payments paused";
+"notif.delegation_receiver_not_ready.body" = "The association receiving %1$@'s payments can no longer collect them: its payments are paused.";
+"notif.delegation_resumed.title" = "Payments back on";
+"notif.delegation_resumed.body" = "%1$@'s payments are back on.";
 
 /* The agenda's five. See the note in fr.lproj. */
 "notif.event.proposed.title" = "Event to review";
@@ -89,3 +101,5 @@
 "notif.event.deleted.body" = "“%1$@” was removed by the BDE";
 "notif.event.pending.title" = "Event needs approval again";
 "notif.event.pending.body" = "“%1$@” needs approval again: its dates changed";
+"notif.event.pending_coorganiser.title" = "Event needs approval again";
+"notif.event.pending_coorganiser.body" = "“%1$@” needs approval again: an association accepted to co-organise";

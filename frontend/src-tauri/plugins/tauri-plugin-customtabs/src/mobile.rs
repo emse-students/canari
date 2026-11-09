@@ -4,6 +4,8 @@ use tauri::{
     AppHandle, Runtime,
 };
 
+use crate::OpenCustomTabResponse;
+
 #[cfg(target_os = "ios")]
 tauri::ios_plugin_binding!(init_plugin_customtabs);
 
@@ -29,13 +31,15 @@ struct OpenCustomTabPayload {
 }
 
 impl<R: Runtime> CustomTabs<R> {
-    /// Opens `url` in a Chrome Custom Tab (Android) or an ASWebAuthenticationSession (iOS).
-    /// Both close automatically once the OIDC deep-link callback brings the app back to the
-    /// foreground - the OS does it for the Custom Tab, the plugin re-dispatches the callback
-    /// URL through the app's own URL scheme for the session (see the Swift implementation).
-    pub fn open_custom_tab(&self, url: String) -> crate::Result<()> {
+    /// Opens `url` in a Chrome Custom Tab (Android) or an ASWebAuthenticationSession (iOS) and
+    /// answers how it ended ([`crate::CustomTabOutcome`]).
+    ///
+    /// ASYNC ON PURPOSE: on iOS the answer comes when the sheet goes away - a sign-in can hold it
+    /// for minutes - and the blocking `run_mobile_plugin` would pin a runtime worker that long.
+    pub async fn open_custom_tab(&self, url: String) -> crate::Result<OpenCustomTabResponse> {
         self.0
-            .run_mobile_plugin("openCustomTab", OpenCustomTabPayload { url })
+            .run_mobile_plugin_async("openCustomTab", OpenCustomTabPayload { url })
+            .await
             .map_err(Into::into)
     }
 }

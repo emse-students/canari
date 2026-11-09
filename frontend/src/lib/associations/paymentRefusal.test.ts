@@ -270,6 +270,16 @@ describe('providerRefusalMessage', () => {
     expect(providerRefusalMessage(refusal)).not.toContain('does not sell');
   });
 
+  it('words an acceptance refused for chaining delegations by its typed code, never the server English', () => {
+    const refusal = new SocialApiError(
+      'The receiving association itself delegates its payments and cannot receive a delegation',
+      'DELEGATION_CHAIN_REFUSED',
+      409
+    );
+    expect(providerRefusalMessage(refusal)).toBe(m.delegation_chain_refused());
+    expect(providerRefusalMessage(refusal)).not.toContain('cannot receive');
+  });
+
   it('is null for any other failure, so each surface keeps its own generic line', () => {
     expect(providerRefusalMessage(new SocialApiError('boom', null, 500))).toBeNull();
     expect(providerRefusalMessage(new SocialApiError('x', 'OTHER', 400))).toBeNull();

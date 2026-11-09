@@ -43,6 +43,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     sendRatchetsNotDurable: BaseMlsService.prototype['sendRatchetsNotDurable'],
     // Real rotation: the assertions below are about what it does.
     rotateDeviceIdentity: BaseMlsService.prototype['rotateDeviceIdentity'],
+    loadFreshStateReplacingUnopened: BaseMlsService.prototype['loadFreshStateReplacingUnopened'],
     // The rotation's socket seams (`BaseMlsService.socketRotation.test.ts` owns them): no socket here.
     reopenGatewaySocketAfterRotation: vi.fn(),
     retireAbandonedIds: BaseMlsService.prototype['retireAbandonedIds'],

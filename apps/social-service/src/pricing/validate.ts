@@ -207,9 +207,12 @@ export function parseAudienceCondition(
   return condition;
 }
 
-/** Validates and normalises one dimension of the grid. */
-function parseDimension(raw: unknown, ctx: CriteriaContext, index: number): Dimension {
-  const where = `priceMatrix.dimensions[${index}]`;
+/**
+ * Validates and normalises one criterion: a dimension of a form's price grid, or the tier criterion
+ * of a priced grid question (`forms/product-grid.ts`), which reuses it so a category means the same
+ * thing in both. `where` names it in a refusal.
+ */
+export function parseDimension(raw: unknown, ctx: CriteriaContext, where: string): Dimension {
   const doc = asRecord(raw, where);
   const id = typeof doc.id === 'string' && doc.id.trim() ? doc.id : '';
   if (!id) throw new BadRequestException(`${where}.id is required.`);
@@ -334,7 +337,9 @@ export function parsePriceMatrix(
   // Values are checked by `assertMatrixValid`, which is the one place that knows a cell may be a
   // number OR the null that means "this combination does not exist".
   const matrix: PriceMatrix = {
-    dimensions: doc.dimensions.map((d, i) => parseDimension(d, ctx, i)),
+    dimensions: doc.dimensions.map((d, i) =>
+      parseDimension(d, ctx, `priceMatrix.dimensions[${i}]`)
+    ),
     cells: cells as Record<string, CellValue>,
   };
   assertMatrixValid(matrix, undefined, subject);

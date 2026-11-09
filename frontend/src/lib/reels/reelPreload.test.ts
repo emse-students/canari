@@ -4,7 +4,12 @@
  * resolves the cache's promise, never by a clock.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { ReelPreload, type ReelPreloadCache } from './reelPreload';
+import {
+  REEL_PRELOAD_MAX_BYTES,
+  ReelPreload,
+  worthPreloading,
+  type ReelPreloadCache,
+} from './reelPreload';
 import type { MediaRef } from '$lib/media';
 import { flushMacrotask } from '../../test/flush';
 
@@ -85,5 +90,14 @@ describe('ReelPreload', () => {
     p.stop();
     await flush();
     expect(onReady).not.toHaveBeenCalled();
+  });
+});
+
+describe('worthPreloading', () => {
+  it('fetches a streamed video or a reel-sized one ahead, never a long unsegmented feed video', () => {
+    expect(worthPreloading({ encoding: 'segmented-v1', size: 900 * 1024 * 1024 })).toBe(true);
+    expect(worthPreloading({ size: REEL_PRELOAD_MAX_BYTES })).toBe(true);
+    expect(worthPreloading({ size: REEL_PRELOAD_MAX_BYTES + 1 })).toBe(false);
+    expect(worthPreloading({ encoding: undefined, size: 300 * 1024 * 1024 })).toBe(false);
   });
 });

@@ -275,6 +275,10 @@ pub unsafe extern "C" fn canari_native_open_graine_push(
 /// directory both the app and the extension read the mirror from. FFI mirror of the Android JNI
 /// `nativeStoreGraineSeeds`, and the same implementation behind it. `cache_key_b64` as for
 /// [`canari_native_open_graine_push`]; with none, nothing is written (-1).
+///
+/// The count of seeds STORED only: the extension opens a salon push's single `seedFrame`, never a
+/// bundle, so no seed it hands over is ever relayed and none is left to the app (the Android JNI
+/// reports that count apart).
 #[no_mangle]
 pub unsafe extern "C" fn canari_native_store_graine_seeds(
     data_dir: *const c_char,
@@ -286,11 +290,23 @@ pub unsafe extern "C" fn canari_native_store_graine_seeds(
         return -1;
     }
     let cache_key = crate::native_cache::platform_key(&str_from_c_str(cache_key_b64));
-    crate::commands::push::store_graine_seeds_json(
+    match crate::commands::push::store_graine_seeds_json(
         &path_from_c_str(data_dir),
         cache_key.as_ref(),
         &str_from_c_str(seeds_json),
-    )
+    ) {
+        Some(outcome) => {
+            if outcome.left_to_the_app > 0 {
+                // Not expected here (see above): said, since it would read as seeds lost in Swift.
+                log::error!(
+                    "[GRAINE_PUSH] the extension handed over {} relayed seed(s) - left to the app",
+                    outcome.left_to_the_app
+                );
+            }
+            i32::try_from(outcome.stored).unwrap_or(i32::MAX)
+        }
+        None => -1,
+    }
 }
 
 /// Whether the seed mirror under `data_dir` holds a session: 1 yes, 0 no, -1 it cannot be read.
@@ -657,6 +673,17 @@ pub extern "C" fn canari_ios_set_quick_reply_ack_listener(
     listener: Option<crate::commands::push::QuickReplyAckListener>,
 ) {
     crate::commands::push::set_quick_reply_ack_listener(listener);
+}
+
+/// Registers the native shell's two leave-flush listeners (`commands::background_flush`): begin a
+/// background task for the page's last work before suspension, and end it when the page says so.
+/// Registered by `CanariPushSetup` rather than linked, like the quick reply's acknowledgement.
+#[no_mangle]
+pub extern "C" fn canari_ios_set_background_flush_listeners(
+    begin: Option<crate::commands::background_flush::BeginListener>,
+    end: Option<crate::commands::background_flush::EndListener>,
+) {
+    crate::commands::background_flush::set_background_flush_listeners(begin.zip(end));
 }
 
 /// Whether the page is ringing `call_id` itself right now (its `CallService` is `incoming` on it) -

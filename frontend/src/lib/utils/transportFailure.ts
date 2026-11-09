@@ -57,6 +57,80 @@ export function isTransportFailure(error: unknown): boolean {
   return error instanceof TransportFailureError || error instanceof RequestDeadlineError;
 }
 
+/**
+ * The refresh endpoint ANSWERED, and the answer was not a token.
+ *
+ * THE MIRROR OF `SessionExpiredError` (`stores/auth.ts`), and the pair is the whole point: only the
+ * APP's own 401/403 proves the refresh cookie dead, because a 502 while the backend restarts during a
+ * deploy is a hiccup and logging the user out for it costs a full OIDC round trip. That care was
+ * spent at the throw and then lost one frame later - the other half arrived as a bare
+ * `new Error('Token refresh failed (HTTP 502)')`, and every caller that wanted to know which of the
+ * two it held had to read the sentence and find the digits in it. So the status travels as a FIELD.
+ *
+ * THE BASE, NOT THE VERDICT. Thrown as itself only for an APP-origin 4xx other than 401/403/408/429
+ * (a 404 or a 410 in Nest's envelope: the endpoint refuses the request outright and no retry changes
+ * that - the boot sends such a user to login, as before). Every answer that is NOT a verdict is the
+ * subclass {@link TransientAnswerError}. The two readers split on that line: `useChannelWorkspaces`
+ * asks again only on the TRANSIENT subclass (a verdict is asked again for nothing), while
+ * `mlsDeliveryApi` wraps the BASE after a delivery 401 as a definitive `DeliveryRenewalFailedError` -
+ * the guard's 401 proved the request did nothing, whatever the refresh answered, and an unwrapped app
+ * 4xx left a commit's stage unknown. It lives here, beside its subclass, so the boot's predicate
+ * ({@link isSessionQuestionOpen}) reads a type without importing the auth store, which re-exports it.
+ */
+export class RefreshFailedError extends Error {
+  constructor(
+    /** The HTTP status the refresh endpoint answered with. Never an app 401 or 403 - those are the sibling. */
+    readonly status: number,
+    message = `Token refresh failed (HTTP ${status})`
+  ) {
+    super(message);
+    this.name = 'RefreshFailedError';
+  }
+}
+
+/**
+ * The refresh endpoint got an answer that is NOT A VERDICT on the session, classified at the throw
+ * (`refresh` in `stores/auth.ts`) from the status and from WHO answered (`refusalOrigin`), never from
+ * a sentence. Exactly this population:
+ * - a 5xx, whoever wrote it (a backend restarting, the edge's 502, core-service's 503 `MAINTENANCE`);
+ * - a 408 or a 429 (a proxy timed the request out, or it was rate-limited: ask again later);
+ * - any other status written by the EDGE rather than the app (a WAF ban page or a portal's HTML 403,
+ *   a JSON block page that is none of our envelopes).
+ *
+ * None of these touches the credential, so the boot reads them like a transport failure: "you are
+ * signed out" would be a lie. `status` and `code` travel as FIELDS so the boot screen can say which
+ * one it is (the network path, the server, a maintenance) without reading a sentence.
+ */
+export class TransientAnswerError extends RefreshFailedError {
+  constructor(
+    status: number,
+    /**
+     * The `code` of a JSON-typed body (`{ code, message }`: core-service's 503 `MAINTENANCE`), else
+     * null. Read for WORDING only, so the content type is proof enough (`responseOrigin`).
+     */
+    readonly code: string | null = null,
+    /**
+     * The OPERATOR's maintenance text (`maintenanceMessage` of the 503 `MAINTENANCE` body), or null
+     * when there is none - the screen then words the default in the user's language. Never the
+     * body's `message`, which falls back to an English default the client cannot tell apart.
+     */
+    readonly maintenanceMessage: string | null = null
+  ) {
+    super(status, `Token refresh answered ${status}${code ? ` (${code})` : ''} - not a verdict`);
+    this.name = 'TransientAnswerError';
+  }
+}
+
+/**
+ * True when the session question stays OPEN after `error`: nobody answered
+ * ({@link isTransportFailure}) or the answer was not a verdict ({@link TransientAnswerError}). The
+ * app's own 401/403 (`SessionExpiredError`) and an app-origin 4xx ({@link RefreshFailedError} itself)
+ * close it.
+ */
+export function isSessionQuestionOpen(error: unknown): boolean {
+  return isTransportFailure(error) || error instanceof TransientAnswerError;
+}
+
 /** Whether a `fetch` call was aborted by the caller's own signal (on `init` or on a `Request`). */
 function abortedSignal(input: RequestInfo | URL, init?: RequestInit): AbortSignal | null {
   const signal =

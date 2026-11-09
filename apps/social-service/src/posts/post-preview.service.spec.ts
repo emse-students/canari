@@ -89,6 +89,12 @@ describe('PostPreviewService.getSharePreview - the one predicate', () => {
     expect(await service(post({ scheduledAt: past })).getSharePreview(UUID)).not.toBeNull();
   });
 
+  it('refuses a post marked "Entre étudiants" to whoever holds the link, and previews it once reopened', async () => {
+    expect(await service(post({ studentsOnly: true })).getSharePreview(UUID)).toBeNull();
+    expect(await service(post({ studentsOnly: true })).readShareableImage(UUID)).toBeNull();
+    expect(await service(post({ studentsOnly: false })).getSharePreview(UUID)).not.toBeNull();
+  });
+
   it('refuses a post whose association is archived', async () => {
     const archived = { name: 'BDE', slug: 'bde', logoUrl: null, archived: true };
     expect(await service(post(), archived).getSharePreview(UUID)).toBeNull();

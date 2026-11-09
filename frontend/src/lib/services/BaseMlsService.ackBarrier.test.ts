@@ -139,47 +139,42 @@ describe('the ack barrier in front of a pull', () => {
   });
 
   /**
-   * TWO OVERLAPPING PULLS, AND THE FIRST TO FINISH MUST NOT BLIND THE BARRIER.
+   * A SECOND PULL ASKED WHILE ONE IS FETCHING STARTS NO REQUEST: it is owed, and the barrier stands
+   * until it has run too.
    *
-   * The slot used to be overwritten by the second pull and nulled by whichever finished first, so a
-   * barrier entered after that saw no pull at all while the other was still fetching - and decrypted
-   * a frame that pull then delivered a second time.
+   * Two pulls used to run side by side, and the barrier had to be chained across both. They are
+   * single-flight now - the second ask waits for the first's fetch to end - so there is never a
+   * second request to blind the barrier, and the owed one is issued exactly once.
    */
-  it('keeps the barrier up until every overlapping pull has landed', async () => {
+  it('owes a pull asked while one is fetching, and runs it once the first has landed', async () => {
     const firstPage = deferred();
-    const secondPage = deferred();
     let pulls = 0;
     poke(svc, {
       delivery: {
         ackMessages: vi.fn().mockResolvedValue(undefined),
         pullPendingMessagesJson: vi.fn(async () => {
           const mine = ++pulls;
-          await (mine === 1 ? firstPage.promise : secondPage.promise);
+          if (mine === 1) await firstPage.promise;
           order.push(`pull-${mine}`);
         }),
       },
     });
 
     const first = inner(svc).fetchPendingMessages();
+    await vi.waitFor(() => expect(pulls).toBe(1));
+    // Two more asks while the first is fetching: neither reaches the server.
     const second = inner(svc).fetchPendingMessages();
-    // Both have reached the server before either answers.
-    await vi.waitFor(() => expect(pulls).toBe(2));
+    const third = inner(svc).fetchPendingMessages();
+    await Promise.resolve();
+    expect(pulls).toBe(1);
 
-    // The SECOND pull's answer is still out when the first one lands.
+    const barrier = svc.waitForMessageQueueIdle('test', null).then(() => order.push('barrier'));
     firstPage.settle();
-    await vi.waitFor(() => expect(order).toEqual(['pull-1']));
-    const slot = (svc as unknown as { pendingPullInFlight: unknown }).pendingPullInFlight;
-    expect(slot).not.toBeNull();
+    await Promise.all([first, second, third, barrier]);
 
-    const barrier = svc.waitForGroupQueueIdle('test', 'g-1').then(() => order.push('barrier'));
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(order).toEqual(['pull-1']);
-
-    secondPage.settle();
-    await Promise.all([first, second, barrier]);
-    expect(order).toEqual(['pull-1', 'pull-2', 'barrier']);
-    // And the slot is released once nothing is behind it, so a later barrier does not wait forever.
+    // ONE re-run for the burst, after the first landed - never two requests at once.
+    expect(order.slice(0, 2)).toEqual(['pull-1', 'pull-2']);
+    expect(pulls).toBe(2);
     expect((svc as unknown as { pendingPullInFlight: unknown }).pendingPullInFlight).toBeNull();
   });
 
@@ -276,25 +271,36 @@ describe('the ack barrier in front of a pull', () => {
     const said = (spy: ReturnType<typeof vi.spyOn>) =>
       (spy.mock.calls as unknown[][]).map((c) => String(c[0])).join(' | ');
 
+    const svcInner = svc as unknown as {
+      ackSerial: number;
+      rememberDelivery(
+        id: string,
+        record: { state: 'queued' | 'done'; via: 'pull' | 'live' }
+      ): void;
+      admitDelivery(
+        id: string | undefined,
+        arrival: { channel: 'pull'; listedAfterAck: number } | { channel: 'live' }
+      ): boolean;
+    };
+    // A pull issued now: ordered after every ack announced so far, which is what a pull's flush gives.
+    const pulledNow = () => ({ channel: 'pull' as const, listedAfterAck: svcInner.ackSerial });
+
     // A row acknowledged by an ack that could NOT be delivered: the server really does still hold
     // it, so its repeat is the consequence of the `[ACK]` failure and must not be a second finding.
+    // Settled `done` first and acknowledged after, in the order the drain does both.
+    svcInner.rememberDelivery('row-1', { state: 'done', via: 'pull' });
     await inner(svc)
       .announceAck(['row-1'])
       .catch(() => {});
-    const svcInner = svc as unknown as {
-      rememberDelivery(id: string, state: 'queued' | 'done'): void;
-      admitDelivery(id: string | undefined, channel: 'pull' | 'live'): boolean;
-    };
-    svcInner.rememberDelivery('row-1', 'done');
-    expect(svcInner.admitDelivery('row-1', 'pull')).toBe(false);
+    expect(svcInner.admitDelivery('row-1', pulledNow())).toBe(false);
     expect(said(note)).toContain('really is still owed');
     expect(said(grumble)).not.toContain('row-1');
 
     // And one whose ack LANDED. Nothing routine explains that any more, so it accuses.
     failing = false;
+    svcInner.rememberDelivery('row-2', { state: 'done', via: 'pull' });
     await inner(svc).announceAck(['row-2']);
-    svcInner.rememberDelivery('row-2', 'done');
-    expect(svcInner.admitDelivery('row-2', 'pull')).toBe(false);
+    expect(svcInner.admitDelivery('row-2', pulledNow())).toBe(false);
     expect(said(grumble)).toContain('nothing routine explains this');
   });
 

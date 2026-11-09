@@ -7,6 +7,9 @@ import {
   gridUnitLimit,
   dragRange,
   formatTimeRange,
+  formatTimeRangeParts,
+  formatBookingRange,
+  formatDay,
   formatDayHead,
   formatWeekRange,
   freeCount,
@@ -39,9 +42,37 @@ describe("a unit's day and its range, on the space's clock (D25)", () => {
     expect(unitDay(night, PARIS)).toBe('2026-11-07');
   });
 
-  it('writes the end of a day as 24:00, never 00:00', () => {
+  it('writes the end of a day as 23:59, never 24:00 or 00:00', () => {
     expect(formatTimeRange(at('2026-11-02T22:30:00Z'), at('2026-11-02T23:00:00Z'), PARIS)).toBe(
-      '23:30 - 24:00'
+      '23:30 - 23:59'
+    );
+    expect(formatTimeRange(at('2026-11-03T22:00:00Z'), at('2026-11-03T23:00:00Z'), PARIS)).toBe(
+      '23:00 - 23:59'
+    );
+  });
+
+  it('writes a free slot running to the end of the day as 23:59 too', () => {
+    expect(formatTimeRange(at('2026-11-03T14:30:00Z'), at('2026-11-03T23:00:00Z'), PARIS)).toBe(
+      '15:30 - 23:59'
+    );
+    expect(
+      formatTimeRangeParts(at('2026-11-03T14:30:00Z'), at('2026-11-03T23:00:00Z'), PARIS)
+    ).toEqual({
+      start: '15:30',
+      end: '23:59',
+    });
+  });
+
+  it('writes a fully free day as 00:00 - 23:59 and never moves the real end', () => {
+    const start = at('2026-11-02T23:00:00Z');
+    const end = at('2026-11-03T23:00:00Z');
+    expect(formatTimeRange(start, end, PARIS)).toBe('00:00 - 23:59');
+    expect(end - start).toBe(24 * 3_600_000);
+  });
+
+  it('keeps the start day alone in a booking range ending at midnight', () => {
+    expect(formatBookingRange(at('2026-11-03T22:00:00Z'), at('2026-11-03T23:00:00Z'), PARIS)).toBe(
+      `${formatDay('2026-11-03')}, 23:00 - 23:59`
     );
   });
 

@@ -53,6 +53,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::remove_tab_bar,
             commands::show_tab_bar,
             commands::hide_tab_bar,
+            // CANARI PATCH: see `SetTabBarInteractiveOptions`.
+            commands::set_tab_bar_interactive,
             commands::select_tab,
             commands::set_badge,
             commands::get_tab_bar_insets,

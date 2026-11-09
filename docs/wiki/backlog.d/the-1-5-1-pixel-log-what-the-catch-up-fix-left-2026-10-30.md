@@ -10,6 +10,10 @@ These are the lines of the same log that fix does NOT cover, each with its count
   this log the ack landed before the pull and the pull still listed the row. Read which cell of
   `REPEAT_MEANS` the 31 lines are (`pull`/`socket` x `queued`/`done`) before anything else - a `done`
   cell means the server listed a row it had recorded acknowledged, which is the server's to explain.
+  **2026-11-04: one cause found and fixed** - a pull issued before the row's ack was even sent (two
+  pulls at boot, the second while the first's drain still applied) listed rows met as `pull:done`;
+  pulls are now single-flight, the one asked meanwhile owed behind the drain's ack ([chat](../frontend/modules/chat.md#one-pull-at-a-time-and-the-one-asked-meanwhile-is-owed-2026-11-04)).
+  Whether the Pixel's 31 lines were all that shape is owed a re-read on a build carrying the fix.
 - **P2 - `derived_inert` after salon sends: 48 lines.** The Svelte 5 teardown race
   ([architecture](../frontend/architecture.md)) reached from the salon send path: a `$derived` read
   after its owner was destroyed. Name the component whose effect outlives the send first.

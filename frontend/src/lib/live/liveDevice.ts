@@ -12,6 +12,7 @@ import { facingConstraint, lensIsExact } from '$lib/utils/cameraFacing';
 import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { REEL_AUDIO_CONSTRAINTS } from '$lib/reels/framedCapture';
+import { captureUserMedia } from '$lib/utils/audioSession';
 import {
   LIVE_BATTERY_WARN_LEVEL,
   LIVE_CAPTURE_FPS,
@@ -41,15 +42,19 @@ export async function openLiveCamera(
     throw new CameraAccessError('unavailable', 'live camera: getUserMedia is not available');
   }
   try {
-    const stream = await devices.getUserMedia({
-      video: {
-        facingMode: facingConstraint(facing, exact),
-        width: { ideal: LIVE_CAPTURE_LONG_SIDE_PX },
-        height: { ideal: LIVE_CAPTURE_SHORT_SIDE_PX },
-        frameRate: { ideal: LIVE_CAPTURE_FPS },
+    const stream = await captureUserMedia(
+      devices,
+      {
+        video: {
+          facingMode: facingConstraint(facing, exact),
+          width: { ideal: LIVE_CAPTURE_LONG_SIDE_PX },
+          height: { ideal: LIVE_CAPTURE_SHORT_SIDE_PX },
+          frameRate: { ideal: LIVE_CAPTURE_FPS },
+        },
+        audio: REEL_AUDIO_CONSTRAINTS,
       },
-      audio: REEL_AUDIO_CONSTRAINTS,
-    });
+      'live-camera'
+    );
     const settings = stream.getVideoTracks()[0]?.getSettings?.();
     console.debug(
       `[LIVE-CAM] opened ${facing}: ${settings?.width ?? '?'}x${settings?.height ?? '?'} @ ${settings?.frameRate ?? '?'}`
@@ -125,9 +130,15 @@ export class ScreenWakeLock {
       this.#sentinel = sentinel;
       console.debug(`[${this.tag}] screen held on`);
     } catch (err) {
-      // A hidden page, or a policy: the screen may dim. Logged, never retried on a timer.
+      // A hidden page, a missing user activation, a permission or a feature policy: the screen may
+      // dim. Logged, never retried on a timer. The engine's refusal is written as TEXT, its message
+      // included: passed as an object, the log keeps only a DOMException's class (`NotAllowedError`)
+      // and loses the sentence that names WHICH of those gates refused - the one fact that decides
+      // the fix (the iPhone refuses every video call, 2026-11-07).
       this.#refusedTicket = ticket;
-      console.warn(`[${this.tag}] the screen lock was refused`, err);
+      console.warn(
+        `[${this.tag}] the screen lock was refused (${String(err)}) - the screen may dim`
+      );
     }
   }
 
@@ -314,7 +325,7 @@ export async function openLiveScreen(
   }
   let mic: MediaStream;
   try {
-    mic = await devices.getUserMedia({ audio: REEL_AUDIO_CONSTRAINTS });
+    mic = await captureUserMedia(devices, { audio: REEL_AUDIO_CONSTRAINTS }, 'live-screen');
   } catch (err) {
     for (const track of display.getTracks()) track.stop();
     void context?.close();

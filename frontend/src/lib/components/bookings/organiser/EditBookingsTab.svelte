@@ -56,12 +56,12 @@
   }
 
   /** "Je regle tout moi-meme": the space by its name alone, every setting at its default. */
-  async function createByName(name: string) {
+  async function createByName(name: string, ownerId: string | null) {
     if (creating) return;
     creating = true;
     error = '';
     try {
-      const { id } = await createSpace(name, associationId);
+      const { id } = await createSpace(name, ownerId);
       Log.i('BOOKINGS', `space created from the tab id=${id.slice(0, 8)}`);
       await openEditor(id);
     } catch (e) {
@@ -103,7 +103,7 @@
         {associationId}
         initialName=""
         onCreated={(id) => void openEditor(id)}
-        onSkip={(name) => void createByName(name)}
+        onSkip={(name, ownerId) => void createByName(name, ownerId)}
         onCancel={closeCreator}
       />
       {#if error}

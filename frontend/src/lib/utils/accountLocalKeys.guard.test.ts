@@ -96,11 +96,17 @@ describe('the per-account key list is the one list', () => {
     'lib/calendar/ics.ts:`UID:${icsEscapeText(ev.uid)}': "an iCalendar event's UID line",
     'lib/mls-client/sendRatchetLedger.ts:`send_ratchet_emitted:${userId}':
       'a record in CanariDBMls_<id> - deleted with that database by accountIndexedDbNames',
+    'lib/utils/deviceKeyVault.ts:`${SLOT_PREFIX}${userId}':
+      'the vault slot - removed by clearDeviceKey, which the account wipe calls',
+    'lib/posts/publishQueue/publishQueue.svelte.ts:`canari-publish-queue-${userId}':
+      'a Web Lock name, which holds nothing once released',
   };
 
   it('rule 4 - no key-shaped literal interpolates a user id outside the list', () => {
+    // A literal prefix (`canari_x_${userId}`) OR a CONSTANT one (`${DB_PREFIX}${userId}`), the shape
+    // the publish queue's database name first took and the literal pattern alone never saw.
     const re =
-      /`[A-Za-z][A-Za-z0-9_.:-]*[_.:-]\$\{[^}]*(?:[uU]ser[A-Za-z]*|\buid\b|savedUser)[^}]*\}/g;
+      /`(?:[A-Za-z][A-Za-z0-9_.:-]*[_.:-]|\$\{[A-Z][A-Z0-9_]{2,}\})\$\{[^}]*(?:[uU]ser[A-Za-z]*|\buid\b|savedUser)[^}]*\}/g;
     const found = SOURCES.filter((s) => s.file !== LIST_FILE).flatMap((s) =>
       [...s.text.matchAll(re)]
         .map((m) => `${s.file}:${m[0]}`)
@@ -115,6 +121,12 @@ describe('the per-account key list is the one list', () => {
       '`CanariDBOutbox_` + id, a database name - deleted by accountIndexedDbNames',
     'lib/utils/hex.ts:IDB_NAME + userId':
       '`CanariDBMls_` + id, a database name - deleted by accountIndexedDbNames',
+    'lib/posts/publishQueue/publishQueueStore.ts:DB_PREFIX + userId':
+      '`CanariDBPublish_` + id, a database name - deleted by accountIndexedDbNames',
+    'lib/utils/chat/tabCommitStore.ts:DB_PREFIX + userId':
+      '`CanariDBTabCommit_` + id, a database name - deleted by accountIndexedDbNames',
+    'lib/forms/draftCopies.ts:DB_PREFIX + userId':
+      '`CanariDBFormDrafts_` + id, a database name - deleted by accountIndexedDbNames and at sign-out',
   };
 
   it('rule 4 - nor does a string concatenation (a literal or a CONSTANT, then + a user id)', () => {
@@ -142,5 +154,13 @@ describe('the per-account key list is the one list', () => {
       expect(re.test(shape), shape).toBe(true);
     }
     expect(re.test("'Bearer ' + token")).toBe(false);
+  });
+
+  it('rule 4 catches a template literal whose prefix is a CONSTANT', () => {
+    const re =
+      /`(?:[A-Za-z][A-Za-z0-9_.:-]*[_.:-]|\$\{[A-Z][A-Z0-9_]{2,}\})\$\{[^}]*(?:[uU]ser[A-Za-z]*|\buid\b|savedUser)[^}]*\}/;
+    expect(re.test('`${DB_PREFIX}${this.userId}`')).toBe(true);
+    expect(re.test('`canari_x_${userId}`')).toBe(true);
+    expect(re.test('`${API_BASE}${path}`')).toBe(false);
   });
 });

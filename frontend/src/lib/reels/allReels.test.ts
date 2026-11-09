@@ -19,7 +19,8 @@ it('asks the server for reels and one-photo posts across every tab', async () =>
   await listAllReels(20, REEL_PAGE);
   expect(listPosts).toHaveBeenCalledWith({
     kind: 'reel',
-    singlePhotos: true,
+    multiMedia: true,
+    withLinks: true,
     feed: 'all',
     offset: 20,
     limit: 10,
@@ -34,7 +35,8 @@ it('serves the first page it was handed, then asks the server for the rest', asy
   await load(REEL_PAGE, REEL_PAGE);
   expect(listPosts).toHaveBeenCalledWith({
     kind: 'reel',
-    singlePhotos: true,
+    multiMedia: true,
+    withLinks: true,
     feed: 'all',
     offset: 10,
     limit: 10,

@@ -564,6 +564,7 @@ impl MlsManager {
                     &leaf_keys(group),
                     sender_identity.as_deref(),
                     (&own_identity, observers.own.1),
+                    observers.admission.get(group_id).copied(),
                 );
                 observe_merge(observers.graine_runs, provider, group_id, before, group);
                 // A Remove commit naming OUR leaf leaves the group inactive, and this is the

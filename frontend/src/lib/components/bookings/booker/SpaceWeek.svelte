@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, untrack, type Snippet } from 'svelte';
+  import { guideAnchorWhen } from '$lib/guidance/guideAnchors.svelte';
   import MineHereCard from '$lib/components/bookings/booker/MineHereCard.svelte';
   import { mineHere } from '$lib/bookings/mineHere';
   import SpaceGrid from '$lib/components/bookings/booker/SpaceGrid.svelte';
@@ -36,6 +37,13 @@
     WEEK_DAYS,
   } from '$lib/bookings/grid';
   import { addDays, localDate } from '$lib/bookings/zonedTime';
+  import {
+    editChoices,
+    editPeople,
+    type EditChoices,
+    type EditPerson,
+  } from '$lib/bookings/editRange';
+  import { currentUserId } from '$lib/stores/userState.svelte';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import {
     SCHEDULE_AGENDA_QUERY,
@@ -83,7 +91,15 @@
         blockRun: SlotUnit[];
       }
     | { kind: 'block'; resource: BookerResource; run: SlotUnit[]; initialCount: number }
-    | { kind: 'detail'; resource: BookerResource; unit: SlotUnit };
+    | { kind: 'detail'; resource: BookerResource; unit: SlotUnit }
+    | {
+        kind: 'edit';
+        resource: BookerResource;
+        bookingId: string;
+        choices: EditChoices;
+        participants: EditPerson[];
+        revision: string;
+      };
 
   let slots = $state<ResourceSlots[]>([]);
   let loaded = $state<{ from: string; to: string } | null>(null);
@@ -273,6 +289,70 @@
     };
   }
 
+  /**
+   * "Modifier" on a taken unit (owner, 2026-11-02): the booking sheet in edit mode, its choices
+   * read from the week held (`editChoices`), its people from the booking as this reader got it.
+   * Null - and no button - when the week does not hold the booking's own start.
+   */
+  function editOf(picked: BookerResource, unit: SlotUnit): (() => void) | undefined {
+    if (unit.state !== 'booked') return undefined;
+    const booking = unit.booking;
+    const choices = editChoices(
+      unitsInOrder(slots, picked.id),
+      booking,
+      space,
+      nowMs,
+      lastRefusedStart
+    );
+    if (!choices) return undefined;
+    // Sent wherever the names are, so to whoever may edit; a view without it was not read for an
+    // editor, and an edit from it could not be checked against the booking's state.
+    const revision = booking.revision;
+    if (revision === undefined) {
+      Log.i('BOOKINGS', `edit not offered: no revision on booking=${booking.id.slice(0, 8)}`);
+      return undefined;
+    }
+    // Read from the booking itself, never from the reader's own list: that list is capped
+    // (`MINE_LIMIT`), and a booking past it would make its holder look like a participant (review
+    // of #2945). `holderId` is always sent to whoever may edit - its holder, or a manager.
+    const me = currentUserId();
+    return () => {
+      Log.d('BOOKINGS', `edit sheet opened booking=${booking.id.slice(0, 8)}`);
+      sheet = {
+        kind: 'edit',
+        resource: picked,
+        bookingId: booking.id,
+        choices,
+        participants: editPeople(
+          booking,
+          me ? { id: me, isParticipant: booking.mine && booking.holderId !== me } : null,
+          m.bookings_edit_you()
+        ),
+        revision,
+      };
+    };
+  }
+
+  /**
+   * The edit was refused `stale` (owner review of #2945): the booking changed since the sheet
+   * opened. The week is read again and the sheet reopened on the booking as it now is - or closed,
+   * the line saying why, when the new read no longer offers its edit (cancelled, started).
+   */
+  async function reopenEdit(picked: BookerResource, bookingId: string) {
+    await reread();
+    onChanged?.();
+    const unit = unitsInOrder(slots, picked.id).find(
+      (u) => u.state === 'booked' && u.booking.id === bookingId
+    );
+    const open = unit ? editOf(picked, unit) : undefined;
+    if (!open) {
+      Log.i('BOOKINGS', `stale edit not reopened: booking=${bookingId.slice(0, 8)} not editable`);
+      sheet = null;
+      return;
+    }
+    open();
+  }
+
   async function closeSheet(changed: boolean) {
     sheet = null;
     if (!changed) return;
@@ -281,15 +361,25 @@
   }
 </script>
 
-<div class={mode === 'book' ? 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start' : ''}>
+<!-- The track is `minmax(0,1fr)`, never the implicit `auto` one: an auto track grows to the widest
+     unbreakable text of its items (a `truncate` line counts at its full length), which pushed the
+     whole week and the aside past a phone's right edge (owner, 2026-11-08). -->
+<div
+  class={mode === 'book'
+    ? 'grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start'
+    : ''}
+  data-week-layout
+>
   <div class="min-w-0 space-y-4">
     {#if space.resources.length > 1 && resource}
-      <ColumnSelect
-        resources={space.resources}
-        value={resource.id}
-        counts={freeCounts}
-        onSelect={(id) => (resourceId = id)}
-      />
+      <div use:guideAnchorWhen={mode === 'book' && loaded ? 'bookings.column' : undefined}>
+        <ColumnSelect
+          resources={space.resources}
+          value={resource.id}
+          counts={freeCounts}
+          onSelect={(id) => (resourceId = id)}
+        />
+      </div>
     {/if}
 
     {#if slotsError}
@@ -325,6 +415,7 @@
         class="transition-opacity {weekHeld ? '' : 'opacity-50'}"
         inert={!weekHeld}
         data-week-grid
+        use:guideAnchorWhen={mode === 'book' && loaded ? 'bookings.week' : undefined}
       >
         {#if drawn.endMin === drawn.startMin}
           <p class="text-text-muted py-8 text-center text-sm">
@@ -366,7 +457,7 @@
     {/if}
   </div>
   {#if mode === 'book'}
-    <aside class="space-y-3">
+    <aside class="min-w-0 space-y-3">
       <MineHereCard bookings={mineRows} />
       {@render aside?.()}
     </aside>
@@ -408,6 +499,22 @@
         : undefined}
       onClose={closeSheet}
     />
+  {:else if sheet.kind === 'edit'}
+    {@const edited = sheet}
+    <BookingSheet
+      {space}
+      resource={sheet.resource}
+      run={sheet.choices.runOf(sheet.choices.starts[sheet.choices.startIndex])}
+      editing={{
+        bookingId: sheet.bookingId,
+        choices: sheet.choices,
+        participants: sheet.participants,
+        revision: sheet.revision,
+        onStale: () => reopenEdit(edited.resource, edited.bookingId),
+      }}
+      onReread={reread}
+      onClose={closeSheet}
+    />
   {:else if sheet.kind === 'block'}
     <BlockSheet
       {space}
@@ -425,6 +532,7 @@
       mine={sheet.unit.state === 'booked' ? mine.get(sheet.unit.booking.id) : undefined}
       {nowMs}
       onClose={closeSheet}
+      onEdit={editOf(sheet.resource, sheet.unit)}
     />
   {/if}
 {/if}

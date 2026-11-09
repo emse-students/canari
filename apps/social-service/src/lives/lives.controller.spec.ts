@@ -1,4 +1,4 @@
-import { HttpStatus, Logger } from '@nestjs/common';
+import { ForbiddenException, HttpStatus, Logger } from '@nestjs/common';
 import type { DataSource } from 'typeorm';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { Readable } from 'stream';
@@ -156,6 +156,8 @@ describe('LivesController', () => {
   const ingest = jest.fn().mockResolvedValue({ index: 0 });
   const manifest = jest.fn().mockResolvedValue({ liveId: 'm' });
   const read = jest.fn().mockResolvedValue({ messages: [] });
+  const readArrivals = jest.fn().mockResolvedValue(null);
+  const blockedFor = jest.fn().mockResolvedValue(new Set<string>());
   const cut = jest.fn().mockResolvedValue({ newlyCut: true });
   const rulesStatus = jest.fn().mockResolvedValue({ version: 1 });
   /** The posts' one moderator predicate, faked: only `MODERATOR` holds `MODERATE` in a BDE. */
@@ -163,12 +165,21 @@ describe('LivesController', () => {
     async (userId: string, opts?: { isGlobalAdmin?: boolean }) =>
       opts?.isGlobalAdmin === true || userId === MODERATOR
   );
+  const LIVE = '22222222-2222-4222-8222-222222222222';
+  const OTHER_LIVE = '33333333-3333-4333-8333-333333333333';
+  /** The scope (owner, 2026-11-02): `MODERATOR`'s BDE governs `LIVE`, not `OTHER_LIVE`. */
+  const mayModerateLive = jest.fn(
+    async (userId: string, liveId: string, opts?: { isGlobalAdmin?: boolean }) =>
+      opts?.isGlobalAdmin === true || (userId === MODERATOR && liveId === LIVE)
+  );
+  const refuseModeration = jest.fn(() =>
+    Promise.reject(new ForbiddenException({ code: 'MODERATION_OUT_OF_SCOPE' }))
+  );
   const controller = new LivesController(
-    { ingest, manifest, cut, rulesStatus } as unknown as LivesService,
-    { isContentModerator } as unknown as AssociationsService,
+    { ingest, manifest, cut, rulesStatus, readArrivals, blockedFor } as unknown as LivesService,
+    { isContentModerator, mayModerateLive, refuseModeration } as unknown as AssociationsService,
     { read } as unknown as LiveChatService
   );
-  const LIVE = '22222222-2222-4222-8222-222222222222';
 
   beforeEach(() => jest.clearAllMocks());
 
@@ -220,6 +231,17 @@ describe('LivesController', () => {
       expect(cut).toHaveBeenLastCalledWith('d'.repeat(64), LIVE, body);
       expect(isContentModerator).toHaveBeenLastCalledWith('d'.repeat(64), { isGlobalAdmin: true });
     });
+
+    it('refuses a BDE moderator a live outside its governed spaces, with the typed 403', async () => {
+      await expect(controller.cut(OTHER_LIVE, MODERATOR, undefined, body)).rejects.toMatchObject({
+        status: HttpStatus.FORBIDDEN,
+        response: { code: 'MODERATION_OUT_OF_SCOPE' },
+      });
+      expect(cut).not.toHaveBeenCalled();
+      // The platform admin is never scoped.
+      await controller.cut(OTHER_LIVE, 'd'.repeat(64), 'true', body);
+      expect(cut).toHaveBeenLastCalledWith('d'.repeat(64), OTHER_LIVE, body);
+    });
   });
 
   it('answers the caller its first-live rules standing', async () => {
@@ -235,14 +257,56 @@ describe('LivesController', () => {
       liveId: 'm',
       chat: { messages: [] },
     });
-    expect(read).toHaveBeenLastCalledWith('b'.repeat(64), LIVE, {
-      messagesAfter: undefined,
-      reactionsAfter: undefined,
-    });
+    expect(read).toHaveBeenLastCalledWith(
+      'b'.repeat(64),
+      LIVE,
+      { messagesAfter: undefined, reactionsAfter: undefined, arrivalsAfter: undefined },
+      { withheld: undefined, blocked: expect.any(Set) }
+    );
     await controller.manifest(LIVE, 'b'.repeat(64), '3', '1', '41', '0');
-    expect(read).toHaveBeenLastCalledWith('b'.repeat(64), LIVE, {
-      messagesAfter: 41,
-      reactionsAfter: 0,
+    expect(read).toHaveBeenLastCalledWith(
+      'b'.repeat(64),
+      LIVE,
+      { messagesAfter: 41, reactionsAfter: 0, arrivalsAfter: undefined },
+      { withheld: undefined, blocked: expect.any(Set) }
+    );
+  });
+
+  it("hands the watch statement's chatWithheld to the chat read, and never serves it as a manifest field", async () => {
+    manifest.mockResolvedValueOnce({ liveId: 'm', chatWithheld: true });
+    await expect(controller.manifest(LIVE, 'b'.repeat(64), undefined, '1')).resolves.toEqual({
+      liveId: 'm',
+      chat: { messages: [] },
+    });
+    expect(read).toHaveBeenLastCalledWith(
+      'b'.repeat(64),
+      LIVE,
+      { messagesAfter: undefined, reactionsAfter: undefined, arrivalsAfter: undefined },
+      { withheld: true, blocked: expect.any(Set) }
+    );
+    manifest.mockResolvedValueOnce({ liveId: 'm', chatWithheld: true });
+    await expect(controller.manifest(LIVE, 'b'.repeat(64))).resolves.toEqual({ liveId: 'm' });
+  });
+
+  it('adds the arrival fields to the chat block, and NEVER to a withheld reader (owner, 2026-11-07)', async () => {
+    const block = { arrivals: [{ userId: 'x', seq: 1 }], arrivalsMore: 2, arrivalsCursor: 7 };
+    readArrivals.mockResolvedValueOnce(block);
+    await expect(
+      controller.manifest(LIVE, 'b'.repeat(64), undefined, '1', '1', '1', '6')
+    ).resolves.toEqual({ liveId: 'm', chat: { messages: [], ...block } });
+    expect(readArrivals).toHaveBeenLastCalledWith('b'.repeat(64), LIVE, 6, expect.any(Set));
+    // A reader the chat is withheld from: the arrivals are not even read.
+    readArrivals.mockClear();
+    manifest.mockResolvedValueOnce({ liveId: 'm', chatWithheld: true });
+    await expect(controller.manifest(LIVE, 'b'.repeat(64), undefined, '1')).resolves.toEqual({
+      liveId: 'm',
+      chat: { messages: [] },
+    });
+    expect(readArrivals).not.toHaveBeenCalled();
+    // A refusal of the arrivals (null) leaves the block as the chat made it.
+    await expect(controller.manifest(LIVE, 'b'.repeat(64), undefined, '1')).resolves.toEqual({
+      liveId: 'm',
+      chat: { messages: [] },
     });
   });
 

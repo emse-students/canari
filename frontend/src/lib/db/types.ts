@@ -148,6 +148,21 @@ export interface PageKey {
   provisional: boolean;
 }
 
+/** The answer of {@link IStorage.getMessagesByIds}. */
+export interface StoredRowsById {
+  /** The rows found and opened, by id - only rows of the conversation asked about. */
+  rows: Map<string, StoredMessage>;
+  /** The ids a row of that conversation stands under that this device cannot open - never written over. */
+  unreadable: Set<string>;
+}
+
+/**
+ * How {@link IStorage.mergeMessages} rewrites a row: given the row as the store holds it NOW, the
+ * row to write, or `null` to leave it as it is. Called again with the fresher row whenever another
+ * writer committed in between, so it must be a pure function of its argument.
+ */
+export type StoredMessageMerge = (current: StoredMessage) => StoredMessage | null;
+
 /**
  * The fields of a stored message a mutation is allowed to change.
  *
@@ -155,6 +170,88 @@ export interface PageKey {
  * message to another conversation. Applied by `mergeStoredMessage`.
  */
 export type StoredMessagePatch = Partial<Omit<StoredMessage, 'id' | 'conversationId'>>;
+
+/** What a {@link PendingMutation} does to its message once the message is here. */
+export type PendingMutationKind = 'delete' | 'edit' | 'reaction';
+
+/**
+ * How many entries the store of {@link PendingMutation}s keeps: per sender within a conversation, and
+ * per conversation (`putPendingMutation`, which evicts within these bounds).
+ */
+export interface PendingMutationLimits {
+  perSender: number;
+  perConversation: number;
+}
+
+/**
+ * A mutation whose target message is NOT on this device yet - a deletion, an edit or a reaction
+ * that arrived before its message (2026-11-02, the owner's deleted-message report).
+ *
+ * Kept in its own local store, never as a message row: it is never shown, never put in memory as a
+ * message, never counted by the reconciliation (the digest manifest, the state key) and never relayed
+ * in a bundle. When the message arrives it is settled against the message's AUTHOR
+ * (`settleAgainstPending`, `pendingMutations.ts`): only the author's deletion and edit apply, and
+ * everyone's reactions do.
+ *
+ * Keyed by (`conversationId`, `messageId`, `sender`, `kind`, `slot`): one entry per sender and kind,
+ * and per emoji for a reaction. Two entries under one key keep the larger `rank`, the first on a tie,
+ * decided by the store in the write itself - there is no read-then-write. At rest the message id, the
+ * sender and the slot are stored only as TAGS under the device key (`pendingMutationCodec.ts`), and
+ * in full only inside the sealed payload.
+ */
+export interface PendingMutation {
+  conversationId: string;
+  messageId: string;
+  /** The frame's MLS-authenticated sender, canonical (`canonicalUserId`). */
+  sender: string;
+  kind: PendingMutationKind;
+  /** `''` for a deletion or an edit; the emoji for a reaction - a reactor holds one state per emoji. */
+  slot: string;
+  /**
+   * What decides between two entries under one key, larger winning: the edit's `editedAt`, the
+   * reaction's `at` (the same last-write-wins as `applyReaction`), 0 for a deletion (all alike).
+   */
+  rank: number;
+  /** The frame's SERVER time (Unix ms) - the order the store evicts in within a tier, oldest first. */
+  at: number;
+  /** An edit's replacement text. Sealed. */
+  text?: string;
+  /** A reaction taken back. */
+  removed?: boolean;
+  /** The frame's own author proof, when it carried one. Sealed. */
+  proof?: RecordedAuthorship;
+}
+
+/** What {@link IStorage.putPendingMutation} did. */
+export interface PendingMutationWrite {
+  /** False when an entry under the same key already ranked at least as high. */
+  written: boolean;
+  /**
+   * Whether the entry written is still there once the bounds were applied - false when the same
+   * write evicted it (its sender was the one over the bound, and it was that sender's lowest).
+   */
+  kept: boolean;
+  /** How many entries the bounds evicted in this write. */
+  evicted: number;
+}
+
+/** What {@link IStorage.getPendingMutations} found. */
+export interface PendingMutationRead {
+  entries: PendingMutation[];
+  /**
+   * Entries found under this device key's tags that did not open under it (corrupted bytes): removed
+   * in the same read, since nothing could ever apply them. Counted so the caller can say so once.
+   */
+  removedUnreadable: number;
+}
+
+/** What {@link IStorage.resealPendingMutations} did. */
+export interface PendingMutationReseal {
+  resealed: number;
+  alreadyNew: number;
+  /** Entries open under neither key - left as they are, like every other sealed store. */
+  unreadable: number;
+}
 
 /**
  * Raw encrypted message row as persisted on disk (IndexedDB or SQLite).
@@ -318,6 +415,11 @@ export interface OutboxResumableUpload {
   uploadId?: string;
   /** The part size the session was opened with (the server's answer). */
   partBytes?: number;
+  /**
+   * `single-block` when the blob is ONE AES-GCM block (a post photo); absent for `segmented-v1`,
+   * which every state written before the field existed was.
+   */
+  encoding?: 'single-block';
 }
 
 /**
@@ -637,15 +739,26 @@ export interface IStorage {
    * makes the work grow with the square of the number of conversations.
    */
   getConversation(id: string): Promise<ConversationMeta | null>;
-  /** Delete the conversation row and cascade-delete all of its messages. */
+  /** Delete the conversation row and cascade-delete all of its messages and pending mutations. */
   deleteConversation(id: string): Promise<void>;
-  /** Delete all messages for a conversation without removing its metadata row. */
+  /** Delete all messages (and the mutations awaiting them) for a conversation, keeping its metadata row. */
   deleteMessagesForConversation(conversationId: string): Promise<void>;
 
   // Messages (content encrypted with device key)
 
   /** Encrypt and persist a single message to the local store. */
   saveMessage(msg: StoredMessage, deviceKeyB64: string): Promise<void>;
+  /**
+   * Persist each of `msgs` ONLY where no row is stored under its id - an insert, never a replace.
+   *
+   * For an ARRIVING message, which must never overwrite a row another writer put there between the
+   * caller's read and this write (the archive replay writes outside the inbound drain). The absence
+   * is decided by the store's own key constraint, in the write itself; an undecryptable row counts as
+   * present, which `getMessage` alone cannot tell.
+   *
+   * @returns the ids this call wrote - the others were already there
+   */
+  saveMessagesIfAbsent(msgs: StoredMessage[], deviceKeyB64: string): Promise<Set<string>>;
   /** Encrypt and persist a batch of messages in a single atomic write. */
   saveMessages(msgs: StoredMessage[], deviceKeyB64: string): Promise<void>;
   /**
@@ -662,13 +775,38 @@ export interface IStorage {
     deviceKeyB64: string
   ): Promise<void>;
   /**
-   * Merge `patch` into the stored message (read-modify-write; re-encrypts the payload).
-   * No-op if the row is absent or undecryptable.
+   * Merge `patch` into the stored message, re-encrypting the payload. No-op if the row is absent or
+   * undecryptable.
    *
    * The way to persist a MUTATION of an existing message: `saveMessage` replaces the whole row, so
    * a handler using it erases every field it did not itself carry. See `mergeStoredMessage`.
+   *
+   * A COMPARE-AND-SET on the row's revision ({@link mergeMessages}), never a read, an await and a
+   * blind write: a patch merged onto a row another writer changed in between is merged again onto
+   * what that writer left. SCOPED like every lookup by id: a row of another conversation than
+   * `conversationId` is left alone.
    */
-  updateMessage(id: string, patch: StoredMessagePatch, deviceKeyB64: string): Promise<void>;
+  updateMessage(
+    conversationId: string,
+    id: string,
+    patch: StoredMessagePatch,
+    deviceKeyB64: string
+  ): Promise<void>;
+  /**
+   * Rewrites the rows of `conversationId` stored under `ids` from their CURRENT state: each row is
+   * read with its revision, `merge` gives the row to write, and the write applies only while the
+   * revision is still the one read - on IndexedDB a get-compare-put in ONE readwrite transaction
+   * (every payload sealed before it opens), on SQLite `UPDATE ... WHERE rev = ?`. A row that moved
+   * in between is read again and merged again; each retry means another writer COMMITTED, so the
+   * loop ends. A row absent, unreadable or of another conversation is left alone. Resolves with the
+   * ids written.
+   */
+  mergeMessages(
+    conversationId: string,
+    ids: readonly string[],
+    merge: StoredMessageMerge,
+    deviceKeyB64: string
+  ): Promise<Set<string>>;
   /**
    * Remove one message row outright. No-op when the row is absent.
    *
@@ -693,8 +831,78 @@ export interface IStorage {
    * caller that needs the pair to be indivisible must run where nothing else writes.
    */
   getMessage(id: string, deviceKeyB64: string): Promise<StoredMessage | null>;
+  /**
+   * The rows of `conversationId` stored under `ids`, read by primary key in one pass - what a seam
+   * that is handed a batch of messages asks before it writes, so a row stored but not on screen is
+   * never written over. Its cost is the batch's, never the conversation's.
+   *
+   * SCOPED TO THE CONVERSATION: a message id is global in the store, and a frame of one
+   * conversation naming a row of another must not reach it (a member removed from B deleting her
+   * old B message through a frame sent in A). A row of another conversation reads as absent, and is
+   * said at warn.
+   *
+   * `unreadable` names the ids a row stands under that this device key cannot open: `getMessage`
+   * reports those as `null` like an absent row, and only an absent one may be written.
+   */
+  getMessagesByIds(
+    conversationId: string,
+    ids: readonly string[],
+    deviceKeyB64: string
+  ): Promise<StoredRowsById>;
   /** Decrypt and return all messages for a conversation, sorted oldest-first. */
   getMessages(conversationId: string, deviceKeyB64: string): Promise<StoredMessage[]>;
+  /**
+   * The messages of a conversation whose `timestamp` is at or after `since`, decrypting only those:
+   * what a reconciliation reads, whose window is `since` - its cost is the window's, never the whole
+   * conversation's. Oldest-first.
+   */
+  getMessagesSince(
+    conversationId: string,
+    since: number,
+    deviceKeyB64: string
+  ): Promise<StoredMessage[]>;
+
+  // Mutations whose message is not here yet (see PendingMutation)
+
+  /**
+   * Keep `entry` until its message arrives: written only where no entry under its key ranks at least
+   * as high, then held to `limits` - its sender's entries first (a sender over `perSender` loses its
+   * own), then the conversation's (over `perConversation`, the sender holding the most loses one).
+   * Within a sender, reactions go before deletions and edits, and older before newer. The rank
+   * comparison is atomic with the write on both backends - never a read, an await, then a write.
+   *
+   * The message id, the sender and the slot are stored only as tags under the device key
+   * (`deviceKeyTag`) and sealed with the rest: nothing at rest says who reacted to what.
+   */
+  putPendingMutation(
+    entry: PendingMutation,
+    limits: PendingMutationLimits,
+    deviceKeyB64: string
+  ): Promise<PendingMutationWrite>;
+  /**
+   * The entries waiting for any of `messageIds` in `conversationId`, read by key prefix - one range
+   * per message, never the conversation's whole set. An entry found that does not open under this
+   * key is removed in the same read and counted (`removedUnreadable`).
+   */
+  getPendingMutations(
+    conversationId: string,
+    messageIds: readonly string[],
+    deviceKeyB64: string
+  ): Promise<PendingMutationRead>;
+  /**
+   * Removes exactly the entries given, each only while it still holds the `rank` read - an entry a
+   * later frame raised meanwhile is a different version and stays.
+   */
+  deletePendingMutations(entries: readonly PendingMutation[], deviceKeyB64: string): Promise<void>;
+  /**
+   * Moves every entry from the old device key to the new one: its payload re-sealed AND its tags
+   * re-derived, since both are under the key. Resumable like the other sealed stores - an entry
+   * already under the new key is done, one under neither is left as it is.
+   */
+  resealPendingMutations(
+    oldDeviceKeyB64: string,
+    newDeviceKeyB64: string
+  ): Promise<PendingMutationReseal>;
   /**
    * How many rows the store holds for a conversation, decrypting NONE of them.
    *
@@ -735,7 +943,12 @@ export interface IStorage {
 
   // Garbage collection - delete messages older than the given threshold.
 
-  /** Delete messages older than `maxAgeMs` milliseconds and return the count of deleted rows. */
+  /**
+   * Delete messages older than `maxAgeMs` milliseconds and return the count of deleted rows. The
+   * pending mutations whose FRAME is older than the same cutoff go with them: a frame's time is an
+   * upper bound on its target's, so the message such an entry waits for is older still, and would
+   * be collected the moment it arrived.
+   */
   deleteOldMessages(maxAgeMs: number): Promise<number>;
 
   // Backup helpers - expose raw encrypted rows so backups don't require

@@ -1,3 +1,4 @@
+import type { DelegationRefusal } from '$lib/utils/chat/tabCommitDelegation';
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage } from '$lib/db';
 import type { Conversation } from '$lib/types';
@@ -78,10 +79,21 @@ export type ConversationRefusal =
   /** The peer has never signed in, so there is no KeyPackage to add and no group to build. */
   | 'peer-has-no-device'
   /**
-   * This tab is not the one that runs the device's MLS state, so it cannot commit
-   * (`FollowerTabCommitError`): the member must do it in the main tab.
+   * This tab cannot have the creation done: the tab that runs the device's MLS state is signed in to
+   * another account, or this engine cannot hand it over (`tabCommitDelegation.ts`, `not-delegable`),
+   * or this tab lost the lead between reading its role and committing (`FollowerTabCommitError`).
    */
   | 'follower-tab'
+  /**
+   * The creation was handed to the main tab, which closed while running it: whether it was created
+   * is not known here, and it is NOT run again (`tabCommitDelegation.ts`, `leader-gone`).
+   */
+  | 'leader-gone'
+  /**
+   * The creation was handed to the main tab, which is locked or signed out: it answered at once and
+   * ran nothing (`tabCommitDelegation.ts`, `leader-unavailable`).
+   */
+  | 'leader-unavailable'
   /** Anything the creation threw. The log carries the detail; the screen cannot use it. */
   | 'creation-failed';
 
@@ -90,6 +102,23 @@ export type ConversationRefusal =
  */
 function creationRefusal(e: unknown): ConversationRefusal {
   return e instanceof FollowerTabCommitError ? 'follower-tab' : 'creation-failed';
+}
+
+/**
+ * The refusal a creation handed to the leader tab is reported as, when the leader did not answer it
+ * itself (`tabCommitDelegation.ts`).
+ */
+export function delegationCreationRefusal(reason: DelegationRefusal): ConversationRefusal {
+  switch (reason) {
+    case 'leader-gone':
+      return 'leader-gone';
+    case 'leader-unavailable':
+      return 'leader-unavailable';
+    case 'not-delegable':
+      return 'follower-tab';
+    case 'failed':
+      return 'creation-failed';
+  }
 }
 
 /**

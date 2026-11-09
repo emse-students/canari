@@ -23,6 +23,14 @@ import { toastStore } from '$lib/stores/toast.svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import { giveMediaStreamGetTracks } from '$lib/reels/mediaStreamTracks.test-helper';
 
+// The microphone hold (`audioSession.ts`, pinned by `audioSession.test.ts`) is passed through: this
+// file's fake streams pin what is ASKED, not the session type.
+vi.mock('$lib/utils/audioSession', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/audioSession')>()),
+  captureUserMedia: (devices: MediaDevices, constraints: MediaStreamConstraints) =>
+    devices.getUserMedia(constraints),
+}));
+
 giveMediaStreamGetTracks();
 
 // The publish step fades in, and a test closes it mid-fade.
@@ -66,6 +74,7 @@ vi.mock('$lib/utils/historyOverlayStack', async (orig) => ({
 vi.mock('$lib/posts/postIdentity', async (orig) => ({
   ...(await orig<typeof import('$lib/posts/postIdentity')>()),
   listPostAsAssociations: () => Promise.resolve([]),
+  listLiveAssociations: () => Promise.resolve([]),
 }));
 vi.mock('$lib/components/shared/VideoPlayer.svelte', async () => ({
   default: (await import('./VideoPlayerStub.test-helper.svelte')).default,
@@ -845,7 +854,9 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
     expect(vi.mocked(pushHistoryOverlay)).toHaveBeenCalledTimes(1);
     const takeClose = vi.mocked(pushHistoryOverlay).mock.calls[0][0];
 
-    // Back #1 asks; Back #2 closes the camera (its owner unmounts it) while the question is up.
+    // Back #1 asks. The question holds its own history entry (ConfirmDialog -> ModalOverlay), so
+    // Back #2 closes the QUESTION and never reaches the camera; here the camera is unmounted while
+    // the question is up (its owner closes it, the X, a navigation), the shape this pins.
     takeClose('back');
     await settle();
     unmount(mounted.pop()!);
@@ -1037,8 +1048,7 @@ describe('one camera, one behaviour (user, 2026-10-19): a video filmed from the 
       oncapture,
       onpublished,
       onclose,
-      composerCaption: 'hello',
-      composerIdentity: '',
+      composerStart: { caption: 'hello', identity: '', studentsOnly: false },
     });
 
     expect(tab.sheet).not.toBeNull();

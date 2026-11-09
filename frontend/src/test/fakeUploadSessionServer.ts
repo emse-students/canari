@@ -38,7 +38,8 @@ interface FakeSession {
   owner: string;
   totalBytes: number;
   partBytes: number;
-  header: string;
+  /** The declared segmented header, or `null` for a `single-block` session (nothing to re-check). */
+  header: string | null;
   retentionClass: string;
   data: Uint8Array;
   received: Set<number>;
@@ -128,15 +129,20 @@ export class FakeSessionServer {
         retentionClass: string;
         totalBytes: number;
         partBytes: number;
-        header: string;
+        header?: string;
+        encoding?: string;
       };
+      // The real server's shape check (`declaredBlobShape`): a single-block session sends no header.
+      if (req.encoding === 'single-block' ? req.header !== undefined : !req.header) {
+        return this.json(400, { message: 'header and encoding disagree' });
+      }
       const id = `s${++this.next}`;
       this.reservations++;
       this.sessions.set(id, {
         owner,
         totalBytes: req.totalBytes,
         partBytes: req.partBytes,
-        header: req.header,
+        header: req.header ?? null,
         retentionClass: req.retentionClass,
         data: new Uint8Array(req.totalBytes),
         received: new Set(),
@@ -182,7 +188,7 @@ export class FakeSessionServer {
     if (method === 'POST' && verb === 'complete') {
       if (s.completed) return this.json(200, { mediaId: s.completed });
       if (s.received.size !== parts) return this.json(409, { message: 'parts are missing' });
-      if (hexEncode(s.data.subarray(0, 20)) !== s.header) {
+      if (s.header !== null && hexEncode(s.data.subarray(0, 20)) !== s.header) {
         return this.json(422, { message: 'Staged header differs from the declared header' });
       }
       const mediaId = `media-${id}`;

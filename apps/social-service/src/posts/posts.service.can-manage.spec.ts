@@ -1,4 +1,5 @@
-import { UnauthorizedException } from '@nestjs/common';
+import { ForbiddenException } from '@nestjs/common';
+import { PIN_SPACES_FOR_VIEWER_SQL } from './space-pins';
 import { Repository } from 'typeorm';
 import { PostsService } from './posts.service';
 import { Post } from './entities/post.entity';
@@ -24,22 +25,40 @@ describe('PostsService post management rights', () => {
 
   /**
    * `flagHolders` maps a user id to the associations where they hold POST_AS_ASSO; `moderators`
-   * lists the users holding MODERATE in a BDE.
+   * lists the users holding MODERATE in a BDE whose governed spaces hold the post; `elsewhere` those
+   * holding it in a BDE that does NOT govern the post (owner, 2026-11-02: MODERATE is scoped).
    */
   function makeService(
     post: Partial<Post>,
     flagHolders: Record<string, string[]> = {},
-    moderators: string[] = []
+    moderators: string[] = [],
+    elsewhere: string[] = []
   ) {
     const postRepo = {
       findOne: jest.fn(() => Promise.resolve(post)),
       save: jest.fn(() => Promise.resolve({ ...post } as Post)),
       remove: jest.fn(() => Promise.resolve(undefined)),
       // The one-row visibility read (WP6b) says yes: these are about rights, not audiences.
+      // WP-PIN: the governed spaces where the post is visible - one, for a platform admin and for a
+      // BDE moderator here (`moderators` doubles as the governors of the post's space).
       manager: {
-        query: jest.fn((sql: string) =>
-          Promise.resolve(sql.includes('AS visible') ? [{ visible: true }] : [])
-        ),
+        query: jest.fn((sql: string, params: unknown[] = []) => {
+          if (sql === PIN_SPACES_FOR_VIEWER_SQL) {
+            const governs = params[2] === true || moderators.includes(params[1] as string);
+            return Promise.resolve(
+              governs
+                ? (params[0] as string[]).map((postId) => ({
+                    postId,
+                    spaceId: 'space-1',
+                    formation: 'ICM',
+                    campus: 'saint-etienne',
+                    rank: null,
+                  }))
+                : []
+            );
+          }
+          return Promise.resolve(sql.includes('AS visible') ? [{ visible: true }] : []);
+        }),
       },
     };
 
@@ -56,14 +75,30 @@ describe('PostsService post management rights', () => {
         Promise.resolve(new Set(ids.filter((id) => holds(userId, id))))
       ),
       isContentModerator: jest.fn((userId: string, opts?: { isGlobalAdmin?: boolean }) =>
-        Promise.resolve(opts?.isGlobalAdmin === true || moderators.includes(userId))
+        Promise.resolve(
+          opts?.isGlobalAdmin === true || moderators.includes(userId) || elsewhere.includes(userId)
+        )
+      ),
+      moderatedPostIds: jest.fn((userId: string | undefined, ids: string[]) =>
+        Promise.resolve(new Set(userId && moderators.includes(userId) ? ids : []))
+      ),
+      mayModeratePost: jest.fn((userId: string | undefined) =>
+        Promise.resolve(!!userId && moderators.includes(userId))
+      ),
+      refuseModeration: jest.fn(() =>
+        Promise.reject(new ForbiddenException({ code: 'MODERATION_OUT_OF_SCOPE' }))
       ),
       findValidatedCalendarEventSummary: jest.fn(() => Promise.resolve(null)),
     };
 
     const service = new PostsService(
       postRepo as unknown as Repository<Post>,
-      { del: jest.fn(), setex: jest.fn(), get: jest.fn() } as unknown as RedisService,
+      {
+        del: jest.fn(),
+        setex: jest.fn(),
+        get: jest.fn(),
+        deleteByPattern: jest.fn(() => Promise.resolve(0)),
+      } as unknown as RedisService,
       {} as FollowsService,
       associations as unknown as AssociationsService,
       { resolveMentionedUserIds: () => [] } as unknown as PostNotificationsService,
@@ -161,15 +196,13 @@ describe('PostsService post management rights', () => {
     it('refuses a member of the association without the flag', async () => {
       const { service } = makeService(assoPost, {});
       await expect(service.updatePost('p1', 'plain-member', edit)).rejects.toThrow(
-        UnauthorizedException
+        ForbiddenException
       );
     });
 
     it('refuses the author once the association took the flag back', async () => {
       const { service } = makeService(assoPost, {});
-      await expect(service.updatePost('p1', 'officer', edit)).rejects.toThrow(
-        UnauthorizedException
-      );
+      await expect(service.updatePost('p1', 'officer', edit)).rejects.toThrow(ForbiddenException);
     });
 
     it('deletes for an officer holding the flag', async () => {
@@ -180,16 +213,12 @@ describe('PostsService post management rights', () => {
 
     it('refuses the delete to everyone else', async () => {
       const { service } = makeService(assoPost, {});
-      await expect(service.deletePost('p1', 'stranger', false)).rejects.toThrow(
-        UnauthorizedException
-      );
+      await expect(service.deletePost('p1', 'stranger', false)).rejects.toThrow(ForbiddenException);
     });
 
     it('keeps a personal post to its author', async () => {
       const { service } = makeService(personalPost, { intruder: [ASSO] });
-      await expect(service.updatePost('p2', 'intruder', edit)).rejects.toThrow(
-        UnauthorizedException
-      );
+      await expect(service.updatePost('p2', 'intruder', edit)).rejects.toThrow(ForbiddenException);
     });
 
     it('answers the edit with a post the editor is still told they manage', async () => {
@@ -201,33 +230,113 @@ describe('PostsService post management rights', () => {
   });
 
   /**
-   * The BDE curates the whole feed. Asked for explicitly on 2026-08-27: *"En tant qu'admin BDE,
-   * Justine devrait pouvoir modifier, supprimer, epingler en plus de signaler ou copier le lien."*
-   * The three verbs are three different tiers, which is why they are three fields.
+   * The BDE moderates the posts of the spaces it governs (owner, 2026-11-02, amending the
+   * 2026-08-27 request that also let it edit): it deletes, pins, unmasks and reads the anonymous
+   * author there - and EDITS NOTHING, anywhere: "tout sauf changer l'integrite du post".
    */
-  describe('the content moderator tier (BDE MODERATE)', () => {
-    it('may manage and pin a post it did not publish, and may still report it', async () => {
+  describe('the content moderator tier (BDE MODERATE, scoped)', () => {
+    it('may delete and pin a post of its spaces, may report it, and never edit it', async () => {
       const { service } = makeService(assoPost, {}, ['bde']);
       await expect(service.getById('p1', { viewerId: 'bde' })).resolves.toMatchObject({
         canManage: true,
+        canEdit: false,
         canPin: true,
         canReport: true,
       });
     });
 
-    it('reaches a personal post the same way', async () => {
+    it('reaches a personal post of its spaces the same way', async () => {
       const { service } = makeService(personalPost, {}, ['bde']);
       await expect(service.getById('p2', { viewerId: 'bde' })).resolves.toMatchObject({
         canManage: true,
+        canEdit: false,
         canPin: true,
       });
     });
 
-    it('has its edit and its delete accepted', async () => {
+    it('has its delete accepted and its edit REFUSED with the typed 403', async () => {
       const { service, postRepo } = makeService(assoPost, {}, ['bde']);
-      await service.updatePost('p1', 'bde', { markdown: 'corrected' });
-      expect(postRepo.save).toHaveBeenCalled();
+      const refusal = await service
+        .updatePost('p1', 'bde', { markdown: 'corrected' })
+        .catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+        code: 'POST_EDIT_PUBLISHER_ONLY',
+      });
+      expect(postRepo.save).not.toHaveBeenCalled();
       await expect(service.deletePost('p1', 'bde', false)).resolves.toEqual({ ok: true });
+    });
+
+    it('is offered nothing on a post OUTSIDE its governed spaces', async () => {
+      const { service } = makeService(personalPost, {}, [], ['bde-other']);
+      await expect(service.getById('p2', { viewerId: 'bde-other' })).resolves.toMatchObject({
+        canManage: false,
+        canEdit: false,
+        canPin: false,
+      });
+    });
+
+    it('has its delete outside its scope refused with the typed 403', async () => {
+      const { service, postRepo } = makeService(personalPost, {}, [], ['bde-other']);
+      await expect(service.deletePost('p2', 'bde-other', false)).rejects.toMatchObject({
+        response: { code: 'MODERATION_OUT_OF_SCOPE' },
+      });
+      expect(postRepo.remove).not.toHaveBeenCalled();
+    });
+
+    it('never reads the anonymous author outside its scope', async () => {
+      const anon = { ...personalPost, id: 'p9', anonymous: true } as unknown as Partial<Post>;
+      const { service } = makeService(anon, {}, [], ['bde-other']);
+      await expect(service.getById('p9', { viewerId: 'bde-other' })).resolves.not.toHaveProperty(
+        'authorId'
+      );
+    });
+  });
+
+  /**
+   * A POST'S INTEGRITY: ONLY ITS AUTHOR CHANGES ITS TEXT (owner, 2026-11-02). The platform admin
+   * keeps every other control and loses this one, unless they ARE the author.
+   */
+  describe('the platform admin edits no post but its own', () => {
+    it('is refused the edit of a personal post by somebody else, with the typed 403', async () => {
+      const { service, postRepo } = makeService(personalPost, {});
+      const refusal = await service
+        .updatePost('p2', 'admin', { markdown: 'rewritten' }, true)
+        .catch((e: unknown) => e);
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+        code: 'POST_EDIT_PUBLISHER_ONLY',
+      });
+      expect(postRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('is refused the edit of an association post it does not speak for', async () => {
+      const { service, postRepo } = makeService(assoPost, {});
+      await expect(
+        service.updatePost('p1', 'admin', { markdown: 'rewritten' }, true)
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(postRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('is not offered the pencil, and keeps the bin and the pin', async () => {
+      const { service } = makeService(personalPost, {});
+      await expect(
+        service.getById('p2', { viewerId: 'admin', isGlobalAdmin: true })
+      ).resolves.toMatchObject({ canManage: true, canEdit: false, canPin: true });
+    });
+
+    it('still edits its OWN post', async () => {
+      const own = { ...personalPost, authorId: 'admin' } as unknown as Partial<Post>;
+      const { service, postRepo } = makeService(own, {});
+      await service.updatePost('p2', 'admin', { markdown: 'mine' }, true);
+      expect(postRepo.save).toHaveBeenCalled();
+    });
+
+    it('is offered the pencil on an association post it holds POST_AS_ASSO in', async () => {
+      const { service } = makeService(assoPost, { admin: [ASSO] });
+      await expect(
+        service.getById('p1', { viewerId: 'admin', isGlobalAdmin: true })
+      ).resolves.toMatchObject({ canEdit: true });
     });
   });
 
@@ -275,7 +384,7 @@ describe('PostsService post management rights', () => {
   /**
    * Anonymous posts (user request, 2026-09-17): a regular reader never gets `authorId` on an
    * anonymous post, a content moderator/platform admin does, and only that same tier may clear the
-   * flag - `canUnmaskAnonymous` is drawn from the exact same predicate as `canPin`.
+   * flag - `canUnmaskAnonymous` is drawn from the moderation tier (`canPin` is a per-space promotion since WP-PIN).
    */
   describe('anonymous posts', () => {
     const anonPost = {

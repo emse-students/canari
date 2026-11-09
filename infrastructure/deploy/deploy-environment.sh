@@ -112,7 +112,7 @@ cd "$DEPLOY_PATH" || {
 # The estate is identified by the compose file's own `name:`, not by the directory or by a `-p` this
 # script passes. Read it back and SAY it: the two deployed files sit in one directory, and a missing
 # `name:` used to mean dev silently joined production's project and its volumes.
-PROJECT="$(grep -E '^name:[[:space:]]*' "$COMPOSE_FILE" | head -1 |
+PROJECT="$(grep -E '^name:[[:space:]]*' "$COMPOSE_FILE" | sed -n 1p |
   sed 's/^name:[[:space:]]*//; s/[[:space:]]*$//' || true)"
 [ -n "$PROJECT" ] || {
   printf 'deploy-environment: %s declares no top-level "name:" - refusing, because its project would then be named after its directory, which is shared with the other deployed estate\n' \
@@ -229,10 +229,12 @@ fi
 # rotation_seed writes every list in its resting form (each service by its DNS name) first.
 #
 # Where rolling.sh writes the lists: inside edge/, which the edge already mounts, and mounted
-# read-only into the frontend as /etc/nginx/rotation (both compose files). Not tracked by git, so
-# `git reset --hard` leaves the lists the running proxies were reloaded on.
+# read-only into the frontend as /etc/nginx/targets (both compose files). Not tracked by git, so
+# `git reset --hard` leaves the lists the running proxies were reloaded on. edge/rotation/ holds the
+# `upstream` lists of 1.6.2, which this library never touches: a frontend of that release still reads
+# them on the first deploy carrying the targets, and its library rewrites them on a rollback.
 # docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to.
-ROTATION_DIR="$DEPLOY_PATH/infrastructure/edge/rotation"
+ROTATION_DIR="$DEPLOY_PATH/infrastructure/edge/targets"
 # shellcheck source-path=SCRIPTDIR source=../lib/rolling.sh
 . "$DEPLOY_PATH/infrastructure/lib/rolling.sh"
 # WHATEVER ENDS THIS SCRIPT puts a list a replacement had taken out back at rest, and says so: a
@@ -425,7 +427,7 @@ for _ in $(seq 1 36); do
 
   missing=""
   for service in $critical; do
-    printf '%s\n' "$running" | grep -qx "$service" || missing="$missing $service"
+    grep -qx "$service" <<<"$running" || missing="$missing $service"
   done
 
   if [ -z "$missing" ]; then
@@ -453,7 +455,7 @@ retry_http() {
   local i
   for i in $(seq 1 "$attempts"); do
     status="$(eval "$cmd" || true)"
-    if printf '%s' "$status" | grep -Eq "$expected"; then
+    if grep -Eq "$expected" <<<"$status"; then
       printf 'ok   %s (HTTP %s)\n' "$label" "$status"
       return 0
     fi

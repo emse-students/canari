@@ -1,0 +1,5 @@
+{
+  "description": "The \"Entre etudiants\" switch on a post (owner, 2026-11-04; docs/wiki/profiles-and-access.md): the entity types whose posts may carry it - an association and a list, never an institution, never a personal post - and the typed 400 `code` social-service refuses it with anywhere else (apps/social-service/src/posts/students-only.ts). The composers offer the switch on exactly these types (frontend/src/lib/posts/studentsOnly.ts). Each side's spec asserts its constants equal these, so the two cannot drift apart.",
+  "types": ["association", "list"],
+  "code": "students_only_not_offered"
+}

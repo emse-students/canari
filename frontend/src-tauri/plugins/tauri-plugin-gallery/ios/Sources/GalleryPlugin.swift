@@ -3,6 +3,14 @@ import SwiftRs
 import Tauri
 import UIKit
 import WebKit
+import os
+
+/// The plugin's native log. A Swift `NSLog` reaches the unified log WHOLE as `<private>` on a store
+/// build, literal text included; a `Logger`'s literal text is public, and each interpolation names
+/// its privacy (`nativeLogContent.test.ts` refuses a Swift `NSLog` anywhere the app compiles).
+enum GalleryLog {
+  static let log = Logger(subsystem: "fr.emse.canari", category: "gallery")
+}
 
 /// The phone's gallery for CanaReels (C6): a saved reel is added to the Photos library.
 ///
@@ -10,7 +18,9 @@ import WebKit
 /// member once whether Canari may ADD photos and videos (`NSPhotoLibraryAddUsageDescription`), and it
 /// can read nothing back. A refusal is an OUTCOME the screen draws (`status: denied`, with the way
 /// to Settings), not a failure. The file must be a container Photos accepts - the reel is the
-/// fragmented H.264/AAC MP4 `prepareVideoForUpload` produced, which it does.
+/// fragmented H.264/AAC MP4 `prepareVideoForUpload` produced, which it does. A feed video may be a
+/// MOV, which Photos takes too (the staged file carries its extension); a WebM is never sent here:
+/// the rail hides its save (`canSaveVideo`).
 class GalleryPlugin: Plugin {
   class SaveVideoArgs: Decodable {
     let path: String
@@ -20,11 +30,12 @@ class GalleryPlugin: Plugin {
   @objc public func saveVideo(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(SaveVideoArgs.self)
     let url = URL(fileURLWithPath: args.path)
-    NSLog("[GalleryPlugin] saveVideo %@", args.name)
+    GalleryLog.log.notice("[GalleryPlugin] saveVideo \(args.name, privacy: .private)")
 
     PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
       guard status == .authorized || status == .limited else {
-        NSLog("[GalleryPlugin] saveVideo: add-only access refused (%d)", status.rawValue)
+        GalleryLog.log.notice(
+          "[GalleryPlugin] saveVideo: add-only access refused (\(status.rawValue, privacy: .public))")
         invoke.resolve(["status": "denied"])
         return
       }
@@ -32,10 +43,15 @@ class GalleryPlugin: Plugin {
         PHAssetCreationRequest.creationRequestForAssetFromVideo(atFileURL: url)
       }) { ok, error in
         if ok {
-          NSLog("[GalleryPlugin] saveVideo: saved")
+          GalleryLog.log.notice("[GalleryPlugin] saveVideo: saved")
           invoke.resolve(["status": "saved"])
         } else {
-          NSLog("[GalleryPlugin] saveVideo failed: %@", error?.localizedDescription ?? "unknown")
+          // The error's domain and code only: its description may quote the file it failed on.
+          let failure = error.map { $0 as NSError }
+          let domain = failure?.domain ?? "none"
+          let code = failure?.code ?? 0
+          GalleryLog.log.error(
+            "[GalleryPlugin] saveVideo failed: \(domain, privacy: .public) \(code, privacy: .public)")
           invoke.reject("saveVideo failed: \(error?.localizedDescription ?? "unknown")")
         }
       }
@@ -54,7 +70,7 @@ class GalleryPlugin: Plugin {
   /// The system share sheet on a text: a message, a link.
   @objc public func shareText(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(ShareTextArgs.self)
-    NSLog("[GalleryPlugin] shareText: %d chars", args.text.count)
+    GalleryLog.log.notice("[GalleryPlugin] shareText: \(args.text.count, privacy: .public) chars")
     presentShareSheet(invoke, items: [args.text])
   }
 
@@ -63,7 +79,7 @@ class GalleryPlugin: Plugin {
   /// from its extension.
   @objc public func shareFile(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(ShareFileArgs.self)
-    NSLog("[GalleryPlugin] shareFile: %@", args.mime)
+    GalleryLog.log.notice("[GalleryPlugin] shareFile: \(args.mime, privacy: .public)")
     presentShareSheet(invoke, items: [URL(fileURLWithPath: args.path)])
   }
 
@@ -72,14 +88,14 @@ class GalleryPlugin: Plugin {
   private func presentShareSheet(_ invoke: Invoke, items: [Any]) {
     DispatchQueue.main.async {
       guard let presenter = self.manager.viewController else {
-        NSLog("[GalleryPlugin] share: no view controller to present from")
+        GalleryLog.log.error("[GalleryPlugin] share: no view controller to present from")
         invoke.reject("share: no view controller", code: "noPresenter")
         return
       }
       // UIKit refuses to present over a controller that is already presenting, and then never calls
       // the completion: the promise would hang. Refused at once instead, with a code saying why.
       if presenter.presentedViewController != nil {
-        NSLog("[GalleryPlugin] share: another sheet is already presented")
+        GalleryLog.log.notice("[GalleryPlugin] share: another sheet is already presented")
         invoke.reject("share: another sheet is already presented", code: "busy")
         return
       }
@@ -94,9 +110,49 @@ class GalleryPlugin: Plugin {
     }
   }
 
+  class ShareTargetArg: Decodable {
+    let id: String
+    let label: String
+    let link: String
+  }
+
+  class PublishShareTargetsArgs: Decodable {
+    let targets: [ShareTargetArg]
+  }
+
+  /// Replaces the conversations the share sheet suggests (`ShareSuggestions.publish`, sharing lot
+  /// S5). The labels are conversation names: only their count is logged.
+  @objc public func publishShareTargets(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(PublishShareTargetsArgs.self)
+    GalleryLog.log.notice(
+      "[GalleryPlugin] publishShareTargets: \(args.targets.count, privacy: .public) target(s)")
+    let targets = args.targets.map { ShareSuggestions.Target(id: $0.id, label: $0.label) }
+    ShareSuggestions.publish(targets) { outcome in
+      switch outcome {
+      case .success(let published):
+        invoke.resolve(["present": published.present, "leftover": published.leftover])
+      case .failure(.deleteFailed(let code)):
+        invoke.reject("publishShareTargets: the previous suggestions were not deleted", code: "deleteFailed\(code)")
+      }
+    }
+  }
+
+  /// Removes every conversation this app suggested to the share sheet (`ShareSuggestions.clear`).
+  @objc public func clearShareTargets(_ invoke: Invoke) {
+    GalleryLog.log.notice("[GalleryPlugin] clearShareTargets")
+    ShareSuggestions.clear { outcome in
+      switch outcome {
+      case .success(let removed):
+        invoke.resolve(["removed": removed])
+      case .failure(.deleteFailed(let code)):
+        invoke.reject("clearShareTargets: the suggestions were not deleted", code: "deleteFailed\(code)")
+      }
+    }
+  }
+
   /// This app's page in Settings, where a refused camera, microphone or photo access is given back.
   @objc public func openAppSettings(_ invoke: Invoke) {
-    NSLog("[GalleryPlugin] openAppSettings")
+    GalleryLog.log.notice("[GalleryPlugin] openAppSettings")
     DispatchQueue.main.async {
       guard let url = URL(string: UIApplication.openSettingsURLString) else {
         invoke.reject("openAppSettings: no settings URL")

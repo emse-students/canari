@@ -36,7 +36,19 @@ function makeCtx(alice: TestAuthor, mallory: TestAuthor, held: Record<string, un
       getDeviceId: () => 'device-me',
       getGroupWithheld: vi.fn().mockResolvedValue(new Map([[ME, []]])),
     },
-    storage: { updateMessage: vi.fn().mockResolvedValue(undefined) },
+    storage: {
+      updateMessage: vi.fn().mockResolvedValue(undefined),
+      // Every rewrite of a stored row is a compare-and-set now: this one merges onto a bare row and
+      // hands the result to `updateMessage`, which the assertions below read.
+      async mergeMessages(c: string, ids: string[], merge: (row: any) => any, key: string) {
+        for (const id of ids) {
+          const next = merge({ id, conversationId: c, senderId: '', content: '', timestamp: 0 });
+          if (next) await this.updateMessage(id, next, key);
+        }
+        return new Set(ids);
+      },
+      getPendingMutations: vi.fn(async () => ({ entries: [], removedUnreadable: 0 })),
+    },
     userId: ME,
     deviceKey: () => 'device-key',
     conversations,

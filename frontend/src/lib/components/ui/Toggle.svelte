@@ -16,18 +16,46 @@
     hint?: string;
     /** Whether the switch can be operated. */
     disabled?: boolean;
+    /**
+     * A write of this setting is in flight: the switch is `aria-busy` and `aria-disabled`, and a
+     * click does nothing - never `disabled`, which would drop focus out of a dialog's focus trap.
+     */
+    busy?: boolean;
+    /** Called with the new state after the user flips the switch (for a write that is not a bind). */
+    onchange?: (checked: boolean) => void;
   }
 
-  let { checked = $bindable(), label, hint, disabled = false }: Props = $props();
+  let {
+    checked = $bindable(),
+    label,
+    hint,
+    disabled = false,
+    busy = false,
+    onchange,
+  }: Props = $props();
 </script>
 
 <label
   class="flex items-center gap-3 select-none {disabled
     ? 'cursor-not-allowed opacity-50'
-    : 'cursor-pointer'}"
+    : busy
+      ? 'cursor-wait opacity-60'
+      : 'cursor-pointer'}"
 >
   <div class="relative shrink-0">
-    <input type="checkbox" bind:checked {disabled} class="peer sr-only" />
+    <input
+      type="checkbox"
+      bind:checked
+      {disabled}
+      aria-busy={busy}
+      aria-disabled={busy || undefined}
+      onclick={(e) => {
+        // A click while the last write is still saving is not a change: the box stays as drawn.
+        if (busy) e.preventDefault();
+      }}
+      onchange={() => onchange?.(checked)}
+      class="peer sr-only"
+    />
     <div
       class="bg-cn-border peer-checked:bg-cn-yellow h-6 w-11 rounded-full transition-colors"
     ></div>

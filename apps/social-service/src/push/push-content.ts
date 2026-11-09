@@ -36,6 +36,7 @@ export type PushContentKey =
   | 'social_live_started'
   | 'social_follow_request'
   | 'social_follow_accepted'
+  | 'social_birthday'
   | 'social_live_cut'
   | 'social_live_suspended'
   | 'social_live_withdrawn'
@@ -43,18 +44,24 @@ export type PushContentKey =
   | 'social_booking_withdrawn'
   | 'social_booking_added'
   | 'social_booking_reminder'
+  | 'social_booking_changed'
+  | 'social_booking_removed'
   | 'form_opening_soon'
   | 'form_open'
   | 'form_paid_over_capacity'
   | 'lydia_payments_active'
   | 'lydia_payments_paused'
   | 'lydia_refund_issued'
+  | 'delegation_revoked'
+  | 'delegation_receiver_not_ready'
+  | 'delegation_resumed'
   | 'event_proposed'
   | 'event_validated'
   | 'event_rejected'
   | 'event_updated'
   | 'event_deleted'
-  | 'event_pending';
+  | 'event_pending'
+  | 'event_pending_coorganiser';
 
 /**
  * WHERE THE NOTIFICATION'S PICTURE COMES FROM - never a URL, always an id.
@@ -422,6 +429,43 @@ export function lydiaPaymentsPausedContent(associationName: string): PushContent
 }
 
 /**
+ * An entity collecting through a payment delegation (a list) stopped collecting or collects again,
+ * told to its shop managers (owner review of #2967). The entity's name is the only datum; the
+ * reason is the key, so each is its own sentence.
+ */
+export function delegationNoticeContent(
+  notice: 'revoked' | 'receiver-not-ready' | 'resumed',
+  associationName: string
+): PushContent {
+  switch (notice) {
+    case 'revoked':
+      return {
+        key: 'delegation_revoked',
+        actorName: '',
+        arg: associationName,
+        legacyTitle: 'Paiements en pause',
+        legacyBody: `L'association qui recevait les paiements de ${associationName} a mis fin à la délégation : ses paiements sont en pause.`,
+      };
+    case 'receiver-not-ready':
+      return {
+        key: 'delegation_receiver_not_ready',
+        actorName: '',
+        arg: associationName,
+        legacyTitle: 'Paiements en pause',
+        legacyBody: `L'association qui reçoit les paiements de ${associationName} ne peut plus les encaisser : ses paiements sont en pause.`,
+      };
+    case 'resumed':
+      return {
+        key: 'delegation_resumed',
+        actorName: '',
+        arg: associationName,
+        legacyTitle: 'Paiements rétablis',
+        legacyBody: `Les paiements de ${associationName} reprennent.`,
+      };
+  }
+}
+
+/**
  * A payer was REFUNDED through Canari (lot 4): the association's name is the one datum, the amount
  * stays in the app (the payer opens the notifications list).
  */
@@ -525,6 +569,21 @@ export function eventPendingContent(actorName: string, eventTitle: string): Push
     arg: eventTitle,
     legacyTitle: 'Événement à revalider',
     legacyBody: `« ${eventTitle} » doit être revalidé : ses dates ont changé`,
+  };
+}
+
+/**
+ * The same return to the queue for the OTHER reason (WP-Q2, F7): a partner association accepted to
+ * co-organise a validated event, which widens its reach with no validation behind the new part. Its
+ * own key, so the reason is the sentence - never a sentence parsed out of a title.
+ */
+export function eventPendingCoorganiserContent(actorName: string, eventTitle: string): PushContent {
+  return {
+    key: 'event_pending_coorganiser',
+    actorName,
+    arg: eventTitle,
+    legacyTitle: 'Événement à revalider',
+    legacyBody: `« ${eventTitle} » doit être revalidé : une association a accepté de co-organiser`,
   };
 }
 
@@ -698,18 +757,40 @@ export function followAcceptedContent(accepterName: string, icon?: PushIcon): Pu
 }
 
 /**
+ * It is the birthday of a person the recipient follows and whose date they may read (owner,
+ * 2026-11-08, docs/wiki/birthdays.md). `actorName` is that person; `arg` is always empty - the title
+ * is the whole sentence ("C'est l'anniversaire de X"), the body a fixed invitation to wish it.
+ */
+export function birthdayContent(celebrantName: string, icon?: PushIcon): PushContent {
+  return {
+    key: 'social_birthday',
+    icon,
+    actorName: celebrantName,
+    arg: '',
+    legacyTitle: `C'est l'anniversaire de ${celebrantName}`,
+    legacyBody: 'Souhaitez-lui un bon anniversaire',
+  };
+}
+
+/**
  * A member or an association the recipient follows started a live (WP-L7, decision L10). `actorName`
  * is the BROADCASTER - the association's name for a live broadcast as one, the member's otherwise;
- * `arg` is always empty: a live has no text to quote, so the body is the fixed sentence.
+ * `arg` is the live's TITLE (owner, 2026-11-07), empty when it has none - the body is then the fixed
+ * sentence. Both natives already read a non-empty `arg` as the body (`actorTitled` on iOS, the
+ * `arg.ifEmpty` on Android), so "BDE est en live" stays the title and the live's title its body.
  */
-export function liveStartedContent(broadcasterName: string, icon?: PushIcon): PushContent {
+export function liveStartedContent(
+  broadcasterName: string,
+  title: string,
+  icon?: PushIcon
+): PushContent {
   return {
     key: 'social_live_started',
     icon,
     actorName: broadcasterName,
-    arg: '',
+    arg: title,
     legacyTitle: `${broadcasterName} est en live`,
-    legacyBody: 'Appuyez pour regarder',
+    legacyBody: title || 'Appuyez pour regarder',
   };
 }
 
@@ -798,6 +879,34 @@ export function bookingAddedContent(actorName: string, place: string): PushConte
     arg: place,
     legacyTitle: `${actorName} vous a inscrit à une réservation`,
     legacyBody: place || 'Retrouvez-la dans Réservations',
+  };
+}
+
+/**
+ * A booking the recipient STAYS on was moved by someone else (owner, 2026-11-02): its holder or its
+ * organiser. `arg` is the place; the client's bell row names the new time from `meta`.
+ */
+export function bookingChangedContent(actorName: string, place: string): PushContent {
+  return {
+    key: 'social_booking_changed',
+    actorName,
+    arg: place,
+    legacyTitle: `${actorName} a modifié votre réservation`,
+    legacyBody: place || 'Retrouvez le nouvel horaire dans Réservations',
+  };
+}
+
+/**
+ * The recipient was REMOVED from a booking by someone else (owner, 2026-11-02): its holder or its
+ * organiser took them off the people of a booking that still takes place.
+ */
+export function bookingRemovedContent(actorName: string, place: string): PushContent {
+  return {
+    key: 'social_booking_removed',
+    actorName,
+    arg: place,
+    legacyTitle: `${actorName} vous a retiré d'une réservation`,
+    legacyBody: place || "Vous n'en faites plus partie",
   };
 }
 

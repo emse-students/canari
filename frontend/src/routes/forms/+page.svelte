@@ -8,8 +8,6 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import {
-    exportLabels,
-    exportSubmissions,
     getForms,
     getSubmissions,
     deleteForm,
@@ -17,9 +15,9 @@
     type Form,
     type Submission,
   } from '$lib/forms/api';
+  import { formSharePath } from '$lib/forms/shareLink';
   import {
     Plus,
-    Download,
     FileText,
     Pencil,
     Link,
@@ -27,25 +25,25 @@
     Trash2,
     ChevronUp,
     Users,
+    ExternalLink,
   } from '@lucide/svelte';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { publicAppUrl } from '$lib/utils/publicAppUrl';
   import QrCodeModal from '$lib/components/shared/QrCodeModal.svelte';
-  import { downloadDecryptedFile } from '$lib/utils/fileDownload';
   import { m } from '$lib/paraglide/messages';
   import { submitterName } from '$lib/forms/submissionTable';
-  import FormSubmissionsTable from '$lib/components/forms/FormSubmissionsTable.svelte';
+  import FormResponsesPanel from '$lib/components/forms/FormResponsesPanel.svelte';
+  import FormExportMenu from '$lib/components/forms/FormExportMenu.svelte';
+  import { productGridQuestions } from '$lib/forms/responsesView';
+  import { formViewHref, isDraftForm } from '$lib/forms/publish';
+  import Button from '$lib/components/ui/Button.svelte';
+  import { markdownToPlainText } from '$lib/seo/text';
 
   /** The form whose QR code is open, or null. Both share controls point at the same path. */
   let qrForm = $state<Form | null>(null);
 
-  /** The one place this screen says where a form lives, so the two share controls cannot drift. */
-  function formPath(id: string): string {
-    return `/forms/${id}`;
-  }
-
-  function copyFormLink(id: string) {
-    void copyPublicShareLink(formPath(id));
+  function copyFormLink(form: Form) {
+    void copyPublicShareLink(formSharePath(form));
   }
 
   let forms = $state<Form[]>([]);
@@ -87,14 +85,16 @@
     }
   }
 
-  async function handleExport(id: string) {
+  /**
+   * Re-reads one form's answers after a payment action (cash marked paid, a refund), so the cards,
+   * the filters and the totals follow. A failure keeps the answers already shown.
+   */
+  async function reloadResponses(formId: string) {
     try {
-      await downloadDecryptedFile(
-        await exportSubmissions(id, exportLabels()),
-        `submissions_${id}.xlsx`
-      );
-    } catch {
-      showToast(m.form_list_error_export());
+      submissionsData = { ...submissionsData, [formId]: await getSubmissions(formId) };
+    } catch (e) {
+      console.error(`[FORMS] re-reading the answers of form ${formId.slice(0, 8)} failed:`, e);
+      showToast(m.form_list_responses_error());
     }
   }
 
@@ -227,11 +227,13 @@
             : 'hover:border-cn-yellow/40'}"
         >
           <!-- Card header -->
-          <div class="flex flex-col gap-3 p-5 sm:flex-row sm:items-center">
+          <div class="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:p-5">
             <div class="min-w-0 flex-1">
               <h2 class="text-text-main truncate font-bold">{form.title}</h2>
               {#if form.description}
-                <p class="text-text-muted mt-0.5 truncate text-sm">{form.description}</p>
+                <p class="text-text-muted mt-0.5 truncate text-sm">
+                  {markdownToPlainText(form.description)}
+                </p>
               {/if}
               <!-- Whose form this is, by NAME. The list covers association forms reachable
                    through MANAGE_FORMS, so a row that only said its title would leave the
@@ -252,40 +254,76 @@
                     {m.form_list_personal_badge()}
                   </span>
                 {/if}
+                {#if isDraftForm(form)}
+                  <span
+                    class="border-cn-border text-text-main inline-flex rounded-full border border-dashed px-2 py-0.5"
+                    data-testid="form-draft-badge"
+                  >
+                    {m.form_status_draft_badge()}
+                  </span>
+                {:else if form.hasUnpublishedChanges}
+                  <span
+                    class="border-cn-border text-text-main inline-flex rounded-full border border-dashed px-2 py-0.5"
+                    data-testid="form-unpublished-badge"
+                  >
+                    {m.form_unpublished_changes_badge()}
+                  </span>
+                {/if}
               </p>
             </div>
-            <!-- Icon-only, all six - a text label on each of six actions demanded more width than
-                 a viewport had to give, and the only flex item without a `min-w-0` floor is the
-                 name above, so it lost that fight first and truncated to almost nothing. -->
-            <div class="flex shrink-0 flex-wrap gap-2">
+            <!-- Icon-only, ONE ROW at every width (owner, 2026-11-08: the seventh button wrapped
+                 alone onto a second row on a phone). Under `sm` the row takes the card's width and
+                 every action shares it equally (`flex-1`, 44px tall, a gap of 6px); from `sm` up the
+                 buttons keep their own box beside the name. `relative` anchors the export menu to the
+                 row on a phone, where a menu hanging from its own button would leave the screen. -->
+            <div
+              class="relative flex w-full items-stretch gap-1.5 sm:w-auto sm:shrink-0 sm:gap-2 [&_.ui-icon-button]:w-full sm:[&_.ui-icon-button]:w-auto [&>*]:min-w-0 [&>*]:flex-1 sm:[&>*]:flex-none"
+            >
               <a
                 href="/forms/{form.id}/edit"
                 class="ui-icon-button bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl transition-colors"
+                aria-label={m.form_list_edit_button()}
                 title={m.form_list_edit_button()}
               >
                 <Pencil size={16} />
               </a>
-              <button
-                onclick={() => copyFormLink(form.id)}
-                class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
-                title={m.form_list_share_button()}
+              <!-- The respondent view in a new tab; a draft opens as a preview that sends nothing. -->
+              <Button
+                variant="secondary"
+                icon
+                href={formViewHref(form, !!form.hasUnpublishedChanges)}
+                target="_blank"
+                rel="noopener"
+                aria-label={m.form_view_open_button()}
+                title={m.form_view_open_button()}
+                data-testid="form-view-link"
               >
-                <Link size={16} />
-              </button>
-              <button
-                onclick={() => (qrForm = form)}
-                class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
-                title={m.qr_button()}
-              >
-                <QrCode size={16} />
-              </button>
-              <button
-                onclick={() => handleExport(form.id)}
-                class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
-                title={m.form_list_export_button()}
-              >
-                <Download size={16} />
-              </button>
+                <ExternalLink size={16} />
+              </Button>
+              <!-- A draft has no link to hand out: nobody but its managers can open it. -->
+              {#if !isDraftForm(form)}
+                <button
+                  onclick={() => copyFormLink(form)}
+                  class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
+                  aria-label={m.form_list_share_button()}
+                  title={m.form_list_share_button()}
+                >
+                  <Link size={16} />
+                </button>
+                <button
+                  onclick={() => (qrForm = form)}
+                  class="ui-icon-button border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border-2 bg-(--cn-surface) transition-colors"
+                  aria-label={m.qr_button()}
+                  title={m.qr_button()}
+                >
+                  <QrCode size={16} />
+                </button>
+              {/if}
+              <FormExportMenu
+                formId={form.id}
+                title={form.title}
+                hasProductGrid={productGridQuestions(form.items ?? []).length > 0}
+              />
               <button
                 onclick={() => toggleResponses(form.id)}
                 class="ui-icon-button rounded-xl border-2 bg-(--cn-surface) transition-colors {expandedForms[
@@ -293,6 +331,7 @@
                 ]
                   ? 'border-cn-yellow/40 bg-cn-yellow/10 text-cn-dark'
                   : 'border-cn-border text-text-main hover:border-cn-yellow/40'}"
+                aria-label={m.form_list_responses_button()}
                 title={m.form_list_responses_button()}
               >
                 {#if expandedForms[form.id]}
@@ -304,7 +343,8 @@
               <button
                 onclick={() => handleDelete(form.id, form.title)}
                 disabled={deletingId === form.id}
-                class="ui-icon-button border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 rounded-xl border-2 transition-colors disabled:opacity-50"
+                class="ui-icon-button border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 rounded-xl border-2 transition-colors disabled:opacity-50 sm:ml-1"
+                aria-label={m.common_delete_button()}
                 title={m.common_delete_button()}
               >
                 <Trash2 size={16} />
@@ -331,14 +371,12 @@
                 </p>
               {:else if Array.isArray(submissionsData[form.id])}
                 {@const subs = submissionsData[form.id] as Submission[]}
-                <FormSubmissionsTable
-                  formId={form.id}
-                  items={form.items ?? []}
-                  requiresPayment={form.requiresPayment ?? false}
-                  anonymous={form.anonymous ?? false}
+                <FormResponsesPanel
+                  {form}
                   submissions={subs}
                   deletingId={deletingSubmissionId}
                   onDelete={(sub) => void handleDeleteSubmission(form.id, sub)}
+                  onReload={() => reloadResponses(form.id)}
                 />
               {/if}
             </div>
@@ -352,7 +390,7 @@
 {#if qrForm}
   <QrCodeModal
     open
-    url={publicAppUrl(formPath(qrForm.id))}
+    url={publicAppUrl(formSharePath(qrForm))}
     label={qrForm.title}
     owner={qrForm.associationName}
     intro={m.form_qr_intro()}

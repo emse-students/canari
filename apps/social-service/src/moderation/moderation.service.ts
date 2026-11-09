@@ -8,7 +8,14 @@ import {
 } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { isBlockedBetween } from '../common/user-blocks';
-import { liveVisibleToViewerSql } from '../spaces/reader-spaces';
+import { liveChatWithheldFromViewerSql, liveVisibleToViewerSql } from '../spaces/reader-spaces';
+import { bdeModeratesUserSql, reportInBdeScopeSql } from '../spaces/bde-moderation';
+import type { StoredComment as RemovableComment } from '../posts/comment-identity';
+import { idsOfRows, planCommentRemoval, rowsReleasedBy } from '../posts/comment-removal';
+import { forgetCommentNotices, writeComments } from '../posts/comment-write';
+import { commentMediaIds } from '../posts/post-media-retention.service';
+import { applyMediaRetentionClass } from '../internal/media-retention-class';
+import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, QueryFailedError, Repository } from 'typeorm';
 import { DELETED_ACCOUNT } from '../internal/account-erasure';
@@ -31,17 +38,33 @@ import {
   LIVE_CHAT_REPORT_MAX_KEEP_MS,
   LIVE_CHAT_REPORT_TEXT_MAX_BYTES,
 } from '../lives/live.constants';
-import { ContentReport } from './entities/content-report.entity';
+import { ContentReport, type ReportContentType } from './entities/content-report.entity';
+import { parseNicknameReportSubject } from '../channels/community-nicknames';
 import { UserModeration } from './entities/user-moderation.entity';
 import { sanitizeLog } from '../common/log.utils';
 import { dropRepublicationsOf } from '../posts/republication-sql';
+import { readPostOpenVerdict, type OpenablePost } from '../posts/post-openable';
+import { commentShownDespiteBlocks, type StoredComment } from '../posts/comment-page';
+
+/** The `posts` columns `readPostOpenVerdict` reads, from a row aliased `p`. */
+const OPENABLE_POST_COLUMNS = `p.id, p."authorId", p."associationId", p.anonymous,
+  p."hiddenByModeration", p."scheduledAt", p.kind, p."expiresAt"`;
+
+/**
+ * Who is reading a moderation list. REQUIRED, never defaulted: a missing scope used to read as the
+ * platform admin's, which fails open (review of #2953) - every caller now says who asks.
+ */
+export interface ModerationScope {
+  userId: string;
+  isGlobalAdmin: boolean;
+}
 
 /** Number of distinct pending reports on the same content that triggers automatic hiding. */
 const AUTO_HIDE_THRESHOLD = 5;
 
 export interface CreateReportData {
   reporterId: string;
-  contentType: 'post' | 'comment' | 'user' | 'live' | 'live_chat';
+  contentType: ReportContentType;
   contentId: string;
   reason: string;
   details?: string;
@@ -123,7 +146,9 @@ export class ModerationService {
     @InjectRepository(ContentReport)
     private readonly reportRepo: Repository<ContentReport>,
     @InjectRepository(UserModeration)
-    private readonly muteRepo: Repository<UserModeration>
+    private readonly muteRepo: Repository<UserModeration>,
+    /** For the media service: a moderated comment's media are released (`deleteCommentById`). */
+    private readonly http: HttpService
   ) {}
 
   // ── Content reports ───────────────────────────────────────────────────────
@@ -158,11 +183,21 @@ export class ModerationService {
         reportedUserId: live.broadcasterId,
       };
     }
+    if (data.contentType === 'post') {
+      await this.assertReportablePost(data.reporterId, data.contentId);
+    }
+    if (data.contentType === 'nickname') {
+      // The setter is read from the membership row, never taken from the client: it is who a mute
+      // that follows the report acts on.
+      const setBy = await this.assertReportableNickname(data.reporterId, data.contentId);
+      data = { ...data, contentId: data.contentId.toLowerCase(), reportedUserId: setBy };
+    }
     if (data.contentType === 'comment') {
       // The writer is read from the stored comment, never taken from the client: an anonymous
       // comment is served WITHOUT its account, so the reporter cannot name it - and the mute that
       // follows a report needs it. It is held for moderators and never served to anyone else.
-      data = { ...data, reportedUserId: await this.commentWriterId(data.contentId) };
+      const writerId = await this.assertReportableComment(data.reporterId, data.contentId);
+      data = { ...data, reportedUserId: writerId };
     }
     const saved = await this.insertReport(this.reportRepo, data);
 
@@ -187,6 +222,114 @@ export class ModerationService {
     }
 
     return saved;
+  }
+
+  /**
+   * A POST IS REPORTED BY THOSE WHO MAY OPEN IT - the read's own gate (`readPostOpenVerdict`, which
+   * `PostsService.getById` goes through): its audience, no block with a personal post's author, not
+   * hidden, not scheduled later, not an expired reel. Five reports hide a post (AUTO_HIDE_THRESHOLD),
+   * so a report by someone who was never shown it would be a way to hide what one cannot read.
+   * Every refusal is the same 404 `CONTENT_NOT_FOUND`, a hidden post's included: the route is no
+   * oracle for a post the reporter could not open. A lives' twin is `reportableLive`.
+   */
+  private async assertReportablePost(reporterId: string, postId: string): Promise<void> {
+    if (!UUID_RE.test(postId)) throw this.unreportable('post', postId, reporterId, 'not a post id');
+    const rows: OpenablePost[] = await this.reportRepo.manager.query(
+      `SELECT ${OPENABLE_POST_COLUMNS} FROM posts p WHERE p.id = $1`,
+      [postId]
+    );
+    if (!rows[0]) throw this.unreportable('post', postId, reporterId, 'no such post');
+    await this.assertOpenableBy(rows[0], reporterId, 'post', postId);
+  }
+
+  /**
+   * A COMMENT IS REPORTED BY THOSE WHO ARE SHOWN IT: its post opens to them (`assertReportablePost`'s
+   * gate) and the read does not drop it for a block with its writer (`commentShownDespiteBlocks`,
+   * the rule every comment read applies). Same 404 `CONTENT_NOT_FOUND` otherwise.
+   *
+   * @returns the real account that wrote it, or `null` when it has none (erased) - read in the same
+   *   scan, for the report's `reportedUserId`.
+   */
+  private async assertReportableComment(
+    reporterId: string,
+    commentId: string
+  ): Promise<string | null> {
+    const rows: (OpenablePost & { comment: StoredComment })[] = await this.reportRepo.manager.query(
+      `SELECT ${OPENABLE_POST_COLUMNS}, elem AS comment
+           FROM posts p, jsonb_array_elements(COALESCE(p.comments, '[]'::jsonb)) elem
+          WHERE elem->>'id' = $1
+          LIMIT 1`,
+      [commentId]
+    );
+    const row = rows[0];
+    if (!row) throw this.unreportable('comment', commentId, reporterId, 'no such comment');
+    const blockedIds = await this.assertOpenableBy(row, reporterId, 'comment', commentId);
+    if (!commentShownDespiteBlocks(row.comment, new Set(blockedIds))) {
+      throw this.unreportable('comment', commentId, reporterId, 'a block with its writer');
+    }
+    return row.comment.userId || null;
+  }
+
+  /**
+   * A COMMUNITY NICKNAME IS REPORTED BY A MEMBER OF THAT COMMUNITY, and only the version that is still
+   * shown: the subject names the member row AND the instant it was set (`nicknameReportSubject`), so
+   * a nickname changed or cleared since the reporter read it is not reportable - the insult the
+   * report would describe is gone - and the next one set on the same person is a new subject. Every
+   * refusal is the 404 `CONTENT_NOT_FOUND` of a post, so the route is no oracle for a community the
+   * reporter is not in.
+   *
+   * @returns the account that set it, the report's `reportedUserId`.
+   */
+  private async assertReportableNickname(reporterId: string, subject: string): Promise<string> {
+    const parsed = parseNicknameReportSubject(subject);
+    if (!parsed) throw this.unreportable('nickname', subject, reporterId, 'not a nickname subject');
+    const rows: { setBy: string | null }[] = await this.reportRepo.manager.query(
+      `SELECT m."nicknameSetBy" AS "setBy"
+         FROM channel_members m
+        WHERE m.id = $1
+          AND m.nickname IS NOT NULL
+          AND floor(extract(epoch FROM m."nicknameSetAt") * 1000) = $2
+          AND EXISTS (SELECT 1 FROM channel_members r
+                       WHERE r."workspaceId" = m."workspaceId" AND r."userId" = $3)`,
+      [parsed.memberRowId, parsed.setAtMs, reporterId.trim().toLowerCase()]
+    );
+    if (!rows[0]?.setBy) {
+      throw this.unreportable('nickname', subject, reporterId, 'not shown to this reporter');
+    }
+    return rows[0].setBy;
+  }
+
+  /** `readPostOpenVerdict` for a reporter, refused as {@link unreportable}. Returns their blocks. */
+  private async assertOpenableBy(
+    post: OpenablePost,
+    reporterId: string,
+    contentType: 'post' | 'comment',
+    contentId: string
+  ): Promise<string[]> {
+    const verdict = await readPostOpenVerdict(
+      this.reportRepo.manager,
+      post,
+      { viewerId: reporterId },
+      // A comment is reported by who may READ it: a named reader the comments are withheld from
+      // gets the 404 of a missing one (owner, 2026-11-04).
+      contentType === 'comment' ? 'COMMENT' : 'READ_OR_REACT'
+    );
+    if (verdict.refusal !== null)
+      throw this.unreportable(contentType, contentId, reporterId, verdict.why);
+    return verdict.blockedIds;
+  }
+
+  /** The one refusal a post or comment report meets, logged with its reason, answered without it. */
+  private unreportable(
+    contentType: 'post' | 'comment' | 'nickname',
+    contentId: string,
+    reporterId: string,
+    why: string
+  ): NotFoundException {
+    this.logger.debug(
+      `[REPORT] ${contentType} ${sanitizeLog(contentId)} not reportable by ${short(reporterId)}: ${why}`
+    );
+    return new NotFoundException({ code: 'CONTENT_NOT_FOUND', message: 'Content not found' });
   }
 
   /**
@@ -258,7 +401,7 @@ export class ModerationService {
     reporterId: string,
     liveId: string,
     lock = false
-  ): Promise<{ broadcasterId: string; storedKey: StoredLiveKey }> {
+  ): Promise<{ broadcasterId: string; storedKey: StoredLiveKey; chatWithheld: boolean }> {
     const refuse = (why: string): NotFoundException => {
       this.logger.debug(
         `[REPORT] live ${sanitizeLog(liveId)} not reportable by ${sanitizeLog(reporterId)}: ${why}`
@@ -266,13 +409,17 @@ export class ModerationService {
       return new NotFoundException({ code: 'LIVE_NOT_FOUND' });
     };
     if (!UUID_RE.test(liveId)) throw refuse('not a live id');
-    const rows: (StoredLiveKey & { broadcasterId: string; visible: boolean })[] =
-      await manager.query(
-        `SELECT "broadcasterId", ${storedLiveKeyColumns()},
-                ${liveVisibleToViewerSql('lives', '$2')} AS visible
-           FROM lives WHERE id = $1${lock ? ' FOR SHARE' : ''}`,
-        [liveId.toLowerCase(), reporterId]
-      );
+    const rows: (StoredLiveKey & {
+      broadcasterId: string;
+      visible: boolean;
+      chatWithheld: boolean;
+    })[] = await manager.query(
+      `SELECT "broadcasterId", ${storedLiveKeyColumns()},
+              ${liveVisibleToViewerSql('lives', '$2')} AS visible,
+              ${liveChatWithheldFromViewerSql('lives', '$2')} AS "chatWithheld"
+         FROM lives WHERE id = $1${lock ? ' FOR SHARE' : ''}`,
+      [liveId.toLowerCase(), reporterId]
+    );
     const live = rows[0];
     if (!live) throw refuse('no such live');
     if (live.visible !== true) throw refuse('not visible to the reporter');
@@ -281,6 +428,7 @@ export class ModerationService {
     }
     return {
       broadcasterId: live.broadcasterId,
+      chatWithheld: live.chatWithheld === true,
       storedKey: {
         liveKeyCiphertext: live.liveKeyCiphertext,
         liveKeyVersion: live.liveKeyVersion,
@@ -360,6 +508,9 @@ export class ModerationService {
         throw notFound('another live named');
       }
       const live = await this.reportableLive(tx, data.reporterId, liveId, true);
+      // A named reader the chat is withheld from (owner, 2026-11-04) is served no line, so has none
+      // to report: the same 404 as a hidden line - as a withheld comment's report is refused.
+      if (live.chatWithheld) throw notFound('the chat is withheld from the reporter');
       const rows: {
         seq: number;
         authorId: string;
@@ -472,8 +623,13 @@ export class ModerationService {
    * Retention is NOT this method's business. A lazy purge ran here on every call until 2026-08-27,
    * which made a moderator's GET delete rows as a side effect and gave `content_reports` a second,
    * contradictory lifetime. The one policy left is the weekly cron in `forms-reminder.scheduler`.
+   *
+   * NARROWED TO THE CALLER'S SCOPE (owner, 2026-11-02): a platform admin reads every report; a BDE
+   * `MODERATE` holder reads those about something in the spaces its BDE governs
+   * (`reportInBdeScopeSql`), in SQL so the page bounds stay true.
    */
   async listAllReports(
+    scope: ModerationScope,
     limit = 50,
     offset = 0
   ): Promise<
@@ -486,11 +642,18 @@ export class ModerationService {
       }
     >
   > {
-    const reports = await this.reportRepo.find({
-      order: { createdAt: 'DESC' },
-      take: Math.min(limit, 200),
-      skip: offset,
-    });
+    const qb = this.reportRepo
+      .createQueryBuilder('r')
+      .orderBy('r.createdAt', 'DESC')
+      .take(Math.min(limit, 200))
+      .skip(offset);
+    if (!scope.isGlobalAdmin) {
+      qb.where(reportInBdeScopeSql('r', ':scopeModerator'), { scopeModerator: scope.userId });
+    }
+    const reports = await qb.getMany();
+    this.logger.debug(
+      `[REPORT] queue read by ${short(scope.userId)} admin=${scope.isGlobalAdmin}: ${reports.length} row(s)`
+    );
 
     const postIds = reports.filter((r) => r.contentType === 'post').map((r) => r.contentId);
     const commentIds = reports.filter((r) => r.contentType === 'comment').map((r) => r.contentId);
@@ -530,6 +693,12 @@ export class ModerationService {
       for (const row of rows) userPreviews.set(row.id, row.displayName ?? row.id);
     }
 
+    // A reported nickname's preview is its text while that VERSION is still shown, and null once it
+    // was changed or cleared - a moderator then reads that the report describes something gone.
+    const nicknamePreviews = await this.nicknamePreviews(
+      reports.filter((r) => r.contentType === 'nickname').map((r) => r.contentId)
+    );
+
     const lives = await this.liveReportStates(reports.filter((r) => r.contentType === 'live'));
     const chatLines = await this.chatLineStates(
       reports.filter((r) => r.contentType === 'live_chat')
@@ -550,12 +719,39 @@ export class ModerationService {
                   ? chatLines.get(r.id)?.integrity.content === 'verified'
                     ? chatLines.get(r.id)!.text
                     : null
-                  : null,
+                  : r.contentType === 'nickname'
+                    ? (nicknamePreviews.get(r.contentId) ?? null)
+                    : null,
       postId:
         r.contentType === 'comment' ? (commentPreviews.get(r.contentId)?.postId ?? null) : null,
       live: r.contentType === 'live' ? (lives.get(r.contentId) ?? null) : null,
       liveChat: r.contentType === 'live_chat' ? (chatLines.get(r.id) ?? null) : null,
     }));
+  }
+
+  /** The text of each reported nickname version still shown, by report subject. */
+  private async nicknamePreviews(subjects: string[]): Promise<Map<string, string>> {
+    const previews = new Map<string, string>();
+    const parsed = subjects.flatMap((s) => {
+      const p = parseNicknameReportSubject(s);
+      return p ? [{ subject: s, ...p }] : [];
+    });
+    if (parsed.length === 0) return previews;
+    const rows: { id: string; at: string; nickname: string }[] =
+      await this.reportRepo.manager.query(
+        `SELECT id::text AS id,
+                floor(extract(epoch FROM "nicknameSetAt") * 1000)::bigint::text AS at,
+                nickname
+           FROM channel_members
+          WHERE id::text = ANY($1) AND nickname IS NOT NULL`,
+        [parsed.map((p) => p.memberRowId)]
+      );
+    const shown = new Map(rows.map((r) => [`${r.id}@${r.at}`, r.nickname]));
+    for (const p of parsed) {
+      const text = shown.get(`${p.memberRowId}@${p.setAtMs}`);
+      if (text) previews.set(p.subject, text);
+    }
+    return previews;
   }
 
   /**
@@ -788,18 +984,6 @@ export class ModerationService {
     };
   }
 
-  /** The real account that wrote a stored comment, or `null` when it is gone or has none (erased). */
-  private async commentWriterId(commentId: string): Promise<string | null> {
-    const rows: { user_id: string | null }[] = await this.reportRepo.manager.query(
-      `SELECT elem->>'userId' AS user_id
-         FROM posts p, jsonb_array_elements(COALESCE(p.comments, '[]'::jsonb)) elem
-        WHERE elem->>'id' = $1
-        LIMIT 1`,
-      [commentId]
-    );
-    return rows[0]?.user_id || null;
-  }
-
   /** Locates the parent post of a comment by scanning JSON comment arrays. */
   async findPostIdForComment(commentId: string): Promise<string | null> {
     const rows: { id: string }[] = await this.reportRepo.manager.query(
@@ -814,31 +998,70 @@ export class ModerationService {
     return rows[0]?.id ?? null;
   }
 
-  /**
-   * Removes a comment (and its replies) from any post that contains it.
-   * Used by moderators when acting on comment reports.
-   */
-  async deleteCommentById(commentId: string): Promise<{ postId: string }> {
-    const postId = await this.findPostIdForComment(commentId);
-    if (!postId) throw new NotFoundException('Comment not found');
-
-    await this.reportRepo.manager.query(
-      `UPDATE posts SET comments = COALESCE(
-         (
-           SELECT jsonb_agg(elem)
-           FROM jsonb_array_elements(COALESCE(comments, '[]'::jsonb)) elem
-           WHERE elem->>'id' != $2 AND COALESCE(elem->>'parentId', '') != $2
-         ),
-         '[]'::jsonb
-       )
-       WHERE id = $1`,
-      [postId, commentId]
+  /** The stored comments of post `postId` (empty when it has none, or is gone). */
+  async commentsOfPost(postId: string): Promise<RemovableComment[]> {
+    const rows: { comments: RemovableComment[] | null }[] = await this.reportRepo.manager.query(
+      `SELECT comments FROM posts WHERE id = $1`,
+      [postId]
     );
-    return { postId };
+    return rows[0]?.comments ?? [];
   }
 
-  /** Returns all currently muted users. */
-  async listMutedUsers(): Promise<UserModeration[]> {
-    return this.muteRepo.find({ where: { isMuted: true }, order: { mutedAt: 'DESC' } });
+  /**
+   * Removes a comment and its descendants from the post that holds it - the moderators' act on a
+   * comment report. What goes is `planCommentRemoval` (`posts/comment-removal.ts`), the same plan the
+   * comment's own delete route applies: each descendant `mayRemove` admits goes, one it does not stays
+   * under a moderation tombstone (lead, 2026-11-04).
+   *
+   * It writes through `writeComments` (`posts/comment-write.ts`), as every other comment writer does:
+   * the post row locked, the array read under the lock, so a reply that lands meanwhile either waits
+   * for this delete and sees its result, or is seen by it - never lost, and never brings a removed
+   * comment back. `mayRemove` was built from the comments read before the lock; a reply in a name it
+   * has not seen is judged as one the moderator does not moderate, and stays.
+   *
+   * Afterwards, as the comment's own delete route does: the media of every removed row and of each
+   * tombstone's original are released, and the bell forgets them (`forgetCommentNotices`).
+   */
+  async deleteCommentById(
+    commentId: string,
+    mayRemove: (c: RemovableComment) => boolean
+  ): Promise<{ postId: string; removedIds: string[]; tombstoneIds: string[] }> {
+    const postId = await this.findPostIdForComment(commentId);
+    if (!postId) throw new NotFoundException('Comment not found');
+    const plan = await writeComments(this.reportRepo.manager, postId, (comments) => {
+      if (!comments.some((c) => c.id === commentId)) {
+        throw new NotFoundException('Comment not found');
+      }
+      const planned = planCommentRemoval(comments, commentId, mayRemove, new Date().toISOString());
+      return { next: planned.comments, result: planned };
+    });
+    this.logger.log(
+      `[MODERATION] reported comment delete post=${postId.slice(0, 8)} comment=${commentId.slice(0, 12)} removed=${plan.removed.length} tombstoned=${plan.tombstoned.length}`
+    );
+    const media = commentMediaIds(rowsReleasedBy(plan));
+    if (media.length > 0) {
+      await applyMediaRetentionClass(this.http, this.logger, media, 'ephemeral');
+    }
+    const removedIds = idsOfRows(plan.removed);
+    const tombstoneIds = idsOfRows(plan.tombstoned.map((t) => t.after));
+    await forgetCommentNotices(this.reportRepo.manager, postId, removedIds, tombstoneIds);
+    return { postId, removedIds, tombstoneIds };
+  }
+
+  /**
+   * Returns the currently muted users within the caller's scope (owner, 2026-11-02): all of them for
+   * a platform admin, those belonging to one of its BDE's spaces for a `MODERATE` holder.
+   */
+  async listMutedUsers(scope: ModerationScope): Promise<UserModeration[]> {
+    const qb = this.muteRepo
+      .createQueryBuilder('m')
+      .where('m.isMuted = true')
+      .orderBy('m.mutedAt', 'DESC');
+    if (!scope.isGlobalAdmin) {
+      qb.andWhere(bdeModeratesUserSql(':scopeModerator', 'm."userId"'), {
+        scopeModerator: scope.userId,
+      });
+    }
+    return qb.getMany();
   }
 }

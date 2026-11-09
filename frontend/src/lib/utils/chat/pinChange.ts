@@ -265,6 +265,16 @@ export async function resealDeviceKeyStores(
     report.unreadable += storeUnreadable;
   }
 
+  // The mutations kept for messages not here yet: their payload is sealed under the device key AND
+  // their key is made of tags under it (`pendingMutationCodec.ts`), so each moves to a new key - the
+  // store's own method, resumable like the loop above.
+  const pending = await storage.resealPendingMutations(oldDeviceKeyB64, newDeviceKeyB64);
+  report.alreadyNew += pending.alreadyNew;
+  report.unreadable += pending.unreadable;
+  log(
+    `[DEVICEKEY_CHANGE] Pending mutations re-sealed and re-tagged: ${pending.resealed}; already new=${pending.alreadyNew}, unreadable=${pending.unreadable}`
+  );
+
   log(
     `[DEVICEKEY_CHANGE] Re-sealed under the new device key: messages=${report.resealed.messages} ` +
       `seeds=${report.resealed.graine} outbox=${report.resealed.outbox}; already new=${report.alreadyNew}, ` +

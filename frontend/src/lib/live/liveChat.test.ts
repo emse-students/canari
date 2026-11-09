@@ -14,6 +14,7 @@ import {
   LiveChatSession,
   isLiveOverRefusal,
   liveChatSendFailure,
+  LIVE_ARRIVAL_LINES_KEPT,
   LIVE_REACTION_KINDS,
   liveReactionEmoji,
   type LiveChatDeps,
@@ -268,6 +269,7 @@ describe('writing', () => {
     [refusal('ended', 410, 'LIVE_ENDED'), 'ended'],
     [refusal('not-found', 404, 'LIVE_NOT_FOUND'), 'ended'],
     [refusal('refused', 403, 'LIVE_MUTED'), 'muted'],
+    [refusal('refused', 403, 'LIVE_CHAT_WITHHELD'), 'withheld'],
     [refusal('refused', 409, 'LIVE_MESSAGE_CONFLICT'), 'refused'],
     [refusal('unavailable', 502), 'network'],
     [new TransportFailureError('offline'), 'network'],
@@ -589,5 +591,210 @@ describe('a write answered "the live is over" (WP-L6)', () => {
     expect(await hiding).toBe(false);
     expect(over).not.toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe('the chat withheld from a named reader (owner, 2026-11-04)', () => {
+  function watched() {
+    const told: boolean[] = [];
+    const s = new LiveChatSession({
+      liveId: LIVE,
+      me: () => ME,
+      onChange: (l) => {
+        lines = l;
+      },
+      onFloat: (kind, n) => floats.push([kind, n]),
+      onWithheld: (w) => told.push(w),
+      deps,
+    });
+    return { s, told };
+  }
+
+  it('the open says it: no composer from the first frame, told once', () => {
+    const { s, told } = watched();
+    s.onKey(KEY, { chatWithheld: true });
+    expect(s.withheld).toBe(true);
+    expect(s.canWrite).toBe(false);
+    expect(told).toEqual([true]);
+    // An open that says nothing (an older server) is not withheld.
+    const other = watched();
+    other.s.onKey(KEY);
+    expect(other.s.withheld).toBe(false);
+    expect(other.s.canWrite).toBe(true);
+    expect(other.told).toEqual([]);
+  });
+
+  it('a withheld block draws no line, keeps no message cursor, and still floats the reactions', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { s, told } = watched();
+    s.onKey(KEY);
+    await s.receive(block([wire(1, 'avant')], 1));
+    expect(texts()).toEqual(['avant']);
+    await s.receive(
+      block([wire(2, 'never drawn')], 9, {
+        withheld: true,
+        reactions: [{ window: 0, counts: { fire: 2 } }],
+        reactionsCursor: 4,
+      })
+    );
+    expect(lines).toEqual([]);
+    expect(floats).toEqual([['fire', 2]]);
+    expect(s.query()).toEqual({ messagesAfter: undefined, reactionsAfter: 4 });
+    expect(told).toEqual([true]);
+    info.mockRestore();
+  });
+
+  it('switched back ON, the next poll is a joiner: the backlog is drawn and writing comes back', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { s, told } = watched();
+    s.onKey(KEY, { chatWithheld: true });
+    await s.receive(block([], 5, { withheld: true }));
+    expect(s.query().messagesAfter).toBeUndefined();
+    await s.receive(block([wire(4, 'backlog'), wire(5, 'newest')], 5));
+    expect(texts()).toEqual(['backlog', 'newest']);
+    expect(s.query().messagesAfter).toBe(5);
+    expect(s.canWrite).toBe(true);
+    expect(told).toEqual([true, false]);
+    info.mockRestore();
+  });
+
+  it('a send refused LIVE_CHAT_WITHHELD (the switch went off between two polls) withholds at once, with no failed line', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    deps.postMessage.mockRejectedValueOnce(refusal('refused', 403, 'LIVE_CHAT_WITHHELD'));
+    const { s, told } = watched();
+    s.onKey(KEY);
+    expect(await s.send('bonjour')).toBe('withheld');
+    expect(lines).toEqual([]);
+    expect(s.withheld).toBe(true);
+    expect(told).toEqual([true]);
+    info.mockRestore();
+  });
+
+  it('a send while already withheld is refused here: no pending line, no request, nothing kept for the way back', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { s } = watched();
+    s.onKey(KEY, { chatWithheld: true });
+    expect(await s.send('bonjour')).toBe('withheld');
+    expect(deps.postMessage).not.toHaveBeenCalled();
+    expect(lines).toEqual([]);
+    // Served again: the backlog alone is drawn, never the refused line.
+    await s.receive(block([wire(4, 'backlog')], 4));
+    expect(texts()).toEqual(['backlog']);
+    info.mockRestore();
+  });
+
+  it('a block still opening its rows when a withheld block arrives draws none of them, and its reactions still float', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    // The first row's open waits on a gate the test opens, so the withheld block lands MID-block:
+    // an ordering, never a duration.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let opening!: () => void;
+    const opened = new Promise<void>((r) => (opening = r));
+    deps.open = vi.fn(async (_k, _l, _c, _a, sealed: string) => {
+      if (sealed === 'S:gated') {
+        opening();
+        await gate;
+      }
+      return sealed.slice(2);
+    });
+    const { s } = watched();
+    s.onKey(KEY);
+    const first = s.receive(
+      block([wire(1, 'gated'), wire(2, 'after')], 2, {
+        reactions: [{ window: 0, counts: { clap: 1 } }],
+        reactionsCursor: 1,
+      })
+    );
+    await opened;
+    const second = s.receive(block([], 9, { withheld: true, reactionsCursor: 1 }));
+    release();
+    await first;
+    await second;
+    expect(deps.open).toHaveBeenCalledTimes(1);
+    expect(lines).toEqual([]);
+    expect(s.withheld).toBe(true);
+    expect(floats).toEqual([['clap', 1]]);
+    info.mockRestore();
+  });
+});
+
+describe('the arrival lines (owner, 2026-11-07)', () => {
+  const JOINER = 'c'.repeat(64);
+  const OTHER = 'd'.repeat(64);
+
+  it('draws one line per named arrival, then the folded crowd, and passes the cursor back', async () => {
+    const s = session();
+    await s.receive(block([wire(1, 'salut')], 1));
+    await s.receive(
+      block([], 1, {
+        arrivals: [
+          { userId: JOINER.toUpperCase(), seq: 1 },
+          { userId: OTHER, seq: 2 },
+        ],
+        arrivalsMore: 4,
+        arrivalsCursor: 9,
+      })
+    );
+    expect(lines.map((l) => [l.kind, l.more])).toEqual([
+      [undefined, undefined],
+      ['arrival', undefined],
+      ['arrival', undefined],
+      ['arrivals-more', 4],
+    ]);
+    expect(lines[1].authorId).toBe(JOINER);
+    expect(s.query().arrivalsAfter).toBe(9);
+    // A later message lands UNDER the arrival lines, whatever its own number.
+    await s.receive(block([wire(2, 'apres')], 2));
+    expect(lines.at(-1)?.text).toBe('apres');
+  });
+
+  it("sorts a block's arrivals under ITS OWN messages, even when a newer block arrived before it was drawn", async () => {
+    const s = session();
+    // Two polls land back to back: the cursors move at arrival, the rows are drawn in order after.
+    const first = s.receive(
+      block([wire(1, 'un')], 1, { arrivals: [{ userId: JOINER, seq: 1 }], arrivalsCursor: 1 })
+    );
+    const second = s.receive(block([wire(2, 'deux'), wire(3, 'trois')], 3));
+    await Promise.all([first, second]);
+    expect(lines.map((l) => l.kind ?? l.text)).toEqual(['un', 'arrival', 'deux', 'trois']);
+  });
+
+  it('draws a line once per server sequence, and drops a malformed row', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const s = session();
+    const arrivals = [
+      { userId: JOINER, seq: 1 },
+      { userId: JOINER, seq: 1 },
+      { userId: 7 as unknown as string, seq: 2 },
+    ];
+    await s.receive(block([], 0, { arrivals, arrivalsMore: 0, arrivalsCursor: 2 }));
+    expect(lines.filter((l) => l.kind === 'arrival')).toHaveLength(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('keeps its cursor when the server sent none, and has none while the chat is withheld', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const s = session();
+    await s.receive(block([], 0, { arrivals: [], arrivalsMore: 0, arrivalsCursor: 5 }));
+    await s.receive(block([], 0));
+    expect(s.query().arrivalsAfter).toBe(5);
+    await s.receive(block([], 3, { withheld: true, arrivals: [{ userId: JOINER, seq: 6 }] }));
+    expect(s.query().arrivalsAfter).toBeUndefined();
+    expect(lines.filter((l) => l.kind)).toEqual([]);
+    info.mockRestore();
+  });
+
+  it('keeps only the newest arrival lines, so a crowd never buries the conversation', async () => {
+    const s = session();
+    const arrivals = Array.from({ length: LIVE_ARRIVAL_LINES_KEPT + 5 }, (_, i) => ({
+      userId: JOINER,
+      seq: i + 1,
+    }));
+    await s.receive(block([], 0, { arrivals, arrivalsMore: 0, arrivalsCursor: arrivals.length }));
+    const kept = lines.filter((l) => l.kind === 'arrival');
+    expect(kept).toHaveLength(LIVE_ARRIVAL_LINES_KEPT);
+    expect(kept[0].clientId).toBe('arrival:6');
   });
 });

@@ -1,8 +1,10 @@
 <script lang="ts">
   import { ChevronDown, ChevronRight, Download, X } from '@lucide/svelte';
+  import type { Snippet } from 'svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { reportClipped } from '$lib/actions/reportClipped';
   import { statusClass, statusLabel } from '$lib/forms/paymentStatus';
+  import { isGuestAnswer } from '$lib/forms/responsesView';
   import {
     downloadFormAnswerFile,
     fileAnswerWords,
@@ -19,6 +21,7 @@
     answeredItems,
     maxAnswerColumns,
     panelAddsNothing,
+    guestShownName,
     submitterName,
   } from '$lib/forms/submissionTable';
   import { m } from '$lib/paraglide/messages';
@@ -68,6 +71,11 @@
     /** The submission currently being deleted, so its control can say so. */
     deletingId: string | null;
     onDelete: (sub: Submission) => void;
+    /**
+     * A row's payment actions - mark a cash answer paid, refund a paid one - drawn by the screen that
+     * owns them (`FormResponsesPanel.svelte`), beside the delete control.
+     */
+    rowActions?: Snippet<[Submission]>;
   }
 
   let {
@@ -78,6 +86,7 @@
     submissions,
     deletingId,
     onDelete,
+    rowActions,
   }: Props = $props();
 
   const columns = $derived(answerColumns(items ?? [], maxAnswerColumns(requiresPayment)));
@@ -93,7 +102,7 @@
     // A file answer reads as a word, never as its id: "file", or "file deleted" once purged.
     const words = fileAnswerWords(submissions);
     return new Map(
-      submissions.map((sub) => [sub.id, answeredItems(items ?? [], sub.answers, words)])
+      submissions.map((sub) => [sub.id, answeredItems(items ?? [], sub.answers, words, sub.lines)])
     );
   });
 
@@ -166,14 +175,45 @@
   }
 </script>
 
+<!-- A paid answer says HOW it paid ("Payé · Lydia", "Payé · espèces"): the cash desk and the
+     Lydia statement are two different places to check it. -->
 {#snippet statusPill(sub: Submission)}
   <span
-    class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold {statusClass(
+    class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold whitespace-nowrap {statusClass(
       sub.paymentStatus
     )}"
   >
-    {statusLabel(sub.paymentStatus)}
+    {#if sub.paymentStatus === 'paid' && sub.paymentMethod}
+      {m.form_responses_status_with_method({
+        status: statusLabel(sub.paymentStatus),
+        method:
+          sub.paymentMethod === 'cash'
+            ? m.form_responses_method_cash()
+            : m.form_responses_method_online(),
+      })}
+    {:else}
+      {statusLabel(sub.paymentStatus)}
+    {/if}
   </span>
+{/snippet}
+
+<!-- The submitter, and a GUEST's answer (a public form's link, no account) marked as one: its name
+     is what the guest typed when the form asked (owner, 2026-11-06), ALWAYS beside the reference it
+     was given when it paid and the badge, so a typed name never passes for an account's. -->
+{#snippet submitter(sub: Submission)}
+  {#if isGuestAnswer(sub, anonymous)}
+    {@const given = guestShownName(sub)}
+    <span class="inline-flex items-center gap-2">
+      {#if given}<span data-testid="guest-name">{given}</span>{/if}
+      {#if sub.reference}<span class="font-mono text-xs">{sub.reference}</span>{/if}
+      <span
+        class="bg-control-fill text-text-main rounded-full px-2 py-0.5 text-xs font-bold"
+        data-testid="guest-badge">{m.form_submitter_guest()}</span
+      >
+    </span>
+  {:else}
+    {submitterName(sub)}
+  {/if}
 {/snippet}
 
 <!-- Disabled, rather than absent, when the panel holds nothing new: the control keeps its place in
@@ -197,6 +237,7 @@
 {/snippet}
 
 {#snippet deleteControl(sub: Submission)}
+  {@render rowActions?.(sub)}
   <button
     onclick={() => onDelete(sub)}
     disabled={deletingId === sub.id}
@@ -280,7 +321,7 @@
             >{formatDate(sub.createdAt)}</td
           >
           {#if !anonymous}
-            <td class="py-2 pr-4 whitespace-nowrap">{submitterName(sub)}</td>
+            <td class="py-2 pr-4 whitespace-nowrap">{@render submitter(sub)}</td>
           {/if}
           {#each columns as column (column.id)}
             {@const text = answered.find((a) => a.item.id === column.id)?.text}
@@ -300,9 +341,16 @@
           {/each}
           {#if requiresPayment}
             <td class="py-2 pr-4">{@render statusPill(sub)}</td>
-            <td class="py-2 pr-4 text-xs font-medium">{formatAmount(sub.totalPaid)}</td>
+            <!-- A refunded amount is struck through: it was received, and went back. -->
+            <td
+              class="py-2 pr-4 text-xs font-medium {sub.paymentStatus === 'refunded'
+                ? 'line-through'
+                : ''}">{formatAmount(sub.totalPaid)}</td
+            >
           {/if}
-          <td class="py-2">{@render deleteControl(sub)}</td>
+          <td class="py-2">
+            <div class="flex items-center justify-end gap-1">{@render deleteControl(sub)}</div>
+          </td>
         </tr>
         {#if expanded[sub.id]}
           <tr>
@@ -328,7 +376,7 @@
         <div class="min-w-0 flex-1">
           <p class="text-text-muted text-2xs font-mono">{formatDate(sub.createdAt)}</p>
           {#if !anonymous}
-            <p class="text-text-main truncate font-semibold">{submitterName(sub)}</p>
+            <p class="text-text-main truncate font-semibold">{@render submitter(sub)}</p>
           {/if}
           {#if requiresPayment}
             <p class="mt-1 flex items-center gap-2">
@@ -337,7 +385,7 @@
             </p>
           {/if}
         </div>
-        <div class="flex shrink-0 items-center">
+        <div class="flex shrink-0 flex-wrap items-center justify-end gap-1">
           {@render expandControl(sub, answered, [])}
           {@render deleteControl(sub)}
         </div>

@@ -56,6 +56,21 @@ const TREES: { dir: string; lang: Lang; ext: string }[] = [
     lang: 'swift',
     ext: '.swift',
   },
+  {
+    dir: join(SRC_TAURI, 'patches/tauri-plugin-system-components/ios/Sources'),
+    lang: 'swift',
+    ext: '.swift',
+  },
+  {
+    dir: join(SRC_TAURI, 'plugins/tauri-plugin-customtabs/ios/Sources'),
+    lang: 'swift',
+    ext: '.swift',
+  },
+  {
+    dir: join(SRC_TAURI, 'plugins/tauri-plugin-gallery/ios/Sources'),
+    lang: 'swift',
+    ext: '.swift',
+  },
   { dir: join(SRC_TAURI, 'src'), lang: 'rust', ext: '.rs' },
   { dir: join(FRONTEND, 'mls-core/src'), lang: 'rust', ext: '.rs' },
 ];
@@ -510,5 +525,78 @@ describe('native log lines in every build', () => {
   it('carry no message text, name, emoji, seed, secret or token', () => {
     const findings = scan();
     expect(findings.map((f) => `${f.file}:${f.line} interpolates \`${f.expr}\``)).toEqual([]);
+  });
+});
+
+describe('the notification extension on a store build', () => {
+  const NSE = join(SRC_TAURI, 'gen/apple/canari_NSE/NotificationService.swift');
+
+  it('logs through its Logger, never a Swift NSLog, which arrives as <private> whole', () => {
+    // `1.6.5-alpha.1` on the iPhone 12: the generic banner of a killed-app DM came with every
+    // extension line `<private>`, so its reason could not be read. The scan above still holds every
+    // interpolation of the Logger calls to ids, counts, states and reasons.
+    const src = readFileSync(NSE, 'utf8');
+    expect(src).not.toMatch(/\bNSLog\s*\(/);
+    expect(src).toContain('Logger(subsystem: "fr.emse.canari", category: "nse")');
+    expect(src).toMatch(/NseLog\.log\.notice\(\s*"\[CanariNSE\] outcome=/);
+  });
+
+  it('names the privacy of every value it interpolates', () => {
+    // A string interpolated with no privacy argument is redacted on a store build, silently: the
+    // choice is written value by value, `.public` for an id, a count, a state or a reason (the scan
+    // above refuses one that is content), `.private` for anything else.
+    const src = readFileSync(NSE, 'utf8');
+    const unmarked: string[] = [];
+    for (const m of src.matchAll(/NseLog\.log\.\w+\(/g)) {
+      for (const expr of callExpressions(src, m.index! + m[0].length, 'swift')) {
+        if (!/privacy:\s*\.(public|private)\s*$/.test(expr)) {
+          unmarked.push(`${lineOf(src, m.index!)}: ${expr}`);
+        }
+      }
+    }
+    expect(unmarked).toEqual([]);
+  });
+});
+
+/**
+ * EVERY SWIFT FILE THE APP COMPILES, DERIVED FROM THE TREE RATHER THAN LISTED: the extension, the
+ * share extension, the patched plugins and Canari's own. A Swift `NSLog` is `<private>` WHOLE on a
+ * store build, literal text included (the tab-bar plugin's line, `1.6.4-alpha.4`; the extension's,
+ * `1.6.5-alpha.1`), so a line meant to be read goes through a `Logger` - whose interpolations
+ * the content scan above still holds to ids, counts, states and reasons.
+ */
+describe('every Swift line on a store build', () => {
+  const ROOTS = ['gen/apple', 'patches', 'plugins'].map((d) => join(SRC_TAURI, d));
+  /** Build outputs and dependency checkouts are not sources this repository writes. */
+  const NOT_SOURCES = new Set(['generated', '.build', 'build', 'node_modules', 'Pods']);
+  const swiftFiles = (dir: string): string[] =>
+    readdirSync(dir).flatMap((name) => {
+      const path = join(dir, name);
+      if (statSync(path).isDirectory()) return NOT_SOURCES.has(name) ? [] : swiftFiles(path);
+      return name.endsWith('.swift') ? [path] : [];
+    });
+  const files = ROOTS.flatMap(swiftFiles);
+
+  it('finds the Swift sources it guards', () => {
+    const names = files.map((f) => relative(SRC_TAURI, f).replaceAll('\\', '/'));
+    for (const known of [
+      'gen/apple/canari_NSE/NotificationService.swift',
+      'patches/tauri-plugin-keystore/ios/Sources/KeystorePlugin.swift',
+      'patches/tauri-plugin-system-components/ios/Sources/TabBarOverlay.swift',
+      'plugins/tauri-plugin-customtabs/ios/Sources/CustomTabsPlugin.swift',
+      'plugins/tauri-plugin-gallery/ios/Sources/GalleryPlugin.swift',
+    ]) {
+      expect(names).toContain(known);
+    }
+  });
+
+  it('never goes through a Swift NSLog, which arrives as <private> whole', () => {
+    const offenders = files.flatMap((file) => {
+      const src = readFileSync(file, 'utf8');
+      return [...src.matchAll(/\bNSLog\s*\(/g)].map(
+        (m) => `${relative(SRC_TAURI, file)}:${lineOf(src, m.index!)}`
+      );
+    });
+    expect(offenders).toEqual([]);
   });
 });

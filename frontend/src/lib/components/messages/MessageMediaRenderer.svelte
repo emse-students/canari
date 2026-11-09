@@ -37,6 +37,8 @@
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 
   interface Props {
+    /** The conversation's nickname scope ("Modifier les pseudos"): names drawn here are read in it. */
+    nicknameScope?: string | null;
     /** Parsed media descriptor from the message envelope, or null for text-only messages. */
     mediaRef: MediaRef | null;
     /** Decrypted object URL for the media blob, or null while loading. */
@@ -141,6 +143,7 @@
     uploadFailedLabel = m.upload_failed_label(),
     onCancelUpload,
     onRetryUpload,
+    nicknameScope = null,
   }: Props = $props();
 
   /**
@@ -171,13 +174,16 @@
     console.debug(`[chat-reel] ${messageId.slice(0, 8)} answered 410 in the viewer - recorded`);
     onReelPurged?.(at);
   }
-  const reelSenderName = $derived(senderId ? getUserDisplayNameSync(senderId, senderId) : '');
+  const reelSenderName = $derived(
+    senderId ? getUserDisplayNameSync(senderId, senderId, nicknameScope ?? undefined) : ''
+  );
   const reelPost = $derived(
     showReelViewer && mediaRef && isReel
       ? reelMessageAsPost({
           messageId: messageId || mediaRef.mediaId,
           media: mediaRef,
           caption: textContent,
+          senderId: senderId ?? '',
           senderName: reelSenderName,
           sentAt: sentAt ?? new Date(),
         })
@@ -626,7 +632,7 @@
          PERCENT would resolve against a bubble that is itself sized by its content and balloon it
          over the whole row, so the caption wraps at that width less the bubble's side padding. -->
     <p
-      class="text-sm leading-relaxed wrap-break-word whitespace-pre-wrap select-text {bleed
+      class="text-sm leading-relaxed wrap-break-word whitespace-pre-wrap select-text pointer-coarse:select-none pointer-coarse:[-webkit-touch-callout:none] {bleed
         ? 'mt-1.5 w-[calc(17rem-1.5rem)] max-w-full'
         : 'mt-2'}"
     >

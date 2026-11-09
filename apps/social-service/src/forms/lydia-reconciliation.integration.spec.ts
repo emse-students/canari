@@ -121,7 +121,6 @@ RESET lock_timeout;`
     const purchaseRecordService = new PurchaseRecordService(ds.getRepository(PurchaseRecord));
     const associationsService: any = {
       getPaymentAccountId: async () => VENDOR_WITH_KEY,
-      getLydiaPayeeAccountId: async () => VENDOR_WITH_KEY,
       getActivePaymentProvider: async () => 'lydia',
     };
     forms = new FormsService(
@@ -135,7 +134,8 @@ RESET lock_timeout;`
       { build: async () => ({ answers: {} }) } as any,
       ds.getRepository(FormRespondent),
       {} as any,
-      { enabled: () => false } as any
+      { enabled: () => false } as any,
+      {} as any
     );
     // The boutique's return reads through Nest's HttpService: the same answer, unverified.
     products = Object.assign(Object.create(ProductsService.prototype) as object, {
@@ -162,20 +162,16 @@ RESET lock_timeout;`
       }
       return new WithRefusals(
         ds.getRepository(Submission),
-        ds.getRepository(Form),
         ds.getRepository(ProductCheckout),
         forms,
-        withProducts,
-        associationsService
+        withProducts
       );
     };
     sweep = new LydiaReconciliationService(
       ds.getRepository(Submission),
-      ds.getRepository(Form),
       ds.getRepository(ProductCheckout),
       forms,
-      products,
-      associationsService
+      products
     );
     jest.spyOn(axios, 'post').mockImplementation(async (url: string, body: any) => {
       if (!url.endsWith('payments/request-state')) throw new Error(`unexpected call to ${url}`);
@@ -242,6 +238,8 @@ RESET lock_timeout;`
         paymentStatus: 'pending',
         stripeSessionId: uuid(n),
         paymentRequestId: String(7000 + n),
+        // The Business the request was issued to: what the sweep reads it with.
+        lydiaVendorToken: VENDOR_WITH_KEY,
       })
     );
     await ds.query(

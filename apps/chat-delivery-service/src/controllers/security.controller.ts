@@ -103,16 +103,12 @@ export class SecurityController {
   ) {}
 
   /**
-   * Authorises a PIN/security operation: the caller must be the target user
-   * themselves (matched on the Nginx-injected `x-user-id` header) or a global
-   * admin. Throws {@link ForbiddenException} otherwise.
+   * Authorises a PIN/security operation: the caller must be the target user themselves (matched on
+   * the Nginx-injected `x-user-id` header). A global admin is not exempt (owner, 2026-11-02): a PIN
+   * is its holder's alone, and a reset purges their device footprint. Throws
+   * {@link ForbiddenException} otherwise.
    */
-  private assertSelfOrGlobalAdmin(
-    targetUserId: string,
-    headerUserId?: string,
-    headerGlobalAdmin?: string
-  ): void {
-    if (headerGlobalAdmin === 'true') return;
+  private assertSelf(targetUserId: string, headerUserId?: string): void {
     const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     if (!caller || caller.trim().toLowerCase() !== targetUserId.trim().toLowerCase()) {
       throw new ForbiddenException('Operation restricted to the authenticated user');
@@ -144,11 +140,10 @@ export class SecurityController {
   @Post('mls/security/pin-check')
   async checkPinVerifier(
     @Body() body: { userId: string; verifier: string; deviceId?: string; salt?: string },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ) {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
-    this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
+    this.assertSelf(safeUserId, headerUserId);
     const safeVerifier = sanitizeQueryValue(body.verifier, 'verifier');
     const safeDeviceId = sanitizeOptionalQueryValue(body.deviceId, 'deviceId');
 
@@ -224,11 +219,10 @@ export class SecurityController {
   @Get('mls/security/pin-salt/:userId')
   async getPinSalt(
     @Param('userId') userId: string,
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ): Promise<{ salt: string }> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
-    this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
+    this.assertSelf(safeUserId, headerUserId);
 
     let doc = await this.pinVerifierRepo.findOne({ where: { userId: safeUserId } });
 
@@ -264,11 +258,10 @@ export class SecurityController {
   @Get('mls/security/pin-status/:userId')
   async getPinStatus(
     @Param('userId') userId: string,
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ): Promise<{ registered: boolean }> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
-    this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
+    this.assertSelf(safeUserId, headerUserId);
     const doc = await this.pinVerifierRepo.findOne({
       where: { userId: safeUserId },
       select: { id: true },
@@ -292,11 +285,10 @@ export class SecurityController {
   @Post('mls/security/pin-change')
   async changePin(
     @Body() body: { userId: string; oldVerifier: string; newVerifier: string },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ): Promise<{ ok: boolean }> {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
-    this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
+    this.assertSelf(safeUserId, headerUserId);
 
     const oldVerifier = sanitizeQueryValue(body.oldVerifier, 'oldVerifier');
     const newVerifier = sanitizeQueryValue(body.newVerifier, 'newVerifier');
@@ -367,11 +359,34 @@ export class SecurityController {
   @Post('mls/security/pin-reset')
   async resetPin(
     @Body() body: { userId: string },
-    @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-user-id') headerUserId?: string
   ): Promise<{ ok: boolean; devicesPurged: number }> {
     const safeUserId = sanitizeQueryValue(body.userId, 'userId');
-    this.assertSelfOrGlobalAdmin(safeUserId, headerUserId, headerGlobalAdmin);
+    this.assertSelf(safeUserId, headerUserId);
+
+    // THE VERIFIER GOES FIRST, AND ITS DELETION IS THE RESET'S COMMIT POINT (round 9 of the review of
+    // #2919). The client settles a reset whose answer it lost by comparing the account's salt with
+    // the one it had before asking: the salt lives in this row, so "same salt" must prove that
+    // NOTHING was done. Purging the devices first broke that - a reset cut after the purge left the
+    // salt in place, and the client restored a state whose device footprint was already gone. The
+    // purge spans Redis and other tables, so it cannot share a transaction with this delete; it runs
+    // after it, per device, each failure accused, and the answer is a 5xx when one failed - which
+    // the client reads by the salt, now gone, as a reset that happened.
+    //
+    // THE REVOCATIONS ONLY AFTER IT, never beside it (round 11): deleted together, a failed verifier
+    // delete beside a committed revocations delete UN-REVOKED a stolen device while the PIN stayed.
+    // A verifier delete that fails stops here, with nothing done; a revocations delete that fails
+    // after it keeps the devices revoked - the safe side - and is accused like a failed purge.
+    await this.pinVerifierRepo.delete({ userId: safeUserId });
+    let failures = 0;
+    try {
+      await this.revokedDeviceRepo.delete({ userId: safeUserId });
+    } catch (e) {
+      failures++;
+      this.logger.error(
+        `[PIN_RESET] user=${safeUserId}: the PIN is reset but its device revocations were not cleared - those devices stay revoked: ${String(e)}`
+      );
+    }
 
     const devices = await this.keyPackageRepo.find({
       where: { userId: safeUserId },
@@ -380,19 +395,27 @@ export class SecurityController {
     const deviceIds = [...new Set(devices.map((d) => d.deviceId))];
 
     let devicesPurged = 0;
+    let purgeFailures = 0;
     for (const deviceId of deviceIds) {
-      await this.messagingService.purgeDeviceFootprint(safeUserId, deviceId);
-      devicesPurged++;
+      try {
+        await this.messagingService.purgeDeviceFootprint(safeUserId, deviceId);
+        devicesPurged++;
+      } catch (e) {
+        purgeFailures++;
+        this.logger.error(
+          `[PIN_RESET] user=${safeUserId} device=${deviceId}: the PIN is reset but this device's footprint was not purged: ${String(e)}`
+        );
+      }
     }
 
-    await Promise.all([
-      this.pinVerifierRepo.delete({ userId: safeUserId }),
-      this.revokedDeviceRepo.delete({ userId: safeUserId }),
-    ]);
-
     this.logger.log(
-      `[PIN_RESET] user=${safeUserId} devicesPurged=${devicesPurged} (GroupMember rows kept for re-add)`
+      `[PIN_RESET] user=${safeUserId} devicesPurged=${devicesPurged} purgeFailures=${purgeFailures} (GroupMember rows kept for re-add)`
     );
+    if (purgeFailures + failures > 0) {
+      throw new InternalServerErrorException(
+        `the PIN is reset; ${purgeFailures} device footprint(s) could not be purged, revocations ${failures > 0 ? 'not cleared' : 'cleared'}`
+      );
+    }
 
     return { ok: true, devicesPurged };
   }

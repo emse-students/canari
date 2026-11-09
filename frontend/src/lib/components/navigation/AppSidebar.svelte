@@ -3,6 +3,7 @@
   import { m } from '$lib/paraglide/messages';
   import { afterNavigate } from '$app/navigation';
   import { preloadRouteOnView } from '$lib/actions/preloadRouteOnView';
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import { PLACE_ICONS } from '$lib/navigation/placeIcons';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
@@ -147,6 +148,8 @@
       <a
         href={place.href}
         use:preloadRouteOnView={place.href}
+        use:guideAnchor={`nav.${place.id}`}
+        data-app-place={place.href}
         title={isExpanded ? undefined : place.label()}
         aria-current={isActive ? 'page' : undefined}
         class="group relative flex h-12 w-full items-center gap-4 overflow-hidden rounded-2xl px-3 text-left transition-all duration-200

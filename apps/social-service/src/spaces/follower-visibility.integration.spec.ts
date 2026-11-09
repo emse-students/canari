@@ -127,9 +127,10 @@ maybe('personal posts and lives open to accepted followers (WP-F5) against Postg
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int, formation varchar);
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
-        type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false);
+        type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false,
+        archived boolean NOT NULL DEFAULT false);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
-        "associationId" uuid, anonymous boolean NOT NULL DEFAULT false);
+        "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, anonymous boolean NOT NULL DEFAULT false);
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL);
       CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255),
@@ -435,6 +436,36 @@ maybe('personal posts and lives open to accepted followers (WP-F5) against Postg
     try {
       await client.query(`DELETE FROM user_follows WHERE "followerUserId" = 'personnel'`);
       await expect(asking('personnel')).rejects.toMatchObject({ status: 403 });
+    } finally {
+      await client.query('ROLLBACK');
+    }
+  });
+
+  it('a person with NO SPACE may publish a personal post: it reaches their accepted followers only (D31, owner 2026-11-02)', async () => {
+    // staffAlone has a campus and no cursus, so no space at all; farStranger follows them (accepted),
+    // farPending only asked. Nothing refuses the write (no space check at publish), and the post is
+    // the author's and their accepted followers', nobody else's - not a same-campus reader either.
+    const P_NO_SPACE = '00000000-0000-4000-8000-000000000521';
+    await client.query('BEGIN');
+    try {
+      await client.query(
+        `INSERT INTO user_follows ("followerUserId", "followedUserId", status, "acceptedAt")
+           VALUES ('farStranger', 'staffAlone', 'accepted', now())`
+      );
+      await client.query(
+        `INSERT INTO user_follows ("followerUserId", "followedUserId") VALUES ('farPending', 'staffAlone')`
+      );
+      await client.query(
+        `INSERT INTO posts (id, "authorId", "associationId", anonymous) VALUES ($1, 'staffAlone', NULL, false)`,
+        [P_NO_SPACE]
+      );
+      expect(await seersOfPost(P_NO_SPACE)).toEqual(['farStranger', 'staffAlone']);
+      // "Tout" is a feed of spaces: the author has none, so it reaches nobody there but themselves.
+      expect(await seersOfPost(P_NO_SPACE, { followers: false })).toEqual(['staffAlone']);
+      // And the announcement tells exactly the accepted follower.
+      expect(ids((await client.query(announceRecipientsSql(true), [P_NO_SPACE])).rows)).toEqual([
+        'farStranger',
+      ]);
     } finally {
       await client.query('ROLLBACK');
     }

@@ -2,6 +2,7 @@ import { isAppOnScreen, onAppScreenChange } from '$lib/utils/appForeground';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { Log } from '$lib/utils/Log';
 import { callHoldsAppSound, callSoundHeld } from '$lib/utils/callSoundGate';
+import { armAudioSession, reportAudibleMedia } from '$lib/utils/audioSession';
 
 /**
  * ONE MEDIA PLAYS AT A TIME, IN THE WHOLE APP (user, 2026-10-02: *"commencer une video doit en
@@ -49,12 +50,38 @@ function isPlaying(el: HTMLMediaElement) {
   return !el.paused && !el.ended;
 }
 
+/** Whether a registered `<video>` (not an audio-only media) is playing right now. */
+export function isVideoPlaying(): boolean {
+  for (const el of registry.keys()) {
+    if (el instanceof HTMLVideoElement && isPlaying(el)) return true;
+  }
+  return false;
+}
+
 /** Whether a non-ambient registered media (other than `except`) is playing right now. */
 export function isForegroundPlaying(except?: HTMLMediaElement): boolean {
   for (const [el, { ambient }] of registry) {
     if (el !== except && !ambient && isPlaying(el)) return true;
   }
   return false;
+}
+
+/**
+ * Tells the audio session (`audioSession.ts`) whether a registered media plays WITH SOUND - its
+ * `playback` category, under which an explicitly unmuted reel or a voice note plays with the silent
+ * switch on. Re-read on every event that can change it: play, pause, end, volume, a new source
+ * (`emptied` / `loadstart`: a load resets `paused` without a `pause` event), unmount. A volume of 0
+ * is silence, like `muted`.
+ */
+function reportAudible() {
+  let audible = false;
+  for (const el of registry.keys()) {
+    if (isPlaying(el) && !el.muted && el.volume > 0) {
+      audible = true;
+      break;
+    }
+  }
+  reportAudibleMedia(audible);
 }
 
 function isAnythingPlaying(): boolean {
@@ -64,13 +91,19 @@ function isAnythingPlaying(): boolean {
 
 /**
  * Pauses every registered media playing but `except`, restricted to the ambient ones when
- * `ambientOnly`. Also what a recorder calls (without `except`): a microphone open next to a speaker
+ * `ambientOnly`. `videoOnly` leaves audio-only media (a voice note) alone. Also what a recorder calls (without `except`): a microphone open next to a speaker
  * is feedback, and a clip with the previous one in it.
  */
-export function pausePlayback(except?: HTMLMediaElement, ambientOnly = false, reason = 'claim') {
+export function pausePlayback(
+  except?: HTMLMediaElement,
+  ambientOnly = false,
+  reason = 'claim',
+  videoOnly = false
+) {
   for (const [el, { ambient }] of registry) {
     if (el === except || !isPlaying(el)) continue;
     if (ambientOnly && !ambient) continue;
+    if (videoOnly && !(el instanceof HTMLVideoElement)) continue;
     Log.d('VIDEO', `playback arbiter: pausing a ${el.tagName.toLowerCase()} (${reason})`);
     el.pause();
   }
@@ -165,12 +198,20 @@ function armScreenWatch() {
  */
 export function arbitratePlayback(el: HTMLMediaElement, options: PlaybackOptions = {}) {
   armScreenWatch();
+  armAudioSession();
   registry.set(el, { ambient: options.ambient === true });
-  const onPlay = () => claimPlayback(el);
-  const onQuiet = () => notifyIfIdle();
+  const onPlay = () => {
+    claimPlayback(el);
+    reportAudible();
+  };
+  const onQuiet = () => {
+    reportAudible();
+    notifyIfIdle();
+  };
   // A muted media playing during a call (a reel, the feed) that is UNMUTED becomes a sound: the
   // call keeps it. `play` does not fire for that, `volumechange` does.
   const onVolume = () => {
+    reportAudible();
     if (!isPlaying(el) || el.muted || !callHoldsAppSound()) return;
     Log.d(
       'VIDEO',
@@ -182,13 +223,18 @@ export function arbitratePlayback(el: HTMLMediaElement, options: PlaybackOptions
   el.addEventListener('pause', onQuiet);
   el.addEventListener('ended', onQuiet);
   el.addEventListener('volumechange', onVolume);
+  el.addEventListener('emptied', reportAudible);
+  el.addEventListener('loadstart', reportAudible);
   return {
     destroy() {
+      el.removeEventListener('emptied', reportAudible);
+      el.removeEventListener('loadstart', reportAudible);
       el.removeEventListener('volumechange', onVolume);
       el.removeEventListener('play', onPlay);
       el.removeEventListener('pause', onQuiet);
       el.removeEventListener('ended', onQuiet);
       registry.delete(el);
+      reportAudible();
       notifyIfIdle();
     },
   };

@@ -36,6 +36,7 @@
 
     <string name="notif_mention_you">you</string>
     <string name="notif_mention_someone">someone</string>
+    <string name="notif_wake_unavailable">A message could not be loaded. Open Canari to read it.</string>
 
     <string name="notif_reaction_body">reacted %1$s to your message</string>
     <string name="notif_action_reply">Reply</string>
@@ -84,6 +85,8 @@
     <string name="notif_chat_join_ask_anon_title">Someone wants to join</string>
     <string name="notif_social_follow_accepted_title">%1$s accepted your request</string>
     <string name="notif_social_follow_accepted_body">Your request was accepted</string>
+    <string name="notif_social_birthday_title">It\'s %1$s\'s birthday</string>
+    <string name="notif_social_birthday_body">Wish them a happy birthday</string>
     <string name="notif_social_live_cut_title">Your live was stopped</string>
     <string name="notif_social_live_cut_body">Moderators cut your live. This is a warning.</string>
     <string name="notif_social_live_suspended_title">Lives suspended</string>
@@ -98,6 +101,10 @@
     <string name="notif_social_booking_added_body">Find it in Bookings</string>
     <string name="notif_social_booking_reminder_title">Booking reminder</string>
     <string name="notif_social_booking_reminder_body">Your booking starts soon</string>
+    <string name="notif_social_booking_changed_title">%1$s changed your booking</string>
+    <string name="notif_social_booking_changed_body">Find the new time in Bookings</string>
+    <string name="notif_social_booking_removed_title">%1$s removed you from a booking</string>
+    <string name="notif_social_booking_removed_body">You are no longer part of it</string>
     <string name="notif_form_opening_soon_title">Form opening soon</string>
     <string name="notif_form_opening_soon_body">A form you are watching opens in 5 minutes!</string>
     <string name="notif_form_open_title">Form now open!</string>
@@ -110,6 +117,12 @@
     <string name="notif_lydia_payments_paused_body">Lydia payments for %1$s are paused: Lydia refused a payment request.</string>
     <string name="notif_lydia_refund_issued_title">Refund</string>
     <string name="notif_lydia_refund_issued_body">%1$s refunded one of your payments.</string>
+    <string name="notif_delegation_revoked_title">Payments paused</string>
+    <string name="notif_delegation_revoked_body">The association receiving %1$s\'s payments ended the delegation: its payments are paused.</string>
+    <string name="notif_delegation_receiver_not_ready_title">Payments paused</string>
+    <string name="notif_delegation_receiver_not_ready_body">The association receiving %1$s\'s payments can no longer collect them: its payments are paused.</string>
+    <string name="notif_delegation_resumed_title">Payments back on</string>
+    <string name="notif_delegation_resumed_body">%1$s\'s payments are back on.</string>
     <!-- The agenda's five. See the note in values/strings.xml. -->
     <string name="notif_event_proposed_title">Event to review</string>
     <string name="notif_event_proposed_body">%1$s is proposing “%2$s”</string>
@@ -123,4 +136,6 @@
     <string name="notif_event_deleted_body">“%1$s” was removed by the BDE</string>
     <string name="notif_event_pending_title">Event needs approval again</string>
     <string name="notif_event_pending_body">“%1$s” needs approval again: its dates changed</string>
+    <string name="notif_event_pending_coorganiser_title">Event needs approval again</string>
+    <string name="notif_event_pending_coorganiser_body">“%1$s” needs approval again: an association accepted to co-organise</string>
 </resources>

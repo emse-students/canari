@@ -384,3 +384,25 @@ pub struct GlassSupport {
     /// blur fallback instead of real glass.
     pub fallback: bool,
 }
+
+/// CANARI PATCH: whether the tab bar (and its accessory) takes touches. `false` while a modal web
+/// layer covers the page - the guided tour's backdrop - which cannot cover the bar, drawn above the
+/// WebView; the touches then fall through to the WebView, where the backdrop takes them.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetTabBarInteractiveOptions {
+    pub interactive: bool,
+    /// Rises with every call from the page; Swift drops one older than the last it applied, since
+    /// this async command may reach the main queue out of order. Reset by a configuration.
+    pub seq: u64,
+}
+
+/// CANARI PATCH: `show_tab_bar` / `hide_tab_bar`'s argument - the same rising `seq` as
+/// `SetTabBarInteractiveOptions`, from the same counter on the page (`systemComponentsCommands.ts`):
+/// both commands are async, so a hide quickly followed by a show may reach the main queue in the
+/// reverse order, and Swift drops a call older than the last one it applied. Reset by a configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabBarVisibilityOptions {
+    pub seq: u64,
+}

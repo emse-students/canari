@@ -211,7 +211,7 @@ cargo_package_name() {
   # First `name = "..."` in a manifest is the [package] name (the file starts with
   # [package]); dependency tables come later.
   local file="$1"
-  sed -n 's/^name = "\([^"]*\)".*/\1/p' "$file" | head -n 1
+  sed -n 's/^name = "\([^"]*\)".*/\1/p' "$file" | sed -n 1p
 }
 
 bump_cargo_lock_version() {

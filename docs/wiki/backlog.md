@@ -61,7 +61,7 @@ Left by the review of #2544. Start after the tier stack (#2544 and its followers
 
 ## Follow requests, member reposts, and visibility between spaces - decided by the user on 2026-10-25
 
-**Starts AFTER the stable `1.4.1`; WP-F1 to F4 shipped in `1.5.1` (#2616), WP-F5 MERGED (#2827, ships in `1.5.4`), WP-F6 BUILT (draft #2859, for `1.6.0`).** Today following a person is free and
+**Starts AFTER the stable `1.4.1`; WP-F1 to F4 shipped in `1.5.1` (#2616), WP-F5 MERGED (#2827, ships in `1.5.4`), WP-F6 IN PRODUCTION since `v1.6.1` (#2859, migrations 121 and 123; hardened by #2917, and #2920 made the posts of lists and members-only associations non-repostable).** Today following a person is free and
 silent (`user_follows`, no status), a personal post is seen by readers sharing a space with its
 author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
 [profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)).
@@ -116,11 +116,10 @@ author (`postVisibleToUserSql`), and only associations republish (D38, D38b in
 Checked with four cases: a student asks a student, a staff member asks a student (same rule, no
 exception by profile), two people sharing a space still see each other's posts in the space feed
 without following, and a member's repost (author consent given) reaches the reposter's followers
-even when they do not follow the author. **New, from the same answers:** (a) rename the "Tout" tab
-"Mon espace" for clarity; (b) an information button explaining each tab; (c) a broader tutorial
-shown on the first open after a future update, covering many features of the app. All three are
-product work for after the stable, none is designed yet; ask the user for the wording and the
-placement of (b) and the scope of (c) before building.
+even when they do not follow the author. **New, from the same answers:** (a) the "Tout" tab renamed "Mon espace" and (b) the information
+button explaining each tab are BUILT (#2857); (b) now MOVES into guided help as a hint on the tab
+bar, and (c) a broader tutorial on the first open after an update is decided as the "what's new"
+help, both in [guided-help](frontend/guided-help.md#owner-decisions-of-2026-11-03).
 
 ### The work packages, in order: one small pull request each, its starting point and its proof
 
@@ -224,9 +223,9 @@ ordinary review.
   space / other space x personal / anonymous / association post), the read-grants spec unchanged,
   and the privacy-policy paragraph in the same pull request.
 - **WP-F6 - member reposts with the author's consent, reels included (DISCLOSURE: Opus security
-  review before arming). BUILT, draft pull request #2859, migration 121**
+  review before arming). IN PRODUCTION since `v1.6.1` (#2859, migration 121), hardened by #2917 (migration 123); since #2920 the posts of lists and members-only associations are not repostable**
   ([as built](profiles-and-access.md#wp-f6---member-reposts-with-the-authors-consent-as-built-2026-11-01));
-  owed: the Opus review, then arming on the owner's go (it changes who sees what). The plan as
+  it changed who sees what, and shipped on the owner's go. The plan as
   written: The consent setting (per author, per post); the SQL beside the
   republication kinds (`posts/republication-sql.ts`, entity-only today); the consent check modelled
   on `posts/personal-republications.service.ts`; an ENTITY post reposted without consent but
@@ -235,13 +234,17 @@ ordinary review.
   D38 newly-reached notification; the share action in `frontend/src/lib/posts/sharePost.ts`.
   Proof: the D38b refusal list re-run for a member reposter, a hide removing every repost, a
   notification only for the newly reached, and the policy paragraph in the same pull request.
-- **WP-F7 - the register and the privacy policy for follow requests.** Register C5
-  ([register](compliance/register-of-processing.md)): the request, its answer, the followers list,
-  retention (a request until answered or withdrawn; a follow until removed or either account is
-  erased). The privacy policy (`/legal/privacy`, its public face - both change together), the
-  terms (`/legal/cgu`) if they name following, and the D34-D41 tables of
-  [profiles-and-access](profiles-and-access.md). Merges before the stable carrying F1-F4; F5 and F6
-  each amend these texts in their own pull request.
+- **WP-F7 - the register and the privacy policy for follow requests. DONE 2026-11-02.** The text
+  rode with the code: register C5 and the `/legal/privacy` paragraphs (follows, member reposts,
+  retention table) arrived in the F5 and F6 pull requests, and this package re-read them against
+  the code (the `FOLLOW_ASKS_PER_DAY` cap of 50, the notice row kept until an erasure, the refusal
+  and withdrawal deletes, the F6 consent default ON, the erasure deletes of `member_reposts` and
+  `user_repost_settings`) and found them exact; #2917 and #2920 had already amended C5 and the
+  privacy page in step ("notified, or announced to, through a repost"; lists and members-only
+  associations not repostable), so this package changes neither. The terms (`/legal/cgu`) name followers only for
+  lives and need nothing; the D37-D41 table of
+  [profiles-and-access](profiles-and-access.md#d37-d41---what-each-surface-shows) was the one stale
+  line, now corrected.
 
 ### Risks, and what proves each away
 
@@ -1408,7 +1411,7 @@ no purge date (flagged to the DPO); account deletion is a durable queue (#1965).
 
 ## Decided by the user on 2026-10-18 (second batch)
 
-- **`graine_seeds.json` and `channel_keys.json` stay on account deletion for now.** They are per-install native files holding community keys, with no owner. Backlog item: verify whether the next session re-mirrors them, then write an erasure rule using the same `push_context.json` ownership proof.
+- **`graine_seeds.json` and `channel_keys.json` stay on account deletion for now.** They are per-install native files holding community keys, with no owner. Backlog item: verify whether the next session re-mirrors them, then write an erasure rule using the same `push_context.json` ownership proof. *(Superseded 2026-11-07: each mirror entry now names its writers and the account wipes remove the account's own - [auth](frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07); `channel_keys.json` is deleted at every start.)*
 - **WP-RESTORE-1 (account restore through WebAuthn, native + server)** is MERGED (#2065, 2026-10-24); it stays out of a stable until it is read on a phone ([its entry](#p2---wp-restore-1-zero-tap-sign-in-restoration-required-by-google-play-from-april-2027)).
 - **The MiConnect terms hold is lifted by the lead** as soon as the three preconditions listed above are verified; the lead tells the user.
 - **The KLIPY key is not rotated** (re-decided 2026-10-24: dev reuses the production key) - the revisit condition is on [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review).
@@ -1708,8 +1711,9 @@ Group) and its `CanariShare` profiles exist: a Share Extension writes into the A
 carries the share out of it into the Android layout. Nothing on Windows compiles it, so CI's archive
 is its first compile and the iPhone readings listed under Owed on
 [sharing](frontend/sharing.md#owed) are its first proof - including the secret
-`APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. Next: the iOS
-suggestions (`INSendMessageIntent`).
+`APPLE_PROVISIONING_PROFILE_SHARE`, which every signed `ios.yml` build now REQUIRES. **The iOS
+suggestions (`INSendMessageIntent`, the S5 twin) are BUILT (2026-10-27, rebuilt on main 2026-11-08)**,
+owed the iPhone readings ([sharing](frontend/sharing.md#share-suggestions-ios---lot-s5)).
 
 ## P3 - Three loose ends of the per-conversation drafts (review of #2614, 2026-10-27)
 
@@ -1793,7 +1797,7 @@ each image runs as a non-root user and `trivy config infrastructure/local` repor
 
 ## P3 - Bump the four Alpine pins when upstream rebuilds with brotli 1.2.1 (2026-10-24)
 
-Owner: Master. `CVE-2026-92392` (curl 8.22.0-r0, fixed in 8.23.0-r0) joined it on 2026-10-26 under the same conditions, so the rebuild must carry BOTH fixes and both entries go together. `CVE-2026-111497` (`brotli-libs` 1.2.0-r1) is allowlisted in
+Owner: Master. `CVE-2026-92392` (curl 8.22.0-r0, fixed in 8.23.0-r0) joined it on 2026-10-26 under the same conditions, so the rebuild must carry BOTH fixes and both entries go together. `CVE-2026-117610` and `CVE-2026-118370` (libexpat 2.9.0-r0, fixed in 2.10.0-r0, nginx pins only) joined on 2026-11-03: the rebuild must carry all three, and those two entries go with it. **The nginx half is done (2026-11-06):** the edge pin moved to a build carrying all three fixes and the libexpat entries were deleted; adminer and postgres are what is left. `CVE-2026-111497` (`brotli-libs` 1.2.0-r1) is allowlisted in
 `.github/image-scan-allowlist.yaml` because no patched image existed: Alpine fixed it on 2026-10-22
 and the official `adminer`, `nginx:1.31.8-alpine`, `nginx:stable-alpine` and `postgres:18-alpine`
 builds of that day still carry 1.2.0. Done when the three digest pins (production and dev compose,
@@ -1904,7 +1908,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **reread the terms' lives paragraph and the privacy text (written 2026-10-29, draft pull request, the points to decide on [live-production](frontend/modules/live-production.md#5-the-privacy-policy-and-the-terms---written-2026-10-29-owed-the-owners-reread)), and write the filtering statement for the store review** | 1 reread, 1 statement | [live moderation](backlog.d/p1-live-moderation-wp-l8-merged-the-client-s-standing-refusals-the-vie.md) |
 | **send the DPO dossier to the school's DPO** and bring back the answers to its three questions (the school's role, the hosting agreement with the DSI, the MiGallery DPIA); MiTV keeps the proof of each member's face-recognition consent | 1 e-mail, 1 conversation | [the GDPR entry](#p2---gdpr-compliance-the-open-items-of-the-register-2026-10-16), [dso-dossier](compliance/dso-dossier.md) |
 | **upload the APNs authentication key in the DEVELOPMENT slot of Firebase** (2 minutes): Firebase Console > Project settings > Cloud Messaging > the iOS app `fr.emse.canari` > APNs authentication key - the same `.p8` (Key ID + Team ID) already in the Production slot. The agent then resends the test DM | click | [the iOS push rows](#owed-a-verification-and-nothing-else) |
-| **Lydia's three still-open Livrable A answers** - the KYC document list (channel confirmed: email, not yet arrived), the minimum payable amount, and rate limits/webhook-sandbox testing | blocked upstream | WP-LYDIA-1 |
+| **Lydia's three still-open Livrable A answers** - the KYC document list (channel confirmed: email, not yet arrived), the minimum payable amount, and rate limits/webhook-sandbox testing | blocked upstream | [WP-LYDIA-1](#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end) |
 | **the dev mobile half: a Firebase project for `dev.canari-emse.fr` and a dev keystore, plus where that keystore is backed up.** No agent can create the project with the credentials it holds. Until then a pre-release APK points at dev with production's FCM sender | 1 console visit, 1 decision | [the second package id](#p3---a-second-package-id-so-a-pre-release-can-be-measured-against-production-decided-2026-09-15) |
 | **the spaces release order (WP6b), three gestures in THIS order**: (1) go for the WP3 profile backfill on production once 6a/6d's release ran migration 071 (`backfill-canari-profiles.sh apply`); (2) set every association's real reach and the BDEs at `/admin/spaces` - the seed gave all of them (ICM, saint-etienne) only; (3) only then cut the release carrying 6b. Out of order, ISMIN/Gardanne/FSSS/Autre readers see no existing association post, and anyone not backfilled loses the feed | 1 go, 1 grid, 1 release | [profiles-and-access](profiles-and-access.md), "WP6b as built" |
 | **turn off JavaScript detections on the `canari-emse.fr` zone** (Security > Bots): its injected inline script is refused by the page policy on every dev document, one console error per load; production is not behind Cloudflare. Done when a dev document's console holds no CSP refusal, and the rig's `DEV_EDGE_CSP_EXCEPTION` can go | 1 dashboard toggle | [cloudflare-edge](infrastructure/cloudflare-edge.md#no-script-runs-unless-the-policy-names-it-2026-10-22) |
@@ -2051,10 +2055,6 @@ The owed mark is written at decision time and drained into the outbox at every o
 
 Another tab's "Take over" makes the changing leader `releaseLeadership`, and the demotion handler (`useChatSession.svelte.ts`) reloads it 50 ms later whatever it is doing; the recovery finishes the move, but it costs a recovery prompt. **Owed**: refuse or defer a takeover while this tab is changing the key (the realm knows it, `RealmHold.changing`), with a two-realm test ([auth](frontend/modules/auth.md#the-other-tabs-of-the-account)).
 
-## P2 - A deleted account's community keys stay on the phone in per-install files with no owner (found 2026-10-18, fourth review of #2023)
-
-`graine_seeds.json` (with its `.lock`) and `channel_keys.json` are ONE file per install and hold community keys that can decrypt history the server still stores. (Since 2026-10-22 the first is sealed at rest under the INSTALL's native cache key and the second is deleted at the first run ([mobile](frontend/mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)) - which changes nothing here: the install key opens the mirror for whichever account is signed in.) Neither records whose it is, so the account-deletion wipe cannot remove them (and a sign-out already leaves them, deliberately). **The minimal safe rule** is the one `delete_user_push_files` uses: remove only when an ownership proof names the deleted account, as `push_context.json` does. **Check first**: two local accounts in the same community may share entries, and whether the live account re-mirrors them from its own session decides if a per-account split or an owner field is the right cut ([auth](frontend/modules/auth.md#an-account-deletion-wipes-that-accounts-local-database-and-vault-slot-wp-del-local-2026-10-18)).
-
 ## P3 - The case-collision refusal keeps the deletion marker for ever (found 2026-10-18, fourth review of #2023)
 
 `wipeDeletedAccountLocalData` refuses an id that differs from another stored id only by letter case and keeps the wipe OWED, reported once per start, "until a human looks" - but nothing ever asks a human, so the marker lives until the subject signs in again. It was the main precondition of scenario A of that review (a resume wiping the NEW account), now closed by the callback dropping the marker and every login refusing a deleted account; what is left is an owed wipe that never completes and is never surfaced. **Owed**: a decision on what a collision does (wipe the parts not shared by case, and surface the rest to the user), and a test ([auth](frontend/modules/auth.md#an-account-deletion-wipes-that-accounts-local-database-and-vault-slot-wp-del-local-2026-10-18)).
@@ -2062,24 +2062,6 @@ Another tab's "Take over" makes the changing leader `releaseLeadership`, and the
 ## P3 - Four things the offline cold start fix left open (Mi 9T, `v1.2.9-alpha.1`, 2026-10-15)
 
 From [offline-and-weak-network section 15](frontend/offline-and-weak-network.md#15-an-offline-cold-start-sends-nothing-it-knows-will-fail-2026-10-15). (a) An answerer holding nothing answers a HISTORY ask by silence, so the requester cannot record an answer and re-asks its named online device once per launch: SHIPPED in `v1.3.0` as WP-HOLD-NOTHING (#2027, [channel-encryption section 24](protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)); owed one bench reading. (b) The push context written after the MLS init is not re-attempted after an offline start: the native side keeps the previous launch's context until the next start; a retry on reconnect must check the device key has not changed meanwhile. (c) When only OUR OWN other devices could answer a history ask and none is online, nothing re-asks when one comes online in the same session: `parkHistoryUntilOnline` rides `whenAnyComesOnline`, which watches USERS, and our own user is online by definition, so it would fire at once. The fix is a per-device presence waiter (the roster already carries `onlineDevices`); until then the next start re-reads presence. (d) A no-network spell (`auth.refresh`) is ended by the reconnect or the foreground: a STALE `navigator.onLine === false` whose one spell refresh failed while the server was down, followed by the server coming back with no `online` event and no foreground, keeps refusing until one of the two.
-
-## P3 - Asked by the USER on 2026-10-14 - "Modifier les pseudos" for a group and a community, design questions answered, not built
-
-> *"Une fonctionnalite comme sur Messenger : 'Modifier les pseudos', un ecran qui liste les membres du groupe ou de la communaute, avec 'Definir un pseudo' et un crayon a cote de chaque membre."* (not urgent)
-
-**Rules decided by the user.** In a GROUP (private conversation) every member may set ANY other member's nickname, no hierarchy. In a COMMUNITY one must be at least moderator.
-
-**Answered from the code and wiki:**
-
-- **The name is resolved in ONE place**: `frontend/src/lib/utils/users/displayName.ts` (`firstName lastName`, then `displayName`; asserted against `libs/contracts/user-display-name.cases.json`, which two server copies also follow) fed by the reactive `userDisplayName` / `userDisplayNames` in `displayNames.svelte.ts`. A nickname enters there as a per-conversation override, never at call sites. Push titles (chat-delivery, social-service) would otherwise name a person differently from the screen - the 2026-09-18 report that contract was written for.
-- **Moderator checks reach the client as a DECISION, never a role name**: the server's `viewerCanModerate` (with `viewerCanManage`, `viewerCanManageChannels`) on the workspace listing and its event ([social-service](services/social-service.md)). `frontend/src/lib/utils/chat/pinPermission.ts` is the model: in a salon the grant decides, in a DM or group "there are no ranks". The server must re-check it.
-- **Where it lives is OPEN and splits by kind.** DM or group is an MLS room: a nickname fits an MLS application frame the server never reads (precedent: the silent edit frame, [chat](frontend/modules/chat.md)), but "anybody may" is then enforced only by convention between equals. A community salon is sealed with Graine and a moderator rule is a SERVER-checked grant, so only a server column enforces it, at the cost that the server sees the nickname. To decide: one mechanism or two.
-- **Scope**: per conversation, visible to every member of THAT conversation, never leaking to the profile or another conversation. A late joiner misses an MLS frame sent before they joined ([channel-encryption](protocols/channel-encryption.md)); a column has no such gap.
-- **Abuse**: a nickname set by someone else can be an insult. Show who set it (setter id travels with the value), let the target reset it for themselves, make the community case reportable and moderator-reversible ([moderation-and-blocking](moderation-and-blocking.md)), and do not let a blocked user rename the blocker. Length and content limits mirror the profile's; every string through Paraglide.
-- **DECIDED by the user, 2026-10-14: TWO MECHANISMS.** Private groups carry the nickname in an MLS application frame the server never sees; communities use a server column with the moderator check. **The build is queued** (mute and mentions-only, which it waited for, shipped in `1.2.8`).
-- **DECIDED by the user, 2026-10-18**: in a community the target sees "set by X"; a nickname STAYS when its setter leaves (the target can reset it) ([WP-NICK-COMMUNITY-RULES](#decided-by-the-user-on-2026-10-18---every-design-question-answered)).
-
-
 
 ## Android back-gesture zone on the right edge (own bubbles) - DECIDED by the user 2026-10-14, MERGED as #1883, owed a reading
 
@@ -2140,7 +2122,7 @@ Salon writes now wait for the link and a repeat is one row (WP-OFF-3/4, PK4 pull
 
 ## P2 - Weak network, the attachment path after WP-OFF-8 (audit 2026-10-10)
 
-Prioritised list and numbers: [offline-and-weak-network section 13](frontend/offline-and-weak-network.md#13-audit-of-2026-10-10-a-13-mb-attachment-on-a-poor-link-and-what-navigation-waits-for). Built: the upload bubble (progress, cancel, retry, refusal) and the 8 MiB body budget (WP-OFF-8), navigation never waiting on the profile call or a post (WP-NAV-1), the upload running outside the lane so a text sent behind a big file does not wait for it (WP-OFF-9, section 13.8). **Open**: every failed upload restarts at byte 0 (resumable chunks need a server offset route, RC-5); a salon attachment blocks the composer with no progress (WP-OFF-3 queues a salon text, edit or reaction but not a photo, video or poll: section 16); the file sits in the outbox row and three times in memory per attempt. **Owed ONE look on the iPhone** with a real file on a bad link.
+Prioritised list and numbers: [offline-and-weak-network section 13](frontend/offline-and-weak-network.md#13-audit-of-2026-10-10-a-13-mb-attachment-on-a-poor-link-and-what-navigation-waits-for). Built: the upload bubble (progress, cancel, retry, refusal) and the 8 MiB body budget (WP-OFF-8), navigation never waiting on the profile call or a post (WP-NAV-1), the upload running outside the lane so a text sent behind a big file does not wait for it (WP-OFF-9, section 13.8). **Open**: every failed upload restarts at byte 0 (resumable chunks need a server offset route, RC-5); a salon poll is still not queued (WP-OFF-3 queues a salon text, edit or reaction, and since 2026-11-02 a salon attachment is drawn at the tap with its upload on its row: [chat](frontend/modules/chat.md#a-salon-attachment-is-drawn-at-the-tap-and-its-row-carries-its-upload-2026-11-02)); the file sits in the outbox row and three times in memory per attempt. **Owed ONE look on the iPhone** with a real file on a bad link.
 
 ## P3 - iOS notification sounds still play the default tone (palette A is Android and in-app only, 2026-10-09)
 
@@ -2165,7 +2147,8 @@ Neither the tab nor the salon showed one. Not reproduced.
 The next session shows "Vos messages enregistrés sur cet appareil n'ont pas pu être ouverts", and only a reinstall clears it.
 A candidate cause is fixed in #1862 (`v1.2.8`: the MLS client and its device id survived a sign-out into the next account's login, [auth](frontend/modules/auth.md#a-sign-out-ended-the-session-on-the-server-and-left-it-live-on-the-device---fixed-2026-10-14)).
 **The vault half is fixed (2026-10-14)**: the device-key vault names its account, so B is never handed A's key and never rotates A's `mls.bin` ([auth](frontend/modules/auth.md#the-vault-names-its-account---fixed-2026-10-14)).
-**The owner record SHIPPED in `v1.3.0` (PK1, #2001)**: `initialiser_mls` writes `mls.owner` beside `mls.bin` each time a state OPENS for an account, a state reset (`terminer_session_mls`) removes both, and when B's key does not open the file and the record names A, `init` throws `SavedStateOfAnotherAccountError` before any write - the gate says another account's messages are here and withholds the reset, on the keypad path too. An install whose state predates the record has none, so A must sign in once on the new build before B is protected. Owed: one A -> B -> A reading on the Mi 9T and the iPhone.
+**The owner record SHIPPED in `v1.3.0` (PK1, #2001)**: `initialiser_mls` writes `mls.owner` beside `mls.bin` each time a state OPENS for an account, a state reset (`terminer_session_mls`) removes both, and when B's key does not open the file and the record names A, `init` throws `SavedStateOfAnotherAccountError` before any write - the gate says another account's messages are here and withholds the reset, on the keypad path too. An install whose state predates the record has none, so A must sign in once on the new build before B is protected.
+**One state per account, built (owner decision, 2026-11-02)**: `mls.bin` is now the signed-in account's slot and every other account's state is parked whole under `mls_accounts/<sha256(id)>/`; `initialiser_mls` switches them by RENAME before it reads anything, ownership proven by `mls.owner` alone, an unrecorded state never moved ([auth](frontend/modules/auth.md#one-mls-state-per-account-on-a-native-install-owner-decision-2026-11-02)). Verified by compiling and host tests only. **Owed: one A -> B -> A -> B reading on the iPhone 12 bench phone (`tools/ios-device`) after a pre-release** - each account opens its messages, `[MLS_ACCOUNT]` lines show each park and unpark; delete this entry then.
 
 ### P3 - the per-community triplet, ETag/304 and the Mi 9T's two `history-request`
 
@@ -2193,7 +2176,7 @@ Three minutes of a production web client idle on `/communities` ([web-console-lo
 
 ### P2 - one encrypted MLS checkpoint per inbound application message
 
-39 checkpoints in 197 s, median 348 ms, max 998 ms: `onBulkIngestEnd` marks the state dirty unconditionally, and every WebSocket frame is its own drain. **The split is now measured** ([performance-audit](frontend/performance-audit-2026-10-12.md#finding-2-and-3-read-together---the-checkpoint-question-the-backlog-owed)): on a 7.7 MB state the main-thread export is 2.3 ms, the WASM ChaCha20 seal 141 ms (worker) and the IndexedDB put 31 ms, linear in the whole state. #1774 already merges a received batch with one sort. The WebCrypto seal option is a design only, see [the P2](backlog.d/p2-the-web-checkpoint-is-82-wasm-chacha20-seal-the-hardened-reader-mer.md). **DECIDED 2026-10-18: skip it after a plain receive, ONLY after the Mi 9T crash measurement** ([WP-CHECKPOINT-SKIP](#decided-by-the-user-on-2026-10-18---every-design-question-answered); the measurement protocol stays in [open-questions](open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13)). Still owed: what losing an application-only ratchet advance costs once the frame is acked. Then choose between "flush on a commit, a welcome, hide and logout" and the current per-drain flush ([mlsStatePersister](../../frontend/src/lib/mls-client/mlsStatePersister.ts)).
+39 checkpoints in 197 s, median 348 ms, max 998 ms: `onBulkIngestEnd` marks the state dirty unconditionally, and every WebSocket frame is its own drain. **The split is now measured** ([performance-audit](frontend/performance-audit-2026-10-12.md#finding-2-and-3-read-together---the-checkpoint-question-the-backlog-owed)): on a 7.7 MB state the main-thread export is 2.3 ms, the WASM ChaCha20 seal 141 ms (worker) and the IndexedDB put 31 ms, linear in the whole state. #1774 already merges a received batch with one sort. The WebCrypto seal option is a design only, see [the P2](backlog.d/p2-the-web-checkpoint-is-82-wasm-chacha20-seal-the-hardened-reader-mer.md). **DECIDED 2026-10-18: skip it after a plain receive, ONLY after the Mi 9T crash measurement; BUILT 2026-11-07 behind `checkpoint_skip_mode`, OFF until its dev readings pass** ([WP-CHECKPOINT-SKIP](#decided-by-the-user-on-2026-10-18---every-design-question-answered); the measurement protocol stays in [open-questions](open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below)). Still owed: what losing an application-only ratchet advance costs once the frame is acked. Then choose between "flush on a commit, a welcome, hide and logout" and the current per-drain flush ([mlsStatePersister](../../frontend/src/lib/mls-client/mlsStatePersister.ts)).
 
 ### P3 - an avatar 404 is the only way to learn a person has no photo
 
@@ -2452,7 +2435,7 @@ browser salon notification clicked through `/chat`. Open:
 2. **P3 - the Android manifest and `tauri.conf.json` declare five hosts; the page hosts a push writes (`posts`,
    `calendar`, `admin-agenda`, `proposals`) rely on the explicit intent of the notification.** Read it once on the Mi 9T.
 
-The two questions of the audit are answered (2026-10-08): a follow keeps its meaning, a per-association mute exists, read-grant holders stay unannounced - [social-service](services/social-service.md#follow-mute-and-read-grants-three-different-facts-decided-by-the-user-2026-10-08).
+The two questions of the audit are answered (2026-10-08): a follow keeps its meaning, a per-association mute exists, read-grant holders stay unannounced - [social-service](services/social-service.md#follow-bell-and-read-grants-three-different-facts-decided-by-the-user-2026-10-08-the-mute-became-the-bell-engagement-wp-3-2026-11-08).
 
 ## CI and the chain that runs unattended
 
@@ -2741,6 +2724,8 @@ Lydia ("Paiement Canari") and cash are the only payments since Stripe was remove
 
 ### WP-LYDIA-1 - Lydia live in production, with one payment observed end to end
 
+**LIVE, confirmed 2026-11-06.** The owner states Lydia is active in production (*"il est actif en prod"*), and the running production core's startup log reads `Lydia configured: yes (https://lydia-app.com)` (read 2026-11-06, a container started 2026-11-05) - row 2 below holds. What stays owed is what the sections below list: the other rows of the read table where nobody recorded the read, a validated Business observed through a form, each association's re-onboarding and Lydia's Livrable A answers.
+
 **Owner decision, 2026-10-24: on production NOTHING is done without the owner - after the stable only the
 reads below; every real payment test is made on dev.** A remedy in the table's last column is the
 owner's go, never an agent's gesture.
@@ -2814,7 +2799,7 @@ WHERE pr.status = 'paid' AND pr."paymentMethod" = 'online'
 
 ### A PAID PUBLIC FORM (user, 2026-09-30) - the paid half waits for Lydia
 
-The free half is shipped (`/f/:id`, migration 068, [forms](frontend/modules/forms.md#a-public-form-is-answered-without-an-account-2026-09-30)). **Owed:** one guest answer sent from a private window on `dev.canari-emse.fr`, with the `canari-dev-frontend-1` log showing a real client address rather than the Docker gateway (the `real_ip` change it carries); the paid half is scoped on [forms](frontend/modules/forms.md#the-paid-half-what-it-needs-scoped-2026-09-30) and needs WP-LYDIA-1.
+The free half is shipped (`/f/:id`, migration 068, [forms](frontend/modules/forms.md#a-public-form-is-answered-without-an-account-2026-09-30)). **Owed:** one guest answer sent from a private window on `dev.canari-emse.fr`, with the `canari-dev-frontend-1` log showing a real client address rather than the Docker gateway (the `real_ip` change it carries); the paid half is scoped on [forms](frontend/modules/forms.md#the-paid-half-what-it-needs-scoped-2026-09-30); Lydia is live in production (WP-LYDIA-1), so what it still needs is its own work packages and the guest payment readings.
 
 ### P2 - the history rule saved by an admin is not applied from the live frame
 
@@ -2911,7 +2896,7 @@ Each line: the decision, its scope as a work package (WP), and what blocks it. R
 - **WP-PRESENCE, the push half (M, server, no MLS): the 10 s phone poll is replaced by a push over the live WebSocket.** The audience half (presence visible only to those who share a conversation or a community) SHIPPED in #2031, `v1.3.0`. Blocks: nothing.
 - **WP-SMOKE-LOGIN: a dedicated smoke account on the DEV estate only**, a real sign-in right after the dev deploy; no production credential in GitHub. Shipped in `v1.3.0` (#2020, #2073); it passed on the `v1.4.1-alpha.1` dev deploy.
 - **WP-HOLD-NOTHING (M, MLS-adjacent, OPUS): an additive "I hold nothing" answer to a HISTORY ask**, so the requester records a definitive answer and stops re-asking once per launch. Blocks: verify first that an OLD client ignores an unknown answer frame without error (a test on the old reader), then ship reader-then-writer. **SHIPPED (#2027)** ([channel-encryption section 24](protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)): the old reader was checked first (an empty bundle, absorbed silently since `1.0.3`), so reader and writer ship together.
-- **WP-CHECKPOINT-SKIP (M, native + MLS, OPUS): skip the full checkpoint after a drain that only received application frames**, forced after K deferred receive generations (K about 200, a COUNT never a clock). **MEASURED 2026-10-22 on the Mi 9T, switch ON, K 20-100, up to 60 skipped frames: 0 lost, 0 `live-ahead`, 0 duplicates, 0 `unreadable for good` in 6 valid trials (table in [the question](open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13)); what it does not cover is named there, and the build decision is the user's.** Was blocked on: the Mi 9T crash measurement of [the question](open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13) (kill, push while dead, resume, read `live-ahead`, duplicates, `unreadable for good`); nothing changes before it. The v2 seal (writer off) is a separate lever.
+- **WP-CHECKPOINT-SKIP (M, MLS, OPUS): skip the full checkpoint after a drain that only received application frames**, forced after K deferred receive generations (a COUNT, never a clock). **BUILT 2026-11-07 (decided by the lead under the owner's delegation): K = 100 behind the server switch `platform_config.checkpoint_skip_mode` (core migration 020, `off` on every estate, `/admin/platform`, published as `checkpointSkip.mode` by `/api/version`), read by the client at every drain end; off is today's behaviour, pinned by a test.** Measured 2026-10-22 on the Mi 9T (K 20-100, up to 60 skipped frames: 0 lost, 0 `live-ahead`, 0 duplicates, 0 `unreadable for good` in 6 valid trials, table in [the question](open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below)). **Owed before the lead flips it: the two dev readings on the Mi 9T AND the iPhone 12** - a kill during a drain of more than K frames, and a phone killed for hours with traffic ([the readings](open-questions.md#the-readings-owed-before-the-flip), protocol [CKS](device-verification.md#cks-the-checkpoint-skip-switch-on-dev---owed-on-both-phones-before-the-flip)). The v2 seal (writer off) is a separate lever.
 - **WP-RESTORE-1 is planned NOW, independent of the campaign** (Play enforcement April 2027): [mobile](frontend/mobile.md#wp-restore-1---zero-tap-sign-in-restoration-accepted-2026-08-26-built-2026-10-18); merged as #2065, [account-restore](account-restore.md). Owed: the Mi 9T test before the deadline.
 - **WP-MIGALLERY-OFFSITE (M, ops + a MiGallery PR, no native): MiGallery's offsite backup goes to Canari's own offsite server**, Needs the offsite server's access arranged (private notes); a restore test.
 - **WP-MENTION-NAME (M, native Android and iOS, OPUS): a mention notification names its author from the phone's local copy of names**, "someone" if unknown; the name never rides the push. Owed: one look on each phone, and on the Mi 9T whether the COLLAPSED shade shows only the first line of a mention (the author line is line 1 of the message and may hide the text). **SHIPPED in `v1.3.1` (#2047)**: the author on a salon banner (an MLS banner already names its sender), and the mentioned person inside the text from the same copy.
@@ -2927,7 +2912,7 @@ Each line: the decision, its scope as a work package (WP), and what blocks it. R
 ## Chantiers in planning (opened 2026-10-15)
 
 - **Bookings** (rooms and slots, a module of its own): 41 decisions and eight work packages in [bookings-chantier](bookings-chantier.md). WP-B0 (#1904, `v1.2.9`), WP-B3 (#2002) and WP-B4 (#2019, both `v1.3.0`) are shipped; the redesign is D44-D54.
-- **Paid public forms** (the same as a paid internal form, answered with no account): five decisions and five work packages in [public-paid-forms-chantier](public-paid-forms-chantier.md). WP-P0 (a pending payment stops holding a seat for ever) also fixes a defect members have today. The observed payment waits on WP-LYDIA-1.
+- **Paid public forms** (the same as a paid internal form, answered with no account): five decisions and five work packages in [public-paid-forms-chantier](public-paid-forms-chantier.md). WP-P0 (a pending payment stops holding a seat for ever) also fixes a defect members have today. Lydia is live in production (WP-LYDIA-1, 2026-11-06); the observed guest payment is what is owed.
 - **P2 - A MULTIPLE-CHOICE GRID QUESTION WHOSE OPTIONS SIT IN TWO BUCKETS IS PRICED ON THE FIRST BUCKET (found 2026-10-22, paid forms, members and guests alike).** `bucketFor` (`apps/social-service/src/pricing/audience.ts`) returns the first bucket, in the grid's order, that ANY selected option matches. So the price depends on the order of the buckets, not on what was chosen, and an answer can pick a cheaper cell by adding an option. **The fix:** refuse, at save, a grid dimension on a `multiple_choice` question whose options fall in more than one bucket, beside the overlapping-bucket refusal (`findOverlappingBuckets`, checked in `pricing/price-matrix.ts`). That check would need the form's items to know the question's type. Pricing each option on its own bucket and summing is the alternative, but it changes what a grid means. **The test that lifts it:** a `forms.service` spec saving a grid on a multiple-choice question with options in two buckets is refused, and the same grid with every option in one bucket is accepted.
 - **The FILE question type** for forms (WP-F) serves both: decisions D7, D8, D22, D40, D41 of the bookings page.
 - **Blocked on the Lydia documentation (2026-10-15):** the expiry parameter of `request/do` (D1) and a call that cancels a Lydia request (D2) appear nowhere in the repository and no public Lydia documentation was found; the user is asked for it. Until then a pending form answer past its 30-minute hold is not reused, and a cancel of an old request must never cancel the live one (see [public-paid-forms-chantier](public-paid-forms-chantier.md)).

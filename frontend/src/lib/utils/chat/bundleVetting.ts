@@ -109,11 +109,19 @@ export async function vetBundle<E extends BundleEntry>(
     held: Map<string, BundleHeldRow>;
     relayer: string;
     mutateHeld: boolean;
+    /**
+     * Whether a held row may take a TOMBSTONE even where `mutateHeld` is false. A deletion is the one
+     * mutation an addressed answer must still carry onto a held row: the reconciliation state key
+     * counts it, so two devices that differ only on a deletion would otherwise never agree. It is
+     * vetted exactly as any other (`vetRestoredDelete`: the author's signed event, or the author
+     * relaying a row it vouches for).
+     */
+    tombstoneHeld?: boolean;
   },
   log: Log,
   onForged: ForgedReport
 ): Promise<VettedBundle<E>> {
-  const { entries, fresh, held, relayer, mutateHeld } = input;
+  const { entries, fresh, held, relayer, mutateHeld, tombstoneHeld = false } = input;
   const out: VettedBundle<E> = {
     fresh: [],
     unverified: 0,
@@ -166,10 +174,16 @@ export async function vetBundle<E extends BundleEntry>(
   //    added, the one just upgraded, or the one held. The last copy of an id speaks for a held row.
   const lastById = new Map(entries.map((e) => [e.id, e]));
   const targets = new Map<string, { entry: E; row: BundleHeldRow }>();
-  if (mutateHeld) {
-    for (const [id, entry] of lastById) {
-      const row = held.get(id);
-      if (row) targets.set(id, { entry, row: { ...row, senderId: row.senderId ?? '' } });
+  /** Held rows that may take a tombstone and nothing else (`tombstoneHeld`). */
+  const tombstoneOnly = new Set<string>();
+  for (const [id, entry] of lastById) {
+    const row = held.get(id);
+    if (!row) continue;
+    if (mutateHeld) {
+      targets.set(id, { entry, row: { ...row, senderId: row.senderId ?? '' } });
+    } else if (tombstoneHeld && entry.isDeleted === true && !row.isDeleted) {
+      targets.set(id, { entry, row: { ...row, senderId: row.senderId ?? '' } });
+      tombstoneOnly.add(id);
     }
   }
   for (const [id, up] of out.upgrades) {
@@ -191,6 +205,12 @@ export async function vetBundle<E extends BundleEntry>(
   for (const [id, { entry, row }] of targets) {
     const target = { id, senderId: row.senderId ?? '', content: row.content };
     const decision: BundleRowDecision = {};
+    if (tombstoneOnly.has(id) && !out.upgrades.has(id) && !freshIndex.has(id)) {
+      decision.del = await vetRestoredDelete(keys, groupId, target, entry, relayer, log);
+      if (decision.del.kind === 'forged') onForged('delete', id, decision.del.why);
+      out.decisions.set(id, { entry, decision });
+      continue;
+    }
     if (Array.isArray(entry.reactions) && entry.reactions.length > 0) {
       const outcome = await vetRestoredReactions(keys, groupId, id, entry.reactions, relayer, log);
       if (outcome.forged > 0) onForged('reaction', id, `${outcome.forged} forged`);

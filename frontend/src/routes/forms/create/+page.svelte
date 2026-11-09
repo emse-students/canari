@@ -1,19 +1,35 @@
 <script lang="ts">
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import { kindHasSection } from '$lib/associations/editSections';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
+  import { formCodeMessage, formItemsProblem } from '$lib/forms/answerBounds';
+  import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { safeInternalPath } from '$lib/utils/internalPath';
   import { gotoAppPath } from '$lib/navigation/gotoAppPath';
   import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
-  import { onMount } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import {
     activePaymentProvider,
     loadActivePaymentProvider,
   } from '$lib/associations/activePaymentProvider.svelte';
-  import { goto } from '$app/navigation';
+  import { beforeNavigate, goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { createForm, type AudienceCondition, type CreateFormPayload } from '$lib/forms/api';
+  import {
+    createForm,
+    publishFormDraft,
+    saveFormDraft,
+    uploadFormItemImage,
+    type AudienceCondition,
+    type CreateFormPayload,
+  } from '$lib/forms/api';
+  import { draftRefusalMessage, FORM_CREATE_KEY_REUSED, publishBlocker } from '$lib/forms/publish';
+  import { serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
+  import { deviceCopyOf, formDraftCopyStore, holdFormEditor } from '$lib/forms/draftCopies';
+  import { currentUserId } from '$lib/stores/user';
+  import { FormAutosave } from '$lib/forms/autosave.svelte';
+  import { questionImageRefusalMessage } from '$lib/forms/questionImage';
   import { POST_NEW_FORM_ID_KEY, loadPostComposerDraft } from '$lib/posts/postComposerDraft';
   import {
     canAssociationReceiveFormPayments,
@@ -39,23 +55,38 @@
     emptyCotisationSettings,
     forgetTierSelection,
   } from '$lib/forms/cotisationSettings';
-  import {
-    matrixPayload,
-    matrixProblem,
-    pricesOnProfile,
-    type PriceMatrix,
-  } from '$lib/pricing/priceMatrix';
+  import { matrixPayload, matrixProblem, type PriceMatrix } from '$lib/pricing/priceMatrix';
   import { gridProblemMessage } from '$lib/pricing/gridProblem';
   import { formSummary } from '$lib/forms/summary';
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { firstEmptyCondition } from '$lib/forms/audience';
+  import {
+    firstEmptyConditionQuestion,
+    firstItemsFaultQuestion,
+    refusedProductGridFault,
+  } from '$lib/forms/questionFault';
   import { toFormItemsPayload } from '$lib/forms/itemsPayload';
+  import {
+    firstProductGridProblem,
+    multipleSubmissionsAfterGridAdded,
+    multipleSubmissionsAfterGridGone,
+    profileTierCriterion,
+    type GridMultipleSubmissions,
+  } from '$lib/forms/productGridEditor';
   import {
     FILE_RETENTION_DEFAULT_DAYS,
     fileQuestionProblem,
     hasFileQuestion,
   } from '$lib/forms/fileQuestion';
+  import { formConfigConflicts, type GuestPricedGrid } from '$lib/forms/formOptionRules';
+  import {
+    conflictCodeMessage,
+    editorOptionState,
+    formConflictMessage,
+  } from '$lib/forms/formOptionConflict';
+  import { Log } from '$lib/utils/Log';
   import { CircleAlert, FileText } from '@lucide/svelte';
+  import { askedGuestFields } from '$lib/forms/guestIdentity';
   import { m } from '$lib/paraglide/messages';
 
   // General
@@ -66,6 +97,8 @@
   let allowMultipleSubmissions = $state(false);
   let anonymous = $state(false);
   let isPublic = $state(false);
+  /** What a public form asks a guest (`guestIdentity.ts`); none by default. */
+  let guestFields = $state<string[]>([]);
 
   // Payment
   let basePrice = $state(0);
@@ -73,6 +106,8 @@
   /** Pre-selected by a "create a form" link from that association's own tab, e.g. `EditFormsTab`. */
   let associationId = $state(page.url.searchParams.get('association') ?? '');
   let allowCashPayment = $state(false);
+  /** Online payment accepted (owner, 2026-11-08); off with cash on is a cash-only form. */
+  let allowOnlinePayment = $state(true);
   let cashPaymentExpiryDays = $state<number | undefined>(undefined);
   let fileRetentionDays = $state(FILE_RETENTION_DEFAULT_DAYS);
   let cotisation = $state(emptyCotisationSettings());
@@ -190,8 +225,198 @@
   );
 
   const formHasFile = $derived(hasFileQuestion(items));
+  /** The options as the shared rule reads them: what every switch and the save are judged by. */
+  const optionState = $derived(
+    editorOptionState({
+      anonymous,
+      isPublic,
+      requiresPayment,
+      grantsCotisation: cotisation.grantsCotisation,
+      submitCondition,
+      items,
+    })
+  );
 
-  async function handleSave() {
+  /** A save refused on a question opens that question: a folded card hides its own error. */
+  let reveal = $state<{ id: string } | null>(null);
+  /** The priced grid a refused save is about, and its sentence, drawn under that grid. */
+  let gridFault = $state<{ itemId: string; message: string } | null>(null);
+  /**
+   * Whether a priced grid - not the manager - switched "several answers" on: only then does removing
+   * the last grid switch it back off. Any choice made on the switch itself clears it.
+   */
+  let multipleTurnedOnByGrid = $state(false);
+  const multipleSubmissions = (): GridMultipleSubmissions => ({
+    allow: allowMultipleSubmissions,
+    turnedOnByGrid: multipleTurnedOnByGrid,
+  });
+  function applyMultipleSubmissions(next: GridMultipleSubmissions) {
+    allowMultipleSubmissions = next.allow;
+    multipleTurnedOnByGrid = next.turnedOnByGrid;
+  }
+  /** A priced grid may copy the registration price grid's categories in one click. */
+  const formTiers = $derived(profileTierCriterion(priceMatrix, requiresPayment));
+  function revealQuestion(id: string | null) {
+    if (id) reveal = { id };
+  }
+  /** The banner sits at the top: a refusal about settings must be seen from the save bar. */
+  let errorBanner = $state<HTMLElement | null>(null);
+  async function scrollToError() {
+    await tick();
+    errorBanner?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+
+  /** Why "Publier" is shut: a paid form whose association cannot collect yet (it saves as a draft). */
+  const blockedReason = $derived(
+    publishBlocker({ form: buildPayload(), associationId, associationCanBePaid })
+  );
+  let isPublishing = $state(false);
+
+  /**
+   * Whether this estate builds forms as drafts (`formDrafts` in `/api/version`). An older server
+   * strips `draft` and publishes at once, and has no publish route: the builder then saves as it
+   * always did, one "Enregistrer" that publishes (docs/wiki/legacy-compatibility.md).
+   */
+  const formDrafts = serverFormDrafts() === true;
+
+  /**
+   * The draft this page is building, created at the first autosave once the form has a title
+   * (owner, 2026-11-08): a shell holding only what is fixed at creation - its association - and its
+   * title; everything else is its unpublished revision, saved as it is typed.
+   */
+  /**
+   * The create's idempotency key, minted HERE (the client post id pattern): a create whose answer
+   * was lost is sent again as the same create, and the server answers the form it stored - never a
+   * second draft. Never the form's id: the server mints that.
+   */
+  const createKey = crypto.randomUUID();
+  /** Set once the server holds the draft (its shell answered). */
+  let createdId = $state<string | null>(null);
+  /**
+   * Set at the FIRST create sent, and kept while that create MAY have landed: no answer, a 5xx, or
+   * the server's own word that a form already sits under this key (`FORM_CREATE_KEY_REUSED`). Such a
+   * create may have stored the form under the association it named, and its replay must name the
+   * same one. Any other 4xx is a verdict that nothing was stored: the picker opens again.
+   */
+  let createSent = $state(false);
+
+  async function draftId(): Promise<string> {
+    if (createdId) return createdId;
+    createSent = true;
+    let created;
+    try {
+      created = await createForm({
+        clientCreateId: createKey,
+        draft: true,
+        title,
+        basePrice: 0,
+        currency: 'eur',
+        items: [],
+        associationId: associationId || undefined,
+      });
+    } catch (e) {
+      const status = refusalStatus(e);
+      if (status !== null && status < 500 && refusalCode(e) !== FORM_CREATE_KEY_REUSED) {
+        Log.d('forms-editor', `draft create refused status=${status}: nothing stored, picker open`);
+        createSent = false;
+      }
+      throw e;
+    }
+    Log.d('forms-editor', `draft created ${created.id}`);
+    createdId = created.id;
+    // The device copy is the form's from now on: an editor of it finds it under its id.
+    if (formDrafts && userId) {
+      await formDraftCopyStore(userId)
+        .rekey(createKey, created.id)
+        .catch((e: unknown) =>
+          console.warn(`[forms-editor] device copy not re-keyed to ${created.id}: ${e}`)
+        );
+    }
+    return created.id;
+  }
+
+  const userId = currentUserId();
+  const autosave = new FormAutosave({
+    save: async (base, document, saveId, leaving) =>
+      saveFormDraft(await draftId(), base, document, saveId, { leaving }),
+    // Kept on the device until a save lands: a page closed first loses nothing, and the background
+    // resend creates the draft and sends it (`draftResend.ts`).
+    device:
+      formDrafts && userId
+        ? deviceCopyOf(userId, () => ({ formId: createdId, clientCreateId: createKey }))
+        : null,
+  });
+
+  // Every edit is saved, debounced, once the form has a title to be listed under.
+  let lastSaved: string | null = null;
+  $effect(() => {
+    const document = buildPayload();
+    const json = JSON.stringify(document);
+    const named = !titleMissing;
+    untrack(() => {
+      if (!formDrafts || !named || json === lastSaved) return;
+      lastSaved = json;
+      autosave.schedule(document);
+    });
+  });
+
+  // Hidden, left or torn down: saved at once; back online: an edit that reached no server is sent
+  // again. The cleanup saves too - an in-app navigation fires no `pagehide`.
+  $effect(() => (formDrafts ? autosave.attach(window) : undefined));
+  beforeNavigate(() => {
+    if (formDrafts) void autosave.flush();
+  });
+  // While this page is open, the background resend leaves its device copy to it.
+  $effect(() => (formDrafts ? holdFormEditor(createKey) : undefined));
+  $effect(() => (formDrafts && createdId ? holdFormEditor(createdId) : undefined));
+
+  /** The new form's payload: what the autosave stores and the publication applies. */
+  function buildPayload(): CreateFormPayload {
+    return {
+      title,
+      description,
+      basePrice: requiresPayment ? Math.round(basePrice * 100) : 0,
+      priceMatrix: matrixPayload(priceMatrix, requiresPayment),
+      submitCondition,
+      ...cotisationPayload(cotisation, requiresPayment),
+      currency: 'eur',
+      items: toFormItemsPayload(items),
+      maxSubmissions,
+      allowMultipleSubmissions,
+      anonymous,
+      isPublic,
+      // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
+      guestFields: isPublic && !anonymous ? askedGuestFields(guestFields) : [],
+      ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
+      requiresPayment,
+      // NEVER conditioned on `requiresPayment` - a free form belongs to the association it was
+      // created for exactly as a paid one does (the comment on `associations` above already said
+      // so; this line contradicted it, and a free form created from an association's own "create
+      // a form" button would otherwise vanish from that association's list the moment it saved).
+      associationId: associationId || undefined,
+      ...(requiresPayment ? { allowCashPayment, allowOnlinePayment } : {}),
+      ...(requiresPayment && allowCashPayment && cashPaymentExpiryDays != null
+        ? { cashPaymentExpiryDays }
+        : {}),
+      ...(formHasFile ? { fileRetentionDays } : {}),
+    };
+  }
+
+  /** Why "Publier" is shut beyond payments: an edit the server does not hold yet. */
+  const unsavedReason = $derived(
+    autosave.status === 'offline' || autosave.status === 'error'
+      ? m.form_publish_blocked_unsaved()
+      : autosave.status === 'conflict'
+        ? m.form_draft_conflict_refusal()
+        : null
+  );
+
+  /**
+   * "Publier" (owner, 2026-11-08): the page's own checks first, in the reader's language; then what
+   * is typed is saved and the draft published with it, in one transaction on the server
+   * (`publishFormDraft`). Refused, the draft stays saved and this page says why.
+   */
+  async function handlePublish() {
     if (titleMissing) {
       error = m.form_error_title_required();
       return;
@@ -200,19 +425,41 @@
       error = m.form_error_association_required();
       return;
     }
-    const fileProblem = fileQuestionProblem({
-      items,
-      isPublic,
-      anonymous,
-      fileRetentionDays,
-      submitCondition,
-    });
+    const itemsProblem = formItemsProblem(items);
+    if (itemsProblem) {
+      error = itemsProblem;
+      revealQuestion(firstItemsFaultQuestion(items));
+      return;
+    }
+    // The server's refusal, said first and in the reader's language: the same rule, whichever
+    // switch was turned on last (`formOptionRules.ts`).
+    const [conflict] = formConfigConflicts(
+      optionState,
+      matrixPayload(priceMatrix, requiresPayment) as GuestPricedGrid | null
+    );
+    if (conflict) {
+      Log.d('forms-editor', `save refused before sending: ${conflict}`);
+      error = formConflictMessage(conflict);
+      return;
+    }
+    // A priced grid is judged by the contract the server judges it by, on the payload it will send.
+    gridFault = firstProductGridProblem(items, { isPublic, requiresPayment });
+    if (gridFault) {
+      error = gridFault.message;
+      revealQuestion(gridFault.itemId);
+      return;
+    }
+    const fileProblem = fileQuestionProblem({ items, fileRetentionDays, submitCondition });
     if (fileProblem) {
+      // A form-level refusal (public, anonymous, retention): no question is at fault, the
+      // settings are, so the banner is brought into view instead of opening a card.
       error = fileProblem;
+      await scrollToError();
       return;
     }
     const empty = firstEmptyCondition(submitCondition, items);
     if (empty) {
+      revealQuestion(firstEmptyConditionQuestion(items));
       error =
         empty.scope === 'form'
           ? m.form_error_audience_empty()
@@ -227,35 +474,29 @@
     isSubmitting = true;
     error = '';
     try {
-      const payload: CreateFormPayload = {
-        title,
-        description,
-        basePrice: requiresPayment ? Math.round(basePrice * 100) : 0,
-        priceMatrix: matrixPayload(priceMatrix, requiresPayment),
-        submitCondition,
-        ...cotisationPayload(cotisation, requiresPayment),
-        currency: 'eur',
-        items: toFormItemsPayload(items),
-        maxSubmissions,
-        allowMultipleSubmissions,
-        ...(anonymous ? { anonymous } : {}),
-        isPublic,
-        ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
-        requiresPayment,
-        // NEVER conditioned on `requiresPayment` - a free form belongs to the association it was
-        // created for exactly as a paid one does (the comment on `associations` above already said
-        // so; this line contradicted it, and a free form created from an association's own "create
-        // a form" button would otherwise vanish from that association's list the moment it saved).
-        associationId: associationId || undefined,
-        ...(requiresPayment ? { allowCashPayment } : {}),
-        ...(requiresPayment && allowCashPayment && cashPaymentExpiryDays != null
-          ? { cashPaymentExpiryDays }
-          : {}),
-        ...(formHasFile ? { fileRetentionDays } : {}),
-      };
-      const created = await createForm(payload);
+      let publishedId: string;
+      if (!formDrafts) {
+        // An estate older than drafts: one create that publishes, as this page always did.
+        const created = await createForm(buildPayload());
+        Log.d('forms-editor', `created and published ${created.id} (an estate without drafts)`);
+        publishedId = created.id;
+      } else {
+        // What is on the page now is what is published: saved first, whatever the debounce holds.
+        lastSaved = JSON.stringify(buildPayload());
+        autosave.schedule(buildPayload());
+        await autosave.flush();
+        if (!autosave.settled || !createdId) {
+          error = unsavedReason ?? m.form_publish_blocked_unsaved();
+          return;
+        }
+        isPublishing = true;
+        const result = await publishFormDraft(createdId, autosave.revision);
+        autosave.closed(result.revision, 'published');
+        Log.d('forms-editor', `created and published ${createdId}`);
+        publishedId = createdId;
+      }
       if (fromPostComposer) {
-        sessionStorage.setItem(POST_NEW_FORM_ID_KEY, created.id);
+        sessionStorage.setItem(POST_NEW_FORM_ID_KEY, publishedId);
         goto(resolve('/posts'));
       } else {
         gotoAppPath(returnTo).catch((err: unknown) =>
@@ -263,9 +504,22 @@
         );
       }
     } catch (e: any) {
-      error = providerRefusalMessage(e) ?? e.message;
+      // A grid the server alone could refuse (a cotisation tier it does not sell) is drawn under
+      // that grid and its card opened, as the page's own check does.
+      gridFault = refusedProductGridFault(e, items);
+      if (gridFault) revealQuestion(gridFault.itemId);
+      error =
+        gridFault?.message ??
+        questionImageRefusalMessage(e) ??
+        formCodeMessage(refusalCode(e)) ??
+        conflictCodeMessage(refusalCode(e)) ??
+        draftRefusalMessage(refusalCode(e)) ??
+        providerRefusalMessage(e) ??
+        describeApiRefusal(refusalStatus(e), m.form_action_publish()) ??
+        m.form_publish_failed();
     } finally {
       isSubmitting = false;
+      isPublishing = false;
     }
   }
 </script>
@@ -280,6 +534,7 @@
 
   {#if error}
     <div
+      bind:this={errorBanner}
       class="bg-red-err/10 border-red-err/30 text-red-err mb-6 flex items-center gap-2 rounded-2xl border-2 px-4 py-3 text-sm font-medium"
     >
       <CircleAlert size={18} class="shrink-0" />
@@ -288,47 +543,51 @@
   {/if}
 
   <!-- 1. What the form is -->
-  <FormSection title={m.form_section_general()} icon={FileText}>
-    <Input
-      label={m.form_title_label()}
-      bind:value={title}
-      placeholder={m.form_title_placeholder()}
-      required
-    />
-
-    <div>
-      <p class={CONTROL_LABEL_CLASS}>{m.form_description_label()}</p>
-      <MarkdownComposerField
-        bind:value={description}
-        placeholder={m.form_description_placeholder()}
-        minHeight="7rem"
+  <div use:guideAnchor={'forms.create.general'}>
+    <FormSection title={m.form_section_general()} icon={FileText}>
+      <Input
+        label={m.form_title_label()}
+        bind:value={title}
+        placeholder={m.form_title_placeholder()}
+        required
       />
-    </div>
 
-    {#if associations.length > 0}
-      <Select
-        id="association-select"
-        label={m.form_association_label()}
-        hint={m.form_association_hint()}
-        value={associationId}
-        options={[
-          { value: '', label: m.form_association_none() },
-          ...associations.map((a) => ({ value: a.id, label: a.name })),
-        ]}
-        onValueChange={(v) => (associationId = v)}
-      />
-    {/if}
+      <div>
+        <p class={CONTROL_LABEL_CLASS}>{m.form_description_label()}</p>
+        <MarkdownComposerField
+          bind:value={description}
+          placeholder={m.form_description_placeholder()}
+          minHeight="7rem"
+        />
+      </div>
 
-    <p class={CONTROL_HINT_CLASS}>{m.form_image_add_after_create()}</p>
-  </FormSection>
+      {#if associations.length > 0}
+        <Select
+          id="association-select"
+          label={m.form_association_label()}
+          hint={m.form_association_hint()}
+          value={associationId}
+          options={[
+            { value: '', label: m.form_association_none() },
+            ...associations.map((a) => ({ value: a.id, label: a.name })),
+          ]}
+          onValueChange={(v) => (associationId = v)}
+          disabled={createSent}
+        />
+      {/if}
+
+      <p class={CONTROL_HINT_CLASS}>{m.form_image_add_after_create()}</p>
+    </FormSection>
+  </div>
 
   <!-- 2. Money -->
   <FormPaymentSection
     bind:requiresPayment
-    {anonymous}
+    {optionState}
     {isPublic}
     bind:basePrice
     bind:allowCashPayment
+    bind:allowOnlinePayment
     bind:cashPaymentExpiryDays
     bind:priceMatrix
     {tiers}
@@ -340,33 +599,66 @@
   />
 
   <!-- 3. Questions -->
-  <FormQuestionsSection bind:items {requiresPayment} {gridQuestionIds} {tiers} {formations} />
+  <div use:guideAnchor={'forms.create.questions'}>
+    <FormQuestionsSection
+      bind:items
+      {requiresPayment}
+      {gridQuestionIds}
+      {tiers}
+      {formations}
+      {formTiers}
+      {isPublic}
+      {gridFault}
+      onPricedGridAdded={() =>
+        applyMultipleSubmissions(multipleSubmissionsAfterGridAdded(multipleSubmissions()))}
+      onPricedGridGone={() =>
+        applyMultipleSubmissions(multipleSubmissionsAfterGridGone(multipleSubmissions(), items))}
+      {reveal}
+      imageUploadFn={async (file) => (await uploadFormItemImage(createdId, file)).imageUrl}
+    />
+  </div>
 
   <!-- 4. Rarely wanted, and folded away -->
-  <FormAdvancedSettings
-    bind:maxSubmissions
-    bind:allowMultipleSubmissions
-    bind:anonymous
-    anonymousFixed={false}
-    bind:isPublic
-    profilePricing={pricesOnProfile(priceMatrix, requiresPayment)}
-    {requiresPayment}
-    bind:opensAt
-    bind:submitCondition
-    bind:settings={cotisation}
-    {tiers}
-    {formations}
-    {grantBlocker}
-    associationName={selectedAssociation?.name ?? ''}
-    hasFileQuestion={formHasFile}
-    bind:fileRetentionDays
-  />
+  <div use:guideAnchor={'forms.create.settings'}>
+    <FormAdvancedSettings
+      bind:maxSubmissions
+      bind:allowMultipleSubmissions={
+        () => allowMultipleSubmissions,
+        (on) => {
+          allowMultipleSubmissions = on;
+          multipleTurnedOnByGrid = false;
+        }
+      }
+      bind:anonymous
+      anonymousFixed={false}
+      bind:isPublic
+      bind:guestFields
+      {optionState}
+      bind:opensAt
+      bind:submitCondition
+      bind:settings={cotisation}
+      {tiers}
+      {formations}
+      {grantBlocker}
+      associationName={selectedAssociation?.name ?? ''}
+      hasFileQuestion={formHasFile}
+      bind:fileRetentionDays
+    />
+  </div>
 
   <FormSaveBar
     {titleMissing}
     {isSubmitting}
     {summary}
+    autosaveStatus={formDrafts ? autosave.status : null}
     saveLabel={m.form_save_button()}
-    onSave={handleSave}
+    onSave={formDrafts ? null : handlePublish}
+    publish={formDrafts
+      ? {
+          onPublish: handlePublish,
+          blockedReason: blockedReason ?? unsavedReason,
+          busy: isPublishing,
+        }
+      : null}
   />
 </PageContainer>

@@ -54,6 +54,7 @@ describe('AuthController restore routes', () => {
     isLiveSessionOf: jest.Mock;
     registrationOptions: jest.Mock;
     registeredKeyOf: jest.Mock;
+    allowedOriginsDigest: jest.Mock;
     register: jest.Mock;
     assertionOptions: jest.Mock;
     verifyAssertion: jest.Mock;
@@ -86,6 +87,7 @@ describe('AuthController restore routes', () => {
       isLiveSessionOf: jest.fn().mockResolvedValue(true),
       registrationOptions: jest.fn().mockResolvedValue({ challenge: 'c' }),
       registeredKeyOf: jest.fn().mockResolvedValue(null),
+      allowedOriginsDigest: jest.fn().mockReturnValue('0123456789abcdef'),
       register: jest
         .fn()
         .mockResolvedValue({ status: 'registered', credentialId: 'cred', replaced: null }),
@@ -134,7 +136,8 @@ describe('AuthController restore routes', () => {
       sessions as never,
       { enabled: false } as never,
       erasure as never,
-      restore as never
+      restore as never,
+      {} as never // HandoffService: no handoff route here
     );
   });
 
@@ -147,6 +150,8 @@ describe('AuthController restore routes', () => {
       await expect(controller.restoreRegistrationOptions(fromApp())).resolves.toEqual({
         options: { challenge: 'c' },
         registeredCredentialId: 'held',
+        // The other half of an origin refusal's verdict: a changed set lifts it on the client.
+        originsDigest: '0123456789abcdef',
       });
       // The refresh id is passed down: only the session's CURRENT credential may register a key.
       expect(restore.isLiveSessionOf).toHaveBeenCalledWith(
@@ -258,6 +263,19 @@ describe('AuthController restore routes', () => {
       await expect(
         controller.restoreRegistration(fromApp(), { response: {}, cloudBackup: true })
       ).rejects.toMatchObject({ response: { code: 'RESTORE_KEY_TAKEN' } });
+    });
+
+    it('answers a key from a build this estate does not vouch for with its own typed 403', async () => {
+      restore.register.mockResolvedValue({
+        status: 'origin-refused',
+        origin: 'android:apk-key-hash:x',
+      });
+      await expect(
+        controller.restoreRegistration(fromApp(), { response: {}, cloudBackup: true })
+      ).rejects.toMatchObject({
+        status: 403,
+        response: { code: 'RESTORE_ORIGIN_NOT_ALLOWED' },
+      });
     });
   });
 

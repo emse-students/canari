@@ -27,9 +27,14 @@ describe('a change of tab leadership never leaves a stale ratchet sending', () =
   it('reloads on promotion instead of only reconnecting the WebSocket', () => {
     // Reconnecting alone would resume sending from the snapshot this tab loaded, at a generation
     // the peer has already consumed - the message reaches the server and is dropped on arrival.
+    // The reload is one function, shared with a login promoted before it went live (`sessionAuth`).
     const promoted = handlerBody('setTabLeaderPromotedHandler');
-    expect(promoted).toContain('window.location.reload()');
-    expect(promoted).toContain('return;');
+    expect(promoted).toContain('reloadForPromotion(cb.log)');
+    const start = useChatSession.indexOf('function reloadForPromotion(');
+    expect(start).toBeGreaterThan(-1);
+    const reload = useChatSession.slice(start, useChatSession.indexOf('\n  }\n', start));
+    expect(reload).toContain('markPromotionReload()');
+    expect(reload).toContain('window.location.reload()');
   });
 
   it('still reloads on demotion, so a released leader restarts read-only', () => {

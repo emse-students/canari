@@ -939,6 +939,10 @@ What is left there: **Dependabot, which on GitLab is not the same product as on 
 security commit already added `bun audit` to the gates, which is the part that matters - the
 repository audits clean, so a red there is a new advisory.
 
+/** What the instrument's own per-frame predicates cost between two marks (rows from before the probe timed itself: null). */
+const sumProbe = (r, from, to) =>
+  from == null || to == null || !r.probe ? null : Math.round(r.probe.filter(([t]) => t >= from && t <= to).reduce((x, [, dur]) => x + dur, 0) * 10) / 10;
+
 ### Portail-etu - DONE (`5ba4945` + `6d914ca`, 2026-08-27, CI green on run `33068835243`)
 
 The last repository still on prettier and ESLint. It is on oxfmt, oxlint and oxvelte now, and the

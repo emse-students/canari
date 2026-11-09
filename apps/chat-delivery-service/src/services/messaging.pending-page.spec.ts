@@ -130,8 +130,7 @@ describe('MessagingService.fetchMessages - the page is bounded in bytes', () => 
   });
 
   /** Rows carry no `groupId`, so the orphan purge lets every one of them through untouched. */
-  const fetch = (limit: number) =>
-    service.fetchMessages('u1', 'd1', 'u1', undefined, limit, undefined);
+  const fetch = (limit: number) => service.fetchMessages('u1', 'd1', 'u1', limit, undefined);
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -192,12 +191,11 @@ describe('MessagingService.fetchMessages - the page is bounded in bytes', () => 
   it('withholds an addressed row from a fetch that did not declare the capability', async () => {
     table = [row('a', 10, 0), { ...row('b', 10, 1), addressed: true }, row('c', 10, 2)];
 
-    const older = await service.fetchMessages('u1', 'd1', 'u1', undefined, 500, undefined);
+    const older = await service.fetchMessages('u1', 'd1', 'u1', 500, undefined);
     const current = await service.fetchMessages(
       'u1',
       'd1',
       'u1',
-      undefined,
       500,
       undefined,
       'addressed-history-1'
@@ -215,14 +213,14 @@ describe('MessagingService.fetchMessages - the page is bounded in bytes', () => 
     const withheldLines = () =>
       logSpy.mock.calls.filter(([m]) => String(m).includes('WITHHELD')).length;
 
-    await service.fetchMessages('u1', 'd1', 'u1', undefined, 500, undefined);
-    await service.fetchMessages('u1', 'd1', 'u1', undefined, 500, undefined);
+    await service.fetchMessages('u1', 'd1', 'u1', 500, undefined);
+    await service.fetchMessages('u1', 'd1', 'u1', 500, undefined);
     expect(withheldLines()).toBe(1);
 
     // A second row waiting is a change: told again, once.
     table.push({ ...row('c', 10, 2), addressed: true });
-    await service.fetchMessages('u1', 'd1', 'u1', undefined, 500, undefined);
-    await service.fetchMessages('u1', 'd1', 'u1', undefined, 500, undefined);
+    await service.fetchMessages('u1', 'd1', 'u1', 500, undefined);
+    await service.fetchMessages('u1', 'd1', 'u1', 500, undefined);
     expect(withheldLines()).toBe(2);
 
     expect(warnSpy.mock.calls.filter(([m]) => String(m).includes('WITHHELD'))).toHaveLength(0);

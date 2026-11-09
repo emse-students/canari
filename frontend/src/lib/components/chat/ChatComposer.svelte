@@ -9,7 +9,6 @@
     X,
     FileText,
     CloudUpload,
-    LoaderCircle,
     ChartColumn,
     SmilePlus,
     Images,
@@ -61,6 +60,12 @@
   import { rememberedKeyboardHeight } from '$lib/stores/keyboardHeightMemory';
   import { abandonHistoryOverlay, pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
   import ComposerEmojiPicker from './ComposerEmojiPicker.svelte';
+  import { warmEmojiPicker, whenIdleAfterPaint } from '$lib/utils/emojiPreload';
+  import {
+    emojiPickerDataSource,
+    getPreferredSkinTone,
+    getRecentEmojis,
+  } from '$lib/components/messages/emojiPickerShared';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { portal } from '$lib/actions/portal';
   import { Log } from '$lib/utils/Log';
@@ -71,11 +76,13 @@
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { downloadDecryptedFile } from '$lib/utils/fileDownload';
-  import { filesFromTransfer, localFileAddressesFromTransfer } from '$lib/utils/composerTransfer';
+  import { dropEffectFor } from '$lib/utils/composerTransfer';
+  import { handleComposerDrop } from '$lib/utils/composerDrop';
   import { m } from '$lib/paraglide/messages';
   import { showToast } from '$lib/stores/toast.svelte';
   import VoiceMessagePlayer from '$lib/components/messages/VoiceMessagePlayer.svelte';
   import { isNarrowChatLayout, NARROW_CHAT_QUERY, onViewportChange } from '$lib/utils/viewport';
+  import type { MentionRosterMember } from '$lib/utils/users/mentionRoster';
 
   interface ReplyTo {
     id: string;
@@ -139,10 +146,8 @@
     onRemovePendingFile?: (index: number) => void;
     /** A picked video being re-encoded before it joins `pendingFiles` - drawn with its cancel. */
     videoPreparation?: VideoPreparationState;
-    /** Whether an upload is currently in progress (disables the send button). */
-    isUploading?: boolean;
-    /** When set, only users whose IDs are in this list appear in @mention suggestions. */
-    allowedUserIds?: string[];
+    /** The conversation's members, suggested locally by the @mention picker. */
+    mentionRoster?: MentionRosterMember[];
     /**
      * A line ABOUT the send (its refusal, or what it waits for), drawn at the top of the composer
      * stack. Inside the footer on purpose: the footer's measured height is the thread's
@@ -150,6 +155,8 @@
      * instead of floating over them, which is what it did (user's screenshot, 2026-10-13).
      */
     notice?: Snippet;
+    /** The conversation's nickname scope ("Modifier les pseudos"): the reply bar names its sender in it. */
+    nicknameScope?: string | null;
   }
 
   let {
@@ -171,9 +178,9 @@
     pendingFiles = [],
     onRemovePendingFile,
     videoPreparation,
-    isUploading = false,
-    allowedUserIds,
+    mentionRoster,
     notice,
+    nicknameScope = null,
   }: Props = $props();
 
   /**
@@ -525,7 +532,7 @@
   const isSendDisabled = $derived(
     isEditing
       ? !messageText.trim() || messageText.trim() === (editingText ?? '').trim()
-      : (!messageText.trim() && pendingFiles.length === 0) || isUploading
+      : !messageText.trim() && pendingFiles.length === 0
   );
 
   // ── Typing signal (throttled) ──────────────────────────────────────────────
@@ -628,10 +635,12 @@
     }
 
     const senderId = replyingTo.senderId;
-    replySenderDisplayName = getUserDisplayNameSync(senderId, senderId);
+    const scope = nicknameScope ?? undefined;
+    replySenderDisplayName = getUserDisplayNameSync(senderId, senderId, scope);
     resolveUserDisplayName(senderId).then((resolved) => {
       if (resolved && replyingTo?.senderId === senderId) {
-        replySenderDisplayName = resolved;
+        // Through the scope again: the resolved profile name must not cover a nickname.
+        replySenderDisplayName = getUserDisplayNameSync(senderId, resolved, scope);
       }
     });
   });
@@ -690,6 +699,7 @@
 
   function handleDragOver(event: DragEvent) {
     event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = dropEffectFor(event.dataTransfer);
     isDragOver = true;
   }
 
@@ -734,20 +744,7 @@
   function handleDrop(event: DragEvent) {
     event.preventDefault();
     isDragOver = false;
-    const files = filesFromTransfer(event.dataTransfer);
-    if (files.length > 0 && onFilesSelected) {
-      onFilesSelected(files);
-      return;
-    }
-    // Same refusal as the editor's own drop: a local file the engine withheld (Firefox + Nemo) is
-    // said out loud rather than silently doing nothing.
-    const refused = localFileAddressesFromTransfer(event.dataTransfer);
-    if (refused.length > 0) {
-      console.warn(
-        `[COMPOSER] drop announced ${refused.length} local file(s) but handed over none - the file manager did not give the browser the file`
-      );
-      showToast(m.composer_drop_file_unreadable());
-    }
+    handleComposerDrop(event.dataTransfer, { onFiles: onFilesSelected });
   }
 
   function fileKey(file: File, index: number): string {
@@ -841,6 +838,13 @@
       Log.d('ChatComposer', `edit entered, caret to ${end}`);
       mentionComposer?.focusEditor();
       mentionComposer?.setSelectionRange(end);
+    });
+  });
+
+  /** The emoji picker's first screen is fetched once the composer has painted and the thread is idle, so opening it (here or on a reaction) paints at once. */
+  onMount(() => {
+    whenIdleAfterPaint(() => {
+      void warmEmojiPicker(emojiPickerDataSource(), getPreferredSkinTone(), getRecentEmojis());
     });
   });
 
@@ -1166,39 +1170,25 @@
 
       <!-- The phone apps' "+": every action, growing out of one glass button (see `addMenuItems`). -->
       {#if appChrome && !actionsHidden}
-        {#if isUploading}
-          <div class="shrink-0">
-            <button
-              type="button"
-              disabled
-              aria-label={m.chat_attach_file_label()}
-              class="glass-chrome ui-icon-button rounded-full"
-            >
-              <LoaderCircle class="h-5 w-5 animate-spin text-amber-500" strokeWidth={2.5} />
-            </button>
-          </div>
-        {:else}
-          <!-- On iOS a native glass "+" is drawn at this box (`nativeGlassPiece`); the spinner
-               above stays web, since an upload is short and cannot be picked from. -->
-          <span
-            class="inline-flex shrink-0"
-            use:nativeGlassPiece={{
-              id: 'chat-add',
-              label: m.chat_composer_add_label(),
-              icon: Plus,
-              items: addMenuItems,
-            }}
-          >
-            <GlassMenuButton
-              icon={Plus}
-              label={m.chat_composer_add_label()}
-              items={addMenuItems}
-              open={surface === 'menu'}
-              onOpenChange={onMenuOpenChange}
-              keepsFocus={menuPressKeepsFocus(keyboardOpen)}
-            />
-          </span>
-        {/if}
+        <!-- On iOS a native glass "+" is drawn at this box (`nativeGlassPiece`). -->
+        <span
+          class="inline-flex shrink-0"
+          use:nativeGlassPiece={{
+            id: 'chat-add',
+            label: m.chat_composer_add_label(),
+            icon: Plus,
+            items: addMenuItems,
+          }}
+        >
+          <GlassMenuButton
+            icon={Plus}
+            label={m.chat_composer_add_label()}
+            items={addMenuItems}
+            open={surface === 'menu'}
+            onOpenChange={onMenuOpenChange}
+            keepsFocus={menuPressKeepsFocus(keyboardOpen)}
+          />
+        </span>
       {/if}
 
       <!-- The website's paperclip. An Android browser gets Canari's menu (`attachMenuItems`); an iOS
@@ -1235,16 +1225,11 @@
         <div class="shrink-0">
           <button
             onclick={() => openSource('files')}
-            disabled={isUploading}
             title={m.chat_attach_file_title()}
             aria-label={m.chat_attach_file_label()}
             class="ui-icon-button chat-composer-icon-button"
           >
-            {#if isUploading}
-              <LoaderCircle class="h-5 w-5 animate-spin text-amber-500" strokeWidth={2.5} />
-            {:else}
-              <Paperclip size={20} strokeWidth={2} />
-            {/if}
+            <Paperclip size={20} strokeWidth={2} />
           </button>
         </div>
       {/if}
@@ -1317,7 +1302,7 @@
         <MentionComposerInput
           bind:this={mentionComposer}
           value={messageText}
-          {allowedUserIds}
+          {mentionRoster}
           onchange={handleMessageChange}
           class="min-w-0 flex-1"
           editorClass="chat-composer-textarea"

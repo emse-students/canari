@@ -10,7 +10,7 @@ vi.mock('$lib/utils/checkLinkSafety', () => ({
 }));
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: (...args: unknown[]) => openUrl(...args) }));
 
-import { handleAppLinkClick, openExternal } from './openExternal';
+import { ECOSYSTEM_SITE_ATTRIBUTE, handleAppLinkClick, openExternal } from './openExternal';
 import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
 import { flushMacrotask } from '../../test/flush';
 
@@ -22,6 +22,21 @@ function pretendTauri() {
 }
 
 describe('handleAppLinkClick', () => {
+  it('leaves an ecosystem-site anchor to its own onclick, even on Tauri', () => {
+    pretendTauri();
+    try {
+      document.body.innerHTML = `<a id="site" href="https://gallery.mitv.fr" ${ECOSYSTEM_SITE_ATTRIBUTE}="migallery">MiGallery</a>`;
+      const anchor = document.getElementById('site') as HTMLAnchorElement;
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'target', { value: anchor });
+      expect(handleAppLinkClick(event)).toBe(false);
+      expect(event.defaultPrevented).toBe(false);
+      expect(openUrl).not.toHaveBeenCalled();
+    } finally {
+      delete (window as TauriWindow).__TAURI_INTERNALS__;
+    }
+  });
+
   it('navigates in-app for supported relative paths', () => {
     document.body.innerHTML = '<a id="link" href="/calendar">Agenda</a>';
     const anchor = document.getElementById('link') as HTMLAnchorElement;

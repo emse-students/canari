@@ -1,103 +1,77 @@
 <script lang="ts">
   import { Bold, Code, Heading2, Italic, Link2, List, Quote, Strikethrough } from '@lucide/svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
-    /** Called with format id (`bold`, `italic`, `heading`, …). */
+    /** Called with format id (`bold`, `italic`, `heading`, ...). */
     onFormat: (type: string) => void;
     class?: string;
     /**
-     * One row that scrolls sideways, with no rule under it, instead of a wrapping block that heads
-     * the editor. For a toolbar that lives in a composer's pinned bottom bar, where a second row
-     * would be taken from the text above the keyboard.
+     * The class of one LABELLED button, to draw the actions as the chips of a composer's pinned bottom
+     * bar (icon and word, wrapping onto as many rows as the width needs) instead of the icon-only
+     * block that heads an editor. It is how the post composer's formatting row fills the room its
+     * attachment chips take, so the swap between the two moves nothing.
      */
-    row?: boolean;
+    chipClass?: string;
   }
 
-  import { m } from '$lib/paraglide/messages';
+  let { onFormat, class: className = '', chipClass }: Props = $props();
 
-  let { onFormat, class: className = '', row = false }: Props = $props();
+  /** One entry per format id `applyComposerMarkdownFormat` knows, in toolbar order; `null` is a rule. */
+  const ACTIONS = [
+    { id: 'bold', icon: Bold, label: () => m.md_toolbar_bold() },
+    { id: 'italic', icon: Italic, label: () => m.md_toolbar_italic() },
+    { id: 'strikethrough', icon: Strikethrough, label: () => m.md_toolbar_strikethrough() },
+    null,
+    { id: 'heading', icon: Heading2, label: () => m.md_toolbar_heading() },
+    { id: 'quote', icon: Quote, label: () => m.md_toolbar_quote() },
+    { id: 'code', icon: Code, label: () => m.md_toolbar_code() },
+    null,
+    { id: 'list', icon: List, label: () => m.md_toolbar_list() },
+    { id: 'link', icon: Link2, label: () => m.md_toolbar_link() },
+  ] as const;
 
   const layoutClass = $derived(
-    row
-      ? 'flex-nowrap overflow-x-auto'
-      : 'flex-wrap border-b border-black/5 px-2 pt-1.5 pb-1.5 dark:border-white/5'
+    chipClass
+      ? 'flex-wrap gap-2'
+      : 'flex-wrap gap-0.5 border-b border-black/5 px-2 pt-1.5 pb-1.5 dark:border-white/5'
   );
 
-  const btnClass =
+  const iconButtonClass =
     'ui-icon-button rounded-lg text-text-muted hover:bg-black/10 dark:hover:bg-white/10 hover:text-text-main transition-colors outline-none focus-visible:ring-1 focus-visible:ring-amber-500';
 </script>
 
 <div
-  class="flex items-center gap-0.5 {layoutClass} {className}"
+  class="flex items-center {layoutClass} {className}"
   role="toolbar"
   tabindex="-1"
   aria-label={m.md_toolbar_aria_label()}
   onmousedown={(e) => e.preventDefault()}
 >
-  <button
-    type="button"
-    title={m.md_toolbar_bold()}
-    class={btnClass}
-    onclick={() => onFormat('bold')}
-  >
-    <Bold size={15} strokeWidth={2} />
-  </button>
-  <button
-    type="button"
-    title={m.md_toolbar_italic()}
-    class={btnClass}
-    onclick={() => onFormat('italic')}
-  >
-    <Italic size={15} strokeWidth={2} />
-  </button>
-  <button
-    type="button"
-    title={m.md_toolbar_strikethrough()}
-    class={btnClass}
-    onclick={() => onFormat('strikethrough')}
-  >
-    <Strikethrough size={15} strokeWidth={2} />
-  </button>
-  <div class="mx-1 h-4 w-px shrink-0 bg-black/10 dark:bg-white/10" aria-hidden="true"></div>
-  <button
-    type="button"
-    title={m.md_toolbar_heading()}
-    class={btnClass}
-    onclick={() => onFormat('heading')}
-  >
-    <Heading2 size={15} strokeWidth={2} />
-  </button>
-  <button
-    type="button"
-    title={m.md_toolbar_quote()}
-    class={btnClass}
-    onclick={() => onFormat('quote')}
-  >
-    <Quote size={15} strokeWidth={2} />
-  </button>
-  <button
-    type="button"
-    title={m.md_toolbar_code()}
-    class={btnClass}
-    onclick={() => onFormat('code')}
-  >
-    <Code size={15} strokeWidth={2} />
-  </button>
-  <div class="mx-1 h-4 w-px shrink-0 bg-black/10 dark:bg-white/10" aria-hidden="true"></div>
-  <button
-    type="button"
-    title={m.md_toolbar_list()}
-    class={btnClass}
-    onclick={() => onFormat('list')}
-  >
-    <List size={15} strokeWidth={2} />
-  </button>
-  <button
-    type="button"
-    title={m.md_toolbar_link()}
-    class={btnClass}
-    onclick={() => onFormat('link')}
-  >
-    <Link2 size={15} strokeWidth={2} />
-  </button>
+  {#each ACTIONS as action, i (action ? action.id : `rule-${i}`)}
+    {#if action === null}
+      {#if !chipClass}
+        <div class="mx-1 h-4 w-px shrink-0 bg-black/10 dark:bg-white/10" aria-hidden="true"></div>
+      {/if}
+    {:else if chipClass}
+      <button
+        type="button"
+        title={action.label()}
+        class={chipClass}
+        onclick={() => onFormat(action.id)}
+      >
+        <action.icon size={16} strokeWidth={2.25} />
+        {action.label()}
+      </button>
+    {:else}
+      <button
+        type="button"
+        title={action.label()}
+        class={iconButtonClass}
+        onclick={() => onFormat(action.id)}
+      >
+        <action.icon size={15} strokeWidth={2} />
+      </button>
+    {/if}
+  {/each}
 </div>

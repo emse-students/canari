@@ -2,6 +2,8 @@ import { BadRequestException } from '@nestjs/common';
 import { OTHERS_BUCKET_ID, type Dimension } from '../pricing/audience';
 import { allCellKeys, pricedQuestionIds, type PriceMatrix } from '../pricing/price-matrix';
 import { normaliseCondition, type ConditionalItem } from './visibility';
+import { isGuestCell } from './form-option-rules';
+import { FORM_ANSWER_NOT_AN_OPTION, formRefusal } from './answer-bounds';
 
 /**
  * WHAT A PRICED ANSWER MAY SAY, AND WHICH PRICE A GRID MAY NOT FALL BACK TO.
@@ -126,8 +128,10 @@ export function assertDeclaredOptionAnswers(
       new Set(chosen).size === chosen.length &&
       chosen.every((id) => typeof id === 'string' && declared.has(id));
     if (!valid) {
-      throw new BadRequestException(
-        `Answer for field ${item.label ?? item.id} is not one of its options.`
+      throw formRefusal(
+        FORM_ANSWER_NOT_AN_OPTION,
+        `Answer for field ${item.label ?? item.id} is not one of its options.`,
+        item.id
       );
     }
   }
@@ -149,10 +153,13 @@ function othersReachable(dimension: Dimension, items: readonly PricedItem[]): bo
 }
 
 /**
- * The cells of a CHARGING grid a submitter can reach through an "everyone else" group and that
- * price at 0 - the free seat a public form must not offer by default (decision PP1, WP-P1). A grid
- * that charges nobody is a free form and returns none. The manager prices such a cell, or marks it
- * unavailable.
+ * The cells of a CHARGING grid a GUEST can reach through an "everyone else" group and that price at
+ * 0 - the free seat a public form must not offer by default (decision PP1, WP-P1): only the cell
+ * where EVERY criterion is "everyone else", never a named option priced 0. A guest lands in
+ * "everyone else" on every criterion about who the person is (`isGuestCell`), so a cell priced for
+ * a promo, a formation or a cotisation is a member's and is not judged here: a member is counted
+ * once like on any form. A grid that charges nobody is a free form and returns none. The manager
+ * prices such a cell, or marks it unavailable.
  */
 export function freeFallbackCells(
   matrix: PriceMatrix | null | undefined,
@@ -162,9 +169,9 @@ export function freeFallbackCells(
   if (!Object.values(matrix.cells).some((v) => typeof v === 'number' && v > 0)) return [];
   const reachable = matrix.dimensions.map((d) => othersReachable(d, items));
   return allCellKeys(matrix.dimensions).filter((key) => {
-    if (matrix.cells[key] !== 0) return false;
-    const parts = key.split('|');
-    const viaOthers = parts.some((p) => p === OTHERS_BUCKET_ID);
-    return viaOthers && parts.every((p, i) => p !== OTHERS_BUCKET_ID || reachable[i]);
+    if (matrix.cells[key] !== 0 || !isGuestCell(matrix, key)) return false;
+    // The TRUE fallback: "everyone else" on EVERY criterion, each of them reachable. A cell naming
+    // an option ("Sans repas: 0") is a free choice the manager made, not a default.
+    return key.split('|').every((p, i) => p === OTHERS_BUCKET_ID && reachable[i]);
   });
 }

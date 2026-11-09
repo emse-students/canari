@@ -437,6 +437,32 @@ matches it - without one, a second save became `X.mp3 (1)` and lost its type. Tw
   (user, 2026-09-29, on the agenda sheet). `exportSearchablePdf` now hands its `pdf.output('blob')`
   to `downloadDecryptedFile`; its test's fake jsPDF throws from `save()` so the regression cannot
   return quietly. When a dependency offers to write a file, look for what it does under the name.
+- **On Android, a saved document is written through ITS PROVIDER'S stream, never `plugin-fs`**
+  (owner report 2026-11-04: an exported log "badly formed", Messenger refusing it or seeing 0
+  bytes). `writeFile` on a `content://` URI asks the Kotlin side for a descriptor, and
+  `tauri-plugin-fs` (2.7.1) answers `openAssetFileDescriptor(...).parcelFileDescriptor.detachFd()`;
+  Rust writes the raw fd and closes it. A `detachFd()` tells the provider's close listener "closed"
+  AT ONCE, before the first byte, so a provider that records the size on close records 0 and keeps
+  it. **Measured on the Mi 9T (Android 16), `1.6.4-alpha.2`:** the log saved into the
+  "Telechargements" root is 2 138 451 bytes on disk and in MediaStore (`_size`), and the Downloads
+  root lists it as **"0 octet(s)"** - as it still lists three logs saved there on 15, 16 and 19
+  October; the same log saved into the "Mi 9T > Download" root (external storage provider, which
+  learns the size from the file system) lists 2,15 Mo. A file shared from the Downloads view
+  carries that provider's size to the receiver. `isProviderDocument(target)` now sends a
+  `content://` destination to `write_staged_document` (gallery plugin): the bytes are staged in the
+  app cache like a shared file, and Kotlin copies them through `contentResolver.openOutputStream`,
+  closed AFTER the copy, so the listener fires once the bytes are in. iOS and desktop return a path
+  and keep `writeFile`: the iPhone 12 save into "Sur mon iPhone" read 1,6 Mo in Files (2026-11-04).
+  **Owed:** after a pre-release, a log saved into "Telechargements" on the Mi 9T lists its real size
+  there, and shared from that view to Gmail and Messenger the receiver shows the size and opens it.
+  **Read 2026-11-07 (Mi 9T, 1.6.6 data, MediaStore):** every saved `canari-log-*.txt` row holds
+  `mime_type=text/plain` and the full `_size`, so the save dialog's `txt` filter already creates a
+  `text/plain` document and the write leaves no stale metadata. "Cannot select the file in Canari" was
+  the composer's `accept` list (now `*/*`, [chat](modules/chat.md)), not the write. Messenger's refusal
+  is NOT reproduced here: if it persists, read the owner's row (Files > Details) before touching the write.
+  Not read: an iOS save into iCloud Drive or a third-party provider, where the dialog plugin exports
+  an EMPTY placeholder (`UIDocumentPickerViewController(url:in: .exportToService)`) before the
+  write.
 - **Never ask for a directory.** Android's storage access framework offers a *document* picker;
   `dialog.open({ directory: true })` has no equivalent there. `save()` is the portable shape.
 - **`fs:default` is READ-ONLY.** It grants reading the app-specific directories and creating them,
@@ -477,7 +503,7 @@ every plugin with a JS command surface, and an exemption there is how that test 
 | Failure | No IndexedDB, or a failed write ON screen: persistence stops for the process, said ONCE at `error` (`[APPLOG] the in-app log is no longer written to disk`), lines stay in a 256 KiB memory tail (oldest dropped and counted), and the export header names the state. **The export still reads the ring already on disk** - it read the memory tail alone, 19 KB against 191 KB stored (iPhone 12, 1.2.9-alpha.3). Not a second storage path. |
 | Write cut short off screen | WebKit aborts the IndexedDB transaction in flight when it suspends a backgrounded WebView, so on iOS the leave-screen flush lost that race (`log write failed` 69 ms after `[LIFECYCLE] App in background`, alpha.2 and alpha.3). A write that fails while the app is OFF screen (known from the same `onAppScreenChange` that asked for it) is not a storage failure: its lines go back in front, the connection is dropped, the batch thresholds stop asking until the app is back, and the return writes them. WebKit delivers that abort on RESUME, so the app may already be on screen when it arrives: the hold then applies only while the app is still off screen, and otherwise the lines are written again at once. One `info` line says so. `appLog.test.ts` pins it. |
 | Wipe | `wipeDeviceToFactory` calls `discardAppLog()` (empties, closes, stops writing for the process) before the `CanariDB*` prefix delete removes the database; `onversionchange` closes the connection too, so the delete cannot block. A sign-out does NOT clear it: "I was logged out" is exactly the report it must survive. The cost, accepted rather than missed: the next account to sign in on that device can export the previous one's REDACTED lines (8-character id prefixes, times, error kinds). |
-| Export | Settings > About > **Save the log**: user-initiated only, through `downloadDecryptedFile` - the browser download on the web, the native save dialog in the app (Android's document picker, iOS's Files picker, the desktop save panel). A header gives version, platform class (`android-app`, never the model), export time and UTC offset, line / redacted / dropped counts and the storage state. |
+| Export | Settings > About > **Save the log**: user-initiated only, through `downloadDecryptedFile` - the browser download on the web, the native save dialog in the app (Android's document picker, written through the provider's own stream, for the reason given in the download rules above - iOS's Files picker, the desktop save panel). The file is `canari-log-<version>-<date>-<time>.txt`, `text/plain;charset=utf-8`. A header gives version, platform class (`android-app`, never the model), export time and UTC offset, line / redacted / dropped counts and the storage state. |
 
 **Why IndexedDB and not a file through the log or fs plugin.** A plugin-log `Webview`/`LogDir`
 forward would cost an IPC crossing per line - on Android a JSON `postMessage` - on the hot path,
@@ -601,6 +627,24 @@ removing the read-side call fails it; a line this build stored, capped or not, n
 **The stored records are NOT rewritten in place.** A rewrite would be a `put` over records the
 writer's amplification test pins at zero, and it would buy nothing: the read-side pass already
 covers every line, and it also covers whatever a FUTURE rule change finds in lines stored today.
+
+### The push service's lines in the in-app log (2026-11-04)
+
+**The log above is the WebView's console, and the Android push service is not in it.** The FCM
+service (`CanariFirebaseMessagingService`, tag `CanariFCM`) usually runs with no WebView alive and
+logs through `android.util.Log`, so every line that says why a salon banner went up blind
+("Quelqu'un" / "Nouveau message dans #salon") lived in logcat only - a tester's exported log could not
+classify their own notifications. The Android counterpart of the iOS extension's `[NSE_OUTCOME]`
+lines (`nseOutcomes.ts`):
+
+| Part | Decision |
+| --- | --- |
+| Source | The service imports `FcmLog as Log` (`NativePushLog.kt`): same signatures, and every `w`, `e` and `println` at WARN or above ALSO goes to `NativePushLog.record`. No call site was rewritten. Debug and info stay in logcat, as the in-app log keeps no debug. |
+| Line | `NativePushLogLine`: the service's own instant in the in-app log's stamp shape, `W`/`E`, the tag, the message, an exception named by its CLASS (never its message or stack), on one line. |
+| Storage | `commands/native_push_log.rs`, through JNI `nativeAppendPushLog`: `native_push_log.txt` in the app data directory, rotated to `native_push_log.1.txt` past **32 KiB** - the pair never exceeds 64 KiB. Lines are cut at 400 characters. One in-process mutex orders every append against every take (the service and the WebView share one Android process), so no line is lost between a read and a removal. |
+| Into the log | `take_native_push_log` (empty off Android) hands the lines over, oldest first, and removes them; `drainNativePushLog` (`nativePushLog.ts`) writes each as `[NATIVE_PUSH] <line>` through `appendLog`, plus one count line - at login, at every resume, and **at the top of `exportAppLog`, before `readAppLog`**, so an export carries what the service said since the last resume. That is the one hook in the export: what the file CONTAINS, never how it is shared. |
+| Privacy | Through `appendLog`, so through the console wrapper and `redactLogLine` like every other line: the lines leave the device under the in-app log's rules (8-character id prefixes, no secrets, no prose values). The service never logs message text; the file itself is app-private and plain, like logcat. |
+| Failure | A writer that cannot write says so ONCE to logcat (`NativePushLog`: `the push service's lines are NOT reaching the in-app log`), never through `FcmLog`, so it cannot recurse. A take that cannot read or remove a generation says so and leaves it for the next take. |
 
 ## The app owns which URLs its own WebView may load
 
@@ -1276,13 +1320,76 @@ The NSE shares data with the main app via App Group `group.fr.emse.canari`:
 - `push_context.json` — device ID, user ID, backend base URL, push token. No key material: the
   device key comes from the shared keychain item `mls_bg_key_<alias>` (see
   [auth](modules/auth.md) "Where the key lives")
-- `mls.bin` — read-only mirror of the persisted MLS state; the NSE never writes it
+- `mls.bin` — read-only copy of the persisted MLS state, rewritten at EVERY write of the state (below); the NSE never writes it
 - `graine_seeds.json` — the salon seed mirror, SEALED at rest; only Rust opens it (see "The native caches are sealed at rest")
 - `push_secret.txt` — read-only mirror of the PushSecret for backend fetch paths
 
 (`channel_keys.json`, the epoch-key mirror Graine replaced, had no reader left; the first run of a 2026-10-22 build deletes it.)
 
 The NSE does **not** write `mls.bin`, process Welcome pushes, or drain the outbox. Those remain app-process responsibilities.
+
+### The extension's copy of the state follows every write (2026-11-05)
+
+**The defect** (owner: blocks `1.6.5`). On the iPhone 12, `1.6.5-alpha.1`: a DM created from the
+foreground, the app killed with `ios.mjs terminate` (an OS death, not a user swipe), then two
+messages pushed in that DM - both banners read `Nouveau message de <sender>`; a salon push in
+between read its text. The syslog of that run (Objective-C lines are readable on a store build) gives
+the mechanism: process `31805` mirrored to the App Group at `didBecomeActive` (12:03:52) and never
+again - no `willResignActive` before `Target app was terminated` (12:11:42); the extension ran at
+12:11:50; the next process, launched in the background at 12:12:26, mirrors only at its
+`didBecomeActive` (12:15:11), so the second DM push (12:14:52) met the same copy. The copy predated
+the DM, so the ladder can only have found no such group (`group-absent`, the generic line) - READ
+FROM THE CODE, since every Swift `NSLog` of the extension arrived `<private>` and its `cause` could
+not be read. The salon was untouched because its key group was older than the activation.
+
+**The fix.** The copy was made at `didBecomeActive` and `willResignActive` only (`canari_ios.mm`,
+`CanariMirrorPushStateToAppGroup`), because "there is no Rust write hook to mirror on". There is
+one now: every write of the slot goes through `write_slot_mls_bin` (`concurrency.rs`) - the
+foreground checkpoint, `save_mls_state`, the re-sealed legacy snapshot and the background engines'
+compare-and-swap - which, under the same hold of `mls_bin_write_lock`, makes the App Group copy the
+slot's (`refresh_extension_copy` -> `sync_extension_copy`, the same code an account switch uses).
+**The compiler refuses any other writer** (2026-11-06): `write_mls_bin_atomically` is private to the
+module `slot_file` in `concurrency.rs`, whose only other item is the follower-taking writer - it
+replaced a source scan (`only_the_slot_writer_writes_mls_bin`) that did the same job one layer lower.
+The copy is an APFS clone where the volume allows it (`std::fs::copy`), and its time is in the
+`[MLS_ACCOUNT]` debug line. The activation mirror stays for the seeds and the secret; its `mls.bin`
+and `push_context.json` halves re-copy files that are already followed. The bench
+commands' deliberate damage (`commands/bench.rs`) is not followed: a CORRUPT row measures the app.
+
+**Owed:** the same reading on a build carrying this (`ios.mjs terminate` after a foreground DM), and
+the extension's `outcome=` line, now readable, saying `decrypted`.
+
+**`push_context.json` follows every edit too (2026-11-06).** The same defect waited in the context:
+it was copied into the App Group only by the activation mirror, so an account switch in the
+foreground followed by a foreground kill paired account B's state (which follows every write) with
+A's context, and the extension drew a generic banner. Every edit of the file - `store_push_context`,
+`store_device_identity`, `set_push_context_locale` and the sign-out strip - now goes through
+`write_push_context_file` (`push.rs`), which writes it and makes the extension's copy follow
+(`sync_push_context_copy`: tmp + rename, or the copy removed when the app holds none), under
+`PUSH_CONTEXT_LOCK`, which every edit already held. The activation mirror no longer copies the file
+itself: it calls `canari_ios_mirror_push_context_to_app_group`, which copies it under the same lock,
+so a mirror can no longer read the file before an edit and write its copy after the edit's own.
+`iosMlsMirror.test.ts` holds both halves. **Owed on the iPhone 12:** an account switch A -> B in the
+foreground, `ios.mjs terminate`, a DM pushed to B - its banner drawn with its text.
+
+**The extension's lines are readable.** `NotificationService.swift` logs through
+`NseLog.log` (`Logger`, subsystem `fr.emse.canari`, category `nse`); every interpolation names its
+privacy, `.public` for ids and id prefixes, counts, states, outcome reasons and error domains and
+codes. `nativeLogContent.test.ts` refuses an interpolation with no privacy argument there, on top of
+its content scan. **And every other Swift line since 2026-11-06**: the keystore patch
+(`KeystoreLog`, category `keystore` - its failed background keychain write is the one that leaves
+every push generic), the system-components patch's button (`PendiNav`), the custom-tabs plugin
+(`CustomTabsLog`) and the gallery plugin (`GalleryLog`) log through a `Logger`, the two packages
+whose floor was iOS 13 raised to 14 for it (the app's floor is 16). `nativeLogContent.test.ts`
+refuses a Swift `NSLog` in ANY `.swift` file under `gen/apple`, `patches` and `plugins`, the set
+derived from the tree, and its content scan reads the two plugins too.
+
+**A frame ahead of the stored state is not called a failure (2026-11-06).** Since #3042 Rust answers
+`mls-refused` with `kind: EpochAhead` for a frame whose cleartext epoch is ahead of the extension's
+copy - the designed case after any commit, which the commit catch-up reads. The ladder's line was
+still `direct decrypt failed ... locality=...`; it reads the kind now (`refusalKind`) and says
+`frame ahead of the stored state ... - the commit catch-up reads it` at `info`, Android's `Log.d`
+twin. Every other refusal keeps the failure line.
 
 **A salon banner names its speaker (2026-11-01), the iOS half of Android's `ChannelBannerAuthor`.**
 Both Apple composers (the NSE's `handleChannelMessage`, `canari_push.mm`'s `CanariHandleChannelMessage`)
@@ -1318,7 +1425,7 @@ reading on the iPhone 12** ([backlog](../backlog.md#owed-a-verification-and-noth
 **Reported by the owner from a real user on iOS 1.5.3: iPhone notifications show no content, and the
 user's exported log held nothing about it** - the extension logged through `NSLog` only, which a
 tethered Mac's Console.app sees and nothing else. Three changes, one pull request
-([backlog](../backlog.d/p1-ios-notifications-show-no-content.md) holds the readings owed):
+(its backlog entry was withdrawn by the owner on 2026-11-03, unreviewed for too long):
 
 - **The outcome log.** `NseOutcomeLog` (in `NotificationService.swift`) appends ONE line per
   notification to `nse_outcomes.ndjson` in the App Group: `outcome` (`decrypted`, `fallback`,
@@ -1341,17 +1448,22 @@ tethered Mac's Console.app sees and nothing else. Three changes, one pull reques
   `Trace` property is read and written under the run's lock, because the expiry reads it on another
   thread while the decrypt writes it.
 - **`killed`, the outcome no run can write.** Each run keeps an in-flight marker
-  `nse_inflight.<pid>.<n>.json`, stamped with the boot session it ran in (`kern.bootsessionuuid`,
-  compared for EQUALITY - not `kern.boottime`, which Darwin recomputes when the clock is stepped and
-  would call a live run killed), rewritten at every stage, removed with its line - under the run's
-  lock, and never rewritten once the run has ended, so an expired run cannot come back as a marker.
-  The boot session is read ONCE per process on both sides (a `static let` in the extension, a
-  `OnceLock` in the app), so a kernel that does not answer is said once, not at every stage.
+  `nse_inflight.<pid>.<n>.json`, stamped with the device's continuous uptime (`up`,
+  `mach_continuous_time` ticks, sleep included, reset by a reboot), rewritten at every stage, removed
+  with its line - under the run's lock, and never rewritten once the run has ended, so an expired run
+  cannot come back as a marker. **The boot proof is one-sided** (2026-11-06): the app reads its own
+  uptime AFTER reading every marker, and a marker whose `up` is GREATER was written before a reboot -
+  an uptime never goes back within one boot. A marker of an earlier boot stamped below the reading is
+  left to the pid proof. It replaced `kern.bootsessionuuid`, compared for equality, which the
+  extension's sandbox refuses with `EPERM` (iPhone 12, `v1.6.5-alpha.2`, `[CanariNSE] outcome:
+  kern.bootsessionuuid unreadable errno=1` at every cold launch): no marker ever carried it, so that
+  proof never ran. `kern.boottime` stays refused - Darwin recomputes it when the clock is stepped, and
+  it would call a live run killed. The uptime is a clock read, not a filtered sysctl (its bench reading is owed).
   **A run's identity is `(pid, at, n)`**: `at` is a millisecond and two runs of one process can
   start in the same one, so the sequence `n` its file names carry is written into its record too
   (and kept by the allowlist - a per-process counter from 1, no more personal than `pid`). A marker
   whose run's line was already taken (same identity) is removed uncounted, alive or not; otherwise
-  the app turns the marker of a process PROVEN gone (stamped in another boot session, or
+  the app turns the marker of a process PROVEN gone (stamped ahead of the app's uptime, or
   `kill(pid, 0)` answering `ESRCH`) into a `killed` line carrying the stage and footprint it
   reached - **but only when the app's own removal of that marker is what removed it**. A proof of
   death is not a proof the run never ended: between the listing and the proof the run can write its
@@ -1547,7 +1659,23 @@ the arguments are deserialised into the Rust `TabItem` and serialised again for 
 Rust lacks is dropped without an error. The `v0.18.32-alpha.2` build therefore drew the selected tab
 in the resting colour. `systemComponentsPatch.test.ts` now reads both halves and fails on any field
 Swift decodes that the Rust struct in front of it does not carry; on its first run it also found
-upstream's `itemPositioning`, dropped the same way (unused here, carried now). The crate is otherwise
+upstream's `itemPositioning`, dropped the same way (unused here, carried now). A later patch adds a
+command, `set_tab_bar_interactive` (2026-11-04): the bar takes no touch under the guided tour's
+backdrop ([guided-help](guided-help.md)); its JS name is pinned by `nativePluginCommands.test.ts`,
+its Swift/Rust argument pair by `systemComponentsPatch.test.ts`. **Show and hide are ordered the
+same way** (2026-11-04): upstream's `show_tab_bar` / `hide_tab_bar` are ASYNC Rust commands, each on
+its own runtime worker before the hop to the main queue, so a hide quickly followed by a show (the
+keyboard closing as a conversation opens) could reach UIKit reversed and leave the bar in the state
+the layout had left. Both now take `TabBarVisibilityOptions { seq }`, invoked by name through
+`invokeSequenced` (`systemComponentsCommands.ts`) instead of the published JS API, which sends no
+argument. ONE mechanism serves the three commands: the page stamps every call from one rising
+counter, and Swift's `CommandSequence` - one instance per state (`interactiveOrder`,
+`visibilityOrder`), both reset by a configuration - drops a call older than the last one it applied.
+A sync Rust command is NOT the alternative: it runs on the main thread and would block it waiting
+for Swift, which answers from `DispatchQueue.main.async` - a deadlock. The race was read off the
+shape, never seen; owed on the iPhone is only that the bar still shows and hides with the layout (a
+conversation opened and left with the keyboard up, the bar back on the list) - a dropped call logs
+`[pendi-nav][native] showTabBar/hideTabBar seq=N dropped`. The crate is otherwise
 byte-identical to 0.1.8 and carries its MIT text, which the published crate omits. A theme change
 redraws both states and reconfigures the bar. **The redraw is keyed on the two COLOURS read off the
 DOM, never on `themeStore.isDark`** (2026-10-01): the bar's `onMount` runs before the root layout's
@@ -1665,7 +1793,8 @@ without a lag the eye sees, the picker opening, and VoiceOver reading the four n
 
 #### The DM whose chrome stands one keyboard too high (2026-10-17)
 
-**OPEN, P2, CAUSE NOT YET MEASURED.** This was found on the iPhone 12 with `v1.2.9-alpha.7`
+**MEASURED 2026-11-04, FIXED BY THE DOCUMENT-ANCHORED RECT (below); the phone reading after the fix is owed.**
+The history that follows is kept for its reasoning. This was found on the iPhone 12 with `v1.2.9-alpha.7`
 ([device-verification](../device-verification.md#the-iphone-12-readings-of-v129-alpha7-2026-10-17), 3b).
 The conversation was a DM whose last message is a tall video. The keyboard rose
 (`overlap=301 -> webview height 543`). The web composer was drawn at 487 pt, where it belongs.
@@ -1699,6 +1828,35 @@ store build's WebView cannot be inspected, so this line is the measurement. Read
 - `composerTop` 186 with both at 0 is cause 3.
 
 No fix is written until the line has named one.
+
+**The reading (iPhone 12, `1.6.4-alpha.2`, 2026-11-04, bench account, 3 rounds + 1 control).**
+- DM "Canari Test Delta" (the thread ends in a tall card): 3 of 3 rounds reproduce. Native
+  `keyboard overlap=301 -> webview height 543`; `keyboard settled: native offset=0.0 content=543.0
+  bounds=543.0`; WDA's tree reads the web "Envoyer le message" at y=487 and the native "Ajouter" ("+")
+  at y=186; the header is out of the tree.
+- Control, DM "Canari Test Alpha" (short messages): same keyboard, `offset=0 content=543 bounds=543`,
+  "+" at y=487, in place.
+- **The `page` half of the line is `<private>` on a TestFlight build**, so `scrollY`, `vvOffsetTop` and
+  `composerTop` cannot be read from the syslog. The cause is named by elimination instead.
+- **Cause 2 is refuted** (`content - bounds` = 0, offset 0). **Cause 3 is refuted**: a composer laid
+  out at 186 would be DRAWN at 186, and the web composer is drawn at 487. What is left is **cause 1**:
+  the page's rect says 186 = 487 - 301 while the screen draws 487 with the native offset at 0, so the
+  page believes its document is scrolled by 301 (the keyboard's reveal) while UIKit's offset is 0.
+  (`rect + scrollY` = 487 is the drawn place; `scrollY` itself was not read, hence "by elimination".)
+
+**The fix.** The piece's rect is anchored to the DOCUMENT, not to the layout viewport:
+`screenRect` = `getBoundingClientRect() + (scrollX, scrollY)`. The app never scrolls its document (the
+shell is `overflow-hidden` at the viewport height, so the document has no scroll range and UIKit's
+offset is 0; `CanariClampDocumentScroll` guarantees that only for an offset leaving its range). The
+rect is therefore right WHILE the offset is 0, and then what is drawn is the document position
+whatever the page believes. `rect + scroll` is invariant under that stale scroll, so no document
+scroll listener is needed; the visual viewport's `scroll` is listened to for the zoomed pan only.
+When it compensates a nonzero scroll it logs once per transition (`Log.i`, "compensating a document
+scroll: scrollX= scrollY="): the in-app reading that confirms the cause, since the native page line
+is `<private>`. Pinch-zoomed (`visualViewport.scale > 1.01`; the viewport meta
+does not forbid zoom) there is a real pan, and the visual viewport's transform
+`(rect - offset) * scale` is used instead. **Owed:** the same three rounds on the build that carries
+it (the "+" at 487 beside "Envoyer", the header in place), and a salon.
 
 **Not new in 1.2.9, by reading.** Between `v1.2.8` and `v1.2.9-alpha.7`, none of these changed:
 
@@ -1988,6 +2146,63 @@ warning - where it previously reached the orphan, which no one could see. Gated 
 WebView itself, so the override is deleted rather than doubled). **Owed: one Mi 9T reading on the
 next pre-release - switch the navigation mode twice, then CDP must list ONE page and a salon text
 refused before the switch must come back to its composer.**
+
+### Wry main pipe patch
+
+**Every WebView call Rust makes on Android crosses wry's "main pipe"**: a channel the tao thread (and
+the main thread) send into, drained on the main thread by a looper callback woken by one byte on a
+pipe (`patches/wry/src/android/main_pipe.rs`). Two Play reports read on 2026-11-03 trace to it, and
+wry upstream carried both in every release up to 0.57.1, so `frontend/src-tauri/patches/wry` is a
+vendored fork of 0.57.1 with four `CANARI PATCH` hunks, pinned `wry = "=0.57.1"` (a transitive crate
+needs the pin, or a newer registry release out-resolves the path patch) and watched by
+`vendored-upstream-report.sh` like the websocket fork.
+
+**ANR `f51255a5a831e715b4fc8d976e87be11`** (3 reports, `1.1.1` and `1.2.3`, Pixel 8a and Galaxy S24
+FE, API 36). Main thread: `WryActivity.onDestroy` -> `Rust.onWebviewDestroy` -> `MainPipe::send` ->
+`crossbeam_channel` array-flavour `send` -> `std::thread::park`. The tao thread is parked in the
+same `send`, from `InnerWebView::eval`. Upstream's channel is `bounded(8)`, and its only consumer is
+the main looper - so once eight messages wait, a main-thread send parks the one thread that could
+ever empty the channel. Play files it under the FCM `RECEIVE` broadcast only because that is what
+could not be delivered while the main thread was stuck; FCM is a bystander. Upstream also
+unregistered the drain for good the first time ONE message's JNI call failed (`recv()?` then
+`is_ok()`), which fills the channel with nobody draining it. **Fixed by construction**: the channel
+is unbounded (an unbounded `send` never blocks), the pipe's write end is non-blocking (a full pipe
+already holds an unread wake byte, which owes a drain that takes the new message too, so `EAGAIN`
+loses nothing), and a failed message is logged `[WRY_MAIN_PIPE]` and the drain goes on. The looper
+callback retries a read interrupted by a signal (upstream unregistered the drain on ANY short read,
+EINTR included). The only cases left - end of file, or a read error, on a pipe whose write end is a
+static - log at error and then ABORT deliberately (`panic!` in the looper callback is SIGABRT
+through `abort_on_panic`), instead of unregistering: owner decision, 2026-11-03, so Play Vitals
+reports a crash rather than leaving a silently frozen UI. A drain handles at most the `len()` it
+read on entry, so it terminates while other threads keep sending; a message sent after that read has
+its own wake byte, or found the pipe full of unread ones, and a later callback drains it. A Java
+exception left pending is described and cleared after EVERY message, not only a failed one - several
+arms swallow a JNI error and the `Jni` closures return nothing, and an exception they leave would
+poison the next message.
+
+**Crash `e3697bc4ad55d069ebb94d3d4a528c34`** (1 report, `1.2.4`, Nothing Phone (2a), API 36).
+`abort_internal` <- `ndk::utils::abort_on_panic` <- the looper callback registered by
+`onFirstActivityCreateWry`. `OnDestroy` (not a configuration change) removes the activity's proxy;
+a message queued for that activity before the destroy then reached `get_webview`, which `unwrap`ped
+the missing entry, and the looper callback turns any panic into SIGABRT. Upstream measured the same
+abort after a back gesture and fixed it on `dev` (tauri-apps/wry#1846, `790ca0df48`, 2026-10-28) -
+in no release yet; the fork carries the same change. `None` is what every caller already handles,
+and the gone-activity case logs `[WRY_MAIN_PIPE] no WebView for activity N` ONCE per activity - the
+evidence the device row reads. The same abort had a second road: every reply to a requester was
+`unwrap`ped, and a requester waits with `recv_timeout`, so an answer arriving after it gave up
+panicked in the same callback. Replies now go through `reply`, which logs the loss.
+
+Reading a later report: Play may cluster the deliberate dead-wake-pipe abort with `e3697bc4`, both
+being a SIGABRT from the looper callback, so read the frames below `cb_handler` - an
+`onFirstActivityCreateWry` closure means a dead pipe (the owner-decided abort), `get_webview` or
+`handle_message` means a real regression.
+
+`.github/scripts/tests/wry-main-pipe-patch.test.mjs` fails a rebase that drops any hunk (in
+`main_pipe.rs` and in `binding.rs`'s looper callback), proves each check against the upstream code it
+replaces, and asserts the `=0.57.1` pin and a lockfile entry with no registry `source`. The device
+reading is owed:
+[device-verification](../device-verification.md#wmp-the-wry-main-pipe-after-an-activity-destroy---owed-on-android).
+The fork is deleted once an upstream release carries every hunk.
 
 ### A modal closed by its owner's state left the overlay stack, and the tab swipe stood down (2026-10-09)
 
@@ -2315,6 +2530,21 @@ overwrite the pending record INCLUDING its resolver, so the first promise never 
 - Decrypts media thumbnails via JNI (`nativeDecryptMedia`)
 - Shows notifications: MessagingStyle for messages, CallStyle for calls
 - Quick actions: Reply (text input) and Mark as Read (broadcast to `CanariNotificationActionReceiver`)
+
+**A content-free wake-up push (`type: wake`, 2026-11-02) is fetched, then dispatched as the full
+push.** With `platform_config.push_mode = wake` and a registration that declared `wake: true`
+(`PUSH_WAKE_DECLARED[platform]` - Android only until the iOS notification P1 closes), an MLS push
+carries only `type`, `queuedMessageId`, `silent` and, for a mentions-only conversation,
+`notifLevel`. Each native receiver fetches `GET /api/mls/push/wake` with the PushSecret and runs the
+answer through its ONE existing path: Android `onWakePush` fetches OFF the MLS lane and
+`WakeOrder` hands the lane every push, wake or full, in ARRIVAL order (a full push cannot overtake an earlier wake still fetching; every wake ticket is settled at most 20 s after it ARRIVED, so nothing waits longer than that behind it) -> `dispatchPush` (`WakeAnswer.classify`
+decides frame / gone / failed), the iOS extension `handleWake` -> `dispatch` (the fetched map merged
+into `userInfo`, stage `wake-fetch`, the run re-kinded to the fetched type, causes `wake-<stage>`
+letter-only), the iOS app
+`CanariHandleWakeBackgroundFrame` -> `CanariHandleBackgroundFrame` for a silent frame. A failed fetch
+is a `[PUSH_WAKE]` ERROR and a notification that says the message could not be loaded - never the
+generic text. Design, failure table and the P1 interlock:
+[push-payloads-carry-nothing](../backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
 
 MessagingStyle takes two `Person`s and **both** need an icon. The sender's comes from `fetchAvatar(senderId)`; ours comes from `fetchAvatar(loadUserId())` - Android attributes the inline reply to the self `Person` while the reply is in flight, so an iconless self is a blank face on the only message in that thread the user actually wrote. `MlsContextLoader.loadUserId` reads just the `userId` field of `push_context.json`, deliberately not `loadPushContext`, whose expensive half is a Keystore round trip this caller has no use for. iOS shows a single attachment image rather than a thread, so it has no self `Person` and nothing to fix there.
 
@@ -2913,6 +3143,8 @@ Both Android and the iOS NSE run the same ladder when an encrypted MLS message p
 
 This order matters because a silent commit push advances the epoch but cannot persist state while the app is closed; the next message push therefore looks like an epoch gap on a group that is already joined. Running catch-up first for local groups avoids the old ~9.6 s retry loop.
 
+**That epoch gap is read from the frame, never learnt from MLS** (2026-11-05). `decrypt_loaded` compares the frame's cleartext epoch with the stored one before any decrypt (`MlsManager::frame_epoch_ahead`, the ONE copy of that question - the foreground's `recevoir_message_bytes` asks it too, and since it does an evicted group's frame is no longer queued there as a `[GAP]` awaiting a resync that cannot come) and answers `mls-refused` with `kind: EpochAhead` at info - the Kotlin decoder says it at debug and the ladder runs the catch-up as before. It used to hand the frame to MLS: an ERROR `process_incoming_message Err(... epoch gap ...)` plus a WARN claiming a "resync" this path never runs, 13 times in one Mi 9T reading of `1.6.5-alpha.1` while every banner still drew its text. A frame of a group this device was removed from stays with MLS (`Evicted`, refused for good), and a gap still standing AFTER the catch-up applied its commits keeps its ERROR - that one is a defect.
+
 ##### The Android half of it is ONE FUNCTION, COMPILED TWICE (2026-09-22)
 
 Steps 2-5 above are `PushRecoveryLadder.run` in
@@ -2988,7 +3220,9 @@ the way each store can answer it.
 Two files exist so a phone can act with the app shut, and each holds what the app's own stores
 seal: `graine_seeds.json` (salon seeds, for the push service to derive a message key) and
 `fcm_message_cache*.ndjson` (messages the push service decrypted, for the next start). Both are
-sealed at rest by `src-tauri/src/native_cache.rs`, the only copy of the design:
+sealed at rest by `src-tauri/src/native_cache.rs`, the only copy of the design. (The mirror's
+entries also carry their writers' account labels since 2026-11-07, so one account's wipe removes
+only its own: [auth](modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07).)
 
 - **The key is the INSTALL's, not the device key.** A random 32 bytes, created once by the native
   side at process start (Android `NativeCacheKey.ensure` from `CanariApplication`; iOS
@@ -3318,6 +3552,8 @@ uninstall and therefore that phone's identity and history.
 The fix is `tauri-plugin-customtabs` (`frontend/src-tauri/plugins/tauri-plugin-customtabs/`), a mobile plugin (one command, `open_custom_tab`) that opens the URL via `androidx.browser.customtabs.CustomTabsIntent` on Android. A Custom Tab shares the **launching app's own task**, which is what lets the OS close it automatically the instant that task's activity resumes - confirmed live via `adb shell dumpsys activity activities`: the tab's `ActivityRecord` shared the app's task id right after `startOidcLogin()`, and was gone from that task's history entirely the moment the deep link returned. `auth.ts` now branches on `isMobileTauriRuntime()` for both platforms - iOS no longer keeps the plain `openUrl` launch.
 
 **iOS side (built, not yet run on a device or simulator - this repo has never done that for any iOS build, see the device-verification ladder in CLAUDE.md).** `ios/Sources/CustomTabsPlugin.swift` presents the same URL in an `ASWebAuthenticationSession` instead, following `patches/tauri-plugin-keystore`'s `ios/` structure exactly (`Package.swift`, `Sources/`, `@_cdecl("init_plugin_customtabs")`). The one thing that is NOT a straight mirror of Android and needs checking first on hardware: `ASWebAuthenticationSession` intercepts its `callbackURLScheme` redirect itself, bypassing the app's normal URL-opening delegate entirely - so it would never reach `tauri-plugin-deep-link`'s `onOpenUrl` listener the way Android's intent-filter callback does. The plugin works around this by re-opening the callback URL via `UIApplication.shared.open(_:)`: since `fr.emse.canari://` is this app's own registered scheme, that call is expected to route straight back into the same app-delegate path the Android deep link already uses, keeping `hooks.client.ts` and everything downstream of it (the `/auth/callback` exchange) unchanged and shared between platforms. **VERIFIED ON HARDWARE 2026-08-27** (iPhone, iOS 18.7, against production): the `ASWebAuthenticationSession` presented, the redirect was intercepted, the self-reinvocation routed back into the app, and `/auth/callback` ran - the login failed one step later, in a server's CORS allowlist, which is a different defect entirely ([below](#the-ios-login-that-died-in-a-cors-allowlist)). Nothing in this plugin needed changing.
+
+**The command answers how the browser ENDED, typed (2026-11-04).** `open_custom_tab` resolves with `{ outcome }` - `completed` (iOS: the session caught the callback and re-dispatched it), `cancelled` (iOS: the user closed the sheet, or answered "Annuler" on the consent alert), `handedOff` (Android: the tab is an activity the OS owns, whose end IS the app's foreground edge) - and REJECTS on a failure (`start()` refused, any session error other than `canceledLogin`). `CustomTabOutcome` in the plugin's `src/models.rs` is the one definition; Rust deserialises the native answer into it, `parseCustomTabOutcome` (`customTabsCommands.ts`) types it for the page, and the Rust command awaits it with `run_mobile_plugin_async` so a sheet held open for minutes pins no runtime worker. **Why:** the iOS plugin used to resolve on PRESENTATION and drop a cancellation; an in-app sheet raises no visibility, focus or foreground edge, so `LoginPage.svelte` kept its button on "Redirection..." until the app was killed (iPhone 12, `1.6.3-alpha.7`). The page now releases the form on `cancelled` (`settleLoginStart`, pinned by `LoginPage.cancelledSheet.svelte.test.ts`) and keeps it busy on every other outcome. A second `openCustomTab` while a sheet is up answers the earlier invoke `cancelled` and cancels its session, so each invoke settles exactly once. The sign-out's end-session does NOT await the outcome: the app goes to `/login` behind the sheet, as before, and the outcome is only logged. Owed on the iPhone: check SC in [device-verification](../device-verification.md).
 
 **Why this needed a real plugin and not a few lines of Rust JNI.** This app already has a working Rust → Kotlin JNI call (`flush_webview_cookies` in `commands/cookies.rs`, calling `CookieManager.getInstance()`/`.flush()`), and its own comment explains exactly why that pattern does not generalise: a JNI-attached native thread has no Java frames on its stack, so `FindClass` only reaches boot-classpath **framework** classes. `android.webkit.CookieManager` is one; `androidx.browser.customtabs.CustomTabsIntent` (bundled into the APK's own dex, like `MainActivity` itself) is not, and would fail to resolve the same way calling into `MainActivity` directly would. Tauri's own plugin-invocation mechanism (`@TauriPlugin`, `Plugin(activity)`) runs Kotlin code with the correct classloader context for exactly this reason, which is why the fix is a full (if minimal) mobile plugin, following `patches/tauri-plugin-keystore`'s structure - `Cargo.toml`/`build.rs`/`src/mobile.rs` on the Rust side, `CustomTabsPlugin.kt` + a Gradle module on the Android side - rather than extending the raw-JNI pattern.
 
@@ -4250,6 +4486,38 @@ both halves run only on hardware.
 ## The group summary never alerts (measured on a Pixel 6a, 2026-10-09)
 
 Logcat 12:16:49: a `type=channel` push at .069, a `type=channel_read` at .103 (`cancelConversationNotification` id=1035, which calls `refreshBadgeSummary`), the message banner posted at .147, then Android logged "Muting recently noisy" on the summary id 9999. The summary was rebuilt by every post and cancel with default alert behaviour, so each rebuild counted as a noisy post and tripped the platform's rate limit on the group. `refreshBadgeSummary` now sets `setOnlyAlertOnce(true)` and `GROUP_ALERT_CHILDREN`: only a child line may sound. No change to the message repost: a message already announced and cancelled by a read push is refused by the alerted ledger (`hasAlreadyAlerted`), and one not yet announced is rightly its first alert, so a second `setOnlyAlertOnce` there would only hide a real first sound.
+
+## Back to the top: a re-tap of the open tab, and the iOS status bar (owner, 2026-11-04)
+
+An iPhone user had no quick way back to the top of the feed. Two gestures, NO button (owner), ONE action (`scrollPageToTop`, `lib/navigation/scrollToTop.ts`). Section navigation is a closed chantier ([section-navigation](section-navigation.md)); this adds a gesture, not a menu.
+
+- **Re-tap of the tab the reader is on** (`handlePlaceTap`; native iOS bar, `BottomNav` on web and Android, `AppSidebar` on desktop). The web bars' links only DECLARE themselves place links (`data-app-place`, `PLACE_LINK_ATTRIBUTE`); the decision is made by `handleAppLinkClick` (`openExternal.ts`), the document's capture listener that owns every in-app link click and stops it. The first build put the gate in each anchor's `onclick`, which that listener never let run: on the Mi 9T (`1.6.4-alpha.3`) three re-taps of the open Feed tab logged `[appLink] In-app navigation`, no `[scrollToTop]` line, and the page stayed at 1378 px. The test dispatches a real click on a place link with that listener installed. A re-tap first closes any open history overlay and stops there (the same-URL navigation it replaces used to drain them). Otherwise the first re-tap scrolls the page to the top (smooth, instant under reduced motion); a re-tap while ALREADY at the top refreshes the feed, like Instagram, through the SAME function as pull-to-refresh (`refreshPosts`, registered by the feed with `registerRetapRefresh`), one refresh at a time, a failure warned. `scrollPageToTop` itself never refreshes. A tap from deeper in the place (`/posts/<id>`) still navigates back to it; ctrl/meta/shift/alt and non-primary clicks on the web links are left to the browser. The native bar delivers a re-tap because `UITabBarDelegate.didSelect` fires for the selected item too (owed one reading on an iPhone). Other places get the scroll where they scroll in the layout's box (communities, dashboard); the chat list scrolls in its own panel, so it is not covered, and only the feed registers a refresh.
+- **iOS status bar tap**: the app's pages scroll in ONE inner box (`.page-scroll-wrap`, `+layout.svelte`) and the document never moves. **WebKit does not answer the tap for that box (measured)**: on two throwaway bench builds of the iPhone 12 (2026-11-04, dev), with no catcher, the scrolled feed did not move on a tap at (200,20) - neither with the web view's own `scrollsToTop` left at its default (the state before #3013) nor with it switched off, although WebKit gives the box a native scroll view of its own. So the patched plugin mounts a `StatusBarTapCatcher` in the tab bar overlay and switches the web view's `scrollsToTop` off. Since iOS 13 the tap is a scene action (`UIStatusBarTapAction`), not a touch: no hit test runs. The first build's catcher (`1.6.4-alpha.3`) was a 1 pt strip at `alpha` 0.01 and the page did not move; `alpha` 0.01 is stored as a `Float` below UIKit's 0.01 visibility threshold, the most likely single cause. Since `1.6.4-alpha.4` the catcher has `alpha` 1 on a clear background, covers the whole status bar (top edge to the safe area's top, full width, at least 1 pt) and always keeps vertical range, and **the tap scrolls the feed to the top (measured on alpha.4)**. That UIKit picks the scroll view under the tap's x position is inferred from behaviour, not documented. The catcher refuses the native scroll and triggers the `statusBarTap` plugin event; the page runs `scrollPageToTop('status-bar')`, which never refreshes and is skipped while a history overlay is open (the page behind would move unseen). A full-screen modal that is NOT on the history overlay stack is not detected: the tap scrolls the page behind it.
+  - **The catcher's log line was there and read as absent.** alpha.4's `NSLog("[pendi-nav][native] status bar tap caught ...")` arrived as `Canari{Foundation} <private>`, 1.8 ms after `Received action(s): UIStatusBarTapAction`, the only such line of that process in the capture: **a Swift `NSLog` is redacted WHOLE on a store build**, literal text included (the Objective-C `[CanariIOS]` lines are not). The plugin's lines now go through one `Logger` (`PendiNav.log`, category `pendi-nav`), whose literal text is public, and `nativeLogContent.test.ts` scans the plugin. Read on a bench build of that change (iPhone 12, dev, 2026-11-04): three taps on a scrolled feed, three `Received action(s): UIStatusBarTapAction` each followed within 2 ms by `Canari{Canari} [pendi-nav][native] status bar tap caught, reported to the page`, and the feed back at its top.
+  - **It takes NO touch, and the dead band under the status bar is iOS's, not ours (measured).** `PassthroughView.hitTest` returns nil for everything but the bar and the account button, so the catcher never enters a hit test. On alpha.4 a horizontal swipe STARTING at y 30 did nothing on the feed as on the camera tab, while the same swipe at y 400 changed tab. On the throwaway build with NO catcher (the pre-#3013 native state) a debug probe logging every overlay hit test with y < 100 logged nothing for a swipe at y 30 and did for one at y 90, and the swipe at y 30 changed nothing: **iOS does not deliver to the app a touch that begins in the status bar band (0-47 pt on the iPhone 12) while the status bar is shown**. It is not a `1.6.4` regression and no overlay change can fix it; only hiding the status bar on a screen would give that band back (not decided). Driven over WDA, whose touches are synthesised through the system like a finger's.
+
+## A panel on a phone is the whole screen, and the status bar is padded ONCE (owner, 2026-11-04)
+
+Symptom (iPhone, English): the group's "Group management" panel opened with about 70 pt of blank
+above its header, below the clock. Cause: `SidePanel.svelte` left a chat panel IN the page (it had
+to be, for the `xl` column), and `.page-scroll-wrap` (`will-change: transform`) is the containing
+block of `position: fixed`, so `top: 0` meant "below the status bar" - `.app-shell` already pads
+`--safe-area-inset-top`. `.side-panel-header` then added the inset again. Two owners, one inset.
+
+Decided: below `xl` EVERY side panel is a drawer, portalled to `<body>` (`portalWhile`, driven by
+`OVERLAY_LAYOUT_QUERY`), laid out against the window, and `.side-panel-header` is the ONE owner of
+the top inset. Below 768 px the drawer has no `max-width`, so it is the whole screen; from 768 px it
+keeps its 28rem card. Only a column at `xl` stays in the page. Same shell, so it covers the group
+panel, the channel members, media and channel settings (`ConversationSidePanel`) and the community
+settings (`SidebarCommunityAdminPanel`, already portalled). Pinned by `SidePanel.portal.svelte.test.ts`.
+
+Two consequences, both intended. (1) The aside carries `use:coversScreen` as well as the scrim, because
+the minimised call bar redefines `--safe-area-inset-top` only UNDER a `data-covers-screen` node, and the
+header lives in the aside. (2) At 768-1279 px the drawer's `top: calc(var(--app-content-top) + 0.75rem)`
+now resolves against the window, as the sidebar's panels always did, instead of against
+`.page-scroll-wrap` (which already starts below the top bar, so it used to offset twice). The geometry
+there therefore CHANGED - it now sits where its own comment says, below the bar; read it once at iPad
+width. The `@md` forms also apply to a phone panel wider than 28rem (up to 767 px).
 
 ## See also
 

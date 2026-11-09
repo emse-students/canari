@@ -43,8 +43,8 @@ vi.mock('$lib/utils/users/displayName', () => ({
   resolveUserDisplayName: async (id: string) => `User ${id}`,
 }));
 vi.mock('$lib/utils/userAvatarCache', () => ({
-  resolveUserAvatarDisplayUrl: async () => ({ kind: 'none' as const }),
-  releaseUserAvatarDisplayUrl: () => {},
+  resolveUserAvatarDisplay: async () => ({ kind: 'none' as const }),
+  releaseUserAvatarDisplay: () => {},
 }));
 vi.mock('$lib/moderation/muteCheck', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/moderation/muteCheck')>()),
@@ -286,6 +286,18 @@ it('a post of one picture is a photo page, with the rail and no player', async (
   expect(q('[data-reel-rail]')).not.toBeNull();
   // Not a reel without its video: nothing accuses the row.
   expect(error).not.toHaveBeenCalled();
+  error.mockRestore();
+});
+
+it('a post of one video is a reel page with its tools, and nothing accuses the row', async () => {
+  const feedVideo = post('v', { kind: 'post', expiresAt: null });
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  await render(feedVideo, 'alice');
+
+  expect(q('[data-reel-page="reel"]')).not.toBeNull();
+  expect(q('[data-reel-rail] [data-reel-save]')).not.toBeNull();
+  expect(q('[data-reel-rail-sound]')).not.toBeNull();
+  expect(error).not.toHaveBeenCalledWith(expect.stringContaining('neither a reel nor one picture'));
   error.mockRestore();
 });
 

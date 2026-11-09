@@ -3,6 +3,11 @@
 import { Logger } from '@nestjs/common';
 import { PostNotificationsService } from './post-notifications.service';
 import type { PushContent } from '../push/push-content';
+import {
+  levelWithholds,
+  type BellTarget,
+  type StoredBellLevel,
+} from '../follows/account-bells.service';
 
 /**
  * THE AGENDA'S NOTIFICATIONS ESCAPED THE ONE MAPPING THAT MAKES A PUSH TRANSLATABLE.
@@ -25,8 +30,10 @@ describe('PostNotificationsService.createNotifications', () => {
   const saved: unknown[] = [];
   const updates: unknown[] = [];
   const pushes: { userId: string; content: PushContent; data?: Record<string, string> }[] = [];
-  const mutedIds = new Set<string>();
-  const muteAsks: string[] = [];
+  /** Each recipient's stored bell level for whichever account is asked about (none = no row). */
+  const levels = new Map<string, StoredBellLevel>();
+  /** Which accounts' bells were asked, as `kind:id`. */
+  const bellAsks: string[] = [];
   let warn: jest.SpyInstance;
 
   function service(): PostNotificationsService {
@@ -49,17 +56,24 @@ describe('PostNotificationsService.createNotifications', () => {
         return Promise.resolve();
       },
     };
-    const mutes = {
-      mutedAmong: (associationId: string, ids: string[]) => {
-        muteAsks.push(associationId);
-        return Promise.resolve(new Set(ids.filter((id) => mutedIds.has(id))));
+    const bells = {
+      withheldAmong: (target: BellTarget, ids: string[]) => {
+        bellAsks.push(`${target.kind}:${target.id}`);
+        return Promise.resolve(
+          new Set(
+            ids.filter((id) => {
+              const level = levels.get(id);
+              return level !== undefined && levelWithholds(level, target.push);
+            })
+          )
+        );
       },
     };
     return new PostNotificationsService(
       notifRepo as never,
       {} as never,
       push as never,
-      mutes as never
+      bells as never
     );
   }
 
@@ -67,8 +81,8 @@ describe('PostNotificationsService.createNotifications', () => {
     saved.length = 0;
     updates.length = 0;
     pushes.length = 0;
-    mutedIds.clear();
-    muteAsks.length = 0;
+    levels.clear();
+    bellAsks.length = 0;
     warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
   });
 
@@ -175,6 +189,7 @@ describe('PostNotificationsService.createNotifications', () => {
     ['event_updated', 'event_updated'],
     ['event_deleted', 'event_deleted'],
     ['event_pending', 'event_pending'],
+    ['event_pending_coorganiser', 'event_pending_coorganiser'],
   ])('%s pushes a CONTENT KEY, never a composed sentence', async (type, expectedKey) => {
     await service().createNotifications({
       recipientIds: ['a'],
@@ -290,7 +305,7 @@ describe('PostNotificationsService.createNotifications', () => {
     ]);
   });
 
-  describe('the per-association mute', () => {
+  describe('the bell (engagement WP-3, which replaced the per-association mute)', () => {
     const flush = () => new Promise((resolve) => setImmediate(resolve));
     const base = {
       postId: 'p1',
@@ -300,8 +315,8 @@ describe('PostNotificationsService.createNotifications', () => {
       associationId: 'asso1',
     };
 
-    it('writes the in-app row for a muted reader and withholds only the push', async () => {
-      mutedIds.add('b');
+    it('writes the in-app row for a reader whose bell is at none and withholds only the push', async () => {
+      levels.set('b', 'none');
       const written = await service().createNotifications({
         ...base,
         recipientIds: ['a', 'b', 'c'],
@@ -312,11 +327,11 @@ describe('PostNotificationsService.createNotifications', () => {
       expect(written).toBe(3);
       expect(saved.map((r) => (r as { recipientId: string }).recipientId)).toEqual(['a', 'b', 'c']);
       expect(pushes.map((p) => p.userId)).toEqual(['a', 'c']);
-      expect(muteAsks).toEqual(['asso1']);
+      expect(bellAsks).toEqual(['association:asso1']);
     });
 
-    it('applies to a republication as well', async () => {
-      mutedIds.add('a');
+    it('applies to a republication as well, at lives too (a post, not a live)', async () => {
+      levels.set('a', 'lives');
       await service().createNotifications({
         ...base,
         recipientIds: ['a', 'b'],
@@ -326,8 +341,8 @@ describe('PostNotificationsService.createNotifications', () => {
       expect(pushes.map((p) => p.userId)).toEqual(['b']);
     });
 
-    it('never reaches a manager-side type, whoever muted', async () => {
-      mutedIds.add('a');
+    it('never reaches a manager-side type, whatever the bell', async () => {
+      levels.set('a', 'none');
       await service().createNotifications({
         ...base,
         recipientIds: ['a', 'b'],
@@ -335,12 +350,59 @@ describe('PostNotificationsService.createNotifications', () => {
       });
       await flush();
       expect(pushes.map((p) => p.userId)).toEqual(['a', 'b']);
-      expect(muteAsks).toEqual([]);
+      expect(bellAsks).toEqual([]);
+    });
+
+    it("asks a PERSON's bell for their post, and lives withholds it", async () => {
+      levels.set('a', 'lives');
+      await service().createNotifications({
+        postId: 'p1',
+        actorId: 'author',
+        actorName: 'Claire',
+        text: 'Hello',
+        recipientIds: ['a', 'b'],
+        type: 'followed_post',
+      });
+      await flush();
+      expect(bellAsks).toEqual(['user:author']);
+      expect(pushes.map((p) => p.userId)).toEqual(['b']);
+    });
+
+    it('asks the reposter for a member repost', async () => {
+      levels.set('b', 'none');
+      await service().createNotifications({
+        postId: 'p1',
+        actorId: 'reposter',
+        actorName: 'Claire',
+        text: 'Hello',
+        recipientIds: ['a', 'b'],
+        type: 'member_repost',
+      });
+      await flush();
+      expect(bellAsks).toEqual(['user:reposter']);
+      expect(pushes.map((p) => p.userId)).toEqual(['a']);
+    });
+
+    it('never asks a bell about a mention, a reply or a comment', async () => {
+      levels.set('a', 'none');
+      for (const type of ['mention', 'reply', 'comment']) {
+        await service().createNotifications({
+          postId: 'p1',
+          actorId: 'author',
+          actorName: 'Claire',
+          text: 'Hello',
+          recipientIds: ['a'],
+          type,
+        });
+      }
+      await flush();
+      expect(bellAsks).toEqual([]);
+      expect(pushes.map((p) => p.userId)).toEqual(['a', 'a', 'a']);
     });
   });
   /**
    * A LIVE IS ANNOUNCED BY PUSH ONLY (WP-L7): it is deleted when it ends (L3), so a bell row would
-   * name a 404 for ever after. Same mapping, same icon rule, same mute as a post - one helper.
+   * name a 404 for ever after. Same mapping, same icon rule, same bell as a post - one helper.
    */
   describe('pushNotice', () => {
     const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -368,21 +430,30 @@ describe('PostNotificationsService.createNotifications', () => {
         icon: { kind: 'user', userId: 'broadcaster' },
       });
       expect(pushes[0].data).toEqual({ type: 'social', liveId: 'live-1' });
-      expect(muteAsks).toEqual([]);
+      expect(bellAsks).toEqual(['user:broadcaster']);
     });
 
-    it("withholds an association's live from the followers who muted it, with its logo", async () => {
-      mutedIds.add('a');
+    it("pushes a person's live to a bell at lives, and withholds it at none", async () => {
+      levels.set('a', 'lives');
+      levels.set('b', 'none');
+      await service().pushNotice({ ...live, recipientIds: ['a', 'b'] });
+      await flush();
+      expect(pushes.map((p) => p.userId)).toEqual(['a']);
+    });
+
+    it("withholds an association's live at none, not at lives, with its logo", async () => {
+      levels.set('a', 'none');
+      levels.set('c', 'lives');
       await service().pushNotice({
         ...live,
         actorName: 'BDE',
         associationId: 'asso1',
         associationLogoMediaId: 'logo1',
-        recipientIds: ['a', 'b'],
+        recipientIds: ['a', 'b', 'c'],
       });
       await flush();
-      expect(muteAsks).toEqual(['asso1']);
-      expect(pushes.map((p) => p.userId)).toEqual(['b']);
+      expect(bellAsks).toEqual(['association:asso1']);
+      expect(pushes.map((p) => p.userId)).toEqual(['b', 'c']);
       expect(pushes[0].content.icon).toEqual({ kind: 'publicMedia', mediaId: 'logo1' });
     });
 

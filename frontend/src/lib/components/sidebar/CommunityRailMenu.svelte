@@ -43,7 +43,7 @@
 
   /** Same row box as the post menu, so the two menus read as one family. */
   const ROW =
-    'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors';
+    'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors [&>svg]:shrink-0';
 </script>
 
 <div

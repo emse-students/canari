@@ -26,6 +26,7 @@ import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 const admitRefused = (userIds: string[]) =>
   new CommitRefusedError('admit_refused', 2, 2, null, userIds);
 import { decodeAppMessage } from '$lib/proto/codec';
+import { devicePackages } from '$lib/mls-client/test/fixtures/devicePackages';
 
 /** A send the delivery service accepted, with its receive time. */
 const SENT = {
@@ -307,7 +308,9 @@ function sweepHarness() {
     releaseAddLock: vi.fn(async () => {}),
     getGroupMembers: vi.fn(async () => []),
     getGroupMemberIdentities: vi.fn(async () => [...state.tree]),
-    fetchUserDevices: vi.fn(async () => [{ deviceId: 'w4-new', keyPackage: new Uint8Array([4]) }]),
+    fetchDeviceKeyPackage: devicePackages([
+      { deviceId: 'w4-new', keyPackage: new Uint8Array([4]) },
+    ]),
     getDeviceMemberships: vi.fn(async () => []),
     deleteDeviceMembership: vi.fn(async () => {}),
     pinnedSignatureKeys: vi.fn(async () => ({ keys: [], anchored: false, reaffirmations: 0 })),
@@ -435,10 +438,12 @@ describe('processPendingInvitations - a lost commit race', () => {
       { userId: 'w4', deviceId: 'w4-b', groupId: G, status: 'pending' },
     ];
     h.mlsService.getPendingInvitations.mockResolvedValue(rows);
-    h.mlsService.fetchUserDevices.mockResolvedValue([
-      { deviceId: 'w4-a', keyPackage: new Uint8Array([4]) },
-      { deviceId: 'w4-b', keyPackage: new Uint8Array([5]) },
-    ]);
+    h.mlsService.fetchDeviceKeyPackage.mockImplementation(
+      devicePackages([
+        { deviceId: 'w4-a', keyPackage: new Uint8Array([4]) },
+        { deviceId: 'w4-b', keyPackage: new Uint8Array([5]) },
+      ])
+    );
     // Neither Add lands, so both rows are judged at the same epoch.
     h.mlsService.addMember.mockRejectedValue(new Error('boom'));
 
@@ -457,10 +462,12 @@ describe('processPendingInvitations - a lost commit race', () => {
       { userId: 'w4', deviceId: 'w4-a', groupId: G, status: 'pending' },
       { userId: 'w4', deviceId: 'w4-b', groupId: G, status: 'pending' },
     ]);
-    h.mlsService.fetchUserDevices.mockResolvedValue([
-      { deviceId: 'w4-a', keyPackage: new Uint8Array([4]) },
-      { deviceId: 'w4-b', keyPackage: new Uint8Array([5]) },
-    ]);
+    h.mlsService.fetchDeviceKeyPackage.mockImplementation(
+      devicePackages([
+        { deviceId: 'w4-a', keyPackage: new Uint8Array([4]) },
+        { deviceId: 'w4-b', keyPackage: new Uint8Array([5]) },
+      ])
+    );
     // Row A's Add fails without moving the epoch; meanwhile a removal's record deletes row B.
     h.mlsService.addMember.mockImplementationOnce(async () => {
       h.mlsService.getPendingInvitations.mockResolvedValue([

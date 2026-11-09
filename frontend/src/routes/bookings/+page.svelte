@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import SpaceList from '$lib/components/bookings/booker/SpaceList.svelte';
@@ -81,7 +82,11 @@
     </div>
   {:else}
     <div class="space-y-8">
-      <section class="space-y-3" aria-labelledby="bookings-mine-heading">
+      <section
+        class="space-y-3"
+        aria-labelledby="bookings-mine-heading"
+        use:guideAnchor={'bookings.mine'}
+      >
         <h2 id="bookings-mine-heading" class="text-text-main text-lg font-bold tracking-tight">
           {m.bookings_mine_heading()}
         </h2>
@@ -135,7 +140,9 @@
         {:else if spaces.length === 0}
           <p class="text-text-muted text-sm">{m.bookings_spaces_empty()}</p>
         {:else}
-          <SpaceList {spaces} label={m.bookings_spaces_heading()} />
+          <div use:guideAnchor={'bookings.spaces'}>
+            <SpaceList {spaces} label={m.bookings_spaces_heading()} />
+          </div>
         {/if}
       </section>
 

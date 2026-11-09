@@ -14,6 +14,7 @@
     Megaphone,
     X,
     Ban,
+    Users,
   } from '@lucide/svelte';
   import { Log } from '$lib/utils/Log';
   import { clickOutside } from '$lib/actions/clickOutside';
@@ -23,6 +24,9 @@
   import { isMobileOverlayLayout } from '$lib/utils/historyOverlayStack';
   import { slide } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
+  import { toggleMyRepost } from '$lib/posts/sharePost';
+  import type { PinSpace } from '$lib/posts/api';
+  import { campusLabel, formationLabel } from '$lib/profile/miconnectProfile';
 
   /**
    * Props for the PostActionsMenu component.
@@ -56,24 +60,36 @@
    * reader moderates the feed.
    */
   interface Props {
-    /** Whether the post is currently pinned. */
-    pinned: boolean;
     /**
-     * May edit or delete: the post's publisher (its author, or an officer of the association it
-     * speaks for), a content moderator, or a platform admin.
+     * WP-PIN: the spaces where this reader may pin the post, each with the pin's state there - one
+     * entry per space, served by the server. With exactly one, the entry reads "Épingler" alone.
+     */
+    pinSpaces: PinSpace[];
+    /**
+     * May delete: the post's publisher (its author, or an officer of the association it speaks
+     * for), a moderator of this post (a BDE MODERATE of its spaces), or a platform admin.
      */
     canManage: boolean;
-    /** May pin or unpin: a content moderator (BDE MODERATE) or a platform admin. */
+    /**
+     * May edit: the post's author (publisher) ALONE - never a moderator nor the platform admin
+     * (owner, 2026-11-02). Required, never derived from `canManage`: that would hand the pencil back
+     * to every moderator.
+     */
+    canEdit: boolean;
+    /**
+     * May pin or unpin (WP-PIN): the reader governs a space where the post is visible - the platform
+     * admin, or `MODERATE` in that space's BDE. A promotion per space, not moderation.
+     */
     canPin: boolean;
     /** May report: any logged-in reader who is not the post's own publisher. */
     canReport: boolean;
-    /** May clear the anonymous flag on this post: same tier as `canPin`, only ever true when the
-     *  post actually is anonymous - the server never sets it otherwise. */
+    /** May clear the anonymous flag on this post: a moderator of it or a platform admin, only ever
+     *  true when the post actually is anonymous - the server never sets it otherwise. */
     canUnmaskAnonymous: boolean;
     /** Whether any user is logged in (gates the whole menu). */
     isLoggedIn: boolean;
-    /** Called when the reader picks pin/unpin. */
-    onTogglePin: () => void;
+    /** Called with the space the reader pins the post in, or unpins it from. */
+    onTogglePin: (space: PinSpace) => void;
     /** Called when a manager picks "Edit post". */
     onStartEdit: () => void;
     /** Called when a manager picks "Delete post". */
@@ -100,7 +116,7 @@
     canRequestRepublication?: boolean;
     /** The requests of the reader's associations still waiting on the author, one entry each. */
     pendingRequests?: { proposalId: string; name: string }[];
-    /** Called when the reader picks "Republier au nom d'une association". */
+    /** Called when the reader picks "Demander a republier". */
     onRequestRepublication?: () => void;
     /** Called with the request (a proposal id) the reader cancels. */
     onWithdrawRequest?: (proposalId: string) => void;
@@ -117,11 +133,19 @@
     repostsAllowed?: boolean;
     /** WP-F6: the author picked "Autoriser" (true) or "Interdire" (false) for this post. */
     onSetRepostConsent?: (allow: boolean) => void;
+    /**
+     * WP-F6: the AUTHOR's own post only - how many people they are shown as having reposted it.
+     * Above zero, draws "Republie par N personnes", which opens the list (`onShowReposters`).
+     */
+    reposterCount?: number;
+    /** WP-F6: the author picked "Republie par N personnes". */
+    onShowReposters?: () => void;
   }
 
   let {
-    pinned,
+    pinSpaces,
     canManage,
+    canEdit,
     canPin,
     canReport,
     canUnmaskAnonymous,
@@ -147,6 +171,8 @@
     onRepostChange = () => {},
     repostsAllowed,
     onSetRepostConsent = () => {},
+    reposterCount = 0,
+    onShowReposters = () => {},
   }: Props = $props();
 
   let open = $state(false);
@@ -176,6 +202,14 @@
     () => open && isMobileOverlayLayout(),
     () => (open = false)
   );
+
+  /** A space's name in the pin entries: its formation and campus, localized. */
+  function spaceName(space: PinSpace): string {
+    return m.post_pin_space_name({
+      formation: formationLabel(space.formation),
+      campus: campusLabel(space.campus),
+    });
+  }
 
   /** Runs a menu entry and closes the menu, which every entry does. */
   function pick(action: () => void) {
@@ -208,7 +242,7 @@
 
   /** One row per action: same box, same padding, so the menu reads as a list rather than a pile. */
   const ROW =
-    'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors';
+    'flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm font-medium transition-colors [&>svg]:shrink-0';
 </script>
 
 {#if isLoggedIn}
@@ -255,6 +289,24 @@
           <Share2 size={16} strokeWidth={2.5} />
           {m.post_share_label()}
         </button>
+
+        {#if repostedByMe || canRepost}
+          <button
+            type="button"
+            role="menuitem"
+            data-repost-row
+            onclick={() =>
+              pick(() => {
+                void toggleMyRepost(postId, repostedByMe).then((reposted) =>
+                  onRepostChange(reposted)
+                );
+              })}
+            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
+          >
+            <Repeat2 size={16} strokeWidth={2.5} />
+            {repostedByMe ? m.post_repost_undo_label() : m.post_repost_label()}
+          </button>
+        {/if}
 
         {#if canRepublish}
           <button
@@ -334,21 +386,46 @@
           </button>
         {/if}
 
-        {#if canPin}
+        {#if reposterCount > 0}
           <button
             type="button"
             role="menuitem"
-            onclick={() => pick(onTogglePin)}
-            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-500"
+            data-post-reposters-open
+            onclick={() => pick(onShowReposters)}
+            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-600"
           >
-            {#if pinned}
-              <PinOff size={16} strokeWidth={2.5} />
-              {m.post_unpin_action_label()}
-            {:else}
-              <Pin size={16} strokeWidth={2.5} />
-              {m.post_pin_action_label()}
-            {/if}
+            <Users size={16} strokeWidth={2.5} />
+            {m.post_reposters_menu({ count: reposterCount })}
           </button>
+        {/if}
+
+        {#if canPin}
+          <!-- WP-PIN: one entry per space the reader governs and the post is seen in; with one,
+               it pins there directly. A "pending" pin is kept but not shown (3 already are). -->
+          {#each pinSpaces as space (space.spaceId)}
+            <button
+              type="button"
+              role="menuitem"
+              data-post-pin-space={space.spaceId}
+              onclick={() => pick(() => onTogglePin(space))}
+              class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-500"
+            >
+              {#if space.state !== null}
+                <PinOff size={16} strokeWidth={2.5} />
+                {pinSpaces.length === 1
+                  ? m.post_unpin_action_label()
+                  : m.post_unpin_in_space({ space: spaceName(space) })}
+                {#if space.state === 'pending'}
+                  <span class="text-text-muted text-xs">({m.post_pin_pending()})</span>
+                {/if}
+              {:else}
+                <Pin size={16} strokeWidth={2.5} />
+                {pinSpaces.length === 1
+                  ? m.post_pin_action_label()
+                  : m.post_pin_in_space({ space: spaceName(space) })}
+              {/if}
+            </button>
+          {/each}
         {/if}
 
         {#if canUnmaskAnonymous}
@@ -363,7 +440,7 @@
           </button>
         {/if}
 
-        {#if canManage}
+        {#if canEdit}
           <button
             type="button"
             role="menuitem"
@@ -373,6 +450,9 @@
             <Pencil size={16} strokeWidth={2.5} />
             {m.post_edit_post_label()}
           </button>
+        {/if}
+
+        {#if canManage}
           <button
             type="button"
             role="menuitem"

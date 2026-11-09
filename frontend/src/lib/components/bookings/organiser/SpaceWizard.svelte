@@ -16,7 +16,7 @@
   import {
     lineProblem,
     MAX_AVAILABILITY_LINES,
-    timeChoices,
+    timeOptions,
     weekdayNames,
   } from '$lib/bookings/availability';
   import {
@@ -40,6 +40,14 @@
     type WizardDraft,
   } from '$lib/bookings/wizard';
   import type { MembershipTier } from '$lib/associations/api';
+  import PostIdentityPicker from '$lib/components/posts/PostIdentityPicker.svelte';
+  import { listActableAssociations } from '$lib/associations/actable';
+  import {
+    AssociationPermissionFlag,
+    getAssociation,
+    type Association,
+  } from '$lib/associations/api';
+  import { forgetAudienceTiers } from '$lib/forms/audience';
   import { cotisationOptionsFor } from '$lib/forms/cotisationSettings';
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { m } from '$lib/paraglide/messages';
@@ -54,14 +62,17 @@
    * the editor's, which the page opens on the new space.
    */
   interface Props {
-    /** The owning entity, or `null` for a personal space. */
+    /**
+     * The owner the wizard OPENS on: the entity of the edit page it was opened from, or `null` for
+     * "Moi" (the Reservations page). The first step lets the organiser change it.
+     */
     associationId: string | null;
     /** The name typed before the wizard opened. */
     initialName: string;
     /** The space was created: the caller opens its editor. */
     onCreated: (id: string) => void;
-    /** "Je regle tout moi-meme": the caller creates the space by its name alone. */
-    onSkip: (name: string) => void;
+    /** "Je regle tout moi-meme": the caller creates the space by its name alone, for the CHOSEN owner. */
+    onSkip: (name: string, ownerId: string | null) => void;
     /** Leave without creating anything. */
     onCancel: () => void;
   }
@@ -79,6 +90,21 @@
   let stepHeading = $state<HTMLHeadingElement | null>(null);
   let error = $state('');
   let tiers = $state<MembershipTier[]>([]);
+  /** The chosen owner: `''` is "Moi" (personal), else an entity's id. Starts on the caller's. */
+  let owner = $state(untrack(() => associationId ?? ''));
+  /** The entities the organiser may create spaces for (`MANAGE_BOOKINGS`). */
+  let ownerChoices = $state<Association[]>([]);
+  const ownerId = $derived(owner || null);
+  let ownerChoicesFailed = $state(false);
+  /** The entity the wizard opened on, read by id so it is offered even when the list lacks it. */
+  let preset = $state<Association | null>(null);
+  const offeredOwners = $derived.by(() => {
+    if (!associationId || ownerChoices.some((a) => a.id === associationId)) return ownerChoices;
+    const known =
+      preset ??
+      ({ id: associationId, name: String(m.bookings_owner_current()) } as unknown as Association);
+    return [known, ...ownerChoices];
+  });
   let formations = $state<FormationOption[]>([]);
 
   const STEPS = [
@@ -90,12 +116,51 @@
   onMount(() => {
     Log.d('BOOKINGS', `wizard open association=${associationId ?? 'personal'}`);
     // The audience editor's choices, as the space editor's page loads them.
+    listActableAssociations(AssociationPermissionFlag.MANAGE_BOOKINGS)
+      .then((list) => (ownerChoices = list))
+      .catch((e) => {
+        console.warn('[BOOKINGS]', `wizard owner choices unavailable: ${String(e)}`);
+        ownerChoicesFailed = true;
+      });
+    // The page's own entity is ALWAYS an option, whatever the list says (still loading, failed, or
+    // an entity the member manages without belonging to it).
     if (associationId) {
-      void cotisationOptionsFor(associationId).then((o) => (tiers = o.tiers));
+      getAssociation(associationId)
+        .then((a) => (preset = a))
+        .catch((e) => console.warn('[BOOKINGS]', `wizard preset owner unavailable: ${String(e)}`));
     }
     fetchFormations()
       .then((f) => (formations = f))
       .catch((e) => Log.d('BOOKINGS', `formations unavailable: ${String(e)}`));
+  });
+
+  /**
+   * The audience tiers belong to the CHOSEN owner, so a change of owner reloads them. The cleanup
+   * marks the run stale, so a slow answer for the previous owner is dropped, never applied to the
+   * new one. A personal space has no tiers. The audience's own tier keys are forgotten too: they
+   * name the PREVIOUS owner's catalogue, and the saved audience would key another entity's tiers.
+   */
+  let lastOwner: string | null | undefined;
+  $effect(() => {
+    const target = ownerId;
+    let stale = false;
+    tiers = [];
+    if (lastOwner !== undefined && lastOwner !== target) {
+      Log.d('BOOKINGS', 'wizard owner changed, audience tiers forgotten');
+      untrack(() => (draft.audience = forgetAudienceTiers(draft.audience)));
+    }
+    lastOwner = target;
+    if (target) {
+      Log.d('BOOKINGS', `wizard tiers load owner=${target.slice(0, 8)}`);
+      cotisationOptionsFor(target)
+        .then((o) => {
+          if (!stale) tiers = o.tiers;
+        })
+        .catch((e) => Log.d('BOOKINGS', `wizard tiers unavailable: ${String(e)}`));
+    }
+    return () => {
+      stale = true;
+    };
   });
 
   const problems = $derived(wizardProblems(draft));
@@ -184,7 +249,7 @@
       tried = true;
       return;
     }
-    onSkip(name);
+    onSkip(name, ownerId);
   }
 
   async function create() {
@@ -199,7 +264,7 @@
     try {
       const { id } = await createSpace(
         payload.name,
-        associationId,
+        ownerId,
         { lines: payload.lines, exceptions: [] },
         payload.fields
       );
@@ -270,6 +335,21 @@
       >
         {m.bookings_wizard_step_what()}
       </h4>
+      <!-- "Creer en tant que": the posts' "Publier en tant que" picker, personal or an entity. -->
+      <div>
+        <span class={CONTROL_LABEL_CLASS}>{m.bookings_owner_label()}</span>
+        <PostIdentityPicker
+          id="wizard-owner"
+          bind:value={owner}
+          associations={offeredOwners}
+          allowAnonymous={false}
+          personalOptionLabel={m.bookings_owner_personal()}
+          label={m.bookings_owner_label()}
+        />
+        {#if ownerChoicesFailed}
+          <p class="text-red-err text-xs" role="alert">{m.bookings_owner_load_error()}</p>
+        {/if}
+      </div>
       <Input
         id="wizard-name"
         label={m.bookings_field_name()}
@@ -328,20 +408,14 @@
                   id="wizard-date-{i}-start"
                   label={m.bookings_avail_start()}
                   value={row.start}
-                  options={timeChoices(timeStep, false, row.start).map((t) => ({
-                    value: t,
-                    label: t,
-                  }))}
+                  options={timeOptions(timeStep, false, row.start)}
                   onValueChange={(v) => (draft.rows[i] = { ...row, start: v })}
                 />
                 <Select
                   id="wizard-date-{i}-end"
                   label={m.bookings_avail_end()}
                   value={row.end}
-                  options={timeChoices(timeStep, true, row.end).map((t) => ({
-                    value: t,
-                    label: t,
-                  }))}
+                  options={timeOptions(timeStep, true, row.end)}
                   onValueChange={(v) => (draft.rows[i] = { ...row, end: v })}
                 />
               </li>

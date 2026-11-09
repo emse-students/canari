@@ -3,8 +3,11 @@ import {
   VP8_INTER_FRAME_CLEAR_BYTES,
   VP8_KEY_FRAME_CLEAR_BYTES,
   clearHeaderBytes,
+  framesAsVp8,
   isCallVideoCodec,
   isVp8KeyFrame,
+  negotiatedCodecMismatch,
+  negotiatedMediaCodec,
   vp8CodecPreferences,
 } from './callVideoFrame';
 
@@ -26,29 +29,67 @@ describe('clearHeaderBytes', () => {
   const inter = Uint8Array.from({ length: 40 }, (_, i) => (i === 0 ? 0x31 : 1));
 
   it('is 10 bytes for a VP8 key frame and 3 for an interframe', () => {
-    expect(clearHeaderBytes('video', 'video/VP8', key)).toBe(VP8_KEY_FRAME_CLEAR_BYTES);
-    expect(clearHeaderBytes('video', 'video/VP8', inter)).toBe(VP8_INTER_FRAME_CLEAR_BYTES);
+    expect(clearHeaderBytes('video', true, key)).toBe(VP8_KEY_FRAME_CLEAR_BYTES);
+    expect(clearHeaderBytes('video', true, inter)).toBe(VP8_INTER_FRAME_CLEAR_BYTES);
   });
 
   it('is 0 for audio, whatever its bytes: the audio layout every build has sent', () => {
-    expect(clearHeaderBytes('audio', 'audio/opus', key)).toBe(0);
+    expect(clearHeaderBytes('audio', true, key)).toBe(0);
   });
 
-  it('is 0 for another video codec: encrypted whole, never framed as VP8', () => {
-    expect(clearHeaderBytes('video', 'video/H264', key)).toBe(0);
-  });
-
-  it('FAILS CLOSED on an engine that names no codec: encrypted whole, never split on a guess', () => {
-    expect(clearHeaderBytes('video', undefined, key)).toBe(0);
+  it('is 0 for a video frame not framed as VP8: encrypted whole', () => {
+    expect(clearHeaderBytes('video', false, key)).toBe(0);
   });
 
   it('is not bounded by a short payload: the sender drops a frame shorter than its header', () => {
-    expect(clearHeaderBytes('video', 'video/VP8', Uint8Array.from([0x10, 0, 0]))).toBe(10);
+    expect(clearHeaderBytes('video', true, Uint8Array.from([0x10, 0, 0]))).toBe(10);
+  });
+});
+
+describe('framesAsVp8 - the transform codec decides, not the engine (2026-11-07)', () => {
+  it('frames as VP8 on a VP8 transform whether the engine names VP8 (Chromium) or nothing (WebKit)', () => {
+    expect(framesAsVp8('video/VP8', 'video/VP8')).toBe(true);
+    expect(framesAsVp8('video/vp8', undefined)).toBe(true);
+    expect(framesAsVp8('video/VP8', '')).toBe(true);
+  });
+
+  it('FAILS CLOSED on a transform whose codec is not known, whatever the frame says', () => {
+    expect(framesAsVp8(undefined, 'video/VP8')).toBe(false);
+    expect(framesAsVp8(undefined, undefined)).toBe(false);
+    expect(framesAsVp8('video/H264', 'video/H264')).toBe(false);
+  });
+
+  it('FAILS CLOSED when the engine NAMES another codec than the transform: a negotiation gone wrong', () => {
+    expect(framesAsVp8('video/VP8', 'video/H264')).toBe(false);
+  });
+});
+
+describe('the negotiated codec against the transform codec (report only, 2026-11-07)', () => {
+  it('reads the media codec a side negotiated, past the wrappers', () => {
+    expect(negotiatedMediaCodec([{ mimeType: 'video/rtx' }, { mimeType: 'video/VP8' }])).toBe(
+      'video/VP8'
+    );
+    expect(negotiatedMediaCodec([])).toBeUndefined();
+    expect(negotiatedMediaCodec(undefined)).toBeUndefined();
+  });
+
+  it('says nothing for VP8 under a VP8 transform, nor for a side not negotiated yet', () => {
+    expect(negotiatedCodecMismatch('video/vp8', 'video/VP8')).toBeNull();
+    expect(negotiatedCodecMismatch('video/vp8', undefined)).toBeNull();
+  });
+
+  it('names H.264 negotiated under a VP8 transform, and VP8 under a transform with no codec', () => {
+    expect(negotiatedCodecMismatch('video/vp8', 'video/H264')).toBe(
+      'negotiated video/H264, transform frames video/vp8'
+    );
+    expect(negotiatedCodecMismatch(undefined, 'video/VP8')).toBe(
+      'negotiated video/VP8, transform frames no codec (whole)'
+    );
   });
 });
 
 describe('isCallVideoCodec', () => {
-  it('is VP8 in any case, and never an engine that names no codec', () => {
+  it('is VP8 in any case, and never a missing name', () => {
     expect(isCallVideoCodec('video/VP8')).toBe(true);
     expect(isCallVideoCodec('video/vp8')).toBe(true);
     expect(isCallVideoCodec(undefined)).toBe(false);

@@ -126,6 +126,9 @@ describe('what the WASM is told about a missing state', () => {
       // `this` and a plain object has no prototype chain to find it on.
       loadStateWithKey: (WebMlsService.prototype as unknown as Record<string, unknown>)
         .loadStateWithKey,
+      loadFreshStateReplacingUnopened: (
+        WebMlsService.prototype as unknown as Record<string, unknown>
+      ).loadFreshStateReplacingUnopened,
     });
 
     await resolveDeviceId(ctx);

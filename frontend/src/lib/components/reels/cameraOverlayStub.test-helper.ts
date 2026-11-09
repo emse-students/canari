@@ -1,8 +1,10 @@
+import type { ComposerReelState } from '$lib/posts/composerReelState';
+
 /**
  * The `CameraOverlayStub` control panel for the composer tests: what the composer last handed the
- * camera, and the caption and identity its "keep" button reports (`null`: as the composer gave them).
+ * camera, and the state its "keep" button reports (`null`: as the composer gave it).
  */
 export const cameraOverlayStub: {
-  last: { destination: string; composerCaption?: string; composerIdentity?: string } | null;
-  keepWith: { caption: string; identity: string } | null;
+  last: { destination: string; composerStart?: ComposerReelState } | null;
+  keepWith: ComposerReelState | null;
 } = { last: null, keepWith: null };

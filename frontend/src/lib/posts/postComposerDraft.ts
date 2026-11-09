@@ -1,3 +1,4 @@
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { getSavedUserId } from '$lib/stores/user';
 import { emptyPollOptions, newPollOption, type PollDraftOption } from './pollDraft';
 
@@ -34,6 +35,11 @@ export interface PostComposerDraft {
   scheduledAt: string;
   selectedAssociationId: string;
   selectedLinkedCalendarEventId: string;
+  /**
+   * "Entre étudiants" was switched on (owner, 2026-11-04). Optional and written only when ON: OFF is
+   * the default, so a draft from before the switch, or one that never touched it, reads as OFF.
+   */
+  studentsOnly?: boolean;
 }
 
 /**
@@ -44,11 +50,10 @@ export interface PostComposerDraft {
 const UNOWNED_DRAFT_KEY = 'canari_post_composer_draft';
 /** Legacy markdown-only key, also unowned: dropped with the other one. */
 const LEGACY_MARKDOWN_DRAFT_KEY = 'canari_post_draft';
-const POST_COMPOSER_DRAFT_KEY_PREFIX = 'canari_post_composer_draft:';
 
 /** The storage key of ONE account's draft: the draft is owned by the user id, not by the device. */
 export function postComposerDraftKey(userId: string): string {
-  return `${POST_COMPOSER_DRAFT_KEY_PREFIX}${userId}`;
+  return ACCOUNT_KEY.postComposerDraft(userId);
 }
 
 /**
@@ -137,6 +142,7 @@ export function loadPostComposerDraft(): PostComposerDraft | null {
             typeof parsed.selectedLinkedCalendarEventId === 'string'
               ? parsed.selectedLinkedCalendarEventId
               : '',
+          ...(parsed.studentsOnly === true ? { studentsOnly: true } : {}),
         });
         if (isPostComposerDraftWorthKeeping(draft)) return draft;
         console.log('[POST_COMPOSER] stored draft held only abandoned attachments - not restored');

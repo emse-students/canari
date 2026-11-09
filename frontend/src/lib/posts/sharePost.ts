@@ -112,3 +112,11 @@ export async function undoMyRepost(postId: string): Promise<boolean> {
     return true;
   }
 }
+
+/**
+ * The repost row's one action, shared by the share sheet and the post menu: reposts the post, or
+ * takes the repost back when the member already made it. Resolves to the repost's state afterwards.
+ */
+export function toggleMyRepost(postId: string, repostedByMe: boolean): Promise<boolean> {
+  return repostedByMe ? undoMyRepost(postId) : repostToMyFollowers(postId);
+}

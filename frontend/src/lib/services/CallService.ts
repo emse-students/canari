@@ -66,6 +66,7 @@ import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion'
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { nextPageRingHolder, reportPageRingingCall } from './pageGatewaySocket';
 import { reportCallSoundPhase, retireCallSoundHolder } from '$lib/utils/callSoundGate';
+import { captureUserMedia } from '$lib/utils/audioSession';
 import {
   callVideoConstraints,
   canHoldVideoToVp8,
@@ -73,6 +74,11 @@ import {
   type CameraFacing,
 } from '$lib/utils/callVideo';
 import { CallVideoQualityLoop } from '$lib/utils/callVideoQuality';
+import {
+  CALL_VIDEO_MIME_TYPE,
+  negotiatedCodecMismatch,
+  negotiatedMediaCodec,
+} from '$lib/utils/callVideoFrame';
 import {
   buildCallMicPipeline,
   CALL_NOISE_SUPPRESSION_DEFAULT,
@@ -148,6 +154,15 @@ export interface CallChatNotifier {
  */
 export function canUseRtpScriptTransform(): boolean {
   return typeof RTCRtpScriptTransform !== 'undefined';
+}
+
+/**
+ * A transform's media as its attach line names it: the kind, and for video the codec the worker
+ * frames it on (`CallTransformOptions.videoCodec`) - or that none is held, so it fails closed.
+ */
+function describeTransformMedia(kind: string, videoCodec: string | undefined): string {
+  if (kind !== 'video') return kind;
+  return videoCodec ? `video, ${videoCodec}` : 'video, no codec held - framed whole';
 }
 
 /**
@@ -553,6 +568,10 @@ export class CallService {
   private cameraOpTarget: 'on' | 'off' = 'off';
   /** The worker's `videoCodecUnexpected` was logged in this call: one ERROR line, not one per post. */
   private videoCodecUnexpectedLogged = false;
+  /** The codec each VIDEO sender and receiver's transform was told (`undefined` = none held). */
+  private videoTransformCodecs = new WeakMap<RTCRtpSender | RTCRtpReceiver, string | undefined>();
+  /** A negotiated video codec that differs from its transform's was reported in this call. */
+  private negotiatedCodecMismatchLogged = false;
   /**
    * The camera sender's quality ladder (`utils/callVideoQuality.ts`), for the peer connection and
    * sender it was started on; `null` when no camera transceiver exists.
@@ -1545,6 +1564,7 @@ export class CallService {
     this.cameraBusy = false;
     this.offPending = false;
     this.videoCodecUnexpectedLogged = false;
+    this.negotiatedCodecMismatchLogged = false;
     this.cameraFacing.set('user');
     this.canSwitchCamera.set(false);
     this.isVideoOff.set(true);
@@ -2571,13 +2591,24 @@ export class CallService {
     // transform is assigned in the same task as that `addTrack` - Chromium decided when the
     // transceiver was created. So the sender gets its transform now, before it carries anything.
     const newMline = !receiver.transform;
+    // The peer's camera m-line is held to VP8 on this side too, so whichever side answers, the
+    // negotiated codec is the one the transform frames (`utils/callVideoFrame.ts`) - and held
+    // BEFORE the transforms are made, so they are told that codec rather than reading the frame's
+    // metadata, which WebKit leaves empty. A transceiver this side made (the camera's) already holds
+    // it, and its transforms are already on: the attaches below return at once.
+    const videoCodec = transceiver ? this.holdVideoToVp8(transceiver, track.kind) : undefined;
     let side: 'receiver' | 'sender' = 'receiver';
     try {
-      this.attachReceiverTransform(receiver, track.kind);
+      this.attachReceiverTransform(receiver, track.kind, videoCodec);
       side = 'sender';
       // Armed with no track yet: it sends nothing until a later `addTrack` reuses it.
       if (transceiver)
-        this.attachSenderTransform(transceiver.sender, track.kind, 'armed, no track yet');
+        this.attachSenderTransform(
+          transceiver.sender,
+          track.kind,
+          videoCodec,
+          'armed, no track yet'
+        );
     } catch (e) {
       appendLog(`[Call] E2E ${side} transform failed in ontrack (${track.kind}): ${String(e)}`);
       this.failCall(
@@ -2588,9 +2619,6 @@ export class CallService {
       );
       return;
     }
-    // The peer's camera m-line is held to VP8 on this side too, so whichever side answers, the
-    // negotiated codec is the one the transform frames (`utils/callVideoFrame.ts`).
-    if (track.kind === 'video' && transceiver) preferVp8(transceiver, appendLog);
     // A new m-line is media the 5 s check of the first connect may not have seen: check it again.
     if (newMline && this.pc) this.scheduleE2ePathCheck(this.pc, `after a new ${track.kind} m-line`);
 
@@ -2798,6 +2826,7 @@ export class CallService {
       // check costs a look and never a verdict.
       if (pc.signalingState === 'stable' && this.pc === pc) {
         this.recheckE2eOnMediaStart('after signalling reached stable');
+        this.reportNegotiatedVideoCodecs(pc);
       }
     };
 
@@ -2901,16 +2930,18 @@ export class CallService {
         // to the SENDER, so a later `replaceTrack` between the two keeps it in the path.
         const micSwitch = track.kind === 'audio' ? this.micSwitch : null;
         const sender = pc.addTrack(micSwitch ? micSwitch.trackToSend() : track, this.localStream);
-        this.attachSenderTransform(sender);
-        // A track muted by the OS (or not producing yet) starts sending with no negotiation.
-        track.onunmute = () => this.recheckE2eOnMediaStart(`after the local ${track.kind} unmuted`);
         const transceiver = pc.getTransceivers().find((t) => t.sender === sender);
         if (!transceiver) throw new Error(`no transceiver for the ${track.kind} sender just added`);
-        this.attachReceiverTransform(transceiver.receiver, track.kind);
+        // A camera's transceiver is held to VP8 BEFORE its transforms, which are told the codec.
+        const videoCodec = this.holdVideoToVp8(transceiver, track.kind);
+        this.attachSenderTransform(sender, track.kind, videoCodec);
+        // A track muted by the OS (or not producing yet) starts sending with no negotiation.
+        track.onunmute = () => this.recheckE2eOnMediaStart(`after the local ${track.kind} unmuted`);
+        this.attachReceiverTransform(transceiver.receiver, track.kind, videoCodec);
         // After both transforms, in this task: it only QUEUES a `replaceTrack` for later.
         micSwitch?.attachSender(sender);
         if (track.kind === 'video') {
-          if (!preferVp8(transceiver, appendLog)) {
+          if (!videoCodec) {
             this.refuseCameraSender(pc, sender, track);
             continue;
           }
@@ -3396,9 +3427,9 @@ export class CallService {
           // Once per call: the worker keeps counting, and the report line carries the count.
           if (!this.videoCodecUnexpectedLogged) {
             this.videoCodecUnexpectedLogged = true;
-            const mime = (event.data as unknown as { mimeType?: string }).mimeType ?? '?';
+            const d = event.data as unknown as { mimeType?: string; transformCodec?: string };
             appendLog(
-              `[Call] ERROR E2E: video frames of ${mime}, not VP8, crossed the transform - encrypted whole, they cannot decode (${count ?? '?'} so far)`
+              `[Call] ERROR E2E: video frames not framed as VP8 crossed the transform (frame codec ${d.mimeType ?? '?'}, transform codec ${d.transformCodec ?? '-'}) - encrypted whole, they cannot decode (${count ?? '?'} so far)`
             );
           }
         } else if (type === 'videoKeyframeIn') {
@@ -3422,7 +3453,7 @@ export class CallService {
           // engine actually feeds the transform.
           const d = event.data as unknown as Record<string, unknown>;
           appendLog(
-            `[Call] E2E ${String(d.side)} transformer #${String(d.id)} (${String(d.count)} ${String(d.side)} in this worker): first frame ${String(d.mediaKind)} mime=${String(d.mimeType)} pt=${String(d.payloadType)}`
+            `[Call] E2E ${String(d.side)} transformer #${String(d.id)} (${String(d.count)} ${String(d.side)} in this worker): first frame ${String(d.mediaKind)} mime=${String(d.mimeType)} pt=${String(d.payloadType)}${d.mediaKind === 'video' ? ` transform-codec=${String(d.transformCodec ?? '-')}` : ''}`
           );
         } else if (type === 'senderAudioShape') {
           // Posted once after 50 frames, and again only while an anomaly counter is non-zero:
@@ -3622,12 +3653,32 @@ export class CallService {
    * A transform's options: its side, its track's kind - authenticated in every frame, so the worker
    * is TOLD it rather than reading it off a frame - and the peer connection it belongs to
    * (`transformEpoch`). THROWS for a kind that is neither audio nor video: such a transform could
-   * not authenticate a frame, so it is never made.
+   * not authenticate a frame, so it is never made. A video transform also carries the codec its
+   * transceiver is HELD to (`videoCodec`, from `holdVideoToVp8`), which the worker frames on: the
+   * engine's frame metadata names no codec on WebKit (`utils/callVideoFrame.ts`, `framesAsVp8`).
    */
-  private transformOptions(side: 'sender' | 'receiver', trackKind: string): CallTransformOptions {
+  private transformOptions(
+    side: 'sender' | 'receiver',
+    trackKind: string,
+    videoCodec: string | undefined
+  ): CallTransformOptions {
     const kind = callMediaKind(trackKind);
     if (!kind) throw new CallE2eSetupError(`${side} (${trackKind}): not an audio or video track`);
-    return { side, kind, epoch: this.transformEpoch };
+    return kind === 'video' && videoCodec
+      ? { side, kind, epoch: this.transformEpoch, videoCodec }
+      : { side, kind, epoch: this.transformEpoch };
+  }
+
+  /**
+   * Holds a VIDEO transceiver to VP8 (`preferVp8`) BEFORE its transforms are made, and answers the
+   * codec it now carries - the fact the transforms are told (`transformOptions`). `undefined` for an
+   * audio transceiver, and for a video one the engine would not hold (`preferVp8` said why at
+   * ERROR): its transforms then fail closed and frame whole, and the caller refuses to send on it.
+   * SYNCHRONOUS, so it fits in the task that created the transceiver (`attachSenderTransform`).
+   */
+  private holdVideoToVp8(transceiver: RTCRtpTransceiver, trackKind: string): string | undefined {
+    if (trackKind !== 'video') return undefined;
+    return preferVp8(transceiver, appendLog) ? CALL_VIDEO_MIME_TYPE : undefined;
   }
 
   /**
@@ -3638,25 +3689,74 @@ export class CallService {
    */
   private attachSenderTransform(
     sender: RTCRtpSender,
-    mediaKind = sender.track?.kind ?? 'unknown',
+    mediaKind: string,
+    videoCodec: string | undefined,
     how = 'attached'
   ): void {
     if (sender.transform) return;
     sender.transform = new RTCRtpScriptTransform(
       this.keyedWorker('sender', mediaKind),
-      this.transformOptions('sender', mediaKind)
+      this.transformOptions('sender', mediaKind, videoCodec)
     );
-    appendLog(`[Call] E2E sender transform ${how} (${mediaKind})`);
+    if (mediaKind === 'video') this.videoTransformCodecs.set(sender, videoCodec);
+    appendLog(
+      `[Call] E2E sender transform ${how} (${describeTransformMedia(mediaKind, videoCodec)})`
+    );
   }
 
   /** Attaches the E2E decrypt transform to a receiver: synchronous and throwing, like the sender. */
-  private attachReceiverTransform(receiver: RTCRtpReceiver, mediaKind = 'unknown'): void {
+  private attachReceiverTransform(
+    receiver: RTCRtpReceiver,
+    mediaKind: string,
+    videoCodec: string | undefined
+  ): void {
     if (receiver.transform) return;
     receiver.transform = new RTCRtpScriptTransform(
       this.keyedWorker('receiver', mediaKind),
-      this.transformOptions('receiver', mediaKind)
+      this.transformOptions('receiver', mediaKind, videoCodec)
     );
-    appendLog(`[Call] E2E receiver transform attached (${mediaKind})`);
+    if (mediaKind === 'video') this.videoTransformCodecs.set(receiver, videoCodec);
+    appendLog(
+      `[Call] E2E receiver transform attached (${describeTransformMedia(mediaKind, videoCodec)})`
+    );
+  }
+
+  /**
+   * Once negotiation settles (`stable`), compares the codec each VIDEO sender and receiver of `pc`
+   * NEGOTIATED (`getParameters().codecs`) with the codec its transform was told
+   * (`videoTransformCodecs`), and reports the first mismatch of the call ONCE, at ERROR, in the E2E
+   * lines (`negotiatedCodecMismatch`). WHY: WebKit's frame metadata names no codec, so the worker's
+   * own "the frame names another codec" check can never fire there - an engine that ignored
+   * `setCodecPreferences` would carry H.264 framed as VP8 with nothing saying so. A REPORT only:
+   * nothing about the framing changes.
+   */
+  private reportNegotiatedVideoCodecs(pc: RTCPeerConnection): void {
+    if (this.negotiatedCodecMismatchLogged) return;
+    for (const t of pc.getTransceivers()) {
+      const sides: ['sender' | 'receiver', RTCRtpSender | RTCRtpReceiver][] = [
+        ['sender', t.sender],
+        ['receiver', t.receiver],
+      ];
+      for (const [side, end] of sides) {
+        if (!this.videoTransformCodecs.has(end)) continue;
+        let negotiated: string | undefined;
+        try {
+          negotiated = negotiatedMediaCodec(end.getParameters().codecs);
+        } catch (e) {
+          appendLog(
+            `[Call] WARN video ${side} parameters unreadable after negotiation: ${String(e)}`
+          );
+          continue;
+        }
+        const mismatch = negotiatedCodecMismatch(this.videoTransformCodecs.get(end), negotiated);
+        if (!mismatch) continue;
+        this.negotiatedCodecMismatchLogged = true;
+        appendLog(
+          `[Call] ERROR E2E report: the video ${side} (mid ${t.mid ?? '-'}) ${mismatch} - its frames cannot decode`
+        );
+        return;
+      }
+    }
   }
 
   /**
@@ -3724,10 +3824,13 @@ export class CallService {
    * the camera off, which the user can retry from the call screen.
    */
   private async setupMedia(video: boolean, seq: number) {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: buildCallAudioConstraints(),
-      video: false,
-    });
+    // The microphone is held from before the ask: an ANSWER opens it while the phase is still
+    // `incoming`, whose session type (`ambient`) WebKit would refuse a capture under.
+    const stream = await captureUserMedia(
+      navigator.mediaDevices,
+      { audio: buildCallAudioConstraints(), video: false },
+      'call'
+    );
     try {
       this.assertSetupLive(seq, 'after the microphone prompt');
     } catch (e) {
@@ -4158,9 +4261,11 @@ export class CallService {
       direction: 'sendrecv',
       streams: this.localStream ? [this.localStream] : [],
     });
+    // Held to VP8 BEFORE its transforms, which are told the codec (`holdVideoToVp8`).
+    const videoCodec = this.holdVideoToVp8(transceiver, 'video');
     try {
-      this.attachSenderTransform(transceiver.sender, 'video');
-      this.attachReceiverTransform(transceiver.receiver, 'video');
+      this.attachSenderTransform(transceiver.sender, 'video', videoCodec);
+      this.attachReceiverTransform(transceiver.receiver, 'video', videoCodec);
     } catch (e) {
       // Never a video sender without its transform: removed before any negotiation carries it.
       pc.removeTrack(transceiver.sender);
@@ -4173,7 +4278,7 @@ export class CallService {
       );
       return;
     }
-    if (!preferVp8(transceiver, appendLog)) {
+    if (!videoCodec) {
       this.refuseCameraSender(pc, transceiver.sender, track);
       return;
     }

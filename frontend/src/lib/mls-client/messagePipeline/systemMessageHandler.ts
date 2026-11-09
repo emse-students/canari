@@ -1,4 +1,4 @@
-import type { Conversation } from '$lib/types';
+import type { Conversation, MessageReaction } from '$lib/types';
 import type { IncomingDeliveryMeta } from '$lib/mls-client/incomingDelivery';
 import { canonicalIdentity, canonicalUserId, canonicalUserOf } from '$lib/mls-client/leafIdentity';
 import {
@@ -10,7 +10,6 @@ import {
 } from '$lib/envelope';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { receivedNoticeTime, renderVisibleNotice } from '$lib/utils/chat/visibleNotices';
-import { applyReaction } from '$lib/utils/chat/messageReactions';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
 import { clearMessageControlRefusals } from '$lib/utils/chat/controlRefusals.svelte';
 import { purgeConversation, retireConversation } from '$lib/utils/chat/conversations';
@@ -33,6 +32,9 @@ import {
   upgradedRow,
   upgradePatch,
   vetBundle,
+  type BundleEntry,
+  type BundleHeldRow,
+  type BundleRowDecision,
 } from '$lib/utils/chat/bundleVetting';
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import { noteIntegrityFinding } from '$lib/mls-client/integrityFindings';
@@ -61,8 +63,21 @@ import {
 } from '$lib/utils/chat/readState';
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
+import { mergeBundleNicknames } from '$lib/utils/users/conversationNicknames.svelte';
+import { applyNicknameFrame, nicknameMembersOf } from '$lib/utils/chat/nicknameFrame';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
+import type {
+  PendingMutation,
+  StoredMessage,
+  StoredMessagePatch,
+  StoredRowsById,
+} from '$lib/db/types';
+import { keepPendingMutation, settlePendingFor } from '$lib/utils/chat/pendingMutationStore';
+import { mergeStoredMessage } from '$lib/db/messagePayload';
+import { isPushPreview } from '$lib/utils/chat/messageMerge';
+import { applyReactionFrame } from './reactionFrame';
+import { publishReadState } from '$lib/mls-client/tabMessageSync';
 
 /**
  * Context passed to handleSystemEvent - extends MessageHandlerDeps with
@@ -134,6 +149,426 @@ function mutationIsAuthorised(
     `[MLS] Refused ${kind === 'edit' ? 'an edit' : 'a delete'} of a message owned by ${owner.slice(0, 8) || 'unknown'} from ${senderNorm.slice(0, 8)} - only the author may mutate it`
   );
   return false;
+}
+
+/**
+ * Applies one `delete_message` to this device, wherever its target is - or is not yet.
+ *
+ * **THE TARGET IS LOOKED FOR WHERE IT IS KEPT, NOT ONLY WHERE IT IS SHOWN** (owner's report,
+ * 2026-11-02: a message the other person deleted was still shown on a device signed in after the
+ * deletion). Memory holds a WINDOW - nothing at all for a conversation the boot restore has not
+ * reached (`loadExistingConversations` seeds every row with `messages: []`), the last page for one
+ * that was opened - and this handler used to look there alone. A deletion whose target was stored
+ * but not shown was acknowledged and forgotten, and nothing brings it back: its frame is consumed
+ * (`noteFrameConsumed`), so the archive replay skips it. So the store is asked next.
+ *
+ * **AND A DELETION CAN ARRIVE BEFORE ITS TARGET.** A device that was away receives the message and
+ * its deletion in ONE catch-up drain, and the drain buffers inbound bodies until it ends
+ * (`beginBulkMessageIngest`) while it handles this frame at once: the body is in neither memory nor
+ * the store yet. A body may also reach this device only later, through a bundle or the archive
+ * replay. Dropping the deletion then had the same ending, so it is KEPT as a pending mutation, in its
+ * own store and never as a message row (`keepPendingMutation`, `pendingMutations.ts`), and settled
+ * against the body's AUTHOR when the body arrives.
+ *
+ * Only the author may delete (`mutationIsAuthorised`) - against the held row when there is one.
+ */
+async function applyDeletion(targetId: string, ctx: SystemEventContext): Promise<void> {
+  const { storage, deviceKey, conversations, convoKey, senderNorm, log, authorship, deliveryMeta } =
+    ctx;
+  const c = conversations.get(convoKey);
+  const held = c?.messages.find((row) => row.id === targetId);
+  // Looked up at rest even when shown: a writer shows a message BEFORE it stores it (`keepUntilStored`).
+  const found = await storedTarget(ctx, targetId, 'DELETE');
+  if (found.kind === 'unreadable' && !held) return;
+  const stored = found.kind === 'stored' ? found.row : null;
+  const target = held ?? stored;
+  if (target && !mutationIsAuthorised(target, senderNorm, 'delete', log)) return;
+  const tombstoneBody = m.chat_system_message_deleted();
+
+  if (target) {
+    if (held && c) {
+      conversations.set(convoKey, {
+        ...c,
+        messages: c.messages.map((row) =>
+          row.id === targetId ? { ...row, isDeleted: true, content: tombstoneBody } : row
+        ),
+      });
+    }
+    // Deleted by another of the author's devices: a refused act on it has nothing left to retry.
+    clearMessageControlRefusals(targetId);
+    log(
+      `[DELETE] ${targetId.slice(0, 8)} deleted by its author ${senderNorm.slice(0, 8)} - ${held ? 'shown' : 'stored, not shown'}`
+    );
+    if (!storage || found.kind === 'unreadable') return;
+    if (!stored) {
+      await keepUntilStored(ctx, targetId, 'delete', 0, authorship ? { proof: authorship } : {});
+      return;
+    }
+    try {
+      // The tombstone and the replacement body, nothing else: the edit flags and the read state of
+      // the message being deleted are not this handler's to rewrite. The original signed bytes go
+      // with the body (`authorship`/`editProof: null`), and the author's signed deletion stays, so a
+      // bundle can prove the tombstone to a device that missed it.
+      const tombstone = {
+        isDeleted: true,
+        content: tombstoneBody,
+        authorship: null,
+        editProof: null,
+        ...(authorship ? { deleteProof: authorship } : {}),
+      };
+      // A compare-and-set scoped to this conversation, like every rewrite of a stored row.
+      await storage.mergeMessages(
+        convoKey,
+        [targetId],
+        (current) => mergeStoredMessage(current, tombstone),
+        deviceKey()
+      );
+    } catch (e) {
+      // Non-blocking: the tombstone holds in memory, a reload shows the message again.
+      log(`[DELETE] tombstone of ${targetId.slice(0, 8)} not persisted: ${String(e)}`);
+    }
+    return;
+  }
+
+  // Neither shown nor stored: the deletion arrived first.
+  await keepPendingMutation(
+    ctx,
+    {
+      conversationId: convoKey,
+      messageId: targetId,
+      sender: senderNorm,
+      kind: 'delete',
+      slot: '',
+      rank: 0,
+      ...(authorship ? { proof: authorship } : {}),
+    },
+    deliveryMeta?.queuedCreatedAt
+  );
+}
+
+/**
+ * Keeps a mutation whose target is SHOWN but not stored yet: a writer shows a message before it
+ * stores it, so a mutation handled in between found it on screen and wrote to a row that was not
+ * there - the screen took it, the store never did, and a reload brought the body back. Kept as a
+ * pending mutation, it is written with the row by the writer's own look after its write
+ * (`settlePendingFor`, which consumes an entry only once the row at rest carries it).
+ */
+async function keepUntilStored(
+  ctx: SystemEventContext,
+  targetId: string,
+  kind: 'delete' | 'edit',
+  rank: number,
+  rest: Pick<PendingMutation, 'text' | 'proof'>
+): Promise<void> {
+  ctx.log(
+    `[PENDING] ${targetId.slice(0, 8)} is shown and not stored yet - its ${kind} is kept for the write`
+  );
+  await keepPendingMutation(
+    ctx,
+    {
+      conversationId: ctx.convoKey,
+      messageId: targetId,
+      sender: ctx.senderNorm,
+      kind,
+      slot: '',
+      rank,
+      ...rest,
+    },
+    ctx.deliveryMeta?.queuedCreatedAt
+  );
+}
+
+/** Where a mutation's target stands in the store. */
+type StoredTarget =
+  | { kind: 'stored'; row: StoredMessage }
+  | { kind: 'unreadable' }
+  | { kind: 'absent' };
+
+/**
+ * Looks a mutation's target up in the store, by primary key - the row memory does not show
+ * (`applyDeletion` says why memory is a window). A row this device cannot open is reported as such
+ * and is never written: it is not absent.
+ */
+async function storedTarget(
+  ctx: SystemEventContext,
+  targetId: string,
+  tag: 'DELETE' | 'EDIT'
+): Promise<StoredTarget> {
+  if (!ctx.storage) return { kind: 'absent' };
+  try {
+    // Scoped to THIS conversation: a frame of one conversation never reaches a row of another.
+    const found = await ctx.storage.getMessagesByIds(ctx.convoKey, [targetId], ctx.deviceKey());
+    const row = found.rows.get(targetId);
+    if (row) return { kind: 'stored', row };
+    if (found.unreadable.has(targetId)) {
+      console.warn(
+        `[${tag}] ${targetId.slice(0, 8)} is stored under a key this device cannot open - left as it is`
+      );
+      return { kind: 'unreadable' };
+    }
+  } catch (e) {
+    ctx.log(`[${tag}] stored row of ${targetId.slice(0, 8)} could not be read: ${String(e)}`);
+  }
+  return { kind: 'absent' };
+}
+
+/**
+ * Applies one `edit_message` wherever its target is - shown, stored but not shown, or not here yet.
+ * The same three places as {@link applyDeletion}, for the same report: an edit looked for its target
+ * in memory alone and was forgotten when memory did not show it.
+ *
+ * - **Shown or stored**: only the author may edit, a tombstone is final, and an edit older than the
+ *   one the row holds is dropped (`editSupersedes`) - the rules the live path always had, now also
+ *   against the stored row.
+ * - **Not here yet**: KEPT as a pending mutation (`keepPendingMutation`), settled against the body's
+ *   author when it arrives (`pendingMutations.ts`).
+ * - **Here only as a push PREVIEW** (`isPushPreview`: flagged, or a non-envelope body an older
+ *   build stored unflagged): not here yet either. The caption is not the
+ *   body - an edit applied to it was laid under the body when the body arrived (the upgrade takes
+ *   the body's content and kept `isEdited`), so the edit was lost. Kept the same way, it is settled
+ *   by the upgrade itself (`settleWithPending`, `settledWith`), against the body's author.
+ */
+async function applyEdit(
+  targetId: string,
+  newText: string,
+  sentEditedAt: unknown,
+  ctx: SystemEventContext
+): Promise<void> {
+  const { storage, deviceKey, conversations, convoKey, senderNorm, log, authorship, deliveryMeta } =
+    ctx;
+  // Dated by the sender, so two devices converge whatever order the edits reach them in; a frame
+  // from a client too old to send the time is dated on arrival (`legacy-compatibility.md`).
+  const editedAtMs = typeof sentEditedAt === 'number' ? sentEditedAt : Date.now();
+  const c = conversations.get(convoKey);
+  const held = c?.messages.find((row) => row.id === targetId);
+  // Looked up at rest even when shown, as in `applyDeletion`.
+  const found = await storedTarget(ctx, targetId, 'EDIT');
+  if (found.kind === 'unreadable' && !held) return;
+  const stored = found.kind === 'stored' ? found.row : null;
+  const target = held ?? stored;
+  const previewOnly = !!target && isPushPreview(target);
+  if (previewOnly) {
+    log(
+      `[PENDING] ${targetId.slice(0, 8)} is here only as a push preview - its edit is kept for the body`
+    );
+  }
+
+  if (!target || previewOnly) {
+    await keepPendingMutation(
+      ctx,
+      {
+        conversationId: convoKey,
+        messageId: targetId,
+        sender: senderNorm,
+        kind: 'edit',
+        slot: '',
+        rank: editedAtMs,
+        text: newText,
+        ...(authorship ? { proof: authorship } : {}),
+      },
+      deliveryMeta?.queuedCreatedAt
+    );
+    return;
+  }
+  if (!mutationIsAuthorised(target, senderNorm, 'edit', log)) return;
+  // A DELETE IS ABSORBING: THE TOMBSTONE WINS, WHATEVER THE ORDER. The tombstone lives in `content`,
+  // so an edit applied on top of it would put the deleted text back on screen.
+  if (target.isDeleted) {
+    log(
+      `[MLS] Dropped an edit of ${targetId.slice(0, 8)} - the message is deleted and a tombstone is final`
+    );
+    return;
+  }
+  // AN EDIT OLDER THAN THE ONE THIS ROW ALREADY CARRIES IS DROPPED, and dropping it is what makes two
+  // devices agree (MUT-18) - see `editSupersedes`.
+  if (!editSupersedes({ editedAt: editedAtMs, content: newText }, target)) {
+    log(
+      `[MLS] Dropped an edit of ${targetId.slice(0, 8)} dated ${editedAtMs} - the row already holds a later one`
+    );
+    return;
+  }
+  // THE EDIT CARRIES A TEXT, NOT A BODY: the reply reference lives inside the envelope in `content`,
+  // so the text is applied to the body this row holds (`applyEditToBody`).
+  const editedContent = applyEditToBody(target.content, newText);
+  if (held && c) {
+    conversations.set(convoKey, {
+      ...c,
+      messages: c.messages.map((row) =>
+        row.id === targetId
+          ? { ...row, isEdited: true, editedAt: new Date(editedAtMs), content: editedContent }
+          : row
+      ),
+    });
+  }
+  log(
+    `[EDIT] ${targetId.slice(0, 8)} edited by its author ${senderNorm.slice(0, 8)} - ${held ? 'shown' : 'stored, not shown'}`
+  );
+  if (!storage || found.kind === 'unreadable') return;
+  if (!stored) {
+    await keepUntilStored(ctx, targetId, 'edit', editedAtMs, {
+      text: newText,
+      ...(authorship ? { proof: authorship } : {}),
+    });
+    return;
+  }
+  try {
+    // The author's signed edit replaces any earlier one: it is what proves THIS body. Decided again
+    // on the row as it stands at the write (a compare-and-set): a deletion or a later edit stored
+    // since the read above wins, and the text is applied to the body the row holds THEN.
+    await storage.mergeMessages(
+      convoKey,
+      [targetId],
+      (current) =>
+        current.isDeleted || !editSupersedes({ editedAt: editedAtMs, content: newText }, current)
+          ? null
+          : mergeStoredMessage(current, {
+              content: applyEditToBody(current.content, newText),
+              isEdited: true,
+              editedAt: editedAtMs,
+              editProof: authorship ?? null,
+            }),
+      deviceKey()
+    );
+  } catch (e) {
+    log(`[EDIT] edit of ${targetId.slice(0, 8)} not persisted: ${String(e)}`);
+  }
+}
+
+/** The rows the store holds under a bundle's ids memory does not show; nothing when it cannot say. */
+async function storedRowsForBundle(
+  ctx: SystemEventContext,
+  ids: readonly string[]
+): Promise<StoredRowsById> {
+  const none: StoredRowsById = { rows: new Map(), unreadable: new Set() };
+  if (!ctx.storage || ids.length === 0) return none;
+  try {
+    return await ctx.storage.getMessagesByIds(ctx.convoKey, ids, ctx.deviceKey());
+  } catch (e) {
+    console.error(
+      `[HISTORY_BUNDLE] the store could not say which of ${ids.length} relayed message(s) it holds - they are vetted as new: ${String(e)}`
+    );
+    return none;
+  }
+}
+
+/**
+ * The stored fields a merged row writes: what {@link mergeVettedRow} may have moved, and nothing
+ * else. The body is left alone EXCEPT on a deletion, which must purge it at rest - the tombstone is
+ * meant to be all that survives - and on an edit the merge took, which supersedes it.
+ */
+function mergedRowPatch(
+  msg: {
+    content: string;
+    isDeleted?: boolean;
+    isEdited?: boolean;
+    editedAt?: Date;
+    reactions?: MessageReaction[];
+    serverTimestamp?: number;
+  },
+  reactions: MessageReaction[] | undefined,
+  bodyEdited: boolean,
+  editProof: RecordedAuthorship | undefined,
+  deleteProof: RecordedAuthorship | undefined
+): StoredMessagePatch {
+  return {
+    reactions: reactions ?? msg.reactions,
+    serverTimestamp: msg.serverTimestamp,
+    // A tombstone purges the original signed bytes with the body.
+    ...(msg.isDeleted
+      ? {
+          isDeleted: true,
+          content: msg.content,
+          authorship: null,
+          editProof: null,
+          ...(deleteProof ? { deleteProof } : {}),
+        }
+      : {}),
+    ...(!msg.isDeleted && bodyEdited ? { content: msg.content, editProof: editProof ?? null } : {}),
+    ...(msg.isEdited ? { isEdited: true } : {}),
+    ...(msg.editedAt ? { editedAt: msg.editedAt.getTime() } : {}),
+  };
+}
+
+/** A stored row as `mergeVettedRow` reads one. */
+function storedRowForMerge(row: StoredMessage) {
+  return {
+    id: row.id,
+    senderId: row.senderId,
+    content: row.content,
+    ...(row.isDeleted ? { isDeleted: true } : {}),
+    ...(row.isEdited ? { isEdited: true } : {}),
+    ...(typeof row.editedAt === 'number' ? { editedAt: new Date(row.editedAt) } : {}),
+    ...(row.reactions ? { reactions: row.reactions } : {}),
+    ...(row.restoredUnverified ? { restoredUnverified: true } : {}),
+    ...(row.serverTimestamp !== undefined ? { serverTimestamp: row.serverTimestamp } : {}),
+  };
+}
+
+/**
+ * Merges a vetted bundle onto the rows memory does NOT show, in the store (`mergeVettedRow`, the one
+ * rule): a held row that is stored but outside memory's window, and a row the bundle added that
+ * memory did not take. The rows memory shows are merged by the caller, in memory and at rest.
+ */
+async function mergeVettedIntoStore<E extends BundleEntry>(
+  ctx: SystemEventContext,
+  decisions: Map<string, { entry: E; decision: BundleRowDecision }>
+): Promise<void> {
+  const { conversations, convoKey, storage, deviceKey, senderNorm, log } = ctx;
+  if (!storage || decisions.size === 0) return;
+  const shown = new Set((conversations.get(convoKey)?.messages ?? []).map((row) => row.id));
+  const ids = [...decisions.keys()].filter((id) => !shown.has(id));
+  if (ids.length === 0) return;
+  const stored = await storedRowsForBundle(ctx, ids);
+  const candidates = [...stored.rows.keys()].filter((id) => decisions.has(id));
+  let merged = 0;
+  if (candidates.length > 0) {
+    try {
+      // Merged onto each row as it stands AT THE WRITE (a compare-and-set): the read above only
+      // chose the candidates, so a deletion stored meanwhile is what the merge sees and keeps.
+      merged = (
+        await storage.mergeMessages(
+          convoKey,
+          candidates,
+          (row) => {
+            const vetted = decisions.get(row.id);
+            if (!vetted) return null;
+            const out = mergeVettedRow(
+              storedRowForMerge(row),
+              vetted.entry,
+              vetted.decision,
+              senderNorm,
+              row.reactions
+            );
+            return out.changed
+              ? mergeStoredMessage(
+                  row,
+                  mergedRowPatch(
+                    out.next,
+                    out.reactions,
+                    out.bodyEdited,
+                    out.editProof,
+                    out.deleteProof
+                  )
+                )
+              : null;
+          },
+          deviceKey()
+        )
+      ).size;
+    } catch (e) {
+      log(
+        `[HISTORY_BUNDLE] merged state of ${candidates.length} stored row(s) not persisted: ${String(e)}`
+      );
+    }
+  }
+  // A row this bundle PROVED may now settle what waited for it: a deletion or an edit by its author
+  // that was retained while the stored copy's author was only a claim (`restoredUnverified`).
+  await settlePendingFor(ctx, convoKey, [...decisions.keys()]);
+  if (merged > 0) {
+    log(
+      `[HISTORY_BUNDLE] merged metadata onto ${merged} stored message(s) not shown in ${convoKey.slice(0, 8)}…`
+    );
+  }
 }
 
 /**
@@ -211,7 +646,6 @@ export async function handleSystemEvent(
     messageId,
     sentAt,
     deliveryMeta,
-    authorship,
   } = ctx;
 
   /**
@@ -787,6 +1221,9 @@ export async function handleSystemEvent(
         selfRead && mark ? withOwnReadAdvanced(c, senderNorm, mark.at, mark.clock) : (merged ?? c);
       if (next !== c) {
         conversations.set(convoKey, next);
+        // Only this tab has the socket: a follower tab of the same browser learns the receipt, and
+        // this account's read on another device, from here or not at all (`read_state`).
+        if (mark) publishReadState(convoKey, senderNorm, mark.at, mark.clock);
         // The read state lives on the conversation row, so this save is what persists it - for a
         // peer's watermark as much as for our own.
         await saveConversation?.(convoKey).catch(() => {});
@@ -802,118 +1239,18 @@ export async function handleSystemEvent(
   }
 
   if (event === 'delete_message') {
-    const c = conversations.get(convoKey);
-    if (c && data.messageId) {
-      const idx = c.messages.findIndex((m) => m.id === data.messageId);
-      if (idx !== -1 && !mutationIsAuthorised(c.messages[idx], senderNorm, 'delete', log))
-        return true;
-      if (idx !== -1) {
-        const orig = c.messages[idx];
-        const deletedMsg = {
-          ...orig,
-          isDeleted: true,
-          content: m.chat_system_message_deleted(),
-        };
-        conversations.set(convoKey, {
-          ...c,
-          messages: c.messages.map((m, i) => (i === idx ? deletedMsg : m)),
-        });
-        // Deleted by another of the author's devices: a refused act on it has nothing left to retry.
-        clearMessageControlRefusals(deletedMsg.id);
-        if (storage) {
-          try {
-            // The tombstone and the replacement body, nothing else: the edit flags and the read
-            // state of the message being deleted are not this handler's to rewrite. The original
-            // signed bytes go with the body (`authorship`/`editProof: null`), and the author's
-            // signed deletion stays, so a bundle can prove the tombstone to a device that missed it.
-            await storage.updateMessage(
-              deletedMsg.id,
-              {
-                isDeleted: true,
-                content: deletedMsg.content,
-                authorship: null,
-                editProof: null,
-                ...(authorship ? { deleteProof: authorship } : {}),
-              },
-              deviceKey()
-            );
-          } catch (e) {
-            // Non-blocking: the tombstone holds in memory, a reload shows the message again.
-            log(`[DELETE] tombstone of ${deletedMsg.id.slice(0, 8)} not persisted: ${String(e)}`);
-          }
-        }
-      }
+    if (data.messageId) {
+      await applyDeletion(String(data.messageId), ctx);
+    } else {
+      log(
+        `[DELETE] a delete_message from ${senderNorm.slice(0, 8)} names no message - nothing to do`
+      );
     }
     return true;
   }
 
   if (event === 'edit_message' && data.messageId && data.newContent) {
-    const c = conversations.get(convoKey);
-    if (c) {
-      const idx = c.messages.findIndex((m) => m.id === data.messageId);
-      if (idx !== -1 && !mutationIsAuthorised(c.messages[idx], senderNorm, 'edit', log))
-        return true;
-      if (idx !== -1) {
-        const orig = c.messages[idx];
-        // A DELETE IS ABSORBING: THE TOMBSTONE WINS, WHATEVER THE ORDER. The tombstone lives in
-        // `content`, so an edit applied on top of it does not merely reorder two bodies - it puts
-        // the deleted text back on screen, italic and faded, which is the one outcome a delete
-        // exists to prevent. Reachable the same way the ordering defect was: two devices of one
-        // account, one deleting while the other edits. The archive's own post-save pass
-        // (`history.ts`, `if (deletion) ... else if (edit)`) has always had this rule; the live path
-        // and the replay never did.
-        if (orig.isDeleted) {
-          log(
-            `[MLS] Dropped an edit of ${String(data.messageId).slice(0, 8)} - the message is deleted and a tombstone is final`
-          );
-          return true;
-        }
-        const editedAtMs = typeof data.editedAt === 'number' ? data.editedAt : Date.now();
-        // AN EDIT OLDER THAN THE ONE THIS ROW ALREADY CARRIES IS DROPPED, and dropping it is what
-        // makes two devices agree. Applying on arrival meant the answer was "whichever frame came
-        // last", which differs per device: MUT-18 crossed two edits from two devices of one account
-        // and left W1 on A1's text and A1 on W1's, permanently, with no error anywhere. See
-        // `editSupersedes` for why a sender-stamped clock is enough - convergence needs the same
-        // winner, not the right one.
-        if (!editSupersedes({ editedAt: editedAtMs, content: data.newContent }, orig)) {
-          log(
-            `[MLS] Dropped an edit of ${String(data.messageId).slice(0, 8)} dated ${editedAtMs} - the row already holds a later one`
-          );
-          return true;
-        }
-        const editedAt = new Date(editedAtMs);
-        // No read state is reset here. It used to clear `readBy`, so an edited message showed as
-        // read by nobody - which the watermark cannot express and should not: a watermark is
-        // monotone, and a peer that never sees the edit would never agree to move back anyway.
-        // THE EDIT CARRIES A TEXT, NOT A BODY. The reply reference lives inside the envelope in
-        // `content` and nowhere else, so writing the bare text here deleted the quote from the row
-        // - invisibly on the editing device, whose in-memory `replyTo` outlived the write, and
-        // immediately on every device that re-read the row from disk. See `applyEditToBody`.
-        const editedContent = applyEditToBody(orig.content, data.newContent);
-        const editedMsg = { ...orig, isEdited: true, editedAt, content: editedContent };
-        conversations.set(convoKey, {
-          ...c,
-          messages: c.messages.map((m, i) => (i === idx ? editedMsg : m)),
-        });
-        if (storage) {
-          try {
-            // The author's signed edit replaces any earlier one: it is what proves THIS body.
-            await storage.updateMessage(
-              editedMsg.id,
-              {
-                content: editedContent,
-                isEdited: true,
-                editedAt: editedAt.getTime(),
-                editProof: authorship ?? null,
-              },
-              deviceKey()
-            );
-          } catch {
-            // Non-blocking
-          }
-        }
-      }
-    }
+    await applyEdit(String(data.messageId), String(data.newContent), data.editedAt, ctx);
     return true;
   }
 
@@ -948,6 +1285,9 @@ export async function handleSystemEvent(
     };
     let incoming: BundleMsg[] = Array.isArray(data?.messages) ? data.messages : [];
     let addOnly = false;
+    // The inviter's join push to THIS device, accepted below: the one bundle a nickname register is
+    // taken from (see the nickname merge).
+    let joinPush = false;
     if (deliveryMeta?.addressed === true) {
       const requestId = parseHistoryRequestId(data?.requestId);
       const claimsJoin = data?.join === true && requestId === undefined;
@@ -984,6 +1324,7 @@ export async function handleSystemEvent(
       }
       incoming = bounded.kept;
       addOnly = ask.kind !== 'join';
+      joinPush = ask.kind === 'join';
     } else if (addressee && addressee.toLowerCase() !== me) {
       log(
         `[HISTORY_BUNDLE] ${convoKey.slice(0, 8)}… - broadcast answer for ${addressee.slice(0, 8)}…, ingesting it anyway`
@@ -1043,12 +1384,23 @@ export async function handleSystemEvent(
         );
         const mergedFloor = mergeHistoryFloor(beforeMerge.historyFloor, data.floor);
         if (mergedWatermarks || mergedServerWatermarks || mergedFloor !== null) {
-          conversations.set(convoKey, {
+          const merged = {
             ...beforeMerge,
             ...(mergedWatermarks ? { readWatermarks: mergedWatermarks } : {}),
             ...(mergedServerWatermarks ? { serverReadWatermarks: mergedServerWatermarks } : {}),
             ...(mergedFloor !== null ? { historyFloor: mergedFloor } : {}),
-          });
+          };
+          conversations.set(convoKey, merged);
+          // The marks restated reach the follower tabs too, each entry that moved (`read_state`);
+          // the floor is not theirs.
+          for (const [map, before, clock] of [
+            [mergedWatermarks, beforeMerge.readWatermarks, 'stamped'],
+            [mergedServerWatermarks, beforeMerge.serverReadWatermarks, 'server'],
+          ] as const) {
+            for (const [reader, at] of Object.entries(map ?? {})) {
+              if ((before?.[reader] ?? 0) < at) publishReadState(convoKey, reader, at, clock);
+            }
+          }
           await saveConversation?.(convoKey).catch((e: unknown) => {
             log(
               `[HISTORY_BUNDLE] conversation state of ${convoKey.slice(0, 8)}… not persisted: ${String(e)}`
@@ -1066,9 +1418,42 @@ export async function handleSystemEvent(
           `[HISTORY_BUNDLE] ${pinsMerged} pin state(s) converged for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}`
         );
       }
+      // And the nickname register - from the inviter's JOIN PUSH to this device ONLY (review of
+      // #3177): a member admitted after a `nickname` frame went out learns the names from it (it
+      // carries them even when every message is withheld). Its entries are the relayer's word about
+      // what others did, so they are taken UNVERIFIED, only about current members of the tree, dated
+      // within the bundle's server time - and a broadcast or a replayed bundle carries none at all.
+      if (joinPush && Array.isArray(data?.nicknames) && data.nicknames.length > 0) {
+        const members = await nicknameMembersOf(mlsService, convoKey, 'join push');
+        const nicknamesMerged = members
+          ? mergeBundleNicknames(convoKey, data.nicknames, {
+              members,
+              serverAt: deliveryMeta?.queuedCreatedAt,
+            })
+          : 0;
+        if (nicknamesMerged > 0) {
+          log(
+            `[HISTORY_BUNDLE] ${nicknamesMerged} nickname(s) taken (unverified) for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}'s join push`
+          );
+        }
+      }
 
       if (msgs.length > 0) {
-        const existingIds = new Set(convo.messages.map((m) => m.id));
+        // HELD MEANS SHOWN OR STORED. Memory is a window, so every id of the bundle memory does not
+        // show is asked of the store, in ONE read whose cost is the bundle's: a stored row is held -
+        // never added again over itself, and open to what the bundle may change on it.
+        const shownRows = new Map(
+          (conversations.get(convoKey)?.messages ?? convo.messages).map((row) => [row.id, row])
+        );
+        const storedRows = await storedRowsForBundle(
+          ctx,
+          msgs.map((entry) => entry.id).filter((id) => !shownRows.has(id))
+        );
+        const existingIds = new Set([
+          ...shownRows.keys(),
+          ...storedRows.rows.keys(),
+          ...storedRows.unreadable,
+        ]);
         // HYGIENE, NOT A CONTROL (user, 2026-10-14: a Remove holds against a later re-add). The
         // answering peer withholds what was sent while a member was out; a message that still
         // reaches us from inside OUR OWN window is dropped here, each one logged. Only the messages
@@ -1086,9 +1471,11 @@ export async function handleSystemEvent(
         //    may change on its row - reactions, a tombstone, an edit. Decided before any write
         //    because a signature check is asynchronous and the merge below is not. An addressed
         //    answer to an ask (`addOnly`) changes only the rows it adds or upgrades.
-        const heldRows = new Map(
-          (conversations.get(convoKey)?.messages ?? []).map((row) => [row.id, row])
-        );
+        const heldRows = new Map<string, BundleHeldRow>();
+        for (const row of conversations.get(convoKey)?.messages ?? []) heldRows.set(row.id, row);
+        for (const row of storedRows.rows.values()) {
+          if (!heldRows.has(row.id)) heldRows.set(row.id, row);
+        }
         const vettedBundle = await vetBundle(
           mlsService,
           convoKey,
@@ -1098,6 +1485,9 @@ export async function handleSystemEvent(
             held: heldRows,
             relayer: senderNorm,
             mutateHeld: !addOnly,
+            // An addressed answer adds, and still carries a deletion onto a held row: the state key
+            // counts it, so without this two devices differing only on it never agree.
+            tombstoneHeld: true,
           },
           log,
           refuseForged
@@ -1126,7 +1516,13 @@ export async function handleSystemEvent(
           );
           for (const [id, up] of upgrades) {
             try {
-              await storage?.updateMessage(id, upgradePatch(up), deviceKey());
+              // Scoped to this conversation, a compare-and-set like every rewrite of a stored row.
+              await storage?.mergeMessages(
+                convoKey,
+                [id],
+                (current) => mergeStoredMessage(current, upgradePatch(up)),
+                deviceKey()
+              );
             } catch (e) {
               log(`[AUTHORSHIP] upgrade of ${id.slice(0, 8)} not persisted: ${String(e)}`);
             }
@@ -1189,7 +1585,10 @@ export async function handleSystemEvent(
           }
         }
 
-        // 4) Merge what step 1 allowed onto the conversation's rows (`mergeVettedRow`).
+        // 4) Merge what step 1 allowed onto the conversation's rows (`mergeVettedRow`) - first the
+        //    rows memory does not show, in the store: a held row that is stored but not shown, and a
+        //    row step 3 added that memory did not take.
+        await mergeVettedIntoStore(ctx, vettedBundle.decisions);
         const c = conversations.get(convoKey);
         if (c) {
           const changedIds = new Set<string>();
@@ -1243,29 +1642,19 @@ export async function handleSystemEvent(
                   // a deletion, which must purge it at rest: the tombstone is meant to be all that
                   // survives, and writing the row without it put the original text back on disk -
                   // and on an edit the AUTHOR's own bundle carried, which supersedes it.
-                  await storage.updateMessage(
-                    msg.id,
-                    {
-                      reactions: messageReactions.get(msg.id) ?? msg.reactions,
-                      serverTimestamp: msg.serverTimestamp,
-                      // A tombstone purges the original signed bytes with the body.
-                      ...(msg.isDeleted
-                        ? {
-                            isDeleted: true,
-                            content: msg.content,
-                            authorship: null,
-                            editProof: null,
-                            ...(deleteProofs.has(msg.id)
-                              ? { deleteProof: deleteProofs.get(msg.id) }
-                              : {}),
-                          }
-                        : {}),
-                      ...(!msg.isDeleted && bodyEditedIds.has(msg.id)
-                        ? { content: msg.content, editProof: editProofs.get(msg.id) ?? null }
-                        : {}),
-                      ...(msg.isEdited ? { isEdited: true } : {}),
-                      ...(msg.editedAt ? { editedAt: msg.editedAt.getTime() } : {}),
-                    },
+                  // Scoped to THIS conversation: memory may show an id the store holds in another
+                  // (a relayed copy naming it), and that row is never this bundle's to rewrite.
+                  const patch = mergedRowPatch(
+                    msg,
+                    messageReactions.get(msg.id),
+                    bodyEditedIds.has(msg.id),
+                    editProofs.get(msg.id),
+                    deleteProofs.get(msg.id)
+                  );
+                  await storage.mergeMessages(
+                    convoKey,
+                    [msg.id],
+                    (current) => mergeStoredMessage(current, patch),
                     deviceKey()
                   );
                 } catch (e) {
@@ -1294,35 +1683,18 @@ export async function handleSystemEvent(
   // that change; no client sends one any more. Removal condition in
   // `docs/wiki/legacy-compatibility.md`.
   if (event === 'remove_reaction' && data.messageId && data.emoji) {
-    const reactions = messageReactions.get(data.messageId) || [];
     // Dated with the delivery time, which is the only clock this frame shape carries. It is
     // therefore ordered after every placement that preceded it in the log, which is what it meant.
-    const updated = applyReaction(
-      reactions,
+    // Through the ONE reaction path, so a removal whose message is not here yet is kept for it.
+    const at = deliveryMeta?.queuedCreatedAt ?? Date.now();
+    await applyReactionFrame(
+      ctx,
+      convoKey,
       senderNorm,
-      String(data.emoji),
-      deliveryMeta?.queuedCreatedAt ?? Date.now(),
-      true
+      { messageId: String(data.messageId), emoji: String(data.emoji), at, removed: true },
+      undefined,
+      deliveryMeta?.queuedCreatedAt
     );
-    if (!updated) return true;
-    messageReactions.set(data.messageId, updated);
-
-    const c = conversations.get(convoKey);
-    if (c) {
-      const msgIdx = c.messages.findIndex((m) => m.id === data.messageId);
-      if (msgIdx !== -1) {
-        const nextMsgs = [...c.messages];
-        nextMsgs[msgIdx] = { ...nextMsgs[msgIdx], reactions: updated };
-        conversations.set(convoKey, { ...c, messages: nextMsgs });
-        if (storage) {
-          try {
-            await storage.updateMessage(nextMsgs[msgIdx].id, { reactions: updated }, deviceKey());
-          } catch {
-            // Non-blocking
-          }
-        }
-      }
-    }
     return true;
   }
 
@@ -1331,6 +1703,28 @@ export async function handleSystemEvent(
     // is dated on receipt: later than anything we hold, which is the right answer for a frame
     // arriving live, and the only one available. See `docs/wiki/legacy-compatibility.md`.
     applyPin(convoKey, String(data.messageId), event === 'pin', Number(data.at) || Date.now());
+    return true;
+  }
+
+  if (event === 'nickname') {
+    // THE SERVER'S TIME BOUNDS THE FRAME, NEVER THE RECEIVER'S CLOCK. Every copy carries it: a pulled
+    // one as its queue row's `createdAt`, a live one because chat-delivery publishes that same
+    // `createdAt` and the gateway forwards it (`live_mls_frame`, which says so when it cannot). A
+    // frame without it is a defect upstream, and it is refused - an unbounded date could freeze the
+    // name, and this device's clock is no server's.
+    const serverAt = deliveryMeta?.queuedCreatedAt;
+    if (!(typeof serverAt === 'number' && serverAt > 0)) {
+      console.error(
+        `[NICKNAME] REFUSED a nickname frame from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}…: it carries no server time to bound it`
+      );
+      return true;
+    }
+    applyNicknameFrame(convoKey, data, senderNorm, {
+      fallbackAt: serverAt,
+      serverAt,
+      members: await nicknameMembersOf(mlsService, convoKey, 'live frame'),
+      log,
+    });
     return true;
   }
 

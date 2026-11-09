@@ -8,6 +8,11 @@
  * the app leaves the screen (web visibility AND Android's foreground event), and rebuilt afterwards.
  */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+
+/** The Android ringer, as `window.canariAudio` would answer it (`androidRinger.ts`). */
+const ringer = vi.hoisted(() => ({ silences: false }));
+vi.mock('$lib/mobile/androidRinger', () => ({ ringerSilencesAppTones: () => ringer.silences }));
+
 import { playTone, resetToneOutputForTest, type ToneScore } from '$lib/utils/toneOutput';
 import { reportCallSoundPhase, resetCallSoundGateForTest } from '$lib/utils/callSoundGate';
 
@@ -56,6 +61,7 @@ function setPageVisibility(state: DocumentVisibilityState) {
 }
 
 beforeEach(() => {
+  ringer.silences = false;
   contexts.length = 0;
   resetToneOutputForTest();
   vi.stubGlobal('AudioContext', FakeContext);
@@ -150,4 +156,13 @@ it('a tone that fails to schedule leaves no output running', () => {
     throw new Error('no oscillator');
   });
   expect(contexts[0].suspend).toHaveBeenCalledTimes(1);
+});
+
+it('plays no app tone while the Android ringer is silent or vibrate, and opens no output', () => {
+  ringer.silences = true;
+  const voices: FakeOscillator[] = [];
+  expect(playTone('send', tone(1, voices))).toHaveLength(0);
+  expect(contexts).toHaveLength(0);
+  // The call's own ring is not an app tone: the native ring plan decides it.
+  expect(playTone('ring', tone(1, voices), 'call')).toHaveLength(1);
 });

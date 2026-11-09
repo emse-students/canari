@@ -1,3 +1,5 @@
+import type { GuestIdentityField } from '../guest-identity';
+import type { FormStatus } from '../form-status';
 import type { AudienceCondition } from '../../pricing/audience';
 import type { PriceMatrix } from '../../pricing/price-matrix';
 import {
@@ -11,6 +13,11 @@ import {
 
 /** TypeORM entity representing a dynamic form, optionally linked to an association and an online payment. */
 @Entity('forms')
+// Migration 146's index, declared so a schema built from the entities (the integration specs) has it.
+@Index('forms_owner_client_create_id', ['ownerId', 'clientCreateId'], {
+  unique: true,
+  where: '"clientCreateId" IS NOT NULL',
+})
 export class Form {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -113,11 +120,21 @@ export class Form {
 
   /**
    * When true, anybody holding the link may answer WITHOUT an account (migration 068). A guest has
-   * no identity to charge, to grant to, to count once or to match a profile criterion against, so a
-   * public form is free, criteria-free and answerable more than once - `assertPublicConfigValid`.
+   * no account to grant to, no profile to restrict an audience by and no identity to count once,
+   * so a public form grants nothing, restricts nobody and is answerable more than once
+   * (`form-option-rules.ts`, `assertPublicConfigValid`). A guest pays, and on a grid by promo,
+   * formation or cotisation pays the "everyone else" tier.
    */
   @Column({ default: false })
   isPublic: boolean;
+
+  /**
+   * What a PUBLIC form asks a guest about who they are (migration 138, owner 2026-11-06): a list
+   * drawn from `lastName`, `firstName`, `email`, each required once asked. Null asks nothing - the
+   * default, and every form before 138. A member is never asked (`guest-identity.ts`).
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  guestFields: GuestIdentityField[] | null;
 
   /** When true, a user can submit the form multiple times (e.g. product orders). */
   @Column({ default: false })
@@ -126,6 +143,14 @@ export class Form {
   /** Whether cash (physical) payment is accepted as an alternative to the online payment. */
   @Column({ default: false })
   allowCashPayment: boolean;
+
+  /**
+   * Whether ONLINE payment (Lydia, "Paiement Canari") is accepted (migration 145, owner 2026-11-08):
+   * true for every form before it, where online was the only way. Off with cash on is a cash-only
+   * form. Offered to a respondent only while the association can collect (`payment-offer.ts`).
+   */
+  @Column({ default: true })
+  allowOnlinePayment: boolean;
 
   /** Days after submission before an unvalidated cash payment expires (null = never). */
   @Column({ type: 'int', nullable: true })
@@ -143,6 +168,13 @@ export class Form {
   @Column({ type: 'varchar', length: 500, nullable: true })
   imageUrl: string | null;
 
+  /**
+   * The idempotency key of the create that stored this form (migration 146): minted by the client,
+   * unique per owner, never the form's id. A create sent again with it answers this form.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  clientCreateId: string | null;
+
   /** Internal media-service ID for the banner image (used for cleanup on update). */
   @Column({ type: 'varchar', length: 255, nullable: true })
   imageMediaId: string | null;
@@ -154,6 +186,15 @@ export class Form {
    */
   @Column({ type: 'timestamptz', nullable: true })
   deletedAt: Date | null;
+
+  /**
+   * `draft` until a manager publishes it, then `published` for good (migration 145, owner
+   * 2026-11-08). A draft is read by its managers only: every respondent read goes through
+   * `respondentFormWhere` (`form-status.ts`). The column defaults to `published`, so a form an
+   * older container or an older client writes is answerable as it always was.
+   */
+  @Column({ type: 'varchar', length: 16, default: 'published' })
+  status: FormStatus;
 
   @CreateDateColumn()
   createdAt: Date;

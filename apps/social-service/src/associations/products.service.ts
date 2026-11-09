@@ -6,7 +6,8 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { assertKindMaySell } from './selling-kinds';
+import { followRetagInRevisions, revisionsAtBase } from '../forms/form-draft-revision';
+import { assertMayCollect, mayCollect } from './collection-policy';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { isUUID } from 'class-validator';
@@ -119,7 +120,6 @@ import {
   type TierRelation,
 } from './tier-pricing';
 import {
-  approvedDelegateIds,
   isDelegating,
   PAYMENTS_DISABLED_MESSAGE,
   resolvePaymentTarget,
@@ -309,6 +309,11 @@ export interface PurchaseListRow {
   source: 'form' | 'product';
   productId: string | null;
   formId: string | null;
+  /**
+   * The form answer this payment paid for; null for a boutique purchase. The responses screen opens
+   * the refund of an answer from it, through the same dialog as this list.
+   */
+  submissionId: string | null;
   productName: string;
   amountCents: number;
   paymentMethod: PurchasePaymentMethod;
@@ -566,6 +571,49 @@ export interface FailedDelivery {
 }
 
 /** Boutique CRUD, checkout creation, and Cercle webhook dispatch for association products. */
+/** JSON with every object's keys sorted, so two equal values compare equal whatever their key order. */
+function sortedJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(sortedJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value as object)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${sortedJson((value as Record<string, unknown>)[k])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+/** The fields that set what a product charges: a change to one is a change of price. */
+const PRODUCT_PRICE_FIELDS = [
+  'amountCents',
+  'currency',
+  'amountCentsMember',
+  'memberPriceTag',
+  'priceMatrix',
+  'allowCustomAmount',
+  'customAmountMinCents',
+  'customAmountMaxCents',
+] as const;
+
+/**
+ * What in a product update COLLECTS money - `on-sale` (it goes on sale) or `price` (a price field
+ * changes value) - or null when it collects nothing new (a description, a picture, a limit, taking it
+ * off sale). The one test `ProductsService.update` refuses a paused entity on.
+ */
+export function productUpdateCollects(
+  product: Pick<AssociationProduct, (typeof PRODUCT_PRICE_FIELDS)[number] | 'isActive'>,
+  dto: Partial<Record<(typeof PRODUCT_PRICE_FIELDS)[number] | 'isActive', unknown>>
+): 'on-sale' | 'price' | null {
+  if (dto.isActive === true && !product.isActive) return 'on-sale';
+  for (const field of PRODUCT_PRICE_FIELDS) {
+    const next = dto[field];
+    if (next === undefined) continue;
+    // Key-order-insensitive: jsonb hands a grid back with its keys reordered.
+    if (sortedJson(next ?? null) !== sortedJson(product[field] ?? null)) return 'price';
+  }
+  return null;
+}
+
 @Injectable()
 export class ProductsService {
   private readonly logger = new Logger(ProductsService.name);
@@ -886,39 +934,11 @@ export class ProductsService {
   }
 
   /**
-   * The same release for an association AND every club whose payments it serves.
-   *
-   * A parent finishing its onboarding makes its approved delegating children ready too, and their
-   * products were withheld for exactly the reason that just went away. Sweeping only the
-   * association whose row changed would leave every delegating club waiting on an event that has
-   * already happened - the same day-late, found-by-hand failure this mechanism exists to end.
-   */
-  async releaseWithheldForAssociationAndDelegates(associationId: string): Promise<number> {
-    // The SAME predicate the readiness revert withholds with (`approvedDelegateIds`), so the
-    // release is the exact inverse of the withhold.
-    const children = await approvedDelegateIds(this.assoRepo.manager, associationId);
-    let total = await this.releaseWithheldProducts(associationId);
-    for (const childId of children) {
-      // One failing club must not stop the others: this runs after a state change that is already
-      // committed, so a throw here would lose every release queued behind it.
-      try {
-        total += await this.releaseWithheldProducts(childId);
-      } catch (e) {
-        this.logger.error(
-          `[SHOP] release FAILED for delegating child=${childId.slice(0, 8)} of ` +
-            `parent=${associationId.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`
-        );
-      }
-    }
-    return total;
-  }
-
-  /**
    * Marks the HOLDER of `vendorToken` ready (`AssociationsService.setLydiaReadiness`, the one
-   * writer), then releases its withheld products and its approved delegates' - on EVERY call,
-   * replays included: a crash between the commit and the release is healed by the next replay, and
-   * `activationWithheld` is the release's allowlist, so a second release finds nothing. The ONE path
-   * the webhook's `BUSINESS_VALIDATED` and the global admin's "Valider l'onboarding" take.
+   * writer), which releases its withheld products and its approved delegates' IN THE SAME
+   * TRANSACTION, replays included (owner review of #2967): a commit never leaves one withheld, so
+   * no release after it is owed. The ONE path the webhook's `BUSINESS_VALIDATED` and the global
+   * admin's "Valider l'onboarding" take.
    */
   async markLydiaReady(
     vendorToken: string,
@@ -926,13 +946,7 @@ export class ProductsService {
     ref: LydiaReadinessRef
   ): Promise<LydiaReadinessOutcome> {
     const outcome = await this.associationsService.setLydiaReadiness(vendorToken, true, cause, ref);
-    // Nothing became (or already was) ready: nothing to release.
-    if (outcome.kind !== 'transitioned' && outcome.kind !== 'replay') return outcome;
-    const released = await this.releaseWithheldForAssociationAndDelegates(outcome.associationId);
-    this.logger.debug(
-      `[SHOP] readiness ${outcome.kind} for association=${outcome.associationId.slice(0, 8)}: ` +
-        `${released} withheld product(s) released`
-    );
+    this.logger.debug(`[SHOP] readiness ${outcome.kind} via ${cause}`);
     return outcome;
   }
 
@@ -1269,7 +1283,7 @@ export class ProductsService {
 
     const asso = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!asso) throw new NotFoundException('Association not found');
-    assertKindMaySell(this.logger, associationId, asso.type, 'product create');
+    assertMayCollect(this.logger, asso, 'product create');
     assertMembersOnlyGateable(
       asso,
       dto.membersOnly ?? false,
@@ -1492,14 +1506,24 @@ export class ProductsService {
     if (!product) throw new NotFoundException('Product not found');
     const owner = await this.assoRepo.findOne({
       where: { id: associationId },
-      select: { id: true, type: true },
+      select: {
+        id: true,
+        type: true,
+        paymentDelegationStatus: true,
+        paymentParentAssociationId: true,
+      },
     });
-    // A product of a kind that sells nothing may be taken OFF sale, never put on sale or repriced.
-    const deactivationOnly = Object.entries(dto).every(
-      ([key, value]) => value === undefined || (key === 'isActive' && value === false)
-    );
-    if (owner && !deactivationOnly) {
-      assertKindMaySell(this.logger, associationId, owner.type, 'product update');
+    // An entity that may not collect now (an institution, a paused list) is refused only what
+    // COLLECTS: putting a product on sale, or changing what it charges. Its description, name,
+    // picture, limits and order stay editable while paused (owner review of #2967, 2026-11-03).
+    const collects = productUpdateCollects(product, dto);
+    if (owner && collects) {
+      assertMayCollect(this.logger, owner, `product update (${collects})`);
+    } else if (owner && !mayCollect(owner)) {
+      this.logger.debug(
+        `[SHOP] product ${productId.slice(0, 8)} edited while its owner cannot collect: ` +
+          'no sale and no price change, allowed'
+      );
     }
 
     if (product.type === 'balance_topup' && !isGlobalAdmin) {
@@ -1672,12 +1696,25 @@ export class ProductsService {
       // 2026-11-01): left behind they would rank the tier `unranked`, refuse every new answer and
       // end one in flight `paid_not_granted`. Under the exclusive association lock, so a form saved
       // meanwhile names the key it was validated against.
-      const forms: unknown[] = await manager.query(
+      // Their unpublished revisions follow too (`followRetagInRevisions`): read which are built on
+      // the form as it stands, before it changes.
+      const atBase = await revisionsAtBase(manager, associationId);
+      const updated: unknown[] = await manager.query(
         `UPDATE forms SET "cotisationVariantKey" = $3
           WHERE "associationId" = $1 AND "grantsCotisation"
             AND "cotisationVariantKey" IS NOT DISTINCT FROM $2
         RETURNING id`,
         [associationId, retagging.oldVariantKey, dto.variantKey ?? null]
+      );
+      // TypeORM answers an UPDATE ... RETURNING with `[rows, affected]`.
+      const forms = (Array.isArray(updated[0]) ? updated[0] : updated) as Array<{ id: string }>;
+      await followRetagInRevisions(
+        manager,
+        associationId,
+        forms.map((f) => f.id),
+        atBase,
+        retagging.oldVariantKey ?? null,
+        dto.variantKey ?? null
       );
       if (forms.length > 0) {
         this.logger.log(
@@ -2075,7 +2112,7 @@ export class ProductsService {
       throw new BadRequestException('cotisationMode is required when cotisationEnabled is true');
     }
     const cotisationMode = asso.cotisationMode;
-    assertKindMaySell(this.logger, asso.id, asso.type, 'cotisation provisioning');
+    assertMayCollect(this.logger, asso, 'cotisation provisioning');
 
     const existing = await this.productRepo.find({
       where: { associationId: asso.id, type: 'membership' },
@@ -3148,9 +3185,14 @@ export class ProductsService {
    * Lists all completed purchases for an association (boutique + paid forms).
    * Requires MANAGE_PRODUCTS on the association (enforced by controller).
    */
-  async listAssociationPurchases(associationId: string): Promise<PurchaseListRow[]> {
-    const records = await this.purchaseRecordService.listPaidByAssociation(associationId);
-    return this.enrichPurchaseRecords(records);
+  async listAssociationPurchases(
+    associationId: string,
+    /** Only these records (a former receiver's scope, `childAccountingScope`); null = all. */
+    onlyRecordIds: readonly string[] | null = null
+  ): Promise<PurchaseListRow[]> {
+    const all = await this.purchaseRecordService.listPaidByAssociation(associationId);
+    const keep = onlyRecordIds ? new Set(onlyRecordIds) : null;
+    return this.enrichPurchaseRecords(keep ? all.filter((r) => keep.has(r.id)) : all);
   }
 
   /**
@@ -3159,7 +3201,8 @@ export class ProductsService {
    * an approved parent's delegated-accounting view. Columns match the treasurer-facing table.
    */
   async exportAssociationPurchases(
-    associationId: string
+    associationId: string,
+    onlyRecordIds: readonly string[] | null = null
   ): Promise<{ buffer: Buffer; title: string }> {
     this.logger.debug(`[SHOP] exportAssociationPurchases assoc=${associationId.slice(0, 8)}`);
     const nameRows: { name: string }[] = await this.productRepo.manager.query(
@@ -3167,7 +3210,7 @@ export class ProductsService {
       [associationId]
     );
     const assocName = nameRows[0]?.name ?? 'achats';
-    const purchases = await this.listAssociationPurchases(associationId);
+    const purchases = await this.listAssociationPurchases(associationId, onlyRecordIds);
 
     // Every French cell and header below is written as an escape, so this source stays ASCII.
     const workbook = new ExcelJS.Workbook();
@@ -3290,6 +3333,7 @@ export class ProductsService {
       source: r.source,
       productId: r.productId,
       formId: r.formId,
+      submissionId: r.submissionId ?? null,
       productName: r.productName,
       amountCents: r.amountCents,
       paymentMethod: r.paymentMethod,

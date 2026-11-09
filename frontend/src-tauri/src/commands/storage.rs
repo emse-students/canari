@@ -1,19 +1,125 @@
 //! Storage Tauri commands: persistence, reload, heartbeat, flags.
 
 use crate::concurrency::{
-    foreground_checkpoint_lock, mark_foreground_active, mls_bin_write_lock, write_mls_state_blob,
+    foreground_checkpoint_lock, mark_foreground_active, mls_bin_write_lock, write_slot_mls_bin,
 };
 use crate::state::AppState;
 use mls_core::MlsManager;
 use tauri::Manager;
 
-/// Write an already-encrypted MLS state blob into {app_data_dir}/mls.bin.
+/// Write an already-encrypted MLS state blob of `user_id` into {app_data_dir}/mls.bin.
 /// Accepts the encrypted bytes (as number[] from JS) and writes them verbatim.
 /// This is used by the frontend when it already holds an encrypted state and
 /// wants to persist it to the native app data directory (avoid WebView eviction).
+///
+/// **THE WRITE NAMES ITS ACCOUNT, AND LANDS ONLY IN THAT ACCOUNT'S SLOT** (round 3 of the review of
+/// #2919): see [`write_account_mls_state`].
 #[tauri::command]
-pub(crate) fn save_mls_state(app: tauri::AppHandle, data: Vec<u8>) -> Result<(), String> {
-    write_mls_state_blob(&app, &data)
+pub(crate) fn save_mls_state(
+    app: tauri::AppHandle,
+    user_id: String,
+    data: Vec<u8>,
+) -> Result<(), String> {
+    log::debug!("[MLS] save_mls_state: {} bytes", data.len());
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    write_account_mls_state(&data_dir, &user_id, &data)
+}
+
+/// Why [`write_account_mls_state`] wrote nothing - a TYPE, so no caller reads a sentence.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum AccountStateWriteRefused {
+    /// The slot holds a state its owner record does not name as `user_id`'s: another account's, or
+    /// one whose owner was never proven. Overwriting it would destroy a state this write cannot
+    /// claim.
+    NotThisAccountsSlot,
+    /// A move of a state between two accounts' places was cut part-way by a previous process and
+    /// could not be finished: the slot may hold part of another account's state (round 4 of the
+    /// review of #2919 - a backup restored over a cut park).
+    MoveUnfinished(String),
+    /// The directory, the lock or the file system failed.
+    Io(String),
+}
+
+impl std::fmt::Display for AccountStateWriteRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotThisAccountsSlot => f.write_str(
+                "mls.bin holds a state this account does not own - the write is refused",
+            ),
+            Self::MoveUnfinished(m) => write!(f, "the write is refused: {m}"),
+            Self::Io(e) => f.write_str(e),
+        }
+    }
+}
+
+/// Writes `data` as `user_id`'s `mls.bin` in `data_dir`, ONLY when the slot is that account's: its
+/// owner record ([`MLS_STATE_OWNER_FILE`]) names `user_id`, or the slot holds no state at all (a
+/// backup restored onto an install with nothing in it). The check and the write are one hold of
+/// [`mls_bin_write_lock`], the lock the account switch moves the slot under, so the slot cannot change
+/// owner between them.
+///
+/// Round 4 of the review of #2919: a move a previous process cut part-way is FINISHED first, the way
+/// every sign-in finishes it, and one that cannot be finished refuses the write; a slot that could
+/// not be examined refuses it too; and a write into an empty slot RECORDS `user_id` as its owner, so
+/// the same account's next write is not refused over a state nobody owns.
+///
+/// **WHY THE ACCOUNT IS CHECKED HERE AND NOT ONLY BY THE CALLER.** The slot belongs to whichever
+/// account signed in last. A write from a page still holding the previous account's bytes - a late
+/// checkpoint, a restore - would otherwise seal account A's state over account B's, the loss the
+/// per-account slot exists to prevent. Refused, nothing is written and the slot is untouched.
+pub(crate) fn write_account_mls_state(
+    data_dir: &std::path::Path,
+    user_id: &str,
+    data: &[u8],
+) -> Result<(), String> {
+    std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
+    // A foreground write proves the foreground is alive: refresh the guard so background engines
+    // refrain from writing in parallel (C1/FCM3).
+    mark_foreground_active();
+    let _guard = mls_bin_write_lock()
+        .lock()
+        .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+    account_state_write_held(data_dir, user_id, data).map_err(|refused| {
+        log::error!("[MLS] save_mls_state refused: {refused}");
+        refused.to_string()
+    })
+}
+
+/// [`write_account_mls_state`]'s check and write, the caller holding [`mls_bin_write_lock`].
+fn account_state_write_held(
+    data_dir: &std::path::Path,
+    user_id: &str,
+    data: &[u8],
+) -> Result<(), AccountStateWriteRefused> {
+    if let Some(refusal) =
+        crate::commands::mls_account_state::settle_moves_for_slot_write_held(data_dir, user_id)
+    {
+        log::error!("[MLS] save_mls_state: a cut move could not be finished - {refusal}");
+        return Err(AccountStateWriteRefused::MoveUnfinished(refusal));
+    }
+    let owner = read_mls_state_owner(data_dir).map_err(AccountStateWriteRefused::Io)?;
+    let holds_state = crate::commands::mls_account_state::slot_holds_state(data_dir)
+        .map_err(AccountStateWriteRefused::Io)?;
+    if holds_state && owner.as_deref() != Some(user_id) {
+        log::warn!(
+            "[MLS] save_mls_state: the slot holds a state owned by {} - not this account's",
+            if owner.is_some() {
+                "another account"
+            } else {
+                "no proven account"
+            }
+        );
+        return Err(AccountStateWriteRefused::NotThisAccountsSlot);
+    }
+    log::debug!(
+        "[MLS] save_mls_state: the slot is this account's (holds state: {holds_state}) - writing"
+    );
+    // THE OWNER FIRST, the order `initialiser_mls` writes them in: a crash in between leaves a record
+    // beside the previous (empty) slot, never this account's bytes with no record naming them.
+    if owner.as_deref() != Some(user_id) {
+        record_mls_state_owner(data_dir, user_id).map_err(AccountStateWriteRefused::Io)?;
+    }
+    write_slot_mls_bin(&data_dir.join("mls.bin"), data).map_err(AccountStateWriteRefused::Io)
 }
 
 /// What a resume reload did, and WHY when it did nothing - a TYPE, because the caller must act
@@ -388,8 +494,40 @@ pub(crate) fn report_background_stages(
     data_dir: &std::path::Path,
     held: &MlsManager,
 ) -> StagesReport {
+    stages_reported(with_json_ledger(data_dir, BACKGROUND_STAGES_FILE, |map| {
+        report_stages_in(map, held)
+    }))
+}
+
+/// [`report_background_stages`] for a caller that ALREADY HOLDS [`mls_bin_write_lock`] - the sign-in's
+/// install, which reports them in the same hold as its claim check, so a sign-in whose session ended
+/// while it loaded never clears the next account's ledger (round 4 of the review of #2919).
+pub(crate) fn report_background_stages_held(
+    data_dir: &std::path::Path,
+    held: &MlsManager,
+) -> StagesReport {
+    stages_reported(edit_json_ledger_held(
+        data_dir,
+        BACKGROUND_STAGES_FILE,
+        |map| report_stages_in(map, held),
+    ))
+}
+
+/// The report of a stage ledger that could not be read: nothing, accused.
+fn stages_reported(reported: Result<StagesReport, String>) -> StagesReport {
+    reported.unwrap_or_else(|e| {
+        log::error!("[MLS] background stage ledger unreadable ({e}) - its stages are not reported");
+        StagesReport::default()
+    })
+}
+
+/// [`report_background_stages`]'s verdicts on the ledger `map`, which it empties.
+fn report_stages_in(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    held: &MlsManager,
+) -> (StagesReport, bool) {
     use mls_core::pending_submission::PendingSubmissionRead;
-    let reported = with_json_ledger(data_dir, BACKGROUND_STAGES_FILE, |map| {
+    {
         let mut report = StagesReport::default();
         if map.is_empty() {
             return (report, false);
@@ -426,11 +564,7 @@ pub(crate) fn report_background_stages(
         }
         map.clear();
         (report, true)
-    });
-    reported.unwrap_or_else(|e| {
-        log::error!("[MLS] background stage ledger unreadable ({e}) - its stages are not reported");
-        StagesReport::default()
-    })
+    }
 }
 
 /// What persisting `live` over the file `candidate` was read from ERASES, said at ERROR before the
@@ -541,30 +675,46 @@ pub(crate) fn remove_mls_state_held(data_dir: &std::path::Path) -> Result<(), St
     // UNDER THE `mls.bin` WRITE LOCK (the caller's): a background Welcome writes its stage and notes
     // it under one hold of that lock, so the sweep removes both or neither - never a ledger it
     // re-creates after.
-    let stale_ledger_tmp = format!("{STALE_WELCOME_LEDGER_FILE}.tmp");
-    let join_staged_tmp = format!("{STAGED_KEY_GROUP_JOIN_FILE}.tmp");
-    let join_ledger_tmp = format!("{KEY_GROUP_PUSH_JOIN_LEDGER_FILE}.tmp");
-    let stages_tmp = format!("{BACKGROUND_STAGES_FILE}.tmp");
-    let owner_tmp = format!("{MLS_STATE_OWNER_FILE}.tmp");
-    for name in [
-        STALE_WELCOME_LEDGER_FILE,
-        stale_ledger_tmp.as_str(),
-        STAGED_KEY_GROUP_JOIN_FILE,
-        join_staged_tmp.as_str(),
-        KEY_GROUP_PUSH_JOIN_LEDGER_FILE,
-        join_ledger_tmp.as_str(),
-        BACKGROUND_STAGES_FILE,
-        stages_tmp.as_str(),
-        "mls.bin",
-        MLS_STATE_OWNER_FILE,
-        owner_tmp.as_str(),
-    ] {
-        let path = data_dir.join(name);
+    for name in mls_state_file_names() {
+        let path = data_dir.join(&name);
         if path.exists() {
             std::fs::remove_file(&path).map_err(|e| format!("remove {name}: {e}"))?;
         }
     }
     Ok(())
+}
+
+/// The files that make up ONE account's MLS state at the top of `{app_data_dir}`: `mls.bin`, its owner
+/// record ([`MLS_STATE_OWNER_FILE`]), and the ledgers and push-join files built from it, with the
+/// temporaries an interrupted write of each leaves.
+///
+/// **ONE LIST FOR THE TWO THINGS DONE TO A STATE AS A WHOLE**: the reset removes it
+/// ([`remove_mls_state_held`]) and an account switch parks it aside under its owner
+/// (`mls_account_state.rs`). Two copies would drift, and a file one of them forgets is a ledger left
+/// describing the next account's state.
+///
+/// **THE ORDER IS LOAD-BEARING**: what was built from `mls.bin` first, then `mls.bin`, then its owner
+/// record LAST - a removal or a move cut part-way leaves the state WITH the record naming whose it
+/// is, never staged epoch secrets beside no state, nor a state nobody is named for.
+pub(crate) fn mls_state_file_names() -> Vec<String> {
+    let mut names = Vec::with_capacity(12);
+    for built_from_it in [
+        STALE_WELCOME_LEDGER_FILE,
+        STAGED_KEY_GROUP_JOIN_FILE,
+        KEY_GROUP_PUSH_JOIN_LEDGER_FILE,
+        BACKGROUND_STAGES_FILE,
+    ] {
+        names.push(built_from_it.to_string());
+        names.push(format!("{built_from_it}.tmp"));
+    }
+    // The temporary an interrupted `write_mls_bin_atomically` leaves (review of #2919): a copy of
+    // the account's state, which must neither outlive a reset nor stay behind in the next account's
+    // slot.
+    names.push("mls.bin.tmp".to_string());
+    names.push("mls.bin".to_string());
+    names.push(MLS_STATE_OWNER_FILE.to_string());
+    names.push(format!("{MLS_STATE_OWNER_FILE}.tmp"));
+    names
 }
 
 /// The file beside `mls.bin` naming the account whose state it is.
@@ -575,20 +725,22 @@ pub(crate) fn remove_mls_state_held(data_dir: &std::path::Path) -> Result<(), St
 /// reset, which deletes A's state. With this record the gate can say "another account's messages are
 /// here" and withhold the reset (`TauriMlsService._initImpl`, `device_holds_other_account`).
 ///
-/// Written ONLY by [`write_mls_state_owner`] after `initialiser_mls` LOADED or created a state for
-/// that account - the credential check in `load_or_create` is what proves the state is that
-/// account's - so a record can never name an account whose state was not opened under it.
+/// Written by [`record_mls_state_owner`] in two places only: when `initialiser_mls` installs a state
+/// it LOADED or created for that account - the credential check in `load_or_create` is what proves
+/// the state is that account's - and when `save_mls_state` writes an account's own bytes into a slot
+/// that held NO state (a backup restore; round 4 of the review of #2919), where there is no other
+/// account's state for the record to misattribute.
 pub(crate) const MLS_STATE_OWNER_FILE: &str = "mls.owner";
 
 /// Records `user_id` as the owner of `mls.bin` ([`MLS_STATE_OWNER_FILE`]). Atomic (tmp + rename), so a
 /// reader sees the old owner or the new one, never a torn name. Skipped when it already says so.
-pub(crate) fn write_mls_state_owner(app: &tauri::AppHandle, user_id: &str) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    record_mls_state_owner(&data_dir, user_id)
-}
-
-/// [`write_mls_state_owner`] minus the `AppHandle`, testable on a real directory.
-fn record_mls_state_owner(data_dir: &std::path::Path, user_id: &str) -> Result<(), String> {
+///
+/// Takes no lock: its two callers, the sign-in's install and `save_mls_state`, call it inside their
+/// own hold of [`mls_bin_write_lock`].
+pub(crate) fn record_mls_state_owner(
+    data_dir: &std::path::Path,
+    user_id: &str,
+) -> Result<(), String> {
     std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
     let path = data_dir.join(MLS_STATE_OWNER_FILE);
     if std::fs::read_to_string(&path).ok().as_deref() == Some(user_id) {
@@ -604,71 +756,101 @@ fn record_mls_state_owner(data_dir: &std::path::Path, user_id: &str) -> Result<(
 /// The account `mls.bin` was last opened for ([`MLS_STATE_OWNER_FILE`]), `None` when nothing was
 /// ever recorded - an install whose state predates the record, or a first install. `None` is
 /// ABSENCE OF PROOF and the frontend treats it so: it never claims the state is another account's.
+/// A record that exists and could not be READ rejects (round 5 of the review of #2919): read as `None`,
+/// another account's state looked unproven, and the gate offered the reset that deletes it.
 #[tauri::command]
-pub(crate) fn mls_state_owner(app: tauri::AppHandle) -> Option<String> {
-    let data_dir = match app.path().app_data_dir() {
-        Ok(d) => d,
-        Err(e) => {
-            log::warn!("[MLS] app_data_dir() failed: {e}");
-            return None;
-        }
-    };
+pub(crate) fn mls_state_owner(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?;
     read_mls_state_owner(&data_dir)
 }
 
-/// [`mls_state_owner`] minus the `AppHandle`, testable on a real directory.
-fn read_mls_state_owner(data_dir: &std::path::Path) -> Option<String> {
+/// [`mls_state_owner`] minus the `AppHandle`, testable on a real directory. Three answers, like
+/// [`state_file_absent`]: an owner, no record (`Ok(None)`: absent, or an empty file - the trace of a
+/// write cut short), and a record that could not be read (`Err`), which every caller REFUSES on.
+pub(crate) fn read_mls_state_owner(data_dir: &std::path::Path) -> Result<Option<String>, String> {
     match std::fs::read_to_string(data_dir.join(MLS_STATE_OWNER_FILE)) {
-        Ok(owner) if !owner.is_empty() => Some(owner),
+        Ok(owner) if !owner.is_empty() => Ok(Some(owner)),
         Ok(_) => {
             log::warn!("[MLS] {MLS_STATE_OWNER_FILE} is empty - read as no owner recorded");
-            None
+            Ok(None)
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => {
-            log::warn!("[MLS] read {MLS_STATE_OWNER_FILE}: {e}");
-            None
+            log::error!(
+                "[MLS] read {MLS_STATE_OWNER_FILE}: {e} - whose state this is is NOT known"
+            );
+            Err(format!("read {MLS_STATE_OWNER_FILE}: {e}"))
         }
     }
 }
 
-/// Reads {app_data_dir}/mls.bin and returns its encrypted contents.
-/// Returns None when the file does not exist (first install).
+/// The path of `user_id`'s `mls.bin` on this install, `None` when the account has none here
+/// ([`crate::commands::mls_account_state::account_state_file`]); `Err` when the data directory or the
+/// parked states could not be read.
 ///
-/// THE SHARED READER, AND THE REASON IT IS ONE. `initialiser_mls` needs these same bytes, and
-/// until 2026-09-15 it got them by having the FRONTEND read them through the command below and
-/// hand them straight back - 8 MB across the IPC bridge twice, as a JSON array of per-byte
-/// numbers. Measured on a Pixel 6a: 29 074 883 characters of JSON per crossing, 908 ms of main
-/// thread warm, and a 2 731 ms block on a cold launch that the fingerprint prompt waited out,
-/// because the prompt is raised by an `invoke` queued behind it. Two callers, one read, no bridge.
-pub(crate) fn read_mls_state_blob(app: &tauri::AppHandle) -> Option<Vec<u8>> {
-    let data_dir = match app.path().app_data_dir() {
-        Ok(d) => d,
-        Err(e) => {
-            log::warn!("[MLS] app_data_dir() failed: {e}");
-            return None;
-        }
-    };
-    let path = data_dir.join("mls.bin");
-    match std::fs::read(&path) {
-        Ok(b) => Some(b),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => {
-            log::warn!("[MLS] read mls.bin: {e}");
-            None
-        }
-    }
+/// **EVERY QUERY ABOUT "THE SAVED STATE" TAKES ITS ACCOUNT** (owner, 2026-11-02): an install keeps
+/// one state per account, so "is there a state" without a subject answered for whichever account
+/// used the install last - and a fresh start decided on that answer sealed a new state over it.
+fn account_state_path(
+    app: &tauri::AppHandle,
+    user_id: &str,
+) -> Result<Option<std::path::PathBuf>, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {e}"))?;
+    crate::commands::mls_account_state::account_state_file(&data_dir, user_id)
 }
 
-/// The frontend's view of the reader above.
+/// Reads `user_id`'s `mls.bin` and returns its encrypted contents, `None` when the account has none
+/// on this install.
+///
+/// THE LOGIN NEVER CALLS THIS, and the reason is a measurement: `initialiser_mls` reads the file
+/// itself. Until 2026-09-15 the FRONTEND read the bytes through this command and handed them straight
+/// back - 8 MB across the IPC bridge twice, as a JSON array of per-byte numbers. Measured on a
+/// Pixel 6a: 29 074 883 characters of JSON per crossing, 908 ms of main thread warm, and a 2 731 ms
+/// block on a cold launch that the fingerprint prompt waited out.
 ///
 /// STILL NEEDED, AND BY EXACTLY ONE FLOW: old-PIN recovery hands the blob to `openLocalStateWithKey`,
-/// which re-seals it in the frontend. The LOGIN path no longer calls it - see
-/// [`read_mls_state_blob`] for what that cost - and neither does anything that only wants to know
-/// whether a state exists, which is what [`mls_state_size`] answers.
+/// which re-seals it in the frontend. Nothing that only wants to know whether a state exists calls
+/// it - that is what [`mls_state_size`] answers.
+///
+/// A STATE THAT CANNOT BE LOCATED OR READ IS A REFUSAL, NEVER "NONE" (round 11 of the review of
+/// #2919): an unsettled PIN reset or an unfinished move arrives TYPED (`StateLoadRefusal`, as
+/// [`mls_state_size`] answers it), so recovery shows the gate that names it rather than "no local
+/// state to recover".
 #[tauri::command]
-pub(crate) fn load_mls_state(app: tauri::AppHandle) -> Option<Vec<u8>> {
-    read_mls_state_blob(&app)
+pub(crate) fn load_mls_state(
+    app: tauri::AppHandle,
+    user_id: String,
+) -> Result<Option<Vec<u8>>, mls_core::StateLoadRefusal> {
+    log::debug!("[MLS] load_mls_state for the signing-in account");
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| mls_core::StateLoadRefusal::from(format!("app_data_dir: {e}")))?;
+    let located = crate::commands::mls_account_state::account_state_file_typed(&data_dir, &user_id);
+    let path = match located {
+        Ok(Some(path)) => path,
+        Ok(None) => return Ok(None),
+        Err(refusal) => {
+            refusal.log("load_mls_state: the account's state is not read");
+            return Err(refusal.into());
+        }
+    };
+    match std::fs::read(&path) {
+        Ok(b) => Ok(Some(b)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => {
+            log::error!("[MLS] load_mls_state: mls.bin could not be read: {e}");
+            Err(mls_core::StateLoadRefusal::from(format!(
+                "read mls.bin: {e}"
+            )))
+        }
+    }
 }
 
 /// Whether `mls.bin` at `path` is PROVABLY absent: `Ok(true)` when the file does not exist or is
@@ -686,41 +868,49 @@ pub(crate) fn state_file_absent(path: &std::path::Path) -> Result<bool, String> 
     }
 }
 
-/// The frontend's view of [`state_file_absent`] for this install's `mls.bin`.
+/// The frontend's view of [`state_file_absent`] for `user_id`'s `mls.bin` on this install. An
+/// account with no state here is provably absent; a parked state that could not be located is an
+/// `Err`, never a "gone" that would start a re-enrolment.
 #[tauri::command]
-pub(crate) fn mls_state_absent(app: tauri::AppHandle) -> Result<bool, String> {
-    let data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("app_data_dir: {e}"))?;
-    let absent = state_file_absent(&data_dir.join("mls.bin"));
-    log::debug!("[MLS] mls.bin provably absent: {absent:?}");
+pub(crate) fn mls_state_absent(app: tauri::AppHandle, user_id: String) -> Result<bool, String> {
+    let absent = match account_state_path(&app, &user_id)? {
+        Some(path) => state_file_absent(&path),
+        None => Ok(true),
+    };
+    log::debug!("[MLS] the account's mls.bin provably absent: {absent:?}");
     absent
 }
 
-/// The SIZE of {app_data_dir}/mls.bin, 0 when there is none.
+/// The SIZE of `user_id`'s `mls.bin` on this install, 0 when it has none.
 ///
 /// "Is there a saved state" is a question three call sites asked by loading the whole file: the
 /// login path, which then handed the bytes straight back to Rust, and two that only tested them
 /// for truthiness. It is one `metadata()` syscall, and a number that crosses the bridge as a
 /// number.
+///
+/// **AN ANSWER NOBODY HAS IS AN ERROR, NEVER A 0** (round 4 of the review of #2919): a state that
+/// could not be located or examined rejects, because a 0 is "no state" and a login that believed it
+/// would start fresh. The size is read under [`mls_bin_write_lock`], in the same hold that located the
+/// file, so a switch cannot move it between the two.
 #[tauri::command]
-pub(crate) fn mls_state_size(app: tauri::AppHandle) -> u64 {
-    let data_dir = match app.path().app_data_dir() {
-        Ok(d) => d,
-        Err(e) => {
-            log::warn!("[MLS] app_data_dir() failed: {e}");
-            return 0;
-        }
-    };
-    match std::fs::metadata(data_dir.join("mls.bin")) {
-        Ok(m) => m.len(),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
-        Err(e) => {
-            log::warn!("[MLS] stat mls.bin: {e}");
-            0
-        }
+///
+/// It rejects like `initialiser_mls`, with a `{ code, message }` (round 5): an unfinished move of
+/// this account's own state is `SLOT_MOVE_UNFINISHED`, so the login - which asks this FIRST - reaches
+/// the same typed gate the sign-in would have.
+pub(crate) fn mls_state_size(
+    app: tauri::AppHandle,
+    user_id: String,
+) -> Result<u64, mls_core::StateLoadRefusal> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| mls_core::StateLoadRefusal::from(format!("app_data_dir: {e}")))?;
+    let size = crate::commands::mls_account_state::account_state_size(&data_dir, &user_id);
+    match &size {
+        Ok(n) => log::debug!("[MLS] mls_state_size: {n} bytes"),
+        Err(refusal) => refusal.log("mls_state_size: the account's state is not measured"),
     }
+    size.map_err(mls_core::StateLoadRefusal::from)
 }
 
 /// Entries at the top of `{app_data_dir}` that this must NOT empty wholesale, for one of three
@@ -1487,7 +1677,7 @@ mod tests {
                 crate::concurrency::checkpoint_live_manager(&live, &key, |sealed| {
                     in_write_tx.send(()).unwrap();
                     release_rx.recv().unwrap();
-                    crate::concurrency::write_mls_bin_atomically(&path, sealed)
+                    crate::concurrency::write_slot_mls_bin(&path, sealed)
                 })
             })
         };
@@ -1541,6 +1731,99 @@ mod tests {
         std::fs::write(path, b"x").unwrap();
     }
 
+    /// ROUND 3 OF THE REVIEW OF #2919: `save_mls_state` writes only into its own account's slot. An
+    /// empty slot takes any account's state (a restore); a slot whose owner names the writer is
+    /// overwritten; a slot holding another account's state, or a state of no proven owner, is
+    /// refused and left byte for byte.
+    #[test]
+    fn save_mls_state_writes_only_its_own_accounts_slot() {
+        let dir = temp_dir("save-own-slot");
+
+        // No state: the write lands, whoever asks, and RECORDS its account (round 4): the same
+        // account's next write - a restore followed by a checkpoint - is not refused.
+        account_state_write_held(&dir, "user-a", b"state-a").unwrap();
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"state-a");
+        assert_eq!(
+            read_mls_state_owner(&dir).unwrap().as_deref(),
+            Some("user-a")
+        );
+        account_state_write_held(&dir, "user-a", b"state-a2").unwrap();
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"state-a2");
+
+        // A state of no proven owner is not overwritten.
+        std::fs::remove_file(dir.join(MLS_STATE_OWNER_FILE)).unwrap();
+        assert_eq!(
+            account_state_write_held(&dir, "user-a", b"state-a2b"),
+            Err(AccountStateWriteRefused::NotThisAccountsSlot)
+        );
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"state-a2");
+
+        // Owned by A: A's write lands, B's is refused and changes nothing.
+        record_mls_state_owner(&dir, "user-a").unwrap();
+        account_state_write_held(&dir, "user-a", b"state-a3").unwrap();
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"state-a3");
+        assert_eq!(
+            account_state_write_held(&dir, "user-b", b"state-b"),
+            Err(AccountStateWriteRefused::NotThisAccountsSlot)
+        );
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"state-a3");
+
+        // An empty mls.bin (a write cut short) is no state: the write lands, and B now owns it.
+        std::fs::write(dir.join("mls.bin"), b"").unwrap();
+        account_state_write_held(&dir, "user-b", b"state-b").unwrap();
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"state-b");
+        assert_eq!(
+            read_mls_state_owner(&dir).unwrap().as_deref(),
+            Some("user-b")
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 5 (M1): an owner record that exists and cannot be read is no answer - an `Err`, never
+    /// "no owner" - and a write is refused on it.
+    #[test]
+    fn an_unreadable_owner_record_is_an_error_and_refuses_the_write() {
+        let dir = temp_dir("owner-unreadable");
+        std::fs::write(dir.join("mls.bin"), b"state-a").unwrap();
+        // A directory where the record should be: reading it fails, on every platform.
+        std::fs::create_dir_all(dir.join(MLS_STATE_OWNER_FILE)).unwrap();
+        assert!(read_mls_state_owner(&dir).is_err());
+        assert!(matches!(
+            account_state_write_held(&dir, "user-b", b"state-b"),
+            Err(AccountStateWriteRefused::Io(_))
+        ));
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"state-a");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// ROUND 4 OF THE REVIEW OF #2919 (L3): a park a previous process cut part-way is FINISHED before
+    /// a write - a backup restored into the slot after a crash mid-park no longer lands beside part
+    /// of another account's state, nor leaves the install refusing every sign-in for ever.
+    #[test]
+    fn save_mls_state_finishes_a_cut_park_before_it_writes() {
+        let dir = temp_dir("save-after-cut-park");
+        // Account A's state in the slot, and a park of it started (its journal directory created)
+        // when the process died.
+        record_mls_state_owner(&dir, "user-a").unwrap();
+        std::fs::write(dir.join("mls.bin"), b"state-a").unwrap();
+        let journal = crate::commands::mls_account_state::start_park_for_test(&dir, "user-a");
+        assert!(journal.exists());
+
+        // B restores a backup: the park finishes first (A's state leaves the slot whole), then B's
+        // bytes land in the empty slot under B's name.
+        account_state_write_held(&dir, "user-b", b"state-b").unwrap();
+        assert!(!journal.exists(), "the cut park was finished");
+        assert_eq!(std::fs::read(dir.join("mls.bin")).unwrap(), b"state-b");
+        assert_eq!(
+            read_mls_state_owner(&dir).unwrap().as_deref(),
+            Some("user-b")
+        );
+        let parked_a =
+            crate::commands::mls_account_state::account_state_file(&dir, "user-a").unwrap();
+        assert_eq!(std::fs::read(parked_a.unwrap()).unwrap(), b"state-a");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// THE A -> B -> A RECORD (backlog "switching accounts on one iPhone"). The owner beside
     /// `mls.bin` is what lets B's gate say "another account's messages are here" instead of offering
     /// the reset that deletes them: it must name the LAST account a state was opened for, read back
@@ -1549,17 +1832,23 @@ mod tests {
     fn the_owner_beside_mls_bin_names_the_last_account_and_leaves_with_the_state() {
         let dir = temp_dir("mls-owner");
         assert_eq!(
-            read_mls_state_owner(&dir),
+            read_mls_state_owner(&dir).unwrap(),
             None,
             "no record on a first install"
         );
 
         record_mls_state_owner(&dir, "user-a").unwrap();
-        assert_eq!(read_mls_state_owner(&dir).as_deref(), Some("user-a"));
+        assert_eq!(
+            read_mls_state_owner(&dir).unwrap().as_deref(),
+            Some("user-a")
+        );
         // Re-recording the same owner is a no-op, and a new one replaces it whole (tmp + rename).
         record_mls_state_owner(&dir, "user-a").unwrap();
         record_mls_state_owner(&dir, "user-b").unwrap();
-        assert_eq!(read_mls_state_owner(&dir).as_deref(), Some("user-b"));
+        assert_eq!(
+            read_mls_state_owner(&dir).unwrap().as_deref(),
+            Some("user-b")
+        );
         assert!(
             !dir.join(format!("{MLS_STATE_OWNER_FILE}.tmp")).exists(),
             "the temporary file must not survive the rename"
@@ -1567,7 +1856,7 @@ mod tests {
 
         // An empty record is not an owner.
         std::fs::write(dir.join(MLS_STATE_OWNER_FILE), b"").unwrap();
-        assert_eq!(read_mls_state_owner(&dir), None);
+        assert_eq!(read_mls_state_owner(&dir).unwrap(), None);
 
         // The reset deletes the state AND the record: an owner left beside no state would withhold
         // a later reset over nothing.
@@ -1575,7 +1864,7 @@ mod tests {
         file(&dir, "mls.bin");
         sweep_held(&dir).unwrap();
         assert!(!dir.join("mls.bin").exists());
-        assert_eq!(read_mls_state_owner(&dir), None);
+        assert_eq!(read_mls_state_owner(&dir).unwrap(), None);
         // And it is idempotent on an install that holds neither.
         sweep_held(&dir).unwrap();
 
@@ -1645,7 +1934,10 @@ mod tests {
         file(&dir, "welcome_request_stale.json");
 
         assert!(sweep_held(&dir).is_err());
-        assert_eq!(read_mls_state_owner(&dir).as_deref(), Some("user-a"));
+        assert_eq!(
+            read_mls_state_owner(&dir).unwrap().as_deref(),
+            Some("user-a")
+        );
         assert!(
             !dir.join("welcome_request_stale.json").exists(),
             "what was built from mls.bin still goes before it"
@@ -1655,7 +1947,7 @@ mod tests {
         file(&dir, "mls.bin");
         file(&dir, &format!("{MLS_STATE_OWNER_FILE}.tmp"));
         sweep_held(&dir).unwrap();
-        assert_eq!(read_mls_state_owner(&dir), None);
+        assert_eq!(read_mls_state_owner(&dir).unwrap(), None);
         assert!(!dir.join(format!("{MLS_STATE_OWNER_FILE}.tmp")).exists());
         std::fs::remove_dir_all(&dir).ok();
     }

@@ -49,7 +49,7 @@ case "$out" in
   'Texte ecrit a la main.'*) pass 'the human text is still the first line' ;;
   *) fail "the human text was lost: $out" ;;
 esac
-if printf '%s' "$out" | grep -qF 'Ligne une des notes.'; then
+if grep -qF 'Ligne une des notes.' <<<"$out"; then
   pass 'and the notes are present'
 else
   fail 'the notes are missing'
@@ -89,13 +89,13 @@ printf '\na STALE block is replaced, not kept beside the new one\n'
   printf '%s\n' "$END"
 } > "$TMP/stale"
 out="$(compose "$TMP/stale")"
-if printf '%s' "$out" | grep -qF 'VIEILLES notes'; then
+if grep -qF 'VIEILLES notes' <<<"$out"; then
   fail 'the stale block survived - the release would carry two changelogs, the wrong one first'
 else
   pass 'the stale block is gone'
 fi
-if printf '%s' "$out" | grep -qF 'Texte ecrit a la main.' &&
-  printf '%s' "$out" | grep -qF 'Ligne une des notes.'; then
+if grep -qF 'Texte ecrit a la main.' <<<"$out" &&
+  grep -qF 'Ligne une des notes.' <<<"$out"; then
   pass 'and the human text and the new notes are both there'
 else
   fail "one of the two is missing: $out"
@@ -111,7 +111,7 @@ printf '\nthe degenerate bodies a live release never produces\n'
   printf '%s\n' "$END"
 } > "$TMP/hollow"
 out="$(compose "$TMP/hollow")"
-if printf '%s' "$out" | grep -qF 'Ligne une des notes.'; then
+if grep -qF 'Ligne une des notes.' <<<"$out"; then
   pass 'an empty block is filled rather than treated as already done'
 else
   fail 'an empty marked block was left empty - the release would document nothing, and green'

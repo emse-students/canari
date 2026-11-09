@@ -110,8 +110,13 @@ TURN_USERNAME LIVE_ENABLED"
 # report restore AVAILABLE on a stack no phone can restore against. Empty, restore reports itself
 # unavailable (503, fails closed) - and the frontend half, VITE_ANDROID_APP_LINK_SHA256, is already
 # written empty below for the same reason, so the two halves agree.
+#
+# HANDOFF_SIGNING_KEY because it is the PRIVATE half of what every MiConnect site trusts to sign a
+# person straight in (docs/wiki/sessions.md, "The sign-in handoff"): a laptop holding it could forge a
+# token for anybody. Not REGENERATE either: a regenerated hex string is no EC key, and core-service
+# would say so at error on every boot. Empty, the local stack mints nothing and opens sites plainly.
 BLANK="LYDIA_PROVIDER_PRIVATE_TOKEN LYDIA_PROVIDER_TOKEN MICONNECT_EDITOR_TOKEN
-LYDIA_RECONCILE_ENABLED ANDROID_APP_LINK_SHA256"
+LYDIA_RECONCILE_ENABLED ANDROID_APP_LINK_SHA256 HANDOFF_SIGNING_KEY"
 
 # Regenerated per local stack: these mint or verify credentials.
 # LYDIA_KEY_ENCRYPTION_SECRET is here and NOT in KEEP: kept, a laptop holding a production dump
@@ -119,8 +124,9 @@ LYDIA_RECONCILE_ENABLED ANDROID_APP_LINK_SHA256"
 # open locally (their callbacks are refused), which is the intended outcome.
 # LIVE_KEY_ENCRYPTION_SECRET for the same reason: kept, a dump's live keys would open its chat and
 # segments; regenerated, a dumped live answers 503 LIVE_KEY_UNAVAILABLE locally.
-REGENERATE="AGENDA_SIGNING_KEY CALL_ROOM_SECRET INTERNAL_SECRET INTERNAL_SHARED_SECRET JWT_SECRET
-LIVE_KEY_ENCRYPTION_SECRET LIVE_REPORT_SIGNING_KEY LYDIA_KEY_ENCRYPTION_SECRET"
+REGENERATE="AGENDA_SIGNING_KEY AVATAR_TOKEN_SECRET CALL_ROOM_SECRET INTERNAL_SECRET
+INTERNAL_SHARED_SECRET JWT_SECRET LIVE_KEY_ENCRYPTION_SECRET LIVE_REPORT_SIGNING_KEY
+LYDIA_KEY_ENCRYPTION_SECRET"
 
 # Decided by the local topology. The values are written below, not taken from the snapshot.
 LOCAL="ALLOW_ORIGIN DELIVERY_PORT DOMAIN FRONTEND_HOST_PORT FRONTEND_URL
@@ -133,7 +139,7 @@ TAG"
 OIDC="AUTHENTIK_CLIENT_ID AUTHENTIK_CLIENT_SECRET"
 
 in_list() {
-  printf '%s\n' "$2" | tr ' ' '\n' | grep -qxF "$1"
+  tr ' ' '\n' <<<"$2" | grep -xF "$1" >/dev/null
 }
 
 # ── Every production variable must be in exactly one list ────────────────────
@@ -162,7 +168,7 @@ log "classification: every production variable is accounted for"
 # `cut -d= -f2` would truncate FIREBASE_SERVICE_ACCOUNT_JSON at its first `=`. This keeps
 # everything after the FIRST separator, which is what a value is.
 value_of() {
-  sed -n "s/^$1=//p" "$SNAPSHOT" | head -1
+  sed -n "s/^$1=//p" "$SNAPSHOT" | sed -n 1p
 }
 
 # ── infrastructure/.env ──────────────────────────────────────────────────────
@@ -197,7 +203,7 @@ NEW_SECRETS=""
 HEADER
   printf '\n# ── Kept as production has them ───────────────────────────────────────────────\n'
   for name in $(printf '%s\n' "$KEEP" | tr ' ' '\n' | grep -v '^$' | sort); do
-    if printf '%s\n' "$PROD_NAMES" | grep -qxF "$name"; then
+    if grep -qxF "$name" <<<"$PROD_NAMES"; then
       printf '%s=%s\n' "$name" "$(value_of "$name")"
     fi
   done
@@ -218,7 +224,7 @@ HEADER
   # script has just written.
   for name in $(printf '%s\n' "$REGENERATE" | tr ' ' '\n' | grep -v '^$' | sort); do
     previous=""
-    [ -f "$INFRA_ENV.bak" ] && previous=$(sed -n "s/^$name=//p" "$INFRA_ENV.bak" | head -1)
+    [ -f "$INFRA_ENV.bak" ] && previous=$(sed -n "s/^$name=//p" "$INFRA_ENV.bak" | sed -n 1p)
     if [ -n "$previous" ]; then
       printf '%s=%s\n' "$name" "$previous"
       KEPT_SECRETS="$KEPT_SECRETS $name"

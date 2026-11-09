@@ -503,9 +503,9 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
 
     // The stream serves the joiner the message sent after their Add and nothing before it, on the
     // single read and in a batch - whatever their client would have done with the rest.
-    const page = await service.getHistory(GROUP, undefined, JOINER.userId, undefined);
+    const page = await service.getHistory(GROUP, undefined, JOINER.userId);
     expect(page.rows.map((r) => r['id'])).toEqual(['3-0']);
-    const batch = await service.getHistoryBatch([{ groupId: GROUP }], JOINER.userId, undefined);
+    const batch = await service.getHistoryBatch([{ groupId: GROUP }], JOINER.userId);
     expect(batch.histories[GROUP].map((r) => r['id'])).toEqual(['3-0']);
   });
 
@@ -521,7 +521,7 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     putHistory(1, new Date(arrived.getTime() + 1000));
     putHistory(2, new Date());
 
-    const page = await service.getHistory(GROUP, undefined, MEMBER.userId, undefined);
+    const page = await service.getHistory(GROUP, undefined, MEMBER.userId);
 
     expect(page.rows.map((r) => r['id'])).toEqual(['1-0', '2-0']);
   });
@@ -556,7 +556,7 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     });
     putHistory(4, new Date(Date.now() + 1000));
 
-    const page = await service.getHistory(GROUP, undefined, JOINER.userId, undefined);
+    const page = await service.getHistory(GROUP, undefined, JOINER.userId);
     expect(page.rows.map((r) => r['id'])).toEqual(['1-0', '4-0']);
   });
 
@@ -790,9 +790,9 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     it('cannot read the history, one group or in a batch', async () => {
       await acceptLink();
 
-      await expect(
-        refusalOf(service.getHistory(GROUP, undefined, JOINER.userId, undefined))
-      ).resolves.toEqual(AWAITING);
+      await expect(refusalOf(service.getHistory(GROUP, undefined, JOINER.userId))).resolves.toEqual(
+        AWAITING
+      );
       const authorize = (
         service as unknown as {
           authorizeHistoryGroups: (
@@ -805,7 +805,7 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
       ).authorizeHistoryGroups.bind(service);
       await expect(authorize([GROUP], JOINER.userId, undefined, false)).resolves.toEqual(new Set());
       await expect(
-        service.getHistoryBatch([{ groupId: GROUP }], JOINER.userId, undefined)
+        service.getHistoryBatch([{ groupId: GROUP }], JOINER.userId)
       ).resolves.toMatchObject({ histories: { [GROUP]: [] } });
       // The member it is withheld from the joiner for still reads it.
       await expect(authorize([GROUP], MEMBER.userId, undefined, true)).resolves.toEqual(

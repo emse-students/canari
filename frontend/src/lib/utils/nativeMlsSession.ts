@@ -6,9 +6,9 @@ export type NativeMlsSessionEnd =
   | 'lost session'
   | 'stopped login'
   | 'client reset'
-  | 'failed initialiser_mls'
   | 'state reset'
-  | 'factory wipe';
+  | 'factory wipe'
+  | 'revoked account wipe';
 
 /**
  * Ends this process's native MLS session: the manager, its cached at-rest key and the warm-process
@@ -19,7 +19,8 @@ export type NativeMlsSessionEnd =
  * is an in-app navigation, not a restart, so the process-wide manager of account A was still installed
  * when account B signed in - and a failed sign-in of B left it there, because the native side only ever
  * wrote `Some`. The callers: the MLS holder's retirement and reset (sign-out, account switch, a stopped
- * or failed login), a failed `initialiser_mls`, `removeMlsState` and the factory wipe.
+ * or failed login), `removeMlsState` and the factory wipe. A failed `initialiser_mls` is not one:
+ * its native install guard ends exactly the session it claimed (round 4 of the review of #2919).
  *
  * Web has no native session: its manager is the WASM client the holder destroys, so this resolves at
  * once there. A rejection propagates - the caller decides what a teardown it could not run means.

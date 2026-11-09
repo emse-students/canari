@@ -102,6 +102,8 @@ export const CORE_ERASURE_STATEMENTS: readonly {
     label: 'announcement_seen',
     sql: `DELETE FROM platform_announcement_seen WHERE user_id::text = $1`,
   },
+  // The first-time helps the account has seen (migration 019): `user_id` is a varchar there.
+  { label: 'help_seen', sql: `DELETE FROM help_seen WHERE user_id = $1` },
   {
     label: 'announcement_author',
     sql: `UPDATE platform_announcements SET created_by = $2::uuid WHERE created_by::text = $1`,

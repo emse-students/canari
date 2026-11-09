@@ -8,6 +8,7 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { createHash } from 'crypto';
 import { Repository, type EntityManager } from 'typeorm';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { isBlockedBetween } from '../common/user-blocks';
@@ -22,6 +23,7 @@ import {
 } from '../proposals/proposals.service';
 import { previewOf } from '../push/push-content';
 import { REPUBLICATION_REQUESTS_TARGET } from '../push/push-target';
+import { inReviewCohortSql } from '../review-cohort';
 import {
   newlyReachedByPersonalRepublicationSql,
   postVisibleToViewerSql,
@@ -59,7 +61,11 @@ export const PERSONAL_REPOST_CODES = {
   anonymous: 'REPOST_PERSONAL_ANONYMOUS',
   /** The proposer wrote the post: they would be asking themselves. */
   ownPost: 'REPOST_PERSONAL_OWN_POST',
-  /** The proposing association is not of a kind that may ask (a list, an institution, archived). */
+  /**
+   * The proposing association may not ask: a kind nobody listed in
+   * `PERSONAL_REPUBLISHING_ASSOCIATION_TYPES` (every kind of today is listed, 2026-11-02), or an
+   * archived one.
+   */
   associationType: 'REPOST_PERSONAL_ASSOCIATION_TYPE',
   /** A block stands between the proposer and the author, in either direction. */
   blocked: 'REPOST_PERSONAL_BLOCKED',
@@ -71,6 +77,13 @@ export const PERSONAL_REPOST_CODES = {
   associationCap: 'REPOST_PERSONAL_ASSOCIATION_CAP',
   /** The author's account is restricted (muted): accepting would widen what they published. */
   authorMuted: 'REPOST_PERSONAL_AUTHOR_MUTED',
+  /**
+   * The institution's potential audience changed since the author read it (review of #2965,
+   * 2026-11-02): the acceptance carried another fingerprint than the one computed now, so the
+   * author consented to a different reach. Nothing is decided; the client re-reads the warning and
+   * asks again.
+   */
+  audienceChanged: 'REPOST_PERSONAL_AUDIENCE_CHANGED',
 } as const;
 
 /** The proposing association, as a request needs it. */
@@ -318,6 +331,7 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
         )
       : [];
     const subjects = new Map(rows.map((r) => [r.id, r]));
+    const audiences = await this.institutionAudiencesOf(proposals.map((p) => p.fromAssociationId));
     for (const proposal of proposals) {
       const subject = subjects.get(proposal.subjectId);
       if (!subject) continue;
@@ -326,9 +340,110 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
            FROM (${newlyReachedByPersonalRepublicationSql(subject.feedNotifiedAt !== null)}) nr`,
         [proposal.subjectId, proposal.fromAssociationId]
       );
-      out.set(proposal.id, { ...subjectView(subject), newlyReached: reached[0]?.n ?? 0 });
+      out.set(proposal.id, {
+        ...subjectView(subject),
+        newlyReached: reached[0]?.n ?? 0,
+        institutionAudience: audiences.get(proposal.fromAssociationId) ?? null,
+      });
     }
     return out;
+  }
+
+  /**
+   * THE WARNING AN AUTHOR READS BEFORE AN INSTITUTION CARRIES THEIR POST (owner, 2026-11-02: "Une
+   * institution n'est pas forcement l'ecole, mais oui, ca peut etre pertinent d'afficher un
+   * avertissement sur l'audience potentielle d'une institution"). For each proposing association
+   * that is an INSTITUTION, read from its CURRENT state, never named after the School:
+   *
+   * - `everyone`: one of its rules addresses every campus and every formation;
+   * - `spaces`: its rules, as (campus, formation) with null meaning "every" - what it reaches;
+   * - `staffMembers`: at least one of its MEMBERS is on the staff side - a campus and no cursus, the
+   *   D34-D36 personnel `campusWideReaderCampus` recognises (a review account never counts). A rule
+   *   reaches spaces, and staff hold none, so membership is how the staff side reads what an
+   *   institution carries; a nominative read grant never opens a personal post (WP7).
+   *
+   * Any other kind answers nothing: the owner asked the warning for institutions, whose audience is
+   * the one an author may not guess. ONE query for the whole inbox. Each answer carries its
+   * `fingerprint` (`audienceFingerprint`), which the acceptance re-computes with THIS function, on
+   * the acceptance's own transaction (`assertConsentCurrent`).
+   */
+  private async institutionAudiencesOf(
+    associationIds: string[],
+    manager: EntityManager = this.repo.manager
+  ): Promise<Map<string, InstitutionAudience>> {
+    const out = new Map<string, InstitutionAudience>();
+    const ids = [...new Set(associationIds)];
+    if (ids.length === 0) return out;
+    const rows: {
+      id: string;
+      rules: { campus: string | null; formation: string | null }[];
+      staffMembers: boolean;
+    }[] = await manager.query(
+      `SELECT a.id,
+              COALESCE((SELECT json_agg(json_build_object('campus', r.campus, 'formation', r.formation)
+                                ORDER BY r.campus NULLS FIRST, r.formation NULLS FIRST)
+                          FROM association_audiences r WHERE r."associationId" = a.id), '[]'::json) AS rules,
+              EXISTS (SELECT 1 FROM association_members am JOIN users u ON u.id = am."userId"
+                       WHERE am."associationId" = a.id AND u.campus IS NOT NULL
+                         AND (u.cursus IS NULL OR u.cursus = '[]'::jsonb)
+                         AND NOT ${inReviewCohortSql('u.id')}) AS "staffMembers"
+         FROM associations a
+        WHERE a.id = ANY($1::uuid[]) AND a.type = 'institution'`,
+      [ids]
+    );
+    for (const row of rows) {
+      const everyone = row.rules.some((r) => r.campus === null && r.formation === null);
+      const audience = { everyone, spaces: row.rules, staffMembers: row.staffMembers === true };
+      const fingerprint = audienceFingerprint(audience);
+      out.set(row.id, { ...audience, fingerprint });
+      this.logger.debug(
+        `[REPOST-P] institution ${row.id.slice(0, 8)} audience: everyone=${everyone} rules=${row.rules.length} staff=${row.staffMembers} fp=${fingerprint.slice(0, 8)}`
+      );
+    }
+    return out;
+  }
+
+  /**
+   * THE AUTHOR CONSENTED TO THE AUDIENCE THEY WERE SHOWN (review of #2965, 2026-11-02): inside the
+   * acceptance's transaction, after its locks, the institution's audience is computed again by the
+   * SAME function the inbox used, and its fingerprint compared with the one the acceptance carries.
+   * A mismatch - or none carried for an institution - is a 409 `REPOST_PERSONAL_AUDIENCE_CHANGED`,
+   * which rolls the acceptance back: nothing is decided, and the client re-reads the warning and
+   * asks again. A carrier that is not an institution shows no warning, so nothing is compared.
+   *
+   * A build older than #2965 never drew the warning and carries no fingerprint, so its acceptance was
+   * refused here on purpose - never accepted without one. Floor `1.6.6` admits no such build any
+   * more; a fingerprint-less acceptance is now a caller that is not the app
+   * (docs/wiki/legacy-compatibility.md, "Entries `1.6.6` retires or unblocks").
+   *
+   * What it does NOT promise: after acceptance, who sees the post follows the carrier's LIVE
+   * audience and membership, and the author's remedy is to withdraw the republication.
+   */
+  async assertConsentCurrent(
+    manager: EntityManager,
+    proposal: UserProposal,
+    consent: { audienceFingerprint?: string | null }
+  ): Promise<void> {
+    const audience = (await this.institutionAudiencesOf([proposal.fromAssociationId], manager)).get(
+      proposal.fromAssociationId
+    );
+    if (!audience) {
+      this.logger.debug(
+        `[REPOST-P] ${proposal.id.slice(0, 8)} accept: no institution audience to check`
+      );
+      return;
+    }
+    if (consent.audienceFingerprint !== audience.fingerprint) {
+      this.logger.log(
+        `[REPOST-P] ${proposal.id.slice(0, 8)} accept refused: audience changed (carried ${String(consent.audienceFingerprint ?? 'none').slice(0, 8)}, now ${audience.fingerprint.slice(0, 8)})`
+      );
+      throw refusal(
+        ConflictException,
+        PERSONAL_REPOST_CODES.audienceChanged,
+        "The institution's audience changed since the request was read"
+      );
+    }
+    this.logger.debug(`[REPOST-P] ${proposal.id.slice(0, 8)} accept: audience as shown`);
   }
 
   /** The post first, then the proposal: see `lockPostRow`. */
@@ -413,7 +528,10 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
   /** The proposing association exists, is of a kind that may ask, and still speaks (not archived). */
   private async assertProposingAssociation(manager: EntityManager, id: string): Promise<void> {
     const association = await this.loadAssociation(manager, id);
-    if (!association) throw new NotFoundException('Association not found');
+    if (!association) {
+      this.logger.debug(`[REPOST-P] ${id.slice(0, 8)} may not ask: no such association`);
+      throw new NotFoundException('Association not found');
+    }
     if (
       !PERSONAL_REPUBLISHING_ASSOCIATION_TYPES.includes(association.type) ||
       association.archived
@@ -427,6 +545,7 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
         'This association may not republish a personal post'
       );
     }
+    this.logger.debug(`[REPOST-P] ${id.slice(0, 8)} may ask: type ${association.type}`);
   }
 
   /**
@@ -475,6 +594,35 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
       );
     }
   }
+}
+
+/** An institution's potential audience, as the author's request shows it (`institutionAudiencesOf`). */
+export interface InstitutionAudience {
+  /** One of its rules addresses every campus and every formation. */
+  everyone: boolean;
+  /** Its rules: a null side means "every campus" or "every formation". */
+  spaces: { campus: string | null; formation: string | null }[];
+  /** At least one of its members is on the staff side (a campus, no cursus). */
+  staffMembers: boolean;
+  /**
+   * A digest of the three fields above (`audienceFingerprint`): what the author was shown. The
+   * acceptance carries it back, and the server refuses it once the audience changed.
+   */
+  fingerprint: string;
+}
+
+/**
+ * The digest of what an author is shown of an institution's audience - the SAME function for the
+ * inbox and for the acceptance's check, so the two can only disagree when the audience did. The
+ * spaces come ordered by the query; their order is part of the digest.
+ */
+export function audienceFingerprint(audience: Omit<InstitutionAudience, 'fingerprint'>): string {
+  const canonical = JSON.stringify({
+    everyone: audience.everyone,
+    spaces: audience.spaces.map((s) => [s.campus, s.formation]),
+    staffMembers: audience.staffMembers,
+  });
+  return createHash('sha256').update(canonical).digest('hex').slice(0, 32);
 }
 
 /** A post as a request's description needs it. */

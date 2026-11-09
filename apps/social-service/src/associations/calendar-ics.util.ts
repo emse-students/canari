@@ -1,4 +1,5 @@
 import { buildIcsDocument, type IcsEvent } from './ics';
+import { isNeutralEvent, NEUTRAL_EVENT_LABEL } from './event-presentation';
 
 /** One aggregated agenda row as the feed query returns it. */
 export type AggregatedCalendarIcsRow = {
@@ -11,6 +12,8 @@ export type AggregatedCalendarIcsRow = {
   associationSlug: string;
   /** The accepted co-organisers, in display order (D39); absent on a single-owner row. */
   coOwners?: Array<{ name: string }>;
+  /** `neutral` names "Campus" and links the agenda, never the owner (`event-presentation.ts`). */
+  presentation?: string;
 };
 
 /**
@@ -38,13 +41,22 @@ export function buildAggregatedCalendarIcs(
   opts: { frontendBaseUrl: string }
 ): string {
   const base = opts.frontendBaseUrl.replace(/\/+$/, '');
-  const events: IcsEvent[] = rows.map((r) => ({
-    uid: r.id,
-    summary: `${r.title} - ${organisersSummary([r.associationName, ...(r.coOwners ?? []).map((co) => co.name)].filter((n) => n.trim() !== ''))}`,
-    startsAt: r.startsAt,
-    endsAt: r.endsAt,
-    description: r.description,
-    url: `${base}/associations/${encodeURIComponent(r.associationSlug)}`,
-  }));
+  const events: IcsEvent[] = rows.map((r) => {
+    // A neutral row reaches here already masked (no owner fields); it is named by its label and
+    // points at the agenda, never at an association page.
+    const neutral = isNeutralEvent(r);
+    return {
+      uid: r.id,
+      summary: neutral
+        ? `${r.title} - ${NEUTRAL_EVENT_LABEL}`
+        : `${r.title} - ${organisersSummary([r.associationName, ...(r.coOwners ?? []).map((co) => co.name)].filter((n) => n.trim() !== ''))}`,
+      startsAt: r.startsAt,
+      endsAt: r.endsAt,
+      description: r.description,
+      url: neutral
+        ? `${base}/calendar`
+        : `${base}/associations/${encodeURIComponent(r.associationSlug)}`,
+    };
+  });
   return buildIcsDocument(events);
 }

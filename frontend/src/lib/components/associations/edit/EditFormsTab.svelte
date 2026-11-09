@@ -17,7 +17,8 @@
   import { editSectionHref } from '$lib/associations/editSections';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
-  import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+  import { submitterName } from '$lib/forms/submissionTable';
+  import { isDraftForm } from '$lib/forms/publish';
 
   interface Props {
     asso: Association;
@@ -27,9 +28,16 @@
     canManagePayoutAccount: boolean;
     /** Switches the parent to the Paiements tab. */
     onGoToPayments: () => void;
+    /**
+     * Set for a LIST, which has no Lydia account of its own and collects only through an accepted
+     * payment delegation (owner, 2026-11-02): the not-ready banner then points at its delegation
+     * section instead of a payout account it can never hold.
+     */
+    delegationHref?: string;
   }
 
-  let { asso, onlinePaymentsReady, canManagePayoutAccount, onGoToPayments }: Props = $props();
+  let { asso, onlinePaymentsReady, canManagePayoutAccount, onGoToPayments, delegationHref }: Props =
+    $props();
 
   let forms = $state<AssociationForm[]>([]);
   let formsLoading = $state(false);
@@ -154,12 +162,18 @@
     >
       <TriangleAlert size={15} class="mt-0.5 shrink-0" />
       <span>
-        {#if canManagePayoutAccount}
+        {#if delegationHref}
+          {m.list_delegate_required_banner()}
+          <a href={delegationHref} class="font-semibold underline hover:no-underline"
+            >{m.list_delegate_required_link()}</a
+          >
+        {:else if canManagePayoutAccount}
           {m.asso_forms_payments_missing_can_manage_prefix()}<strong
             >{m.asso_forms_payments_missing_strong()}</strong
           >{m.asso_forms_payments_missing_suffix()}<button
             type="button"
-            class="font-semibold underline hover:no-underline"
+            data-testid="payments-link"
+            class="inline p-0 text-start font-semibold underline hover:no-underline"
             onclick={onGoToPayments}>{m.asso_forms_payments_configure_link()}</button
           >.
         {:else}
@@ -186,10 +200,27 @@
   {:else}
     <ul class="space-y-4">
       {#each forms as form (form.id)}
-        <li class="border-cn-border/70 bg-cn-bg space-y-3 rounded-xl border px-4 py-4">
-          <div class="flex flex-wrap items-start justify-between gap-2">
-            <div class="min-w-0 flex-1">
-              <p class="text-text-main truncate text-sm font-semibold">{form.title}</p>
+        <!-- The card answers its OWN width (`@container`), not the window's: on a phone, or in a
+             narrow settings column, the actions go BELOW the title, which keeps the whole width -
+             side by side they crushed it to a sliver of single letters (iPhone, 2026-11-08). -->
+        <li class="border-cn-border/70 bg-cn-bg @container space-y-3 rounded-xl border px-4 py-4">
+          <div
+            class="flex flex-col gap-2 @md:flex-row @md:items-start @md:justify-between"
+            data-testid="form-card-header"
+          >
+            <div class="min-w-0 flex-1" data-testid="form-card-title">
+              <p class="text-text-main flex items-start gap-1.5 text-sm font-semibold">
+                <span class="line-clamp-2 min-w-0 break-words">{form.title}</span>
+                {#if isDraftForm(form)}
+                  <!-- The managers' alone: nobody links it believing it live. -->
+                  <span
+                    class="border-cn-border text-text-main inline-flex shrink-0 rounded-full border border-dashed px-2 py-0.5 text-xs font-normal"
+                    data-testid="form-draft-badge"
+                  >
+                    {m.form_status_draft_badge()}
+                  </span>
+                {/if}
+              </p>
               {#if form.description}
                 <p class="text-text-muted mt-0.5 line-clamp-2 text-xs">{form.description}</p>
               {/if}
@@ -209,7 +240,10 @@
                 {/if}
               </p>
             </div>
-            <div class="flex shrink-0 items-center gap-2">
+            <div
+              class="flex flex-wrap items-center gap-2 @md:shrink-0"
+              data-testid="form-card-actions"
+            >
               <a
                 href="/forms/{form.id}"
                 class="text-cn-yellow text-xs font-semibold hover:underline"
@@ -248,7 +282,7 @@
                   >
                     <div class="min-w-0 flex-1">
                       <p class="text-text-main truncate text-xs font-semibold">
-                        {getUserDisplayNameSync(sub.userId)}
+                        {submitterName(sub)}
                       </p>
                       <p class="text-text-muted text-xs">
                         {(sub.totalPaid / 100).toFixed(2)} € · {new Date(

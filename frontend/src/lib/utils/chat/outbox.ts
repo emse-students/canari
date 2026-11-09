@@ -3,6 +3,8 @@ import { bumpOutboxQueueVersion } from './outboxActivity.svelte';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, OutboxEntry } from '$lib/db';
+import type { StoredMessagePatch } from '$lib/db/types';
+import { mergeStoredMessage } from '$lib/db/messagePayload';
 import type {
   OutboxAdoptedUpload,
   OutboxReelTakeSend,
@@ -382,6 +384,24 @@ export function buildOutboxProto(entry: OutboxEntry): Uint8Array | null {
 export type WithdrawReason = 'user' | 'superseded' | 'exit' | 'other-tab';
 
 /** Dependencies driving the outbox flusher. Built once per session and registered globally. */
+/**
+ * What {@link OutboxDeps.onReelSendFailed} is told: ONE send refused on its own (`send`), or a verdict
+ * on the take's file that ends every send still queued (`take`) - said once, never once per send.
+ */
+export type ReelSendFailure =
+  | { kind: 'send'; conversationId: string }
+  | { kind: 'take'; conversationIds: string[] };
+
+/** {@link OutboxController.reelTakeReachOf}: a take's sends still queued, and those that went and stand. */
+export interface ReelTakeReach {
+  /** The take's id: what a run that ends its sends holds, so a second press waits for none. */
+  takeId: string;
+  /** Sends whose row is still queued: "Annuler partout" withdraws them. */
+  queued: OutboxReelTakeSend[];
+  /** Sends that went and were not deleted for everyone since: "Supprimer partout" deletes them. */
+  standing: OutboxReelTakeSend[];
+}
+
 export interface OutboxDeps {
   mlsService: IMlsService;
   storage: IStorage | null;
@@ -456,6 +476,15 @@ export interface OutboxDeps {
    * `refused` makes the take upload its own, `unanswered` holds the take for a retry. Never rejects.
    */
   holdChatReel?: (mediaId: string) => Promise<ChatReelHoldAnswer>;
+  /**
+   * SENDS OF A CHAT-REEL TAKE FAILED FOR GOOD (reels-in-chat 15.2): the member who pressed "Envoyer
+   * a..." on the camera tab is no longer in those threads to see their bubbles, so the session says
+   * it ONCE per cause: one send refused on its own names its conversation; a verdict on the take
+   * itself (its file refused, over today's budget, lost, expired) is said once for the whole take,
+   * with the conversations it reached (`conversationIds` empty when they are no longer known).
+   * Called after the threads' own lines; never rejects.
+   */
+  onReelSendFailed?: (failure: ReelSendFailure) => void;
   /**
    * Gives back the chat hold of a take's file (RC-13; `MediaService.releaseChatReel`): no send went,
    * or the last message that cited it was deleted for everyone. `answered` lets the take row go;
@@ -613,18 +642,14 @@ export interface OutboxController {
   /** The publish step of `takeId` ended (posted, failed or cancelled): the take stops waiting for it. */
   endPublishWait: (takeId: string) => void;
   /**
-   * "Annuler partout": withdraws every send of the take that `sendId` belongs to and is still queued.
-   * The last withdrawal releases the take (its upload session, its file). Returns how many went.
+   * How far the take naming `messageId` reaches - read from the take row or its SENT-TAKE RECORD
+   * (15.7) and the queue - for the bubble's "Annuler partout" / "Supprimer partout" (15.2, 15.7): its
+   * sends still QUEUED and its sends that went and still STAND. Each is then ended through the ONE
+   * message delete path (a queued one withdrawn, a sent one deleted for everyone), and the take
+   * settles from its rows as they go. `null` for a message no take names (any other message, an
+   * expired record) or a queue that cannot be read - an unknown is never drawn as "one conversation".
    */
-  cancelTakeEverywhere: (sendId: string) => Promise<number>;
-  /**
-   * The SENT-TAKE RECORD naming `messageId` (15.7): the take's id and its sends that went and were
-   * not deleted since - what "Supprimer partout" deletes. `null` for a message no take names (any
-   * other message, or a take whose record has expired).
-   */
-  sentTakeOf: (
-    messageId: string
-  ) => Promise<{ takeId: string; sends: OutboxReelTakeSend[] } | null>;
+  reelTakeReachOf: (messageId: string) => Promise<ReelTakeReach | null>;
   /**
    * D-delete-one: the sender deleted `messageId` for everyone. The take's record marks it, and when
    * no message citing the file is left (none queued, none sent and still standing), the file's chat
@@ -683,6 +708,61 @@ export const MAX_CONCURRENT_SENDS = 3;
  * tells the member sooner than that that nothing is moving and a retry is on offer.
  */
 export const UPLOAD_STALL_HINT_MS = 10_000;
+
+/**
+ * Builds, from an uploaded attachment's ref, the proto to send and the real media envelope to
+ * swap into the optimistic placeholder message. Shared by the DM/group queue and the salon
+ * attachment send (`salonAttachmentSend.ts`), so an attachment is encoded ONE way whichever path
+ * carries it.
+ */
+export function buildMediaMessage(
+  entry: Pick<OutboxEntry, 'id' | 'sentAt'>,
+  media: NonNullable<OutboxEntry['media']>,
+  ref: NonNullable<NonNullable<OutboxEntry['media']>['uploadedRef']>
+): { proto: Uint8Array; content: string } {
+  // What the sender declared (a reel message's intent, length and expiry hint): empty for an
+  // ordinary attachment, which therefore encodes exactly as before.
+  const declaration = {
+    ...(media.intent ? { intent: media.intent } : {}),
+    ...(media.durationMs ? { durationMs: media.durationMs } : {}),
+    ...(media.expiresAtMs ? { expiresAtMs: media.expiresAtMs } : {}),
+  };
+  const fullRef: MediaRef = {
+    type: mediaKindToType(media.kind),
+    mediaId: ref.mediaId,
+    key: ref.key,
+    iv: ref.iv,
+    mimeType: media.mimeType,
+    size: media.size,
+    fileName: media.fileName,
+    width: media.width,
+    height: media.height,
+    ...(media.placeholder ? { placeholder: media.placeholder } : {}),
+    ...(media.voiceNote ? { voiceNote: true } : {}),
+    ...(ref.encoding ? { encoding: ref.encoding } : {}),
+    ...declaration,
+  };
+  const proto = encodeAppMessage({
+    ...mkMedia({
+      kind: media.kind,
+      mediaId: ref.mediaId,
+      key: fromHex(ref.key),
+      iv: fromHex(ref.iv),
+      mimeType: media.mimeType,
+      size: media.size,
+      fileName: media.fileName ?? '',
+      voiceNote: media.voiceNote ?? false,
+      caption: media.caption,
+      ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
+      ...mediaPlaceholderProtoField(media.placeholder),
+      ...mediaEncodingProtoField(ref.encoding),
+      ...mediaReelProtoFields(declaration),
+    }),
+    messageId: entry.id,
+    sentAt: entry.sentAt,
+  });
+  return { proto, content: serializeEnvelope(mkMediaEnvelope(fullRef, media.caption)) };
+}
 
 /**
  * Creates the outbox controller. The flusher re-encodes the proto against the current epoch at
@@ -886,6 +966,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    */
   const sendsOfTake = new Map<string, Set<string>>();
   const takeOfSend = new Map<string, string>();
+  /**
+   * Takes whose failure the member was told of in this page life: a take's own verdict ends each of
+   * its sends, and is said ONCE (`tellReelSendFailed`). A toast lives as long as the page, and so
+   * does this.
+   */
+  const takeFailureSaid = new Set<string>();
   const takeUploads = new Map<string, NonNullable<OutboxEntry['media']>>();
   const takeWithdrawn = new Set<string>();
   /**
@@ -1140,7 +1226,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * not "it is on disk", and only the read-back answers that (re-review of #2874). Every way it can
    * fail is logged: a reload will then draw the file as never completed.
    */
-  async function persistUnsentReason(messageId: string, reason: UnsentReason): Promise<void> {
+  async function persistUnsentReason(
+    conversationId: string,
+    messageId: string,
+    reason: UnsentReason
+  ): Promise<void> {
     const lost = (why: string) =>
       log(
         `[OUTBOX] ${messageId.slice(0, 8)}… unsent reason ${reason} NOT persisted (${why}) - a reload will show the file as never completed`
@@ -1150,7 +1240,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return;
     }
     try {
-      await storage.updateMessage(messageId, { unsentReason: reason }, deviceKey());
+      await storage.updateMessage(conversationId, messageId, { unsentReason: reason }, deviceKey());
       const back = await storage.getMessage(messageId, deviceKey());
       if (!back) lost('its row is absent or undecryptable');
       else if (back.unsentReason !== reason) lost('the row read back does not carry it');
@@ -1278,37 +1368,68 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     const found = findMessage(messageId);
     if (!found) return;
     const m = found.convo.messages[found.idx];
-    const proofs = await storedProofs(messageId);
-    let reactions = m.reactions;
+    // What THIS send adds to the row: this device's own signature, in the field the frame proves.
+    const own_: StoredMessagePatch = {};
+    let reactionSigned: ((list: StoredMessage['reactions']) => StoredMessage['reactions']) | null =
+      null;
     if (own) {
       const mine = recordOwnAuthorship(own.body, own.proof, liveConvId);
       if (!own.control) {
-        proofs.authorship = mine;
+        own_.authorship = mine;
       } else {
         const frame = decodeAppMessage(own.body);
         const event = frame?.system?.event;
-        if (event === 'edit_message') proofs.editProof = mine;
+        if (event === 'edit_message') own_.editProof = mine;
         else if (event === 'delete_message') {
           // The original bytes go with the message; only the author's signed tombstone stays.
-          proofs.deleteProof = mine;
-          proofs.authorship = undefined;
-          proofs.editProof = undefined;
+          own_.deleteProof = mine;
+          own_.authorship = null;
+          own_.editProof = null;
         } else if (frame?.reaction) {
           const r = frame.reaction;
-          reactions = reactions?.map((x) =>
-            canonicalUserId(x.userId) === canonicalUserId(deps.userId) &&
-            x.emoji === r.emoji &&
-            (x.at ?? 0) === Number(r.at ?? 0)
-              ? { ...x, proof: mine }
-              : x
-          );
+          reactionSigned = (list) =>
+            list?.map((x) =>
+              canonicalUserId(x.userId) === canonicalUserId(deps.userId) &&
+              x.emoji === r.emoji &&
+              (x.at ?? 0) === Number(r.at ?? 0)
+                ? { ...x, proof: mine }
+                : x
+            );
         }
       }
     }
-    // A full-row write, not a patch: `liveConvId` may differ from the key the optimistic row was
-    // written under (the group was re-keyed mid-send), and a patch cannot move a row. So every
-    // field the in-memory message still carries is written back rather than dropped - the proofs
-    // included, which live only in the stored row.
+    // THE ROW UNDER `liveConvId` TAKES THIS SEND BY COMPARE-AND-SET: the content the send settled
+    // (a queued attachment's real envelope) unless the row is a tombstone, the server's time, and
+    // the signature above - folded onto the row as it stands, so a reaction or a deletion stored
+    // since the send began is kept, never written over from the copy on screen.
+    let written: Set<string>;
+    try {
+      written = await storage.mergeMessages(
+        liveConvId,
+        [messageId],
+        (current) =>
+          mergeStoredMessage(current, {
+            ...(current.isDeleted ? {} : { content: m.content }),
+            ...(m.serverTimestamp !== undefined ? { serverTimestamp: m.serverTimestamp } : {}),
+            ...own_,
+            ...(reactionSigned ? { reactions: reactionSigned(current.reactions) } : {}),
+          }),
+        deviceKey()
+      );
+    } catch (e) {
+      log(`[OUTBOX] Persist sent ${messageId.slice(0, 8)}… failed: ${String(e)}`);
+      return;
+    }
+    if (written.has(messageId)) return;
+    // NO ROW UNDER `liveConvId`: the group was re-keyed mid-send, so the optimistic row stands under
+    // the key it was written with, and a scoped compare-and-set cannot move it. This is a MOVE, and
+    // the one whole-row write left here: built from the stored proofs and the copy on screen, which
+    // is all the sending device holds of its own message; said, because it is rare.
+    log(
+      `[OUTBOX] ${messageId.slice(0, 8)}… has no row under ${liveConvId.slice(0, 8)}… - written there whole (re-keyed mid-send)`
+    );
+    const proofs = { ...(await storedProofs(messageId)), ...own_ };
+    const reactions = reactionSigned ? reactionSigned(m.reactions) : m.reactions;
     await storage
       .saveMessage(
         {
@@ -1850,59 +1971,6 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   }
 
   /**
-   * Builds, from an uploaded attachment's ref, the proto to send and the real media envelope to
-   * swap into the optimistic placeholder message.
-   */
-  function buildMediaMessage(
-    entry: OutboxEntry,
-    media: NonNullable<OutboxEntry['media']>,
-    ref: NonNullable<NonNullable<OutboxEntry['media']>['uploadedRef']>
-  ): { proto: Uint8Array; content: string } {
-    // What the sender declared (a reel message's intent, length and expiry hint): empty for an
-    // ordinary attachment, which therefore encodes exactly as before.
-    const declaration = {
-      ...(media.intent ? { intent: media.intent } : {}),
-      ...(media.durationMs ? { durationMs: media.durationMs } : {}),
-      ...(media.expiresAtMs ? { expiresAtMs: media.expiresAtMs } : {}),
-    };
-    const fullRef: MediaRef = {
-      type: mediaKindToType(media.kind),
-      mediaId: ref.mediaId,
-      key: ref.key,
-      iv: ref.iv,
-      mimeType: media.mimeType,
-      size: media.size,
-      fileName: media.fileName,
-      width: media.width,
-      height: media.height,
-      ...(media.placeholder ? { placeholder: media.placeholder } : {}),
-      ...(media.voiceNote ? { voiceNote: true } : {}),
-      ...(ref.encoding ? { encoding: ref.encoding } : {}),
-      ...declaration,
-    };
-    const proto = encodeAppMessage({
-      ...mkMedia({
-        kind: media.kind,
-        mediaId: ref.mediaId,
-        key: fromHex(ref.key),
-        iv: fromHex(ref.iv),
-        mimeType: media.mimeType,
-        size: media.size,
-        fileName: media.fileName ?? '',
-        voiceNote: media.voiceNote ?? false,
-        caption: media.caption,
-        ...(media.width && media.height ? { width: media.width, height: media.height } : {}),
-        ...mediaPlaceholderProtoField(media.placeholder),
-        ...mediaEncodingProtoField(ref.encoding),
-        ...mediaReelProtoFields(declaration),
-      }),
-      messageId: entry.id,
-      sentAt: entry.sentAt,
-    });
-    return { proto, content: serializeEnvelope(mkMediaEnvelope(fullRef, media.caption)) };
-  }
-
-  /**
    * Retires an entry that can never be sent, whatever is retried and however long is waited.
    *
    * There are exactly two such causes: the group was deleted server-side, or this device was
@@ -1932,7 +2000,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       | 'take-lost'
       | 'over-budget',
     /** The thread line for `unpreparable`: the preparer's own Paraglide sentence. */
-    notice?: string
+    notice?: string,
+    /** The take's verdict tells the member once for all its sends (`failTakeSends`): none here. */
+    takeNoticeSaid = false
   ): Promise<FlushOutcome> {
     // THE KIND IS THE SEVERITY, and this line used to omit the one thing that decides it. A
     // `control` entry dying with its group is a read receipt or a reaction that lost a race to a
@@ -1961,7 +2031,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
             : undefined;
     if (unsentReason) {
       setUnsentReason(entry.id, unsentReason);
-      await persistUnsentReason(entry.id, unsentReason);
+      await persistUnsentReason(entry.conversationId, entry.id, unsentReason);
       publishOutboxEntryRetired(entry.id, unsentReason);
     }
     // AN UPLOADED FILE RETIRED UNSENT IS AN OBJECT NOBODY WILL CITE. There is no client route that
@@ -2032,6 +2102,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         });
       }
     }
+    // A SEND OF A TAKE: its row names the take, or - a LIGHT queue row, read without its payload by
+    // the take's own verdict (`failTakeSends`) - the take's in-memory view of its live sends does.
+    const takeId =
+      (entry.kind === 'media' ? entry.media?.takeId : undefined) ?? takeOfSend.get(entry.id);
+    if (takeId && !takeNoticeSaid) await tellReelSendFailed(takeId, entry, cause);
     await storage
       ?.deleteOutboxEntry(entry.id)
       .catch((e: unknown) =>
@@ -3803,6 +3878,42 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * fails for good, its sentence in its own thread, and the last one withdraws the take - the ONE
    * disposition both the take's upload and its chat hold reach.
    */
+  /**
+   * Tells the member about a take's send that failed for good, ONCE PER CAUSE: a refusal of THIS send
+   * (its group gone, the member removed) names its conversation; a cause that is the TAKE's (its
+   * hint passed, its file lost) ends every send of the take one lane after another, so it is said
+   * once per take in this page life, with the conversations its unsent sends name.
+   */
+  async function tellReelSendFailed(
+    takeId: string,
+    entry: OutboxEntry,
+    cause: string
+  ): Promise<void> {
+    const short = `${entry.id.slice(0, 8)}… of take ${takeId.slice(0, 8)}…`;
+    if (cause !== 'expired' && cause !== 'take-lost') {
+      log(`[OUTBOX] ${short} failed for good (${cause}) - the member is told which conversation`);
+      deps.onReelSendFailed?.({ kind: 'send', conversationId: entry.conversationId });
+      return;
+    }
+    if (takeFailureSaid.has(takeId)) {
+      log(`[OUTBOX] ${short} failed for good (${cause}) - the take's notice was already said`);
+      return;
+    }
+    takeFailureSaid.add(takeId);
+    let conversationIds: string[] = [];
+    try {
+      conversationIds = ((await readTake(takeId))?.take?.sends ?? [])
+        .filter((s) => !s.sent)
+        .map((s) => s.conversationId);
+    } catch (e) {
+      log(`[OUTBOX] ${short}: the take could not be read for its notice: ${String(e)}`);
+    }
+    log(
+      `[OUTBOX] ${short} failed for good (${cause}) - the member is told once for the take (${conversationIds.length} conversation(s) known)`
+    );
+    deps.onReelSendFailed?.({ kind: 'take', conversationIds });
+  }
+
   async function failTakeSends(
     take: OutboxEntry,
     queue: OutboxEntry[],
@@ -3815,7 +3926,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     const line = `[OUTBOX] take ${take.id.slice(0, 8)}… ${cause} (${detail}) - each of its ${sends.length} queued send(s) fails for good`;
     console.error(line);
     log(line);
-    for (const send of sends) await failPermanently(send, send.conversationId, cause, notice);
+    for (const send of sends) await failPermanently(send, send.conversationId, cause, notice, true);
+    // ONE notice for the take's verdict, never one per send (up to `chatReelMaxTargets` toasts).
+    if (sends.length > 0 && !takeFailureSaid.has(take.id)) {
+      takeFailureSaid.add(take.id);
+      deps.onReelSendFailed?.({
+        kind: 'take',
+        conversationIds: sends.map((q) => q.conversationId),
+      });
+    }
   }
 
   /**
@@ -4641,28 +4760,17 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       runFlush();
     },
 
-    async cancelTakeEverywhere(sendId: string): Promise<number> {
-      const queue = await readQueue('cancel everywhere');
-      const take = queue.find(
-        (e) => e.kind === 'reel-take' && e.take?.sends.some((s) => s.id === sendId)
-      );
-      if (!take) return 0;
-      let withdrawn = 0;
-      for (const send of liveSendsOf(take, new Set(queue.map((e) => e.id)))) {
-        if ((await withdraw(send.id, 'user')).rowDeleted) withdrawn++;
-      }
-      log(
-        `[OUTBOX] take ${take.id.slice(0, 8)}… cancelled everywhere: ${withdrawn} send(s) withdrawn`
-      );
-      return withdrawn;
-    },
-
-    async sentTakeOf(
-      messageId: string
-    ): Promise<{ takeId: string; sends: OutboxReelTakeSend[] } | null> {
-      const take = await takeNaming(messageId, 'sent take');
+    async reelTakeReachOf(messageId: string): Promise<ReelTakeReach | null> {
+      const take = await takeNaming(messageId, 'take reach');
       if (!take?.take) return null;
-      return { takeId: take.id, sends: take.take.sends.filter((s) => s.sent && !s.deleted) };
+      const queue = await queueOrNull('take reach');
+      if (queue === null) return null;
+      const queued = liveSendsOf(take, new Set(queue.map((e) => e.id)));
+      const standing = take.take.sends.filter((s) => s.sent && !s.deleted);
+      log(
+        `[OUTBOX] take ${take.id.slice(0, 8)}… reach of ${messageId.slice(0, 8)}…: ${queued.length} queued, ${standing.length} standing`
+      );
+      return { takeId: take.id, queued, standing };
     },
 
     async reelSendDeleted(messageId: string): Promise<void> {
@@ -4775,13 +4883,14 @@ export function getOutbox(): OutboxController | null {
  * the per-conversation lanes coalescer. There is no second flusher to fuse this with. FIVE sites are
  * internal wake-ups, each bound to the one condition it is the seam for - `connectivity.onReconnect`,
  * `visibilitychange`, a follower tab's `outbox_flush_request`, the backoff timer, and `enqueue`.
- * THREE are external moments nothing inside this module can observe:
+ * FOUR are external moments nothing inside this module can observe:
  *
  * | Site | The moment, and why nothing in here sees it |
  * | --- | --- |
  * | `promoteOfflineSession` step 4 | a session unlocked offline now has a token AND a socket |
  * | `sessionAuth`'s `onGroupReady`, through {@link resumeOutboxGroup} | one GROUP became sendable; the network never changed |
  * | `sessionAuth` after `initializeConnection` | login finished, which is not a reconnection |
+ * | `MainChatPage` leaving the screen, under `holdWhileLeaving` | the iOS background task must last until the owed read marks' send SETTLES; the enqueue hands nobody its end, and this coalesces with it |
  *
  * **THE FUSION THAT LOOKS OBVIOUS IS A REGRESSION, AND IT IS THE FIRST THING ANYONE WILL REACH
  * FOR.** `connectivity.onReconnect` binds a flush to `isOffline` clearing, so binding one to
@@ -4792,7 +4901,7 @@ export function getOutbox(): OutboxController | null {
  * and only the promotion knows the second.**
  *
  * `outbox.test.ts` drives all five internal triggers plus this one over a single table, and a
- * source check pins the three external sites, so a fourth has to be argued for rather than added.
+ * source check pins the four external sites, so a fifth has to be argued for rather than added.
  */
 export function flushOutbox(): void {
   void active?.flush();
@@ -4906,17 +5015,9 @@ export function endOutboxPublishWait(takeId: string): void {
   active?.endPublishWait(takeId);
 }
 
-/** "Annuler partout" on the active controller (0 with none) - see {@link OutboxController.cancelTakeEverywhere}. */
-export function cancelOutboxTakeEverywhere(sendId: string): Promise<number> {
-  if (!active) return Promise.resolve(0);
-  return active.cancelTakeEverywhere(sendId).finally(bumpOutboxQueueVersion);
-}
-
-/** The sent-take record naming `messageId` (`null` with no controller) - see {@link OutboxController.sentTakeOf}. */
-export function sentOutboxTakeOf(
-  messageId: string
-): Promise<{ takeId: string; sends: OutboxReelTakeSend[] } | null> {
-  return active ? active.sentTakeOf(messageId) : Promise.resolve(null);
+/** The reach of the take naming `messageId` (`null` with no controller) - see {@link OutboxController.reelTakeReachOf}. */
+export function outboxReelTakeReachOf(messageId: string): Promise<ReelTakeReach | null> {
+  return active ? active.reelTakeReachOf(messageId) : Promise.resolve(null);
 }
 
 /**

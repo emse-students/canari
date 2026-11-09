@@ -35,7 +35,7 @@ rows="$(run_ak_shell "$container" <"$here/export-profiles.py" | sed -n 's/^PROFI
 }
 json="$(printf '%s\n' "$rows" | paste -sd, -)"
 # shellcheck disable=SC2016
-if printf '%s' "$json" | grep -q '\$canari\$'; then
+if grep -q '\$canari\$' <<<"$json"; then
   echo "the export contains the SQL quote tag - refusing" >&2
   exit 1
 fi

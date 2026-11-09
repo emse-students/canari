@@ -8,7 +8,8 @@ import { AssociationCalendarEvent } from './entities/association-calendar-event.
 import { AssociationCalendarEventCoOwner } from './entities/association-calendar-event-co-owner.entity';
 import { AssociationDocument } from './entities/association-document.entity';
 import { DocumentReviewerGrant } from './entities/document-reviewer-grant.entity';
-import { AssociationCategory } from './entities/association-category.entity';
+import { PosterZone } from './entities/poster-zone.entity';
+import { PosterEntry } from './entities/poster-entry.entity';
 import { PosterProject } from './entities/poster-project.entity';
 import { AssociationProduct } from './entities/association-product.entity';
 import { WebhookDelivery } from './entities/webhook-delivery.entity';
@@ -19,6 +20,7 @@ import { PartnershipCode } from './entities/partnership-code.entity';
 import { Space } from '../spaces/space.entity';
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { SpacesController, AssociationAudiencesController } from '../spaces/spaces.controller';
+import { AdminAssociationsController } from './admin-associations.controller';
 import { SpacesService } from '../spaces/spaces.service';
 import { ReadGrantsController } from '../read-grants/read-grants.controller';
 import { ReadGrantsService } from '../read-grants/read-grants.service';
@@ -33,7 +35,6 @@ import { ProductsService } from './products.service';
 import { PartnershipsService } from './partnerships.service';
 import { CercleDeliveryScheduler } from './cercle-delivery.scheduler';
 import { PaidNotGrantedScheduler } from './paid-not-granted.scheduler';
-import { AssociationCategoriesService } from './association-categories.service';
 import { PosterService } from './poster.service';
 import { LydiaCashierNotifier, LydiaPaymentsNotifier } from './lydia-payments-notifier.service';
 import { LydiaCashiersService } from './lydia-cashiers.service';
@@ -64,7 +65,8 @@ import { RefundsController } from './refunds/refunds.controller';
       AssociationCalendarEventCoOwner,
       AssociationDocument,
       DocumentReviewerGrant,
-      AssociationCategory,
+      PosterZone,
+      PosterEntry,
       PosterProject,
       AssociationProduct,
       WebhookDelivery,
@@ -94,7 +96,6 @@ import { RefundsController } from './refunds/refunds.controller';
     PartnershipsService,
     CercleDeliveryScheduler,
     PaidNotGrantedScheduler,
-    AssociationCategoriesService,
     PosterService,
     GlobalAdminOrAssociationRoleGuard,
     GlobalAdminOrBdeSuperAdminGuard,
@@ -112,13 +113,14 @@ import { RefundsController } from './refunds/refunds.controller';
     RefundsService,
     LydiaRefundNotifier,
   ],
-  // Category/poster controllers are listed FIRST so their literal `associations/categories`
+  // The category shim and the poster controller are listed FIRST so their literal `associations/categories`
   // and `associations/poster` routes register before the `associations/:id` matcher.
   controllers: [
     AssociationCategoriesController,
     SpacesController,
     ReadGrantsController,
     AssociationAudiencesController,
+    AdminAssociationsController,
     PosterController,
     AssociationsController,
     RefundsController,

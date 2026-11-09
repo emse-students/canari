@@ -45,6 +45,8 @@ function makeService(event: Overrides) {
       saved.push({ ...e });
       return e;
     }),
+    // The announcement re-reads the status (it must still be pending): the stored row, as written.
+    findOne: jest.fn(async () => row),
   };
 
   // POSITIONAL, AND FOURTEEN LONG - keep these comments aligned with the parameter list in
@@ -82,16 +84,18 @@ function makeService(event: Overrides) {
     ...event,
   };
 
-  const notifiedValidators = jest.fn();
+  const notifiedValidators = jest.fn().mockResolvedValue(undefined);
   const notifiedAssoAdmins = jest.fn();
   Object.assign(service, {
     findById: jest.fn(async () => ({ id: 'asso-1' })),
+    // The event lock is a transaction in production; here the work simply runs on the stub repo.
+    withEventLock: async (_id: string, work: (repo: unknown) => unknown) => work(calendarRepo),
     findCalendarEventForAssociation: jest.fn(async () => row),
     batchLoadCoOwners: jest.fn(async () => new Map()),
     syncCoOwners: jest.fn(async () => []),
     serializeCalendarEvent: jest.fn((e: Overrides) => e),
     notifyEventValidatorsOfProposal: notifiedValidators,
-    notifyAssocAdminsOfEventAction: notifiedAssoAdmins,
+    notifyEventReopenedParties: notifiedAssoAdmins,
   });
 
   return { service, row, saved, notifiedValidators, notifiedAssoAdmins };
@@ -118,6 +122,7 @@ describe('updateCalendarEvent - a validated event asks again when its dates move
 
   it('tells the validators, by the same route a fresh proposal takes', async () => {
     const { service, notifiedValidators, notifiedAssoAdmins } = makeService({});
+    const announce = jest.spyOn(service, 'announceEventReopened');
 
     await service.updateCalendarEvent(
       'asso-1',
@@ -125,11 +130,19 @@ describe('updateCalendarEvent - a validated event asks again when its dates move
       { startsAt: '2026-10-02T18:00:00.000Z' } as never,
       { callerUserId: 'admin-1' }
     );
+    // The announcement is fire-and-forget (void) and re-reads the status first: await its promise.
+    await Promise.all(announce.mock.results.map((r) => r.value));
 
     // Without this the event leaves the public agenda for a queue nobody is told about - worse
     // than the defect it replaces, the event having at least been visible before.
     expect(notifiedValidators).toHaveBeenCalledWith('asso-1', 'admin-1', 'Gala');
-    expect(notifiedAssoAdmins).toHaveBeenCalledWith('asso-1', 'admin-1', 'Gala', 'pending');
+    expect(notifiedAssoAdmins).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'ev-1', associationId: 'asso-1', title: 'Gala' }),
+      'date_moved',
+      'admin-1',
+      // Whoever the validators' notice already reached (the stub returned nobody).
+      expect.any(Set)
+    );
   });
 
   it('demotes on a change to endsAt alone - an event that now runs to 3am is a different ask', async () => {

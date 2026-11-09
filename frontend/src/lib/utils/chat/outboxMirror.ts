@@ -159,6 +159,18 @@ export async function reconcileOutboxSent(
   appendLog(
     `[OUTBOX_MIRROR] ${sent.length} message(s) sent in the background to reconcile, ${dated} with the server's receive time`
   );
+  // The conversation each sent id was queued in, read from the outbox BEFORE its entries go: the
+  // dating below is a write scoped to that conversation, like every rewrite of a stored row.
+  const queuedIn = new Map<string, string>();
+  if (dating) {
+    try {
+      for (const e of await storage.getOutboxQueue(dating.deviceKeyB64)) {
+        queuedIn.set(e.id, e.conversationId);
+      }
+    } catch (e) {
+      appendLog(`[OUTBOX_MIRROR] outbox read failed, background sends left undated: ${String(e)}`);
+    }
+  }
   for (const { id, receivedAt } of sent) {
     if (dating) noteServerTime(dating.userId, receivedAt);
     await storage
@@ -169,9 +181,16 @@ export async function reconcileOutboxSent(
         )
       );
     if (receivedAt === undefined || !dating) continue;
+    const conversationId = queuedIn.get(id);
+    if (!conversationId) {
+      appendLog(
+        `[OUTBOX_MIRROR] background-sent ${id.slice(0, 8)}… was no longer queued - left undated (it keeps its sentAt)`
+      );
+      continue;
+    }
     // A control frame's id names no stored row: `updateMessage` is then a no-op.
     await storage
-      .updateMessage(id, { serverTimestamp: receivedAt }, dating.deviceKeyB64)
+      .updateMessage(conversationId, id, { serverTimestamp: receivedAt }, dating.deviceKeyB64)
       .then(() => dating.onDated?.(id, receivedAt))
       .catch((e) =>
         appendLog(
@@ -316,9 +335,17 @@ export async function adoptOrphanedMirrorEntries(
     if (rebuilt.message) {
       // Best-effort: the entry is queued either way, this only decides whether the user can see it
       // before it lands. A missing conversation row is the expected failure (FK), and it means the
-      // group is gone, in which case the flusher will drop the entry too.
+      // group is gone, in which case the flusher will drop the entry too. Written only where no row
+      // stands: a row already stored under this id is the truth, never replaced by this rebuild.
       await storage
-        .saveMessage(rebuilt.message, deviceKeyB64)
+        .saveMessagesIfAbsent([rebuilt.message], deviceKeyB64)
+        .then((written) => {
+          if (!written.has(orphan.id)) {
+            appendLog(
+              `[OUTBOX_MIRROR] Local copy of ${orphan.id.slice(0, 8)}… already stored - left as it is`
+            );
+          }
+        })
         .catch((e) =>
           appendLog(
             `[OUTBOX_MIRROR] Local copy of ${orphan.id.slice(0, 8)}… not saved: ${String(e)}`

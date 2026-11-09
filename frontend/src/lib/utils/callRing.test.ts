@@ -23,7 +23,10 @@ import { resetToneOutputForTest } from '$lib/utils/toneOutput';
 
 /** Whether the page runs in the Android app: a bridge-less Android build is a defect, not a path. */
 let android = false;
-vi.mock('$lib/utils/appVersion', () => ({ isAndroidTauriRuntime: () => android }));
+vi.mock('$lib/utils/appVersion', () => ({
+  isAndroidTauriRuntime: () => android,
+  isIosTauriRuntime: () => false,
+}));
 
 /** One incoming call, as `ChatBackgroundService` describes it. */
 const call = (callId: string, appSounds = true): NativeRingFacts => ({

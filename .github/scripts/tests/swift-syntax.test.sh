@@ -68,29 +68,29 @@ printf '\nevery tracked file is parsed, and the set is derived\n'
 make_tree "$work/t1" 'a/One.swift:import Foundation' 'b/Two.swift:let x = 1' 'notes.txt:BROKEN'
 run "$work/t1"
 [ "$rc" -eq 0 ] && pass 'two good files and a BROKEN non-swift file: exit 0' || fail "exit $rc: $out"
-printf '%s' "$out" | grep -q '2 Swift file(s) parse' && pass 'it says how many it parsed (2, the .txt is not Swift)' || fail "count not stated: $out"
+grep -q '2 Swift file(s) parse' <<<"$out" && pass 'it says how many it parsed (2, the .txt is not Swift)' || fail "count not stated: $out"
 
 make_tree "$work/t2" 'a/One.swift:BROKEN' 'b/Two.swift:ALSO BROKEN' 'c/Three.swift:let ok = 1'
 run "$work/t2"
 [ "$rc" -eq 1 ] && pass 'broken files: exit 1' || fail "exit $rc"
-printf '%s' "$out" | grep -q 'a/One.swift' && printf '%s' "$out" | grep -q 'b/Two.swift' &&
+grep -q 'a/One.swift' <<<"$out" && grep -q 'b/Two.swift' <<<"$out" &&
   pass 'BOTH broken files are named - one does not hide the other' || fail "not both named: $out"
-printf '%s' "$out" | grep -q 'c/Three.swift' && fail 'the good file was reported' || pass 'the good file is not blamed'
+grep -q 'c/Three.swift' <<<"$out" && fail 'the good file was reported' || pass 'the good file is not blamed'
 
 printf '\nan empty set is a failure, not a clean tree\n'
 # =================================================================================================
 make_tree "$work/t3" 'readme.md:hello'
 run "$work/t3"
-[ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q 'no tracked .swift file' &&
+[ "$rc" -eq 1 ] && grep -q 'no tracked .swift file' <<<"$out" &&
   pass 'no Swift file: exit 1 and it says the derivation may be broken' || fail "exit $rc: $out"
 
 printf '\na missing swiftc is loud on a workstation and fatal on CI\n'
 # =================================================================================================
 SWIFTC_UNDER_TEST="$work/does-not-exist" run "$work/t1"
-[ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'NOT checked here' &&
+[ "$rc" -eq 0 ] && grep -q 'NOT checked here' <<<"$out" &&
   pass 'workstation: exit 0, and it says the files were NOT checked' || fail "exit $rc: $out"
 SWIFTC_UNDER_TEST="$work/does-not-exist" run "$work/t1" CI=true
-[ "$rc" -eq 1 ] && printf '%s' "$out" | grep -q 'were NOT checked' &&
+[ "$rc" -eq 1 ] && grep -q 'were NOT checked' <<<"$out" &&
   pass 'CI: exit 1 - an unrun check is not a clean one' || fail "exit $rc: $out"
 
 printf '\nwhere a real swiftc exists, the instrument is shown able to fail\n'

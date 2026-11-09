@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ChannelsController } from './channels.controller';
+import { CommunityNicknamesController } from './community-nicknames.controller';
+import { CommunityNicknamesService } from './community-nicknames.service';
 import { ChatReelMediaClient } from './chat-reel-media.client';
 import { ChannelService } from './channel.service';
 import { ChannelRetentionScheduler } from './channel-retention.scheduler';
@@ -28,8 +30,13 @@ import { DistributionDeparture } from './entities/distribution-departure.entity'
     ]),
     HttpModule,
   ],
-  controllers: [ChannelsController],
-  providers: [ChannelService, ChannelRetentionScheduler, ChatReelMediaClient],
+  controllers: [ChannelsController, CommunityNicknamesController],
+  providers: [
+    ChannelService,
+    ChannelRetentionScheduler,
+    ChatReelMediaClient,
+    CommunityNicknamesService,
+  ],
   exports: [ChannelService],
 })
 export class ChannelsModule {}
