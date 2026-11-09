@@ -8,6 +8,9 @@
 #  - a THIRD failure with the issue open does nothing (one issue, not twenty);
 #  - a success while an issue is open comments with the downtime and closes it;
 #  - a success between two failures clears the suspicion (the failures were not consecutive);
+#  - an `edge-refused` reading (the edge refused the MONITOR) opens "cannot read", never "is down",
+#    with its evidence; it neither closes nor confirms an open outage; any answer the name wrote
+#    closes it, no answer at all does not;
 #  - a gh refusal or a missing results file is a failure of the reporter (exit 1);
 #  - a dry run writes nothing.
 #
@@ -84,8 +87,9 @@ chmod +x "$TMP/gh"
 
 # step <class> <label>: one reading of the target `svc`, then the script.
 step() {
-  local class="$1"
-  printf 'svc\t%s\t%s\thttps://svc.test/h\n' "$class" "$([ "$class" = up ] && echo 200 || echo 530)" >"$TMP/r.tsv"
+  local class="$1" code=530
+  case "$class" in up) code=200 ;; edge-refused) code=403 ;; origin-failing) code=502 ;; esac
+  printf 'svc\t%s\t%s\thttps://svc.test/h\tserver=cloudflare cf-mitigated=challenge body=Just a moment...\n' "$class" "$code" >"$TMP/r.tsv"
   OUT="$(GH="$TMP/gh" REPO=x/y UPSTREAM_RESULTS="$TMP/r.tsv" NOW="$2" bash "$SCRIPT" 2>&1)"
   RC=$?
 }
@@ -130,6 +134,42 @@ step origin-failing 2026-11-06T10:00:00Z
 step up 2026-11-06T10:15:00Z
 step origin-failing 2026-11-06T10:30:00Z
 [ "$(count_open "$T")" = 0 ] && ok 'fail, ok, fail is not two CONSECUTIVE failures: no issue' || fail 'alarmed on non-consecutive failures'
+
+# --- edge-refused: the monitor is blind, which is neither an outage nor health ---------------------
+B='Upstream monitor cannot read svc'
+reset
+step edge-refused 2026-11-06T19:20:00Z
+step edge-refused 2026-11-06T23:45:00Z
+[ "$(count_open "$B")" = 1 ] && ok 'two refused readings open ONE "cannot read" issue' || fail "blind issues open: $(count_open "$B")"
+[ "$(count_open "$T")" = 0 ] && ok 'and never an "is down" issue (the 2026-11-06 defect)' || fail 'a refused reading opened an outage issue'
+grep -q 'evidence: `server=cloudflare cf-mitigated=challenge' "$DB"/*/body && ok 'the issue carries the evidence of the reading' || fail 'no evidence in the issue'
+step edge-refused 2026-11-07T03:45:00Z
+[ "$(count_open "$B")" = 1 ] && [ "$RC" = 0 ] && ok 'a further refusal changes nothing' || fail "blind issues open: $(count_open "$B"), exit $RC"
+step up 2026-11-07T07:45:00Z
+[ "$(count_open "$B")" = 0 ] && ok 'the first answer from the name closes it' || fail 'the blind issue stayed open'
+grep -q 'after 12h 25m without a reading' "$DB"/*/comments && ok 'and says how long the monitor was blind' || fail "comments: $(cat "$DB"/*/comments)"
+
+reset
+step tunnel-down 2026-11-06T10:00:00Z
+step tunnel-down 2026-11-06T10:15:00Z
+step edge-refused 2026-11-06T10:30:00Z
+step edge-refused 2026-11-06T10:45:00Z
+[ "$(count_open "$T")" = 1 ] && ok 'a refused reading neither closes nor confirms an open outage' || fail 'a blind reading closed an outage'
+[ "$(count_open "$B")" = 1 ] && ok 'and the blindness is reported beside it, not swallowed' || fail "blind issues open: $(count_open "$B")"
+step origin-failing 2026-11-06T11:00:00Z
+[ "$(count_open "$B")" = 0 ] && [ "$(count_open "$T")" = 1 ] && ok 'an answer the origin wrote ends the blindness and keeps the outage' || fail "down $(count_open "$T"), blind $(count_open "$B")"
+
+reset
+step edge-refused 2026-11-06T10:00:00Z
+step up 2026-11-06T10:15:00Z
+step edge-refused 2026-11-06T10:30:00Z
+[ "$(count_open "$B")" = 0 ] && ok 'refused, ok, refused is not two consecutive: no issue' || fail 'alarmed on non-consecutive refusals'
+
+reset
+step edge-refused 2026-11-06T10:00:00Z
+step edge-refused 2026-11-06T10:15:00Z
+step unreachable 2026-11-06T10:30:00Z
+[ "$(count_open "$B")" = 1 ] && ok 'no answer at all does not prove the monitor sees again' || fail 'unreachable closed the blind issue'
 
 reset
 GH_FAIL=1 step tunnel-down 2026-11-06T10:00:00Z

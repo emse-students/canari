@@ -1,12 +1,55 @@
-# Emoji - Noto's pictures, everywhere
+# Emoji - the system font by default, Noto's pictures on demand
 
-Canari draws every emoji as **Noto's own SVG**, as an `<img>`, on every platform and in every surface
-it draws itself - so the same codepoint is the same picture on Android, iOS, Windows and Linux, the
-picker never depends on a third-party CDN, and no engine's colour-font support decides anything. Noto
-over Microsoft's Fluent Emoji was decided 2026-08-23 on coverage (Fluent has no flags, no ZWJ families,
-and stopped at Unicode 15.1); the numbers are in the [backlog](../backlog.md) entry of that date.
+**Since 2026-11-09 the user chooses** (owner: *"Dans les reglages, il faudrait pouvoir choisir entre
+les emojis systeme et les emojis Canari (emoji systeme par defaut)."*), in Settings > Preferences >
+"Emojis": **Systeme** (the default) lets the platform's emoji font draw every emoji; **Canari** draws
+them as **Noto's own SVG**, as an `<img>`, exactly as every build did from 2026-09-25 to that day -
+the same codepoint the same picture on Android, iOS, Windows and Linux. Everything below this section
+describes the Canari mode; [the setting](#the-setting---one-resolver-2026-11-09) says what changes in
+the default. Noto over Microsoft's Fluent Emoji was decided 2026-08-23 on coverage (Fluent has no
+flags, no ZWJ families, and stopped at Unicode 15.1); the numbers are in the [backlog](../backlog.md)
+entry of that date.
 
-## Pictures replace the font - decided 2026-09-25, in four pull requests
+## The setting - one resolver (2026-11-09)
+
+**ONE module applies it: `frontend/src/lib/utils/emojiStyle.ts`.** `emojiDisplayParts(text)` (text
+runs and pictures) and `emojiPictureSrc(grapheme)` (a picture URL or `null`) read the choice and hand
+back either today's split (`splitEmojiText`, `emojiSvgSrc`) or nothing to draw. `emojiSvg.ts` stays
+the pure "which grapheme HAS a picture" rule: the build gate and the picker's coverage filter
+(`emojiCatalog.ts`) need it whatever the user chose. No in-app surface imports `emojiSvg.ts` for
+drawing; `emojiPreload.test.ts` pins that for the picker and its warm-up.
+
+| Surface | Under "Systeme" | How it asks |
+| --- | --- | --- |
+| Everything `EmojiText` prints (message bodies, captions, search hits, posts and comments through `rawtext`, reactions, notifications, names, toasts - the chokepoints below) | the text as one text node; the font draws the emoji, skin tones included | `emojiDisplayParts` |
+| The composer (`mentionEditor.ts`) | emoji stay characters: no atom, and `needsEmojiRender` never asks for a rebuild | `emojiDisplayParts` |
+| The picker (`EmojiGrid`): cells, tab icons, tone swatches | a glyph `<span>` (`text-xl`, the 28 px picture's visual size) | `emojiPictureSrc`, `EmojiText` |
+| The picker warm-up (`warmEmojiPicker`) | the catalogue loads, no picture is fetched | `emojiPictureSrc` |
+
+**Not governed, on purpose - artefacts other people see keep the pictures**: the PDF exports (the
+poster passes `emojiStyle="canari"` to `EmojiText`; the calendar and the trombinoscope build their
+markup with `emojiHtml`, always pictures) and a CanaReel's emoji sticker (burnt into the video as
+Noto's SVG by `reelEditor.ts`; its picker is `EmojiGrid emojiStyle="canari"`, so it shows what will be
+placed). A printed or shared artefact is then the same on every device and goes through the
+rasterisation path that was measured; a system glyph inside snapdom's raster on WebKit is not.
+Reversible: one prop each.
+
+**What does not depend on the mode**: jumbomoji (`isEmojiOnlyText`) and the PDF's raster decision
+(`containsEmoji` or an `img.emoji`) read the TEXT, so both work in either mode - a system glyph in a
+jumbo bubble simply takes `text-3xl`.
+
+**Storage: `localStorage` key `canari_emoji_style`, per device**, in `settingsStore.svelte.ts` beside
+the sounds, vibrations and feed tab, and like the theme: a display preference follows the screen it
+is seen on, and the account carries no preference record. **Read synchronously when the store module
+loads**, so the first message drawn already knows the mode - no picture is fetched and then replaced.
+Anything but `canari` (nothing stored, a hand edit) is `system`, so **every existing install switched
+to the system glyphs on update**; the changelog says so.
+
+**What "Systeme" costs and gives**: no `/emoji/` request at all and no grapheme split on any text
+(`splitEmojiText` is never reached); the platform draws what it knows, so a sequence newer than the
+phone's font shows as the platform shows it (separate glyphs or a box), as in every other app.
+
+## Pictures replace the font - decided 2026-09-25, in four pull requests (the Canari mode since 2026-11-09)
 
 **The user's decision**: the font never drew on WebKit (Safari and the iOS app showed Apple's glyphs,
 [backlog](../backlog.md)), so every emoji becomes Noto's own SVG drawn as an `<img>` - on every

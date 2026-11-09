@@ -34,9 +34,12 @@
     associationLogoSrc,
     canAssociationReceiveFormPayments,
     getAssociation,
+    listMyAssociations,
     type Association,
     type MembershipTier,
   } from '$lib/associations/api';
+  import { withRequestedAssociation } from '$lib/associations/requestedAssociation';
+  import FormAssociationPicker from '$lib/components/forms/FormAssociationPicker.svelte';
   import FormSection from '$lib/components/forms/FormSection.svelte';
   import FormAdvancedSettings from '$lib/components/forms/FormAdvancedSettings.svelte';
   import FormPaymentSection from '$lib/components/forms/FormPaymentSection.svelte';
@@ -51,6 +54,7 @@
     cotisationPayload,
     cotisationSettingsOf,
     emptyCotisationSettings,
+    forgetTierSelection,
   } from '$lib/forms/cotisationSettings';
   import {
     matrixOf,
@@ -149,14 +153,20 @@
   let submitCondition = $state<AudienceCondition | null>(null);
 
   /**
-   * The linked association, READ ONLY.
+   * The form's association: its builder's choice while it is a DRAFT, fixed once it is published.
    *
-   * A form is personal or an association's, decided once at creation and never after (user
-   * decision, 2026-08-23): which one it is decides who owns it, and MANAGE_FORMS is a right over
-   * the association's forms - so a manager who could cut the link could walk off with the form.
-   * The server refuses a change; this screen does not offer one.
+   * A draft has no answer, payment or reminder yet, and its autosave must not lock it (owner,
+   * 2026-11-09): the choice rides in the revision and the publication moves the draft, the server
+   * asking membership of both sides. A PUBLISHED form stays with its association (user decision,
+   * 2026-08-23, kept for published forms): its answers, payments and reminders are that
+   * association's, so this screen shows it read-only and says why; the server refuses a change
+   * (`FORM_ASSOCIATION_FIXED`).
    */
   let association = $state<Association | null>(null);
+  /** The chosen association's id, `''` for a personal form. */
+  let associationId = $state('');
+  /** What a draft may be moved to: the builder's memberships, plus its own association. */
+  let associations = $state<Association[]>([]);
   const associationCanBePaid = $derived(
     !!association && canAssociationReceiveFormPayments(association, activePaymentProvider.current)
   );
@@ -189,9 +199,9 @@
   /**
    * The association's tiers and whether this user may grant one.
    *
-   * Loaded once alongside the form rather than in an effect: the association cannot change here, so
-   * there is nothing to react to - and an effect that re-ran would have to forget the tier the
-   * saved form already carries and then put it back.
+   * Loaded alongside the form, and again only when the builder picks another association for a
+   * draft (`chooseAssociation`) - never in an effect, which would re-run on the load itself and have
+   * to forget the tier the saved form already carries and then put it back.
    */
   let tiers = $state<MembershipTier[]>([]);
   let mayGrantCotisation = $state(false);
@@ -250,15 +260,21 @@
       // The form's own association, fetched by id rather than found in a list: the list of
       // associations the user belongs to would miss the one they have since left, and this form
       // stays that association's either way.
-      if (f.associationId) {
+      // A DRAFT's association is its builder's latest choice, the revision's; a PUBLISHED form's
+      // is the stored one, always - a revision naming another (one an older server let through)
+      // must neither show that name nor judge payment readiness on it (review of #3198).
+      const ownAssociation = isDraftForm(stored) ? f.associationId : stored.associationId;
+      associationId = ownAssociation ?? '';
+      if (ownAssociation) {
         const [asso, options] = await Promise.all([
-          getAssociation(f.associationId).catch(() => null),
-          cotisationOptionsFor(f.associationId),
+          getAssociation(ownAssociation).catch(() => null),
+          cotisationOptionsFor(ownAssociation),
         ]);
         association = asso;
         tiers = options.tiers;
         mayGrantCotisation = options.mayGrant;
       }
+      if (isDraftForm(stored)) associations = await draftAssociationChoices();
 
       applyContent(f);
       void loadOrderedCells(id, stored);
@@ -276,6 +292,49 @@
             m.form_edit_load_error());
     }
   });
+
+  /**
+   * The associations a draft may be moved to: the builder's memberships (the server asks membership
+   * of both sides), with the draft's own one even when it is not among them - a global admin's, or
+   * one the builder has left - so the picker always names where the draft is.
+   */
+  async function draftAssociationChoices(): Promise<Association[]> {
+    let mine: Association[] = [];
+    try {
+      mine = await listMyAssociations();
+    } catch (e) {
+      console.warn(
+        `[forms-editor] memberships not loaded; the draft's own association alone is offered: ${e}`
+      );
+    }
+    const own = association;
+    return withRequestedAssociation(mine, associationId, (id) =>
+      own?.id === id ? Promise.resolve(own) : getAssociation(id)
+    );
+  }
+
+  /** Token of the latest association pick: an older pick's tiers answering late are dropped. */
+  let associationPick = 0;
+
+  /**
+   * The builder picked `id` for this draft: the payment section and the cotisation settings follow
+   * it at once, and the next autosave carries it. The tier chosen for the old association means
+   * nothing to the new one, so it is forgotten.
+   */
+  async function chooseAssociation(id: string) {
+    if (id === associationId) return;
+    const pick = ++associationPick;
+    Log.d('forms-editor', `draft ${formId} association picked: ${id || 'none'}`);
+    associationId = id;
+    association = associations.find((a) => a.id === id) ?? null;
+    tiers = [];
+    mayGrantCotisation = false;
+    forgetTierSelection(cotisation);
+    const options = await cotisationOptionsFor(id);
+    if (pick !== associationPick) return;
+    tiers = options.tiers;
+    mayGrantCotisation = options.mayGrant;
+  }
 
   /**
    * What this device kept of `formId` and the server does not hold - a page closed before its save
@@ -564,15 +623,15 @@
       guestFields: isPublic && !anonymous ? askedGuestFields(guestFields) : [],
       ...(opensAt ? { opensAt: new Date(opensAt).toISOString() } : {}),
       requiresPayment,
-      // `associationId` is deliberately absent: it is fixed at creation and the API refuses a
-      // value that differs from the stored one. Absent means "leave it".
       ...(requiresPayment ? { allowCashPayment, allowOnlinePayment } : {}),
       ...(requiresPayment && allowCashPayment && cashPaymentExpiryDays != null
         ? { cashPaymentExpiryDays }
         : {}),
       ...(formHasFile ? { fileRetentionDays } : {}),
-      // A draft has no answer yet: its anonymity is still its builder's choice (server-checked).
-      ...(isDraft ? { anonymous } : {}),
+      // A draft has no answer yet: its anonymity and its association are still its builder's
+      // choice (server-checked). A published form's association is absent - "leave it" - as the
+      // server refuses another (`FORM_ASSOCIATION_FIXED`); `''` names none.
+      ...(isDraft ? { anonymous, associationId } : {}),
     };
   }
 
@@ -775,22 +834,36 @@
         />
       </div>
 
-      <div>
-        <p class={CONTROL_LABEL_CLASS}>{m.form_association_label()}</p>
-        <!-- Shown, never editable: the link is fixed at creation, and a disabled picker would
-             suggest it could be changed by someone with more rights. There is no such someone. -->
-        <p
-          class="border-cn-border text-text-main flex items-center gap-2 rounded-2xl border-2 border-dashed px-4 py-3 text-base"
-        >
-          {#if association}
-            <Users size={16} class="text-text-muted shrink-0" />
-            {association.name}
-          {:else}
-            <span class="text-text-muted">{m.form_association_none()}</span>
+      {#if isDraft && associations.length > 0}
+        <FormAssociationPicker
+          {associations}
+          value={associationId}
+          pendingMove={associationId !== (form.associationId ?? '')}
+          onValueChange={(v) => void chooseAssociation(v)}
+        />
+      {:else}
+        <div>
+          <p class={CONTROL_LABEL_CLASS}>{m.form_association_label()}</p>
+          <!-- Shown, never editable once published: the link holds the answers, payments and
+             reminders, and a disabled picker would suggest someone with more rights could change it.
+             There is no such someone; the hint says why, and what to do instead. -->
+          <p
+            class="border-cn-border text-text-main flex items-center gap-2 rounded-2xl border-2 border-dashed px-4 py-3 text-base"
+          >
+            {#if association}
+              <Users size={16} class="text-text-muted shrink-0" />
+              {association.name}
+            {:else}
+              <span class="text-text-muted">{m.form_association_none()}</span>
+            {/if}
+          </p>
+          {#if !isDraft}
+            <p class={CONTROL_HINT_CLASS} data-testid="form-association-locked">
+              {m.form_association_locked_hint()}
+            </p>
           {/if}
-        </p>
-        <p class={CONTROL_HINT_CLASS}>{m.form_association_locked_hint()}</p>
-      </div>
+        </div>
+      {/if}
 
       <div>
         <p class={CONTROL_LABEL_CLASS}>{m.form_image_section()}</p>

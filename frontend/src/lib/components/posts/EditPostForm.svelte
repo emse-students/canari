@@ -399,7 +399,7 @@
         <div class="sm:col-span-2">
           <label
             for="edit-post-linked-calendar-event"
-            class="text-text-muted text-2xs mb-1.5 ml-1 flex items-center gap-1.5 font-bold tracking-wider uppercase"
+            class="text-text-muted text-2xs mb-1.5 ml-1 flex items-center gap-1.5 font-bold"
           >
             <CalendarCheck size={14} strokeWidth={2.5} class="text-amber-500" />
             {m.post_create_link_event_label()}
@@ -487,9 +487,7 @@
                     class="text-text-muted flex h-full w-full flex-col items-center justify-center gap-1.5 bg-black/5 dark:bg-white/5"
                   >
                     <Icon size={28} strokeWidth={1.5} />
-                    <span
-                      class="text-2xs w-full truncate px-2 text-center font-bold tracking-wider uppercase"
-                    >
+                    <span class="text-2xs w-full truncate px-2 text-center font-bold uppercase">
                       {file.type.split('/')[1] ?? 'file'}
                     </span>
                   </div>

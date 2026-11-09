@@ -1839,6 +1839,16 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       });
     });
 
+    it('a new space has NO longest booking, and an organiser may set one then lift it (migration 153)', async () => {
+      const { id } = await organiser.create({ name: 'Libre' }, as(ALICE));
+      const read = async () => (await organiser.managedSpaceView(id, as(ALICE))).maxSteps;
+      expect(await read()).toBeNull();
+      await organiser.update(id, { maxSteps: 4 } as never, as(ALICE), NOW);
+      expect(await read()).toBe(4);
+      await organiser.update(id, { maxSteps: null } as never, as(ALICE), NOW);
+      expect(await read()).toBeNull();
+    });
+
     it('refuses settings the database would refuse, as codes', async () => {
       const { id } = await organiser.create({ name: 'x' }, as(ALICE));
       const patch = (dto: object) => organiser.update(id, dto as never, as(ALICE), NOW);

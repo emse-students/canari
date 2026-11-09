@@ -152,7 +152,7 @@ describe('the window-scale banners sit above the shell row', () => {
   it('insets the banner equally on all four sides', () => {
     const root = BANNER.slice(BANNER.indexOf('<div\n'));
     const classes = root.slice(root.indexOf('class="'), root.indexOf('role='));
-    expect(classes).toContain('m-3 ');
+    expect(classes).toContain('m-2 ');
     // A per-side margin is how the 108/12 asymmetry was written in the first place.
     expect(classes).not.toMatch(/\bm[xytblr]-\d/);
   });

@@ -52,7 +52,7 @@ export type BookingQuotaPeriod = 'day' | 'week';
 @Check('booking_spaces_slot_mode', `"slotMode" IN ('step', 'slots')`)
 @Check(
   'booking_spaces_step_shape',
-  `("slotMode" = 'step' AND COALESCE("stepMinutes", 0) > 0 AND COALESCE("maxSteps", 0) >= 1) OR ("slotMode" = 'slots' AND "stepMinutes" IS NULL AND "maxSteps" IS NULL)`
+  `("slotMode" = 'step' AND COALESCE("stepMinutes", 0) > 0 AND ("maxSteps" IS NULL OR "maxSteps" >= 1)) OR ("slotMode" = 'slots' AND "stepMinutes" IS NULL AND "maxSteps" IS NULL)`
 )
 @Check(
   'booking_spaces_slot_minutes',
@@ -111,7 +111,7 @@ export class BookingSpace {
   @Column({ type: 'int', nullable: true })
   stepMinutes: number | null;
 
-  /** At most this many consecutive steps in one booking. */
+  /** At most this many consecutive steps in one booking; NULL on a step space = no limit (migration 153). */
   @Column({ type: 'int', nullable: true })
   maxSteps: number | null;
 

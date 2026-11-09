@@ -350,8 +350,9 @@
   // passed by exactly one caller: the 320px bell dropdown, deleted on 2026-09-14 when the bell
   // became a link to this page. A second shape nothing asks for is a second shape nobody checks.
   const avatarBox = 'h-14 w-14';
-  const badgeBox = 'h-7 w-7';
-  const glyph = 15;
+  // 20px on a 56px disc: the 28px one hid half of the initials (design audit M9).
+  const badgeBox = 'h-5 w-5';
+  const glyph = 11;
 </script>
 
 <button
