@@ -9,6 +9,7 @@ import {
 } from '../spaces/reader-spaces';
 import { engagedAccountsSql } from './engagement-sql';
 import { CAMPUS_TREND_NOTIFICATION } from './engagement-push-cap';
+import { namedAuthorUnblockedSql } from './friend-activity';
 import type { PostNotificationsService } from './post-notifications.service';
 import { SYSTEM_ACTOR_ID } from './post-notifications.service';
 
@@ -44,23 +45,22 @@ export const STAMP_TREND_SQL = `UPDATE posts SET "trendAnnouncedAt" = now()
 RETURNING id, markdown`;
 
 /**
- * WHO IS TOLD (`$1` the stamped post), into the told-once ledger: everyone who sees the post
+ * WHO IS TOLD (the post of the `stamped` CTE, {@link campusTrendSql}), into the told-once ledger: everyone who sees the post
  * through the SPACE rule - it reaches one of their spaces (`postReachesSpaceSql`) and the plain
  * predicate holds with the follower door CLOSED and no read grant ("from your space", decision 5c) -
- * minus its author, a block either way with the author, the other side of the review cohort, and
+ * minus its author, a block either way with the author when the post NAMES it (an anonymous or an
+ * association post is exempt, as in the feed - `namedAuthorUnblockedSql`), the other side of the review cohort, and
  * whoever already has a row for it in the ledger or in `post_notifications` (L14). Built per call:
  * the cohort is read from the environment.
  */
 export function campusTrendLedgerSql(): string {
   return `INSERT INTO post_engagement_notices ("postId", "recipientId", reason)
 SELECT ct_post.id, ct_user.id, 'trend'
-  FROM posts ct_post
+  FROM stamped ct_s
+  JOIN posts ct_post ON ct_post.id = ct_s.id
   JOIN users ct_user ON ct_user.id <> ct_post."authorId"
- WHERE ct_post.id = $1::uuid
-   AND ${sameSideOfReviewCohortSql('ct_user.id', 'ct_post."authorId"')}
-   AND NOT EXISTS (SELECT 1 FROM user_blocks ct_b
-                    WHERE (ct_b."blockerId" = ct_user.id AND ct_b."blockedId" = ct_post."authorId")
-                       OR (ct_b."blockedId" = ct_user.id AND ct_b."blockerId" = ct_post."authorId"))
+ WHERE ${sameSideOfReviewCohortSql('ct_user.id', 'ct_post."authorId"')}
+   AND ${namedAuthorUnblockedSql('ct_post', 'ct_user.id')}
    AND EXISTS (SELECT 1 FROM spaces ct_space
                 WHERE ${isReaderSpaceSql('ct_space', 'ct_user')} AND ${postReachesSpaceSql('ct_post', 'ct_space')})
    AND ${postVisibleToUserSql('ct_post', 'ct_user', { followers: false })}
@@ -69,6 +69,21 @@ SELECT ct_post.id, ct_user.id, 'trend'
  ORDER BY ct_user.id
 ON CONFLICT DO NOTHING
 RETURNING "recipientId"`;
+}
+
+/**
+ * THE STAMP AND ITS LEDGER IN ONE STATEMENT (`$1` the post): {@link STAMP_TREND_SQL} as a
+ * data-modifying CTE that {@link campusTrendLedgerSql} reads, so the stamp that says "this post was
+ * announced" and the rows that say "these readers were told" commit together or not at all - a
+ * failure between two statements would leave a stamped post that nobody was told of, for ever.
+ * Answers the stamped post's text (none when this write did not cross) and the readers told.
+ */
+export function campusTrendSql(): string {
+  return `WITH stamped AS (${STAMP_TREND_SQL}),
+told AS (${campusTrendLedgerSql()})
+SELECT ct_s.markdown,
+       ARRAY(SELECT "recipientId" FROM told ORDER BY 1) AS told
+  FROM stamped ct_s`;
 }
 
 /**
@@ -87,23 +102,21 @@ export async function announceCampusTrend(
   },
   postId: string
 ): Promise<number> {
-  const stamped: { id: string; markdown: string | null }[] = await deps.manager.query(
-    STAMP_TREND_SQL,
+  const [stamped]: { markdown: string | null; told: string[] }[] = await deps.manager.query(
+    campusTrendSql(),
     [postId]
   );
-  if (stamped.length === 0) return 0;
-  const rows: { recipientId: string }[] = await deps.manager.query(campusTrendLedgerSql(), [
-    postId,
-  ]);
-  logger.log(`[TREND] post=${postId.slice(0, 8)} took off: ${rows.length} to tell`);
-  if (rows.length === 0) return 0;
+  if (!stamped) return 0;
+  const told = stamped.told ?? [];
+  logger.log(`[TREND] post=${postId.slice(0, 8)} took off: ${told.length} to tell`);
+  if (told.length === 0) return 0;
   await deps.notifications.createNotifications({
-    recipientIds: rows.map((r) => r.recipientId),
+    recipientIds: told,
     type: CAMPUS_TREND_NOTIFICATION,
     postId,
     actorId: SYSTEM_ACTOR_ID,
     actorName: '',
-    text: previewOf(stamped[0].markdown ?? ''),
+    text: previewOf(stamped.markdown ?? ''),
   });
-  return rows.length;
+  return told.length;
 }

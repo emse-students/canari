@@ -89,12 +89,13 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
       hoursAgo?: number;
       kind?: string;
       hidden?: boolean;
+      anonymous?: boolean;
     } = {}
   ) =>
     q(
       `INSERT INTO posts (id, "authorId", "associationId", reactions, comments, kind,
-         "hiddenByModeration", markdown, "publishedAt")
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Soirée jeux', now() - make_interval(hours => $8))`,
+         "hiddenByModeration", markdown, "publishedAt", anonymous)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'Soirée jeux', now() - make_interval(hours => $8), $9)`,
       [
         id,
         author,
@@ -104,6 +105,7 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
         opts.kind ?? 'post',
         opts.hidden ?? false,
         opts.hoursAgo ?? 1,
+        opts.anonymous ?? false,
       ]
     );
   const react = (id: string, who: string) =>
@@ -284,6 +286,32 @@ maybe('campus trends against PostgreSQL (engagement WP-10)', () => {
     );
     expect(await announceCampusTrend({ manager, notifications }, P(7))).toBe(3);
     expect(await told(P(7))).toEqual(['grant', 's2', 'seen']);
+  });
+
+  it('an anonymous post: a block with its hidden writer withholds nothing (no oracle)', async () => {
+    // The feed shows blk this post whatever the block (`blockedAuthorSql`); a trend withheld from
+    // blk on that block would tell blk who wrote it.
+    await post(P(9), 'a', { reactions: reactors(4), anonymous: true });
+    expect(await announceCampusTrend({ manager, notifications }, P(9))).toBe(5);
+    expect(await told(P(9))).toEqual(['blk', 'grant', 's1', 's2', 'seen']);
+  });
+
+  it('a ledger that cannot be written leaves the post unstamped - one statement, both or neither', async () => {
+    await post(P(10), 'a', { reactions: reactors(4) });
+    await q(
+      `ALTER TABLE post_engagement_notices ADD CONSTRAINT it_refuse_p10 CHECK ("postId" <> '${P(10)}')`
+    );
+    try {
+      await expect(announceCampusTrend({ manager, notifications }, P(10))).rejects.toThrow(
+        /it_refuse_p10/
+      );
+      expect(await stampOf(P(10))).toBeNull();
+    } finally {
+      await q(`ALTER TABLE post_engagement_notices DROP CONSTRAINT it_refuse_p10`);
+    }
+    // The next write that finds the post over the threshold tells its space.
+    expect(await announceCampusTrend({ manager, notifications }, P(10))).toBe(4);
+    expect(await stampOf(P(10))).not.toBeNull();
   });
 
   it('concurrent writers over the crossing stamp once and tell each reader once', async () => {

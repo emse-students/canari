@@ -729,7 +729,7 @@ write, under the post row's lock, against the database's `now()`:
   at one write; it decides eligibility, it never decides idempotence (the stamp does).
 - **Recipients**: everyone who sees P through the SPACE rule (P reaches one of their spaces -
   `postReachesSpaceSql` - and `postVisibleToUserSql` holds), minus P's author, minus blocks with the
-  author, minus the ledger and `post_notifications` (L14). Never through a follower door or a read
+  author when P names it (rule 4 of (b)), minus the ledger and `post_notifications` (L14). Never through a follower door or a read
   grant: decision 5(c) says "from your space".
 - **`TREND_THRESHOLD` is a MEASUREMENT owed before WP-10 merges**, not a guess: the smallest integer
   at which **at most one post per campus per day** would have crossed, over the last 90 days. That
@@ -746,10 +746,15 @@ Built 2026-11-09 to the rule above, with `TREND_THRESHOLD = 4` as R1 read it. Mi
   one `UPDATE ... SET "trendAnnouncedAt" = now() WHERE "trendAnnouncedAt" IS NULL` that also requires
   a published, unhidden post (not a reel) within 24 hours of `publishedAt` and `engagedAccountsSql`
   (WP-7's one definition) at or above the threshold. Under concurrent writers the row lock lets
-  exactly one through; the others re-read a stamped row. No sweep, no timer.
+  exactly one through; the others re-read a stamped row. No sweep, no timer. **The stamp and the
+  ledger are ONE statement** (`campusTrendSql`, the stamp a data-modifying CTE the ledger insert
+  reads): they commit together or not at all, so a post is never stamped with nobody told (review of
+  #3285; the first draft ran them as two statements).
 - **The audience** (`campusTrendLedgerSql`): everyone a space of whom the post reaches
   (`postReachesSpaceSql`) and who sees it by the plain predicate with the follower door closed and no
-  grant, minus the author, a block either way with the author, the other side of the review cohort,
+  grant, minus the author, a block either way with the author when the post names it
+  (`namedAuthorUnblockedSql`: an anonymous or an association post is exempt, as in the feed - review
+  of #3285), the other side of the review cohort,
   and whoever has a row for the post in the ledger (friends' activity included) or in
   `post_notifications`; inserted into `post_engagement_notices` with reason `trend`.
 - **Naming nobody**: the row and the push carry the system actor and an empty name - an anonymous
@@ -762,7 +767,9 @@ Built 2026-11-09 to the rule above, with `TREND_THRESHOLD = 4` as R1 read it. Mi
   a comment writer counted once; none after 24 hours, for a hidden post, for a reel; the space-only
   audience (the author, a block with the author, a reader with a row, a follower outside the space,
   a reader through a read grant all left out); a reader told by friends' activity not told again;
-  six concurrent writers over the crossing stamping once and telling each reader once.
+  six concurrent writers over the crossing stamping once and telling each reader once; an anonymous
+  post told to a reader its hidden writer blocked; a ledger that cannot be written leaving the post
+  unstamped.
 - **Owed**: a dev pass and a phone reading (a post of the bench account's space reaching four
   engaged accounts within a day pushes "Une publication fait réagir votre espace" once).
 

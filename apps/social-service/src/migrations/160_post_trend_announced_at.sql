@@ -4,7 +4,7 @@
 -- accounts that reacted to or commented on it reaches TREND_THRESHOLD (4, R1 read 2026-11-09) within
 -- 24 hours of its `publishedAt`; the write that crosses stamps `trendAnnouncedAt` in the same
 -- statement (`WHERE "trendAnnouncedAt" IS NULL`, the `lives."announcedAt"` pattern), so a post
--- takes off at most once, and its space is told once (`post_engagement_notices`, migration 158).
+-- takes off at most once, and its space is told once (`post_engagement_notices`, migration 159).
 --
 -- No backfill: a post published before this column existed has NULL, and only a post that crosses
 -- within 24 hours of its publication is ever stamped - a post older than a day never is.
