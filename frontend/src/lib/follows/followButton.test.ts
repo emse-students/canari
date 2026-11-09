@@ -11,6 +11,7 @@ import {
   followActionOf,
   followLabel,
   optimisticStatusAfter,
+  followBackView,
 } from './followButton';
 
 /** The three states of the profile's follow button (WP-F4) and what a tap does in each. */
@@ -42,5 +43,25 @@ describe('the follow button', () => {
     expect(describeFollowRefusal(FOLLOW_DAILY_LIMIT)).toBe(m.refusal_follow_daily_limit());
     expect(describeFollowRefusal(null)).toBe(m.profile_follow_error());
     expect(describeFollowRefusal('SOMETHING_ELSE')).toBe(m.profile_follow_error());
+  });
+});
+
+describe('followBackView', () => {
+  it('offers the follow when the reader has no row, drawn or not', () => {
+    expect(followBackView(null, false)).toBe('follow_back');
+    expect(followBackView(null, true)).toBe('follow_back');
+  });
+  it('shows the answer to the tap once the offer was drawn: requested, then following', () => {
+    expect(followBackView('pending', true)).toBe('requested');
+    expect(followBackView('accepted', true)).toBe('following');
+  });
+  it('draws nothing for a pair already pending or following on arrival', () => {
+    expect(followBackView('pending', false)).toBeNull();
+    expect(followBackView('accepted', false)).toBeNull();
+  });
+  it('draws nothing while unknown, or for a blocked or own account', () => {
+    expect(followBackView(undefined, false)).toBeNull();
+    expect(followBackView('hidden', false)).toBeNull();
+    expect(followBackView('hidden', true)).toBeNull();
   });
 });

@@ -906,6 +906,14 @@ reconnect, an account switch mid-flight, the withdraw races, double taps, member
 hidden, the aria-label of a pending request naming the person and containing the visible text, with
 a nameless fallback).
 
+**"Suivre en retour" (owner's request, 2026-11-09).** On `/notifications/follow-requests`, an accepted
+request keeps its row and the Accepter/Refuser pair becomes `FollowBackButton`, which reuses this
+ledger (`personChipState`, `tapPerson`: a REQUEST, every personal account being private). Its states
+are `followBackView` (`followButton.ts`): offered when the reader has no row; "Demande envoyee" (a tap
+withdraws) or "Abonne" only once the offer was drawn; nothing for a pair already pending or following
+on arrival, a blocked account, or the reader. No server change. The notification rows add nothing:
+`follow_request` leads to this inbox, and `follow_accepted` means the reader already follows.
+
 ### Which migrations are held
 
 The [held-migration rule](cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01) holds a

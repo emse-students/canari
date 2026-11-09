@@ -9,14 +9,27 @@ import { m } from '$lib/paraglide/messages';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { flushMacrotask } from '../../../test/flush';
 
-const api = vi.hoisted(() => ({ list: vi.fn(), accept: vi.fn(), refuse: vi.fn() }));
+const api = vi.hoisted(() => ({
+  list: vi.fn(),
+  accept: vi.fn(),
+  refuse: vi.fn(),
+  statuses: vi.fn(),
+  ask: vi.fn(),
+}));
 
 vi.mock('$lib/follows/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/follows/api')>()),
   listFollowRequests: api.list,
   acceptFollowRequest: api.accept,
   refuseFollowRequest: api.refuse,
+  getFollowStatuses: api.statuses,
+  askToFollow: api.ask,
 }));
+vi.mock('$lib/users/blocks', () => ({
+  listBlockedUsers: vi.fn(async () => []),
+  onBlocksChanged: () => () => {},
+}));
+vi.mock('$lib/stores/user', () => ({ currentUserId: () => 'me' }));
 vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/users/displayName')>()),
   peekUserDisplayName: (id: string) => `Name ${id}`,
@@ -33,6 +46,8 @@ afterEach(() => {
   api.list.mockReset();
   api.accept.mockReset();
   api.refuse.mockReset();
+  api.statuses.mockReset();
+  api.ask.mockReset();
 });
 
 async function render(): Promise<HTMLElement> {
@@ -50,7 +65,9 @@ const buttonOf = (target: HTMLElement, label: string): HTMLButtonElement =>
   [...target.querySelectorAll('button')].find((b) => b.textContent?.trim() === label)!;
 
 describe('/notifications/follow-requests', () => {
-  it('lists the people asking, and an acceptance takes the row off', async () => {
+  it('lists the people asking, and an acceptance turns the row into Suivre en retour', async () => {
+    api.statuses.mockResolvedValue({});
+    api.ask.mockResolvedValue('pending');
     api.list.mockResolvedValue([row('ann'), row('cid')]);
     api.accept.mockResolvedValue(undefined);
     const target = await render();
@@ -60,6 +77,28 @@ describe('/notifications/follow-requests', () => {
     await flushMacrotask();
     flushSync();
     expect(api.accept).toHaveBeenCalledWith('ann');
+    expect(target.textContent).toContain('Name ann');
+    expect(target.textContent).toContain('Name cid');
+    // The accepted row has no answer buttons left, only the follow-back offer.
+    expect(target.querySelectorAll(`button`)).toHaveLength(3);
+    const back = target.querySelector<HTMLButtonElement>('[data-follow-back]')!;
+    expect(back.textContent).toContain(m.follow_back_btn());
+    back.click();
+    await flushMacrotask();
+    flushSync();
+    expect(api.ask).toHaveBeenCalledWith('ann');
+    expect(target.querySelector('[data-follow-back]')!.textContent).toContain(
+      m.profile_follow_requested_btn()
+    );
+  });
+
+  it('a refusal takes the row off', async () => {
+    api.list.mockResolvedValue([row('ann'), row('cid')]);
+    api.refuse.mockResolvedValue(undefined);
+    const target = await render();
+    buttonOf(target, m.follow_requests_refuse()).click();
+    await flushMacrotask();
+    flushSync();
     expect(target.textContent).not.toContain('Name ann');
     expect(target.textContent).toContain('Name cid');
   });
