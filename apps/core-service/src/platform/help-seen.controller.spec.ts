@@ -14,7 +14,10 @@ import { AccountThrottlerGuard } from '../common/guards/account-throttler.guard'
  */
 describe('HelpSeenController', () => {
   const service = {
-    seenBy: jest.fn(async () => ['welcome-tour']),
+    seenWithAges: jest.fn(async () => ({
+      seen: ['welcome-tour'],
+      ageSeconds: { 'welcome-tour': 5 },
+    })),
     markSeen: jest.fn(async () => undefined),
   };
   const controller = new HelpSeenController(service as unknown as HelpSeenService);
@@ -25,8 +28,11 @@ describe('HelpSeenController', () => {
   });
 
   it('answers the seen set in an envelope, for the lower-cased caller', async () => {
-    await expect(controller.list(' ABC-User ')).resolves.toEqual({ seen: ['welcome-tour'] });
-    expect(service.seenBy).toHaveBeenCalledWith('abc-user');
+    await expect(controller.list(' ABC-User ')).resolves.toEqual({
+      seen: ['welcome-tour'],
+      ageSeconds: { 'welcome-tour': 5 },
+    });
+    expect(service.seenWithAges).toHaveBeenCalledWith('abc-user');
   });
 
   it('records a listed id', async () => {

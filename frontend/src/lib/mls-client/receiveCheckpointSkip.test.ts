@@ -1,18 +1,24 @@
-import { receiveCheckpointSkipBudget } from './receiveCheckpointSkip';
+import {
+  RECEIVE_CHECKPOINT_SKIP_BUDGET,
+  receiveCheckpointSkipBudget,
+} from './receiveCheckpointSkip';
 
 describe('receiveCheckpointSkipBudget', () => {
-  it('is 0 on a production build whatever the key says', () => {
-    expect(receiveCheckpointSkipBudget(() => '50', false)).toBe(0);
+  it("is 0 while the server's switch is off - every drain checkpoints, as before", () => {
+    expect(receiveCheckpointSkipBudget('off', true)).toBe(0);
+    expect(receiveCheckpointSkipBudget('off', false)).toBe(0);
   });
 
-  it('is 0 on a non-production build without the key, or with a malformed one', () => {
-    for (const raw of [null, '', 'abc', '-3', '1.5', '0x10']) {
-      expect(receiveCheckpointSkipBudget(() => raw, true)).toBe(0);
-    }
+  it('is the measured K = 100 when the switch is on, on a native phone', () => {
+    expect(receiveCheckpointSkipBudget('on', true)).toBe(100);
+    expect(RECEIVE_CHECKPOINT_SKIP_BUDGET).toBe(100);
   });
 
-  it('reads a positive integer on a non-production build, capped far under the ratchet window', () => {
-    expect(receiveCheckpointSkipBudget(() => '200', true)).toBe(200);
-    expect(receiveCheckpointSkipBudget(() => '99999', true)).toBe(500);
+  it('is 0 on web and desktop whatever the server says - only the phones were measured', () => {
+    expect(receiveCheckpointSkipBudget('on', false)).toBe(0);
+  });
+
+  it('stays far under the sender ratchet window (maximum_forward_distance = 2000)', () => {
+    expect(RECEIVE_CHECKPOINT_SKIP_BUDGET).toBeLessThan(2000 / 4);
   });
 });

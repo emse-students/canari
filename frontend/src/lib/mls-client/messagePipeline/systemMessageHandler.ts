@@ -63,6 +63,8 @@ import {
 } from '$lib/utils/chat/readState';
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
+import { mergeBundleNicknames } from '$lib/utils/users/conversationNicknames.svelte';
+import { applyNicknameFrame, nicknameMembersOf } from '$lib/utils/chat/nicknameFrame';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
 import type {
@@ -1283,6 +1285,9 @@ export async function handleSystemEvent(
     };
     let incoming: BundleMsg[] = Array.isArray(data?.messages) ? data.messages : [];
     let addOnly = false;
+    // The inviter's join push to THIS device, accepted below: the one bundle a nickname register is
+    // taken from (see the nickname merge).
+    let joinPush = false;
     if (deliveryMeta?.addressed === true) {
       const requestId = parseHistoryRequestId(data?.requestId);
       const claimsJoin = data?.join === true && requestId === undefined;
@@ -1319,6 +1324,7 @@ export async function handleSystemEvent(
       }
       incoming = bounded.kept;
       addOnly = ask.kind !== 'join';
+      joinPush = ask.kind === 'join';
     } else if (addressee && addressee.toLowerCase() !== me) {
       log(
         `[HISTORY_BUNDLE] ${convoKey.slice(0, 8)}… - broadcast answer for ${addressee.slice(0, 8)}…, ingesting it anyway`
@@ -1411,6 +1417,25 @@ export async function handleSystemEvent(
         log(
           `[HISTORY_BUNDLE] ${pinsMerged} pin state(s) converged for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}`
         );
+      }
+      // And the nickname register - from the inviter's JOIN PUSH to this device ONLY (review of
+      // #3177): a member admitted after a `nickname` frame went out learns the names from it (it
+      // carries them even when every message is withheld). Its entries are the relayer's word about
+      // what others did, so they are taken UNVERIFIED, only about current members of the tree, dated
+      // within the bundle's server time - and a broadcast or a replayed bundle carries none at all.
+      if (joinPush && Array.isArray(data?.nicknames) && data.nicknames.length > 0) {
+        const members = await nicknameMembersOf(mlsService, convoKey, 'join push');
+        const nicknamesMerged = members
+          ? mergeBundleNicknames(convoKey, data.nicknames, {
+              members,
+              serverAt: deliveryMeta?.queuedCreatedAt,
+            })
+          : 0;
+        if (nicknamesMerged > 0) {
+          log(
+            `[HISTORY_BUNDLE] ${nicknamesMerged} nickname(s) taken (unverified) for ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)}'s join push`
+          );
+        }
       }
 
       if (msgs.length > 0) {
@@ -1678,6 +1703,28 @@ export async function handleSystemEvent(
     // is dated on receipt: later than anything we hold, which is the right answer for a frame
     // arriving live, and the only one available. See `docs/wiki/legacy-compatibility.md`.
     applyPin(convoKey, String(data.messageId), event === 'pin', Number(data.at) || Date.now());
+    return true;
+  }
+
+  if (event === 'nickname') {
+    // THE SERVER'S TIME BOUNDS THE FRAME, NEVER THE RECEIVER'S CLOCK. Every copy carries it: a pulled
+    // one as its queue row's `createdAt`, a live one because chat-delivery publishes that same
+    // `createdAt` and the gateway forwards it (`live_mls_frame`, which says so when it cannot). A
+    // frame without it is a defect upstream, and it is refused - an unbounded date could freeze the
+    // name, and this device's clock is no server's.
+    const serverAt = deliveryMeta?.queuedCreatedAt;
+    if (!(typeof serverAt === 'number' && serverAt > 0)) {
+      console.error(
+        `[NICKNAME] REFUSED a nickname frame from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}…: it carries no server time to bound it`
+      );
+      return true;
+    }
+    applyNicknameFrame(convoKey, data, senderNorm, {
+      fallbackAt: serverAt,
+      serverAt,
+      members: await nicknameMembersOf(mlsService, convoKey, 'live frame'),
+      log,
+    });
     return true;
   }
 

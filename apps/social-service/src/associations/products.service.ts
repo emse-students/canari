@@ -6,6 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { followRetagInRevisions, revisionsAtBase } from '../forms/form-draft-revision';
 import { assertMayCollect, mayCollect } from './collection-policy';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -1695,12 +1696,25 @@ export class ProductsService {
       // 2026-11-01): left behind they would rank the tier `unranked`, refuse every new answer and
       // end one in flight `paid_not_granted`. Under the exclusive association lock, so a form saved
       // meanwhile names the key it was validated against.
-      const forms: unknown[] = await manager.query(
+      // Their unpublished revisions follow too (`followRetagInRevisions`): read which are built on
+      // the form as it stands, before it changes.
+      const atBase = await revisionsAtBase(manager, associationId);
+      const updated: unknown[] = await manager.query(
         `UPDATE forms SET "cotisationVariantKey" = $3
           WHERE "associationId" = $1 AND "grantsCotisation"
             AND "cotisationVariantKey" IS NOT DISTINCT FROM $2
         RETURNING id`,
         [associationId, retagging.oldVariantKey, dto.variantKey ?? null]
+      );
+      // TypeORM answers an UPDATE ... RETURNING with `[rows, affected]`.
+      const forms = (Array.isArray(updated[0]) ? updated[0] : updated) as Array<{ id: string }>;
+      await followRetagInRevisions(
+        manager,
+        associationId,
+        forms.map((f) => f.id),
+        atBase,
+        retagging.oldVariantKey ?? null,
+        dto.variantKey ?? null
       );
       if (forms.length > 0) {
         this.logger.log(

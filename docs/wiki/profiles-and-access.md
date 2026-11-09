@@ -171,6 +171,8 @@ application computed from the same profile, so no application keeps a hard-coded
   dessus"): its audience reaching a BDE's space confers no super-admin tier (archive, members,
   profile, audience, delete). `holdsBdeFlagOverSql` carries the condition once, so every management
   caller inherits it; only its own members, within their flags, and the platform admin manage it.
+  **AMENDED by WP-D2 (2026-11-07): an institution has no parent, and the predicate tests its type even
+  for a hand-written one** ([reform 2.4](spaces-and-audiences-reform.md#24-who-governs-what-and-how-the-predicates-change)).
   **But the agenda is the BDE's** (owner, 2026-11-03: *"Aucun BDE n'a les droits de gestion sur une
   institution, mais c'est le BDE qui a tous les droits sur l'agenda des formations dont il est le
   BDE"*): event validation follows the spaces an event TARGETS, not who governs its organiser, so the
@@ -185,9 +187,17 @@ application computed from the same profile, so no application keeps a hard-coded
   governor may be an institution (it answers for the agenda and manages nothing), designating one no
   longer writes an audience rule, and every change is journaled**
   ([reform 2.8](spaces-and-audiences-reform.md#28-wp-d1-as-built-2026-11-03---built-its-three-migrations-held-for-the-owner)).
+  **AMENDED by WP-D2 (2026-11-07): the BDE of a space no longer governs the associations whose
+  audience reaches it.** An association or list is governed (`MANAGE_ASSO`, `MODERATE` over what it
+  publishes, deletion - E3) by its PARENT BDE only (`parentAssociationId`); with no parent, or a
+  parent governing no space, by the platform admin alone. The space's BDE keeps the AGENDA of its
+  space and its students' personal content
+  ([reform 2.4](spaces-and-audiences-reform.md#24-who-governs-what-and-how-the-predicates-change)).
 - **D23 - Moderation stays GLOBAL** (reports, hide, mute), as today. **AMENDED 2026-11-02 (owner):
   a BDE's `MODERATE` is SCOPED to the spaces it governs, and editing another person's post is nobody's
   power** - read [D23 amended](#d23-amended---moderate-is-scoped-and-only-the-author-edits-a-post-2026-11-02).
+  **Since WP-D2/WP-R4 (2026-11-07) an association's content is moderated by its PARENT BDE**, not by
+  the BDEs of the spaces it reaches.
 - **D24 - Rules by population, plus nominative permissions that only ADD.** A nominative grant never
   removes what a population gives; removal is moderation's job. Grants are made by a global admin,
   or by a BDE for its own space; cross-space rights (widening, profiles, institutions) stay with
@@ -235,7 +245,9 @@ built.
   the two MEs its campus, an association its own. A post with no rule inherits them; an author may
   give it rules of its own, and the server refuses any outside the ceiling. Going beyond is the
   nominative grant of D24. One mechanism for associations, lists and institutions alike, so no
-  entity needs a special case.
+  entity needs a special case. **The ceiling no longer decides who governs (WP-D2, 2026-11-07)**: an
+  audience edit can neither take an entity over nor hand it away; the parent writes its child's
+  ceiling inside its own spaces only (G8), and a wider rule is the platform admin's.
 
 ## 3. Found on the way
 
@@ -613,7 +625,7 @@ purpose**: `associations.type` gaining `institution` (nothing could create one y
 only (`NginxAuthGuard` + `GlobalAdminGuard`), registered BEFORE `AssociationsController` so the literal
 `associations/spaces` wins over `associations/:id`: `GET /api/associations/spaces` (every pair with its
 BDE), `GET /api/associations/spaces/audiences` (the rules of EVERY association in one read, which is all
-the grid needs to draw itself), `PUT /api/associations/spaces/:id/bde` (designate or clear; only a
+the grid needs to draw itself - replaced by the catalogue's per-row rules and removed at floor `1.6.6`), `PUT /api/associations/spaces/:id/bde` (designate or clear; only a
 regular association, never a list; **the same association may be the BDE of several spaces - user,
 2026-10-04, so the migration carries NO unique index on the BDE column**) and
 `GET/PUT /api/associations/:id/audiences` (replace the rules in one transaction, de-duplicated; **an
@@ -1564,8 +1576,8 @@ reaches the personnel side"), the latter **for this consented path only**.
   **An older build is refused, deliberately**: it draws no warning and sends no fingerprint, so its
   Accept of an institution's request is that same 409, read there as "no longer pending", and the
   request stays stuck on that device until the app updates (Refuse works). No fallback accepts
-  without a fingerprint; the floor retires the case
-  ([legacy-compatibility](legacy-compatibility.md#no-date-yet---an-institutions-republication-request-accepted-by-a-build-that-never-showed-its-audience)).
+  without a fingerprint; floor `1.6.6` retired the case
+  ([legacy-compatibility](legacy-compatibility.md#entries-166-retires-or-unblocks-the-owners-raise-of-2026-11-08)).
 - **After acceptance, the audience is LIVE**: who sees the post follows the carrier's CURRENT
   audience rules and membership, never the snapshot the author accepted. A rule added later, or a
   member who joins, reads it; a member who leaves stops. The author's remedy is to withdraw the
@@ -1662,7 +1674,7 @@ standing every BDE power reads (`bdeStandingInSpaceSql`, `spaces/bde.ts`):
 
 | Target | In the BDE's scope when |
 | --- | --- |
-| an association's post or live | the association is reached by a space the BDE governs (`holdsBdeFlagOverSql`) - never an institution's |
+| an association's post or live | the BDE is the association's PARENT (`holdsBdeFlagOverSql`, WP-R4 on WP-D2, 2026-11-07), whatever spaces it reaches - never an institution's, never a parentless one's |
 | a post or live in ANOTHER BDE's name | never, even when it is seen in the BDE's own spaces: only the platform admin, as for an institution (owner, 2026-11-03); a BDE's own content is its own members' |
 | a personal post or live | its author belongs to one of the spaces the BDE governs (`isReaderSpaceSql`) |
 | a comment | the post it sits under is in scope AND, for a comment in an association's name, so is that association's content - never an institution's or another BDE's (owner, 2026-11-03) (`bdeModeratesCommentSql`). Judged on itself: a reply the moderator does not moderate stays, under a moderation tombstone of what it answered (lead, 2026-11-04, [moderation-and-blocking](moderation-and-blocking.md#decisions-taken-2026-11-04-the-lead-reversible)) |
@@ -1672,7 +1684,8 @@ standing every BDE power reads (`bdeStandingInSpaceSql`, `spaces/bde.ts`):
 
 Kept within the scope: hide, unhide, delete, unmask, reading an anonymous author, deleting a
 comment, cutting a live and hiding its chat lines, muting, reviewing a report. An association with no
-audience rule, a person with no space (staff) and **an institution** are governed by no BDE: their
+parent (since WP-D2; before it, one with no audience rule), a person with no space (staff) and **an
+institution** are governed by no BDE: their
 content is the platform admin's to moderate. The institution follows from the owner's rule that no BDE
 governs one (2026-11-02, 2026-11-03), even when its audience reaches a BDE's space - the management
 predicate carries that exclusion once, and moderation reads it (proved in

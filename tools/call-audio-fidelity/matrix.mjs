@@ -180,6 +180,14 @@ export const MATRIX = [
     callee: VID,
   },
   {
+    name: 'video-webkit-metadata',
+    what: "VIDEO across engines: the caller's frames name NO codec in their metadata, as WebKit's do (iOS 1.6.5, 2026-11-07) - both ends must frame them as VP8 from the transform's codec, both directions decrypt",
+    gated: true,
+    video: true,
+    caller: { ...VID, webkitVideoMetadata: true },
+    callee: VID,
+  },
+  {
     name: 'video-rung-720p',
     what: 'EXPERIMENT: both cameras held on the 720p30 rung (2.5 Mb/s ceiling), no ladder - its encode cost',
     video: true,

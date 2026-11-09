@@ -429,16 +429,24 @@ export function buildApnsRequest(
 }
 
 /**
+ * What a wake names: the device's OWN queued MLS row, or its own push envelope - an opaque random id
+ * either way, naming nobody and no conversation. The key's NAME says which of the two (an MLS frame
+ * or anything else) and nothing more; content-free-push section 2 accepts that one bit.
+ */
+export type WakeKey = { queuedMessageId: string } | { envelopeId: string };
+
+/**
  * The data map of a CONTENT-FREE WAKE-UP push (`platform_config.push_mode = 'wake'`, owner
- * 2026-11-02; docs/wiki/backlog.d/push-payloads-carry-nothing-for-google-and-apple.md).
+ * 2026-11-02; docs/wiki/protocols/content-free-push.md).
  *
- * Everything {@link buildPushDataFields} would have said - the conversation, the sender, both names,
- * the kinds, the level, the ciphertext - stays on our server; the device fetches it by
- * `queuedMessageId` (`GET /api/mls/push/wake`) and runs it through the path a full push takes. What
+ * Everything the full push would have said - for an MLS frame the conversation, the sender, both
+ * names, the kinds, the level, the ciphertext ({@link buildPushDataFields}); for an envelope the
+ * salon, the actor, the text ({@link buildEnvelopeAnswer}) - stays on our server; the device fetches
+ * it by its key (`GET /api/mls/push/wake`) and runs it through the path a full push takes. What
  * remains is what the transports cannot do without:
  *
  * - `type: 'wake'`, the discriminator every native dispatcher branches on;
- * - `queuedMessageId`, an opaque random id of the device's OWN queued row - it names nobody;
+ * - the {@link WakeKey}, an opaque random id of the device's OWN row - it names nobody;
  * - `silent`, the one bit the platform needs: on iOS a silent frame must be a background push and a
  *   visible one an alert, so Apple sees it anyway, and on Android it decides whether a failed fetch
  *   owes a notification;
@@ -446,47 +454,49 @@ export function buildApnsRequest(
  *   `mentions` only - the same key and the same rule as the full map. A failed fetch cannot know
  *   whether the frame mentions them, so it must not ring for it: Android posts its failure silently,
  *   exactly as Apple already reads the same bit as `passive` ({@link buildWakeApnsRequest}). It
- *   names no conversation and no person.
+ *   names no conversation and no person. Never set for an envelope: no internal push is quiet.
  *
- * @param queuedMessageId - The queued row the device will fetch.
- * @param silent - Whether the frame draws nothing (`PushMessageInput.silent`, as decided at send).
+ * @param key - The row the device will fetch.
+ * @param silent - Whether the push draws nothing (as decided at send).
  * @param mentionsOnly - The recipient's level for this conversation is `mentions`.
  */
 export function buildWakeDataFields(
-  queuedMessageId: string,
+  key: WakeKey,
   silent: boolean,
   mentionsOnly: boolean
 ): Record<string, string> {
   return {
     type: 'wake',
-    queuedMessageId,
+    ...key,
     silent: silent ? 'true' : 'false',
     ...(mentionsOnly && !silent ? { notifLevel: 'mentions' } : {}),
   };
 }
 
 /**
- * The APNs request of a WAKE-UP push: the same three fields as {@link buildWakeDataFields}, and an
- * `aps` block that names nothing.
+ * The APNs request of a WAKE-UP push: the same fields as {@link buildWakeDataFields}, and an `aps`
+ * block that names nothing.
  *
- * A visible frame is an alert titled `Canari` with the localized generic body, so the extension runs
- * (`mutable-content: 1`) and rewrites it from what it fetches; no `thread-id`, because the thread is
- * the conversation id - the extension files it once it knows. A `mentions` frame stays `passive`,
- * KNOWINGLY: it says "a quiet frame", not who or where, and without it a non-mention would ring
- * whenever the extension does not run. A silent frame is a background push, exactly as today.
+ * A visible push is an alert titled `Canari` with the localized generic body, so the extension runs
+ * (`mutable-content: 1`) and rewrites it from what it fetches; no `thread-id`, because the thread
+ * names the conversation - the extension files it once it knows (the answer's `presentation`). The
+ * sound is the message trill for EVERY wake, an envelope's included: a sound chosen per kind would
+ * tell Apple the kind. A `mentions` frame stays `passive`, KNOWINGLY: it says "a quiet frame", not
+ * who or where, and without it a non-mention would ring whenever the extension does not run. A
+ * silent push is a background push, exactly as today.
  *
- * @param queuedMessageId - The queued row the device will fetch.
- * @param silent - Whether the frame draws nothing.
+ * @param key - The row the device will fetch.
+ * @param silent - Whether the push draws nothing.
  * @param mentionsOnly - The recipient's level for this conversation is `mentions`.
  * @param locale - The device's language, for the generic body only.
  */
 export function buildWakeApnsRequest(
-  queuedMessageId: string,
+  key: WakeKey,
   silent: boolean,
   mentionsOnly: boolean,
   locale?: string | null
 ): ApnsRequest {
-  const fields = buildWakeDataFields(queuedMessageId, silent, mentionsOnly);
+  const fields = buildWakeDataFields(key, silent, mentionsOnly);
   if (silent) {
     return {
       payload: { aps: { 'content-available': 1 }, ...fields },
@@ -511,27 +521,151 @@ export function buildWakeApnsRequest(
 }
 
 /**
+ * How iOS would have PRESENTED the full push - what its `aps` block decided outside the data map:
+ * the alert's title and body, the `thread-id` that stacks it, and the sound or the interruption
+ * level. A wake's alert carries none of it (each would name the conversation or the kind), so the
+ * answer carries it, computed by the very function that builds the full push, and the extension
+ * applies it to the content it delivers (WP-W5). Without it every social and reaction banner would be
+ * filed under no thread with the wake's sound. Android draws from the map and ignores it.
+ */
+export interface WakePresentation {
+  /** `aps.alert.title` of the full push. */
+  title: string;
+  /** `aps.alert.body` of the full push. */
+  body: string;
+  /** `aps.thread-id` of the full push. */
+  threadId: string;
+  /** `aps.sound` of the full push; absent on a quiet one. */
+  sound?: string;
+  /** `aps.interruption-level` of the full push; absent unless it was quiet. */
+  interruptionLevel?: string;
+}
+
+/**
+ * Reads the {@link WakePresentation} out of a full push's APNs request; null for a background push,
+ * which presents nothing.
+ *
+ * @param request - What {@link buildApnsRequest} or {@link buildInternalApnsRequest} built.
+ */
+export function presentationOf(request: ApnsRequest): WakePresentation | null {
+  if (request.pushType !== 'alert') return null;
+  const aps = request.payload.aps;
+  const alert = (aps.alert ?? {}) as { title?: unknown; body?: unknown };
+  const sound = aps.sound;
+  const level = aps['interruption-level'];
+  return {
+    title: String(alert.title ?? ''),
+    body: String(alert.body ?? ''),
+    threadId: String(aps['thread-id'] ?? ''),
+    ...(typeof sound === 'string' ? { sound } : {}),
+    ...(typeof level === 'string' ? { interruptionLevel: level } : {}),
+  };
+}
+
+/**
  * What `GET /api/mls/push/wake` answers, typed so a native reader branches on `status` and never on
  * prose.
  *
- * - `frame`: `fields` is EXACTLY the data map a full push would have carried
- *   ({@link buildPushDataFields}, computed at fetch time by the same description the send path uses),
- *   with the ciphertext inline whatever its size - our own TLS has no 4 KB budget. A Welcome still
- *   carries none: its bundle (with the ratchet tree) is fetched through `fetch-proto`, as before.
- * - `gone`: the queued row is not there - the app drained or acknowledged it since the push left.
- *   An answer, not a failure: there is nothing new to draw.
+ * - `frame` (a `queuedMessageId` wake): `fields` is EXACTLY the data map a full push would have
+ *   carried ({@link buildPushDataFields}, computed at fetch time by the same description the send
+ *   path uses), with the ciphertext inline whatever its size - our own TLS has no 4 KB budget. A
+ *   Welcome still carries none: its bundle (with the ratchet tree) is fetched through `fetch-proto`.
+ * - `push` (an `envelopeId` wake): `fields` is EXACTLY what the full `sendPushToUser` push would have
+ *   handed this device's platform ({@link buildEnvelopeAnswer}), its inline group always included.
+ * - both carry `presentation` ({@link WakePresentation}), null for a silent push. A reader that
+ *   predates the key ignores it.
+ * - `gone`: the row is not there - the app drained or acknowledged the frame, or opened (registered)
+ *   since the envelope was written. An answer, not a failure: there is nothing new to draw.
  */
-export type WakeAnswer = { status: 'frame'; fields: Record<string, string> } | { status: 'gone' };
+export type WakeAnswer =
+  | { status: 'frame'; fields: Record<string, string>; presentation: WakePresentation | null }
+  | { status: 'push'; fields: Record<string, string>; presentation: WakePresentation | null }
+  | { status: 'gone' };
 
 /**
  * Builds the `frame` answer for a fetched queued row.
  *
  * @param input - The frame's description, `proto` ignored.
  * @param protoB64 - The row's ciphertext as queued.
+ * @param locale - The fetching device's language (`push_token.locale`), for the presentation's body.
  */
-export function buildWakeFrameAnswer(input: PushMessageInput, protoB64: string): WakeAnswer {
-  const proto = input.isWelcome ? '' : protoB64;
-  return { status: 'frame', fields: buildPushDataFields({ ...input, proto }) };
+export function buildWakeFrameAnswer(
+  input: PushMessageInput,
+  protoB64: string,
+  locale?: string | null
+): WakeAnswer {
+  const full: PushMessageInput = { ...input, proto: input.isWelcome ? '' : protoB64 };
+  const fields = buildPushDataFields(full);
+  return {
+    status: 'frame',
+    fields,
+    presentation: presentationOf(buildApnsRequest(full, fields, locale)),
+  };
+}
+
+/**
+ * What a push sent through `sendPushToUser` carried, as an envelope keeps it: the caller's title,
+ * body and data map (the server-only floor already removed) and its inline group. Stored as given;
+ * every platform-specific shape is derived from it at fetch time by the builders of the full push.
+ */
+export interface EnvelopeContent {
+  title: string;
+  body: string;
+  data: Record<string, string>;
+  inline: Record<string, string>;
+}
+
+/**
+ * Whether an internal push draws nothing: a salon read frame, or one its caller marked silent. The
+ * ONE rule, read by the full APNs request and by the envelope's eviction order alike.
+ */
+export function isInternalSilent(data: Record<string, string>): boolean {
+  return data.type === 'channel_read' || data.silent === 'true';
+}
+
+/**
+ * The `push` answer for a served envelope: EXACTLY what the full push would have handed this
+ * device's platform, with the inline group always in - our own TLS has no 4 KB budget, which removes
+ * the "not inlined" cause of a blind salon banner (content-free-push section 5.1).
+ *
+ * - Android: the data map {@link buildInternalAndroidHalf} builds, title and body included.
+ * - iOS: the custom keys {@link buildInternalApnsRequest} spreads beside `aps` - the data map alone,
+ *   since title and body live in `aps.alert`, which travels as `presentation`.
+ *
+ * @param content - The envelope's stored content.
+ * @param platform - The fetching device's platform (`push_token.platform`).
+ * @param locale - Its language, for the iOS fallback body when the caller gave none.
+ */
+export function buildEnvelopeAnswer(
+  content: EnvelopeContent,
+  platform: 'android' | 'ios',
+  locale?: string | null
+): WakeAnswer {
+  const merged = { ...content.data, ...content.inline };
+  const request = buildInternalApnsRequest(content.title, content.body, merged, locale);
+  const fields =
+    platform === 'ios'
+      ? internalApnsFields(request)
+      : internalAndroidFields(content.title, content.body, merged);
+  return { status: 'push', fields, presentation: presentationOf(request) };
+}
+
+/** The custom keys of an internal APNs request: everything but `aps`, as strings. */
+function internalApnsFields(request: ApnsRequest): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(request.payload)
+      .filter(([key]) => key !== 'aps')
+      .map(([key, value]) => [key, String(value)])
+  );
+}
+
+/** The Android data map of an internal push: its fields plus the title and body Kotlin draws first. */
+function internalAndroidFields(
+  title: string,
+  body: string,
+  fields: Record<string, string>
+): Record<string, string> {
+  return { ...fields, title, body };
 }
 
 /**
@@ -561,8 +695,7 @@ export function buildInternalApnsRequest(
   data: Record<string, string>,
   locale?: string | null
 ): ApnsRequest {
-  const isSilent = data.type === 'channel_read' || data.silent === 'true';
-  if (isSilent) {
+  if (isInternalSilent(data)) {
     return {
       payload: { aps: { 'content-available': 1 }, ...data },
       pushType: 'background',
@@ -683,7 +816,7 @@ export function buildInternalAndroidHalf(
   inline: Record<string, string>
 ): InternalPushHalf<Record<string, string>> {
   return withInlineGroup(
-    (fields) => ({ ...fields, title, body }),
+    (fields) => internalAndroidFields(title, body, fields),
     measureDataFields,
     FCM_DATA_LIMIT,
     data,

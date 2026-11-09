@@ -59,6 +59,90 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
+describe('LiveChatPanel arrival lines (owner, 2026-11-07)', () => {
+  const arrival = (seq: number, authorId = BOB): LiveChatLine =>
+    line({
+      id: null,
+      clientId: `arrival:${seq}`,
+      authorId,
+      text: '',
+      seq: seq + 0.5,
+      kind: 'arrival',
+    });
+
+  it('draws "X a rejoint" with the name, and the folded crowd as one line', () => {
+    const { target } = render({
+      lines: [
+        arrival(1),
+        line({
+          id: null,
+          clientId: 'arrivals-more:9',
+          authorId: '',
+          text: '',
+          kind: 'arrivals-more',
+          more: 4,
+        }),
+      ],
+    });
+    const one = target.querySelector('[data-live-chat-arrival]')!;
+    expect(one.textContent).toContain('Bob');
+    expect(one.textContent).toContain(m.live_chat_arrival());
+    expect(target.querySelector('[data-live-chat-arrivals-more]')?.textContent?.trim()).toBe(
+      m.live_chat_arrivals_more_other({ count: 4 })
+    );
+  });
+
+  it('says "1 autre" in the singular', () => {
+    const { target } = render({
+      lines: [
+        line({ id: null, clientId: 'arrivals-more:2', kind: 'arrivals-more', more: 1, text: '' }),
+      ],
+    });
+    expect(target.querySelector('[data-live-chat-arrivals-more]')?.textContent?.trim()).toBe(
+      m.live_chat_arrivals_more_one()
+    );
+  });
+
+  it('offers no action on an arrival: no report, no hide, even to a moderator', () => {
+    const { target } = render({ lines: [arrival(1)], canModerate: true, report: vi.fn() });
+    expect(target.querySelector('[data-live-chat-line-toggle]')).toBeNull();
+    expect(target.querySelector('[data-live-chat-line]')).toBeNull();
+  });
+
+  it('never raises the "new messages" chip', () => {
+    const { target } = render({ lines: [arrival(1), arrival(2)] });
+    expect(target.querySelector('[data-live-chat-new]')).toBeNull();
+  });
+});
+
+describe('LiveChatPanel host mark', () => {
+  it("marks the broadcaster's lines and no one else's", () => {
+    const { target } = render({
+      hostId: BOB.toUpperCase(),
+      lines: [
+        line({ id: 'm-1', clientId: 'c-1', authorId: BOB }),
+        line({ id: 'm-2', clientId: 'c-2', authorId: ME, mine: true }),
+      ],
+    });
+    const lines = target.querySelectorAll('[data-live-chat-line]');
+    const badge = lines[0]!.querySelector('[data-live-chat-host]');
+    expect(badge?.textContent).toBe(m.live_chat_host());
+    expect(lines[1]!.querySelector('[data-live-chat-host]')).toBeNull();
+  });
+
+  it('draws no badge when the host is unknown', () => {
+    const { target } = render({ lines: [line({})] });
+    expect(target.querySelector('[data-live-chat-host]')).toBeNull();
+  });
+
+  it('keeps the author avatar slot and name on every line', () => {
+    const { target } = render({ lines: [line({})] });
+    const li = target.querySelector('[data-live-chat-line]')!;
+    expect(li.textContent).toContain('Bob');
+    expect(li.querySelector('span.shrink-0')).not.toBeNull();
+  });
+});
+
 describe('LiveChatPanel', () => {
   it('draws a message as plain text: markup and links stay text', () => {
     const { target } = render({

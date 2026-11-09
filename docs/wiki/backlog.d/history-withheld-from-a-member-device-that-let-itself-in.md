@@ -2,10 +2,13 @@
 
 The device ask of the 2026-10-27 interim is DELETED (owner, 2026-10-31: the gate is on the user,
 never the device - [the decision](a-new-device-of-a-member-enters-by-itself-with-a-history-and-a-visible.md)).
-What stays from it: a further device of a member asks a member's device to add it rather than
-letting itself in, and one that lets itself in anyway (an older client) is said, reported and
+What stays from it, NARROWED on 2026-11-01 (review of #2832): a further device of a member asks
+first and lets itself in when no member device can answer (D1, held shut on the server until
+`minClientVersion` carries D2/D3), and is then an ordinary added device. Only a KNOWN device id
+entering by its own commit under a key other than the one known for it is still said, reported and
 withheld history until a member's Add of it
-([mls-protocol](../protocols/mls-protocol.md#a-device-of-a-member-is-added-never-asked-about-2026-10-31)).
+([the trade-off](../protocols/mls-availability-no-holder.md#the-security-trade-off-honestly),
+[mls-protocol](../protocols/mls-protocol.md#a-device-of-a-member-is-added-never-asked-about-2026-10-31)).
 Owed:
 
 - **the hourly stranded report cannot tell a further device waiting for a member's device to come

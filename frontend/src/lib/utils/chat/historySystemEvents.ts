@@ -10,6 +10,7 @@ import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { receivedNoticeTime, renderVisibleNotice } from '$lib/utils/chat/visibleNotices';
 import { appMessageSentAtMs } from '$lib/utils/chat/messageUtils';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
+import { applyNicknameFrame, nicknameMembersOf, type NicknameRosterSource } from './nicknameFrame';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
@@ -105,6 +106,8 @@ export interface ReplaySystemEventCtx {
   reactionUpdates: Map<string, MessageReaction[]>;
   /** The keys this device trusts for an author (the MLS service): what a bundle's proofs verify under. */
   authorKeys: AuthorKeySource;
+  /** The group's tree (the MLS service): a replayed `nickname` frame must name a current member. */
+  nicknameRoster: NicknameRosterSource;
   /**
    * msgId -> what a replayed `history_bundle` changed on a HELD row (an upgrade, a vetted tombstone
    * or edit), merged onto the stored row in the post-save pass.
@@ -463,6 +466,24 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         parsed.system.event === 'pin',
         Number(data.at) || parseServerTimestampMs(msg.timestamp) || 0
       );
+    } else if (parsed.system.event === 'nickname') {
+      // The live reader, dated by the log entry when the frame carries no `at`: `applyNickname`
+      // keeps the newer statement, so re-reading a log already followed changes nothing.
+      // Bounded by the log row's own server time, as the live frame is by its queue time; a row
+      // without one is refused, never bounded by this device's clock.
+      const serverAt = parseServerTimestampMs(msg.timestamp);
+      if (!(typeof serverAt === 'number' && serverAt > 0)) {
+        console.error(
+          `[NICKNAME] REFUSED a replayed nickname frame from ${senderNorm.slice(0, 8)} in ${conversationId.slice(0, 8)}…: its log row carries no server time`
+        );
+      } else {
+        applyNicknameFrame(conversationId, data, senderNorm, {
+          fallbackAt: serverAt,
+          serverAt,
+          members: await nicknameMembersOf(ctx.nicknameRoster, conversationId, 'replay'),
+          log: (line) => console.debug(line),
+        });
+      }
     } else if (parsed.system.event === 'remove_reaction' && data.messageId && data.emoji) {
       // LEGACY FRAME, replay side. Taking a reaction back now travels as a `ReactionMsg` with
       // `removed` set; this only ever sees log entries written before that change. Dated with the
@@ -517,6 +538,9 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           `[HISTORY_REPLAY] ${pinsMerged} pin state(s) converged for ${conversationId.slice(0, 8)}…`
         );
       }
+      // No nickname is taken from a REPLAYED bundle: a register restated in the log is a relayer's
+      // word broadcast to everyone, and only the join push addressed to this device may carry one
+      // (`mergeBundleNicknames`, review of #3177). The frames themselves replay above.
       if (Array.isArray(bundleData) && bundleData.length > 0) {
         // THE ONE RULE EVERY BUNDLE GOES THROUGH (`bundleVetting.ts`), the one the live handler
         // applies: a durable bundle an older build wrote keeps restoring history - MARKED when

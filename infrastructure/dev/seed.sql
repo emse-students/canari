@@ -4,10 +4,10 @@
 -- so this file carries no transaction control of its own. The three lines below are read by it.
 -- seed-users: 18
 -- seed-marker: Fictif
--- seed-tables: platform_config users association_categories associations association_audiences spaces association_members association_follows user_follows association_calendar_events posts
+-- seed-tables: platform_config users associations association_audiences spaces association_members association_follows user_follows association_calendar_events posts
 
-INSERT INTO "platform_config" ("id", "maintenance_enabled", "min_client_version", "payment_provider", "calls_mode", "lives_mode", "push_mode") VALUES
-  (1, false, '1.2.7', 'disabled', 'audio_video', 'on', 'full');
+INSERT INTO "platform_config" ("id", "maintenance_enabled", "min_client_version", "payment_provider", "calls_mode", "lives_mode", "push_mode", "checkpoint_skip_mode") VALUES
+  (1, false, '1.2.7', 'disabled', 'audio_video', 'on', 'full', 'off');
 
 INSERT INTO "users" ("id", "displayName", "firstName", "lastName", "promo", "formation", "campus", "cursus", "bio", "createdAt", "updatedAt") VALUES
   ('9088bb4dccb0c955a853c03f59c62eb4c2ece330adad89cefe5b70955a252a43', 'Alice Fictif', 'Alice', 'Fictif', 2024, 'ICM', 'saint-etienne', '[{"formation":"ICM","promo":2024}]'::jsonb, 'Personne fictive de l''environnement de test (ICM 2024).', now() - interval '30 days 0 hours', now() - interval '30 days 0 hours'),
@@ -29,23 +29,17 @@ INSERT INTO "users" ("id", "displayName", "firstName", "lastName", "promo", "for
   ('2d8a25ed7f4d8b9fad50562ec61e58aca44dcc00ac2f9eb0332e1d96ae747f10', 'Rose Fictif', 'Rose', 'Fictif', 2026, 'ICM', 'saint-etienne', '[{"formation":"ICM","promo":2026}]'::jsonb, 'Personne fictive de l''environnement de test (ICM 2026).', now() - interval '30 days 0 hours', now() - interval '30 days 0 hours'),
   ('e3d3e8005d6304a509ad745cd0f1e9cfecd5c83627f17c8694e0654fadab6320', 'Samir Fictif', 'Samir', 'Fictif', 2024, 'Autre', 'saint-etienne', '[{"formation":"Autre","promo":2024}]'::jsonb, 'Personne fictive de l''environnement de test (Autre 2024).', now() - interval '30 days 0 hours', now() - interval '30 days 0 hours');
 
-INSERT INTO "association_categories" ("id", "label", "slug", "sortOrder") VALUES
-  ('52377257-2abc-4dd7-a989-bc1e16eb30b2', 'Sport', 'sport', 0),
-  ('488bdb3e-93e0-430e-8259-8860de96ed71', 'Culture', 'culture', 1),
-  ('34695ba7-9501-4095-9751-93feb4908e0b', 'Vie étudiante', 'vie', 2),
-  ('37a7e640-c286-4619-a260-fcaa228f74c8', 'Solidarité', 'solidarite', 3);
-
-INSERT INTO "associations" ("id", "name", "slug", "description", "color", "categoryId", "type", "promo", "contactEmail", "createdBy") VALUES
-  ('97db8795-6284-46b1-bd94-b1a3c94ee10e', 'BDE Fictif', 'bde-fictif', 'Le bureau des élèves de démonstration. Rien de ce qui est écrit ici n''est réel.', '#2563eb', '34695ba7-9501-4095-9751-93feb4908e0b', 'association', NULL, 'bureau.bde@example.invalid', '9088bb4dccb0c955a853c03f59c62eb4c2ece330adad89cefe5b70955a252a43'),
-  ('f1ddbfe2-ad95-4a40-8fb1-a0a50d5f8851', 'Club d''Échecs Fictif', 'echecs-fictif', 'Parties du mardi soir, tournoi fictif en fin de semestre.', '#16a34a', '488bdb3e-93e0-430e-8259-8860de96ed71', 'association', NULL, 'bureau.echecs@example.invalid', '2727f2127d501baf2f4bc1a672917f2727c1ac235700a702e1ab328b01085941'),
-  ('c5de75b7-27ea-4915-abe7-658df6d69b8e', 'Fanfare Fictive', 'fanfare-fictif', 'Cuivres, percussions et répétitions imaginaires.', '#db2777', '488bdb3e-93e0-430e-8259-8860de96ed71', 'association', NULL, 'bureau.fanfare@example.invalid', 'b06cd7f7a7b133a3322e80f9910defdaeb788eb579a35610cb62023189e73841'),
-  ('e7d5094f-3e5f-444d-a6f2-d527f8d36ab1', 'Escalade Fictive Gardanne', 'escalade-fictif', 'Sorties en salle et en falaise, toutes inventées.', '#ea580c', '52377257-2abc-4dd7-a989-bc1e16eb30b2', 'association', NULL, 'bureau.escalade@example.invalid', '82f0b331ad115e344f6e19d01c364798f7cb7b6bdd44ba112d6aa2c1044594d1'),
-  ('ca5dabb2-1f17-43f6-9f01-46d543456be3', 'Liste Fictive 2026', 'liste-fictif', 'Une liste de campagne de démonstration.', '#7c3aed', NULL, 'list', 2026, 'bureau.liste@example.invalid', 'e3477c6eece0218896b3e32abe153f788f381df9587ed9458eb4daef0fcd23cc'),
-  ('4d899af0-b0c2-4027-80ac-44a97f33392a', 'École Fictive', 'ecole-fictif', 'L''institution de démonstration : ses publications s''adressent à tout le monde.', '#0f172a', NULL, 'institution', NULL, 'bureau.ecole@example.invalid', 'b06cd7f7a7b133a3322e80f9910defdaeb788eb579a35610cb62023189e73841'),
-  ('480264fd-08c5-432a-ac86-02e0c1ce503d', 'Club Photo Fictif', 'photo-fictif', 'Sorties photo, expositions et ateliers de retouche, le tout imaginaire.', '#0891b2', '488bdb3e-93e0-430e-8259-8860de96ed71', 'association', NULL, 'bureau.photo@example.invalid', 'e0d06029647226e4a1422682ba8525afd51f73798b93facf7947a79d0182d9db'),
-  ('2275580c-dd3a-4cdf-b0aa-4ab515d14239', 'Troupe de Théâtre Fictive', 'theatre-fictif', 'Improvisation le mercredi, pièce de fin d''année et décors en carton.', '#be123c', '488bdb3e-93e0-430e-8259-8860de96ed71', 'association', NULL, 'bureau.theatre@example.invalid', '4efa102166f11469bb5ca5fcbd433d48a842f3ddf7a0e06bb9f0e6cf4105c4b4'),
-  ('d66a82c7-ddd2-48ee-9a38-37e380ece851', 'Solidarité Fictive', 'solidaire-fictif', 'Collectes, maraudes et soutien scolaire, pour de faux.', '#65a30d', '37a7e640-c286-4619-a260-fcaa228f74c8', 'association', NULL, 'bureau.solidaire@example.invalid', 'e3d3e8005d6304a509ad745cd0f1e9cfecd5c83627f17c8694e0654fadab6320'),
-  ('6cd94b94-32e5-4b35-a7df-a9d9ef5115c5', 'Club Robotique Fictif', 'robotique-fictif', 'Robots suiveurs de ligne, impression 3D et coupe fictive en mai.', '#4f46e5', '488bdb3e-93e0-430e-8259-8860de96ed71', 'association', NULL, 'bureau.robotique@example.invalid', '3f94d6d4a81040a0e0b1fc99f4398e3cc4fadc557f1bf6b90eb8e3505e802762');
+INSERT INTO "associations" ("id", "name", "slug", "description", "color", "type", "promo", "contactEmail", "createdBy") VALUES
+  ('97db8795-6284-46b1-bd94-b1a3c94ee10e', 'BDE Fictif', 'bde-fictif', 'Le bureau des élèves de démonstration. Rien de ce qui est écrit ici n''est réel.', '#2563eb', 'association', NULL, 'bureau.bde@example.invalid', '9088bb4dccb0c955a853c03f59c62eb4c2ece330adad89cefe5b70955a252a43'),
+  ('f1ddbfe2-ad95-4a40-8fb1-a0a50d5f8851', 'Club d''Échecs Fictif', 'echecs-fictif', 'Parties du mardi soir, tournoi fictif en fin de semestre.', '#16a34a', 'association', NULL, 'bureau.echecs@example.invalid', '2727f2127d501baf2f4bc1a672917f2727c1ac235700a702e1ab328b01085941'),
+  ('c5de75b7-27ea-4915-abe7-658df6d69b8e', 'Fanfare Fictive', 'fanfare-fictif', 'Cuivres, percussions et répétitions imaginaires.', '#db2777', 'association', NULL, 'bureau.fanfare@example.invalid', 'b06cd7f7a7b133a3322e80f9910defdaeb788eb579a35610cb62023189e73841'),
+  ('e7d5094f-3e5f-444d-a6f2-d527f8d36ab1', 'Escalade Fictive Gardanne', 'escalade-fictif', 'Sorties en salle et en falaise, toutes inventées.', '#ea580c', 'association', NULL, 'bureau.escalade@example.invalid', '82f0b331ad115e344f6e19d01c364798f7cb7b6bdd44ba112d6aa2c1044594d1'),
+  ('ca5dabb2-1f17-43f6-9f01-46d543456be3', 'Liste Fictive 2026', 'liste-fictif', 'Une liste de campagne de démonstration.', '#7c3aed', 'list', 2026, 'bureau.liste@example.invalid', 'e3477c6eece0218896b3e32abe153f788f381df9587ed9458eb4daef0fcd23cc'),
+  ('4d899af0-b0c2-4027-80ac-44a97f33392a', 'École Fictive', 'ecole-fictif', 'L''institution de démonstration : ses publications s''adressent à tout le monde.', '#0f172a', 'institution', NULL, 'bureau.ecole@example.invalid', 'b06cd7f7a7b133a3322e80f9910defdaeb788eb579a35610cb62023189e73841'),
+  ('480264fd-08c5-432a-ac86-02e0c1ce503d', 'Club Photo Fictif', 'photo-fictif', 'Sorties photo, expositions et ateliers de retouche, le tout imaginaire.', '#0891b2', 'association', NULL, 'bureau.photo@example.invalid', 'e0d06029647226e4a1422682ba8525afd51f73798b93facf7947a79d0182d9db'),
+  ('2275580c-dd3a-4cdf-b0aa-4ab515d14239', 'Troupe de Théâtre Fictive', 'theatre-fictif', 'Improvisation le mercredi, pièce de fin d''année et décors en carton.', '#be123c', 'association', NULL, 'bureau.theatre@example.invalid', '4efa102166f11469bb5ca5fcbd433d48a842f3ddf7a0e06bb9f0e6cf4105c4b4'),
+  ('d66a82c7-ddd2-48ee-9a38-37e380ece851', 'Solidarité Fictive', 'solidaire-fictif', 'Collectes, maraudes et soutien scolaire, pour de faux.', '#65a30d', 'association', NULL, 'bureau.solidaire@example.invalid', 'e3d3e8005d6304a509ad745cd0f1e9cfecd5c83627f17c8694e0654fadab6320'),
+  ('6cd94b94-32e5-4b35-a7df-a9d9ef5115c5', 'Club Robotique Fictif', 'robotique-fictif', 'Robots suiveurs de ligne, impression 3D et coupe fictive en mai.', '#4f46e5', 'association', NULL, 'bureau.robotique@example.invalid', '3f94d6d4a81040a0e0b1fc99f4398e3cc4fadc557f1bf6b90eb8e3505e802762');
 
 INSERT INTO "association_audiences" ("id", "associationId", "formation", "campus") VALUES
   ('141da22f-a69b-474d-bb46-5d49e81f03f3', '97db8795-6284-46b1-bd94-b1a3c94ee10e', 'ICM', 'saint-etienne'),

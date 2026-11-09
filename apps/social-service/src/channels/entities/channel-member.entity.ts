@@ -66,6 +66,47 @@ export class ChannelMember {
   @Column({ type: 'text', nullable: true, default: null })
   admissionVoucher: string | null;
 
+  /**
+   * What this member is called IN THIS COMMUNITY ("Modifier les pseudos", migration 149), or null.
+   * Written only by `CommunityNicknamesService.set` (a moderator, or the member clearing their own),
+   * as a column update, and read by raw SQL only. Kept out of every TypeORM SELECT, INSERT and UPDATE
+   * like `clearedMarks`, for one more reason than the deploy order: a membership `save` elsewhere
+   * writes back every column it read, and would put back a nickname changed since that read.
+   */
+  @Column({
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+    default: null,
+    select: false,
+    insert: false,
+    update: false,
+  })
+  nickname?: string | null;
+
+  /** Who set - or cleared - {@link nickname}. No foreign key: a nickname outlives its setter's leaving. */
+  @Column({
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+    default: null,
+    select: false,
+    insert: false,
+    update: false,
+  })
+  nicknameSetBy?: string | null;
+
+  /** When {@link nickname} was last set or cleared; null when nobody ever named this member. */
+  @Column({
+    type: 'timestamptz',
+    nullable: true,
+    default: null,
+    select: false,
+    insert: false,
+    update: false,
+  })
+  nicknameSetAt?: Date | null;
+
   /** Display order of this member's workspaces in their own sidebar (ascending). Personal, not shared across members. */
   @Column({ type: 'int', default: 0 })
   sortOrder: number;

@@ -177,6 +177,8 @@ added later without the pipe fails there.
 | GET | `/api/channels/workspaces/user/me` | List caller's workspaces; each carries `viewerCanManage` (true iff the caller holds MANAGE_WORKSPACE) and `viewerCanManageChannels` (`roleGrantsChannelManagement`: `channel.manage` or `workspace.manage`) so the client can gate admin controls without deriving permissions itself. Ordered by the caller's personal `sortOrder` |
 | PATCH | `/api/channels/workspaces/reorder` | Persist the caller's top-to-bottom community order (`{ orderedIds }`, workspace ids). Personal per-member setting, stored on `channel_members.sortOrder` (migration 024) - not shared across members of the same workspace |
 | GET | `/api/channels/workspaces/:workspaceId/members` | The whole community roster. Exists for the caller that holds no channel id - a device that has just joined the Graine distribution group and must name who to ask for history |
+| GET | `/api/channels/workspaces/:workspaceId/nicknames` | Every nickname state of the community, set and cleared (dated), for a member of it ([chat](../frontend/modules/chat.md#per-conversation-nicknames-modifier-les-pseudos-2026-11-08)) |
+| PUT | `/api/channels/workspaces/:workspaceId/nicknames/:userId` | `{ nickname: string \| null }`. A moderator names a member; the member may clear their own. Refusals `nickname_too_long`, `NICKNAME_REQUIRES_MODERATION`, `NICKNAME_TARGET_NOT_MEMBER`, `USER_BLOCKED`; announced on `workspace.updated { nickname }` (migration 149, columns read and written by raw SQL only) |
 | PATCH | `/api/channels/workspaces/:workspaceId/history-visibility` | Set what a newcomer may read: `shared` or `joined`, MANAGE_WORKSPACE only. Stored on `channel_workspaces."historyVisibility"` (migration 039) and broadcast as `workspace.updated`. **The server enforces nothing here** - it holds no seed; members apply the rule ([channel-encryption](../protocols/channel-encryption.md)) |
 | GET | `/api/channels/workspace/:workspaceId/user/me` | List channels in workspace for caller |
 | POST | `/api/channels` | Create channel in a workspace |
@@ -292,6 +294,41 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
   wart:** `normalizeRoleLabelToCanonical` folds any unrecognised role name to `member`, so such a role
   shows in the member list as "Membre" while holding whatever permissions it was given - a display
   fault waiting for the day somebody uses the route.
+
+#### A community may name its three roles (owner, 2026-11-08)
+
+The three roles stay fixed (identity, permissions); each community may give them **display names**
+("Presidence", "Bureau", "Musicien"). LABELS ONLY.
+
+- **Storage: a separate nullable column, `channel_roles."displayLabel"` (migration 150, varchar 40),
+  never the existing `name`.** `name` is the role's IDENTITY (the names `createWorkspace` seeds:
+  Administrateur, the accented moderator name, Membre): `mapRoleInputToWorkspaceRoleName`, invitations, assignment and every client of
+  `minClientVersion` 1.6.6 resolve a role from it, and `normalizeRoleLabelToCanonical` folds an
+  unknown name to `member`. Writing a free-text label into `name` would show an administrator as
+  "Membre" on an old client (and break the by-name lookups). With its own column an old client ignores the
+  field it does not know and sees exactly what it saw before; the listing (`roles`) simply carries
+  `displayLabel` beside `name`. NULL = no name of its own, every client shows the localized default
+  (`chat_role_admin` / `chat_role_moderator` / `chat_role_member`).
+- **Write: `PATCH /channels/roles/:roleId/label` `{ label: string | null }`** (`setRoleDisplayLabel`); the `label` KEY is required (`roleLabelOfBody`): a body without it is a 400, only an explicit null or blank resets.
+  Only an administrator (`workspace.manage`, read under the community removal lock so a demotion
+  committing meanwhile is honoured); anyone else is refused 403 `ROLE_RENAME_REQUIRES_ADMIN`. The
+  client receives no role name to decide on: it mounts the editor from `viewerCanManage`, the existing
+  decision flag. `validateRoleLabel`: trimmed, at most 40 code points, no control, invisible-formatting (`\p{Cf}`: zero-width, bidi, BOM, tag) or line-separator
+  character (400 `ROLE_LABEL_INVALID`); a blank or null value RESETS. One name per role.
+- **Live update: the existing `workspace.role.permissions` event** is the role's one public
+  publish (`announceRoleToCommunity`) to the whole membership, shared by a permission edit and a rename,
+  each carrying only what ITS write changed: a rename adds `label` (string, or null for the default), a
+  permission toggle OMITS it, so a toggle's late publish cannot restore an old name. Absent `label`
+  means unchanged on every client. A rename changes no standing, so no `workspace.role.changed`.
+- **Nothing keys on a label.** Consumers audited: the roster rows and `normalizeRoleLabelToCanonical`
+  read `name`; permission checks read `permissions`; invite and assignment lookups read `name`; the
+  client folds `name` (never the label) through `canonicalRoleOf`; `mapRoleInputToWorkspaceRoleName`
+  receives the canonical English/French input of the client. The ONE client resolver is
+  `resolveRoleLabel` (`utils/chat/communityRoleLabel.ts`): the member list badges, the invite and
+  role pickers, the permission grid headers and the editor placeholders all call it, from the store
+  (`globalChannels.roleLabels`, keyed by role id) that the announcement keeps current. No push or
+  notification text names a role. Tests: `role-label.integration.spec.ts` (PostgreSQL),
+  `role-label.spec.ts`.
 
 #### Message moderation (`channel.moderate`)
 
@@ -598,7 +635,7 @@ channel id, migration 066), one instant per reader, only ever raised.
 - `GET /api/channels/:channelId/read-marks` - every CURRENT reader's mark; the client reads it beside
   every history page, since live events only carry what moved while it was connected.
 - Distinct from `POST :id/read` above, on purpose: that one dismisses this account's notifications
-  on arrival; the receipt waits for the same focus guard and 2 s debounce as a DM's
+  on arrival; the receipt waits for the same focus guard and leading-edge 2 s throttle (sent at once, burst coalesced) as a DM's
   (`MainChatPage`), so a phone in a pocket never tells a sender it read anything.
 
 The client merges both into the conversation's `readWatermarks`, so "Lu par", the avatars and `+N`
@@ -678,7 +715,7 @@ Live broadcasts, behind `LIVE_ENABLED`; every route, its rights and its refusal 
 | GET | `/api/associations/:id` | Get association detail |
 | POST | `/api/associations` | Create association (global admin or BDE `MANAGE_ASSO` flag) |
 | PATCH | `/api/associations/:id` | Update details: each field asks its own right (`UPDATE_FIELD_RIGHTS`: profile `EDIT_PROFILE`, `archived` `MANAGE_MEMBERS`, cotisation `MANAGE_PRODUCTS`, quota and a list's parent the platform admin) - [the field table](../association-permissions.md#edit_profile-bit-12-the-profile-is-not-the-roster-and-patch-id-is-not-one-flag-owner-2026-11-02) |
-| GET/PUT/DELETE | `/api/associations/:id/push-mute` | The caller's push mute of one association; `GET /api/associations/me/push-mutes` lists them |
+| GET/PUT/DELETE | `/api/associations/:id/push-mute` | LEGACY (builds older than the bell, engagement WP-3): the caller's bell on one association read as a mute (`none`); `GET /api/associations/me/push-mutes` lists them |
 | POST | `/api/associations/:id/members` | Add member to association |
 | POST | `/api/associations/:id/events` | Create calendar event |
 | PATCH | `/api/associations/:id/events/:eventId` | Update calendar event |
@@ -948,41 +985,47 @@ where "Suivre" is defined.
 Pinned by `post-announce.scheduler.spec.ts`, whose first assertion is the stamp/send ORDER rather
 than the recipients.
 
-### Follow, mute and read grants: three different facts (decided by the user, 2026-10-08)
+### Follow, bell and read grants: three different facts (decided by the user, 2026-10-08; the mute became the bell, engagement WP-3, 2026-11-08)
 
 | | What it is | Does it decide who is PUSHED? |
 | --- | --- | --- |
-| **Follow** (`association_follows`, button "Suivre") | a reading preference: it feeds the "followed" view of the feed | **No.** Every association post is pushed to everyone who can SEE it; the follow table is not consulted for announcing (STATUS QUO, chosen on purpose) |
-| **Mute** (`association_push_mutes`, migration 080) | "stop pushing me THIS association", and only that | **Yes - it removes the recipient from the PUSH**, never from the feed or the bell |
+| **Follow** (`association_follows`, button "Suivre") | a reading preference: it feeds the "followed" view of the feed | **No** for an association: every association post is pushed to everyone who can SEE it; the follow table is not consulted for announcing (STATUS QUO, chosen on purpose). A PERSON's accepted followers are their announcement audience |
+| **Bell** (`account_bells`, migrations 142-143) | what the reader receives from ONE account, a person they follow or an association: posts and lives (no row, the default), `lives`, or `none`. The old association **mute** (`association_push_mutes`, migration 080) is the level `none`, copied by 143 | **Yes - it removes the recipient from the PUSH**, never from the feed or the bell list |
 | **Nominative read grant** (`read_grants`) | access to read | **No.** A read grant is access, not subscription: its holders are not announced to |
 
-**Where a mute is applied: ONE place, server-side.** `PostNotificationsService.createNotifications`
-asks `AssociationPushMutesService.mutedAmong(associationId, recipients)` just before the push loop
-and drops the muted. The in-app `post_notifications` row is still written (the bell is the record, a
-push is the interruption), and the announce SQL is untouched. Nothing is filtered by the client, and
-no cache or feed key is involved.
+**Where the bell is applied: ONE place, server-side.** `PostNotificationsService.fanOutPush` asks
+`AccountBellsService.withheldAmong(target, recipients)` just before the push loop and drops the
+withheld (`bellTargetOf`: the association when the push carries one, the person acting otherwise). The
+in-app `post_notifications` row is still written (the bell list is the record, a push is the
+interruption), and the announce SQL is untouched. Nothing is filtered by the client, and no cache or
+feed key is involved. The full design, the levels and why a new follow resets the row:
+[engagement](../engagement.md#the-bell---data-model-and-how-it-combines-with-categories-and-mutes).
 
-**If the mute lookup fails the push FAILS CLOSED and LOUD**: `[NOTIFY] mute lookup failed` at error level, the error rethrown to the caller's own warning, the in-app rows kept. Pushing everyone would override a stated choice. The announce stamp is a CONDITIONAL update (`feedNotifiedAt IS NULL`), so two overlapping instances cannot both announce a post. Account deletion purges the account's mutes (`internal.controller.ts`).
+**If the bell lookup fails the push FAILS CLOSED and LOUD**: `[NOTIFY] bell lookup failed` at error level, the error rethrown to the caller's own warning, the in-app rows kept. Pushing everyone would override a stated choice. The announce stamp is a CONDITIONAL update (`feedNotifiedAt IS NULL`), so two overlapping instances cannot both announce a post. Account deletion purges the account's bells and every bell on it (`account-erasure.ts`).
 
-**Per type, and the list is an ALLOWLIST** (`MUTABLE_PUSH_TYPES`; a new type is never muted by
+**Per type, and the list is an ALLOWLIST** (`BELL_PUSH_KINDS`; a new type is never withheld by
 accident):
 
-| Type | Recipient is | Muted by a mute? |
-| --- | --- | --- |
-| `association_post` | a reader | yes |
-| `association_repost` | a reader the republication newly reached (the mute is the REPUBLISHING association's) | yes |
-| `live_started` | a follower of the association broadcasting a live (WP-L7; push only, no bell row - `pushNotice`, [lives](lives.md#the-push-to-the-followers-wp-l7-server-half)) | yes |
-| `repost_proposed`, `coorganise_proposed` | managers who must accept | **no** - operational |
-| `repost_personal_requested` | the author of a personal post an association asks to carry (D38b) | **yes** - the author's mute of the asking association |
-| `event_proposed/validated/rejected/updated/deleted/pending` | validators and proposers | **no** - operational |
-| `followed_post`, `mention`, `reply`, `reaction`, `comment` | addressed to you by a person | **no** - not an association's push |
+| Type | Recipient is | Its bell | Withheld at `lives`? at `none`? |
+| --- | --- | --- | --- |
+| `association_post` | a reader | the association's | yes / yes |
+| `association_repost` | a reader the republication newly reached | the REPUBLISHING association's | yes / yes |
+| `live_started` | a reader who sees the account broadcasting (WP-L7; push only, no bell row - `pushNotice`, [lives](lives.md#the-push-to-the-followers-wp-l7-server-half)) | the association's, or the broadcasting person's | **no** / yes |
+| `followed_post`, `member_repost` | an accepted follower | the author's, the reposter's (L17) | yes / yes |
+| `repost_personal_requested` | the author of a personal post an association asks to carry (D38b) | the asking association's | yes / yes |
+| `repost_proposed`, `coorganise_proposed` | managers who must accept | - | **never** - operational |
+| `event_proposed/validated/rejected/updated/deleted/pending` | validators and proposers | - | **never** - operational |
+| `mention`, `reply`, `reaction`, `comment` | addressed to you by a person | - | **never** |
 
 **Routes** (own rows only: the caller's id is the `x-user-id` header, never a body field):
-`GET|PUT|DELETE /api/associations/:id/push-mute` (status, mute, unmute - idempotent) and
-`GET /api/associations/me/push-mutes` (the settings list). UI: a "Couper les notifications" button
-beside "Suivre" on the association page, and a "muted associations" list with an unmute button in
-the notification settings (`SettingsMutedAssociations.svelte`). The account-wide `posts` switch
-still applies first, in chat-delivery.
+`GET /api/posts/me/bells` (the settings list), `GET|PUT /api/posts/me/bells/:kind/:targetId` (read,
+set `{ level }` - idempotent; a person only while followed, accepted). **Legacy, for builds older than
+the bell control** ([legacy-compatibility](../legacy-compatibility.md#no-date-yet---an-association-mute-set-by-a-build-older-than-the-bell-designed-2026-11-07)):
+`GET|PUT|DELETE /api/associations/:id/push-mute` and `GET /api/associations/me/push-mutes`, which read
+and write `account_bells` (mute = `none`, unmute = no row). UI: the bell (`AccountBell.svelte`)
+beside "Suivre" on the association page and on a followed person's profile, and the "Notifications
+réduites" list with a "Tout recevoir" button in the notification settings
+(`SettingsAccountBells.svelte`). The account-wide `posts` switch still applies, in chat-delivery.
 
 **Measured on the local estate (2026-10-08, sandbox accounts, a build of this branch beside the
 old container).** Association post, recipients: follower, muted follower, non-follower member. The

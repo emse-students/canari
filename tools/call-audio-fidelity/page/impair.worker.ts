@@ -24,7 +24,30 @@ interface Transformer {
     doubleEncrypt?: boolean;
     kind?: 'audio' | 'video';
     wholeFrameVideo?: boolean;
+    webkitVideoMetadata?: boolean;
   };
+}
+
+/**
+ * SCENARIO: every video frame handed on with a metadata that names NO codec and no payload type, as
+ * WebKit's encoded frames do (iOS, `mime=? pt=-1`, 2026-11-07). The frame is the platform's own,
+ * shadowed per instance, so the engine still takes it back on the writable side.
+ */
+function webkitMetadata() {
+  return new TransformStream({
+    transform(frame: { getMetadata?: () => Record<string, unknown> }, controller) {
+      const original = frame.getMetadata?.bind(frame);
+      Object.defineProperty(frame, 'getMetadata', {
+        value: () => {
+          const meta = { ...original?.() };
+          delete meta.mimeType;
+          delete meta.payloadType;
+          return meta;
+        },
+      });
+      controller.enqueue(frame);
+    },
+  });
 }
 
 /**
@@ -155,6 +178,7 @@ scope.onrtctransform = (event: Event) => {
       .pipeTo(writable);
     return;
   }
+  if (o.kind === 'video' && o.webkitVideoMetadata) readable = readable.pipeThrough(webkitMetadata());
   // Built field by field: the platform transformer's members are prototype getters, so a spread
   // would copy none of them.
   if (o.side === 'sender' && o.doubleEncrypt) {

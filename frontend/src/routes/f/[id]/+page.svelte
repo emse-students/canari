@@ -48,6 +48,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { offersOnlyCash } from '$lib/forms/publish';
 
   /**
    * A PUBLIC FORM, ANSWERED WITHOUT AN ACCOUNT (user, 2026-09-30) - the page a shared link opens.
@@ -76,6 +77,11 @@
   /** The reference the server gave a cash answer, for the guest to give the organiser. */
   let cashReference = $state<string | null>(null);
   let paymentMethodChoice = $state<'online' | 'cash'>('online');
+  /** Online is paused and cash is accepted: the answer is paid in cash, no online choice shown. */
+  const cashOnly = $derived(offersOnlyCash(form));
+  $effect(() => {
+    if (cashOnly) paymentMethodChoice = 'cash';
+  });
   let askingPayerEmail = $state(false);
   /** The required question the last send stopped on: its card says why, until it is answered. */
   let missingAnswer = $state<MissingAnswer | null>(null);
@@ -250,7 +256,6 @@
 {#snippet guestPayButton()}
   <Button
     variant="primary"
-    class="px-8"
     disabled={blocked || submitting}
     loading={submitting}
     onclick={() => void handleSubmit()}
@@ -383,7 +388,7 @@
         disabled={isNotOpenYet || isClosed || form.formFull || submitting}
       />
 
-      {#if total > 0 && form.allowCashPayment}
+      {#if total > 0 && form.allowCashPayment && !cashOnly}
         <PaymentMethodChoice bind:method={paymentMethodChoice} />
       {/if}
 

@@ -68,8 +68,6 @@ export {
   getIsTabLeader,
   setTabLeaderPromotedHandler,
   setTabLeaderDemotedHandler,
-  releaseLeadership,
-  requestLeadershipTakeover,
   markPromotionReload,
 } from './tabLeader';
 export {

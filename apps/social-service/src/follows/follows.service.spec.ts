@@ -3,7 +3,7 @@ import { FollowsService } from './follows.service';
 
 /**
  * The follow rules the service itself owns, against in-memory repositories (the repo's pattern, see
- * association-push-mutes.service.spec.ts). Deliberately NOT pinned, because the service does not do
+ * account-bells.service.spec.ts). Deliberately NOT pinned, because the service does not do
  * them: refusing a self-follow (the controller does), blocks, a counts API and a visibility rule
  * for a follow list. Those absences are recorded in docs/wiki/mechanism-audit.md rather than frozen
  * here as if intended. The SQL readers' `status = 'accepted'` term is proven against PostgreSQL
@@ -54,6 +54,16 @@ function fakeRepo(rows: Row[]) {
       // The request notice claimed with the request: always the first one in this fake.
       if (/^\s*INSERT INTO user_follow_notices/.test(sql)) {
         return Promise.resolve([{ kind: 'request' }]);
+      }
+      // `followAssociation`: the follow and its bell reset in one statement. The reset's real
+      // behaviour (a retried follow touches no bell) is proven in `account-bells.integration.spec.ts`.
+      if (/^\s*WITH followed AS \(\s*INSERT INTO association_follows/.test(sql)) {
+        const [followerUserId, associationId] = params;
+        if (rows.some((r) => matches(r, { followerUserId, associationId }))) {
+          return Promise.resolve([{ created: 0, reset: 0 }]);
+        }
+        rows.push({ followerUserId, associationId });
+        return Promise.resolve([{ created: 1, reset: 0 }]);
       }
       if (!/^\s*INSERT INTO user_follows/.test(sql)) throw new Error(`unexpected SQL: ${sql}`);
       const [followerUserId, followedUserId, status] = params;

@@ -24,15 +24,15 @@
   import { m } from '$lib/paraglide/messages';
   import { changeLocale, getLocale, locales, LOCALE_LABELS } from '$lib/i18n';
   import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
-  import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
+  import { isMobileTauriRuntime } from '$lib/utils/appVersion';
   import RepostConsentSetting from './RepostConsentSetting.svelte';
 
   // The vibration toggle is only meaningful on touch-capable hardware; detect it here so the
   // section needs no props and stays drop-in.
   let isTouchDevice = $state(false);
-  // Share suggestions (sharing lot S5) exist only in Android's share sheet: the toggle is hidden
-  // wherever it would do nothing.
-  let isAndroidApp = $state(false);
+  // Share suggestions (sharing lot S5) exist only in the phone apps' share sheets: the toggle is
+  // hidden wherever it would do nothing.
+  let isPhoneApp = $state(false);
   /**
    * Replays the welcome tour: it runs on the feed, where every control it points at is drawn, so the
    * request is recorded first and the feed opened - the tour starts there once the app is quiet.
@@ -53,7 +53,7 @@
 
   onMount(() => {
     isTouchDevice = isCoarsePointerDevice();
-    isAndroidApp = isAndroidTauriRuntime();
+    isPhoneApp = isMobileTauriRuntime();
   });
 </script>
 
@@ -135,7 +135,7 @@
       </div>
     {/if}
 
-    {#if isAndroidApp}
+    {#if isPhoneApp}
       <div class="flex items-center justify-between gap-4">
         <div class="flex items-center gap-3.5">
           <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">

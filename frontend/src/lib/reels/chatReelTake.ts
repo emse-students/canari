@@ -107,3 +107,17 @@ export function buildChatReelTake(input: ChatReelTakeInput): ChatReelTakeRows {
   }));
   return { take, sends };
 }
+
+/**
+ * Which "everywhere" act the sender's delete offers beside "Supprimer pour tout le monde" (15.2,
+ * 15.7), from the take's reach on THIS device: nothing when the take names one message or none (the
+ * plain delete already ends it), "Annuler partout" while no send has gone yet, "Supprimer partout"
+ * once one has - both end every send through the one delete path. A sender's other device holds no
+ * reach (`null`) and offers neither: the safe direction, the file still goes at 30 days.
+ */
+export function reelEverywhereActOf(
+  reach: { queued: readonly unknown[]; standing: readonly unknown[] } | null
+): 'cancel-all' | 'delete-everywhere' | null {
+  if (!reach || reach.queued.length + reach.standing.length < 2) return null;
+  return reach.standing.length === 0 ? 'cancel-all' : 'delete-everywhere';
+}

@@ -1023,6 +1023,31 @@ export async function setMessagePinned(
 }
 
 /**
+ * Captures a "nickname" system event in the durable outbox: *`userId` is called `nickname` in this
+ * conversation* (`null` = reset), so every member's register converges ("Modifier les pseudos").
+ *
+ * Silent and durable like every control event (`DELIVERY.mutation`): it notifies nobody, and the
+ * group's shared log hands it to a device that was offline. A member admitted later receives the
+ * register from the bundles instead (`conversationNicknames.svelte.ts`). The SETTER is never in the
+ * payload: every reader takes it from the identity MLS authenticated for the frame.
+ *
+ * `at` is the CALLER's, for the reason `setMessagePinned` gives: the local apply and the broadcast are
+ * one act and must state one instant. The value must already be normalized (`normalizeNickname`).
+ */
+export async function setConversationNickname(
+  userId: string,
+  nickname: string | null,
+  at: number,
+  deps: MessageActionDeps
+): Promise<boolean> {
+  return enqueueControlEvent(
+    'nickname',
+    deps.conversation.id,
+    encodeAppMessage(mkSystem('nickname', JSON.stringify({ userId, nickname, at })))
+  );
+}
+
+/**
  * Captures a "read_watermark" system event in the durable outbox: *I have read this conversation
  * up to `at`*, one monotone instant rather than a list of message ids.
  *

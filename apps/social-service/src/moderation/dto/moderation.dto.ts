@@ -1,10 +1,11 @@
 import { IsIn, IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { LIVE_CHAT_REPORT_TEXT_MAX_BYTES } from '../../lives/live.constants';
+import { REPORT_CONTENT_TYPES, type ReportContentType } from '../entities/content-report.entity';
 
 /** DTO for reporting a piece of content. */
 export class CreateReportDto {
-  @IsIn(['post', 'comment', 'user', 'live', 'live_chat'])
-  contentType: 'post' | 'comment' | 'user' | 'live' | 'live_chat';
+  @IsIn(REPORT_CONTENT_TYPES)
+  contentType: ReportContentType;
 
   @IsString()
   @IsNotEmpty()

@@ -33,12 +33,24 @@ describe('the iOS activation mirror of mls.bin', () => {
     expect(rust).toContain('pub unsafe extern "C" fn canari_ios_mirror_mls_bin_to_app_group(');
   });
 
-  it('hands mls.bin to Rust and copies only the other inputs itself', () => {
+  it('hands mls.bin and the seed mirror to Rust, and copies neither itself', () => {
     const start = push.indexOf('void CanariMirrorPushStateToAppGroup(void) {');
     const body = push.slice(start, push.indexOf('\n}\n', start));
     expect(body).toContain('canari_ios_mirror_mls_bin_to_app_group(src.UTF8String)');
-    expect(body).toContain('for (NSString *name in @[ kGraineSeedsFileName ])');
+    // The seed mirror under the group copy's writers' lock (2026-11-07): an unlocked copy could
+    // bring back seeds an account's wipe had just removed from the group's copy.
+    expect(body).toContain('canari_ios_mirror_graine_seeds_to_app_group(src.UTF8String)');
+    expect(body).not.toMatch(/@\[[^\]]*kGraineSeedsFileName/);
     expect(body).not.toMatch(/@\[[^\]]*kMlsBinFileName/);
+    expect(header).toContain(
+      'int canari_ios_mirror_graine_seeds_to_app_group(const char *data_dir);'
+    );
+    const pushRs = read(resolve(TAURI, 'src/commands/push.rs'));
+    expect(pushRs).toContain(
+      'pub unsafe extern "C" fn canari_ios_mirror_graine_seeds_to_app_group('
+    );
+    const sync = pushRs.slice(pushRs.indexOf('fn sync_seed_mirror_copy('));
+    expect(sync.slice(0, sync.indexOf('\n}\n'))).toContain('lock_seed_mirror(group)');
   });
 });
 

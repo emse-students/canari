@@ -67,6 +67,7 @@ describe('FormsService - public forms', () => {
         // An edit that starts charging asks what kind the association is: one that sells.
         collectionSubjectOf: jest.fn(() => Promise.resolve(null)),
         assertPaymentsReady: jest.fn(() => Promise.resolve()),
+        canTakePaymentsNow: jest.fn(() => Promise.resolve(true)),
       } as any,
       // UserTagService: the association sells no cotisation, so a grid on promo needs no tier.
       { listCotisationTiers: jest.fn(() => Promise.resolve([])) } as any,

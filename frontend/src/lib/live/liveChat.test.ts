@@ -14,6 +14,7 @@ import {
   LiveChatSession,
   isLiveOverRefusal,
   liveChatSendFailure,
+  LIVE_ARRIVAL_LINES_KEPT,
   LIVE_REACTION_KINDS,
   liveReactionEmoji,
   type LiveChatDeps,
@@ -715,5 +716,85 @@ describe('the chat withheld from a named reader (owner, 2026-11-04)', () => {
     expect(s.withheld).toBe(true);
     expect(floats).toEqual([['clap', 1]]);
     info.mockRestore();
+  });
+});
+
+describe('the arrival lines (owner, 2026-11-07)', () => {
+  const JOINER = 'c'.repeat(64);
+  const OTHER = 'd'.repeat(64);
+
+  it('draws one line per named arrival, then the folded crowd, and passes the cursor back', async () => {
+    const s = session();
+    await s.receive(block([wire(1, 'salut')], 1));
+    await s.receive(
+      block([], 1, {
+        arrivals: [
+          { userId: JOINER.toUpperCase(), seq: 1 },
+          { userId: OTHER, seq: 2 },
+        ],
+        arrivalsMore: 4,
+        arrivalsCursor: 9,
+      })
+    );
+    expect(lines.map((l) => [l.kind, l.more])).toEqual([
+      [undefined, undefined],
+      ['arrival', undefined],
+      ['arrival', undefined],
+      ['arrivals-more', 4],
+    ]);
+    expect(lines[1].authorId).toBe(JOINER);
+    expect(s.query().arrivalsAfter).toBe(9);
+    // A later message lands UNDER the arrival lines, whatever its own number.
+    await s.receive(block([wire(2, 'apres')], 2));
+    expect(lines.at(-1)?.text).toBe('apres');
+  });
+
+  it("sorts a block's arrivals under ITS OWN messages, even when a newer block arrived before it was drawn", async () => {
+    const s = session();
+    // Two polls land back to back: the cursors move at arrival, the rows are drawn in order after.
+    const first = s.receive(
+      block([wire(1, 'un')], 1, { arrivals: [{ userId: JOINER, seq: 1 }], arrivalsCursor: 1 })
+    );
+    const second = s.receive(block([wire(2, 'deux'), wire(3, 'trois')], 3));
+    await Promise.all([first, second]);
+    expect(lines.map((l) => l.kind ?? l.text)).toEqual(['un', 'arrival', 'deux', 'trois']);
+  });
+
+  it('draws a line once per server sequence, and drops a malformed row', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const s = session();
+    const arrivals = [
+      { userId: JOINER, seq: 1 },
+      { userId: JOINER, seq: 1 },
+      { userId: 7 as unknown as string, seq: 2 },
+    ];
+    await s.receive(block([], 0, { arrivals, arrivalsMore: 0, arrivalsCursor: 2 }));
+    expect(lines.filter((l) => l.kind === 'arrival')).toHaveLength(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('keeps its cursor when the server sent none, and has none while the chat is withheld', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const s = session();
+    await s.receive(block([], 0, { arrivals: [], arrivalsMore: 0, arrivalsCursor: 5 }));
+    await s.receive(block([], 0));
+    expect(s.query().arrivalsAfter).toBe(5);
+    await s.receive(block([], 3, { withheld: true, arrivals: [{ userId: JOINER, seq: 6 }] }));
+    expect(s.query().arrivalsAfter).toBeUndefined();
+    expect(lines.filter((l) => l.kind)).toEqual([]);
+    info.mockRestore();
+  });
+
+  it('keeps only the newest arrival lines, so a crowd never buries the conversation', async () => {
+    const s = session();
+    const arrivals = Array.from({ length: LIVE_ARRIVAL_LINES_KEPT + 5 }, (_, i) => ({
+      userId: JOINER,
+      seq: i + 1,
+    }));
+    await s.receive(block([], 0, { arrivals, arrivalsMore: 0, arrivalsCursor: arrivals.length }));
+    const kept = lines.filter((l) => l.kind === 'arrival');
+    expect(kept).toHaveLength(LIVE_ARRIVAL_LINES_KEPT);
+    expect(kept[0].clientId).toBe('arrival:6');
   });
 });

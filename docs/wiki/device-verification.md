@@ -603,6 +603,36 @@ Play may cluster the deliberate dead-wake-pipe abort with `e3697bc4`, both being
 looper callback, so read the frames below `cb_handler`: an `onFirstActivityCreateWry` closure means
 a dead pipe (the owner-decided abort); `get_webview` or `handle_message` means a real regression.
 
+## CFP-W3. The step-1 wake still wakes after migration 046 - owed on the Mi 9T, on dev
+
+**Proves** that moving the wake capability from `push_token.wakeCapable` to `wakeVersion` (content-free
+push WP-W3, [design](protocols/content-free-push.md#8-rollout-and-old-clients)) left the step-1 MLS
+wake working on a real phone, and that the envelope half is inert while no client declares version 2.
+Nothing native changed; the server reads a different column, writes it from the same `wake: true`,
+and the wake answer gained a `presentation` key the Android reader must ignore. Needs dev on a release
+carrying 046, `push_mode = wake` on dev (WP-W1), and the Mi 9T on any build carrying the step-1 client.
+
+1. BEFORE reopening the app after the deploy, send the Mi 9T a 1:1 text with the app killed.
+   **Expect** a banner with content, and on the server `[PUSH_SEND] ... mode=full` for that device: its
+   row reads `wakeVersion = 0` until the app starts (046 writes no backfill - the full push is the
+   contract the binary registered under, never a lost notification).
+2. Open the app once (a cold start registers), then kill it. **Expect** on the server
+   `[PUSH_REGISTER] ... wake=1`, and no `[PUSH_ENVELOPE] register sweep FAILED` line.
+3. Send three texts (1:1, group, salon) with the app killed - reading 1 of the
+   [backlog entry](backlog.d/push-payloads-carry-nothing-for-google-and-apple.md#readings-owed-the-code-is-verified-only-by-compiling-and-ios-not-even-that-before-a-release).
+   **Expect** the 1:1 and group banners with their text, `[PUSH_WAKE] fetched` in
+   `adb logcat -s CanariFCM` before the decrypt (the extra `presentation` key read by nothing), and on
+   the server `mode=wake` sends with one `[PUSH_WAKE] served queued=...` each. **Expect** the salon to
+   arrive as a FULL push (`[SOCIAL_PUSH] sent ... mode=full`): the device declares version 1, so no
+   `[PUSH_ENVELOPE]` line and no `mode=wake` on `[SOCIAL_PUSH]` anywhere.
+4. On the dev database: `SELECT platform, "wakeVersion", count(*) FROM push_token GROUP BY 1, 2` and
+   `SELECT count(*) FROM push_envelope`. **Expect** the Mi 9T's row at 1 and ZERO envelopes - an
+   envelope before WP-W4 ships is a writer this row did not expect.
+
+The envelope wake itself (a salon, a comment and a chat reaction, each drawn with content from its
+envelope; a repeat fetch drawing ONE notification) is WP-W4's reading, owed once Android declares
+version 2.
+
 ## The VoIP ring announces a video call as video - owed
 
 **Proves** that the native ring carries the media kind (alpha.2 bench: a video call rang as audio).
@@ -616,6 +646,54 @@ locked and the app killed, and a second device calling it with VIDEO.
    preview visible) and the caller seeing video.
 3. Repeat with an AUDIO call: `video=0`, audio screen, camera off.
 4. With `calls_mode = audio`, a video ring attempt is refused by the server: no CallKit ring at all.
+
+## The emoji picker paints at once - owed on the iPhone (2026-11-08)
+
+Cause and fix: [emoji](frontend/emoji.md#the-picker-paints-at-once---2026-11-08). On a pre-release, killed app, a conversation with at least one message: open a conversation, wait for it to settle, tap a message's reaction "+" (then the composer's emoji button on a second run). Read: no cell of the first screen of "Smileys et emotions" is blank or grows, "Recents" has no empty tile, the tab bar shows nine icons and no stray glyph, on the FIRST open after a cold launch. Record the first-frame state with a screen capture.
+
+## The seed mirror labelled by account - owed (2026-11-07)
+
+**Proves** that the Graine seed mirror's account labels are written on hardware by both writers (the
+page and the push decrypt) and that one account's wipe removes its own seeds and leaves the other
+account's ([auth](frontend/modules/auth.md#the-seed-mirror-labels-each-entry-with-its-writers-2026-11-07)).
+Verified so far by host tests only, and no mobile target was compiled on the Windows box that wrote
+it: the Kotlin absorber now reads `{stored, leftToApp}` from the JNI writer, and the Objective-C
+activation mirror hands the seed file to Rust (`canari_ios_mirror_graine_seeds_to_app_group`) instead
+of copying it. Needs a pre-release carrying the change, the iPhone 12 (`tools/ios-device`) - the
+platform with TWO copies of the mirror (app and App Group) - then the Mi 9T, and two test accounts A
+and B that are both members of one community with two salons S and T, plus a second device for B. A
+message is "under a session" until that salon rotates (a member joining rotates it): keep T quiet of
+joins for the whole reading.
+
+1. On the phone, sign in as A and let its community sync settle, then sign out and sign in as B -
+   for the FIRST time on this phone. Opening a salon mirrors nothing: the page mirrors a seed when it
+   RECEIVES one (B's first community sync replays the key-group frames that carry T's current
+   session) or when it MINTS one. After B's first sync settles, T's current session is labelled A
+   and B.
+2. Still as B, app killed: have a member mint a new session in S (a member joining is enough), then
+   send a message in S: **expect** a decrypted banner - the seed frame went through the push writer,
+   whose entry is labelled B alone.
+3. From B's other device, remove this phone from B's devices. **Expect** the per-account wipe (A
+   still lives here), with the page's line `[REVOKED-LOCAL] ... mirrored Graine seeds: N seed
+   entry(ies) removed from the app's copy (alone on the install: false)` and, from Rust, one line PER
+   COPY: `[GRAINE_MIRROR] the account's seeds in the app's copy: N removed, M kept for another
+   writer, 0 of unknown writer removed, K of unknown writer left, C channel(s) dropped`, and on iOS
+   a second line `... in the App Group copy: ...` with its own counts (equal to the app's when the
+   group copy was current). N counts the sessions only B wrote (step 2's at least), M the ones A also
+   wrote (T's at least), K the ones mirrored before this build. `0 of unknown writer removed` is the
+   point: another account lives here.
+4. Sign in as A WITHOUT the community sync reaching T (airplane mode right after sign-in), kill the
+   app, back online, send a message in T from another client: **expect** a decrypted banner - A's
+   label kept the shared entry through B's wipe.
+5. On the OTHER phone, holding ONE account only and updated over a pre-label build (so its mirror
+   has entries of unknown writer), with a throwaway test account: delete that account from
+   Settings. **Expect** `(alone on the install: true)` on the page's line and `K of unknown writer
+   removed` with `0 of unknown writer left` on Rust's - the pre-label entries go with the install's
+   last account. (A signed-out account keeps its parked MLS state, so it still counts as "on the
+   install": steps 1-4's phone never reads `true`.)
+6. Nothing in the log at ERROR `[GRAINE_PUSH] seed ... carries no writer account` at any step: that
+   line means a push decrypt reached the writer without its stamp. On Android, a seed RELAYED for the
+   app (no channel known to the push) logs at INFO `left to the app`, never at ERROR.
 
 ## The camera tab and Android Back - read on the Mi 9T, `1.6.3-alpha.2`, 2026-11-02
 
@@ -1860,6 +1938,80 @@ for LA, plus the Xcode device console (or Console.app) filtered on `leave flush`
    aeroplane mode off and open the app: the owed mark leaves at once (the web tab drops the badge).
 3. **Off iOS nothing changed.** On the Mi 9T, repeat step 1: there is no `leave flush` line, and the mark leaves
    as before.
+
+## CKS. The checkpoint-skip switch on dev - owed on BOTH phones before the flip
+
+**THE SWITCH STAYS `off` IN PRODUCTION UNTIL BOTH READINGS PASS ON BOTH PHONES** (the Mi 9T and the
+iPhone 12). WP-CHECKPOINT-SKIP was built on 2026-11-07 behind `platform_config.checkpoint_skip_mode`
+(core migration 020): with it `on`, a live drain that only received application frames leaves its
+MLS checkpoint to the next send, commit, background edge or logout, until 100 receive generations are
+unsaved. The decision, the measurement of 2026-10-22 and what it left uncovered are in
+[open-questions](open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below).
+What is read here is the two cases that measurement did not cover.
+
+**Precondition - NOT ambient, assert each line:**
+
+- A pre-release carrying the switch serves dev (`GET https://dev.canari-emse.fr/api/version` answers
+  a `checkpointSkip` field) and is installed on the phone (Mi 9T: the release APK or the Play tester
+  build; iPhone 12: TestFlight). A bench debug build is not needed.
+- **The switch is `on` on dev**: as `canari-test-gamma` (dev's global admin) at `/admin/platform`,
+  "Sauvegarde de l'état de chiffrement après réception" -> "Différée", saved; then
+  `/api/version` answers `"checkpointSkip":{"mode":"on"}`.
+- **The phone heard it**: a running session re-reads the mode only at its next version check,
+  which focus, coming back online and visibility trigger (there is no periodic refresh), and only a
+  LIVE answer counts, never the cached one. After a relaunch (or a return to the foreground), the
+  in-app log carries
+  `[MLS] Checkpoint skip ON: live receive-only drains defer their checkpoint while fewer than 100
+  receive generations are unsaved`. Without that line the run is a control, not a reading.
+- A DM between the phone's bench account and a peer driven from the harness Chrome, which sends
+  NUMBERED messages (`live-1`, `dead-1`, ...) so a gap or a duplicate is read off the conversation.
+- The phone's in-app log open afterwards (the summary and the reload lines go through it; the
+  per-drain `checkpoint deferred ...` line is a debug line, read only in a debug build's console).
+
+**CKS-1. A kill DURING a drain of more than K frames.**
+
+1. Phone open on the feed (NOT the DM, so the drain is the only reader). The peer sends `live-1` ..
+   `live-10`; the phone receives them and writes no checkpoint line for them (they are deferred).
+2. Kill the app: Mi 9T `adb shell am force-stop fr.emse.canari`; iPhone, swipe it away in the app
+   switcher.
+3. The peer sends `dead-1` .. `dead-300` while the phone is dead.
+4. Relaunch and unlock, and kill the app again while the catch-up drain runs - the first time right
+   after the unlock, the second time a second or two later, the third time just after the in-app log
+   shows `Encrypted state checkpoint persisted. Covers ...` (the drain reached K = 100 and
+   checkpointed). Three kills, three relaunches.
+5. Relaunch, unlock, wait for the list to settle, open the DM.
+
+**Expect:** every one of the 310 messages exactly once, in order; in the log no `live-ahead`, no
+`unreadable for good`, no duplicate row, and at least one `Covers N receive generations left by M
+skipped drains` line. A message missing, doubled or unreadable is a FAIL.
+
+**CKS-2. A phone away for HOURS with traffic** - two runs, because they take two different paths.
+
+- **(a) Killed.** Phone open on the feed; the peer sends `live-1` .. `live-20` (deferred). Mi 9T:
+  `adb shell input keyevent KEYCODE_HOME`, then `adb shell am kill fr.emse.canari` and assert
+  `pidof` is empty - **never `force-stop` here**, which cancels every FCM broadcast and so takes the
+  background engine out of the run; iPhone: swipe it away.
+- **(b) Backgrounded, not killed** (the native resume reload, the path that can say `live-ahead`).
+  Same start, then only Home - the process stays alive.
+
+For each run, over AT LEAST THREE HOURS the peer sends one numbered message every ~15 minutes and,
+once in the middle, a burst of 50. Write down every notification the phone shows. The background
+engine decrypts each push READ-ONLY from `mls.bin`, which is behind by the deferred generations, and
+never writes it (the one background write, a staged Welcome, is refused while the app runs:
+`foreground-active` / `warm-process` in `prepare_welcome_background_with_key`,
+`mobile/background.rs`). Then open the app, unlock, open the DM.
+
+**Expect:** every message exactly once, in order; every notification shown matches a message in the
+DM; no `unreadable for good`, no duplicate. What this targets: that a push decrypted from a file
+behind by up to 99 generations still shows its text, and, in run (b), that the resume reload says
+`live-ahead` (expected with deferred generations: the live state is persisted over the file,
+`TauriMlsService.reloadStateFromDisk`, which discards nothing since the engine never wrote it) and
+keeps every message. A missing message, or a notification that could not be read, is a FAIL.
+
+**After the run:** the verdict, the build, the phone and the counts go into a row here and into
+[the question](open-questions.md#the-readings-owed-before-the-flip). Any FAIL: the switch goes back
+to `off` on dev at once and the question is reopened. Both readings passing on both phones: the lead
+flips production at `/admin/platform` and says so.
 
 ## The iPhone 12 owed-readings inventory (2026-10-11)
 

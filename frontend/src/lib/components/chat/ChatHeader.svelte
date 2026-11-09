@@ -20,7 +20,7 @@
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
-  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import { userDisplayName } from '$lib/utils/users/displayNames.svelte';
   import { openProfile } from '$lib/utils/users/profileHref';
   import { isAbsentUser } from '$lib/utils/users/absentUsers';
   import ProfileLink from '../shared/ProfileLink.svelte';
@@ -204,10 +204,20 @@
   });
 
   let isOnline = $derived($presenceMap[contactName] || false);
-  let resolvedContactDisplayName = $state('');
+  /**
+   * A DM is titled with its peer's name - the ONE resolver's, read with this conversation's scope so a
+   * nickname set here titles it (`getUserDisplayNameSync`). A group or a salon is titled with its own
+   * name, and its `contactName` is no user id, so nothing is resolved for it (an empty id asks
+   * nobody).
+   */
+  const peerName = userDisplayName(
+    () => (!isGroupConversation && !isChannel ? contactName : ''),
+    () => displayName,
+    () => groupId
+  );
 
   const effectiveDisplayName = $derived(
-    !isGroupConversation && !isChannel ? resolvedContactDisplayName : displayName
+    !isGroupConversation && !isChannel ? peerName.current : displayName
   );
 
   const pillLabel = $derived(
@@ -229,19 +239,6 @@
       watchUsers([watched]);
       return () => unwatchUsers([watched]);
     }
-  });
-
-  $effect(() => {
-    if (isGroupConversation || isChannel) {
-      resolvedContactDisplayName = displayName;
-      return;
-    }
-    resolvedContactDisplayName = getUserDisplayNameSync(contactName, displayName);
-    resolveUserDisplayName(contactName).then((resolved) => {
-      if (resolved) {
-        resolvedContactDisplayName = resolved;
-      }
-    });
   });
 </script>
 

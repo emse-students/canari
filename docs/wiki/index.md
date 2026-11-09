@@ -24,6 +24,7 @@
 - [MLS defects the campaign measured](protocols/campaign-measured-defects.md) — The reasoning, numbers, recurrences and refuted readings behind the open MLS healing and delivery entries of the backlog
 - [MLS desync prevention](protocols/mls-desync-prevention.md) — Server + client tactics to avoid state drift
 - [MLS recovery ladder](protocols/mls-recovery-ladder.md) — Step-by-step recovery (commit replay → external join → welcome_request)
+- [MLS availability with no holder](protocols/mls-availability-no-holder.md) — Who can get back into a group no live device holds: the audit of 2026-10-31, the owner's decisions D1-D6 (a further device lets itself in when no member device is online; the "cannot be opened here" banner decided by server facts only)
 - [MLS + Graine state machine](protocols/mls-graine-state-machine.md) — **Every path, drawn from the code.** Mermaid diagrams with `file:line` on every transition, the duplicate-path table, the dead ends, and the P1/P2/P3 triage
 - [Channel encryption](protocols/channel-encryption.md) — **Graine, PHASES 1-5 ARE IN.** Why a salon is not an MLS group, the per-sender seed the server has never held, and the cut that is still owed
 - [Graine rotates on a departure (design)](protocols/graine-removal-tracker.md) — DESIGN ONLY, reviewed before code: a commit summary from `mls-core` on every platform, a per-key-group clean run, the fail-safe argument, reuse across an Add by re-distributing the same seed, `joined` keeps rotate-on-add
@@ -54,6 +55,7 @@
 - [Frontend architecture](frontend/architecture.md) — SvelteKit 5, stores, routing, Paraglide i18n
 - [Guided help](frontend/guided-help.md) - the welcome tour and first-time hints: one engine, how to declare a help, a missing target decided by an event, the quiet state, and the per-account seen store
 - [Design reference](frontend/design-reference.md) - Messenger and Facebook MEASURED, Canari's 36 font sizes measured beside them, and the scale that replaces them
+- [Controls](frontend/controls.md) - one 40 px height, one grey edge, three mandatory components (Button, Input, Select) and the ratchet test that fails a screen drawing its own
 - [SEO and link previews](frontend/seo.md) — why a login-gated SPA needs server-rendered heads, the sitemap and robots routes, and what each decision follows from
 - [Local-first UI](frontend/local-first-ui.md) - the rule that no interaction servable from local state may await the network, what a shaped link measured on the phone, and the ledger of what is fixed
 - [Offline and weak network](frontend/offline-and-weak-network.md) - what each send and load path does offline and on Slow 3G / 2G, measured on the sandbox pair, the root causes with file:line, and the ordered work packages (salon outbox, deadlines, boot chain)
@@ -131,6 +133,8 @@
 - [Association permissions](association-permissions.md) — The eleven flags measured from their call sites, the one predicate answering "may this user act here", and the two tiers above a member
 - [Cotisations](cotisations.md) — Membership dues: cotisant tags, boutique products, form member pricing
 - [Carte de la Vie Asso](carte-vie-asso.md) — Editable poster generator (drag & drop canvas, PDF export)
+- [Engagement](engagement.md) - the owner's decisions of 2026-11-07: who a live and a post notify, follow suggestions (the query, measured), the per-account bell, the daily push cap, what each surface reveals, WP-1..WP-10
+- [Birthdays](birthdays.md) - day and month on the profile, who sees the date, the ring on the day for everyone, the followers' morning notice: the data, the rules, the proofs
 
 ### Compliance (GDPR)
 

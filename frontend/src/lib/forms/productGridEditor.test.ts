@@ -327,23 +327,33 @@ describe('the wire trip', () => {
     expect(parseEuroInput('1,005')).toBe(1.01);
   });
 
-  it('turns a typed 19,99 into 1999 cents, and every stored cent amount survives the trip back', () => {
+  it('turns a typed 19,99 into 1999 cents', () => {
     const grid = newProductGrid();
     grid.rows[0].label = 'Vert';
     grid.columns[0].label = 'M';
     setPrice(grid, '_all', '*', parseEuroInput('19,99'));
     expect(productGridPayload(grid).pricing.prices._all['*']).toBe(1999);
-    // Every amount the contract accepts, read back as euros and sent again, is the same cents.
-    // Checked in a plain loop (an `expect` per amount would take seconds), the misses collected.
-    const misses: number[] = [];
-    for (let cents = 0; cents <= 1_000_000; cents += 1) {
-      const euros = cents / 100;
-      if (Math.round(euros * 100) !== cents || parseEuroInput(euroInputText(euros)) !== euros) {
-        misses.push(cents);
-      }
-    }
-    expect(misses).toEqual([]);
   });
+
+  // Every amount the contract accepts (0 to 1 000 000 cents), read back as euros and sent again,
+  // is the same cents. Exhaustive, in ten slices of 100 000 so each case stays far under the
+  // per-test budget on a loaded runner; a plain loop collects the misses (an `expect` per amount
+  // would take seconds).
+  it.each(Array.from({ length: 10 }, (_, slice) => slice))(
+    'every stored cent amount survives the trip back (slice %i of 10)',
+    (slice) => {
+      const misses: number[] = [];
+      const first = slice * 100_000;
+      const last = slice === 9 ? 1_000_000 : first + 99_999;
+      for (let cents = first; cents <= last; cents += 1) {
+        const euros = cents / 100;
+        if (Math.round(euros * 100) !== cents || parseEuroInput(euroInputText(euros)) !== euros) {
+          misses.push(cents);
+        }
+      }
+      expect(misses).toEqual([]);
+    }
+  );
 
   it('keeps a price above the contract bound, so the save names it rather than clamping it', () => {
     const grid = newProductGrid();

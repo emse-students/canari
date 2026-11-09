@@ -73,8 +73,8 @@ describe('biometric login pulls the key into the session', () => {
 
   it('stores it in the session context, and only there', () => {
     // ctx.setDeviceKey feeds every local-message crypto call site. The local `deviceKeyB64` must
-    // stay empty: it gates the device-key vault write and store_push_context, both of which
-    // biometric mode must keep skipped.
+    // stay empty: it gates the device-key vault write and the key half of store_push_context,
+    // both of which biometric mode must keep skipped (the push context's file is still written).
     const block = biometricKeyBlock();
     expect(block).toContain('ctx.setDeviceKey(sessionKey)');
     expect(block).not.toContain('deviceKeyB64 = sessionKey');

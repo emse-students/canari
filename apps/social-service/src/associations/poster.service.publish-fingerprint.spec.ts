@@ -15,9 +15,14 @@ describe('PosterService - the fingerprint of the document that went live', () =>
   let saved: PosterProject;
   let service: PosterService;
 
+  /** The platform admin: bounded by nothing, so no scope query runs. */
+  const ADMIN = { userId: 'admin', isGlobalAdmin: true };
+  /** The switches the map holds; `a1` is on unless a test turns it off. */
+  let entries: { associationId: string; enabled: boolean }[];
+
   /** A repository stub recording what publish/unpublish write, which is what these tests read. */
   function repo() {
-    const row = { id: 'p1' } as PosterProject;
+    const row = { id: 'p1', spaceId: 's1' } as PosterProject;
     const inner = {
       update: (where: unknown, patch: Record<string, unknown>) => {
         updates.push({ where, patch });
@@ -32,11 +37,25 @@ describe('PosterService - the fingerprint of the document that went live', () =>
         return Promise.resolve(project);
       },
       manager: {
+        // The associations space `s1` offers (`CARTE_SPACE_ASSOCIATIONS_SQL`).
+        query: () => Promise.resolve([{ id: 'a1' }]),
         transaction: (run: (m: unknown) => Promise<unknown>) =>
-          run({ getRepository: () => inner }) as Promise<PosterProject>,
+          run({
+            getRepository: () => inner,
+            // The per-space lock (`SELECT ... FOR NO KEY UPDATE`): recorded, answered with nothing.
+            query: (sql: string, params: unknown[]) => {
+              locks.push({ sql, params });
+              return Promise.resolve([]);
+            },
+          }) as Promise<PosterProject>,
       },
     };
   }
+
+  /** The switch table stub: `find` answers the switches that are ON, as the service asks. */
+  const entryRepo = () => ({
+    find: () => Promise.resolve(entries.filter((e) => e.enabled)),
+  });
 
   /** The smallest document `sanitizePublishedCarte` accepts: one placeable unit. */
   function carte() {
@@ -86,28 +105,74 @@ describe('PosterService - the fingerprint of the document that went live', () =>
     };
   }
 
+  let locks: { sql: string; params: unknown[] }[] = [];
+
   beforeEach(() => {
+    locks = [];
     updates = [];
     saved = undefined as unknown as PosterProject;
-    service = new PosterService(repo() as never);
+    entries = [{ associationId: 'a1', enabled: true }];
+    service = new PosterService(repo() as never, {} as never, entryRepo() as never);
   });
 
   const patchFor = (id: string) => updates.find((u) => u.where === id)?.patch;
 
   it('stores the fingerprint the client computed for the document it sent', async () => {
-    await service.publish('p1', { carte: carte(), fingerprint: FP });
+    await service.publish('p1', { carte: carte(), fingerprint: FP }, ADMIN);
     expect(patchFor('p1')?.publicationFingerprint).toBe(FP);
   });
 
-  it('clears the previous live map fingerprint with its publication', async () => {
-    await service.publish('p1', { carte: carte(), fingerprint: FP });
+  it('clears the previous live map OF ITS SPACE, fingerprint included', async () => {
+    await service.publish('p1', { carte: carte(), fingerprint: FP }, ADMIN);
     const clearing = updates.find((u) => u.where !== 'p1');
+    expect(clearing?.where).toMatchObject({ spaceId: 's1' });
     expect(clearing?.patch).toMatchObject({ publication: null, publicationFingerprint: null });
+  });
+
+  // The document is built by the editor; the server holds the rule that a switched-off association
+  // never reaches the anonymous showcase through this map.
+  it('refuses a unit whose association is switched off on the map, and publishes nothing', async () => {
+    entries = [{ associationId: 'a1', enabled: false }];
+    await expect(
+      service.publish('p1', { carte: carte(), fingerprint: FP }, ADMIN)
+    ).rejects.toMatchObject({ response: { code: 'CARTE_UNIT_OUTSIDE_MAP' } });
+    expect(updates).toEqual([]);
+  });
+
+  it('serialises the publish on its space row before clearing the previous live map', async () => {
+    await service.publish('p1', { carte: carte(), fingerprint: FP }, ADMIN);
+    expect(locks).toEqual([
+      { sql: expect.stringMatching(/FROM spaces .* FOR NO KEY UPDATE/), params: ['s1'] },
+    ]);
+  });
+
+  // A roster line is as public as a unit: a switched-off association is no more in the directory.
+  it('refuses a directory line naming an association the map does not show', async () => {
+    const doc = {
+      ...carte(),
+      directory: {
+        zones: [
+          {
+            label: 'Z',
+            assos: [
+              { assoId: 'a1', line: 'x' },
+              { assoId: 'a9', line: 'y' },
+            ],
+          },
+        ],
+      },
+    };
+    await expect(
+      service.publish('p1', { carte: doc, fingerprint: FP }, ADMIN)
+    ).rejects.toMatchObject({
+      response: { code: 'CARTE_UNIT_OUTSIDE_MAP' },
+    });
+    expect(updates).toEqual([]);
   });
 
   // Every client admitted since floor 1.2.7 sends the wrapper, so a bare document is a bug.
   it('refuses a bare document, and publishes nothing', async () => {
-    await expect(service.publish('p1', carte())).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.publish('p1', carte(), ADMIN)).rejects.toBeInstanceOf(BadRequestException);
     expect(patchFor('p1')).toBeUndefined();
   });
 
@@ -116,15 +181,15 @@ describe('PosterService - the fingerprint of the document that went live', () =>
   it.each([['not-hex'], ['A'.repeat(64)], ['a'.repeat(63)], [''], [42], [undefined]])(
     'refuses a malformed or absent fingerprint (%p), and publishes nothing',
     async (fingerprint) => {
-      await expect(service.publish('p1', { carte: carte(), fingerprint })).rejects.toBeInstanceOf(
-        BadRequestException
-      );
+      await expect(
+        service.publish('p1', { carte: carte(), fingerprint }, ADMIN)
+      ).rejects.toBeInstanceOf(BadRequestException);
       expect(patchFor('p1')).toBeUndefined();
     }
   );
 
   it('forgets the fingerprint when the poster goes offline', async () => {
-    await service.unpublish('p1');
+    await service.unpublish('p1', ADMIN);
     expect(saved.publicationFingerprint).toBeNull();
     expect(saved.publication).toBeNull();
   });

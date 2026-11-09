@@ -22,6 +22,8 @@ describe('FormsService.list', () => {
     const queries: Record<string, unknown>[][] = [];
     const formRepo: any = {
       find: jest.fn(() => Promise.resolve(opts.owned ?? [])),
+      // The unpublished-revision marks (migration 146): none here.
+      manager: { query: jest.fn(() => Promise.resolve([])) },
       // One query-builder call in `list`: the association scan.
       createQueryBuilder: jest.fn(() => {
         const result = opts.viaAssociation ?? [];

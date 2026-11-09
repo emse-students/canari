@@ -5,6 +5,8 @@
  * Each function receives `ctx: SessionContext` instead of the closure,
  * and `cb: ChatSessionCallbacks` to interact with conversations / UI.
  */
+import { forgetConversationNicknames } from '$lib/utils/users/conversationNicknames.svelte';
+import { noteMlsStateLoaded, promotedSinceLoad } from '$lib/mls-client/stateAuthority';
 import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
@@ -53,6 +55,7 @@ import { describeRefusalCode } from '$lib/utils/refusalCodes';
 import {
   LoginFailure,
   LoginStoppedBySignOutError,
+  LoginStoppedForPromotionError,
   type LoginStop,
   hardwareKeyLoginFailure,
   isExpectedLoginOutcome,
@@ -264,6 +267,7 @@ import { takeKeyGroupPushJoins } from '$lib/utils/graine/keyGroupPushJoins';
 import { drainNseOutcomes } from '$lib/mobile/nseOutcomes';
 import { drainNativePushLog } from '$lib/mobile/nativePushLog';
 import { uploadClassFor } from '$lib/reels/chatReelWriter';
+import { reelSendFailedNotice } from '$lib/reels/reelSendTargets';
 import { ACCOUNT_KEY, SESSION_META_STORE } from '$lib/utils/accountLocalKeys';
 import { isDeletedAccountHere, wipeReasonOf } from '$lib/utils/deletedAccountMarker';
 import { registerDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
@@ -499,6 +503,13 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     releaseChatReel: async (mediaId: string) => {
       const { MediaService } = await import('$lib/media');
       return new MediaService().releaseChatReel(mediaId, ownerToken);
+    },
+    // A SEND OF A TAKE FAILED FOR GOOD (15.2): its thread already says why; this tells a member who
+    // pressed "Envoyer a..." on the camera tab, and is no longer in that thread, WHICH one.
+    onReelSendFailed: (failure: import('$lib/utils/chat/outbox').ReelSendFailure) => {
+      const notice = reelSendFailedNotice(cb.conversations, failure, ownerId);
+      cb.log(`[OUTBOX] a reel ${failure.kind} failed for good - one notice: ${notice.form}`);
+      showToast(notice.text, 'error');
     },
   };
 }
@@ -801,6 +812,7 @@ async function eraseAccountRecordsLocally(
 ): Promise<void> {
   localStorage.removeItem(ACCOUNT_KEY.deviceId(userIdToReset));
   localStorage.removeItem(ACCOUNT_KEY.syncGuideSeen(userIdToReset));
+  forgetConversationNicknames(userIdToReset);
 
   const deviceNamePrefix = ACCOUNT_KEY.deviceName(userIdToReset, '');
   const keysToDelete: string[] = [];
@@ -1748,6 +1760,9 @@ export async function loginImpl(
     endBootSpan('tab-leadership', { leader: tabLeaderNow });
     stopIfSignedOut('tab-leadership');
     ctx.setIsTabLeader(tabLeaderNow);
+    // THE STATE READ BELOW IS READ WITH THIS ROLE: only a document that loads it as the leader holds
+    // the authoritative copy, and only it commits or serves a follower's commits (`stateAuthority`).
+    noteMlsStateLoaded(tabLeaderNow);
     if (!tabLeaderNow) {
       cb.log('[TAB] Follower tab - WebSocket active in another Canari tab.');
     }
@@ -1872,8 +1887,9 @@ export async function loginImpl(
     // swallows its error. That is a whole biometric session of history quietly not being saved.
     //
     // The local `deviceKeyB64` deliberately stays empty: it means "a key the caller supplied", and
-    // it is what gates the device-key vault write and store_push_context further down. Biometric
-    // mode must keep both skipped - the keystore is the only place this key belongs at rest.
+    // it is what gates the device-key vault write and the KEY half of store_push_context further
+    // down. Biometric mode must keep both skipped - the keystore is the only place this key belongs
+    // at rest. The push context's FILE is still written, with no key (TauriMlsService init).
     if (isBiometric) {
       beginBootSpan('keystore-session-key');
       const sessionKey = await mlsService.resolveSessionDeviceKey();
@@ -1943,6 +1959,10 @@ export async function loginImpl(
     // awaits before `setIsLoggedIn(true)`, so from here a sign-out finds a live session and
     // `endSessionImpl` stops it - and every await further down re-reads the generation.
     stopIfSignedOut('auth-token-final');
+    // PROMOTED SINCE THE STATE WAS LOADED AS A FOLLOWER: the promotion handler reloads only a live
+    // session, so a promotion during the login is found HERE, synchronously before going live, and
+    // the page reloads instead - never a live session (pulls, ACKs, key packages) on that copy.
+    if (promotedSinceLoad()) throw new LoginStoppedForPromotionError();
     ctx.setAuthToken(sessionToken);
     ctx.setIsOfflineSession(offlineSession);
 
@@ -2792,6 +2812,15 @@ export async function loginImpl(
       cb.log(`[SECURITY] The revoked-device wipe FAILED - local data may remain: ${String(_e)}`);
       console.error('[SECURITY] The revoked-device wipe failed - local data may remain:', _e);
     }
+    if (_e instanceof LoginStoppedForPromotionError) {
+      withdrawLandingPreview('promoted to leader during the login');
+      cb.log(
+        '[TAB] Promoted to leader during the login, on a state loaded as a follower - reloading before going live.'
+      );
+      releaseLoginStoppedBySignOut(ctx, cb, loginClient, loginHandshake);
+      ctx.reloadForPromotion(cb.log);
+      return;
+    }
     if (
       _e instanceof SignOutInProgressError ||
       _e instanceof LoginStoppedBySignOutError ||
@@ -3568,24 +3597,6 @@ export function tearDownLiveSession(
     finalWrite = Promise.resolve();
   }
 
-  // THE SERVER-SIDE DEREGISTRATION OF A LIVE SESSION, and only that. The device deletes its own push
-  // registration at every sign-out regardless (`endPushRegistration`, run by `clearAuth`), and the
-  // server ends the device's push token itself when it ends the session (logout and every
-  // revocation, core-service) - so this call is a third, redundant path, kept for a live session.
-  if (reason === 'logout') {
-    const tokenForPushCleanup = ctx.getAuthToken();
-    const deviceForPushCleanup = ctx.getMyDeviceId();
-    if (isRefreshCredentialProvenDead()) {
-      // A DEAD SESSION ENDING: the server already refused this session's credential, so this call
-      // would only earn a refusal. The device's own deletion still runs from `clearAuth`.
-      cb.log(
-        '[LOGOUT] Server push deregistration skipped - the session is already dead; the device deletes its token.'
-      );
-    } else if (tokenForPushCleanup && deviceForPushCleanup) {
-      void stopPushService(ctx.getHistoryBaseUrl(), tokenForPushCleanup, deviceForPushCleanup);
-    }
-  }
-
   if (ctx.timers.reconnect !== null) {
     clearTimeout(ctx.timers.reconnect);
     ctx.timers.reconnect = null;
@@ -3626,6 +3637,31 @@ export function tearDownLiveSession(
 }
 
 /**
+ * THE SERVER-SIDE PUSH DEREGISTRATION OF A LIVE SESSION, started while its credential is valid.
+ *
+ * The first step of a sign-out; the caller hands the returned promise to `clearAuth`, which awaits
+ * it BEFORE the revocation (then the socket closes, then the session is revoked and wiped). Run
+ * beside the revocation it was refused `HTTP 401` (Mi 9T, `1.6.7-alpha.3`). The device deletes its
+ * own push registration at every sign-out regardless (`endPushRegistration`, run by `clearAuth`),
+ * and the server ends the device's token when it ends the session, so this call only keeps the
+ * server's row from outliving the sign-out by a revocation that fails. NEVER REJECTS.
+ */
+function deregisterPushOfLiveSession(ctx: SessionContext, cb: ChatSessionCallbacks): Promise<void> {
+  const token = ctx.getAuthToken();
+  const deviceId = ctx.getMyDeviceId();
+  if (isRefreshCredentialProvenDead()) {
+    // A DEAD SESSION ENDING: the server already refused this session's credential, so this call
+    // would only earn a refusal. The device's own deletion still runs from `clearAuth`.
+    cb.log(
+      '[LOGOUT] Server push deregistration skipped - the session is already dead; the device deletes its token.'
+    );
+    return Promise.resolve();
+  }
+  if (!token || !deviceId) return Promise.resolve();
+  return stopPushService(ctx.getHistoryBaseUrl(), token, deviceId);
+}
+
+/**
  * Ends the live session on the device because the user signed out - the device half of `clearAuth`.
  *
  * REACHED FROM `clearAuth` ITSELF (through `setSignOutHandler`, wired by the app shell), because
@@ -3642,8 +3678,11 @@ export function tearDownLiveSession(
  * What a PIN protects is untouched - `mls.bin`, the message database and the device-key vault -
  * because a sign-out keeps the local state (user, "deconnecter seulement, garder l'etat"); the
  * identity and the credentials are `clearAuth`'s own work.
+ *
+ * Resolves once the server's push deregistration has answered (never rejects): `clearAuth` awaits it
+ * before it revokes the session.
  */
-export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
+export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): Promise<void> {
   if (!ctx.isLoggedIn()) {
     // A LOGIN IN FLIGHT HOLDS A CLIENT THAT IS NOW THE SIGNED-OUT ACCOUNT'S. The holder lets go of it
     // now, so the next sign-in cannot be handed it (it waits for this retirement, then builds its
@@ -3657,7 +3696,7 @@ export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): v
         '[LOGOUT] Signed out during a login - its MLS client is retired once that login stops.'
       );
       void ctx.retireMls(stopping);
-      return;
+      return Promise.resolve();
     }
     cb.log('[LOGOUT] Signed out with no live session on this device - nothing to stop.');
     // BUT A CLIENT MAY STILL HOLD A STATE THAT WAS OPENED. The PIN gate's recovery opens the state
@@ -3667,9 +3706,14 @@ export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): v
     // the native session ended in the chain the next sign-in waits on. With no client it ends only
     // the native session, which is then already empty.
     void ctx.retireMls(Promise.resolve());
-    return;
+    return Promise.resolve();
   }
   cb.log(`[LOGOUT] Signing out userId=${ctx.getUserId()?.slice(0, 8) ?? 'unknown'}...`);
+  // ORDER OF A SIGN-OUT: (1) the server's push deregistration, started NOW while the credential is
+  // valid and awaited by `clearAuth` before it revokes the session; (2) the socket; (3) the
+  // teardown, the local wipe and, in `clearAuth`, the revocation. Revoking first refused the
+  // deregistration `HTTP 401` and left the socket's native close to run on a dead connection.
+  const pushDeregistered = deregisterPushOfLiveSession(ctx, cb);
   // THE SOCKET GOES BEFORE THE FINAL FLUSH. The gateway does not close it when the server revokes the
   // session, and the teardown below unregisters the state persister: left open, it kept decrypting
   // and ACKing the leaving account's frames, and every MLS advance they made after the flush was in
@@ -3699,6 +3743,7 @@ export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): v
   ctx.setStorage(null);
   ctx.setAuthToken('');
   cb.log('[LOGOUT] Live session stopped.');
+  return pushDeregistered;
 }
 
 /**

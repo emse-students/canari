@@ -150,7 +150,8 @@ describe('AuthController sessions', () => {
         erasureState: jest.fn().mockResolvedValue('none'),
         confirmAfterSignIn: jest.fn().mockResolvedValue('none'),
       } as never,
-      {} as never // RestoreCredentialsService: no restore route here
+      {} as never, // RestoreCredentialsService: no restore route here
+      {} as never // HandoffService: no handoff route here
     );
   });
 
@@ -178,7 +179,8 @@ describe('AuthController sessions', () => {
           erasureState: jest.fn().mockResolvedValue('none'),
           confirmAfterSignIn: jest.fn().mockResolvedValue('none'),
         } as never,
-        {} as never // RestoreCredentialsService: no restore route here
+        {} as never, // RestoreCredentialsService: no restore route here
+        {} as never // HandoffService: no handoff route here
       );
 
     const cookieOptionsFor = async (origin: string): Promise<Record<string, unknown>> => {
@@ -693,7 +695,8 @@ describe('AuthController sessions', () => {
             .mockResolvedValue(erasure.during ?? erasure.before),
           confirmAfterSignIn: jest.fn().mockResolvedValue(erasure.after),
         } as never,
-        {} as never // RestoreCredentialsService: no restore route here
+        {} as never, // RestoreCredentialsService: no restore route here
+        {} as never // HandoffService: no handoff route here
       );
     }
 

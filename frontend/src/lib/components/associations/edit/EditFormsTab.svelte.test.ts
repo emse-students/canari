@@ -102,3 +102,74 @@ describe('EditFormsTab - a guest paying cash', () => {
     );
   });
 });
+
+describe('EditFormsTab - a draft', () => {
+  it('marks a draft, and only a draft, so nobody links it believing it live', async () => {
+    state.forms = [
+      { ...form(), id: 'draft-1', title: 'Gala', status: 'draft' },
+      { ...form(), id: 'live-1', title: 'Merch', status: 'published' },
+    ];
+    state.pending = [];
+    const target = await render();
+    const badges = target.querySelectorAll('[data-testid="form-draft-badge"]');
+    expect(badges).toHaveLength(1);
+    expect(badges[0]?.textContent?.trim()).toBe(m.form_status_draft_badge());
+    expect(badges[0]?.closest('li')?.textContent).toContain('Gala');
+  });
+});
+
+describe('EditFormsTab - a form card on a phone', () => {
+  // happy-dom lays nothing out, so the rule is pinned where it lives: the classes that decide it.
+  it('gives the title the whole width, and puts the actions below it until the card is wide', async () => {
+    state.forms = [{ ...form(), title: 'Billetterie du gala de fin d année', status: 'draft' }];
+    state.pending = [];
+    const target = await render();
+    const card = target.querySelector('li')!;
+    const header = target.querySelector('[data-testid="form-card-header"]')!;
+    const title = target.querySelector('[data-testid="form-card-title"]')!;
+    const actions = target.querySelector('[data-testid="form-card-actions"]')!;
+    // The card is the container the breakpoint reads, not the window.
+    expect(card.classList).toContain('@container');
+    // Stacked by default; side by side only from the container's `md`.
+    expect(header.classList).toContain('flex-col');
+    expect(header.classList).toContain('@md:flex-row');
+    // The title may shrink below its content (min-w-0) and takes what is left (flex-1); no fixed
+    // minimum it could be crushed against.
+    expect(title.classList).toContain('min-w-0');
+    expect(title.classList).toContain('flex-1');
+    expect([...title.classList].some((c) => /^min-w-[1-9]/.test(c))).toBe(false);
+    // The actions wrap among themselves, and never hold a width of their own below `md`.
+    expect(actions.classList).toContain('flex-wrap');
+    expect([...actions.classList].some((c) => /^(w|min-w)-[1-9]/.test(c))).toBe(false);
+    // The draft marker sits with the title.
+    expect(title.querySelector('[data-testid="form-draft-badge"]')).not.toBeNull();
+  });
+});
+
+describe('EditFormsTab - the paid-forms banner on a phone', () => {
+  // happy-dom lays nothing out: the rule is pinned as the classes that decide it. A button is an
+  // atomic inline box, so a long link label could not break and jumped to its own line, leaving the
+  // closing full stop alone (iPhone, 2026-11-08); `inline` lets it flow with the sentence.
+  it('lets the link flow inside the sentence and keeps the full stop right after it', async () => {
+    state.forms = [{ ...form(), basePrice: 2800 }];
+    state.pending = [];
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    component = mount(EditFormsTab, {
+      target,
+      props: {
+        asso,
+        onlinePaymentsReady: false,
+        canManagePayoutAccount: true,
+        onGoToPayments: () => {},
+      },
+    });
+    await flushMacrotask();
+    await flushMacrotask();
+    flushSync();
+    const link = target.querySelector('[data-testid="payments-link"]')!;
+    expect(link.classList).toContain('inline');
+    expect(link.classList).toContain('p-0');
+    expect(link.nextSibling?.textContent?.trim()).toBe('.');
+  });
+});

@@ -469,6 +469,87 @@ static void CanariObserveCallProximity(void) {
   NSLog(@"[CanariIOS] listening for the call proximity");
 }
 
+/// THE SCREEN STAYS ON DURING A VIDEO CALL AND A LIVE. WKWebView refuses the Screen Wake Lock API
+/// (`NotAllowedError`), so the page posts through `webkit.messageHandlers.canariIdleTimer`
+/// (`screenAwake.ts`) `{owner, hold}` - `owner` is `call` or `live` - when a holder takes or lets go
+/// of the screen, and `{reset: true}` once at every page boot, so a reload or a WebContent kill
+/// mid-call never leaves the screen on.
+///
+/// A SET OF OWNERS, NOT A BOOLEAN: a call and a live can overlap, and the release of one must not
+/// drop the other's hold. `idleTimerDisabled` is YES exactly while the set is not empty. Adding an
+/// owner already held, or removing one not held, changes nothing (idempotent). The property belongs
+/// to the running app: a kill or a crash returns it to the system, and iOS ignores it while the app
+/// is not in the foreground. A malformed message is logged and ignored.
+@interface CanariIdleTimerHandler : NSObject <WKScriptMessageHandler>
+@property(nonatomic, strong) NSMutableSet<NSString *> *owners;
+@end
+@implementation CanariIdleTimerHandler
+- (void)userContentController:(WKUserContentController *)controller
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+  if (self.owners == nil) {
+    self.owners = [NSMutableSet set];
+  }
+  NSDictionary *body = [message.body isKindOfClass:[NSDictionary class]] ? message.body : nil;
+  NSString *change = nil;
+  if ([body[@"reset"] isKindOfClass:[NSNumber class]] && [body[@"reset"] boolValue]) {
+    [self.owners removeAllObjects];
+    change = @"reset";
+  } else if ([body[@"owner"] isKindOfClass:[NSString class]] &&
+             [body[@"hold"] isKindOfClass:[NSNumber class]]) {
+    NSString *owner = body[@"owner"];
+    if ([body[@"hold"] boolValue]) {
+      [self.owners addObject:owner];
+      change = [@"hold " stringByAppendingString:owner];
+    } else {
+      [self.owners removeObject:owner];
+      change = [@"release " stringByAppendingString:owner];
+    }
+  } else {
+    NSLog(@"[CanariIOS] idle timer ignored, the page posted neither {owner, hold} nor {reset}");
+    return;
+  }
+  UIApplication *app = UIApplication.sharedApplication;
+  BOOL was = app.idleTimerDisabled;
+  app.idleTimerDisabled = self.owners.count > 0;
+  NSLog(@"[CanariIOS] idle timer (%@): owners=[%@] disabled=%d (was %d)", change,
+        [self.owners.allObjects componentsJoinedByString:@","], app.idleTimerDisabled, was);
+}
+@end
+
+static void CanariObserveCallIdleTimer(void) {
+  static CanariIdleTimerHandler *handler = nil;
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil || handler != nil) {
+    return;
+  }
+  handler = [CanariIdleTimerHandler new];
+  [webView.configuration.userContentController addScriptMessageHandler:handler name:@"canariIdleTimer"];
+  NSLog(@"[CanariIOS] listening for the screen idle timer");
+}
+
+/// THE ONE REGISTRATION POINT of the call's page handlers (`canariProximity`, `canariIdleTimer`),
+/// called wherever the WebView may have just come to exist: at the scene's connection (a PushKit
+/// launch of a killed app connects the scene and loads the page IN THE BACKGROUND, with no
+/// `didBecomeActive` before the call is answered on CallKit - a handler registered only at the
+/// activation was absent when the call screen posted its hold), at the end of a page load, and at
+/// every activation. Each handler keeps its own `static handler != nil` guard, so a second call
+/// registers nothing twice. The first point that found the WebView is logged once.
+static void CanariRegisterCallPageHandlers(NSString *where) {
+  static BOOL registered = NO;
+  if (CanariFindWebView() == nil) {
+    if (!registered) {
+      NSLog(@"[CanariIOS] call page handlers: no WebView yet at %@", where);
+    }
+    return;
+  }
+  CanariObserveCallProximity();
+  CanariObserveCallIdleTimer();
+  if (!registered) {
+    registered = YES;
+    NSLog(@"[CanariIOS] call page handlers registered at %@", where);
+  }
+}
+
 /// Publishes the home indicator's inset to the page as `--safe-area-inset-bottom` - the iOS peer of
 /// what Android's window insets give the same 35 consumers (`app.html` names that variable "the one
 /// place this is decided").
@@ -497,6 +578,7 @@ static void CanariObserveCallProximity(void) {
                         change:(NSDictionary *)change
                        context:(void *)context {
   if ([keyPath isEqualToString:@"loading"] && ![(WKWebView *)object isLoading]) {
+    CanariRegisterCallPageHandlers(@"page load");
     CanariPublishSafeAreaInsets();
     CanariPublishDynamicType();
     CanariPublishForeground(nil);
@@ -919,7 +1001,7 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariApplyEdgeToEdge();
   CanariObserveDocumentScrollRange();
   CanariObserveTheme();
-  CanariObserveCallProximity();
+  CanariRegisterCallPageHandlers(@"activation");
   CanariHideKeyboardAccessoryBar();
   CanariPublishSafeAreaInsets();
   CanariPublishDynamicType();
@@ -995,6 +1077,9 @@ static CanariSceneWillConnectIMP CanariOrigSceneWillConnect = NULL;
 static void CanariSceneWillConnect(id self, SEL _cmd, UIScene *scene, UISceneSession *session,
                                    UISceneConnectionOptions *options) {
   CanariOrigSceneWillConnect(self, _cmd, scene, session, options);
+  // The scene now holds its window, on a background launch too; whether the WebView is in it yet
+  // is logged (`registered at scene connection`, or `no WebView yet` and a later point).
+  CanariRegisterCallPageHandlers(@"scene connection");
   NSSet<UIOpenURLContext *> *urls = options.URLContexts;
   NSUInteger webActivities = 0;
   for (NSUserActivity *activity in options.userActivities) {

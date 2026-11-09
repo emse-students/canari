@@ -33,7 +33,7 @@ export async function forgetCommunityGraine(workspaceId: string): Promise<number
     return 0;
   }
 
-  const { storage, deviceKey, mlsService } = requireGraineRuntime('forgetCommunityGraine');
+  const { storage, deviceKey, mlsService, userId } = requireGraineRuntime('forgetCommunityGraine');
 
   // THE MLS GROUP GOES FIRST, and it is the one thing this function used to leave behind. Seeds,
   // maps and the mirror are what this device HELD; the distribution group is what keeps FEEDING it
@@ -90,7 +90,7 @@ export async function forgetCommunityGraine(workspaceId: string): Promise<number
 
   forgetWorkspaceGraineState(workspaceId, sessionIds, channelIds);
   forgetWorkspaceRepairState(workspaceId, sessionIds);
-  await Promise.all(channelIds.map((channelId) => forgetGraineChannelMirror(channelId)));
+  await Promise.all(channelIds.map((channelId) => forgetGraineChannelMirror(channelId, userId)));
 
   console.info(
     `[GRAINE] community ${workspaceId.slice(0, 8)} forgotten - ${dropped} seed(s), ${channelIds.length} channel(s) unmirrored`

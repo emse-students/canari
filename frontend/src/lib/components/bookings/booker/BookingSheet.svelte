@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Button from '$lib/components/ui/Button.svelte';
   import { untrack } from 'svelte';
   import { CalendarClock, Minus, Plus, X } from '@lucide/svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
@@ -495,22 +496,13 @@
   {#snippet footer()}
     <div class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
       {#if onBlockInstead}
-        <button
-          type="button"
-          onclick={onBlockInstead}
-          class="border-cn-border text-text-main hover:border-cn-yellow/40 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors"
-        >
+        <Button variant="secondary" onclick={onBlockInstead}>
           {m.bookings_block_action()}
-        </button>
+        </Button>
       {/if}
-      <button
-        type="button"
-        disabled={submitting || uploading}
-        onclick={submit}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-      >
+      <Button disabled={submitting || uploading} onclick={submit}>
         {editing ? m.bookings_edit_submit() : m.bookings_sheet_submit()}
-      </button>
+      </Button>
     </div>
   {/snippet}
 </Modal>
