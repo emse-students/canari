@@ -108,7 +108,7 @@ describe('the slot length (migration 116)', () => {
   it('sends none on a step space, so a switch to step clears it', () => {
     const draft = { ...draftFromSpace({ ...SLOTS, slotMinutes: 25 }), slotMode: 'step' as const };
     draft.stepMinutes = '30';
-    draft.maxSteps = '4';
+    draft.maxMinutes = '120';
     expect(settingsFromDraft(draft)).toMatchObject({ slotMode: 'step', slotMinutes: null });
   });
 });
@@ -149,5 +149,31 @@ describe('timeZoneChoices', () => {
   it('keeps the space own zone even when the engine does not list it', () => {
     expect(timeZoneChoices('Europe/Paris')).toContain('Europe/Paris');
     expect(timeZoneChoices('Mars/Olympus')[0]).toBe('Mars/Olympus');
+  });
+});
+
+describe('the longest single booking, in minutes, empty = no limit (migration 151)', () => {
+  const step = (over: Partial<ReturnType<typeof draftFromSpace>>) => ({
+    ...draftFromSpace(SPACE),
+    ...over,
+  });
+
+  it('reads the stored steps as minutes, and an unbounded space as empty', () => {
+    expect(draftFromSpace(SPACE).maxMinutes).toBe(String((SPACE.maxSteps ?? 0) * 30));
+    expect(draftFromSpace({ ...SPACE, maxSteps: null }).maxMinutes).toBe('');
+  });
+
+  it('sends null for an empty field and steps for a multiple of the step', () => {
+    expect(settingsFromDraft(step({ maxMinutes: '' }))).toMatchObject({ maxSteps: null });
+    expect(settingsFromDraft(step({ stepMinutes: '30', maxMinutes: '240' }))).toMatchObject({
+      maxSteps: 8,
+    });
+  });
+
+  it('refuses a maximum that is not a whole number of steps, or more than 96 of them', () => {
+    expect(draftProblems(step({ stepMinutes: '30', maxMinutes: '45' })).maxMinutes).toBe('range');
+    expect(draftProblems(step({ stepMinutes: '30', maxMinutes: '0' })).maxMinutes).toBe('range');
+    expect(draftProblems(step({ stepMinutes: '5', maxMinutes: '485' })).maxMinutes).toBe('range');
+    expect(draftProblems(step({ maxMinutes: '' })).maxMinutes).toBeUndefined();
   });
 });

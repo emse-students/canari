@@ -229,6 +229,13 @@ function insideOneOpening(windows: readonly Window[], range: Range): boolean {
 const LONGEST_SLOT_MS = 49 * 60 * MINUTE_MS;
 
 /**
+ * The safety cap of a step space with NO maximum: 14 days of elapsed time. It is not a rule shown
+ * to bookers (the booker's picker stops at the end of the opening) but the bound that keeps the
+ * work a range costs finite.
+ */
+const UNBOUNDED_MAX_MS = 14 * 24 * 60 * MINUTE_MS;
+
+/**
  * THE LENGTH BOUND, read from the settings alone: an over-long range is refused before any window
  * is built, so the work a range costs never grows with its length. A step space takes at most
  * `maxSteps` x `stepMinutes`; a slots space at most {@link LONGEST_SLOT_MS}. An empty or reversed
@@ -242,7 +249,10 @@ export function rangeLengthRefusal(config: SlotConfig, range: Range): RangeRefus
   }
   const step = (config.stepMinutes ?? 0) * MINUTE_MS;
   if (step <= 0) return 'misaligned';
-  return length > (config.maxSteps ?? 1) * step ? 'too-many-steps' : null;
+  // No maximum set: the length is bounded by the openings (`checkRangeShape`), and by the one
+  // safety cap below so a request cannot make the server build windows for years.
+  const cap = config.maxSteps === null ? UNBOUNDED_MAX_MS : config.maxSteps * step;
+  return length > cap ? 'too-many-steps' : null;
 }
 
 /**

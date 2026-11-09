@@ -27,7 +27,7 @@ import {
   MAX_AVAILABILITY_LINES,
 } from './availability';
 import { applyTemplate, timeOfMinutes, type TemplateKey } from './availabilityPaint';
-import { NUMBER_BOUNDS } from './spaceSettings.svelte';
+import { MAX_STEPS_BOUND } from './spaceSettings.svelte';
 
 /** The steps a "Au choix" booking is cut in. */
 export const STEP_CHOICES = [15, 30, 60] as const;
@@ -138,7 +138,7 @@ export function wizardProblems(draft: WizardDraft): WizardProblems {
     draft.slotMode === 'step' &&
     (draft.maxMinutes < draft.stepMinutes ||
       draft.maxMinutes % draft.stepMinutes !== 0 ||
-      draft.maxMinutes / draft.stepMinutes > NUMBER_BOUNDS.maxSteps.max)
+      draft.maxMinutes / draft.stepMinutes > MAX_STEPS_BOUND)
   ) {
     problems.hours = 'duration';
   } else if (wizardLines(draft).length > MAX_AVAILABILITY_LINES) problems.hours = 'too-many';

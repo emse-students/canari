@@ -334,6 +334,13 @@ maybe('bookings schema against PostgreSQL (migration 087)', () => {
       await expect(
         repo.save({ ownerId: ALICE, name: 'x', slotMode: 'step', stepMinutes: null, maxSteps: 1 })
       ).rejects.toThrow(/booking_spaces_step_shape/);
+      // No longest booking is a valid step space (migration 151); zero steps is not.
+      await expect(
+        repo.save({ ownerId: ALICE, name: 'x', slotMode: 'step', stepMinutes: 30, maxSteps: null })
+      ).resolves.toBeDefined();
+      await expect(
+        repo.save({ ownerId: ALICE, name: 'x', slotMode: 'step', stepMinutes: 30, maxSteps: 0 })
+      ).rejects.toThrow(/booking_spaces_step_shape/);
       await expect(
         repo.save({ ownerId: ALICE, name: 'x', slotMode: 'slots', retentionDays: 31 })
       ).rejects.toThrow(/booking_spaces_retention_days/);
