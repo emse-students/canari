@@ -227,7 +227,7 @@
 <div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6 shadow-sm">
   <div class="flex flex-wrap items-start justify-between gap-3">
     <div>
-      <h2 class="text-text-main text-lg font-bold tracking-tight">{m.common_members_label()}</h2>
+      <h2 class="text-text-main text-lg font-bold">{m.common_members_label()}</h2>
       <p class="text-text-muted mt-1 text-sm">
         {m.asso_members_subtitle()}
       </p>

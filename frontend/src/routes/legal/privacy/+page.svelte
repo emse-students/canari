@@ -901,7 +901,7 @@
             </td>
             <td>
               Tant que la réponse attend son paiement (30 minutes en ligne, jusqu'à l'échéance fixée
-              pour un paiement en espèces), puis effacée dans les cinq minutes
+              pour un paiement sur place), puis effacée dans les cinq minutes
             </td>
           </tr>
           <tr>

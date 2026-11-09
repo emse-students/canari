@@ -247,6 +247,9 @@
   2026-09-30) - back, the conversation in a centre pill, and a menu that grows into the actions. It
   draws no bar of its own: `ChatArea` floats it over the messages and reserves its height, so the
   thread scrolls under the glass. The website keeps the header below, at every width.
+  THE TITLE PILL TAKES ALL THE FREE WIDTH (`w-full`): its rect is where the native pill is drawn, and
+  a pill that hugged the WEB text was too narrow for the native (wider) system font, so "Canari Test
+  Alpha" was cut at 186 pt with 70 pt of the bar empty (design audit M5, 2026-11-09).
 -->
 {#if glass}
   <div class="chat-header-phone flex items-center gap-2 px-3 py-2 md:hidden">
@@ -280,7 +283,7 @@
           avatar: true,
           onClick: openPill,
         }}
-        class="glass-chrome flex max-w-full min-w-0 items-center gap-2 rounded-full py-1 pr-4 pl-1 transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98]"
+        class="glass-chrome flex w-full max-w-full min-w-0 items-center justify-center gap-2 rounded-full py-1 pr-4 pl-1 transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98]"
       >
         {#if isChannel}
           <span
@@ -375,7 +378,9 @@
 
   <!-- Info (name, status) -->
   <div class="flex min-w-0 flex-1 flex-col justify-center">
-    <h2 class="text-text-main mb-0.5 truncate text-base leading-tight font-bold md:text-base">
+    <h2
+      class="font-display text-text-main mb-0.5 truncate text-base leading-tight font-bold md:text-base"
+    >
       {#if peerLinked}
         <ProfileLink userId={contactName} class="hover:underline">
           <EmojiText text={effectiveDisplayName} />
@@ -386,9 +391,7 @@
     </h2>
 
     {#if isChannel}
-      <span
-        class="text-text-muted text-2xs inline-flex items-center font-semibold tracking-wider uppercase md:text-xs"
-      >
+      <span class="text-text-muted text-2xs inline-flex items-center font-semibold md:text-xs">
         {m.chat_community_channel_label()}
       </span>
     {:else}

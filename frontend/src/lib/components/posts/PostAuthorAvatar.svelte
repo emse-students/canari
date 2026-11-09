@@ -14,9 +14,11 @@
   interface Props {
     post: Pick<PostEntity, 'association' | 'anonymous' | 'authorId'>;
     size?: 'sm' | 'md';
+    /** Stretch to the parent's box (the post header's 40 dp tile) instead of a preset size. */
+    fill?: boolean;
   }
 
-  let { post, size = 'md' }: Props = $props();
+  let { post, size = 'md', fill = false }: Props = $props();
 </script>
 
 {#if post.association}
@@ -25,10 +27,11 @@
     name={post.association.name}
     logoUrl={post.association.logoUrl}
     {size}
+    {fill}
     shape="circle"
   />
 {:else if post.anonymous}
-  <AnonymousAvatar {size} shape="circle" />
+  <AnonymousAvatar {size} {fill} shape="circle" />
 {:else}
-  <Avatar userId={post.authorId ?? ''} {size} />
+  <Avatar userId={post.authorId ?? ''} {size} {fill} />
 {/if}

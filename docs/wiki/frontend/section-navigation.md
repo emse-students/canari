@@ -9,7 +9,7 @@ Every menu of the app was inventoried on 2026-10-14 (every route under `frontend
 | Shape | When | Where |
 | --- | --- | --- |
 | **Hub of route sections** under a breadcrumb | more than 3 entries, or entries gated per reader | the app's own hub (`/dashboard`, no breadcrumb: it is a tab), association edit (`/associations/<slug>/edit/<section>`), association and list public page (`/associations/<slug>/<section>`, `/lists/<slug>/<section>`), list edit, administration (`/admin/<page>`), account settings (`/settings/<section>`), own profile (`/profile/me/<section>`) |
-| **Fixed segmented control** (`ui/SegmentedControl.svelte`) | 3 or so short labels | shop (products, partnerships), moderation (3), legacy dues (4, `text-xs` below `sm`), salon settings (2), community admin panel (2-3), conversation media panel (3), new conversation (2) |
+| **Fixed segmented control** (`ui/SegmentedControl.svelte`) | 3 or so short labels | shop (products, partnerships), moderation (3), legacy dues (4, `text-xs` below `sm`), salon settings (2), community admin panel (2-3), conversation media panel (3), new conversation (2), the Emojis preference in `/settings/preferences` (2, [emoji](emoji.md#the-setting---one-resolver-2026-11-09)) |
 
 How each shape behaves:
 

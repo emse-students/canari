@@ -45,7 +45,7 @@
   import FormQuestionsSection from '$lib/components/forms/FormQuestionsSection.svelte';
   import FormSaveBar from '$lib/components/forms/FormSaveBar.svelte';
   import Input from '$lib/components/ui/Input.svelte';
-  import Select from '$lib/components/ui/Select.svelte';
+  import FormAssociationPicker from '$lib/components/forms/FormAssociationPicker.svelte';
   import { CONTROL_HINT_CLASS, CONTROL_LABEL_CLASS } from '$lib/components/ui/controlClasses';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import {
@@ -281,8 +281,10 @@
 
   /**
    * The draft this page is building, created at the first autosave once the form has a title
-   * (owner, 2026-11-08): a shell holding only what is fixed at creation - its association - and its
-   * title; everything else is its unpublished revision, saved as it is typed.
+   * (owner, 2026-11-08): a shell holding its association and its title; everything else is its
+   * unpublished revision, saved as it is typed. The association stays the builder's choice after
+   * that first autosave (owner, 2026-11-09): it rides in the revision, and the publication moves the
+   * draft to it.
    */
   /**
    * The create's idempotency key, minted HERE (the client post id pattern): a create whose answer
@@ -293,16 +295,19 @@
   /** Set once the server holds the draft (its shell answered). */
   let createdId = $state<string | null>(null);
   /**
-   * Set at the FIRST create sent, and kept while that create MAY have landed: no answer, a 5xx, or
-   * the server's own word that a form already sits under this key (`FORM_CREATE_KEY_REUSED`). Such a
-   * create may have stored the form under the association it named, and its replay must name the
-   * same one. Any other 4xx is a verdict that nothing was stored: the picker opens again.
+   * The association the create NAMED (`''`: none), set at the FIRST create sent and kept while that
+   * create MAY have landed: no answer, a 5xx, or the server's own word that a form already sits under
+   * this key (`FORM_CREATE_KEY_REUSED`). Such a create may have stored the form under it, and its
+   * replay must name the SAME one - the create is idempotent on its key, and a replay naming another
+   * association is refused. Any other 4xx is a verdict that nothing was stored: the next create
+   * names the choice of that moment. The PICKER never waits on it: a later choice is the revision's,
+   * and the publication moves the draft (`null` here: no create sent).
    */
-  let createSent = $state(false);
+  let createAssociation = $state<string | null>(null);
 
   async function draftId(): Promise<string> {
     if (createdId) return createdId;
-    createSent = true;
+    createAssociation ??= associationId;
     let created;
     try {
       created = await createForm({
@@ -312,13 +317,13 @@
         basePrice: 0,
         currency: 'eur',
         items: [],
-        associationId: associationId || undefined,
+        associationId: createAssociation || undefined,
       });
     } catch (e) {
       const status = refusalStatus(e);
       if (status !== null && status < 500 && refusalCode(e) !== FORM_CREATE_KEY_REUSED) {
-        Log.d('forms-editor', `draft create refused status=${status}: nothing stored, picker open`);
-        createSent = false;
+        Log.d('forms-editor', `draft create refused status=${status}: nothing stored`);
+        createAssociation = null;
       }
       throw e;
     }
@@ -343,7 +348,12 @@
     // resend creates the draft and sends it (`draftResend.ts`).
     device:
       formDrafts && userId
-        ? deviceCopyOf(userId, () => ({ formId: createdId, clientCreateId: createKey }))
+        ? deviceCopyOf(userId, () => ({
+            formId: createdId,
+            clientCreateId: createKey,
+            // What the create names when the resend sends it: the one already sent, else the choice.
+            createAssociationId: createAssociation ?? associationId,
+          }))
         : null,
   });
 
@@ -393,7 +403,9 @@
       // created for exactly as a paid one does (the comment on `associations` above already said
       // so; this line contradicted it, and a free form created from an association's own "create
       // a form" button would otherwise vanish from that association's list the moment it saved).
-      associationId: associationId || undefined,
+      // ALWAYS present, `''` for none: the revision is an edit, where an absent field means "leave
+      // it", so a draft moved to "personal" must say so (owner, 2026-11-09).
+      associationId,
       ...(requiresPayment ? { allowCashPayment, allowOnlinePayment } : {}),
       ...(requiresPayment && allowCashPayment && cashPaymentExpiryDays != null
         ? { cashPaymentExpiryDays }
@@ -477,7 +489,11 @@
       let publishedId: string;
       if (!formDrafts) {
         // An estate older than drafts: one create that publishes, as this page always did.
-        const created = await createForm(buildPayload());
+        // A create names an association or nothing: `''` is an edit's word for none.
+        const created = await createForm({
+          ...buildPayload(),
+          associationId: associationId || undefined,
+        });
         Log.d('forms-editor', `created and published ${created.id} (an estate without drafts)`);
         publishedId = created.id;
       } else {
@@ -562,17 +578,11 @@
       </div>
 
       {#if associations.length > 0}
-        <Select
-          id="association-select"
-          label={m.form_association_label()}
-          hint={m.form_association_hint()}
+        <FormAssociationPicker
+          {associations}
           value={associationId}
-          options={[
-            { value: '', label: m.form_association_none() },
-            ...associations.map((a) => ({ value: a.id, label: a.name })),
-          ]}
+          pendingMove={createdId !== null && createAssociation !== associationId}
           onValueChange={(v) => (associationId = v)}
-          disabled={createSent}
         />
       {/if}
 

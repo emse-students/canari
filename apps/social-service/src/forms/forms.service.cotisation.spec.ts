@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { FormsService } from './forms.service';
+import { FORM_ASSOCIATION_FIXED, FormsService } from './forms.service';
 import type { CreateFormDto } from './dto/form.dto';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 
@@ -373,29 +373,34 @@ describe('FormsService - cotisation configuration and granting', () => {
     });
   });
 
-  // A form is personal or an association's, decided once at creation (user decision, 2026-08-23):
-  // MANAGE_FORMS is a right over the association's forms, so cutting the link would let a manager
-  // walk off with one, and re-pointing it would hand someone else's form to a third association.
-  describe('the association link is fixed at creation', () => {
+  // A PUBLISHED form stays with the association it was published under (user decision 2026-08-23,
+  // narrowed to published forms by the owner on 2026-11-09): its answers, payments and reminders are
+  // that association's. A DRAFT may move (`forms.service.draft.spec.ts`). These rows carry no
+  // status, which is a published form (migration 145's default).
+  describe('the association link of a published form is fixed', () => {
     const linked = () => ({
       id: 'f1',
       ownerId: 'user1',
       items: [],
       associationId: 'asso1',
     });
+    const fixed = { response: { code: FORM_ASSOCIATION_FIXED } };
 
     it('refuses moving a form to another association', async () => {
       const { service } = makeService({ tiers: CERCLE, form: linked() });
       await expect(
         service.update('f1', dto({ associationId: 'asso2' }), 'user1', false)
-      ).rejects.toThrow(/stays with the association/i);
+      ).rejects.toMatchObject(fixed);
     });
 
-    it('refuses unlinking a form by sending an empty association', async () => {
+    it('refuses unlinking a form by sending an empty association, or null', async () => {
       const { service } = makeService({ tiers: CERCLE, form: linked() });
       await expect(
         service.update('f1', dto({ associationId: '' }), 'user1', false)
-      ).rejects.toThrow(/stays with the association/i);
+      ).rejects.toMatchObject(fixed);
+      await expect(
+        service.update('f1', dto({ associationId: null }), 'user1', false)
+      ).rejects.toMatchObject(fixed);
     });
 
     it('refuses attaching an association to a personal form', async () => {
@@ -406,6 +411,13 @@ describe('FormsService - cotisation configuration and granting', () => {
       await expect(
         service.update('f1', dto({ associationId: 'asso1' }), 'user1', false)
       ).rejects.toThrow(/stays with the association/i);
+    });
+
+    it('refuses a global admin too: what is tied to the link does not depend on who asks', async () => {
+      const { service } = makeService({ tiers: CERCLE, form: linked() });
+      await expect(
+        service.update('f1', dto({ associationId: 'asso2' }), 'user1', true)
+      ).rejects.toMatchObject(fixed);
     });
 
     it('accepts a save that repeats the same association', async () => {
