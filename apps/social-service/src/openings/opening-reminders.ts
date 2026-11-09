@@ -57,10 +57,12 @@ async function returned(db: Queryable, sql: string, params: unknown[]): Promise<
  * heads-up is re-armed while the opening is still to come - exactly what a fresh ask gets, so an
  * ask on a follower's row inside the last five minutes is told at the next tick like any other
  * (found by the integration spec: a first draft re-armed it only beyond five minutes, so the same
- * ask got a heads-up or none depending on whether the reader followed). The opening's own stamp is
- * never re-armed: an opening
- * already told is told once. Spelt the same way by migration 152's mirror trigger, which turns an
- * older image's subscribe into this statement during a rolling deploy.
+ * ask got a heads-up or none depending on whether the reader followed). The OPENING's stamp is
+ * re-armed the same way: an ask for an opening still to come is owed that opening, even when the
+ * row was told of an earlier one (the target moved ahead after it opened) - the behaviour of the
+ * `form_reminders` upsert it replaces (review of #3188, L28). Spelt the same way by migration 152's
+ * mirror trigger, which turns an older image's subscribe into this statement during a rolling
+ * deploy.
  */
 export const ASK_OPENING_SQL = `INSERT INTO opening_reminders AS o
     (kind, "targetId", "userId", "opensAt", origin)
@@ -68,7 +70,8 @@ export const ASK_OPENING_SQL = `INSERT INTO opening_reminders AS o
   ON CONFLICT (kind, "targetId", "userId") DO UPDATE
     SET origin = 'asked',
         "opensAt" = EXCLUDED."opensAt",
-        "notified5min" = CASE WHEN EXCLUDED."opensAt" > now() THEN false ELSE o."notified5min" END
+        "notified5min" = CASE WHEN EXCLUDED."opensAt" > now() THEN false ELSE o."notified5min" END,
+        "notifiedOnOpen" = CASE WHEN EXCLUDED."opensAt" > now() THEN false ELSE o."notifiedOnOpen" END
   RETURNING id`;
 
 /** Records the ask of `userId` for one target opening at `opensAt`. Idempotent. */
@@ -128,9 +131,11 @@ export async function isTold(
  * "Who sees it" is the association's own visibility (`associationVisibleToUserSql`, the PLAIN
  * predicate an entity post's announcement uses: a member anywhere, or anyone its rules reach - read
  * grants never notify); an ARCHIVED association announces nothing. The target's own audience
- * condition (a form's `submitCondition`, a booking space's `audience`) is NOT asked: it is a profile
- * predicate evaluated in code against core-service facts, one call per person, and the target's
- * page tells a follower it does not admit (lead decision, engagement.md L25).
+ * condition (a form's `submitCondition`) is NOT asked: it is a profile predicate evaluated in code
+ * against core-service facts, one call per person, and the form's page tells a follower it does not
+ * admit (lead decision, engagement.md L25). A booking space WITH an audience is never announced
+ * (its caller, `announceSpaceOpening`, writes nothing; L25 as amended). Both are read again at the
+ * opening (`DUE_OPENINGS_SQL`, `stillOwed`).
  *
  * `ON CONFLICT DO NOTHING`: a row already there - an ask, or a follower already written - keeps its
  * origin and its stamps, so nobody is told twice.
@@ -228,8 +233,21 @@ export interface DueOpening {
   targetId: string;
   userId: string;
   origin: OpeningOrigin;
-  /** The target still exists and is open to readers (a published, unarchived form; a validated event). */
+  /**
+   * The target is open to readers and its association is not archived. A row is selected while its
+   * target is not live only when that is FINAL - the target is gone (deleted) or its association
+   * archived - and is then claimed and told nothing; a target that is merely not live YET (a form
+   * back in draft, an event sent back to validation) is not selected at all, and its rows are told
+   * the tick after it becomes live again (review of #3188).
+   */
   targetLive: boolean;
+  /**
+   * The row is still owed, read at the opening: an ask always; a follower's row only while they
+   * still follow the association AND see it (`associationVisibleToUserSql`: a member, or reached by
+   * its rules) AND the target may be named to followers (a booking space with no `audience`, L25).
+   * Decided once, in the claim's own statement: no write elsewhere has to remember to delete it.
+   */
+  stillOwed: boolean;
   /** The target's association, if any; its name and logo for the row. */
   associationId: string | null;
   associationName: string | null;
@@ -247,11 +265,25 @@ export interface DueOpening {
 }
 
 /**
- * The rows owed the OPENING at `$1`, with their target read in the same statement: a row naming a
- * target that is gone or no longer readable is claimed and not pushed.
+ * The rows owed the OPENING at `$1`, with their target, its association and the reader read in the
+ * same statement as the facts the push is decided on (`targetLive`, `stillOwed`, `bellWithholds`):
+ * the state AT THE OPENING decides, once.
+ *
+ * Selected: a live target; a FINAL one (gone - a deleted form, a deleted space or event - or of an
+ * archived association: claimed, told nothing - an archived association pushes nothing, an ask
+ * included, as Reservations and the forms hide it). NOT selected: a target not live YET (a form
+ * back in draft, an event back in validation) - left for the tick after it is live again, and
+ * bounded by the 30-day purge of rows whose opening is that old (`PURGE_STALE_OPENINGS_SQL`).
  */
 export const DUE_OPENINGS_SQL = `SELECT o.id, o.kind, o."targetId", o."userId", o.origin,
-         COALESCE(t.live, false) AS "targetLive", t."associationId", t."linkOnly",
+         (COALESCE(t.live, false) AND NOT COALESCE(a.archived, false)) AS "targetLive",
+         COALESCE(o.origin = 'asked' OR (
+           t."associationId" IS NOT NULL AND t."followersTold" AND op_user.id IS NOT NULL
+           AND EXISTS (SELECT 1 FROM association_follows op_follow
+                        WHERE op_follow."followerUserId" = o."userId"
+                          AND op_follow."associationId" = t."associationId")
+           AND ${associationVisibleToUserSql('t."associationId"', 'op_user')}), false) AS "stillOwed",
+         t."associationId", t."linkOnly",
          t.name AS "targetName", a.name AS "associationName", a."logoUrl" AS "associationLogoUrl",
          (o.origin = 'followed' AND t."associationId" IS NOT NULL AND EXISTS (
             SELECT 1 FROM account_bells b
@@ -260,19 +292,27 @@ export const DUE_OPENINGS_SQL = `SELECT o.id, o.kind, o."targetId", o."userId", 
     FROM opening_reminders o
     LEFT JOIN LATERAL (
       SELECT f."associationId", f.title AS name, false AS "linkOnly",
-             (f."deletedAt" IS NULL AND f.status = 'published') AS live
+             (f."deletedAt" IS NULL AND f.status = 'published') AS live,
+             f."deletedAt" IS NOT NULL AS gone, true AS "followersTold"
         FROM forms f WHERE o.kind = 'form' AND f.id = o."targetId"
       UNION ALL
-      SELECT s."associationId", s.name, s.discoverability = 'link', true
+      SELECT s."associationId", s.name, s.discoverability = 'link', true, false,
+             (s.audience IS NULL OR s.audience = 'null'::jsonb)
         FROM booking_spaces s WHERE o.kind = 'booking' AND s.id = o."targetId"
       UNION ALL
-      SELECT e."associationId", e.title, false, e.status = 'validated'
+      SELECT e."associationId", e.title, false, e.status = 'validated', false, true
         FROM association_calendar_events e WHERE o.kind = 'event' AND e.id = o."targetId"
     ) t ON true
     LEFT JOIN associations a ON a.id = t."associationId"
+    LEFT JOIN users op_user ON op_user.id = o."userId"
    WHERE NOT o."notifiedOnOpen" AND o."opensAt" <= $1::timestamptz
+     AND (t.live IS NULL OR t.live OR t.gone OR COALESCE(a.archived, false))
    ORDER BY o."opensAt"`;
 
-/** The 30-day purge of the rows told of their opening (the scheduler's daily GC). */
-export const PURGE_TOLD_OPENINGS_SQL = `DELETE FROM opening_reminders
-  WHERE "notifiedOnOpen" AND "opensAt" < now() - make_interval(days => $1)`;
+/**
+ * The 30-day purge (the scheduler's daily GC): every row whose opening is that old - told, or left
+ * untold because its target never became live again (a form left in draft, an event never
+ * re-validated). A target published again later writes its followers anew.
+ */
+export const PURGE_STALE_OPENINGS_SQL = `DELETE FROM opening_reminders
+  WHERE "opensAt" < now() - make_interval(days => $1)`;

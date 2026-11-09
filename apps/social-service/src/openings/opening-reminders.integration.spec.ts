@@ -33,6 +33,7 @@ import { PostNotification } from '../posts/entities/post-notification.entity';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import { createPostNotificationsTable } from '../posts/post-notifications.it-schema';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
+import { announceSpaceOpening } from '../bookings/booking-spaces.service';
 import type { PushContent } from '../push/push-content';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
@@ -122,7 +123,7 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
       CREATE TABLE forms (id uuid PRIMARY KEY, title varchar NOT NULL, "associationId" uuid,
         "deletedAt" timestamptz, status varchar(16) NOT NULL DEFAULT 'published');
       CREATE TABLE booking_spaces (id uuid PRIMARY KEY, name varchar NOT NULL, "associationId" uuid,
-        discoverability varchar(8) NOT NULL DEFAULT 'listed');
+        discoverability varchar(8) NOT NULL DEFAULT 'listed', audience jsonb);
       CREATE TABLE association_calendar_events (id uuid PRIMARY KEY, title varchar NOT NULL,
         "associationId" uuid NOT NULL, status varchar NOT NULL DEFAULT 'pending');
       -- form_reminders exactly as TypeORM built it on the estates (\\d form_reminders).
@@ -417,6 +418,138 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
         { type: 'booking_open', text: 'Salle de musique', actorName: 'BDE' },
         { type: 'event_open', text: 'Soirée', actorName: 'BDE' },
       ]);
+    });
+
+    describe('what the review of #3188 found', () => {
+      const SPACE_WITH_AUDIENCE = '7a1c2d9e-0000-4000-8000-0000000000a3';
+      beforeAll(async () => {
+        await q(
+          `INSERT INTO booking_spaces (id, name, "associationId", discoverability, audience)
+           VALUES ($1, 'Salle des ICM 2A', $2, 'listed', '{"formations": ["ICM"]}')`,
+          [SPACE_WITH_AUDIENCE, BDE]
+        );
+      });
+      afterEach(async () => {
+        await q(`UPDATE associations SET archived = false`);
+        await q(`UPDATE association_calendar_events SET status = 'validated'`);
+        await q(`UPDATE users SET campus = 'saint-etienne' WHERE id = $1`, [FAN_ASKER]);
+      });
+
+      it('(1) a booking space with an audience names itself to no follower, written or not (L25)', async () => {
+        const space = {
+          id: SPACE_WITH_AUDIENCE,
+          associationId: BDE,
+          opensAt: null,
+          discoverability: 'listed' as const,
+          audience: { formations: ['ICM'] } as never,
+        };
+        await announceSpaceOpening(ds.manager, space, PUBLISHER);
+        expect(await rows()).toEqual([]);
+        // A row written before the audience was set: claimed at the opening, told nothing.
+        await announceOpeningToFollowers(ds.manager, {
+          kind: 'booking',
+          targetId: SPACE_WITH_AUDIENCE,
+          associationId: BDE,
+          opensAt: null,
+          actorId: PUBLISHER,
+        });
+        await scheduler.checkReminders();
+        expect(pushes()).toEqual([]);
+        expect(await inApp()).toEqual([]);
+        expect(await rows()).toEqual(
+          sorted([
+            `booking:${FAN}:followed:true/true`,
+            `booking:${FAN_ASKER}:followed:true/true`,
+            `booking:${MUTED_FAN}:followed:true/true`,
+          ])
+        );
+      });
+
+      it('(2) a follower who unfollowed, left the association or moved campus is not told', async () => {
+        await q(`INSERT INTO association_members ("associationId", "userId") VALUES ($1, $2)`, [
+          BDE,
+          FAR_FAN,
+        ]);
+        expect(await announceForm(opensIn(60))).toBe(4);
+        await q(`DELETE FROM association_follows WHERE "followerUserId" = $1`, [FAN]);
+        await q(`DELETE FROM association_members WHERE "userId" = $1`, [FAR_FAN]);
+        await q(`UPDATE users SET campus = 'gardanne' WHERE id = $1`, [FAN_ASKER]);
+        await openNow();
+        await scheduler.checkReminders();
+        expect(pushes()).toEqual([`${MUTED_FAN}:form_open`]);
+        expect(await inApp()).toEqual([`${MUTED_FAN}:form_reminder`]);
+        // Decided at the opening, once: every row claimed.
+        const left = await q(
+          `SELECT count(*)::int AS n FROM opening_reminders WHERE NOT "notifiedOnOpen"`
+        );
+        expect(left.rows[0].n).toBe(0);
+      });
+
+      it('(3) a re-ask after an opening was told, the opening moved ahead, is told again', async () => {
+        await askOpening(ds.manager, 'form', FORM, ASKER, opensIn(60));
+        await openNow();
+        await scheduler.checkReminders();
+        expect(pushes()).toEqual([`${ASKER}:form_open`]);
+        pushed.length = 0;
+        expect(await followOpeningMove(ds.manager, 'form', FORM, opensIn(3))).toBe(0);
+        await askOpening(ds.manager, 'form', FORM, ASKER, opensIn(3));
+        expect(await rows()).toEqual([`form:${ASKER}:asked:false/false`]);
+        await scheduler.checkReminders();
+        await openNow();
+        await scheduler.checkReminders();
+        expect(pushes()).toEqual(sorted([`${ASKER}:form_opening_soon`, `${ASKER}:form_open`]));
+        // The OLD image's re-ask (its upsert sets both flags false) re-arms the new row the same way.
+        await q(
+          `INSERT INTO form_reminders ("formId", "userId", "opensAt", "notified5min", "notifiedOnOpen")
+           VALUES ($1, $2, now() + interval '1 hour', false, false)`,
+          [FORM, ASKER]
+        );
+        expect(await rows()).toEqual([`form:${ASKER}:asked:false/false`]);
+      });
+
+      it('(4) an event sent back to pending is left for later, and told once validated again', async () => {
+        await announceOpeningToFollowers(ds.manager, {
+          kind: 'event',
+          targetId: EVENT,
+          associationId: BDE,
+          opensAt: null,
+          actorId: PUBLISHER,
+        });
+        await q(`UPDATE association_calendar_events SET status = 'pending'`);
+        await openNow();
+        await scheduler.checkReminders();
+        expect(pushes()).toEqual([]);
+        expect(await rows()).toContain(`event:${FAN}:followed:true/false`);
+        await q(`UPDATE association_calendar_events SET status = 'validated'`);
+        await scheduler.checkReminders();
+        expect(pushes()).toEqual(
+          sorted([
+            `${FAN}:social_event_open`,
+            `${FAN_ASKER}:social_event_open`,
+            `${MUTED_FAN}:social_event_open`,
+          ])
+        );
+      });
+
+      it('(5) an archived association pushes nothing, a follower row or an ask', async () => {
+        await announceOpeningToFollowers(ds.manager, {
+          kind: 'booking',
+          targetId: SPACE,
+          associationId: BDE,
+          opensAt: null,
+          actorId: PUBLISHER,
+        });
+        await askOpening(ds.manager, 'form', FORM, ASKER, opensIn(60));
+        await q(`UPDATE associations SET archived = true`);
+        await openNow();
+        await scheduler.checkReminders();
+        expect(pushes()).toEqual([]);
+        expect(await inApp()).toEqual([]);
+        const left = await q(
+          `SELECT count(*)::int AS n FROM opening_reminders WHERE NOT "notifiedOnOpen"`
+        );
+        expect(left.rows[0].n).toBe(0);
+      });
     });
 
     describe('an image older than WP-4, still writing form_reminders during the rollover', () => {

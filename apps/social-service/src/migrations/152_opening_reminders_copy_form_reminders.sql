@@ -79,7 +79,8 @@ BEGIN
   ON CONFLICT (kind, "targetId", "userId") DO UPDATE
     SET origin = 'asked',
         "opensAt" = EXCLUDED."opensAt",
-        "notified5min" = CASE WHEN EXCLUDED."opensAt" > now() THEN false ELSE o."notified5min" END;
+        "notified5min" = CASE WHEN EXCLUDED."opensAt" > now() THEN false ELSE o."notified5min" END,
+        "notifiedOnOpen" = CASE WHEN EXCLUDED."opensAt" > now() THEN false ELSE o."notifiedOnOpen" END;
   RETURN NEW;
 END
 $fn$;

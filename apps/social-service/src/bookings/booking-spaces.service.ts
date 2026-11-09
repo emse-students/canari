@@ -739,14 +739,18 @@ export class BookingSpacesService {
  * The opening of an association's LISTED booking space, written for the association's followers
  * who see it (engagement WP-4, decision 5d): its window (`opensAt`), or now when it is bookable at
  * once. A space reached by its link only is never announced - it is not meant to be found, and its
- * name never reaches a lock screen (Q-R5) - nor a personal one, which has no followers.
+ * name never reaches a lock screen (Q-R5) - nor a personal one, which has no followers, nor one
+ * with an `audience` (L25 as amended after the review of #3188).
  */
-async function announceSpaceOpening(
+export async function announceSpaceOpening(
   m: EntityManager,
-  space: Pick<BookingSpace, 'id' | 'associationId' | 'opensAt' | 'discoverability'>,
+  space: Pick<BookingSpace, 'id' | 'associationId' | 'opensAt' | 'discoverability' | 'audience'>,
   actorId: string
 ): Promise<void> {
   if (space.discoverability !== 'listed') return;
+  // A space with an AUDIENCE is not named to the followers it refuses (Reservations hides it from
+  // them, and its page answers 403): none is written (review of #3188, L25). The claim re-reads it.
+  if (space.audience) return;
   await announceOpeningToFollowers(m, {
     kind: 'booking',
     targetId: space.id,

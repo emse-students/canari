@@ -6,7 +6,7 @@ import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import {
   DUE_HEADS_UP_SQL,
   DUE_OPENINGS_SQL,
-  PURGE_TOLD_OPENINGS_SQL,
+  PURGE_STALE_OPENINGS_SQL,
   type DueOpening,
   type OpeningKind,
 } from '../openings/opening-reminders';
@@ -115,14 +115,22 @@ export class FormReminderScheduler {
   }
 
   /**
-   * Tells ONE claimed row that its target opened. A target that is gone or no longer readable (an
-   * archived or draft form, a deleted space, an event sent back to validation) is told nothing. A
-   * follower's row whose bell on the association is reduced gets the in-app row and no push (L26).
+   * Tells ONE claimed row that its target opened. A target that is gone for good (a deleted form,
+   * space or event, an archived association) is told nothing - one merely not live yet is never
+   * selected (`DUE_OPENINGS_SQL`). A follower who no longer follows or sees the association, or a
+   * booking space with an audience, is told nothing either (`stillOwed`). A follower's row whose
+   * bell on the association is reduced gets the in-app row and no push (L26).
    */
   private async sendOpening(r: DueOpening): Promise<void> {
     const who = `userId=${r.userId.slice(0, 8)} ${r.kind}=${r.targetId.slice(0, 8)} origin=${r.origin}`;
     if (!r.targetLive) {
-      this.logger.log(`[REMINDER] open not sent: ${who} - the target is gone or not readable`);
+      this.logger.log(`[REMINDER] open not sent: ${who} - the target is gone or archived`);
+      return;
+    }
+    if (!r.stillOwed) {
+      this.logger.log(
+        `[REMINDER] open not sent: ${who} - no longer follows or sees the association, or the target has an audience`
+      );
       return;
     }
     const withhold = r.bellWithholds;
@@ -285,7 +293,7 @@ export class FormReminderScheduler {
   async purgeDeliveredFormReminders() {
     try {
       const res: { rowCount?: number } = await this.reminderRepo.manager.query(
-        PURGE_TOLD_OPENINGS_SQL,
+        PURGE_STALE_OPENINGS_SQL,
         [GC_REMINDER_DAYS]
       );
       const deleted = res.rowCount ?? 0;

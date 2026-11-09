@@ -948,8 +948,8 @@
           <tr>
             <td>Ouvertures à vous signaler (« Me prévenir », associations suivies)</td>
             <td>
-              30 jours après l'ouverture signalée, ou dès que vous appuyez sur « Ne plus me prévenir
-              », ou à la suppression de votre compte
+              30 jours après l'ouverture, ou dès que vous appuyez sur « Ne plus me prévenir », ou à
+              la suppression de votre compte
             </td>
           </tr>
           <tr>
