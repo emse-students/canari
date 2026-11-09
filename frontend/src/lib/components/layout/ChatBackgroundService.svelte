@@ -1285,10 +1285,17 @@
           showToast(m.channel_removed_from_channel({ channel: event.channelName || '' }), 'info');
         }
       },
-      onRolePermissionsChanged: (event: { roleId: string; permissions: string[] }) => {
+      onRolePermissionsChanged: (event: {
+        roleId: string;
+        permissions: string[];
+        label?: string | null;
+      }) => {
         globalChannels.handleRolePermissionsChanged(event);
+        // A rename carries `label`, a permission edit does not: the line says which one happened.
         appendLog(
-          `[ROLE] ${event.roleId.slice(0, 8)} now grants ${event.permissions.length} permission(s)`
+          event.label !== undefined
+            ? `[ROLE] ${event.roleId.slice(0, 8)} renamed (${event.label === null ? 'default name' : 'custom name'})`
+            : `[ROLE] ${event.roleId.slice(0, 8)} now grants ${event.permissions.length} permission(s)`
         );
       },
       onChannelUpdated: (event: { channelId: string; name?: string; viewerCanWrite?: boolean }) => {

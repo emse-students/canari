@@ -3,6 +3,7 @@
   import { resolve } from '$app/paths';
   import '../app.css';
   import { pageScrollPaddingClass } from '$lib/components/layout/pageScrollPadding';
+  import { retryFailedMyAssociationsProbe } from '$lib/associations/api';
   import { afterNavigate, beforeNavigate, goto, onNavigate, preloadData } from '$app/navigation';
   import { preloadRouteCodeOnce } from '$lib/navigation/routeCodePreload';
   import { onMount, tick } from 'svelte';
@@ -148,6 +149,8 @@
     // A SHALLOW navigation (SvelteKit 3 runs the lifecycle hooks for them too) is a tab or query
     // change on the same page: not a page the hook is about.
     if (shallow && type === 'goto') return;
+    // A membership probe that failed is owed one retry on the next navigation (never a timer).
+    void retryFailedMyAssociationsProbe();
     drainHistoryOverlayStack();
     const fromPath = from?.url.pathname ?? '';
     const toPath = to?.url.pathname ?? '';

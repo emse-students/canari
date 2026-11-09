@@ -5857,5 +5857,14 @@
   "profile_public_default_name": "Membre Canari",
   "profile_birthday_takes_effect": "Une date enregistrée compte à partir de demain, et ne pourra plus être changée pendant 30 jours (la retirer puis la remettre compte comme un changement).",
   "profile_birthday_change_opens": "Vous pourrez changer la date à partir du {date}. Vous pouvez toujours changer qui la voit, ou la retirer.",
-  "profile_birthday_change_too_soon": "La date a déjà été changée il y a moins de 30 jours."
+  "profile_birthday_change_too_soon": "La date a déjà été changée il y a moins de 30 jours.",
+  "follow_chip_follow_named": "Suivre {name}",
+  "follow_chip_withdraw_named": "Demande envoyée - retirer la demande de suivi à {name}",
+  "follow_chip_withdraw": "Demande envoyée - retirer la demande de suivi",
+  "chat_role_names_title": "Noms des rôles",
+  "chat_role_names_description": "Donnez à chaque rôle le nom que votre communauté utilise. Seul le nom change : les droits de chaque rôle restent les mêmes. Laissez vide pour reprendre le nom par défaut.",
+  "chat_role_name_input_label": "Nom du rôle {role}",
+  "chat_role_name_reset_button": "Nom par défaut",
+  "chat_role_name_invalid_error": "Ce nom ne peut pas être enregistré : 40 caractères au plus, sans caractère de contrôle.",
+  "chat_role_name_forbidden_error": "Seuls les administrateurs peuvent renommer les rôles."
 }

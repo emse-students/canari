@@ -3,6 +3,7 @@
   import { m } from '$lib/paraglide/messages';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { emojiSvgSrc } from '$lib/utils/emojiSvg';
+  import { FIRST_SCREEN_EMOJI_COUNT } from '$lib/utils/emojiPreload';
   import {
     EMOJI_CATEGORIES,
     SKIN_TONES,
@@ -123,7 +124,7 @@
   }
 </script>
 
-{#snippet emojiButton(entry: EmojiEntry)}
+{#snippet emojiButton(entry: EmojiEntry, eager: boolean)}
   {@const emoji = withSkinTone(entry, tone)}
   <button
     type="button"
@@ -132,12 +133,19 @@
     aria-label={entry.annotation}
     title={entry.annotation}
   >
+    <!-- WHY THIS PICTURE IS BUILT SO (iPhone, 2026-11-08: blank cells, cells that grew in, empty
+         recents): explicit width/height give the box before a byte arrives; the first screen is
+         EAGER and decoded SYNCHRONOUSLY (lazy + async decode left the cells blank on the first
+         frames); the alt text is transparent so a picture still on its way never shows the emoji
+         as a glyph. Everything below the first screen stays lazy. -->
     <img
-      class="size-7"
+      class="size-7 text-transparent"
+      width="28"
+      height="28"
       src={emojiSvgSrc(emoji) ?? emojiSvgSrc(entry.emoji)}
       alt={emoji}
-      loading="lazy"
-      decoding="async"
+      loading={eager ? 'eager' : 'lazy'}
+      decoding={eager ? 'sync' : 'async'}
       draggable="false"
     />
   </button>
@@ -214,7 +222,15 @@
           aria-label={CATEGORY_LABELS[section.category]()}
           title={CATEGORY_LABELS[section.category]()}
         >
-          <EmojiText text={section.entries[0].emoji} />
+          <img
+            class="size-5 text-transparent"
+            width="20"
+            height="20"
+            src={emojiSvgSrc(section.entries[0].emoji)}
+            alt={section.entries[0].emoji}
+            decoding="sync"
+            draggable="false"
+          />
         </button>
       {/each}
     </div>
@@ -242,8 +258,8 @@
           {m.emoji_picker_search_results_label()}
         </h3>
         <div class="grid grid-cols-8 gap-0.5">
-          {#each results as entry (entry.emoji)}
-            {@render emojiButton(entry)}
+          {#each results as entry, index (entry.emoji)}
+            {@render emojiButton(entry, index < FIRST_SCREEN_EMOJI_COUNT)}
           {/each}
         </div>
       {/if}
@@ -256,8 +272,11 @@
             {CATEGORY_LABELS[section.category]()}
           </h3>
           <div class="grid grid-cols-8 gap-0.5">
-            {#each section.entries as entry (entry.emoji)}
-              {@render emojiButton(entry)}
+            {#each section.entries as entry, index (entry.emoji)}
+              {@render emojiButton(
+                entry,
+                section.category === EMOJI_CATEGORIES[0] && index < FIRST_SCREEN_EMOJI_COUNT
+              )}
             {/each}
           </div>
         </section>
