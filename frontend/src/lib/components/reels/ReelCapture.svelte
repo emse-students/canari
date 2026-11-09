@@ -54,7 +54,8 @@
   import { zoomFromDrag } from '$lib/reels/cameraZoom';
   import type { CameraCapture, FramedStream } from '$lib/reels/framedCapture';
   import { settings } from '$lib/stores/settingsStore.svelte';
-  import { readVideoDurationMs } from '$lib/reels/videoDuration';
+  import { readVideoMetadata } from '$lib/reels/videoDuration';
+  import { isReelFrame, reelRuleOf } from '$lib/reels/reelRule';
   import { attachCapturePoster } from '$lib/reels/capturePoster';
   import { getReelLimits, type ReelLimits } from '$lib/posts/api';
   import type { PublishReelDeps } from '$lib/reels/publishReel';
@@ -97,8 +98,6 @@
     composerStart?: ComposerReelState;
     /** A reel filmed from the composer was published (`post`), as `identity`. */
     onpublished?: (identity: string) => void;
-    /** "Garder comme post" from the composer: the step's state, as it stands. */
-    onkept?: (kept: ComposerReelState) => void;
     /**
      * A `chat` destination that may FILM (the chat reel writer, `chatReelWriter.ts`): a hold records
      * a video, handed back marked as a reel message. Absent, the chat camera takes photos only.
@@ -116,7 +115,6 @@
     onclose,
     composerStart = EMPTY_COMPOSER_REEL_STATE,
     onpublished,
-    onkept,
   }: Props = $props();
 
   /** The opener for each way of asking the microphone (`DestinationRules.microphone`). */
@@ -768,10 +766,19 @@
       showToast(m.reels_capture_not_a_video(), 'error');
       return;
     }
-    const durationMs = await readVideoDurationMs(file);
+    const { durationMs, width, height } = await readVideoMetadata(file);
     if (durationMs !== null && durationMs > capMs) {
       console.warn(`[reel-capture] picked ${durationMs} ms, over ${capMs}`);
       showToast(m.reels_capture_too_long({ seconds: Math.round(capMs / 1000) }), 'error');
+      return;
+    }
+    // A CanaReel is VERTICAL (owner, 2026-11-09, `reels/reelRule.ts`): a landscape or square pick is
+    // a post video, refused here with where to publish it. A frame the engine cannot read is let
+    // through: the publish reads the PREPARED frame, the one the server is told, and decides there.
+    const rule = limits ? reelRuleOf(limits) : null;
+    if (rule && width !== null && height !== null && !isReelFrame(width, height, rule)) {
+      console.warn(`[reel-capture] picked a ${width}x${height} video, not vertical`);
+      showToast(m.reels_capture_not_vertical(), 'error');
       return;
     }
     send({
@@ -965,11 +972,6 @@
         composer={rules.fromComposer
           ? {
               start: composerStart,
-              onkeep: (kept) => {
-                // The take first: the step's state follows only a take the composer actually
-                // received, never one lost to a missing `oncapture`.
-                if (handBack(clip.blob, clip.poster)) onkept?.(kept);
-              },
               onpublished: publishedFromComposer,
             }
           : undefined}

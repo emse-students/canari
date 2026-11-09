@@ -253,33 +253,6 @@ describe('CreatePostForm - a video filmed with its camera is a CanaReel (one cam
     expect(heldPostComposerMedia()).toHaveLength(1);
     expect(target.isConnected).toBe(true);
   });
-
-  it('"Garder comme post" brings back the caption edited in the reel step, and its identity', async () => {
-    const { target } = await openCamera();
-    cameraOverlayStub.keepWith = {
-      caption: 'edited in the step',
-      identity: ANONYMOUS_POST_IDENTITY,
-      studentsOnly: false,
-    };
-    try {
-      document.querySelector<HTMLButtonElement>('[data-camera-overlay-stub-keep]')!.click();
-      flushSync();
-      await tick();
-    } finally {
-      cameraOverlayStub.keepWith = null;
-    }
-    expect(target.querySelector('[contenteditable]')!.textContent).toBe('edited in the step');
-    expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(1);
-    expect(target.textContent).toContain(m.post_create_anonymous_label());
-  });
-
-  it('"Garder comme post" with the caption untouched leaves the text as it was', async () => {
-    const { target } = await openCamera(emptyPostComposerDraft('my own text'));
-    document.querySelector<HTMLButtonElement>('[data-camera-overlay-stub-keep]')!.click();
-    flushSync();
-    await tick();
-    expect(target.querySelector('[contenteditable]')!.textContent).toBe('my own text');
-  });
 });
 
 describe('CreatePostForm - where a post lands', () => {

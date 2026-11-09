@@ -92,8 +92,6 @@
     reel?: {
       start: ComposerReelState;
       onpublished: (identity: string) => void;
-      /** "Garder comme post": the publish step's state, as the member left it. */
-      onkept: (kept: ComposerReelState) => void;
     };
   }
 
@@ -200,7 +198,6 @@
     onclose={() => (cameraOpen = false)}
     composerStart={reel?.start}
     onpublished={reel?.onpublished}
-    onkept={reel?.onkept}
   />
 {/if}
 

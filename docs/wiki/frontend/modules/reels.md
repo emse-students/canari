@@ -37,9 +37,9 @@ comparison R1 was built from is on
 | C1 | **Markdown STAYS** in posts; its layout is ours to make clean (formatting on demand, not two rows of buttons above an empty field). |
 | C2 | **Any member may publish a CanaReel**, as for a post; the existing reports cover moderation. |
 | C3 | **The PHONE compresses, the server only stores** - *"il faut que la charge serveur soit minimale, sinon on va vite avoir des problemes de stockage et de memoire"*. No server transcoding, no server thumbnails. Target 720p at ~2.5 Mb/s: ~28 MB for 90 s, under the 50 MB cap. |
-| C4 | **A CanaReel lasts 90 seconds at most.** |
+| C4 | **A CanaReel lasts 90 seconds at most.** **And (owner, 2026-11-09) EVERY VERTICAL video of 90 s or less IS a CanaReel** - filmed in the CanaReels tab or imported from the gallery into a post composer - published as a reel (the pager, the reel lifetime); a landscape, square or longer video stays an ordinary post video. "Vertical" is `width / height <= 4:5` on the prepared frame, defined once on the server and served ([the rule](#the-rule-every-vertical-video-of-90-s-or-less-is-a-canareel-owner-2026-11-09)). |
 | C5 | **The camera is a TAB, left of the feed** (user's proposal): a swipe right from the feed opens it through the tab swipe that exists since #1223 - no competing gesture. |
-| C6 | **A CanaReel is kept ONE MONTH, then deleted - post, comments and reactions with it**; nothing dead stays on screen. The member can **save a reel to the phone's gallery** first, for memories. |
+| C6 | **A CanaReel is kept ONE YEAR (owner, 2026-11-09; was ONE MONTH), then deleted - post, comments and reactions with it**; nothing dead stays on screen. The reels already published moved to the year (migration 158, [server](../../services/reels.md#migration-158-the-reels-already-published-move-to-the-year-2026-11-09)). The member can **save a reel to the phone's gallery** first, for memories. |
 | C7 | **A reel is read in the feed, and touching it opens a full-screen vertical viewer** that swipes to the next one. No dedicated Reels tab. |
 | C8 | **Stories: not now.** With one-month reels the two formats overlap. |
 | C9 | **Live, when it comes, is for the WHOLE network**, keyed like a post (its key in the row, as a post CEK is), after calls are revived and the box's egress is MEASURED (~1.5 Mb/s x viewers). The plan and the user's 2026-10-15 decisions: [live](live.md). |
@@ -409,6 +409,38 @@ as an ordinary post: the server contract defines a reel as exactly one video wit
 photo must not be disguised as a reel. Video decorations use the same editor and are rendered into a
 local MediaRecorder stream before the existing H.264/AAC preparation path.
 
+## The rule: every vertical video of 90 s or less is a CanaReel (owner, 2026-11-09)
+
+**Decided by the owner on 2026-11-09**, with the year of C6 the same day. ONE classifier on the
+client, `reels/reelRule.ts`, reading the server's numbers (`GET /api/posts/reel-limits`:
+`maxDurationMs`, `maxAspectRatio`), so it draws the line where the door refuses
+([server: the rule](../../services/reels.md#the-rule-what-is-a-canareel-owner-2026-11-09)).
+
+| Path | Where the rule is read | A vertical video of 90 s or less | Any other video |
+| --- | --- | --- | --- |
+| A post composer, a picked video (`publishQueue.ts`, at the create step) | the PREPARED frame and length (`preparePostMedia` now returns `durationMs`; the queue records it with the frame) | `kind: 'reel'` + `durationMs`; its `archive` upload is promoted by the reel claim | an ordinary post, as before |
+| The CanaReels tab, a gallery pick (`ReelCapture.takePickedVideo`) | the DISPLAYED frame (`readVideoMetadata`: `videoWidth`/`videoHeight`, rotation applied by the engine) | reviewed and published as a reel | refused at once: `reels_capture_not_vertical` points to "Nouvelle publication" |
+| The tab's publish (`publishReel`) | the PREPARED frame, the one the server is told | a reel, `reel-pending` upload | an ordinary post, `archive` upload, logged at WARN: the pick-time check missed it |
+
+- **A post carrying something a reel cannot** (a poll, an attached form, a linked event, a
+  schedule, a second attachment) stays a post: the member chose them, and the door refuses each on
+  a reel (`reelDeclarationFor`).
+- **"Garder comme post" is gone** from the composer camera's publish step: a filmed take is
+  vertical and within the cap, so handing it back would make it a reel again at the create step. The
+  step's notice now says the rule ("Une vidéo verticale de 90 secondes au plus est un CanaReel :
+  supprimé au bout de 1 an"), and every lifetime is worded by `reelLifetimeLabel` ("1 an" for 365
+  days, "N jours" otherwise).
+- **An estate older than the rule** serves no `maxAspectRatio` (`reelRuleOf` -> `null`, logged at
+  WARN): the composer's video stays a post and the tab's take a reel, each as that estate expects.
+- **Old queued posts** (prepared before this release, no recorded length) stay posts.
+
+Pinned by `reelRule.test.ts` (the 4:5 and 90 000 ms boundaries, the exclusions, the lifetime
+wording), `publishQueue.test.ts` (one vertical video is created as a reel with its prepared length;
+landscape, square, 90 001 ms, a poll, a form, an event, a schedule, a second media and an older
+estate stay posts), `publishReel.test.ts` (a wide prepared take publishes as an `archive` post, an
+older estate keeps the reel) and `ReelCapture.svelte.test.ts` (a landscape or square pick is
+refused with its toast; an unreadable frame reaches the review).
+
 ## The two ways into the camera publish the same thing (2026-10-19)
 
 **User report, relayed 2026-10-19: "+" then the camera did something different from swiping to the
@@ -425,11 +457,11 @@ web page cannot remove.
 | Component | `ReelCapture destination="feed"` | `PostComposerBar reel` -> `CameraOverlay` -> `ReelCapture destination="post"` | `PostComposerBar` (no `reel`) -> `destination="post-edit"` |
 | Capture | the lens last used (front by default), the preview's crop, 90 s ring from `reel-limits` | the same | the same |
 | Microphone | with the lens: refused = no camera | asked apart: refused = photos only | asked apart |
-| A FILMED VIDEO | `ReelPublishSheet` -> `kind:'reel'`, `durationMs`, `reel` class (30 days) | **the same** `ReelPublishSheet`, `kind:'reel'`, `durationMs`; caption = the composer's text, identity = its choice | handed back as a file: an existing post never becomes a reel |
-| What the step adds from the composer | - | an amber notice "CanaReel : supprimé au bout de 30 jours" BEFORE "Publier", and "Garder comme post", which hands the video back to the composer as before | - |
+| A FILMED VIDEO | `ReelPublishSheet` -> `kind:'reel'`, `durationMs`, `reel` class (one year since 2026-11-09) | **the same** `ReelPublishSheet`, `kind:'reel'`, `durationMs`; caption = the composer's text, identity = its choice | handed back as a file: an existing post never becomes a reel |
+| What the step adds from the composer | - | an amber notice BEFORE "Publier" (since 2026-11-09: "Une vidéo verticale de 90 secondes au plus est un CanaReel : supprimé au bout de 1 an"); "Garder comme post" was removed that day ([the rule](#the-rule-every-vertical-video-of-90-s-or-less-is-a-canareel-owner-2026-11-09)) | - |
 | After publishing | lands on `/posts` (replace) | the composer's text is spent (the draft is saved without it at once), the composer closes, the feed shows where the reel landed | - |
 | A PHOTO | the publish step, an ordinary post | handed back to the composer, an ordinary post | handed back |
-| Gallery / sound removal | yes / yes | no (the composer has "Photo/vidéo", whose video stays a POST) / no | no / no |
+| Gallery / sound removal | yes (vertical only, since 2026-11-09) / yes | no (the composer has "Photo/vidéo", whose video is a REEL when vertical and 90 s or less since 2026-11-09, a post otherwise) / no | no / no |
 
 One table decides it (`destinationRules` + `handsBackTake` in `reels/reelCapture.ts`): a photo and
 a video of the same destination may part ways.
@@ -441,9 +473,8 @@ a video of the same destination may part ways.
   the camera is `post-edit`, and its video is attached to that post - a reel carries none of them
   (the server's `assertCreateKindShape` refuses each), the post can. Silent on purpose: the outcome
   is the one the member always had.
-- **"Garder comme post" carries the step's edits back**: the caption REPLACES the composer's text
-  when it differs from it (it started as that text, so an untouched caption changes nothing), and
-  the identity chosen in the step becomes the post's.
+- *(Removed 2026-11-09 with the button, [the rule](#the-rule-every-vertical-video-of-90-s-or-less-is-a-canareel-owner-2026-11-09).)*
+  "Garder comme post" carried the step's caption and identity back to the composer.
 - **A publish past its upload keeps the step** (both paths, the tab's included): a Back during
   `mediaUpload`/`createPost` used to return to the take while the upload went on, and "Suivant",
   "Publier" published the take a SECOND time. Now that Back is refused and the entry given back,
@@ -455,8 +486,6 @@ a video of the same destination may part ways.
   still gave a second post; a VIDEO stays stoppable until its upload, since its re-encode signal is
   armed at the press and an abort during the mute check or the token makes the re-encode refuse
   before any post exists. Pinned by `ReelPublishSheet.stopping.svelte.test.ts`.
-- **"Garder comme post" hands the take back FIRST**: the step's caption and identity reach the
-  composer only once it has received the video, never with a take lost to a missing `oncapture`.
 - **An ANONYMOUS post or reel lands in `all`**, never `associations` (`isAssociationIdentity`,
   `posts/postIdentity.ts`; `!!identity` counted anonymity as an association), for the composer's
   ordinary publish too.
@@ -466,7 +495,7 @@ a video of the same destination may part ways.
 
 Pinned by `ReelCapture.svelte.test.ts` (the same
 filmed video creates `kind:'reel'` with its duration from the tab and from the composer; the photo
-and the editor still hand back; "Garder comme post" hands the video back with its poster),
+and the editor still hand back; from the composer the step offers no way back to a post),
 `ReelPublishSheet.svelte.test.ts` (the notice, the caption, no navigation from the composer),
 `CreatePostForm.svelte.test.ts` (the text is spent and the composer closes) and
 `PostComposerBar.svelte.test.ts` (new post vs editor). On phones:
@@ -1134,7 +1163,7 @@ instead is its AGE, discreetly and from the one helper (`timeAgo`, with `exactDa
 feed card has it in the post header, and the viewer - which has no header - carries it beside the
 author's name. `expiresAt`, `expiringSoon` and `serverNow` stay on the server's `my-reels` answer
 ([reels (server)](../../services/reels.md)), which no client reads any more.
-The publish step's own note ("visible 30 days...") is unchanged and is the user's to rule on.
+The publish step's own note reads "Visible 1 an..." since the owner's year of 2026-11-09 (`reelLifetimeLabel`).
 
 **The save** (`ReelSaveButton`) is **for EVERY reel, public or not** (user, 2026-10-09: *"un bouton pour
 sauvegarder tous les reels, public ou non"*). Since 2026-10-23 it is in the RAIL under the send, not in

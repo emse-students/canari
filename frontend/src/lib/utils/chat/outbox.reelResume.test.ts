@@ -1110,6 +1110,7 @@ describe('one take, several conversations (RC-13)', () => {
         caption: '',
         identity: '',
         maxDurationMs: 90_000,
+        rule: { maxDurationMs: 90_000, maxAspectRatio: 0.8 },
         video: {},
         onUploaded: (uploaded) => l.outbox.adoptPublishedUpload(ID, uploaded),
       },

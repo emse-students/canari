@@ -59,7 +59,6 @@
   import PostIdentityPicker from './PostIdentityPicker.svelte';
   import StudentsOnlySwitch from './StudentsOnlySwitch.svelte';
   import { studentsOnlyOffered } from '$lib/posts/studentsOnly';
-  import type { ComposerReelState } from '$lib/posts/composerReelState';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import PostComposerBar from './PostComposerBar.svelte';
   import MediaThumbRemoveButton from './MediaThumbRemoveButton.svelte';
@@ -349,24 +348,6 @@
       linkedCalendarEventId: selectedLinkedCalendarEventId,
     })
   );
-
-  /**
-   * "Garder comme post" from the reel publish step: the video comes back through `onFiles`, and
-   * what the member changed in that step comes with it. The caption REPLACES this text only when
-   * it differs from it (it started as this text, so an untouched caption changes nothing); the
-   * identity and the "Entre étudiants" switch chosen there are the post's.
-   */
-  function onReelKept(kept: ComposerReelState) {
-    if (kept.caption !== markdown) {
-      Log.d(
-        'POST_COMPOSER',
-        'kept as a post: the caption edited in the reel step replaces the text'
-      );
-      markdown = kept.caption;
-    }
-    selectedAssociationId = kept.identity;
-    studentsOnly = kept.studentsOnly;
-  }
 
   function onReelPublished(identity: string) {
     Log.d('POST_COMPOSER', 'a reel filmed from this composer was published: its text is spent');
@@ -872,7 +853,6 @@
         ? {
             start: { caption: markdown, identity: selectedAssociationId, studentsOnly },
             onpublished: onReelPublished,
-            onkept: onReelKept,
           }
         : undefined}
     >
