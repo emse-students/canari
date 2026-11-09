@@ -179,6 +179,13 @@ computes `isEmojiOnly` from it (up to 5 emoji, no media/reply/poll) and folds it
 new `jumbo` prop swaps `text-sm leading-relaxed` for `text-3xl leading-tight` - the largest existing
 `--text-*` step, not an eighth size.
 
+**What it costs per bubble (2026-11-08).** Every bubble asks it once, so it is on the salon open's
+path. The page holds ONE `Intl.Segmenter` (`graphemes`, lazy, shared with `emojiSvg.ts`'s
+`splitEmojiText`), and the scan stops at the first grapheme that is not an emoji or at the one past
+`maxCount`: an ordinary message is answered after its first letter, whatever its length. It used to
+build a segmenter per call and split the whole text first
+([community-open-budget](community-open-budget.md#per-bubble-and-per-day-work-cut-2026-11-08)).
+
 ## What the pictures do NOT change
 
 The notification shade, the OS share sheet, the keyboard's own emoji panel and every other native

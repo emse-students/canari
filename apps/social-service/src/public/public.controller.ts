@@ -20,7 +20,8 @@ import { Association } from '../associations/entities/association.entity';
 import { ProductsService } from '../associations/products.service';
 import { PosterService, type PublishedCarteResponse } from '../associations/poster.service';
 import type { PublishedCarteCard, PublishedCarteUnit } from '../associations/published-carte';
-import { CARTE_ERROR, parseCarteSpaceParam } from '../associations/poster-scope';
+import { CARTE_ERROR } from '../associations/poster-scope';
+import { parsePublicSpaceParam } from '../spaces/public-space';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import { coreUrl } from '../internal/service-urls';
 import { PostPreviewService, type PostSharePreview } from '../posts/post-preview.service';
@@ -144,21 +145,56 @@ export class PublicController {
     }
   }
 
-  /** Lists associations and/or lists. `?type=association|list` restricts; omit for both. */
+  /**
+   * Lists associations and/or lists. `?type=association|list` restricts; omit for both.
+   *
+   * `?space=<formation>:<campus>` (owner, 2026-11-08) keeps, among rows of type `association`, only
+   * those whose audience reaches the space - a carte's set of that space, plus its archived ones,
+   * which the showcase lists in its archived section (`spaces/public-space.ts`); lists and
+   * institutions are not filtered by it. The portail-etu showcase sends its space; without the
+   * parameter the answer is the COMPLETE list, unchanged, because Canari's own sitemap and SEO read
+   * it too. A malformed `space` is a typed 400 (`PUBLIC_SPACE_INVALID`).
+   */
   @Get('associations')
-  async listAssociations(@Query('type') type?: string): Promise<PublicAssociation[]> {
+  async listAssociations(
+    @Query('type') type?: string,
+    @Query('space') rawSpace?: unknown
+  ): Promise<PublicAssociation[]> {
+    const space = parsePublicSpaceParam(rawSpace, 'GET public/associations');
     const filter =
       type === 'association' || type === 'list' || type === 'institution' ? type : undefined;
-    this.logger.debug(`public listAssociations type=${filter ?? 'all'}`);
+    this.logger.debug(
+      `public listAssociations type=${filter ?? 'all'} space=${space ? `${space.formation}:${space.campus}` : 'all'}`
+    );
     const rows = await this.associations.list(filter);
-    return rows.map(toPublic);
+    if (!space) return rows.map(toPublic);
+    const offered = await this.associations.offeredInSpace(space);
+    return rows.filter((a) => a.type !== 'association' || offered.has(a.id)).map(toPublic);
   }
 
-  /** One association/list by slug, with its public members. */
+  /**
+   * One association/list by slug, with its public members.
+   *
+   * With `?space=`, an association (type `association`, archived or not) whose audience does not
+   * reach the space answers 404, the
+   * same as an unknown slug: the showcase of a space must not render another space's association
+   * by URL. Without it, every association answers - Canari's own pages read it.
+   */
   @Get('associations/slug/:slug')
-  async getBySlug(@Param('slug') slug: string) {
+  async getBySlug(@Param('slug') slug: string, @Query('space') rawSpace?: unknown) {
+    const space = parsePublicSpaceParam(rawSpace, 'GET public/associations/slug');
     this.logger.debug(`public getBySlug ${slug}`);
     const a = await this.associations.findBySlug(slug);
+    if (
+      space &&
+      a.type === 'association' &&
+      !(await this.associations.offeredInSpace(space)).has(a.id)
+    ) {
+      this.logger.debug(
+        `public getBySlug ${slug}: not offered by ${space.formation}:${space.campus} - 404`
+      );
+      throw new NotFoundException('Association not found');
+    }
     const members = await this.associations.listMembersPublic(a.id);
     return { ...toPublic(a), members };
   }
@@ -310,7 +346,7 @@ export class PublicController {
    * live map since migration 147, and the showcase names its own space in its configuration - Canari
    * knows nothing of which school a showcase belongs to. 404 when that space has no live map; the
    * showcase then simply omits the map. A value naming no possible space is a typed 400
-   * (`CARTE_PUBLIC_SPACE_INVALID`).
+   * (`PUBLIC_SPACE_INVALID`).
    *
    * [LEGACY] With no `space`, a showcase deployed before it sent one still gets the map while EXACTLY
    * ONE map is live anywhere, logged at WARN; otherwise a typed 400 (`CARTE_PUBLIC_SPACE_REQUIRED`)
@@ -326,7 +362,7 @@ export class PublicController {
   @Get('carte')
   @Header('Cache-Control', 'public, max-age=300')
   async getPublishedCarte(@Query('space') rawSpace?: unknown): Promise<PublicCarteResponse> {
-    const space = parseCarteSpaceParam(rawSpace);
+    const space = parsePublicSpaceParam(rawSpace, 'GET public/carte');
     this.logger.debug(
       `public getPublishedCarte ${space ? `${space.formation}:${space.campus}` : '(no space)'}`
     );

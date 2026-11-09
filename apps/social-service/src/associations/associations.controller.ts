@@ -80,7 +80,6 @@ import { sanitizeLog } from '../common/log.utils';
 import {
   ASSOCIATION_FIELD_PLATFORM_ADMIN_ONLY,
   ASSOCIATION_FIELD_RIGHT_MISSING,
-  dropUnchangedPlatformFields,
   rightsAskedBy,
 } from './association-update-rights';
 import { wholeCentsOf } from '../common/core-payment-error';
@@ -857,17 +856,6 @@ export class AssociationsController {
   ) {
     let patch = { ...dto };
     const isGlobalAdmin = ga === 'true';
-    if (!isGlobalAdmin && rightsAskedBy(patch).platformAdmin.length > 0) {
-      // LEGACY SHIM until 2027-05-03: an old list form resends its parent unchanged on every save.
-      const stored = (await this.service.findById(id)) as unknown as Record<string, unknown>;
-      const unchanged = dropUnchangedPlatformFields(patch, stored);
-      patch = unchanged.patch;
-      if (unchanged.dropped.length > 0) {
-        this.logger.log(
-          `[LEGACY] update ${sanitizeLog(id)}: unchanged ${unchanged.dropped.join(',')} dropped (old client resend)`
-        );
-      }
-    }
     const asked = rightsAskedBy(patch);
     this.logger.debug(
       `[ASSO] update ${sanitizeLog(id)} fields=${Object.keys(patch).join(',') || '(none)'}`

@@ -335,6 +335,8 @@
   "chat_insert_emoji_label": "Insérer {emoji}",
   "chat_composer_group_label": "Zone de saisie et dépôt de fichiers",
   "chat_drag_files_badge": "Déposez vos fichiers ici",
+  "composer_drop_web_image_refused": "Ce site ne laisse pas d'autres sites lire son image. Enregistrez l'image, puis joignez le fichier.",
+  "post_drop_overlay": "Déposez pour joindre à votre publication",
   "composer_drop_file_unreadable": "Le gestionnaire de fichiers n'a pas transmis ce fichier au navigateur. Utilisez le bouton de pièce jointe.",
   "chat_enlarge_preview_label": "Agrandir l'aperçu",
   "chat_remove_file_label": "Retirer le fichier",

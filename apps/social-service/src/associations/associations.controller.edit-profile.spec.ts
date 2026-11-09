@@ -216,28 +216,20 @@ describe('AssociationsController - every PATCH field asks its own right', () => 
   });
 
   /**
-   * LEGACY until 2027-05-03: a store build up to 1.6.2 resends `parentAssociationId: editParentId ||
-   * null` on every list save. An unchanged value is dropped before the rights are asked; a changed
-   * one is still refused.
+   * The resend of a build up to 1.6.2 (its list form sent `parentAssociationId` on every save) was
+   * dropped when unchanged until floor 1.6.6; since then any parent a member sends is refused, the
+   * stored value or not (docs/wiki/legacy-compatibility.md).
    */
-  it.each([
-    ['the stored parent', STORED_PARENT],
-    ['null, for a list that has none', null],
-  ])('saves a profile resent with %s, without writing the parent', async (_label, sent) => {
+  it('refuses an UNCHANGED parent from that holder too, and writes nothing', async () => {
     const { controller, service } = harness(F.EDIT_PROFILE);
-    if (sent === null) {
-      service.findById.mockResolvedValueOnce({
-        id: ASSO,
-        type: 'list',
-        parentAssociationId: null as unknown as string,
-        documentQuotaBytes: '524288000',
-      });
-    }
-    await controller.update(ASSO, 'member', undefined, {
-      name: 'Liste',
-      parentAssociationId: sent,
-    });
-    expect(service.update).toHaveBeenCalledWith(ASSO, { name: 'Liste' });
+    const body = await refusal(
+      controller.update(ASSO, 'member', undefined, {
+        name: 'Liste',
+        parentAssociationId: STORED_PARENT,
+      })
+    );
+    expect(body).toMatchObject({ code: ASSOCIATION_FIELD_PLATFORM_ADMIN_ONLY });
+    expect(service.update).not.toHaveBeenCalled();
   });
 
   it('still refuses a CHANGED parent from that holder', async () => {

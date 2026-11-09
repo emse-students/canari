@@ -3,7 +3,7 @@
  * NOT GATED BY CI: a hand-run instrument whose numbers are a SHAPE, never a phone's number.
  *
  *   bun bench/salon-mount/run.mjs [--scene pane|hub] [--runs 7] [--rows 200] [--shape own|mixed]
- *                                 [--cpu 4] [--profile <dir>] [--no-build] [--compare <dir>]
+ *                                 [--days 1] [--cpu 4] [--profile <dir>] [--no-build] [--compare <dir>]
  *
  * What it answers: how long a salon whose page is already in memory takes to show its last
  * messages, how many rows were mounted to get there, which long tasks it cost, and how many
@@ -45,6 +45,8 @@ const SCENE = opt('scene', 'pane');
 const RUNS = Number(opt('runs', 7));
 const ROWS = Number(opt('rows', 200));
 const SHAPE = opt('shape', 'own');
+/** Days the messages span, ending today: one day separator each (1 = the bench seed's shape). */
+const DAYS = Number(opt('days', 1));
 const CPU = Number(opt('cpu', 4));
 const PROFILE_DIR = opt('profile', null);
 const COMPARE = opt('compare', null);
@@ -130,7 +132,9 @@ function connect(wsUrl) {
   ws.addEventListener('message', (m) => {
     const msg = JSON.parse(m.data);
     if (msg.method === 'Log.entryAdded') {
-      const text = msg.params.entry.text.slice(0, 60);
+      // A failed load names no resource in its text: the URL is what tells a bench gap from a defect.
+      const { text: entryText, url } = msg.params.entry;
+      const text = `${entryText.slice(0, 60)}${url ? ` <${url.replace(/^https?:\/\/[^/]+/, '')}>` : ''}`;
       session.warnings.set(text, (session.warnings.get(text) ?? 0) + 1);
     }
     if (msg.id && pending.has(msg.id)) {
@@ -207,7 +211,7 @@ try {
       if (await evaluate(cx, 'typeof window.__salonBench === "object"').catch(() => false)) break;
       await new Promise((r) => setTimeout(r, 25));
     }
-    const options = JSON.stringify({ rows: ROWS, shape: SHAPE, settleMs: 1500 });
+    const options = JSON.stringify({ rows: ROWS, shape: SHAPE, days: DAYS, settleMs: 1500 });
     for (const which of ['first', 'reopen']) {
       const profiling = PROFILE_DIR && run === 1 && arm === 'this';
       if (profiling) {
@@ -248,11 +252,18 @@ try {
   chrome.kill();
   await exited;
   server.stop(true);
-  rmSync(profileDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  // On Windows Chrome's helper processes can hold the profile a moment past the browser's own exit,
+  // beyond the retries: the readings are taken, so a leftover temp directory is SAID, never fatal
+  // (it used to throw here and lose the summary below).
+  try {
+    rmSync(profileDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  } catch (e) {
+    console.warn(`the throwaway Chrome profile was left behind: ${profileDir} (${e.code ?? e})`);
+  }
 }
 
 console.log(
-  `\n${SCENE}: ${ROWS} rows (${SHAPE}), cpu x${CPU}, ${VIEWPORT.width}x${VIEWPORT.height}, ${RUNS} runs - medians:`
+  `\n${SCENE}: ${ROWS} rows (${SHAPE}, ${DAYS} day(s)), cpu x${CPU}, ${VIEWPORT.width}x${VIEWPORT.height}, ${RUNS} runs - medians:`
 );
 for (const [arm, which] of Object.keys(ARMS).flatMap((a) => [
   [a, 'first'],

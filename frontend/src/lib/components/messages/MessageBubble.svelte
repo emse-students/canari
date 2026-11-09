@@ -1091,33 +1091,36 @@
                 onClose={() => onClosePoll?.(messageId)}
               />
             {:else}
-              <MessageMediaRenderer
-                {mediaRef}
-                {blobUrl}
-                failure={mediaFailure}
-                onRetry={() => (mediaAttempt += 1)}
-                {textContent}
-                {isOwn}
-                onBubble={!isMediaOnly}
-                orphan={orphanMedia}
-                {textSegments}
-                bleed={bleedsMedia}
-                {senderId}
-                sentAt={timestamp}
-                {messageId}
-                {authToken}
-                {reelPurgedAt}
-                onReelPurged={onReelPurged ? (at) => onReelPurged(messageId, at) : undefined}
-                onNear={() => (isNearViewport = true)}
-                {upload}
-                uploadFailed={uploadFailed || retiredForGroup}
-                {uploadFailedLabel}
-                onCancelUpload={uploadCancelOf(messageId) ??
-                  (onDelete ? () => onDelete(messageId) : undefined)}
-                onRetryUpload={() => retryUpload(messageId)}
-              />
-
-              {#if !mediaRef}
+              <!-- MOUNTED ONLY FOR AN ATTACHMENT: the renderer draws nothing without one, and a text
+                   row paid its whole setup anyway - one per bubble of every salon open
+                   (community-open-budget, 2026-11-08). -->
+              {#if mediaRef}
+                <MessageMediaRenderer
+                  {mediaRef}
+                  {blobUrl}
+                  failure={mediaFailure}
+                  onRetry={() => (mediaAttempt += 1)}
+                  {textContent}
+                  {isOwn}
+                  onBubble={!isMediaOnly}
+                  orphan={orphanMedia}
+                  {textSegments}
+                  bleed={bleedsMedia}
+                  {senderId}
+                  sentAt={timestamp}
+                  {messageId}
+                  {authToken}
+                  {reelPurgedAt}
+                  onReelPurged={onReelPurged ? (at) => onReelPurged(messageId, at) : undefined}
+                  onNear={() => (isNearViewport = true)}
+                  {upload}
+                  uploadFailed={uploadFailed || retiredForGroup}
+                  {uploadFailedLabel}
+                  onCancelUpload={uploadCancelOf(messageId) ??
+                    (onDelete ? () => onDelete(messageId) : undefined)}
+                  onRetryUpload={() => retryUpload(messageId)}
+                />
+              {:else}
                 <MessageTextBody
                   {textSegments}
                   {searchTerm}
