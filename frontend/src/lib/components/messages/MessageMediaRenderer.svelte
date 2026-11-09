@@ -217,6 +217,15 @@
       : 'bg-black/5 dark:bg-white/10 border-black/5 dark:border-white/10 text-text-main'
   );
 
+  /**
+   * A FILE ROW IS A COMPACT ROW, NOT A BORDERED CARD (design audit M6, 2026-11-09): the fill alone
+   * separates it from the bubble, as Messenger's attachment does; the border is what made two files
+   * take 150 dp.
+   */
+  const fileRowClass = $derived(
+    onAmber ? 'bg-black/10 text-cn-ink' : 'bg-black/5 dark:bg-white/10 text-text-main'
+  );
+
   /** Red is unreadable on one's own amber bubble, so the failure box speaks in its ink there. */
   const failureTone = $derived(onAmber ? 'ink' : 'surface');
 
@@ -489,27 +498,27 @@
     {:else}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        class="flex w-full max-w-full items-center gap-3.5 rounded-3xl border px-3.5 py-3 {glassBoxClass} group/file transition-colors"
+        class="flex w-full max-w-full items-center gap-3 rounded-2xl py-1.5 pr-1.5 pl-2.5 {fileRowClass} group/file transition-colors"
         ontouchstart={(e) => e.stopPropagation()}
         ontouchend={(e) => e.stopPropagation()}
       >
         {#snippet fileRowContent()}
           <!-- File icon, or the PDF's own first page once it is decrypted. -->
           <div
-            class="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-current/10 text-current opacity-80"
+            class="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-current/10 text-current opacity-80"
           >
             {#if isPdf && blobUrl}
               <PdfThumbnail
                 url={blobUrl}
-                maxWidth={44}
+                maxWidth={36}
                 imgClass="w-full h-full object-cover object-top"
               >
                 {#snippet fallback()}
-                  <FileText size={22} strokeWidth={2} />
+                  <FileText size={20} strokeWidth={2} />
                 {/snippet}
               </PdfThumbnail>
             {:else}
-              <FileText size={22} strokeWidth={2} />
+              <FileText size={20} strokeWidth={2} />
             {/if}
           </div>
 
@@ -553,7 +562,7 @@
           <button
             type="button"
             onclick={openPdfViewer}
-            class="flex min-w-0 flex-1 cursor-pointer items-center gap-3.5 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-current"
+            class="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-current"
             aria-label={m.pdf_open_document_label()}
           >
             {@render fileRowContent()}
