@@ -1004,11 +1004,21 @@ animation of the first open of each. Mounting them on the bubble's first `pointe
 before any of them can open, is the candidate; it changes when `bindHistoryOverlay` registers and
 needs its own review.
 
-**Owed on the Mi 9T, with the next pre-release:** `community-open.mjs` cold and warm at 1x on the
-`BancOuverture-1` seed (one day: expect the salon-open long task to move by the per-bubble part
-only, within the spread), and the same on a salon spanning weeks, which no bench seed holds yet
-(`community-bench-seed.mjs` writes its messages in one burst) - `reopen>msgs` and the cached-reopen
-long task are the readings that should move there.
+**Read on the Mi 9T, `v1.6.9-alpha.1` (2026-11-09).** The release APK sideloaded, dev, `community-open.mjs --community "nse banc communaute" --runs 5 --cpu 1 --net none`, the bench account on the vault path; the community is the dev bench one of the test accounts (one salon `general`; not the `BancOuverture-1` seed, so it is NOT the table above's shape and the two are not compared). Medians over five runs, worst in brackets, ms:
+
+| milestone | cold | warm (HOME, 10 s, resume) |
+| --- | --- | --- |
+| tap Communautes to the rail | 434 (723) | 332 (449) |
+| tap to the target community's salons | 782 (1095) | 545 (818) |
+| tap a salon to the pane (composer) | 368 (519) | 291 (328) |
+| tap a salon to its first bubble | **891** (1072) | **299** (558) |
+| reopen of the same salon to its bubbles | 359 (377) | 370 (383) |
+| other community, its first salon, to the pane | 248 (603) | 293 (645) |
+| long tasks over the open | 627 (755) | 246 (573) |
+| longest main-thread gap | 285 (325) | 199 (298) |
+| API calls / kB | 49 / 131 | 5 / 1 |
+
+Cold: `attach` 412 and `nav` 1459. The warm `attach`/`nav` columns (240 s) are not a reading (the tool's attach on a resume waited minutes; cause not investigated). **What this says:** the salon-open milestone is 891 ms cold and 299 ms warm at 1x, still above the 200 ms budget cold (the cold run also makes 49 API calls and holds 627 ms of long tasks over the whole open); the cached reopen is 359-370 ms in both starts, so the per-bubble cut did not move it on a salon of this size, as the note above predicted for a one-day seed. A salon spanning weeks, where the cut was expected to show (`reopen>msgs`, the cached-reopen long task), is still owed: no bench seed holds one. No before/after on the phone: the previous build was not run in the same session.
 
 ## 7. Not measured, and owed
 
