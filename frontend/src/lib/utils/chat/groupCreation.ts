@@ -5,7 +5,9 @@ import type { Conversation } from '$lib/types';
 import {
   deliverWelcomes,
   persistMlsStateAfterMutation,
+  pushJoinBundles,
   warnSkippedKeyPackages,
+  type WelcomedDevice,
 } from '$lib/utils/chat/groupActions';
 import { globalMessaging } from '$lib/stores/globalChatSingleton.svelte';
 import type { SvelteMap } from 'svelte/reactivity';
@@ -679,6 +681,8 @@ async function attemptBulkAddition(
 
     // Users registered server-side AND whose Welcome was accepted: only those are announced.
     const announcedUsers = new Set<string>();
+    // And their devices, each owed the join push below.
+    const welcomedDevices: WelcomedDevice[] = [];
 
     try {
       // Add all devices in one staged MLS commit (C7-A), REBUILT ON A LOST RACE (`commitRace.ts`):
@@ -778,7 +782,7 @@ async function attemptBulkAddition(
       );
 
       // Deliver welcomes per-device in parallel; one failure never aborts the others.
-      const deliveredUsers = await deliverWelcomes({
+      const delivered = await deliverWelcomes({
         mlsService,
         groupId: conversation.id,
         bulk,
@@ -789,7 +793,8 @@ async function attemptBulkAddition(
         tag: '[SYNC]',
         log,
       });
-      for (const u of deliveredUsers) announcedUsers.add(u);
+      for (const u of delivered.users) announcedUsers.add(u);
+      welcomedDevices.push(...delivered.devices);
 
       log(
         `[OK] Added: ${targetUsers.join(', ')} (${bulk.addedDeviceIds.length} device(s)). (${announcedUsers.size} user(s) delivered)`
@@ -831,6 +836,16 @@ async function attemptBulkAddition(
       );
       console.warn('[SYNC] No Welcome delivered - member addition notification skipped');
     }
+
+    // THE JOIN PUSH, as every other Add path sends it: the conversation's state - the nickname
+    // register first - for each device just admitted, addressed to it and carrying none of the past
+    // (step A). Without it a person added here never saw a nickname set before them (2026-11-09).
+    await pushJoinBundles(conversation.id, welcomedDevices, {
+      storage: deps.storage,
+      deviceKeyB64,
+      mlsService,
+      log,
+    });
   } catch (e: any) {
     // The one failure the member can act on, so it reaches them (`inviteMembersToCurrentGroup`).
     if (e instanceof FollowerTabCommitError) throw e;

@@ -5081,7 +5081,21 @@ its setter leaves.
 **The late joiner.** A member added after a `nickname` frame went out never receives it. The
 inviter's JOIN PUSH to the new device restates the register (`nicknames`, beside `pins`), even when
 every message is withheld, so a new member gets the names in the first bundle. That join push is the
-ONLY bundle a register is taken from (review of #3177). A broadcast or replayed bundle carries none,
+ONLY bundle a register is taken from (review of #3177). **EVERY Add path sends it**: the pending
+invitation and the welcome request always did (`sendFullHistoryBundle` in `actions.ts`), and the
+member's "Ajouter" - `inviteMembersToGroup`, which a join-request approval also is - did not until
+#3185 (`pushJoinBundles`, one push per device whose Welcome was delivered). Reading 2 of
+`1.6.9-alpha.1` found the gap: a newcomer added there saw no nickname at all
+([defect](../../backlog.d/p2-a-member-added-after-a-nickname-does-not-receive-it.md)).
+
+**Why it does not breach step A** ([the decision](../../backlog.md#p1---a-new-member-of-a-group-conversation-receives-its-whole-past-decided-2026-10-21-that-they-must-not)).
+Step A forbids a newcomer the MESSAGES sent before their arrival; the push is addressed to the new
+device and filtered on its owner's server windows, so for a newcomer it carries no message from
+before - a state-only frame, or only what was sent since the Add. A nickname is not a past message:
+it is the name the conversation shows TODAY for a current member, which the newcomer reads on every
+later frame anyway, and which the screen marks "Défini avant votre arrivée" rather than attributing.
+Its only trace of the past is the entry's date and the setter the relayer states, and the screen
+names neither as a fact: the entry is unverified, the relayer's word. A broadcast or replayed bundle carries none,
 and an answer to a later ask carries none either. A bundle's entries are the relayer's word about what
 others did, so a relayer could forge a setter and pass the target's block check. So
 `mergeBundleNicknames` applies four limits:

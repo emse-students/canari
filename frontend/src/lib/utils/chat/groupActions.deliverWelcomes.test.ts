@@ -26,7 +26,16 @@ describe('deliverWelcomes', () => {
       log: noopLog,
     });
 
-    expect(delivered).toEqual(new Set(['alice', 'bob']));
+    expect(delivered.users).toEqual(new Set(['alice', 'bob']));
+    // Each device reached, with its owner: the ones an inviter then owes its join push.
+    expect(delivered.devices).toEqual(
+      expect.arrayContaining([
+        { userId: 'alice', deviceId: 'dev-a1' },
+        { userId: 'alice', deviceId: 'dev-a2' },
+        { userId: 'bob', deviceId: 'dev-b1' },
+      ])
+    );
+    expect(delivered.devices).toHaveLength(3);
     expect(mlsService.sendWelcome).toHaveBeenCalledTimes(3);
     expect(mlsService.sendWelcome).toHaveBeenCalledWith(
       bulk.welcome,
@@ -55,7 +64,8 @@ describe('deliverWelcomes', () => {
       log: noopLog,
     });
 
-    expect(delivered).toEqual(new Set(['alice']));
+    expect(delivered.users).toEqual(new Set(['alice']));
+    expect(delivered.devices).toEqual([{ userId: 'alice', deviceId: 'dev-a1' }]);
     expect(sendWelcome).toHaveBeenCalledTimes(2);
   });
 
@@ -71,7 +81,8 @@ describe('deliverWelcomes', () => {
       log: noopLog,
     });
 
-    expect(delivered.size).toBe(0);
+    expect(delivered.users.size).toBe(0);
+    expect(delivered.devices).toEqual([]);
     expect(mlsService.sendWelcome).not.toHaveBeenCalled();
   });
 
@@ -87,7 +98,8 @@ describe('deliverWelcomes', () => {
       log: noopLog,
     });
 
-    expect(delivered).toEqual(new Set(['alice']));
+    expect(delivered.users).toEqual(new Set(['alice']));
+    expect(delivered.devices).toEqual([{ userId: 'alice', deviceId: 'dev-a1' }]);
     expect(mlsService.sendWelcome).toHaveBeenCalledTimes(1);
   });
 });

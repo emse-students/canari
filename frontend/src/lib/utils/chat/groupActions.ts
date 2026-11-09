@@ -20,6 +20,7 @@ import { cachedHistoryStateKey } from './historyStateKey';
 import { sendVisibleNotice, type OwnNotice } from './visibleNotices';
 import { readerHistorySelection } from './historyEntitlement';
 import { mintHistoryRequestId, noteHistoryAsk } from './historyAddressing';
+import { digestIdentity } from './historyDigestRendezvous';
 import { treeHoldsUser, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import {
   buildHistoryDigest,
@@ -109,7 +110,8 @@ export function warnSkippedKeyPackages(
  * aborting the remaining deliveries.
  *
  * @param ownerOf Resolves the owner userId of a device; devices without an owner are skipped.
- * @returns The set of owner userIds with at least one successfully delivered device.
+ * @returns The owners with at least one successfully delivered device (`users`), and every device
+ *   whose Welcome was delivered (`devices`) - the ones an inviter then owes its join push.
  */
 export async function deliverWelcomes(params: {
   mlsService: IMlsService;
@@ -118,13 +120,14 @@ export async function deliverWelcomes(params: {
   ownerOf: (deviceId: string) => string | undefined;
   tag: string;
   log: (msg: string) => void;
-}): Promise<Set<string>> {
+}): Promise<DeliveredWelcomes> {
   const { mlsService, groupId, bulk, ownerOf, tag, log } = params;
   const delivered = new Set<string>();
+  const devices: WelcomedDevice[] = [];
   if (!bulk.welcome) {
     log(`${tag} addMembersBulk returned no welcome (${bulk.addedDeviceIds.length} device(s))`);
     console.warn(`${tag} addMembersBulk returned no welcome`);
-    return delivered;
+    return { users: delivered, devices };
   }
   const welcome = bulk.welcome;
   await Promise.all(
@@ -144,6 +147,7 @@ export async function deliverWelcomes(params: {
       try {
         await mlsService.sendWelcome(welcome, owner, groupId, did, bulk.ratchetTree);
         delivered.add(owner);
+        devices.push({ userId: owner, deviceId: did });
         log(`${tag} Welcome -> ${owner}:${did} OK`);
       } catch (e) {
         log(`${tag} Welcome failed -> ${owner}:${did}: ${String(e)}`);
@@ -151,8 +155,14 @@ export async function deliverWelcomes(params: {
       }
     })
   );
-  return delivered;
+  return { users: delivered, devices };
 }
+
+/** One device a Welcome was delivered to, and its owner. */
+export type WelcomedDevice = { userId: string; deviceId: string };
+
+/** What {@link deliverWelcomes} delivered: the owners reached, and each device reached. */
+export type DeliveredWelcomes = { users: Set<string>; devices: WelcomedDevice[] };
 
 /**
  * The users holding an ACTIVE device row in a group - who the delivery service ROUTES to, deduplicated
@@ -1097,6 +1107,43 @@ export async function sendFullHistoryBundle(
     return;
   }
   log(`[HISTORY_BUNDLE] Full history sent: ${outcome.count} of ${messages.length} message(s)`);
+}
+
+/**
+ * THE INVITER'S JOIN PUSH, OWED BY EVERY ADD OF A NEW PERSON TO A GROUP - one
+ * {@link sendFullHistoryBundle} per device whose Welcome was delivered.
+ *
+ * The push is what hands a newcomer the conversation's STATE - the nickname register above all,
+ * which it is the ONLY bundle a reader takes from (`mergeBundleNicknames`), and the pins, the floor
+ * and the read watermarks beside it. It carries no past: it is addressed to the device and filtered
+ * on its owner's windows (step A), so everything sent before their arrival is withheld and the frame
+ * is state-only. The member's "Ajouter" (`inviteMembersToGroup`) used to deliver its Welcomes and
+ * push nothing, while the pending-invitation and welcome-request paths did, so a person added there
+ * never learned a nickname set before them (backlog, 2026-11-09).
+ *
+ * Sequential and caught per device: one device's failure is said and never stops the next.
+ */
+export async function pushJoinBundles(
+  groupId: string,
+  devices: readonly WelcomedDevice[],
+  deps: {
+    storage: IStorage | null;
+    deviceKeyB64: string;
+    mlsService: IMlsService;
+    log: (msg: string) => void;
+  }
+): Promise<void> {
+  for (const { userId, deviceId } of devices) {
+    deps.log(`[HISTORY_BUNDLE] join push -> ${userId}:${deviceId} in ${groupId.slice(0, 8)}...`);
+    await sendFullHistoryBundle(groupId, {
+      ...deps,
+      to: digestIdentity(userId, deviceId),
+    }).catch((e: unknown) =>
+      deps.log(
+        `[HISTORY_BUNDLE] join push to ${userId}:${deviceId} failed in ${groupId.slice(0, 8)}...: ${String(e).slice(0, 120)}`
+      )
+    );
+  }
 }
 
 /**
