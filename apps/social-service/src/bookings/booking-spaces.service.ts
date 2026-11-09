@@ -465,6 +465,7 @@ export class BookingSpacesService {
         const formerName = space.name;
         const opensBefore = space.opensAt ? new Date(space.opensAt).getTime() : null;
         const listedBefore = space.discoverability === 'listed';
+        const audienceBefore = !!space.audience;
         const storedImageUrls = questionImageUrlsOf(space.items);
         this.applySettings(space, dto);
         await this.assertSettingsValid(space, storedImageUrls);
@@ -486,13 +487,17 @@ export class BookingSpacesService {
           claimed = newPoster;
         }
         await m.save(BookingSpace, space);
-        // Its opening moved, or it became listed: the reminders follow, in this transaction
-        // (engagement WP-4).
+        // Its opening moved, it became listed, or its audience was cleared (L29): the reminders
+        // follow, in this transaction (engagement WP-4). `ON CONFLICT DO NOTHING` tells nobody twice.
         const opensAfter = space.opensAt ? new Date(space.opensAt).getTime() : null;
         if (opensAfter !== opensBefore) {
           await followOpeningMove(m, 'booking', spaceId, space.opensAt);
         }
-        if (opensAfter !== opensBefore || (!listedBefore && space.discoverability === 'listed')) {
+        if (
+          opensAfter !== opensBefore ||
+          (!listedBefore && space.discoverability === 'listed') ||
+          (audienceBefore && !space.audience)
+        ) {
           await announceSpaceOpening(m, space, actor.userId);
         }
         if (space.name !== formerName)

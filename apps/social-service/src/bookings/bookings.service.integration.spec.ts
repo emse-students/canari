@@ -2075,6 +2075,32 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(await ds.getRepository(BookingResource).countBy({ spaceId: space.id })).toBe(0);
     });
 
+    it('tells the followers of a listed space once its audience is cleared (engagement WP-4, L29)', async () => {
+      const { space } = await setup({
+        discoverability: 'listed',
+        audience: { promo: { values: [2024] } } as never,
+        opensAt: new Date(Date.now() + 86_400_000),
+      });
+      await q(
+        `INSERT INTO association_follows ("followerUserId", "associationId") VALUES ($1, $2)`,
+        [ALICE, space.associationId]
+      );
+      const told = async () =>
+        (
+          await q(
+            `SELECT "userId", origin FROM opening_reminders WHERE kind = 'booking' AND "targetId" = $1`,
+            [space.id]
+          )
+        ).map((r: { userId: string; origin: string }) => `${r.userId}:${r.origin}`);
+      await organiser.update(space.id, { name: 'renamed' } as never, as(ORGA), NOW);
+      expect(await told()).toEqual([]);
+      await organiser.update(space.id, { audience: null } as never, as(ORGA), NOW);
+      expect(await told()).toEqual([`${ALICE}:followed`]);
+      // Saved again with no audience: nothing new, nothing twice.
+      await organiser.update(space.id, { audience: null } as never, as(ORGA), NOW);
+      expect(await told()).toEqual([`${ALICE}:followed`]);
+    });
+
     it('refuses duplicate question ids, a question image, a zoneless opening, an entity that does not exist', async () => {
       const { id } = await organiser.create({ name: 'x' }, as(ALICE));
       const patch = (dto: object) => organiser.update(id, dto as never, as(ALICE), NOW);

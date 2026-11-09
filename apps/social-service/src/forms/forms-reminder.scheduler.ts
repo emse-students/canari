@@ -41,6 +41,8 @@ interface DueHeadsUp {
   kind: OpeningKind;
   targetId: string;
   userId: string;
+  /** The form is published and its association not archived; false = gone for good, told nothing. */
+  targetLive: boolean;
 }
 
 @Injectable()
@@ -75,6 +77,12 @@ export class FormReminderScheduler {
         // crashes between the push and the flag update.  Worst case: the notification is
         // silently lost; acceptable vs spamming the user on every cron tick.
         if (!(await this.claim(r.id, 'notified5min'))) continue;
+        if (!r.targetLive) {
+          this.logger.log(
+            `[REMINDER] 5min not sent: userId=${r.userId.slice(0, 8)} formId=${r.targetId.slice(0, 8)} - the form is gone or its association archived`
+          );
+          continue;
+        }
         await this.push.notifyContent(r.userId, content, {
           type: 'form_reminder',
           formId: r.targetId,
@@ -292,14 +300,12 @@ export class FormReminderScheduler {
   @Cron('15 3 * * *')
   async purgeDeliveredFormReminders() {
     try {
-      const res: { rowCount?: number } = await this.reminderRepo.manager.query(
-        PURGE_STALE_OPENINGS_SQL,
-        [GC_REMINDER_DAYS]
-      );
-      const deleted = res.rowCount ?? 0;
-      if (deleted > 0)
+      const [counts] = (await this.reminderRepo.manager.query(PURGE_STALE_OPENINGS_SQL, [
+        GC_REMINDER_DAYS,
+      ])) as { told: number; untold: number }[];
+      if (counts && counts.told + counts.untold > 0)
         this.logger.log(
-          `[GC] opening_reminders: ${deleted} deleted (older than ${GC_REMINDER_DAYS} days)`
+          `[GC] opening_reminders older than ${GC_REMINDER_DAYS} days deleted: told=${counts.told} never-told=${counts.untold}`
         );
     } catch (e) {
       this.logger.warn('[GC] purgeDeliveredFormReminders failed', e);

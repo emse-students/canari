@@ -219,12 +219,24 @@ export async function followOpeningMove(
 /**
  * The rows owed the HEADS-UP at `$1`: asked forms opening within the next five minutes. Only an ask
  * leaves `notified5min` unset, and only a form can be asked today (`POST /api/forms/:id/remind`).
+ *
+ * The form and its association are read in the same statement, under the OPENING's rule
+ * (`DUE_OPENINGS_SQL`): a form gone (deleted) or of an archived association is selected and
+ * claimed, `targetLive` false, told nothing; one merely not live yet (back in draft) is not
+ * selected - its heads-up is told if it is live again within the five minutes (second review of
+ * #3188).
  */
-export const DUE_HEADS_UP_SQL = `SELECT o.id, o.kind, o."targetId", o."userId"
+export const DUE_HEADS_UP_SQL = `SELECT o.id, o.kind, o."targetId", o."userId",
+         (f."deletedAt" IS NULL AND f.status = 'published' AND NOT COALESCE(a.archived, false))
+           AS "targetLive"
     FROM opening_reminders o
+    LEFT JOIN forms f ON f.id = o."targetId"
+    LEFT JOIN associations a ON a.id = f."associationId"
    WHERE o.kind = 'form' AND NOT o."notified5min" AND NOT o."notifiedOnOpen"
      AND o."opensAt" >= $1::timestamptz
-     AND o."opensAt" <= $1::timestamptz + make_interval(mins => ${OPENING_HEADS_UP_MINUTES})`;
+     AND o."opensAt" <= $1::timestamptz + make_interval(mins => ${OPENING_HEADS_UP_MINUTES})
+     AND (f.id IS NULL OR (f."deletedAt" IS NULL AND f.status = 'published')
+          OR f."deletedAt" IS NOT NULL OR COALESCE(a.archived, false))`;
 
 /** One row owed its opening, with what the push needs to know about its target. */
 export interface DueOpening {
@@ -312,7 +324,14 @@ export const DUE_OPENINGS_SQL = `SELECT o.id, o.kind, o."targetId", o."userId", 
 /**
  * The 30-day purge (the scheduler's daily GC): every row whose opening is that old - told, or left
  * untold because its target never became live again (a form left in draft, an event never
- * re-validated). A target published again later writes its followers anew.
+ * re-validated). A target published again later writes its followers anew. Answers ONE row, the
+ * told and the never-told counts apart: a never-told count that grows is a target that stayed
+ * not-live, and the line has to say which.
  */
-export const PURGE_STALE_OPENINGS_SQL = `DELETE FROM opening_reminders
-  WHERE "opensAt" < now() - make_interval(days => $1)`;
+export const PURGE_STALE_OPENINGS_SQL = `WITH purged AS (
+    DELETE FROM opening_reminders
+     WHERE "opensAt" < now() - make_interval(days => $1)
+    RETURNING "notifiedOnOpen")
+  SELECT (count(*) FILTER (WHERE "notifiedOnOpen"))::int AS told,
+         (count(*) FILTER (WHERE NOT "notifiedOnOpen"))::int AS untold
+    FROM purged`;

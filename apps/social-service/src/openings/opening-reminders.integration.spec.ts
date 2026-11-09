@@ -25,6 +25,7 @@ import {
   cancelOpening,
   followOpeningMove,
   isTold,
+  PURGE_STALE_OPENINGS_SQL,
 } from './opening-reminders';
 import { AccountBell } from '../follows/entities/account-bell.entity';
 import { AccountBellsService } from '../follows/account-bells.service';
@@ -453,6 +454,9 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
           opensAt: null,
           actorId: PUBLISHER,
         });
+        // The rows open at the DATABASE's now(), in microseconds; the tick compares a JS Date, in
+        // milliseconds - moved to the past by the database's clock, as every other test does.
+        await openNow();
         await scheduler.checkReminders();
         expect(pushes()).toEqual([]);
         expect(await inApp()).toEqual([]);
@@ -549,6 +553,62 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
           `SELECT count(*)::int AS n FROM opening_reminders WHERE NOT "notifiedOnOpen"`
         );
         expect(left.rows[0].n).toBe(0);
+      });
+    });
+
+    describe('what the second review of #3188 found', () => {
+      afterEach(async () => {
+        await q(`UPDATE associations SET archived = false`);
+      });
+
+      it('(6) an archived association sends no heads-up either: claimed, told nothing', async () => {
+        await askOpening(ds.manager, 'form', FORM, ASKER, opensIn(3));
+        await q(`UPDATE associations SET archived = true`);
+        await scheduler.checkReminders();
+        expect(pushes()).toEqual([]);
+        expect(await inApp()).toEqual([]);
+        expect(await rows()).toEqual([`form:${ASKER}:asked:true/false`]);
+      });
+
+      it('(7) an old image never claims a new row whose opening is still to come', async () => {
+        // The old image's row says "due now"; the new code moved the opening an hour ahead.
+        await q(
+          `INSERT INTO form_reminders ("formId", "userId", "opensAt") VALUES ($1, $2, now() - interval '1 second')`,
+          [FORM, ASKER]
+        );
+        await followOpeningMove(ds.manager, 'form', FORM, opensIn(60));
+        const opening = await q(
+          `UPDATE form_reminders SET "notifiedOnOpen" = true WHERE "userId" = $1 AND NOT "notifiedOnOpen"`,
+          [ASKER]
+        );
+        expect(opening.rowCount).toBe(0);
+        const headsUp = await q(
+          `UPDATE form_reminders SET "notified5min" = true WHERE "userId" = $1 AND NOT "notified5min"`,
+          [ASKER]
+        );
+        expect(headsUp.rowCount).toBe(0);
+        expect(await rows()).toEqual([`form:${ASKER}:asked:false/false`]);
+        // Inside the five minutes, the old image's heads-up claim is honoured - once.
+        await q(`UPDATE opening_reminders SET "opensAt" = now() + interval '2 minutes'`);
+        const due = await q(
+          `UPDATE form_reminders SET "notified5min" = true WHERE "userId" = $1 AND NOT "notified5min"`,
+          [ASKER]
+        );
+        expect(due.rowCount).toBe(1);
+        expect(await rows()).toEqual([`form:${ASKER}:asked:true/false`]);
+      });
+
+      it('(8) the purge says how many told and never-told rows it removed', async () => {
+        await q(
+          `INSERT INTO opening_reminders (kind, "targetId", "userId", "opensAt", origin, "notifiedOnOpen")
+           VALUES ('form', $1, $2, now() - interval '40 days', 'asked', true),
+                  ('form', $1, $3, now() - interval '40 days', 'followed', false),
+                  ('form', $1, $4, now() - interval '1 day', 'asked', true)`,
+          [FORM, ASKER, FAN, FAN_ASKER]
+        );
+        const purged = await q(PURGE_STALE_OPENINGS_SQL, [30]);
+        expect(purged.rows).toEqual([{ told: 1, untold: 1 }]);
+        expect(await rows()).toEqual([`form:${FAN_ASKER}:asked:false/true`]);
       });
     });
 
