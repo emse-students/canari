@@ -5845,5 +5845,7 @@
   "chat_nicknames_error_failed": "Le pseudo n'a pas pu être enregistré. Réessayez.",
   "chat_nicknames_list_unreadable": "Les pseudos n'ont pas pu être chargés. Les noms affichés sont ceux des profils.",
   "moderation_type_nickname": "Pseudo",
-  "chat_nicknames_hidden_for_you": "Un pseudo que vous ne voyez pas est défini pour vous. Réinitialisez-le pour l'effacer pour tous."
+  "chat_nicknames_hidden_for_you": "Un pseudo que vous ne voyez pas est défini pour vous. Réinitialisez-le pour l'effacer pour tous.",
+  "chat_nicknames_error_superseded": "Un changement plus récent l'emporte déjà. Réessayez dans un instant.",
+  "chat_nicknames_set_before_you": "Défini avant votre arrivée"
 }

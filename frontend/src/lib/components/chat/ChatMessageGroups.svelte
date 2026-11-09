@@ -400,7 +400,7 @@
           <!-- Who stopped reading HERE, whoever wrote it: the Messenger placement, right-aligned
                under the row whichever side the bubble is on. -->
           <div data-seen-by={msg.id} class="flex w-full justify-end px-0.5">
-            <SeenByHeads readers={seenBy.get(msg.id) ?? []} />
+            <SeenByHeads readers={seenBy.get(msg.id) ?? []} {nicknameScope} />
           </div>
         {/if}
       {/if}

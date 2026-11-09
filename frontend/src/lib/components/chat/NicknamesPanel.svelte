@@ -74,7 +74,10 @@
         nickname: shown,
         // Only once the block answer is KNOWN: while it is pending the row shows the plain name.
         hiddenFromViewer: held && shown === null && nicknameHiddenByBlock(scope, userId),
-        setBy: shown === null ? null : (raw?.setBy ?? null),
+        // An UNVERIFIED entry (from a join push) names its setter on a relayer's word only: the
+        // screen does not repeat that name as a fact (review of #3177), it says when instead.
+        setBy: shown === null || raw?.verified !== true ? null : (raw?.setBy ?? null),
+        setBeforeArrival: shown !== null && raw?.verified !== true,
         reportSubject: shown === null ? null : (raw?.reportSubject ?? null),
         canEdit: mayNameMember(standing, { isSelf, isReset: false }),
         canReset: held && mayNameMember(standing, { isSelf, isReset: true }),
@@ -133,6 +136,8 @@
         return m.chat_nicknames_error_not_member();
       case 'not_queued':
         return m.chat_nicknames_error_not_queued();
+      case 'superseded':
+        return m.chat_nicknames_error_superseded();
       case 'saved':
         return '';
       case 'failed':
@@ -223,6 +228,8 @@
                     · {m.chat_nicknames_set_by({
                       name: setterNames.get(row.setBy) ?? row.setBy.slice(0, 8),
                     })}
+                  {:else if row.setBeforeArrival}
+                    · {m.chat_nicknames_set_before_you()}
                   {/if}
                 </div>
               {:else}

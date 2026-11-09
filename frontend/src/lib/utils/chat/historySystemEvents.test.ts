@@ -108,6 +108,9 @@ async function replay(
     messageReactions: new Map(),
     reactionUpdates: sinks.reactionUpdates,
     authorKeys: keySource({}),
+    nicknameRoster: {
+      getGroupMemberIdentities: async () => [`${OWNER}:d1`, `bob:d2`],
+    },
     rowPatches: new Map(),
     pendingById: new Map(),
     deletedMessages: sinks.deletedMessages,
@@ -728,5 +731,28 @@ describe('replaying a nickname', () => {
       verified: true,
     });
     warn.mockRestore();
+  });
+
+  it('keeps a frame whose setter has left since, and refuses one naming a target outside the tree', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const g = 'group-nickname-2';
+    // OTHER is not in the replay's roster: the log is the past, and its nickname stays.
+    await replay(
+      systemEvent('nickname', { userId: 'bob', nickname: 'Reste', at: 1 }),
+      OTHER,
+      [],
+      g
+    );
+    expect(nicknameEntry(g, 'bob')?.nickname).toBe('Reste');
+    await replay(
+      systemEvent('nickname', { userId: 'stranger', nickname: 'X', at: 1 }),
+      OWNER,
+      [],
+      g
+    );
+    expect(nicknameEntry(g, 'stranger')).toBeNull();
+    warn.mockRestore();
+    debug.mockRestore();
   });
 });

@@ -98,6 +98,10 @@
     {
       "input": "A\u2028B",
       "expected": "AB"
-    }
+    },
+    {"input": "B\u200cob", "expected": "Bob"},
+    {"input": "B\u200dob", "expected": "Bob"},
+    {"input": "\ud83d\ude00\udb40\udc41\udb40\udc42\udb40\udc43", "expected": "\ud83d\ude00"},
+    {"input": "Bob\ud83d\ude00\u200d", "expected": "Bob\ud83d\ude00"}
   ]
 }

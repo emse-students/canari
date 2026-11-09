@@ -3,9 +3,12 @@ import { refusalCode } from '$lib/utils/apiRefusal';
 import { isBlockedWith, USER_BLOCKED_CODE } from '$lib/users/blocks';
 import {
   applyNickname,
+  boundedNicknameAt,
   communityNicknameScope,
   dropNickname,
   nicknameEntries,
+  nicknameEntry,
+  nicknameSupersedes,
 } from '$lib/utils/users/conversationNicknames.svelte';
 import { NICKNAME_TOO_LONG, normalizeNickname } from '$lib/utils/users/nicknameRules';
 import { mayNameMember } from './nicknamePermission';
@@ -28,7 +31,9 @@ export type NicknamePlace =
  * What one change came to - each a sentence on the screen, none read out of a message:
  * `saved`; `too_long` (the profile's limit); `not_allowed` (no moderation grant, community);
  * `blocked` (a block stands between viewer and member); `not_member`; `not_queued` (the durable queue
- * refused the frame: nothing changed, here or elsewhere); `failed` (no answer).
+ * refused the frame: nothing changed, here or elsewhere); `superseded` (a statement this device
+ * holds is dated later than this change could be, so it would lose everywhere - nothing is sent);
+ * `failed` (no answer).
  */
 export type NicknameOutcome =
   | 'saved'
@@ -37,6 +42,7 @@ export type NicknameOutcome =
   | 'blocked'
   | 'not_member'
   | 'not_queued'
+  | 'superseded'
   | 'failed';
 
 /**
@@ -84,10 +90,31 @@ export async function saveNickname(
   }
 
   if (place.kind === 'group') {
-    const at = Date.now();
+    // DATED TO WIN, AND CHECKED TO WIN BEFORE IT IS SENT (review of #3177). A held entry may be dated
+    // ahead of this clock (a peer's, up to the server's time plus the skew), so the change is dated
+    // just past it; peers bound that date by their server time, and the local apply is bounded the
+    // same way, by the best server time this device has - its own clock at the send. A change that
+    // would still lose is not sent and not called saved.
+    const now = Date.now();
+    const held = nicknameEntry(place.scope, target);
+    const at = Math.max(now, (held?.at ?? 0) + 1);
+    const local = { nickname, setBy: viewer, at: boundedNicknameAt(at, now), verified: true };
+    if (held && !nicknameSupersedes(local, held)) {
+      console.warn(
+        `[NICKNAME] not sent: a statement about ${target.slice(0, 8)} dated ${held.at} outranks this change (bounded to ${local.at})`
+      );
+      return 'superseded';
+    }
     const queued = await place.send(target, nickname, at);
     if (!queued) return 'not_queued';
-    applyNickname(place.scope, target, { nickname, setBy: viewer, at });
+    if (!applyNickname(place.scope, target, local)) {
+      // Something newer landed while the frame was being queued: the frame is out, but this device
+      // already shows a later statement, and the screen says so rather than "saved".
+      console.warn(
+        `[NICKNAME] ${target.slice(0, 8)}: a newer statement landed during the send - this change does not show`
+      );
+      return 'superseded';
+    }
     console.info(
       `[NICKNAME] ${target.slice(0, 8)} ${nickname === null ? 'reset' : 'renamed'} in ${place.scope.slice(0, 8)}…`
     );
@@ -120,6 +147,8 @@ export async function saveNickname(
 // mark not newer than the list's start. Ordering by a counter, never by a clock.
 const eventMarks = new Map<string, number>();
 let eventCounter = 0;
+/** The latest list read started per community - see `loadCommunityNicknames`. */
+const listReads = new Map<string, number>();
 const markKey = (workspaceId: string, userId: string) =>
   `${workspaceId}|${userId.trim().toLowerCase()}`;
 
@@ -130,6 +159,10 @@ const markKey = (workspaceId: string, userId: string) =>
  */
 export async function loadCommunityNicknames(workspaceId: string): Promise<boolean> {
   const startedAt = eventCounter;
+  // ONE SEQUENCE PER READ: two reads may overlap (a reconnect while the screen opens one), and the
+  // answer of the older must never overwrite the newer's - it is dropped when a later read began.
+  const seq = (listReads.get(workspaceId) ?? 0) + 1;
+  listReads.set(workspaceId, seq);
   let entries: Awaited<ReturnType<typeof channelService.listCommunityNicknames>>;
   try {
     entries = await channelService.listCommunityNicknames(workspaceId);
@@ -138,6 +171,12 @@ export async function loadCommunityNicknames(workspaceId: string): Promise<boole
       `[NICKNAME] nicknames of community ${workspaceId.slice(0, 8)} unreadable - names show as profiles until the next read: ${String(e)}`
     );
     return false;
+  }
+  if (listReads.get(workspaceId) !== seq) {
+    console.debug(
+      `[NICKNAME] list of community ${workspaceId.slice(0, 8)} superseded by a later read - dropped`
+    );
+    return true;
   }
   const scope = communityNicknameScope(workspaceId);
   const named = new Set<string>();

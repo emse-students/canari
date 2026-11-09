@@ -29,39 +29,44 @@ export type NicknameNormalization =
 /**
  * Drops every control, invisible-formatting, line and paragraph separator character
  * (`\p{Cc}\p{Cf}\p{Zl}\p{Zp}`) - a zero-width space or a bidi override would let a nickname
- * impersonate another member's name - EXCEPT the two kinds that are writing, not hiding:
+ * impersonate another member's name - EXCEPT what is writing, not hiding, judged per grapheme as
+ * #3175's role labels are (and narrowed by the review of #3177):
  *
- *  - the glue of an emoji, judged per grapheme as #3175's role labels are: inside a grapheme that
- *    holds a pictographic (or starts with U+1F3F4, a tag flag), the zero-width joiner U+200D and the
- *    tag characters U+E0020-U+E007F stay (a family, a profession, the rainbow or the England flag);
- *  - a zero-width non-joiner or joiner (U+200C, U+200D) BETWEEN two letters or marks, which Persian
- *    and the Indic scripts need to spell a word.
+ *  - the zero-width joiner U+200D INSIDE an emoji grapheme (one holding a pictographic), never as
+ *    its last code point - a family or a profession, not an emoji with a joiner left dangling;
+ *  - the tag characters U+E0020-U+E007F only in a TAG FLAG: a grapheme that starts with U+1F3F4 and
+ *    ends with the cancel tag U+E007F (the England flag), never trailing after any other emoji;
+ *  - a zero-width non-joiner or joiner (U+200C, U+200D) between two letters or marks OF A SCRIPT THAT
+ *    SPELLS WITH THEM - Arabic (Persian), Syriac and the Indic scripts - never between two Latin,
+ *    Greek or Cyrillic letters, where it only splits a name that looks whole.
  */
 function stripInvisible(value: string): string {
   const forbidden = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
-  const emojiGlue = /[‍\u{E0020}-\u{E007F}]/u;
-  const letter = /[\p{L}\p{M}]/u;
-  const points = [...value];
-  // Which code points sit in an emoji grapheme, walked once.
-  const inEmoji: boolean[] = [];
-  for (const { segment } of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(
-    value
-  )) {
-    const isEmoji = /\p{Extended_Pictographic}/u.test(segment) || segment.startsWith('\u{1F3F4}');
-    for (let i = [...segment].length; i > 0; i--) inEmoji.push(isEmoji);
-  }
+  const zwnj = '\u200C';
+  const zwj = '\u200D';
+  const tag = /[\u{E0020}-\u{E007F}]/u;
+  const joiningLetter =
+    /^(?=[\p{L}\p{M}])[\p{scx=Arabic}\p{scx=Syriac}\p{scx=Devanagari}\p{scx=Bengali}\p{scx=Gurmukhi}\p{scx=Gujarati}\p{scx=Oriya}\p{scx=Tamil}\p{scx=Telugu}\p{scx=Kannada}\p{scx=Malayalam}\p{scx=Sinhala}]$/u;
   let out = '';
-  points.forEach((point, i) => {
-    if (!forbidden.test(point)) out += point;
-    else if (inEmoji[i] && emojiGlue.test(point)) out += point;
-    else if (
-      (point === '‌' || point === '‍') &&
-      letter.test(points[i - 1] ?? '') &&
-      letter.test(points[i + 1] ?? '')
-    ) {
-      out += point;
-    }
-  });
+  for (const { segment, index } of new Intl.Segmenter(undefined, {
+    granularity: 'grapheme',
+  }).segment(value)) {
+    const points = [...segment];
+    const pictographic = /\p{Extended_Pictographic}/u.test(segment);
+    const tagFlag = points[0] === '\u{1F3F4}' && points[points.length - 1] === '\u{E007F}';
+    points.forEach((point, i) => {
+      if (!forbidden.test(point)) out += point;
+      else if (tag.test(point) && tagFlag) out += point;
+      else if (point === zwj && pictographic && i < points.length - 1) out += point;
+      else if (point === zwnj || point === zwj) {
+        // Between graphemes: the letters on either side are the last one written and the next one.
+        const before = [...out].pop() ?? '';
+        const next = value.codePointAt(index + segment.length);
+        const after = points[i + 1] ?? (next === undefined ? '' : String.fromCodePoint(next));
+        if (joiningLetter.test(before) && joiningLetter.test(after)) out += point;
+      }
+    });
+  }
   return out;
 }
 

@@ -10,7 +10,7 @@ import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { receivedNoticeTime, renderVisibleNotice } from '$lib/utils/chat/visibleNotices';
 import { appMessageSentAtMs } from '$lib/utils/chat/messageUtils';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
-import { applyNicknameFrame } from './nicknameFrame';
+import { applyNicknameFrame, nicknameMembersOf, type NicknameRosterSource } from './nicknameFrame';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
@@ -106,6 +106,8 @@ export interface ReplaySystemEventCtx {
   reactionUpdates: Map<string, MessageReaction[]>;
   /** The keys this device trusts for an author (the MLS service): what a bundle's proofs verify under. */
   authorKeys: AuthorKeySource;
+  /** The group's tree (the MLS service): a replayed `nickname` frame must name a current member. */
+  nicknameRoster: NicknameRosterSource;
   /**
    * msgId -> what a replayed `history_bundle` changed on a HELD row (an upgrade, a vetted tombstone
    * or edit), merged onto the stored row in the post-save pass.
@@ -467,15 +469,23 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
     } else if (parsed.system.event === 'nickname') {
       // The live reader, dated by the log entry when the frame carries no `at`: `applyNickname`
       // keeps the newer statement, so re-reading a log already followed changes nothing.
-      applyNicknameFrame(
-        conversationId,
-        data,
-        senderNorm,
-        parseServerTimestampMs(msg.timestamp) || 0,
-        (line) => console.debug(line),
-        // Bounded by the log row's own server time, as the live frame is by its queue time.
-        parseServerTimestampMs(msg.timestamp) || undefined
-      );
+      // Bounded by the log row's own server time, as the live frame is by its queue time; a row
+      // without one is refused, never bounded by this device's clock.
+      const serverAt = parseServerTimestampMs(msg.timestamp);
+      if (!(typeof serverAt === 'number' && serverAt > 0)) {
+        console.error(
+          `[NICKNAME] REFUSED a replayed nickname frame from ${senderNorm.slice(0, 8)} in ${conversationId.slice(0, 8)}…: its log row carries no server time`
+        );
+      } else {
+        applyNicknameFrame(conversationId, data, senderNorm, {
+          fallbackAt: serverAt,
+          serverAt,
+          members: await nicknameMembersOf(ctx.nicknameRoster, conversationId, 'replay'),
+          // The log is the past: a nickname stays when its setter leaves (owner, 2026-10-18).
+          setterMustBeMember: false,
+          log: (line) => console.debug(line),
+        });
+      }
     } else if (parsed.system.event === 'remove_reaction' && data.messageId && data.emoji) {
       // LEGACY FRAME, replay side. Taking a reaction back now travels as a `ReactionMsg` with
       // `removed` set; this only ever sees log entries written before that change. Dated with the

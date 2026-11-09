@@ -136,15 +136,20 @@ describe('a join push restates the register - unverified, bounded, members only'
     expect(mergeBundleNicknames('g9', wire, { members, serverAt })).toBe(0);
   });
 
-  it('refuses an entry whose target or setter is no member, and malformed ones', () => {
+  it('refuses an entry whose target is no member, and malformed ones', () => {
     const wire = [
       { userId: 'stranger', nickname: 'X', setBy: 'ann', at: 1 },
-      { userId: 'bob', nickname: 'X', setBy: 'stranger', at: 1 },
       { nickname: 'X', setBy: 'ann', at: 1 },
       42,
       null,
     ];
     expect(mergeBundleNicknames('g9', wire, { members, serverAt })).toBe(0);
+  });
+
+  it('keeps an entry whose setter has left - a nickname stays when its setter leaves', () => {
+    const wire = [{ userId: 'bob', nickname: 'Reste', setBy: 'gone', at: 1 }];
+    expect(mergeBundleNicknames('g9', wire, { members, serverAt })).toBe(1);
+    expect(visibleNickname('g9', 'bob')).toBe('Reste');
   });
 
   it('takes no more entries than the group has members', () => {

@@ -23,7 +23,8 @@ import { normalizeNickname } from './nicknameRules';
  * entries are a relayer's word about what somebody else did, so they are UNVERIFIED: taken only from
  * the join push addressed to this device, only about current members, and any verified statement
  * supersedes one whatever its date. An unverified entry that names the viewer as its own setter
- * cannot skip the block check (`visibleNickname`), and only unverified entries are ever evicted.
+ * cannot skip the block check (`visibleNickname`). Every source names a CURRENT MEMBER as its
+ * target, and the register has a hard cap (`MAX_NICKNAME_ENTRIES`), so nothing grows it without bound.
  *
  * A NICKNAME NEVER LEAVES ITS CONVERSATION: the register is keyed by the conversation's scope, so it
  * cannot reach the profile, another conversation, or a push (docs/wiki/frontend/modules/chat.md,
@@ -62,10 +63,13 @@ export function boundedNicknameAt(at: number, serverAt: number | undefined): num
 const COMMUNITY_PREFIX = 'community:';
 
 /**
- * Entries kept per conversation - UNVERIFIED ones only are evicted, oldest first: a verified entry is
- * a member's own authenticated statement, and evicting it would let a relayer push it out.
+ * Entries kept per conversation, a HARD cap whatever their kind (review of #3177): every source is
+ * held to naming a current member, and this bounds what a stream of them can still grow. When over
+ * it, entries are evicted in this order - a member no longer in the conversation (when the caller
+ * knows the roster), then an unverified entry, then the oldest - so a relayer's word goes before a
+ * member's authenticated statement does.
  */
-const MAX_ENTRIES = 500;
+export const MAX_NICKNAME_ENTRIES = 500;
 
 /** The scope of a community's register: one per community, shared by all its salons. */
 export function communityNicknameScope(workspaceId: string): string {
@@ -144,14 +148,28 @@ function load(scope: string): Map<string, NicknameEntry> {
   return map;
 }
 
-function persist(scope: string, map: Map<string, NicknameEntry>): void {
+function persist(
+  scope: string,
+  map: Map<string, NicknameEntry>,
+  members?: ReadonlySet<string> | null
+): void {
   revision++;
-  if (map.size > MAX_ENTRIES) {
+  if (map.size > MAX_NICKNAME_ENTRIES) {
+    const rank = ([id, e]: [string, NicknameEntry]) => [
+      members && !members.has(id) ? 0 : 1,
+      e.verified ? 1 : 0,
+      e.at,
+    ];
     const doomed = [...map.entries()]
-      .filter(([, e]) => !e.verified)
-      .sort((a, b) => a[1].at - b[1].at)
-      .slice(0, map.size - MAX_ENTRIES);
+      .sort((a, b) => {
+        const [x, y] = [rank(a), rank(b)];
+        return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+      })
+      .slice(0, map.size - MAX_NICKNAME_ENTRIES);
     for (const [id] of doomed) map.delete(id);
+    console.warn(
+      `[NICKNAME] register of ${scope.slice(0, 8)}… over ${MAX_NICKNAME_ENTRIES} entries - ${doomed.length} evicted`
+    );
   }
   // A community's register is the server's: nothing of it is written to the device.
   const owner = account();
@@ -183,9 +201,15 @@ export function nicknameSupersedes(next: NicknameEntry, held: NicknameEntry | un
 /**
  * Applies one AUTHENTICATED statement about `userId`'s nickname - an MLS frame, the viewer's own
  * change, or the server's answer - and says whether it was the newest. `false` is the ordinary outcome
- * of replaying a log already followed, or of a malformed value.
+ * of replaying a log already followed, or of a malformed value. `members`, when the caller read the
+ * roster, ranks the eviction a full register needs.
  */
-export function applyNickname(scope: string, userId: string, entry: NicknameEntry): boolean {
+export function applyNickname(
+  scope: string,
+  userId: string,
+  entry: NicknameEntry,
+  members?: ReadonlySet<string> | null
+): boolean {
   const target = norm(userId);
   const parsed = parseEntry({ ...entry, verified: true });
   if (!scope || !target || !parsed) {
@@ -197,7 +221,7 @@ export function applyNickname(scope: string, userId: string, entry: NicknameEntr
   const map = load(scope);
   if (!nicknameSupersedes(parsed, map.get(target))) return false;
   map.set(target, parsed);
-  persist(scope, map);
+  persist(scope, map, members);
   return true;
 }
 
@@ -221,8 +245,9 @@ export function nicknameEntries(scope: string): NicknameWireEntry[] {
 /**
  * Merges the register a JOIN PUSH addressed to this device restates - the one bundle a new member's
  * names may come from (`systemMessageHandler`). Every entry is UNVERIFIED, must name a current
- * member as its target AND as its setter, is dated no later than the bundle's server time allows,
- * and there are at most as many as there are members. Returns how many entries changed.
+ * member as its TARGET (its setter may have left since: a nickname stays when its setter leaves,
+ * owner 2026-10-18), is dated no later than the bundle's server time allows, and there are at most
+ * as many as there are members. Returns how many entries changed.
  */
 export function mergeBundleNicknames(
   scope: string,
@@ -240,14 +265,14 @@ export function mergeBundleNicknames(
         ? norm((raw as { userId: string }).userId)
         : '';
     const entry = parseEntry({ ...(raw as object), verified: false });
-    if (!userId || !entry || !opts.members.has(userId) || !opts.members.has(entry.setBy)) continue;
+    if (!userId || !entry || !opts.members.has(userId)) continue;
     taken++;
     entry.at = boundedNicknameAt(entry.at, opts.serverAt);
     if (!nicknameSupersedes(entry, map.get(userId))) continue;
     map.set(userId, entry);
     changed++;
   }
-  if (changed > 0) persist(scope, map);
+  if (changed > 0) persist(scope, map, opts.members);
   return changed;
 }
 

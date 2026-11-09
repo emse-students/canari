@@ -41,6 +41,7 @@ import { m } from '$lib/paraglide/messages';
 import {
   applyNickname,
   communityNicknameScope,
+  mergeBundleNicknames,
   nicknameEntry,
   resetConversationNicknamesForTests,
 } from '$lib/utils/users/conversationNicknames.svelte';
@@ -110,6 +111,18 @@ describe('NicknamesPanel in a group', () => {
     expect(send).toHaveBeenCalledWith('bob', 'Capitaine', expect.any(Number));
     expect(nicknameEntry('g1', 'bob')?.nickname).toBe('Capitaine');
     expect(row('bob').textContent).toContain('Capitaine');
+  });
+
+  it('names no setter for a nickname a join push restated - it says when, not who', async () => {
+    mergeBundleNicknames('g1', [{ userId: 'bob', nickname: 'Capitaine', setBy: 'ann', at: 1 }], {
+      members: new Set(['me', 'bob', 'ann']),
+      serverAt: 1_000,
+    });
+    await render({ place: { kind: 'group', scope: 'g1', send: async () => true } });
+    const text = row('bob').textContent ?? '';
+    expect(text).toContain('Capitaine');
+    expect(text).toContain(m.chat_nicknames_set_before_you());
+    expect(text).not.toContain(m.chat_nicknames_set_by({ name: 'Ann Durand' }));
   });
 
   it('offers no report outside a community - nothing of it reaches a server', async () => {

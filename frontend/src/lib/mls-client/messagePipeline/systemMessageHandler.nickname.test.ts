@@ -21,7 +21,18 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
   const conversations = new Map<string, any>();
   conversations.set('g1', { id: 'g1', unreadCount: 0, readWatermarks: {}, messages: [] });
   return {
-    mlsService: { getDeviceId: () => 'device-me' },
+    mlsService: {
+      getDeviceId: () => 'device-me',
+      getGroupMemberIdentities: vi.fn(async () => [
+        'me:device-me',
+        'ann:a1',
+        'bob:b1',
+        'cy:c1',
+        'inviter:inviter-device',
+      ]),
+    },
+    // Every copy carries its server time (the queue row's, forwarded live by the gateway).
+    deliveryMeta: { queuedCreatedAt: 1_000_000 },
     storage: null,
     userId: 'me',
     deviceKey: () => 'device-key',
@@ -144,11 +155,27 @@ describe('handleSystemEvent - history_bundle restates the nicknames', () => {
         to: TO_ME,
         join: true,
         last: true,
-        nicknames: [{ userId: 'bob', nickname: 'Faux', setBy: 'stranger', at: 10 }],
+        nicknames: [{ userId: 'stranger', nickname: 'Faux', setBy: 'ann', at: 10 }],
       },
       makeCtx(JOIN_PUSH) as any
     );
-    expect(nicknameEntry('g1', 'bob')).toBeNull();
+    expect(nicknameEntry('g1', 'stranger')).toBeNull();
+  });
+
+  it('keeps an entry whose setter has left - a nickname stays when its setter leaves', async () => {
+    noteJoinSolicited('g1', 1);
+    await handleSystemEvent(
+      'history_bundle',
+      {
+        messages: [],
+        to: TO_ME,
+        join: true,
+        last: true,
+        nicknames: [{ userId: 'bob', nickname: 'Reste', setBy: 'gone', at: 10 }],
+      },
+      makeCtx(JOIN_PUSH) as any
+    );
+    expect(nicknameEntry('g1', 'bob')?.nickname).toBe('Reste');
   });
 
   it('does not let a bundle overrule a frame already applied', async () => {
@@ -170,6 +197,42 @@ describe('handleSystemEvent - history_bundle restates the nicknames', () => {
       makeCtx(JOIN_PUSH) as any
     );
     expect(nicknameEntry('g1', 'bob')?.nickname).toBe('New');
+  });
+});
+
+describe('handleSystemEvent - nickname, held to the tree and to the server time', () => {
+  it('refuses a frame naming a target outside the tree, and one the tree cannot be read for', async () => {
+    const error = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ctx = makeCtx();
+    await handleSystemEvent('nickname', { userId: 'stranger', nickname: 'X', at: 1 }, ctx as any);
+    expect(nicknameEntry('g1', 'stranger')).toBeNull();
+    expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('REFUSED'));
+    await handleSystemEvent(
+      'nickname',
+      { userId: 'bob', nickname: 'X', at: 1 },
+      makeCtx({
+        mlsService: {
+          getDeviceId: () => 'device-me',
+          getGroupMemberIdentities: vi.fn(async () => {
+            throw new Error('no group');
+          }),
+        },
+      }) as any
+    );
+    expect(nicknameEntry('g1', 'bob')).toBeNull();
+    error.mockRestore();
+  });
+
+  it('refuses a frame that carries no server time - never bounded by this clock', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await handleSystemEvent(
+      'nickname',
+      { userId: 'bob', nickname: 'X', at: 1 },
+      makeCtx({ deliveryMeta: undefined }) as any
+    );
+    expect(nicknameEntry('g1', 'bob')).toBeNull();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('no server time'));
+    error.mockRestore();
   });
 });
 

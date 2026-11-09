@@ -1139,6 +1139,7 @@
             {/if}
 
             <MessageMetadata
+              {nicknameScope}
               {isEdited}
               {restoredUnverified}
               {isOwn}
@@ -1194,6 +1195,7 @@
     />
 
     <MessageMetadata
+      {nicknameScope}
       {isEdited}
       {isOwn}
       {isLastOwn}

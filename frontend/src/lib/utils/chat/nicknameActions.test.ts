@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 
 vi.mock('$lib/stores/userState.svelte', () => ({ currentUserId: () => 'me' }));
@@ -24,8 +24,12 @@ import {
   type NicknamePlace,
 } from './nicknameActions';
 import {
+  NICKNAME_CLOCK_SKEW_MS,
+  applyNickname,
+  boundedNicknameAt,
   communityNicknameScope,
   nicknameEntry,
+  nicknameSupersedes,
   resetConversationNicknamesForTests,
 } from '$lib/utils/users/conversationNicknames.svelte';
 
@@ -95,6 +99,56 @@ describe('saveNickname in an MLS room', () => {
     const send = vi.fn(async () => true);
     expect(await saveNickname(group(send), 'me', 'bob', 'x'.repeat(101))).toBe('too_long');
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe('saveNickname - a correction is dated to win, and never called saved when it loses', () => {
+  const S = 1_800_000_000_000;
+  afterEach(() => vi.useRealTimers());
+
+  it('a reset right after a nickname dated at the server time plus the skew wins, here and on a peer', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(S);
+    // A peer's frame, dated as far ahead as any server lets one be.
+    applyNickname('g1', 'bob', { nickname: 'Gel', setBy: 'ann', at: S + NICKNAME_CLOCK_SKEW_MS });
+    const held = nicknameEntry('g1', 'bob')!;
+    vi.setSystemTime(S + 1);
+    const send = vi.fn(async (_u: string, _n: string | null, _at: number) => true);
+    expect(await saveNickname(group(send), 'me', 'bob', '')).toBe('saved');
+    const sentAt = send.mock.calls[0][2];
+    expect(sentAt).toBe(S + NICKNAME_CLOCK_SKEW_MS + 1);
+    expect(nicknameEntry('g1', 'bob')?.nickname).toBeNull();
+    // A peer bounds the same frame by its own server time for it - and it wins there too.
+    const atPeer = {
+      nickname: null,
+      setBy: 'me',
+      at: boundedNicknameAt(sentAt, S + 1),
+      verified: true,
+    };
+    expect(nicknameSupersedes(atPeer, held)).toBe(true);
+  });
+
+  it('sends nothing, and says so, when a held statement outranks any date this change may carry', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(S);
+    applyNickname('g1', 'bob', {
+      nickname: 'Gel',
+      setBy: 'zed',
+      at: S + 3 * NICKNAME_CLOCK_SKEW_MS,
+    });
+    const send = vi.fn(async () => true);
+    expect(await saveNickname(group(send), 'me', 'bob', 'Autre')).toBe('superseded');
+    expect(send).not.toHaveBeenCalled();
+    expect(nicknameEntry('g1', 'bob')?.nickname).toBe('Gel');
+  });
+
+  it('does not call a change saved when a newer statement landed while it was queued', async () => {
+    const send = vi.fn(async (u: string) => {
+      applyNickname('g1', u, { nickname: 'Plus tard', setBy: 'ann', at: Date.now() + 60_000 });
+      return true;
+    });
+    expect(await saveNickname(group(send), 'me', 'bob', 'Capitaine')).toBe('superseded');
+    expect(nicknameEntry('g1', 'bob')?.nickname).toBe('Plus tard');
   });
 });
 
@@ -172,6 +226,19 @@ describe('the community register is fed by the list and the event, merged by dat
     answer([]);
     expect(await loading).toBe(true);
     expect(nicknameEntry(scope, 'bob')?.nickname).toBe('Fresh');
+  });
+
+  it('an older read answering after a newer one never overwrites it', async () => {
+    let first: (v: unknown[]) => void = () => {};
+    listCommunityNicknames.mockReturnValueOnce(new Promise((r) => (first = r)));
+    listCommunityNicknames.mockResolvedValueOnce([
+      { userId: 'bob', nickname: 'Neuf', setBy: 'mod', at: 10 },
+    ]);
+    const older = loadCommunityNicknames('w1');
+    expect(await loadCommunityNicknames('w1')).toBe(true);
+    first([]);
+    expect(await older).toBe(true);
+    expect(nicknameEntry(scope, 'bob')?.nickname).toBe('Neuf');
   });
 
   it('an event naming nobody is accused, not applied', () => {

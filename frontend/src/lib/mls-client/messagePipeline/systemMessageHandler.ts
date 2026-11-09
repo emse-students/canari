@@ -64,7 +64,7 @@ import {
 import { boundedByVerifiedSentAt, withVettedBundleServerTimes } from '$lib/utils/chat/messageTime';
 import { applyPin, mergePinEntries } from '$lib/stores/pinStore.svelte';
 import { mergeBundleNicknames } from '$lib/utils/users/conversationNicknames.svelte';
-import { applyNicknameFrame } from '$lib/utils/chat/nicknameFrame';
+import { applyNicknameFrame, nicknameMembersOf } from '$lib/utils/chat/nicknameFrame';
 import { m } from '$lib/paraglide/messages';
 import type { MessageHandlerDeps } from './deps';
 import type {
@@ -1424,20 +1424,7 @@ export async function handleSystemEvent(
       // what others did, so they are taken UNVERIFIED, only about current members of the tree, dated
       // within the bundle's server time - and a broadcast or a replayed bundle carries none at all.
       if (joinPush && Array.isArray(data?.nicknames) && data.nicknames.length > 0) {
-        let members: Set<string> | null = null;
-        try {
-          const identities = await mlsService.getGroupMemberIdentities(convoKey);
-          members = new Set(
-            identities.flatMap((identity) => {
-              const user = canonicalUserOf(identity);
-              return user ? [user.toLowerCase()] : [];
-            })
-          );
-        } catch (e) {
-          console.warn(
-            `[HISTORY_BUNDLE] nicknames of ${convoKey.slice(0, 8)}… not taken - the tree is unreadable: ${String(e)}`
-          );
-        }
+        const members = await nicknameMembersOf(mlsService, convoKey, 'join push');
         const nicknamesMerged = members
           ? mergeBundleNicknames(convoKey, data.nicknames, {
               members,
@@ -1720,15 +1707,26 @@ export async function handleSystemEvent(
   }
 
   if (event === 'nickname') {
-    // Dated on receipt when the frame carries no `at`, as a pin is - see `applyNicknameFrame`.
-    applyNicknameFrame(
-      convoKey,
-      data,
-      senderNorm,
-      Date.now(),
+    // THE SERVER'S TIME BOUNDS THE FRAME, NEVER THE RECEIVER'S CLOCK. Every copy carries it: a pulled
+    // one as its queue row's `createdAt`, a live one because chat-delivery publishes that same
+    // `createdAt` and the gateway forwards it (`live_mls_frame`, which says so when it cannot). A
+    // frame without it is a defect upstream, and it is refused - an unbounded date could freeze the
+    // name, and this device's clock is no server's.
+    const serverAt = deliveryMeta?.queuedCreatedAt;
+    if (!(typeof serverAt === 'number' && serverAt > 0)) {
+      console.error(
+        `[NICKNAME] REFUSED a nickname frame from ${senderNorm.slice(0, 8)} in ${convoKey.slice(0, 8)}…: it carries no server time to bound it`
+      );
+      return true;
+    }
+    applyNicknameFrame(convoKey, data, senderNorm, {
+      fallbackAt: serverAt,
+      serverAt,
+      members: await nicknameMembersOf(mlsService, convoKey, 'live frame'),
+      // MLS just authenticated the sender in this tree.
+      setterMustBeMember: true,
       log,
-      deliveryMeta?.queuedCreatedAt ?? Date.now()
-    );
+    });
     return true;
   }
 

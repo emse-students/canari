@@ -5845,5 +5845,7 @@
   "chat_nicknames_error_failed": "The nickname could not be saved. Try again.",
   "chat_nicknames_list_unreadable": "Nicknames could not be loaded. The names shown are the profiles'.",
   "moderation_type_nickname": "Nickname",
-  "chat_nicknames_hidden_for_you": "A nickname you cannot see is set for you. Reset it to clear it for everyone."
+  "chat_nicknames_hidden_for_you": "A nickname you cannot see is set for you. Reset it to clear it for everyone.",
+  "chat_nicknames_error_superseded": "A more recent change already wins. Try again in a moment.",
+  "chat_nicknames_set_before_you": "Set before you joined"
 }
