@@ -21,7 +21,7 @@ This page is the mechanism.
 
 - **A screen REQUESTS a mode while it is mounted** (`requestOrientation(mode, owner)`, or
   `useScreenOrientation(owner)` in a component, which requests `auto` at mount and releases at
-  unmount). Three modes: `portrait`, `auto`, `landscape`.
+  unmount). Four modes: `portrait`, `auto`, `landscape`, and `locked` (the hold, below).
 - **The newest live request decides; none means `portrait`.** A viewer opened over the camera wins
   while it is open, and its release hands the turn back to the camera.
 - **The release on unmount is the ONLY path back to portrait.** No timer, no "if nothing asked for
@@ -43,9 +43,12 @@ This page is the mechanism.
   nothing). Auto-rotation comes back with the next visit of the screen. *Decided by the lead under
   the owner's delegation (reversible): YouTube re-enables the sensor once the phone is held upright
   again, which needs a device-orientation listener this first cut does not have.*
-- **A take and a live on air FREEZE the orientation on screen** (`hold(true)`): a camera take is
-  recorded through a canvas of one size (`FramedStream`) and a live through one `MediaRecorder`, so the
-  screen may not turn under either. The button stands down while frozen; `hold(false)` gives the turn
+- **A take and a live on air FREEZE the orientation on screen** (`hold(true)`, the mode `locked`): a
+  camera take is recorded through a canvas of one size (`FramedStream`) and a live through one
+  `MediaRecorder`, so the screen may not turn under either. `locked` is its own mode, never the
+  `portrait` or `landscape` on screen restated: a tablet's `portrait` is free rotation, and
+  `landscape` still allows the flip to the other side, so either would turn under a recording
+  (adversarial review, 2026-11-09). The button stands down while frozen; `hold(false)` gives the turn
   back. The broadcaster's orientation is chosen in its PREVIEW and kept for the whole live.
 
 ### What the page sees
@@ -69,6 +72,7 @@ pure `fr.emse.canari.orientation.requestedOrientationFor` (unit-tested in `andro
 | `portrait` | `SCREEN_ORIENTATION_PORTRAIT` | `UNSPECIFIED` (rotates freely, as before) |
 | `auto` | `SCREEN_ORIENTATION_USER` | `UNSPECIFIED` |
 | `landscape` | `SCREEN_ORIENTATION_USER_LANDSCAPE` | `USER_LANDSCAPE` |
+| `locked` | `SCREEN_ORIENTATION_LOCKED` (the rotation on screen) | `LOCKED` |
 
 - **"Respect the lock" is the platform's, not a reading of ours.** `USER` is the sensor while
   auto-rotate is on and the user's own rotation while it is off; `SENSOR` / `FULL_SENSOR` would turn
@@ -93,7 +97,8 @@ pure `fr.emse.canari.orientation.requestedOrientationFor` (unit-tested in `andro
 - **The gate is tao's root view controller.** `canari_ios.mm` replaces
   `TaoUIViewController -supportedInterfaceOrientations` (installed at the launch notification, retried
   at the scene's connection and at the first request) by the mask of the requested mode: `portrait`
-  -> Portrait, `auto` -> AllButUpsideDown, `landscape` -> Landscape. The app delegate's
+  -> Portrait, `auto` -> AllButUpsideDown, `landscape` -> Landscape, `locked` -> the one orientation
+  the scene's `effectiveGeometry` has now (no geometry request). The app delegate's
   `application:supportedInterfaceOrientationsForWindow:` is NOT used: tao's `AppDelegate` does not
   implement it, and UIKit reads which selectors a delegate answers when the delegate is set, before
   any hook could add one.
@@ -107,8 +112,8 @@ pure `fr.emse.canari.orientation.requestedOrientationFor` (unit-tested in `andro
   is logged (`ERROR the scene refused`).
 - **The safe area follows the scene**: the scene's `effectiveGeometry` (KVO-observable since iOS 16)
   re-publishes `--safe-area-inset-*`, the sides included.
-- An iPad keeps tao's mask (every orientation) for `portrait` and `auto`; only `landscape` forces it -
-  the same rule as an Android tablet.
+- An iPad keeps tao's mask (every orientation) for `portrait` and `auto`; only `landscape` and
+  `locked` force it - the same rule as an Android tablet.
 
 ## The web build
 

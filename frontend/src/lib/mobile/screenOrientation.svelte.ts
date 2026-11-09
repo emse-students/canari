@@ -9,6 +9,8 @@ import { Log } from '$lib/utils/Log';
  * - `auto`: follows the accelerometer AND the phone's rotation lock (Android `SCREEN_ORIENTATION_USER`,
  *   iOS's own auto-rotation, which the lock already stops).
  * - `landscape`: the rotate button - landscape even with the lock on (YouTube's full-screen button).
+ * - `locked`: whatever is on screen NOW, and nothing else - not the other landscape side, and on a
+ *   tablet too (where `portrait` and `auto` leave the turn free). A take and a live on air hold it.
  *
  * OWNERSHIP IS A STACK OF REQUESTS, AND AN UNMOUNT IS THE ONLY WAY BACK. A screen requests a mode while
  * it is mounted ({@link requestOrientation} / {@link useScreenOrientation}) and releases it when it
@@ -21,7 +23,7 @@ import { Log } from '$lib/utils/Log';
  * ask: a browser tab turns with the phone, and `screen.orientation.lock` exists only in fullscreen, so
  * there {@link orientationCanBeForced} is false and the rotate button is not drawn.
  */
-export type OrientationMode = 'portrait' | 'auto' | 'landscape';
+export type OrientationMode = 'portrait' | 'auto' | 'landscape' | 'locked';
 
 /** One screen's ask, held while it is mounted. */
 export interface OrientationRequest {
@@ -170,19 +172,21 @@ export function rotateTarget(landscapeNow: boolean): OrientationMode {
  *
  * - `rotate()` is the rotate button: the other orientation from the one on screen, kept until the
  *   component unmounts (a second press is portrait, forced too - the lock-proof way back).
- * - `hold(true)` FREEZES the orientation on screen: a camera take and a live on air are recorded at
- *   one frame size, so the screen may not turn under them; `hold(false)` gives the turn back.
+ * - `hold(true)` FREEZES the orientation on screen (`locked`): a camera take and a live on air are
+ *   recorded at one frame size, so the screen may not turn under them - not on a tablet either, whose
+ *   `portrait` is free rotation, and not by the 180-degree flip between the landscape sides that
+ *   `landscape` allows; `hold(false)` gives the turn back.
  * - `canRotate` says whether to draw the button (the native app only).
  */
 export function useScreenOrientation(owner: string, initial: OrientationMode = 'auto') {
   let request: OrientationRequest | null = null;
   /** `initial`, or the rotate button's last choice. */
   let chosen: OrientationMode = initial;
-  /** The orientation a take or a live froze, or null. */
-  let frozen: OrientationMode | null = null;
-  const current = (): OrientationMode => (viewportOrientation.landscape ? 'landscape' : 'portrait');
+  /** Whether a take or a live froze what is on screen. */
+  let frozen = false;
+  const wanted = (): OrientationMode => (frozen ? 'locked' : chosen);
   $effect(() => {
-    const held = requestOrientation(frozen ?? chosen, owner);
+    const held = requestOrientation(wanted(), owner);
     request = held;
     return () => {
       held.release();
@@ -199,10 +203,10 @@ export function useScreenOrientation(owner: string, initial: OrientationMode = '
     },
     /** Freezes (true) or frees (false) the orientation on screen. Idempotent. */
     hold(on: boolean): void {
-      if (on === (frozen !== null)) return;
-      frozen = on ? current() : null;
-      Log.d('ORIENTATION', `${owner}: ${on ? `held ${frozen}` : 'turn given back'}`);
-      request?.set(frozen ?? chosen);
+      if (on === frozen) return;
+      frozen = on;
+      Log.d('ORIENTATION', `${owner}: ${on ? 'held as it is on screen' : 'turn given back'}`);
+      request?.set(wanted());
     },
     /** Whether the rotate button can do anything in this build. */
     get canRotate(): boolean {

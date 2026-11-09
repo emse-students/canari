@@ -48,6 +48,16 @@ describe('iOS screen orientation (anti-regression)', () => {
     expect(page).toContain('messageHandlers?.canariOrientation');
   });
 
+  it('locks a take to the ONE orientation on screen, an iPad included', () => {
+    // A frozen take mapped to `portrait` would be tao's free mask on an iPad, and to `landscape` would
+    // still flip between the two landscape sides under the recording.
+    expect(iosMm).toContain('[mode isEqualToString:@"locked"]');
+    expect(iosMm).toContain('(UIInterfaceOrientationMask)(1 << now)');
+    expect(iosMm).toMatch(
+      /g_canariOrientationForcedOnIpad = \[mode isEqualToString:@"landscape"\] \|\| \[mode isEqualToString:@"locked"\];/
+    );
+  });
+
   it("publishes the notch's side to the page after every turn", () => {
     expect(iosMm).toContain("'--safe-area-inset-left'");
     expect(iosMm).toContain("'--safe-area-inset-right'");

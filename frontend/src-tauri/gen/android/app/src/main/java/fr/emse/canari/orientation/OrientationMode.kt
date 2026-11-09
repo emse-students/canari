@@ -13,6 +13,9 @@ package fr.emse.canari.orientation
  *   offers its rotate suggestion in the navigation bar, the user's gesture, not ours).
  * - [LANDSCAPE]: the rotate button, landscape even with the lock on - `USER_LANDSCAPE`, so the
  *   180-degree flip between the two landscape sides still respects the lock.
+ * - [LOCKED]: a take or a live on air - the rotation on screen NOW and no other, on a tablet too
+ *   (`SCREEN_ORIENTATION_LOCKED`): a recording has one frame size, and a frozen portrait mapped to a
+ *   tablet's free rotation, or a landscape that may still flip sides, would turn under it.
  *
  * Pure: compiled by the plain-JVM `android-tests` project, which has no Android classpath (an Android
  * import here breaks that build, and that is the guard).
@@ -20,7 +23,8 @@ package fr.emse.canari.orientation
 enum class OrientationMode(val wire: String) {
     PORTRAIT("portrait"),
     AUTO("auto"),
-    LANDSCAPE("landscape");
+    LANDSCAPE("landscape"),
+    LOCKED("locked");
 
     companion object {
         /** The page's value, or null for anything else (the caller logs and ignores it). */
@@ -37,6 +41,7 @@ object ScreenOrientation {
     const val PORTRAIT = 1
     const val USER = 2
     const val USER_LANDSCAPE = 11
+    const val LOCKED = 14
 }
 
 /**
@@ -50,4 +55,5 @@ fun requestedOrientationFor(mode: OrientationMode, lockPortrait: Boolean): Int =
     OrientationMode.AUTO ->
         if (lockPortrait) ScreenOrientation.USER else ScreenOrientation.UNSPECIFIED
     OrientationMode.LANDSCAPE -> ScreenOrientation.USER_LANDSCAPE
+    OrientationMode.LOCKED -> ScreenOrientation.LOCKED
 }
