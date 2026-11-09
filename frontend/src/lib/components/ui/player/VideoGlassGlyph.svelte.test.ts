@@ -10,7 +10,7 @@
  * as bars. WHETHER WEBKIT BLURS THROUGH A CLIPPED SHAPE IS NOT PINNED HERE - nothing in a test can.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { flushSync, mount, unmount } from 'svelte';
+import { flushSync, mount, unmount, type Component } from 'svelte';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import VideoGlassGlyph from './VideoGlassGlyph.svelte';
@@ -22,9 +22,9 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-function render<P extends Record<string, unknown>>(
-  component: Parameters<typeof mount>[0],
-  props: P
+function render<P extends Record<string, any>>(
+  component: Component<P>,
+  props: NoInfer<P>
 ): HTMLElement {
   const instance = mount(component, { target: document.body, props });
   mounted.push(() => unmount(instance));

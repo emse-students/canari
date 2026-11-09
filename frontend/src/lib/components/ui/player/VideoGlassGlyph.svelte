@@ -51,19 +51,19 @@
     viewBox="0 0 {size} {size}"
     style="filter: blur(5px); transform: translateY(2px)"
   >
-    <path d={path} fill="#000" fill-opacity="0.38" />
+    <path d={path} class="fill-black/40" />
   </svg>
   <span
     class="glass-video-shape absolute inset-0"
     style="clip-path: path('{path}'); -webkit-clip-path: path('{path}')"
     data-glass={videoGlass()}
   ></span>
-  <svg class="absolute inset-0" width={size} height={size} viewBox="0 0 {size} {size}">
+  <svg class="absolute inset-0 text-white" width={size} height={size} viewBox="0 0 {size} {size}">
     <defs>
       <linearGradient id={rimId} x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="#fff" stop-opacity="0.7" />
-        <stop offset="0.55" stop-color="#fff" stop-opacity="0.16" />
-        <stop offset="1" stop-color="#fff" stop-opacity="0.05" />
+        <stop offset="0" stop-color="currentColor" stop-opacity="0.7" />
+        <stop offset="0.55" stop-color="currentColor" stop-opacity="0.16" />
+        <stop offset="1" stop-color="currentColor" stop-opacity="0.05" />
       </linearGradient>
     </defs>
     <path d={path} fill="none" stroke="url(#{rimId})" stroke-width="1.25" stroke-linejoin="round" />
