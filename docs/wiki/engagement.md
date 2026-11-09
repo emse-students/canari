@@ -748,9 +748,8 @@ the moderation preview, `showFollow={false}`; icon-only below `sm` so the name k
 directory rows, and `AssociationTile` (the chip is a sibling of the link, in its own row under the
 card, never over its text). It is NEVER drawn for yourself, a blocked account, a person already
 followed or requested-and-accepted, an association already followed, an ARCHIVED association, or one
-the reader is a MEMBER of (lead decision), and it draws nothing while its answer is unknown. The post header passes
-`archived` when the post's association payload carries it; the feed payloads do not carry it today,
-so for a post header that rule is wired but inert until they do.
+the reader is a MEMBER of (lead decision), and it draws nothing while its answer is unknown.
+A post header does not know whether its association is archived (the feed payloads do not carry it), so an archived association's post still shows the chip - accepted for now.
 
 **The server half, two small routes (both under `/api/posts`, `FollowRequestsController`).**
 

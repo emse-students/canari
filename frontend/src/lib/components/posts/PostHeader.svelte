@@ -137,7 +137,6 @@
       kind="association"
       targetId={post.association.id}
       name={post.association.name}
-      archived={post.association.archived === true}
       iconOnlyOnPhone
     />
   {:else if post.authorId && !post.anonymous}
