@@ -617,6 +617,8 @@
   "msg_restored_unverified": "unverified",
   "msg_restored_unverified_hint": "This message was restored from another member's history, and nothing proves who wrote it: its author may have used an older version of Canari.",
   "msg_en_attente": "Pending…",
+  "msg_waiting_for_network": "Waiting for the network…",
+  "msg_waiting_for_server": "Waiting for the server…",
   "msg_echec": "Failed",
   "msg_non_confirme": "Not confirmed",
   "msg_remettre_dans_le_champ": "Put back in the composer",

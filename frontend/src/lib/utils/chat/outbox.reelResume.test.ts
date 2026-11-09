@@ -73,7 +73,7 @@ import type { SentFrame } from '$lib/mls-client/mlsDeliveryApi';
 import type { Conversation } from '$lib/types';
 import type { TabOutboxEvent } from '$lib/mls-client/tabMessageSync';
 import { CHAT_REEL_OVER_BUDGET } from '$lib/utils/mediaErrors';
-import { REEL_TAKE_MAX_SENDS } from '$lib/db/sqliteBatch';
+import { OUTBOX_COLUMNS, REEL_TAKE_MAX_SENDS } from '$lib/db/sqliteBatch';
 import { acquireEncoderLease, withEncoderLease } from '$lib/video/encoderLease';
 import { SqliteStorage } from '$lib/db/sqlite';
 import { buildChatReelTake } from '$lib/reels/chatReelTake';
@@ -986,7 +986,7 @@ describe('one take, several conversations (RC-13)', () => {
     await enqueueTake(l, 3);
     const inserts = w.sql.executed.filter((e) => e.sql.includes('INSERT OR REPLACE INTO outbox'));
     expect(inserts).toHaveLength(1);
-    expect(inserts[0].params).toHaveLength(12 * 4);
+    expect(inserts[0].params).toHaveLength(OUTBOX_COLUMNS * 4);
     expect(new Set(w.sql.rows.keys())).toEqual(new Set([ID, ...SEND_IDS]));
     l.kill();
 
@@ -1565,7 +1565,7 @@ describe('one take, several conversations (RC-13)', () => {
       ReelTakeTooManySendsError
     );
     expect(w.sql.rows.size).toBe(0);
-    expect(REEL_TAKE_MAX_SENDS).toBe(82);
+    expect(REEL_TAKE_MAX_SENDS).toBe(75);
   });
 
   it('A TAKE WAITING FOR THE ENCODER HOLDS NO UPLOAD SLOT: a ready file uploads and goes meanwhile', async () => {

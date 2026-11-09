@@ -658,6 +658,8 @@
   "msg_restored_unverified": "non vérifié",
   "msg_restored_unverified_hint": "Ce message a été restauré depuis l'historique d'un autre membre, et rien ne prouve qui l'a écrit : son auteur utilisait peut-être une ancienne version de Canari.",
   "msg_en_attente": "En attente…",
+  "msg_waiting_for_network": "En attente du réseau…",
+  "msg_waiting_for_server": "En attente du serveur…",
   "msg_echec": "Échec",
   "msg_non_confirme": "Non confirmé",
   "msg_remettre_dans_le_champ": "Remettre dans le champ",
