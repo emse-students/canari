@@ -905,6 +905,9 @@
   "video_fullscreen_label": "Full screen",
   "video_exit_fullscreen_label": "Exit full screen",
   "video_unplayable": "This video cannot be played on this device.",
+  "video_expand_label": "Open in full screen",
+  "video_sound_on_announce": "Sound on",
+  "video_sound_off_announce": "Sound off",
   "post_download_label": "Download",
   "post_poll_multiple_choice_label": "Multiple choices allowed",
   "post_poll_days_remaining": [

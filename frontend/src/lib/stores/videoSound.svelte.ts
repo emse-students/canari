@@ -1,31 +1,98 @@
 import { Log } from '$lib/utils/Log';
+import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 
 /**
  * WHETHER THE APP'S VIDEOS MAKE SOUND - ONE ANSWER FOR ALL OF THEM (user, 2026-09-29).
  *
- * A video in the feed or in a conversation plays by itself as soon as it is on screen, the way
- * Instagram's do, and the button that turns its sound on turns it on for every video in the app:
- * a reader who wants to hear the feed should not have to ask once per post, and the full-screen
- * viewer follows the same answer, including when its own controls change it.
+ * A video in the feed or in a reel plays by itself as soon as it is on screen, the way Instagram's
+ * do, and whatever turns its sound on (a tap on the picture, the speaker button) turns it on for
+ * every video in the app: a reader who wants to hear the feed should not have to ask once per post,
+ * and the full-screen viewer follows the same answer, including when its own controls change it.
  *
- * MUTED AT EVERY START AND DELIBERATELY NOT PERSISTED (user: *"defaut sans son a l'ouverture de
- * l'app"*). Opening the app must never be loud, whatever the last session chose, so the state lives
- * in memory and a reload returns it to silence.
+ * REMEMBERED PER DEVICE (owner, 2026-11-09, replacing the session-only rule of 2026-09-29): the
+ * reader's last choice survives the next video, the next session and a cold start - stored under
+ * {@link VIDEO_SOUND_KEY}, a device preference like the theme (never per account, never wiped by a
+ * sign-out). Two things the owner kept from the old rule:
+ *
+ * - THE FIRST EVER RUN IS SILENT: with nothing stored the answer is muted, until the reader unmutes
+ *   once. Only {@link videoSound.setMuted} called from a reader's gesture writes the choice.
+ * - UNMUTING IS ALWAYS A GESTURE. A stored "on" is honoured at start only where the engine lets a
+ *   video start with sound without one - the phone apps, whose WebViews are configured so
+ *   (`mediaPlaybackRequiresUserGesture = false`, WKWebView `mediaTypesRequiringUserActionForPlayback
+ *   = []`). A browser refuses an audible autoplay before the page has had a gesture
+ *   (`navigator.userActivation.hasBeenActive`), and a refused `play()` leaves the video STILL: so
+ *   there, before any gesture, this session starts muted and the stored "on" is left as it is, for the
+ *   next tap to restore. That is a fact read once at start, never a refusal provoked to learn it.
+ *
+ * NOT YET: following the device volume (a muted glyph at volume 0). A WebView does not expose the
+ * system volume; it needs a native bridge on each phone - the owed work is in
+ * `docs/wiki/backlog.d/video-sound-follows-the-device-volume.md`.
  */
-let muted = $state(true);
+
+/** The device preference's key: `'on'` or `'off'`; absent on a device that never chose. */
+export const VIDEO_SOUND_KEY = 'canari-video-sound';
+
+/** What the store remembers, or null when nothing (or something unreadable) is stored. */
+function readStored(): 'on' | 'off' | null {
+  try {
+    const saved = localStorage.getItem(VIDEO_SOUND_KEY);
+    return saved === 'on' || saved === 'off' ? saved : null;
+  } catch (err) {
+    console.warn('[VIDEO] the sound preference could not be read - starting muted', err);
+    return null;
+  }
+}
+
+function writeStored(value: 'on' | 'off'): void {
+  try {
+    localStorage.setItem(VIDEO_SOUND_KEY, value);
+  } catch (err) {
+    console.warn('[VIDEO] the sound preference could not be saved', err);
+  }
+}
+
+/**
+ * Whether a video may START with sound before this page has had a gesture: the phone apps' WebViews
+ * may, a browser tab that has had no gesture yet may not.
+ */
+function engineAllowsAudibleStart(): boolean {
+  if (isMobileTauriRuntime()) return true;
+  const activation = (globalThis.navigator as Navigator | undefined)?.userActivation;
+  return activation?.hasBeenActive === true;
+}
+
+/** The answer a run starts with: the stored choice, where the engine can honour it at once. */
+export function initialVideoMuted(
+  stored: 'on' | 'off' | null,
+  audibleStartAllowed: boolean
+): boolean {
+  if (stored !== 'on') return true;
+  return !audibleStartAllowed;
+}
+
+let muted = $state(
+  typeof localStorage === 'undefined'
+    ? true
+    : initialVideoMuted(readStored(), engineAllowsAudibleStart())
+);
 
 export const videoSound = {
   /** True while every video in the app is silent. */
   get muted(): boolean {
     return muted;
   },
-  /** Sets the answer for every video; a no-op when it is already that. */
+  /**
+   * Sets the answer for every video and REMEMBERS it on this device - called from a reader's gesture
+   * (a tap on a video, the speaker button, the `m` key, a viewer's own sound button). A no-op when it
+   * is already that.
+   */
   setMuted(next: boolean): void {
     if (next === muted) return;
-    Log.d('VIDEO', `sound ${next ? 'off' : 'on'} for every video`);
+    Log.d('VIDEO', `sound ${next ? 'off' : 'on'} for every video (remembered on this device)`);
     muted = next;
+    writeStored(next ? 'off' : 'on');
   },
-  /** Flips it - the sound button's action. */
+  /** Flips it - the speaker button's and the tap's action. */
   toggle(): void {
     videoSound.setMuted(!muted);
   },

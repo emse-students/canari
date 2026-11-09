@@ -937,6 +937,9 @@
   "video_fullscreen_label": "Plein écran",
   "video_exit_fullscreen_label": "Quitter le plein écran",
   "video_unplayable": "Cette vidéo ne peut pas être lue sur cet appareil.",
+  "video_expand_label": "Ouvrir en grand",
+  "video_sound_on_announce": "Son activé",
+  "video_sound_off_announce": "Son coupé",
   "post_download_label": "Télécharger",
   "post_poll_multiple_choice_label": "Choix multiples autorisés",
   "post_poll_days_remaining": [

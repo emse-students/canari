@@ -80,6 +80,8 @@ translucency. The layout and the reasons are in [chat](modules/chat.md#the-conve
 
 **WIDENED BY THE OWNER, 2026-10-31: `.glass-chrome` IS THE MATERIAL OF EVERYTHING THAT FLOATS ABOVE CONTENT** - the feed bar, the header pieces, menus, popovers (post, community, ecosystem, emoji pickers) and sticky headers over a scrolling list; cards and lists stay opaque. One `--glass-chrome-blur` token carries the blur, and `@supports not (backdrop-filter)` or `prefers-reduced-transparency: reduce` sets it to `none` and the background to `--cn-surface` (opaque). Never glass a bar that no content scrolls under (the bottom nav, the desktop top bar): the blur would cost a low-end Android for nothing. Never stack two blurs.
 
+**AND THE VIDEO PLAYER'S CONTROLS, 2026-11-09 (owner: *"du liquid glass, de belles choses"*)** - they float over moving pixels, so they qualify, with their own sibling material `.glass-video`: a DARK tint (black 28 %, both themes - a video is dark whatever the theme), a 12 px blur instead of 18 px (it sits over a decoder), a specular top rim and a sheen. White glyphs; the brand yellow only on the played part of a scrubber and the sound-on glyph. Only short-lived or small pieces wear it (a play disc, a 28 px speaker, the lightbox bar while shown), a hidden one is unmounted rather than made transparent, and it flattens under the same fallbacks plus `prefers-contrast: more`, and on Android until the Mi 9T measurement ([video-player](modules/video-player.md#the-glass)).
+
 ## 4. The reference radii
 
 | value | count (MSG / FB) | what has it |
