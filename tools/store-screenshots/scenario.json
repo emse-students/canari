@@ -410,5 +410,34 @@
         }
       }
     }
+  ],
+  "photoPosts": [
+    {
+      "seat": "owner",
+      "association": "Bureau des élèves",
+      "photo": "photo-3.jpg",
+      "text": {
+        "fr": "Les décos de la soirée sont prêtes, rendez-vous vendredi à 20 h !",
+        "en": "The party decorations are ready, see you Friday at 8 pm!"
+      }
+    },
+    {
+      "seat": "peer",
+      "association": "Club photo",
+      "photo": "photo-6.jpg",
+      "text": {
+        "fr": "Premières images du campus ce matin",
+        "en": "First pictures of the campus this morning"
+      }
+    },
+    {
+      "seat": "fourth",
+      "association": "Club randonnée",
+      "photo": "photo-5.jpg",
+      "text": {
+        "fr": "Le sentier de samedi, version automne",
+        "en": "Saturday's trail, autumn edition"
+      }
+    }
   ]
 }

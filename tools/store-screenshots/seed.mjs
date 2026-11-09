@@ -42,7 +42,10 @@ const EXTRA = ['Jade', 'Yanis', 'Léa', 'Noah'];
 const nextDay = (weekday, today = new Date()) => ((weekday - today.getDay() + 7) % 7) || 7;
 
 /** The SQL of the whole seed. `benchIds` maps a rig key to the account's user id (read from the rig's state, never printed). */
-export function buildSql(benchIds, today = new Date()) {
+export function buildSql(benchIds, today = new Date(), lang = 'fr') {
+  const en = lang === 'en';
+  /** The ids of the language-specific rows: the English ones are their own rows, so both sets can exist and one be set aside. */
+  const lk = (key) => (en ? `${key}:en` : key);
   const wed = nextDay(3, today), thu = nextDay(4, today), fri = nextDay(5, today), sat = nextDay(6, today);
   const ids = { ...benchIds };
   for (const n of EXTRA) ids[n] = userId(n);
@@ -55,12 +58,12 @@ export function buildSql(benchIds, today = new Date()) {
   ];
   const aid = (k) => uuid(`association:${k}`);
   const poll = {
-    id: uuid('poll:theme'),
-    question: 'Quel thème pour la soirée ?',
+    id: uuid(lk('poll:theme')),
+    question: en ? 'Which theme for the party?' : 'Quel thème pour la soirée ?',
     options: [
-      { id: uuid('poll:theme:80'), label: 'Années 80', votes: [] },
-      { id: uuid('poll:theme:pyjama'), label: 'Pyjama', votes: [] },
-      { id: uuid('poll:theme:neon'), label: 'Néon', votes: [] },
+      { id: uuid(lk('poll:theme:80')), label: en ? '80s' : 'Années 80', votes: [] },
+      { id: uuid(lk('poll:theme:pyjama')), label: en ? 'Pyjamas' : 'Pyjama', votes: [] },
+      { id: uuid(lk('poll:theme:neon')), label: en ? 'Neon' : 'Néon', votes: [] },
     ],
     multipleChoice: false,
     anonymous: false,
@@ -73,15 +76,24 @@ export function buildSql(benchIds, today = new Date()) {
     poll.votesByUser[v] = [o.id];
   });
   const posts = [
-    { key: 'theme', author: hugo, as: 'bde', ago: [0, 3], md: 'La soirée d\'intégration approche : **votez pour le thème** et venez nombreux vendredi à 20 h !', polls: [poll] },
-    { key: 'photo', author: sana, as: 'photo', ago: [1, 2], md: "On fera les photos de la soirée vendredi. Passez nous voir pour l'atelier de mercredi, appareil ou téléphone." },
-    { key: 'rando', author: tom, as: 'rando', ago: [2, 5], md: 'Sortie rando samedi, départ 9 h devant l\'école. Chaussures de marche et bonne humeur.' },
+    {
+      key: lk('theme'), author: hugo, as: 'bde', ago: [0, 3], polls: [poll],
+      md: en ? 'The integration party is coming up: **vote for the theme** and come along on Friday at 8 pm!' : "La soirée d'intégration approche : **votez pour le thème** et venez nombreux vendredi à 20 h !",
+    },
+    {
+      key: lk('photo'), author: sana, as: 'photo', ago: [1, 2],
+      md: en ? "We'll take the pictures at Friday's party. Come and see us at Wednesday's workshop, camera or phone." : "On fera les photos de la soirée vendredi. Passez nous voir pour l'atelier de mercredi, appareil ou téléphone.",
+    },
+    {
+      key: lk('rando'), author: tom, as: 'rando', ago: [2, 5],
+      md: en ? 'Hike on Saturday, leaving at 9 am in front of the school. Walking shoes and good spirits.' : "Sortie rando samedi, départ 9 h devant l'école. Chaussures de marche et bonne humeur.",
+    },
   ];
   const events = [
-    { key: 'atelier', as: 'photo', author: sana, title: 'Atelier photo', days: wed, hour: 18 },
-    { key: 'diner', as: 'bde', author: hugo, title: 'Dîner de la semaine', days: thu, hour: 19 },
-    { key: 'soiree', as: 'bde', author: hugo, title: "Soirée d'intégration", days: fri, hour: 20 },
-    { key: 'rando', as: 'rando', author: tom, title: 'Randonnée', days: sat, hour: 9 },
+    { key: lk('atelier'), as: 'photo', author: sana, title: en ? 'Photo workshop' : 'Atelier photo', days: wed, hour: 18 },
+    { key: lk('diner'), as: 'bde', author: hugo, title: en ? 'Weekly dinner' : 'Dîner de la semaine', days: thu, hour: 19 },
+    { key: lk('soiree'), as: 'bde', author: hugo, title: en ? 'Integration party' : "Soirée d'intégration", days: fri, hour: 20 },
+    { key: lk('rando'), as: 'rando', author: tom, title: en ? 'Hike' : 'Randonnée', days: sat, hour: 9 },
   ];
   const out = ['BEGIN;'];
   // The bench accounts' names (an UPDATE by id: the rows exist, the accounts signed in once).
@@ -132,27 +144,51 @@ export function buildSql(benchIds, today = new Date()) {
 
 /** Delete exactly what `buildSql` created (extra users included), children first. Allowlist of derived ids. */
 export function teardownSql(benchIds) {
-  const sql = buildSql(benchIds);
-  const idsOf = (table) => [...sql.matchAll(new RegExp(`INSERT INTO "${table}"[^;]*?;`, 'gs'))].flatMap((m) => [...m[0].matchAll(/^  \('([^']+)'/gm)].map((x) => x[1]));
+  const sql = ['fr', 'en'].map((l) => buildSql(benchIds, new Date(), l)).join('\n');
+  const idsOf = (table) => [...new Set([...sql.matchAll(new RegExp(`INSERT INTO "${table}"[^;]*?;`, 'gs'))].flatMap((m) => [...m[0].matchAll(/^  \('([^']+)'/gm)].map((x) => x[1])))];
   const list = (t) => idsOf(t).map(q).join(',');
   return ['BEGIN;', ...['posts', 'association_calendar_events', 'association_follows', 'association_members', 'association_audiences', 'associations', 'users'].map((t) => `DELETE FROM "${t}" WHERE "id" IN (${list(t)});`), 'COMMIT;'].join('\n');
+}
+
+/**
+ * Sets aside, REVERSIBLY, the language-specific rows of one language: its events become `rejected`
+ * and its posts `hiddenByModeration`, by the derived ids only (an allowlist, never a pattern). The
+ * other language is unset again by `restoreSql`. Used between the French pass and the English one,
+ * so a capture shows one language's content.
+ */
+export function setAsideSql(benchIds, lang) {
+  const sql = buildSql(benchIds, new Date(), lang);
+  const ids = (t) => [...sql.matchAll(new RegExp(`INSERT INTO "${t}"[^;]*?;`, 'gs'))].flatMap((m) => [...m[0].matchAll(/^  \('([^']+)'/gm)].map((x) => q(x[1]))).join(',');
+  return `UPDATE "association_calendar_events" SET "status" = 'rejected', "rejectedAt" = now(), "rejectionReason" = 'store-shots: set aside for the other language' WHERE "id" IN (${ids('association_calendar_events')});\n` +
+    `UPDATE "posts" SET "hiddenByModeration" = true WHERE "id" IN (${ids('posts')});`;
+}
+
+/** Undoes `setAsideSql` for one language. */
+export function restoreSql(benchIds, lang) {
+  const sql = buildSql(benchIds, new Date(), lang);
+  const ids = (t) => [...sql.matchAll(new RegExp(`INSERT INTO "${t}"[^;]*?;`, 'gs'))].flatMap((m) => [...m[0].matchAll(/^  \('([^']+)'/gm)].map((x) => q(x[1]))).join(',');
+  return `UPDATE "association_calendar_events" SET "status" = 'validated', "rejectedAt" = NULL, "rejectionReason" = NULL WHERE "id" IN (${ids('association_calendar_events')});\n` +
+    `UPDATE "posts" SET "hiddenByModeration" = false WHERE "id" IN (${ids('posts')});`;
 }
 
 if (import.meta.main) {
   const cmd = process.argv[2];
   const { accounts } = JSON.parse(readFileSync(join('F:/Programmation/canari-harness', 'test-accounts.json'), 'utf8'));
   const benchIds = Object.fromEntries(Object.keys(BENCH).map((k) => [k, accounts[k].sub]));
-  if (cmd === 'sql') console.log(buildSql(benchIds));
-  else if (['apply', 'teardown', 'status'].includes(cmd)) {
+  const langArg = process.argv.includes('--lang') ? process.argv[process.argv.indexOf('--lang') + 1] : 'fr';
+  if (cmd === 'sql') console.log(buildSql(benchIds, new Date(), langArg));
+  else if (['apply', 'teardown', 'status', 'setaside', 'restore'].includes(cmd)) {
     const { ssh } = await import('../cross-client-harness/ssh.mjs');
     const { devPsqlCommand } = await import('../cross-client-harness/estate-target.mjs');
     const { DEV_SSH_HOST } = await import('../cross-client-harness/names.mjs');
     const run = (sql) => ssh(DEV_SSH_HOST, devPsqlCommand(sql));
-    if (cmd === 'apply') console.log(run(buildSql(benchIds)));
+    if (cmd === 'apply') console.log(run(buildSql(benchIds, new Date(), langArg)));
+    else if (cmd === 'setaside') console.log(run(setAsideSql(benchIds, langArg)));
+    else if (cmd === 'restore') console.log(run(restoreSql(benchIds, langArg)));
     else if (cmd === 'teardown') console.log(run(teardownSql(benchIds)));
     else console.log(run(`select (select count(*) from associations where slug like 'demo-%') as associations, (select count(*) from posts where id in (${[...buildSql(benchIds).matchAll(/^  \('([^']+)', '[0-9a-f]{64}', '(?:[^']|'')*', '[0-9a-f-]{36}', '\[/gm)].map((m) => q(m[1])).join(',') || "''"})) as posts`));
   } else {
-    console.error('usage: bun seed.mjs sql|apply|teardown|status');
+    console.error('usage: bun seed.mjs sql|apply|teardown|status|setaside|restore [--lang fr|en]');
     process.exit(2);
   }
 }
