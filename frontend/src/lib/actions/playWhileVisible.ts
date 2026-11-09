@@ -35,6 +35,21 @@ export interface PlayWhileVisibleOptions {
 
 /** Inline videos currently on screen, in the order they came into view. */
 const visibleInline = new Set<HTMLVideoElement>();
+
+/** Feed videos the READER paused ({@link markReaderPaused}): nothing ambient starts them again. */
+const readerPaused = new WeakSet<HTMLVideoElement>();
+
+/**
+ * THE READER PAUSED THIS FEED VIDEO - a held press, Space or `k` (stack review, 2026-11-09). The
+ * pause's own `pause` event makes the arbiter report idle, and {@link resumeVisible} then replayed
+ * the video last come into view: the very one just paused, so a hold or a key on the feed was undone
+ * at once. Until the element plays again (the reader's play, a hold released) or LEAVES the screen,
+ * neither `resumeVisible` nor its intersection starts it. Called BEFORE `pause()`.
+ */
+export function markReaderPaused(video: HTMLVideoElement): void {
+  Log.d('VIDEO', 'playWhileVisible: the reader paused a feed video - the feed will not replay it');
+  readerPaused.add(video);
+}
 /** Viewers open: while one is, no inline video starts. */
 let openViewers = 0;
 
@@ -96,7 +111,7 @@ function tryPlay(video: HTMLVideoElement) {
  */
 function resumeVisible() {
   const resume = [...visibleInline].at(-1);
-  if (openViewers === 0 && resume && resume.paused) tryPlay(resume);
+  if (openViewers === 0 && resume && resume.paused && !readerPaused.has(resume)) tryPlay(resume);
 }
 onPlaybackIdle(resumeVisible);
 
@@ -104,6 +119,9 @@ export function playWhileVisible(video: HTMLVideoElement, options: PlayWhileVisi
   if (typeof IntersectionObserver === 'undefined') return {};
 
   const registration = arbitratePlayback(video, { ambient: true });
+  // The reader's own play (or a hold released) ends their pause.
+  const onPlay = () => readerPaused.delete(video);
+  video.addEventListener('play', onPlay);
 
   const observer = new IntersectionObserver(
     (entries) => {
@@ -114,9 +132,17 @@ export function playWhileVisible(video: HTMLVideoElement, options: PlayWhileVisi
         // takes playback back from what was chosen. `resumeVisible` brings it back afterwards.
         // Nor off screen: Android reports intersections in the background, and the arbiter paused
         // the feed on leaving; coming back resumes it through `onPlaybackIdle`.
-        if (openViewers === 0 && !isForegroundPlaying(video) && isAppOnScreen()) tryPlay(video);
+        if (
+          openViewers === 0 &&
+          !readerPaused.has(video) &&
+          !isForegroundPlaying(video) &&
+          isAppOnScreen()
+        )
+          tryPlay(video);
       } else {
         visibleInline.delete(video);
+        // Gone from the screen: the reader's pause is spent, coming back plays it as any other.
+        readerPaused.delete(video);
         if (!video.paused) video.pause();
       }
     },
@@ -127,6 +153,7 @@ export function playWhileVisible(video: HTMLVideoElement, options: PlayWhileVisi
   return {
     destroy() {
       observer.disconnect();
+      video.removeEventListener('play', onPlay);
       visibleInline.delete(video);
       registration.destroy();
     },

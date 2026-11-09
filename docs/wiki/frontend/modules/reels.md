@@ -520,7 +520,7 @@ reel, and the server refuses a declaration over the cap, so it declares the cap
 2026-10-22): the clip's own ratio under the `--media-max-height` ceiling, the whole frame contained
 and the sides a blurred copy of its first frame; 9:16 only when the reel carries no dimensions
 ([posts](posts.md)). It used to be a fixed 9:16 box 70 % of the screen high with the video covering
-it. It plays muted while on screen like any feed video (`InlineVideo`), and a
+it. It plays muted while on screen like any feed video (`VideoPlayer` `feed`), and a
 touch opens the viewer instead of the media viewer.
 
 **A feed card fetches what its video is about to play, and gives it all back off screen (fix of
@@ -992,15 +992,20 @@ sans timecode."* The viewer's player is `VideoPlayer` with `minimal` (through `P
   `data-video-controls`, so a drag on it is a seek and never a swipe. It pads for the home indicator
   (`--safe-area-inset-bottom`) only when the frame reaches the screen bottom (`playerSafeBottom`).
   The caption's bottom pad is now `inset + 1rem`; the 4.5 rem it left for the bar is gone.
-- **A tap on the picture plays or pauses** (it toggled the controls before; a paused reel kept a big
-  play button). **The glyph is the feedback of a tap, never a state** (user, same day): nothing at load,
-  autoplay, an engine pause or the end; the icon of what the tap just did pops and fades in 600 ms
-  (`.reel-glyph`) and is not drawn under `prefers-reduced-motion`. A double tap that likes still
-  pauses then resumes (the first tap is the player's, as it always was).
+- **A tap on the picture toggles the SOUND, a press held PAUSES until released** (owner, 2026-11-09,
+  replacing "a tap plays or pauses" - one gesture map for every player,
+  [video-player](video-player.md#the-gestures-videogesturests); Instagram's reel tap pauses, Canari's
+  does not, by decision). **The glyph is the feedback of a gesture, never a state** (user, 2026-10-23):
+  nothing at load, autoplay, an engine pause or the end; the icon of what the tap just did (sound on,
+  sound off; play/pause from the keyboard) pops and fades in 600 ms (`VideoFeedbackGlyph`) and is not
+  drawn under `prefers-reduced-motion`. **A double tap that likes leaves the sound as it was**: the
+  reel's surface says it likes (`data-double-tap-likes`), so the sound tap waits for the double-tap
+  window instead of flipping twice.
 - **The rail, top to bottom: heart, comments, share, DOWNLOAD under share, SOUND under that** (the user
   asked for this order; Instagram puts the sound top-right). The tools show on a reel page even
   when the rail has no social action (a conversation's reel), and not on a photo page. The sound
-  button is `videoSound`'s one answer; `VideoPlayer` now also carries a store change to its element
+  button is the player kit's `VideoSoundButton` drawn as a rail glyph (`rail`; yellow when on), on
+  `videoSound`'s one answer; `VideoPlayer` now also carries a store change to its element
   (`app` scope), so the rail needs no handle on the player. The download is the same
   `ReelSaveButton`, same logic, drawn plain (`rail`).
 - **The top**: a scrim under the status bar and the X, the X without a disc (it overlapped a

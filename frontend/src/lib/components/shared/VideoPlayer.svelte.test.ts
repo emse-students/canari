@@ -3,8 +3,10 @@
  * CANARI'S PLAYER REPLACES THE ENGINE'S `controls` IN EVERY VIEWER (user, 2026-10-01).
  *
  * Pinned: no native controls and no native poster ever; the Canari poster covers the box until the
- * first frame is in the element; the controls fade after 2.5 s of playback and come back on a tap;
- * the keyboard plays, pauses and mutes; and a stream's URL reaches the element untouched.
+ * first frame is in the element; the controls fade after 2.5 s of playback - UNMOUNTED, so their blur
+ * stops paying - and come back on a tap; the keyboard plays, pauses and mutes; and a stream's URL
+ * reaches the element untouched. Since the shared kit (owner, 2026-11-09): a tap toggles the sound,
+ * a press held pauses while held, the bar is one glass pill and the play disc is glass.
  */
 import { it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
@@ -15,6 +17,7 @@ import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
 import { CONTROLS_FADE_MS } from '$lib/utils/videoPlayback';
 import { m } from '$lib/paraglide/messages';
 import type { AutoplayBlockCause } from '$lib/utils/videoAutoplay';
+import { HOLD_TO_PAUSE_MS } from '$lib/actions/videoGestures';
 
 const mounted: (() => void)[] = [];
 
@@ -38,8 +41,16 @@ function mountPlayer(src = 'blob:clip', soundScope?: 'app' | 'local') {
   flushSync();
   const root = target.querySelector('[role="group"]') as HTMLElement;
   const video = target.querySelector('video')!;
-  const bar = target.querySelector('[data-video-controls]') as HTMLElement;
-  return { target, root, video, bar };
+  return { target, root, video };
+}
+
+/** Whether the control bar is up: a faded bar is UNMOUNTED, never a transparent layer. */
+const barShown = (target: HTMLElement) => target.querySelector('[data-video-bar]') !== null;
+
+/** A tap as the engine makes one after a pointer press (`detail` 1) - a keyboard click is 0. */
+function tap(el: Element) {
+  el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
+  flushSync();
 }
 
 /** Makes the element report it is playing, as the engine would before firing `play`. */
@@ -66,44 +77,43 @@ it('hands a stream its URL exactly as minted', () => {
   expect(video.getAttribute('src')).toBe('blob:stream');
 });
 
-it('fades the controls after 2.5 s of playback, and a tap brings them back', () => {
+it('fades the controls after 2.5 s of playback, unmounting them, and a tap brings them back', () => {
   vi.useFakeTimers();
-  const { video, bar } = mountPlayer();
+  const { target, video } = mountPlayer();
   startPlaying(video);
-  expect(bar.className).toContain('opacity-100');
+  expect(barShown(target)).toBe(true);
 
   vi.advanceTimersByTime(CONTROLS_FADE_MS - 1);
   flushSync();
-  expect(bar.className).toContain('opacity-100');
+  expect(barShown(target)).toBe(true);
   vi.advanceTimersByTime(1);
   flushSync();
-  expect(bar.className).toContain('opacity-0');
+  expect(barShown(target)).toBe(false);
+  expect(target.querySelector('.glass-video'), 'no blur layer left behind').toBeNull();
 
-  video.click();
-  flushSync();
-  expect(bar.className).toContain('opacity-100');
+  tap(video);
+  expect(barShown(target)).toBe(true);
 });
 
 it('a tap that FOCUSES the player brings the faded controls back, not up and down again', () => {
   // Mi 9T, 2026-10-01: the tap's focusin raised the controls, its click then read them as up and
   // hid them - the first tap on a playing video did nothing visible.
   vi.useFakeTimers();
-  const { root, video, bar } = mountPlayer();
+  const { target, root, video } = mountPlayer();
   startPlaying(video);
   vi.advanceTimersByTime(CONTROLS_FADE_MS);
   flushSync();
-  expect(bar.className).toContain('opacity-0');
+  expect(barShown(target)).toBe(false);
 
   root.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
   flushSync();
-  video.click();
-  flushSync();
-  expect(bar.className).toContain('opacity-100');
+  tap(video);
+  expect(barShown(target)).toBe(true);
 });
 
 it('loops by default, and a loop restarting reads the time from 0 while it keeps playing', () => {
   vi.useFakeTimers();
-  const { root, video, bar } = mountPlayer();
+  const { target, root, video } = mountPlayer();
   expect(video.loop).toBe(true);
   Object.defineProperty(video, 'duration', { configurable: true, get: () => 8 });
   let t = 7.9;
@@ -121,15 +131,15 @@ it('loops by default, and a loop restarting reads the time from 0 while it keeps
   expect(slider.getAttribute('aria-valuenow')).toBe('0');
   vi.advanceTimersByTime(CONTROLS_FADE_MS);
   flushSync();
-  expect(bar.className).toContain('opacity-0');
+  expect(barShown(target)).toBe(false);
 });
 
 it('keeps the controls while paused', () => {
   vi.useFakeTimers();
-  const { bar } = mountPlayer();
+  const { target } = mountPlayer();
   vi.advanceTimersByTime(CONTROLS_FADE_MS * 3);
   flushSync();
-  expect(bar.className).toContain('opacity-100');
+  expect(barShown(target)).toBe(true);
 });
 
 it('plays from the keyboard and from its play button', () => {
@@ -215,37 +225,37 @@ const pointer = (type: string, pointerType: string) =>
  */
 it('a mouse moving anywhere over the player brings the faded controls back', () => {
   vi.useFakeTimers();
-  const { root, video, bar } = mountPlayer();
+  const { target, root, video } = mountPlayer();
   startPlaying(video);
   vi.advanceTimersByTime(CONTROLS_FADE_MS);
   flushSync();
-  expect(bar.className).toContain('opacity-0');
+  expect(barShown(target)).toBe(false);
 
   root.dispatchEvent(pointer('pointermove', 'mouse'));
   flushSync();
-  expect(bar.className).toContain('opacity-100');
+  expect(barShown(target)).toBe(true);
 
   // ... and they fade again once the mouse is still.
   vi.advanceTimersByTime(CONTROLS_FADE_MS);
   flushSync();
-  expect(bar.className).toContain('opacity-0');
+  expect(barShown(target)).toBe(false);
 });
 
 it('keeps the controls up for as long as the mouse keeps moving', () => {
   vi.useFakeTimers();
-  const { root, video, bar } = mountPlayer();
+  const { target, root, video } = mountPlayer();
   startPlaying(video);
   for (let i = 0; i < 4; i++) {
     vi.advanceTimersByTime(CONTROLS_FADE_MS - 500);
     root.dispatchEvent(pointer('pointermove', 'mouse'));
     flushSync();
   }
-  expect(bar.className).toContain('opacity-100');
+  expect(barShown(target)).toBe(true);
 });
 
 it('a finger moving over the player shows nothing by itself', () => {
   vi.useFakeTimers();
-  const { root, video, bar } = mountPlayer();
+  const { target, root, video } = mountPlayer();
   startPlaying(video);
   vi.advanceTimersByTime(CONTROLS_FADE_MS);
   flushSync();
@@ -253,36 +263,88 @@ it('a finger moving over the player shows nothing by itself', () => {
   root.dispatchEvent(pointer('pointermove', 'touch'));
   root.dispatchEvent(pointer('pointermove', 'pen'));
   flushSync();
-  expect(bar.className).toContain('opacity-0');
+  expect(barShown(target)).toBe(false);
 });
 
 /**
- * A TAP ANYWHERE ON THE PLAYER TOGGLES THE CONTROLS (user, 2026-10-02: *"un appui n'importe ou sur
- * l'ecran de la video ouverte en grand"*). The listener was on the `<video>`, so a tap on the black
- * around a letterboxed clip - most of a phone's screen for a landscape clip - did nothing.
+ * A TAP ANYWHERE ON THE PLAYER TOGGLES THE SOUND (owner, 2026-11-09) - anywhere meaning the black
+ * around a letterboxed clip too (user, 2026-10-02) - and RAISES the bar, never hides it: the bar
+ * goes by itself after the fade.
  */
-it('a tap on the black around the picture toggles the controls, both ways', () => {
+it('a tap on the black around the picture toggles the sound and raises the bar', () => {
   vi.useFakeTimers();
-  const { root, video, bar } = mountPlayer();
+  const { target, root, video } = mountPlayer();
   startPlaying(video);
-  expect(bar.className).toContain('opacity-100');
+  expect(video.muted).toBe(true);
 
-  root.click();
+  tap(root);
+  video.dispatchEvent(new Event('volumechange'));
   flushSync();
-  expect(bar.className).toContain('opacity-0');
+  expect(video.muted).toBe(false);
+  expect(videoSound.muted, "the app's one answer follows").toBe(false);
+  expect(target.querySelector('[data-video-glyph="sound-on"]')).not.toBeNull();
+  expect(barShown(target)).toBe(true);
 
-  root.click();
+  vi.advanceTimersByTime(CONTROLS_FADE_MS);
   flushSync();
-  expect(bar.className).toContain('opacity-100');
+  expect(barShown(target)).toBe(false);
+  tap(root);
+  expect(video.muted).toBe(true);
+  expect(barShown(target), 'a tap raises the faded bar').toBe(true);
 });
 
-it('a tap on a control is the control s, and does not toggle the bar away', () => {
+it('a press held on the picture pauses while held and resumes on release', () => {
   vi.useFakeTimers();
-  const { target, video, bar } = mountPlayer();
+  const { target, root, video } = mountPlayer();
   startPlaying(video);
-  target.querySelector<HTMLButtonElement>('[data-video-controls] button')!.click();
+  vi.mocked(HTMLMediaElement.prototype.play).mockClear();
+
+  root.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, button: 0 }));
+  vi.advanceTimersByTime(HOLD_TO_PAUSE_MS);
+  expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1);
+  Object.defineProperty(video, 'paused', { configurable: true, get: () => true });
+  video.dispatchEvent(new Event('pause'));
   flushSync();
-  expect(bar.className).toContain('opacity-100');
+  expect(target.querySelector('[data-video-play-disc]'), 'a held pause draws no disc').toBeNull();
+
+  root.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+  expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+  // The click a mouse makes after the hold is not a tap: the sound is left as it was.
+  tap(root);
+  expect(video.muted).toBe(true);
+});
+
+it('a hold on a paused video resumes nothing', () => {
+  vi.useFakeTimers();
+  const { root } = mountPlayer();
+  vi.mocked(HTMLMediaElement.prototype.play).mockClear();
+  root.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, button: 0 }));
+  vi.advanceTimersByTime(HOLD_TO_PAUSE_MS);
+  root.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+  expect(HTMLMediaElement.prototype.pause).not.toHaveBeenCalled();
+  expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+});
+
+it("a tap on a control is the control's, and is not the sound tap", () => {
+  vi.useFakeTimers();
+  const { target, video } = mountPlayer();
+  startPlaying(video);
+  const playPause = target.querySelector<HTMLButtonElement>('[data-video-bar] button')!;
+  playPause.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+  flushSync();
+  expect(barShown(target)).toBe(true);
+  expect(video.muted).toBe(true);
+});
+
+it('draws one glass bar whose buttons wear no blur of their own, and a glass play disc', () => {
+  const { target, video } = mountPlayer();
+  video.dispatchEvent(new Event('loadeddata'));
+  flushSync();
+  expect(target.querySelectorAll('[data-video-bar] .glass-video').length).toBe(0);
+  expect(target.querySelector('[data-video-bar]')!.className).toContain('glass-video');
+  const disc = target.querySelector('[data-video-play-disc]')!;
+  expect(disc.className).toContain('glass-video');
+  expect(disc.className).not.toContain('bg-cn-yellow');
 });
 
 it('marks its box, which is what the viewer reads to leave the tap to it', () => {
@@ -296,7 +358,8 @@ it('marks its box, which is what the viewer reads to leave the tap to it', () =>
  * scales it or carries it off the screen.
  */
 it('applies the viewer s zoom to the picture alone, never to the controls', () => {
-  const { video, bar, root } = mountPlayer();
+  const { video, target, root } = mountPlayer();
+  const bar = target.querySelector('[data-video-controls]') as HTMLElement;
   expect(video.getAttribute('style')).toContain('transform: var(--lightbox-zoom, none)');
   expect(bar.getAttribute('style') ?? '').not.toContain('--lightbox-zoom');
   expect(root.getAttribute('style') ?? '').not.toContain('--lightbox-zoom');
@@ -362,7 +425,7 @@ function mountMinimal(
   document.body.appendChild(target);
   const component = mount(VideoPlayer, {
     target,
-    props: { src: 'blob:reel', minimal: true, safeBottom, poster, onPlaybackBlocked },
+    props: { src: 'blob:reel', variant: 'reel', safeBottom, poster, onPlaybackBlocked },
   });
   mounted.push(() => unmount(component));
   flushSync();
@@ -378,17 +441,17 @@ it('minimal: draws a bare line, with no timecode, button or control row', () => 
   expect(target.textContent).not.toMatch(/\d:\d\d/);
   const slider = target.querySelector('[role="slider"]')!;
   expect(slider.getAttribute('aria-label')).toBe(m.video_seek_label());
-  expect(slider.closest('[data-video-controls]')!.className).toContain('z-40');
+  expect(slider.closest('[data-video-line-slot]')!.className).toContain('z-40');
   expect(target.querySelector('[data-video-line]')!.className).toContain('h-0.5');
   expect(target.querySelector('[data-video-handle]')!.className).toContain('opacity-0');
 });
 
 it('minimal: the line pads for the home indicator only when the player reaches the bottom', () => {
   const { target } = mountMinimal(true);
-  const bar = target.querySelector<HTMLElement>('[data-video-progress]')!;
+  const bar = target.querySelector<HTMLElement>('[data-video-line-slot]')!;
   expect(bar.getAttribute('style')).toContain('--safe-area-inset-bottom');
   const other = mountMinimal(false);
-  expect(other.target.querySelector('[data-video-progress]')!.getAttribute('style')).toBeNull();
+  expect(other.target.querySelector('[data-video-line-slot]')!.getAttribute('style')).toBeNull();
 });
 
 it('minimal: shows no glyph at load, at an engine pause, or at the end', () => {
@@ -400,22 +463,49 @@ it('minimal: shows no glyph at load, at an engine pause, or at the end', () => {
   expect(target.querySelector('[data-video-glyph]')).toBeNull();
 });
 
-it('minimal: a tap plays or pauses and shows the glyph of what it did', () => {
+/**
+ * THE REEL'S GESTURES ARE EVERY PLAYER'S (owner, 2026-11-09): a tap is the sound - the app's one
+ * answer, remembered - with its glyph, and a press held pauses until released. Instagram's reel tap
+ * pauses; Canari's does not, by decision.
+ */
+it('minimal: a tap toggles the sound with its glyph, and plays or pauses nothing', () => {
   const { target, root, video } = mountMinimal();
   video.dispatchEvent(new Event('loadeddata'));
-  // The element is still paused under the test, so the load asked its autoplay: not the tap's.
+  startPlaying(video);
   vi.mocked(HTMLMediaElement.prototype.play).mockClear();
-  root.click();
+  tap(root);
+  video.dispatchEvent(new Event('volumechange'));
+  flushSync();
+  expect(video.muted).toBe(false);
+  expect(videoSound.muted).toBe(false);
+  expect(target.querySelector('[data-video-glyph]')!.getAttribute('data-video-glyph')).toBe(
+    'sound-on'
+  );
+  expect(HTMLMediaElement.prototype.play).not.toHaveBeenCalled();
+  expect(HTMLMediaElement.prototype.pause).not.toHaveBeenCalled();
+});
+
+it('minimal: a press held pauses the reel and the release resumes it', () => {
+  vi.useFakeTimers();
+  const { root, video } = mountMinimal();
+  video.dispatchEvent(new Event('loadeddata'));
+  startPlaying(video);
+  vi.mocked(HTMLMediaElement.prototype.play).mockClear();
+  root.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, button: 0 }));
+  vi.advanceTimersByTime(HOLD_TO_PAUSE_MS);
+  expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1);
+  root.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+  expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
+});
+
+it('minimal: the keyboard still plays and pauses, with the glyph of what it did', () => {
+  const { target, root, video } = mountMinimal();
+  video.dispatchEvent(new Event('loadeddata'));
+  vi.mocked(HTMLMediaElement.prototype.play).mockClear();
+  root.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
   flushSync();
   expect(HTMLMediaElement.prototype.play).toHaveBeenCalledTimes(1);
   expect(target.querySelector('[data-video-glyph]')!.getAttribute('data-video-glyph')).toBe('play');
-  startPlaying(video);
-  root.click();
-  flushSync();
-  expect(HTMLMediaElement.prototype.pause).toHaveBeenCalledTimes(1);
-  expect(target.querySelector('[data-video-glyph]')!.getAttribute('data-video-glyph')).toBe(
-    'pause'
-  );
 });
 
 it('minimal: a loading reel shows its first frame picture, never a play glyph', () => {
@@ -431,7 +521,7 @@ it('minimal: a loading reel shows its first frame picture, never a play glyph', 
 it('minimal: with no picture a loading reel is a black box, with no glyph', () => {
   const { target } = mountMinimal();
   expect(target.querySelector('[data-video-first-frame-poster]')).toBeNull();
-  expect(target.querySelector('.bg-cn-yellow')).toBeNull();
+  expect(target.querySelector('[data-video-play-disc]')).toBeNull();
 });
 
 it('minimal: a play button only when the engine REFUSES the autoplay', async () => {
@@ -523,7 +613,7 @@ it('minimal: an autoplay WITH SOUND that is refused keeps the sound and shows th
   // Lead decision 2026-11-04: the sound is the reader's explicit choice; a refusal never mutes.
   videoSound.setMuted(false);
   const blocked = vi.fn();
-  const { target, root, video } = mountMinimal(true, null, blocked);
+  const { target, video } = mountMinimal(true, null, blocked);
   expect(video.muted).toBe(false);
   const play = vi.mocked(HTMLMediaElement.prototype.play);
   play.mockRejectedValueOnce(new DOMException('no', 'NotAllowedError'));
@@ -536,8 +626,8 @@ it('minimal: an autoplay WITH SOUND that is refused keeps the sound and shows th
   expect(playButton(target)).not.toBeNull();
   expect(blocked).toHaveBeenCalledWith('refused');
   expect(String(warn.mock.calls[0][0])).toContain('with sound');
-  // The reader's tap plays it as it is - with the sound they chose.
-  root.click();
+  // The reader's press on the play disc plays it as it is - with the sound they chose.
+  (playButton(target) as HTMLButtonElement).click();
   flushSync();
   expect(play).toHaveBeenCalledTimes(2);
   expect(video.muted).toBe(false);

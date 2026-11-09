@@ -32,7 +32,7 @@
   <!-- Panel header -->
   <div class="border-cn-border flex items-center gap-2 border-b bg-amber-500/5 px-4 py-2.5">
     <Clock size={14} class="shrink-0 text-amber-500" />
-    <span class="text-xs font-bold tracking-wider text-amber-600 uppercase dark:text-amber-400">
+    <span class="text-xs font-bold text-amber-600 dark:text-amber-400">
       {m.post_scheduled_panel_title({ count: posts.length })}
     </span>
   </div>

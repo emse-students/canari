@@ -804,7 +804,7 @@
               {#if imageUploadError}
                 <p class="text-red-err text-xs">{imageUploadError}</p>
               {/if}
-              <label class="text-text-muted text-xs font-bold uppercase" for="server-name"
+              <label class="text-text-muted text-xs font-bold" for="server-name"
                 >{m.chat_community_name_label()}</label
               >
               <input
@@ -828,9 +828,7 @@
 
           {#if canManage}
             <div class="border-cn-border bg-cn-surface space-y-3 rounded-xl border p-4 shadow-sm">
-              <p
-                class="text-text-muted flex items-center gap-1.5 text-xs font-bold tracking-wider uppercase"
-              >
+              <p class="text-text-muted flex items-center gap-1.5 text-xs font-bold">
                 <RotateCcwClock size={14} />
                 {m.chat_community_history_visibility_label()}
               </p>
@@ -1013,9 +1011,7 @@
 
           {#if canManage}
             <div class="border-cn-border bg-cn-surface space-y-3 rounded-xl border p-4 shadow-sm">
-              <p
-                class="text-text-muted flex items-center gap-1.5 text-xs font-bold tracking-wider uppercase"
-              >
+              <p class="text-text-muted flex items-center gap-1.5 text-xs font-bold">
                 <Link2 size={14} />
                 {m.chat_community_invite_link_label()}
               </p>

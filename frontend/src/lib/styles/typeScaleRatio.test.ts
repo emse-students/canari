@@ -23,7 +23,7 @@ describe('type scale tokens', () => {
   it('text with no size class inherits a body size that follows --type-scale too', () => {
     const body = [...css.matchAll(/\nbody \{([^}]*)\}/g)]
       .map((m) => m[1])
-      .find((rule) => rule.includes("'Nunito Variable'"));
+      .find((rule) => rule.includes('font-family: var(--font-body)'));
     expect(body).toMatch(/font-size: calc\(1rem \* var\(--type-scale, 1\)\);/);
   });
 

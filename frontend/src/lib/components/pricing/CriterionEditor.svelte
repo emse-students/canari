@@ -96,9 +96,7 @@
 
 <div class="border-cn-border/70 rounded-2xl border p-3" data-testid="criterion-{dimension.id}">
   <div class="flex items-center gap-2">
-    <span
-      class="bg-cn-bg text-text-muted rounded-full px-2 py-0.5 text-xs font-bold tracking-wide uppercase"
-    >
+    <span class="bg-cn-bg text-text-muted rounded-full px-2 py-0.5 text-xs font-bold">
       {axisLabel}
     </span>
     <span class="text-text-main min-w-0 flex-1 truncate text-sm font-bold">{title}</span>

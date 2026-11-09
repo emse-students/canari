@@ -21,7 +21,7 @@
 
 | Component | Role |
 |---|---|
-| `AssociationDetailView.svelte` | Public-facing association page |
+| `AssociationDetailView.svelte` | Public-facing association page; the identity card's actions (follow, bell, leave, manage) are ONE wrapping row, not stacked full-width bars (2026-11-09) |
 | `AssociationCard.svelte` | Card in the directory listing |
 | `AssociationMembersSection.svelte` | Member list with role display |
 | `AssociationCalendarSection.svelte` | Calendar events for an association |

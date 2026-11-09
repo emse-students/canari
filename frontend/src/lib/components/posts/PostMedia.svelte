@@ -32,7 +32,6 @@
   import PdfThumbnail from '$lib/components/shared/PdfThumbnail.svelte';
   import PdfViewerModal from '$lib/components/shared/PdfViewerModal.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
-  import InlineVideo from '$lib/components/shared/InlineVideo.svelte';
   import VideoPlayer from '$lib/components/shared/VideoPlayer.svelte';
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
   import MediaSpinner from '$lib/components/shared/MediaSpinner.svelte';
@@ -520,7 +519,7 @@
         src={playUrl!}
         disableRemotePlayback={streamManaged}
         class="h-full w-full"
-        minimal={minimalPlayer}
+        variant={minimalPlayer ? 'reel' : 'lightbox'}
         safeBottom={playerSafeBottom}
         {poster}
         {onPlaybackBlocked}
@@ -636,11 +635,12 @@
       <!-- ========== VIDEO ========== -->
       <!-- UNDER A SINGLE-ATTACHMENT POST THE BOX IS THE CALLER'S (`letterbox`): `PostContent`
            reserves it at the video's own shape under the `--media-max-height` ceiling, and the
-           video is CONTAINED in it: the whole frame, the sides filled by a blurred copy of its first frame (`InlineVideo` `backdrop`)
+           video is CONTAINED in it: the whole frame, the sides filled by a blurred copy of its first frame (`VideoPlayer` `backdrop`)
            (user, 2026-10-22; a gallery cell passes `videoFit="cover"`, its square being the point). It used to draw its own 16:9 box inside that reservation,
            which put a phone's vertical clip in a narrow strip over a grey band (Mi 9T, 2026-09-29).
            It was cropped (`object-cover`) until 2026-10-22, which cut a portrait clip. -->
-      <InlineVideo
+      <VideoPlayer
+        variant="feed"
         src={playUrl!}
         disableRemotePlayback={streamManaged}
         streamed={streamUrl !== null}
@@ -650,7 +650,7 @@
         backdrop={letterbox && videoFit === 'contain'}
         class={letterbox
           ? videoFit === 'contain'
-            ? 'bg-cn-surface h-full w-full'
+            ? 'bg-cn-card h-full w-full'
             : 'h-full w-full bg-black'
           : 'aspect-video w-full max-w-md rounded-3xl bg-black/10 shadow-sm dark:bg-black/40'}
         videoClass="relative h-full w-full {letterbox && videoFit === 'cover'
@@ -736,7 +736,7 @@
         {media.fileName ?? m.post_media_file_label()}
       </p>
       <!-- No `uppercase` here: it would render the "Ko" unit as "KO". -->
-      <p class="text-text-muted text-2xs font-semibold tracking-wider">
+      <p class="text-text-muted text-2xs font-semibold">
         {formatFileSize(media.size)}
       </p>
       {#if saveReady}

@@ -98,6 +98,11 @@ export interface CreateFormPayload {
   /** ISO 8601 - submissions blocked until this instant. */
   opensAt?: string;
   requiresPayment?: boolean;
+  /**
+   * The association the form belongs to. A create names it or nothing; an edit leaves it when
+   * absent, and `''` names none. Only a DRAFT may change it - a published form's is fixed
+   * (`FORM_ASSOCIATION_FIXED`, docs/wiki/frontend/modules/forms.md).
+   */
   associationId?: string;
   paymentMethods?: string[];
   /** Allow the same user to submit multiple times (e.g. product orders). */

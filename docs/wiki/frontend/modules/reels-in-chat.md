@@ -1306,7 +1306,7 @@ single conversation (RC-5) is now a take with ONE send, and `handleSendChat` no 
   send; on IndexedDB one transaction over `outbox` and `messages`. The echo is drawn with
   `skipDbSave` - it is already on disk.
 - **The cap on targets is ONE number on both engines.** `REEL_TAKE_MAX_SENDS` (`sqliteBatch.ts`) is
-  the sends that fit beside their take in one SQLite statement, 82; IndexedDB has no such bound and is
+  the sends that fit beside their take in one SQLite statement, 75 (82 before the outbox row gained `unavailable_answers`, 2026-11-09); IndexedDB has no such bound and is
   held to it anyway, so a take never queues on the web and fails on a phone. `enqueueTake` refuses past
   it with `ReelTakeTooManySendsError` (an `OutboxEnqueueError`), before anything is written. **RC-12's
   sheet caps at `chatReelTargetCap(limits)`**: the SMALLER of the server's `chatReelMaxTargets` (15,

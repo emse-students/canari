@@ -545,6 +545,23 @@ weigh closing them by hand against the rollback.
 the default of a create (a create without it a draft too). Measure before: the `[FORMS] create without draft` lines
 in social-service count the older builds still creating forms.
 
+### No date yet - a draft's association, between builds (2026-11-09)
+
+**Site:** `FormsService.associationAfterEdit` (server), `createAssociationOf` (`frontend/src/lib/forms/draftResend.ts`).
+**A current editor against an older social-service.** The editor now sends a draft's association in
+every revision (`''` for none, never `null`, so an older server's `trim()` reads it). An older server
+still refuses a DIFFERENT value at the publication, with an untyped `400`: the builder reads the
+generic refusal and the draft stays as it was, revision included - nothing is lost, and the move
+works once the server carries this change. The same value is no change on either side.
+**An older build against the current server** never sends a draft's association on an edit (its
+editor leaves the field out, its create page shut the picker): it moves nothing.
+**A device copy kept before `createAssociationId` was recorded** (a create page of the 2026-11-08
+build closed with its create unanswered) names its create's association from its document, which
+WAS the create's then - that build shut the picker once a create was sent; read with a `Log.d` line.
+**Removal condition:** device copies die at sign-out and land within a session, so the copy branch
+may go one stable after this change; nothing to remove server side
+([forms](frontend/modules/forms.md#a-drafts-association-may-change-a-published-forms-may-not-owner-2026-11-09)).
+
 ### No date yet - an association mute set by a build older than the bell (designed 2026-11-07)
 
 **BUILT 2026-11-08 with WP-3 of [engagement](engagement.md) (L8).**
@@ -564,6 +581,26 @@ out is not lost; it goes with the table's held drop, which MUST also `DROP FUNCT
 control, raised once BOTH stores serve it. Then the old endpoints go, and the held drop of
 `association_push_mutes` follows. Measure before: the endpoints' own debug lines counted per week
 name how many older builds still mute that way.
+
+### No date yet - a form reminder written by a server image older than the openings (2026-11-09)
+
+**BUILT 2026-11-09 with WP-4 of [engagement](engagement.md) (L9).**
+**Site:** migration 152 (`canari_form_reminder_to_opening()`, two triggers on `form_reminders`) and
+the `FormReminder` entity still mapped in `forms/forms.module.ts`. WP-4 folded the "Me prévenir" asks
+into `opening_reminders`; the three `/api/forms/:id/remind` routes keep their shape and write the new
+table, so an OLD CLIENT needs nothing.
+**What an older SERVER image does during the deploy.** It still writes and claims `form_reminders`.
+Without a shim, an ask it took after the copy would be lost, and an opening due while both images run
+could be pushed twice (each image claiming its own table).
+**The shim.** 152's triggers turn an old image's insert or upsert into the same ask on
+`opening_reminders`, its delete into the same delete, and make its CLAIM on the new row first: a
+claim the new image already made cancels the old row's update (`RETURN NULL`), so one push. The new
+code never writes the old table. `FormReminder` stays mapped only so a `synchronize`d local database
+still has the table the trigger and the erasure name.
+**Removal condition:** WP-4 has served one stable (no older image can be rolled out any more). Then a
+HELD migration drops `form_reminders` AND `DROP FUNCTION canari_form_reminder_to_opening()`
+(dropping the table removes the triggers, not their function), the entity is unmapped and the
+erasure's `form_reminders` statement goes.
 
 ### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
 

@@ -261,11 +261,11 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   frame at the clip's own ratio, never cropped - user, 2026-10-22, a portrait clip past the
   `--media-max-height` ceiling used to lose its top and bottom). The bands the ceiling leaves on the
   sides are a blurred copy of the clip's own first frame, the picture post's backdrop
-  (`BlurredBackdrop`): `InlineVideo` draws the frame it already decoded ONCE into a 48 px canvas
+  (`BlurredBackdrop`): the feed's player (`VideoPlayer variant="feed"`, `backdrop`) draws the frame it already decoded ONCE into a 48 px canvas
   (`captureVideoFrame`) - no second `<video>`, no second stream, one `drawImage` and a few hundred
   bytes - and until it exists the box is the neutral `bg-cn-surface` under the usual poster. A reel
   goes through the SAME box (`singleMedia`), with a 9:16 fallback when it carries no dimensions. The
-  square gallery cell still crops (`videoFit="cover"`, its shape being the point). It plays muted on its own (`InlineVideo`, rule in
+  square gallery cell still crops (`videoFit="cover"`, its shape being the point). It plays muted on its own (`VideoPlayer` `feed`, rule in
   [durable-rules](../../durable-rules.md#ui-and-i18n---frontendarchitecture-auth-native-prompts)).
   The download lives in the viewer. A video posted before this carries no dimensions and keeps the
   4:3 box, contained the same way. Measured on the Mi 9T: a 1080 x 2340 clip in a 402 x 567 box,
@@ -629,6 +629,42 @@ at most a page read) on a reader seeded with 600 rows among 6,000. The page is b
 `NOTIFICATIONS_LIMIT_INVALID` for anything not a whole number. The entity declares the index under
 the migration's name, so a `TYPEORM_SYNCHRONIZE=1` boot keeps it (TypeORM cannot say DESC, and
 does not compare order).
+
+**The 1-13 s bell was JIT compilation, not the walk (measured 2026-11-09).** Production answered
+`GET /api/posts/notifications` in 1.1-3.6 s for one account and 12.8-13.8 s for another while other
+reads took 80-600 ms. The statement is ~47 KB of SQL (~89 KB with the review cohort set) and about
+1,350 JIT functions, and PostgreSQL JIT-compiles a plan whose ESTIMATED cost passes `jit_above_cost`
+(100,000), and also optimises and inlines it past 500,000. The estimate grows with the reader's rows
+and the predicate's guessed selectivity, so a heavy reader crossed the thresholds and paid the
+compilation on every poll. On dev (`EXPLAIN (ANALYZE)` of the exact statement, read-only, the
+heaviest bell reader, thresholds forced with `SET LOCAL` because dev's small data stays under them):
+
+| session | planning | execution |
+| --- | --- | --- |
+| JIT off | 53-65 ms | 8.7-9.7 ms |
+| JIT, no optimisation (cost >= 100,000) | 53 ms | 0.99-1.09 s (emission ~0.8 s) |
+| JIT optimised and inlined (cost >= 500,000) | 56-61 ms | 11.6-12.3 s |
+
+The walk was ruled out on a throwaway PostgreSQL 18 holding dev's schema and production-sized
+synthetic data (24k bell rows, 517 recipients, 2,500 users, 5,000 posts): a reader whose 149 rows
+are ALL hidden (the worst walk the 90-day retention allows) executes in 36-45 ms without JIT and
+1.2-1.9 s with it, because its estimate crossed 100,000 on its own. A reader whose rows pass stays
+under the threshold and answers in 13-28 ms.
+
+**The fix**: every social-service connection starts with `jit=off` (`PG_SESSION_OPTIONS`, passed as
+the pool's libpq `options` in `app.module.ts`). JIT changes no result, and no statement of this
+service scans enough rows to repay a compilation (the feed predicate took 40-75 % longer with it,
+[profiles-and-access](../../profiles-and-access.md)). `bell-page.integration.spec.ts` asserts it:
+`SHOW jit` is `off` on the service's session, the bell's plan with `jit_above_cost = 0` carries no
+`JIT` section, and the same statement with `jit = on` does, so the test can fail.
+
+**What is left, measured, not built.** Planning is now the larger part: 53-65 ms on dev, per poll,
+for a statement of this size. A named prepared statement plans it once per connection: on the
+throwaway database PostgreSQL switched to the generic plan after five executions and each call then
+took about 3 ms (the same index walk). And the client polls every 60 s (`PostNotificationBell`,
+`postNotifStore.load`): no WebSocket event carries a bell change today - a new row reaches a device
+only as a native push (`PushService.notifyContent`) - so a push of the unread count on the existing
+channel would replace the clock.
 
 ## The search stops where the feed stops (2026-10-04)
 
@@ -1295,25 +1331,33 @@ client wrote: those are `other`, and their cached bytes are kept, since an updat
 
 ## A video is Canari's to play: `VideoPlayer`, never `controls` (2026-10-01)
 
+> **Being replaced (owner, 2026-11-09): ONE shared player, one glass controls kit, one gesture map
+> (tap = sound, hold = pause) for every surface, and the sound REMEMBERED per device** - the decisions,
+> the kit and where the migration stands are in [video-player](video-player.md). What follows is the
+> history each step of it keeps or retires; a surface already migrated is described there.
+
 The viewers handed a clip to `<video controls>`, which is the ENGINE's bar: Android's grey strip
 with its own "plein ecran" pill and download button on the Mi 9T, another one on iOS, neither themed
-nor sized to a 44 px target. Two components now carry every video the app shows.
+nor sized to a 44 px target. ONE component now carries every video the app shows (owner, 2026-11-09:
+`InlineVideo` was folded into `VideoPlayer` as its `feed` and `chat` variants and deleted).
 
 | Where | Component | What it is |
 | --- | --- | --- |
-| Feed card | `InlineVideo` | Instagram-style: muted autoplay while on screen, one sound button, a tap opens the viewer |
-| Chat bubble | `InlineVideo manualPlay` | Discord-style: a play button, no autoplay (see below) |
+| Feed card | `VideoPlayer variant="feed"` | Instagram-style: muted autoplay while on screen, the kit's speaker chip, a tap is the sound, the expand chip opens the viewer |
+| Chat bubble | `VideoPlayer variant="chat"` | Discord-style: the glass play disc, no autoplay, its own sound (see below) |
 | Single-media viewer, gallery viewer, chat viewer, conversation media panel | `VideoPlayer` | The full player |
 
 - **A conversation's video plays when asked, not when scrolled to** (user, 2026-10-02, *"comme sur
-  Discord"*): `InlineVideo`'s `manualPlay` mode. It shows its first frame with an amber **play
-  button**; **the button starts the video where it is, with sound of its own**;
-  **a tap on the rest of it opens the viewer, whose player starts it too**. No `playWhileVisible`, no
+  Discord"*): `VideoPlayer variant="chat"`. It shows its first frame with the glass **play
+  disc**; **the disc starts the video where it is, with sound of its own**;
+  **the expand chip opens the viewer, whose player starts it too** (a tap on the picture used to;
+  since 2026-11-09 it is this video's own sound, and a press held pauses it). No `playWhileVisible`, no
   loop (it stops on its last frame and offers play again).
   **A conversation has NO app-wide sound button, and its videos never touch `videoSound`** (user,
   2026-10-02: *"le bouton mute ne devrait pas apparaitre dans les conversations ... quand on appuie,
   TOUS les boutons de la page changent"* - the feed's rule, one answer for every video, is right for
-  the feed and was wrong where each video is its own). The manual `InlineVideo` is audible from the
+  the feed and was wrong where each video is its own). Its speaker, drawn once it has started, mutes
+  that one video. The `chat` player is audible from the
   start (`muted = false`), neither reads nor writes the app-wide answer - so a feed that autoplays
   muted cannot open a conversation video silent - and the chat viewer and the conversation media
   panel mount `VideoPlayer soundScope="local"`: it opens audible and its bar button mutes that one
@@ -1327,7 +1371,7 @@ nor sized to a 44 px target. Two components now carry every video the app shows.
   and unregisters on destroy, and CLAIMS on its own `play` event, so a button, a native control and a
   programmatic `play()` claim alike. Every other media playing is PAUSED, not reset: it keeps its
   position, its own `pause` handler shows "play" again, no `ended`. Players: conversation video
-  (`InlineVideo manualPlay`), voice note (`VoiceMessagePlayer`), audio attachment (`PostMedia`), feed
+  (`VideoPlayer` `chat`), voice note (`VoiceMessagePlayer`), audio attachment (`PostMedia`), feed
   video (`playWhileVisible`), the viewers (`VideoPlayer`, reels included). Not registered, so untouched:
   notification sounds, a call's streams, silent previews (`SharedMediaThumb`, `PickedMediaPreview`,
   the reel publish sheet's muted loop), the camera preview.
@@ -1345,7 +1389,8 @@ nor sized to a 44 px target. Two components now carry every video the app shows.
   devrait reprendre la ou elle en est, pas au debut"*). The inline video and the viewer's player are
   two `<video>` elements, so the viewer started at 0. Several places open the viewer from an inline
   video (a chat bubble, a post, a post's gallery, a reel), so the position is not a prop threaded through
-  each: `InlineVideo` writes `currentTime` to `utils/videoResume.ts` as the reader opens it, keyed by
+  each: the inline `VideoPlayer` (`feed`, `chat`) writes `currentTime` to `utils/videoResume.ts` as
+  the reader opens it from the expand chip, keyed by
   the media URL (both are handed the same decrypted blob URL), and `VideoPlayer` TAKES it when it
   mounts and seeks once on `loadedmetadata`, when there is a duration to seek in. **Taken, not read**:
   once the viewer has it, it is gone, so opening the same file later from somewhere that never played
@@ -1359,7 +1404,8 @@ nor sized to a 44 px target. Two components now carry every video the app shows.
   where `document.fullscreenEnabled` - a capability, not a fallback. Every target is `ui-icon-button`.
 - **The bar fades** after `CONTROLS_FADE_MS` (2.5 s) of playback without a touch, and a paused
   video keeps it. **It comes back on ANY MOUSE MOVEMENT over the player, and a tap ANYWHERE on the
-  player toggles it** (user, 2026-10-02) - anywhere means the black around a letterboxed clip too: the
+  player toggles it** (user, 2026-10-02; **since 2026-11-09 the tap toggles the SOUND and only raises
+  the bar** - [video-player](video-player.md#the-lightbox-on-the-kit-step-b)) - anywhere means the black around a letterboxed clip too: the
   tap listener used to be on the `<video>` alone, which a phone's landscape clip fills a third of.
   Only a mouse's `pointermove` counts; a finger's is a drag (a swipe, a seek) and shows nothing. A
   key or a pause brings it back too.
@@ -1395,15 +1441,15 @@ nor sized to a 44 px target. Two components now carry every video the app shows.
   for its taps, not exercised with fingers.
 - **No native poster, ever.** `poster` stays `TRANSPARENT_VIDEO_POSTER` (the WebView's grey play
   button), and `VideoPoster` - Canari's ink-to-scrim gradient and an amber play disc - covers the box
-  until `loadeddata` says the first frame is in the element. `InlineVideo` does the same, and the
+  until `loadeddata` says the first frame is in the element. The inline variants do the same, and the
   card's loading box IS that poster rather than a flat black one.
-- **A streamed `src` reaches the element untouched.** `VideoPlayer` never appends to a URL, and
-  `InlineVideo` keeps its `streamed` prop: `#t=0.1` only on a decrypted file, never on an MSE URL.
+- **A streamed `src` reaches the element untouched.** `VideoPlayer` appends `#t=0.1` only for an
+  inline variant on a decrypted file (`streamed` off): never on an MSE URL, never in a viewer.
   A viewer opened while the card is still STREAMING has no `blobUrl` yet (an MSE URL feeds one
   element) and shows the poster until the last segment fills it.
-- **A chat video is an `InlineVideo` now**, like the feed's, instead of a `<video controls>` in the
+- **A chat video is the shared `VideoPlayer` (`chat`) now**, like the feed's, instead of a `<video controls>` in the
   bubble; the bubble's viewer is `VideoPlayer`.
-- **Every video LOOPS, like Instagram's** (user, 2026-10-01): `InlineVideo` has `loop`, and
+- **Every video LOOPS, like Instagram's** (user, 2026-10-01): the `feed` variant loops (a conversation's does not), and
   `VideoPlayer`'s `loop` prop defaults to true. A looping element never fires `ended` and never
   pauses, so nothing in the bar can stick at the end: the time reads from 0 again on the next
   `timeupdate` and the fade keeps running. Both are pinned by tests.
@@ -1858,8 +1904,10 @@ the same fix; the media viewer already used `timeStamp`. `doubleTapLike.test.ts`
   click goes on to its target at once. On text it does nothing; on a reel it toggles the player's
   controls, and the second toggles them back - the pair cancels itself, so nothing needs to wait.
 - **On a media that OPENS A VIEWER the single tap IS held**, because no second tap can take back a
-  full-screen viewer: a picture (`PostMedia`'s image button), a feed video and a reel card
-  (`InlineVideo`'s open button), the gallery's "+N" cell carry `data-double-tap-defers`. Their click
+  full-screen viewer: a picture (`PostMedia`'s image button) and the gallery's "+N" cell carry
+  `data-double-tap-defers`. A feed video and a reel card no longer do (2026-11-09): their picture's
+  tap is the sound, which waits for the window itself (`videoGestures`, `data-double-tap-likes`), and
+  the viewer is the expand chip's, a button that acts at once. Their click
   is stopped in capture and replayed (`element.click()`) once the window has passed with no second
   tap; a double spends it on the like. **That wait is `createTapDisambiguator`'s one timer and its
   stated reason: whether a second tap will come is not a fact any event carries before it comes.**
@@ -2438,3 +2486,24 @@ WebDriverAgent's synthetic touches (a real long press and real handle drags), an
 (Chrome Android, Safari iOS), where the overlay's `top 180ms` transition follows a visual-viewport pan
 and was not measured. If the keyboard still drops there, the first thing to log is `focusout` on the
 editor and the `visualViewport` height around it.
+
+## One tap likes, a hold chooses (2026-11-09)
+
+Owner decision (design audit S2, Facebook's rule): the reaction button of a post's action bar (`PostActions`) no
+longer opens the picker on a tap.
+
+- **Tap** = `onQuickReact` -> `PostCard.handleReaction(userReaction ?? DOUBLE_TAP_REACTION)`: "J'aime" when the
+  reader has no reaction, and the same call with their own reaction type takes it back (`toggledReactions`). The
+  optimistic update, mute refusal and rollback are the picker's own path, as for the double tap.
+- **Hold** = the picker (`longPress`, 450 ms, 10 px slop): a press that travels is a scroll and opens nothing, and the
+  click ending a hold is swallowed so opening never also likes. A hold while reacted opens the picker to change it.
+- **No gesture needed**: the context menu (Menu key, Shift+F10, right click), ArrowUp on the button, and a
+  `sr-only` button named "Add reaction" (`data-post-react-picker-open`). The button carries `aria-haspopup`; its name
+  is the reader's reaction (or "React") and its `title` states the tap/hold rule. It has no `aria-pressed` on purpose
+  (the poll tests and the card read `button[aria-pressed]` as poll options).
+- The open picker closes on Escape (focus back on the button) or a tap elsewhere (`clickOutside`, the button
+  ignored: a tap there likes and `handleReaction` closes it). The reactor list, the counts and the server API are
+  untouched; the double-tap like on media posts is unchanged.
+- Pinned by `PostActions.oneTap.svelte.test.ts` (fake timers) and `PostCard.doubleTap.svelte.test.ts`.
+- **Owed**: a phone reading of the hold while scrolling the feed (no accidental picker, no accidental like) and of
+  the picker's clearance above the bar.

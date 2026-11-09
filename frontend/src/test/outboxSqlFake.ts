@@ -9,10 +9,23 @@ import { OUTBOX_COLUMNS } from '$lib/db/sqliteBatch';
 /** A row as the `outbox` table holds it. */
 export type FakeOutboxRow = Record<string, any>;
 
-/** One row from its twelve parameters, in `outboxInsertSql`'s column order. */
+/** One row from its thirteen parameters, in `outboxInsertSql`'s column order. */
 function rowOf(params: unknown[]): FakeOutboxRow {
-  const [id, conv, sent, kind, status, attempts, last, next, serverErrors, created, iv, cipher] =
-    params;
+  const [
+    id,
+    conv,
+    sent,
+    kind,
+    status,
+    attempts,
+    last,
+    next,
+    serverErrors,
+    unavailableAnswers,
+    created,
+    iv,
+    cipher,
+  ] = params;
   return {
     id,
     conversation_id: conv,
@@ -23,6 +36,7 @@ function rowOf(params: unknown[]): FakeOutboxRow {
     last_attempt_at: last,
     next_attempt_at: next,
     server_errors: serverErrors,
+    unavailable_answers: unavailableAnswers,
     created_at: created,
     iv,
     cipher_text: cipher,
@@ -50,7 +64,7 @@ export function fakeOutboxSql() {
       }
       if (sql.includes('INSERT OR REPLACE INTO outbox')) {
         // ONE STATEMENT, ONE OR SEVERAL ROWS (a chat-reel take and its sends, `outboxInsertSql`):
-        // the parameters come in groups of the twelve columns, all applied or none.
+        // the parameters come in groups of the thirteen columns, all applied or none.
         for (let at = 0; at < params.length; at += OUTBOX_COLUMNS) {
           const row = rowOf(params.slice(at, at + OUTBOX_COLUMNS));
           rows.set(row.id, row);
@@ -66,6 +80,7 @@ export function fakeOutboxSql() {
           row.last_attempt_at = params[3] ?? row.last_attempt_at;
           row.next_attempt_at = params[4] ?? row.next_attempt_at;
           row.server_errors = params[5] ?? row.server_errors;
+          row.unavailable_answers = params[6] ?? row.unavailable_answers;
         }
       }
       return { rowsAffected: 1 };

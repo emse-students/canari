@@ -472,6 +472,17 @@ export interface OutboxEntry {
    * `MAX_CONSECUTIVE_SERVER_ERRORS` the entry is parked as failed (`outbox.ts`). Absent = 0.
    */
   serverErrors?: number;
+  /**
+   * "NOT NOW" answers (502, 503, 504 - `unavailableAnswer.ts`) since this entry was queued: a
+   * deploy rotating a container answers them, and none refuses the message. Durable and in the
+   * clear (SQLite `unavailable_answers`, migration v19) for two readers: the outbox's bound
+   * (`MAX_UNAVAILABLE_ANSWERS`: a text answered only "not now" that many times leaves the waiting
+   * state, since no answer proves the route alive), and a withdrawal, for which any of them means
+   * the frame MAY have been stored (a 502 after an upstream reset, a 504), so the delete travels as
+   * an event - after a reload and in a follower tab too. Only the entry's own 2xx ends it (the
+   * row is deleted) and the member's Retry of a failed text resets it.
+   */
+  unavailableAnswers?: number;
   createdAt: number;
 }
 
