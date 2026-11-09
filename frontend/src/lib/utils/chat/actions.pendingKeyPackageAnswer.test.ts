@@ -80,7 +80,6 @@ describe('a pending invitation acts on WHICH answer it got', () => {
     const log = vi.fn();
     await processPendingInvitations({
       mlsService,
-      storage: null,
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations: new Map<string, Conversation>([['g1', conversation()]]),

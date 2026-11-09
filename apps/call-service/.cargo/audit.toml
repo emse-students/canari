@@ -21,4 +21,12 @@ ignore = [
   # Lifted by a jsonwebtoken on elliptic-curve 0.14; the retirement step of code-analysis.yml fails
   # when it is not reported.
   "RUSTSEC-2026-0387",
+  # pin-utils 0.1.1 (RUSTSEC-2026-0441, 2026-10-01): "unmaintained" - a status warning, NOT a
+  # vulnerability, so nothing exploitable is claimed. Path: webrtc 0.17.2 -> webrtc-util 0.17.2 ->
+  # nix 0.26.4 -> pin-utils 0.1.1. No lockfile bump helps: nix 0.26.4 is the newest 0.26 and
+  # webrtc-util 0.17.3 still asks for `nix ^0.26.2`; only webrtc 0.21 drops nix. Same webrtc 0.17
+  # edge as the entry above. Lifted by the webrtc 0.21 port (docs/wiki/frontend/modules/calls.md) or
+  # a webrtc-util on nix >= 0.27; the retirement step of code-analysis.yml fails when it is not
+  # reported. Time-boxed: re-examine by the webrtc 0.21 port or 2027-01-31.
+  "RUSTSEC-2026-0441",
 ]

@@ -27,7 +27,7 @@ import {
   MAX_AVAILABILITY_LINES,
 } from './availability';
 import { applyTemplate, timeOfMinutes, type TemplateKey } from './availabilityPaint';
-import { NUMBER_BOUNDS } from './spaceSettings.svelte';
+import { MAX_STEPS_BOUND } from './spaceSettings.svelte';
 
 /** The steps a "Au choix" booking is cut in. */
 export const STEP_CHOICES = [15, 30, 60] as const;
@@ -64,7 +64,8 @@ export interface WizardDraft {
   rows: EditorLine[];
   slotMode: SlotMode;
   stepMinutes: number;
-  maxMinutes: number;
+  /** The longest single booking in minutes; null = no limit, the default (owner, 2026-11-09). */
+  maxMinutes: number | null;
   slotMinutes: number;
   /** Off = everybody (`audience: null`); on = the criteria of `audience`. */
   restricted: boolean;
@@ -75,7 +76,7 @@ export interface WizardDraft {
 
 /**
  * A new draft, named as the organiser typed it. The defaults are the mockup's (D52): a working
- * week 8h-20h, bookings of up to 2 h by 30 min, everybody, names hidden, listed - and the last
+ * week 8h-20h, bookings of any length by 30 min, everybody, names hidden, listed - and the last
  * three are also the server's own defaults.
  */
 export function newWizardDraft(name: string): WizardDraft {
@@ -87,7 +88,7 @@ export function newWizardDraft(name: string): WizardDraft {
     rows: applyTemplate([], 'weekdays'),
     slotMode: 'step',
     stepMinutes: 30,
-    maxMinutes: 120,
+    maxMinutes: null,
     slotMinutes: DEFAULT_SLOT_MINUTES,
     restricted: false,
     audience: {},
@@ -136,9 +137,10 @@ export function wizardProblems(draft: WizardDraft): WizardProblems {
   if (draft.rows.some((r) => lineProblem(r) !== null)) problems.hours = 'line';
   else if (
     draft.slotMode === 'step' &&
+    draft.maxMinutes !== null &&
     (draft.maxMinutes < draft.stepMinutes ||
       draft.maxMinutes % draft.stepMinutes !== 0 ||
-      draft.maxMinutes / draft.stepMinutes > NUMBER_BOUNDS.maxSteps.max)
+      draft.maxMinutes / draft.stepMinutes > MAX_STEPS_BOUND)
   ) {
     problems.hours = 'duration';
   } else if (wizardLines(draft).length > MAX_AVAILABILITY_LINES) problems.hours = 'too-many';
@@ -161,7 +163,10 @@ export function wizardPayload(
       // It carries its slot length instead (migration 116), the one the lines were cut with, so
       // the painter opens slots of it even once the week is emptied.
       ...(step
-        ? { stepMinutes: draft.stepMinutes, maxSteps: draft.maxMinutes / draft.stepMinutes }
+        ? {
+            stepMinutes: draft.stepMinutes,
+            maxSteps: draft.maxMinutes === null ? null : draft.maxMinutes / draft.stepMinutes,
+          }
         : { slotMinutes: draft.slotMinutes }),
       audience: draft.restricted ? draft.audience : null,
       nameVisibility: draft.nameVisibility,

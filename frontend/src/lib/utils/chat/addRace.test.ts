@@ -327,7 +327,6 @@ function sweepHarness() {
   const run = () =>
     processPendingInvitations({
       mlsService: mlsService as unknown as IMlsService,
-      storage: null,
       userId: 'w2',
       deviceKeyB64: 'k',
       conversations: new Map([[G, readyConversation(G)]]),
