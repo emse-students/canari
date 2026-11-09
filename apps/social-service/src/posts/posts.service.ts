@@ -1169,6 +1169,12 @@ export class PostsService {
     } else {
       data.kind = 'post';
       delete data.durationMs;
+      // Every picture is the author's own upload: a delete of this post releases the blobs it names.
+      await this.mediaRetention.assertOwnMedia(
+        authorId,
+        postMediaIds({ media: data.media }),
+        'post'
+      );
     }
 
     const post = this.postRepo.create(data) as unknown as Post;

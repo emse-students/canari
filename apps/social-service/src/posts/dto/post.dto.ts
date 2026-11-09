@@ -491,7 +491,7 @@ export const COMMENT_MEDIA_MAX_BYTES = 16 * 1024 * 1024;
  * when sent, must say `image`; the `mimeType` must be an image either way. `encoding` is not
  * declared, so `whitelist` drops it: a comment's picture is one AES-GCM block, never the segmented video format.
  *
- * What this cannot check is the uploader: like a post's, the blob's owner is recorded by the media
+ * The uploader is checked at the write by `assertOwnMedia`; the blob's owner is recorded by the media
  * service, which deletes only an object its recorded uploader names (`commentMediaOwners`).
  */
 export class CommentMediaDto {
