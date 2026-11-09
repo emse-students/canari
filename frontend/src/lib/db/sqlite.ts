@@ -89,6 +89,7 @@ import {
   messageOrderColumnsStatements,
   messageRevisionStatement,
   outboxServerErrorsStatement,
+  outboxUnavailableAnswersStatement,
 } from './sqliteMigrations';
 import {
   compareStoredOrder,
@@ -308,6 +309,7 @@ export class SqliteStorage implements IStorage {
                 last_attempt_at INTEGER,
                 next_attempt_at INTEGER,
                 server_errors   INTEGER DEFAULT 0,
+                unavailable_answers INTEGER DEFAULT 0,
                 created_at      INTEGER,
                 iv              TEXT,
                 cipher_text     TEXT
@@ -600,6 +602,17 @@ export class SqliteStorage implements IStorage {
       //
       // Stamped at 18, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
       await this.db.execute('PRAGMA user_version = 18');
+    }
+
+    if (currentVersion < 19) {
+      // v18->v19: the outbox row counts its "not now" answers (`unavailable_answers`, 502/503/504),
+      // so a withdrawal after a reload still knows the frame may have been stored, and the bound on
+      // a text answered only "not now" holds across reloads. Additive and 0 on arrival.
+      const cols: any[] = await this.db.select('PRAGMA table_info(outbox)');
+      const add = outboxUnavailableAnswersStatement(cols.map((c) => String(c.name)));
+      if (add) await this.db.execute(add);
+      // Stamped at 19, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
+      await this.db.execute('PRAGMA user_version = 19');
     }
 
     // EVERY OPEN, not a migration: a build older than v16 that opened this file meanwhile wrote its
@@ -1482,6 +1495,8 @@ export class SqliteStorage implements IStorage {
       lastAttemptAt: row.last_attempt_at ?? undefined,
       nextAttemptAt: row.next_attempt_at ?? undefined,
       serverErrors: typeof row.server_errors === 'number' ? row.server_errors : undefined,
+      unavailableAnswers:
+        typeof row.unavailable_answers === 'number' ? row.unavailable_answers : undefined,
       createdAt: rowTimestampMs(row.created_at),
     };
   }
@@ -1598,6 +1613,7 @@ export class SqliteStorage implements IStorage {
       c.lastAttemptAt ?? null,
       c.nextAttemptAt ?? null,
       c.serverErrors ?? 0,
+      c.unavailableAnswers ?? 0,
       c.createdAt,
       uint8ToBase64(encrypted.iv),
       uint8ToBase64(encrypted.cipherText),
@@ -1628,7 +1644,7 @@ export class SqliteStorage implements IStorage {
    */
   async getOutboxQueue(deviceKeyB64: string): Promise<OutboxEntry[]> {
     const rows: any[] = await this.db.select(
-      `SELECT id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, server_errors, created_at,
+      `SELECT id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, server_errors, unavailable_answers, created_at,
          CASE WHEN kind = 'media' THEN NULL ELSE iv END AS iv,
          CASE WHEN kind = 'media' THEN NULL ELSE cipher_text END AS cipher_text
        FROM outbox WHERE conversation_id <> $1 ORDER BY sent_at ASC, id ASC`,
@@ -1704,7 +1720,8 @@ export class SqliteStorage implements IStorage {
       await this.db.execute(
         `UPDATE outbox SET status = COALESCE($2, status), attempts = COALESCE($3, attempts),
            last_attempt_at = COALESCE($4, last_attempt_at), next_attempt_at = COALESCE($5, next_attempt_at),
-           server_errors = COALESCE($6, server_errors)
+           server_errors = COALESCE($6, server_errors),
+           unavailable_answers = COALESCE($7, unavailable_answers)
          WHERE id = $1`,
         [
           id,
@@ -1713,6 +1730,7 @@ export class SqliteStorage implements IStorage {
           patch.lastAttemptAt ?? null,
           patch.nextAttemptAt ?? null,
           patch.serverErrors ?? null,
+          patch.unavailableAnswers ?? null,
         ]
       );
       return;

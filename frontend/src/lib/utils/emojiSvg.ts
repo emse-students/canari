@@ -1,6 +1,7 @@
 /**
- * Turns a run of text into text and emoji PICTURES - the one place the app decides which grapheme is
- * drawn as an SVG from `/emoji/` rather than by the platform's font.
+ * Turns a run of text into text and emoji PICTURES - the one place the app decides which grapheme
+ * HAS a picture under `/emoji/`. WHETHER a surface draws it is the user's emoji setting, applied by
+ * `emojiStyle.ts` alone: an in-app surface asks that module, never this one.
  *
  * WHY PICTURES (user, 2026-09-25): the bundled colour font never drew on WebKit, and an `<img>` of
  * an SVG is drawn identically by every engine. The pictures and `emojiSvgNames.json` are produced by
@@ -119,6 +120,9 @@ const escapeHtml = (text: string) => text.replace(/[&<>"]/g, (c) => HTML_ESCAPES
 /**
  * `text` as ESCAPED HTML, every emoji an `<img>` of its picture - for the exports that build their
  * markup as a string (the calendar, the trombinoscope) rather than through `EmojiText`.
+ *
+ * ALWAYS PICTURES, WHATEVER THE USER'S EMOJI SETTING (`emojiStyle.ts`): an export is an artefact
+ * others print and read, so it is the same on every device and keeps the measured raster path.
  *
  * The picture's size is inlined: those sheets are rasterised off-page by snapdom, and the style an
  * export paints must not depend on a stylesheet reaching the serialised copy.

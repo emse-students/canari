@@ -247,7 +247,7 @@
 </script>
 
 <div class="border-cn-border space-y-4 rounded-2xl border bg-[var(--cn-surface)]/95 p-6 shadow-sm">
-  <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+  <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
     <Building2 size={20} />
     {m.asso_lydia_title()}
   </h2>
@@ -358,9 +358,7 @@
   {:else if view.active}
     <p class="text-text-main flex flex-wrap items-center gap-2 text-sm font-semibold">
       {m.asso_lydia_active_title()}
-      <span
-        class="text-green-ok bg-green-ok/20 text-2xs rounded-full px-2 py-0.5 font-bold tracking-wide uppercase"
-      >
+      <span class="text-green-ok bg-green-ok/20 text-2xs rounded-full px-2 py-0.5 font-bold">
         {m.asso_lydia_status_active()}
       </span>
     </p>

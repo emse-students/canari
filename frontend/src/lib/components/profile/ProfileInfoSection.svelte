@@ -22,7 +22,7 @@
         <GraduationCap size={20} strokeWidth={2.5} />
       </div>
       <div class="min-w-0">
-        <p class="text-text-muted text-2xs mb-0.5 font-bold tracking-wider uppercase">
+        <p class="text-text-muted text-2xs mb-0.5 font-bold">
           {m.profile_promo_label()}
         </p>
         <p class="text-text-main truncate text-sm font-bold">
@@ -40,7 +40,7 @@
         <CalendarDays size={20} strokeWidth={2.5} />
       </div>
       <div class="min-w-0">
-        <p class="text-text-muted text-2xs mb-0.5 font-bold tracking-wider uppercase">
+        <p class="text-text-muted text-2xs mb-0.5 font-bold">
           {m.profile_member_since_label()}
         </p>
         <p class="text-text-main text-sm font-bold capitalize">

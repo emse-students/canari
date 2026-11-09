@@ -17,6 +17,7 @@ import { serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
 import { showToast } from '$lib/stores/toast.svelte';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import { refusalStatus } from '$lib/utils/apiRefusal';
+import { Log } from '$lib/utils/Log';
 
 let running: { userId: string; onOnline: () => void } | null = null;
 
@@ -26,8 +27,8 @@ function depsFor(userId: string): ResendDeps {
     store: formDraftCopyStore(userId),
     formDrafts: () => serverFormDrafts() === true,
     signedIn: () => currentUserId() === userId,
-    // The shell a create page makes first: what is fixed at creation, and the title it is listed
-    // under - the SAME create, by its key. The rest is the revision the save below stores.
+    // The shell a create page makes first: its association and the title it is listed under - the
+    // SAME create, by its key. The rest is the revision the save below stores.
     createDraft: (copy) =>
       createForm({
         clientCreateId: copy.clientCreateId ?? undefined,
@@ -36,7 +37,7 @@ function depsFor(userId: string): ResendDeps {
         basePrice: 0,
         currency: 'eur',
         items: [],
-        associationId: copy.document.associationId,
+        associationId: createAssociationOf(copy) || undefined,
       }),
     save: (copy) => saveFormDraft(copy.formId, copy.baseRevision, copy.document, copy.saveId),
     statusOf: refusalStatus,
@@ -46,6 +47,17 @@ function depsFor(userId: string): ResendDeps {
         : undefined,
     dropped: tellCopyDropped,
   };
+}
+
+/**
+ * The association the create of `copy` names: the one recorded when it was kept (the create the page
+ * already sent, whose replay must name the same). A copy kept by a build before that record names
+ * the document's own, which WAS the create's then: that build shut the picker once a create was sent.
+ */
+export function createAssociationOf(copy: FormDraftCopy): string | undefined {
+  if (copy.createAssociationId !== undefined) return copy.createAssociationId;
+  Log.d('FORM-DRAFT-COPY', `copy ${copy.key} kept before its create's association was recorded`);
+  return copy.document.associationId;
 }
 
 /**

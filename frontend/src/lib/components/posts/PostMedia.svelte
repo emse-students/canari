@@ -683,7 +683,7 @@
         backdrop={letterbox && videoFit === 'contain'}
         class={letterbox
           ? videoFit === 'contain'
-            ? 'bg-cn-surface h-full w-full'
+            ? 'bg-cn-card h-full w-full'
             : 'h-full w-full bg-black'
           : 'aspect-video w-full max-w-md rounded-3xl bg-black/10 shadow-sm dark:bg-black/40'}
         videoClass="relative h-full w-full {letterbox && videoFit === 'cover'
@@ -778,7 +778,7 @@
         {media.fileName ?? m.post_media_file_label()}
       </p>
       <!-- No `uppercase` here: it would render the "Ko" unit as "KO". -->
-      <p class="text-text-muted text-2xs font-semibold tracking-wider">
+      <p class="text-text-muted text-2xs font-semibold">
         {formatFileSize(media.size)}
       </p>
       {#if saveReady}

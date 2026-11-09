@@ -97,7 +97,6 @@ describe('handleWelcomeRequest - a new user is never added automatically', () =>
   ) =>
     handleWelcomeRequest({
       mlsService,
-      storage: null,
       userId: 'me',
       deviceKeyB64: 'pin',
       conversations: activeConversations(groupId, extra.conversationType),
@@ -359,7 +358,6 @@ describe('processPendingInvitations - a new user is never added automatically', 
   ) =>
     processPendingInvitations({
       mlsService,
-      storage: null,
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations: extra.conversations ?? activeConversations('g1'),

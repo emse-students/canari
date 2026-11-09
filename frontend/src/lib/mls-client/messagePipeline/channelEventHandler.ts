@@ -1,5 +1,6 @@
 import { applySalonEchoChange } from '$lib/utils/chat/salonEcho';
 import { clearUnsentSalonTexts } from '$lib/utils/chat/salonUnsent';
+import { forgetDeliveredSalonSend } from '$lib/utils/chat/messaging';
 import { openChannelMessageProving } from '$lib/utils/graine/channelSeal';
 import { reportUnreadableChannelMessage } from '$lib/utils/chat/channelCrypto';
 import { decodeAppMessage } from '$lib/proto/codec';
@@ -570,7 +571,11 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
           { kind: 'settled', serverId: renderedId, serverMs: channelServerMs },
           log
         );
-        // The frame is the proof the server holds it: the unsent ledger must not hand it back.
+        // The frame is the proof the server holds it: the unsent ledger must not hand it back, and
+        // the send must stop - its hold for the server, its ladder step, its debt to the reconnect -
+        // or a delivered message is POSTed again, and with a lasting "not now", for ever (review of
+        // #3189, D3). The ledger is cleared on its own too: an entry of a past page life has no send.
+        forgetDeliveredSalonSend(ownClientId, ctx.userId);
         clearUnsentSalonTexts(ctx.userId, [ownClientId]);
       }
 

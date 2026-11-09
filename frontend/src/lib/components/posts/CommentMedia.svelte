@@ -31,9 +31,9 @@
 <div
   data-comment-media
   class="relative mt-1.5 w-full overflow-hidden rounded-xl {reserved
-    ? `${compact ? 'max-w-32' : 'max-w-56'} bg-black/5 dark:bg-white/5`
+    ? `${compact ? 'max-w-24' : 'max-w-56'} bg-black/5 dark:bg-white/5`
     : compact
-      ? 'max-w-40'
+      ? 'max-w-24'
       : 'max-w-[20rem]'}"
   style={reserved ? mediaAspectStyle(media.width, media.height) : ''}
   use:nearViewport={{ onnear: () => (near = true) }}

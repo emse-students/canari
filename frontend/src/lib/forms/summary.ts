@@ -48,10 +48,7 @@ function priceLabel(input: FormSummaryInput): string | null {
 }
 
 export function formSummary(input: FormSummaryInput): string {
-  const questions =
-    input.questionCount === 1
-      ? m.form_questions_count_one()
-      : m.form_questions_count({ count: input.questionCount });
+  const questions = m.form_questions_count({ count: input.questionCount });
   const price = priceLabel(input);
   return price ? `${questions} · ${price}` : questions;
 }

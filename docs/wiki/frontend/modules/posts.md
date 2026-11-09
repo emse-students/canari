@@ -630,6 +630,42 @@ at most a page read) on a reader seeded with 600 rows among 6,000. The page is b
 the migration's name, so a `TYPEORM_SYNCHRONIZE=1` boot keeps it (TypeORM cannot say DESC, and
 does not compare order).
 
+**The 1-13 s bell was JIT compilation, not the walk (measured 2026-11-09).** Production answered
+`GET /api/posts/notifications` in 1.1-3.6 s for one account and 12.8-13.8 s for another while other
+reads took 80-600 ms. The statement is ~47 KB of SQL (~89 KB with the review cohort set) and about
+1,350 JIT functions, and PostgreSQL JIT-compiles a plan whose ESTIMATED cost passes `jit_above_cost`
+(100,000), and also optimises and inlines it past 500,000. The estimate grows with the reader's rows
+and the predicate's guessed selectivity, so a heavy reader crossed the thresholds and paid the
+compilation on every poll. On dev (`EXPLAIN (ANALYZE)` of the exact statement, read-only, the
+heaviest bell reader, thresholds forced with `SET LOCAL` because dev's small data stays under them):
+
+| session | planning | execution |
+| --- | --- | --- |
+| JIT off | 53-65 ms | 8.7-9.7 ms |
+| JIT, no optimisation (cost >= 100,000) | 53 ms | 0.99-1.09 s (emission ~0.8 s) |
+| JIT optimised and inlined (cost >= 500,000) | 56-61 ms | 11.6-12.3 s |
+
+The walk was ruled out on a throwaway PostgreSQL 18 holding dev's schema and production-sized
+synthetic data (24k bell rows, 517 recipients, 2,500 users, 5,000 posts): a reader whose 149 rows
+are ALL hidden (the worst walk the 90-day retention allows) executes in 36-45 ms without JIT and
+1.2-1.9 s with it, because its estimate crossed 100,000 on its own. A reader whose rows pass stays
+under the threshold and answers in 13-28 ms.
+
+**The fix**: every social-service connection starts with `jit=off` (`PG_SESSION_OPTIONS`, passed as
+the pool's libpq `options` in `app.module.ts`). JIT changes no result, and no statement of this
+service scans enough rows to repay a compilation (the feed predicate took 40-75 % longer with it,
+[profiles-and-access](../../profiles-and-access.md)). `bell-page.integration.spec.ts` asserts it:
+`SHOW jit` is `off` on the service's session, the bell's plan with `jit_above_cost = 0` carries no
+`JIT` section, and the same statement with `jit = on` does, so the test can fail.
+
+**What is left, measured, not built.** Planning is now the larger part: 53-65 ms on dev, per poll,
+for a statement of this size. A named prepared statement plans it once per connection: on the
+throwaway database PostgreSQL switched to the generic plan after five executions and each call then
+took about 3 ms (the same index walk). And the client polls every 60 s (`PostNotificationBell`,
+`postNotifStore.load`): no WebSocket event carries a bell change today - a new row reaches a device
+only as a native push (`PushService.notifyContent`) - so a push of the unread count on the existing
+channel would replace the clock.
+
 ## The search stops where the feed stops (2026-10-04)
 
 `/api/posts/search` is ONE server query - `ILIKE` over the body and the association name, pinned
@@ -2450,3 +2486,24 @@ WebDriverAgent's synthetic touches (a real long press and real handle drags), an
 (Chrome Android, Safari iOS), where the overlay's `top 180ms` transition follows a visual-viewport pan
 and was not measured. If the keyboard still drops there, the first thing to log is `focusout` on the
 editor and the `visualViewport` height around it.
+
+## One tap likes, a hold chooses (2026-11-09)
+
+Owner decision (design audit S2, Facebook's rule): the reaction button of a post's action bar (`PostActions`) no
+longer opens the picker on a tap.
+
+- **Tap** = `onQuickReact` -> `PostCard.handleReaction(userReaction ?? DOUBLE_TAP_REACTION)`: "J'aime" when the
+  reader has no reaction, and the same call with their own reaction type takes it back (`toggledReactions`). The
+  optimistic update, mute refusal and rollback are the picker's own path, as for the double tap.
+- **Hold** = the picker (`longPress`, 450 ms, 10 px slop): a press that travels is a scroll and opens nothing, and the
+  click ending a hold is swallowed so opening never also likes. A hold while reacted opens the picker to change it.
+- **No gesture needed**: the context menu (Menu key, Shift+F10, right click), ArrowUp on the button, and a
+  `sr-only` button named "Add reaction" (`data-post-react-picker-open`). The button carries `aria-haspopup`; its name
+  is the reader's reaction (or "React") and its `title` states the tap/hold rule. It has no `aria-pressed` on purpose
+  (the poll tests and the card read `button[aria-pressed]` as poll options).
+- The open picker closes on Escape (focus back on the button) or a tap elsewhere (`clickOutside`, the button
+  ignored: a tap there likes and `handleReaction` closes it). The reactor list, the counts and the server API are
+  untouched; the double-tap like on media posts is unchanged.
+- Pinned by `PostActions.oneTap.svelte.test.ts` (fake timers) and `PostCard.doubleTap.svelte.test.ts`.
+- **Owed**: a phone reading of the hold while scrolling the feed (no accidental picker, no accidental like) and of
+  the picker's clearance above the bar.
