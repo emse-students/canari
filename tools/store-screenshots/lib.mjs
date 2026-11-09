@@ -109,3 +109,22 @@ export function flattenPng(buf) {
   ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
   return Buffer.concat([SIG, chunk('IHDR', ihdr), chunk('IDAT', deflateSync(out, { level: 9 })), chunk('IEND', Buffer.alloc(0))]);
 }
+
+/**
+ * Page-side probe, run in the app's page: the page text, then one `[MEDIA] ...` line per kind of
+ * visible placeholder - an initials avatar (`.avatar-placeholder`, what Avatar.svelte draws when
+ * there is no photo) or an image that did not load. The verify step fails a shot with either: the
+ * owner's rule is that no final shot shows an initials circle or an empty medium.
+ */
+export const PAGE_PROBE = `(() => {
+  const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight; };
+  const lines = [document.documentElement.lang, document.body.innerText];
+  const ph = [...document.querySelectorAll('.avatar-placeholder')].filter(vis).length;
+  const broken = [...document.querySelectorAll('img')].filter((i) => vis(i) && i.complete && i.naturalWidth === 0).length;
+  if (ph) lines.push('[MEDIA] ' + ph + ' initials avatar(s) on screen');
+  if (broken) lines.push('[MEDIA] ' + broken + ' image(s) did not load');
+  return lines.join(String.fromCharCode(10));
+})()`;
+
+/** Closes the "Environnement de test" banner of a dev page (its own close button). */
+export const CLOSE_BANNER = `(()=>{const el=[...document.querySelectorAll('div,section,aside')].find(d=>d.children.length<=3&&/^(Environnement de test|Test environment)/.test(d.textContent.trim())&&d.querySelector('button'));el?.querySelector('button')?.click()})()`;

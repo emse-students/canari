@@ -45,7 +45,7 @@ describe('scenario', () => {
     expect(scenario.shots.map((s) => s.id.split('-')[0])).toEqual(['1', '2', '3', '4', '5', '6']);
   });
   test('sizes are the store classes of docs/wiki/store-listings.md section 3', () => {
-    expect(cfg.sizes.map((s) => `${s.width}x${s.height}`)).toEqual(['1320x2868', '1284x2778', '1080x1920', '1024x500']);
+    expect(cfg.sizes.map((s) => `${s.width}x${s.height}`)).toEqual(['1206x2622', '1080x1920', '1024x500']);
     expect(cfg.look.field).toBe('#f6c232');
   });
 });

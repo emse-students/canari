@@ -1,74 +1,260 @@
 {
   "_doc": "The demo week: one integration/party week of invented first names and generic associations. Nothing here is a real person or association. The seed step (verify) checks that dev holds this content; MLS content (chat, communities) cannot be inserted as rows and is created by live clients.",
   "week": "integration week and its party on Friday",
-  "people": ["Lina", "Hugo", "Sana", "Tom", "Emma", "Yanis", "Chloé", "Noah"],
+  "people": [
+    "Lina",
+    "Mathis",
+    "Sana",
+    "Tom",
+    "Emma",
+    "Yanis",
+    "Chloé",
+    "Noah"
+  ],
   "associations": [
-    { "name": "Bureau des élèves", "role": "organises the week" },
-    { "name": "Club photo", "role": "covers the party" },
-    { "name": "Club cuisine", "role": "Thursday dinner" },
-    { "name": "Club de randonnée", "role": "Saturday hike" }
+    {
+      "name": "Bureau des élèves",
+      "role": "organises the week"
+    },
+    {
+      "name": "Club photo",
+      "role": "covers the party"
+    },
+    {
+      "name": "Club cuisine",
+      "role": "Thursday dinner"
+    },
+    {
+      "name": "Club de randonnée",
+      "role": "Saturday hike"
+    }
   ],
   "conversation": {
-    "title": { "fr": "Soirée d'intégration", "en": "Integration party" },
-    "members": ["Lina", "Hugo", "Sana", "Tom"],
+    "title": {
+      "fr": "Soirée d'intégration",
+      "en": "Integration party"
+    },
+    "members": [
+      "Lina",
+      "Mathis",
+      "Sana",
+      "Tom"
+    ],
     "messages": {
-      "fr": ["Qui apporte les enceintes ?", "Moi, je passe les prendre à 18 h", "On se retrouve devant la salle à 20 h ?", "Parfait, j'amène les gobelets"],
-      "en": ["Who brings the speakers?", "I will, picking them up at 6 pm", "Meet in front of the hall at 8 pm?", "Perfect, I will bring the cups"]
+      "fr": [
+        "Qui apporte les enceintes ?",
+        "Moi, je passe les prendre à 18 h",
+        "On se retrouve devant la salle à 20 h ?",
+        "Parfait, j'amène les gobelets",
+        "Je ramène les guirlandes lumineuses",
+        "Top ! Et les chips, qui s'en occupe ?",
+        "Moi, j'ai déjà la liste des courses",
+        "Sana, tu fais les photos ?",
+        "Oui, avec le club photo, rendez-vous à 19 h 30",
+        "Super, on se voit tous vendredi !",
+        "Nickel, on se retrouve à 19 h 30 alors",
+        "Je lance le sondage du thème, vous avez voté ?",
+        "Oui ! Années 80 pour moi",
+        "Années 80 gagne, on sort les perruques"
+      ],
+      "en": [
+        "Who brings the speakers?",
+        "I will, picking them up at 6 pm",
+        "Meet in front of the hall at 8 pm?",
+        "Perfect, I will bring the cups",
+        "I will bring the string lights",
+        "Great! And who is on snacks?",
+        "I have the shopping list already",
+        "Sana, will you take the photos?",
+        "Yes, with the photo club, see you at 7:30 pm",
+        "Awesome, see you all on Friday!",
+        "Perfect, so we meet at 7:30 pm",
+        "Did you all vote in the theme poll?",
+        "Yes! 80s for me",
+        "80s wins, time to get the wigs out"
+      ]
+    },
+    "speakers": {
+      "fr": [
+        "owner",
+        "peer",
+        "third",
+        "fourth",
+        "owner",
+        "peer",
+        "third",
+        "fourth",
+        "owner",
+        "peer",
+        "third",
+        "fourth",
+        "peer",
+        "owner"
+      ],
+      "en": [
+        "owner",
+        "peer",
+        "third",
+        "fourth",
+        "owner",
+        "peer",
+        "third",
+        "fourth",
+        "peer",
+        "owner",
+        "third",
+        "fourth",
+        "peer",
+        "owner"
+      ]
     }
   },
   "poll": {
-    "question": { "fr": "Quel thème pour la soirée ?", "en": "Which theme for the party?" },
-    "options": { "fr": ["Années 80", "Pyjama", "Neon"], "en": ["80s", "Pyjamas", "Neon"] }
+    "question": {
+      "fr": "Quel thème pour la soirée ?",
+      "en": "Which theme for the party?"
+    },
+    "options": {
+      "fr": [
+        "Années 80",
+        "Pyjama",
+        "Neon"
+      ],
+      "en": [
+        "80s",
+        "Pyjamas",
+        "Neon"
+      ]
+    }
   },
   "event": {
-    "title": { "fr": "Soirée d'intégration", "en": "Integration party" },
+    "title": {
+      "fr": "Soirée d'intégration",
+      "en": "Integration party"
+    },
     "when": "Friday 20:00, relative to the capture date"
   },
-  "forbiddenOnScreen": ["Canari Test", "Fictif", "Fictive", "@example.invalid"],
+  "forbiddenOnScreen": [
+    "Canari Test",
+    "Fictif",
+    "Fictive",
+    "@example.invalid"
+  ],
   "shots": [
     {
       "id": "1-promise",
       "route": "/chat",
-      "caption": { "fr": "Ta vie asso, au même endroit", "en": "Your campus life, in one place" },
-      "sub": { "fr": "Messages, actus, agenda", "en": "Messages, news, agenda" },
-      "expect": { "fr": ["Soirée d'intégration"], "en": ["Integration party"] }
+      "caption": {
+        "fr": "Ta vie asso, au même endroit",
+        "en": "Your campus life, in one place"
+      },
+      "sub": {
+        "fr": "Messages, actus, agenda",
+        "en": "Messages, news, agenda"
+      },
+      "expect": {
+        "fr": [
+          "Soirée d'intégration"
+        ],
+        "en": [
+          "Integration party"
+        ]
+      }
     },
     {
       "id": "2-messaging",
       "route": "/chat",
-      "open": { "fr": "Soirée d'intégration", "en": "Integration party" },
-      "caption": { "fr": "Des messages vraiment privés", "en": "Truly private messages" },
-      "sub": { "fr": "Chiffrés de bout en bout", "en": "End-to-end encrypted" },
-      "expect": { "fr": ["Qui apporte les enceintes"], "en": ["Who brings the speakers"] }
+      "open": {
+        "fr": "Soirée d'intégration",
+        "en": "Integration party"
+      },
+      "caption": {
+        "fr": "Des messages vraiment privés",
+        "en": "Truly private messages"
+      },
+      "sub": {
+        "fr": "Chiffrés de bout en bout",
+        "en": "End-to-end encrypted"
+      },
+      "expect": {
+        "fr": [
+          "Qui apporte les enceintes"
+        ],
+        "en": [
+          "Who brings the speakers"
+        ]
+      }
     },
     {
       "id": "3-communities",
       "route": "/communities",
-      "caption": { "fr": "Des communautés à ton image", "en": "Communities of your own" },
-      "expect": { "fr": [], "en": [] }
+      "caption": {
+        "fr": "Des communautés à ton image",
+        "en": "Communities of your own"
+      },
+      "expect": {
+        "fr": [],
+        "en": []
+      }
     },
     {
       "id": "4-feed-polls",
       "route": "/posts",
-      "caption": { "fr": "Actus et sondages du campus", "en": "Campus news and polls" },
-      "expect": { "fr": ["Quel thème pour la soirée"], "en": ["Which theme for the party"] }
+      "caption": {
+        "fr": "Actus et sondages du campus",
+        "en": "Campus news and polls"
+      },
+      "expect": {
+        "fr": [
+          "Quel thème pour la soirée"
+        ],
+        "en": [
+          "Which theme for the party"
+        ]
+      },
+      "open": {
+        "fr": "Suivis",
+        "en": "Following"
+      }
     },
     {
       "id": "5-agenda",
       "route": "/calendar",
-      "caption": { "fr": "Agenda et associations réunis", "en": "Agenda and clubs together" },
-      "expect": { "fr": ["Soirée d'intégration"], "en": ["Integration party"] }
+      "caption": {
+        "fr": "Agenda et associations réunis",
+        "en": "Agenda and clubs together"
+      },
+      "expect": {
+        "fr": [
+          "Soirée d'intégration"
+        ],
+        "en": [
+          "Integration party"
+        ]
+      }
     },
     {
       "id": "6-privacy",
       "route": "/settings/security",
-      "caption": { "fr": "Ta vie privée, protégée", "en": "Your privacy, protected" },
-      "sub": { "fr": "Un PIN que toi seul connais", "en": "A PIN only you know" },
-      "expect": { "fr": [], "en": [] }
+      "caption": {
+        "fr": "Ta vie privée, protégée",
+        "en": "Your privacy, protected"
+      },
+      "sub": {
+        "fr": "Un PIN que toi seul connais",
+        "en": "A PIN only you know"
+      },
+      "expect": {
+        "fr": [],
+        "en": []
+      }
     }
   ],
   "featureGraphic": {
-    "caption": { "fr": "Canari, ta vie de campus", "en": "Canari, your campus life" },
+    "caption": {
+      "fr": "Canari, ta vie de campus",
+      "en": "Canari, your campus life"
+    },
     "shot": "1-promise"
   }
 }

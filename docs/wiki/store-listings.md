@@ -245,8 +245,17 @@ each recorded with source URL, author and licence in `photos.manifest.json`; the
 never committed. **Gate:** `verify` refuses a set while a `Canari Test` or `Fictif` string is on screen
 or a scenario string is missing, so the checklist of section 4 is partly asserted instead of read.
 
-**State (2026-11-09):** capture, verify and compose work end to end (first preview set rendered from
-whatever dev held, hence `PREVIEW-` files). NOT done: the demo content on dev. The conversation and the
-communities are MLS state that live clients must create; the rig's accounts carry `Canari Test` display
-names and their Authentik profile is production-adjacent (section 4), the posts, poll and event need
-association officers, and the photos need an upload path into the posts. Those are what remains owed.
+**Owner rulings of the same day:** captures are NATIVE, from the iPhone 12 and the Mi 9T (the installed dev
+app, real chrome, theme and language set in the app); the browser path is a layout preview and
+`compose` refuses a non-native source for a final file; the demo names are set in the app's own data, never
+in the identity provider; every person and medium must look real (no initials circle, no empty image) and
+`verify` fails a shot showing one. **Apple sizes, read on Apple's page on 2026-11-09:** the ONLY mandatory
+iPhone class is Dynamic Island (medium), 1179x2556 or 1206x2622; the 6.9in set (1320x2868) and 6.5in set
+(1284x2778) are optional, the larger being the fallback chain. The owner ruled to produce only the mandatory
+class: `sizes.json` holds 1206x2622 for Apple, 1080x1920 for Play phones and the 1024x500 feature graphic.
+
+**State (2026-11-09):** the dev demo content is seeded in part (names, associations, posts with a poll,
+events, one French group conversation with 14 messages from four live clients); the Android native capture
+and the composition run end to end (French only); the manifest holds 8 Commons photos with source, author and
+licence. NOT done, with what lifts each: [README](../../tools/store-screenshots/README.md#what-is-blocked-2026-11-09-and-what-lifts-each) -
+chiefly the people's photos (the gallery owns avatars), the iOS capture, the English set and the communities.

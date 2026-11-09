@@ -14,7 +14,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { flattenPng, newTab, pngInfo, serveDir } from './lib.mjs';
+import { CLOSE_BANNER, PAGE_PROBE, flattenPng, newTab, pngInfo, serveDir } from './lib.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '../..');
@@ -33,6 +33,9 @@ const work = resolve(opt('work', join(HERE, '.work')));
 const out = resolve(opt('out', join(HERE, 'out')));
 const site = opt('site', 'https://dev.canari-emse.fr');
 const allowDirty = argv.includes('--allow-dirty');
+/** Where a captured PNG comes from. ONLY the two phones are native; `web` is a layout preview and never yields a final file. */
+const NATIVE = ['android', 'ios'];
+const sourceOf = (size) => (size.store === 'apple' ? 'ios' : 'android');
 const log = (...a) => console.log('[store-shots]', ...a);
 
 if (new URL(site).hostname !== 'dev.canari-emse.fr') throw new Error(`refused: ${site} is not the dev estate`);
@@ -69,11 +72,11 @@ async function capture() {
         const target = shot.open ? (opt('open', null) ?? shot.open[lang]) : null;
         if (target) await clickText(tab, target);
         await tab.ev('window.scrollTo(0,0)');
-        const text = await tab.ev('document.documentElement.lang+"\\n"+document.body.innerText');
+        const text = await tab.ev(PAGE_PROBE);
         if (/Environnement de test|Test environment/.test(text)) throw new Error('the dev banner is still on screen');
-        mkdirSync(join(work, lang), { recursive: true });
-        writeFileSync(join(work, lang, `${shot.id}.txt`), text);
-        writeFileSync(join(work, lang, `${shot.id}.png`), await tab.png());
+        mkdirSync(join(work, 'web', lang), { recursive: true });
+        writeFileSync(join(work, 'web', lang, `${shot.id}.txt`), text);
+        writeFileSync(join(work, 'web', lang, `${shot.id}.png`), await tab.png());
         log('captured', lang, shot.id);
       }
     }
@@ -84,18 +87,19 @@ async function capture() {
 }
 
 /** The demo content must be on screen and nothing from the forbidden list: returns the problems. */
-function verify() {
+function verify(source = opt('source', 'web')) {
   const problems = [];
   for (const lang of langs)
     for (const shot of scenario.shots) {
-      const f = join(work, lang, `${shot.id}.txt`);
+      const f = join(work, source, lang, `${shot.id}.txt`);
       if (!existsSync(f)) {
-        problems.push(`${lang}/${shot.id}: not captured`);
+        problems.push(`${source}/${lang}/${shot.id}: not captured`);
         continue;
       }
       const text = readFileSync(f, 'utf8');
-      for (const s of shot.expect[lang]) if (!text.includes(s)) problems.push(`${lang}/${shot.id}: missing demo text "${s}"`);
-      for (const s of scenario.forbiddenOnScreen) if (text.includes(s)) problems.push(`${lang}/${shot.id}: forbidden text on screen "${s}"`);
+      for (const s of shot.expect[lang]) if (!text.includes(s)) problems.push(`${source}/${lang}/${shot.id}: missing demo text "${s}"`);
+      for (const l of text.split(String.fromCharCode(10)).filter((x) => x.startsWith('[MEDIA]'))) problems.push(`${source}/${lang}/${shot.id}: ${l.slice(8)}`);
+      for (const s of scenario.forbiddenOnScreen) if (text.includes(s)) problems.push(`${source}/${lang}/${shot.id}: forbidden text on screen "${s}"`);
     }
   return problems;
 }
@@ -137,7 +141,7 @@ body{position:relative;font-family:Fredoka,sans-serif;color:${ink}}
 
 /** Composes every size and language from the captured PNGs; refuses unverified demo content unless told. */
 async function compose() {
-  const problems = verify();
+  const problems = [...NATIVE.flatMap((src) => (existsSync(join(work, src)) ? verify(src) : [`${src}: no native capture (bun native.mjs --platform ${src})`]))];
   if (problems.length && !allowDirty) {
     for (const p of problems) log('NOT READY', p);
     throw new Error(`${problems.length} problem(s): fix the demo content on dev, or pass --allow-dirty for a PREVIEW- set that must never be uploaded`);
@@ -147,7 +151,7 @@ async function compose() {
   copyFileSync(fontFile(), join(stage, 'fredoka.woff2'));
   const srv = serveDir(stage);
   const tab = await newTab(port);
-  const prefix = problems.length ? 'PREVIEW-' : '';
+  
   try {
     for (const lang of langs)
       for (const size of cfg.sizes) {
@@ -158,8 +162,17 @@ async function compose() {
             ? [{ id: 'feature-graphic', caption: scenario.featureGraphic.caption[lang], sub: null, shot: scenario.featureGraphic.shot }]
             : scenario.shots.map((s) => ({ id: s.id, caption: s.caption[lang], sub: s.sub?.[lang] ?? null, shot: s.id }));
         for (const it of items) {
-          const imgName = `${lang}-${it.shot}.png`;
-          copyFileSync(join(work, lang, `${it.shot}.png`), join(stage, imgName));
+          // A final file needs a NATIVE source with no problem of its own; anything else is a PREVIEW.
+          const native = sourceOf(size);
+          const hasNative = existsSync(join(work, native, lang, `${it.shot}.png`));
+          const src = hasNative ? native : 'web';
+          const prefix = hasNative && !problems.some((p) => p.startsWith(`${native}/`)) ? '' : 'PREVIEW-';
+          if (!existsSync(join(work, src, lang, `${it.shot}.png`))) {
+            log('SKIPPED (no capture)', size.id, lang, it.id);
+            continue;
+          }
+          const imgName = `${lang}-${src}-${it.shot}.png`;
+          copyFileSync(join(work, src, lang, `${it.shot}.png`), join(stage, imgName));
           writeFileSync(join(stage, 'c.html'), page(size, it.caption, it.sub, imgName));
           await tab.send('Emulation.setDeviceMetricsOverride', { width: size.width, height: size.height, deviceScaleFactor: 1, mobile: false });
           await tab.goto(`http://127.0.0.1:${srv.port}/c.html`, 600);
