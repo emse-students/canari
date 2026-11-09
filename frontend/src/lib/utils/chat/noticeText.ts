@@ -43,3 +43,25 @@ export function noticeText(spec: NoticeSpec, nameOf: (userId: string) => string)
       return m.chat_system_group_photo_removed({ sender });
   }
 }
+
+/**
+ * The sentence a notice row SHOWS: drawn from the ids when every person it names is known
+ * (`knownName` answers without fetching, `null` for a name not known yet), the STORED sentence
+ * otherwise. The stored one was drawn by the writer with the names it held, so on a cold cache (a
+ * relaunch, offline) it is the best text there is - drawing the ids then would turn a row that named
+ * everyone into "Utilisateur inconnu" until each profile is fetched again, and for good when it
+ * cannot be (review of #3232).
+ */
+export function noticeDisplayText(
+  spec: NoticeSpec,
+  stored: string,
+  knownName: (userId: string) => string | null
+): string {
+  const names = new Map<string, string>();
+  for (const id of noticeUserIds(spec)) {
+    const name = knownName(id);
+    if (name === null) return stored;
+    names.set(id, name);
+  }
+  return noticeText(spec, (id) => names.get(id) ?? '');
+}

@@ -11,7 +11,7 @@
  * accepted, is the primary path the channel invitation card already takes
  * (`inviteMemberToChannel`): every device then holds the same row and there is nothing to relay.
  *
- * `renderVisibleNotice` is the ONE rendering of these four events, used by the acting device, the
+ * `visibleNoticeContent` is the ONE rendering of these four events, used by the acting device, the
  * live handler and the archive replay, so the three cannot draw the same event differently.
  *
  * @see docs/wiki/protocols/history-reconciliation.md#the-acting-device-writes-its-own-notice
@@ -77,21 +77,6 @@ export function visibleNoticeSpec(
       return users.length ? { event, actor, targets: users } : null;
     }
   }
-}
-
-/**
- * The text of a visible notice, or `null` when its payload names nothing to draw. Names are
- * resolved once here for the STORED fallback sentence; the row itself carries the ids and is redrawn
- * from them (see {@link visibleNoticeContent}).
- */
-export async function renderVisibleNotice(
-  event: VisibleNoticeEvent,
-  data: Record<string, unknown>,
-  actor: string
-): Promise<string | null> {
-  const spec = visibleNoticeSpec(event, data, actor);
-  if (!spec) return null;
-  return noticeText(spec, await resolveDisplayNames(noticeUserIds(spec)));
 }
 
 /**

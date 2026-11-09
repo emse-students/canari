@@ -41,7 +41,7 @@ describe('a notice row is redrawn when the member name arrives', () => {
     const spec: NoticeSpec = { event: 'memberAdded', actor: 'u-adder', targets: ['u-newcomer'] };
     const stored = serializeEnvelope(
       mkNoticeEnvelope(
-        noticeText(spec, () => 'Utilisateur inconnu'),
+        noticeText(spec, (id) => (id === 'u-adder' ? 'Alice Adder' : 'Utilisateur inconnu')),
         spec
       )
     );
@@ -66,6 +66,35 @@ describe('a notice row is redrawn when the member name arrives', () => {
     await flushMacrotask();
     flushSync();
     expect(target.textContent).toContain('Ghost Newcomer');
+    unmount(app);
+  });
+
+  it('keeps the stored sentence while a name is unknown here, never the unknown label', async () => {
+    // A cold cache (a relaunch, offline): the writer knew both names, this device knows none yet and
+    // its lookup gets no answer. Drawing the ids now would erase two names the row already holds.
+    vi.mocked(userStore.fetchUserProfile).mockImplementation(() => new Promise(() => {}) as never);
+    const spec: NoticeSpec = { event: 'memberRemoved', actor: 'u-cold-a', targets: ['u-cold-b'] };
+    const sentence = noticeText(spec, (id) => (id === 'u-cold-a' ? 'Ana Cold' : 'Ben Cold'));
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const app = mount(MessageBubble, {
+      target,
+      props: {
+        messageId: 'n2',
+        senderId: 'system',
+        currentUserId: 'u-me',
+        content: serializeEnvelope(mkNoticeEnvelope(sentence, spec)),
+        timestamp: new Date(),
+        isOwn: false,
+        isSystem: true,
+      },
+    });
+    flushSync();
+    await flushMacrotask();
+    flushSync();
+    expect(target.textContent).toContain('Ana Cold');
+    expect(target.textContent).toContain('Ben Cold');
+    expect(target.textContent).not.toContain('Utilisateur inconnu');
     unmount(app);
   });
 });

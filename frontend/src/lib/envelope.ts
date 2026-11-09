@@ -77,8 +77,12 @@ function readNotice(raw: unknown): NoticeSpec | undefined {
   if (typeof n.event !== 'string' || !NOTICE_EVENTS.includes(n.event)) return undefined;
   if (typeof n.actor !== 'string' || !n.actor) return undefined;
   const targets = Array.isArray(n.targets)
-    ? n.targets.filter((t): t is string => typeof t === 'string')
+    ? n.targets.filter((t): t is string => typeof t === 'string' && t !== '')
     : undefined;
+  // An addition or a removal names who it acted upon; without them the stored `text` is all there is.
+  if ((n.event === 'memberAdded' || n.event === 'memberRemoved') && !targets?.length) {
+    return undefined;
+  }
   return {
     event: n.event as NoticeEvent,
     actor: n.actor,

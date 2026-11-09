@@ -12,7 +12,7 @@
     type MediaFailureCause,
   } from '$lib/utils/mediaErrors';
   import { parseEnvelope } from '$lib/envelope';
-  import { noticeText, noticeUserIds } from '$lib/utils/chat/noticeText';
+  import { noticeDisplayText, noticeUserIds } from '$lib/utils/chat/noticeText';
   import Modal from '../shared/Modal.svelte';
   import MessageEmojiPicker from './MessageEmojiPicker.svelte';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
@@ -322,8 +322,10 @@
    * A NOTICE ROW NAMES ITS PEOPLE BY ID AND DRAWS THE NAMES HERE, NEVER FROM A FROZEN SENTENCE.
    * A name unknown when the row was written (a newcomer's profile not yet readable) is fetched by the
    * one display-name resolver (single-flight, cached) and lands in `noticeNames`, which redraws the
-   * row. A person the server genuinely does not know keeps the unknown label, logged once by the
-   * resolver with its reason.
+   * row. Until EVERY name is known the stored sentence shows (`noticeDisplayText`): the writer drew it
+   * with the names it held, so a cold cache never degrades it. The resolver keeps a 404 or a nameless
+   * profile as the unknown label for the session, so a row written during that state redraws at the
+   * next launch, not before (review of #3232).
    */
   let noticeNames = $state<Record<string, string>>({});
   let notice = $derived(envelope.kind === 'system' ? (envelope.notice ?? null) : null);
@@ -337,11 +339,8 @@
     }
   });
   let textContent = $derived(
-    notice
-      ? noticeText(
-          notice,
-          (id) => noticeNames[id] ?? peekUserDisplayName(id) ?? getUserDisplayNameSync(id)
-        )
+    notice && envelope.kind === 'system'
+      ? noticeDisplayText(notice, envelope.text, (id) => noticeNames[id] ?? peekUserDisplayName(id))
       : envelope.kind === 'text' || envelope.kind === 'system'
         ? envelope.text
         : envelope.kind === 'media'
