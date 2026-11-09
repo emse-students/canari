@@ -5614,6 +5614,8 @@
   "notif_booking_cancelled_text": "a annulé une réservation",
   "notif_booking_withdrawn_text": "a quitté votre réservation",
   "notif_booking_added_text": "vous a inscrit à une réservation",
+  "notif_booking_open_text": "a ouvert les réservations :",
+  "notif_event_open_text": "a publié un événement :",
   "notif_booking_changed_text": "a modifié votre réservation",
   "notif_booking_removed_text": "vous a retiré d'une réservation",
   "notif_booking_reminder_text": "Rappel : votre réservation commence bientôt",

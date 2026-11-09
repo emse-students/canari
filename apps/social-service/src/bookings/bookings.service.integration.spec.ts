@@ -187,6 +187,13 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       `CREATE TABLE user_blocks ("blockerId" varchar NOT NULL, "blockedId" varchar NOT NULL)`
     );
     await q(MIGRATION);
+    // A listed space tells its association's followers of its opening (engagement WP-4): the
+    // follows, in the shape the follow writes them, and the opening reminders 151 creates.
+    await q(
+      `CREATE TABLE association_follows (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+         "followerUserId" varchar NOT NULL, "associationId" uuid NOT NULL)`
+    );
+    await q(readFileSync(join(MIGRATION_DIR, '151_opening_reminders.sql'), 'utf8'));
     for (const [id, first] of [
       [ALICE, 'Alice'],
       [BOB, 'Bob'],

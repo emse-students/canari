@@ -1,11 +1,23 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, LessThanOrEqual } from 'typeorm';
-import { FormReminder } from './entities/form-reminder.entity';
+import { Repository } from 'typeorm';
+import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
+import {
+  DUE_HEADS_UP_SQL,
+  DUE_OPENINGS_SQL,
+  PURGE_TOLD_OPENINGS_SQL,
+  type DueOpening,
+  type OpeningKind,
+} from '../openings/opening-reminders';
 import { PushService } from '../push/push.service';
 import { formOpeningSoonContent, formOpenContent } from '../push/push-content';
-import { PostNotificationsService, SYSTEM_ACTOR_NAME } from '../posts/post-notifications.service';
+import { BOOKINGS_TARGET } from '../push/push-target';
+import {
+  PostNotificationsService,
+  SYSTEM_ACTOR_ID,
+  SYSTEM_ACTOR_NAME,
+} from '../posts/post-notifications.service';
 import { FormsService } from './forms.service';
 import { LydiaReconciliationService } from './lydia-reconciliation.service';
 
@@ -16,32 +28,47 @@ const GC_USER_TAG_GRACE_DAYS = 30;
 const GC_WEBHOOK_DELIVERY_DAYS = 30;
 const GC_CONTENT_REPORT_DAYS = 90;
 
+/** The in-app type of an opening, per kind - what the bell draws and where it leads. */
+const OPENING_NOTIFICATION_TYPE: Readonly<Record<OpeningKind, string>> = {
+  form: 'form_reminder',
+  booking: 'booking_open',
+  event: 'event_open',
+};
+
+/** One heads-up row, as `DUE_HEADS_UP_SQL` reads it. */
+interface DueHeadsUp {
+  id: string;
+  kind: OpeningKind;
+  targetId: string;
+  userId: string;
+}
+
 @Injectable()
 export class FormReminderScheduler {
   private readonly logger = new Logger(FormReminderScheduler.name);
 
   constructor(
-    @InjectRepository(FormReminder)
-    private readonly reminderRepo: Repository<FormReminder>,
+    @InjectRepository(OpeningReminder)
+    private readonly reminderRepo: Repository<OpeningReminder>,
     private readonly push: PushService,
     private readonly notifications: PostNotificationsService,
     private readonly formsService: FormsService,
     private readonly reconciliation: LydiaReconciliationService
   ) {}
 
+  /**
+   * Every minute: the OPENING REMINDERS due (engagement WP-4, `openings/opening-reminders.ts`) - the
+   * five-minute heads-up of an asked form, then every opening that has come, whatever its kind and
+   * whoever caused its row. Each row is CLAIMED before it is sent (`claim`), so one row is one push.
+   * Never capped (decision 11: a shotgun opening is outside the daily cap).
+   */
   @Cron('* * * * *')
   async checkReminders() {
     const now = new Date();
-    const fiveMinFromNow = new Date(now.getTime() + 5 * 60_000);
+    const manager = this.reminderRepo.manager;
 
-    // 5-minute advance warning
-    const toNotify5min = await this.reminderRepo.find({
-      where: {
-        notified5min: false,
-        opensAt: Between(now, fiveMinFromNow),
-      },
-    });
-    for (const r of toNotify5min) {
+    const headsUp = (await manager.query(DUE_HEADS_UP_SQL, [now])) as DueHeadsUp[];
+    for (const r of headsUp) {
       const content = formOpeningSoonContent();
       try {
         // Mark as notified BEFORE sending to avoid duplicate notifications if the process
@@ -50,64 +77,96 @@ export class FormReminderScheduler {
         if (!(await this.claim(r.id, 'notified5min'))) continue;
         await this.push.notifyContent(r.userId, content, {
           type: 'form_reminder',
-          formId: r.formId,
+          formId: r.targetId,
         });
         // In-app bell notification: postId holds the formId for deep linking.
         // skipPush: the FCM push was already sent above with the exact wording.
         await this.notifications.createNotification({
           recipientId: r.userId,
           type: 'form_reminder',
-          postId: r.formId,
-          actorId: 'system',
+          postId: r.targetId,
+          actorId: SYSTEM_ACTOR_ID,
           actorName: SYSTEM_ACTOR_NAME,
           text: content.legacyBody,
           skipPush: true,
         });
         this.logger.log(
-          `[REMINDER] 5min sent: userId=${r.userId.slice(0, 8)} formId=${r.formId.slice(0, 8)}`
+          `[REMINDER] 5min sent: userId=${r.userId.slice(0, 8)} formId=${r.targetId.slice(0, 8)}`
         );
       } catch (e: unknown) {
         this.logger.warn(`[REMINDER] 5min notify failed for ${r.id}`, e);
       }
     }
 
-    // Notify at open time
-    const toNotifyOpen = await this.reminderRepo.find({
-      where: {
-        notifiedOnOpen: false,
-        opensAt: LessThanOrEqual(now),
-      },
-    });
-    for (const r of toNotifyOpen) {
-      const content = formOpenContent();
+    const openings = (await manager.query(DUE_OPENINGS_SQL, [now])) as DueOpening[];
+    for (const r of openings) {
       try {
         // Mark as notified BEFORE sending to avoid duplicate notifications (same rationale as above).
         if (!(await this.claim(r.id, 'notifiedOnOpen'))) continue;
-        await this.push.notifyContent(r.userId, content, {
-          type: 'form_reminder',
-          formId: r.formId,
-        });
-        // In-app bell notification. skipPush: the FCM push was already sent above.
-        await this.notifications.createNotification({
-          recipientId: r.userId,
-          type: 'form_reminder',
-          postId: r.formId,
-          actorId: 'system',
-          actorName: SYSTEM_ACTOR_NAME,
-          text: content.legacyBody,
-          skipPush: true,
-        });
-        this.logger.log(
-          `[REMINDER] open sent: userId=${r.userId.slice(0, 8)} formId=${r.formId.slice(0, 8)}`
-        );
+        await this.sendOpening(r);
       } catch (e: unknown) {
         this.logger.warn(`[REMINDER] open notify failed for ${r.id}`, e);
       }
     }
 
-    if (toNotify5min.length + toNotifyOpen.length > 0) {
-      this.logger.log(`[REMINDER] sent: 5min=${toNotify5min.length} open=${toNotifyOpen.length}`);
+    if (headsUp.length + openings.length > 0) {
+      this.logger.log(`[REMINDER] sent: 5min=${headsUp.length} open=${openings.length}`);
     }
+  }
+
+  /**
+   * Tells ONE claimed row that its target opened. A target that is gone or no longer readable (an
+   * archived or draft form, a deleted space, an event sent back to validation) is told nothing. A
+   * follower's row whose bell on the association is reduced gets the in-app row and no push (L26).
+   */
+  private async sendOpening(r: DueOpening): Promise<void> {
+    const who = `userId=${r.userId.slice(0, 8)} ${r.kind}=${r.targetId.slice(0, 8)} origin=${r.origin}`;
+    if (!r.targetLive) {
+      this.logger.log(`[REMINDER] open not sent: ${who} - the target is gone or not readable`);
+      return;
+    }
+    const withhold = r.bellWithholds;
+    if (r.kind === 'form') {
+      const content = formOpenContent();
+      if (!withhold) {
+        await this.push.notifyContent(r.userId, content, {
+          type: 'form_reminder',
+          formId: r.targetId,
+        });
+      }
+      // In-app bell notification. skipPush: the FCM push was already sent above, or withheld.
+      await this.notifications.createNotification({
+        recipientId: r.userId,
+        type: 'form_reminder',
+        postId: r.targetId,
+        actorId: SYSTEM_ACTOR_ID,
+        actorName: SYSTEM_ACTOR_NAME,
+        text: content.legacyBody,
+        skipPush: true,
+      });
+    } else {
+      // A booking space or an event: the association names the row and the push (its followers
+      // are the only rows of these kinds), the place or the title is the text. A link-only space
+      // is never named on a lock screen (Q-R5): its rows are not written, and this guards it.
+      await this.notifications.createNotification({
+        recipientId: r.userId,
+        type: OPENING_NOTIFICATION_TYPE[r.kind],
+        postId: r.targetId,
+        actorId: SYSTEM_ACTOR_ID,
+        actorName: r.associationName || SYSTEM_ACTOR_NAME,
+        ...(r.associationId && {
+          associationId: r.associationId,
+          associationLogoUrl: r.associationLogoUrl,
+        }),
+        text: r.linkOnly ? '' : (r.targetName ?? ''),
+        // A booking opens Reservations; an event the agenda (`action`, read by `socialDeepLink`).
+        pushData: r.kind === 'booking' ? { target: BOOKINGS_TARGET } : { action: 'opened' },
+        skipPush: withhold,
+      });
+    }
+    this.logger.log(
+      `[REMINDER] open sent: ${who}${withhold ? ' (push withheld by the bell)' : ''}`
+    );
   }
 
   /**
@@ -118,7 +177,8 @@ export class FormReminderScheduler {
    * old one and retires the old one only once the new one is healthy, and a minute boundary inside
    * that overlap fires this cron in both (docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to).
    * An unconditional `update` let both read the row as unsent, both stamp it, both push - the member
-   * was told twice. The conditional one matches in exactly one of them.
+   * was told twice. The conditional one matches in exactly one of them. An image older than WP-4,
+   * still claiming `form_reminders`, is ordered against this one by migration 152's trigger.
    */
   private async claim(id: string, flag: 'notified5min' | 'notifiedOnOpen'): Promise<boolean> {
     const result = await this.reminderRepo.update({ id, [flag]: false }, { [flag]: true });
@@ -220,20 +280,18 @@ export class FormReminderScheduler {
     }
   }
 
-  /** Daily at 03:15 - deletes form reminders where both notifications were sent and the opening was more than 30 days ago. */
+  /** Daily at 03:15 - deletes opening reminders told of their opening more than 30 days ago. */
   @Cron('15 3 * * *')
   async purgeDeliveredFormReminders() {
     try {
       const res: { rowCount?: number } = await this.reminderRepo.manager.query(
-        `DELETE FROM form_reminders
-         WHERE "notifiedOnOpen" = true
-           AND "opensAt" < NOW() - make_interval(days => $1)`,
+        PURGE_TOLD_OPENINGS_SQL,
         [GC_REMINDER_DAYS]
       );
       const deleted = res.rowCount ?? 0;
       if (deleted > 0)
         this.logger.log(
-          `[GC] form_reminders: ${deleted} deleted (older than ${GC_REMINDER_DAYS} days)`
+          `[GC] opening_reminders: ${deleted} deleted (older than ${GC_REMINDER_DAYS} days)`
         );
     } catch (e) {
       this.logger.warn('[GC] purgeDeliveredFormReminders failed', e);

@@ -388,7 +388,9 @@
           Rien », le serveur garde ce choix (le compte concerné et le niveau) pour ne vous envoyer
           que ce que vous avez choisi ; ce compte n'en est pas informé, et ses publications restent
           dans votre fil et dans vos notifications. Suivre ce compte à nouveau rétablit «
-          Publications et lives ».
+          Publications et lives ». Quand une association que vous suivez publie un formulaire, ouvre
+          des réservations ou publie un événement, le serveur note que vous devez être prévenu de
+          cette ouverture (comme quand vous appuyez sur « Me prévenir ») et si vous l'avez été.
         </dd>
       </div>
       <div>
@@ -941,6 +943,13 @@
               Jusqu'à ce que vous le remettiez sur « Publications et lives », que vous suiviez à
               nouveau ce compte, ou à la suppression de votre compte, de celui de la personne ou de
               l'association
+            </td>
+          </tr>
+          <tr>
+            <td>Ouvertures à vous signaler (« Me prévenir », associations suivies)</td>
+            <td>
+              30 jours après l'ouverture signalée, ou dès que vous appuyez sur « Ne plus me prévenir
+              », ou à la suppression de votre compte
             </td>
           </tr>
           <tr>

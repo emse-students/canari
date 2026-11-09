@@ -6,7 +6,7 @@ design that answers each one, what each surface reveals and to whom, and the wor
 The queue entry is [backlog.d](backlog.d/engagement-chantier.md).
 
 **State: WP-1 and WP-1b BUILT (the association live audience, and its 6-hour bound); WP-3 BUILT
-(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built), with one small server route); everything else DESIGNED, not built.**
+(the bell, 2026-11-08, [below](#wp-3---the-bell-built)); WP-2 BUILT ([below](#wp-2---suivre-everywhere-built), with one small server route); WP-4 BUILT (openings for followers, 2026-11-09, [below](#wp-4---openings-for-followers-built), its copy HELD); everything else DESIGNED, not built.**
 
 Context it must respect, and which nothing here changes:
 
@@ -109,6 +109,12 @@ and is recorded here only; no package on this page builds it.
 | L21 | `PUT` on an entity's bell needs only the entity to exist (the old mute's rule), not that the reader sees it; on a person it needs an accepted follow, checked IN the upsert statement. An id that is no uuid is `404 BELL_TARGET_NOT_FOUND`, never the database's type error. | An entity's posts reach readers whatever they follow, and a bell that reduces nothing is harmless; the person check is the one L7 owes, and a check apart from the write would let an unfollow slip between them. |
 | L22 | A BIRTHDAY notice (`birthday`, push `social_birthday`, [birthdays](birthdays.md)) is one of the celebrant's "posts" to the bell: a bell on that person at `lives` or `none` withholds its push, and the bell row is still written. | The reader is told BECAUSE they follow the person, like L17; `none` means "nothing from them", and `lives` means "only their lives", which a birthday is not. The row stays so the bell reduces the push, never what the reader can find. Reversed by one entry of `BELL_PUSH_KINDS`. |
 | L23 | A birthday date counts from the NEXT Paris day; a member is announced at most once per 300 days wherever the date moves, and a removal after an announcement keeps `noticeOpensOn = lastAnnouncedOn + 300` (nothing else) so a new date is neither announced nor ringed before it; the ring follows the notice's eligibility; a new date is accepted at most once per 30 days (a removal then a set included), a correction the same Paris day keeping the window - [birthdays](birthdays.md#a-date-cannot-be-moved-to-buy-a-ring-or-a-notice-lead-decision-2026-11-09). Amended 2026-11-09 after the re-review of #3180. | Without them, moving the date daily bought a daily school-wide ring and a daily push to every follower, and a removal then a set reopened the notice monthly. Reversed by `dateInEffectSql`, `noticeOpenSql`, `celebratedTodaySql`, `BIRTHDAY_NOTICE_EVERY_DAYS` or `BIRTHDAY_CHANGE_WINDOW_DAYS`. |
+| L24 | "Ne plus me prévenir" (`DELETE /api/forms/:id/remind`) deletes the reader's opening row WHATEVER wrote it, a follower's included: the reader is then not told of that opening. A later MOVE of the opening writes the followers again, them included. `GET` answers `subscribed: true` for a follower's row as for an ask - it says "you will be told". | The button is about THIS target; a follower who presses it means "not this one". Reversed by adding `AND origin = 'asked'` to `cancelOpening`. |
+| L25 | The follower rows ask the ASSOCIATION's visibility only (`associationVisibleToUserSql`, plain: a member, or a reader its rules reach; never a read grant; nothing for an archived association), NOT the target's own audience condition (a form's `submitCondition`, a booking space's `audience`). | Those are profile predicates evaluated in code against core-service facts, one call per person; at publication that is one call per follower. A follower the form does not admit opens it and reads why. Reversed by filtering the rows at the claim with `matchesCondition`. |
+| L26 | An opening is neither a post nor a live of the association, so on a FOLLOWER's row ANY stored bell level (`lives` or `none`) withholds its push; the in-app row is still written, as for a post. An ASKED row is never withheld: the reader asked for this target. Read in the claim's select (`DUE_OPENINGS_SQL`, `bellWithholds`), not through `BELL_PUSH_KINDS`, whose seam is `fanOutPush`. | "Lives seulement" means only its lives, and an opening is not one (the reasoning of L18). Reversed by testing `level = 'none'` only. |
+| L27 | An agenda event "opens" when it is VALIDATED (`validateCalendarEvent`, in its lock's transaction), once. NOT announced: an event with a registration form (the form is the shotgun, and its publication tells the followers), a `break`, and a NEUTRAL event - not announced at all, rather than to its audience as "Nouvel événement sur le campus". The member who filed it is not told. | A neutral event must not be pushed under its BDE's name, and a campus-wide unnamed push to every reader is a new kind of notice nobody decided. Reversed in `announceEventOpening` (`associations.service.ts`). |
+| L28 | An ask re-arms the heads-up while the opening is still to come (not only beyond five minutes): an ask on a follower's row inside the last five minutes is told at the next tick, as a fresh ask always was. A moved opening re-arms an ASKED row's heads-up the same way. | Found by the integration spec: re-arming only beyond five minutes gave the same ask a heads-up or none depending on whether the reader followed. Reversed in `ASK_OPENING_SQL`, `followOpeningMove` and 152's trigger together. |
+| L29 | A booking space is announced only when LISTED and an association's, at its creation and when its `opensAt` moves or it becomes listed; one with no `opensAt` (bookable at once) is announced at once, as a form published with no `opensAt`. A link-only space is never announced. | A link-only space is not meant to be found, and its name never reaches a lock screen (Q-R5). Reversed in `announceSpaceOpening` (`booking-spaces.service.ts`). |
 | L9 | The opening reminders of forms, booking spaces and events share ONE table (`opening_reminders`, kind + target), replacing `form_reminders`. | One unique key `(kind, targetId, userId)` is what makes "one notification, never two" a constraint instead of a convention. |
 | L10 | Suggestion score = `4 * min(mutual, 10) + 3 * min(sharedAssociations, 3) + tier` (tier 3 same promo and formation, 2 same formation, 1 same campus), ties broken by id. | Deterministic and explainable from the card ("N en commun" carries the dominant term). The weights are one constant each. |
 | L11 | A suggestion card shows NO reason line besides "N en commun" and the faces. | A line "Promo 2027" or "Membre du BDE" would disclose a profile fact or a membership to someone who may not see it elsewhere; the count and the faces are what decision 4 chose to show. |
@@ -232,6 +238,70 @@ Built 2026-11-08 to the design [below](#the-bell---data-model-and-how-it-combine
 (L4), and WP-8 ships immediately before WP-9, the first package that sends a capped kind - built
 earlier it would guard nothing - and only once [R2](#r2---the-cap-check) has been read on production
 and written back here.
+
+## WP-4 - openings for followers (BUILT)
+
+Built 2026-11-09 to [(d)](#d-openings-for-followers---one-notice-never-two) (decision 5d, L9) plus
+L24-L29 above. Never capped (decision 11).
+
+- **Migrations.** 151 (`opening_reminders`, its due and user indexes; plain) and 152 (**HELD**,
+  marked `-- canari:hold-for-owner`; its approval line is NOT in this pull request - the lead adds it
+  after the review, step 3 of the order [below](#which-migrations-are-held)). 152 takes `SHARE ROW
+  EXCLUSIVE` on `form_reminders`, installs `canari_form_reminder_to_opening()` - AFTER INSERT/DELETE
+  and BEFORE UPDATE - then copies every reminder as `asked`, keeping its id and stamps. The trigger
+  covers an image older than WP-4 during the rolling deploy: its ask and unsubscribe become the same
+  writes on the new table, and its scheduler's CLAIM is made on `opening_reminders` first - a claim
+  the new image already made cancels the old row's update (`RETURN NULL`, the old image reads
+  `affected = 0` and pushes nothing), so an opening due while both images run is pushed once.
+  Verdicts (`migration_gate_verdict`): 151 `plain`, 152 `held`.
+- **Server.** `openings/opening-reminders.ts` - plain statements over a manager, called inside the
+  writers' own transactions: `askOpening` (the ask, `ASK_OPENING_SQL`, spelt the same way by 152's
+  trigger), `cancelOpening`, `isTold`, `announceOpeningToFollowers`
+  (`ANNOUNCE_OPENING_TO_FOLLOWERS_SQL`, `ON CONFLICT DO NOTHING`: never overwrites an ask),
+  `followOpeningMove`, and the scheduler's reads `DUE_HEADS_UP_SQL` / `DUE_OPENINGS_SQL` (the target
+  read in the same statement: a gone or unreadable target is claimed and told nothing; the bell,
+  L26) and its 30-day purge. Entity `openings/entities/opening-reminder.entity.ts`.
+  `FormReminderScheduler` claims and sends every kind: a form keeps `form_opening_soon` /
+  `form_open` (type `form_reminder`); a booking space is `booking_open` (push
+  `social_booking_open`, category `bookings`, tap: Reservations), an event `event_open` (push
+  `social_event_open`, category `events`, tap: the agenda), both named by the association, its
+  logo on the row. Writers: `FormsService.createNew` (published at once), `publishChanges` (a draft
+  published), `update` (a published form's `opensAt` moved - rows follow, followers written again,
+  in the save's transaction); `BookingSpacesService.create` / `update` (L29);
+  `AssociationsService.validateCalendarEvent` (L27). The three `/api/forms/:id/remind` routes keep
+  their shape and write the new table (L24). `form_reminders` stays mapped (`FormReminder`, read by
+  no code) until its held drop, so a `synchronize`d local database still has it; the erasure
+  deletes from both tables.
+- **Native and client.** The two keys in `strings.xml` (fr, en), `CanariFirebaseMessagingService`,
+  `canari_push.mm`, the NSE (`NotificationService.swift`) and the four `Localizable.strings`;
+  chat-delivery's `push-category.ts` files them under the EXISTING `bookings` and `events`. The bell
+  row: `notificationTarget.ts` (Reservations, `/calendar`) and `NotificationRow.svelte` (the
+  association's logo, "a ouvert les réservations :" / "a publié un événement :", Paraglide
+  `notif_booking_open_text`, `notif_event_open_text`). A build older than this shows the two new
+  types as an unknown row and the push in the server's French wording (`legacyTitle/Body`).
+- **Proof.** `openings/opening-reminders.integration.spec.ts` on PostgreSQL 18: 152 copies two
+  reminders against real rows (ids, stamps, instants kept) and re-runs clean (151 and 152 applied
+  twice); the followers who see the association are written, never the publisher, a follower its
+  rules do not reach, or anyone of an archived association, and a MEMBER anywhere is; **a follower
+  who also asked gets ONE opening push, a follower gets the opening and no heads-up, a non-follower
+  who asked gets both**; a reduced bell withholds a follower's push but not an ask's, the bell row
+  written; two scheduler replicas in the same tick push each row once; a move re-arms an ask and
+  carries the untold rows; "Ne plus me prévenir" removes a follower's row; a booking space and an
+  event open to their followers with their own keys, rows and names, and an archived form is told
+  nothing; an OLD image's insert, upsert and delete on `form_reminders` are the same writes on the
+  new table, and its claim and the new claim exclude each other in both orders; the erasure deletes
+  both tables' rows. The existing form specs run against the new store (`forms.service.*.spec.ts`,
+  the five forms integration specs, which now build `opening_reminders`). Unit:
+  `push-content.spec.ts` (the two keys against `strings.xml`), `push-category.spec.ts`. Client:
+  `NotificationRow.svelte.test.ts`, `notificationTarget.test.ts`, `nativeStrings.test.ts`.
+- **Owed.** The approval merge of 152, then a NEW pre-release on dev, then on the Mi 9T and the
+  iPhone 12: follow an association from one phone; from the other publish a form of it opening in
+  ten minutes - the follower gets "Formulaire ouvert !" at the opening and no heads-up; press "Me
+  prévenir" on it as well before the opening - the heads-up, and still ONE opening push; a listed
+  booking space created by the association - "<asso> ouvre les réservations" opening Reservations;
+  an event validated - "<asso> publie un événement" opening the agenda; the association's bell at
+  "Rien" - the bell row, no push. **And the drop** of `form_reminders` (held) after WP-4 has served
+  one stable.
 
 ## Follow suggestions - the query
 
@@ -514,8 +584,8 @@ person.
   follower gets the opening, not the five-minute heads-up), `ON CONFLICT DO NOTHING` - a reader who
   already asked keeps their row and its heads-up.
 - **"Me prévenir" after the fact** upserts the reader's row to `origin = 'asked'` and re-arms
-  `"notified5min"` when the opening is more than five minutes away: the same row, so still one
-  opening push.
+  `"notified5min"` while the opening is still to come (L28): the same row, so still one opening
+  push.
 - **The push** is the scheduler's existing claim (`notifiedOnOpen` flipped before the send): one row,
   one claim, one push, whoever caused the row. A target with no `opensAt` (open at once) is inserted
   with `opensAt = now()` and claimed at the next tick.
@@ -733,7 +803,7 @@ then WP-9). Shipping it earlier would guard nothing.
 | **WP-1b** (BUILT, #3119) | One announced live per association per 6 hours (L16) | `lives/lives.service.ts` (the claim) | [above](#wp-1b---one-announced-live-per-association-per-6-hours-built-in-the-same-pull-request) |
 | **WP-2** (BUILT, [below](#wp-2---suivre-everywhere-built)) | Suivre everywhere a person or entity is named: post headers of an account the viewer does not follow, search results, association cards (today only the profile and the association page carry it) | `frontend/src/lib/follows/api.ts` | component tests per surface; a phone reading of a follow request from a post header |
 | **WP-3** (BUILT, [below](#wp-3---the-bell-built)) | The bell (decisions 3d, 5a, 10): `account_bells` (`lives` and `none` only, L3), the HELD copy of `association_push_mutes`, the old mute endpoints writing `account_bells` (L8), a follow deleting the row in the creating statement, the seam in `fanOutPush`, the profile control, the association mute UI moved onto it | `follows/association-push-mutes.service.ts` | integration spec of the level table above; a new follow resets a reduced bell and a RETRIED follow does not; following a muted association again unmutes it; a mute set through the old endpoint after the copy is honoured; the existing mute specs still green against the new store |
-| **WP-4** | Openings for followers (5d): `opening_reminders`, the HELD copy of `form_reminders`, follower rows at publication, "Me prévenir" upsert, booking and event openings; never capped | `forms/forms-reminder.scheduler.ts` | integration spec: a follower who also asked gets ONE push, a follower gets the opening and no heads-up, a non-follower who asked gets both |
+| **WP-4** (BUILT, [below](#wp-4---openings-for-followers-built)) | Openings for followers (5d): `opening_reminders`, the HELD copy of `form_reminders`, follower rows at publication, "Me prévenir" upsert, booking and event openings; never capped | `forms/forms-reminder.scheduler.ts` | integration spec: a follower who also asked gets ONE push, a follower gets the opening and no heads-up, a non-follower who asked gets both |
 | **WP-5** | The suggestion query, its faces, entities, `follow_suggestion_dismissals`, `GET /api/suggestions`, `POST /api/suggestions/dismiss`, the erasure | `follows/` | integration spec of every exclusion of decision 2 and every face rule of decision 4; EXPLAIN on dev |
 | **WP-6** | The surfaces (decisions 3 and 7): the carousel in the feed, "Suivez aussi...", the empty Suivis feed, the onboarding banner | the feed route | component tests; phone readings on both bench phones |
 | **WP-7** | Suggested posts (decision 8), through the feed's own block filter (`PostsService.blockedAuthorSql`) as every feed row | the feed query | integration spec: a suggested post is visible by the space rule to the viewer, never through a grant or a follower door, and never by an author blocked either way |
@@ -826,14 +896,14 @@ AND copies rows into it ships TWO files: the `CREATE TABLE` (plain) and the copy
 | `associations."lastLiveAnnouncedAt"` | WP-1b | no | `ADD COLUMN`, no backfill |
 | `account_bells` | WP-3 | no | `CREATE TABLE` |
 | copy of `association_push_mutes` into `account_bells` | WP-3 | **yes**, marked | a backfill (`INSERT ... SELECT`) |
-| `opening_reminders` | WP-4 | no | `CREATE TABLE` |
-| copy of `form_reminders` into `opening_reminders` | WP-4 | **yes**, marked | a backfill (`INSERT ... SELECT`) |
+| `opening_reminders` (151) | WP-4 | no | `CREATE TABLE`, `CREATE INDEX` |
+| copy of `form_reminders` into `opening_reminders`, and its mirror trigger (152) | WP-4 | **yes**, marked | a backfill (`INSERT ... SELECT`); the trigger body holds a `DELETE FROM` |
 | `follow_suggestion_dismissals` | WP-5 | no | `CREATE TABLE`, `CREATE INDEX` |
 | `engagement_push_days` | WP-8 | no | `CREATE TABLE` |
 | `user_activity_settings`, `post_engagement_notices` | WP-9 | no | `CREATE TABLE` |
 | `posts."trendAnnouncedAt"` | WP-10 | no | `ADD COLUMN`, no backfill |
 | drop of `association_push_mutes` | after WP-3 has served one stable and the floor passed it | **yes** (a `DROP`) | destructive |
-| drop of `form_reminders` | after WP-4 has served one stable | **yes** (a `DROP`) | destructive |
+| drop of `form_reminders` | after WP-4 has served one stable | **yes** (a `DROP`) | destructive; it must also `DROP FUNCTION canari_form_reminder_to_opening()` and unmap `FormReminder` |
 
 **Approval.** Each held file is approved by the owner or by the lead under the 2026-11-03 delegation
 ([the conditions](backlog.d/owner-decisions-of-2026-11-03-evening.md)). **A held migration on `main`

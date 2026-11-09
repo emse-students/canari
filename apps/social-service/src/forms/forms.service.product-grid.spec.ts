@@ -97,6 +97,19 @@ function makeService(opts: { form?: Record<string, unknown>; facts?: PricingFact
     create: jest.fn((x: unknown) => x),
     manager: { query: jest.fn(() => Promise.resolve([])) },
   };
+  // A form published at once by an association is stored in a transaction that also writes its
+  // followers' opening rows (engagement WP-4): the save is still `formRepo.save`, the rows a no-op.
+  formRepo.manager = {
+    transaction: jest.fn((fn: (m: unknown) => Promise<unknown>) =>
+      fn({
+        save: async (_entity: unknown, x: unknown) => ({
+          id: 'f-new',
+          ...(await formRepo.save(x)),
+        }),
+        query: jest.fn(() => Promise.resolve([])),
+      })
+    ),
+  };
   const submissionRepo: any = {
     count: jest.fn(() => Promise.resolve(0)),
     findOne: jest.fn(() => Promise.resolve(null)),

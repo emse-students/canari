@@ -112,6 +112,11 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   social_booking_reminder: 'bookings',
   social_booking_changed: 'bookings',
   social_booking_removed: 'bookings',
+  // The openings told to an association's followers (engagement WP-4): a booking space that opens
+  // is a bookings matter, an event published on the agenda an events one - the EXISTING ids, which
+  // the settings screen already draws (a new id would be a switch older clients cannot draw).
+  social_booking_open: 'bookings',
+  social_event_open: 'events',
 };
 
 /**

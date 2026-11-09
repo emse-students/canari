@@ -768,6 +768,10 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     // An edit (owner, 2026-11-02): the booking was moved, or the reader taken off it.
     @"social_booking_changed" : @"booking_changed",
     @"social_booking_removed" : @"booking_removed",
+    // The openings told to an association's followers (engagement WP-4): the association names
+    // the title, the space's name or the event's title is the body.
+    @"social_booking_open" : @"booking_open",
+    @"social_event_open" : @"event_open",
   };
   // With no name to show (the lookup failed server-side) the title says "someone": an id never
   // reaches a lock screen.

@@ -36,6 +36,7 @@ import {
 } from './dto/space.dto';
 import { ZONED_INSTANT } from './dto/booking.dto';
 import { BookingPosterMedia, posterOf } from './booking-poster-media';
+import { announceOpeningToFollowers, followOpeningMove } from '../openings/opening-reminders';
 import {
   BookingNotificationsService,
   deletedBookingNotices,
@@ -391,6 +392,7 @@ export class BookingSpacesService {
         }
         const created = await m.save(BookingSpace, space);
         const column = await this.writeDefaultColumn(m, created, hours);
+        await announceSpaceOpening(m, created, actor.userId);
         return { id: created.id, resourceId: column };
       });
       this.logger.log(
@@ -461,6 +463,8 @@ export class BookingSpacesService {
         const oldPoster = space.poster?.mediaId ?? null;
         const before: SlotConfig = { ...space };
         const formerName = space.name;
+        const opensBefore = space.opensAt ? new Date(space.opensAt).getTime() : null;
+        const listedBefore = space.discoverability === 'listed';
         const storedImageUrls = questionImageUrlsOf(space.items);
         this.applySettings(space, dto);
         await this.assertSettingsValid(space, storedImageUrls);
@@ -482,6 +486,15 @@ export class BookingSpacesService {
           claimed = newPoster;
         }
         await m.save(BookingSpace, space);
+        // Its opening moved, or it became listed: the reminders follow, in this transaction
+        // (engagement WP-4).
+        const opensAfter = space.opensAt ? new Date(space.opensAt).getTime() : null;
+        if (opensAfter !== opensBefore) {
+          await followOpeningMove(m, 'booking', spaceId, space.opensAt);
+        }
+        if (opensAfter !== opensBefore || (!listedBefore && space.discoverability === 'listed')) {
+          await announceSpaceOpening(m, space, actor.userId);
+        }
         if (space.name !== formerName)
           await this.renameDefaultColumn(m, spaceId, formerName, space.name);
         this.logger.log(`[BOOKINGS] space updated id=${spaceId.slice(0, 8)}`);
@@ -720,4 +733,25 @@ export class BookingSpacesService {
     if (!space) throw new NotFoundException({ code: 'space-not-found' });
     return space;
   }
+}
+
+/**
+ * The opening of an association's LISTED booking space, written for the association's followers
+ * who see it (engagement WP-4, decision 5d): its window (`opensAt`), or now when it is bookable at
+ * once. A space reached by its link only is never announced - it is not meant to be found, and its
+ * name never reaches a lock screen (Q-R5) - nor a personal one, which has no followers.
+ */
+async function announceSpaceOpening(
+  m: EntityManager,
+  space: Pick<BookingSpace, 'id' | 'associationId' | 'opensAt' | 'discoverability'>,
+  actorId: string
+): Promise<void> {
+  if (space.discoverability !== 'listed') return;
+  await announceOpeningToFollowers(m, {
+    kind: 'booking',
+    targetId: space.id,
+    associationId: space.associationId,
+    opensAt: space.opensAt ? new Date(space.opensAt) : null,
+    actorId,
+  });
 }

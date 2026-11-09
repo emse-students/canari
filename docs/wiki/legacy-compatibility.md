@@ -550,6 +550,26 @@ control, raised once BOTH stores serve it. Then the old endpoints go, and the he
 `association_push_mutes` follows. Measure before: the endpoints' own debug lines counted per week
 name how many older builds still mute that way.
 
+### No date yet - a form reminder written by a server image older than the openings (2026-11-09)
+
+**BUILT 2026-11-09 with WP-4 of [engagement](engagement.md) (L9).**
+**Site:** migration 152 (`canari_form_reminder_to_opening()`, two triggers on `form_reminders`) and
+the `FormReminder` entity still mapped in `forms/forms.module.ts`. WP-4 folded the "Me prévenir" asks
+into `opening_reminders`; the three `/api/forms/:id/remind` routes keep their shape and write the new
+table, so an OLD CLIENT needs nothing.
+**What an older SERVER image does during the deploy.** It still writes and claims `form_reminders`.
+Without a shim, an ask it took after the copy would be lost, and an opening due while both images run
+could be pushed twice (each image claiming its own table).
+**The shim.** 152's triggers turn an old image's insert or upsert into the same ask on
+`opening_reminders`, its delete into the same delete, and make its CLAIM on the new row first: a
+claim the new image already made cancels the old row's update (`RETURN NULL`), so one push. The new
+code never writes the old table. `FormReminder` stays mapped only so a `synchronize`d local database
+still has the table the trigger and the erasure name.
+**Removal condition:** WP-4 has served one stable (no older image can be rolled out any more). Then a
+HELD migration drops `form_reminders` AND `DROP FUNCTION canari_form_reminder_to_opening()`
+(dropping the table removes the triggers, not their function), the entity is unmapped and the
+erasure's `form_reminders` statement goes.
+
 ### No date yet - a send-ledger entry with no epoch, written by a client older than 2026-10-23
 
 **Site:** `parseKey` and `sendRatchetDebt` in `frontend/src/lib/mls-client/sendRatchetLedger.ts`.
