@@ -195,4 +195,24 @@ describe('the gesture glyph', () => {
     expect(target.querySelector('[data-video-glyph="pause"]')).not.toBeNull();
     expect(live.textContent, 'a pause is seen, not announced').toBe('');
   });
+
+  it('leaves no static announcement: the glyph and its text go when its fade ends', () => {
+    const props = $state<{
+      feedback: { kind: 'play' | 'pause' | 'sound-on' | 'sound-off'; n: number } | null;
+    }>({ feedback: { kind: 'sound-off', n: 1 } });
+    const target = render(VideoFeedbackGlyph, props);
+    const live = target.querySelector('[aria-live="polite"]')!;
+    expect(live.textContent).toBeTruthy();
+    target.querySelector('[data-video-glyph]')!.dispatchEvent(new Event('animationend'));
+    flushSync();
+    expect(target.querySelector('[data-video-glyph]')).toBeNull();
+    expect(live.textContent).toBe('');
+
+    props.feedback = { kind: 'sound-on', n: 2 };
+    flushSync();
+    expect(
+      target.querySelector('[data-video-glyph="sound-on"]'),
+      'the next gesture pops'
+    ).not.toBeNull();
+  });
 });
