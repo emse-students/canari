@@ -39,13 +39,13 @@ through the rig's `login.mjs` and `pin.mjs`.
 Fredoka comes from the app's own package (`frontend/node_modules`, so run `bun install` in `frontend/`),
 or `STORE_SHOTS_FONT=<file.woff2>`. The browser tool refuses any site other than `dev.canari-emse.fr`.
 
-## What is blocked (2026-11-09), and what lifts each
+## What is blocked (2026-11-09, evening), and what lifts each
 
 | Blocked | Why | What lifts it |
 | --- | --- | --- |
-| People's photos | a user's avatar is served by the photo gallery (MiGallery), which Canari reads and cannot write; every chat bubble and member row shows an initials circle, and `verify` fails on it | the owner decides: photos for the four bench accounts in the gallery, or a dev-only avatar override in core-service |
-| Test names in a conversation | the join lines ("X a ajouté Y") carry the names the clients cached before the rename; they scroll off in a long conversation, but the list preview and the first screen of a short one show them | a longer script (done for fr), or re-enrolling the seats after the rename |
-| iOS capture | `native.mjs --platform ios` is not wired: the iPhone has WDA screenshots (`ios.mjs shot`) but no navigation here (the WebKit inspector bridge of the rig is needed), and the status bar cannot be forced | wire the rig's I1 bridge into `native.mjs`; the clock stays real |
-| English set | the English group conversation is not created yet (`bun chat-seed.mjs --lang en ...`) | run it |
-| Communities, post media, covers | the community and its channel are MLS state (rig `comm.mjs`), post images and covers go through the encrypted media flow | not built |
-| Leftovers | the demo conversation holds one deleted-message tombstone (a duplicated send); the phone account's chat list holds test-campaign debris (old groups, tombstones); Android keeps the app's own notification icons in the status bar | recreate the group, leave or delete the old conversations, clear notifications |
+| People's photos | a user's avatar is served by the gallery, which dev lacks: every face is an initials circle and `verify` fails on it. The fix is the dev-only avatar override of core-service (PR #3219, geometric portraits) | #3219 merged, a pre-release deployed to dev, the `DEV_AVATAR_OVERRIDE_EXTRA` value set; then re-capture |
+| iOS capture | `native.mjs --platform ios` is not wired: the iPhone has WDA screenshots (`ios.mjs shot`) but no navigation here (the rig's WebKit inspector bridge is needed); the status bar cannot be forced and is cropped at compose | wire the rig's I1 bridge into `native.mjs` |
+| English set | the English group, DMs and community lines are created per language. The French ones exist on dev now; for the English pass the French group is deleted (the product's own delete, as `purge.mjs` did) and `chat-seed.mjs`, `dm-seed.mjs` and `comm-seed.mjs` are run with `--lang en`. Community NAMES are language-neutral, their lines are not | run the pass after the French capture |
+| Post media, covers | scene photos (`photos.manifest.json`, 6 scenes, no portrait) are fetched but not yet posted: post images go through the composer's encrypted media flow | drive the real composer on the seats |
+
+Done on dev (2026-11-09): the four demo seats were emptied through the product (every old group, DM and tombstone, ids recorded in the run's allowlist), then `chat-seed.mjs` (group), `dm-seed.mjs` (four DMs) and `comm-seed.mjs` (two communities) were run in French. The "Fictif" events and three fixture posts that showed in the demo accounts' lists were set aside by a reversible flag (`rejected`, `hiddenByModeration`), never deleted. The test-environment banner is closed before each capture and `verify` fails a shot that shows it.

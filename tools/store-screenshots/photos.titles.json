@@ -1,12 +1,11 @@
 {
-  "_doc": "Commons file titles proposed for the demo (campus life, varied natural young adults). `bun photos.mjs resolve` reads the live licence and author of each and rewrites photos.manifest.json; a licence outside the allowlist is refused. Candidates only: the owner picks which ones are used.",
+  "_doc": "Commons file titles proposed for the demo: SCENES only (campus, party, trail, chess), no portrait and no identifiable face in the foreground (owner, 2026-11-09). `bun photos.mjs resolve` reads the live licence and author of each and rewrites photos.manifest.json; a licence outside the allowlist is refused.",
   "titles": [
-    "File:UFV ABSOLUTE STYLE (13888869610).jpg",
-    "File:Reimaging campus life for students on the Lansdowne campus of Camosun College.jpg",
-    "File:College Students Visit NASA Stennis (SSC-20241114-s01156).jpg",
-    "File:GMU Mason Votes MasonVotes Election Night Watch Party (8167236164).jpg",
     "File:People are walking over the footbridges at the campus Roeterseiland; free photo Amsterdam, 10-2021.jpg",
-    "File:Photographer taking a group photograph of smiling students in front of the Tokyo station, Marunouchi, Japan.jpg",
-    "File:Students crossing bridge in autumn at National Conservation Training Center - DPLA - a1ac1b52f0f380a596c8e1f0153ad78e.jpg"
+    "File:Students crossing bridge in autumn at National Conservation Training Center - DPLA - a1ac1b52f0f380a596c8e1f0153ad78e.jpg",
+    "File:Birthday party decoration.jpg",
+    "File:Chess game Staunton No. 6.jpg",
+    "File:Diamond Notch Trail in autumn, Spruceton, NY.jpg",
+    "File:Green space at Indiana University Southeast.jpg"
   ]
 }

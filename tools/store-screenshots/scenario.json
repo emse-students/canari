@@ -136,6 +136,8 @@
   },
   "forbiddenOnScreen": [
     "Canari Test",
+    "Environnement de test",
+    "Test environment",
     "Fictif",
     "Fictive",
     "@example.invalid"
@@ -256,5 +258,157 @@
       "en": "Canari, your campus life"
     },
     "shot": "1-promise"
-  }
+  },
+  "dms": [
+    {
+      "a": "third",
+      "b": "peer",
+      "messages": {
+        "fr": [
+          [
+            "third",
+            "Tu peux me renvoyer le planning de vendredi ?"
+          ],
+          [
+            "peer",
+            "Bien sûr, je te l'envoie ce soir"
+          ]
+        ],
+        "en": [
+          [
+            "third",
+            "Can you send me Friday's schedule?"
+          ],
+          [
+            "peer",
+            "Sure, I'll send it tonight"
+          ]
+        ]
+      }
+    },
+    {
+      "a": "third",
+      "b": "fourth",
+      "messages": {
+        "fr": [
+          [
+            "third",
+            "Merci pour le coup de main hier !"
+          ],
+          [
+            "fourth",
+            "Avec plaisir, à vendredi"
+          ]
+        ],
+        "en": [
+          [
+            "third",
+            "Thanks for the help yesterday!"
+          ],
+          [
+            "fourth",
+            "Anytime, see you Friday"
+          ]
+        ]
+      }
+    },
+    {
+      "a": "owner",
+      "b": "peer",
+      "messages": {
+        "fr": [
+          [
+            "owner",
+            "Tu viens à la rando samedi ?"
+          ],
+          [
+            "peer",
+            "Oui, je prends le pique-nique"
+          ]
+        ],
+        "en": [
+          [
+            "owner",
+            "Are you coming to the hike on Saturday?"
+          ],
+          [
+            "peer",
+            "Yes, I'll bring the picnic"
+          ]
+        ]
+      }
+    },
+    {
+      "a": "owner",
+      "b": "fourth",
+      "messages": {
+        "fr": [
+          [
+            "owner",
+            "J'ai les photos de la dernière sortie"
+          ],
+          [
+            "fourth",
+            "Génial, envoie-les dans le groupe"
+          ]
+        ],
+        "en": [
+          [
+            "owner",
+            "I have the photos from the last trip"
+          ],
+          [
+            "fourth",
+            "Great, post them in the group"
+          ]
+        ]
+      }
+    }
+  ],
+  "communities": [
+    {
+      "name": "Campus",
+      "owner": "third",
+      "channels": [
+        "soirées",
+        "bons-plans"
+      ],
+      "hello": {
+        "owner": {
+          "fr": "Bienvenue dans le campus, c'est ici qu'on s'organise",
+          "en": "Welcome to the campus, this is where we get organised"
+        },
+        "peer": {
+          "fr": "Super, merci pour l'invitation !",
+          "en": "Great, thanks for the invite!"
+        },
+        "fourth": {
+          "fr": "J'ai déjà plein d'idées de sorties",
+          "en": "I already have plenty of ideas for outings"
+        }
+      }
+    },
+    {
+      "name": "Atelier photo",
+      "owner": "owner",
+      "channels": [
+        "sorties",
+        "expo"
+      ],
+      "hello": {
+        "owner": {
+          "fr": "Prochaine sortie photo samedi matin",
+          "en": "Next photo outing on Saturday morning"
+        },
+        "third": {
+          "fr": "Je viens avec mon objectif grand angle",
+          "en": "I'm coming with my wide-angle lens"
+        },
+        "peer": {
+          "fr": "Moi je prends le trépied",
+          "en": "I'll bring the tripod"
+        }
+      }
+    }
+  ]
 }

@@ -254,8 +254,10 @@ iPhone class is Dynamic Island (medium), 1179x2556 or 1206x2622; the 6.9in set (
 (1284x2778) are optional, the larger being the fallback chain. The owner ruled to produce only the mandatory
 class: `sizes.json` holds 1206x2622 for Apple, 1080x1920 for Play phones and the 1024x500 feature graphic.
 
-**State (2026-11-09):** the dev demo content is seeded in part (names, associations, posts with a poll,
-events, one French group conversation with 14 messages from four live clients); the Android native capture
-and the composition run end to end (French only); the manifest holds 8 Commons photos with source, author and
-licence. NOT done, with what lifts each: [README](../../tools/store-screenshots/README.md#what-is-blocked-2026-11-09-and-what-lifts-each) -
-chiefly the people's photos (the gallery owns avatars), the iOS capture, the English set and the communities.
+**State (2026-11-09, evening):** the dev demo content is seeded in French (names, associations, posts with a
+poll, events, one group conversation, four DMs, two communities, all from live clients after the demo seats
+were emptied through the product); the Android native capture and the composition run end to end; the manifest
+holds 6 Commons SCENE photos with source, author and licence (no portrait: faces are invented geometric
+avatars, served by the dev-only override of #3219). NOT done, with what lifts each:
+[README](../../tools/store-screenshots/README.md#what-is-blocked-2026-11-09-evening-and-what-lifts-each) -
+the avatars on dev (the override must be deployed), the iOS capture, the English pass and the post media.

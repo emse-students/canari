@@ -81,6 +81,9 @@ try {
         if (!(await evaluate(cx, clickExpr(target2)))) throw new Error(`"${target2}" not on screen`);
         await sleep(3000);
       }
+      // The banner comes back after a route change or a tap: closed again right before the pixels (owner, 2026-11-09).
+      await evaluate(cx, CLOSE_BANNER);
+      await sleep(600);
       await evaluate(cx, 'window.scrollTo(0,0)');
       const text = await evaluate(cx, PAGE_PROBE);
       const dir = join(work, platform, lang);
