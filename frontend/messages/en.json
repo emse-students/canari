@@ -5828,5 +5828,6 @@
   "form_create_key_reused": "This draft was already created for another association. Reload the page and continue from \"My forms\".",
   "form_create_key_gone": "This draft was deleted in the meantime.",
   "follow_chip_follow_named": "Follow {name}",
-  "follow_chip_withdraw_named": "Withdraw the follow request to {name}"
+  "follow_chip_withdraw_named": "Request sent - withdraw the follow request to {name}",
+  "follow_chip_withdraw": "Request sent - withdraw the follow request"
 }

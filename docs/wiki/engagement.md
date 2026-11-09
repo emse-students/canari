@@ -748,7 +748,9 @@ the moderation preview, `showFollow={false}`; icon-only below `sm` so the name k
 directory rows, and `AssociationTile` (the chip is a sibling of the link, in its own row under the
 card, never over its text). It is NEVER drawn for yourself, a blocked account, a person already
 followed or requested-and-accepted, an association already followed, an ARCHIVED association, or one
-the reader is a MEMBER of (lead decision), and it draws nothing while its answer is unknown.
+the reader is a MEMBER of (lead decision), and it draws nothing while its answer is unknown. The post header passes
+`archived` when the post's association payload carries it; the feed payloads do not carry it today,
+so for a post header that rule is wired but inert until they do.
 
 **The server half, two small routes (both under `/api/posts`, `FollowRequestsController`).**
 
@@ -776,15 +778,27 @@ follow of the reader's, so it writes nothing.
   microtask (no timer), chunked at the cap, deduplicated, cached per session. Followed associations
   and memberships are one read each, shared by every card.
 - **A failed read is asked ONCE per epoch.** The ids it failed for are recorded and never asked again
-  until a real event: the connection coming back (`connectivity.onReconnect`, which retries exactly
-  the failures once), a block or unblock on this device (`onBlocksChanged` - a block severs follows,
+  until a real event: the connection coming back (`connectivity.onReconnect`) or the next navigation
+  (`beforeNavigate` in the chip - an online 5xx is what no reconnect heals), each of which retries
+  exactly the failures once; a block or unblock on this device (`onBlocksChanged` - a block severs follows,
   so everything read is void), or another account. (The first version kept the asked ids in a
   reactive set read by the chip's effect: a failure re-ran every effect, a new request each
-  microtask, forever.) The ledger's sets are plain on purpose.
+  microtask, forever.) The ledger's sets are plain on purpose, and a failed read is a `console.warn`
+  carrying the status, not a debug line.
 - **An epoch ends every read of a previous reader.** The ledger is a per-reader cache
   (`registerPerReaderCache(resetFollowState)`, run on sign-out and account switch); a read, an
   association read or a blocks read that left for account A compares the epoch when it lands and is
   dropped after the switch to B. A chip still on screen reads the reactive epoch and asks again.
+- **Writes are epoch-guarded and win over older reads.** Every writer (the chip taps, `askPerson`,
+  `withdrawPerson`, `leavePerson`, the association pair, and the pages' own status reads) captures
+  the epoch before its await and writes - or rolls back - nothing if it moved, so a tap on account
+  A answered after the switch to B leaves B's ledger alone. A read that left before an association
+  write never overwrites it (a per-id write marker in the epoch, as for persons). A page's status
+  read teaches the ledger ONLY from a real answer (`readAssociationFollowed`): a failed read is a
+  warning, never "not followed".
+- **Membership unknown is hidden.** `ensureMyAssociations` turns a failure into `[]` (and caches it
+  for the session: fail-closed for the BDE flags, which is right for them); the ledger asks
+  `didMyAssociationsProbeFail()` and offers nothing on any association when membership is unknown.
 - **A tap** flips the state at once, is guarded by a per-id in-flight set (a second tap does nothing),
   and puts the state back with a toast on a refusal (the profile's sentences). A withdraw that
   raced the other side ends in what the server says now - a follow (409) or none (404) - with no
@@ -796,7 +810,8 @@ route: pending removed with its bell row, accepted refused and kept, refused/abs
 asker untouched), `follow-requests.controller.spec.ts` (cap, typed 400s), and the chip specs (N chips
 = 1 request, chunking, session cache, block refetch, a rejected read asked once and again on a
 reconnect, an account switch mid-flight, the withdraw races, double taps, member and archived
-hidden, the aria-label of a pending request naming the person).
+hidden, the aria-label of a pending request naming the person and containing the visible text, with
+a nameless fallback).
 
 ### Which migrations are held
 

@@ -1080,6 +1080,7 @@ export function invalidateMyAssociations(): void {
   myMemberships.invalidate();
   myBdeReach.invalidate();
   myAssociationsProbe = null;
+  myAssociationsProbeFailed = false;
 }
 
 /**
@@ -1109,12 +1110,24 @@ export async function getMyBdeReach(): Promise<BdeReach> {
 
 /** Session cache for the membership probe; deduplicates concurrent callers. */
 let myAssociationsProbe: Promise<Association[]> | null = null;
+/** Whether the probe above ended in a failure (its list is then `[]`, which is NOT "belongs to nothing"). */
+let myAssociationsProbeFailed = false;
+
+/**
+ * Whether the membership probe FAILED: its `[]` then says nothing about what the reader belongs to.
+ * For a caller that must not act on "no memberships" when that is only a failure (the follow chip
+ * offers nothing it cannot tell is not the reader's own).
+ */
+export function didMyAssociationsProbeFail(): boolean {
+  return myAssociationsProbeFailed;
+}
 
 // The probe is not a SharedCache - it is one promise holding three derived flags - so it enrols
 // itself. The list beside it does so through its own `perReader` option, and both have to go: a
 // probe kept across a sign-in answers `isAssociationSuperAdmin()` for the previous account.
 registerPerReaderCache(() => {
   myAssociationsProbe = null;
+  myAssociationsProbeFailed = false;
 });
 
 /**
@@ -1140,6 +1153,7 @@ export async function ensureMyAssociations(force = false): Promise<Association[]
       })
       .catch((err) => {
         console.error('[associations] membership probe failed, every BDE flag denied', err);
+        myAssociationsProbeFailed = true;
         setAssociationSuperAdmin(false);
         setContentModerator(false);
         setEventValidator(false);

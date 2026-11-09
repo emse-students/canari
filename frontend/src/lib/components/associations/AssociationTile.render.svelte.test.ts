@@ -26,6 +26,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('$lib/follows/followState.svelte', () => ({
   ensureAssociationsLoaded: () => {},
   followEpoch: () => 0,
+  retryFailedFollowReads: () => {},
   ensureBlocksLoaded: () => {},
   ensurePersonStatus: () => {},
   personChipState: () => 'hidden',

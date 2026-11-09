@@ -9,6 +9,7 @@
   import { getFollowStatus, type FollowStatus } from '$lib/follows/api';
   import {
     askPerson,
+    followEpoch,
     leavePerson,
     recordPersonStatus,
     withdrawPerson,
@@ -84,13 +85,15 @@
 
   /** Loads a profile and its extras, ignoring the result if a newer load has since started. */
   async function loadProfile(userId: string, token: number) {
+    const readAt = followEpoch();
     try {
       const [prof, status, blocks] = await Promise.all([
         fetchUserProfile(userId),
         getFollowStatus(userId)
           .then((read) => {
-            // The ledger learns what this page read: a chip elsewhere agrees with it.
-            recordPersonStatus(userId, read);
+            // The ledger learns what this page read (a chip elsewhere agrees with it) - unless the
+            // reader changed while it was out.
+            recordPersonStatus(userId, read, readAt);
             return read;
           })
           .catch((e: unknown) => {

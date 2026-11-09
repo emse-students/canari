@@ -10,7 +10,6 @@
   import {
     getAssociationBySlug,
     listMembers,
-    getAssociationFollowStatus,
     hasPermissionFlag,
     getMyBdeReach,
     leaveAssociation,
@@ -28,6 +27,7 @@
   import AccountBell from '$lib/components/follows/AccountBell.svelte';
   import {
     followAssociationLedgered,
+    readAssociationFollowed,
     recordAssociationFollowed,
     unfollowAssociationLedgered,
   } from '$lib/follows/followState.svelte';
@@ -296,12 +296,10 @@
         listAssociationProducts(asso.id).catch(() => []),
         listAssociationPartnerships(asso.id).catch(() => []),
         uid
-          ? getAssociationFollowStatus(asso.id).catch(() => ({ following: false }))
+          ? readAssociationFollowed(asso.id).then((following) => ({ following }))
           : Promise.resolve({ following: false }),
       ]);
       following = followStatus.following;
-      // The ledger learns what this page read, so a card or a post header agrees with it.
-      recordAssociationFollowed(asso.id, following);
       const names: Record<string, string> = {};
       for (const m of members) {
         names[m.userId] = rosterDisplayName(m);

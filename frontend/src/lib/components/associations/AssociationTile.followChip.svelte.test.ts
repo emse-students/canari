@@ -10,6 +10,7 @@ vi.mock('$lib/utils/associationLogoCache', () => ({
 vi.mock('$lib/follows/followState.svelte', () => ({
   ensureAssociationsLoaded: () => {},
   followEpoch: () => 0,
+  retryFailedFollowReads: () => {},
   ensureBlocksLoaded: () => {},
   ensurePersonStatus: () => {},
   personChipState: () => null,

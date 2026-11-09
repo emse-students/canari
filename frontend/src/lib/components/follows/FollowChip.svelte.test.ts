@@ -18,9 +18,17 @@ vi.mock('$lib/follows/api', async (importOriginal) => ({
 }));
 const asso = vi.hoisted(() => ({
   followAssociation: vi.fn(),
+  getAssociationFollowStatus: vi.fn(),
   unfollowAssociation: vi.fn(),
   listMyFollowedAssociations: vi.fn(),
   ensureMyAssociations: vi.fn(),
+  didMyAssociationsProbeFail: vi.fn(() => false),
+}));
+const nav = vi.hoisted(() => ({ before: null as null | (() => void) }));
+vi.mock('$app/navigation', () => ({
+  beforeNavigate: (cb: () => void) => {
+    nav.before = cb;
+  },
 }));
 vi.mock('$lib/associations/api', () => asso);
 const blocks = vi.hoisted(() => ({
@@ -81,6 +89,8 @@ beforeEach(() => {
   blocks.listBlockedUsers.mockResolvedValue([]);
   asso.listMyFollowedAssociations.mockResolvedValue([]);
   asso.ensureMyAssociations.mockResolvedValue([]);
+  asso.didMyAssociationsProbeFail.mockReturnValue(false);
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 afterEach(() => {
   if (component) unmount(component);
@@ -106,6 +116,8 @@ describe('a person', () => {
     api.withdrawFollowRequest.mockResolvedValue(undefined);
     await render('user', 'u1');
     expect(chip()?.getAttribute('aria-label')).toBe(m.follow_chip_withdraw_named({ name: 'X' }));
+    // label in name: the accessible name holds the visible text
+    expect(chip()!.getAttribute('aria-label')).toContain(m.profile_follow_requested_btn());
     chip()!.click();
     await settle();
     expect(api.withdrawFollowRequest).toHaveBeenCalledWith('u1');
@@ -227,6 +239,78 @@ describe('a read that fails', () => {
   });
 });
 
+describe('the association page read', () => {
+  it('teaches the ledger only from a real answer: a rejected read writes nothing', async () => {
+    const led = await import('$lib/follows/followState.svelte');
+    asso.getAssociationFollowStatus.mockRejectedValue(new Error('502'));
+    asso.listMyFollowedAssociations.mockResolvedValue([{ id: 'a1' }]);
+    expect(await led.readAssociationFollowed('a1')).toBe(false); // the page still gets a value to draw
+    expect(console.warn).toHaveBeenCalled();
+    // the ledger kept its OWN answer (followed): the failed read did not turn it into "not followed"
+    await render('association', 'a1');
+    expect(chip()).toBeNull();
+  });
+
+  it('a real answer is recorded', async () => {
+    const led = await import('$lib/follows/followState.svelte');
+    asso.getAssociationFollowStatus.mockResolvedValue({ following: true });
+    expect(await led.readAssociationFollowed('a1')).toBe(true);
+    await render('association', 'a1');
+    expect(chip()).toBeNull();
+  });
+});
+
+describe('a failure is said, and a navigation retries it once', () => {
+  it('warns with the status, and a navigation asks again once', async () => {
+    api.getFollowStatuses
+      .mockRejectedValueOnce(new ApiRefusalError(502, null, 'bad gateway'))
+      .mockResolvedValueOnce({});
+    await render('user', 'u1');
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining('status 502'),
+      expect.anything()
+    );
+    nav.before!();
+    await settle();
+    expect(api.getFollowStatuses).toHaveBeenCalledTimes(2);
+    nav.before!();
+    await settle();
+    expect(api.getFollowStatuses).toHaveBeenCalledTimes(2);
+    expect(chip()?.dataset.followChipState).toBe('ask');
+  });
+});
+
+describe('a tap that outlives its reader', () => {
+  it('a tap on A answered after the switch to B leaves B ledger untouched', async () => {
+    let answer!: (s: string) => void;
+    api.getFollowStatuses.mockResolvedValue({});
+    api.askToFollow.mockReturnValue(new Promise((r) => (answer = r)));
+    await render('user', 'u1');
+    chip()!.click();
+    await settle();
+    forgetReaderCaches(); // B signs in
+    api.getFollowStatuses.mockResolvedValue({});
+    answer('pending');
+    await settle();
+    await settle();
+    // B's own read says none; A's 'pending' never reached it.
+    expect(chip()?.dataset.followChipState).toBe('ask');
+  });
+
+  it('a refused tap on A, answered after the switch, rolls nothing back and says nothing', async () => {
+    let fail!: (e: unknown) => void;
+    api.getFollowStatuses.mockResolvedValue({});
+    api.askToFollow.mockReturnValue(new Promise((_, rej) => (fail = rej)));
+    await render('user', 'u1');
+    chip()!.click();
+    await settle();
+    forgetReaderCaches();
+    fail(new ApiRefusalError(403, FOLLOW_BLOCKED, 'x'));
+    await settle();
+    expect(toast.showToast).not.toHaveBeenCalled();
+  });
+});
+
 describe('another account', () => {
   it('an answer in flight for account A never lands in B, and B asks for itself', async () => {
     let answerA!: (v: Record<string, string>) => void;
@@ -250,6 +334,20 @@ describe('another account', () => {
     api.getFollowStatuses.mockResolvedValue({});
     await settle();
     expect(chip()?.dataset.followChipState).toBe('ask');
+  });
+});
+
+describe('the name of a pending chip', () => {
+  it('never renders with an empty name: a nameless label, not the visible text alone', async () => {
+    api.getFollowStatuses.mockResolvedValue({ u1: 'pending' });
+    component = mount(FollowChip, {
+      target: document.body,
+      props: { kind: 'user', targetId: 'u1' },
+    });
+    await settle();
+    const label = chip()!.getAttribute('aria-label')!;
+    expect(label).toBe(m.follow_chip_withdraw());
+    expect(label).toContain(m.profile_follow_requested_btn());
   });
 });
 
@@ -303,6 +401,25 @@ describe('an association', () => {
     await settle();
     expect(asso.followAssociation).toHaveBeenCalledWith('a1');
     expect(chip()).toBeNull();
+  });
+
+  it('draws nothing when the membership read FAILED: unknown is not "belongs to nothing"', async () => {
+    asso.didMyAssociationsProbeFail.mockReturnValue(true);
+    await render('association', 'a1');
+    expect(chip()).toBeNull();
+  });
+
+  it('a follow settled by a write is not overwritten by an older read', async () => {
+    let list!: (v: { id: string }[]) => void;
+    asso.listMyFollowedAssociations.mockReturnValue(new Promise((r) => (list = r)));
+    asso.followAssociation.mockResolvedValue({ ok: true });
+    asso.unfollowAssociation.mockResolvedValue({ ok: true });
+    const led = await import('$lib/follows/followState.svelte');
+    await render('association', 'a1');
+    await led.unfollowAssociationLedgered('a1'); // a write settles "not followed"
+    list([{ id: 'a1' }]); // the older read says followed
+    await settle();
+    expect(chip()?.dataset.followChipState).toBe('ask');
   });
 
   it('draws nothing for an association the reader belongs to', async () => {

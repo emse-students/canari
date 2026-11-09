@@ -11,6 +11,7 @@
    * the chip then goes away. The state is `followState.svelte.ts`, shared with every other chip, and
    * the labels and refusals are the profile's (`followButton.ts`).
    */
+  import { beforeNavigate } from '$app/navigation';
   import { UserPlus, Send } from '@lucide/svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -18,6 +19,7 @@
     ensureAssociationsLoaded,
     ensureBlocksLoaded,
     followEpoch,
+    retryFailedFollowReads,
     ensurePersonStatus,
     associationChipState,
     personChipState,
@@ -41,6 +43,9 @@
 
   let { kind, targetId, name = '', archived = false, iconOnlyOnPhone = false }: Props = $props();
 
+  // A real navigation asks again, once, for what failed (an online 5xx no reconnect ever heals).
+  beforeNavigate(() => retryFailedFollowReads());
+
   const person = $derived(kind === 'user' ? personChipState(targetId) : undefined);
   const association = $derived(kind === 'association' ? associationChipState(targetId) : undefined);
 
@@ -62,9 +67,16 @@
     if (person === 'pending') return 'pending';
     return person === null ? 'ask' : null;
   });
+  /**
+   * The accessible name CONTAINS the visible text (label in name): "Suivre X" for the visible
+   * "Suivre"; "Demande envoyee - retirer la demande de suivi a X" for the visible "Demande envoyee".
+   * Without a name it says the same without one - never the bare visible text.
+   */
   const label = $derived(
     shown === 'pending'
-      ? m.follow_chip_withdraw_named({ name: name || followLabel('pending') })
+      ? name
+        ? m.follow_chip_withdraw_named({ name })
+        : m.follow_chip_withdraw()
       : name
         ? m.follow_chip_follow_named({ name })
         : followLabel(null)

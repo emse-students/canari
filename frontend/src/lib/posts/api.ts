@@ -150,6 +150,11 @@ export interface PostAssociationAuthor {
   name: string;
   slug: string;
   logoUrl: string | null;
+  /**
+   * Set when the server says the entity is archived (no "Suivre" is offered for it). Not every
+   * post payload carries it yet; absent reads as not archived.
+   */
+  archived?: boolean;
   /** The entity's type - what decides whether its posts may be marked "Entre étudiants". */
   type?: 'association' | 'list' | 'institution';
 }
