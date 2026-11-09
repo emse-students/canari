@@ -56,8 +56,11 @@ on:
     - cron: '0 4 * * 1'
     # Every 15 minutes, as a request GitHub may delay or drop, and ONE job reads it: do the public
     # names the estate depends on answer? The deliberate exception to "a daily floor" - see the
-    # header and the `upstream` job.
-    - cron: '*/15 * * * *'
+    # header and the `upstream` job. OFF the hour on purpose (2026-11-09): GitHub's own advice is
+    # that the start of every hour is when slots are delayed and dropped, and `*/15` asked for
+    # `:00` four times an hour. Measured as `*/15`: 13 runs of ~240 slots (2026-11-06..09). What
+    # reports it if delivery stays that thin is NOT this file - see `upstream-monitor-freshness`.
+    - cron: '4,19,34,49 * * * *'
   workflow_dispatch:
     inputs:
       job:
@@ -243,12 +246,16 @@ jobs:
   # downtime. An issue reaches everyone watching the repository, once; a red run reaches only whoever
   # last edited the cron line, once per slot. So the RUN IS GREEN while an outage is recorded, and
   # red only when this reporter cannot report (a refused gh call, a missing reading).
+  # A reading the EDGE refused (`edge-refused`: a bot or challenge rule against this runner) is the
+  # monitor being blind, and opens "Upstream monitor cannot read <name>" - never "is down", never
+  # silence (2026-11-09: three such names had held "is down" issues open for three days). And this
+  # job cannot report its own absence: `upstream-monitor-freshness` in `ci.yml` does, on every push.
   # docs/wiki/infrastructure/upstream-reachability.md.
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   upstream:
     name: Public names answer
     if: >
-      github.event.schedule == '*/15 * * * *' ||
+      github.event.schedule == '4,19,34,49 * * * *' ||
       (github.event_name == 'workflow_dispatch' &&
       contains(fromJSON('["all", "upstream"]'), inputs.job))
     runs-on: ubuntu-latest

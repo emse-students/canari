@@ -458,9 +458,12 @@
                 <Select
                   id="wizard-max"
                   label={m.bookings_wizard_max_label()}
-                  value={String(draft.maxMinutes)}
-                  options={durationChoices(MAX_DURATION_CHOICES)}
-                  onValueChange={(v) => (draft.maxMinutes = Number(v))}
+                  value={draft.maxMinutes === null ? '' : String(draft.maxMinutes)}
+                  options={[
+                    { value: '', label: m.bookings_field_max_minutes_none() },
+                    ...durationChoices(MAX_DURATION_CHOICES),
+                  ]}
+                  onValueChange={(v) => (draft.maxMinutes = v === '' ? null : Number(v))}
                 />
                 <Select
                   id="wizard-step"
