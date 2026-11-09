@@ -207,6 +207,12 @@ maybe('follow suggestions against PostgreSQL (engagement WP-5)', () => {
     }
   });
 
+  it('counts what the viewer follows for the onboarding banner: accepted persons and entities (L12)', async () => {
+    // f1..f5 and x accepted, f6 and pend only asked; E3 followed.
+    expect((await service.suggestionsFor('v')).followingCount).toBe(7);
+    expect((await service.suggestionsFor('p1')).followingCount).toBe(0);
+  });
+
   it('a review account is suggested to nobody outside the cohort, and sees no member', async () => {
     expect((await service.suggestionsFor('v')).people.map((p) => p.userId)).not.toContain('rev');
     // rev shares v's campus, promo and formation: nothing of it crosses the boundary.
