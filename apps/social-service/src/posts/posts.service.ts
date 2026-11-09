@@ -2254,6 +2254,11 @@ export class PostsService {
     const nextMedia = data.media ?? data.images;
     if (nextMedia !== undefined) {
       assertWithinPostAttachmentCap(nextMedia.length);
+      // Only what THIS edit adds is the editor's to prove: the edit form sends back the media the
+      // post already carries, and those were checked when they were added.
+      const already = new Set(postMediaIds(post));
+      const added = postMediaIds({ media: nextMedia }).filter((id) => !already.has(id));
+      await this.mediaRetention.assertOwnMedia(userId, added, 'post');
       post.media = nextMedia;
     }
 
