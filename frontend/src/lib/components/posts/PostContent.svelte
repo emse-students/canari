@@ -179,7 +179,9 @@
 
 {#if postMedia.length > 0 && authToken}
   <div
-    class="w-full overflow-hidden first:rounded-t-2xl last:rounded-b-2xl {post.markdown ? '' : 'mt-2'}"
+    class="w-full overflow-hidden first:rounded-t-2xl last:rounded-b-2xl {post.markdown
+      ? ''
+      : 'mt-2'}"
   >
     {#if reel}
       {@render singleMedia(postMedia[0], true)}
