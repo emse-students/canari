@@ -7,6 +7,7 @@ const SOUNDS_KEY = 'canari_sounds_enabled';
 const VIBRATIONS_KEY = 'canari_vibrations_enabled';
 const POST_FEED_KEY = 'canari_preferred_post_feed';
 const SHARE_SUGGESTIONS_KEY = 'canari_share_suggestions_enabled';
+const EMOJI_STYLE_KEY = 'canari_emoji_style';
 
 function readBool(key: string): boolean {
   if (typeof localStorage === 'undefined') return true;
@@ -30,6 +31,7 @@ let soundsEnabled = $state(readBool(SOUNDS_KEY));
 let vibrationsEnabled = $state(readBool(VIBRATIONS_KEY));
 let preferredPostFeed = $state(readString(POST_FEED_KEY));
 let shareSuggestionsEnabled = $state(readBool(SHARE_SUGGESTIONS_KEY));
+let emojiStyle = $state(readString(EMOJI_STYLE_KEY));
 
 function persist(key: string, value: boolean | string): void {
   if (typeof localStorage !== 'undefined') {
@@ -89,5 +91,23 @@ export const settings = {
   setPreferredPostFeed(value: string): void {
     preferredPostFeed = value;
     persist(POST_FEED_KEY, value);
+  },
+
+  /**
+   * How emoji are drawn - the system font's glyphs or Canari's own pictures - verbatim, or null
+   * when never chosen. Narrowed by `$lib/utils/emojiStyle`, the module that owns the vocabulary
+   * and the one place the choice is applied.
+   *
+   * READ HERE, AT MODULE LOAD, SYNCHRONOUSLY: the first message drawn already knows which emoji to
+   * draw, so no picture is fetched and then replaced. Per device, like the theme it sits beside: a
+   * display preference follows the screen it is seen on, and the account carries no preference record.
+   */
+  get emojiStyle(): string | null {
+    return emojiStyle;
+  },
+  /** Persists the emoji drawing preference. */
+  setEmojiStyle(value: string): void {
+    emojiStyle = value;
+    persist(EMOJI_STYLE_KEY, value);
   },
 };
