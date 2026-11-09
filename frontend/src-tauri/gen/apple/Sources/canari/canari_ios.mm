@@ -388,6 +388,151 @@ static void CanariObserveTheme(void) {
   NSLog(@"[CanariIOS] listening for the app theme");
 }
 
+/// WHICH WAY THE APP MAY TURN (owner, 2026-11-09; docs/wiki/frontend/screen-orientation.md). The
+/// iPhone is portrait everywhere except the video and camera screens, which ask through
+/// `webkit.messageHandlers.canariOrientation` (`screenOrientation.svelte.ts`):
+///
+/// - `portrait`: upright only - the boot's value, and what every page load posts.
+/// - `auto`: portrait and both landscapes. iOS rotates by the accelerometer and ALREADY honours the
+///   rotation lock for that, so nothing here reads the lock.
+/// - `landscape`: both landscapes, and a geometry request that turns the scene NOW - which iOS honours
+///   with the lock on (an app-requested orientation is not an auto-rotation).
+///
+/// THE GATE IS tao's ROOT VIEW CONTROLLER. Info.plist lists the three orientations, so the scene may
+/// turn; what it actually allows is `TaoUIViewController -supportedInterfaceOrientations`, replaced
+/// below by the mask of the requested mode. The app delegate's `supportedInterfaceOrientationsForWindow:`
+/// is NOT used: tao's `AppDelegate` does not implement it, and UIKit reads which selectors a delegate
+/// answers when it is set - before any hook here could add one.
+///
+/// An iPad keeps tao's own mask (every orientation) for `portrait` and `auto`: it is a PC here, as an
+/// Android tablet is; only `landscape` forces it.
+static NSString *g_canariOrientationMode = @"portrait";
+static UIInterfaceOrientationMask g_canariOrientationMask = UIInterfaceOrientationMaskPortrait;
+
+typedef UIInterfaceOrientationMask (*CanariSupportedOrientationsIMP)(id, SEL);
+static CanariSupportedOrientationsIMP CanariOrigSupportedOrientations = NULL;
+
+static BOOL CanariIsPhone(void) {
+  return UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone;
+}
+
+static UIInterfaceOrientationMask CanariSupportedOrientations(id self, SEL _cmd) {
+  if (!CanariIsPhone() && g_canariOrientationMask != UIInterfaceOrientationMaskLandscape) {
+    return CanariOrigSupportedOrientations(self, _cmd);
+  }
+  return g_canariOrientationMask;
+}
+
+/// Replaces tao's `supportedInterfaceOrientations` once. tao declares its view controller class when
+/// it builds the first window, inside `didFinishLaunching`, so the hook is installed at the launch
+/// notification and retried at the scene's connection and at the first request. `class_addMethod`
+/// first, so a tao that stopped declaring its own getter gets ours ADDED rather than UIViewController's
+/// swizzled for every controller in the process.
+static void CanariInstallOrientationHook(NSString *where) {
+  if (CanariOrigSupportedOrientations != NULL) return;
+  Class cls = NSClassFromString(@"TaoUIViewController");
+  SEL sel = @selector(supportedInterfaceOrientations);
+  Method method = cls ? class_getInstanceMethod(cls, sel) : NULL;
+  if (method == NULL) {
+    NSLog(@"[CanariOrientation] TaoUIViewController not declared yet at %@", where);
+    return;
+  }
+  IMP ours = (IMP)CanariSupportedOrientations;
+  if (class_addMethod(cls, sel, ours, method_getTypeEncoding(method))) {
+    CanariOrigSupportedOrientations = (CanariSupportedOrientationsIMP)method_getImplementation(method);
+  } else {
+    CanariOrigSupportedOrientations = (CanariSupportedOrientationsIMP)method_setImplementation(method, ours);
+  }
+  NSLog(@"[CanariOrientation] supported-orientations hook installed on TaoUIViewController at %@", where);
+}
+
+/// Applies a mode the page asked for. One line per change; an unknown value is logged and ignored.
+static void CanariApplyOrientation(NSString *mode) {
+  UIInterfaceOrientationMask mask;
+  if ([mode isEqualToString:@"portrait"]) {
+    mask = UIInterfaceOrientationMaskPortrait;
+  } else if ([mode isEqualToString:@"auto"]) {
+    mask = UIInterfaceOrientationMaskAllButUpsideDown;
+  } else if ([mode isEqualToString:@"landscape"]) {
+    mask = UIInterfaceOrientationMaskLandscape;
+  } else {
+    NSLog(@"[CanariOrientation] unknown mode ignored: %@", mode);
+    return;
+  }
+  CanariInstallOrientationHook(@"a request");
+  if ([mode isEqualToString:g_canariOrientationMode]) return;
+  if (CanariOrigSupportedOrientations == NULL) {
+    NSLog(@"[CanariOrientation] ERROR %@ asked but the hook is not installed - the app stays portrait", mode);
+    return;
+  }
+  NSLog(@"[CanariOrientation] %@ -> %@", g_canariOrientationMode, mode);
+  g_canariOrientationMode = mode;
+  g_canariOrientationMask = mask;
+  UIWindow *window = CanariFindWebView().window;
+  [window.rootViewController setNeedsUpdateOfSupportedInterfaceOrientations];
+  // `auto` asks for no geometry: the accelerometer, under the lock, decides from here. The two forced
+  // modes turn the scene now - with the lock on too.
+  if ([mode isEqualToString:@"auto"]) return;
+  UIWindowScene *scene = window.windowScene;
+  if (scene == nil) {
+    NSLog(@"[CanariOrientation] no window scene - %@ waits for the next rotation", mode);
+    return;
+  }
+  UIWindowSceneGeometryPreferencesIOS *preferences =
+      [[UIWindowSceneGeometryPreferencesIOS alloc] initWithInterfaceOrientations:mask];
+  [scene requestGeometryUpdateWithPreferences:preferences
+                                 errorHandler:^(NSError *error) {
+                                   NSLog(@"[CanariOrientation] ERROR the scene refused %@: %@", mode, error);
+                                 }];
+}
+
+/// Re-publishes the safe area after the scene turned: in landscape the notch is on a SIDE, and WebKit
+/// reports every `env(safe-area-inset-*)` as 0 in this WebView, so the page learns the sides from
+/// `CanariPublishSafeAreaInsets` only. `effectiveGeometry` is key-value observable since iOS 16.
+@interface CanariGeometryObserver : NSObject
+@end
+@implementation CanariGeometryObserver
+- (void)observeValueForKeyPath:(NSString *)keyPath
+                      ofObject:(id)object
+                        change:(NSDictionary *)change
+                       context:(void *)context {
+  UIWindowScene *scene = (UIWindowScene *)object;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    BOOL landscape = UIInterfaceOrientationIsLandscape(scene.effectiveGeometry.interfaceOrientation);
+    NSLog(@"[CanariOrientation] the scene turned: %@", landscape ? @"landscape" : @"portrait");
+    CanariPublishSafeAreaInsets();
+  });
+}
+@end
+
+@interface CanariOrientationHandler : NSObject <WKScriptMessageHandler>
+@end
+@implementation CanariOrientationHandler
+- (void)userContentController:(WKUserContentController *)controller
+      didReceiveScriptMessage:(WKScriptMessage *)message {
+  CanariApplyOrientation([message.body isKindOfClass:[NSString class]] ? message.body : @"");
+}
+@end
+
+static void CanariObserveOrientation(void) {
+  static CanariOrientationHandler *handler = nil;
+  static CanariGeometryObserver *geometryObserver = nil;
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil || handler != nil) {
+    return;
+  }
+  handler = [CanariOrientationHandler new];
+  [webView.configuration.userContentController addScriptMessageHandler:handler
+                                                                  name:@"canariOrientation"];
+  UIWindowScene *scene = webView.window.windowScene;
+  if (scene != nil) {
+    geometryObserver = [CanariGeometryObserver new];
+    [scene addObserver:geometryObserver forKeyPath:@"effectiveGeometry" options:0 context:NULL];
+  }
+  NSLog(@"[CanariOrientation] listening for the page's orientation (geometry observed: %@)",
+        scene != nil ? @"yes" : @"NO - the sides' safe area follows the next activation only");
+}
+
 /// THE SCREEN GOES DARK AGAINST THE CHEEK DURING A CALL ON THE RECEIVER. iOS turns the screen off
 /// near the face only while `UIDevice.proximityMonitoringEnabled` is set, and a WebView never sets it.
 /// The page posts a boolean through `webkit.messageHandlers.canariProximity` (`iosCallProximity.ts`):
@@ -565,8 +710,9 @@ static void CanariRegisterCallPageHandlers(NSString *where) {
 /// The inset is the window's bottom safe area MINUS the part of it the WebView no longer reaches,
 /// so a WebView shrunk above the keyboard publishes 0 - the same outcome `.keyboard-open` has on
 /// Android, and what the old comment on CanariApplyKeyboardLayout relied on UIKit to do through env().
-/// Re-read at every activation (a reload of the page loses the property) and after every keyboard
-/// resize; portrait only on iPhone, so there is no rotation to follow.
+/// Re-read at every activation (a reload of the page loses the property), after every keyboard
+/// resize, and after every turn of the scene (`CanariGeometryObserver`: the video and camera screens
+/// rotate since 2026-11-09, and then the notch's side is published as `--safe-area-inset-left/right`).
 /// Republishes the inset when a page finishes loading: a document that loads after the publish
 /// starts without the property (seen on a cold start, where the first `didBecomeActive` precedes the
 /// end of the initial load - syslog showed 34 pt published and the page still read 0).
@@ -588,6 +734,8 @@ static void CanariRegisterCallPageHandlers(NSString *where) {
 
 static void CanariPublishSafeAreaInsets(void) {
   static CGFloat published = -1;
+  static CGFloat publishedLeft = -1;
+  static CGFloat publishedRight = -1;
   static CanariLoadObserver *loadObserver = nil;
   WKWebView *webView = CanariFindWebView();
   UIWindow *window = webView.window;
@@ -605,11 +753,18 @@ static void CanariPublishSafeAreaInsets(void) {
   // starts below. With the page edge to edge (CanariApplyEdgeToEdge) the frame starts at the screen's
   // top, so that is the status bar's whole height.
   CGFloat top = MAX(0.0, window.safeAreaInsets.top - MAX(0.0, CGRectGetMinY(inWindow)));
+  // The SIDES, for the video and camera screens that turn (screen-orientation.md): in landscape the
+  // notch is on the left or the right, and 0 in portrait. Same rule - the part the frame reaches.
+  CGFloat left = MAX(0.0, window.safeAreaInsets.left - MAX(0.0, CGRectGetMinX(inWindow)));
+  CGFloat right = MAX(0.0, window.safeAreaInsets.right -
+                               MAX(0.0, CGRectGetWidth(window.bounds) - CGRectGetMaxX(inWindow)));
   NSString *js = [NSString
       stringWithFormat:@"document.documentElement.style.setProperty('--safe-area-inset-bottom', '%.0fpx');"
                         "document.documentElement.style.setProperty('--safe-area-inset-top', '%.0fpx');"
+                        "document.documentElement.style.setProperty('--safe-area-inset-left', '%.0fpx');"
+                        "document.documentElement.style.setProperty('--safe-area-inset-right', '%.0fpx');"
                         "(document.documentElement.dataset.theme || '')",
-                       inset, top];
+                       inset, top, left, right];
   [webView evaluateJavaScript:js
             completionHandler:^(id result, NSError *error) {
               // The same round trip reads the theme the page started with: a page that loads after
@@ -618,9 +773,12 @@ static void CanariPublishSafeAreaInsets(void) {
                 CanariApplyTheme(result);
               }
             }];
-  if (inset != published) {
+  if (inset != published || left != publishedLeft || right != publishedRight) {
     published = inset;
-    NSLog(@"[CanariIOS] safe area published to the page: bottom %.0f pt, top %.0f pt", inset, top);
+    publishedLeft = left;
+    publishedRight = right;
+    NSLog(@"[CanariIOS] safe area published to the page: bottom %.0f pt, top %.0f pt, left %.0f pt, right %.0f pt",
+          inset, top, left, right);
   }
 }
 
@@ -1001,6 +1159,7 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariApplyEdgeToEdge();
   CanariObserveDocumentScrollRange();
   CanariObserveTheme();
+  CanariObserveOrientation();
   CanariRegisterCallPageHandlers(@"activation");
   CanariHideKeyboardAccessoryBar();
   CanariPublishSafeAreaInsets();
@@ -1077,6 +1236,7 @@ static CanariSceneWillConnectIMP CanariOrigSceneWillConnect = NULL;
 static void CanariSceneWillConnect(id self, SEL _cmd, UIScene *scene, UISceneSession *session,
                                    UISceneConnectionOptions *options) {
   CanariOrigSceneWillConnect(self, _cmd, scene, session, options);
+  CanariInstallOrientationHook(@"scene connection");
   // The scene now holds its window, on a background launch too; whether the WebView is in it yet
   // is logged (`registered at scene connection`, or `no WebView yet` and a later point).
   CanariRegisterCallPageHandlers(@"scene connection");
@@ -1132,6 +1292,7 @@ void canari_ios_bootstrap(void) {
                    queue:nil
               usingBlock:^(__unused NSNotification *note) {
                 CanariInstallSceneLaunchUrlHook();
+                CanariInstallOrientationHook(@"launch");
               }];
   [nc addObserverForName:UIApplicationDidBecomeActiveNotification
                   object:nil
