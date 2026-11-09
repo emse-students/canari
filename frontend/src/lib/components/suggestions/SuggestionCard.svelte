@@ -9,6 +9,7 @@
    */
   import { resolve } from '$app/paths';
   import { X } from '@lucide/svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import FollowChip from '$lib/components/follows/FollowChip.svelte';
@@ -52,15 +53,18 @@
   data-suggestion-card={card.kind}
   data-suggestion-id={card.id}
 >
-  <button
-    type="button"
-    class="text-text-muted hover:text-text-main tap-target absolute top-1 right-1 rounded-full p-1"
+  <!-- The X: the shared ui/Button (docs/wiki/frontend/controls.md), an icon square in the corner. -->
+  <Button
+    variant="ghost"
+    size="compact"
+    icon
+    class="absolute top-1 right-1"
     aria-label={m.suggestions_dismiss_named({ name })}
     data-suggestion-dismiss
     onclick={() => onDismiss(card)}
   >
     <X size={14} strokeWidth={2.5} aria-hidden="true" />
-  </button>
+  </Button>
   {#snippet identity()}
     <span class="h-16 w-16 shrink-0 overflow-hidden rounded-full">
       {#if card.kind === 'user'}
