@@ -42,7 +42,6 @@ describe('handleWelcomeRequest - membership guard', () => {
 
     await handleWelcomeRequest({
       mlsService,
-      storage: null,
       userId: 'me',
       deviceKeyB64: 'pin',
       conversations: activeConversations(groupId),
@@ -67,7 +66,6 @@ describe('handleWelcomeRequest - membership guard', () => {
 
     await handleWelcomeRequest({
       mlsService,
-      storage: null,
       userId: 'me',
       deviceKeyB64: 'pin',
       conversations: activeConversations(groupId),
@@ -101,7 +99,6 @@ describe('handleWelcomeRequest - membership guard', () => {
 
     await handleWelcomeRequest({
       mlsService,
-      storage: null,
       userId: 'me',
       deviceKeyB64: 'pin',
       conversations: activeConversations(groupId),
@@ -148,7 +145,6 @@ describe('handleWelcomeRequest - the kick decision reads the tree, not the routi
   ) =>
     handleWelcomeRequest({
       mlsService,
-      storage: null,
       userId: 'me',
       deviceKeyB64: 'pin',
       conversations: activeConversations(groupId),
@@ -316,7 +312,6 @@ describe('handleWelcomeRequest - a re-add the device key cannot justify', () => 
   ) =>
     handleWelcomeRequest({
       mlsService,
-      storage: null,
       userId: 'me',
       deviceKeyB64: 'pin',
       conversations: activeConversations(groupId),
@@ -440,7 +435,6 @@ describe('handleWelcomeRequest - a duplicate signature key', () => {
   const run = (groupId: string, mlsService: ReturnType<typeof createMlsServiceStub>) =>
     handleWelcomeRequest({
       mlsService,
-      storage: null,
       userId: 'me',
       deviceKeyB64: 'pin',
       conversations: activeConversations(groupId),
