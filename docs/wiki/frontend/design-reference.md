@@ -2526,9 +2526,34 @@ The four window-scale banners (`EnvironmentBanner`, `MaintenanceAdminBanner`, `M
 `OfflineBanner`; `TabFollowerBanner` was the fifth until 2026-11-08, when a follower tab started handing
 its commits to the leader and the banner had nothing left to say - [chat](modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08))
 all render in that one column, above the row - so they are
-full width by construction, and `Banner.svelte` insets itself squarely at `m-3`, the same 0.75rem
-gutter grid every other card in the floating shell sits on. It was `mx-3 mt-2`: three different
+full width by construction, and `Banner.svelte` insets itself squarely at `m-2` (0.5rem on all four sides; it was `m-3`
+until 2026-11-09, see the table below). It was `mx-3 mt-2`: three different
 numbers on four sides (user: *"si il y a des marges elles doivent etre egales de tous les cotes"*).
+
+### Banners are one line and one height (owner, 2026-11-09)
+
+*"Les bandeaux sont tres fournis en texte, notamment celui qui dit que la connexion est impossible. Je
+veux qu'il soit reduit au minimum."* `Banner.svelte` no longer wraps: `min-h-(--banner-height)` (2rem,
+32px) with `text-xs`, or `--banner-height-thin` (1.5rem, 24px, `text-2xs`) for the deployment marker
+(`thin`); the label truncates beside its actions. An action inside a strip is `.banner-action` (24px
+drawn, 44px hit area through a pseudo-element). A sentence that explains goes to `title` and to a
+screen-reader-only span, never to a second visible line; the offline sentence lives in
+[offline-and-weak-network](offline-and-weak-network.md). WHEN a banner shows did not change. Heights
+at a 390px phone, box / with the inset (before: computed from the classes, `text-sm`, `py-2`, `px-4`,
+`m-3`, the 44px close button; after: the tokens):
+
+| Banner | Before (fr) | Before | After (fr) | After |
+| --- | --- | --- | --- | --- |
+| Offline | "Hors connexion. Vous pouvez lire vos conversations. Vos messages partiront ..." (4 lines) | ~98 / ~122 | "Hors connexion" | 32 / 48 |
+| Reconnecting | "Connexion retrouvee, synchronisation de vos messages..." | 38 / 62 | "Synchronisation..." | 32 / 48 |
+| Test environment (dev builds) | "Environnement de test" + 44px close | 62 / 86 | "Environnement de test" + 24px close | 24 / 40 |
+| Maintenance (admins) | "Mode maintenance actif - seuls les administrateurs ont acces." + message | 58 / 82 | "Maintenance : admins uniquement" | 32 / 48 |
+| MLS fatal error | one sentence of 40 to 110 characters, action wrapped below | 60-100 / 84-124 | 2 to 6 words + action on the row | 32 / 48 |
+| Post being sent | label, bar on a second row, Retry and Delete wrapped below | 46-76 / 70-100 | label, bar and controls on one row | 32 / 48 |
+
+Left as they were, on purpose: the minimised-call bar (its mute and hang-up are 44px touch targets),
+the chat's catch-up strip (`text-xs`, 29px, already one line) and `OpenInAppBanner` (a full card with
+one button, decided 2026-10-08).
 
 `appContentTop.test.ts` counts the readers of `var(--app-top-bar-height)` across the whole
 stylesheet and expects exactly one - the definition of `--app-content-top`. A sixth card positioning
