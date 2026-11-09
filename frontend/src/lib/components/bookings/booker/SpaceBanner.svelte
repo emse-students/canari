@@ -56,7 +56,7 @@
 
   <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
     <div class="min-w-0">
-      <h1 class="text-text-main text-2xl font-bold tracking-tight break-words">{space.name}</h1>
+      <h1 class="text-text-main text-2xl font-bold break-words">{space.name}</h1>
       {#if space.description}
         <p class="text-text-main mt-1 text-sm">{space.description}</p>
       {/if}

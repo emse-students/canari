@@ -8,6 +8,7 @@ import {
   SendForbiddenError,
   SenderNotActiveError,
   SendServerError,
+  SendUnavailableError,
   parseRetryAfterMs,
   WithheldUnsupportedError,
 } from './mlsDeliveryApi';
@@ -104,6 +105,29 @@ describe('postApplicationMessage on a 5xx or another status', () => {
     expect(edge).toBeInstanceOf(SendServerError);
     expect((edge as SendServerError).origin).toBe('edge');
     expect(classifyOutgoingSendError(edge)).toBe('unknown');
+  });
+
+  it('types a "not now" (502, 503, 504) as SendUnavailableError, whoever answered - and nothing else (R05)', async () => {
+    const answer = (status: number, type: string) =>
+      api(new Response('{}', { status, headers: { 'content-type': type } }))
+        .postApplicationMessage('g1', 'AAAA')
+        .catch((e: unknown) => e);
+    for (const status of [502, 503, 504]) {
+      // The estate's nginx answers its own 502/503/504 in JSON while a container rotates; a host
+      // proxy or a CDN answers HTML. Both are the same answer about the service.
+      for (const type of ['application/json', 'text/html']) {
+        const failure = await answer(status, type);
+        expect(failure).toBeInstanceOf(SendUnavailableError);
+        // Still a 5xx for every reader of one.
+        expect(failure).toBeInstanceOf(SendServerError);
+        expect(refusalStatus(failure)).toBe(status);
+      }
+    }
+    for (const status of [500, 501, 505]) {
+      const failure = await answer(status, 'application/json');
+      expect(failure).toBeInstanceOf(SendServerError);
+      expect(failure).not.toBeInstanceOf(SendUnavailableError);
+    }
   });
 
   it('carries the Retry-After of a 5xx, in ms', async () => {

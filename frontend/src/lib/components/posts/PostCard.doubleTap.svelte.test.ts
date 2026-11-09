@@ -118,7 +118,7 @@ const text = (target: HTMLElement) => target.querySelector('.post-markdown')!;
 const hearts = (target: HTMLElement) => target.querySelectorAll('[data-double-tap-heart]').length;
 /** The emoji the reaction button shows as the reader's own, or null when they have not reacted. */
 function myReaction(target: HTMLElement): string | null {
-  const button = target.querySelector(`button[aria-label="${m.post_reacter()}"]`)!;
+  const button = target.querySelector(`button[data-post-react]`)!;
   return button.querySelector('img.emoji')?.getAttribute('alt') ?? null;
 }
 
@@ -185,15 +185,38 @@ it('a double tap on a poll option is two taps on the option, never a like', asyn
   expect(hearts(target)).toBe(0);
 });
 
-it("a double tap on the action bar is the bar's, never a like", async () => {
+it("a double tap on the action bar is the bar's own two taps (like, then back), never the card's heart", async () => {
+  vi.mocked(addReaction).mockResolvedValue({ ok: true, reactions: { alice: "J'aime" } });
+  vi.mocked(removeReaction).mockResolvedValue({ ok: true, reactions: {} });
   const target = mountCard(row());
-  const button = target.querySelector(`button[aria-label="${m.post_reacter()}"]`)!;
+  const button = target.querySelector(`button[data-post-react]`)!;
 
   doubleTap(button);
   await settle();
 
-  expect(addReaction).not.toHaveBeenCalled();
+  expect(addReaction).toHaveBeenCalledTimes(1);
+  expect(removeReaction).toHaveBeenCalledTimes(1);
   expect(hearts(target)).toBe(0);
+});
+
+it('one tap on the bar likes, and a second tap takes the reaction back (owner, 2026-11-09)', async () => {
+  vi.mocked(addReaction).mockResolvedValue({ ok: true, reactions: { alice: "J'aime" } });
+  vi.mocked(removeReaction).mockResolvedValue({ ok: true, reactions: {} });
+  const target = mountCard(row());
+  const button = () => target.querySelector<HTMLButtonElement>('button[data-post-react]')!;
+
+  button().click();
+  flushSync();
+  expect(myReaction(target)).toBe('❤️');
+  expect(target.querySelector('[role="group"]')).toBeNull();
+  await settle();
+  expect(addReaction).toHaveBeenCalledWith('p1', "J'aime");
+
+  button().click();
+  flushSync();
+  expect(myReaction(target)).toBeNull();
+  await settle();
+  expect(removeReaction).toHaveBeenCalledTimes(1);
 });
 
 it('a known mute refuses it as it refuses the heart button: no request, no heart, the same line', async () => {

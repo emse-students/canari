@@ -392,7 +392,7 @@
         </div>
 
         <div class="space-y-1">
-          <p class="text-text-main text-xs font-bold tracking-wide uppercase">
+          <p class="text-text-main text-xs font-bold">
             {m.asso_partnership_claims_title()}
           </p>
           {#if claimsLoading}

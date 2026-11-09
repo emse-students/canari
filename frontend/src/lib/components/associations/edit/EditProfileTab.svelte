@@ -190,7 +190,7 @@
 </script>
 
 <div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6 shadow-sm">
-  <h2 class="text-text-main text-lg font-bold tracking-tight">{m.asso_edit_profile_title()}</h2>
+  <h2 class="text-text-main text-lg font-bold">{m.asso_edit_profile_title()}</h2>
   <!--
     ONE LOGO CONTROL, CALLED TWICE. The second theme's logo had every half of its plumbing - column,
     DTO, public projection, frontend type, detail-page rendering - and no way to SET it, so the

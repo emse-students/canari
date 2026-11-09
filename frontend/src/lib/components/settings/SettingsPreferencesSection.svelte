@@ -3,7 +3,6 @@
   import { settings } from '$lib/stores/settingsStore.svelte';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import {
-    Settings,
     Volume2,
     VolumeX,
     Vibrate,
@@ -75,12 +74,7 @@
   class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-200 duration-500 md:p-8"
   style="animation-fill-mode: backwards;"
 >
-  <div class="mb-6 flex items-center gap-3">
-    <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
-      <Settings size={22} strokeWidth={2.5} />
-    </div>
-    <h2 class="text-text-main text-lg font-bold">{m.profile_preferences_title()}</h2>
-  </div>
+  <h2 class="sr-only">{m.profile_preferences_title()}</h2>
 
   <div class="space-y-5">
     <div class="flex items-center justify-between gap-4">

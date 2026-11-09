@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Bell } from '@lucide/svelte';
   import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
   import {
     NOTIFICATION_CATEGORIES,
@@ -51,12 +50,9 @@
   style="animation-fill-mode: backwards;"
 >
   <div class="mb-6 flex items-center gap-3">
-    <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
-      <Bell size={22} strokeWidth={2.5} />
-    </div>
     <div>
-      <h2 class="text-text-main text-lg font-bold">{m.settings_notifications_heading()}</h2>
-      <p class="text-text-muted mt-0.5 text-xs font-medium">
+      <h2 class="sr-only">{m.settings_notifications_heading()}</h2>
+      <p class="text-text-muted text-xs font-medium">
         {m.settings_notifications_subtitle()}
       </p>
     </div>

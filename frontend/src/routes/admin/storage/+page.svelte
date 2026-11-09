@@ -225,7 +225,7 @@
           </div>
 
           <div class="space-y-2">
-            <h3 class="text-text-muted text-xs font-bold tracking-wide uppercase">
+            <h3 class="text-text-muted text-xs font-bold">
               {m.admin_storage_media_growth_title()}
             </h3>
             <div class="flex h-24 items-end gap-2">
@@ -263,7 +263,7 @@
           </div>
 
           <div class="space-y-1">
-            <h3 class="text-text-muted text-xs font-bold tracking-wide uppercase">
+            <h3 class="text-text-muted text-xs font-bold">
               {m.admin_storage_media_retention_title()}
             </h3>
             {#if retention?.kind === 'stalled'}
@@ -295,7 +295,7 @@
           </div>
 
           <div class="space-y-1">
-            <h3 class="text-text-muted text-xs font-bold tracking-wide uppercase">
+            <h3 class="text-text-muted text-xs font-bold">
               {m.admin_storage_media_unreachable_title()}
             </h3>
             {#if unreachableCount === 0}
@@ -412,7 +412,7 @@
         {#if mls}
           {#if mls.tables.length > 0}
             <div class="space-y-2">
-              <h3 class="text-text-muted text-xs font-bold tracking-wide uppercase">
+              <h3 class="text-text-muted text-xs font-bold">
                 {m.admin_storage_mls_tables_title()}
               </h3>
               <!-- Why two sizes. "72.9 Mo, 817 lignes" was read here on 2026-08-19 as a 90 kB
@@ -449,7 +449,7 @@
           {/if}
 
           <div class="space-y-2">
-            <h3 class="text-text-muted text-xs font-bold tracking-wide uppercase">
+            <h3 class="text-text-muted text-xs font-bold">
               {m.admin_storage_mls_queue_title()}
             </h3>
             {#if !mls.queue}
@@ -475,7 +475,7 @@
                   })}
                 </p>
               {/if}
-              <h4 class="text-text-muted pt-2 text-xs font-bold tracking-wide uppercase">
+              <h4 class="text-text-muted pt-2 text-xs font-bold">
                 {m.admin_storage_mls_queue_growth()}
               </h4>
               <div class="flex h-20 items-end gap-2">
@@ -501,7 +501,7 @@
           </div>
 
           <div class="space-y-1">
-            <h3 class="text-text-muted text-xs font-bold tracking-wide uppercase">
+            <h3 class="text-text-muted text-xs font-bold">
               {m.admin_storage_mls_ghosts_title()}
             </h3>
             {#if !mls.ghosts}
@@ -524,7 +524,7 @@
           </div>
 
           <div class="space-y-1">
-            <h3 class="text-text-muted text-xs font-bold tracking-wide uppercase">
+            <h3 class="text-text-muted text-xs font-bold">
               {m.admin_storage_mls_redis_title()}
             </h3>
             {#if !mls.redisKeyspace}
