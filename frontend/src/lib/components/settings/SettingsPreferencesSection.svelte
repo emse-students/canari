@@ -15,6 +15,7 @@
     Share2,
     Compass,
     Lightbulb,
+    Smile,
   } from '@lucide/svelte';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
@@ -26,6 +27,19 @@
   import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
   import { isMobileTauriRuntime } from '$lib/utils/appVersion';
   import RepostConsentSetting from './RepostConsentSetting.svelte';
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
+  import {
+    EMOJI_STYLES,
+    currentEmojiStyle,
+    setEmojiStyle,
+    type EmojiStyle,
+  } from '$lib/utils/emojiStyle';
+
+  /** The label of each emoji choice, in the order `EMOJI_STYLES` lists them. */
+  const EMOJI_STYLE_LABELS: Record<EmojiStyle, () => string> = {
+    system: m.settings_emoji_style_system,
+    canari: m.settings_emoji_style_canari,
+  };
 
   // The vibration toggle is only meaningful on touch-capable hardware; detect it here so the
   // section needs no props and stays drop-in.
@@ -206,6 +220,29 @@
           </button>
         {/each}
       </div>
+    </div>
+
+    <div class="flex items-center justify-between gap-4">
+      <div class="flex items-center gap-3.5">
+        <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
+          <Smile size={20} strokeWidth={2.5} />
+        </div>
+        <div>
+          <p class="text-text-main text-sm font-bold">{m.settings_emoji_style_label()}</p>
+          <p class="text-text-muted mt-0.5 text-xs font-medium">
+            {m.settings_emoji_style_desc()}
+          </p>
+        </div>
+      </div>
+
+      <SegmentedControl
+        items={EMOJI_STYLES.map((style) => ({ key: style, label: EMOJI_STYLE_LABELS[style]() }))}
+        value={currentEmojiStyle()}
+        onSelect={setEmojiStyle}
+        label={m.settings_emoji_style_label()}
+        tone="yellow"
+        class="w-44 shrink-0"
+      />
     </div>
 
     <RepostConsentSetting />

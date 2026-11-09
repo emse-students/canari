@@ -2,6 +2,10 @@
   "$schema": "https://inlang.com/schema/inlang-message-format",
   "settings_language_label": "Langue",
   "settings_language_desc": "Langue de l'interface",
+  "settings_emoji_style_label": "Emojis",
+  "settings_emoji_style_desc": "Système : ceux de votre téléphone. Canari : les mêmes dessins sur tous les appareils.",
+  "settings_emoji_style_system": "Système",
+  "settings_emoji_style_canari": "Canari",
   "auth_brand_subtitle": "Mines Saint-Étienne",
   "auth_redirecting": "Redirection…",
   "auth_restore_in_progress": "Restauration de votre session...",
@@ -458,7 +462,16 @@
   "chat_device_revoke_session_confirm": "Supprimer cette connexion ? Celui qui la détient sera déconnecté et devra tout reprendre depuis le début.",
   "chat_devices_intro": "Chaque ligne est un appareil relié à votre compte. Le supprimer le déconnecte et lui retire l'accès à vos conversations : il repart de zéro.",
   "chat_device_no_session": "Aucune connexion active",
-  "chat_device_session_count": "{count} connexions",
+  "chat_device_session_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} connexion",
+        "countPlural=other": "{count} connexions"
+      }
+    }
+  ],
   "chat_device_session_orphan_note": "Cette connexion n'a jamais identifié d'appareil : elle n'a pas déverrouillé vos messages. Si vous ne la reconnaissez pas, supprimez-la.",
   "chat_device_session_unlisted_note": "Cette connexion nomme un appareil qui ne figure plus dans la liste. Si vous ne la reconnaissez pas, supprimez-la.",
   "chat_device_limit_reached": "Cet appareil n'a pas pu s'enregistrer : votre compte a atteint la limite de {max} appareils. Supprimez un appareil inutilisé dans Paramètres > Gestion des appareils, puis rouvrez l'application.",
@@ -493,7 +506,16 @@
   "chat_channel_access_description": "Définissez si le canal est ouvert à tous les membres ou restreint à certains utilisateurs.",
   "chat_channel_settings_read_only_hint": "Seuls les membres ayant la permission de gérer les canaux peuvent modifier ces réglages.",
   "common_loading_label": "Chargement…",
-  "reactors_more_label": "+{count} autres",
+  "reactors_more_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "+{count} autre",
+        "countPlural=other": "+{count} autres"
+      }
+    }
+  ],
   "common_saving_label": "Sauvegarde…",
   "common_delete_button": "Supprimer",
   "chat_channel_private_label": "Canal privé",
@@ -705,7 +727,16 @@
   "msg_max_reactions_label": "Maximum de {max} réactions différentes sur ce message.",
   "msg_recent_reactions_label": "Récents",
   "msg_reactions_label": "Réactions au message",
-  "msg_reactions_show_more": "Afficher {count} autres réactions",
+  "msg_reactions_show_more": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Afficher {count} autre réaction",
+        "countPlural=other": "Afficher {count} autres réactions"
+      }
+    }
+  ],
   "msg_reaction_aria_label": "{emoji} ({count} personnes)",
   "msg_reaction_aria_label_one": "{emoji} (1 personne)",
   "msg_audio_format_unsupported_label": "Format non supporté",
@@ -1093,7 +1124,16 @@
   "post_create_publish_button_label": "Publier",
   "post_form_section_remove_label": "Retirer le formulaire",
   "post_form_choose_label": "- Choisir un formulaire -",
-  "post_form_questions_label": "{count} questions",
+  "post_form_questions_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} question",
+        "countPlural=other": "{count} questions"
+      }
+    }
+  ],
   "post_form_opens_suffix_label": "ouvre {date}",
   "post_form_opens_planned_label": "Ouverture prévue le {date}",
   "post_form_none_yet_label": "Aucun formulaire pour l'instant.",
@@ -1178,29 +1218,130 @@
   "admin_storage_disk_used": "{used} / {total} utilisés ({percent} %)",
   "admin_storage_postgres_label": "Base de données",
   "admin_storage_garage_label": "Objets média (Garage)",
-  "admin_storage_garage_object_count": "{count} objets",
+  "admin_storage_garage_object_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet",
+        "countPlural=other": "{count} objets"
+      }
+    }
+  ],
   "admin_storage_redis_label": "Cache (Redis)",
   "admin_storage_unavailable": "Mesure indisponible.",
   "admin_storage_media_growth_title": "Ce qui a été écrit",
   "admin_storage_media_week_range": "{from}-{to} j",
   "admin_storage_media_week_current": "7 derniers jours",
   "admin_storage_media_older": "Au-delà de {days} j : {size}. La rétention en efface une partie, ce n'est donc pas une mesure de croissance.",
-  "admin_storage_media_undated": "{count} objets sans date d'écriture, absents des barres ci-dessus.",
+  "admin_storage_media_undated": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet sans date d'écriture, absent des barres ci-dessus.",
+        "countPlural=other": "{count} objets sans date d'écriture, absents des barres ci-dessus."
+      }
+    }
+  ],
   "admin_storage_media_retention_title": "Rétention",
   "admin_storage_media_retention_healthy": "Aucun objet au-delà de la fenêtre de {days} jours. Balayage toutes les {hours} h.",
-  "admin_storage_media_retention_pending": "{count} objets ({size}) ont dépassé la fenêtre de {days} jours et attendent le prochain balayage.",
-  "admin_storage_media_retention_stalled": "{count} objets ({size}) auraient dû partir : le plus ancien a {age} jours pour une fenêtre de {days} jours. Un balayage est passé sans les prendre.",
+  "admin_storage_media_retention_pending": [
+    {
+      "declarations": [
+        "input count",
+        "input days",
+        "input size",
+        "local countPlural = count: plural"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) a dépassé la fenêtre de {days} jours et attend le prochain balayage.",
+        "countPlural=other": "{count} objets ({size}) ont dépassé la fenêtre de {days} jours et attendent le prochain balayage."
+      }
+    }
+  ],
+  "admin_storage_media_retention_stalled": [
+    {
+      "declarations": [
+        "input count",
+        "input age",
+        "input days",
+        "input size",
+        "local countPlural = count: plural"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) aurait dû partir : le plus ancien a {age} jours pour une fenêtre de {days} jours. Un balayage est passé sans le prendre.",
+        "countPlural=other": "{count} objets ({size}) auraient dû partir : le plus ancien a {age} jours pour une fenêtre de {days} jours. Un balayage est passé sans les prendre."
+      }
+    }
+  ],
   "admin_storage_media_unreachable_title": "Hors d'atteinte du balayage",
   "admin_storage_media_unreachable_none": "Aucun. Chaque objet du bucket a son entrée de métadonnées.",
-  "admin_storage_media_unreachable_some": "{count} objets ({size}) qu'aucun balayage ne peut atteindre.",
+  "admin_storage_media_unreachable_some": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) qu'aucun balayage ne peut atteindre.",
+        "countPlural=other": "{count} objets ({size}) qu'aucun balayage ne peut atteindre."
+      }
+    }
+  ],
   "admin_storage_media_untracked": "{count} ({size}) sans entrée de métadonnées : le balayage parcourt les métadonnées, il ne les voit pas.",
   "admin_storage_media_tombstoned": "{count} ({size}) marqués supprimés mais toujours dans le bucket : une suppression a échoué.",
-  "admin_storage_media_public": "{count} objets ({size}) sont des ressources publiques, exemptées de rétention.",
-  "admin_storage_media_archive": "{count} objets ({size}) sont des médias du fil (posts, commentaires, avatars), conservés indéfiniment.",
-  "admin_storage_media_association": "{count} objets ({size}) sont des documents d'associations, conservés indéfiniment, même après la suppression du compte qui les a envoyés.",
-  "admin_storage_media_reel": "{count} objets ({size}) sont des vidéos de CanaReels, supprimées avec leur reel un mois après la publication.",
+  "admin_storage_media_public": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) est une ressource publique, exemptée de rétention.",
+        "countPlural=other": "{count} objets ({size}) sont des ressources publiques, exemptées de rétention."
+      }
+    }
+  ],
+  "admin_storage_media_archive": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) est un média du fil (posts, commentaires, avatars), conservé indéfiniment.",
+        "countPlural=other": "{count} objets ({size}) sont des médias du fil (posts, commentaires, avatars), conservés indéfiniment."
+      }
+    }
+  ],
+  "admin_storage_media_association": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) est un document d'association, conservé indéfiniment, même après la suppression du compte qui l'a envoyé.",
+        "countPlural=other": "{count} objets ({size}) sont des documents d'associations, conservés indéfiniment, même après la suppression du compte qui les a envoyés."
+      }
+    }
+  ],
+  "admin_storage_media_reel": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) est une vidéo de CanaReels, supprimée avec son reel un mois après la publication.",
+        "countPlural=other": "{count} objets ({size}) sont des vidéos de CanaReels, supprimées avec leur reel un mois après la publication."
+      }
+    }
+  ],
   "admin_storage_reels": "{live} reels en vie, {overdue} en retard de suppression (un reel en retard est encore là passé son mois : le traitement horaire ne l'a pas retiré).",
-  "admin_storage_media_unclassified": "{count} objets ({size}) n'ont aucune classe de rétention (envoyés avant le 2026-10-01 ou par un ancien client) : le balayage n'y touche jamais.",
+  "admin_storage_media_unclassified": [
+    {
+      "declarations": ["input count", "input size", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} objet ({size}) n'a aucune classe de rétention (envoyé avant le 2026-10-01 ou par un ancien client) : le balayage n'y touche jamais.",
+        "countPlural=other": "{count} objets ({size}) n'ont aucune classe de rétention (envoyés avant le 2026-10-01 ou par un ancien client) : le balayage n'y touche jamais."
+      }
+    }
+  ],
   "admin_storage_mls_title": "MLS",
   "admin_storage_mls_desc": "Ce que contiennent la base et le cache ci-dessus. Des nombres seulement : rien ici n'alerte, ne classe ni n'agit.",
   "admin_storage_mls_tables_title": "Tables",
@@ -1209,13 +1350,36 @@
   "admin_storage_mls_table_live": "~{size} de données",
   "admin_storage_mls_queue_title": "File non distribuée",
   "admin_storage_mls_queue_summary": "{rows} messages en attente pour {devices} appareils.",
-  "admin_storage_mls_queue_deepest": "File la plus profonde pour un seul appareil : {count} messages.",
+  "admin_storage_mls_queue_deepest": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "File la plus profonde pour un seul appareil : {count} message.",
+        "countPlural=other": "File la plus profonde pour un seul appareil : {count} messages."
+      }
+    }
+  ],
   "admin_storage_mls_queue_oldest": "Message le plus ancien en attente : {days} jours.",
   "admin_storage_mls_queue_empty": "Rien en attente.",
   "admin_storage_mls_queue_growth": "Messages mis en file par semaine",
   "admin_storage_mls_ghosts_title": "Appareils sans key package",
   "admin_storage_mls_ghosts_none": "Aucun. Les {devices} appareils qui portent des adhésions ont tous publié un key package.",
-  "admin_storage_mls_ghosts_some": "{count} appareils sur {devices} portent des adhésions ({memberships}) sans avoir publié de key package : ils ne peuvent être ajoutés à rien ni recevoir de Welcome.",
+  "admin_storage_mls_ghosts_some": [
+    {
+      "declarations": [
+        "input count",
+        "input devices",
+        "input memberships",
+        "local countPlural = count: plural"
+      ],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} appareil sur {devices} porte des adhésions ({memberships}) sans avoir publié de key package : il ne peut être ajouté à rien ni recevoir de Welcome.",
+        "countPlural=other": "{count} appareils sur {devices} portent des adhésions ({memberships}) sans avoir publié de key package : ils ne peuvent être ajoutés à rien ni recevoir de Welcome."
+      }
+    }
+  ],
   "admin_storage_mls_redis_title": "Clés du cache",
   "admin_storage_mls_redis_summary": "{keys} clés. La répartition ci-dessous est un échantillon de {sampled}.",
   "admin_storage_mls_redis_prefix": "{prefix} : {keys}",
@@ -1330,7 +1494,16 @@
   "admin_legacy_status_already_held": "Déjà cotisant - ligne close sans rien changer",
   "admin_legacy_collision_hint": "Plusieurs lignes partagent le même nom, prénom et promo pour une même association. Rien ne peut décider seul laquelle revient à qui : la première personne connectée prend la cotisation et les autres lignes restent bloquées.",
   "admin_legacy_empty": "Aucune ligne.",
-  "admin_legacy_total_label": "{count} lignes",
+  "admin_legacy_total_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} ligne",
+        "countPlural=other": "{count} lignes"
+      }
+    }
+  ],
   "admin_payments_connect_hint": "La configuration des paiements en ligne se fait sur chaque association : page publique → Modifier → onglet Paiements.",
   "admin_agenda_title": "Événements en attente",
   "admin_agenda_subtitle": "Validez un événement pour le rendre visible sur l'agenda public et dans l'agenda global.",
@@ -2964,8 +3137,16 @@
   "form_cash_expiry_placeholder": "Jamais (laisser vide)",
   "form_cash_expiry_hint": "Les paiements sur place non validés après ce délai passent automatiquement à \"expiré\". Laissez vide pour ne jamais expirer.",
   "form_cash_expiry_required_public": "Obligatoire sur un formulaire public : une réponse non payée, à régler sur place, garde sa place jusqu'à ce délai.",
-  "form_questions_count": "{count} questions",
-  "form_questions_count_one": "1 question",
+  "form_questions_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} question",
+        "countPlural=other": "{count} questions"
+      }
+    }
+  ],
   "form_add_question_button": "Ajouter une question",
   "form_error_title_required": "Le titre du formulaire est obligatoire.",
   "form_error_association_required": "Veuillez sélectionner une association bénéficiaire pour un formulaire payant.",
@@ -4140,7 +4321,16 @@
   "chat_system_call_busy": "Contact occupé",
   "chat_system_call_duration_under_minute": "moins d'une minute",
   "chat_system_call_duration_one_minute": "1 minute",
-  "chat_system_call_duration_minutes": "{count} minutes",
+  "chat_system_call_duration_minutes": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} minute",
+        "countPlural=other": "{count} minutes"
+      }
+    }
+  ],
   "chat_preview_media": "[Média]",
   "chat_preview_info": "[Info]",
   "chat_preview_poll": "[Sondage]",
@@ -4242,7 +4432,16 @@
   "pdf_open_document_label": "Ouvrir le document",
   "post_file_ready_to_save": "Prêt - touchez pour enregistrer",
   "pdf_viewer_page_alt": "Page {page} sur {total}",
-  "pdf_viewer_page_count": "{count} pages",
+  "pdf_viewer_page_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} page",
+        "countPlural=other": "{count} pages"
+      }
+    }
+  ],
   "pdf_viewer_zoom_in": "Agrandir",
   "pdf_viewer_zoom_out": "Réduire",
   "pdf_viewer_error": "Ce document ne peut pas être affiché.",
@@ -4413,7 +4612,16 @@
   "form_criterion_question_label": "Question",
   "form_criterion_question_placeholder": "Choisir une question...",
   "form_criterion_untitled_question": "Question sans titre",
-  "form_criterion_formation_count": "{count} personnes",
+  "form_criterion_formation_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} personne",
+        "countPlural=other": "{count} personnes"
+      }
+    }
+  ],
   "form_builder_priced_by_grid": "Les tarifs de cette question sont fixés dans la grille tarifaire, pas ici.",
   "form_view_not_open_to_you_title": "Ce formulaire ne vous est pas destiné",
   "form_view_not_open_to_you_desc": "Son accès est réservé à certaines promotions, formations ou cotisants.",
@@ -4534,7 +4742,23 @@
   "reel_sendto_failed_in_unnamed": "Une vidéo n'a pas pu être envoyée dans l'une des conversations choisies : ouvrez-la pour voir pourquoi.",
   "reel_sendto_failed_in_many": "La vidéo n'a pas pu être envoyée dans {count} conversations : ouvrez-les pour voir pourquoi.",
   "reel_sendto_failed_in_chosen": "La vidéo n'a pas pu être envoyée dans les conversations choisies : ouvrez-les pour voir pourquoi.",
-  "reel_sendto_delete_everywhere_skipped": "Supprimée dans {done} conversations ; {skipped} ne sont plus sur cet appareil et la gardent.",
+  "reel_sendto_delete_everywhere_skipped": [
+    {
+      "declarations": [
+        "input done",
+        "input skipped",
+        "local donePlural = done: plural",
+        "local skippedPlural = skipped: plural"
+      ],
+      "selectors": ["donePlural", "skippedPlural"],
+      "match": {
+        "donePlural=one skippedPlural=one": "Supprimée dans {done} conversation ; {skipped} n'est plus sur cet appareil et la garde.",
+        "donePlural=one skippedPlural=other": "Supprimée dans {done} conversation ; {skipped} ne sont plus sur cet appareil et la gardent.",
+        "donePlural=other skippedPlural=one": "Supprimée dans {done} conversations ; {skipped} n'est plus sur cet appareil et la garde.",
+        "donePlural=other skippedPlural=other": "Supprimée dans {done} conversations ; {skipped} ne sont plus sur cet appareil et la gardent."
+      }
+    }
+  ],
   "reel_sendto_everywhere_running": "La suppression de cette vidéo est déjà en cours.",
   "reel_sendto_same_as_post": "Les conversations recevront la vidéo publiée elle-même.",
   "reel_sendto_cancel_all": "Annuler partout",
@@ -5214,7 +5438,16 @@
   "bookings_day_state_none": "rien de libre",
   "bookings_strip_label": "Jours de la semaine",
   "bookings_column_label": "Colonne",
-  "bookings_column_free_count": "{count} libres",
+  "bookings_column_free_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} libre",
+        "countPlural=other": "{count} libres"
+      }
+    }
+  ],
   "bookings_grid_caption": "Créneaux de {space}",
   "bookings_grid_drag_hint_pointer": "Glissez sur la grille pour choisir plusieurs créneaux.",
   "bookings_grid_drag_hint_touch": "Appui long, puis glissez sur la grille pour choisir plusieurs créneaux.",

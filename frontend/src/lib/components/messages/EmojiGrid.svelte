@@ -2,7 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { m } from '$lib/paraglide/messages';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
-  import { emojiSvgSrc } from '$lib/utils/emojiSvg';
+  import { emojiPictureSrc, type EmojiStyle } from '$lib/utils/emojiStyle';
   import { FIRST_SCREEN_EMOJI_COUNT } from '$lib/utils/emojiPreload';
   import {
     EMOJI_CATEGORIES,
@@ -21,7 +21,8 @@
   } from './emojiPickerShared';
 
   /**
-   * THE EMOJI PICKER'S BODY, DRAWN BY US, IN NOTO'S PICTURES (2026-09-25).
+   * THE EMOJI PICKER'S BODY, DRAWN BY US (2026-09-25) - in Noto's pictures under the "Canari" emoji
+   * setting, in the platform's own glyphs under "system" (the default since 2026-11-09).
    *
    * It replaced `emoji-picker-element`, which draws with a font inside its shadow root - so the
    * picker kept showing Apple's glyphs on WebKit after every message had moved to Noto's pictures.
@@ -35,9 +36,14 @@
   interface Props {
     /** Called with the picked emoji (skin tone applied) and whether Shift was held. */
     onPick: (emoji: string, shiftKey: boolean) => void;
+    /**
+     * Overrides the user's emoji setting - ONLY where the pick becomes a picture others see (the
+     * CanaReels sticker, burnt into the video as Noto's SVG), so the grid shows what will be placed.
+     */
+    emojiStyle?: EmojiStyle;
   }
 
-  let { onPick }: Props = $props();
+  let { onPick, emojiStyle }: Props = $props();
 
   const CATEGORY_LABELS: Record<EmojiCategory, () => string> = {
     'smileys-emotion': m.emoji_picker_category_smileys_emotion,
@@ -126,6 +132,7 @@
 
 {#snippet emojiButton(entry: EmojiEntry, eager: boolean)}
   {@const emoji = withSkinTone(entry, tone)}
+  {@const src = emojiPictureSrc(emoji, emojiStyle) ?? emojiPictureSrc(entry.emoji, emojiStyle)}
   <button
     type="button"
     onclick={(event) => pick(entry, event)}
@@ -138,16 +145,20 @@
          EAGER and decoded SYNCHRONOUSLY (lazy + async decode left the cells blank on the first
          frames); the alt text is transparent so a picture still on its way never shows the emoji
          as a glyph. Everything below the first screen stays lazy. -->
-    <img
-      class="size-7 text-transparent"
-      width="28"
-      height="28"
-      src={emojiSvgSrc(emoji) ?? emojiSvgSrc(entry.emoji)}
-      alt={emoji}
-      loading={eager ? 'eager' : 'lazy'}
-      decoding={eager ? 'sync' : 'async'}
-      draggable="false"
-    />
+    {#if src}
+      <img
+        class="size-7 text-transparent"
+        width="28"
+        height="28"
+        {src}
+        alt={emoji}
+        loading={eager ? 'eager' : 'lazy'}
+        decoding={eager ? 'sync' : 'async'}
+        draggable="false"
+      />
+    {:else}
+      <span class="text-xl leading-none" aria-hidden="true">{emoji}</span>
+    {/if}
   </button>
 {/snippet}
 
@@ -170,6 +181,7 @@
     >
       <EmojiText
         text={tone === 0 ? TONE_SWATCH : `${TONE_SWATCH}${String.fromCodePoint(0x1f3fa + tone)}`}
+        {emojiStyle}
       />
     </button>
   </div>
@@ -197,6 +209,7 @@
             text={option === 0
               ? TONE_SWATCH
               : `${TONE_SWATCH}${String.fromCodePoint(0x1f3fa + option)}`}
+            {emojiStyle}
           />
         </button>
       {/each}
@@ -210,6 +223,7 @@
       aria-label={m.emoji_picker_categories_label()}
     >
       {#each sections as section (section.category)}
+        {@const tabSrc = emojiPictureSrc(section.entries[0].emoji, emojiStyle)}
         <button
           type="button"
           role="tab"
@@ -222,15 +236,19 @@
           aria-label={CATEGORY_LABELS[section.category]()}
           title={CATEGORY_LABELS[section.category]()}
         >
-          <img
-            class="size-5 text-transparent"
-            width="20"
-            height="20"
-            src={emojiSvgSrc(section.entries[0].emoji)}
-            alt={section.entries[0].emoji}
-            decoding="sync"
-            draggable="false"
-          />
+          {#if tabSrc}
+            <img
+              class="size-5 text-transparent"
+              width="20"
+              height="20"
+              src={tabSrc}
+              alt={section.entries[0].emoji}
+              decoding="sync"
+              draggable="false"
+            />
+          {:else}
+            <span aria-hidden="true">{section.entries[0].emoji}</span>
+          {/if}
         </button>
       {/each}
     </div>
