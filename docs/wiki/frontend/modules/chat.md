@@ -11,6 +11,7 @@
 - Offline message delivery via pull on reconnect (`fetchPendingMessages`).
 - Message reactions, edits, deletes.
 - Media attachments (images, files — CEK in MLS ciphertext).
+  A generic file is a COMPACT ROW (2026-11-09, design audit M6): bubble-tone fill, no border, 36 px tile, ~56 dp tall (was a 70 dp bordered card); the 44 dp download button sets the floor (`MessageMediaRenderer`).
 - Read receipts.
 - In-chat message search.
 - Conversation sidebar with direct messages and group list.
