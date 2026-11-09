@@ -1068,6 +1068,27 @@ release was **half-shipped by construction**. `tools/app-store/submit.mjs` close
 about how, including the release-notes file a human owes each stable and why its first line names
 its own version, is in [its README](../../tools/app-store/README.md), the only copy.
 
+### The Android release build restores Gradle, it never saves it (2026-11-09)
+
+`android.yml` cached nothing under `~/.gradle`, so every release fetched the Gradle wrapper
+distribution (`services.gradle.org`) and the dependency jars (Maven Central, GitHub) cold. The run of
+`v1.6.9-alpha.1` failed three times on a 504 and a 10 s read timeout from those hosts. The fix is a
+cache, not a retry or a longer timeout: `actions/cache/restore` of `~/.gradle/caches` and
+`~/.gradle/wrapper`, under the SAME key `compile-android-app` (`ci.yml`) already saves
+(`gradle-app-<os>-<hash of gen/android's gradle files and wrapper properties>`, prefix fallback).
+
+- **Read-only in the release, and that is the safety argument.** GitHub scopes a cache to the ref
+  that wrote it and lets a ref read its own and the default branch's. A release runs on a tag ref:
+  it can read what `main` wrote, can never read a pull request's cache (`refs/pull/N/merge`), and a
+  save from the tag would be unreadable by the next release anyway. So only `compile-android-app`
+  running on `main` (reviewed code, green CI) writes it, and the release only avoids downloads;
+  Gradle still resolves from the committed build files, so what is built is unchanged.
+- **A cold cache is the old behaviour, not a failure.** `compile-android-app` runs on `main` only
+  when the Android tree changed, and an unread entry is evicted after 7 days; a release after that
+  downloads as before.
+- `test-android` and `compile-android-app` already cached these paths with `actions/cache`; `ios.yml`
+  caches only Bun (no CocoaPods or SwiftPM cache exists, and `compile-ios-app` has none either).
+
 **BOTH ARMS ARE ALSO HAND-DISPATCHABLE, AND THAT IS A CAPABILITY RATHER THAN A SECOND DOOR.** It is
 the only way to compile Swift, ObjC or Kotlin from the Windows workstation this project is developed
 on. What makes it safe is `publish`, an INPUT: `release.yml` takes the callable default `true`, a
