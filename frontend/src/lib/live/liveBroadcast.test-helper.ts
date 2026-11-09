@@ -204,6 +204,8 @@ export function fakeDeps() {
     timers,
     /** The link comes back: every subscribed listener runs. */
     reconnect: () => {
+      // A SNAPSHOT: a one-shot listener removes itself from the set while it runs.
+      // oxlint-disable-next-line unicorn/no-useless-spread
       for (const l of [...reconnectListeners]) l();
     },
     reconnectListeners,
