@@ -77,7 +77,7 @@ export function buildSql(benchIds, today = new Date(), lang = 'fr') {
   });
   const posts = [
     {
-      key: lk('theme'), author: hugo, as: 'bde', ago: [0, 3], polls: [poll],
+      key: lk('theme'), author: hugo, as: 'bde', ago: [0, 0.05], polls: [poll],
       md: en ? 'The integration party is coming up: **vote for the theme** and come along on Friday at 8 pm!' : "La soirée d'intégration approche : **votez pour le thème** et venez nombreux vendredi à 20 h !",
     },
     {

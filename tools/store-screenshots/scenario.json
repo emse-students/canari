@@ -134,6 +134,7 @@
     },
     "when": "Friday 20:00, relative to the capture date"
   },
+  "allowedInitials": { "fr": ["SD", "BD", "CP", "CR"], "en": ["IP", "BD", "CP", "CR"] },
   "forbiddenOnScreen": [
     "Canari Test",
     "Environnement de test",
@@ -166,6 +167,8 @@
     },
     {
       "id": "2-messaging",
+      "scrollTop": 330,
+      "iosScrollFromTop": 270,
       "ios": [{"tab":2},{"tap":{"fr":"Soirée d'intégration","en":"Integration party"}}],
       "route": "/chat",
       "open": {
@@ -182,29 +185,31 @@
       },
       "expect": {
         "fr": [
-          "Qui apporte les enceintes"
+          "Top ! Et les chips"
         ],
         "en": [
-          "Who brings the speakers"
+          "Great! And who is on snacks"
         ]
       }
     },
     {
       "id": "3-communities",
-      "ios": [{"tab":1}],
+      "ios": [{"tab":1},{"tap":{"fr":"Campus","en":"Campus"}},{"tap":{"fr":"général","en":"général"}}],
       "route": "/communities",
+      "open": [{"fr":"Campus","en":"Campus"},{"fr":"général","en":"général"}],
       "caption": {
         "fr": "Des communautés à ton image",
         "en": "Communities of your own"
       },
       "expect": {
-        "fr": [],
-        "en": []
+        "fr": ["Bienvenue dans le campus"],
+        "en": ["Welcome to the campus"]
       }
     },
     {
       "id": "4-feed-polls",
-      "ios": [{"tab":0},{"tap":{"fr":"Suivis","en":"Following"}}],
+      "scrollAnchor": { "fr": "votez pour le thème", "en": "vote for the theme" },
+      "ios": [{"tab":0},{"tap":{"fr":"Associations","en":"Associations"}}],
       "route": "/posts",
       "caption": {
         "fr": "Actus et sondages du campus",
@@ -219,13 +224,15 @@
         ]
       },
       "open": {
-        "fr": "Suivis",
-        "en": "Following"
+        "fr": "Associations",
+        "en": "Associations"
       }
     },
     {
       "id": "5-agenda",
-      "ios": [{"tab":3}],
+      "ios": [{"tab":3},{"tap":{"fr":"Agenda Événements et calendrier","en":"Calendar Events and calendar"},"retry":true}],
+      "waitFor": {"fr": "Soirée d'intégration", "en": "Integration party"},
+      "scrollAnchor": {"fr": "Soirée d'intégration", "en": "Integration party"},
       "route": "/calendar",
       "caption": {
         "fr": "Agenda et associations réunis",
@@ -242,7 +249,7 @@
     },
     {
       "id": "6-privacy",
-      "ios": [],
+      "ios": [{"tab":3},{"tap":{"fr":"Voir mon profil","en":"View my profile"}},{"tap":{"fr":"Paramètres","en":"Settings"}},{"tap":{"fr":"Sécurité & appareils","en":"Security & devices"}}],
       "route": "/settings/security",
       "caption": {
         "fr": "Ta vie privée, protégée",

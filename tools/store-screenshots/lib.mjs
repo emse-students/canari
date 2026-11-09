@@ -116,10 +116,20 @@ export function flattenPng(buf) {
  * there is no photo) or an image that did not load. The verify step fails a shot with either: the
  * owner's rule is that no final shot shows an initials circle or an empty medium.
  */
-export const PAGE_PROBE = `(() => {
+/** @param {string[]} allowed initials of a GROUP or ASSOCIATION badge (an organisation mark, not a person): not reported */
+export const pageProbe = (allowed = []) => `(() => {
+  const allowed = ${JSON.stringify(allowed)};
   const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight; };
-  const lines = [document.documentElement.lang, document.body.innerText];
-  const ph = [...document.querySelectorAll('.avatar-placeholder')].filter(vis).length;
+    // VISIBLE text only (what the shot shows), in reading order: text below the fold is not part of the image.
+  const seen = [];
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const t = n.textContent.trim();
+    const el = n.parentElement;
+    if (t && el && vis(el) && getComputedStyle(el).visibility !== 'hidden' && !['SCRIPT', 'STYLE'].includes(el.tagName)) seen.push(t);
+  }
+  const lines = [document.documentElement.lang, seen.join(String.fromCharCode(10))];
+  const ph = [...document.querySelectorAll('.avatar-placeholder')].filter((e) => vis(e) && !allowed.includes(e.textContent.trim())).length;
   const broken = [...document.querySelectorAll('img')].filter((i) => vis(i) && i.complete && i.naturalWidth === 0).length;
   if (ph) lines.push('[MEDIA] ' + ph + ' initials avatar(s) on screen');
   if (broken) lines.push('[MEDIA] ' + broken + ' image(s) did not load');
@@ -130,16 +140,17 @@ export const PAGE_PROBE = `(() => {
 export const CLOSE_BANNER = `(()=>{const el=[...document.querySelectorAll('div,section,aside')].find(d=>d.children.length<=3&&/^(Environnement de test|Test environment)/.test(d.textContent.trim())&&d.querySelector('button'));el?.querySelector('button')?.click()})()`;
 
 /**
- * The iOS counterpart of `PAGE_PROBE`, from WDA's flattened accessibility tree (`ios.mjs flat`): the
+ * The iOS counterpart of `pageProbe`, from WDA's flattened accessibility tree (`ios.mjs flat`): the
  * iPhone app has no inspector tab, so the page text is what the native tree reports. Same output
- * shape as `PAGE_PROBE` (a language line, the text, then `[MEDIA]` lines), so `shots.mjs verify`
+ * shape as `pageProbe` (a language line, the text, then `[MEDIA]` lines), so `shots.mjs verify`
  * reads both. An initials avatar is a short upper-case text (1-2 letters) drawn in a roughly square
  * box no larger than a avatar; a broken image is NOT detectable from the tree (the shot is looked at).
  * @param {{type?:string,text:string,rect:{x:number,y:number,width:number,height:number}}[]} flat
  * @param {string} lang the language the capture was set to
  * @param {number} windowHeight the window height in points; elements wholly below it are off screen
+ * @param {string[]} allowedInitials initials of a group or association badge (an organisation mark, not a person): not reported
  */
-export function treeProbe(flat, lang, windowHeight = 844) {
+export function treeProbe(flat, lang, windowHeight = 844, allowedInitials = []) {
   const onScreen = flat.filter((e) => e.rect && e.rect.height > 0 && e.rect.width > 0 && e.rect.y < windowHeight && e.rect.y + e.rect.height > 0);
   const ordered = [...onScreen].sort((a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x);
   const initials = ordered.filter((e) => {

@@ -14,7 +14,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLOSE_BANNER, PAGE_PROBE, flattenPng, newTab, pngInfo, serveDir } from './lib.mjs';
+import { CLOSE_BANNER, pageProbe, flattenPng, newTab, pngInfo, serveDir } from './lib.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(HERE, '../..');
@@ -69,10 +69,11 @@ async function capture() {
           `(()=>{const el=[...document.querySelectorAll('div,section,aside')].find(d=>d.children.length<=3&&/^(Environnement de test|Test environment)/.test(d.textContent.trim())&&d.querySelector('button'));el?.querySelector('button')?.click()})()`,
         );
         await tab.sleep(400);
-        const target = shot.open ? (opt('open', null) ?? shot.open[lang]) : null;
+        const first = [].concat(shot.open ?? [])[0];
+        const target = first ? (opt('open', null) ?? first[lang]) : null;
         if (target) await clickText(tab, target);
         await tab.ev('window.scrollTo(0,0)');
-        const text = await tab.ev(PAGE_PROBE);
+        const text = await tab.ev(pageProbe(scenario.allowedInitials[lang]));
         if (/Environnement de test|Test environment/.test(text)) throw new Error('the dev banner is still on screen');
         mkdirSync(join(work, 'web', lang), { recursive: true });
         writeFileSync(join(work, 'web', lang, `${shot.id}.txt`), text);

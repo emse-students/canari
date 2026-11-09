@@ -28,7 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { armIfPhone, resolveDevice } from '../cross-client-harness/device.mjs';
 import { client, evaluate } from '../cross-client-harness/chat.mjs';
 import { SERIAL_OF } from '../cross-client-harness/names.mjs';
-import { CLOSE_BANNER, PAGE_PROBE, treeProbe } from './lib.mjs';
+import { CLOSE_BANNER, pageProbe, treeProbe } from './lib.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const scenario = JSON.parse(readFileSync(join(HERE, 'scenario.json'), 'utf8'));
@@ -45,7 +45,7 @@ const adb = (...a) => execFileSync('adb', ['-s', SERIAL_OF.A1, ...a], { maxBuffe
 const demo = (...kv) => adb('shell', 'am', 'broadcast', '-a', 'com.android.systemui.demo', ...kv);
 
 /** Clicks the smallest visible element showing `text`, from inside the page. */
-const clickExpr = (text) => `(() => { const t = ${JSON.stringify(text)}; const c = [...document.querySelectorAll('a,button,[role=button],li,div,span')].filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && (e.textContent || '').includes(t); }).sort((a, b) => a.querySelectorAll('*').length - b.querySelectorAll('*').length)[0]; if (!c) return false; c.click(); return true; })()`;
+const clickExpr = (text) => `(() => { const t = ${JSON.stringify(text)}; const c = [...document.querySelectorAll('a,button,[role=button],[aria-label],li,div,span')].filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && ((e.textContent || '').includes(t) || (e.getAttribute('aria-label') || '').includes(t)); }).sort((a, b) => a.querySelectorAll('*').length - b.querySelectorAll('*').length)[0]; if (!c) return false; c.click(); return true; })()`;
 
 async function screenshot() {
   if (platform === 'android') return execFileSync('adb', ['-s', SERIAL_OF.A1, 'exec-out', 'screencap', '-p'], { maxBuffer: 1 << 28 });
@@ -66,16 +66,60 @@ async function runIos() {
   const win = await ios.size(sid);
   for (const lang of langs) {
     for (const shot of scenario.shots) {
+      if (opt('shot') && !shot.id.startsWith(opt('shot'))) continue;
       for (const step of shot.ios ?? []) {
         if (step.tab !== undefined) {
-          const bar = await ios.tabs(sid);
+          let bar = await ios.tabs(sid);
+          if (bar.length === 0) {
+            // A conversation hides the tab bar: its own back button brings it up.
+            await ios.tapText(sid, 'Retour au menu');
+            await sleep(2500);
+            bar = await ios.tabs(sid);
+          }
           const t = bar[step.tab];
           if (!t) throw new Error(`tab ${step.tab} not on screen (${bar.length} tabs): is the app signed in?`);
           await ios.tapAt(sid, Math.round(t.x + t.width / 2), Math.round(t.y + t.height / 2));
         } else {
           await ios.tapText(sid, step.tap[lang]);
+          await sleep(4500);
+          // A tap that landed while the page was still settling does nothing: the label is still there, tap it once more.
+          if (step.retry && (await ios.find(sid, step.tap[lang])).some((e) => e.rect.y > 0 && e.rect.y < win.height)) {
+            log('tap did not navigate, retrying', step.tap[lang]);
+            await ios.tapText(sid, step.tap[lang]);
+          }
         }
-        await sleep(3000);
+        await sleep(4500);
+      }
+      if (shot.waitFor) {
+        // A list fed by a request (the agenda): the shot waits for its content, never a fixed delay.
+        for (let i = 0; i < 20 && !(await ios.find(sid, shot.waitFor[lang])).length; i++) await sleep(1500);
+      }
+      if (shot.iosScrollFromTop) {
+        // The history is about 1.2 screens: both its ends carry a system row (a member added, a device added). The landing point of a conversation is remembered, so go to the top first (fast drags in the right margin: a slow press on a bubble opens its menu), then move down a fixed distance that hides the top row.
+        for (let i = 0; i < 6; i++) await ios.swipe(sid, 382, 200, 382, 700, 0.25);
+        await sleep(1500);
+        // In chunks, each after the previous one's momentum has died: a swipe thrown into a coasting list is swallowed.
+        for (let left = shot.iosScrollFromTop; left > 0; left -= 200) {
+          const d = Math.min(200, left);
+          await ios.swipe(sid, 382, 650, 382, 650 - d, 0.25);
+          log('scrolled', d, (await ios.find(sid, 'Test Gamma a ajouté')).map((e) => e.rect.y).join(','));
+          await sleep(1200);
+        }
+        await sleep(1500);
+      }
+      if (shot.scrollAnchor) {
+        // The post the shot is about sits below pinned ones: swipe until its text is near the top of the screen.
+        const want = shot.scrollAnchor[lang];
+        for (let i = 0; i < 14; i++) {
+          const at = (await ios.find(sid, want)).find((e) => e.rect.y > 0);
+          if (at && at.rect.y > 150 && at.rect.y < 260) break;
+          const dy = at ? at.rect.y - 190 : 400;
+          const dist = Math.max(60, Math.min(450, Math.abs(dy)));
+          // From the right margin, quickly: a slow drag on text starts a selection.
+          if (dy >= 0) await ios.swipe(sid, 382, 650, 382, 650 - dist, 0.25);
+          else await ios.swipe(sid, 382, 300, 382, 300 + dist, 0.25);
+          await sleep(1000);
+        }
       }
       // The banner's close cross (owner, 2026-11-09): tapped when the tree shows the banner; verify still fails a shot that shows it.
       const hits = [...(await ios.find(sid, 'Environnement de test')), ...(await ios.find(sid, 'Test environment'))];
@@ -87,7 +131,8 @@ async function runIos() {
       }
       const dir = join(work, 'ios', lang);
       mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, `${shot.id}.txt`), treeProbe(ios.flatten(await ios.tree(sid)), lang, win.height));
+      if (process.env.DUMP_RECTS) writeFileSync(join(dir, `${shot.id}.rects.json`), JSON.stringify(ios.flatten(await ios.tree(sid)).map((e) => [e.text, e.rect])));
+      writeFileSync(join(dir, `${shot.id}.txt`), treeProbe(ios.flatten(await ios.tree(sid)), lang, win.height, scenario.allowedInitials[lang]));
       writeFileSync(join(dir, `${shot.id}.png`), await screenshot());
       log('captured', platform, lang, shot.id);
     }
@@ -118,16 +163,21 @@ try {
       await sleep(7000);
       await evaluate(cx, CLOSE_BANNER);
       await sleep(500);
-      const target2 = shot.open ? (opt('open', null) ?? shot.open[lang]) : null;
-      if (target2) {
-        if (!(await evaluate(cx, clickExpr(target2)))) throw new Error(`"${target2}" not on screen`);
+      for (const [i, o] of [].concat(shot.open ?? []).entries()) {
+        const label = i === 0 ? (opt('open', null) ?? o[lang]) : o[lang];
+        if (!(await evaluate(cx, clickExpr(label)))) throw new Error(`"${label}" not on screen`);
         await sleep(3000);
       }
       // The banner comes back after a route change or a tap: closed again right before the pixels (owner, 2026-11-09).
       await evaluate(cx, CLOSE_BANNER);
       await sleep(600);
       await evaluate(cx, 'window.scrollTo(0,0)');
-      const text = await evaluate(cx, PAGE_PROBE);
+      if (shot.scrollAnchor) {
+        const want = JSON.stringify(shot.scrollAnchor[lang]);
+        await evaluate(cx, `(() => { const w = ${want}; const e = [...document.querySelectorAll('p,span,div')].filter((x) => (x.textContent || '').includes(w)).sort((a, b) => a.querySelectorAll('*').length - b.querySelectorAll('*').length)[0]; if (e) { e.scrollIntoView({ block: 'start' }); window.scrollBy(0, -118); [...document.querySelectorAll('*')].forEach((s) => { if (s.scrollHeight > s.clientHeight + 50 && /(auto|scroll)/.test(getComputedStyle(s).overflowY) && s.contains(e)) s.scrollTop -= 118; }); } })()`);
+        await sleep(1500);
+      }
+      const text = await evaluate(cx, pageProbe(scenario.allowedInitials[lang]));
       const dir = join(work, platform, lang);
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, `${shot.id}.txt`), text);
