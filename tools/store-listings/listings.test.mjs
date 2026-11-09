@@ -35,11 +35,17 @@ describe('store/listings', () => {
     expect(validateListing('fr', ok)).toEqual([]);
   });
 
-  test('rejects a payment, shop or ticketing promise', () => {
+  test('lets the shop, cotisations and online or cash payment pass', () => {
+    const ok = structuredClone(listings.fr);
+    ok.play.fullDescription += ' Boutique, cotisations, paiement en ligne ou en espèces. Shop, online payment.';
+    expect(validateListing('fr', ok)).toEqual([]);
+  });
+
+  test('rejects a payment-security or ticketing claim', () => {
     const bad = structuredClone(listings.fr);
-    bad.play.fullDescription += ' Billetterie avec paiement integre, boutique, tickets, shop.';
+    bad.play.fullDescription += ' Paiement sécurisé, billetterie, tickets, secure payment, ticketing.';
     const errors = validateListing('fr', bad).join('\n');
-    for (const w of ['paiement', 'billetterie', 'boutique', 'tickets', 'shop']) expect(errors).toContain(w);
+    for (const w of ['paiements?', 'billetterie', 'tickets', 'secure', 'ticketing']) expect(errors).toContain(w);
   });
 
   test('rejects the old spelling', () => {

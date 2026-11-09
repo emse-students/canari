@@ -1,7 +1,7 @@
 /**
  * Pure rules for the store listing texts and screenshots, shared by `play.mjs` and its test.
  *
- * WHY a rule file apart from the uploader: a text naming a removed feature (Stripe) or promising a payment
+ * WHY a rule file apart from the uploader: a text naming a removed feature (Stripe) or a payment-security or ticketing claim
  * is a false claim in a public store, and it must be refused in CI, not discovered by a reviewer
  * of the store page. The limits are the stores' own, enforced here rather than truncated.
  */
@@ -34,14 +34,13 @@ export const FORBIDDEN = [
   /\bn[°o]\s?1\b/i,
   /canari-emse\.fr/i,
   /lydia/i,
-  // Owner decision 2026-11-09: a store text promises NOTHING about money. Calls and video calls are
-  // live and may be named; payment, shop and ticketing claims stay refused (no association is
-  // proven able to collect, and the Data Safety / App Privacy answers are not written for it).
-  /\bpaiements?\b/i,
-  /\bpayments?\b/i,
-  /\bachat(?:s|er)?\b/i,
-  /\bboutique\b/i,
-  /\bshop\b/i,
+  // Owner decision 2026-11-09: the shop, the cotisations and online or cash payment are active and may
+  // be named as plain features. What stays refused: any payment-security claim, and ticketing, which
+  // is not a built feature ("paid registrations" says the idea).
+  /\bpaiements?\s+s[ée]curis/i,
+  /\bs[ée]curis\w*\s+(?:de\s+)?paiements?\b/i,
+  /\bsecure[d]?\s+payments?\b/i,
+  /\bpayments?\s+(?:is\s+|are\s+)?secur/i,
   /billetterie/i,
   /ticketing/i,
   /\btickets?\b/i,

@@ -173,24 +173,26 @@ description; nothing that is not in production. **"Le reseau des Marteaux" is KE
 day: he likes it) as the fr Apple subtitle and the opening of the Play fr short description; the
 English side says "The Marteaux network".
 
-**Shop and ticketing are NOT in the texts, and this is what blocks them (checked 2026-11-09).** Lydia
-is the live provider since 2026-11-06, but an association takes a payment only with its own validated
-Lydia Business; the backlog row 5 of WP-LYDIA-1 expects none validated unless the owner enrolled one,
-three Businesses wait for Lydia's validation, the guest payment on a paid public form is still an owed
-reading, and the only payment seen end to end in production is the Cercle's top-up (2026-10-26). There
-is no "billetterie" product in the app or its messages at all. The texts therefore stay silent on
-money; they may name a shop the day an association other than the Cercle is observed selling.
+**Shop, cotisations and payment are in the texts as plain features (owner, 2026-11-09: "la boutique est
+active, de meme que les cotisations etc.").** The wording says associations run registration forms
+with online or cash payment, manage cotisations and have a shop; it names no provider, makes no
+security claim and does not promise it for every association. The wiki itself still lists the Lydia
+readings as owed (a validated Business observed through a form, the guest payment, each
+association's re-onboarding: [WP-LYDIA-1](backlog.md#wp-lydia-1---lydia-live-in-production-with-one-payment-observed-end-to-end)),
+so this line rests on the owner's statement, not on a reading. **Ticketing is not a built feature and
+stays out** ("billetterie", "ticketing", "ticket"): "paid registrations" says the idea.
 
 Advertised, all in production: encrypted chats and communities, feed, polls and reposts, CanaReels
 and sharing a post or reel into a chat, audio and video calls, lives, bookings, forms, follow
 requests and the bell, "Campus" events, the carte de la vie asso, the guided tour. **Not
-advertised, on purpose:** filming a reel inside a chat (dev builds only), birthdays, widgets, the
-follow chip everywhere, suggestions, live replays, the sign-in handoff, and anything about money.
+advertised, on purpose:** ticketing, filming a reel inside a chat (dev builds only), birthdays, widgets, the
+follow chip everywhere, suggestions, live replays, the sign-in handoff, and a ticketing flow.
 The product writes "CanaReels", and the English says "association", never "club".
 
-Guard: `FORBIDDEN` in `tools/store-listings/listings.mjs` no longer refuses calls (they are true); it
-still refuses Stripe, Lydia, superlatives, the old domain, payment, purchase, shop, ticket and
-ticketing words and the spelling "Canareels". Limits as the stores state them: Play
+Guard: `FORBIDDEN` in `tools/store-listings/listings.mjs` lets calls, the shop, cotisations and online
+payment through (they are true); it refuses Stripe, Lydia, superlatives, the old domain, any
+payment-security claim (secure payment), billetterie, ticketing and ticket words, and the spelling
+"Canareels". Limits as the stores state them: Play
 short description 80, Apple subtitle 30, promotional text 170, keywords 100.
 
 The disclaimer "not published by the school administration" stays. The Apple name field is
@@ -227,7 +229,7 @@ tabs: they are reached from the dashboard (the sections hub). An association pag
 `/associations/<slug>`, and the Canareels camera is the tab LEFT of the feed (swipe right). Shot 4 is
 therefore taken from the dashboard, not from a tab, and the entry point of the Canareels viewer and of
 the carte de la vie asso is still to be confirmed on the device before shooting. The shop route exists
-but no shot or text shows it (owner, 2026-11-09: nothing about money in the listings).
+and the owner says the shop is active (2026-11-09); a shot of it is his call.
 
 1. Conversation list, then one open conversation (encrypted messaging, the lock shown).
 2. A community with its channels and a few messages.
@@ -252,7 +254,7 @@ every PNG against the checklist of section 4 before it leaves the scratchpad. No
 * Any upload to Play Console or App Store Connect (`play.mjs` is dry-run by default; `--apply` is the
   user's), and App Store texts, which ride a release.
 * **Any store data declaration** (Data safety, App Privacy, content rating, ads): never changed by an agent.
-* Whether anything about money ever returns to the listing, and when.
+* Whether a ticketing line ever returns to the listing: it needs a built ticketing feature first.
 
 ### 8.4 Next steps
 
