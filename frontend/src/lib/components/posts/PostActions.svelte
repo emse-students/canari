@@ -7,6 +7,7 @@
   import { longPress } from '$lib/actions/longPress';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { Log } from '$lib/utils/Log';
+  import Button from '$lib/components/ui/Button.svelte';
 
   /** Props for the PostActions bar (reaction picker + comment button + the reaction tally). */
   interface Props {
@@ -154,13 +155,13 @@
       <FaceSlightlySmiling size={20} />
     {/if}
   </button>
-  <button
-    type="button"
+  <Button
+    variant="ghost"
     onclick={() => openPicker('assistive button')}
     class="sr-only"
     aria-label={m.post_reacter()}
     data-post-react-picker-open
-  ></button>
+  />
 
   {#if onCommentClick}
     <button
