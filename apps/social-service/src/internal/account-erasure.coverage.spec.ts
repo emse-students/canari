@@ -75,6 +75,8 @@ const RAW_TABLES = [
   'form_drafts',
   // Migration 155's dismissed follow suggestions (engagement WP-5): the reader, and a person target.
   'follow_suggestion_dismissals',
+  // Migration 157's daily push counters (engagement WP-8): the recipient's own rows.
+  'engagement_push_days',
 ];
 
 const SRC = join(__dirname, '..');
