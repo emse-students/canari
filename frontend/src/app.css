@@ -25,6 +25,12 @@
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
 @theme {
+  /* TWO FAMILIES, AND THE DISPLAY ONE IS THE EXCEPTION (owner, 2026-11-09). `--font-body` (Nunito) is
+     every heading, label and sentence; `--font-display` (Fredoka) is the PAGE title (`h1`), a NAME
+     (association, community, profile - `font-display`) and the wordmark (`font-brand`). Both are
+     utilities (`font-body`, `font-display`). Measured reference: design-reference.md, Typography. */
+  --font-body: 'Nunito Variable', 'Nunito', 'Segoe UI', 'Inter', 'Avenir Next', sans-serif;
+  --font-display: 'Fredoka Variable', 'Fredoka', 'Segoe UI', 'Inter', 'Avenir Next', sans-serif;
   --color-cn-dark: var(--cn-dark);
   /* Fixed brand ink: stays navy in BOTH themes. Use for text/icons sitting on the
      (always-light) amber brand surface, where `cn-dark` would wrongly flip to near-white
@@ -636,7 +642,7 @@ body {
 }
 
 body {
-  font-family: 'Nunito Variable', 'Nunito', 'Segoe UI', 'Inter', 'Avenir Next', sans-serif;
+  font-family: var(--font-body);
   /* TEXT WITH NO `text-*` CLASS INHERITS THIS, so it follows iOS Dynamic Type too. It was the
      engine's 16px, outside the scale: at 2x the community rail's salon name stayed put while
      "Ajouter un canal" (`text-sm`) doubled beside it (iPhone 12, 2026-10-15). Still 16px wherever
@@ -644,14 +650,14 @@ body {
   font-size: calc(1rem * var(--type-scale, 1));
 }
 
+/* ONLY `h1` (the page title) AND THE TWO CLASSES CARRY THE DISPLAY FACE. `h2..h6` are section, list
+   and sheet headings and inherit the body family at their own bold weight; a heading that is a NAME
+   (`AssociationTile`, the community title in `Sidebar`) opts in with `font-display`. A sheet or tab
+   title that happens to be an `h1` for the outline opts OUT with `font-body`. */
 h1,
-h2,
-h3,
-h4,
-h5,
-h6,
-.font-brand {
-  font-family: 'Fredoka Variable', 'Fredoka', 'Segoe UI', 'Inter', 'Avenir Next', sans-serif;
+.font-brand,
+.font-display {
+  font-family: var(--font-display);
 }
 
 /*

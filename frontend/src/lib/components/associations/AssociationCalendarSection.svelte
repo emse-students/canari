@@ -373,7 +373,7 @@
 <div class="space-y-5">
   <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div>
-      <h2 class="text-text-main text-lg font-bold tracking-tight">{m.asso_tab_calendar()}</h2>
+      <h2 class="text-text-main text-lg font-bold">{m.asso_tab_calendar()}</h2>
       <p class="text-text-muted text-sm">
         {m.asso_calendar_subtitle()}
         {#if canEdit}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import Button from '$lib/components/ui/Button.svelte';
-  import { RefreshCw, Upload, Download } from '@lucide/svelte';
+  import { Upload, Download } from '@lucide/svelte';
   import {
     globalSession as session,
     globalConvs as convs,
@@ -106,13 +106,8 @@
   class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-200 duration-500 md:p-8"
   style="animation-fill-mode: backwards;"
 >
-  <div class="mb-2 flex items-center gap-3">
-    <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
-      <RefreshCw size={22} strokeWidth={2.5} />
-    </div>
-    <h2 class="text-text-main text-lg font-bold">{m.profile_backup_heading()}</h2>
-  </div>
-  <p class="text-text-muted mb-6 text-xs leading-relaxed font-medium sm:pl-[3.75rem]">
+  <h2 class="sr-only">{m.profile_backup_heading()}</h2>
+  <p class="text-text-muted mb-6 text-xs leading-relaxed font-medium">
     {m.profile_backup_desc()}
   </p>
 

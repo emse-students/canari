@@ -78,7 +78,7 @@
 
 <div class="space-y-3">
   <div class="flex items-center justify-between gap-3">
-    <h2 class="text-text-main min-w-0 text-lg font-bold tracking-tight">
+    <h2 class="text-text-main min-w-0 text-lg font-bold">
       {personal ? m.bookings_personal_title() : m.bookings_tab_label()}
     </h2>
     <button

@@ -214,7 +214,7 @@
     <!-- Club-side: delegate this association's payments to a parent. -->
     <section class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
       <div>
-        <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+        <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
           <Share2 size={20} />
           {m.asso_deleg_club_title()}
         </h2>
@@ -283,7 +283,7 @@
     {#if !receivesNever}
       <section class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
         <div>
-          <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+          <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
             <Inbox size={20} />
             {m.asso_deleg_parent_title()}
           </h2>

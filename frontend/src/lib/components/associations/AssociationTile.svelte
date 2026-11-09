@@ -127,7 +127,9 @@
             and without this it widens its grid column instead of wrapping, which is the one way a
             card wall stops being a wall.
           -->
-            <h3 class="text-text-main line-clamp-3 leading-snug font-bold [overflow-wrap:anywhere]">
+            <h3
+              class="font-display text-text-main line-clamp-3 leading-snug font-bold [overflow-wrap:anywhere]"
+            >
               {association.name}
             </h3>
           </div>

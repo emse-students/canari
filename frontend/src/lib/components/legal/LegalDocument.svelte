@@ -132,7 +132,7 @@
     <p class="text-text-muted text-2xs mb-2 font-semibold tracking-widest uppercase">
       {m.legal_eyebrow()}
     </p>
-    <h1 class="text-text-main text-3xl font-bold tracking-tight text-balance">{title}</h1>
+    <h1 class="text-text-main text-3xl font-bold text-balance">{title}</h1>
     <p class="text-text-muted mt-2 text-base">{subtitle}</p>
     <p class="text-text-muted text-2xs mt-4">{m.legal_last_updated({ date: updated })}</p>
   </header>
@@ -213,7 +213,6 @@
     font-size: var(--text-xl);
     line-height: var(--text-xl--line-height);
     font-weight: 700;
-    letter-spacing: -0.01em;
     margin-bottom: 1rem;
   }
 

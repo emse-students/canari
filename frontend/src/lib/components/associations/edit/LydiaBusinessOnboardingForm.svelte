@@ -247,7 +247,7 @@
 </script>
 
 <div class="border-cn-border space-y-4 rounded-2xl border bg-[var(--cn-surface)]/95 p-6 shadow-sm">
-  <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+  <h2 class="text-text-main flex items-center gap-2 text-lg font-bold">
     <Building2 size={20} />
     {m.asso_lydia_title()}
   </h2>
