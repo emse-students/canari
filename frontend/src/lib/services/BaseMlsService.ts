@@ -93,6 +93,7 @@ import type {
   HistoryRequestOutcome,
   BaseRefreshOutcome,
   DecryptedApplication,
+  DeliveredWelcome,
   IncomingDeliveryMeta,
   OneDeviceAddResult,
 } from '$lib/mls-client/IMlsService';
@@ -515,6 +516,8 @@ export abstract class BaseMlsService implements IMlsService {
     | null = null;
 
   protected welcomeProcessedCallback: ((groupId?: string) => void) | null = null;
+  /** @see onWelcomeDelivered */
+  private welcomeDeliveredListener: ((delivered: DeliveredWelcome) => void) | null = null;
 
   /**
    * Raised when the server says THIS device has been revoked, while it is still connected.
@@ -1710,6 +1713,11 @@ export abstract class BaseMlsService implements IMlsService {
 
   onWelcomeProcessed(callback: (groupId?: string) => void): void {
     this.welcomeProcessedCallback = callback;
+  }
+
+  /** @see IMlsService.onWelcomeDelivered */
+  onWelcomeDelivered(listener: (delivered: DeliveredWelcome) => void): void {
+    this.welcomeDeliveredListener = listener;
   }
 
   /** @see deviceRevokedCallback */
@@ -3688,6 +3696,16 @@ export abstract class BaseMlsService implements IMlsService {
       }
       recordWelcomeSent(groupId, targetDeviceId);
       await this.consumeOwedWelcome(groupId, recipient, welcomeBytes, 'delivered', persistEach);
+      // THE ONE PLACE A WELCOME IS KNOWN DELIVERED, whoever sent it - the Add's caller, a pending
+      // invitation, a welcome_request answer, or the owed-Welcome drain after a failed send or a
+      // kept commit accepted later - and once per request (a concurrent send of the same bytes
+      // awaits this one). What follows a delivery (the inviter's join push) hangs here.
+      this.announceWelcomeDelivered({
+        groupId,
+        userId: targetUserId,
+        deviceId: targetDeviceId,
+        welcome: welcomeBytes,
+      });
     })();
     const entry = { welcome: welcomeBytes, done };
     this.welcomeSendsInFlight.set(key, entry);
@@ -3695,6 +3713,29 @@ export abstract class BaseMlsService implements IMlsService {
       await done;
     } finally {
       if (this.welcomeSendsInFlight.get(key) === entry) this.welcomeSendsInFlight.delete(key);
+    }
+  }
+
+  /**
+   * Hands one delivered Welcome to the listener ({@link onWelcomeDelivered}). Never awaited and never
+   * throws into the send: the Welcome is delivered whatever the listener does. A delivery with no
+   * listener is said at ERROR - the session installs one when it builds this service, so reaching
+   * here without one means a newcomer's join push was never started.
+   */
+  private announceWelcomeDelivered(delivered: DeliveredWelcome): void {
+    const listener = this.welcomeDeliveredListener;
+    if (!listener) {
+      console.error(
+        `[WELCOME] ${delivered.groupId.slice(0, 8)}... Welcome delivered to ${delivered.deviceId} with no listener installed - its join push is not sent`
+      );
+      return;
+    }
+    try {
+      listener(delivered);
+    } catch (e) {
+      console.error(
+        `[WELCOME] ${delivered.groupId.slice(0, 8)}... the delivery listener threw for ${delivered.deviceId}: ${String(e).slice(0, 120)}`
+      );
     }
   }
 

@@ -1422,6 +1422,21 @@ jobs:
           workspaces: frontend/src-tauri
           key: ios-app
 
+      # THE SWIFT PACKAGE DOWNLOADS, SAVED HERE AND ONLY RESTORED BY THE RELEASE (`ios.yml`, the same
+      # key). `Package.resolved` pins 13 packages (Firebase and its binary xcframeworks among them),
+      # cloned and fetched cold from GitHub and Google on every run. SwiftPM keeps the bare clones
+      # and the binary artefacts in `org.swift.swiftpm` and resolves from there when it can.
+      # CocoaPods is not a source of downloads: `gen/apple/Podfile` declares no pod. Every plugin's
+      # `Package.swift` is in the key because a plugin can add a dependency the app project's
+      # `Package.resolved` does not list.
+      # docs/wiki/cicd.md#the-ios-release-build-restores-swiftpm-it-never-saves-it-2026-11-09
+      - name: Cache Swift packages
+        uses: actions/cache@v6
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('frontend/src-tauri/gen/apple/canari.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'frontend/src-tauri/**/ios/Package.swift') }}
+          restore-keys: swiftpm-${{ runner.os }}-
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: |
@@ -1896,12 +1911,41 @@ jobs:
           git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
           PREVIOUS_REF=origin/main bash infrastructure/authentik/test-blueprints.sh
 
+  # =================================================================================================
+  # IS THE UPSTREAM MONITOR STILL READING? - ASKED FROM OUTSIDE THE SCHEDULER
+  # =================================================================================================
+  # The `upstream` job of `scheduled.yml` is the only report of a public name that stops answering,
+  # and it runs when GitHub's scheduler lets it (13 of ~240 requested slots, 2026-11-06..09). If it
+  # stops altogether, its silence reads as "all up". A push to `main` is the one trigger here that
+  # owes nothing to that scheduler, so the witness rides it: no reading in 12 hours opens one issue,
+  # the next fresh one closes it. On a pull request it skips (it says nothing about the change).
+  # docs/wiki/infrastructure/upstream-reachability.md#who-watches-the-monitor
+  upstream-monitor-freshness:
+    name: The upstream monitor still reads
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      # The report is an issue, as the monitor's own is.
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+      - name: Read the monitor's last reading
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: bash .github/scripts/upstream-monitor-freshness.sh
+
   ci-passed:
     name: CI passed
     if: always()
     needs:
       [changes, test-rust, boot-nest-apps, test-social-integration, test-chat-delivery-integration, test-typescript-backend, test-frontend, test-frontend-shards, test-android, compile-android-app, compile-ios-app, test-harness,
-      test-ci-scripts, dependency-ceiling, mls-forward-compat, test-miconnect-blueprints, test-call-service-e2e, security, dependency-audit]
+      test-ci-scripts, dependency-ceiling, mls-forward-compat, test-miconnect-blueprints, test-call-service-e2e, security, dependency-audit, upstream-monitor-freshness]
     runs-on: ubuntu-24.04
     steps:
       - name: Every job either passed or had nothing to do
