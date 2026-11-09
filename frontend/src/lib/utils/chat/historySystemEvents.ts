@@ -481,8 +481,6 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
           fallbackAt: serverAt,
           serverAt,
           members: await nicknameMembersOf(ctx.nicknameRoster, conversationId, 'replay'),
-          // The log is the past: a nickname stays when its setter leaves (owner, 2026-10-18).
-          setterMustBeMember: false,
           log: (line) => console.debug(line),
         });
       }

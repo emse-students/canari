@@ -19,7 +19,6 @@ describe('applyNicknameFrame', () => {
   const ctx = (over: Partial<NicknameFrameContext> = {}): NicknameFrameContext => ({
     fallbackAt: 0,
     members,
-    setterMustBeMember: true,
     log,
     ...over,
   });
@@ -89,18 +88,11 @@ describe('applyNicknameFrame', () => {
     expect(nicknameEntries('g1')).toHaveLength(0);
   });
 
-  it('refuses a live setter who is no member, but keeps a replayed one whose setter left', () => {
+  it('takes a frame whose setter has left the tree since - live and replayed alike', () => {
+    // Decrypting it proved the setter was in the tree at its epoch; the tree NOW is not asked.
     expect(applyNicknameFrame('g1', { userId: 'bob', nickname: 'X', at: 1 }, 'gone', ctx())).toBe(
-      'refused'
+      'applied'
     );
-    expect(
-      applyNicknameFrame(
-        'g1',
-        { userId: 'bob', nickname: 'X', at: 1 },
-        'gone',
-        ctx({ setterMustBeMember: false })
-      )
-    ).toBe('applied');
   });
 });
 

@@ -1723,8 +1723,6 @@ export async function handleSystemEvent(
       fallbackAt: serverAt,
       serverAt,
       members: await nicknameMembersOf(mlsService, convoKey, 'live frame'),
-      // MLS just authenticated the sender in this tree.
-      setterMustBeMember: true,
       log,
     });
     return true;

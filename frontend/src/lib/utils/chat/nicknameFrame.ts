@@ -44,12 +44,6 @@ export interface NicknameFrameContext {
   serverAt?: number;
   /** The group's current members ({@link nicknameMembersOf}); `null` = unreadable, refused. */
   members: ReadonlySet<string> | null;
-  /**
-   * Whether the SETTER must still be a member. True live: MLS just authenticated them in this tree, so
-   * a miss is a defect worth the refusal. False on a replay: the log is the past, and a nickname
-   * stays when its setter leaves (owner, 2026-10-18).
-   */
-  setterMustBeMember: boolean;
   log: (msg: string) => void;
 }
 
@@ -63,7 +57,11 @@ export interface NicknameFrameContext {
  * - **Anybody may name anybody** (owner, 2026-10-14: a group has no ranks), so there is no
  *   permission to check; the frame is held to the nickname's own limits instead
  *   (`normalizeNickname`), and its TARGET must be a current member (review of #3177: a frame naming
- *   anybody else would only grow the stored register). A refusal ACCUSES: a build of this app never
+ *   anybody else would only grow the stored register). The SETTER is not held to the current tree:
+ *   decrypting the frame already proved they were in it at the frame's epoch, and a check against
+ *   the tree NOW would let a device that reads the frame after a commit removing the setter refuse
+ *   what a device that read it earlier took - one rule, live and replayed, so every device agrees
+ *   (and a nickname stays when its setter leaves, owner 2026-10-18). A refusal ACCUSES: a build of this app never
  *   sends one, so reaching it means a peer that is not one.
  * - `at` is the sender's clock, BOUNDED by the server's time for the frame plus a small skew
  *   (`boundedNicknameAt`): an unbounded date would let one frame dated next year freeze a nickname.
@@ -85,9 +83,7 @@ export function applyNicknameFrame(
         ? 'the roster is unreadable'
         : !members.has(userId)
           ? `${userId.slice(0, 8)} is no member`
-          : ctx.setterMustBeMember && !members.has(senderNorm)
-            ? 'its setter is no member'
-            : null;
+          : null;
   if (refusal !== null || !normalized.ok || members === null) {
     log(
       `[NICKNAME] REFUSED a nickname frame from ${senderNorm.slice(0, 8)} in ${scope.slice(0, 8)}…: ${refusal}`
